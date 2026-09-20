@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { CoreStore, type ManagedUserRecord } from "@piwork/core-store";
 import { hashPassword } from "./password.js";
+import { InputValidationError } from "../input-validation.js";
 
 export class AdministrationPermissionError extends Error {
   constructor() {
@@ -40,7 +41,7 @@ export class UserAdministrationService {
   ): Promise<ManagedUserRecord> {
     assertAdministrator(actor);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(input.account)) {
-      throw new Error("account must be a valid identifier");
+      throw new InputValidationError("account must be a valid identifier");
     }
     const now = this.now().toISOString();
     const record = {

@@ -16,13 +16,18 @@ test("compiled CLI help and usage failures do not contact Core", () => {
   for (const command of ["status", "login", "whoami", "logout", "work", "operation", "session", "run", "chat"]) {
     const commandHelp = run([command, "--help"]);
     assert.equal(commandHelp.status, 0, `${command} help should succeed`);
-    assert.match(commandHelp.stdout, new RegExp(`usage: piwork ${command}`));
+    assert.match(commandHelp.stdout, new RegExp(`usage: piwork-cli ${command}`));
     assert.doesNotMatch(commandHelp.stderr, /ECONNREFUSED|not logged in|stack| at /);
   }
   const unknown = run(["unknown"]);
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /unknown command/);
   assert.doesNotMatch(unknown.stderr, /ECONNREFUSED|stack| at /);
+  for (const args of [["admin", "users", "list"], ["config", "show"]]) {
+    const wrongSurface = run(args);
+    assert.equal(wrongSurface.status, 2);
+    assert.doesNotMatch(wrongSurface.stderr, /ECONNREFUSED|stack|\n\s+at /);
+  }
   const missing = run(["--core"]);
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /requires a value/);
@@ -33,6 +38,7 @@ test("documented safe error classes map to stable exit statuses", () => {
   assert.equal(exitCodeFor(new PiworkApiError(401, "AUTH", "auth")), 3);
   assert.equal(exitCodeFor(new PiworkApiError(404, "NOT_FOUND", "missing")), 4);
   assert.equal(exitCodeFor(new PiworkApiError(503, "UNAVAILABLE", "down")), 5);
+  assert.equal(exitCodeFor(new PiworkApiError(409, "CONFLICT", "stale")), 6);
   assert.equal(exitCodeFor(new Error("unexpected")), 1);
 });
 

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const CORE_SCHEMA_VERSION = 2;
+export const CORE_SCHEMA_VERSION = 3;
 
 interface Migration {
   readonly version: number;
@@ -183,6 +183,18 @@ const migrations: readonly Migration[] = [
         PRIMARY KEY(work_id, revision, artifact_kind, ordinal),
         FOREIGN KEY(work_id, revision) REFERENCES work_config_revisions(work_id, revision)
       ) STRICT`,
+    ],
+  },
+  {
+    version: 3,
+    statements: [
+      `CREATE TABLE control_metadata (
+        key TEXT PRIMARY KEY,
+        value_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT`,
+      `ALTER TABLE work_config_revisions ADD COLUMN runtime_profile_json TEXT`,
+      `ALTER TABLE work_config_revisions ADD COLUMN source_runtime_revision INTEGER`,
     ],
   },
 ];

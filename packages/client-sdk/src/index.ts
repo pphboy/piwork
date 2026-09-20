@@ -2,9 +2,27 @@ import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-export interface ClientOptions { readonly coreUrl: string; readonly fetch?: typeof globalThis.fetch; readonly token?: string; }
+export interface ClientOptions { readonly coreUrl: string; readonly fetch?: typeof globalThis.fetch; readonly token?: string; readonly operatorToken?: string; }
 export interface PublicIdentity { readonly id: string; readonly account: string; readonly role: "admin" | "user"; }
 export interface CredentialRecord { readonly version: 1; readonly coreUrl: string; readonly token: string; readonly expiresAt: string; readonly user: PublicIdentity; }
+
+export function resolveCoreEndpoint(options: {
+  readonly explicit?: string;
+  readonly environment?: string;
+  readonly saved?: string;
+  readonly fallback?: string;
+}): string {
+  return options.explicit ?? options.environment ?? options.saved ?? options.fallback ?? "http://127.0.0.1:7171";
+}
+
+export function safeErrorMessage(error: unknown): string {
+  const original = error instanceof Error ? error.message : String(error);
+  return original
+    .replace(/\b(Bearer|Operator)\s+[A-Za-z0-9._~+\/-]+/gi, "$1 [REDACTED]")
+    .replace(/\b(password|passphrase|api[-_ ]?key|token|credential|secret)\s*([=:])\s*([^\s,;]+)/gi, "$1$2[REDACTED]")
+    .replace(/([?&](?:password|api[-_]?key|token|credential|secret)=)[^&#\s]*/gi, "$1[REDACTED]")
+    .replace(/(?:\/?[^\s:]+)*\/(?:secrets?\/[^\s:]+|[^\s/:]*\.secret|operator\.credential)\b/g, "[REDACTED_PATH]");
+}
 
 export class PiworkApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string, readonly details?: Readonly<Record<string, unknown>>) { super(message); this.name = "PiworkApiError"; }
@@ -54,7 +72,7 @@ export class PiworkClient {
     try {
       response = await this.requestFetch(new URL(path, normalizedUrl(this.options.coreUrl)), {
         method,
-        headers: { accept: "application/json", ...(this.options.token === undefined ? {} : { authorization: `Bearer ${this.options.token}` }), ...(body === undefined ? {} : { "content-type": "application/json" }) },
+        headers: { accept: "application/json", ...authorization(this.options), ...(body === undefined ? {} : { "content-type": "application/json" }) },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch (error) { throw new PiworkApiError(0, "NETWORK_ERROR", error instanceof Error ? error.message : "network request failed"); }
@@ -70,6 +88,14 @@ export class PiworkClient {
   }
   health() { return this.request<{ status: string }>("GET", "/healthz"); }
   readiness() { return this.request<{ status: string; reason?: string }>("GET", "/readyz"); }
+  controlStatus() { return this.request<Record<string, unknown>>("GET", "/control/status"); }
+  bootstrapAdministrator(account: string, password: string) { return this.request<Record<string, unknown>>("POST", "/control/admin/bootstrap", { account, password }); }
+  managedUsers() { return this.request<{ users: unknown[] }>("GET", "/control/users"); }
+  createManagedUser(input: { account: string; password: string; role?: "admin" | "user" }) { return this.request<Record<string, unknown>>("POST", "/control/users", input); }
+  setManagedUserEnabled(userId: string, enabled: boolean) { return this.request<Record<string, unknown>>("POST", `/control/users/${encodeURIComponent(userId)}/${enabled ? "enable" : "disable"}`); }
+  resetManagedUserCredential(userId: string, password: string) { return this.request<Record<string, unknown>>("POST", `/control/users/${encodeURIComponent(userId)}/reset-credential`, { password }); }
+  runtimeProfile() { return this.request<Record<string, unknown>>("GET", "/control/runtime"); }
+  configureRuntime(input: { agentImage: string; provider: string; model: string; baseUrl?: string; credential: string }) { return this.request<Record<string, unknown>>("PUT", "/control/runtime", input); }
   login(account: string, password: string) { return this.request<{ token: string; expiresAt: string; user: PublicIdentity }>("POST", "/api/v1/login", { account, password }); }
   me() { return this.request<PublicIdentity & { expiresAt: string }>("GET", "/api/v1/me"); }
   logout() { return this.request<void>("POST", "/api/v1/logout"); }
@@ -77,6 +103,9 @@ export class PiworkClient {
   work(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}`); }
   createWork(input: unknown) { return this.request<{ workId: string; operationId: string }>("POST", "/api/v1/works", input); }
   workAction(workId: string, action: "start" | "stop" | "retry" | "delete", idempotencyKey: string) { return this.request<{ workId: string; operationId: string }>("POST", `/api/v1/works/${encodeURIComponent(workId)}/${action}`, { idempotencyKey }); }
+  workConfiguration(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration`); }
+  updateWorkConfiguration(workId: string, expectedRevision: number, configuration: unknown) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration`, { expectedRevision, configuration }); }
+  applyWorkConfiguration(workId: string, expectedRevision: number) { return this.request<Record<string, unknown>>("POST", `/api/v1/works/${encodeURIComponent(workId)}/configuration/apply`, { expectedRevision }); }
   operation(operationId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/operations/${encodeURIComponent(operationId)}`); }
   createSession(workId: string, idempotencyKey: string) { return this.request<Record<string, unknown>>("POST", `/api/v1/works/${encodeURIComponent(workId)}/sessions`, { idempotencyKey }); }
   sessions(workId: string) { return this.request<{ sessions: unknown[] }>("GET", `/api/v1/works/${encodeURIComponent(workId)}/sessions`); }
@@ -86,7 +115,7 @@ export class PiworkClient {
   cancelRun(workId: string, runId: string, idempotencyKey: string) { return this.request<Record<string, unknown>>("POST", `/api/v1/works/${encodeURIComponent(workId)}/runs/${encodeURIComponent(runId)}/cancel`, { idempotencyKey }); }
   async *watchRun(workId: string, runId: string, after = 0, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
     let response: Response;
-    try { response = await this.requestFetch(new URL(`/api/v1/works/${encodeURIComponent(workId)}/runs/${encodeURIComponent(runId)}/events?after=${after}`, normalizedUrl(this.options.coreUrl)), { headers: { accept: "application/x-ndjson", ...(this.options.token === undefined ? {} : { authorization: `Bearer ${this.options.token}` }) }, signal }); }
+    try { response = await this.requestFetch(new URL(`/api/v1/works/${encodeURIComponent(workId)}/runs/${encodeURIComponent(runId)}/events?after=${after}`, normalizedUrl(this.options.coreUrl)), { headers: { accept: "application/x-ndjson", ...authorization(this.options) }, signal }); }
     catch (error) { throw new PiworkApiError(0, "NETWORK_ERROR", error instanceof Error ? error.message : "network request failed"); }
     if (!response.ok) { const value = await boundedText(response); let parsed: { code?: string; message?: string } = {}; try { parsed = JSON.parse(value) as typeof parsed; } catch {} throw new PiworkApiError(response.status, parsed.code ?? "HTTP_ERROR", parsed.message ?? `HTTP ${response.status}`); }
     if (response.body === null) throw new PiworkApiError(0, "MALFORMED_RESPONSE", "Core returned no event stream");
@@ -101,5 +130,10 @@ export class PiworkClient {
 }
 
 function normalizedUrl(value: string): URL { const url = new URL(value); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Core URL must use HTTP or HTTPS"); if (!url.pathname.endsWith("/")) url.pathname += "/"; return url; }
+function authorization(options: ClientOptions): Record<string, string> {
+  if (options.token !== undefined && options.operatorToken !== undefined) throw new Error("user and operator credentials cannot be used together");
+  if (options.operatorToken !== undefined) return { authorization: `Operator ${options.operatorToken}` };
+  return options.token === undefined ? {} : { authorization: `Bearer ${options.token}` };
+}
 async function boundedText(response: Response, maximum = 1_048_576): Promise<string> { if (response.body === null) return ""; const chunks: Uint8Array[] = []; let size = 0; for await (const chunk of response.body) { size += chunk.length; if (size > maximum) throw new PiworkApiError(response.status, "RESPONSE_TOO_LARGE", "Core response exceeded the safety limit"); chunks.push(chunk); } return Buffer.concat(chunks).toString("utf8"); }
 function isCredential(value: unknown): value is CredentialRecord { if (value === null || typeof value !== "object") return false; const item = value as Partial<CredentialRecord>; return item.version === 1 && typeof item.coreUrl === "string" && typeof item.token === "string" && item.token.length > 0 && typeof item.expiresAt === "string" && item.user !== undefined && typeof item.user.id === "string" && typeof item.user.account === "string" && (item.user.role === "admin" || item.user.role === "user"); }

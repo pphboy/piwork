@@ -128,6 +128,8 @@ export interface WorkConfigurationUpdate {
   readonly configJson: string;
   readonly createdByUserId: string;
   readonly now: string;
+  readonly runtimeProfileJson?: string;
+  readonly sourceRuntimeRevision?: number | null;
 }
 
 export interface WorkConfigurationState {
@@ -145,6 +147,8 @@ export interface WorkConfigRevisionRecord {
   readonly revision: number;
   readonly configJson: string;
   readonly resolvedImageDigest: string | null;
+  readonly runtimeProfileJson: string | null;
+  readonly sourceRuntimeRevision: number | null;
 }
 
 export interface WorkRecord {
@@ -294,6 +298,36 @@ export class CoreStore {
       version: number;
     };
     return row.version;
+  }
+
+  hasEnabledAdministrator(): boolean {
+    this.assertOpen();
+    const row = this.database.prepare(
+      "SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND enabled = 1",
+    ).get() as { count: number };
+    return row.count > 0;
+  }
+
+  getControlMetadata<T>(key: string): T | undefined {
+    this.assertOpen();
+    const row = this.database.prepare("SELECT value_json FROM control_metadata WHERE key = ?").get(key) as
+      | { value_json: string }
+      | undefined;
+    return row === undefined ? undefined : JSON.parse(row.value_json) as T;
+  }
+
+  putControlMetadataIfAbsent(key: string, value: unknown, now: string): boolean {
+    this.assertOpen();
+    const result = this.database.prepare(`INSERT INTO control_metadata(key, value_json, updated_at)
+      VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING`).run(key, JSON.stringify(value), now);
+    return result.changes === 1;
+  }
+
+  setControlMetadata(key: string, value: unknown, now: string): void {
+    this.assertOpen();
+    this.database.prepare(`INSERT INTO control_metadata(key, value_json, updated_at)
+      VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json,
+      updated_at = excluded.updated_at`).run(key, JSON.stringify(value), now);
   }
 
   exec(sql: string): void {
@@ -574,19 +608,87 @@ export class CoreStore {
       }
       const nextRevision = work.desired_revision + 1;
       this.database.prepare(`INSERT INTO work_config_revisions(
-        work_id, revision, config_json, created_by_user_id, created_at
-      ) VALUES (?, ?, ?, ?, ?)`).run(
+        work_id, revision, config_json, created_by_user_id, created_at,
+        runtime_profile_json, source_runtime_revision
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
         update.workId,
         nextRevision,
         update.configJson,
         update.createdByUserId,
         update.now,
+        update.runtimeProfileJson ?? null,
+        update.sourceRuntimeRevision ?? null,
       );
       this.database.prepare(`UPDATE works SET
         desired_revision = ?, control_version = control_version + 1, updated_at = ?
         WHERE id = ?`).run(nextRevision, update.now, update.workId);
       this.database.exec("COMMIT");
       return this.getWorkConfiguration(update.workId)!;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  activateWorkConfiguration(workId: string, expectedRevision: number, now: string): WorkConfigurationState {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const work = this.database.prepare(`SELECT desired_revision, active_revision FROM works
+        WHERE id = ? AND deleted_at IS NULL`).get(workId) as
+        | { desired_revision: number; active_revision: number | null }
+        | undefined;
+      if (work === undefined) throw new Error(`Work ${workId} was not found`);
+      if (work.desired_revision !== expectedRevision) {
+        throw new ConfigurationRevisionConflictError(workId, expectedRevision, work.desired_revision);
+      }
+      if (work.active_revision !== expectedRevision) {
+        this.database.prepare(`UPDATE works SET active_revision = ?, updated_at = ? WHERE id = ?`)
+          .run(expectedRevision, now, workId);
+      }
+      this.database.exec("COMMIT");
+      return this.getWorkConfiguration(workId)!;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  bindWorkRuntimeProfile(
+    workId: string,
+    revision: number,
+    runtimeProfileJson: string,
+    sourceRuntimeRevision: number | null,
+  ): void {
+    this.assertOpen();
+    const result = this.database.prepare(`UPDATE work_config_revisions SET
+      runtime_profile_json = ?, source_runtime_revision = ?
+      WHERE work_id = ? AND revision = ?`).run(runtimeProfileJson, sourceRuntimeRevision, workId, revision);
+    if (result.changes !== 1) throw new Error(`Work configuration ${workId}@${revision} was not found`);
+  }
+
+  backfillWorkRuntimeProfiles(runtimeProfileJson: string, sourceRuntimeRevision: number, now: string): number {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const legacy = this.database.prepare(`SELECT works.id
+        FROM works
+        JOIN work_config_revisions AS desired
+          ON desired.work_id = works.id AND desired.revision = works.desired_revision
+        WHERE works.deleted_at IS NULL AND desired.runtime_profile_json IS NULL`).all() as Array<{ id: string }>;
+      for (const { id } of legacy) {
+        this.database.prepare(`UPDATE work_config_revisions SET
+          runtime_profile_json = ?, source_runtime_revision = ?
+          WHERE work_id = ? AND revision IN (
+            SELECT desired_revision FROM works WHERE id = ?
+            UNION
+            SELECT active_revision FROM works WHERE id = ? AND active_revision IS NOT NULL
+          )`).run(runtimeProfileJson, sourceRuntimeRevision, id, id, id);
+        this.database.prepare(`UPDATE works SET active_revision = desired_revision, updated_at = ? WHERE id = ?`)
+          .run(now, id);
+      }
+      this.database.exec("COMMIT");
+      return legacy.length;
     } catch (error) {
       this.database.exec("ROLLBACK");
       throw error;
@@ -627,16 +729,25 @@ export class CoreStore {
   getWorkConfigRevision(workId: string, revision: number): WorkConfigRevisionRecord | undefined {
     this.assertOpen();
     const row = this.database.prepare(`SELECT
-      work_id, revision, config_json, resolved_image_digest
+      work_id, revision, config_json, resolved_image_digest, runtime_profile_json, source_runtime_revision
       FROM work_config_revisions WHERE work_id = ? AND revision = ?`).get(workId, revision) as
-      | { work_id: string; revision: number; config_json: string; resolved_image_digest: string | null }
+      | { work_id: string; revision: number; config_json: string; resolved_image_digest: string | null; runtime_profile_json: string | null; source_runtime_revision: number | null }
       | undefined;
     return row === undefined ? undefined : {
       workId: row.work_id,
       revision: row.revision,
       configJson: row.config_json,
       resolvedImageDigest: row.resolved_image_digest,
+      runtimeProfileJson: row.runtime_profile_json,
+      sourceRuntimeRevision: row.source_runtime_revision,
     };
+  }
+
+  nextRuntimeGeneration(workId: string): number {
+    this.assertOpen();
+    const row = this.database.prepare("SELECT MAX(generation) AS generation FROM runtime_generations WHERE work_id = ?")
+      .get(workId) as { generation: number | null };
+    return (row.generation ?? 0) + 1;
   }
 
   listWorkConfigArtifactBindings(workId: string, revision: number): ArtifactBindingRecord[] {

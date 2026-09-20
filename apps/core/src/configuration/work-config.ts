@@ -5,8 +5,9 @@ import {
   authorizeWorkResource,
   type UserPrincipal,
 } from "../work-access/policy.js";
+import { InputValidationError } from "../input-validation.js";
 
-export class InvalidWorkConfigurationError extends Error {
+export class InvalidWorkConfigurationError extends InputValidationError {
   constructor() {
     super("Work configuration does not match the supported schema");
     this.name = "InvalidWorkConfigurationError";
@@ -39,6 +40,7 @@ export class WorkConfigurationService {
     workId: string,
     expectedRevision: number,
     configuration: WorkConfig,
+    runtimeBinding?: { readonly runtimeProfileJson: string; readonly sourceRuntimeRevision: number | null },
   ): WorkConfigurationView {
     if (!Check(WorkConfigSchema, configuration)) throw new InvalidWorkConfigurationError();
     const existing = this.store.getWorkConfiguration(workId);
@@ -50,6 +52,7 @@ export class WorkConfigurationService {
       configJson: JSON.stringify(next),
       createdByUserId: principal.userId,
       now: this.now().toISOString(),
+      ...runtimeBinding,
     });
     return view(updated);
   }

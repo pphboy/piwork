@@ -20,11 +20,11 @@ const environment = { ...process.env, PIWORK_CONFIG_PATH: join(temporary, "clien
 let core;
 try {
   if (process.env.PIWORK_REAL_SKIP_BUILD !== "1") run("npm", ["run", "build"]);
-  run("node", ["apps/core/dist/cli.js", "bootstrap-admin", "--data-dir", dataDirectory, "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
-  const configure = ["apps/core/dist/cli.js", "configure-runtime", "--data-dir", dataDirectory, "--agent-image", process.env.PIWORK_REAL_AGENT_IMAGE, "--model-provider", process.env.PIWORK_REAL_MODEL_PROVIDER, "--model", process.env.PIWORK_REAL_MODEL_ID, "--api-key-stdin"];
+  core = await startCore();
+  run("node", ["apps/core/dist/cli.js", "--core", core.url, "--data-dir", dataDirectory, "admin", "bootstrap", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
+  const configure = ["apps/core/dist/cli.js", "--core", core.url, "--data-dir", dataDirectory, "config", "set", "--agent-image", process.env.PIWORK_REAL_AGENT_IMAGE, "--model-provider", process.env.PIWORK_REAL_MODEL_PROVIDER, "--model", process.env.PIWORK_REAL_MODEL_ID, "--api-key-stdin"];
   if (process.env.PIWORK_REAL_MODEL_BASE_URL) configure.push("--model-base-url", process.env.PIWORK_REAL_MODEL_BASE_URL);
   run("node", configure, `${process.env.PIWORK_REAL_MODEL_API_KEY}\n`);
-  core = await startCore();
   run("node", ["apps/cli/dist/main.js", "--core", core.url, "--json", "login", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
   const creation = lines(run("node", ["apps/cli/dist/main.js", "--json", "work", "create", "--name", "real-model-smoke", "--wait"]));
   const workId = creation[0].workId;

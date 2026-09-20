@@ -7,6 +7,7 @@ import type { WorkConfig } from "@piwork/contracts";
 import { CoreStore } from "@piwork/core-store";
 import { createWorkHttpServer } from "./http-api.js";
 import { WorkLifecycleService, type WorkRuntimeAdapter, type WorkRuntimeState } from "./lifecycle.js";
+import { WorkConfigurationService } from "../configuration/work-config.js";
 
 const NOW = "2026-09-20T00:00:00.000Z";
 const owner = { userId: "user-owner", role: "user" as const };
@@ -109,6 +110,37 @@ test("delete drains in order, unknown shutdown never reports stopped, and stoppe
   });
 });
 
+test("Work config set leaves the runtime untouched and apply activates only after readiness", async () => {
+  await withFixture(async ({ store, lifecycle, runtime }) => {
+    const profileA = JSON.stringify({ version: 1, revision: 1, agentImage: "image:a", model: { provider: "test", id: "a", credentialRef: "a.secret" }, updatedAt: NOW });
+    const profileB = JSON.stringify({ version: 1, revision: 2, agentImage: "image:b", model: { provider: "test", id: "b", credentialRef: "b.secret" }, updatedAt: NOW });
+    const created = lifecycle.create(owner, { name: "config-apply", configuration: config(), idempotencyKey: "config-create", runtimeProfileJson: profileA, sourceRuntimeRevision: 1 });
+    await lifecycle.waitForIdle();
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeRevision, 1);
+    runtime.events.length = 0;
+
+    const configurations = new WorkConfigurationService(store, () => new Date(NOW));
+    configurations.update(owner, created.workId, 1, { ...config(), modelRef: "model-0199e6d8next" }, { runtimeProfileJson: profileB, sourceRuntimeRevision: 2 });
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeRevision, 1);
+    assert.equal(store.getWorkConfiguration(created.workId)?.pendingRestart, true);
+    assert.deepEqual(runtime.events, []);
+    assert.equal(runtime.state.running, true);
+
+    runtime.failPrepare = true;
+    await assert.rejects(() => lifecycle.applyConfiguration(owner, created.workId, 2), /prepare failed/);
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeRevision, 1);
+    assert.equal(runtime.state.running, true);
+    assert.deepEqual(runtime.events, []);
+
+    runtime.failPrepare = false;
+    const applied = await lifecycle.applyConfiguration(owner, created.workId, 2);
+    assert.equal(applied.activeRevision, 2);
+    assert.equal(applied.pendingRestart, false);
+    assert.deepEqual(runtime.events, ["drain", "stop", "remove"]);
+    assert.equal(runtime.state.ready, true);
+  });
+});
+
 class FakeRuntime implements WorkRuntimeAdapter {
   state: WorkRuntimeState = { exists: false, running: false, ready: false };
   starts = 0;
@@ -116,11 +148,12 @@ class FakeRuntime implements WorkRuntimeAdapter {
   holdStart = false;
   managedInstances: Array<{ workId: string; instanceId: string }> = [];
   failInspect = false;
+  failPrepare = false;
   events: string[] = [];
   private gate: (() => void) | undefined;
   private startHeld: (() => void) | undefined;
 
-  async prepare(): Promise<void> { this.prepares += 1; }
+  async prepare(): Promise<void> { if (this.failPrepare) throw new Error("prepare failed"); this.prepares += 1; }
   async start(_work: unknown, generation: number): Promise<{ instanceId: string; generation: number }> {
     this.starts += 1;
     if (this.holdStart) await new Promise<void>((resolve) => {

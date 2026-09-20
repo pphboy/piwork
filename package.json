@@ -16,11 +16,12 @@
     "build": "npm run build --workspaces --if-present",
     "test": "node scripts/run-workspace-tests.mjs",
     "test:integration": "node scripts/run-integration-tests.mjs",
-    "core": "node apps/core/dist/cli.js",
-    "piwork": "node apps/cli/dist/main.js",
+    "serve": "node apps/core/dist/cli.js",
+    "cli": "node apps/cli/dist/main.js",
     "agent:image": "docker build -f Dockerfile.agentd --target production -t piwork-agentd:local .",
     "agent:image:acceptance": "docker build -f Dockerfile.agentd --target acceptance -t piwork-agentd:acceptance .",
     "acceptance": "node scripts/product-acceptance.mjs",
+    "test:deployment": "./scripts/deployment-test.sh .env.test",
     "real-model-smoke": "node scripts/real-model-smoke.mjs"
   },
   "devDependencies": {

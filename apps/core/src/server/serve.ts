@@ -1,11 +1,24 @@
 import { formatHttpUrl, parseListenAddress, ensureCorePaths } from "../application/paths.js";
 import { CoreApplication } from "../application/core-application.js";
+import { readEnvironmentFile, resolveEnvironment } from "../application/env-file.js";
+import { resolve } from "node:path";
 
 export async function runServe(args: readonly string[]): Promise<void> {
-  assertKnownOptions(args, ["--data-dir", "--listen", "--allow-insecure-remote"]);
-  const paths = ensureCorePaths(requiredValue(args, "--data-dir"));
-  const requested = parseListenAddress(optionalValue(args, "--listen"), args.includes("--allow-insecure-remote"));
-  const application = await CoreApplication.create({ paths });
+  assertKnownOptions(args, ["--data-dir", "--listen", "--allow-insecure-remote", "--env-file"]);
+  const envFile = optionalValue(args, "--env-file");
+  const fileValues = envFile === undefined ? {} : readEnvironmentFile(envFile);
+  const explicit: Record<string, string> = {};
+  const explicitData = optionalValue(args, "--data-dir"); if (explicitData !== undefined) explicit.PIWORK_DATA_DIR = explicitData;
+  const explicitListen = optionalValue(args, "--listen"); if (explicitListen !== undefined) explicit.PIWORK_LISTEN = explicitListen;
+  const environment = resolveEnvironment(fileValues, process.env, explicit);
+  const dataDirectory = environment.PIWORK_DATA_DIR;
+  if (dataDirectory === undefined || dataDirectory === "") throw new Error("--data-dir or PIWORK_DATA_DIR is required");
+  const defaultPaths = ensureCorePaths(dataDirectory);
+  const paths = environment.PIWORK_OPERATOR_CREDENTIAL_PATH === undefined
+    ? defaultPaths
+    : { ...defaultPaths, operatorCredentialPath: resolve(environment.PIWORK_OPERATOR_CREDENTIAL_PATH) };
+  const requested = parseListenAddress(environment.PIWORK_LISTEN, args.includes("--allow-insecure-remote"));
+  const application = await CoreApplication.create({ paths, initialization: initialization(environment) });
   try {
     const bound = await application.listen(requested);
     process.stdout.write(`${JSON.stringify({ event: "core.listening", url: formatHttpUrl(bound), pid: process.pid, dataDirectory: paths.dataDirectory })}\n`);
@@ -13,6 +26,32 @@ export async function runServe(args: readonly string[]): Promise<void> {
   } finally {
     await withTimeout(application.close(), 10_000, "Core shutdown exceeded 10 seconds");
   }
+}
+
+function initialization(environment: Readonly<Record<string, string>>) {
+  const account = environment.PIWORK_ADMIN_ACCOUNT;
+  const password = environment.PIWORK_ADMIN_PASSWORD;
+  if ((account === undefined) !== (password === undefined)) throw new Error("PIWORK_ADMIN_ACCOUNT and PIWORK_ADMIN_PASSWORD must be provided together");
+  const agentImage = environment.PIWORK_AGENT_IMAGE;
+  const provider = environment.PIWORK_MODEL_PROVIDER;
+  const model = environment.PIWORK_MODEL ?? environment.PIWORK_MODEL_ID;
+  const credential = environment.PIWORK_API_KEY ?? environment.PIWORK_MODEL_API_KEY;
+  const runtimeFields = [agentImage, provider, model, credential];
+  if (runtimeFields.some((value) => value !== undefined) && runtimeFields.some((value) => value === undefined)) {
+    throw new Error("PIWORK_AGENT_IMAGE, PIWORK_MODEL_PROVIDER, PIWORK_MODEL, and PIWORK_API_KEY must be provided together");
+  }
+  return {
+    ...(account === undefined ? {} : { administrator: { account, password: password! } }),
+    ...(agentImage === undefined ? {} : {
+      runtime: {
+        agentImage,
+        provider: provider!,
+        model: model!,
+        credential: credential!,
+        ...(environment.PIWORK_MODEL_BASE_URL === undefined ? {} : { baseUrl: environment.PIWORK_MODEL_BASE_URL }),
+      },
+    }),
+  };
 }
 
 function requiredValue(args: readonly string[], flag: string): string {

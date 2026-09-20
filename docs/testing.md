@@ -12,6 +12,14 @@ does not call an external model, and always removes only resources with its own
 installation label. `npm run real-model-smoke` is opt-in and is never treated
 as a substitute for deterministic acceptance.
 
+`./scripts/deployment-test.sh .env.test` is the opt-in real-provider deployment
+check. Start from `.env.test.example`. It runs the published `piwork-serve` and
+`piwork-cli` command surfaces through env-file initialization, readiness,
+login, the no-default-Work assertion, Work creation, chat, per-Work config
+set/apply, Core restart, saved-login reuse, and cleanup. The script keeps all
+state under a temporary directory, selects a free loopback port, and does not
+print credentials.
+
 `npm run test:integration` creates a unique `PIWORK_TEST_INSTALLATION_ID` with a
 `piwork-test-<uuid>` shape. Every Docker resource created by a test must carry
 the label `piwork.installation_id=<installation_id>`. Discovery and cleanup must

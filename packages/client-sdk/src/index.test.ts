@@ -3,7 +3,7 @@ import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { defaultCredentialPath, FileCredentialStore, PiworkApiError, PiworkClient, type CredentialRecord } from "./index.js";
+import { defaultCredentialPath, FileCredentialStore, PiworkApiError, PiworkClient, resolveCoreEndpoint, safeErrorMessage, type CredentialRecord } from "./index.js";
 
 const record: CredentialRecord = {
   version: 1,
@@ -14,6 +14,10 @@ const record: CredentialRecord = {
 };
 
 test("credential URL precedence and atomic POSIX save/load/clear", async () => {
+  assert.equal(resolveCoreEndpoint({ explicit: "http://explicit", environment: "http://environment", saved: "http://saved" }), "http://explicit");
+  assert.equal(resolveCoreEndpoint({ environment: "http://environment", saved: "http://saved" }), "http://environment");
+  assert.equal(resolveCoreEndpoint({ saved: "http://saved" }), "http://saved");
+  assert.equal(resolveCoreEndpoint({}), "http://127.0.0.1:7171");
   assert.equal(defaultCredentialPath({ PIWORK_CONFIG_PATH: "/override", XDG_CONFIG_HOME: "/xdg", HOME: "/home" }), "/override");
   assert.equal(defaultCredentialPath({ XDG_CONFIG_HOME: "/xdg", HOME: "/home" }), "/xdg/piwork/client.json");
   assert.equal(defaultCredentialPath({ HOME: "/home" }), "/home/.config/piwork/client.json");
@@ -68,6 +72,31 @@ test("client sends authentication, encodes identifiers, handles 204 and typed er
   await assert.rejects(client.work("work/id"), (error) => error instanceof PiworkApiError
     && error.status === 409 && error.code === "BUSY" && error.details?.retryAfterMs === 500);
   assert.match(calls[1]?.url ?? "", /work%2Fid/);
+});
+
+test("operator authentication is distinct from user bearer authentication", async () => {
+  let authorizationHeader = "";
+  const operator = new PiworkClient({
+    coreUrl: "http://core.test",
+    operatorToken: "operator-secret",
+    fetch: async (_input, init) => {
+      authorizationHeader = new Headers(init?.headers).get("authorization") ?? "";
+      return new Response(JSON.stringify({ state: "ADMIN_REQUIRED" }), { status: 200 });
+    },
+  });
+  await operator.controlStatus();
+  assert.equal(authorizationHeader, "Operator operator-secret");
+  await assert.rejects(new PiworkClient({ coreUrl: "http://core.test", token: "user", operatorToken: "operator" }).health(), /cannot be used together/);
+});
+
+test("shared CLI error rendering redacts credentials and secret paths", () => {
+  const rendered = safeErrorMessage(new Error("Bearer user-token password=hunter2 api_key=sk-test /tmp/core/secrets/model.secret"));
+  assert.equal(rendered.includes("user-token"), false);
+  assert.equal(rendered.includes("hunter2"), false);
+  assert.equal(rendered.includes("sk-test"), false);
+  assert.equal(rendered.includes("model.secret"), false);
+  assert.match(rendered, /\[REDACTED\]/);
+  assert.match(rendered, /\[REDACTED_PATH\]/);
 });
 
 test("client bounds and validates JSON, network errors, and incremental NDJSON ordering", async () => {

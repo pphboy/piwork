@@ -8,21 +8,35 @@
 
 ### Requirement: Initial administrator bootstrap
 
-系统 SHALL 提供仅部署主机可调用的首次管理员初始化入口，接收显式账号与密码，在没有用户的实例中创建首个启用的管理员；系统 MUST NOT 提供默认公共密码或未认证远程初始化入口。
+系统 SHALL 允许部署者通过 `piwork-serve admin bootstrap` 在线初始化首个启用管理员，也 SHALL 保留本机离线 bootstrap 入口。在线入口只接受 operator credential 或空安装的受保护一次性初始化流程；普通 `piwork-cli` 用户 token 不得调用。已有用户时必须拒绝且不修改任何用户。
+
+#### Scenario: Bootstrap through the control plane
+
+- **WHEN** Core 已监听且用户数据库为空，部署者通过 `piwork-serve admin bootstrap` 提供账号和密码
+- **THEN** 创建首个管理员并允许其随后使用 `piwork-cli login`
 
 #### Scenario: Bootstrap an empty instance
 
 - **WHEN** 部署者在无用户实例上运行本机初始化并提供有效凭证
 - **THEN** 系统创建一个管理员，该管理员可以通过正常登录入口登录控制面板
 
+#### Scenario: Reject user-client bootstrap
+
+- **WHEN** 普通用户客户端请求首管理员 bootstrap
+- **THEN** 请求被拒绝且数据库不发生变化
+
 #### Scenario: Repeat bootstrap
 
 - **WHEN** 已存在用户的实例再次收到初始化请求
 - **THEN** 系统拒绝创建或覆盖管理员，现有用户凭证保持不变
-
 ### Requirement: Administrator manages users
 
-系统 SHALL 允许启用的管理员通过控制面板及受保护 API 创建、列出、启用、禁用用户和重置用户凭证；普通用户 MUST NOT 执行这些操作。账号标识 SHALL 唯一，列表和操作响应 MUST NOT 返回密码或可直接使用的密码验证材料。
+系统 SHALL 允许管理员通过 `piwork-serve admin users` 及对应受保护 API 创建、列出、启用、禁用用户和重置凭证。响应不得包含密码或可直接验证密码的材料；这些操作不授予管理员读取其他用户的 Session 或 Run 正文的权限。
+
+#### Scenario: Manage users through the operator CLI
+
+- **WHEN** 管理员使用有效 operator credential 执行用户管理命令
+- **THEN** Core 执行对应变更并返回安全的用户元数据
 
 #### Scenario: Create a normal user
 
@@ -33,7 +47,6 @@
 
 - **WHEN** 管理员重复创建相同账号，或普通用户调用用户创建 API
 - **THEN** 系统分别返回冲突或权限拒绝，且不会新增用户
-
 ### Requirement: Disabling and resetting revoke access
 
 系统 SHALL 在禁用用户或重置其密码时撤销该用户全部登录会话，并关闭其已认证客户端观察连接；已经接受的 Run 和 Work 服务 SHALL 继续遵循 work-lifecycle，除非管理员显式停止 Work。重新启用用户 MUST NOT 恢复旧会话。
@@ -47,7 +60,6 @@
 
 - **WHEN** 管理员重置密码并启用用户
 - **THEN** 用户只能通过新密码获得新登录会话，旧 token 和旧密码不能恢复访问
-
 ### Requirement: Preserve an enabled administrator
 
 系统 SHALL 拒绝会使启用管理员数量变为零的用户管理操作，并报告明确原因。

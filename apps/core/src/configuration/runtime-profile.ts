@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { InputValidationError } from "../input-validation.js";
 
 export interface RuntimeProfile {
   readonly version: 1;
@@ -55,11 +56,13 @@ export class RuntimeProfileStore {
     readonly baseUrl?: string;
     readonly credential: string;
   }): PublicRuntimeProfile {
-    validateInput(input);
+    validateRuntimeProfileInput(input);
     assertSafeTarget(this.profilePath, true);
     assertSafeTarget(this.secretsDirectory, false, "directory");
     const current = this.loadOptional();
-    const credentialRef = current?.model.credentialRef ?? `model-${randomUUID()}.secret`;
+    // Each global revision receives a new immutable secret reference so Works
+    // created from an older default keep using the credential they captured.
+    const credentialRef = `model-${randomUUID()}.secret`;
     const credentialPath = join(this.secretsDirectory, credentialRef);
     assertSafeTarget(credentialPath, true);
 
@@ -79,7 +82,7 @@ export class RuntimeProfileStore {
     try {
       atomicWrite(this.profilePath, `${JSON.stringify(profile, null, 2)}\n`, 0o600);
     } catch (error) {
-      if (current === undefined) rmSync(credentialPath, { force: true });
+      rmSync(credentialPath, { force: true });
       throw error;
     }
     return this.publicView(profile);
@@ -87,7 +90,7 @@ export class RuntimeProfileStore {
 
   load(): RuntimeProfile {
     const profile = this.loadOptional();
-    if (profile === undefined) throw new Error("runtime profile is not configured; run piwork-core configure-runtime");
+    if (profile === undefined) throw new Error("runtime profile is not configured; run piwork-serve config set");
     return profile;
   }
 
@@ -148,20 +151,25 @@ export class RuntimeProfileStore {
   }
 }
 
-function validateInput(input: {
+export function validateRuntimeProfileInput(input: {
   readonly agentImage: string;
   readonly provider: string;
   readonly model: string;
   readonly baseUrl?: string;
   readonly credential: string;
 }): void {
-  if (input.agentImage.trim() === "" || input.agentImage.length > 4_096) throw new Error("agent image is invalid");
-  if (!IDENTIFIER.test(input.provider)) throw new Error("model provider is invalid");
-  if (input.model.trim() === "" || input.model.length > 512) throw new Error("model identifier is invalid");
-  if (input.credential.length === 0 || input.credential.length > 64 * 1_024) throw new Error("model credential is invalid");
+  if (input.agentImage.trim() === "" || input.agentImage.length > 4_096) throw new InputValidationError("agent image is invalid");
+  if (!IDENTIFIER.test(input.provider)) throw new InputValidationError("model provider is invalid");
+  if (input.model.trim() === "" || input.model.length > 512) throw new InputValidationError("model identifier is invalid");
+  if (input.credential.length === 0 || input.credential.length > 64 * 1_024) throw new InputValidationError("model credential is invalid");
   if (input.baseUrl !== undefined) {
-    const url = new URL(input.baseUrl);
-    if (url.protocol !== "https:" && !isLoopbackUrl(url)) throw new Error("model base URL must use HTTPS unless it is loopback");
+    let url: URL;
+    try {
+      url = new URL(input.baseUrl);
+    } catch {
+      throw new InputValidationError("model base URL is invalid");
+    }
+    if (url.protocol !== "https:" && !isLoopbackUrl(url)) throw new InputValidationError("model base URL must use HTTPS unless it is loopback");
   }
 }
 

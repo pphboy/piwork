@@ -1,58 +1,54 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { CoreStore } from "@piwork/core-store";
 
 const cli = resolve("dist/cli.js");
 
-test("compiled bootstrap uses data directory and repeat bootstrap is safe", () => {
-  const root = mkdtempSync(join(tmpdir(), "piwork-core-cli-"));
-  try {
-    const data = join(root, "state");
-    const first = run(["bootstrap-admin", "--data-dir", data, "--account", "admin", "--password-stdin"], "correct horse\n");
-    assert.equal(first.status, 0, first.stderr);
-    assert.doesNotMatch(first.stdout + first.stderr, /correct horse/);
-    const second = run(["bootstrap-admin", "--data-dir", data, "--account", "other", "--password-stdin"], "another secret\n");
-    assert.equal(second.status, 1);
-    assert.match(second.stderr, /already exists/);
-    assert.doesNotMatch(second.stdout + second.stderr, /another secret/);
-    const store = CoreStore.open({ databasePath: join(data, "core.sqlite") });
-    try {
-      assert.equal(store.getAuthenticationUserByAccount("admin")?.account, "admin");
-      assert.equal(store.getAuthenticationUserByAccount("other"), undefined);
-    } finally {
-      store.close();
-    }
-  } finally {
-    rmSync(root, { recursive: true, force: true });
+test("piwork-serve publishes only operator commands and rejects legacy or user commands locally", () => {
+  const help = run(["--help"]);
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /admin bootstrap/);
+  assert.match(help.stdout, /config set/);
+  assert.doesNotMatch(help.stdout, /\bpiwork-core\b/);
+
+  for (const command of ["serve", "status", "admin", "config"]) {
+    const result = run([command, "--help"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`piwork-serve ${command}`));
+  }
+
+  for (const args of [["chat"], ["login"], ["work", "create"], ["bootstrap-admin"], ["configure-runtime"]]) {
+    const result = run(args);
+    assert.equal(result.status, 2, `${args.join(" ")} should be a usage failure`);
+    assert.doesNotMatch(result.stderr, /ECONNREFUSED|stack|\n\s+at /);
   }
 });
 
-test("compiled CLI rejects the legacy database option and keeps secrets out of diagnostics", () => {
-  const legacy = run(["bootstrap-admin", "--database", "/tmp/legacy", "--account", "admin", "--password-stdin"], "secret\n");
-  assert.equal(legacy.status, 2);
-  assert.match(legacy.stderr, /unknown option/);
+test("workspace package metadata exposes only piwork-serve and piwork-cli", () => {
+  const core = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { bin?: Record<string, string> };
+  const client = JSON.parse(readFileSync(resolve("../cli/package.json"), "utf8")) as { bin?: Record<string, string> };
+  assert.deepEqual(Object.keys(core.bin ?? {}), ["piwork-serve"]);
+  assert.deepEqual(Object.keys(client.bin ?? {}), ["piwork-cli"]);
+});
 
-  const root = mkdtempSync(join(tmpdir(), "piwork-core-secret-file-"));
+test("piwork-serve keeps the explicit local bootstrap entry under the new command tree", () => {
+  const root = mkdtempSync(join(tmpdir(), "piwork-serve-bootstrap-"));
   try {
-    const key = join(root, "key");
-    writeFileSync(key, "do-not-print\n", { mode: 0o644 });
-    chmodSync(key, 0o644);
-    const result = run([
-      "configure-runtime", "--data-dir", join(root, "state"), "--agent-image", "missing-image",
-      "--model-provider", "openai", "--model", "test", "--api-key-file", key,
-    ]);
-    assert.equal(result.status, 1);
-    assert.doesNotMatch(result.stderr, /do-not-print/);
+    const first = run(["--data-dir", root, "admin", "bootstrap", "--account", "admin", "--password-stdin"], "correct horse battery\n");
+    assert.equal(first.status, 0, first.stderr);
+    assert.doesNotMatch(first.stdout + first.stderr, /correct horse battery/);
+    const repeated = run(["--data-dir", root, "admin", "bootstrap", "--account", "other", "--password-stdin"], "another secret value\n");
+    assert.equal(repeated.status, 1);
+    assert.doesNotMatch(repeated.stdout + repeated.stderr, /another secret value/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 function run(args: readonly string[], input?: string) {
-  const result = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", input });
+  const result = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8", input, env: { ...process.env, PIWORK_CORE_URL: "http://127.0.0.1:1" } });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }

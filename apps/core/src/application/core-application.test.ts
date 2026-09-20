@@ -19,4 +19,10 @@ test("Core maps authentication, gRPC dependency, conflict, busy, and cursor erro
   assert.deepEqual(mapError(new Error("provider api-key-secret")), {
     status: 500, code: "INTERNAL_ERROR", message: "internal server error",
   });
+  assert.deepEqual(mapError(Object.assign(new Error("model base URL is invalid"), { name: "InputValidationError" })), {
+    status: 400, code: "INVALID_REQUEST", message: "model base URL is invalid",
+  });
+  assert.deepEqual(mapError(Object.assign(new Error("schema mismatch"), { name: "InvalidWorkConfigurationError" })), {
+    status: 400, code: "INVALID_REQUEST", message: "schema mismatch",
+  });
 });

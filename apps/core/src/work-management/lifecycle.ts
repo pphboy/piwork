@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { WorkConfig } from "@piwork/contracts";
-import { CoreStore, type OperationRecord, type WorkRecord } from "@piwork/core-store";
+import { CoreStore, type OperationRecord, type WorkConfigurationState, type WorkRecord } from "@piwork/core-store";
 import { authorizeWorkResource, filterVisibleResources, type UserPrincipal } from "../work-access/policy.js";
 
 export interface WorkRuntimeState {
@@ -12,13 +12,18 @@ export interface WorkRuntimeState {
 }
 
 export interface WorkRuntimeAdapter {
-  prepare(work: WorkRecord): Promise<void>;
-  start(work: WorkRecord, generation: number): Promise<{ readonly instanceId: string; readonly generation: number }>;
+  prepare(work: WorkRecord, configuration?: ResolvedWorkRuntimeConfiguration): Promise<void>;
+  start(work: WorkRecord, generation: number, configuration?: ResolvedWorkRuntimeConfiguration): Promise<{ readonly instanceId: string; readonly generation: number }>;
   inspect(workId: string): Promise<WorkRuntimeState>;
   drain(workId: string, timeoutMs: number): Promise<void>;
   stop(workId: string, timeoutMs: number): Promise<void>;
   remove(workId: string): Promise<void>;
   listManagedInstances?(): Promise<readonly { readonly workId: string; readonly instanceId: string }[]>;
+}
+
+export interface ResolvedWorkRuntimeConfiguration {
+  readonly workConfig: WorkConfig;
+  readonly runtimeProfileJson: string;
 }
 
 export interface WorkRecoveryReport {
@@ -59,7 +64,13 @@ export class WorkLifecycleService {
 
   create(
     principal: UserPrincipal,
-    input: { readonly name: string; readonly configuration: WorkConfig; readonly idempotencyKey: string },
+    input: {
+      readonly name: string;
+      readonly configuration: WorkConfig;
+      readonly idempotencyKey: string;
+      readonly runtimeProfileJson?: string;
+      readonly sourceRuntimeRevision?: number;
+    },
   ): AcceptedWorkOperation {
     this.assertAccepting();
     const workId = `work-${randomUUID()}`;
@@ -80,8 +91,10 @@ export class WorkLifecycleService {
         desired_revision, active_revision, control_version, created_at, updated_at
       ) VALUES (?, ?, ?, 'running', 'provisioning', 1, NULL, 1, ?, ?)`, workId, principal.userId, input.name, now, now);
       tx.run(`INSERT INTO work_config_revisions(
-        work_id, revision, config_json, created_by_user_id, created_at
-      ) VALUES (?, 1, ?, ?, ?)`, workId, JSON.stringify(input.configuration), principal.userId, now);
+        work_id, revision, config_json, created_by_user_id, created_at,
+        runtime_profile_json, source_runtime_revision
+      ) VALUES (?, 1, ?, ?, ?, ?, ?)`, workId, JSON.stringify(input.configuration), principal.userId, now,
+        input.runtimeProfileJson ?? null, input.sourceRuntimeRevision ?? null);
       return { resourceId: workId };
     });
     this.store.attachOperationToWork(accepted.operationId, accepted.resourceId);
@@ -123,6 +136,24 @@ export class WorkLifecycleService {
 
   delete(principal: UserPrincipal, workId: string, idempotencyKey: string): AcceptedWorkOperation {
     return this.mutateDesired(principal, workId, "delete-work", "deleted", idempotencyKey);
+  }
+
+  async applyConfiguration(
+    principal: UserPrincipal,
+    workId: string,
+    expectedRevision: number,
+  ): Promise<WorkConfigurationState> {
+    this.assertAccepting();
+    const work = this.store.getWork(workId);
+    authorizeWorkResource(principal, work === undefined ? undefined : asOwnedWork(work), "control");
+    const prior = this.queues.get(workId) ?? Promise.resolve();
+    const result = prior.catch(() => undefined).then(() => this.applyConfigurationNow(workId, expectedRevision));
+    let tracked!: Promise<void>;
+    tracked = result.then(() => undefined, () => undefined).finally(() => {
+      if (this.queues.get(workId) === tracked) this.queues.delete(workId);
+    });
+    this.queues.set(workId, tracked);
+    return result;
   }
 
   async recover(): Promise<WorkRecoveryReport> {
@@ -229,16 +260,18 @@ export class WorkLifecycleService {
   private async ensureRunning(work: WorkRecord): Promise<void> {
     this.store.updateWorkObservedState(work.id, "starting", this.now().toISOString());
     const actual = await this.runtime.inspect(work.id);
+    const runtimeRevision = work.activeRevision ?? work.desiredRevision;
+    const configuration = this.resolveRuntimeConfiguration(work.id, runtimeRevision);
     if (!actual.exists) {
-      await this.runtime.prepare(work);
+      await this.runtime.prepare(work, configuration);
       await this.services.prepareEnabledServices(work);
       this.store.ensureRuntimeGeneration(work.id, work.controlVersion, this.now().toISOString());
-      const started = await this.runtime.start(work, work.controlVersion);
+      const started = await this.runtime.start(work, work.controlVersion, configuration);
       this.store.updateRuntimeGeneration(work.id, work.controlVersion, "starting", this.now().toISOString(), {
         instanceId: started.instanceId,
       });
     } else if (!actual.running) {
-      const started = await this.runtime.start(work, work.controlVersion);
+      const started = await this.runtime.start(work, work.controlVersion, configuration);
       const startedGeneration = started.generation;
       this.store.ensureRuntimeGeneration(work.id, startedGeneration, this.now().toISOString());
       this.store.updateRuntimeGeneration(work.id, startedGeneration, "starting", this.now().toISOString(), {
@@ -259,7 +292,100 @@ export class WorkLifecycleService {
       instanceId: ready.instanceId,
       readySince: this.now().toISOString(),
     });
-    this.store.updateWorkObservedState(work.id, "ready", this.now().toISOString(), work.desiredRevision);
+    this.store.updateWorkObservedState(work.id, "ready", this.now().toISOString(), runtimeRevision);
+  }
+
+  private async applyConfigurationNow(workId: string, expectedRevision: number): Promise<WorkConfigurationState> {
+    const state = this.store.getWorkConfiguration(workId);
+    if (state === undefined) throw invisible();
+    if (state.desiredRevision !== expectedRevision) {
+      const error = new Error(`Work ${workId} configuration revision conflict`);
+      error.name = "ConfigurationRevisionConflictError";
+      throw error;
+    }
+    if (state.activeRevision === expectedRevision) return state;
+    const work = this.store.getWork(workId)!;
+    const candidate = this.resolveRuntimeConfiguration(workId, expectedRevision);
+    if (candidate === undefined) throw new Error("Work runtime profile snapshot is missing");
+
+    // Image/profile preparation is deliberately completed before the running
+    // instance is touched. Most invalid applies therefore leave active Runs
+    // and the old active revision unchanged.
+    await this.runtime.prepare(work, candidate);
+    if (work.desiredState !== "running") {
+      return this.store.activateWorkConfiguration(workId, expectedRevision, this.now().toISOString());
+    }
+
+    const previous = state.activeRevision === null ? undefined : this.resolveRuntimeConfiguration(workId, state.activeRevision);
+    const actual = await this.runtime.inspect(workId);
+    const generation = this.nextRuntimeGeneration(workId);
+    try {
+      if (actual.exists && actual.running) {
+        if (actual.generation !== undefined && this.store.getRuntimeGeneration(workId, actual.generation) !== undefined) {
+          this.store.updateRuntimeGeneration(workId, actual.generation, "draining", this.now().toISOString());
+        }
+        await this.runtime.drain(workId, this.drainTimeoutMs);
+      }
+      if (actual.exists) {
+        if (actual.running) await this.runtime.stop(workId, this.stopTimeoutMs);
+        for (const item of this.store.listRuntimeGenerations(workId)) {
+          if (["preparing", "starting", "ready", "draining", "stopping"].includes(item.state)) {
+            this.store.updateRuntimeGeneration(workId, item.generation, "stopped", this.now().toISOString());
+          }
+        }
+        await this.runtime.remove(workId);
+      }
+      await this.runtime.prepare(work, candidate);
+      this.store.ensureRuntimeGeneration(workId, generation, this.now().toISOString());
+      const started = await this.runtime.start(work, generation, candidate);
+      const ready = await this.runtime.inspect(workId);
+      if (!ready.exists || !ready.running || !ready.ready) throw new Error("updated Work runtime did not become ready");
+      this.store.updateRuntimeGeneration(workId, generation, "ready", this.now().toISOString(), {
+        instanceId: started.instanceId,
+        readySince: this.now().toISOString(),
+      });
+      const activated = this.store.activateWorkConfiguration(workId, expectedRevision, this.now().toISOString());
+      this.store.updateWorkObservedState(workId, "ready", this.now().toISOString(), expectedRevision);
+      return activated;
+    } catch (error) {
+      if (this.store.getRuntimeGeneration(workId, generation) !== undefined) {
+        this.store.updateRuntimeGeneration(workId, generation, "failed", this.now().toISOString());
+      }
+      if (previous !== undefined) {
+        try {
+          const failed = await this.runtime.inspect(workId);
+          if (failed.exists && failed.running) await this.runtime.stop(workId, this.stopTimeoutMs);
+          if (failed.exists) await this.runtime.remove(workId);
+          await this.runtime.prepare(work, previous);
+          const rollbackGeneration = generation + 1;
+          this.store.ensureRuntimeGeneration(workId, rollbackGeneration, this.now().toISOString());
+          const restored = await this.runtime.start(work, rollbackGeneration, previous);
+          const restoredState = await this.runtime.inspect(workId);
+          if (!restoredState.exists || !restoredState.running || !restoredState.ready) throw new Error("previous Work runtime could not be restored");
+          this.store.updateRuntimeGeneration(workId, rollbackGeneration, "ready", this.now().toISOString(), {
+            instanceId: restored.instanceId,
+            readySince: this.now().toISOString(),
+          });
+          this.store.updateWorkObservedState(workId, "ready", this.now().toISOString(), state.activeRevision ?? undefined);
+        } catch {
+          this.store.updateWorkObservedState(workId, "failed", this.now().toISOString());
+        }
+      }
+      throw error;
+    }
+  }
+
+  private nextRuntimeGeneration(workId: string): number {
+    return this.store.nextRuntimeGeneration(workId);
+  }
+
+  private resolveRuntimeConfiguration(workId: string, revision: number): ResolvedWorkRuntimeConfiguration | undefined {
+    const stored = this.store.getWorkConfigRevision(workId, revision);
+    if (stored === undefined || stored.runtimeProfileJson === null) return undefined;
+    return {
+      workConfig: JSON.parse(stored.configJson) as WorkConfig,
+      runtimeProfileJson: stored.runtimeProfileJson,
+    };
   }
 
   private async ensureStopped(work: WorkRecord): Promise<void> {

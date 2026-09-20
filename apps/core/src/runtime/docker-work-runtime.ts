@@ -15,7 +15,7 @@ import {
 } from "@piwork/contracts";
 import type { WorkRecord } from "@piwork/core-store";
 import { DockerRuntime } from "@piwork/runtime-docker";
-import type { WorkRuntimeAdapter, WorkRuntimeState } from "../work-management/lifecycle.js";
+import type { ResolvedWorkRuntimeConfiguration, WorkRuntimeAdapter, WorkRuntimeState } from "../work-management/lifecycle.js";
 import type { CorePaths } from "../application/paths.js";
 import { RuntimeProfileStore } from "../configuration/runtime-profile.js";
 import { ensureGenerationTlsIdentity, readTlsFile } from "./mtls.js";
@@ -68,12 +68,12 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     if (!image.imageId.startsWith("sha256:")) throw new Error("agent image has no immutable Docker identity");
   }
 
-  async prepare(work: WorkRecord): Promise<void> {
-    const profile = this.profiles.load();
+  async prepare(work: WorkRecord, configuration?: ResolvedWorkRuntimeConfiguration): Promise<void> {
+    const profile = this.profile(configuration);
     await Promise.all([this.docker.prepareImage(profile.agentImage), this.docker.ensureWorkNetwork(work.id), this.docker.ensureManagedVolume(work.id, "work-data")]);
   }
 
-  async start(work: WorkRecord, generation: number): Promise<{ readonly instanceId: string; readonly generation: number }> {
+  async start(work: WorkRecord, generation: number, configuration?: ResolvedWorkRuntimeConfiguration): Promise<{ readonly instanceId: string; readonly generation: number }> {
     const current = await this.docker.inspectContainer(work.id, "agent", AGENT_LOGICAL_ID);
     if (current.exists) {
       const record = this.readRecord(work.id);
@@ -81,7 +81,7 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       await this.waitReady(record);
       return { instanceId: record.instanceId, generation: record.generation };
     }
-    const profile = this.profiles.load();
+    const profile = this.profile(configuration);
     const image = await this.docker.prepareImage(profile.agentImage);
     const network = await this.docker.ensureWorkNetwork(work.id);
     const volume = await this.docker.ensureManagedVolume(work.id, "work-data");
@@ -136,8 +136,8 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       image: image.imageId,
       command: ["--config", "/etc/piwork/runtime.json"],
       user: "10001:10001",
-      cpuMillis: 1_000,
-      memoryBytes: 768 * 1_024 * 1_024,
+      cpuMillis: configuration?.workConfig.resources.cpuMillis ?? 1_000,
+      memoryBytes: configuration?.workConfig.resources.memoryBytes ?? 768 * 1_024 * 1_024,
       network: { name: network.name, workId: work.id, aliases: ["agentd"] },
       labels: { [GENERATION_LABEL]: String(generation), [INSTANCE_LABEL]: record.instanceId, [PROTOCOL_LABEL]: CONTRACT_VERSION },
       mounts: [
@@ -209,6 +209,15 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   }
 
   close(): void { for (const workId of [...this.clients.keys()]) this.closeClient(workId); }
+
+  private profile(configuration?: ResolvedWorkRuntimeConfiguration) {
+    if (configuration === undefined) return this.profiles.load();
+    const profile = JSON.parse(configuration.runtimeProfileJson) as ReturnType<RuntimeProfileStore["load"]>;
+    if (profile.version !== 1 || profile.revision < 1 || typeof profile.agentImage !== "string") {
+      throw new Error("Work runtime profile snapshot is invalid");
+    }
+    return profile;
+  }
 
   private async waitReady(record: RuntimeRecord): Promise<void> {
     const deadline = Date.now() + 30_000;

@@ -6,11 +6,13 @@ import {
   FileCredentialStore,
   PiworkApiError,
   PiworkClient,
+  resolveCoreEndpoint,
+  safeErrorMessage,
   type CredentialRecord,
 } from "@piwork/client-sdk";
 
 export const CLI_VERSION = "0.1.0";
-export const CLI_USAGE = `usage: piwork [--core <url>] [--json] <command>
+export const CLI_USAGE = `usage: piwork-cli [--core <url>] [--json] <command>
   status
   login --account <name> [--password-stdin]
   whoami
@@ -19,6 +21,9 @@ export const CLI_USAGE = `usage: piwork [--core <url>] [--json] <command>
   work list
   work show <workId>
   work <start|stop|retry|delete> <workId> [--wait]
+  work config show <workId>
+  work config set <workId> --config <file> --expected-revision <n>
+  work config apply <workId> --expected-revision <n>
   operation show <operationId>
   session create <workId>
   session list <workId>
@@ -30,18 +35,18 @@ export const CLI_USAGE = `usage: piwork [--core <url>] [--json] <command>
 `;
 
 const COMMAND_HELP: Readonly<Record<string, string>> = {
-  status: "usage: piwork status\n  Show Core health and readiness.\n",
-  login: "usage: piwork login --account <name> [--password-stdin]\n  Authenticate and save the credential locally.\n",
-  whoami: "usage: piwork whoami\n  Show the current authenticated identity.\n",
-  logout: "usage: piwork logout\n  Revoke the current session and remove the saved credential.\n",
-  work: "usage: piwork work <create|list|show|start|stop|retry|delete> ...\n  Manage Work resources.\n",
-  operation: "usage: piwork operation show <operationId>\n  Inspect an asynchronous Work operation.\n",
-  session: "usage: piwork session <create|list|show> <workId> [sessionId]\n  Manage persistent conversation sessions.\n",
-  run: "usage: piwork run <show|watch|cancel> <workId> <runId> [options]\n  Inspect, stream, or cancel a Run.\n",
-  chat: "usage: piwork chat <workId> [--session <sessionId>] [--message <text>]\n  Send one prompt or start an interactive conversation.\n",
+  status: "usage: piwork-cli status\n  Show Core health and readiness.\n",
+  login: "usage: piwork-cli login --account <name> [--password-stdin]\n  Authenticate and save the credential locally.\n",
+  whoami: "usage: piwork-cli whoami\n  Show the current authenticated identity.\n",
+  logout: "usage: piwork-cli logout\n  Revoke the current session and remove the saved credential.\n",
+  work: "usage: piwork-cli work <create|list|show|start|stop|retry|delete|config> ...\n  Manage Work resources and per-Work configuration.\n",
+  operation: "usage: piwork-cli operation show <operationId>\n  Inspect an asynchronous Work operation.\n",
+  session: "usage: piwork-cli session <create|list|show> <workId> [sessionId]\n  Manage persistent conversation sessions.\n",
+  run: "usage: piwork-cli run <show|watch|cancel> <workId> <runId> [options]\n  Inspect, stream, or cancel a Run.\n",
+  chat: "usage: piwork-cli chat <workId> [--session <sessionId>] [--message <text>]\n  Send one prompt or start an interactive conversation.\n",
 };
 
-export function cliBanner(): string { return `piwork ${CLI_VERSION}`; }
+export function cliBanner(): string { return `piwork-cli ${CLI_VERSION}`; }
 
 interface GlobalOptions { core?: string; json: boolean; rest: string[]; }
 interface Context { readonly coreUrl: string; readonly json: boolean; readonly store: FileCredentialStore; readonly credential?: CredentialRecord; readonly client: PiworkClient; }
@@ -58,7 +63,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   }
   const store = new FileCredentialStore();
   const credential = await store.load();
-  const coreUrl = globals.core ?? process.env.PIWORK_CORE_URL ?? credential?.coreUrl ?? "http://127.0.0.1:7171";
+  const coreUrl = resolveCoreEndpoint({ explicit: globals.core, environment: process.env.PIWORK_CORE_URL, saved: credential?.coreUrl });
   const context: Context = { coreUrl, json: globals.json, store, ...(credential === undefined ? {} : { credential }), client: new PiworkClient({ coreUrl, token: credential?.token }) };
   if (command === "status") return statusCommand(context, args);
   if (command === "login") return loginCommand(context, args);
@@ -78,7 +83,7 @@ async function statusCommand(context: Context, args: readonly string[]): Promise
   let readiness: unknown;
   try { readiness = await context.client.readiness(); } catch (error) { if (error instanceof PiworkApiError && error.status === 503) readiness = error.details; else throw error; }
   output(context, { coreUrl: context.coreUrl, health, readiness });
-  return 0;
+  return (readiness as { ready?: unknown; status?: unknown }).ready === true || (readiness as { status?: unknown }).status === "ready" ? 0 : 5;
 }
 
 async function loginCommand(context: Context, args: readonly string[]): Promise<number> {
@@ -112,11 +117,29 @@ async function workCommand(context: Context, args: readonly string[]): Promise<n
     known(rest, ["--name", "--config", "--wait", "--idempotency-key"]);
     const name = required(rest, "--name");
     const configPath = optional(rest, "--config");
-    const configuration = configPath === undefined ? defaultWorkConfig() : JSON.parse(readFileSync(configPath, "utf8"));
-    const accepted = await context.client.createWork({ name, configuration, idempotencyKey: optional(rest, "--idempotency-key") ?? randomUUID() });
+    const configuration = configPath === undefined ? undefined : JSON.parse(readFileSync(configPath, "utf8"));
+    const accepted = await context.client.createWork({ name, ...(configuration === undefined ? {} : { configuration }), idempotencyKey: optional(rest, "--idempotency-key") ?? randomUUID() });
     output(context, accepted);
     if (rest.includes("--wait")) await waitOperation(context, accepted.operationId);
     return 0;
+  }
+  if (action === "config") {
+    const [configAction, workId, ...configArgs] = rest;
+    if (workId === undefined || workId.startsWith("--")) throw usage("work config requires <workId>");
+    if (configAction === "show") { noArgs(configArgs); output(context, await context.client.workConfiguration(workId)); return 0; }
+    if (configAction === "set") {
+      known(configArgs, ["--config", "--expected-revision"]);
+      const expectedRevision = positiveInteger(required(configArgs, "--expected-revision"), "--expected-revision");
+      const configuration = JSON.parse(readFileSync(required(configArgs, "--config"), "utf8"));
+      output(context, await context.client.updateWorkConfiguration(workId, expectedRevision, configuration));
+      return 0;
+    }
+    if (configAction === "apply") {
+      known(configArgs, ["--expected-revision"]);
+      output(context, await context.client.applyWorkConfiguration(workId, positiveInteger(required(configArgs, "--expected-revision"), "--expected-revision")));
+      return 0;
+    }
+    throw usage("work config requires show, set, or apply");
   }
   if (action === "start" || action === "stop" || action === "retry" || action === "delete") {
     known(rest.slice(1), ["--wait", "--idempotency-key"]);
@@ -126,7 +149,7 @@ async function workCommand(context: Context, args: readonly string[]): Promise<n
     if (rest.includes("--wait")) await waitOperation(context, accepted.operationId);
     return 0;
   }
-  throw usage("work requires create, list, show, start, stop, retry, or delete");
+  throw usage("work requires create, list, show, start, stop, retry, delete, or config");
 }
 
 async function operationCommand(context: Context, args: readonly string[]): Promise<number> {
@@ -221,7 +244,7 @@ async function renderEvents(context: Context, workId: string, runId: string, aft
     }
     if (chat && !context.json) process.stdout.write("\n");
   } catch (error) {
-    if (!interrupted?.()) process.stderr.write(`Run stream disconnected. Resume with: piwork run watch ${workId} ${runId} --after ${cursor}\n`);
+    if (!interrupted?.()) process.stderr.write(`Run stream disconnected. Resume with: piwork-cli run watch ${workId} ${runId} --after ${cursor}\n`);
     throw error;
   }
 }
@@ -248,10 +271,6 @@ async function waitOperation(context: Context, operationId: string): Promise<voi
   }
 }
 
-function defaultWorkConfig(): Record<string, unknown> {
-  return { revision: 1, agentImage: { catalogId: "default" }, skills: [], modelRef: "default", mcpServers: [], resources: { cpuMillis: 1_000, memoryBytes: 805_306_368, maxServices: 0, maxRetainedVolumes: 1 }, tools: { allowed: [], denied: [] } };
-}
-
 function parseGlobals(argv: readonly string[]): GlobalOptions {
   let core: string | undefined; let json = false; let index = 0;
   while (index < argv.length) {
@@ -264,10 +283,11 @@ function parseGlobals(argv: readonly string[]): GlobalOptions {
 function known(args: readonly string[], names: readonly string[]): void { const boolean = new Set(["--wait", "--password-stdin"]); for (let index = 0; index < args.length; index += 1) { const value = args[index]!; if (!value.startsWith("--") || !names.includes(value)) throw usage(`unknown option: ${value}`); if (!boolean.has(value)) { if (args[index + 1] === undefined || args[index + 1]!.startsWith("--")) throw usage(`${value} requires a value`); index += 1; } } }
 function optional(args: readonly string[], name: string): string | undefined { const indexes = args.flatMap((value, index) => value === name ? [index] : []); if (indexes.length > 1) throw usage(`${name} may be specified only once`); const index = indexes[0]; return index === undefined ? undefined : args[index + 1]; }
 function required(args: readonly string[], name: string): string { const value = optional(args, name); if (value === undefined) throw usage(`${name} is required`); return value; }
+function positiveInteger(value: string, name: string): number { const parsed = Number(value); if (!Number.isSafeInteger(parsed) || parsed < 1) throw usage(`${name} must be a positive integer`); return parsed; }
 function exact(args: readonly string[], count: number): void { if (args.length !== count) throw usage("unexpected arguments"); }
 function noArgs(args: readonly string[]): void { exact(args, 0); }
 function usage(message: string): Error { return Object.assign(new Error(message), { exitCode: 2 }); }
-function requireCredential(context: Context): void { if (context.credential === undefined) throw Object.assign(new Error("not logged in; run piwork login"), { exitCode: 3 }); }
+function requireCredential(context: Context): void { if (context.credential === undefined) throw Object.assign(new Error("not logged in; run piwork-cli login"), { exitCode: 3 }); }
 function output(context: Context, value: unknown): void { process.stdout.write(`${JSON.stringify(value, null, context.json ? 0 : 2)}\n`); }
 function streamOutput(_context: Context, value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`); }
 async function secret(stdinMode: boolean, prompt: string): Promise<string> {
@@ -280,10 +300,10 @@ async function secret(stdinMode: boolean, prompt: string): Promise<string> {
 
 export function exitCodeFor(error: unknown): number {
   const explicit = (error as { exitCode?: unknown }).exitCode; if (typeof explicit === "number") return explicit;
-  if (error instanceof PiworkApiError) { if (error.status === 401 || error.status === 403) return 3; if (error.status === 404) return 4; if (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504) return 5; }
+  if (error instanceof PiworkApiError) { if (error.status === 401 || error.status === 403) return 3; if (error.status === 404) return 4; if (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504) return 5; if (error.status === 409) return 6; }
   return 1;
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runCli(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error: unknown) => { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = exitCodeFor(error); });
+  runCli(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error: unknown) => { process.stderr.write(`${safeErrorMessage(error)}\n`); process.exitCode = exitCodeFor(error); });
 }

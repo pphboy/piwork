@@ -4,20 +4,21 @@
   "private": true,
   "type": "module",
   "bin": {
-    "piwork-core": "dist/cli.js"
+    "piwork-serve": "dist/cli.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "1.14.5",
     "@node-rs/argon2": "2.0.2",
     "@piwork/contracts": "0.1.0",
-    "@piwork/core-store": "0.1.0"
-    ,"@piwork/runtime-docker": "0.1.0"
+    "@piwork/core-store": "0.1.0",
+    "@piwork/client-sdk": "0.1.0",
+    "@piwork/runtime-docker": "0.1.0"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json",
-    "test:unit": "npm run build && node --test dist/**/*.test.js",
+    "test:unit": "npm run build && node --test dist/*.test.js dist/**/*.test.js",
     "test:integration": "npm run build && node --test dist/**/*.integration.js"
   }
 }

@@ -1,12 +1,19 @@
 # syntax=docker/dockerfile:1
 FROM node:24-bookworm-slim AS build
+ARG NPM_REGISTRY=https://npmreg.proxy.ustclug.org
 WORKDIR /workspace
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/agentd/package.json apps/agentd/tsconfig.json ./apps/agentd/
 COPY packages/contracts/package.json packages/contracts/tsconfig.json ./packages/contracts/
 COPY packages/work-store/package.json packages/work-store/tsconfig.json ./packages/work-store/
 COPY packages/pi-adapter/package.json packages/pi-adapter/tsconfig.json ./packages/pi-adapter/
-RUN npm ci --ignore-scripts
+RUN --mount=type=cache,target=/root/.npm npm config set registry "$NPM_REGISTRY" \
+ && npm config set replace-registry-host always \
+ && npm config set fetch-retries 8 \
+ && npm config set fetch-retry-mintimeout 1000 \
+ && npm config set fetch-retry-maxtimeout 30000 \
+ && npm config set fetch-timeout 600000 \
+ && for attempt in 1 2 3; do npm ci --ignore-scripts && break; test "$attempt" = 3 && exit 1; done
 COPY apps/agentd/src ./apps/agentd/src
 COPY packages/contracts/src ./packages/contracts/src
 COPY packages/contracts/proto ./packages/contracts/proto

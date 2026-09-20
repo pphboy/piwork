@@ -8,6 +8,7 @@ export interface CorePaths {
   readonly runtimeProfilePath: string;
   readonly secretsDirectory: string;
   readonly runtimeDirectory: string;
+  readonly operatorCredentialPath: string;
 }
 
 export interface ListenAddress {
@@ -35,6 +36,7 @@ export function ensureCorePaths(dataDirectory: string): CorePaths {
     runtimeProfilePath: join(root, "runtime-profile.json"),
     secretsDirectory,
     runtimeDirectory,
+    operatorCredentialPath: join(root, "operator.credential"),
   };
 }
 

@@ -24,19 +24,21 @@ try {
     checked("npm", ["run", "build"]);
     checked("docker", ["build", "-f", "Dockerfile.agentd", "--target", "acceptance", "-t", "piwork-agentd:acceptance", "."]);
   }
-  coreCommand(["bootstrap-admin", "--data-dir", dataDirectory, "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
-  coreCommand([
-    "configure-runtime", "--data-dir", dataDirectory,
+  core = await startCore(0);
+  const originalUrl = core.url;
+  serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "status"]);
+  serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "admin", "bootstrap", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
+  serveCli([
+    "--core", originalUrl, "--data-dir", dataDirectory, "config", "set",
     "--agent-image", "piwork-agentd:acceptance",
     "--model-provider", "piwork-deterministic", "--model", "fixture-v1", "--api-key-stdin",
   ], `${modelCredential}\n`);
 
-  core = await startCore(0);
-  const originalUrl = core.url;
   cli(["--core", originalUrl, "--json", "status"]);
   cli(["--core", originalUrl, "--json", "login", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
   const identity = firstJson(cli(["--json", "whoami"]));
   assert.equal(identity.account, "admin");
+  assert.deepEqual(firstJson(cli(["--json", "work", "list"])), { works: [] });
 
   const creation = jsonLines(cli(["--json", "work", "create", "--name", "acceptance-work", "--wait"]));
   const workId = creation[0].workId;
@@ -92,7 +94,7 @@ try {
 }
 
 function cli(args, input) { return checked("node", ["apps/cli/dist/main.js", ...args], input); }
-function coreCommand(args, input) { return checked("node", ["apps/core/dist/cli.js", ...args], input); }
+function serveCli(args, input) { return checked("node", ["apps/core/dist/cli.js", ...args], input); }
 function checked(command, args, input) {
   const result = spawnSync(command, args, { cwd: root, env: environment, input, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`${command} ${args.slice(0, 3).join(" ")} failed (${result.status}): ${safeFailure(result.stderr)}`);
