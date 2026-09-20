@@ -1,0 +1,173 @@
+syntax = "proto3";
+
+package piwork.agent.v1;
+
+service AgentService {
+  rpc Readiness(ReadinessRequest) returns (ReadinessResponse);
+  rpc Drain(DrainRequest) returns (DrainResponse);
+  rpc CreateSession(CreateSessionRequest) returns (Session);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc ReadSession(ReadSessionRequest) returns (SessionHistory);
+  rpc SubmitRun(SubmitRunRequest) returns (SubmitRunResponse);
+  rpc GetRun(GetRunRequest) returns (Run);
+  rpc WatchRun(WatchRunRequest) returns (stream RunEvent);
+  rpc CancelRun(CancelRunRequest) returns (Run);
+}
+
+message ReadinessRequest {
+  string work_id = 1;
+  uint64 generation = 2;
+  string instance_id = 3;
+}
+
+message ReadinessResponse {
+  string work_id = 1;
+  uint64 generation = 2;
+  string instance_id = 3;
+  string protocol_version = 4;
+  bool accepting_runs = 5;
+  bool draining = 6;
+}
+
+message DrainRequest {
+  string work_id = 1;
+  uint64 generation = 2;
+  string instance_id = 3;
+  uint32 timeout_ms = 4;
+}
+
+message DrainResponse { bool drained = 1; }
+
+message Session {
+  string work_id = 1;
+  string session_id = 2;
+  string sdk_history_path = 3;
+  string created_at = 4;
+  string updated_at = 5;
+}
+
+message CreateSessionRequest {
+  string work_id = 1;
+  string idempotency_key = 2;
+}
+
+message ListSessionsRequest {
+  string work_id = 1;
+  uint32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+  string next_page_token = 2;
+}
+
+message ReadSessionRequest {
+  string work_id = 1;
+  string session_id = 2;
+}
+
+message SessionHistory {
+  Session session = 1;
+  repeated SessionMessage messages = 2;
+}
+
+message SessionMessage {
+  string entry_id = 1;
+  string role = 2;
+  string text = 3;
+  string created_at = 4;
+}
+
+enum RunState {
+  RUN_STATE_UNSPECIFIED = 0;
+  RUN_STATE_ACCEPTED = 1;
+  RUN_STATE_RUNNING = 2;
+  RUN_STATE_CANCELLING = 3;
+  RUN_STATE_SUCCEEDED = 4;
+  RUN_STATE_FAILED = 5;
+  RUN_STATE_CANCELLED = 6;
+  RUN_STATE_INTERRUPTED = 7;
+}
+
+message RunError {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+}
+
+message Run {
+  string work_id = 1;
+  string session_id = 2;
+  string run_id = 3;
+  string submission_key = 4;
+  RunState state = 5;
+  string prompt_digest = 6;
+  string final_text = 7;
+  RunError error = 8;
+  string accepted_at = 9;
+  string started_at = 10;
+  string finished_at = 11;
+  uint64 earliest_available_sequence = 12;
+  uint64 latest_sequence = 13;
+}
+
+message SubmitRunRequest {
+  string work_id = 1;
+  string session_id = 2;
+  string submission_key = 3;
+  string prompt = 4;
+}
+
+message SubmitRunResponse {
+  Run run = 1;
+  bool reused = 2;
+}
+
+message GetRunRequest {
+  string work_id = 1;
+  string run_id = 2;
+}
+
+message WatchRunRequest {
+  string work_id = 1;
+  string run_id = 2;
+  optional uint64 after_sequence = 3;
+}
+
+message CancelRunRequest {
+  string work_id = 1;
+  string run_id = 2;
+  string idempotency_key = 3;
+}
+
+message TextEvent {
+  string delta = 1;
+}
+
+message ToolEvent {
+  string server_id = 1;
+  string tool_name = 2;
+  string tool_call_id = 3;
+  string phase = 4;
+  bool is_error = 5;
+}
+
+message StateEvent {
+  RunState state = 1;
+  string final_text = 2;
+  RunError error = 3;
+}
+
+message RunEvent {
+  string work_id = 1;
+  string session_id = 2;
+  string run_id = 3;
+  uint64 sequence = 4;
+  string created_at = 5;
+  oneof kind {
+    TextEvent text = 6;
+    ToolEvent tool = 7;
+    StateEvent state = 8;
+  }
+}

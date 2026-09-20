@@ -1,0 +1,8 @@
+**/dist
+**/.tsbuildinfo
+.git
+.piwork
+node_modules
+openspec
+docs
+demo

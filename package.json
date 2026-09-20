@@ -1,0 +1,32 @@
+{
+  "name": "piwork",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "clean": "npm run clean --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "node scripts/run-workspace-tests.mjs",
+    "test:integration": "node scripts/run-integration-tests.mjs",
+    "core": "node apps/core/dist/cli.js",
+    "piwork": "node apps/cli/dist/main.js",
+    "agent:image": "docker build -f Dockerfile.agentd --target production -t piwork-agentd:local .",
+    "agent:image:acceptance": "docker build -f Dockerfile.agentd --target acceptance -t piwork-agentd:acceptance .",
+    "acceptance": "node scripts/product-acceptance.mjs",
+    "real-model-smoke": "node scripts/real-model-smoke.mjs"
+  },
+  "devDependencies": {
+    "@protobuf-ts/protoc": "2.11.1",
+    "@types/node": "24.13.6",
+    "ts-proto": "2.12.4",
+    "typescript": "7.0.2"
+  }
+}

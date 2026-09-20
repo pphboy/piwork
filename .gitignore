@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+.env
+.piwork/
+*.tsbuildinfo
+apps/console/vite.config.js
+apps/console/vite.config.d.ts

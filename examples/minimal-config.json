@@ -1,0 +1,9 @@
+{
+  "revision": 1,
+  "agentImage": { "catalogId": "image-example" },
+  "skills": [],
+  "modelRef": "model-example",
+  "mcpServers": [],
+  "resources": { "cpuMillis": 1000, "memoryBytes": 268435456, "maxServices": 8, "maxRetainedVolumes": 16 },
+  "tools": { "allowed": [], "denied": [] }
+}
