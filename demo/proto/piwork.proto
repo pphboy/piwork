@@ -1,0 +1,90 @@
+// piwork demo protocol: a single daemon hosting pi agent sessions, driven by CLI clients.
+//
+// Error semantics (deliberate, keeps the two channels unambiguous):
+//   - Failures BEFORE the request is accepted (no credentials, session busy, bad
+//     arguments) are reported as gRPC status codes, so generated clients throw.
+//   - Failures AFTER at least one AskEvent has been written can no longer set a
+//     status, so they are delivered in-band as AskEvent.error.
+syntax = "proto3";
+
+package piwork.v1;
+
+service PiDaemon {
+  // Liveness plus the runtime facts needed to diagnose auth/proxy problems.
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // One question, one streamed answer. Streaming lets the client render text as
+  // it is produced instead of waiting for the whole turn.
+  rpc Ask(AskRequest) returns (stream AskEvent);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;       // "ok" whenever the daemon is serving
+  string version = 2;
+  string model = 3;        // resolved model id; empty when unresolved
+  string provider = 4;
+  bool authenticated = 5;
+  string auth_source = 6;  // e.g. "ANTHROPIC_AUTH_TOKEN"; empty when unauthenticated
+  string base_url = 7;     // effective base url, for proxy troubleshooting
+  uint32 session_count = 8;
+  uint64 uptime_ms = 9;
+  string agent_dir = 10;
+}
+
+message AskRequest {
+  string session_id = 1;   // empty => daemon creates one and echoes it back
+  string prompt = 2;
+  string cwd = 3;          // empty => daemon default workspace
+}
+
+message AskEvent {
+  oneof kind {
+    SessionStarted session_started = 1;  // always first, carries the session id
+    TextDelta text_delta = 2;
+    ThinkingDelta thinking_delta = 3;
+    ToolStart tool_start = 4;
+    ToolEnd tool_end = 5;
+    AskResult result = 6;                // always last on success
+    AskError error = 7;                  // always last on post-acceptance failure
+  }
+}
+
+message SessionStarted {
+  string session_id = 1;
+  string model = 2;
+  string cwd = 3;
+  bool resumed = 4;        // true when an existing session was reused
+}
+
+message TextDelta {
+  string delta = 1;
+}
+
+message ThinkingDelta {
+  string delta = 1;
+}
+
+message ToolStart {
+  string tool_name = 1;
+  string tool_call_id = 2;
+}
+
+message ToolEnd {
+  string tool_name = 1;
+  string tool_call_id = 2;
+  bool is_error = 3;
+}
+
+message AskResult {
+  string text = 1;         // full assistant text for this ask
+  uint32 turns = 2;
+  bool aborted = 3;
+  uint64 duration_ms = 4;
+}
+
+message AskError {
+  string code = 1;
+  string message = 2;
+}

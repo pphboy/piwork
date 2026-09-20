@@ -1,0 +1,30 @@
+{
+  "name": "piwork-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "piwork demo: pi agent daemon over gRPC + interactive Q&A CLI",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "proto:gen": "mkdir -p ./src/generated && protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=./src/generated --ts_proto_opt=outputServices=grpc-js,esModuleInterop=true,importSuffix=.js,env=node,useOptionals=messages,useExactTypes=false -I ./proto ./proto/piwork.proto",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test \"dist/**/*.test.js\"",
+    "prestart": "npm run build",
+    "daemon": "node dist/daemon/main.js",
+    "cli": "node dist/cli/main.js"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.15.0",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@grpc/grpc-js": "^1.14.5"
+  },
+  "devDependencies": {
+    "@protobuf-ts/protoc": "^2.11.1",
+    "@types/node": "^26.6.2",
+    "ts-proto": "^2.12.4",
+    "typescript": "^7.0.2"
+  }
+}

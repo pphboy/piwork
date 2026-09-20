@@ -1,0 +1,8 @@
+node_modules/
+dist/
+
+# Runtime state: agent auth/models config, workspaces, session files.
+.piwork/
+
+# Real credentials stay local; .env.example documents the shape.
+.env
