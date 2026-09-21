@@ -2,20 +2,29 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { ServiceDefinitionInput, WorkConfig } from "@piwork/contracts";
 import type { UserPrincipal } from "../work-access/policy.js";
 import type { WorkServiceManagementService } from "../work-services/service-management.js";
-import { WorkLifecycleService } from "./lifecycle.js";
+import { WorkLifecycleService, type AcceptedWorkOperation } from "./lifecycle.js";
 
 export interface WorkApiAuthentication {
   authenticate(token: string): UserPrincipal;
 }
 
+export interface WorkCreateRequest {
+  readonly name: string;
+  readonly configuration: WorkConfig;
+  readonly idempotencyKey: string;
+}
+
+export type WorkCreateHandler = (principal: UserPrincipal, request: WorkCreateRequest) => AcceptedWorkOperation;
+
 export function createWorkHttpServer(
   lifecycle: WorkLifecycleService,
   authentication: WorkApiAuthentication,
   services?: WorkServiceManagementService,
+  createWork: WorkCreateHandler = (principal, request) => lifecycle.create(principal, request),
 ): Server {
   return createServer(async (request, response) => {
     try {
-      await route(request, response, lifecycle, authentication, services);
+      await route(request, response, lifecycle, authentication, services, createWork);
     } catch (error) {
       const status = error instanceof SyntaxError ? 400 : /not found/i.test(error instanceof Error ? error.message : "") ? 404 : 409;
       json(response, status, { code: status === 404 ? "NOT_FOUND" : "CONFLICT", message: error instanceof Error ? error.message : String(error) });
@@ -29,6 +38,7 @@ async function route(
   lifecycle: WorkLifecycleService,
   authentication: WorkApiAuthentication,
   services?: WorkServiceManagementService,
+  createWork?: WorkCreateHandler,
 ): Promise<void> {
   const principal = authentication.authenticate(bearer(request));
   const url = new URL(request.url ?? "/", "http://core.invalid");
@@ -39,8 +49,8 @@ async function route(
     return json(response, 200, { works: lifecycle.list(principal) });
   }
   if (segments[2] === "works" && segments.length === 3 && request.method === "POST") {
-    const body = await bodyJson<{ name: string; configuration: WorkConfig; idempotencyKey: string }>(request);
-    return json(response, 202, lifecycle.create(principal, body));
+    const body = await bodyJson<WorkCreateRequest>(request);
+    return json(response, 202, (createWork ?? ((owner, input) => lifecycle.create(owner, input)))(principal, body));
   }
   if (segments[2] === "works" && segments.length === 4 && request.method === "GET") {
     return json(response, 200, lifecycle.show(principal, segments[3]!));

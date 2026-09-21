@@ -120,6 +120,10 @@ function view(state: WorkConfigurationState): WorkConfigurationView {
     desired: publicConfig(state.desiredConfigJson),
     active: state.activeConfigJson === null ? null : publicConfig(state.activeConfigJson),
     pendingApply: state.pendingRestart,
+    // Historical readiness is deliberately not projected as current runtime
+    // evidence. The runtime adapter supplies a fresh observation when one is
+    // available; until then this state is explicitly unavailable.
+    runtime: { state: "unavailable", checkedAt: null, skills: [] },
   };
 }
 

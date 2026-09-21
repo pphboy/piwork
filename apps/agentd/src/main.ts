@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
 import { AgentApplication } from "./application.js";
+import { emitAgentDiagnostic } from "./diagnostics.js";
 
 export const AGENTD_VERSION = "0.1.0";
 
@@ -22,7 +23,10 @@ export async function runAgentd(args: readonly string[]): Promise<void> {
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runAgentd(process.argv.slice(2)).catch((error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    emitAgentDiagnostic({
+      stage: "runtime-start", outcome: "failed", code: "RUNTIME_START_FAILED",
+      correlationId: "agentd-startup",
+    });
     process.exitCode = 1;
   });
 }

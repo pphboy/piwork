@@ -21,7 +21,7 @@ export function safeErrorMessage(error: unknown): string {
     .replace(/\b(Bearer|Operator)\s+[A-Za-z0-9._~+\/-]+/gi, "$1 [REDACTED]")
     .replace(/\b(password|passphrase|api[-_ ]?key|token|credential|secret)\s*([=:])\s*([^\s,;]+)/gi, "$1$2[REDACTED]")
     .replace(/([?&](?:password|api[-_]?key|token|credential|secret)=)[^&#\s]*/gi, "$1[REDACTED]")
-    .replace(/(?:\/?[^\s:]+)*\/(?:secrets?\/[^\s:]+|[^\s/:]*\.secret|operator\.credential)\b/g, "[REDACTED_PATH]");
+    .replace(/(?:\/[^\s/:]+)*\/(?:secrets?\/[^\s:]+|[^\s/:]*\.secret|operator\.credential)\b/g, "[REDACTED_PATH]");
 }
 
 export class PiworkApiError extends Error {
@@ -115,7 +115,7 @@ export class PiworkClient {
   workAction(workId: string, action: "start" | "stop" | "retry" | "delete", idempotencyKey: string) { return this.request<{ workId: string; operationId: string }>("POST", `/api/v1/works/${encodeURIComponent(workId)}/${action}`, { idempotencyKey }); }
   workConfiguration(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration`); }
   updateWorkConfiguration(workId: string, configuration: unknown) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration`, { configuration }); }
-  applyWorkConfiguration(workId: string) { return this.request<Record<string, unknown>>("POST", `/api/v1/works/${encodeURIComponent(workId)}/configuration/apply`, {}); }
+  applyWorkConfiguration(workId: string, idempotencyKey: string) { return this.request<{ workId: string; operationId: string; reused: boolean }>("POST", `/api/v1/works/${encodeURIComponent(workId)}/configuration/apply`, { idempotencyKey }); }
   workSkills(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration/skills`); }
   updateWorkSkills(workId: string, skills: unknown[]) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration/skills`, { skills }); }
   workAgents(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration/agents`); }

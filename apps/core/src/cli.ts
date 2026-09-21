@@ -158,7 +158,10 @@ async function configCommand(context: OperatorContext, args: readonly string[]):
     const baseImage = optional(options, "--base-image");
     if (baseImage !== undefined) configuration.agentImage = { catalogId: baseImage };
     const skills = repeated(options, "--skill");
-    if (skills.length > 0 && options.includes("--no-skills")) throw usage("--skill and --no-skills are mutually exclusive");
+    const noSkillsCount = options.filter((value) => value === "--no-skills").length;
+    if (noSkillsCount > 1) throw usage("--no-skills may be specified only once");
+    if (new Set(skills).size !== skills.length) throw usage("--skill may not be repeated");
+    if (skills.length > 0 && noSkillsCount === 1) throw usage("--skill and --no-skills are mutually exclusive");
     if (options.includes("--no-skills")) configuration.skills = [];
     else if (skills.length > 0) configuration.skills = skills;
     const agentsFile = optional(options, "--agents-md-file");
@@ -261,7 +264,7 @@ function commandHelp(command: string): string {
   if (command === "serve") return "usage: piwork-serve serve [--data-dir <path>] [--listen <host:port>] [--env-file <path>] [--allow-insecure-remote]\n";
   if (command === "status") return "usage: piwork-serve status\n";
   if (command === "admin") return "usage: piwork-serve admin <bootstrap|users> ...\n";
-  if (command === "config") return "usage: piwork-serve config <show|set> ...\n";
+  if (command === "config") return "usage: piwork-serve config <show|set|default-work> ...\n  Manage runtime settings and the context copied into future Works.\n";
   throw usage(`unknown command: ${command}`);
 }
 
@@ -271,7 +274,7 @@ function wrongSurface(command: string): string {
 }
 
 function known(args: readonly string[], names: readonly string[]): void {
-  const boolean = new Set(["--password-stdin", "--api-key-stdin"]);
+  const boolean = new Set(["--password-stdin", "--api-key-stdin", "--no-skills"]);
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index]!;
     if (!value.startsWith("--") || !names.includes(value)) throw usage(`unknown option: ${value}`);

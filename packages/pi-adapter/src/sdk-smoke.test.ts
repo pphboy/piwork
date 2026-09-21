@@ -3,35 +3,22 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Type } from "typebox";
 import {
   createAgentSession,
-  defineTool,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { createDeterministicRuntime } from "./deterministic-model.js";
 import { loadIsolatedSkills } from "./isolated-resources.js";
 
-test("real SDK loads an explicit Skill and executes a registered fixture tool", async () => {
+test("deterministic fixture discovers and reads the SDK Skill manifest and its supporting file", async () => {
   const root = await mkdtemp(join(tmpdir(), "piwork-sdk-smoke-"));
   const skillDir = join(root, "skills", "fixture-skill");
   await mkdir(skillDir, { recursive: true });
   await writeFile(
     join(skillDir, "SKILL.md"),
-    "---\nname: fixture-skill\ndescription: PIWORK_SKILL_SENTINEL\n---\nUse the fixture tool exactly once.\n",
+    "---\nname: fixture-skill\ndescription: PIWORK_SKILL_SENTINEL\n---\nSupporting file: support.txt\n",
   );
-
-  let calls = 0;
-  const fixtureTool = defineTool({
-    name: "fixture_echo",
-    label: "Fixture Echo",
-    description: "Deterministic SDK smoke tool",
-    parameters: Type.Object({ text: Type.String() }),
-    execute: async (_toolCallId, params) => {
-      calls += 1;
-      return { content: [{ type: "text", text: `echo:${params.text}` }], details: {} };
-    },
-  });
+  await writeFile(join(skillDir, "support.txt"), "SDK_SUPPORT_SENTINEL\n");
 
   const { skills, loader } = loadIsolatedSkills(join(root, "skills"));
   const { runtime, model } = await createDeterministicRuntime();
@@ -43,19 +30,20 @@ test("real SDK loads an explicit Skill and executes a registered fixture tool", 
     thinkingLevel: "off",
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(root),
-    tools: ["read", "fixture_echo"],
-    customTools: [fixtureTool],
+    tools: ["read"],
   });
 
   try {
     assert.deepEqual(skills.map((skill) => skill.name), ["fixture-skill"]);
     assert.match(session.systemPrompt, /fixture-skill/);
     assert.match(session.systemPrompt, /PIWORK_SKILL_SENTINEL/);
-    await session.prompt("call the fixture tool");
-    assert.equal(calls, 1);
-    assert.ok(session.messages.some((message) => message.role === "toolResult"));
+    await session.prompt("read the configured Skill");
+    const results = session.messages.filter((message) => message.role === "toolResult");
+    assert.equal(results.length, 2);
+    assert.equal(results.every((message) => message.role === "toolResult" && message.toolName === "read"), true);
+    assert.equal(results.some((message) => message.role === "toolResult" && JSON.stringify(message.content).includes("SDK_SUPPORT_SENTINEL")), true);
     assert.ok(session.messages.some((message) =>
-      message.role === "assistant" && message.content.some((part) => part.type === "text" && part.text === "fixture tool completed")
+      message.role === "assistant" && message.content.some((part) => part.type === "text" && /^skill-read:[a-f0-9]{16}$/.test(part.text))
     ));
   } finally {
     session.dispose();

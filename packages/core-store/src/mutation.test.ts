@@ -95,6 +95,37 @@ test("tombstone and Operation commit atomically", async () => {
   });
 });
 
+test("Operation state, result, and error persist together across store reopen", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-core-operation-"));
+  const databasePath = join(root, "core.sqlite");
+  let store: CoreStore | undefined;
+  try {
+    store = CoreStore.open({ databasePath });
+    store.exec(`INSERT INTO users(id, account, password_digest, role, enabled, created_at, updated_at)
+      VALUES ('user-1', 'alice', 'digest', 'admin', 1, '${NOW}', '${NOW}')`);
+    store.exec(`INSERT INTO works(
+      id, owner_user_id, name, desired_state, observed_state,
+      desired_revision, active_revision, control_version, created_at, updated_at
+    ) VALUES ('work-1', 'user-1', 'fixture', 'stopped', 'stopped', 1, 1, 1, '${NOW}', '${NOW}')`);
+    const accepted = store.acceptMutation(request(), () => ({ resourceId: "work-1" }));
+    const resultJson = '{"correlationId":"correlation-1","diagnostics":{"stages":[]}}';
+    const errorJson = '{"code":"WORK_OPERATION_FAILED","stage":"runtime-start"}';
+    store.updateOperation(accepted.operationId, "failed", "2026-09-20T00:00:01Z", { resultJson, errorJson });
+    store.close();
+    store = undefined;
+
+    const reopened = CoreStore.open({ databasePath });
+    const operation = reopened.getOperation(accepted.operationId);
+    assert.equal(operation?.state, "failed");
+    assert.equal(operation?.resultJson, resultJson);
+    assert.equal(operation?.errorJson, errorJson);
+    reopened.close();
+  } finally {
+    store?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 const NOW = "2026-09-20T00:00:00Z";
 
 function request(overrides: Partial<Parameters<CoreStore["acceptMutation"]>[0]> = {}) {

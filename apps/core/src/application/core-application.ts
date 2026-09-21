@@ -11,8 +11,8 @@ import { WorkLifecycleService, type WorkRuntimeAdapter } from "../work-managemen
 import type { CorePaths, ListenAddress } from "./paths.js";
 import { RuntimeProfileStore, validateRuntimeProfileInput, type RuntimeProfile } from "../configuration/runtime-profile.js";
 import { WorkConfigurationService } from "../configuration/work-config.js";
-import type { WorkConfig } from "@piwork/contracts";
-import { DockerWorkRuntimeAdapter, ensureInstallationId, type ConversationGateway } from "../runtime/docker-work-runtime.js";
+import type { RuntimeSkillState, WorkConfig } from "@piwork/contracts";
+import { DockerWorkRuntimeAdapter, ensureInstallationId, type ConversationGateway, type RuntimeSkillStateGateway } from "../runtime/docker-work-runtime.js";
 import { ensureOperatorCredential, verifyOperatorCredential } from "./operator-credential.js";
 import { assertValidPassword } from "../identity/password.js";
 import { InputValidationError } from "../input-validation.js";
@@ -22,7 +22,7 @@ import { SkillArtifactStore } from "../configuration/skill-artifact-store.js";
 import { CoreSkillService } from "../configuration/skills.js";
 import { WorkContextStore, type WorkContextSnapshot } from "../configuration/work-context.js";
 import type { WorkContextSnapshotInput } from "@piwork/core-store";
-import { WorkContextMigration } from "../configuration/work-context-migration.js";
+import { emitDiagnostic } from "../work-management/diagnostics.js";
 
 export type ReadinessReason = "STORE_OPEN" | "LISTENING" | "ADMIN_REQUIRED" | "RUNTIME_NOT_CONFIGURED" | "RUNTIME_UNAVAILABLE" | "FILESYSTEM_MIGRATION_REQUIRED" | "RECOVERING" | "READY" | "SHUTTING_DOWN";
 
@@ -75,10 +75,7 @@ export class CoreApplication {
     this.runtimeProfiles = new RuntimeProfileStore(paths.runtimeProfilePath, paths.secretsDirectory);
     this.skillArtifacts = new SkillArtifactStore(paths.skillsDirectory);
     this.skills = new CoreSkillService(store, this.skillArtifacts);
-    this.skills.migrateLegacySkills();
     this.skills.cleanupOrphans();
-    const migrationProfile = this.runtimeProfiles.inspect().configured ? JSON.stringify(this.runtimeProfiles.load()) : undefined;
-    new WorkContextMigration(this.store, this.workContexts, this.skillArtifacts, paths.runtimeDirectory).migrate(migrationProfile);
     this.workContexts.cleanupOrphans(new Set(
       this.store.listWorkContextSnapshots().map((snapshot) => `${snapshot.workId}\0${snapshot.snapshotId}`),
     ));
@@ -106,7 +103,6 @@ export class CoreApplication {
         const profile = profiles.load();
         registerRuntimeProfileCatalog(store, profile);
         ensureDefaultWorkConfiguration(store, profile);
-        store.backfillWorkRuntimeProfiles(JSON.stringify(profile), profile.revision, new Date().toISOString(), true);
       }
       const identity = await IdentityService.create({ store });
       const workContexts = new WorkContextStore(options.paths.workContextsDirectory);
@@ -151,13 +147,12 @@ export class CoreApplication {
         administrator: this.store.hasEnabledAdministrator(),
         runtimeConfigured,
         runtimeAvailable: this.runtime !== undefined,
-        filesystemMigrationReady: this.store.listFilesystemMigrations().every((migration) => migration.state === "succeeded"),
+        filesystemMigrationReady: true,
       },
     };
   }
 
   async refreshRuntime(force = false): Promise<void> {
-    if (this.store.listFilesystemMigrations().some((migration) => migration.state === "failed")) { this.state = "FILESYSTEM_MIGRATION_REQUIRED"; return; }
     if (!this.store.hasEnabledAdministrator()) { this.state = "ADMIN_REQUIRED"; return; }
     if (!this.runtimeProfiles.inspect().configured) { this.state = "RUNTIME_NOT_CONFIGURED"; return; }
     if (this.runtime !== undefined && !force && this.state !== "RUNTIME_UNAVAILABLE") { this.state = "READY"; return; }
@@ -188,7 +183,7 @@ export class CoreApplication {
     this.state = "SHUTTING_DOWN";
     try {
       await closeServer(this.server);
-      await this.lifecycle.shutdown();
+      await this.lifecycle.shutdown(true);
       this.runtime?.close?.();
     } finally {
       this.store.close();
@@ -201,9 +196,15 @@ export class CoreApplication {
     configuration: WorkConfig,
     _runtimeProfileJson: string,
     preserveContextId?: string,
+    reselectSkills = false,
+    correlationId = `correlation-${cryptoRandomUUID()}`,
   ) {
-    const retained = preserveContextId === undefined ? undefined : this.workContexts.load(workId, preserveContextId);
-    const preserveSkills = retained !== undefined
+    emitDiagnostic({ timestamp: new Date().toISOString(), level: "info", component: "core", stage: "context-copy", outcome: "started", correlationId, code: "CONTEXT_COPY_FAILED", message: "Work context copy started.", workId });
+    try {
+    const currentDesiredContextId = this.store.getWorkConfiguration(workId)?.desiredContextId;
+    const retainedContextId = preserveContextId ?? currentDesiredContextId ?? undefined;
+    const retained = retainedContextId === undefined ? undefined : this.workContexts.load(workId, retainedContextId);
+    const preserveSkills = !reselectSkills && retained !== undefined
       && JSON.stringify(retained.configuration.skills) === JSON.stringify(configuration.skills);
     const sources = preserveSkills
       ? retained.metadata.skills.map((skill) => ({
@@ -225,22 +226,48 @@ export class CoreApplication {
     if (reference === null) throw api(400, "INVALID_CONFIGURATION", "Work agent image reference is unavailable");
     const preserveImage = retained !== undefined
       && retained.configuration.agentImage.catalogId === configuration.agentImage.catalogId;
-    const imageIdentity = preserveImage
-      ? retained.metadata.imageIdentity
-      : await this.runtime?.resolveImageIdentity?.(reference)
-        ?? (image.resolvedDigest?.startsWith("sha256:") === true
-          ? image.resolvedDigest
-          : `sha256:${createHash("sha256").update(reference).digest("hex")}`);
-    return this.workContexts.build({
+    let imageIdentity: string;
+    if (preserveImage) {
+      imageIdentity = retained.metadata.imageIdentity;
+    } else if (/^sha256:[a-f0-9]{64}$/.test(image.resolvedDigest ?? "")) {
+      imageIdentity = image.resolvedDigest!;
+    } else {
+      const resolved = await this.runtime?.resolveImageIdentity?.(reference);
+      if (resolved === undefined) throw api(503, "RUNTIME_UNAVAILABLE", "Work agent image identity could not be captured");
+      imageIdentity = resolved;
+    }
+    const snapshot = this.workContexts.build({
       workId,
       configuration,
       imageIdentity,
       skills: sources,
       createdAt: new Date().toISOString(),
     });
+    emitDiagnostic({ timestamp: new Date().toISOString(), level: "info", component: "core", stage: "context-copy", outcome: "succeeded", correlationId, code: "CONTEXT_COPY_FAILED", message: "Work context content was copied.", workId });
+    emitDiagnostic({ timestamp: new Date().toISOString(), level: "info", component: "core", stage: "context-validate", outcome: "succeeded", correlationId, code: "SKILL_VALIDATION_FAILED", message: "Work context was validated.", workId });
+    return snapshot;
+    } catch (error) {
+      emitDiagnostic({ timestamp: new Date().toISOString(), level: "error", component: "core", stage: "context-copy", outcome: "failed", correlationId, code: "CONTEXT_COPY_FAILED", message: "The selected Work context could not be copied.", workId });
+      throw error;
+    }
+  }
+
+  private async workConfigurationView(principal: UserPrincipal, workId: string) {
+    const value = this.workConfigurations.get(principal, workId);
+    const work = this.lifecycle.show(principal, workId);
+    const runtime = this.runtime as Partial<RuntimeSkillStateGateway> | undefined;
+    const observation: RuntimeSkillState = work.observedState === "failed"
+      ? { state: "failed", checkedAt: null, skills: [] }
+      : work.observedState === "starting" || work.observedState === "provisioning"
+        ? { state: "initializing", checkedAt: null, skills: [] }
+        : work.observedState !== "ready" || runtime?.runtimeSkillState === undefined
+          ? { state: "unavailable", checkedAt: null, skills: [] }
+          : await runtime.runtimeSkillState(workId);
+    return { ...value, runtime: observation };
   }
 
   private async route(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const correlationId = `correlation-${cryptoRandomUUID()}`;
     try {
       const url = new URL(request.url ?? "/", "http://core.invalid");
       if (request.method === "GET" && url.pathname === "/healthz") return send(response, 200, { status: "healthy" });
@@ -369,7 +396,7 @@ export class CoreApplication {
         }
         configuration = new WorkConfigurationValidator(this.store).validate({ workOwnerUserId: principal.userId, configuration });
         const workId = `work-${cryptoRandomUUID()}`;
-        const snapshot = await this.buildWorkContext(workId, principal.userId, configuration, JSON.stringify(profile));
+        const snapshot = await this.buildWorkContext(workId, principal.userId, configuration, JSON.stringify(profile), undefined, false, correlationId);
         return send(response, 202, this.lifecycle.create(principal, {
           name: body.name,
           configuration,
@@ -378,11 +405,12 @@ export class CoreApplication {
           snapshot: persistedSnapshot(snapshot, principal.userId),
           runtimeProfileJson: JSON.stringify(profile),
           sourceRuntimeRevision: profile.revision,
+          correlationId,
         }));
       }
       if (parts[2] === "works" && parts.length === 4 && request.method === "GET") return send(response, 200, this.lifecycle.show(principal, parts[3]!));
       if (parts[2] === "works" && parts.length === 5 && parts[4] === "configuration" && request.method === "GET") {
-        return send(response, 200, this.workConfigurations.get(principal, parts[3]!));
+        return send(response, 200, await this.workConfigurationView(principal, parts[3]!));
       }
       if (parts[2] === "works" && parts.length === 5 && parts[4] === "configuration" && request.method === "PUT") {
         const body = await readJson<{ configuration?: unknown; expectedRevision?: unknown }>(request);
@@ -400,12 +428,12 @@ export class CoreApplication {
         const result = this.workConfigurations.update(principal, parts[3]!, configuration, undefined, {
           runtimeProfileJson: JSON.stringify(resolved.profile),
           sourceRuntimeRevision: resolved.sourceRuntimeRevision,
-          snapshot: persistedSnapshot(await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile)), principal.userId),
+          snapshot: persistedSnapshot(await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile), undefined, false, correlationId), principal.userId),
         });
         return send(response, 200, result);
       }
       if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "skills" && request.method === "GET") {
-        const state = this.workConfigurations.get(principal, parts[3]!); return send(response, 200, { skills: state.desired.skills });
+        const state = await this.workConfigurationView(principal, parts[3]!); return send(response, 200, { skills: state.desired.skills, active: state.active?.skills ?? [], pendingApply: state.pendingApply, runtime: state.runtime });
       }
       if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "skills" && request.method === "PUT") {
         const body = await readJson<{ skills?: unknown }>(request);
@@ -415,7 +443,7 @@ export class CoreApplication {
           return configuration;
         }, async (configuration) => {
           const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration);
-          const snapshot = await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile));
+          const snapshot = await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile), undefined, true, correlationId);
           return { runtimeProfileJson: JSON.stringify(resolved.profile), sourceRuntimeRevision: resolved.sourceRuntimeRevision, snapshot: persistedSnapshot(snapshot, principal.userId) };
         }));
       }
@@ -428,18 +456,17 @@ export class CoreApplication {
         return send(response, 200, await this.workConfigurations.updateMerged(principal, parts[3]!, (configuration) => ({ ...configuration, agentsMd }), async (configuration) => {
           const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration);
           const desiredContextId = this.store.getWorkConfiguration(parts[3]!)?.desiredContextId ?? undefined;
-          const snapshot = await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile), desiredContextId);
+          const snapshot = await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile), desiredContextId, false, correlationId);
           return { runtimeProfileJson: JSON.stringify(resolved.profile), sourceRuntimeRevision: resolved.sourceRuntimeRevision, snapshot: persistedSnapshot(snapshot, principal.userId) };
         }));
       }
       if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "apply" && request.method === "POST") {
         requireRuntime(this.state);
-        const body = await readJson<Record<string, unknown>>(request);
-        if (Object.keys(body).length !== 0) throw api(400, "INVALID_REQUEST", "apply request must be empty");
+        const body = await readJson<{ idempotencyKey?: unknown }>(request);
+        if (typeof body.idempotencyKey !== "string" || body.idempotencyKey.length === 0) throw api(400, "INVALID_REQUEST", "idempotencyKey is required");
         const internal = this.store.getWorkConfiguration(parts[3]!);
         if (internal === undefined) throw api(404, "NOT_FOUND", "resource was not found");
-        await this.lifecycle.applyConfiguration(principal, parts[3]!, internal.desiredRevision);
-        return send(response, 200, this.workConfigurations.get(principal, parts[3]!));
+        return send(response, 202, this.lifecycle.applyConfiguration(principal, parts[3]!, body.idempotencyKey, internal.desiredRevision, correlationId));
       }
       if (parts[2] === "works" && parts.length === 5 && request.method === "POST" && ["start", "stop", "retry", "delete"].includes(parts[4]!)) {
         requireRuntime(this.state);
@@ -489,7 +516,7 @@ export class CoreApplication {
       throw api(404, "NOT_FOUND", "route not found");
     } catch (error) {
       const mapped = mapError(error);
-      send(response, mapped.status, { code: mapped.code, message: mapped.message, ...(mapped.retryAfterMs === undefined ? {} : { retryAfterMs: mapped.retryAfterMs }) });
+      send(response, mapped.status, { code: mapped.code, message: mapped.message, correlationId, ...(mapped.retryAfterMs === undefined ? {} : { retryAfterMs: mapped.retryAfterMs }) });
     }
   }
 
@@ -511,8 +538,12 @@ function safeRuntimeFailure(error: unknown): string {
 
 function proxyRuntime(current: () => WorkRuntimeAdapter): WorkRuntimeAdapter {
   return {
+    resolveImageIdentity: (reference) => current().resolveImageIdentity?.(reference)
+      ?? Promise.reject(new Error("runtime cannot resolve an immutable image identity")),
     prepare: (work, configuration) => current().prepare(work, configuration), start: (work, generation, configuration) => current().start(work, generation, configuration),
     inspect: (workId) => current().inspect(workId), drain: (workId, timeout) => current().drain(workId, timeout),
+    prepareConfigurationChange: (workId) => current().prepareConfigurationChange?.(workId)
+      ?? Promise.reject(new Error("runtime cannot prepare configuration replacement")),
     stop: (workId, timeout) => current().stop(workId, timeout), remove: (workId) => current().remove(workId),
     listManagedInstances: () => current().listManagedInstances?.() ?? Promise.resolve([]),
   };
@@ -575,7 +606,7 @@ function defaultWorkConfiguration(profile: RuntimeProfile): WorkConfig {
 }
 
 function publicWorkConfig(configuration: WorkConfig & { revision?: unknown }): WorkConfig {
-  const { revision: _legacyRevision, ...value } = configuration;
+  const { revision: _internalRevision, ...value } = configuration;
   return value;
 }
 

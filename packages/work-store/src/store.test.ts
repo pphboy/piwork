@@ -131,7 +131,7 @@ test("event retention publishes an earliest cursor while final Run state remains
   }
 });
 
-test("legacy databases migrate without losing Session or Run records", async () => {
+test("older structural schemas upgrade without losing Session or Run records", async () => {
   const fixture = await createFixture();
   let store = WorkStore.open(fixture.databasePath);
   try {

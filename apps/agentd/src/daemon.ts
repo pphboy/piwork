@@ -12,7 +12,18 @@ export interface AgentReadiness {
   readonly draining: boolean;
   readonly modelCredentialStatus: "available" | "missing" | "invalid";
   readonly unavailableMcpServerIds: readonly string[];
-  readonly loadedSkillDigests: readonly string[];
+  readonly contextContractVersion: number;
+  readonly contextIdentity: string;
+  readonly initializationComplete: boolean;
+  readonly loadedSkills: readonly {
+    readonly name: string;
+    readonly identity: string;
+    readonly loaded: boolean;
+    readonly modelVisible: boolean;
+    readonly visibilityReason: "" | "model-invocation-disabled" | "read-tools-disabled";
+  }[];
+  readonly resolvedTools: readonly string[];
+  readonly activeRunCount: number;
 }
 
 export class RuntimeIdentityError extends Error {
@@ -29,19 +40,34 @@ export class AgentDaemonControl {
   private waiters: Array<() => void> = [];
   private modelCredentialStatus: AgentReadiness["modelCredentialStatus"] = "missing";
   private unavailableMcpServerIds: string[] = [];
-  private loadedSkillDigests: string[] = [];
+  private contextContractVersion = 0;
+  private contextIdentity = "";
+  private initializationComplete = false;
+  private loadedSkills: AgentReadiness["loadedSkills"] = [];
+  private resolvedTools: string[] = [];
 
   constructor(readonly identity: RuntimeIdentity) {}
 
   configure(status: {
     readonly modelCredentialStatus: AgentReadiness["modelCredentialStatus"];
     readonly unavailableMcpServerIds?: readonly string[];
-    readonly loadedSkillDigests?: readonly string[];
+    readonly contextIdentity: string;
+    readonly loadedSkills: AgentReadiness["loadedSkills"];
+    readonly resolvedTools: readonly string[];
+    readonly initializationComplete: boolean;
+    readonly initializationOnly?: boolean;
   }): void {
+    if (!status.initializationComplete || status.contextIdentity === "" || status.loadedSkills.some((skill) => !skill.loaded)) {
+      throw new Error("agent context initialization is incomplete");
+    }
     this.modelCredentialStatus = status.modelCredentialStatus;
     this.unavailableMcpServerIds = [...(status.unavailableMcpServerIds ?? [])];
-    this.loadedSkillDigests = [...(status.loadedSkillDigests ?? [])];
-    this.acceptingRuns = status.modelCredentialStatus === "available" && !this.draining;
+    this.contextContractVersion = 1;
+    this.contextIdentity = status.contextIdentity;
+    this.initializationComplete = status.initializationComplete;
+    this.loadedSkills = [...status.loadedSkills];
+    this.resolvedTools = [...status.resolvedTools];
+    this.acceptingRuns = status.modelCredentialStatus === "available" && this.initializationComplete && !status.initializationOnly && !this.draining;
   }
 
   verifyIdentity(identity: RuntimeIdentity): void {
@@ -59,7 +85,12 @@ export class AgentDaemonControl {
       draining: this.draining,
       modelCredentialStatus: this.modelCredentialStatus,
       unavailableMcpServerIds: this.unavailableMcpServerIds,
-      loadedSkillDigests: this.loadedSkillDigests,
+      contextContractVersion: this.contextContractVersion,
+      contextIdentity: this.contextIdentity,
+      initializationComplete: this.initializationComplete,
+      loadedSkills: this.loadedSkills,
+      resolvedTools: this.resolvedTools,
+      activeRunCount: this.activeRuns,
     };
   }
 
@@ -84,5 +115,12 @@ export class AgentDaemonControl {
     this.acceptingRuns = false;
     if (this.activeRuns === 0) return;
     await new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+
+  prepareConfigurationChange(): { readonly prepared: boolean; readonly busy: boolean; readonly activeRunCount: number } {
+    if (this.activeRuns > 0) return { prepared: false, busy: true, activeRunCount: this.activeRuns };
+    this.draining = true;
+    this.acceptingRuns = false;
+    return { prepared: true, busy: false, activeRunCount: 0 };
   }
 }

@@ -14,7 +14,7 @@ export const VOLUME_KIND_LABEL = "piwork.volume_kind";
 export type DockerResourceKind = "agent" | "service";
 
 export interface DockerCommandRunner {
-  run(args: readonly string[]): Promise<string>;
+  run(args: readonly string[], timeoutMs?: number): Promise<string>;
 }
 
 export interface DockerContainerSpec {
@@ -68,6 +68,11 @@ export interface ContainerInspection {
   readonly user?: string;
   readonly mounts?: readonly { readonly type: string; readonly source: string; readonly destination: string; readonly readOnly: boolean }[];
   readonly networkAddresses?: Readonly<Record<string, string>>;
+}
+
+export interface ContainerLogCollection {
+  readonly text: string;
+  readonly truncated: boolean;
 }
 
 export interface EnsuredWorkNetwork {
@@ -335,9 +340,33 @@ export class DockerRuntime {
     return this.inspectExpected(found, workId, kind, logicalId);
   }
 
-  async inspectContainer(workId: string, kind: DockerResourceKind, logicalId: string): Promise<ContainerInspection> {
+  async inspectContainer(workId: string, kind: DockerResourceKind, logicalId: string, timeoutMs?: number): Promise<ContainerInspection> {
+    const found = await this.findOne(workId, kind, logicalId, timeoutMs);
+    return found === undefined ? { exists: false } : this.inspectExpected(found, workId, kind, logicalId, timeoutMs);
+  }
+
+  /**
+   * Reads only logs from the exact currently-owned container identity.  The
+   * caller receives a bounded tail so an agent failure cannot exhaust Core.
+   */
+  async collectContainerLogs(
+    workId: string,
+    kind: DockerResourceKind,
+    logicalId: string,
+    tail = 200,
+    expectedContainerId?: string,
+  ): Promise<ContainerLogCollection> {
     const found = await this.findOne(workId, kind, logicalId);
-    return found === undefined ? { exists: false } : this.inspectExpected(found, workId, kind, logicalId);
+    if (found === undefined) return { text: "", truncated: false };
+    if (expectedContainerId !== undefined && !sameContainerId(found, expectedContainerId)) {
+      throw new Error("Docker container identity changed before log collection");
+    }
+    const immutableId = expectedContainerId ?? found;
+    await this.inspectExpected(immutableId, workId, kind, logicalId);
+    const output = await this.run(["container", "logs", "--tail", String(Math.min(Math.max(tail, 1), 200)), immutableId], 2_000);
+    const bytes = Buffer.from(output, "utf8");
+    if (bytes.length <= 64 * 1024) return { text: output, truncated: false };
+    return { text: bytes.subarray(bytes.length - 64 * 1024).toString("utf8"), truncated: true };
   }
 
   async stopContainer(
@@ -388,13 +417,13 @@ export class DockerRuntime {
     };
   }
 
-  private async findOne(workId: string, kind: DockerResourceKind, logicalId: string): Promise<string | undefined> {
-    const found = await this.find(workId, kind, logicalId);
+  private async findOne(workId: string, kind: DockerResourceKind, logicalId: string, timeoutMs?: number): Promise<string | undefined> {
+    const found = await this.find(workId, kind, logicalId, timeoutMs);
     if (found.length > 1) throw new Error(`multiple containers claim logical identity ${logicalId}`);
     return found[0];
   }
 
-  private async find(workId: string, kind: DockerResourceKind, logicalId: string): Promise<string[]> {
+  private async find(workId: string, kind: DockerResourceKind, logicalId: string, timeoutMs?: number): Promise<string[]> {
     const output = await this.run([
       "container", "ls", "--all", "--quiet",
       "--filter", `label=piwork.installation_id=${this.installationId}`,
@@ -402,7 +431,7 @@ export class DockerRuntime {
       "--filter", `label=${WORK_LABEL}=${workId}`,
       "--filter", `label=${RESOURCE_KIND_LABEL}=${kind}`,
       "--filter", `label=${LOGICAL_ID_LABEL}=${logicalId}`,
-    ]);
+    ], timeoutMs);
     return output.split("\n").map((line) => line.trim()).filter(Boolean);
   }
 
@@ -508,8 +537,9 @@ export class DockerRuntime {
     workId: string,
     kind: DockerResourceKind,
     logicalId: string,
+    timeoutMs?: number,
   ): Promise<ContainerInspection> {
-    const inspection = await this.inspectRaw(containerId);
+    const inspection = await this.inspectRaw(containerId, timeoutMs);
     this.assertManagedIdentity(inspection, workId, kind, logicalId);
     return this.toContainerInspection(inspection);
   }
@@ -541,24 +571,24 @@ export class DockerRuntime {
       exitCode: inspection.State.ExitCode,
       specHash: inspection.Config.Labels?.[SPEC_HASH_LABEL],
       labels: inspection.Config.Labels ?? {},
-      image: inspection.Config.Image,
+      image: inspection.Image,
       user: inspection.Config.User,
       mounts: (inspection.Mounts ?? []).map((mount) => ({ type: mount.Type, source: mount.Source, destination: mount.Destination, readOnly: !mount.RW })),
       networkAddresses: Object.fromEntries(Object.entries(inspection.NetworkSettings?.Networks ?? {}).map(([name, network]) => [name, network.IPAddress])),
     };
   }
 
-  private async inspectRaw(containerId: string): Promise<RawContainerInspection> {
-    const output = await this.run(["container", "inspect", containerId]);
+  private async inspectRaw(containerId: string, timeoutMs?: number): Promise<RawContainerInspection> {
+    const output = await this.run(["container", "inspect", containerId], timeoutMs);
     const records = JSON.parse(output) as RawContainerInspection[];
     const inspection = records[0];
     if (inspection === undefined) throw new Error(`Docker returned no inspection result for ${containerId}`);
     return inspection;
   }
 
-  private async run(args: readonly string[]): Promise<string> {
+  private async run(args: readonly string[], timeoutMs?: number): Promise<string> {
     try {
-      return await this.runner.run(args);
+      return await this.runner.run(args, timeoutMs);
     } catch (error) {
       if (!(error instanceof DockerRuntimeError)) throw error;
       const mapped = mapDockerError(error);
@@ -569,6 +599,7 @@ export class DockerRuntime {
 
 interface RawContainerInspection {
   readonly Id: string;
+  readonly Image: string;
   readonly Name: string;
   readonly Config: { readonly Labels?: Readonly<Record<string, string>>; readonly Image?: string; readonly User?: string };
   readonly State: { readonly Running: boolean; readonly Status: string; readonly ExitCode: number };
@@ -588,10 +619,10 @@ interface RawVolumeInspection {
 }
 
 class DockerCliRunner implements DockerCommandRunner {
-  run(args: readonly string[]): Promise<string> {
+  run(args: readonly string[], timeoutMs?: number): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile("docker", [...args], { encoding: "utf8", maxBuffer: 16 * 1_024 * 1_024 }, (error, stdout, stderr) => {
-        if (error === null) resolve(stdout);
+      execFile("docker", [...args], { encoding: "utf8", maxBuffer: 16 * 1_024 * 1_024, ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }) }, (error, stdout, stderr) => {
+        if (error === null) resolve(args[0] === "container" && args[1] === "logs" ? `${stdout}${stderr}` : stdout);
         else reject(new DockerRuntimeError(
           `docker ${args.slice(0, 2).join(" ")} failed`,
           args,
@@ -601,6 +632,10 @@ class DockerCliRunner implements DockerCommandRunner {
       });
     });
   }
+}
+
+function sameContainerId(left: string, right: string): boolean {
+  return left === right || left.startsWith(right) || right.startsWith(left);
 }
 
 function hashSpec(spec: DockerContainerSpec): string {

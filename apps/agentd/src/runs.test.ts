@@ -143,7 +143,10 @@ class AbortSettlingExecutor implements RunExecutor {
 
 function readyManager(store: WorkStore, executor: RunExecutor): RunManager {
   const daemon = new AgentDaemonControl({ workId: "fixture", generation: 1, instanceId: "instance" });
-  daemon.configure({ modelCredentialStatus: "available" });
+  daemon.configure({
+    modelCredentialStatus: "available", contextIdentity: "context-fixture",
+    loadedSkills: [], resolvedTools: ["read"], initializationComplete: true,
+  });
   return new RunManager(store, daemon, executor, () => new Date(NOW));
 }
 

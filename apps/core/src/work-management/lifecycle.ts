@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { WorkConfig } from "@piwork/contracts";
+import type { OperationDiagnostics, PublicOperation, WorkConfig } from "@piwork/contracts";
 import { CoreStore, type OperationRecord, type WorkConfigurationState, type WorkContextSnapshotInput, type WorkRecord } from "@piwork/core-store";
 import { authorizeWorkResource, filterVisibleResources, type UserPrincipal } from "../work-access/policy.js";
-import { WorkContextStore } from "../configuration/work-context.js";
+import { WorkContextError, WorkContextStore } from "../configuration/work-context.js";
+import { diagnosticFromError, emitDiagnostic, errorEnvelope, operationEnvelope, operationWithStage, publicOperation, safeDiagnostic, type JsonLineLogger } from "./diagnostics.js";
 
 export interface WorkRuntimeState {
   readonly exists: boolean;
@@ -17,6 +18,7 @@ export interface WorkRuntimeAdapter {
   prepare(work: WorkRecord, configuration?: ResolvedWorkRuntimeConfiguration): Promise<void>;
   start(work: WorkRecord, generation: number, configuration?: ResolvedWorkRuntimeConfiguration): Promise<{ readonly instanceId: string; readonly generation: number }>;
   inspect(workId: string): Promise<WorkRuntimeState>;
+  prepareConfigurationChange?(workId: string): Promise<{ readonly prepared: boolean; readonly busy: boolean; readonly activeRunCount: number }>;
   drain(workId: string, timeoutMs: number): Promise<void>;
   stop(workId: string, timeoutMs: number): Promise<void>;
   remove(workId: string): Promise<void>;
@@ -26,8 +28,12 @@ export interface WorkRuntimeAdapter {
 export interface ResolvedWorkRuntimeConfiguration {
   readonly workConfig: WorkConfig;
   readonly runtimeProfileJson: string;
-  readonly contextIdentity?: string;
-  readonly contextDirectory?: string;
+  readonly contextIdentity: string;
+  readonly contextDirectory: string;
+  readonly imageIdentity: string;
+  readonly skillIdentities: readonly { readonly name: string; readonly identity: string }[];
+  readonly initializationOnly?: boolean;
+  readonly correlationId?: string;
 }
 
 export interface WorkRecoveryReport {
@@ -53,6 +59,23 @@ export interface AcceptedWorkOperation {
   readonly reused: boolean;
 }
 
+class ApplyConfigurationFailure extends Error {
+  constructor(
+    readonly primary: unknown,
+    readonly rollback: OperationDiagnostics["rollback"],
+  ) {
+    super("Work configuration apply failed");
+    this.name = "ApplyConfigurationFailure";
+  }
+}
+
+class OperationSupersededError extends Error {
+  constructor() {
+    super("Work operation was superseded");
+    this.name = "OperationSupersededError";
+  }
+}
+
 export class WorkLifecycleService {
   private readonly queues = new Map<string, Promise<void>>();
   private shuttingDown = false;
@@ -65,6 +88,7 @@ export class WorkLifecycleService {
     private readonly stopTimeoutMs = 10_000,
     private readonly services: WorkServiceCoordinator = NO_SERVICES,
     private readonly contexts?: WorkContextStore,
+    private readonly diagnosticLogger?: JsonLineLogger,
   ) {}
 
   create(
@@ -77,11 +101,18 @@ export class WorkLifecycleService {
       readonly sourceRuntimeRevision?: number;
       readonly workId?: string;
       readonly snapshot?: WorkContextSnapshotInput;
+      readonly correlationId?: string;
     },
   ): AcceptedWorkOperation {
     this.assertAccepting();
     const workId = input.workId ?? `work-${randomUUID()}`;
-    const requestJson = stableJson({ name: input.name, configuration: input.configuration });
+    const publicRequestJson = stableJson({ name: input.name, configuration: input.configuration });
+    const requestJson = stableJson({
+      name: input.name,
+      configuration: input.configuration,
+      capturedSnapshotId: input.snapshot?.snapshotId ?? null,
+      capturedRevision: 1,
+    });
     let accepted;
     try {
       accepted = this.store.acceptMutation({
@@ -89,7 +120,7 @@ export class WorkLifecycleService {
         workScope: "new-work",
         operationKind: "create-work",
         idempotencyKey: input.idempotencyKey,
-        requestDigest: digest(requestJson),
+        requestDigest: digest(publicRequestJson),
         requestJson,
         targetVersion: 1,
         now: this.now().toISOString(),
@@ -113,6 +144,9 @@ export class WorkLifecycleService {
     }
     if (accepted.reused && input.snapshot !== undefined) this.contexts?.remove(workId, input.snapshot.snapshotId);
     this.store.attachOperationToWork(accepted.operationId, accepted.resourceId);
+    if (!accepted.reused) this.store.updateOperation(accepted.operationId, "pending", this.now().toISOString(), {
+      resultJson: operationEnvelope({ correlationId: input.correlationId ?? accepted.operationId }),
+    });
     this.enqueue(accepted.resourceId);
     return { workId: accepted.resourceId, operationId: accepted.operationId, reused: accepted.reused };
   }
@@ -129,12 +163,12 @@ export class WorkLifecycleService {
     return work!;
   }
 
-  operation(principal: UserPrincipal, operationId: string): OperationRecord {
+  operation(principal: UserPrincipal, operationId: string): PublicOperation {
     const operation = this.store.getOperation(operationId);
     if (operation === undefined || operation.workId === null) throw invisible();
     const work = this.store.getWork(operation.workId, true);
     authorizeWorkResource(principal, work === undefined ? undefined : { ...asOwnedWork(work), kind: "operation", id: operation.id }, "read-metadata");
-    return operation;
+    return publicOperation(operation);
   }
 
   start(principal: UserPrincipal, workId: string, idempotencyKey: string): AcceptedWorkOperation {
@@ -153,11 +187,13 @@ export class WorkLifecycleService {
     return this.mutateDesired(principal, workId, "delete-work", "deleted", idempotencyKey);
   }
 
-  async applyConfiguration(
+  applyConfiguration(
     principal: UserPrincipal,
     workId: string,
+    idempotencyKey: string,
     expectedRevision?: number,
-  ): Promise<WorkConfigurationState> {
+    correlationId?: string,
+  ): AcceptedWorkOperation {
     this.assertAccepting();
     const work = this.store.getWork(workId);
     authorizeWorkResource(principal, work === undefined ? undefined : asOwnedWork(work), "control");
@@ -166,43 +202,38 @@ export class WorkLifecycleService {
     // Capture the desired immutable context before queueing. Later edits are
     // allowed to commit while this snapshot is being prepared; activation is
     // fenced to this captured identity and therefore leaves pendingApply true.
-    const capturedContextId = state.desiredContextId;
     const capturedRevision = state.desiredRevision;
+    const capturedContextId = state.desiredContextId;
     if (expectedRevision !== undefined && expectedRevision !== capturedRevision) {
       const error = new Error(`Work ${workId} configuration revision conflict`);
       error.name = "ConfigurationRevisionConflictError";
       throw error;
     }
     const requestJson = stableJson({ capturedSnapshotId: capturedContextId, capturedRevision });
+    const targetVersion = work!.controlVersion + 1;
     const accepted = this.store.acceptMutation({
       principalId: principal.userId,
       workScope: workId,
       operationKind: "apply-work-configuration",
-      idempotencyKey: capturedContextId ?? `revision-${capturedRevision}`,
-      requestDigest: digest(requestJson),
+      idempotencyKey,
+      requestDigest: digest(stableJson({})),
       requestJson,
-      targetVersion: this.store.getWork(workId)!.controlVersion,
+      targetVersion,
       workId,
+      expectedWorkVersion: work!.controlVersion,
       now: this.now().toISOString(),
-    }, () => ({ resourceId: workId }));
-    const prior = this.queues.get(workId) ?? Promise.resolve();
-    const result = prior.catch(() => undefined).then(async () => {
-      this.store.updateOperation(accepted.operationId, "running", this.now().toISOString());
-      try {
-        const value = await this.applyConfigurationNow(workId, capturedRevision, capturedContextId);
-        this.store.updateOperation(accepted.operationId, "succeeded", this.now().toISOString(), { resultJson: JSON.stringify({ configuration: value }) });
-        return value;
-      } catch (error) {
-        this.store.updateOperation(accepted.operationId, "failed", this.now().toISOString(), { errorJson: JSON.stringify({ message: error instanceof Error ? error.message : String(error) }) });
-        throw error;
-      }
+    }, (tx) => {
+      const now = this.now().toISOString();
+      tx.run("UPDATE works SET control_version = control_version + 1, updated_at = ? WHERE id = ?", now, workId);
+      tx.run(`UPDATE operations SET state = 'superseded', updated_at = ?
+        WHERE work_id = ? AND state IN ('pending', 'running') AND target_version < ?`, now, workId, targetVersion);
+      return { resourceId: workId };
     });
-    let tracked!: Promise<void>;
-    tracked = result.then(() => undefined, () => undefined).finally(() => {
-      if (this.queues.get(workId) === tracked) this.queues.delete(workId);
+    if (!accepted.reused) this.store.updateOperation(accepted.operationId, "pending", this.now().toISOString(), {
+      resultJson: operationEnvelope({ correlationId: correlationId ?? accepted.operationId }),
     });
-    this.queues.set(workId, tracked);
-    return result;
+    this.enqueue(workId);
+    return { workId, operationId: accepted.operationId, reused: accepted.reused };
   }
 
   async recover(): Promise<WorkRecoveryReport> {
@@ -210,7 +241,31 @@ export class WorkLifecycleService {
     const managed = await this.runtime.listManagedInstances?.() ?? [];
     const orphanedInstances = managed.filter((instance) => !knownWorks.has(instance.workId));
     const adoptedWorkIds = managed.filter((instance) => knownWorks.has(instance.workId)).map((instance) => instance.workId);
+    const unfinishedWorkIds = new Set(this.store.listOperations(["pending", "running"])
+      .flatMap((operation) => operation.workId === null ? [] : [operation.workId]));
+    for (const work of this.store.listWorks(true)) {
+      if (work.desiredState === "running" && work.observedState === "stopped" && !unfinishedWorkIds.has(work.id)) {
+        this.mutateDesired(
+          { userId: work.ownerUserId, role: "user" },
+          work.id,
+          "recover-work-after-core-restart",
+          "running",
+          `core-recovery-${randomUUID()}`,
+          true,
+        );
+      }
+    }
     for (const operation of this.store.listOperations(["pending", "running"])) {
+      if (operation.state === "running") {
+        const interrupted = operationWithStage({
+          record: operation,
+          stage: "runtime-start",
+          outcome: "interrupted",
+          diagnostic: safeDiagnostic("WORK_OPERATION_FAILED", "runtime-start"),
+          timestamp: this.now().toISOString(),
+        });
+        this.updateOperationSafely(operation.id, "pending", { resultJson: interrupted.resultJson }, operation.id, operation.workId ?? undefined);
+      }
       if (operation.workId !== null) this.enqueue(operation.workId);
     }
     for (const work of this.store.listWorks(true)) this.enqueue(work.id);
@@ -218,9 +273,17 @@ export class WorkLifecycleService {
     return { adoptedWorkIds: [...new Set(adoptedWorkIds)], orphanedInstances };
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(stopManagedRuntimes = false): Promise<void> {
     this.shuttingDown = true;
     await this.waitForIdle();
+    if (!stopManagedRuntimes) return;
+    for (const work of this.store.listWorks(true)) {
+      if (work.desiredState === "deleted") continue;
+      try { await this.ensureStopped(work); }
+      catch (error) {
+        emitDiagnostic({ timestamp: this.now().toISOString(), level: "error", component: "core", stage: "rollback", outcome: "failed", correlationId: `shutdown-${work.id}`, code: "WORK_OPERATION_FAILED", message: "Managed Work shutdown failed.", workId: work.id });
+      }
+    }
   }
 
   async waitForIdle(): Promise<void> {
@@ -238,14 +301,23 @@ export class WorkLifecycleService {
     this.assertAccepting();
     const work = this.store.getWork(workId, desiredState === "deleted");
     authorizeWorkResource(principal, work === undefined ? undefined : asOwnedWork(work), "control");
-    const requestJson = stableJson({ desiredState, retry: forceVersion });
+    const captured = desiredState === "running" ? this.selectRetainedContext(workId) : null;
+    const publicRequestJson = stableJson({ desiredState, retry: forceVersion });
+    const requestJson = stableJson({
+      desiredState,
+      retry: forceVersion,
+      ...(captured === null ? {} : {
+        capturedSnapshotId: captured.snapshotId,
+        capturedRevision: captured.revision,
+      }),
+    });
     const targetVersion = work!.controlVersion + 1;
     const accepted = this.store.acceptMutation({
       principalId: principal.userId,
       workScope: workId,
       operationKind: kind,
       idempotencyKey,
-      requestDigest: digest(requestJson),
+      requestDigest: digest(publicRequestJson),
       requestJson,
       targetVersion,
       workId,
@@ -280,59 +352,173 @@ export class WorkLifecycleService {
       .sort((left, right) => left.targetVersion - right.targetVersion);
     const current = operations.at(-1);
     if (current === undefined) return;
+    const correlationId = publicOperation(current).correlationId;
     for (const stale of operations.slice(0, -1)) {
       this.store.updateOperation(stale.id, "superseded", this.now().toISOString());
     }
-    this.store.updateOperation(current.id, "running", this.now().toISOString());
+    if (!this.updateOperationSafely(current.id, "running", {}, current.id, workId)) return;
+    emitDiagnostic({ timestamp: this.now().toISOString(), level: "info", component: "core", stage: "runtime-start", outcome: "started", correlationId, code: "WORK_OPERATION_FAILED", message: "Work operation started.", workId, operationId: current.id });
     try {
       if (current.kind === "apply-work-configuration") {
         const request = JSON.parse(current.requestJson) as { capturedSnapshotId?: unknown; capturedRevision?: unknown };
         const snapshotId = typeof request.capturedSnapshotId === "string" ? request.capturedSnapshotId : null;
         const revision = Number(request.capturedRevision);
-        const result = await this.applyConfigurationNow(workId, Number.isSafeInteger(revision) ? revision : 0, snapshotId);
-        this.store.updateOperation(current.id, "succeeded", this.now().toISOString(), { resultJson: JSON.stringify({ configuration: result }) });
+        const result = await this.applyConfigurationNow(workId, Number.isSafeInteger(revision) ? revision : 0, snapshotId, current.targetVersion, current.id, correlationId);
+        const persisted = operationWithStage({
+          record: this.store.getOperation(current.id) ?? current,
+          stage: "activation",
+          outcome: "succeeded",
+          diagnostic: safeDiagnostic("WORK_OPERATION_FAILED", "activation"),
+          timestamp: this.now().toISOString(),
+          result: { configuration: publicConfiguration(result) },
+        });
+        this.store.completeWorkContextActivation({
+          workId,
+          snapshotId: snapshotId!,
+          operationId: current.id,
+          targetVersion: current.targetVersion,
+          observedState: this.store.getWork(workId)!.desiredState === "running" ? "ready" : "stopped",
+          resultJson: persisted.resultJson,
+          now: this.now().toISOString(),
+        });
+        emitDiagnostic({ timestamp: this.now().toISOString(), level: "info", component: "core", stage: "activation", outcome: "succeeded", correlationId, code: "WORK_OPERATION_FAILED", message: "Work configuration was activated.", workId, operationId: current.id });
         return;
       }
       const latest = this.store.getWork(workId, true)!;
-      if (latest.desiredState === "running") await this.ensureRunning(latest);
+      if (latest.desiredState === "running") {
+        const request = JSON.parse(current.requestJson) as { capturedSnapshotId?: unknown };
+        const capturedContextId = typeof request.capturedSnapshotId === "string" ? request.capturedSnapshotId : null;
+        await this.ensureRunning(latest, capturedContextId, current.id, correlationId);
+      }
       else if (latest.desiredState === "stopped") await this.ensureStopped(latest);
       else await this.ensureDeleted(latest);
       const after = this.store.getWork(workId, true)!;
       if (after.controlVersion === current.targetVersion || current.kind === "create-work") {
-        this.store.updateOperation(current.id, "succeeded", this.now().toISOString(), {
-          resultJson: JSON.stringify({ observedState: after.observedState }),
+        const persisted = operationWithStage({
+          record: this.store.getOperation(current.id) ?? current,
+          stage: "readiness",
+          outcome: "succeeded",
+          diagnostic: safeDiagnostic("WORK_OPERATION_FAILED", "readiness"),
+          timestamp: this.now().toISOString(),
+          result: { observedState: after.observedState },
         });
+        const saved = this.updateOperationSafely(current.id, "succeeded", { resultJson: persisted.resultJson }, current.id, workId);
+        if (saved) emitDiagnostic({ timestamp: this.now().toISOString(), level: "info", component: "core", stage: "readiness", outcome: "succeeded", correlationId, code: "WORK_OPERATION_FAILED", message: "Work runtime reached the requested state.", workId, operationId: current.id });
       } else {
-        this.store.updateOperation(current.id, "superseded", this.now().toISOString());
+        this.updateOperationSafely(current.id, "superseded", {}, current.id, workId);
         this.enqueue(workId);
       }
     } catch (error) {
-      this.store.updateWorkObservedState(workId, "failed", this.now().toISOString());
-      this.store.updateOperation(current.id, "failed", this.now().toISOString(), {
-        errorJson: JSON.stringify({ message: error instanceof Error ? error.message : String(error) }),
+      if (error instanceof OperationSupersededError || (error as { name?: unknown }).name === "OperationSupersededError"
+        || this.store.getOperation(current.id)?.state === "superseded") {
+        this.enqueue(workId);
+        return;
+      }
+      const primary = error instanceof ApplyConfigurationFailure ? error.primary : error;
+      if ((primary as { code?: unknown }).code !== "WORK_BUSY"
+        && !(error instanceof ApplyConfigurationFailure && error.rollback.state === "succeeded")) {
+        this.store.updateWorkObservedState(workId, "failed", this.now().toISOString());
+      }
+      const diagnostic = diagnosticFromError(primary, "runtime-start");
+      const diagnosticCollection = (primary as { diagnosticCollection?: OperationDiagnostics["diagnosticCollection"] }).diagnosticCollection;
+      const persisted = operationWithStage({
+        record: this.store.getOperation(current.id) ?? current,
+        stage: diagnostic.stage,
+        outcome: "failed",
+        diagnostic,
+        timestamp: this.now().toISOString(),
+        ...(error instanceof ApplyConfigurationFailure ? { rollback: error.rollback } : {}),
+        ...(diagnosticCollection === undefined ? {} : { diagnosticCollection }),
       });
+      this.updateOperationSafely(current.id, "failed", {
+        resultJson: persisted.resultJson,
+        errorJson: errorEnvelope(diagnostic),
+      }, current.id, workId);
+      emitDiagnostic({ timestamp: this.now().toISOString(), level: "error", component: "core", stage: diagnostic.stage, outcome: "failed", correlationId, code: diagnostic.code, message: diagnostic.message, workId, operationId: current.id, ...(diagnostic.skillName === undefined ? {} : { skillName: diagnostic.skillName }) });
     }
   }
 
-  private async ensureRunning(work: WorkRecord): Promise<void> {
+  private updateOperationSafely(
+    operationId: string,
+    state: OperationRecord["state"],
+    output: { readonly resultJson?: string | null; readonly errorJson?: string | null },
+    correlationId: string,
+    workId?: string,
+  ): boolean {
+    try {
+      this.store.updateOperation(operationId, state, this.now().toISOString(), output);
+      return true;
+    } catch {
+      emitDiagnostic({
+        timestamp: this.now().toISOString(), level: "error", component: "core",
+        stage: "runtime-start", outcome: "failed", correlationId,
+        code: "DIAGNOSTIC_PERSIST_FAILED", message: "Operation diagnostic persistence failed.",
+        ...(workId === undefined ? {} : { workId }), operationId,
+      }, this.diagnosticLogger);
+      return false;
+    }
+  }
+
+  private recordOperationStage(operationId: string, workId: string, stage: Parameters<typeof safeDiagnostic>[1]): void {
+    const record = this.store.getOperation(operationId);
+    if (record === undefined || record.state !== "running") return;
+    const diagnostic = safeDiagnostic("WORK_OPERATION_FAILED", stage);
+    const persisted = operationWithStage({
+      record, stage, outcome: "succeeded", diagnostic, timestamp: this.now().toISOString(),
+    });
+    if (this.updateOperationSafely(operationId, "running", { resultJson: persisted.resultJson }, operationId, workId)) {
+      emitDiagnostic({
+        timestamp: this.now().toISOString(), level: "info", component: "core", stage, outcome: "succeeded",
+        correlationId: publicOperation(record).correlationId, code: diagnostic.code, message: diagnostic.message, workId, operationId,
+      }, this.diagnosticLogger);
+    }
+  }
+
+  private async runOperationStage<T>(
+    operationId: string,
+    workId: string,
+    stage: Parameters<typeof safeDiagnostic>[1],
+    failureCode: "RUNTIME_PREPARE_FAILED" | "RUNTIME_START_FAILED",
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const correlationId = publicOperation(this.store.getOperation(operationId)!).correlationId;
+    emitDiagnostic({
+      timestamp: this.now().toISOString(), level: "info", component: "core", stage, outcome: "started",
+      correlationId, code: failureCode, message: "Work operation stage started.", workId, operationId,
+    }, this.diagnosticLogger);
+    try {
+      const result = await action();
+      this.recordOperationStage(operationId, workId, stage);
+      return result;
+    } catch (error) {
+      const item = error as { code?: unknown; stage?: unknown };
+      if (typeof item.code !== "string") item.code = failureCode;
+      if (typeof item.stage !== "string") item.stage = stage;
+      throw error;
+    }
+  }
+
+  private async ensureRunning(work: WorkRecord, capturedContextId: string | null, operationId: string, correlationId: string): Promise<void> {
     this.store.updateWorkObservedState(work.id, "starting", this.now().toISOString());
     const actual = await this.runtime.inspect(work.id);
     const state = this.store.getWorkConfiguration(work.id);
-    const runtimeRevision = work.activeRevision ?? work.desiredRevision;
-    const contextId = state?.activeContextId ?? state?.desiredContextId;
-    const configuration = contextId === null || contextId === undefined
-      ? this.resolveRuntimeConfiguration(work.id, runtimeRevision)
-      : this.resolveContextRuntimeConfiguration(work.id, contextId);
+    const contextId = state?.activeContextId ?? capturedContextId;
+    if (contextId === null || contextId === undefined) throw new WorkContextError("CONTEXT_NOT_FOUND");
+    const contextRecord = this.store.getWorkContextSnapshot(work.id, contextId);
+    if (contextRecord === undefined || contextRecord.internalRevision === null) throw new WorkContextError("CONTEXT_NOT_FOUND");
+    const runtimeRevision = contextRecord.internalRevision;
+    const configuration = { ...this.resolveContextRuntimeConfiguration(work.id, contextId), correlationId };
+    this.recordOperationStage(operationId, work.id, "context-validate");
     if (!actual.exists) {
-      await this.runtime.prepare(work, configuration);
+      await this.runOperationStage(operationId, work.id, "runtime-prepare", "RUNTIME_PREPARE_FAILED", () => this.runtime.prepare(work, configuration));
       await this.services.prepareEnabledServices(work);
       this.store.ensureRuntimeGeneration(work.id, work.controlVersion, this.now().toISOString());
-      const started = await this.runtime.start(work, work.controlVersion, configuration);
+      const started = await this.runOperationStage(operationId, work.id, "runtime-start", "RUNTIME_START_FAILED", () => this.runtime.start(work, work.controlVersion, configuration));
       this.store.updateRuntimeGeneration(work.id, work.controlVersion, "starting", this.now().toISOString(), {
         instanceId: started.instanceId,
       });
     } else if (!actual.running) {
-      const started = await this.runtime.start(work, work.controlVersion, configuration);
+      const started = await this.runOperationStage(operationId, work.id, "runtime-start", "RUNTIME_START_FAILED", () => this.runtime.start(work, work.controlVersion, configuration));
       const startedGeneration = started.generation;
       this.store.ensureRuntimeGeneration(work.id, startedGeneration, this.now().toISOString());
       this.store.updateRuntimeGeneration(work.id, startedGeneration, "starting", this.now().toISOString(), {
@@ -348,37 +534,58 @@ export class WorkLifecycleService {
     }
     const ready = await this.runtime.inspect(work.id);
     if (!ready.exists || !ready.running || !ready.ready) throw new Error("daemon did not become ready");
+    this.recordOperationStage(operationId, work.id, "skill-validate");
+    this.recordOperationStage(operationId, work.id, "skill-load");
+    this.recordOperationStage(operationId, work.id, "readiness");
     const readyGeneration = ready.generation ?? work.controlVersion;
     this.store.updateRuntimeGeneration(work.id, readyGeneration, "ready", this.now().toISOString(), {
       instanceId: ready.instanceId,
       readySince: this.now().toISOString(),
     });
+    if (state?.activeContextId === null) {
+      this.store.activateWorkContext(work.id, contextId, this.now().toISOString());
+      this.recordOperationStage(operationId, work.id, "activation");
+    }
     this.store.updateWorkObservedState(work.id, "ready", this.now().toISOString(), runtimeRevision);
   }
 
-  private async applyConfigurationNow(workId: string, expectedRevision: number, capturedContextId: string | null): Promise<WorkConfigurationState> {
+  private async applyConfigurationNow(workId: string, expectedRevision: number, capturedContextId: string | null, targetVersion: number, operationId: string, correlationId: string): Promise<WorkConfigurationState> {
     const state = this.store.getWorkConfiguration(workId);
     if (state === undefined) throw invisible();
-    if (capturedContextId !== null && state.activeContextId === capturedContextId) return state;
     const work = this.store.getWork(workId)!;
+    this.assertCurrentTarget(workId, targetVersion);
+    if (capturedContextId !== null && state.activeContextId === capturedContextId) return state;
     const candidate = capturedContextId === null
-      ? this.resolveRuntimeConfiguration(workId, expectedRevision)
-      : this.resolveContextRuntimeConfiguration(workId, capturedContextId);
-    if (candidate === undefined) throw new Error("Work runtime profile snapshot is missing");
+      ? undefined
+      : { ...this.resolveContextRuntimeConfiguration(workId, capturedContextId), correlationId };
+    if (candidate === undefined) throw new WorkContextError("CONTEXT_NOT_FOUND");
+    this.recordOperationStage(operationId, workId, "context-validate");
+    const candidateContextId = capturedContextId;
+    if (candidateContextId === null) throw new Error("Work runtime context is unavailable");
 
     // Image/profile preparation is deliberately completed before the running
     // instance is touched. Most invalid applies therefore leave active Runs
     // and the old active revision unchanged.
-    await this.runtime.prepare(work, candidate);
+    await this.runOperationStage(operationId, workId, "runtime-prepare", "RUNTIME_PREPARE_FAILED", () => this.runtime.prepare(work, candidate));
     if (work.desiredState !== "running") {
-      return capturedContextId === null
-        ? this.store.activateWorkConfiguration(workId, expectedRevision, this.now().toISOString(), true)
-        : this.store.activateWorkContext(workId, capturedContextId, this.now().toISOString());
+      const validation = { ...candidate, initializationOnly: true };
+      const generation = this.nextRuntimeGeneration(workId);
+      this.store.ensureRuntimeGeneration(workId, generation, this.now().toISOString());
+      await this.runOperationStage(operationId, workId, "runtime-start", "RUNTIME_START_FAILED", () => this.runtime.start(work, generation, validation));
+      this.recordOperationStage(operationId, workId, "skill-validate");
+      this.recordOperationStage(operationId, workId, "skill-load");
+      this.recordOperationStage(operationId, workId, "readiness");
+      await this.runtime.stop(workId, this.stopTimeoutMs);
+      const stopped = await this.runtime.inspect(workId);
+      if (stopped.running) throw new Error("runtime could not confirm initialization shutdown");
+      await this.runtime.remove(workId);
+      this.assertCurrentTarget(workId, targetVersion);
+      return projectedActivation(this.store.getWorkConfiguration(workId)!, candidateContextId, expectedRevision, candidate.workConfig);
     }
 
-    const previous = state.activeContextId !== null
-      ? this.resolveContextRuntimeConfiguration(workId, state.activeContextId)
-      : state.activeRevision === null ? undefined : this.resolveRuntimeConfiguration(workId, state.activeRevision);
+    const previous = state.activeContextId === null
+      ? undefined
+      : { ...this.resolveContextRuntimeConfiguration(workId, state.activeContextId), correlationId };
     const actual = await this.runtime.inspect(workId);
     const generation = this.nextRuntimeGeneration(workId);
     try {
@@ -386,7 +593,15 @@ export class WorkLifecycleService {
         if (actual.generation !== undefined && this.store.getRuntimeGeneration(workId, actual.generation) !== undefined) {
           this.store.updateRuntimeGeneration(workId, actual.generation, "draining", this.now().toISOString());
         }
-        await this.runtime.drain(workId, this.drainTimeoutMs);
+        if (this.runtime.prepareConfigurationChange !== undefined) {
+          const gate = await this.runtime.prepareConfigurationChange(workId);
+          if (!gate.prepared || gate.busy) {
+            throw Object.assign(new Error("Work has an active Run"), { name: "WorkBusyError", code: "WORK_BUSY" });
+          }
+        } else {
+          await this.runtime.drain(workId, this.drainTimeoutMs);
+        }
+        this.store.updateWorkObservedState(workId, "starting", this.now().toISOString());
       }
       if (actual.exists) {
         if (actual.running) await this.runtime.stop(workId, this.stopTimeoutMs);
@@ -397,21 +612,38 @@ export class WorkLifecycleService {
         }
         await this.runtime.remove(workId);
       }
-      await this.runtime.prepare(work, candidate);
+      await this.runOperationStage(operationId, workId, "runtime-prepare", "RUNTIME_PREPARE_FAILED", () => this.runtime.prepare(work, candidate));
       this.store.ensureRuntimeGeneration(workId, generation, this.now().toISOString());
-      const started = await this.runtime.start(work, generation, candidate);
+      const started = await this.runOperationStage(operationId, workId, "runtime-start", "RUNTIME_START_FAILED", () => this.runtime.start(work, generation, candidate));
+      this.recordOperationStage(operationId, workId, "skill-validate");
+      this.recordOperationStage(operationId, workId, "skill-load");
+      this.recordOperationStage(operationId, workId, "readiness");
       const ready = await this.runtime.inspect(workId);
       if (!ready.exists || !ready.running || !ready.ready) throw new Error("updated Work runtime did not become ready");
       this.store.updateRuntimeGeneration(workId, generation, "ready", this.now().toISOString(), {
         instanceId: started.instanceId,
         readySince: this.now().toISOString(),
       });
-      const activated = capturedContextId === null
-        ? this.store.activateWorkConfiguration(workId, expectedRevision, this.now().toISOString(), true)
-        : this.store.activateWorkContext(workId, capturedContextId, this.now().toISOString());
-      this.store.updateWorkObservedState(workId, "ready", this.now().toISOString(), expectedRevision);
-      return activated;
+      try {
+        this.assertCurrentTarget(workId, targetVersion);
+      } catch (error) {
+        await this.runtime.stop(workId, this.stopTimeoutMs).catch(() => undefined);
+        await this.runtime.remove(workId).catch(() => undefined);
+        throw error;
+      }
+      return projectedActivation(this.store.getWorkConfiguration(workId)!, candidateContextId, expectedRevision, candidate.workConfig);
     } catch (error) {
+      let rollback: OperationDiagnostics["rollback"] = { state: "not-required" };
+      if (error instanceof OperationSupersededError) throw error;
+      if ((error as { code?: unknown }).code === "WORK_BUSY") {
+        if (actual.generation !== undefined && this.store.getRuntimeGeneration(workId, actual.generation) !== undefined) {
+          this.store.updateRuntimeGeneration(workId, actual.generation, "ready", this.now().toISOString(), {
+            instanceId: actual.instanceId,
+            readySince: this.now().toISOString(),
+          });
+        }
+        throw new ApplyConfigurationFailure(error, rollback);
+      }
       if (this.store.getRuntimeGeneration(workId, generation) !== undefined) {
         this.store.updateRuntimeGeneration(workId, generation, "failed", this.now().toISOString());
       }
@@ -431,11 +663,14 @@ export class WorkLifecycleService {
             readySince: this.now().toISOString(),
           });
           this.store.updateWorkObservedState(workId, "ready", this.now().toISOString(), state.activeRevision ?? undefined);
+          rollback = { state: "succeeded" };
+          this.recordOperationStage(operationId, workId, "rollback");
         } catch {
+          rollback = { state: "failed", error: safeDiagnostic("ROLLBACK_FAILED", "rollback") };
           this.store.updateWorkObservedState(workId, "failed", this.now().toISOString());
         }
       }
-      throw error;
+      throw new ApplyConfigurationFailure(error, rollback);
     }
   }
 
@@ -443,27 +678,44 @@ export class WorkLifecycleService {
     return this.store.nextRuntimeGeneration(workId);
   }
 
-  private resolveRuntimeConfiguration(workId: string, revision: number): ResolvedWorkRuntimeConfiguration | undefined {
-    const stored = this.store.getWorkConfigRevision(workId, revision);
-    if (stored === undefined || stored.runtimeProfileJson === null) return undefined;
-    return {
-      workConfig: JSON.parse(stored.configJson) as WorkConfig,
-      runtimeProfileJson: stored.runtimeProfileJson,
-    };
+  private assertCurrentTarget(workId: string, targetVersion: number): void {
+    const current = this.store.getWork(workId, true);
+    if (current === undefined || current.controlVersion !== targetVersion) throw new OperationSupersededError();
   }
 
-  private resolveContextRuntimeConfiguration(workId: string, snapshotId: string): ResolvedWorkRuntimeConfiguration | undefined {
+  private resolveContextRuntimeConfiguration(workId: string, snapshotId: string): ResolvedWorkRuntimeConfiguration {
     const snapshot = this.store.getWorkContextSnapshot(workId, snapshotId);
-    if (snapshot === undefined || snapshot.internalRevision === null) return undefined;
+    if (snapshot === undefined || snapshot.internalRevision === null) throw new WorkContextError("CONTEXT_NOT_FOUND");
     const stored = this.store.getWorkConfigRevision(workId, snapshot.internalRevision);
-    if (stored === undefined || stored.runtimeProfileJson === null) return undefined;
-    const context = this.contexts?.load(workId, snapshotId);
+    if (stored === undefined || stored.runtimeProfileJson === null) throw new WorkContextError("CONTEXT_NOT_FOUND");
+    if (this.contexts === undefined) throw new WorkContextError("CONTEXT_NOT_FOUND");
+    const context = this.contexts.load(workId, snapshotId);
+    if (snapshot.configurationJson !== stored.configJson
+      || snapshot.configurationJson !== JSON.stringify(context.configuration)
+      || snapshot.imageIdentity !== context.metadata.imageIdentity) {
+      throw new WorkContextError("CONTEXT_OWNERSHIP");
+    }
     return {
       workConfig: JSON.parse(snapshot.configurationJson) as WorkConfig,
       runtimeProfileJson: stored.runtimeProfileJson,
       contextIdentity: snapshotId,
-      ...(context === undefined ? {} : { contextDirectory: context.directory }),
+      contextDirectory: context.directory,
+      imageIdentity: snapshot.imageIdentity,
+      skillIdentities: context.metadata.skills,
     };
+  }
+
+  private selectRetainedContext(workId: string): { readonly snapshotId: string; readonly revision: number } | null {
+    const state = this.store.getWorkConfiguration(workId);
+    if (state?.activeContextId !== null && state?.activeContextId !== undefined) {
+      const active = this.store.getWorkContextSnapshot(workId, state.activeContextId);
+      return active?.internalRevision === null || active?.internalRevision === undefined
+        ? null
+        : { snapshotId: active.snapshotId, revision: active.internalRevision };
+    }
+    const initial = this.store.listWorkContextSnapshots()
+      .find((snapshot) => snapshot.workId === workId && snapshot.internalRevision === 1);
+    return initial === undefined ? null : { snapshotId: initial.snapshotId, revision: 1 };
   }
 
   private async ensureStopped(work: WorkRecord): Promise<void> {
@@ -518,4 +770,29 @@ function invisible(): Error {
   const error = new Error("resource was not found");
   error.name = "WorkNotFoundError";
   return error;
+}
+
+function publicConfiguration(state: WorkConfigurationState) {
+  return {
+    workId: state.workId,
+    active: state.activeConfigJson === null ? null : JSON.parse(state.activeConfigJson) as WorkConfig,
+    desired: JSON.parse(state.desiredConfigJson) as WorkConfig,
+    pendingApply: state.pendingRestart,
+    runtime: { state: "unavailable" as const, checkedAt: null, skills: [] },
+  };
+}
+
+function projectedActivation(
+  state: WorkConfigurationState,
+  snapshotId: string,
+  revision: number,
+  configuration: WorkConfig,
+): WorkConfigurationState {
+  return {
+    ...state,
+    activeRevision: revision,
+    activeConfigJson: JSON.stringify(configuration),
+    activeContextId: snapshotId,
+    pendingRestart: state.desiredContextId !== snapshotId,
+  };
 }

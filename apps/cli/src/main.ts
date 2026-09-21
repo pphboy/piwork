@@ -26,10 +26,10 @@ export const CLI_USAGE = `usage: piwork-cli [--core <url>] [--json] <command>
   work config show <workId>
   work config set <workId> --config <file>
   work config skills list <workId>
-  work config skills set <workId> [--skill <skill-name>]... [--no-skills]
+  work config skills set <workId> (--skill <skill-name>)... | --no-skills
   work config agents show <workId>
   work config agents set <workId> --file <path>
-  work config apply <workId>
+  work config apply <workId> [--idempotency-key <key>] [--wait]
   operation show <operationId>
   session create <workId>
   session list <workId>
@@ -133,12 +133,13 @@ async function workCommand(context: Context, args: readonly string[]): Promise<n
     const name = required(rest, "--name");
     const configPath = optional(rest, "--config");
     const configuration = configPath === undefined ? undefined : JSON.parse(readFileSync(configPath, "utf8"));
-    const skills = repeated(rest, "--skill");
-    if (skills.length > 0 && rest.includes("--no-skills")) throw usage("--skill and --no-skills are mutually exclusive");
+    const selectedSkills = parseSkillSelection(rest, false);
     const agentsFile = optional(rest, "--agents-md-file");
-    const accepted = await context.client.createWork({ name, ...(configuration === undefined ? {} : { configuration }), ...(optional(rest, "--base-image") === undefined ? {} : { baseImage: optional(rest, "--base-image") }), ...(rest.includes("--no-skills") ? { skills: [] } : skills.length === 0 ? {} : { skills }), ...(agentsFile === undefined ? {} : { agentsMd: readFileSync(agentsFile, "utf8") }), idempotencyKey: optional(rest, "--idempotency-key") ?? randomUUID() });
-    output(context, accepted);
-    if (rest.includes("--wait")) await waitOperation(context, accepted.operationId);
+    const accepted = await context.client.createWork({ name, ...(configuration === undefined ? {} : { configuration }), ...(optional(rest, "--base-image") === undefined ? {} : { baseImage: optional(rest, "--base-image") }), ...(selectedSkills === undefined ? {} : { skills: selectedSkills }), ...(agentsFile === undefined ? {} : { agentsMd: readFileSync(agentsFile, "utf8") }), idempotencyKey: optional(rest, "--idempotency-key") ?? randomUUID() });
+    if (rest.includes("--wait")) {
+      if (!context.json) output(context, accepted);
+      await waitOperation(context, accepted);
+    } else output(context, accepted);
     return 0;
   }
   if (action === "config") {
@@ -146,29 +147,33 @@ async function workCommand(context: Context, args: readonly string[]): Promise<n
     if (configAction === "skills") {
       const [sub, workId, ...options] = configArgs;
       if (workId === undefined || workId.startsWith("--")) throw usage("work config skills requires <workId>");
-      if (sub === "list") { noArgs(options); output(context, await context.client.workSkills(workId)); return 0; }
-      if (sub === "set") { known(options, ["--skill", "--no-skills"]); const selected = repeated(options, "--skill"); if (selected.length > 0 && options.includes("--no-skills")) throw usage("--skill and --no-skills are mutually exclusive"); output(context, await context.client.updateWorkSkills(workId, options.includes("--no-skills") ? [] : selected)); return 0; }
+      if (sub === "list") { noArgs(options); outputConfiguration(context, await context.client.workSkills(workId)); return 0; }
+      if (sub === "set") { known(options, ["--skill", "--no-skills"]); const selected = parseSkillSelection(options, true)!; outputConfiguration(context, await context.client.updateWorkSkills(workId, selected), true); return 0; }
       throw usage("work config skills requires list or set");
     }
     if (configAction === "agents") {
       const [sub, workId, ...options] = configArgs;
       if (workId === undefined || workId.startsWith("--")) throw usage("work config agents requires <workId>");
       if (sub === "show") { noArgs(options); output(context, await context.client.workAgents(workId)); return 0; }
-      if (sub === "set") { known(options, ["--file"]); output(context, await context.client.updateWorkAgents(workId, readFileSync(required(options, "--file"), "utf8"))); return 0; }
+      if (sub === "set") { known(options, ["--file"]); outputConfiguration(context, await context.client.updateWorkAgents(workId, readFileSync(required(options, "--file"), "utf8")), true); return 0; }
       throw usage("work config agents requires show or set");
     }
     const [workId, ...options] = configArgs;
     if (workId === undefined || workId.startsWith("--")) throw usage("work config requires <workId>");
-    if (configAction === "show") { noArgs(options); output(context, await context.client.workConfiguration(workId)); return 0; }
+    if (configAction === "show") { noArgs(options); outputConfiguration(context, await context.client.workConfiguration(workId)); return 0; }
     if (configAction === "set") {
       known(options, ["--config"]);
       const configuration = JSON.parse(readFileSync(required(options, "--config"), "utf8"));
-      output(context, await context.client.updateWorkConfiguration(workId, configuration));
+      outputConfiguration(context, await context.client.updateWorkConfiguration(workId, configuration), true);
       return 0;
     }
     if (configAction === "apply") {
-      noArgs(options);
-      output(context, await context.client.applyWorkConfiguration(workId));
+      known(options, ["--wait", "--idempotency-key"]);
+      const accepted = await context.client.applyWorkConfiguration(workId, optional(options, "--idempotency-key") ?? randomUUID());
+      if (options.includes("--wait")) {
+        if (!context.json) output(context, accepted);
+        await waitOperation(context, accepted);
+      } else output(context, accepted);
       return 0;
     }
     throw usage("work config requires show, set, or apply");
@@ -177,8 +182,10 @@ async function workCommand(context: Context, args: readonly string[]): Promise<n
     known(rest.slice(1), ["--wait", "--idempotency-key"]);
     const workId = rest[0]; if (workId === undefined || workId.startsWith("--")) throw usage(`work ${action} requires <workId>`);
     const accepted = await context.client.workAction(workId, action, optional(rest.slice(1), "--idempotency-key") ?? randomUUID());
-    output(context, accepted);
-    if (rest.includes("--wait")) await waitOperation(context, accepted.operationId);
+    if (rest.includes("--wait")) {
+      if (!context.json) output(context, accepted);
+      await waitOperation(context, accepted);
+    } else output(context, accepted);
     return 0;
   }
   throw usage("work requires create, list, show, start, stop, retry, delete, or config");
@@ -192,8 +199,20 @@ function repeated(args: readonly string[], name: string): string[] {
   return values;
 }
 
+export function parseSkillSelection(args: readonly string[], requiredSelection: boolean): string[] | undefined {
+  const skills = repeated(args, "--skill");
+  const noSkillsCount = args.filter((value) => value === "--no-skills").length;
+  if (noSkillsCount > 1) throw usage("--no-skills may be specified only once");
+  if (skills.length > 0 && noSkillsCount === 1) throw usage("--skill and --no-skills are mutually exclusive");
+  if (new Set(skills).size !== skills.length) throw usage("--skill may not be repeated");
+  if (noSkillsCount === 1) return [];
+  if (skills.length > 0) return skills;
+  if (requiredSelection) throw usage("select at least one --skill or use --no-skills");
+  return undefined;
+}
+
 async function operationCommand(context: Context, args: readonly string[]): Promise<number> {
-  requireCredential(context); if (args[0] !== "show") throw usage("operation requires show"); exact(args.slice(1), 1); output(context, await context.client.operation(args[1]!)); return 0;
+  requireCredential(context); if (args[0] !== "show") throw usage("operation requires show"); exact(args.slice(1), 1); outputOperation(context, await context.client.operation(args[1]!)); return 0;
 }
 
 async function sessionCommand(context: Context, args: readonly string[]): Promise<number> {
@@ -299,16 +318,43 @@ async function waitRunTerminal(context: Context, workId: string, runId: string):
   }
 }
 
-async function waitOperation(context: Context, operationId: string): Promise<void> {
+async function waitOperation(context: Context, accepted: { readonly workId: string; readonly operationId: string }): Promise<void> {
   const deadline = Date.now() + 120_000;
   for (;;) {
-    const operation = await context.client.operation(operationId);
+    let operation: Record<string, unknown>;
+    try {
+      operation = await context.client.operation(accepted.operationId);
+    } catch {
+      const waiting = waitingEnvelope(accepted, "OPERATION_OBSERVATION_UNAVAILABLE", "Operation observation is unavailable; query it again with operation show.");
+      if (context.json) output(context, waiting);
+      throw Object.assign(new Error(`Work ID: ${accepted.workId}\nOperation ID: ${accepted.operationId}\nObservation unavailable. Retry: piwork-cli operation show ${accepted.operationId}`), { exitCode: 5 });
+    }
     const state = String(operation.state);
-    if (state === "succeeded") { output(context, operation); return; }
-    if (state === "failed" || state === "superseded") throw Object.assign(new Error(`Work operation ${state}`), { exitCode: 6 });
-    if (Date.now() >= deadline) throw Object.assign(new Error("timed out waiting for Work operation"), { exitCode: 5 });
+    if (state === "succeeded") { outputOperation(context, operation); return; }
+    if (state === "failed" || state === "superseded") {
+      outputOperation(context, operation);
+      const error = operation.error as { stage?: unknown; code?: unknown; message?: unknown; remediation?: unknown } | null;
+      throw Object.assign(new Error([
+        `Work ID: ${accepted.workId}`,
+        `Operation ID: ${accepted.operationId}`,
+        `Stage: ${typeof error?.stage === "string" ? error.stage : "unknown"}`,
+        `Code: ${typeof error?.code === "string" ? error.code : state.toUpperCase()}`,
+        `Reason: ${typeof error?.message === "string" ? error.message : `Work operation ${state}.`}`,
+        `Remediation: ${typeof error?.remediation === "string" ? error.remediation : "Inspect the retained Operation."}`,
+        `Inspect: piwork-cli operation show ${accepted.operationId}`,
+      ].join("\n")), { exitCode: 6 });
+    }
+    if (Date.now() >= deadline) {
+      const waiting = waitingEnvelope(accepted, "OPERATION_WAIT_TIMEOUT", "Timed out waiting; the Operation remains queryable and was not resubmitted.");
+      if (context.json) output(context, waiting);
+      throw Object.assign(new Error(`Work ID: ${accepted.workId}\nOperation ID: ${accepted.operationId}\nTimed out without resubmitting. Inspect: piwork-cli operation show ${accepted.operationId}`), { exitCode: 5 });
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+}
+
+function waitingEnvelope(accepted: { readonly workId: string; readonly operationId: string }, code: string, message: string) {
+  return { ...accepted, correlationId: accepted.operationId, state: "waiting", result: null, error: { code, message }, diagnostics: null };
 }
 
 function parseGlobals(argv: readonly string[]): GlobalOptions {
@@ -320,7 +366,7 @@ function parseGlobals(argv: readonly string[]): GlobalOptions {
   }
   return { ...(core === undefined ? {} : { core }), json, rest: [...argv.slice(index)] };
 }
-function known(args: readonly string[], names: readonly string[]): void { const boolean = new Set(["--wait", "--password-stdin"]); for (let index = 0; index < args.length; index += 1) { const value = args[index]!; if (!value.startsWith("--") || !names.includes(value)) throw usage(`unknown option: ${value}`); if (!boolean.has(value)) { if (args[index + 1] === undefined || args[index + 1]!.startsWith("--")) throw usage(`${value} requires a value`); index += 1; } } }
+function known(args: readonly string[], names: readonly string[]): void { const boolean = new Set(["--wait", "--password-stdin", "--no-skills"]); for (let index = 0; index < args.length; index += 1) { const value = args[index]!; if (!value.startsWith("--") || !names.includes(value)) throw usage(`unknown option: ${value}`); if (!boolean.has(value)) { if (args[index + 1] === undefined || args[index +1]!.startsWith("--")) throw usage(`${value} requires a value`); index += 1; } } }
 function optional(args: readonly string[], name: string): string | undefined { const indexes = args.flatMap((value, index) => value === name ? [index] : []); if (indexes.length > 1) throw usage(`${name} may be specified only once`); const index = indexes[0]; return index === undefined ? undefined : args[index + 1]; }
 function required(args: readonly string[], name: string): string { const value = optional(args, name); if (value === undefined) throw usage(`${name} is required`); return value; }
 function positiveInteger(value: string, name: string): number { const parsed = Number(value); if (!Number.isSafeInteger(parsed) || parsed < 1) throw usage(`${name} must be a positive integer`); return parsed; }
@@ -329,6 +375,38 @@ function noArgs(args: readonly string[]): void { exact(args, 0); }
 function usage(message: string): Error { return Object.assign(new Error(message), { exitCode: 2 }); }
 function requireCredential(context: Context): void { if (context.credential === undefined) throw Object.assign(new Error("not logged in; run piwork-cli login"), { exitCode: 3 }); }
 function output(context: Context, value: unknown): void { process.stdout.write(`${JSON.stringify(value, null, context.json ? 0 : 2)}\n`); }
+function outputOperation(context: Context, value: Record<string, unknown>): void {
+  if (context.json) return output(context, value);
+  const error = value.error as { stage?: unknown; code?: unknown; message?: unknown; remediation?: unknown } | null;
+  process.stdout.write([
+    `Work: ${String(value.workId ?? "unknown")}`,
+    `Operation: ${String(value.operationId ?? "unknown")}`,
+    `State: ${String(value.state ?? "unknown")}`,
+    ...(error === null || error === undefined ? [] : [
+      `Stage: ${String(error.stage ?? "unknown")}`,
+      `Code: ${String(error.code ?? "unknown")}`,
+      `Reason: ${String(error.message ?? "Operation failed")}`,
+      `Remediation: ${String(error.remediation ?? "Inspect the Operation")}`,
+    ]),
+  ].join("\n") + "\n");
+}
+function outputConfiguration(context: Context, value: Record<string, unknown>, saved = false): void {
+  if (context.json) return output(context, value);
+  const desired = (value.desired ?? value.skills) as { skills?: unknown } | unknown[] | undefined;
+  const active = value.active as { skills?: unknown } | unknown[] | null | undefined;
+  const desiredSkills = Array.isArray(desired) ? desired : Array.isArray(desired?.skills) ? desired.skills : [];
+  const activeSkills = Array.isArray(active) ? active : Array.isArray(active?.skills) ? active.skills : [];
+  const runtime = value.runtime as { state?: unknown; skills?: unknown[] } | undefined;
+  process.stdout.write([
+    ...(saved ? ["Desired configuration saved. It remains pending until work config apply succeeds."] : []),
+    `Work: ${String(value.workId ?? "")}`,
+    `Desired Skills: ${desiredSkills.length === 0 ? "(none)" : desiredSkills.join(", ")}`,
+    `Active Skills: ${activeSkills.length === 0 ? "(none)" : activeSkills.join(", ")}`,
+    `Pending apply: ${value.pendingApply === true ? "yes" : "no"}`,
+    `Runtime: ${String(runtime?.state ?? "unavailable")}`,
+    `Loaded Skills: ${Array.isArray(runtime?.skills) && runtime.skills.length > 0 ? runtime.skills.map((item) => String((item as { name?: unknown }).name ?? "")).join(", ") : "(none)"}`,
+  ].join("\n") + "\n");
+}
 function streamOutput(_context: Context, value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`); }
 async function secret(stdinMode: boolean, prompt: string): Promise<string> {
   if (stdinMode) { const value = readFileSync(0, "utf8").replace(/[\r\n]+$/, ""); if (value === "") throw new Error("password must not be empty"); return value; }

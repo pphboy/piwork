@@ -103,9 +103,9 @@ test("revision-free Skill and Work configuration methods send the new request sh
   await client.skills();
   await client.workConfiguration("work-1");
   await client.updateWorkConfiguration("work-1", { skills: [] });
-  await client.applyWorkConfiguration("work-1");
+  await client.applyWorkConfiguration("work-1", "apply-1");
   assert.equal(calls[0]?.url.endsWith("/api/v1/skills"), true);
-  assert.deepEqual(calls.slice(2).map((call) => call.body), [{ configuration: { skills: [] } }, {}]);
+  assert.deepEqual(calls.slice(2).map((call) => call.body), [{ configuration: { skills: [] } }, { idempotencyKey: "apply-1" }]);
   assert.equal(JSON.stringify(calls).includes("expectedRevision"), false);
 });
 
@@ -117,6 +117,15 @@ test("shared CLI error rendering redacts credentials and secret paths", () => {
   assert.equal(rendered.includes("model.secret"), false);
   assert.match(rendered, /\[REDACTED\]/);
   assert.match(rendered, /\[REDACTED_PATH\]/);
+});
+
+test("shared CLI error rendering remains bounded for multiline Operation diagnostics", () => {
+  const diagnostic = Array.from({ length: 64 }, (_, index) =>
+    `Operation ID: operation-${index.toString().padStart(2, "0")}-a1cb6797-c4da-4098-b790-488899ac5ce2`).join("\n");
+  const started = performance.now();
+  const rendered = safeErrorMessage(new Error(diagnostic));
+  assert.equal(rendered, diagnostic);
+  assert.ok(performance.now() - started < 250, "diagnostic redaction must not exhibit catastrophic backtracking");
 });
 
 test("client bounds and validates JSON, network errors, and incremental NDJSON ordering", async () => {

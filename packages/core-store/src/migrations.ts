@@ -231,14 +231,6 @@ const migrations: readonly Migration[] = [
       ) STRICT`,
       `ALTER TABLE works ADD COLUMN desired_context_id TEXT REFERENCES work_context_snapshots(snapshot_id)`,
       `ALTER TABLE works ADD COLUMN active_context_id TEXT REFERENCES work_context_snapshots(snapshot_id)`,
-      `CREATE TABLE filesystem_migrations (
-        migration_key TEXT NOT NULL,
-        item_key TEXT NOT NULL,
-        state TEXT NOT NULL CHECK (state IN ('pending', 'running', 'succeeded', 'failed')),
-        error_code TEXT,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY(migration_key, item_key)
-      ) STRICT`,
       `CREATE INDEX work_context_snapshots_work_id ON work_context_snapshots(work_id, created_at)`,
     ],
   },

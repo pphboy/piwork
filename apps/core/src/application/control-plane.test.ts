@@ -7,7 +7,9 @@ import { CoreApplication } from "./core-application.js";
 import { ensureCorePaths } from "./paths.js";
 import type { WorkRuntimeAdapter } from "../work-management/lifecycle.js";
 
+let resolvedImageIdentity = `sha256:${"a".repeat(64)}`;
 const runtime: WorkRuntimeAdapter = {
+  async resolveImageIdentity() { return resolvedImageIdentity; },
   async prepare() {},
   async start(_work, generation) { return { instanceId: `instance-${generation}`, generation }; },
   async inspect() { return { exists: false, running: false, ready: false }; },
@@ -67,6 +69,17 @@ test("empty Core listens, reports staged readiness, and separates operator from 
     });
     assert.equal(login.response.status, 200);
     const token = String(login.body.token);
+    const otherPassword = "other correct battery";
+    const otherUser = await json(base, "/control/users", {
+      method: "POST", authorization: `Operator ${operator}`,
+      body: { account: "other-user", password: otherPassword, role: "user" },
+    });
+    assert.equal(otherUser.response.status, 201);
+    const otherLogin = await json(base, "/api/v1/login", {
+      method: "POST", body: { account: "other-user", password: otherPassword },
+    });
+    assert.equal(otherLogin.response.status, 200);
+    const otherToken = String(otherLogin.body.token);
     const importedSkill = await json(base, "/control/skills", {
       method: "POST", authorization: `Operator ${operator}`, body: { path: skillSource },
     });
@@ -107,7 +120,23 @@ test("empty Core listens, reports staged readiness, and separates operator from 
       body: { name: "work-a", idempotencyKey: "create-a" },
     });
     assert.equal(workA.response.status, 202);
+    const crossOwnerConfiguration = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration`, {
+      authorization: `Bearer ${otherToken}`,
+    });
+    assert.equal(crossOwnerConfiguration.response.status, 404);
+    assert.deepEqual(crossOwnerConfiguration.body, { code: "NOT_FOUND", message: "resource was not found", correlationId: crossOwnerConfiguration.body.correlationId });
+    const crossOwnerOperation = await json(base, `/api/v1/operations/${String(workA.body.operationId)}`, {
+      authorization: `Bearer ${otherToken}`,
+    });
+    assert.equal(crossOwnerOperation.response.status, 404);
+    assert.equal(crossOwnerOperation.body.code, "NOT_FOUND");
+    assert.equal(JSON.stringify(crossOwnerOperation.body).includes("code-review"), false);
     assert.deepEqual(application.store.getWorkConfiguration(String(workA.body.workId)) === undefined ? [] : JSON.parse(application.store.getWorkConfiguration(String(workA.body.workId))!.desiredConfigJson).skills, ["code-review"]);
+    const initialContextA = application.store.getWorkConfiguration(String(workA.body.workId))!.desiredContextId!;
+    const initialSkillIdentityA = application.store.getWorkContextSnapshot(String(workA.body.workId), initialContextA) === undefined
+      ? undefined
+      : application.workContexts.load(String(workA.body.workId), initialContextA).metadata.skills[0]?.identity;
+    assert.ok(initialSkillIdentityA);
     const profileA = application.store.getWorkConfigRevision(String(workA.body.workId), 1)?.runtimeProfileJson;
     assert.equal((JSON.parse(profileA!) as { model: { id: string } }).model.id, "claude-test");
 
@@ -125,6 +154,22 @@ test("empty Core listens, reports staged readiness, and separates operator from 
     const profileB = application.store.getWorkConfigRevision(String(workB.body.workId), 1)?.runtimeProfileJson;
     assert.equal((JSON.parse(profileA!) as { model: { id: string } }).model.id, "claude-test");
     assert.equal((JSON.parse(profileB!) as { model: { id: string } }).model.id, "claude-next");
+
+    const explicitWork = await json(base, "/api/v1/works", {
+      method: "POST",
+      authorization: `Bearer ${token}`,
+      body: { name: "work-explicit", skills: ["code-review"], idempotencyKey: "create-explicit" },
+    });
+    assert.equal(explicitWork.response.status, 202);
+    assert.deepEqual(JSON.parse(application.store.getWorkConfiguration(String(explicitWork.body.workId))!.desiredConfigJson).skills, ["code-review"]);
+    const emptyWork = await json(base, "/api/v1/works", {
+      method: "POST",
+      authorization: `Bearer ${token}`,
+      body: { name: "work-empty", skills: [], idempotencyKey: "create-empty" },
+    });
+    assert.equal(emptyWork.response.status, 202);
+    const emptyContext = application.store.getWorkConfiguration(String(emptyWork.body.workId))!.desiredContextId!;
+    assert.deepEqual(application.workContexts.load(String(emptyWork.body.workId), emptyContext).metadata.skills, []);
 
     const configurationA = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration`, { authorization: `Bearer ${token}` });
     const desiredA = configurationA.body.desired as Record<string, unknown>;
@@ -145,6 +190,39 @@ test("empty Core listens, reports staged readiness, and separates operator from 
     const desiredProfileA = application.store.getWorkConfigRevision(String(workA.body.workId), 2)?.runtimeProfileJson;
     assert.equal((JSON.parse(desiredProfileA!) as { model: { id: string } }).model.id, "claude-next");
     assert.equal((JSON.parse(profileA!) as { model: { id: string } }).model.id, "claude-test");
+    const genericContextA = application.store.getWorkConfiguration(String(workA.body.workId))!.desiredContextId!;
+    assert.equal(application.workContexts.load(String(workA.body.workId), genericContextA).metadata.skills[0]?.identity, initialSkillIdentityA);
+
+    resolvedImageIdentity = `sha256:${"b".repeat(64)}`;
+    await mkdir(join(skillSource, "refs"), { recursive: true });
+    await writeFile(join(skillSource, "SKILL.md"), "---\nname: deliberately-different\n---\nUpdated instructions.\n");
+    await writeFile(join(skillSource, "refs", "rules.md"), "updated rules\n");
+    const updatedManagedSkill = await json(base, "/control/skills/code-review", {
+      method: "PUT",
+      authorization: `Operator ${operator}`,
+      body: { path: skillSource },
+    });
+    assert.equal(updatedManagedSkill.response.status, 200, JSON.stringify(updatedManagedSkill.body));
+    const skillsA = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration/skills`, {
+      method: "PUT",
+      authorization: `Bearer ${token}`,
+      body: { skills: ["code-review"] },
+    });
+    assert.equal(skillsA.response.status, 200, JSON.stringify(skillsA.body));
+    const skillsContextId = application.store.getWorkConfiguration(String(workA.body.workId))!.desiredContextId!;
+    assert.equal(application.store.getWorkContextSnapshot(String(workA.body.workId), skillsContextId)?.imageIdentity, `sha256:${"a".repeat(64)}`);
+    const reselectedSkillIdentityA = application.workContexts.load(String(workA.body.workId), skillsContextId).metadata.skills[0]?.identity;
+    assert.notEqual(reselectedSkillIdentityA, initialSkillIdentityA);
+
+    const agentsA = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration/agents`, {
+      method: "PUT",
+      authorization: `Bearer ${token}`,
+      body: { agentsMd: "# retained image" },
+    });
+    assert.equal(agentsA.response.status, 200, JSON.stringify(agentsA.body));
+    const agentsContextId = application.store.getWorkConfiguration(String(workA.body.workId))!.desiredContextId!;
+    assert.equal(application.store.getWorkContextSnapshot(String(workA.body.workId), agentsContextId)?.imageIdentity, `sha256:${"a".repeat(64)}`);
+    assert.equal(application.workContexts.load(String(workA.body.workId), agentsContextId).metadata.skills[0]?.identity, reselectedSkillIdentityA);
 
     const invalidConfiguration = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration`, {
       method: "PUT",

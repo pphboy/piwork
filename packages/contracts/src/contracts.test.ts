@@ -10,6 +10,8 @@ import {
   WorkConfigurationViewSchema,
   WorkConfigurationPatchSchema,
   SetWorkSkillsRequestSchema,
+  RuntimeSkillStateSchema,
+  PublicOperationSchema,
   PublicSkillSchema,
   OperatorSkillSchema,
   SkillPathRequestSchema,
@@ -104,6 +106,7 @@ test("Work configuration contracts are revision-free and reject malformed select
     active: validWorkConfig,
     desired: validWorkConfig,
     pendingApply: false,
+    runtime: { state: "unavailable", checkedAt: null, skills: [] },
   }), true);
   assert.equal(Check(WorkConfigSchema, { ...validWorkConfig, revision: 1 }), false);
   assert.equal(Check(WorkConfigurationViewSchema, {
@@ -111,6 +114,7 @@ test("Work configuration contracts are revision-free and reject malformed select
     active: validWorkConfig,
     desired: validWorkConfig,
     pendingApply: false,
+    runtime: { state: "unavailable", checkedAt: null, skills: [] },
     desiredRevision: 4,
   }), false);
   assert.equal(Check(WorkConfigurationPatchSchema, {}), true);
@@ -153,4 +157,34 @@ test("Work context normalizes bounded AGENTS content and resolves open tools", (
   assert.equal(normalizeAgentsMd("hello"), "hello");
   assert.throws(() => normalizeAgentsMd("x".repeat(AGENTS_MD_MAX_BYTES + 1)), /exceeds/);
   assert.deepEqual(resolveBuiltInWorkTools({ allowed: [], denied: ["bash", "write"] }), ["read", "edit", "grep", "find", "ls"]);
+});
+
+test("runtime and operation projections are bounded and reject internal fields", () => {
+  const runtime = { state: "ready", checkedAt: "2026-09-20T00:00:00Z", skills: [{
+    name: "code-review", loaded: true, modelVisible: true, visibilityReason: null,
+  }] };
+  assert.equal(Check(RuntimeSkillStateSchema, runtime), true);
+  assert.equal(Check(RuntimeSkillStateSchema, { ...runtime, contextIdentity: "secret" }), false);
+  const operation = {
+    operationId: "operation-0199e6d8abcd", workId: "work-0199e6d8abcd", kind: "create-work", state: "failed",
+    createdAt: "2026-09-20T00:00:00Z", updatedAt: "2026-09-20T00:00:01Z", correlationId: "operation-0199e6d8abce",
+    result: null,
+    error: { code: "SKILL_LOAD_FAILED", stage: "skill-load", message: "The selected Skill could not be loaded.", retryable: false, remediation: "Correct the Skill and retry." },
+    diagnostics: { stages: [], truncated: false, rollback: { state: "not-required" }, diagnosticCollection: { state: "unrecognized" } },
+  };
+  assert.equal(Check(PublicOperationSchema, operation), true);
+  for (const forbidden of ["requestJson", "targetVersion", "contextIdentity", "imageIdentity", "digest", "hostPath", "storagePath"]) {
+    assert.equal(Check(PublicOperationSchema, { ...operation, [forbidden]: "token=/tmp/private" }), false);
+  }
+  assert.equal(Check(PublicOperationSchema, {
+    ...operation,
+    error: { ...operation.error, message: "x", unknown: "injected" },
+  }), false);
+  assert.equal(Check(PublicOperationSchema, {
+    ...operation,
+    diagnostics: { ...operation.diagnostics, stages: [{
+      timestamp: "2026-09-20T00:00:00Z", component: "core", stage: "skill-load", outcome: "failed",
+      code: "SKILL_LOAD_FAILED", message: "The selected Skill could not be loaded.", path: "/private",
+    }] },
+  }), false);
 });

@@ -5,6 +5,10 @@ import { ChannelCredentials, Metadata, type ServiceError } from "@grpc/grpc-js";
 import {
   AgentServiceClient,
   CONTRACT_VERSION,
+  type DiagnosticCode,
+  type DiagnosticStage,
+  type OperationDiagnostics,
+  type RuntimeSkillState,
   type ReadinessResponse,
   type ListSessionsResponse,
   type Run,
@@ -19,6 +23,7 @@ import { DockerRuntime } from "@piwork/runtime-docker";
 import type { ResolvedWorkRuntimeConfiguration, WorkRuntimeAdapter, WorkRuntimeState } from "../work-management/lifecycle.js";
 import type { CorePaths } from "../application/paths.js";
 import { RuntimeProfileStore } from "../configuration/runtime-profile.js";
+import { WorkContextStore } from "../configuration/work-context.js";
 import { ensureGenerationTlsIdentity, readTlsFile } from "./mtls.js";
 
 const AGENT_LOGICAL_ID = "agentd";
@@ -27,12 +32,27 @@ const INSTANCE_LABEL = "piwork.instance_id";
 const PROTOCOL_LABEL = "piwork.protocol_version";
 const CONTEXT_LABEL = "piwork.context_identity";
 
+export class RuntimeReadinessError extends Error {
+  constructor(
+    readonly code: "AGENT_CONTEXT_INCOMPATIBLE" | "AGENT_CONTEXT_MISMATCH" | "AGENT_EXITED" | "AGENT_READINESS_TIMEOUT" | "RUNTIME_START_FAILED" | "SKILL_VALIDATION_FAILED" | "SKILL_LOAD_FAILED" | "SKILL_DIRECTORY_MISMATCH",
+    readonly exitCode?: number,
+    readonly stage: DiagnosticStage = code === "AGENT_EXITED" || code === "RUNTIME_START_FAILED" ? "runtime-start" : "readiness",
+    readonly skillName?: string,
+    readonly diagnosticCollection: OperationDiagnostics["diagnosticCollection"] = { state: "not-attempted" },
+  ) {
+    super("Work agent did not complete the verified initialization handshake");
+    this.name = "RuntimeReadinessError";
+  }
+}
+
 interface RuntimeRecord {
   readonly workId: string;
   readonly generation: number;
   readonly instanceId: string;
   readonly networkName: string;
   readonly imageId: string;
+  readonly contextIdentity: string;
+  readonly correlationId: string;
   readonly tls: {
     readonly caCertificatePath: string;
     readonly serverCertificatePath: string;
@@ -54,14 +74,31 @@ export interface ConversationGateway {
   cancelRun(workId: string, runId: string, idempotencyKey: string): Promise<Run>;
 }
 
-export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, ConversationGateway {
+export interface RuntimeSkillStateGateway {
+  runtimeSkillState(workId: string): Promise<RuntimeSkillState>;
+}
+
+interface RuntimeTiming {
+  readonly now?: () => number;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
+  readonly readinessTimeoutMs?: number;
+}
+
+export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, ConversationGateway, RuntimeSkillStateGateway {
   private readonly docker: DockerRuntime;
   private readonly profiles: RuntimeProfileStore;
   private readonly clients = new Map<string, AgentServiceClient>();
 
-  constructor(private readonly paths: CorePaths, readonly installationId: string) {
+  private readonly now: () => number;
+  private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly readinessTimeoutMs: number;
+
+  constructor(private readonly paths: CorePaths, readonly installationId: string, timing: RuntimeTiming = {}) {
     this.docker = new DockerRuntime(installationId, undefined, [paths.runtimeDirectory, paths.workContextsDirectory]);
     this.profiles = new RuntimeProfileStore(paths.runtimeProfilePath, paths.secretsDirectory);
+    this.now = timing.now ?? Date.now;
+    this.sleep = timing.sleep ?? delay;
+    this.readinessTimeoutMs = timing.readinessTimeoutMs ?? 30_000;
   }
 
   async verifyDependency(): Promise<void> {
@@ -77,34 +114,43 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   }
 
   async prepare(work: WorkRecord, configuration?: ResolvedWorkRuntimeConfiguration): Promise<void> {
-    if (configuration?.contextDirectory === undefined) {
+    if (configuration === undefined) {
       throw new Error("Work runtime configuration has no validated context snapshot");
     }
-    const profile = this.profile(configuration);
-    await Promise.all([this.docker.prepareImage(profile.agentImage), this.docker.ensureWorkNetwork(work.id), this.docker.ensureManagedVolume(work.id, "work-data")]);
+    await Promise.all([this.prepareCapturedImage(configuration.imageIdentity), this.docker.ensureWorkNetwork(work.id), this.docker.ensureManagedVolume(work.id, "work-data")]);
   }
 
   async start(work: WorkRecord, generation: number, configuration?: ResolvedWorkRuntimeConfiguration): Promise<{ readonly instanceId: string; readonly generation: number }> {
     const current = await this.docker.inspectContainer(work.id, "agent", AGENT_LOGICAL_ID);
     if (current.exists) {
-      if (configuration?.contextDirectory === undefined) {
+      if (configuration === undefined) {
         throw new Error("Work runtime configuration has no validated context snapshot");
       }
-      const expectedContext = configuration.contextIdentity ?? `${work.id}@legacy`;
+      const expectedContext = configuration.contextIdentity;
       if (current.labels?.[CONTEXT_LABEL] !== expectedContext) {
         throw new Error("Work runtime context does not match the active Work context");
       }
-      this.validateExistingMounts(current.mounts ?? [], configuration.contextDirectory);
+      if (current.labels?.[PROTOCOL_LABEL] !== CONTRACT_VERSION) {
+        throw new Error("Work runtime protocol does not match the required runtime contract");
+      }
       const record = this.readRecord(work.id);
+      if (current.labels?.[GENERATION_LABEL] !== String(record.generation)
+        || current.labels?.[INSTANCE_LABEL] !== record.instanceId) {
+        throw new Error("Work runtime identity does not match the active runtime generation");
+      }
+      if (current.image !== configuration.imageIdentity || record.imageId !== configuration.imageIdentity) {
+        throw new Error("Work runtime image does not match the captured Work image");
+      }
+      this.validateExistingMounts(current.mounts ?? [], configuration.contextDirectory);
       await this.docker.startContainer(work.id, "agent", AGENT_LOGICAL_ID);
-      await this.waitReady(record);
+      await this.waitReady(record, configuration, current.containerId);
       return { instanceId: record.instanceId, generation: record.generation };
     }
     const profile = this.profile(configuration);
-    if (configuration?.contextDirectory === undefined) {
+    if (configuration === undefined) {
       throw new Error("Work runtime configuration has no validated context snapshot");
     }
-    const image = await this.docker.prepareImage(profile.agentImage);
+    const image = await this.prepareCapturedImage(configuration.imageIdentity);
     const network = await this.docker.ensureWorkNetwork(work.id);
     const volume = await this.docker.ensureManagedVolume(work.id, "work-data");
     const tls = ensureGenerationTlsIdentity({
@@ -119,6 +165,8 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       instanceId: `agent-${randomUUID()}`,
       networkName: network.name,
       imageId: image.imageId,
+      contextIdentity: configuration.contextIdentity,
+      correlationId: configuration.correlationId ?? recordCorrelationId(work.id, generation),
       tls,
     };
     const directory = this.runtimeDirectory(work.id);
@@ -137,8 +185,10 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       ...(configuration === undefined ? {} : {
         contextConfigPath: "/run/piwork/config.json",
         agentsMdPath: "/run/piwork/AGENTS.md",
-        contextIdentity: configuration.contextIdentity ?? `${work.id}@legacy`,
+        contextIdentity: configuration.contextIdentity,
         resolvedTools: resolveBuiltInWorkTools(configuration.workConfig.tools),
+      initializationOnly: configuration.initializationOnly === true,
+        correlationId: record.correlationId,
       }),
       model: {
         provider: profile.model.provider,
@@ -157,7 +207,7 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     // access to this single bind-mounted file without receiving host ownership.
     chmodSync(configPath, 0o644);
     this.writeRecord(record);
-    await this.docker.ensureContainer({
+    const ensured = await this.docker.ensureContainer({
       workId: work.id,
       kind: "agent",
       logicalId: AGENT_LOGICAL_ID,
@@ -167,12 +217,10 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       cpuMillis: configuration?.workConfig.resources.cpuMillis ?? 1_000,
       memoryBytes: configuration?.workConfig.resources.memoryBytes ?? 768 * 1_024 * 1_024,
       network: { name: network.name, workId: work.id, aliases: ["agentd"] },
-      labels: { [GENERATION_LABEL]: String(generation), [INSTANCE_LABEL]: record.instanceId, [PROTOCOL_LABEL]: CONTRACT_VERSION, ...(configuration === undefined ? {} : { [CONTEXT_LABEL]: configuration.contextIdentity ?? `${work.id}@legacy` }) },
+      labels: { [GENERATION_LABEL]: String(generation), [INSTANCE_LABEL]: record.instanceId, [PROTOCOL_LABEL]: CONTRACT_VERSION, [CONTEXT_LABEL]: configuration.contextIdentity },
       mounts: [
         { type: "volume", source: volume.volumeName, target: "/var/data" },
-        ...(configuration === undefined ? [] : [
-          { type: "bind" as const, source: configuration.contextDirectory!, target: "/run/piwork", readOnly: true },
-        ]),
+        { type: "bind" as const, source: configuration.contextDirectory, target: "/run/piwork", readOnly: true },
         { type: "bind", source: configPath, target: "/etc/piwork/runtime.json", readOnly: true },
         { type: "bind", source: record.tls.caCertificatePath, target: "/etc/piwork/tls/installation-ca.crt", readOnly: true },
         { type: "bind", source: record.tls.serverCertificatePath, target: "/etc/piwork/tls/agent-server.crt", readOnly: true },
@@ -182,7 +230,7 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       ],
     });
     await this.docker.startContainer(work.id, "agent", AGENT_LOGICAL_ID);
-    await this.waitReady(record);
+    await this.waitReady(record, configuration, ensured.containerId);
     return { instanceId: record.instanceId, generation: record.generation };
   }
 
@@ -198,6 +246,41 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     return { exists: true, running: inspection.running === true, ready, ...(instanceId === undefined ? {} : { instanceId }), ...(Number.isSafeInteger(generation) ? { generation } : {}) };
   }
 
+  async runtimeSkillState(workId: string): Promise<RuntimeSkillState> {
+    try {
+      const inspection = await this.docker.inspectContainer(workId, "agent", AGENT_LOGICAL_ID);
+      if (!inspection.exists || !inspection.running) return { state: "unavailable", checkedAt: new Date().toISOString(), skills: [] };
+      const record = this.readRecord(workId);
+      const contextIdentity = inspection.labels?.[CONTEXT_LABEL];
+      if (inspection.labels?.[GENERATION_LABEL] !== String(record.generation)
+        || inspection.labels?.[INSTANCE_LABEL] !== record.instanceId
+        || inspection.labels?.[PROTOCOL_LABEL] !== CONTRACT_VERSION
+        || contextIdentity === undefined
+        || contextIdentity !== record.contextIdentity) {
+        return { state: "unavailable", checkedAt: new Date().toISOString(), skills: [] };
+      }
+      const context = new WorkContextStore(this.paths.workContextsDirectory).load(workId, record.contextIdentity);
+      const value = await this.readiness(record, 2_000);
+      verifyExpectedReadiness(value, record, {
+        contextIdentity: record.contextIdentity,
+        workConfig: context.configuration,
+        skillIdentities: context.metadata.skills,
+      });
+      return {
+        state: "ready",
+        checkedAt: new Date().toISOString(),
+        skills: value.loadedSkills.map((skill) => ({
+          name: skill.name,
+          loaded: true,
+          modelVisible: skill.modelVisible,
+          visibilityReason: skill.visibilityReason === "" ? null : skill.visibilityReason === "model-invocation-disabled" ? "model-invocation-disabled" : "read-tools-disabled",
+        })),
+      };
+    } catch {
+      return { state: "unavailable", checkedAt: null, skills: [] };
+    }
+  }
+
   async listManagedInstances(): Promise<readonly { readonly workId: string; readonly instanceId: string }[]> {
     const containers = await this.docker.listManagedContainers("agent");
     return containers.flatMap((item) => {
@@ -210,6 +293,15 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   async drain(workId: string, timeoutMs: number): Promise<void> {
     const record = this.readRecord(workId);
     await this.unary(workId, (client, metadata, callback) => client.drain({ workId, generation: BigInt(record.generation), instanceId: record.instanceId, timeoutMs }, metadata, callback));
+  }
+
+  prepareConfigurationChange(workId: string): Promise<{ readonly prepared: boolean; readonly busy: boolean; readonly activeRunCount: number }> {
+    const record = this.readRecord(workId);
+    return this.unary(workId, (client, metadata, callback) => client.prepareConfigurationChange({
+      workId,
+      generation: BigInt(record.generation),
+      instanceId: record.instanceId,
+    }, metadata, callback));
   }
 
   async stop(workId: string, timeoutMs: number): Promise<void> {
@@ -250,6 +342,13 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     return profile;
   }
 
+  private async prepareCapturedImage(identity: string) {
+    if (!/^sha256:[a-f0-9]{64}$/.test(identity)) throw new Error("Work runtime image identity is invalid");
+    const image = await this.docker.prepareImage(identity);
+    if (image.imageId !== identity) throw new Error("Work runtime image does not match the captured Work image");
+    return image;
+  }
+
   private validateExistingMounts(
     mounts: readonly { readonly type: string; readonly source: string; readonly destination: string; readonly readOnly: boolean }[],
     contextDirectory: string,
@@ -270,18 +369,88 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   }
 
 
-  private async waitReady(record: RuntimeRecord): Promise<void> {
-    const deadline = Date.now() + 30_000;
-    let last: unknown;
-    while (Date.now() < deadline) {
-      try { const value = await this.readiness(record); if (value.acceptingRuns && value.workId === record.workId && Number(value.generation) === record.generation && value.instanceId === record.instanceId && value.protocolVersion === CONTRACT_VERSION) return; }
-      catch (error) { last = error; }
-      await new Promise((resolve) => setTimeout(resolve, 200));
+  private async waitReady(record: RuntimeRecord, configuration: ResolvedWorkRuntimeConfiguration, expectedContainerId?: string): Promise<void> {
+    const deadline = this.now() + this.readinessTimeoutMs;
+    let inspectionFailed = false;
+    while (this.now() < deadline) {
+      const attemptMs = Math.max(1, Math.min(1_000, deadline - this.now()));
+      const [readiness, inspection] = await Promise.allSettled([
+        this.readiness(record, attemptMs),
+        this.docker.inspectContainer(record.workId, "agent", AGENT_LOGICAL_ID, attemptMs),
+      ]);
+      if (readiness.status === "fulfilled") {
+        verifyExpectedReadiness(readiness.value, record, configuration);
+        return;
+      }
+      if (inspection.status === "fulfilled") {
+        inspectionFailed = false;
+        const value = inspection.value;
+        if (expectedContainerId !== undefined && value.containerId !== expectedContainerId) {
+          throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+        }
+        const labels = value.labels ?? {};
+        if (labels[GENERATION_LABEL] !== String(record.generation)
+          || labels[INSTANCE_LABEL] !== record.instanceId
+          || labels[CONTEXT_LABEL] !== configuration.contextIdentity) {
+          throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+        }
+        if (labels[PROTOCOL_LABEL] !== CONTRACT_VERSION) {
+          throw new RuntimeReadinessError("AGENT_CONTEXT_INCOMPATIBLE");
+        }
+        if (!value.running) {
+          throw await this.failureWithCollectedEvidence(record, value.exitCode, "AGENT_EXITED", true, expectedContainerId);
+        }
+      } else {
+        inspectionFailed = true;
+      }
+      await this.sleep(Math.min(200, Math.max(0, deadline - this.now())));
     }
-    throw new Error(`agentd did not become ready${last instanceof Error ? `: ${last.message}` : ""}`);
+    if (inspectionFailed) throw new RuntimeReadinessError("RUNTIME_START_FAILED");
+    throw await this.failureWithCollectedEvidence(record, undefined, "AGENT_READINESS_TIMEOUT", false, expectedContainerId);
   }
 
-  private readiness(record: RuntimeRecord): Promise<ReadinessResponse> { return this.unary(record.workId, (client, metadata, callback) => client.readiness({ workId: record.workId, generation: BigInt(record.generation), instanceId: record.instanceId }, metadata, callback)); }
+  private async failureWithCollectedEvidence(
+    record: RuntimeRecord,
+    exitCode: number | undefined,
+    fallback: "AGENT_EXITED" | "AGENT_READINESS_TIMEOUT",
+    exited: boolean,
+    expectedContainerId?: string,
+  ): Promise<RuntimeReadinessError> {
+    try {
+      const logs = await this.docker.collectContainerLogs(record.workId, "agent", AGENT_LOGICAL_ID, 200, expectedContainerId);
+      const evidence = recognizeInitializationEvidence(logs.text, record, exited);
+      const collection: OperationDiagnostics["diagnosticCollection"] = {
+        state: logs.truncated ? "truncated" : evidence === undefined ? "unrecognized" : "available",
+        ...(evidence === undefined ? {} : { code: evidence.code }),
+      };
+      return new RuntimeReadinessError(
+        evidence?.code ?? fallback,
+        exitCode,
+        evidence?.stage ?? (fallback === "AGENT_EXITED" ? "runtime-start" : "readiness"),
+        evidence?.skillName,
+        collection,
+      );
+    } catch {
+      return new RuntimeReadinessError(
+        fallback,
+        exitCode,
+        fallback === "AGENT_EXITED" ? "runtime-start" : "readiness",
+        undefined,
+        { state: "unavailable", code: "DIAGNOSTIC_COLLECTION_FAILED" },
+      );
+    }
+  }
+
+  private async readiness(record: RuntimeRecord, timeoutMs = 1_000): Promise<ReadinessResponse> {
+    const client = await this.client(record.workId);
+    const metadata = new Metadata();
+    return new Promise<ReadinessResponse>((resolve, reject) => client.readiness(
+      { workId: record.workId, generation: BigInt(record.generation), instanceId: record.instanceId },
+      metadata,
+      { deadline: new Date(Date.now() + timeoutMs) },
+      (error, response) => error === null ? resolve(response) : reject(error),
+    ));
+  }
 
   private async client(workId: string): Promise<AgentServiceClient> {
     const cached = this.clients.get(workId); if (cached !== undefined) return cached;
@@ -313,6 +482,73 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   private recordPath(workId: string): string { return join(this.runtimeDirectory(workId), "runtime-state.json"); }
   private writeRecord(record: RuntimeRecord): void { atomicJson(this.recordPath(record.workId), record); }
   private readRecord(workId: string): RuntimeRecord { const path = this.recordPath(workId); if (!existsSync(path)) throw new Error("Work runtime state is missing"); return JSON.parse(readFileSync(path, "utf8")) as RuntimeRecord; }
+}
+
+export function verifyExpectedReadiness(
+  value: ReadinessResponse,
+  record: Pick<RuntimeRecord, "workId" | "generation" | "instanceId">,
+  configuration: Pick<ResolvedWorkRuntimeConfiguration, "contextIdentity" | "initializationOnly" | "skillIdentities" | "workConfig">,
+): void {
+  if (value.protocolVersion !== CONTRACT_VERSION || value.contextContractVersion !== 1
+    || value.workId.length === 0 || Number(value.generation) < 1 || value.instanceId.length === 0
+    || value.contextIdentity.length === 0 || !value.initializationComplete) {
+    throw new RuntimeReadinessError("AGENT_CONTEXT_INCOMPATIBLE");
+  }
+  if (value.workId !== record.workId || Number(value.generation) !== record.generation
+    || value.instanceId !== record.instanceId || value.contextIdentity !== configuration.contextIdentity) {
+    throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  }
+  if (configuration.initializationOnly !== true && !value.acceptingRuns) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  if (configuration.initializationOnly === true && value.acceptingRuns) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  const expectedTools = resolveBuiltInWorkTools(configuration.workConfig.tools);
+  if (JSON.stringify(value.resolvedTools) !== JSON.stringify(expectedTools)) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  if (value.loadedSkills.length !== configuration.skillIdentities.length) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  const skillsMatch = value.loadedSkills.every((skill, index) => {
+    const expected = configuration.skillIdentities[index];
+    return expected !== undefined && skill.name === expected.name && skill.identity === expected.identity && skill.loaded;
+  });
+  if (!skillsMatch) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+}
+
+const recognizedAgentCodes = new Set<DiagnosticCode>([
+  "CONTEXT_NOT_FOUND", "CONTEXT_FORMAT_UNSUPPORTED", "SKILL_VALIDATION_FAILED",
+  "SKILL_LOAD_FAILED", "SKILL_DIRECTORY_MISMATCH", "AGENT_CONTEXT_INCOMPATIBLE",
+  "AGENT_CONTEXT_MISMATCH",
+]);
+
+function recognizeInitializationEvidence(
+  text: string,
+  record: Pick<RuntimeRecord, "workId" | "instanceId"> & Partial<Pick<RuntimeRecord, "correlationId">>,
+  exited: boolean,
+): { readonly code: RuntimeReadinessError["code"]; readonly stage: DiagnosticStage; readonly skillName?: string } | undefined {
+  for (const line of text.split("\n")) {
+    if (exited && line.trim() === "invalid Work Skill descriptor") {
+      return { code: "AGENT_CONTEXT_INCOMPATIBLE", stage: "readiness" };
+    }
+    try {
+      const value = JSON.parse(line) as Record<string, unknown>;
+      if (value.component !== "agentd" || value.outcome !== "failed"
+        || value.workId !== record.workId || value.correlationId !== (record.correlationId ?? record.instanceId)
+        || typeof value.code !== "string" || !recognizedAgentCodes.has(value.code as DiagnosticCode)
+        || !isDiagnosticStage(value.stage)) continue;
+      const skillName = typeof value.skillName === "string" && /^[a-z0-9][a-z0-9-]{0,63}$/.test(value.skillName)
+        ? value.skillName : undefined;
+      return { code: value.code as RuntimeReadinessError["code"], stage: value.stage, ...(skillName === undefined ? {} : { skillName }) };
+    } catch { /* Plain or forged output is deliberately ignored. */ }
+  }
+  return undefined;
+}
+
+function isDiagnosticStage(value: unknown): value is DiagnosticStage {
+  return typeof value === "string" && ["context-copy", "context-validate", "runtime-prepare", "runtime-start", "skill-validate", "skill-load", "readiness", "activation", "rollback"].includes(value);
+}
+
+function delay(ms: number): Promise<void> {
+  return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function recordCorrelationId(workId: string, generation: number): string {
+  return `runtime-${workId}-${generation}`;
 }
 
 function isWithin(root: string, candidate: string): boolean {

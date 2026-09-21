@@ -101,6 +101,17 @@ npm run cli -- work create --name no-skill-work --no-skills --wait
 
 Repeat `--skill` to select multiple enabled Skills. `--skill` and `--no-skills` are mutually exclusive. Creation also accepts `--base-image <image>` and `--config <file>`. Later changes to defaults, managed Skill content, or the original import directory do not alter an existing Work.
 
+For every create or configuration edit, Core materializes one immutable Work context. The data path is:
+
+```text
+managed Skill directory
+  -> <data>/works/<workId>/contexts/<contextId>/skills/<skillName>
+  -> read-only bind mount at /run/piwork in that Work's agentd container
+  -> agentd loads /run/piwork/skills with the Pi SDK before readiness
+```
+
+The context records both the copied Skill identities and the immutable container-image identity. Selecting, clearing, or reselection of Skills only creates a new context; it does not rebuild the agentd image. A software release that changes the context protocol does require a compatible agentd image to be selected for the Work.
+
 Copy the `workId` from the create output, then send a message or continue a Session:
 
 ```bash
@@ -118,12 +129,25 @@ npm run cli -- work config skills list <workId>
 npm run cli -- work config skills set <workId> --skill code-review
 npm run cli -- work config agents show <workId>
 npm run cli -- work config agents set <workId> --file ./AGENTS.md
-npm run cli -- work config apply <workId>
+npm run cli -- work config apply <workId> --idempotency-key apply-1 --wait
 ```
 
-Use `work config skills set <workId> --no-skills` to select an empty Skill set. Field-specific Skill and AGENTS commands preserve unrelated desired fields. Configuration updates only change the desired context and set `pendingApply`; they do not interrupt the active runtime or a Run. `apply` captures the current desired context in an Operation, prepares or restarts that Work, and activates the captured context only after the runtime reports ready. If another update commits while apply is running, it remains desired with `pendingApply: true`. A failed apply leaves the prior active context usable.
+Use `work config skills set <workId> --no-skills` to select an empty Skill set; a Skills set command must contain either `--skill` or `--no-skills`. Field-specific Skill and AGENTS commands preserve unrelated desired fields. Configuration updates only change the desired context and set `pendingApply`; they do not interrupt the active runtime or a Run. `apply` accepts immediately with an Operation ID, captures the current desired context, prepares or restarts that Work, and activates the captured context only after agentd reports the exact context, tools, and SDK-loaded Skills. If another update commits while apply is running, it remains desired with `pendingApply: true`. A failed apply leaves the prior active context usable.
+
+`work config show` reports desired and active context settings plus `runtime`. `runtime.skills` is current agentd readiness evidence: `ready` means each displayed Skill was SDK-loaded from this Work's copied directory; `initializing` and `failed` describe the current lifecycle attempt; `unavailable` means the Work is stopped, unreachable, or cannot prove the active generation. These non-ready states always have an empty loaded list and never reuse a historical load result. Each ready entry also reports `modelVisible`. A false value includes `model-invocation-disabled` or `read-tools-disabled` as the reason; a Skill can be loaded correctly while policy prevents the model from invoking it.
+
+Core writes JSON-line start and terminal events to the `piwork-serve serve` process stderr. Agentd writes initialization events to its container stderr before an initialization exit; Core validates and stores recognized safe evidence before cleanup. To inspect a failed create or apply, retain its Operation ID and run `operation show <operationId>`; it includes the safe failure code, stage, retry guidance, collection state, and bounded stage history without Skill contents, paths, credentials, or raw container output. With `--json --wait`, stdout contains one terminal Operation object and no progress records, so scripts can parse it as one JSON value.
+
+Representative errors include `SKILL_LOAD_FAILED` at `skill-load` for an SDK-invalid manifest, `AGENT_CONTEXT_INCOMPATIBLE` for an old agentd/context contract, and `AGENT_READINESS_TIMEOUT` when the exact running generation never completes its handshake. Use the returned remediation and retry with a new idempotency key after correcting the cause:
+
+```bash
+npm run cli -- operation show <operationId>
+npm run cli -- work config apply <workId> --idempotency-key apply-2 --wait
+```
 
 To adopt updated managed Skill content, select that Skill again for the Work and apply the new desired context. Existing Work copies remain usable if the managed Skill is later updated, disabled, removed, or if its original source directory disappears. Configuration commands do not accept or expose numeric revisions.
+
+This is the initial pre-0.1 storage format. Core performs structural database initialization and same-version recovery, but it does not convert older experimental Work context descriptors or attach unbound Sessions. An unsupported context fails explicitly and remains untouched.
 
 ## Environment-file startup and deployment test
 
@@ -257,8 +281,16 @@ npm run cli -- work config skills set <workId> \
   --skill code-review --skill another-skill
 npm run cli -- work config agents set <workId> --file ./AGENTS.md
 npm run cli -- work config show <workId>
-npm run cli -- work config apply <workId>
+npm run cli -- work config apply <workId> --idempotency-key project-a-skill-apply --wait
 npm run cli -- operation show <operationId>
+
+# Whole-context replacement from an exported or edited configuration object:
+npm run cli -- work config set <workId> --config ./work-config.json
+npm run cli -- work config apply <workId> --idempotency-key project-a-config-apply --wait
+
+# Explicitly clear Skills, then activate that desired context:
+npm run cli -- work config skills set <workId> --no-skills
+npm run cli -- work config apply <workId> --idempotency-key project-a-clear-skills --wait
 
 npm run cli -- session create <workId>
 npm run cli -- chat <workId> --session <sessionId> \

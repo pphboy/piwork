@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,9 +22,37 @@ test("fixed Skills load into the SDK, invalid artifacts block ready, and restart
   try {
     const first = await loadConfiguredSkills(active, [fixed("alpha", alpha), fixed("beta", beta)]);
     assert.deepEqual(first.skills.map((item) => item.name).sort(), ["alpha", "beta"]);
+    assert.equal(first.skills.find((item) => item.name === "alpha")?.baseDir, join(active, "alpha"));
+    assert.equal(first.skills.find((item) => item.name === "alpha")?.filePath, join(active, "alpha", "SKILL.md"));
+    assert.equal(first.loader.getSystemPrompt(), undefined);
+    assert.equal(first.loader.getSkills().skills, first.skills);
     const restarted = await loadConfiguredSkills(next, [fixed("beta", beta)]);
     assert.deepEqual(restarted.skills.map((item) => item.name), ["beta"]);
     assert.equal(restarted.skills.some((item) => item.name === "alpha" || item.name === "host-only"), false);
+    const empty = await loadConfiguredSkills(next, []);
+    assert.deepEqual(empty.skills, []);
+
+    await mkdir(join(next, "missing"), { recursive: true });
+    await assert.rejects(
+      loadConfiguredSkills(next, [{ name: "missing", digest: `sha256:${"0".repeat(64)}` }]),
+      (error) => error instanceof RequiredSkillError && /manifest is missing/.test(error.statuses[0]?.error ?? ""),
+    );
+
+    const unreadable = skill("unreadable", "UNREADABLE");
+    await writeSkill(next, "unreadable", unreadable);
+    await chmod(join(next, "unreadable", "SKILL.md"), 0o000);
+    await assert.rejects(
+      loadConfiguredSkills(next, [fixed("unreadable", unreadable)]),
+      (error) => error instanceof RequiredSkillError && /unreadable/.test(error.statuses[0]?.error ?? ""),
+    );
+
+    const tampered = skill("tampered", "TAMPERED");
+    await writeSkill(next, "tampered", tampered);
+    await writeFile(join(next, "tampered", "support.txt"), "unexpected supporting bytes");
+    await assert.rejects(
+      loadConfiguredSkills(next, [fixed("tampered", tampered)]),
+      (error) => error instanceof RequiredSkillError && /digest mismatch/.test(error.statuses[0]?.error ?? ""),
+    );
 
     await assert.rejects(
       loadConfiguredSkills(next, [{ name: "beta", digest: `sha256:${"0".repeat(64)}` }]),
@@ -35,6 +63,36 @@ test("fixed Skills load into the SDK, invalid artifacts block ready, and restart
     const rebound = await loadConfiguredSkills(next, [fixed("declared-name", wrong)]);
     assert.equal(rebound.skills[0]?.name, "declared-name");
     assert.equal(rebound.skills[0]?.description, "WRONG");
+    const omittedName = "---\ndescription: OMITTED_NAME\n---\nFollow the directory identity.\n";
+    await writeSkill(next, "omitted-name", omittedName);
+    const omitted = await loadConfiguredSkills(next, [fixed("omitted-name", omittedName)]);
+    assert.equal(omitted.skills[0]?.name, "omitted-name");
+
+    const sdkInvalid = "---\nname: sdk-invalid\ndescription: [unterminated\n---\ninvalid\n";
+    await writeSkill(next, "sdk-invalid", sdkInvalid);
+    await assert.rejects(
+      loadConfiguredSkills(next, [fixed("sdk-invalid", sdkInvalid)]),
+      (error) => error instanceof RequiredSkillError,
+    );
+
+    await assert.rejects(
+      loadConfiguredSkills(next, [fixed("beta", beta), fixed("beta", beta)]),
+      (error) => error instanceof RequiredSkillError && /duplicate/.test(error.statuses[1]?.error ?? ""),
+    );
+    await assert.rejects(
+      loadConfiguredSkills(next, [{ name: "../host-only", digest: fixed("host-only", skill("host-only", "host")).digest }]),
+      (error) => error instanceof RequiredSkillError && /name is invalid/.test(error.statuses[0]?.error ?? ""),
+    );
+    await symlink(join(next, "beta"), join(next, "linked-dir"), "dir");
+    await assert.rejects(
+      loadConfiguredSkills(next, [{ name: "linked-dir", digest: fixed("linked-dir", beta).digest }]),
+      (error) => error instanceof RequiredSkillError && /directory is unreadable or invalid/.test(error.statuses[0]?.error ?? ""),
+    );
+    await symlink(join(next, "beta", "SKILL.md"), join(next, "beta", "reference.md"));
+    await assert.rejects(
+      loadConfiguredSkills(next, [fixed("beta", beta)]),
+      (error) => error instanceof RequiredSkillError && /symbolic link/.test(error.statuses[0]?.error ?? ""),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

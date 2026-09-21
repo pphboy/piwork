@@ -7,6 +7,8 @@ import {
   createAssistantMessageEventStream,
 } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
+import { dirname, resolve } from "node:path";
 
 const PROVIDER_ID = "piwork-deterministic";
 const MODEL_ID = "fixture-v1";
@@ -66,29 +68,29 @@ function streamDeterministic(
       return;
     }
 
-    const hasToolResult = context.messages.slice(latestUserIndex + 1).some((message) => message.role === "toolResult");
-    if (!hasToolResult) {
-      const toolCall = {
-        type: "toolCall" as const,
-        id: "fixture-call-1",
-        name: "fixture_echo",
-        arguments: { text: "sdk-smoke" },
-      };
-      output.content.push(toolCall);
-      stream.push({ type: "toolcall_start", contentIndex: 0, partial: output });
-      stream.push({
-        type: "toolcall_end",
-        contentIndex: 0,
-        toolCall,
-        partial: output,
-      });
-      output.stopReason = "toolUse";
-      stream.push({ type: "done", reason: "toolUse", message: output });
-      stream.end();
+    const systemPrompt = context.messages
+      .filter((message) => message.role === "system")
+      .flatMap((message) => message.role === "system"
+        ? [typeof message.content === "string" ? message.content : message.content.map((part) => part.text).join(""), ...Object.values(message.sections ?? {}).filter((section): section is string => typeof section === "string")]
+        : [])
+      .join("\n");
+    const manifestPath = decodeXml(systemPrompt.match(/<location>([^<]*\/SKILL\.md)<\/location>/)?.[1] ?? "");
+    const toolResults = context.messages.slice(latestUserIndex + 1).filter((message) => message.role === "toolResult");
+    if (toolResults.length === 0 && manifestPath !== "") {
+      emitToolCall(stream, output, "fixture-read-manifest", manifestPath);
+      return;
+    }
+    if (toolResults.length === 1 && manifestPath !== "") {
+      const manifest = toolResultText(toolResults[0]!);
+      const reference = manifest.match(/(?:supporting file|support)\s*:\s*([a-zA-Z0-9._/-]+)/i)?.[1]
+        ?? manifest.match(/\[[^\]]+\]\(([^)]+)\)/)?.[1];
+      if (reference === undefined || reference.startsWith("/") || reference.includes("..")) throw new Error("deterministic Skill fixture has no safe supporting-file reference");
+      emitToolCall(stream, output, "fixture-read-support", resolve(dirname(manifestPath), reference));
       return;
     }
 
-    const text = "fixture tool completed";
+    const text = manifestPath === "" ? "skill-read:none" : `skill-read:${createHash("sha256")
+      .update(toolResultText(toolResults[0]!)).update("\0").update(toolResultText(toolResults[1]!)).digest("hex").slice(0, 16)}`;
     output.content.push({ type: "text", text });
     stream.push({ type: "text_start", contentIndex: 0, partial: output });
     stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
@@ -104,6 +106,24 @@ function streamDeterministic(
   });
 
   return stream;
+}
+
+function emitToolCall(stream: AssistantMessageEventStream, output: AssistantMessage, id: string, path: string): void {
+  const toolCall = { type: "toolCall" as const, id, name: "read", arguments: { path } };
+  output.content.push(toolCall);
+  stream.push({ type: "toolcall_start", contentIndex: 0, partial: output });
+  stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: output });
+  output.stopReason = "toolUse";
+  stream.push({ type: "done", reason: "toolUse", message: output });
+  stream.end();
+}
+
+function toolResultText(message: TranscriptContext["messages"][number]): string {
+  return message.role === "toolResult" ? message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("") : "";
+}
+
+function decodeXml(value: string): string {
+  return value.replace(/&apos;/g, "'").replace(/&quot;/g, "\"").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
 }
 
 function emptyMessage(model: Model<any>): AssistantMessage {

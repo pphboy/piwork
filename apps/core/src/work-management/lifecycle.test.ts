@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { WorkConfig } from "@piwork/contracts";
-import { CoreStore } from "@piwork/core-store";
+import { CoreStore, type WorkContextSnapshotInput } from "@piwork/core-store";
 import { createWorkHttpServer } from "./http-api.js";
 import { WorkLifecycleService, type WorkRuntimeAdapter, type WorkRuntimeState } from "./lifecycle.js";
 import { WorkConfigurationService } from "../configuration/work-config.js";
@@ -12,10 +12,18 @@ import { WorkContextStore } from "../configuration/work-context.js";
 
 const NOW = "2026-09-20T00:00:00.000Z";
 const owner = { userId: "user-owner", role: "user" as const };
+const IMAGE_A = `sha256:${"a".repeat(64)}`;
+const IMAGE_B = `sha256:${"b".repeat(64)}`;
+const PROFILE_A = JSON.stringify({ version: 1, revision: 1, agentImage: "image:a", model: { provider: "test", id: "a", credentialRef: "a.secret" }, updatedAt: NOW });
 
 test("HTTP Work lifecycle is authorized, idempotent, asynchronous, and follows the latest persisted target", async () => {
-  await withFixture(async ({ store, lifecycle, runtime }) => {
-    const server = createWorkHttpServer(lifecycle, { authenticate: (token) => token === "owner" ? owner : { userId: "user-other", role: "user" } });
+  await withFixture(async ({ store, lifecycle, runtime, create }) => {
+    const server = createWorkHttpServer(
+      lifecycle,
+      { authenticate: (token) => token === "owner" ? owner : { userId: "user-other", role: "user" } },
+      undefined,
+      (_principal, input) => create(input),
+    );
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     assert.ok(address !== null && typeof address !== "string");
@@ -58,9 +66,9 @@ test("HTTP Work lifecycle is authorized, idempotent, asynchronous, and follows t
   });
 });
 
-test("startup recovery adopts an existing instance and normal Core shutdown leaves it running", async () => {
-  await withFixture(async ({ store, lifecycle, runtime }) => {
-    const accepted = lifecycle.create(owner, { name: "adopt", configuration: config(), idempotencyKey: "adopt-1" });
+test("startup recovery adopts an existing instance and Core shutdown stops it", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const accepted = create({ name: "adopt", configuration: config(), idempotencyKey: "adopt-1" });
     runtime.state = { exists: true, running: true, ready: true, instanceId: "existing", generation: 1 };
     runtime.managedInstances = [
       { workId: accepted.workId, instanceId: "existing" },
@@ -71,14 +79,59 @@ test("startup recovery adopts an existing instance and normal Core shutdown leav
     assert.equal(runtime.starts, 0);
     assert.deepEqual(report.adoptedWorkIds, [accepted.workId]);
     assert.deepEqual(report.orphanedInstances, [{ workId: "work-orphaned-resource", instanceId: "orphan" }]);
-    await lifecycle.shutdown();
+    await lifecycle.shutdown(true);
+    assert.equal(runtime.state.running, false);
+    assert.equal(store.getWork(accepted.workId)?.observedState, "stopped");
+
+    const restarted = new WorkLifecycleService(store, runtime, () => new Date(NOW), 10, 10, undefined, contexts);
+    await restarted.recover();
     assert.equal(runtime.state.running, true);
+    assert.equal(store.getWork(accepted.workId)?.observedState, "ready");
+    assert.ok(store.listOperations().some((operation) =>
+      operation.workId === accepted.workId && operation.kind === "recover-work-after-core-restart" && operation.state === "succeeded"));
+  });
+});
+
+test("recovery closes an unfinished Operation stage as interrupted before continuing", async () => {
+  await withFixture(async ({ store, lifecycle, create }) => {
+    const accepted = create({ name: "recover-operation", configuration: config(), idempotencyKey: "recover-operation-1" });
+    await lifecycle.waitForIdle();
+    store.updateOperation(accepted.operationId, "running", NOW);
+
+    await lifecycle.recover();
+
+    const operation = store.getOperation(accepted.operationId)!;
+    assert.equal(operation.state, "succeeded");
+    const diagnostics = JSON.parse(operation.resultJson ?? "{}").diagnostics as { stages?: Array<{ outcome?: string }> };
+    assert.ok(diagnostics.stages?.some((stage) => stage.outcome === "interrupted"));
+  });
+});
+
+test("Operation persistence failure emits a safe stderr fallback and leaves the Operation incomplete", async () => {
+  await withFixture(async ({ store, runtime, contexts, createInput }) => {
+    const lines: string[] = [];
+    const lifecycle = new WorkLifecycleService(store, runtime, () => new Date(NOW), 10, 10, undefined, contexts, {
+      write(line) { lines.push(line); },
+    });
+    const original = store.updateOperation.bind(store);
+    const accepted = lifecycle.create(owner, createInput({ name: "persist-failure", configuration: config(), idempotencyKey: "persist-failure-1" }));
+    (store as unknown as { updateOperation: CoreStore["updateOperation"] }).updateOperation = () => { throw new Error("token=abc /host/private"); };
+    try {
+      await lifecycle.waitForIdle();
+    } finally {
+      (store as unknown as { updateOperation: CoreStore["updateOperation"] }).updateOperation = original;
+    }
+    assert.equal(store.getOperation(accepted.operationId)?.state, "pending");
+    assert.equal(runtime.starts, 0);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0]!, /DIAGNOSTIC_PERSIST_FAILED/);
+    assert.doesNotMatch(lines[0]!, /token=abc|host\/private/);
   });
 });
 
 test("delete drains in order, unknown shutdown never reports stopped, and stopped Works stay stopped on recovery", async () => {
-  await withFixture(async ({ store, lifecycle, runtime }) => {
-    const created = lifecycle.create(owner, { name: "ordered-delete", configuration: config(), idempotencyKey: "ordered-1" });
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const created = create({ name: "ordered-delete", configuration: config(), idempotencyKey: "ordered-1" });
     await lifecycle.waitForIdle();
     runtime.events.length = 0;
     const serviceEvents: string[] = [];
@@ -86,13 +139,13 @@ test("delete drains in order, unknown shutdown never reports stopped, and stoppe
       async prepareEnabledServices() { serviceEvents.push("services-prepare"); },
       async stopServices() { serviceEvents.push("services-stop"); runtime.events.push("services-stop"); },
       async removeServiceInstances() { serviceEvents.push("services-remove"); runtime.events.push("services-remove"); },
-    });
+    }, contexts);
     ordered.delete(owner, created.workId, "delete-ordered");
     await ordered.waitForIdle();
     assert.deepEqual(runtime.events, ["drain", "services-stop", "stop", "services-remove", "remove"]);
     assert.equal(store.getWork(created.workId, true)?.observedState, "deleted");
 
-    const stopped = lifecycle.create(owner, { name: "stay-stopped", configuration: config(), idempotencyKey: "stopped-1" });
+    const stopped = create({ name: "stay-stopped", configuration: config(), idempotencyKey: "stopped-1" });
     await lifecycle.waitForIdle();
     lifecycle.stop(owner, stopped.workId, "stopped-2");
     await lifecycle.waitForIdle();
@@ -112,67 +165,357 @@ test("delete drains in order, unknown shutdown never reports stopped, and stoppe
 });
 
 test("Work config set leaves the runtime untouched and apply activates only after readiness", async () => {
-  await withFixture(async ({ store, lifecycle, runtime }) => {
-    const profileA = JSON.stringify({ version: 1, revision: 1, agentImage: "image:a", model: { provider: "test", id: "a", credentialRef: "a.secret" }, updatedAt: NOW });
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const profileA = PROFILE_A;
     const profileB = JSON.stringify({ version: 1, revision: 2, agentImage: "image:b", model: { provider: "test", id: "b", credentialRef: "b.secret" }, updatedAt: NOW });
-    const created = lifecycle.create(owner, { name: "config-apply", configuration: config(), idempotencyKey: "config-create", runtimeProfileJson: profileA, sourceRuntimeRevision: 1 });
+    const created = create({ name: "config-apply", configuration: config(), idempotencyKey: "config-create", runtimeProfileJson: profileA, sourceRuntimeRevision: 1 });
     await lifecycle.waitForIdle();
     assert.equal(store.getWorkConfiguration(created.workId)?.activeRevision, 1);
     runtime.events.length = 0;
 
     const configurations = new WorkConfigurationService(store, () => new Date(NOW));
-    configurations.update(owner, created.workId, 1, { ...config(), modelRef: "model-0199e6d8next" }, { runtimeProfileJson: profileB, sourceRuntimeRevision: 2 });
+    const configurationB = { ...config(), modelRef: "model-0199e6d8next" };
+    configurations.update(owner, created.workId, 1, configurationB, {
+      runtimeProfileJson: profileB,
+      sourceRuntimeRevision: 2,
+      snapshot: capture(contexts, created.workId, configurationB, "context-config-b", IMAGE_B),
+    });
     assert.equal(store.getWorkConfiguration(created.workId)?.activeRevision, 1);
     assert.equal(store.getWorkConfiguration(created.workId)?.pendingRestart, true);
     assert.deepEqual(runtime.events, []);
     assert.equal(runtime.state.running, true);
 
     runtime.failPrepare = true;
-    await assert.rejects(() => lifecycle.applyConfiguration(owner, created.workId, 2), /prepare failed/);
+    const failed = lifecycle.applyConfiguration(owner, created.workId, "config-apply-failed", 2);
+    await lifecycle.waitForIdle();
+    assert.equal(store.getOperation(failed.operationId)?.state, "failed");
     assert.equal(store.getWorkConfiguration(created.workId)?.activeRevision, 1);
     assert.equal(runtime.state.running, true);
     assert.deepEqual(runtime.events, []);
 
     runtime.failPrepare = false;
-    const applied = await lifecycle.applyConfiguration(owner, created.workId, 2);
+    const succeeded = lifecycle.applyConfiguration(owner, created.workId, "config-apply-success", 2);
+    await lifecycle.waitForIdle();
+    const applied = store.getWorkConfiguration(created.workId)!;
     assert.equal(applied.activeRevision, 2);
     assert.equal(applied.pendingRestart, false);
-    assert.deepEqual(runtime.events, ["drain", "stop", "remove"]);
+    assert.deepEqual(runtime.events, ["prepare-change", "stop", "remove"]);
     assert.equal(runtime.state.ready, true);
     const applyOperations = store.listOperations().filter((operation) => operation.kind === "apply-work-configuration");
-    assert.equal(applyOperations.length, 1);
-    assert.equal(JSON.parse(applyOperations.at(-1)!.requestJson).capturedRevision, 2);
-    assert.equal(applyOperations.at(-1)!.state, "succeeded");
+    assert.equal(applyOperations.length, 2);
+    assert.equal(JSON.parse(store.getOperation(succeeded.operationId)!.requestJson).capturedRevision, 2);
+    assert.equal(store.getOperation(succeeded.operationId)!.state, "succeeded");
+  });
+});
+
+test("initial activation remains null until runtime readiness completes", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, create }) => {
+    runtime.holdStart = true;
+    const created = create({ name: "held-create", configuration: config(), idempotencyKey: "held-create-1" });
+    await runtime.waitUntilStartIsHeld();
+    const during = store.getWorkConfiguration(created.workId)!;
+    assert.equal(during.activeContextId, null);
+    assert.equal(during.pendingRestart, true);
+    assert.equal(store.getOperation(created.operationId)?.state, "running");
+    runtime.release();
+    await lifecycle.waitForIdle();
+    assert.notEqual(store.getWorkConfiguration(created.workId)?.activeContextId, null);
+  });
+});
+
+test("apply replay is stable after edits and a distinct key retries the retained candidate", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const created = create({ name: "apply-replay", configuration: config(), idempotencyKey: "replay-create" });
+    await lifecycle.waitForIdle();
+    const configurations = new WorkConfigurationService(store, () => new Date(NOW));
+    const candidate = { ...config(), agentsMd: "candidate B" };
+    configurations.update(owner, created.workId, candidate, undefined, {
+      runtimeProfileJson: PROFILE_A, sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, candidate, "context-replay-b"),
+    });
+    runtime.failPrepare = true;
+    const first = lifecycle.applyConfiguration(owner, created.workId, "apply-stable-key");
+    await lifecycle.waitForIdle();
+    assert.equal(store.getOperation(first.operationId)?.state, "failed");
+
+    const later = { ...config(), agentsMd: "candidate C" };
+    configurations.update(owner, created.workId, later, undefined, {
+      runtimeProfileJson: PROFILE_A, sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, later, "context-replay-c"),
+    });
+    const startsBeforeReplay = runtime.starts;
+    const replay = lifecycle.applyConfiguration(owner, created.workId, "apply-stable-key");
+    await lifecycle.waitForIdle();
+    assert.deepEqual(replay, { ...first, reused: true });
+    assert.equal(runtime.starts, startsBeforeReplay);
+    assert.equal(store.getOperation(first.operationId)?.state, "failed");
+
+    runtime.failPrepare = false;
+    const retry = lifecycle.applyConfiguration(owner, created.workId, "apply-new-key");
+    await lifecycle.waitForIdle();
+    assert.notEqual(retry.operationId, first.operationId);
+    assert.equal(store.getOperation(retry.operationId)?.state, "succeeded");
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, "context-replay-c");
+  });
+});
+
+test("stopped apply validates in initialization-only mode and remains stopped", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const created = create({ name: "stopped-apply", configuration: config(), idempotencyKey: "stopped-create" });
+    await lifecycle.waitForIdle();
+    lifecycle.stop(owner, created.workId, "stopped-stop");
+    await lifecycle.waitForIdle();
+
+    const candidate = { ...config(), agentsMd: "validated while stopped" };
+    new WorkConfigurationService(store, () => new Date(NOW)).update(owner, created.workId, candidate, undefined, {
+      runtimeProfileJson: PROFILE_A,
+      sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, candidate, "context-stopped-candidate"),
+    });
+    runtime.events.length = 0;
+    const applied = lifecycle.applyConfiguration(owner, created.workId, "stopped-apply-operation");
+    await lifecycle.waitForIdle();
+
+    assert.equal(store.getOperation(applied.operationId)?.state, "succeeded");
+    assert.equal(store.getWork(created.workId)?.desiredState, "stopped");
+    assert.equal(store.getWork(created.workId)?.observedState, "stopped");
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, "context-stopped-candidate");
+    assert.equal(runtime.startConfigurations.at(-1)?.initializationOnly, true);
+    assert.deepEqual(runtime.events, ["stop", "remove"]);
+    assert.equal(runtime.state.exists, false);
+  });
+});
+
+test("busy configuration preparation preserves the active runtime and context", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const created = create({ name: "busy-apply", configuration: config(), idempotencyKey: "busy-create" });
+    await lifecycle.waitForIdle();
+    const activeContextId = store.getWorkConfiguration(created.workId)!.activeContextId;
+    const candidate = { ...config(), agentsMd: "pending while busy" };
+    new WorkConfigurationService(store, () => new Date(NOW)).update(owner, created.workId, candidate, undefined, {
+      runtimeProfileJson: PROFILE_A,
+      sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, candidate, "context-busy-candidate"),
+    });
+    runtime.activeRunCount = 1;
+    runtime.events.length = 0;
+
+    const applied = lifecycle.applyConfiguration(owner, created.workId, "busy-apply-operation");
+    await lifecycle.waitForIdle();
+
+    assert.equal(store.getOperation(applied.operationId)?.state, "failed");
+    assert.equal(JSON.parse(store.getOperation(applied.operationId)?.errorJson ?? "{}").code, "WORK_BUSY");
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, activeContextId);
+    assert.equal(store.getWorkConfiguration(created.workId)?.desiredContextId, "context-busy-candidate");
+    assert.equal(store.getWork(created.workId)?.observedState, "ready");
+    assert.equal(runtime.state.running, true);
+    assert.deepEqual(runtime.events, ["prepare-change"]);
   });
 });
 
 test("apply activates its captured configuration while a later desired edit remains pending", async () => {
-  await withFixture(async ({ store, lifecycle, runtime }) => {
-    const profile = JSON.stringify({ version: 1, revision: 1, agentImage: "image:a", model: { provider: "test", id: "a", credentialRef: "a.secret" }, updatedAt: NOW });
-    const created = lifecycle.create(owner, { name: "apply-race", configuration: config(), idempotencyKey: "race-create", runtimeProfileJson: profile, sourceRuntimeRevision: 1 });
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const profile = PROFILE_A;
+    const created = create({ name: "apply-race", configuration: config(), idempotencyKey: "race-create", runtimeProfileJson: profile, sourceRuntimeRevision: 1 });
     await lifecycle.waitForIdle();
     const configurations = new WorkConfigurationService(store, () => new Date(NOW));
-    configurations.update(owner, created.workId, { ...config(), agentsMd: "B" }, undefined, { runtimeProfileJson: profile, sourceRuntimeRevision: 1 });
+    const configurationB = { ...config(), agentsMd: "B" };
+    configurations.update(owner, created.workId, configurationB, undefined, {
+      runtimeProfileJson: profile,
+      sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, configurationB, "context-race-b"),
+    });
 
     runtime.holdStart = true;
-    const applyingB = lifecycle.applyConfiguration(owner, created.workId);
+    lifecycle.applyConfiguration(owner, created.workId, "apply-b");
     await runtime.waitUntilStartIsHeld();
-    configurations.update(owner, created.workId, { ...config(), agentsMd: "C" }, undefined, { runtimeProfileJson: profile, sourceRuntimeRevision: 1 });
+    const configurationC = { ...config(), agentsMd: "C" };
+    configurations.update(owner, created.workId, configurationC, undefined, {
+      runtimeProfileJson: profile,
+      sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, configurationC, "context-race-c"),
+    });
     runtime.release();
 
-    const applied = await applyingB;
+    await lifecycle.waitForIdle();
+    const applied = store.getWorkConfiguration(created.workId)!;
     assert.equal(applied.activeRevision, 2);
     assert.equal(applied.desiredRevision, 3);
     assert.equal(applied.pendingRestart, true);
     assert.equal(JSON.parse(applied.activeConfigJson ?? "{}").agentsMd, "B");
     assert.equal(JSON.parse(applied.desiredConfigJson).agentsMd, "C");
+    assert.equal(runtime.startConfigurations.at(-1)?.contextIdentity, "context-race-b");
+    assert.equal(runtime.startConfigurations.at(-1)?.imageIdentity, IMAGE_A);
 
     const before = store.listOperations().filter((operation) => operation.kind === "apply-work-configuration").length;
-    const appliedC = await lifecycle.applyConfiguration(owner, created.workId);
+    lifecycle.applyConfiguration(owner, created.workId, "apply-c");
+    await lifecycle.waitForIdle();
+    const appliedC = store.getWorkConfiguration(created.workId)!;
     assert.equal(appliedC.pendingRestart, false);
     assert.equal(appliedC.activeRevision, 3);
     const after = store.listOperations().filter((operation) => operation.kind === "apply-work-configuration").length;
     assert.equal(after, before + 1);
+  });
+});
+
+test("stop accepted during candidate initialization supersedes apply before activation", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const created = create({ name: "superseded-apply", configuration: config(), idempotencyKey: "superseded-create" });
+    await lifecycle.waitForIdle();
+    const active = store.getWorkConfiguration(created.workId)!.activeContextId;
+    const candidate = { ...config(), agentsMd: "candidate while stopping" };
+    new WorkConfigurationService(store, () => new Date(NOW)).update(owner, created.workId, candidate, undefined, {
+      runtimeProfileJson: PROFILE_A, sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, candidate, "context-superseded"),
+    });
+    runtime.holdStart = true;
+    const applied = lifecycle.applyConfiguration(owner, created.workId, "superseded-apply-operation");
+    await runtime.waitUntilStartIsHeld();
+    const stopped = lifecycle.stop(owner, created.workId, "superseding-stop");
+    runtime.release();
+    await lifecycle.waitForIdle();
+
+    assert.equal(store.getOperation(applied.operationId)?.state, "superseded");
+    assert.equal(store.getOperation(stopped.operationId)?.state, "succeeded");
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, active);
+    assert.equal(store.getWork(created.workId)?.observedState, "stopped");
+    assert.equal(runtime.state.running, false);
+  });
+});
+
+test("stopped apply cannot activate when candidate shutdown is uncertain", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const created = create({ name: "uncertain-shutdown", configuration: config(), idempotencyKey: "uncertain-create" });
+    await lifecycle.waitForIdle();
+    lifecycle.stop(owner, created.workId, "uncertain-stop");
+    await lifecycle.waitForIdle();
+    const active = store.getWorkConfiguration(created.workId)!.activeContextId;
+    const candidate = { ...config(), agentsMd: "must remain pending" };
+    new WorkConfigurationService(store, () => new Date(NOW)).update(owner, created.workId, candidate, undefined, {
+      runtimeProfileJson: PROFILE_A, sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, candidate, "context-uncertain"),
+    });
+    runtime.leaveRunningOnStop = true;
+    const applied = lifecycle.applyConfiguration(owner, created.workId, "uncertain-apply");
+    await lifecycle.waitForIdle();
+    assert.equal(store.getOperation(applied.operationId)?.state, "failed");
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, active);
+    assert.equal(store.getWork(created.workId)?.observedState, "failed");
+    assert.equal(runtime.starts, 2);
+  });
+});
+
+test("failed replacement restores the active context and records rollback failure separately", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const created = create({ name: "rollback", configuration: config(), idempotencyKey: "rollback-create", snapshotId: "context-rollback-a" });
+    await lifecycle.waitForIdle();
+    const candidate = { ...config(), agentsMd: "candidate B" };
+    new WorkConfigurationService(store, () => new Date(NOW)).update(owner, created.workId, candidate, undefined, {
+      runtimeProfileJson: PROFILE_A, sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, candidate, "context-rollback-b"),
+    });
+    runtime.failStartContexts.add("context-rollback-b");
+    const applied = lifecycle.applyConfiguration(owner, created.workId, "rollback-success");
+    await lifecycle.waitForIdle();
+    const operation = lifecycle.operation(owner, applied.operationId);
+    assert.equal(operation.state, "failed");
+    assert.equal(operation.diagnostics.rollback.state, "succeeded");
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, "context-rollback-a");
+    assert.equal(runtime.startConfigurations.at(-1)?.contextIdentity, "context-rollback-a");
+    assert.equal(store.getWork(created.workId)?.observedState, "ready");
+
+    runtime.failStartContexts.add("context-rollback-a");
+    const retry = lifecycle.applyConfiguration(owner, created.workId, "rollback-failed");
+    await lifecycle.waitForIdle();
+    const failed = lifecycle.operation(owner, retry.operationId);
+    assert.equal(failed.state, "failed");
+    assert.equal(failed.diagnostics.rollback.state, "failed");
+    assert.equal(failed.diagnostics.rollback.error?.code, "ROLLBACK_FAILED");
+    assert.equal(store.getWork(created.workId)?.observedState, "failed");
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, "context-rollback-a");
+  });
+});
+
+test("initial retry retains the create Operation context after desired advances", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    runtime.failPrepare = true;
+    const created = create({
+      name: "initial-retry",
+      configuration: config(),
+      idempotencyKey: "initial-retry-create",
+      snapshotId: "context-initial",
+    });
+    await lifecycle.waitForIdle();
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, null);
+
+    const desired = { ...config(), agentsMd: "later desired" };
+    new WorkConfigurationService(store, () => new Date(NOW)).update(owner, created.workId, desired, undefined, {
+      runtimeProfileJson: PROFILE_A,
+      sourceRuntimeRevision: 1,
+      snapshot: capture(contexts, created.workId, desired, "context-later"),
+    });
+
+    runtime.failPrepare = false;
+    const retry = lifecycle.retry(owner, created.workId, "initial-retry-operation");
+    await lifecycle.waitForIdle();
+
+    assert.equal(store.getOperation(retry.operationId)?.state, "succeeded");
+    assert.equal(runtime.startConfigurations.at(-1)?.contextIdentity, "context-initial");
+    const state = store.getWorkConfiguration(created.workId)!;
+    assert.equal(state.activeContextId, "context-initial");
+    assert.equal(state.desiredContextId, "context-later");
+    assert.equal(state.pendingRestart, true);
+  });
+});
+
+test("missing, mismatched, and wrongly owned captured contexts fail before runtime start", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, createInput }) => {
+    const missing = lifecycle.create(owner, {
+      workId: "work-context-missing",
+      name: "missing",
+      configuration: config(),
+      idempotencyKey: "missing-context",
+      runtimeProfileJson: PROFILE_A,
+      sourceRuntimeRevision: 1,
+    });
+    await lifecycle.waitForIdle();
+    assert.equal(JSON.parse(store.getOperation(missing.operationId)?.errorJson ?? "{}").code, "CONTEXT_NOT_FOUND");
+
+    const metadataInput = createInput({
+      workId: "work-context-metadata",
+      name: "metadata",
+      configuration: config(),
+      idempotencyKey: "mismatched-metadata",
+      snapshotId: "context-metadata",
+    });
+    const metadata = lifecycle.create(owner, {
+      ...metadataInput,
+      snapshot: { ...metadataInput.snapshot!, imageIdentity: IMAGE_B },
+    });
+    await lifecycle.waitForIdle();
+    assert.equal(JSON.parse(store.getOperation(metadata.operationId)?.errorJson ?? "{}").code, "SKILL_VALIDATION_FAILED");
+
+    const ownershipInput = createInput({
+      workId: "work-context-ownership",
+      name: "ownership",
+      configuration: config(),
+      idempotencyKey: "mismatched-ownership",
+      snapshotId: "context-ownership",
+    });
+    const metadataPath = join(contexts.rootDirectory, "work-context-ownership", "contexts", "context-ownership", "metadata.json");
+    await chmod(metadataPath, 0o600);
+    await writeFile(metadataPath, `${JSON.stringify({
+      version: 1,
+      snapshotId: "context-ownership",
+      workId: "work-another-owner",
+      imageIdentity: IMAGE_A,
+      skills: [],
+      createdAt: NOW,
+    })}\n`);
+    const ownership = lifecycle.create(owner, ownershipInput);
+    await lifecycle.waitForIdle();
+    assert.equal(JSON.parse(store.getOperation(ownership.operationId)?.errorJson ?? "{}").code, "SKILL_VALIDATION_FAILED");
+    assert.equal(runtime.starts, 0);
   });
 });
 
@@ -240,24 +583,39 @@ class FakeRuntime implements WorkRuntimeAdapter {
   managedInstances: Array<{ workId: string; instanceId: string }> = [];
   failInspect = false;
   failPrepare = false;
+  activeRunCount = 0;
+  leaveRunningOnStop = false;
+  failStartContexts = new Set<string>();
   events: string[] = [];
+  startConfigurations: Array<Parameters<WorkRuntimeAdapter["start"]>[2]> = [];
   private gate: (() => void) | undefined;
   private startHeld: (() => void) | undefined;
 
   async prepare(): Promise<void> { if (this.failPrepare) throw new Error("prepare failed"); this.prepares += 1; }
-  async start(_work: unknown, generation: number): Promise<{ instanceId: string; generation: number }> {
+  async prepareConfigurationChange(): Promise<{ prepared: boolean; busy: boolean; activeRunCount: number }> {
+    this.events.push("prepare-change");
+    return { prepared: this.activeRunCount === 0, busy: this.activeRunCount > 0, activeRunCount: this.activeRunCount };
+  }
+  async start(_work: unknown, generation: number, configuration?: Parameters<WorkRuntimeAdapter["start"]>[2]): Promise<{ instanceId: string; generation: number }> {
     this.starts += 1;
+    this.startConfigurations.push(configuration);
     if (this.holdStart) await new Promise<void>((resolve) => {
       this.gate = resolve;
       this.startHeld?.();
       this.startHeld = undefined;
     });
+    if (configuration !== undefined && this.failStartContexts.has(configuration.contextIdentity)) {
+      throw new Error("runtime candidate failed");
+    }
     this.state = { exists: true, running: true, ready: true, instanceId: `instance-${generation}`, generation };
     return { instanceId: `instance-${generation}`, generation };
   }
   async inspect(): Promise<WorkRuntimeState> { if (this.failInspect) throw new Error("runtime state unknown"); return this.state; }
   async drain(): Promise<void> { this.events.push("drain"); }
-  async stop(): Promise<void> { this.events.push("stop"); this.state = { ...this.state, running: false, ready: false }; }
+  async stop(): Promise<void> {
+    this.events.push("stop");
+    if (!this.leaveRunningOnStop) this.state = { ...this.state, running: false, ready: false };
+  }
   async remove(): Promise<void> { this.events.push("remove"); this.state = { exists: false, running: false, ready: false }; }
   async listManagedInstances() { return this.managedInstances; }
   async waitUntilStartIsHeld(): Promise<void> {
@@ -276,16 +634,73 @@ async function request(base: string, token: string, method: string, path: string
   return { status: response.status, body: await response.json() as Record<string, any> };
 }
 
-async function withFixture(run: (fixture: { store: CoreStore; lifecycle: WorkLifecycleService; runtime: FakeRuntime }) => Promise<void>) {
+interface FixtureCreateInput {
+  readonly name: string;
+  readonly configuration: WorkConfig;
+  readonly idempotencyKey: string;
+  readonly runtimeProfileJson?: string;
+  readonly sourceRuntimeRevision?: number;
+  readonly workId?: string;
+  readonly snapshotId?: string;
+  readonly imageIdentity?: string;
+}
+
+async function withFixture(run: (fixture: {
+  store: CoreStore;
+  lifecycle: WorkLifecycleService;
+  runtime: FakeRuntime;
+  contexts: WorkContextStore;
+  create: (input: FixtureCreateInput) => ReturnType<WorkLifecycleService["create"]>;
+  createInput: (input: FixtureCreateInput) => Parameters<WorkLifecycleService["create"]>[1];
+}) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "piwork-lifecycle-"));
   const store = CoreStore.open({ databasePath: join(root, "core.sqlite") });
   store.exec(`INSERT INTO users(id, account, password_digest, role, enabled, created_at, updated_at) VALUES
     ('user-owner', 'owner', 'digest', 'user', 1, '${NOW}', '${NOW}'),
     ('user-other', 'other', 'digest', 'user', 1, '${NOW}', '${NOW}')`);
   const runtime = new FakeRuntime();
-  const lifecycle = new WorkLifecycleService(store, runtime, () => new Date(NOW), 10, 10);
-  try { await run({ store, lifecycle, runtime }); }
+  const contexts = new WorkContextStore(join(root, "works"));
+  const lifecycle = new WorkLifecycleService(store, runtime, () => new Date(NOW), 10, 10, undefined, contexts);
+  let sequence = 0;
+  const createInput = (input: FixtureCreateInput): Parameters<WorkLifecycleService["create"]>[1] => {
+    const workId = input.workId ?? `work-fixture-${++sequence}`;
+    return {
+      name: input.name,
+      configuration: input.configuration,
+      idempotencyKey: input.idempotencyKey,
+      runtimeProfileJson: input.runtimeProfileJson ?? PROFILE_A,
+      sourceRuntimeRevision: input.sourceRuntimeRevision ?? 1,
+      workId,
+      snapshot: capture(contexts, workId, input.configuration, input.snapshotId ?? `context-${sequence}`, input.imageIdentity ?? IMAGE_A),
+    };
+  };
+  const create = (input: FixtureCreateInput) => lifecycle.create(owner, createInput(input));
+  try { await run({ store, lifecycle, runtime, contexts, create, createInput }); }
   finally { store.close(); await rm(root, { recursive: true, force: true }); }
+}
+
+function capture(
+  contexts: WorkContextStore,
+  workId: string,
+  configuration: WorkConfig,
+  snapshotId: string,
+  imageIdentity = IMAGE_A,
+): WorkContextSnapshotInput {
+  const snapshot = contexts.build({
+    workId,
+    snapshotId,
+    configuration,
+    imageIdentity,
+    skills: [],
+    createdAt: NOW,
+  });
+  return {
+    snapshotId: snapshot.snapshotId,
+    configurationJson: JSON.stringify(snapshot.configuration),
+    imageIdentity: snapshot.metadata.imageIdentity,
+    createdByUserId: owner.userId,
+    createdAt: snapshot.metadata.createdAt,
+  };
 }
 
 function config(): WorkConfig {

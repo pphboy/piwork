@@ -17,10 +17,6 @@ export class AgentSessionService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  bindLegacyContexts(): void {
-    if (this.contextIdentity !== undefined) this.store.bindUnboundSessionContexts(this.workId, this.contextIdentity);
-  }
-
   create(idempotencyKey?: string): SessionRecord {
     const sdk = initializePersistentSession({ cwd: this.workspace, sessionRoot: this.sessionRoot });
     const snapshot = readPersistentSession(sdk);

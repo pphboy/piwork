@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { exitCodeFor } from "./main.js";
+import { exitCodeFor, parseSkillSelection } from "./main.js";
 import { PiworkApiError } from "@piwork/client-sdk";
 
 const executable = resolve("dist/main.js");
@@ -40,6 +40,16 @@ test("documented safe error classes map to stable exit statuses", () => {
   assert.equal(exitCodeFor(new PiworkApiError(503, "UNAVAILABLE", "down")), 5);
   assert.equal(exitCodeFor(new PiworkApiError(409, "CONFLICT", "stale")), 6);
   assert.equal(exitCodeFor(new Error("unexpected")), 1);
+});
+
+test("Skill selection flags distinguish default, explicit, and empty selections", () => {
+  assert.equal(parseSkillSelection([], false), undefined);
+  assert.deepEqual(parseSkillSelection(["--skill", "alpha", "--skill", "beta"], false), ["alpha", "beta"]);
+  assert.deepEqual(parseSkillSelection(["--no-skills"], true), []);
+  assert.throws(() => parseSkillSelection([], true), /select at least one/);
+  assert.throws(() => parseSkillSelection(["--skill", "alpha", "--skill", "alpha"], false), /may not be repeated/);
+  assert.throws(() => parseSkillSelection(["--skill", "alpha", "--no-skills"], false), /mutually exclusive/);
+  assert.throws(() => parseSkillSelection(["--no-skills", "--no-skills"], false), /only once/);
 });
 
 function run(args: readonly string[]) {

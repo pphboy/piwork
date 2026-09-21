@@ -4,6 +4,7 @@ package piwork.agent.v1;
 
 service AgentService {
   rpc Readiness(ReadinessRequest) returns (ReadinessResponse);
+  rpc PrepareConfigurationChange(PrepareConfigurationChangeRequest) returns (PrepareConfigurationChangeResponse);
   rpc Drain(DrainRequest) returns (DrainResponse);
   rpc CreateSession(CreateSessionRequest) returns (Session);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
@@ -27,6 +28,32 @@ message ReadinessResponse {
   string protocol_version = 4;
   bool accepting_runs = 5;
   bool draining = 6;
+  uint32 context_contract_version = 7;
+  string context_identity = 8;
+  bool initialization_complete = 9;
+  repeated LoadedSkill loaded_skills = 10;
+  repeated string resolved_tools = 11;
+  uint32 active_run_count = 12;
+}
+
+message LoadedSkill {
+  string name = 1;
+  string identity = 2;
+  bool loaded = 3;
+  bool model_visible = 4;
+  string visibility_reason = 5;
+}
+
+message PrepareConfigurationChangeRequest {
+  string work_id = 1;
+  uint64 generation = 2;
+  string instance_id = 3;
+}
+
+message PrepareConfigurationChangeResponse {
+  bool prepared = 1;
+  bool busy = 2;
+  uint32 active_run_count = 3;
 }
 
 message DrainRequest {

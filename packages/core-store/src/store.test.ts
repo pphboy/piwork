@@ -32,7 +32,6 @@ test("empty database upgrades once and contains every durable Core entity", asyn
       "control_metadata",
       "managed_skill_artifacts",
       "work_context_snapshots",
-      "filesystem_migrations",
     ]) {
       assert.match(tables?.names ?? "", new RegExp(`(?:^|,)${name}(?:,|$)`));
     }
@@ -43,33 +42,6 @@ test("empty database upgrades once and contains every durable Core entity", asyn
     const migrationCount = reopened.get<{ count: number }>("SELECT COUNT(*) AS count FROM schema_migrations");
     assert.equal(migrationCount?.count, CORE_SCHEMA_VERSION);
     reopened.close();
-  } finally {
-    await fixture.cleanup();
-  }
-});
-
-test("legacy Work runtime snapshots are backfilled once and survive later global changes", async () => {
-  const fixture = await createFixture();
-  try {
-    const store = CoreStore.open({ databasePath: fixture.databasePath });
-    const now = "2026-09-20T00:00:00.000Z";
-    store.exec(`INSERT INTO users(id, account, password_digest, role, enabled, created_at, updated_at)
-      VALUES ('user-1', 'alice', 'digest', 'admin', 1, '${now}', '${now}')`);
-    store.exec(`INSERT INTO works(id, owner_user_id, name, desired_state, observed_state,
-      desired_revision, active_revision, control_version, created_at, updated_at)
-      VALUES ('work-1', 'user-1', 'legacy', 'running', 'ready', 2, 1, 1, '${now}', '${now}')`);
-    store.exec(`INSERT INTO work_config_revisions(work_id, revision, config_json, created_by_user_id, created_at)
-      VALUES ('work-1', 1, '{"revision":1}', 'user-1', '${now}'),
-             ('work-1', 2, '{"revision":2}', 'user-1', '${now}')`);
-
-    assert.equal(store.backfillWorkRuntimeProfiles('{"model":"model-a"}', 7, now), 1);
-    assert.equal(store.getWorkConfiguration("work-1")?.activeRevision, 2);
-    assert.equal(store.getWorkConfiguration("work-1")?.pendingRestart, false);
-    assert.equal(store.getWorkConfigRevision("work-1", 2)?.runtimeProfileJson, '{"model":"model-a"}');
-
-    assert.equal(store.backfillWorkRuntimeProfiles('{"model":"model-b"}', 8, now), 0);
-    assert.equal(store.getWorkConfigRevision("work-1", 2)?.runtimeProfileJson, '{"model":"model-a"}');
-    store.close();
   } finally {
     await fixture.cleanup();
   }

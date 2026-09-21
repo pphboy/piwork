@@ -1,6 +1,4 @@
 import type { OperatorSkill, PublicSkill } from "@piwork/contracts";
-import { dirname, resolve } from "node:path";
-import { lstatSync } from "node:fs";
 import {
   CoreStore,
   ManagedSkillNotFoundError,
@@ -101,36 +99,6 @@ export class CoreSkillService {
     this.artifacts.cleanupOrphans(referenced);
   }
 
-  /** Resume import of pre-snapshot catalog Skill references. */
-  migrateLegacySkills(): void {
-    const migrationKey = "legacy-skill-import-v1";
-    for (const entry of this.store.listCatalogEntries(false).filter((item) => item.kind === "skill" && item.mutableReference !== null)) {
-      const prior = this.store.getFilesystemMigration(migrationKey, entry.id);
-      if (prior?.state === "succeeded") continue;
-      const now = this.now().toISOString();
-      this.store.setFilesystemMigration({ migrationKey, itemKey: entry.id, state: "running", errorCode: null, updatedAt: now });
-      try {
-        const reference = resolve(entry.mutableReference!);
-        const stat = lstatSync(reference);
-        const source = stat.isFile() && reference.endsWith("SKILL.md") ? dirname(reference) : reference;
-        const artifact = this.artifacts.import(source);
-        if (artifact.name !== entry.id) {
-          this.store.rewriteSkillReferences(entry.id, artifact.name, now);
-          this.store.retireLegacyCatalogSkill(entry.id, now);
-        }
-        if (this.store.getCatalogEntry(artifact.name) === undefined) {
-          this.store.addManagedSkill({ name: artifact.name, identity: artifact.identity, fileCount: artifact.fileCount, totalBytes: artifact.totalBytes, now });
-        } else if (this.store.getManagedSkill(artifact.name) === undefined) {
-          this.store.adoptLegacyManagedSkill({ name: artifact.name, identity: artifact.identity, fileCount: artifact.fileCount, totalBytes: artifact.totalBytes, now });
-        }
-        this.store.setFilesystemMigration({ migrationKey, itemKey: entry.id, state: "succeeded", errorCode: null, updatedAt: this.now().toISOString() });
-      } catch (error) {
-        const code = error instanceof Error && "code" in error ? String((error as { code?: unknown }).code) : "LEGACY_SKILL_UNRECOVERABLE";
-        this.store.setFilesystemMigration({ migrationKey, itemKey: entry.id, state: "failed", errorCode: code.slice(0, 128), updatedAt: this.now().toISOString() });
-      }
-    }
-    this.cleanupOrphans();
-  }
 }
 
 function operatorView(record: ManagedSkillRecord): OperatorSkill {

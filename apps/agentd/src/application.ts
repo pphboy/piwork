@@ -22,6 +22,8 @@ import {
   type ListSessionsResponse,
   type ReadinessRequest,
   type ReadinessResponse,
+  type PrepareConfigurationChangeRequest,
+  type PrepareConfigurationChangeResponse,
   type ReadSessionRequest,
   type Run,
   type RunEvent,
@@ -37,6 +39,8 @@ import { PiSdkRunExecutor } from "./pi-sdk-executor.js";
 import { RunManager } from "./runs.js";
 import { AgentSessionService } from "./sessions.js";
 import { loadConfiguredSkills, type ConfiguredSkill } from "./skills.js";
+import { emitAgentDiagnostic } from "./diagnostics.js";
+import type { ResourceLoader } from "@earendil-works/pi-coding-agent";
 
 export const AGENT_PROTOCOL_VERSION = "v1";
 
@@ -53,6 +57,8 @@ export interface AgentRuntimeConfig {
   readonly agentsMdPath?: string;
   readonly contextIdentity?: string;
   readonly resolvedTools?: readonly string[];
+  readonly initializationOnly?: boolean;
+  readonly correlationId?: string;
   readonly model: {
     readonly provider: string;
     readonly id: string;
@@ -65,6 +71,27 @@ export interface AgentRuntimeConfig {
     readonly serverPrivateKeyPath: string;
     readonly expectedClientCommonName: string;
   };
+}
+
+interface CapturedWorkContext {
+  readonly skillRoot: string;
+  readonly skills: readonly ConfiguredSkill[];
+  readonly agentsMd: string;
+  readonly contextIdentity: string;
+  readonly resolvedTools: readonly string[];
+}
+
+export interface LoadedWorkContext {
+  readonly contextIdentity: string;
+  readonly loader: ResourceLoader;
+  readonly resolvedTools: readonly string[];
+  readonly skills: readonly {
+    readonly name: string;
+    readonly identity: string;
+    readonly loaded: boolean;
+    readonly modelVisible: boolean;
+    readonly visibilityReason: "" | "model-invocation-disabled" | "read-tools-disabled";
+  }[];
 }
 
 export class AgentApplication {
@@ -97,18 +124,37 @@ export class AgentApplication {
       mkdirSync(workspace, { recursive: true });
       mkdirSync(sessionRoot, { recursive: true });
       const sessions = new AgentSessionService(config.workId, store, workspace, sessionRoot, config.contextIdentity);
-      sessions.bindLegacyContexts();
       const context = loadWorkContext(config);
+      emitAgentDiagnostic({
+        stage: "skill-load", outcome: "started", code: "SKILL_LOAD_FAILED",
+        correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
+      });
+      const loaded = await loadValidatedWorkContext(context);
       const runs = new RunManager(store, daemon, new PiSdkRunExecutor(
         sessions,
         join(config.dataDirectory, "agent"),
         { ...config.model, deterministic: config.deterministic },
-        context,
+        { resourceLoader: loaded.loader, resolvedTools: loaded.resolvedTools },
       ));
       runs.recover();
-      daemon.configure({ modelCredentialStatus: "available" });
+      daemon.configure({
+        modelCredentialStatus: "available",
+        contextIdentity: loaded.contextIdentity,
+        loadedSkills: loaded.skills,
+        resolvedTools: [...loaded.resolvedTools],
+        initializationComplete: true,
+        initializationOnly: config.initializationOnly,
+      });
+      emitAgentDiagnostic({
+        stage: "skill-load", outcome: "succeeded", code: "SKILL_LOAD_FAILED",
+        correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
+      });
       return new AgentApplication(config, store, daemon, sessions, runs);
     } catch (error) {
+      emitAgentDiagnostic({
+        stage: "skill-load", outcome: "failed", code: "SKILL_LOAD_FAILED",
+        correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
+      });
       store.close();
       throw error;
     }
@@ -161,7 +207,20 @@ export class AgentApplication {
           protocolVersion: AGENT_PROTOCOL_VERSION,
           acceptingRuns: value.acceptingRuns,
           draining: value.draining,
+          contextContractVersion: value.contextContractVersion,
+          contextIdentity: value.contextIdentity,
+          initializationComplete: value.initializationComplete,
+          loadedSkills: value.loadedSkills.map((skill) => ({
+            name: skill.name, identity: skill.identity, loaded: skill.loaded,
+            modelVisible: skill.modelVisible, visibilityReason: skill.visibilityReason,
+          })),
+          resolvedTools: [...value.resolvedTools],
+          activeRunCount: value.activeRunCount,
         };
+      }),
+      prepareConfigurationChange: unary((request: PrepareConfigurationChangeRequest): PrepareConfigurationChangeResponse => {
+        this.verify(request);
+        return this.daemon.prepareConfigurationChange();
       }),
       drain: unary(async (request: DrainRequest): Promise<DrainResponse> => {
         this.verify(request);
@@ -170,6 +229,7 @@ export class AgentApplication {
       }),
       createSession: unary((request: CreateSessionRequest): Session => {
         this.verifyWork(request.workId);
+        this.assertAcceptingRuns();
         return sessionMessage(this.sessions.create(request.idempotencyKey));
       }),
       listSessions: unary((request: ListSessionsRequest): ListSessionsResponse => {
@@ -187,7 +247,8 @@ export class AgentApplication {
       }),
       submitRun: unary((request: SubmitRunRequest): SubmitRunResponse => {
         this.verifyWork(request.workId);
-    const result = this.runs.submit(request);
+        this.assertAcceptingRuns();
+        const result = this.runs.submit(request);
         return { run: runMessage(result.run), reused: result.reused };
       }),
       getRun: unary((request: GetRunRequest): Run => runMessage(this.requireRun(request.workId, request.runId))),
@@ -236,6 +297,12 @@ export class AgentApplication {
     if (workId !== this.config.workId) throw Object.assign(new Error("Work identity mismatch"), { code: status.PERMISSION_DENIED });
   }
 
+  private assertAcceptingRuns(): void {
+    if (!this.daemon.readiness().acceptingRuns) {
+      throw Object.assign(new Error("Work is initializing and cannot accept Sessions or Runs"), { code: status.FAILED_PRECONDITION });
+    }
+  }
+
   private requireRun(workId: string, runId: string): RunRecord {
     this.verifyWork(workId);
     const run = this.runs.get(runId);
@@ -265,6 +332,8 @@ function readConfig(path: string): AgentRuntimeConfig {
   if (value.version !== 1 || typeof value.workId !== "string" || !Number.isSafeInteger(value.generation)
     || typeof value.instanceId !== "string" || typeof value.listen !== "string"
     || typeof value.dataDirectory !== "string" || typeof value.deterministic !== "boolean"
+    || (value.initializationOnly !== undefined && typeof value.initializationOnly !== "boolean")
+    || (value.correlationId !== undefined && (typeof value.correlationId !== "string" || !/^[a-z0-9][a-z0-9-]{0,127}$/.test(value.correlationId)))
     || value.model === undefined || typeof value.model.provider !== "string" || typeof value.model.id !== "string"
     || (value.model.baseUrl !== undefined && typeof value.model.baseUrl !== "string")
     || (value.model.credentialPath !== undefined && typeof value.model.credentialPath !== "string")
@@ -275,7 +344,7 @@ function readConfig(path: string): AgentRuntimeConfig {
   return value as AgentRuntimeConfig;
 }
 
-function loadWorkContext(config: AgentRuntimeConfig): { readonly skillRoot?: string; readonly skills: readonly ConfiguredSkill[]; readonly agentsMd?: string; readonly contextIdentity?: string; readonly resolvedTools?: readonly string[] } {
+function loadWorkContext(config: AgentRuntimeConfig): CapturedWorkContext {
   const configPath = config.contextConfigPath ?? "/run/piwork/config.json";
   try {
     const value = JSON.parse(readFileSync(configPath, "utf8")) as { skills?: unknown; agentsMdPath?: unknown; contextIdentity?: unknown; resolvedTools?: unknown; tools?: Parameters<typeof resolveBuiltInWorkTools>[0] };
@@ -296,11 +365,39 @@ function loadWorkContext(config: AgentRuntimeConfig): { readonly skillRoot?: str
     const resolvedTools = Array.isArray(value.resolvedTools)
       ? value.resolvedTools.filter((item): item is string => typeof item === "string")
       : value.tools === undefined ? undefined : resolveBuiltInWorkTools(value.tools);
-    return { skillRoot: "/run/piwork/skills", skills, ...(agentsMd === undefined ? {} : { agentsMd }), contextIdentity: metadata.snapshotId, ...(resolvedTools === undefined ? {} : { resolvedTools }) };
-  } catch (error) {
-    if (config.contextConfigPath === undefined && (error as NodeJS.ErrnoException).code === "ENOENT") return { skills: [] };
-    throw error;
-  }
+    if (resolvedTools === undefined) throw new Error("Work tool policy is unavailable");
+    return { skillRoot: "/run/piwork/skills", skills, agentsMd, contextIdentity: metadata.snapshotId, resolvedTools };
+  } catch (error) { throw error; }
+}
+
+async function loadValidatedWorkContext(context: CapturedWorkContext): Promise<LoadedWorkContext> {
+  const loaded = await loadConfiguredSkills(context.skillRoot, context.skills, context.agentsMd);
+  const tools = new Set(context.resolvedTools);
+  return {
+    contextIdentity: context.contextIdentity,
+    loader: loaded.loader,
+    resolvedTools: context.resolvedTools,
+    skills: loaded.statuses.map((status) => {
+      const skill = loaded.skills.find((item) => item.name === status.name);
+      const visibility = skillVisibility(skill?.disableModelInvocation, tools);
+      return {
+        name: status.name,
+        identity: status.digest,
+        loaded: status.loaded,
+        ...visibility,
+      };
+    }),
+  };
+}
+
+export function skillVisibility(
+  disableModelInvocation: boolean | undefined,
+  resolvedTools: ReadonlySet<string> | readonly string[],
+): { readonly modelVisible: boolean; readonly visibilityReason: "" | "model-invocation-disabled" | "read-tools-disabled" } {
+  const tools = resolvedTools instanceof Set ? resolvedTools : new Set(resolvedTools);
+  if (disableModelInvocation === true) return { modelVisible: false, visibilityReason: "model-invocation-disabled" };
+  if (!tools.has("read") && !tools.has("bash")) return { modelVisible: false, visibilityReason: "read-tools-disabled" };
+  return { modelVisible: true, visibilityReason: "" };
 }
 
 function readBoundedRegularFile(path: string): Buffer {

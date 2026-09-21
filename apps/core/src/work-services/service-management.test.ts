@@ -3,8 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { ServiceDefinition, ServiceDefinitionInput } from "@piwork/contracts";
+import type { ServiceDefinition, ServiceDefinitionInput, WorkConfig } from "@piwork/contracts";
 import { CoreStore } from "@piwork/core-store";
+import { WorkContextStore } from "../configuration/work-context.js";
 import { createWorkHttpServer } from "../work-management/http-api.js";
 import { WorkLifecycleService, type WorkRuntimeAdapter, type WorkRuntimeState } from "../work-management/lifecycle.js";
 import { ServiceNameConflictError, ServicePreconditionError, ServiceQuotaExceededError, ServiceRevisionConflictError, WorkServiceManagementService, type ServiceRuntimeAdapter } from "./service-management.js";
@@ -107,8 +108,9 @@ test("same Work service names are unique while different Works may reuse a name"
 
 test("service acceptance atomically enforces Work and host budgets and counts retained volumes", async () => {
   await withFixture(async ({ store, services, runtime }) => {
-    store.exec(`INSERT INTO work_config_revisions(work_id, revision, config_json, created_by_user_id, created_at)
-      VALUES ('${WORK_ID}', 1, '${JSON.stringify({ resources: { cpuMillis: 1_000, memoryBytes: 1_000_000_000, maxServices: 1, maxRetainedVolumes: 1 } }).replace(/'/g, "''")}', 'user-owner', '${NOW}')`);
+    const limitedConfiguration = { ...workConfig(), resources: { cpuMillis: 1_000, memoryBytes: 1_000_000_000, maxServices: 1, maxRetainedVolumes: 1 } };
+    store.exec(`UPDATE work_config_revisions SET config_json = '${JSON.stringify(limitedConfiguration).replace(/'/g, "''")}'
+      WHERE work_id = '${WORK_ID}' AND revision = 1`);
     const first = services.create(owner, WORK_ID, {
       definition: definition({ cpuMillis: 700, memoryBytes: 500_000_000 }),
       idempotencyKey: "budget-first",
@@ -148,12 +150,12 @@ test("stopped Work keeps an enabled service reservation for its next start", asy
 });
 
 test("Work lifecycle starts an enabled service once and stops it without losing its definition", async () => {
-  await withFixture(async ({ store, services, runtime }) => {
+  await withFixture(async ({ store, services, runtime, contexts }) => {
     store.exec(`UPDATE works SET desired_state = 'stopped', observed_state = 'stopped' WHERE id = '${WORK_ID}'`);
     const accepted = services.create(owner, WORK_ID, { definition: definition(), idempotencyKey: "lifecycle-service" });
     await services.waitForIdle();
     const workRuntime = new LifecycleRuntime();
-    const lifecycle = new WorkLifecycleService(store, workRuntime, () => new Date(NOW), 10, 10, services);
+    const lifecycle = new WorkLifecycleService(store, workRuntime, () => new Date(NOW), 10, 10, services, contexts);
     lifecycle.start(owner, WORK_ID, "lifecycle-start");
     await runtime.started;
     runtime.release();
@@ -350,6 +352,7 @@ async function withFixture(
     services: WorkServiceManagementService;
     runtime: GatedServiceRuntime;
     lifecycle: WorkLifecycleService;
+    contexts: WorkContextStore;
   }) => Promise<void>,
 ): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "piwork-services-"));
@@ -361,11 +364,33 @@ async function withFixture(
     id, owner_user_id, name, desired_state, observed_state,
     desired_revision, active_revision, control_version, created_at, updated_at
   ) VALUES ('${WORK_ID}', 'user-owner', 'fixture', 'running', 'ready', 1, 1, 1, '${NOW}', '${NOW}')`);
+  const configuration = workConfig();
+  const profile = JSON.stringify({ version: 1, revision: 1, agentImage: "image:a", model: { provider: "test", id: "a", credentialRef: "a.secret" }, updatedAt: NOW });
+  store.exec(`INSERT INTO work_config_revisions(
+    work_id, revision, config_json, created_by_user_id, created_at, runtime_profile_json, source_runtime_revision
+  ) VALUES ('${WORK_ID}', 1, '${JSON.stringify(configuration).replace(/'/g, "''")}', 'user-owner', '${NOW}', '${profile.replace(/'/g, "''")}', 1)`);
+  const contexts = new WorkContextStore(join(root, "works"));
+  const snapshot = contexts.build({
+    workId: WORK_ID,
+    snapshotId: "context-active",
+    configuration,
+    imageIdentity: `sha256:${"a".repeat(64)}`,
+    skills: [],
+    createdAt: NOW,
+  });
+  store.insertInitialWorkContext(WORK_ID, 1, {
+    snapshotId: snapshot.snapshotId,
+    configurationJson: JSON.stringify(snapshot.configuration),
+    imageIdentity: snapshot.metadata.imageIdentity,
+    createdByUserId: owner.userId,
+    createdAt: snapshot.metadata.createdAt,
+  });
+  store.activateWorkContext(WORK_ID, snapshot.snapshotId, NOW);
   const runtime = new GatedServiceRuntime(store);
   const services = new WorkServiceManagementService(store, runtime, () => new Date(NOW));
-  const lifecycle = new WorkLifecycleService(store, new NoopWorkRuntime(), () => new Date(NOW));
+  const lifecycle = new WorkLifecycleService(store, new NoopWorkRuntime(), () => new Date(NOW), 30_000, 10_000, undefined, contexts);
   try {
-    await run({ store, services, runtime, lifecycle });
+    await run({ store, services, runtime, lifecycle, contexts });
   } finally {
     runtime.release();
     await services.waitForIdle();
@@ -398,5 +423,17 @@ function definition(overrides: Partial<ServiceDefinitionInput> = {}): ServiceDef
     required: false,
     restartPolicy: "bounded",
     ...overrides,
+  };
+}
+
+function workConfig(): WorkConfig {
+  return {
+    agentImage: { catalogId: "image-0199e6d8abcd" },
+    skills: [],
+    agentsMd: "",
+    modelRef: "model-0199e6d8abcd",
+    mcpServers: [],
+    resources: { cpuMillis: 1_000, memoryBytes: 1_000_000_000, maxServices: 8, maxRetainedVolumes: 16 },
+    tools: { allowed: [], denied: [] },
   };
 }

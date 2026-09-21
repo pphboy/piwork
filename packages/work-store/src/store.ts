@@ -162,13 +162,6 @@ export class WorkStore {
     return rows.map(mapSession);
   }
 
-  /** Bind legacy sessions created before context snapshots were introduced. */
-  bindUnboundSessionContexts(workId: string, contextIdentity: string): void {
-    this.assertOpen();
-    this.database.prepare(`UPDATE sessions SET active_context_identity = ?
-      WHERE work_id = ? AND active_context_identity IS NULL`).run(contextIdentity, workId);
-  }
-
   acceptRun(request: AcceptRunRequest): AcceptedRun {
     this.assertOpen();
     this.database.exec("BEGIN IMMEDIATE");

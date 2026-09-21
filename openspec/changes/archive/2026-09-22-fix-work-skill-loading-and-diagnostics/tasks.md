@@ -1,0 +1,57 @@
+# Tasks
+
+## 1. Shared contracts and diagnostic foundations
+
+- [x] 1.1 Define typed runtime Skill state, accepted apply response, safe diagnostic/stage envelopes, Operation projection, and error catalog in contracts as specified in design decisions 5–6; verify schema/type tests reject unknown diagnostic fields and omit raw revisions, digests, request JSON, and protected paths. (WCFG-004, WDIAG-002, WDIAG-004, CLI-DIAG-001)
+- [x] 1.2 Extend agent protobuf readiness with the mandatory context-contract fields and add the identity-scoped PrepareConfigurationChange RPC; regenerate with `npm run proto:gen --workspace @piwork/contracts` and verify round-trip tests cover missing/zero contract version, empty Skills, exact loaded identities, and busy/prepared responses. (RUNTIME-CONTEXT-001, WCFG-002)
+- [x] 1.3 Add the injected JSON-line logger and allowlisted diagnostic conversion for Core/agentd, including correlation IDs and static safe messages; verify tests with secrets, host paths, malicious Skill text, forged JSON, and unknown exceptions produce no protected output and retain recognized safe code/stage/name. (WDIAG-001, WDIAG-004)
+- [x] 1.4 Add atomic bounded Operation stage/result/error persistence and the safe public projection using the existing JSON columns; verify latest-64/64-KiB limits, primary/rollback preservation, persistence failure stderr fallback, interrupted-stage recovery, and rereading after store reopen. (WDIAG-002)
+
+## 2. Exact Work context and image binding
+
+- [x] 2.1 Require captured context identity/directory/image identity throughout Core lifecycle and runtime inputs; verify unit tests reject missing/mismatched ownership or metadata, and candidate B remains selected when desired advances to C. (RUNTIME-MATERIALIZE-001, RUNTIME-CONTEXT-001, RUNTIME-CONTEXT-002)
+- [x] 2.2 Use snapshot immutable image identity for prepare/start/adoption and retain it during Skill-only/AGENTS-only set; verify retagging cannot change restarted/applied Work images and missing captured images fail without mutable-tag fallback. (RUNTIME-CONTEXT-002, existing WCFG-003)
+- [x] 2.3 Make explicit same-name Skill reselection copy current managed bytes while unrelated updates retain owned Skill copies; verify generic set, field-specific set, defaults/explicit/empty create, copy-failure cleanup, and concurrent desired writes with configuration tests. (SKILL-001, existing SKILL-003, WCFG-002, CLI-WORK-001)
+- [x] 2.4 Validate actual mount source, destination, read-only flag, image, and ownership/runtime labels before adoption; verify Docker adapter tests reject a correct label with a wrong/missing/writable context mount and never adopt another Work's container. (RUNTIME-MATERIALIZE-001, RUNTIME-CONTEXT-001)
+
+## 3. Agentd SDK initialization before readiness
+
+- [x] 3.1 Strengthen Skill loading to validate complete readable trees, root SDK manifest filePath/baseDir, exact name membership, directory-derived identity, and empty-selection isolation; verify tests cover missing/unreadable/tampered files, symlinks, duplicates, wrong directory, SDK parse failure, and differing/omitted frontmatter names. (SKILL-001, SKILL-002)
+- [x] 3.2 Introduce LoadedWorkContext and await actual SDK loading in AgentApplication.create before daemon.configure; pass that same loader to PiSdkRunExecutor and remove Run-time independent discovery; verify a Skill-invalid Work fails before any prompt and a valid Run uses the already validated loader. Keep fixture-specific prompting out of the production loader. (SKILL-001, SKILL-002, RUNTIME-CONTEXT-001)
+- [x] 3.3 Populate readiness from validated loaded records and resolved tools, expose model visibility/reasons, and emit safe initialization stage logs before startup exit; verify no load success is emitted while initialization is pending and disabled-model-invocation/read-tool policies are preserved. (SKILL-001, SKILL-002, WCFG-004, WDIAG-001)
+- [x] 3.4 Implement initialization-only runtime mode and atomic PrepareConfigurationChange gating; verify stopped validation accepts no Session/Run mutations, busy preparation does not cancel or block the existing Run, and idle preparation prevents a racing new Run. (WCFG-002, RUNTIME-CONTEXT-001)
+
+## 4. Runtime readiness and failure collection
+
+- [x] 4.1 Add bounded owned-container initialization-log collection to runtime-docker with command deadlines/output bounds; verify ownership/generation selection, last-200-line/64-KiB bounds, truncation, two-second timeout, and no use of a replacement container by reused name. (WDIAG-003, WDIAG-004)
+- [x] 4.2 Replace transport-only readiness retries with the full context verifier and concurrent bounded container-state checks; verify exact Skill/tool/context matching, missing-handshake incompatibility, stale-generation rejection, early exit detection, and the existing 30-second timeout using controlled clocks/runners. (RUNTIME-CONTEXT-001, WDIAG-003)
+- [x] 4.3 Collect safe evidence before cleanup and propagate typed failures to lifecycle: preserve recognized SDK causes, map the historical invalid-descriptor line to incompatibility, and retain exit/collection status independently; verify unknown output is not forwarded and collection failure cannot replace the primary cause. (WDIAG-002, WDIAG-003, WDIAG-004)
+
+## 5. Durable create and apply lifecycle
+
+- [x] 5.1 Leave initial active pointers null until verified initialization and retain the create Operation's captured candidate for initial retry; verify failed creation shows active null/pendingApply true and successful creation commits active only after readiness. (WCFG-002, SKILL-002, RUNTIME-MATERIALIZE-001)
+- [x] 5.2 Return HTTP 202 apply acceptance with caller idempotency key, persist captured context, and queue reconciliation once; verify replay after desired edits returns the same Operation, terminal replay does not rerun, and a new key can retry the same failed candidate. (WCFG-002, CLI-WORK-001)
+- [x] 5.3 Separate desired-edit commit ordering from lifecycle fencing, implement atomic idle-only apply preparation, and fence activation against newer lifecycle/apply targets; verify desired C remains pending after B succeeds, busy Runs are preserved, and stop/delete supersedes initialization without reopening routing. (WCFG-002, existing SKILL-003)
+- [x] 5.4 Implement stopped-Work candidate initialization and confirmed shutdown before activation; verify no Run is accepted, lifecycle remains stopped, and initialization or uncertain-shutdown failure cannot activate the candidate or create a second daemon. (WCFG-002, RUNTIME-CONTEXT-001)
+- [x] 5.5 Preserve and restore the previous active context on failed replacement, recording primary and rollback diagnostics separately; verify successful rollback restores old Skill behavior, failed rollback reports Work failed, and recovery resumes the accepted captured Operation without substituting mutable defaults. (WCFG-002, WDIAG-002, RUNTIME-CONTEXT-001)
+- [x] 5.6 Instrument Core copy/validation/prepare/start/load/readiness/activation/rollback boundaries with correlated stage outcomes; verify pre-acceptance failures expose a correlationId without inventing an Operation, accepted outcomes persist, and success logs prove SDK verification rather than config persistence. (WDIAG-001, WDIAG-002)
+
+## 6. Public state, CLI behavior, and authorization
+
+- [x] 6.1 Expose desired/active/pendingApply plus current runtime Skill state through configuration and Skill-list APIs, with bounded readiness observation and safe serializers; verify stopped/unreachable/stale/failed runtimes never reuse historical loaded status and ordinary cross-owner reads return NOT_FOUND. (WCFG-004, WDIAG-004)
+- [x] 6.2 Update client SDK contracts and both CLI option parsers for boolean --no-skills, duplicate/exclusive/missing selection checks, generic versus field-specific set, and apply --wait/--idempotency-key; verify CLI tests exercise defaults, explicit overrides, clear, missing-selection usage failure, and unchanged unrelated fields. (CLI-WORK-001, WCFG-002)
+- [x] 6.3 Implement truthful text output and one-value JSON acceptance/wait envelopes with stable error/exit handling; verify failed wait displays primary stage/code/Skill/IDs/remediation, timeout retains identifiers without resubmission, operation show queries terminal failures successfully, and JSON stdout has no progress noise. (CLI-DIAG-001, WDIAG-002)
+- [x] 6.4 Verify production and test HTTP routes return safe Operation projections and enforce ownership before inspecting diagnostics; add integration cases for restart/container-removal persistence and hostile SDK/container errors across stored diagnostics, Core logs, agentd logs, HTTP, and CLI. (WDIAG-002, WDIAG-004)
+
+## 7. Remove pre-release context migration
+
+- [x] 7.1 Remove WorkContextMigration startup execution, converter-only store helpers/bookkeeping/tests, legacy runtime descriptor fallbacks, and unbound Session-context rewriting; verify searches find no live conversion callers and unsupported/missing context fails with the specified safe code without rewriting or deleting user data. (WCFG-005)
+- [x] 7.2 Retain current structural schema initialization and same-version recovery; verify fresh Core/Work databases initialize and saved login, Work-owned Skills, Session history, and durable Operation diagnostics survive Core/agentd restart without a conversion pass. (WCFG-005, WDIAG-002)
+
+## 8. End-to-end proof and documentation
+
+- [x] 8.1 Extend the deterministic Pi fixture to discover the Skill location from the actual SDK prompt, execute real SDK reads of SKILL.md and its referenced supporting file, and derive its reply from tool results; verify adapter tests fail for wrong locations/content and cannot pass with only a hardcoded reply or fixture-side direct file read. (SKILL-001, SKILL-002)
+- [x] 8.2 Extend real compiled Core/CLI Docker acceptance using one built image for import/create/default/explicit/empty/set/reselect/apply/clear/restart; assert A/B/Core same-name different-content isolation, later desired edits, source removal, captured image identity, and actual SDK-read markers. (SKILL-001, existing SKILL-003, WCFG-002, WCFG-004, RUNTIME-CONTEXT-002, CLI-WORK-001)
+- [x] 8.3 Add acceptance failure cases for SDK-invalid creation, old-descriptor exit or missing handshake, rollback failure, and subsequent Operation query; assert no false ready, safe actionable immediate CLI output, retained primary/secondary diagnostics after restart/removal, and successful load-stage logs. Cover remaining injection/timing/concurrency cases in focused integration tests. (SKILL-002, RUNTIME-CONTEXT-001, WDIAG-001 through WDIAG-004, CLI-DIAG-001)
+- [x] 8.4 Update README and CLI help with the concrete directory data flow, compatible software deployment versus data-only Skill changes, desired/active/loaded status, full operator/user demos, set/apply --wait, Operation inspection, and stderr diagnostics; verify every documented command against the compiled CLI and acceptance flow. (CLI-WORK-001, CLI-DIAG-001, WCFG-005, RUNTIME-CONTEXT-002)
+- [x] 8.5 Run `npm run typecheck`, `npm run build`, `npm test`, `npm run test:integration`, `npm run acceptance`, and `openspec validate fix-work-skill-loading-and-diagnostics --strict`; map every requirement/scenario to passing evidence, record optional real-provider smoke separately, and do not mark this task complete if required Docker/SDK tests were skipped. (All requirements in this change)

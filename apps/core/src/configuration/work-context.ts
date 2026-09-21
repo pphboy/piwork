@@ -23,6 +23,7 @@ export type WorkContextErrorCode =
   | "CONTEXT_ID_INVALID"
   | "CONTEXT_EXISTS"
   | "CONTEXT_NOT_FOUND"
+  | "CONTEXT_FORMAT_UNSUPPORTED"
   | "CONTEXT_OWNERSHIP"
   | "CONTEXT_UNSAFE"
   | "CONFIGURATION_INVALID"
@@ -175,11 +176,19 @@ function validateSnapshotDirectory(rootDirectory: string, directory: string, exp
     const canonical = realpathSync(directory);
     assertContained(realpathSync(rootDirectory), canonical);
     const config = JSON.parse(readFileSync(join(canonical, "config.json"), "utf8")) as unknown;
-    if (!Check(WorkConfigSchema, config)) throw new WorkContextError("CONFIGURATION_INVALID", "configuration");
+    if (!Check(WorkConfigSchema, config)) {
+      const skills = config !== null && typeof config === "object" ? (config as { skills?: unknown }).skills : undefined;
+      if (Array.isArray(skills) && skills.some((skill) => skill !== null && typeof skill === "object")) {
+        throw new WorkContextError("CONTEXT_FORMAT_UNSUPPORTED");
+      }
+      throw new WorkContextError("CONFIGURATION_INVALID", "configuration");
+    }
     const metadata = JSON.parse(readFileSync(join(canonical, "metadata.json"), "utf8")) as Partial<WorkContextMetadata>;
-    if (metadata.version !== 1 || metadata.workId !== expectedWorkId || metadata.snapshotId !== expectedSnapshotId
-      || !/^sha256:[a-f0-9]{64}$/.test(metadata.imageIdentity ?? "") || !Array.isArray(metadata.skills)
-      || typeof metadata.createdAt !== "string") throw new WorkContextError("CONTEXT_OWNERSHIP");
+    if (metadata.version !== 1 || !/^sha256:[a-f0-9]{64}$/.test(metadata.imageIdentity ?? "")
+      || !Array.isArray(metadata.skills) || typeof metadata.createdAt !== "string") {
+      throw new WorkContextError("CONTEXT_FORMAT_UNSUPPORTED");
+    }
+    if (metadata.workId !== expectedWorkId || metadata.snapshotId !== expectedSnapshotId) throw new WorkContextError("CONTEXT_OWNERSHIP");
     const agents = readFileSync(join(canonical, "AGENTS.md"));
     if (agents.byteLength > AGENTS_MD_MAX_BYTES) throw new WorkContextError("AGENTS_INVALID", "agentsMd");
     try { new TextDecoder("utf-8", { fatal: true }).decode(agents); }
@@ -284,6 +293,7 @@ function safeContextMessage(code: WorkContextErrorCode, field?: string, skillNam
     CONTEXT_ID_INVALID: "Work context identifier is invalid",
     CONTEXT_EXISTS: "Work context already exists",
     CONTEXT_NOT_FOUND: "Work context is unavailable",
+    CONTEXT_FORMAT_UNSUPPORTED: "Work context format is unsupported",
     CONTEXT_OWNERSHIP: "Work context ownership is invalid",
     CONTEXT_UNSAFE: "Work context is unsafe or corrupted",
     CONFIGURATION_INVALID: "Work context configuration is invalid",

@@ -27,6 +27,8 @@ export async function loadConfiguredSkills(skillRoot: string, configured: readon
   const names = new Set<string>();
   for (const skill of configured) {
     try {
+      if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(skill.name)) throw new Error("configured Skill name is invalid");
+      if (!/^sha256:[a-f0-9]{64}$/.test(skill.digest)) throw new Error("configured Skill identity is invalid");
       if (names.has(skill.name)) throw new Error("duplicate configured Skill name");
       names.add(skill.name);
       const actual = await hashSkillTree(join(skillRoot, skill.name));
@@ -37,7 +39,17 @@ export async function loadConfiguredSkills(skillRoot: string, configured: readon
     }
   }
   if (statuses.some((status) => !status.loaded)) throw new RequiredSkillError(statuses);
-  const isolated = loadConfiguredIsolatedSkills(skillRoot, configured.map((skill) => skill.name), agentsMd);
+  let isolated;
+  try {
+    isolated = loadConfiguredIsolatedSkills(skillRoot, configured.map((skill) => skill.name), agentsMd);
+  } catch {
+    throw new RequiredSkillError(configured.map((skill) => ({
+      name: skill.name,
+      digest: skill.digest,
+      loaded: false,
+      error: "SKILL_LOAD_FAILED",
+    })));
+  }
   if (isolated.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
     throw new RequiredSkillError(configured.map((skill) => ({ name: skill.name, digest: skill.digest, loaded: false, error: "SKILL_LOAD_FAILED" })));
   }
@@ -57,6 +69,10 @@ export async function loadConfiguredSkills(skillRoot: string, configured: readon
 async function hashSkillTree(root: string): Promise<string> {
   const files: Array<{ relativePath: string; size: number }> = [];
   const walk = async (directory: string, prefix: string): Promise<void> => {
+    const directoryInfo = await lstat(directory);
+    if (directoryInfo.isSymbolicLink() || !directoryInfo.isDirectory() || (directoryInfo.mode & 0o555) === 0) {
+      throw new Error("Skill directory is unreadable or invalid");
+    }
     const entries = await readdir(directory, { withFileTypes: true });
     entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
     for (const entry of entries) {
@@ -65,7 +81,10 @@ async function hashSkillTree(root: string): Promise<string> {
       const info = await lstat(absolutePath);
       if (info.isSymbolicLink()) throw new Error("Skill tree contains a symbolic link");
       if (info.isDirectory()) await walk(absolutePath, relativePath);
-      else if (info.isFile()) files.push({ relativePath, size: info.size });
+      else if (info.isFile()) {
+        if ((info.mode & 0o444) === 0) throw new Error("Skill file is unreadable");
+        files.push({ relativePath, size: info.size });
+      }
       else throw new Error("Skill tree contains an unsupported entry");
     }
   };

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -51,6 +51,7 @@ test("WorkContextStore rejects mismatched content atomically and preserves no pa
     createdAt: "2026-09-21T00:00:00Z",
   }), (error) => error instanceof WorkContextError && error.code === "SKILL_LOAD_FAILED");
   assert.throws(() => store.load("work-0199e6d8abcd", "context-failed"), /unavailable/);
+  assert.equal(readdirSync(join(store.rootDirectory, "work-0199e6d8abcd", "contexts")).some((name) => name.startsWith(".staging-")), false);
 }));
 
 test("WorkContextStore reports corruption with safe identifiers", () => withFixture(({ store, source }) => {
@@ -64,6 +65,20 @@ test("WorkContextStore reports corruption with safe identifiers", () => withFixt
   assert.throws(() => store.load("work-0199e6d8abcd", "context-corrupt"), (error) => {
     assert.ok(error instanceof WorkContextError); assert.equal(error.code, "SKILL_LOAD_FAILED"); assert.equal(error.message.includes(snapshot.directory), false); return true;
   });
+}));
+
+test("WorkContextStore rejects unsupported pre-release context shapes without rewriting them", () => withFixture(({ store, source }) => {
+  const snapshot = store.build({
+    workId: "work-0199e6d8abcd", snapshotId: "context-old-shape", configuration: config,
+    imageIdentity: `sha256:${"b".repeat(64)}`, skills: [{ name: "code-review", identity: source.identity, directory: source.directory }],
+    createdAt: "2026-09-21T00:00:00Z",
+  });
+  const configPath = join(snapshot.directory, "config.json");
+  chmodSync(configPath, 0o600);
+  writeFileSync(configPath, JSON.stringify({ ...config, skills: [{ name: "code-review", path: "/old/host/path" }] }));
+  assert.throws(() => store.load("work-0199e6d8abcd", "context-old-shape"),
+    (error) => error instanceof WorkContextError && error.code === "CONTEXT_FORMAT_UNSUPPORTED");
+  assert.equal(existsSync(configPath), true);
 }));
 
 test("WorkContextStore startup cleanup removes staging and database-unreferenced snapshots", () => withFixture(({ store }) => {

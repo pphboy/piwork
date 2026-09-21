@@ -98,6 +98,27 @@ export const WorkConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const RuntimeSkillSchema = Type.Object(
+  {
+    name: SkillNameSchema,
+    loaded: Type.Literal(true),
+    modelVisible: Type.Boolean(),
+    visibilityReason: Type.Union([
+      Type.Null(), Type.Literal("model-invocation-disabled"), Type.Literal("read-tools-disabled"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const RuntimeSkillStateSchema = Type.Object(
+  {
+    state: Type.Union([Type.Literal("ready"), Type.Literal("initializing"), Type.Literal("failed"), Type.Literal("unavailable")]),
+    checkedAt: Type.Union([Type.String({ format: "date-time" }), Type.Null()]),
+    skills: Type.Array(RuntimeSkillSchema, { maxItems: 128 }),
+  },
+  { additionalProperties: false },
+);
+
 /** Revision-free public state for one Work's effective context. */
 export const WorkConfigurationViewSchema = Type.Object(
   {
@@ -105,6 +126,7 @@ export const WorkConfigurationViewSchema = Type.Object(
     active: Type.Union([WorkConfigSchema, Type.Null()]),
     desired: WorkConfigSchema,
     pendingApply: Type.Boolean(),
+    runtime: RuntimeSkillStateSchema,
   },
   { additionalProperties: false },
 );
@@ -137,6 +159,8 @@ export type SkillSelection = Type.Static<typeof SkillSelectionSchema>;
 export type McpServer = Type.Static<typeof McpServerSchema>;
 export type ResourcePolicy = Type.Static<typeof ResourcePolicySchema>;
 export type WorkConfig = Type.Static<typeof WorkConfigSchema>;
+export type RuntimeSkill = Type.Static<typeof RuntimeSkillSchema>;
+export type RuntimeSkillState = Type.Static<typeof RuntimeSkillStateSchema>;
 export type WorkConfigurationView = Type.Static<typeof WorkConfigurationViewSchema>;
 export type SetWorkConfigurationRequest = Type.Static<typeof SetWorkConfigurationRequestSchema>;
 export type WorkConfigurationPatch = Type.Static<typeof WorkConfigurationPatchSchema>;

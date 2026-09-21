@@ -52,21 +52,6 @@ test("default references block disable/remove and cleanup preserves referenced a
   assert.equal(existsSync(join(managed, "code-review")), false);
 }));
 
-test("legacy Skill references migrate by directory basename and become resumable", () => withFixture(({ service, store, root }) => {
-  createSkill(root, "renamed-skill", "---\nname: other\n---\nopaque", "legacy-support");
-  store.createCatalogEntry({
-    id: "legacy-id", kind: "skill", name: "legacy", mutableReference: join(root, "renamed-skill", "SKILL.md"),
-    resolvedDigest: null, metadataJson: "{}", enabled: true,
-    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-  });
-  service.migrateLegacySkills();
-  assert.equal(store.getManagedSkill("renamed-skill")?.enabled, true);
-  assert.equal(store.getCatalogEntry("legacy-id")?.mutableReference, null);
-  assert.equal(store.getFilesystemMigration("legacy-skill-import-v1", "legacy-id")?.state, "succeeded");
-  service.migrateLegacySkills();
-  assert.equal(store.listManagedSkills().length, 1);
-}));
-
 function createSkill(root: string, name: string, manifest: string, support: string): void {
   const directory = join(root, name);
   if (!existsSync(directory)) mkdirSync(join(directory, "references"), { recursive: true });

@@ -3,6 +3,9 @@ import test from "node:test";
 import {
   AgentServiceService,
   CancelRunRequest,
+  PrepareConfigurationChangeRequest,
+  PrepareConfigurationChangeResponse,
+  ReadinessResponse,
   Run,
   RunEvent,
   RunState,
@@ -80,6 +83,7 @@ test("submit idempotency, watch cursor, cancellation, and event union serialize"
 test("generated grpc-js service exposes the durable Agent API", () => {
   assert.deepEqual(Object.keys(AgentServiceService), [
     "readiness",
+    "prepareConfigurationChange",
     "drain",
     "createSession",
     "listSessions",
@@ -91,6 +95,31 @@ test("generated grpc-js service exposes the durable Agent API", () => {
   ]);
   assert.equal(AgentServiceService.watchRun.responseStream, true);
   assert.equal(AgentServiceService.submitRun.responseStream, false);
+});
+
+test("readiness and configuration-gate messages preserve the context handshake", () => {
+  const absent = roundTrip(ReadinessResponse, {
+    workId: "work-0199e6d8abcd", generation: 1n, instanceId: "instance-1", protocolVersion: "v1",
+    acceptingRuns: false, draining: false, contextContractVersion: 0, contextIdentity: "",
+    initializationComplete: false, loadedSkills: [], resolvedTools: [], activeRunCount: 0,
+  });
+  assert.equal(absent.contextContractVersion, 0);
+  assert.deepEqual(absent.loadedSkills, []);
+
+  const ready = roundTrip(ReadinessResponse, {
+    ...absent,
+    contextContractVersion: 1,
+    contextIdentity: "context-0199e6d8abcd",
+    initializationComplete: true,
+    loadedSkills: [{ name: "code-review", identity: "sha256:abc", loaded: true, modelVisible: true, visibilityReason: "" }],
+    resolvedTools: ["read", "bash"],
+  });
+  assert.deepEqual(ready.loadedSkills, [{ name: "code-review", identity: "sha256:abc", loaded: true, modelVisible: true, visibilityReason: "" }]);
+
+  const request = roundTrip(PrepareConfigurationChangeRequest, { workId: ready.workId, generation: ready.generation, instanceId: ready.instanceId });
+  assert.equal(request.instanceId, "instance-1");
+  assert.deepEqual(roundTrip(PrepareConfigurationChangeResponse, { prepared: false, busy: true, activeRunCount: 1 }), { prepared: false, busy: true, activeRunCount: 1 });
+  assert.deepEqual(roundTrip(PrepareConfigurationChangeResponse, { prepared: true, busy: false, activeRunCount: 0 }), { prepared: true, busy: false, activeRunCount: 0 });
 });
 
 interface MessageCodec<T> {

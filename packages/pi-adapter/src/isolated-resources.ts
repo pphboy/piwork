@@ -5,7 +5,8 @@ import {
   type ResourceLoader,
   type Skill,
 } from "@earendil-works/pi-coding-agent";
-import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 
 export function loadIsolatedSkills(skillDir: string, agentsMd?: string): { readonly skills: Skill[]; readonly diagnostics: LoadSkillsResult["diagnostics"]; readonly loader: ResourceLoader } {
   return loadConfiguredIsolatedSkills(skillDir, undefined, agentsMd);
@@ -13,13 +14,20 @@ export function loadIsolatedSkills(skillDir: string, agentsMd?: string): { reado
 
 /** Load one explicit directory per Core-assigned name and rebind SDK metadata to that name. */
 export function loadConfiguredIsolatedSkills(skillDir: string, configuredNames?: readonly string[], agentsMd?: string): { readonly skills: Skill[]; readonly diagnostics: LoadSkillsResult["diagnostics"]; readonly loader: ResourceLoader } {
+  const canonicalRoot = realpathSync(skillDir);
   const loaded = configuredNames === undefined
-    ? loadSkillsFromDir({ dir: skillDir, source: "piwork-artifact" })
+    ? loadSkillsFromDir({ dir: canonicalRoot, source: "piwork-artifact" })
     : configuredNames.reduce((all, name) => {
-      const directory = resolve(skillDir, name);
+      const directory = realpathSync(resolve(canonicalRoot, name));
+      const child = relative(canonicalRoot, directory);
+      if (child === "" || child === ".." || child.startsWith(`..${sep}`)) {
+        throw new Error(`configured Skill ${name} is outside the isolated Skill root`);
+      }
+      const manifest = realpathSync(join(directory, "SKILL.md"));
       const result = loadSkillsFromDir({ dir: directory, source: "piwork-artifact" });
-      const matching = result.skills.filter((skill) => resolve(skill.baseDir) === directory);
-      if (matching.length !== 1) {
+      const matching = result.skills.filter((skill) => realpathSync(skill.baseDir) === directory
+        && realpathSync(skill.filePath) === manifest);
+      if (result.skills.length !== 1 || matching.length !== 1) {
         throw new Error(`configured Skill ${name} did not load exactly once from its directory`);
       }
       all.skills.push({ ...matching[0]!, name });
@@ -32,7 +40,7 @@ export function loadConfiguredIsolatedSkills(skillDir: string, configuredNames?:
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: agentsMd === undefined ? [] : [{ path: "/run/piwork/AGENTS.md", content: agentsMd }] }),
-    getSystemPrompt: () => "You are the deterministic piwork SDK fixture.",
+    getSystemPrompt: () => undefined,
     getSystemPromptSource: () => undefined,
     getAppendSystemPrompt: () => [],
     getAppendSystemPromptSources: () => [],

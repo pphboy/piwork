@@ -105,6 +105,32 @@ export interface ReadinessResponse {
   protocolVersion: string;
   acceptingRuns: boolean;
   draining: boolean;
+  contextContractVersion: number;
+  contextIdentity: string;
+  initializationComplete: boolean;
+  loadedSkills: LoadedSkill[];
+  resolvedTools: string[];
+  activeRunCount: number;
+}
+
+export interface LoadedSkill {
+  name: string;
+  identity: string;
+  loaded: boolean;
+  modelVisible: boolean;
+  visibilityReason: string;
+}
+
+export interface PrepareConfigurationChangeRequest {
+  workId: string;
+  generation: bigint;
+  instanceId: string;
+}
+
+export interface PrepareConfigurationChangeResponse {
+  prepared: boolean;
+  busy: boolean;
+  activeRunCount: number;
 }
 
 export interface DrainRequest {
@@ -356,7 +382,20 @@ export const ReadinessRequest: MessageFns<ReadinessRequest> = {
 };
 
 function createBaseReadinessResponse(): ReadinessResponse {
-  return { workId: "", generation: 0n, instanceId: "", protocolVersion: "", acceptingRuns: false, draining: false };
+  return {
+    workId: "",
+    generation: 0n,
+    instanceId: "",
+    protocolVersion: "",
+    acceptingRuns: false,
+    draining: false,
+    contextContractVersion: 0,
+    contextIdentity: "",
+    initializationComplete: false,
+    loadedSkills: [],
+    resolvedTools: [],
+    activeRunCount: 0,
+  };
 }
 
 export const ReadinessResponse: MessageFns<ReadinessResponse> = {
@@ -381,6 +420,24 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     }
     if (message.draining !== false) {
       writer.uint32(48).bool(message.draining);
+    }
+    if (message.contextContractVersion !== 0) {
+      writer.uint32(56).uint32(message.contextContractVersion);
+    }
+    if (message.contextIdentity !== "") {
+      writer.uint32(66).string(message.contextIdentity);
+    }
+    if (message.initializationComplete !== false) {
+      writer.uint32(72).bool(message.initializationComplete);
+    }
+    for (const v of message.loadedSkills) {
+      LoadedSkill.encode(v!, writer.uint32(82).fork()).join();
+    }
+    for (const v of message.resolvedTools) {
+      writer.uint32(90).string(v!);
+    }
+    if (message.activeRunCount !== 0) {
+      writer.uint32(96).uint32(message.activeRunCount);
     }
     return writer;
   },
@@ -446,6 +503,54 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
             message.draining = reader.bool();
             continue;
           }
+          case 7: {
+            if (tag !== 56) {
+              break;
+            }
+
+            message.contextContractVersion = reader.uint32();
+            continue;
+          }
+          case 8: {
+            if (tag !== 66) {
+              break;
+            }
+
+            message.contextIdentity = reader.string();
+            continue;
+          }
+          case 9: {
+            if (tag !== 72) {
+              break;
+            }
+
+            message.initializationComplete = reader.bool();
+            continue;
+          }
+          case 10: {
+            if (tag !== 82) {
+              break;
+            }
+
+            message.loadedSkills.push(LoadedSkill.decode(reader, reader.uint32()));
+            continue;
+          }
+          case 11: {
+            if (tag !== 90) {
+              break;
+            }
+
+            message.resolvedTools.push(reader.string());
+            continue;
+          }
+          case 12: {
+            if (tag !== 96) {
+              break;
+            }
+
+            message.activeRunCount = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -482,6 +587,36 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
         ? globalThis.Boolean(object.accepting_runs)
         : false,
       draining: isSet(object.draining) ? globalThis.Boolean(object.draining) : false,
+      contextContractVersion: isSet(object.contextContractVersion)
+        ? globalThis.Number(object.contextContractVersion)
+        : isSet(object.context_contract_version)
+        ? globalThis.Number(object.context_contract_version)
+        : 0,
+      contextIdentity: isSet(object.contextIdentity)
+        ? globalThis.String(object.contextIdentity)
+        : isSet(object.context_identity)
+        ? globalThis.String(object.context_identity)
+        : "",
+      initializationComplete: isSet(object.initializationComplete)
+        ? globalThis.Boolean(object.initializationComplete)
+        : isSet(object.initialization_complete)
+        ? globalThis.Boolean(object.initialization_complete)
+        : false,
+      loadedSkills: globalThis.Array.isArray(object?.loadedSkills)
+        ? object.loadedSkills.map((e: any) => LoadedSkill.fromJSON(e))
+        : globalThis.Array.isArray(object?.loaded_skills)
+        ? object.loaded_skills.map((e: any) => LoadedSkill.fromJSON(e))
+        : [],
+      resolvedTools: globalThis.Array.isArray(object?.resolvedTools)
+        ? object.resolvedTools.map((e: any) => globalThis.String(e))
+        : globalThis.Array.isArray(object?.resolved_tools)
+        ? object.resolved_tools.map((e: any) => globalThis.String(e))
+        : [],
+      activeRunCount: isSet(object.activeRunCount)
+        ? globalThis.Number(object.activeRunCount)
+        : isSet(object.active_run_count)
+        ? globalThis.Number(object.active_run_count)
+        : 0,
     };
   },
 
@@ -505,6 +640,24 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     if (message.draining !== false) {
       obj.draining = message.draining;
     }
+    if (message.contextContractVersion !== 0) {
+      obj.contextContractVersion = Math.round(message.contextContractVersion);
+    }
+    if (message.contextIdentity !== "") {
+      obj.contextIdentity = message.contextIdentity;
+    }
+    if (message.initializationComplete !== false) {
+      obj.initializationComplete = message.initializationComplete;
+    }
+    if (message.loadedSkills?.length) {
+      obj.loadedSkills = message.loadedSkills.map((e) => LoadedSkill.toJSON(e));
+    }
+    if (message.resolvedTools?.length) {
+      obj.resolvedTools = message.resolvedTools;
+    }
+    if (message.activeRunCount !== 0) {
+      obj.activeRunCount = Math.round(message.activeRunCount);
+    }
     return obj;
   },
 
@@ -521,6 +674,372 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     message.protocolVersion = object.protocolVersion ?? "";
     message.acceptingRuns = object.acceptingRuns ?? false;
     message.draining = object.draining ?? false;
+    message.contextContractVersion = object.contextContractVersion ?? 0;
+    message.contextIdentity = object.contextIdentity ?? "";
+    message.initializationComplete = object.initializationComplete ?? false;
+    message.loadedSkills = object.loadedSkills?.map((e) => LoadedSkill.fromPartial(e)) || [];
+    message.resolvedTools = object.resolvedTools?.map((e) => e) || [];
+    message.activeRunCount = object.activeRunCount ?? 0;
+    return message;
+  },
+};
+
+function createBaseLoadedSkill(): LoadedSkill {
+  return { name: "", identity: "", loaded: false, modelVisible: false, visibilityReason: "" };
+}
+
+export const LoadedSkill: MessageFns<LoadedSkill> = {
+  encode(message: LoadedSkill, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.identity !== "") {
+      writer.uint32(18).string(message.identity);
+    }
+    if (message.loaded !== false) {
+      writer.uint32(24).bool(message.loaded);
+    }
+    if (message.modelVisible !== false) {
+      writer.uint32(32).bool(message.modelVisible);
+    }
+    if (message.visibilityReason !== "") {
+      writer.uint32(42).string(message.visibilityReason);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): LoadedSkill {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseLoadedSkill();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.name = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.identity = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 24) {
+              break;
+            }
+
+            message.loaded = reader.bool();
+            continue;
+          }
+          case 4: {
+            if (tag !== 32) {
+              break;
+            }
+
+            message.modelVisible = reader.bool();
+            continue;
+          }
+          case 5: {
+            if (tag !== 42) {
+              break;
+            }
+
+            message.visibilityReason = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): LoadedSkill {
+    return {
+      name: isSet(object.name) ? globalThis.String(object.name) : "",
+      identity: isSet(object.identity) ? globalThis.String(object.identity) : "",
+      loaded: isSet(object.loaded) ? globalThis.Boolean(object.loaded) : false,
+      modelVisible: isSet(object.modelVisible)
+        ? globalThis.Boolean(object.modelVisible)
+        : isSet(object.model_visible)
+        ? globalThis.Boolean(object.model_visible)
+        : false,
+      visibilityReason: isSet(object.visibilityReason)
+        ? globalThis.String(object.visibilityReason)
+        : isSet(object.visibility_reason)
+        ? globalThis.String(object.visibility_reason)
+        : "",
+    };
+  },
+
+  toJSON(message: LoadedSkill): unknown {
+    const obj: any = {};
+    if (message.name !== "") {
+      obj.name = message.name;
+    }
+    if (message.identity !== "") {
+      obj.identity = message.identity;
+    }
+    if (message.loaded !== false) {
+      obj.loaded = message.loaded;
+    }
+    if (message.modelVisible !== false) {
+      obj.modelVisible = message.modelVisible;
+    }
+    if (message.visibilityReason !== "") {
+      obj.visibilityReason = message.visibilityReason;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<LoadedSkill>): LoadedSkill {
+    return LoadedSkill.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<LoadedSkill>): LoadedSkill {
+    const message = createBaseLoadedSkill();
+    message.name = object.name ?? "";
+    message.identity = object.identity ?? "";
+    message.loaded = object.loaded ?? false;
+    message.modelVisible = object.modelVisible ?? false;
+    message.visibilityReason = object.visibilityReason ?? "";
+    return message;
+  },
+};
+
+function createBasePrepareConfigurationChangeRequest(): PrepareConfigurationChangeRequest {
+  return { workId: "", generation: 0n, instanceId: "" };
+}
+
+export const PrepareConfigurationChangeRequest: MessageFns<PrepareConfigurationChangeRequest> = {
+  encode(message: PrepareConfigurationChangeRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.workId !== "") {
+      writer.uint32(10).string(message.workId);
+    }
+    if (message.generation !== 0n) {
+      if (BigInt.asUintN(64, message.generation) !== message.generation) {
+        throw new globalThis.Error("value provided for field message.generation of type uint64 too large");
+      }
+      writer.uint32(16).uint64(message.generation);
+    }
+    if (message.instanceId !== "") {
+      writer.uint32(26).string(message.instanceId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PrepareConfigurationChangeRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePrepareConfigurationChangeRequest();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.workId = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 16) {
+              break;
+            }
+
+            message.generation = reader.uint64() as bigint;
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.instanceId = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): PrepareConfigurationChangeRequest {
+    return {
+      workId: isSet(object.workId)
+        ? globalThis.String(object.workId)
+        : isSet(object.work_id)
+        ? globalThis.String(object.work_id)
+        : "",
+      generation: isSet(object.generation) ? BigInt(object.generation) : 0n,
+      instanceId: isSet(object.instanceId)
+        ? globalThis.String(object.instanceId)
+        : isSet(object.instance_id)
+        ? globalThis.String(object.instance_id)
+        : "",
+    };
+  },
+
+  toJSON(message: PrepareConfigurationChangeRequest): unknown {
+    const obj: any = {};
+    if (message.workId !== "") {
+      obj.workId = message.workId;
+    }
+    if (message.generation !== 0n) {
+      obj.generation = message.generation.toString();
+    }
+    if (message.instanceId !== "") {
+      obj.instanceId = message.instanceId;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<PrepareConfigurationChangeRequest>): PrepareConfigurationChangeRequest {
+    return PrepareConfigurationChangeRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<PrepareConfigurationChangeRequest>): PrepareConfigurationChangeRequest {
+    const message = createBasePrepareConfigurationChangeRequest();
+    message.workId = object.workId ?? "";
+    message.generation = (object.generation !== undefined && object.generation !== null)
+      ? BigInt(object.generation)
+      : 0n;
+    message.instanceId = object.instanceId ?? "";
+    return message;
+  },
+};
+
+function createBasePrepareConfigurationChangeResponse(): PrepareConfigurationChangeResponse {
+  return { prepared: false, busy: false, activeRunCount: 0 };
+}
+
+export const PrepareConfigurationChangeResponse: MessageFns<PrepareConfigurationChangeResponse> = {
+  encode(message: PrepareConfigurationChangeResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.prepared !== false) {
+      writer.uint32(8).bool(message.prepared);
+    }
+    if (message.busy !== false) {
+      writer.uint32(16).bool(message.busy);
+    }
+    if (message.activeRunCount !== 0) {
+      writer.uint32(24).uint32(message.activeRunCount);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PrepareConfigurationChangeResponse {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePrepareConfigurationChangeResponse();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 8) {
+              break;
+            }
+
+            message.prepared = reader.bool();
+            continue;
+          }
+          case 2: {
+            if (tag !== 16) {
+              break;
+            }
+
+            message.busy = reader.bool();
+            continue;
+          }
+          case 3: {
+            if (tag !== 24) {
+              break;
+            }
+
+            message.activeRunCount = reader.uint32();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): PrepareConfigurationChangeResponse {
+    return {
+      prepared: isSet(object.prepared) ? globalThis.Boolean(object.prepared) : false,
+      busy: isSet(object.busy) ? globalThis.Boolean(object.busy) : false,
+      activeRunCount: isSet(object.activeRunCount)
+        ? globalThis.Number(object.activeRunCount)
+        : isSet(object.active_run_count)
+        ? globalThis.Number(object.active_run_count)
+        : 0,
+    };
+  },
+
+  toJSON(message: PrepareConfigurationChangeResponse): unknown {
+    const obj: any = {};
+    if (message.prepared !== false) {
+      obj.prepared = message.prepared;
+    }
+    if (message.busy !== false) {
+      obj.busy = message.busy;
+    }
+    if (message.activeRunCount !== 0) {
+      obj.activeRunCount = Math.round(message.activeRunCount);
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<PrepareConfigurationChangeResponse>): PrepareConfigurationChangeResponse {
+    return PrepareConfigurationChangeResponse.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<PrepareConfigurationChangeResponse>): PrepareConfigurationChangeResponse {
+    const message = createBasePrepareConfigurationChangeResponse();
+    message.prepared = object.prepared ?? false;
+    message.busy = object.busy ?? false;
+    message.activeRunCount = object.activeRunCount ?? 0;
     return message;
   },
 };
@@ -3009,6 +3528,19 @@ export const AgentServiceService = {
     responseSerialize: (value: ReadinessResponse): Buffer => Buffer.from(ReadinessResponse.encode(value).finish()),
     responseDeserialize: (value: Buffer): ReadinessResponse => ReadinessResponse.decode(value),
   },
+  prepareConfigurationChange: {
+    path: "/piwork.agent.v1.AgentService/PrepareConfigurationChange" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: PrepareConfigurationChangeRequest): Buffer =>
+      Buffer.from(PrepareConfigurationChangeRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): PrepareConfigurationChangeRequest =>
+      PrepareConfigurationChangeRequest.decode(value),
+    responseSerialize: (value: PrepareConfigurationChangeResponse): Buffer =>
+      Buffer.from(PrepareConfigurationChangeResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): PrepareConfigurationChangeResponse =>
+      PrepareConfigurationChangeResponse.decode(value),
+  },
   drain: {
     path: "/piwork.agent.v1.AgentService/Drain" as const,
     requestStream: false as const,
@@ -3086,6 +3618,7 @@ export const AgentServiceService = {
 
 export interface AgentServiceServer extends UntypedServiceImplementation {
   readiness: handleUnaryCall<ReadinessRequest, ReadinessResponse>;
+  prepareConfigurationChange: handleUnaryCall<PrepareConfigurationChangeRequest, PrepareConfigurationChangeResponse>;
   drain: handleUnaryCall<DrainRequest, DrainResponse>;
   createSession: handleUnaryCall<CreateSessionRequest, Session>;
   listSessions: handleUnaryCall<ListSessionsRequest, ListSessionsResponse>;
@@ -3111,6 +3644,21 @@ export interface AgentServiceClient extends Client {
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: ReadinessResponse) => void,
+  ): ClientUnaryCall;
+  prepareConfigurationChange(
+    request: PrepareConfigurationChangeRequest,
+    callback: (error: ServiceError | null, response: PrepareConfigurationChangeResponse) => void,
+  ): ClientUnaryCall;
+  prepareConfigurationChange(
+    request: PrepareConfigurationChangeRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: PrepareConfigurationChangeResponse) => void,
+  ): ClientUnaryCall;
+  prepareConfigurationChange(
+    request: PrepareConfigurationChangeRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: PrepareConfigurationChangeResponse) => void,
   ): ClientUnaryCall;
   drain(
     request: DrainRequest,
