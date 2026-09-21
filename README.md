@@ -49,6 +49,35 @@ npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" config 
 
 Core changes readiness online; it does not need a restart after bootstrap or runtime configuration.
 
+## Managed Skills and default Work context
+
+An operator can import a complete Skill directory after Core is initialized. The path must be absolute, the directory basename becomes the public Skill name, and the directory must contain a regular `SKILL.md`. Core copies the entire validated directory into managed storage, so the source directory is not needed afterward.
+
+```bash
+SKILL_DIR="$(realpath ./skills/code-review)"
+
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  skills add --path "$SKILL_DIR"
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  skills list
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  skills show code-review
+```
+
+The basename must match `[a-z0-9][a-z0-9-]{0,63}`. Core does not use metadata inside `SKILL.md` to name the Skill. Imports reject symbolic links and special files and are limited to 2,048 files, 32 MiB total, and 8 MiB per file.
+
+Select managed Skills and optional `AGENTS.md` content for future Works through the default Work configuration:
+
+```bash
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  config default-work set --skill code-review \
+  --agents-md-file "$PWD/default-AGENTS.md"
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  config default-work show
+```
+
+Repeat `--skill` to select multiple Skills. Omitting both `--skill` and `--no-skills` preserves the current default selection; `--no-skills` explicitly clears it. `skills update <name> --path <absolute-directory>` replaces the managed content used for future copies. `skills enable`, `disable`, and `remove` manage availability. A Skill selected by the default Work configuration cannot be disabled or removed until it is removed from that selection.
+
 Log in with the user client and create the first Work:
 
 ```bash
@@ -56,11 +85,21 @@ printf '%s\n' "$PIWORK_ADMIN_PASSWORD" | npm run cli -- \
   --core "$PIWORK_CORE_URL" login --account admin --password-stdin
 npm run cli -- status
 npm run cli -- whoami
+npm run cli -- skills list
+npm run cli -- skills show code-review
 npm run cli -- work create --name first-work --wait
 npm run cli -- work list
 ```
 
-Startup never creates a default Work. Work creation copies the current global runtime default into an independent Work snapshot. Later global changes apply only to Works created afterward.
+Startup never creates a default Work. Work creation without Skill flags copies the current default Skills and other effective context into independent Work-owned storage. Explicit options replace the corresponding defaults:
+
+```bash
+npm run cli -- work create --name reviewed-work \
+  --skill code-review --agents-md-file ./AGENTS.md --wait
+npm run cli -- work create --name no-skill-work --no-skills --wait
+```
+
+Repeat `--skill` to select multiple enabled Skills. `--skill` and `--no-skills` are mutually exclusive. Creation also accepts `--base-image <image>` and `--config <file>`. Later changes to defaults, managed Skill content, or the original import directory do not alter an existing Work.
 
 Copy the `workId` from the create output, then send a message or continue a Session:
 
@@ -75,10 +114,16 @@ Each Work has an active context, a desired context, and a revision-free pending 
 ```bash
 npm run cli -- work config show <workId>
 npm run cli -- work config set <workId> --config ./work-config.json
+npm run cli -- work config skills list <workId>
+npm run cli -- work config skills set <workId> --skill code-review
+npm run cli -- work config agents show <workId>
+npm run cli -- work config agents set <workId> --file ./AGENTS.md
 npm run cli -- work config apply <workId>
 ```
 
-`set` only creates a desired context and sets `pendingApply`; it does not interrupt a Run. `apply` explicitly prepares or restarts that Work and activates the captured context after the new runtime reports ready. Existing Works never follow later global changes.
+Use `work config skills set <workId> --no-skills` to select an empty Skill set. Field-specific Skill and AGENTS commands preserve unrelated desired fields. Configuration updates only change the desired context and set `pendingApply`; they do not interrupt the active runtime or a Run. `apply` captures the current desired context in an Operation, prepares or restarts that Work, and activates the captured context only after the runtime reports ready. If another update commits while apply is running, it remains desired with `pendingApply: true`. A failed apply leaves the prior active context usable.
+
+To adopt updated managed Skill content, select that Skill again for the Work and apply the new desired context. Existing Work copies remain usable if the managed Skill is later updated, disabled, removed, or if its original source directory disappears. Configuration commands do not accept or expose numeric revisions.
 
 ## Environment-file startup and deployment test
 
@@ -114,6 +159,8 @@ admin users disable
 admin users reset-credential
 config show
 config set
+config default-work show
+config default-work set
 skills list|show|add|update|enable|disable|remove
 ```
 
@@ -126,13 +173,124 @@ logout
 whoami
 work create|list|show|start|stop|retry|delete
 work config show|set|apply
-work config skills set
-work config agents set
+work config skills list|set
+work config agents show|set
 skills list|show
 operation show
 session create|list|show
 run show|watch|cancel
 chat
+```
+
+## CLI usage demos
+
+The examples in this repository use npm wrappers. After installing the binaries, replace `npm run serve --` with `piwork-serve` and `npm run cli --` with `piwork-cli`. Global options such as `--core`, `--data-dir`, and `--json` must appear before the command. Use `--help` to print the full command grammar:
+
+```bash
+npm run serve -- --help
+npm run cli -- --help
+```
+
+### Operator client
+
+The operator client uses the protected credential under `PIWORK_DATA_DIR`. This example checks Core, manages a user, inspects Skills, and changes the defaults copied into future Works:
+
+```bash
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" status
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  admin users list
+
+printf '%s\n' "$NEW_USER_PASSWORD" | npm run serve -- \
+  --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  admin users create --account alice --role user --password-stdin
+
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  skills list
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  config default-work set --skill code-review
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  config default-work show
+```
+
+User lifecycle commands take the stable user ID returned by `admin users list`:
+
+```bash
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  admin users disable <userId>
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  admin users enable <userId>
+printf '%s\n' "$NEW_USER_PASSWORD" | npm run serve -- \
+  --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  admin users reset-credential <userId> --password-stdin
+```
+
+Managed Skill lifecycle commands use the directory basename as `<skill-name>`:
+
+```bash
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  skills update <skill-name> --path <absolute-directory>
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  skills disable <skill-name>
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  skills enable <skill-name>
+npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  skills remove <skill-name>
+```
+
+### User client
+
+The user client saves its own login credential. This example discovers available Skills, creates a Work, updates its desired context, applies it, and starts a persistent conversation:
+
+```bash
+printf '%s\n' "$USER_PASSWORD" | npm run cli -- \
+  --core "$PIWORK_CORE_URL" login --account alice --password-stdin
+
+npm run cli -- whoami
+npm run cli -- skills list
+npm run cli -- skills show code-review
+npm run cli -- work create --name project-a --skill code-review \
+  --agents-md-file ./AGENTS.md --wait
+npm run cli -- work list
+npm run cli -- work show <workId>
+
+npm run cli -- work config skills set <workId> \
+  --skill code-review --skill another-skill
+npm run cli -- work config agents set <workId> --file ./AGENTS.md
+npm run cli -- work config show <workId>
+npm run cli -- work config apply <workId>
+npm run cli -- operation show <operationId>
+
+npm run cli -- session create <workId>
+npm run cli -- chat <workId> --session <sessionId> \
+  --message "Review the current workspace"
+npm run cli -- session show <workId> <sessionId>
+```
+
+`chat` prints the stable Session and Run IDs. Use them to inspect, resume, watch, or cancel execution:
+
+```bash
+npm run cli -- run show <workId> <runId>
+npm run cli -- run watch <workId> <runId> --after <lastSequence>
+npm run cli -- run cancel <workId> <runId>
+npm run cli -- chat <workId> --session <sessionId> --message "Continue"
+```
+
+Work lifecycle commands optionally wait for their durable Operation to finish:
+
+```bash
+npm run cli -- work stop <workId> --wait
+npm run cli -- work start <workId> --wait
+npm run cli -- work retry <workId> --wait
+npm run cli -- work delete <workId> --wait
+npm run cli -- logout
+```
+
+Add `--json` before the command when scripting. The installed binary writes one JSON value to standard output without npm wrapper output:
+
+```bash
+piwork-cli --json work list
+piwork-serve --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
+  --json skills list
 ```
 
 Core prints one JSON `core.listening` record after startup checks complete. Stop it with `SIGTERM` or `Ctrl-C`; healthy Work containers remain alive and the next Core process adopts them using each Work's active configuration. See [operations](docs/operations.md) for readiness, restart, backup, credentials, and data retention.
@@ -145,7 +303,7 @@ npm run build
 npm test
 npm run test:integration
 npm run acceptance
-openspec validate unify-core-admin-config-and-split-clients --type change --strict
+openspec validate --specs --strict
 ```
 
 `npm run acceptance` uses the deterministic acceptance image and real compiled Core/CLI subprocesses. It requires Docker but no external model credential. `npm run real-model-smoke` and `scripts/deployment-test.sh` are opt-in real-provider checks.
