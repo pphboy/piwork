@@ -34,6 +34,8 @@ export interface SessionRecord {
   readonly sdkHistoryPath: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** Internal active Work context identity; never mapped to public protobuf output. */
+  readonly contextIdentity?: string | null;
 }
 
 export interface RunRecord {
@@ -50,6 +52,8 @@ export interface RunRecord {
   readonly finishedAt: string | null;
   readonly earliestAvailableSequence: number;
   readonly latestSequence: number;
+  /** Internal context captured when the Run was accepted. */
+  readonly contextIdentity?: string | null;
 }
 
 export interface AcceptRunRequest {
@@ -58,6 +62,7 @@ export interface AcceptRunRequest {
   readonly submissionKey: string;
   readonly requestDigest: string;
   readonly promptDigest: string;
+  readonly contextIdentity?: string | null;
   readonly now?: string;
 }
 
@@ -106,13 +111,14 @@ export class WorkStore {
   createSession(record: SessionRecord): void {
     this.assertOpen();
     this.database.prepare(`INSERT INTO sessions(
-      work_id, session_id, sdk_history_path, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?)`).run(
+      work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity
+    ) VALUES (?, ?, ?, ?, ?, ?)`).run(
       record.workId,
       record.sessionId,
       record.sdkHistoryPath,
       record.createdAt,
       record.updatedAt,
+      record.contextIdentity ?? null,
     );
   }
 
@@ -129,8 +135,8 @@ export class WorkStore {
         this.database.exec("COMMIT");
         return { session, reused: true };
       }
-      this.database.prepare(`INSERT INTO sessions(work_id, session_id, sdk_history_path, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)`).run(record.workId, record.sessionId, record.sdkHistoryPath, record.createdAt, record.updatedAt);
+      this.database.prepare(`INSERT INTO sessions(work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity)
+        VALUES (?, ?, ?, ?, ?, ?)`).run(record.workId, record.sessionId, record.sdkHistoryPath, record.createdAt, record.updatedAt, record.contextIdentity ?? null);
       this.database.prepare(`INSERT INTO session_idempotency(work_id, idempotency_key, session_id, created_at)
         VALUES (?, ?, ?, ?)`).run(record.workId, idempotencyKey, record.sessionId, record.createdAt);
       this.database.exec("COMMIT");
@@ -141,9 +147,9 @@ export class WorkStore {
   getSession(workId: string, sessionId: string): SessionRecord | undefined {
     this.assertOpen();
     const row = this.database.prepare(`SELECT
-      work_id, session_id, sdk_history_path, created_at, updated_at
+      work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity
       FROM sessions WHERE work_id = ? AND session_id = ?`).get(workId, sessionId) as
-      | Record<string, string>
+      | Record<string, string | null>
       | undefined;
     return row === undefined ? undefined : mapSession(row);
   }
@@ -151,9 +157,16 @@ export class WorkStore {
   listSessions(workId: string): SessionRecord[] {
     this.assertOpen();
     const rows = this.database.prepare(`SELECT
-      work_id, session_id, sdk_history_path, created_at, updated_at
+      work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity
       FROM sessions WHERE work_id = ? ORDER BY created_at, session_id`).all(workId) as Array<Record<string, string>>;
     return rows.map(mapSession);
+  }
+
+  /** Bind legacy sessions created before context snapshots were introduced. */
+  bindUnboundSessionContexts(workId: string, contextIdentity: string): void {
+    this.assertOpen();
+    this.database.prepare(`UPDATE sessions SET active_context_identity = ?
+      WHERE work_id = ? AND active_context_identity IS NULL`).run(contextIdentity, workId);
   }
 
   acceptRun(request: AcceptRunRequest): AcceptedRun {
@@ -178,21 +191,25 @@ export class WorkStore {
       if (activity !== undefined) throw new WorkBusyError(activity.active_run_id);
 
       const session = this.database.prepare(
-        "SELECT 1 AS found FROM sessions WHERE work_id = ? AND session_id = ?",
-      ).get(request.workId, request.sessionId);
+        "SELECT active_context_identity FROM sessions WHERE work_id = ? AND session_id = ?",
+      ).get(request.workId, request.sessionId) as { active_context_identity: string | null } | undefined;
       if (session === undefined) throw new Error(`session ${request.sessionId} does not exist in Work ${request.workId}`);
+      if (request.contextIdentity !== undefined && session.active_context_identity !== request.contextIdentity) {
+        throw new Error(`session ${request.sessionId} context is no longer active`);
+      }
 
       const runId = `run-${randomUUID()}`;
       const now = request.now ?? new Date().toISOString();
       this.database.prepare(`INSERT INTO runs(
-        work_id, session_id, run_id, submission_key, prompt_digest, state, accepted_at
-      ) VALUES (?, ?, ?, ?, ?, 'accepted', ?)`).run(
+        work_id, session_id, run_id, submission_key, prompt_digest, state, accepted_at, context_identity
+      ) VALUES (?, ?, ?, ?, ?, 'accepted', ?, ?)`).run(
         request.workId,
         request.sessionId,
         runId,
         request.submissionKey,
         request.promptDigest,
         now,
+        session.active_context_identity,
       );
       this.database.prepare(`INSERT INTO submit_idempotency(
         work_id, submission_key, request_digest, run_id, created_at
@@ -388,7 +405,7 @@ export class WorkStore {
     const row = this.database.prepare(`SELECT
       work_id, session_id, run_id, submission_key, prompt_digest, state,
       final_text, error_json, accepted_at, started_at, finished_at,
-      earliest_available_sequence, latest_sequence
+      earliest_available_sequence, latest_sequence, context_identity
       FROM runs WHERE run_id = ?`).get(runId) as Record<string, string | number | null> | undefined;
     return row === undefined ? undefined : mapRun(row);
   }
@@ -403,13 +420,14 @@ export class WorkStore {
   }
 }
 
-function mapSession(row: Record<string, string>): SessionRecord {
+function mapSession(row: Record<string, string | null>): SessionRecord {
   return {
     workId: row.work_id ?? "",
     sessionId: row.session_id ?? "",
     sdkHistoryPath: row.sdk_history_path ?? "",
     createdAt: row.created_at ?? "",
     updatedAt: row.updated_at ?? "",
+    contextIdentity: row.active_context_identity ?? null,
   };
 }
 
@@ -428,5 +446,6 @@ function mapRun(row: Record<string, string | number | null>): RunRecord {
     finishedAt: row.finished_at === null ? null : String(row.finished_at),
     earliestAvailableSequence: Number(row.earliest_available_sequence),
     latestSequence: Number(row.latest_sequence),
+    contextIdentity: row.context_identity === null || row.context_identity === undefined ? null : String(row.context_identity),
   };
 }

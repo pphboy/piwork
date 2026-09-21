@@ -1,6 +1,13 @@
 import { Type } from "typebox";
 import { ResourceIdSchema, TimestampSchema } from "../common.js";
 
+/** Opaque, service-internal identity of an immutable Work-owned context. */
+export const WorkContextIdentitySchema = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: "^[A-Za-z0-9._-]+$",
+});
+
 export const WorkRuntimeIdentitySchema = Type.Object(
   {
     installationId: ResourceIdSchema,
@@ -30,3 +37,4 @@ export const WorkReadinessSchema = Type.Object(
 
 export type WorkRuntimeIdentity = Type.Static<typeof WorkRuntimeIdentitySchema>;
 export type WorkReadiness = Type.Static<typeof WorkReadinessSchema>;
+export type WorkContextIdentity = Type.Static<typeof WorkContextIdentitySchema>;

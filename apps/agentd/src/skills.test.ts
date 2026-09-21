@@ -32,10 +32,9 @@ test("fixed Skills load into the SDK, invalid artifacts block ready, and restart
     );
     const wrong = skill("wrong-name", "WRONG");
     await writeSkill(next, "declared-name", wrong);
-    await assert.rejects(
-      loadConfiguredSkills(next, [fixed("declared-name", wrong)]),
-      (error) => error instanceof RequiredSkillError && /manifest name/.test(error.statuses[0]?.error ?? ""),
-    );
+    const rebound = await loadConfiguredSkills(next, [fixed("declared-name", wrong)]);
+    assert.equal(rebound.skills[0]?.name, "declared-name");
+    assert.equal(rebound.skills[0]?.description, "WRONG");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -46,7 +45,12 @@ function skill(name: string, sentinel: string): string {
 }
 
 function fixed(name: string, source: string) {
-  return { name, digest: `sha256:${createHash("sha256").update(source).digest("hex")}` };
+  const path = Buffer.from("SKILL.md", "utf8");
+  const pathLength = Buffer.allocUnsafe(4); pathLength.writeUInt32BE(path.length);
+  const bytes = Buffer.from(source, "utf8");
+  const byteLength = Buffer.allocUnsafe(8); byteLength.writeBigUInt64BE(BigInt(bytes.length));
+  const digest = createHash("sha256").update(pathLength).update(path).update(byteLength).update(bytes).digest("hex");
+  return { name, digest: `sha256:${digest}` };
 }
 
 async function writeSkill(root: string, name: string, source: string, rootIsSkill = false): Promise<void> {

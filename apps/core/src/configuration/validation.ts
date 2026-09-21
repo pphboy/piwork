@@ -1,5 +1,5 @@
 import { Check } from "typebox/value";
-import { WorkConfigSchema, type McpServer, type WorkConfig } from "@piwork/contracts";
+import { BUILT_IN_WORK_TOOLS, normalizeAgentsMd, WorkConfigSchema, type McpServer, type WorkConfig } from "@piwork/contracts";
 import { CoreStore, type CatalogKind } from "@piwork/core-store";
 
 export type ConfigurationValidationCode =
@@ -38,8 +38,27 @@ export class WorkConfigurationValidator {
       );
     }
     const config = context.configuration;
+    try {
+      normalizeAgentsMd(config.agentsMd);
+    } catch (error) {
+      throw new ConfigurationValidationError("INVALID_CONFIGURATION", error instanceof Error ? error.message : "agentsMd is invalid", "agentsMd");
+    }
     this.catalog(config.agentImage.catalogId, "agent_image", "agentImage.catalogId");
-    config.skills.forEach((skill, index) => this.catalog(skill.catalogId, "skill", `skills.${index}.catalogId`));
+    const skillIds = new Set<string>();
+    config.skills.forEach((skillName, index) => {
+      if (skillIds.has(skillName)) {
+        throw new ConfigurationValidationError("INVALID_CONFIGURATION", `duplicate Skill ${skillName}`, `skills.${index}`);
+      }
+      skillIds.add(skillName);
+      const skill = this.store.getManagedSkill(skillName);
+      if (skill === undefined || !skill.enabled) {
+        throw new ConfigurationValidationError(
+          "INVALID_REFERENCE",
+          `Skill ${skillName} is unavailable`,
+          `skills.${index}`,
+        );
+      }
+    });
     this.catalog(config.modelRef, "model", "modelRef");
 
     const serverIds = new Set<string>();
@@ -72,6 +91,14 @@ export class WorkConfigurationValidator {
             `mcpServers.${index}.secretRefs.${secretIndex}.secretId`,
           );
         }
+      }
+    }
+    const mcpToolPrefixes = new Set(config.mcpServers.map((server) => server.serverId));
+    for (const [field, names] of [["tools.allowed", config.tools.allowed], ["tools.denied", config.tools.denied] ] as const) {
+      for (const [index, name] of names.entries()) {
+        const valid = (BUILT_IN_WORK_TOOLS as readonly string[]).includes(name)
+          || name.includes(".") && mcpToolPrefixes.has(name.split(".", 1)[0]!);
+        if (!valid) throw new ConfigurationValidationError("INVALID_CONFIGURATION", `unsupported tool ${name}`, `${field}.${index}`);
       }
     }
     return config;

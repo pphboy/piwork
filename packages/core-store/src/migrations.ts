@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const CORE_SCHEMA_VERSION = 3;
+export const CORE_SCHEMA_VERSION = 5;
 
 interface Migration {
   readonly version: number;
@@ -195,6 +195,51 @@ const migrations: readonly Migration[] = [
       ) STRICT`,
       `ALTER TABLE work_config_revisions ADD COLUMN runtime_profile_json TEXT`,
       `ALTER TABLE work_config_revisions ADD COLUMN source_runtime_revision INTEGER`,
+    ],
+  },
+  {
+    version: 4,
+    statements: [
+      `INSERT INTO control_metadata(key, value_json, updated_at)
+        VALUES ('default_work_configuration', '{"version":1,"revision":0,"configuration":null}', datetime('now'))
+        ON CONFLICT(key) DO NOTHING`,
+      `UPDATE work_config_revisions
+        SET config_json = json_set(config_json, '$.agentsMd', '')
+        WHERE json_extract(config_json, '$.agentsMd') IS NULL`,
+    ],
+  },
+  {
+    version: 5,
+    statements: [
+      `CREATE TABLE managed_skill_artifacts (
+        skill_name TEXT NOT NULL REFERENCES catalog_entries(id) ON DELETE CASCADE,
+        content_identity TEXT NOT NULL,
+        file_count INTEGER NOT NULL CHECK (file_count >= 1 AND file_count <= 2048),
+        total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0 AND total_bytes <= 33554432),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(skill_name, content_identity)
+      ) STRICT`,
+      `CREATE TABLE work_context_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+        internal_revision INTEGER,
+        configuration_json TEXT NOT NULL,
+        image_identity TEXT NOT NULL,
+        created_by_user_id TEXT NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL,
+        UNIQUE(work_id, internal_revision)
+      ) STRICT`,
+      `ALTER TABLE works ADD COLUMN desired_context_id TEXT REFERENCES work_context_snapshots(snapshot_id)`,
+      `ALTER TABLE works ADD COLUMN active_context_id TEXT REFERENCES work_context_snapshots(snapshot_id)`,
+      `CREATE TABLE filesystem_migrations (
+        migration_key TEXT NOT NULL,
+        item_key TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'running', 'succeeded', 'failed')),
+        error_code TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(migration_key, item_key)
+      ) STRICT`,
+      `CREATE INDEX work_context_snapshots_work_id ON work_context_snapshots(work_id, created_at)`,
     ],
   },
 ];

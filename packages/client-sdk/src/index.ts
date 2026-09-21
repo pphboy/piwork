@@ -96,6 +96,16 @@ export class PiworkClient {
   resetManagedUserCredential(userId: string, password: string) { return this.request<Record<string, unknown>>("POST", `/control/users/${encodeURIComponent(userId)}/reset-credential`, { password }); }
   runtimeProfile() { return this.request<Record<string, unknown>>("GET", "/control/runtime"); }
   configureRuntime(input: { agentImage: string; provider: string; model: string; baseUrl?: string; credential: string }) { return this.request<Record<string, unknown>>("PUT", "/control/runtime", input); }
+  defaultWorkConfiguration() { return this.request<Record<string, unknown>>("GET", "/control/default-work"); }
+  configureDefaultWorkConfiguration(configuration: unknown, overrides?: { readonly baseImage?: string }) { return this.request<Record<string, unknown>>("PUT", "/control/default-work", { configuration, ...(overrides?.baseImage === undefined ? {} : { baseImage: overrides.baseImage }) }); }
+  managedSkills() { return this.request<{ skills: unknown[] }>("GET", "/control/skills"); }
+  managedSkill(name: string) { return this.request<Record<string, unknown>>("GET", `/control/skills/${encodeURIComponent(name)}`); }
+  addManagedSkill(path: string) { return this.request<Record<string, unknown>>("POST", "/control/skills", { path }); }
+  updateManagedSkill(name: string, path: string) { return this.request<Record<string, unknown>>("PUT", `/control/skills/${encodeURIComponent(name)}`, { path }); }
+  setManagedSkillEnabled(name: string, enabled: boolean) { return this.request<Record<string, unknown>>("POST", `/control/skills/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`); }
+  removeManagedSkill(name: string) { return this.request<void>("DELETE", `/control/skills/${encodeURIComponent(name)}`); }
+  skills() { return this.request<{ skills: unknown[] }>("GET", "/api/v1/skills"); }
+  skill(name: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/skills/${encodeURIComponent(name)}`); }
   login(account: string, password: string) { return this.request<{ token: string; expiresAt: string; user: PublicIdentity }>("POST", "/api/v1/login", { account, password }); }
   me() { return this.request<PublicIdentity & { expiresAt: string }>("GET", "/api/v1/me"); }
   logout() { return this.request<void>("POST", "/api/v1/logout"); }
@@ -104,8 +114,12 @@ export class PiworkClient {
   createWork(input: unknown) { return this.request<{ workId: string; operationId: string }>("POST", "/api/v1/works", input); }
   workAction(workId: string, action: "start" | "stop" | "retry" | "delete", idempotencyKey: string) { return this.request<{ workId: string; operationId: string }>("POST", `/api/v1/works/${encodeURIComponent(workId)}/${action}`, { idempotencyKey }); }
   workConfiguration(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration`); }
-  updateWorkConfiguration(workId: string, expectedRevision: number, configuration: unknown) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration`, { expectedRevision, configuration }); }
-  applyWorkConfiguration(workId: string, expectedRevision: number) { return this.request<Record<string, unknown>>("POST", `/api/v1/works/${encodeURIComponent(workId)}/configuration/apply`, { expectedRevision }); }
+  updateWorkConfiguration(workId: string, configuration: unknown) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration`, { configuration }); }
+  applyWorkConfiguration(workId: string) { return this.request<Record<string, unknown>>("POST", `/api/v1/works/${encodeURIComponent(workId)}/configuration/apply`, {}); }
+  workSkills(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration/skills`); }
+  updateWorkSkills(workId: string, skills: unknown[]) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration/skills`, { skills }); }
+  workAgents(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration/agents`); }
+  updateWorkAgents(workId: string, agentsMd: string) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration/agents`, { agentsMd }); }
   operation(operationId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/operations/${encodeURIComponent(operationId)}`); }
   createSession(workId: string, idempotencyKey: string) { return this.request<Record<string, unknown>>("POST", `/api/v1/works/${encodeURIComponent(workId)}/sessions`, { idempotencyKey }); }
   sessions(workId: string) { return this.request<{ sessions: unknown[] }>("GET", `/api/v1/works/${encodeURIComponent(workId)}/sessions`); }

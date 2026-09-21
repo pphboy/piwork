@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import { CoreStore } from "@piwork/core-store";
 import { createWorkHttpServer } from "./http-api.js";
 import { WorkLifecycleService, type WorkRuntimeAdapter, type WorkRuntimeState } from "./lifecycle.js";
 import { WorkConfigurationService } from "../configuration/work-config.js";
+import { WorkContextStore } from "../configuration/work-context.js";
 
 const NOW = "2026-09-20T00:00:00.000Z";
 const owner = { userId: "user-owner", role: "user" as const };
@@ -138,7 +139,97 @@ test("Work config set leaves the runtime untouched and apply activates only afte
     assert.equal(applied.pendingRestart, false);
     assert.deepEqual(runtime.events, ["drain", "stop", "remove"]);
     assert.equal(runtime.state.ready, true);
+    const applyOperations = store.listOperations().filter((operation) => operation.kind === "apply-work-configuration");
+    assert.equal(applyOperations.length, 1);
+    assert.equal(JSON.parse(applyOperations.at(-1)!.requestJson).capturedRevision, 2);
+    assert.equal(applyOperations.at(-1)!.state, "succeeded");
   });
+});
+
+test("apply activates its captured configuration while a later desired edit remains pending", async () => {
+  await withFixture(async ({ store, lifecycle, runtime }) => {
+    const profile = JSON.stringify({ version: 1, revision: 1, agentImage: "image:a", model: { provider: "test", id: "a", credentialRef: "a.secret" }, updatedAt: NOW });
+    const created = lifecycle.create(owner, { name: "apply-race", configuration: config(), idempotencyKey: "race-create", runtimeProfileJson: profile, sourceRuntimeRevision: 1 });
+    await lifecycle.waitForIdle();
+    const configurations = new WorkConfigurationService(store, () => new Date(NOW));
+    configurations.update(owner, created.workId, { ...config(), agentsMd: "B" }, undefined, { runtimeProfileJson: profile, sourceRuntimeRevision: 1 });
+
+    runtime.holdStart = true;
+    const applyingB = lifecycle.applyConfiguration(owner, created.workId);
+    await runtime.waitUntilStartIsHeld();
+    configurations.update(owner, created.workId, { ...config(), agentsMd: "C" }, undefined, { runtimeProfileJson: profile, sourceRuntimeRevision: 1 });
+    runtime.release();
+
+    const applied = await applyingB;
+    assert.equal(applied.activeRevision, 2);
+    assert.equal(applied.desiredRevision, 3);
+    assert.equal(applied.pendingRestart, true);
+    assert.equal(JSON.parse(applied.activeConfigJson ?? "{}").agentsMd, "B");
+    assert.equal(JSON.parse(applied.desiredConfigJson).agentsMd, "C");
+
+    const before = store.listOperations().filter((operation) => operation.kind === "apply-work-configuration").length;
+    const appliedC = await lifecycle.applyConfiguration(owner, created.workId);
+    assert.equal(appliedC.pendingRestart, false);
+    assert.equal(appliedC.activeRevision, 3);
+    const after = store.listOperations().filter((operation) => operation.kind === "apply-work-configuration").length;
+    assert.equal(after, before + 1);
+  });
+});
+
+test("corrupt active context blocks reconciliation without replacing the existing runtime", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-lifecycle-context-"));
+  const store = CoreStore.open({ databasePath: join(root, "core.sqlite") });
+  store.exec(`INSERT INTO users(id, account, password_digest, role, enabled, created_at, updated_at) VALUES
+    ('user-owner', 'owner', 'digest', 'user', 1, '${NOW}', '${NOW}')`);
+  const contexts = new WorkContextStore(join(root, "works"));
+  const runtime = new FakeRuntime();
+  const lifecycle = new WorkLifecycleService(store, runtime, () => new Date(NOW), 10, 10, undefined, contexts);
+  try {
+    const workId = "work-0199e6d8-context";
+    const configuration = config();
+    const snapshot = contexts.build({
+      workId,
+      snapshotId: "context-active",
+      configuration,
+      imageIdentity: `sha256:${"a".repeat(64)}`,
+      skills: [],
+      createdAt: NOW,
+    });
+    const profile = JSON.stringify({ version: 1, revision: 1, agentImage: "image:a", model: { provider: "test", id: "a", credentialRef: "a.secret" }, updatedAt: NOW });
+    lifecycle.create(owner, {
+      workId,
+      name: "context-corruption",
+      configuration,
+      idempotencyKey: "context-create",
+      runtimeProfileJson: profile,
+      sourceRuntimeRevision: 1,
+      snapshot: {
+        snapshotId: snapshot.snapshotId,
+        configurationJson: JSON.stringify(snapshot.configuration),
+        imageIdentity: snapshot.metadata.imageIdentity,
+        createdByUserId: owner.userId,
+        createdAt: snapshot.metadata.createdAt,
+      },
+    });
+    await lifecycle.waitForIdle();
+    assert.equal(runtime.state.ready, true);
+    const starts = runtime.starts;
+    runtime.events.length = 0;
+    await chmod(join(snapshot.directory, "AGENTS.md"), 0o600);
+    await writeFile(join(snapshot.directory, "AGENTS.md"), "corrupt active context");
+
+    const retry = lifecycle.retry(owner, workId, "context-retry");
+    await lifecycle.waitForIdle();
+
+    assert.equal(store.getOperation(retry.operationId)?.state, "failed");
+    assert.equal(runtime.starts, starts);
+    assert.deepEqual(runtime.events, []);
+    assert.equal(runtime.state.running, true);
+    assert.equal(store.getWorkConfiguration(workId)?.activeContextId, snapshot.snapshotId);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 class FakeRuntime implements WorkRuntimeAdapter {
@@ -199,9 +290,8 @@ async function withFixture(run: (fixture: { store: CoreStore; lifecycle: WorkLif
 
 function config(): WorkConfig {
   return {
-    revision: 1,
     agentImage: { catalogId: "image-0199e6d8abcd" },
-    skills: [], modelRef: "model-0199e6d8abcd", mcpServers: [],
+    skills: [], agentsMd: "", modelRef: "model-0199e6d8abcd", mcpServers: [],
     resources: { cpuMillis: 1000, memoryBytes: 1_073_741_824, maxServices: 8, maxRetainedVolumes: 16 },
     tools: { allowed: [], denied: [] },
   };

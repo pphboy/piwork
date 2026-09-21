@@ -11,9 +11,13 @@ test("Core paths resolve one restricted data-directory contract", () => {
     const paths = ensureCorePaths(join(parent, "state"));
     assert.equal(paths.databasePath, join(paths.dataDirectory, "core.sqlite"));
     assert.equal(paths.runtimeProfilePath, join(paths.dataDirectory, "runtime-profile.json"));
+    assert.equal(paths.skillsDirectory, join(paths.dataDirectory, "skills"));
+    assert.equal(paths.workContextsDirectory, join(paths.dataDirectory, "works"));
     assert.equal(statSync(paths.dataDirectory).mode & 0o777, 0o700);
     assert.equal(statSync(paths.secretsDirectory).mode & 0o777, 0o700);
     assert.equal(statSync(paths.runtimeDirectory).mode & 0o777, 0o700);
+    assert.equal(statSync(paths.skillsDirectory).mode & 0o777, 0o700);
+    assert.equal(statSync(paths.workContextsDirectory).mode & 0o777, 0o700);
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }

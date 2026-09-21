@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const WORK_SCHEMA_VERSION = 2;
+export const WORK_SCHEMA_VERSION = 3;
 
 export function migrateWorkDatabase(database: DatabaseSync): void {
   database.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -73,9 +73,18 @@ export function migrateWorkDatabase(database: DatabaseSync): void {
       ) STRICT`);
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)").run(new Date().toISOString());
     }
+    if (row.version < 3) {
+      if (!hasColumn(database, "sessions", "active_context_identity")) database.exec("ALTER TABLE sessions ADD COLUMN active_context_identity TEXT");
+      if (!hasColumn(database, "runs", "context_identity")) database.exec("ALTER TABLE runs ADD COLUMN context_identity TEXT");
+      database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (3, ?)").run(new Date().toISOString());
+    }
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
     throw error;
   }
+}
+
+function hasColumn(database: DatabaseSync, table: string, column: string): boolean {
+  return (database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>).some((item) => item.name === column);
 }

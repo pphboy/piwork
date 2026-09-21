@@ -8,27 +8,42 @@
 
 ### Requirement: Select a complete Work environment
 
-系统 SHALL 维护全局默认运行时配置和每个 Work 的独立配置。创建 Work 时，系统 SHALL 将当时的全局默认解析为 Work 的 desired configuration；Work 所有者之后可以读取和更新自己的配置。全局配置查询不得暴露 secret 明文。
+**Identifier:** WCFG-001
+
+系统 SHALL 维护全局默认 Work configuration 和每个 Work 的独立 active/desired context。创建 Work 时，系统 SHALL 将当时的默认配置与用户显式覆盖解析为最终配置，并将 base image identity、model、完整 Skills、`AGENTS.md` 内容、MCP、工具和资源策略复制或记录到 Work-owned durable context。未提供 Skill selection 时 SHALL 使用默认 Skills；显式 Skill names SHALL replace defaults；explicit no-Skills SHALL produce an empty set. Default changes MUST NOT mutate an existing Work. Public queries MUST NOT expose secrets, import paths, managed-storage paths, internal digests, or configuration revisions.
 
 #### Scenario: Copy defaults at creation
+- **WHEN** defaults select model-a, Skills s-a and s-b, and AGENTS text-a when Work A is created, then defaults change
+- **THEN** Work A retains independent active and desired copies of the original effective context and only a later Work receives the new defaults
 
-- **WHEN** 全局默认选择 model-a，用户创建 Work A，随后全局默认改为 model-b
-- **THEN** Work A 的配置仍引用 model-a，新建 Work B 才引用 model-b
+#### Scenario: Create with explicit Skills
+- **WHEN** a user creates a Work with one or more enabled Skill names
+- **THEN** Core copies exactly those complete Core-managed Skill directories into Work-owned context before the Work becomes ready
 
 #### Scenario: Create a configured Work
+- **WHEN** a user creates a Work with valid image, model, Skill, AGENTS, MCP, tool, and resource selections
+- **THEN** Core stores the complete effective Work-owned context and the ready runtime reports the corresponding public configuration without secrets or revisions
 
-- **WHEN** 用户选择可用镜像、Skill、模型和 MCP 配置创建 Work
-- **THEN** 系统保存完整配置 revision，启动结果可核对实际镜像、Skill、MCP 和模型引用
+#### Scenario: Create with no Skills
+- **WHEN** a user explicitly requests no Skills
+- **THEN** Core creates a valid empty Work-owned Skills directory and imports no host or global Skill
 
 #### Scenario: Configure one Work
+- **WHEN** the owner updates Work A's image, model, Skills, MCP, AGENTS content, tools, or resources
+- **THEN** only Work A's desired context changes and the response reports active, desired, and `pendingApply` without secrets or revisions
 
-- **WHEN** Work 所有者更新 Work A 的 Agent image、model、Skill、MCP 或资源策略
-- **THEN** 只有 Work A 的 desired configuration revision 改变，并返回 secret 引用和可用性信息而非明文
+#### Scenario: Reject host-path context references
+- **WHEN** a Work request attempts to persist an AGENTS path or arbitrary Skill path instead of content or a managed Skill name
+- **THEN** the request is rejected and no host path is saved in Work runtime context
+
+#### Scenario: Fail context copy atomically
+- **WHEN** any selected managed Skill cannot be fully copied and validated while creating or updating a Work
+- **THEN** no Work or desired-context change is committed and no partial copied tree remains visible
 
 #### Scenario: Secret query
+- **WHEN** a user queries a Work containing model or MCP credential references
+- **THEN** Core returns availability and safe container references without returning secret plaintext or protected host paths
 
-- **WHEN** 用户查询包含模型或 MCP secret 引用的 WorkConfig
-- **THEN** 系统返回引用和可用性信息，不返回 secret 明文
 ### Requirement: Validate environment compatibility
 
 系统 SHALL 验证配置结构、引用权限、agent 镜像兼容性和工具运行条件，并将异步准备失败关联到配置字段及 Operation。无法解析的镜像、缺失模型配置或不兼容入口 MUST NOT 被报告为可用 Work。
@@ -42,42 +57,55 @@
 
 - **WHEN** 接受的配置在拉取镜像或启动兼容入口时失败
 - **THEN** Work 和配置保留，Operation 提供失败原因，用户可以修正或重试
-### Requirement: Version desired and active configuration
 
-系统 SHALL 为每个 Work 保存独立的 desired revision 和 active revision。修改必须携带预期版本；`work config apply` 或等价的显式 lifecycle 操作才可将 desired 配置应用到运行实例。修改不得隐式中断当前 Run，active revision 只有在新配置被验证加载后才更新。
+### Requirement: Manage desired and active context without public revisions
+
+**Identifier:** WCFG-002
+
+系统 SHALL 为每个 Work 保存一个 active context 和一个 desired context，并公开 `pendingApply` 表示二者是否不同。配置读取、修改和 apply 的 CLI、HTTP 请求及响应 MUST NOT require or expose numeric configuration revisions. Each successful update SHALL atomically replace the requested desired fields in Core commit order without interrupting the active runtime. `work config apply` SHALL capture the complete desired context accepted by that Operation; success SHALL make that captured context active, failure SHALL keep the prior active context usable, and an update committed during apply SHALL remain desired with `pendingApply: true` after the earlier apply completes.
 
 #### Scenario: Update without implicit restart
+- **WHEN** a user changes model, Skills, AGENTS content, base image, MCP, tools, or resources for a running Work
+- **THEN** Core stores a complete desired context, returns `pendingApply: true`, and leaves the active runtime and active Runs unchanged
 
-- **WHEN** 用户修改运行中 Work 的模型配置
-- **THEN** 当前 Run 继续使用旧 active revision，Work 显示 pending restart/apply，系统不自动重启容器
+#### Scenario: Apply the desired context
+- **WHEN** a user invokes apply while desired differs from active
+- **THEN** Core prepares and starts the captured desired context, marks it active only after readiness succeeds, and then reports `pendingApply: false` unless a later desired update exists
 
-#### Scenario: Update a running Work
+#### Scenario: Preserve a later edit during apply
+- **WHEN** apply captures context B while A is active and a later update commits desired context C before B becomes ready
+- **THEN** successful apply makes B active, preserves C as desired, and reports `pendingApply: true`
 
-- **WHEN** 用户为运行中的 Work 修改 Skills 或基础镜像
-- **THEN** 当前 Run 保持原环境，界面显示待应用版本，重启后报告新 active revision
+#### Scenario: Fail an invalid apply safely
+- **WHEN** copied Skill content, AGENTS content, image, model, or runtime validation prevents the captured desired context from becoming ready
+- **THEN** the Operation fails with the Work and public field, active remains unchanged, desired remains available for correction or retry, and no partial context is used by a Run
 
-#### Scenario: Apply a Work revision
+#### Scenario: Order concurrent desired updates
+- **WHEN** two authorized updates to the same desired field commit concurrently
+- **THEN** the later Core commit is the desired value and the public response contains no revision conflict or revision number
 
-- **WHEN** 用户显式应用 Work 的 desired revision
-- **THEN** Core 按该 Work 配置准备或重启实例，成功后更新 active revision，失败时保留旧 active revision 并返回可重试错误
-
-#### Scenario: Concurrent Work edits
-
-- **WHEN** 两个客户端基于同一旧 revision 修改同一 Work
-- **THEN** 先成功的修改保留，后者收到 revision conflict 且不覆盖 desired 配置
-
-#### Scenario: Concurrent edits
-
-- **WHEN** 两个客户端基于相同旧版本提交不同配置，先前提交已成功
-- **THEN** 后一提交返回版本冲突，不覆盖已保存版本
 ### Requirement: Resolve reproducible artifacts
 
-系统 SHALL 为首次成功准备的配置记录不可变镜像和 Skill 制品身份；同 revision 重启 SHALL 使用已解析身份，即使来源 tag 或分支改变。需要新制品时 SHALL 创建新配置 revision。
+**Identifier:** WCFG-003
+
+系统 SHALL 为每个 accepted Work context retain immutable image identity, complete copied Skill trees, `AGENTS.md`, and effective non-secret configuration inside Work-owned durable storage. Start, restart, Core recovery, and apply MUST use the Work-owned captured content rather than rereading defaults, Core Skill source imports, operator paths, or mutable external references. Adopting changed Core-managed Skill content SHALL require a new explicit Work Skill selection followed by apply.
 
 #### Scenario: Mutable tag changes
+- **WHEN** a stopped Work's original image tag points to another image before restart
+- **THEN** the Work uses its recorded immutable image identity and does not silently upgrade
 
-- **WHEN** Work 停止期间其镜像 tag 指向新镜像，然后使用原配置重新启动
-- **THEN** Work 仍使用原 revision 解析的镜像，不静默升级
+#### Scenario: Managed Skill changes
+- **WHEN** a Core-managed Skill is updated, disabled, or removed after Work A copied it
+- **THEN** Work A continues to start and run with its own complete Skill copy while later Work creation observes the current Core-managed state
+
+#### Scenario: Stable Skill and AGENTS revision
+- **WHEN** Core-managed Skill content or default AGENTS content changes after Work A captured its active context
+- **THEN** Work A restarts with its retained Skill and AGENTS copies and can adopt changed content only through an explicit desired update and apply, without exposing a revision
+
+#### Scenario: Source directory disappears
+- **WHEN** the operator source path used to import a Skill is moved or deleted after Core accepted it
+- **THEN** Core can still create Works from its managed copy and existing Works can restart from their owned copies
+
 ### Requirement: Expose and enforce supported resource policy
 
 系统 SHALL 查询可支持的资源限制与有效策略，并拒绝无法实际执行的强制限制。第一版 SHALL 执行服务数量、CPU 和内存预算；未支持硬存储字节限制的后端 SHALL 返回 UNSUPPORTED_LIMIT，而不能仅保存一个无效数值。

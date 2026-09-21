@@ -17,13 +17,19 @@ export const CLI_USAGE = `usage: piwork-cli [--core <url>] [--json] <command>
   login --account <name> [--password-stdin]
   whoami
   logout
-  work create --name <name> [--config <file>] [--wait]
+  skills list
+  skills show <skill-name>
+  work create --name <name> [--base-image <image>] [--skill <skill-name>]... [--no-skills] [--agents-md-file <path>] [--config <file>] [--wait]
   work list
   work show <workId>
   work <start|stop|retry|delete> <workId> [--wait]
   work config show <workId>
-  work config set <workId> --config <file> --expected-revision <n>
-  work config apply <workId> --expected-revision <n>
+  work config set <workId> --config <file>
+  work config skills list <workId>
+  work config skills set <workId> [--skill <skill-name>]... [--no-skills]
+  work config agents show <workId>
+  work config agents set <workId> --file <path>
+  work config apply <workId>
   operation show <operationId>
   session create <workId>
   session list <workId>
@@ -40,6 +46,7 @@ const COMMAND_HELP: Readonly<Record<string, string>> = {
   whoami: "usage: piwork-cli whoami\n  Show the current authenticated identity.\n",
   logout: "usage: piwork-cli logout\n  Revoke the current session and remove the saved credential.\n",
   work: "usage: piwork-cli work <create|list|show|start|stop|retry|delete|config> ...\n  Manage Work resources and per-Work configuration.\n",
+  skills: "usage: piwork-cli skills <list|show> [skill-name]\n  Discover enabled Skills available to the current user.\n",
   operation: "usage: piwork-cli operation show <operationId>\n  Inspect an asynchronous Work operation.\n",
   session: "usage: piwork-cli session <create|list|show> <workId> [sessionId]\n  Manage persistent conversation sessions.\n",
   run: "usage: piwork-cli run <show|watch|cancel> <workId> <runId> [options]\n  Inspect, stream, or cancel a Run.\n",
@@ -69,6 +76,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   if (command === "login") return loginCommand(context, args);
   if (command === "whoami") return whoamiCommand(context, args);
   if (command === "logout") return logoutCommand(context, args);
+  if (command === "skills") return skillsCommand(context, args);
   if (command === "work") return workCommand(context, args);
   if (command === "operation") return operationCommand(context, args);
   if (command === "session") return sessionCommand(context, args);
@@ -108,35 +116,59 @@ async function logoutCommand(context: Context, args: readonly string[]): Promise
   return 0;
 }
 
+async function skillsCommand(context: Context, args: readonly string[]): Promise<number> {
+  requireCredential(context);
+  if (args[0] === "list") { noArgs(args.slice(1)); output(context, await context.client.skills()); return 0; }
+  if (args[0] === "show") { exact(args.slice(1), 1); output(context, await context.client.skill(args[1]!)); return 0; }
+  throw usage("skills requires list or show");
+}
+
 async function workCommand(context: Context, args: readonly string[]): Promise<number> {
   requireCredential(context);
   const [action, ...rest] = args;
   if (action === "list") { noArgs(rest); output(context, await context.client.works()); return 0; }
   if (action === "show") { exact(rest, 1); output(context, await context.client.work(rest[0]!)); return 0; }
   if (action === "create") {
-    known(rest, ["--name", "--config", "--wait", "--idempotency-key"]);
+    known(rest, ["--name", "--config", "--wait", "--idempotency-key", "--base-image", "--skill", "--no-skills", "--agents-md-file"]);
     const name = required(rest, "--name");
     const configPath = optional(rest, "--config");
     const configuration = configPath === undefined ? undefined : JSON.parse(readFileSync(configPath, "utf8"));
-    const accepted = await context.client.createWork({ name, ...(configuration === undefined ? {} : { configuration }), idempotencyKey: optional(rest, "--idempotency-key") ?? randomUUID() });
+    const skills = repeated(rest, "--skill");
+    if (skills.length > 0 && rest.includes("--no-skills")) throw usage("--skill and --no-skills are mutually exclusive");
+    const agentsFile = optional(rest, "--agents-md-file");
+    const accepted = await context.client.createWork({ name, ...(configuration === undefined ? {} : { configuration }), ...(optional(rest, "--base-image") === undefined ? {} : { baseImage: optional(rest, "--base-image") }), ...(rest.includes("--no-skills") ? { skills: [] } : skills.length === 0 ? {} : { skills }), ...(agentsFile === undefined ? {} : { agentsMd: readFileSync(agentsFile, "utf8") }), idempotencyKey: optional(rest, "--idempotency-key") ?? randomUUID() });
     output(context, accepted);
     if (rest.includes("--wait")) await waitOperation(context, accepted.operationId);
     return 0;
   }
   if (action === "config") {
-    const [configAction, workId, ...configArgs] = rest;
+    const [configAction, ...configArgs] = rest;
+    if (configAction === "skills") {
+      const [sub, workId, ...options] = configArgs;
+      if (workId === undefined || workId.startsWith("--")) throw usage("work config skills requires <workId>");
+      if (sub === "list") { noArgs(options); output(context, await context.client.workSkills(workId)); return 0; }
+      if (sub === "set") { known(options, ["--skill", "--no-skills"]); const selected = repeated(options, "--skill"); if (selected.length > 0 && options.includes("--no-skills")) throw usage("--skill and --no-skills are mutually exclusive"); output(context, await context.client.updateWorkSkills(workId, options.includes("--no-skills") ? [] : selected)); return 0; }
+      throw usage("work config skills requires list or set");
+    }
+    if (configAction === "agents") {
+      const [sub, workId, ...options] = configArgs;
+      if (workId === undefined || workId.startsWith("--")) throw usage("work config agents requires <workId>");
+      if (sub === "show") { noArgs(options); output(context, await context.client.workAgents(workId)); return 0; }
+      if (sub === "set") { known(options, ["--file"]); output(context, await context.client.updateWorkAgents(workId, readFileSync(required(options, "--file"), "utf8"))); return 0; }
+      throw usage("work config agents requires show or set");
+    }
+    const [workId, ...options] = configArgs;
     if (workId === undefined || workId.startsWith("--")) throw usage("work config requires <workId>");
-    if (configAction === "show") { noArgs(configArgs); output(context, await context.client.workConfiguration(workId)); return 0; }
+    if (configAction === "show") { noArgs(options); output(context, await context.client.workConfiguration(workId)); return 0; }
     if (configAction === "set") {
-      known(configArgs, ["--config", "--expected-revision"]);
-      const expectedRevision = positiveInteger(required(configArgs, "--expected-revision"), "--expected-revision");
-      const configuration = JSON.parse(readFileSync(required(configArgs, "--config"), "utf8"));
-      output(context, await context.client.updateWorkConfiguration(workId, expectedRevision, configuration));
+      known(options, ["--config"]);
+      const configuration = JSON.parse(readFileSync(required(options, "--config"), "utf8"));
+      output(context, await context.client.updateWorkConfiguration(workId, configuration));
       return 0;
     }
     if (configAction === "apply") {
-      known(configArgs, ["--expected-revision"]);
-      output(context, await context.client.applyWorkConfiguration(workId, positiveInteger(required(configArgs, "--expected-revision"), "--expected-revision")));
+      noArgs(options);
+      output(context, await context.client.applyWorkConfiguration(workId));
       return 0;
     }
     throw usage("work config requires show, set, or apply");
@@ -150,6 +182,14 @@ async function workCommand(context: Context, args: readonly string[]): Promise<n
     return 0;
   }
   throw usage("work requires create, list, show, start, stop, retry, delete, or config");
+}
+
+function repeated(args: readonly string[], name: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) if (args[index] === name) {
+    const value = args[index + 1]; if (value === undefined || value.startsWith("--")) throw usage(`${name} requires a value`); values.push(value); index += 1;
+  }
+  return values;
 }
 
 async function operationCommand(context: Context, args: readonly string[]): Promise<number> {

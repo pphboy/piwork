@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,14 +9,14 @@ import { RuntimeConfigurationMaterializer } from "./materialization.js";
 
 test("materializes isolated paths, selected Skills, and only referenced secrets", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "piwork-materialize-"));
-  const reads: string[] = [];
+  const context = join(temporary, "context");
+  await mkdir(join(context, "skills", "skill-0199e6d8abcd"), { recursive: true });
+  await writeFile(join(context, "skills", "skill-0199e6d8abcd", "SKILL.md"), "---\nname: selected\n---\nOnly this Skill is active.\n", { mode: 0o444 });
+  await writeFile(join(context, "AGENTS.md"), "", { mode: 0o444 });
+  await writeFile(join(context, "metadata.json"), JSON.stringify({ version: 1, workId: "work-0199e6d8abcd", snapshotId: "context-1", imageIdentity: `sha256:${"b".repeat(64)}`, skills: [{ name: "skill-0199e6d8abcd", identity: `sha256:${"a".repeat(64)}` }], createdAt: new Date().toISOString() }), { mode: 0o444 });
+  await writeFile(join(context, "config.json"), JSON.stringify(configuration()), { mode: 0o444 });
   const materializer = new RuntimeConfigurationMaterializer({
-    async readSkill(catalogId, digest) {
-      reads.push(`skill:${catalogId}:${digest}`);
-      return new TextEncoder().encode("---\nname: selected\n---\nOnly this Skill is active.\n");
-    },
     async readSecret(secretId) {
-      reads.push(`secret:${secretId}`);
       if (secretId !== "secret-0199e6d8abcd") throw new Error("unexpected secret read");
       return new TextEncoder().encode("mcp-credential");
     },
@@ -28,6 +28,7 @@ test("materializes isolated paths, selected Skills, and only referenced secrets"
       workId: "work-0199e6d8abcd",
       configuration: configuration(),
       artifacts: artifacts(),
+      contextDirectory: context,
     });
     assert.deepEqual(result.mounts.map((mount) => [mount.target, mount.readOnly]), [
       ["/var/data", false],
@@ -35,27 +36,13 @@ test("materializes isolated paths, selected Skills, and only referenced secrets"
       ["/var/cache", false],
       ["/run/piwork", true],
     ]);
-    assert.deepEqual(reads, [
-      `skill:skill-0199e6d8abcd:sha256:${"a".repeat(64)}`,
-      "secret:secret-0199e6d8abcd",
-    ]);
-
     const runtime = JSON.parse(await readFile(result.configPath, "utf8")) as Record<string, any>;
-    assert.deepEqual(runtime.skillDiscovery, {
-      directories: ["/run/piwork/skills"],
-      loadHostSkills: false,
-    });
-    assert.equal(runtime.skills[0].path, "/run/piwork/skills/skill-0199e6d8abcd/SKILL.md");
-    assert.equal(runtime.mcpServers[0].secretRefs, undefined);
-    assert.deepEqual(runtime.mcpServers[0].secretFiles, [{
-      secretId: "secret-0199e6d8abcd",
-      key: "API_TOKEN",
-      path: "/run/piwork/secrets/local-tools/API_TOKEN",
-    }]);
+    assert.deepEqual(runtime.skills, ["skill-0199e6d8abcd"]);
+    assert.deepEqual(runtime.mcpServers[0].secretRefs, [{ secretId: "secret-0199e6d8abcd", key: "API_TOKEN" }]);
     assert.doesNotMatch(JSON.stringify(runtime), /mcp-credential/);
-    assert.equal((await stat(result.configPath)).mode & 0o777, 0o400);
+    assert.equal((await stat(result.configPath)).mode & 0o777, 0o444);
     assert.equal((await stat(join(result.root, "run", "piwork", "secrets", "local-tools", "API_TOKEN"))).mode & 0o777, 0o400);
-    assert.equal((await stat(join(result.root, "run", "piwork", "skills", "skill-0199e6d8abcd", "SKILL.md"))).mode & 0o777, 0o400);
+    assert.equal((await stat(join(result.root, "run", "piwork", "skills", "skill-0199e6d8abcd", "SKILL.md"))).mode & 0o777, 0o444);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -63,9 +50,9 @@ test("materializes isolated paths, selected Skills, and only referenced secrets"
 
 function configuration(): WorkConfig {
   return {
-    revision: 1,
     agentImage: { catalogId: "image-0199e6d8abcd" },
-    skills: [{ catalogId: "skill-0199e6d8abcd", digest: `sha256:${"a".repeat(64)}` }],
+    skills: ["skill-0199e6d8abcd"],
+    agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [{
       serverId: "local-tools",

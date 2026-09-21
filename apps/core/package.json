@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "piwork-serve": "dist/cli.js"
+    "piwork-serve": "dist/cli.js",
+    "piwork": "dist/cli.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "1.14.5",

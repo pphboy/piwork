@@ -18,13 +18,13 @@ test("test image sees the isolated runtime paths and restricted files", async ()
   assert.equal(filter, `label=piwork.installation_id=${installationId}`);
 
   const temporary = await mkdtemp(join(tmpdir(), "piwork-materialize-docker-"));
-  const hostSkill = join(temporary, "host-home", ".pi", "skills", "host-only");
-  await mkdir(hostSkill, { recursive: true });
-  await writeFile(join(hostSkill, "SKILL.md"), "HOST SKILL MUST NOT LOAD\n");
+  const context = join(temporary, "context", "skills", "skill-0199e6d8abcd");
+  await mkdir(context, { recursive: true });
+  await writeFile(join(context, "SKILL.md"), "---\nname: selected\n---\nSelected only.\n", { mode: 0o444 });
+  await writeFile(join(temporary, "context", "AGENTS.md"), "", { mode: 0o444 });
+  await writeFile(join(temporary, "context", "metadata.json"), "{}", { mode: 0o444 });
+  await writeFile(join(temporary, "context", "config.json"), "{}", { mode: 0o444 });
   const materializer = new RuntimeConfigurationMaterializer({
-    async readSkill() {
-      return new TextEncoder().encode("---\nname: selected\n---\nSelected only.\n");
-    },
     async readSecret() {
       return new TextEncoder().encode("mcp-credential");
     },
@@ -36,6 +36,7 @@ test("test image sees the isolated runtime paths and restricted files", async ()
       workId: "work-0199e6d8abcd",
       configuration: configuration(),
       artifacts: artifacts(),
+      contextDirectory: join(temporary, "context"),
     });
     const mounts = materialized.mounts.flatMap((mount) => [
       "--mount",
@@ -45,12 +46,10 @@ test("test image sees the isolated runtime paths and restricted files", async ()
       "set -eu",
       "test -w /var/data && test -w /var/session && test -w /var/cache",
       "touch /var/data/data-ok /var/session/session-ok /var/cache/cache-ok",
-      "test \"$(stat -c %a /run/piwork/config.json)\" = 400",
-      "test \"$(stat -c %a /run/piwork/skills/skill-0199e6d8abcd/SKILL.md)\" = 400",
+      "test \"$(stat -c %a /run/piwork/config.json)\" = 444",
+      "test \"$(stat -c %a /run/piwork/skills/skill-0199e6d8abcd/SKILL.md)\" = 444",
       "test \"$(stat -c %a /run/piwork/secrets/local-tools/API_TOKEN)\" = 400",
-      "grep -q '\"loadHostSkills\": false' /run/piwork/config.json",
       "grep -q 'Selected only' /run/piwork/skills/skill-0199e6d8abcd/SKILL.md",
-      "test ! -e /tmp/isolated-home/.pi/skills/host-only/SKILL.md",
       "if touch /run/piwork/must-fail 2>/dev/null; then exit 41; fi",
     ].join("; ");
     const { stdout, stderr } = await execFile("docker", [
@@ -70,9 +69,9 @@ test("test image sees the isolated runtime paths and restricted files", async ()
 
 function configuration(): WorkConfig {
   return {
-    revision: 1,
     agentImage: { catalogId: "image-0199e6d8abcd" },
-    skills: [{ catalogId: "skill-0199e6d8abcd", digest: `sha256:${"a".repeat(64)}` }],
+    skills: ["skill-0199e6d8abcd"],
+    agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [{
       serverId: "local-tools",

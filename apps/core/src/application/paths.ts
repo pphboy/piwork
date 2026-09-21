@@ -8,6 +8,8 @@ export interface CorePaths {
   readonly runtimeProfilePath: string;
   readonly secretsDirectory: string;
   readonly runtimeDirectory: string;
+  readonly skillsDirectory: string;
+  readonly workContextsDirectory: string;
   readonly operatorCredentialPath: string;
 }
 
@@ -26,16 +28,24 @@ export function ensureCorePaths(dataDirectory: string): CorePaths {
   const root = realpathSync(requested);
   const secretsDirectory = join(root, "secrets");
   const runtimeDirectory = join(root, "runtime");
+  const skillsDirectory = join(root, "skills");
+  const workContextsDirectory = join(root, "works");
   mkdirSync(secretsDirectory, { recursive: true, mode: 0o700 });
   mkdirSync(runtimeDirectory, { recursive: true, mode: 0o700 });
+  mkdirSync(skillsDirectory, { recursive: true, mode: 0o700 });
+  mkdirSync(workContextsDirectory, { recursive: true, mode: 0o700 });
   chmodSync(secretsDirectory, 0o700);
   chmodSync(runtimeDirectory, 0o700);
+  chmodSync(skillsDirectory, 0o700);
+  chmodSync(workContextsDirectory, 0o700);
   return {
     dataDirectory: root,
     databasePath: join(root, "core.sqlite"),
     runtimeProfilePath: join(root, "runtime-profile.json"),
     secretsDirectory,
     runtimeDirectory,
+    skillsDirectory,
+    workContextsDirectory,
     operatorCredentialPath: join(root, "operator.credential"),
   };
 }

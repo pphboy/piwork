@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { WorkConfig } from "@piwork/contracts";
-import { CoreStore, type OperationRecord, type WorkConfigurationState, type WorkRecord } from "@piwork/core-store";
+import { CoreStore, type OperationRecord, type WorkConfigurationState, type WorkContextSnapshotInput, type WorkRecord } from "@piwork/core-store";
 import { authorizeWorkResource, filterVisibleResources, type UserPrincipal } from "../work-access/policy.js";
+import { WorkContextStore } from "../configuration/work-context.js";
 
 export interface WorkRuntimeState {
   readonly exists: boolean;
@@ -12,6 +13,7 @@ export interface WorkRuntimeState {
 }
 
 export interface WorkRuntimeAdapter {
+  resolveImageIdentity?(reference: string): Promise<string>;
   prepare(work: WorkRecord, configuration?: ResolvedWorkRuntimeConfiguration): Promise<void>;
   start(work: WorkRecord, generation: number, configuration?: ResolvedWorkRuntimeConfiguration): Promise<{ readonly instanceId: string; readonly generation: number }>;
   inspect(workId: string): Promise<WorkRuntimeState>;
@@ -24,6 +26,8 @@ export interface WorkRuntimeAdapter {
 export interface ResolvedWorkRuntimeConfiguration {
   readonly workConfig: WorkConfig;
   readonly runtimeProfileJson: string;
+  readonly contextIdentity?: string;
+  readonly contextDirectory?: string;
 }
 
 export interface WorkRecoveryReport {
@@ -60,6 +64,7 @@ export class WorkLifecycleService {
     private readonly drainTimeoutMs = 30_000,
     private readonly stopTimeoutMs = 10_000,
     private readonly services: WorkServiceCoordinator = NO_SERVICES,
+    private readonly contexts?: WorkContextStore,
   ) {}
 
   create(
@@ -70,33 +75,43 @@ export class WorkLifecycleService {
       readonly idempotencyKey: string;
       readonly runtimeProfileJson?: string;
       readonly sourceRuntimeRevision?: number;
+      readonly workId?: string;
+      readonly snapshot?: WorkContextSnapshotInput;
     },
   ): AcceptedWorkOperation {
     this.assertAccepting();
-    const workId = `work-${randomUUID()}`;
+    const workId = input.workId ?? `work-${randomUUID()}`;
     const requestJson = stableJson({ name: input.name, configuration: input.configuration });
-    const accepted = this.store.acceptMutation({
-      principalId: principal.userId,
-      workScope: "new-work",
-      operationKind: "create-work",
-      idempotencyKey: input.idempotencyKey,
-      requestDigest: digest(requestJson),
-      requestJson,
-      targetVersion: 1,
-      now: this.now().toISOString(),
-    }, (tx) => {
-      const now = this.now().toISOString();
-      tx.run(`INSERT INTO works(
-        id, owner_user_id, name, desired_state, observed_state,
-        desired_revision, active_revision, control_version, created_at, updated_at
-      ) VALUES (?, ?, ?, 'running', 'provisioning', 1, NULL, 1, ?, ?)`, workId, principal.userId, input.name, now, now);
-      tx.run(`INSERT INTO work_config_revisions(
-        work_id, revision, config_json, created_by_user_id, created_at,
-        runtime_profile_json, source_runtime_revision
-      ) VALUES (?, 1, ?, ?, ?, ?, ?)`, workId, JSON.stringify(input.configuration), principal.userId, now,
-        input.runtimeProfileJson ?? null, input.sourceRuntimeRevision ?? null);
-      return { resourceId: workId };
-    });
+    let accepted;
+    try {
+      accepted = this.store.acceptMutation({
+        principalId: principal.userId,
+        workScope: "new-work",
+        operationKind: "create-work",
+        idempotencyKey: input.idempotencyKey,
+        requestDigest: digest(requestJson),
+        requestJson,
+        targetVersion: 1,
+        now: this.now().toISOString(),
+      }, (tx) => {
+        const now = this.now().toISOString();
+        tx.run(`INSERT INTO works(
+          id, owner_user_id, name, desired_state, observed_state,
+          desired_revision, active_revision, control_version, created_at, updated_at
+        ) VALUES (?, ?, ?, 'running', 'provisioning', 1, NULL, 1, ?, ?)`, workId, principal.userId, input.name, now, now);
+        tx.run(`INSERT INTO work_config_revisions(
+          work_id, revision, config_json, created_by_user_id, created_at,
+          runtime_profile_json, source_runtime_revision
+        ) VALUES (?, 1, ?, ?, ?, ?, ?)`, workId, JSON.stringify(input.configuration), principal.userId, now,
+          input.runtimeProfileJson ?? null, input.sourceRuntimeRevision ?? null);
+        if (input.snapshot !== undefined) this.store.insertInitialWorkContext(workId, 1, input.snapshot);
+        return { resourceId: workId };
+      });
+    } catch (error) {
+      if (input.snapshot !== undefined) this.contexts?.remove(workId, input.snapshot.snapshotId);
+      throw error;
+    }
+    if (accepted.reused && input.snapshot !== undefined) this.contexts?.remove(workId, input.snapshot.snapshotId);
     this.store.attachOperationToWork(accepted.operationId, accepted.resourceId);
     this.enqueue(accepted.resourceId);
     return { workId: accepted.resourceId, operationId: accepted.operationId, reused: accepted.reused };
@@ -141,13 +156,47 @@ export class WorkLifecycleService {
   async applyConfiguration(
     principal: UserPrincipal,
     workId: string,
-    expectedRevision: number,
+    expectedRevision?: number,
   ): Promise<WorkConfigurationState> {
     this.assertAccepting();
     const work = this.store.getWork(workId);
     authorizeWorkResource(principal, work === undefined ? undefined : asOwnedWork(work), "control");
+    const state = this.store.getWorkConfiguration(workId);
+    if (state === undefined) throw invisible();
+    // Capture the desired immutable context before queueing. Later edits are
+    // allowed to commit while this snapshot is being prepared; activation is
+    // fenced to this captured identity and therefore leaves pendingApply true.
+    const capturedContextId = state.desiredContextId;
+    const capturedRevision = state.desiredRevision;
+    if (expectedRevision !== undefined && expectedRevision !== capturedRevision) {
+      const error = new Error(`Work ${workId} configuration revision conflict`);
+      error.name = "ConfigurationRevisionConflictError";
+      throw error;
+    }
+    const requestJson = stableJson({ capturedSnapshotId: capturedContextId, capturedRevision });
+    const accepted = this.store.acceptMutation({
+      principalId: principal.userId,
+      workScope: workId,
+      operationKind: "apply-work-configuration",
+      idempotencyKey: capturedContextId ?? `revision-${capturedRevision}`,
+      requestDigest: digest(requestJson),
+      requestJson,
+      targetVersion: this.store.getWork(workId)!.controlVersion,
+      workId,
+      now: this.now().toISOString(),
+    }, () => ({ resourceId: workId }));
     const prior = this.queues.get(workId) ?? Promise.resolve();
-    const result = prior.catch(() => undefined).then(() => this.applyConfigurationNow(workId, expectedRevision));
+    const result = prior.catch(() => undefined).then(async () => {
+      this.store.updateOperation(accepted.operationId, "running", this.now().toISOString());
+      try {
+        const value = await this.applyConfigurationNow(workId, capturedRevision, capturedContextId);
+        this.store.updateOperation(accepted.operationId, "succeeded", this.now().toISOString(), { resultJson: JSON.stringify({ configuration: value }) });
+        return value;
+      } catch (error) {
+        this.store.updateOperation(accepted.operationId, "failed", this.now().toISOString(), { errorJson: JSON.stringify({ message: error instanceof Error ? error.message : String(error) }) });
+        throw error;
+      }
+    });
     let tracked!: Promise<void>;
     tracked = result.then(() => undefined, () => undefined).finally(() => {
       if (this.queues.get(workId) === tracked) this.queues.delete(workId);
@@ -236,6 +285,14 @@ export class WorkLifecycleService {
     }
     this.store.updateOperation(current.id, "running", this.now().toISOString());
     try {
+      if (current.kind === "apply-work-configuration") {
+        const request = JSON.parse(current.requestJson) as { capturedSnapshotId?: unknown; capturedRevision?: unknown };
+        const snapshotId = typeof request.capturedSnapshotId === "string" ? request.capturedSnapshotId : null;
+        const revision = Number(request.capturedRevision);
+        const result = await this.applyConfigurationNow(workId, Number.isSafeInteger(revision) ? revision : 0, snapshotId);
+        this.store.updateOperation(current.id, "succeeded", this.now().toISOString(), { resultJson: JSON.stringify({ configuration: result }) });
+        return;
+      }
       const latest = this.store.getWork(workId, true)!;
       if (latest.desiredState === "running") await this.ensureRunning(latest);
       else if (latest.desiredState === "stopped") await this.ensureStopped(latest);
@@ -260,8 +317,12 @@ export class WorkLifecycleService {
   private async ensureRunning(work: WorkRecord): Promise<void> {
     this.store.updateWorkObservedState(work.id, "starting", this.now().toISOString());
     const actual = await this.runtime.inspect(work.id);
+    const state = this.store.getWorkConfiguration(work.id);
     const runtimeRevision = work.activeRevision ?? work.desiredRevision;
-    const configuration = this.resolveRuntimeConfiguration(work.id, runtimeRevision);
+    const contextId = state?.activeContextId ?? state?.desiredContextId;
+    const configuration = contextId === null || contextId === undefined
+      ? this.resolveRuntimeConfiguration(work.id, runtimeRevision)
+      : this.resolveContextRuntimeConfiguration(work.id, contextId);
     if (!actual.exists) {
       await this.runtime.prepare(work, configuration);
       await this.services.prepareEnabledServices(work);
@@ -295,17 +356,14 @@ export class WorkLifecycleService {
     this.store.updateWorkObservedState(work.id, "ready", this.now().toISOString(), runtimeRevision);
   }
 
-  private async applyConfigurationNow(workId: string, expectedRevision: number): Promise<WorkConfigurationState> {
+  private async applyConfigurationNow(workId: string, expectedRevision: number, capturedContextId: string | null): Promise<WorkConfigurationState> {
     const state = this.store.getWorkConfiguration(workId);
     if (state === undefined) throw invisible();
-    if (state.desiredRevision !== expectedRevision) {
-      const error = new Error(`Work ${workId} configuration revision conflict`);
-      error.name = "ConfigurationRevisionConflictError";
-      throw error;
-    }
-    if (state.activeRevision === expectedRevision) return state;
+    if (capturedContextId !== null && state.activeContextId === capturedContextId) return state;
     const work = this.store.getWork(workId)!;
-    const candidate = this.resolveRuntimeConfiguration(workId, expectedRevision);
+    const candidate = capturedContextId === null
+      ? this.resolveRuntimeConfiguration(workId, expectedRevision)
+      : this.resolveContextRuntimeConfiguration(workId, capturedContextId);
     if (candidate === undefined) throw new Error("Work runtime profile snapshot is missing");
 
     // Image/profile preparation is deliberately completed before the running
@@ -313,10 +371,14 @@ export class WorkLifecycleService {
     // and the old active revision unchanged.
     await this.runtime.prepare(work, candidate);
     if (work.desiredState !== "running") {
-      return this.store.activateWorkConfiguration(workId, expectedRevision, this.now().toISOString());
+      return capturedContextId === null
+        ? this.store.activateWorkConfiguration(workId, expectedRevision, this.now().toISOString(), true)
+        : this.store.activateWorkContext(workId, capturedContextId, this.now().toISOString());
     }
 
-    const previous = state.activeRevision === null ? undefined : this.resolveRuntimeConfiguration(workId, state.activeRevision);
+    const previous = state.activeContextId !== null
+      ? this.resolveContextRuntimeConfiguration(workId, state.activeContextId)
+      : state.activeRevision === null ? undefined : this.resolveRuntimeConfiguration(workId, state.activeRevision);
     const actual = await this.runtime.inspect(workId);
     const generation = this.nextRuntimeGeneration(workId);
     try {
@@ -344,7 +406,9 @@ export class WorkLifecycleService {
         instanceId: started.instanceId,
         readySince: this.now().toISOString(),
       });
-      const activated = this.store.activateWorkConfiguration(workId, expectedRevision, this.now().toISOString());
+      const activated = capturedContextId === null
+        ? this.store.activateWorkConfiguration(workId, expectedRevision, this.now().toISOString(), true)
+        : this.store.activateWorkContext(workId, capturedContextId, this.now().toISOString());
       this.store.updateWorkObservedState(workId, "ready", this.now().toISOString(), expectedRevision);
       return activated;
     } catch (error) {
@@ -385,6 +449,20 @@ export class WorkLifecycleService {
     return {
       workConfig: JSON.parse(stored.configJson) as WorkConfig,
       runtimeProfileJson: stored.runtimeProfileJson,
+    };
+  }
+
+  private resolveContextRuntimeConfiguration(workId: string, snapshotId: string): ResolvedWorkRuntimeConfiguration | undefined {
+    const snapshot = this.store.getWorkContextSnapshot(workId, snapshotId);
+    if (snapshot === undefined || snapshot.internalRevision === null) return undefined;
+    const stored = this.store.getWorkConfigRevision(workId, snapshot.internalRevision);
+    if (stored === undefined || stored.runtimeProfileJson === null) return undefined;
+    const context = this.contexts?.load(workId, snapshotId);
+    return {
+      workConfig: JSON.parse(snapshot.configurationJson) as WorkConfig,
+      runtimeProfileJson: stored.runtimeProfileJson,
+      contextIdentity: snapshotId,
+      ...(context === undefined ? {} : { contextDirectory: context.directory }),
     };
   }
 

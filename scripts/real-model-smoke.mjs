@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -25,8 +25,16 @@ try {
   const configure = ["apps/core/dist/cli.js", "--core", core.url, "--data-dir", dataDirectory, "config", "set", "--agent-image", process.env.PIWORK_REAL_AGENT_IMAGE, "--model-provider", process.env.PIWORK_REAL_MODEL_PROVIDER, "--model", process.env.PIWORK_REAL_MODEL_ID, "--api-key-stdin"];
   if (process.env.PIWORK_REAL_MODEL_BASE_URL) configure.push("--model-base-url", process.env.PIWORK_REAL_MODEL_BASE_URL);
   run("node", configure, `${process.env.PIWORK_REAL_MODEL_API_KEY}\n`);
+  const skillDirectory = join(temporary, "imports", "real-smoke-skill");
+  await mkdir(skillDirectory, { recursive: true });
+  await writeFile(join(skillDirectory, "SKILL.md"), "---\nname: provider-smoke-helper\ndescription: Real provider smoke fixture\n---\nUse ordinary concise replies.\n");
+  await writeFile(join(skillDirectory, "support.txt"), "managed Skill supporting file\n");
+  run("node", ["apps/core/dist/cli.js", "--core", core.url, "--data-dir", dataDirectory, "skills", "add", "--path", skillDirectory]);
+  await rm(skillDirectory, { recursive: true, force: true });
   run("node", ["apps/cli/dist/main.js", "--core", core.url, "--json", "login", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
-  const creation = lines(run("node", ["apps/cli/dist/main.js", "--json", "work", "create", "--name", "real-model-smoke", "--wait"]));
+  const discovered = lines(run("node", ["apps/cli/dist/main.js", "--json", "skills", "list"]))[0];
+  assert.deepEqual(discovered, { skills: [{ name: "real-smoke-skill" }] });
+  const creation = lines(run("node", ["apps/cli/dist/main.js", "--json", "work", "create", "--name", "real-model-smoke", "--skill", "real-smoke-skill", "--wait"]));
   const workId = creation[0].workId;
   assert.equal(creation.at(-1).state, "succeeded");
   const chat = lines(run("node", ["apps/cli/dist/main.js", "--json", "chat", workId, "--message", "Reply with a short confirmation that the model is reachable."]));
@@ -49,7 +57,12 @@ function run(command, args, input) {
   return result.stdout;
 }
 function lines(output) { return output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)); }
-function redact(value) { return String(value).split(process.env.PIWORK_REAL_MODEL_API_KEY).join("[redacted]").slice(0, 2_000); }
+function redact(value) {
+  return [process.env.PIWORK_REAL_MODEL_API_KEY, adminPassword, temporary, dataDirectory]
+    .reduce((safe, sensitive) => safe.split(sensitive).join("[redacted]"), String(value))
+    .replace(/sha256:[a-f0-9]{64}/gi, "[redacted-digest]")
+    .slice(0, 2_000);
+}
 async function startCore() {
   const child = spawn("node", ["apps/core/dist/cli.js", "serve", "--data-dir", dataDirectory, "--listen", "127.0.0.1:0"], { cwd: root, env: environment, stdio: ["ignore", "pipe", "pipe"] });
   let stderr = ""; child.stderr.on("data", (chunk) => { stderr += String(chunk); });

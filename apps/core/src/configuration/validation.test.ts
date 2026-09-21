@@ -77,9 +77,9 @@ test("UNSUPPORTED_LIMIT is returned before runtime creation", async () => {
 
 function config(): WorkConfig {
   return {
-    revision: 1,
     agentImage: { catalogId: "image-0199e6d8abcd" },
-    skills: [{ catalogId: "skill-0199e6d8abcd", digest: `sha256:${"a".repeat(64)}` }],
+    skills: ["fixture-skill"],
+    agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [
       {
@@ -105,7 +105,6 @@ async function withValidator(
     VALUES ('user-1', 'alice', 'digest', 'user', 1, '${NOW}', '${NOW}')`);
   for (const [id, kind] of [
     ["image-0199e6d8abcd", "agent_image"],
-    ["skill-0199e6d8abcd", "skill"],
     ["model-0199e6d8abcd", "model"],
   ] as const) {
     store.createCatalogEntry({
@@ -113,13 +112,20 @@ async function withValidator(
       kind,
       name: id,
       mutableReference: `${kind}://fixture`,
-      resolvedDigest: kind === "skill" ? `sha256:${"a".repeat(64)}` : null,
+      resolvedDigest: null,
       metadataJson: "{}",
       enabled: true,
       createdAt: NOW,
       updatedAt: NOW,
     });
   }
+  store.addManagedSkill({
+    name: "fixture-skill",
+    identity: `sha256:${"a".repeat(64)}`,
+    fileCount: 1,
+    totalBytes: 1,
+    now: NOW,
+  });
   store.createSecretReference({
     id: "secret-0199e6d8abcd",
     ownerUserId: "user-1",

@@ -1,4 +1,6 @@
+import { createHash, randomUUID as cryptoRandomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { join } from "node:path";
 import { CoreStore } from "@piwork/core-store";
 import { status as grpcStatus } from "@grpc/grpc-js";
 import { IdentityService } from "../identity/sessions.js";
@@ -16,8 +18,13 @@ import { assertValidPassword } from "../identity/password.js";
 import { InputValidationError } from "../input-validation.js";
 import { WorkConfigurationValidator } from "../configuration/validation.js";
 import { registerRuntimeProfileCatalog, resolveRuntimeProfileFromWorkConfig, runtimeImageCatalogId, runtimeModelCatalogId } from "../configuration/runtime-catalog.js";
+import { SkillArtifactStore } from "../configuration/skill-artifact-store.js";
+import { CoreSkillService } from "../configuration/skills.js";
+import { WorkContextStore, type WorkContextSnapshot } from "../configuration/work-context.js";
+import type { WorkContextSnapshotInput } from "@piwork/core-store";
+import { WorkContextMigration } from "../configuration/work-context-migration.js";
 
-export type ReadinessReason = "STORE_OPEN" | "LISTENING" | "ADMIN_REQUIRED" | "RUNTIME_NOT_CONFIGURED" | "RUNTIME_UNAVAILABLE" | "RECOVERING" | "READY" | "SHUTTING_DOWN";
+export type ReadinessReason = "STORE_OPEN" | "LISTENING" | "ADMIN_REQUIRED" | "RUNTIME_NOT_CONFIGURED" | "RUNTIME_UNAVAILABLE" | "FILESYSTEM_MIGRATION_REQUIRED" | "RECOVERING" | "READY" | "SHUTTING_DOWN";
 
 export interface FirstRunInitialization {
   readonly administrator?: { readonly account: string; readonly password: string };
@@ -44,6 +51,9 @@ export class CoreApplication {
   readonly users: UserAdministrationService;
   readonly workConfigurations: WorkConfigurationService;
   readonly runtimeProfiles: RuntimeProfileStore;
+  readonly skills: CoreSkillService;
+  readonly workContexts: WorkContextStore;
+  readonly skillArtifacts: SkillArtifactStore;
   private runtime?: WorkRuntimeAdapter & Partial<ConversationGateway> & { close?: () => void };
   private server?: Server;
   private state: ReadinessReason = "STORE_OPEN";
@@ -53,6 +63,7 @@ export class CoreApplication {
     store: CoreStore,
     identity: IdentityService,
     lifecycle: WorkLifecycleService,
+    workContexts: WorkContextStore,
     private readonly options: CoreApplicationOptions,
   ) {
     this.store = store;
@@ -60,7 +71,17 @@ export class CoreApplication {
     this.lifecycle = lifecycle;
     this.users = new UserAdministrationService(store);
     this.workConfigurations = new WorkConfigurationService(store);
+    this.workContexts = workContexts;
     this.runtimeProfiles = new RuntimeProfileStore(paths.runtimeProfilePath, paths.secretsDirectory);
+    this.skillArtifacts = new SkillArtifactStore(paths.skillsDirectory);
+    this.skills = new CoreSkillService(store, this.skillArtifacts);
+    this.skills.migrateLegacySkills();
+    this.skills.cleanupOrphans();
+    const migrationProfile = this.runtimeProfiles.inspect().configured ? JSON.stringify(this.runtimeProfiles.load()) : undefined;
+    new WorkContextMigration(this.store, this.workContexts, this.skillArtifacts, paths.runtimeDirectory).migrate(migrationProfile);
+    this.workContexts.cleanupOrphans(new Set(
+      this.store.listWorkContextSnapshots().map((snapshot) => `${snapshot.workId}\0${snapshot.snapshotId}`),
+    ));
   }
 
   static async create(options: CoreApplicationOptions): Promise<CoreApplication> {
@@ -84,13 +105,15 @@ export class CoreApplication {
       if (profiles.inspect().configured) {
         const profile = profiles.load();
         registerRuntimeProfileCatalog(store, profile);
-        store.backfillWorkRuntimeProfiles(JSON.stringify(profile), profile.revision, new Date().toISOString());
+        ensureDefaultWorkConfiguration(store, profile);
+        store.backfillWorkRuntimeProfiles(JSON.stringify(profile), profile.revision, new Date().toISOString(), true);
       }
       const identity = await IdentityService.create({ store });
+      const workContexts = new WorkContextStore(options.paths.workContextsDirectory);
       let application!: CoreApplication;
       let runtime: WorkRuntimeAdapter = unavailableRuntime("runtime is not initialized");
-      const lifecycle = new WorkLifecycleService(store, proxyRuntime(() => application?.runtime ?? runtime));
-      application = new CoreApplication(options.paths, store, identity, lifecycle, options);
+      const lifecycle = new WorkLifecycleService(store, proxyRuntime(() => application?.runtime ?? runtime), undefined, undefined, undefined, undefined, workContexts);
+      application = new CoreApplication(options.paths, store, identity, lifecycle, workContexts, options);
       if (!store.hasEnabledAdministrator()) application.state = "ADMIN_REQUIRED";
       else if (!profiles.inspect().configured) application.state = "RUNTIME_NOT_CONFIGURED";
       else application.state = "STORE_OPEN";
@@ -128,11 +151,13 @@ export class CoreApplication {
         administrator: this.store.hasEnabledAdministrator(),
         runtimeConfigured,
         runtimeAvailable: this.runtime !== undefined,
+        filesystemMigrationReady: this.store.listFilesystemMigrations().every((migration) => migration.state === "succeeded"),
       },
     };
   }
 
   async refreshRuntime(force = false): Promise<void> {
+    if (this.store.listFilesystemMigrations().some((migration) => migration.state === "failed")) { this.state = "FILESYSTEM_MIGRATION_REQUIRED"; return; }
     if (!this.store.hasEnabledAdministrator()) { this.state = "ADMIN_REQUIRED"; return; }
     if (!this.runtimeProfiles.inspect().configured) { this.state = "RUNTIME_NOT_CONFIGURED"; return; }
     if (this.runtime !== undefined && !force && this.state !== "RUNTIME_UNAVAILABLE") { this.state = "READY"; return; }
@@ -149,10 +174,11 @@ export class CoreApplication {
       await this.lifecycle.recover();
       if (previous !== undefined && previous !== runtime) previous.close?.();
       this.state = "READY";
-    } catch {
+    } catch (error) {
       if (runtime !== previous) (runtime as WorkRuntimeAdapter & { close?: () => void }).close?.();
       this.runtime = previous;
       this.state = "RUNTIME_UNAVAILABLE";
+      process.stderr.write(`${JSON.stringify({ event: "core.runtime-unavailable", error: safeRuntimeFailure(error) })}\n`);
     }
   }
 
@@ -167,6 +193,51 @@ export class CoreApplication {
     } finally {
       this.store.close();
     }
+  }
+
+  private async buildWorkContext(
+    workId: string,
+    userId: string,
+    configuration: WorkConfig,
+    _runtimeProfileJson: string,
+    preserveContextId?: string,
+  ) {
+    const retained = preserveContextId === undefined ? undefined : this.workContexts.load(workId, preserveContextId);
+    const preserveSkills = retained !== undefined
+      && JSON.stringify(retained.configuration.skills) === JSON.stringify(configuration.skills);
+    const sources = preserveSkills
+      ? retained.metadata.skills.map((skill) => ({
+          name: skill.name,
+          identity: skill.identity,
+          directory: join(retained.directory, "skills", skill.name),
+        }))
+      : configuration.skills.map((name) => {
+          const record = this.store.getManagedSkill(name);
+          if (record === undefined || !record.enabled) throw api(400, "SKILL_UNAVAILABLE", `Skill ${name} is unavailable`);
+          const artifact = this.skillArtifacts.inspect(name, record.currentIdentity);
+          return { name, identity: record.currentIdentity, directory: artifact.directory };
+        });
+    const image = this.store.getCatalogEntry(configuration.agentImage.catalogId);
+    if (image === undefined || image.kind !== "agent_image" || !image.enabled) {
+      throw api(400, "INVALID_CONFIGURATION", "Work agent image reference is unavailable");
+    }
+    const reference = image.resolvedDigest ?? image.mutableReference;
+    if (reference === null) throw api(400, "INVALID_CONFIGURATION", "Work agent image reference is unavailable");
+    const preserveImage = retained !== undefined
+      && retained.configuration.agentImage.catalogId === configuration.agentImage.catalogId;
+    const imageIdentity = preserveImage
+      ? retained.metadata.imageIdentity
+      : await this.runtime?.resolveImageIdentity?.(reference)
+        ?? (image.resolvedDigest?.startsWith("sha256:") === true
+          ? image.resolvedDigest
+          : `sha256:${createHash("sha256").update(reference).digest("hex")}`);
+    return this.workContexts.build({
+      workId,
+      configuration,
+      imageIdentity,
+      skills: sources,
+      createdAt: new Date().toISOString(),
+    });
   }
 
   private async route(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -210,14 +281,59 @@ export class CoreApplication {
           }
         }
         if (request.method === "GET" && url.pathname === "/control/runtime") return send(response, 200, this.runtimeProfiles.inspect());
+        if (request.method === "GET" && url.pathname === "/control/skills") return send(response, 200, { skills: this.skills.listForOperator(actor) });
+        if (request.method === "POST" && url.pathname === "/control/skills") {
+          const body = await readJson<{ path?: unknown }>(request);
+          if (typeof body.path !== "string") throw api(400, "INVALID_REQUEST", "path is required");
+          return send(response, 201, this.skills.add(actor, body.path));
+        }
+        if (control[0] === "control" && control[1] === "skills" && control.length === 3 && request.method === "GET") {
+          return send(response, 200, this.skills.showForOperator(actor, control[2]!));
+        }
+        if (control[0] === "control" && control[1] === "skills" && control.length === 3 && request.method === "DELETE") {
+          this.skills.remove(actor, control[2]!); response.writeHead(204); response.end(); return;
+        }
+        if (control[0] === "control" && control[1] === "skills" && control.length === 4 && request.method === "POST") {
+          if (control[3] === "enable") return send(response, 200, this.skills.enable(actor, control[2]!));
+          if (control[3] === "disable") return send(response, 200, this.skills.disable(actor, control[2]!));
+        }
+        if (control[0] === "control" && control[1] === "skills" && control.length === 3 && request.method === "PUT") {
+          const body = await readJson<{ path?: unknown }>(request);
+          if (typeof body.path !== "string") throw api(400, "INVALID_REQUEST", "path is required");
+          return send(response, 200, this.skills.update(actor, control[2]!, body.path));
+        }
         if (request.method === "PUT" && url.pathname === "/control/runtime") {
           const body = await readJson<{ agentImage?: unknown; provider?: unknown; model?: unknown; baseUrl?: unknown; credential?: unknown }>(request);
           if (typeof body.agentImage !== "string" || typeof body.provider !== "string" || typeof body.model !== "string" || typeof body.credential !== "string" || (body.baseUrl !== undefined && typeof body.baseUrl !== "string")) throw api(400, "INVALID_REQUEST", "agentImage, provider, model, and credential are required");
           const configured = this.runtimeProfiles.configure({ agentImage: body.agentImage, provider: body.provider, model: body.model, credential: body.credential, ...(body.baseUrl === undefined ? {} : { baseUrl: body.baseUrl }) });
-          registerRuntimeProfileCatalog(this.store, this.runtimeProfiles.load());
+          const profile = this.runtimeProfiles.load();
+          registerRuntimeProfileCatalog(this.store, profile);
+          syncDefaultRuntimeFields(this.store, profile);
           await this.refreshRuntime(true);
           if (this.state !== "READY") throw api(503, "RUNTIME_UNAVAILABLE", "the configured runtime is unavailable");
           return send(response, 200, configured);
+        }
+        if (request.method === "GET" && url.pathname === "/control/default-work") {
+          const profile = this.runtimeProfiles.inspect().configured ? this.runtimeProfiles.load() : undefined;
+          const envelope = this.store.getDefaultWorkConfiguration();
+          const resolved = envelope?.configuration === null && profile !== undefined
+            ? ensureDefaultWorkConfiguration(this.store, profile)
+            : envelope;
+          if (resolved === undefined || resolved.configuration === null) return send(response, 200, { configuration: null });
+          return send(response, 200, { configuration: publicWorkConfig(resolved.configuration as WorkConfig) });
+        }
+        if (request.method === "PUT" && url.pathname === "/control/default-work") {
+          const body = await readJson<{ expectedRevision?: unknown; configuration?: unknown; baseImage?: unknown }>(request);
+          if (body.expectedRevision !== undefined || body.configuration === null || typeof body.configuration !== "object") throw api(400, "INVALID_REQUEST", "configuration is required and expectedRevision is obsolete");
+          let candidate = body.configuration as Record<string, unknown>;
+          if (typeof body.baseImage === "string") {
+            const id = `image-${createHash("sha256").update(body.baseImage).digest("hex").slice(0, 24)}`;
+            if (this.store.getCatalogEntry(id) === undefined) this.store.createCatalogEntry({ id, kind: "agent_image", name: body.baseImage, mutableReference: body.baseImage, resolvedDigest: null, metadataJson: JSON.stringify({ version: 1, source: "default-work" }), enabled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+            candidate = { ...candidate, agentImage: { catalogId: id } };
+          }
+          const configuration = new WorkConfigurationValidator(this.store).validate({ workOwnerUserId: "operator", configuration: candidate });
+          const result = this.store.updateDefaultWorkConfiguration(configuration as unknown as Record<string, unknown>, new Date().toISOString());
+          return send(response, 200, { configuration: publicWorkConfig(result.configuration as WorkConfig) });
         }
         throw api(404, "NOT_FOUND", "route not found");
       }
@@ -230,20 +346,36 @@ export class CoreApplication {
       const token = bearer(request);
       const session = this.identity.authenticate(token);
       const principal: UserPrincipal = { userId: session.user.id, role: session.user.role };
-      if (request.method === "GET" && url.pathname === "/api/v1/me") return send(response, 200, { ...session.user, expiresAt: session.expiresAt });
-      if (request.method === "POST" && url.pathname === "/api/v1/logout") { this.identity.logout(token); response.writeHead(204); response.end(); return; }
       const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+      if (request.method === "GET" && url.pathname === "/api/v1/me") return send(response, 200, { ...session.user, expiresAt: session.expiresAt });
+      if (request.method === "GET" && url.pathname === "/api/v1/skills") return send(response, 200, { skills: this.skills.listForUser(principal) });
+      if (request.method === "GET" && parts.length === 4 && parts[2] === "skills") return send(response, 200, this.skills.showForUser(principal, parts[3]!));
+      if (request.method === "POST" && url.pathname === "/api/v1/logout") { this.identity.logout(token); response.writeHead(204); response.end(); return; }
       if (parts[2] === "works" && parts.length === 3 && request.method === "GET") return send(response, 200, { works: this.lifecycle.list(principal) });
       if (parts[2] === "works" && parts.length === 3 && request.method === "POST") {
         requireRuntime(this.state);
-        const body = await readJson<{ name?: unknown; configuration?: unknown; idempotencyKey?: unknown }>(request);
+        const body = await readJson<{ name?: unknown; configuration?: unknown; baseImage?: unknown; skills?: unknown; agentsMd?: unknown; idempotencyKey?: unknown }>(request);
         if (typeof body.name !== "string" || typeof body.idempotencyKey !== "string" || (body.configuration !== undefined && (body.configuration === null || typeof body.configuration !== "object"))) throw api(400, "INVALID_REQUEST", "name and idempotencyKey are required");
         const profile = this.runtimeProfiles.load();
-        const configuration = body.configuration === undefined ? defaultWorkConfiguration(profile) : body.configuration as WorkConfig;
+        const envelope = this.store.getDefaultWorkConfiguration();
+        let configuration = body.configuration === undefined
+          ? (envelope?.configuration === null || envelope?.configuration === undefined ? defaultWorkConfiguration(profile) : envelope.configuration as WorkConfig)
+          : body.configuration as WorkConfig;
+        if (body.baseImage !== undefined || body.skills !== undefined || body.agentsMd !== undefined) {
+          if (body.baseImage !== undefined && typeof body.baseImage !== "string") throw api(400, "INVALID_REQUEST", "baseImage must be a string");
+          if (body.skills !== undefined && !Array.isArray(body.skills)) throw api(400, "INVALID_REQUEST", "skills must be an array");
+          if (body.agentsMd !== undefined && typeof body.agentsMd !== "string") throw api(400, "INVALID_REQUEST", "agentsMd must be a string");
+          configuration = { ...configuration, ...(body.baseImage === undefined ? {} : { agentImage: { catalogId: body.baseImage } }), ...(body.skills === undefined ? {} : { skills: body.skills }), ...(body.agentsMd === undefined ? {} : { agentsMd: body.agentsMd }) } as WorkConfig;
+        }
+        configuration = new WorkConfigurationValidator(this.store).validate({ workOwnerUserId: principal.userId, configuration });
+        const workId = `work-${cryptoRandomUUID()}`;
+        const snapshot = await this.buildWorkContext(workId, principal.userId, configuration, JSON.stringify(profile));
         return send(response, 202, this.lifecycle.create(principal, {
           name: body.name,
           configuration,
           idempotencyKey: body.idempotencyKey,
+          workId,
+          snapshot: persistedSnapshot(snapshot, principal.userId),
           runtimeProfileJson: JSON.stringify(profile),
           sourceRuntimeRevision: profile.revision,
         }));
@@ -253,8 +385,11 @@ export class CoreApplication {
         return send(response, 200, this.workConfigurations.get(principal, parts[3]!));
       }
       if (parts[2] === "works" && parts.length === 5 && parts[4] === "configuration" && request.method === "PUT") {
-        const body = await readJson<{ expectedRevision?: unknown; configuration?: unknown }>(request);
-        if (!Number.isInteger(body.expectedRevision) || body.configuration === null || typeof body.configuration !== "object") throw api(400, "INVALID_REQUEST", "expectedRevision and configuration are required");
+        const body = await readJson<{ configuration?: unknown; expectedRevision?: unknown }>(request);
+        if (body.expectedRevision !== undefined || Object.keys(body).some((key) => key !== "configuration")
+          || body.configuration === null || typeof body.configuration !== "object") {
+          throw api(400, "INVALID_REQUEST", "configuration is required and revision fields are obsolete");
+        }
         const work = this.lifecycle.show(principal, parts[3]!);
         const configuration = new WorkConfigurationValidator(this.store).validate({
           workOwnerUserId: work.ownerUserId,
@@ -262,17 +397,48 @@ export class CoreApplication {
           availableServiceIds: new Set(this.store.listServices(work.id).map((service) => service.serviceId)),
         });
         const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration);
-        const result = this.workConfigurations.update(principal, parts[3]!, body.expectedRevision as number, configuration, {
+        const result = this.workConfigurations.update(principal, parts[3]!, configuration, undefined, {
           runtimeProfileJson: JSON.stringify(resolved.profile),
           sourceRuntimeRevision: resolved.sourceRuntimeRevision,
+          snapshot: persistedSnapshot(await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile)), principal.userId),
         });
         return send(response, 200, result);
       }
+      if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "skills" && request.method === "GET") {
+        const state = this.workConfigurations.get(principal, parts[3]!); return send(response, 200, { skills: state.desired.skills });
+      }
+      if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "skills" && request.method === "PUT") {
+        const body = await readJson<{ skills?: unknown }>(request);
+        if (!Array.isArray(body.skills)) throw api(400, "INVALID_REQUEST", "skills are required");
+        return send(response, 200, await this.workConfigurations.updateMerged(principal, parts[3]!, (current) => {
+          const configuration = new WorkConfigurationValidator(this.store).validate({ workOwnerUserId: principal.userId, configuration: { ...current, skills: body.skills } });
+          return configuration;
+        }, async (configuration) => {
+          const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration);
+          const snapshot = await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile));
+          return { runtimeProfileJson: JSON.stringify(resolved.profile), sourceRuntimeRevision: resolved.sourceRuntimeRevision, snapshot: persistedSnapshot(snapshot, principal.userId) };
+        }));
+      }
+      if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "agents") {
+        const state = this.workConfigurations.get(principal, parts[3]!); const current = state.desired;
+        if (request.method === "GET") return send(response, 200, { agentsMd: current.agentsMd });
+        const body = await readJson<{ agentsMd?: unknown }>(request);
+        if (typeof body.agentsMd !== "string") throw api(400, "INVALID_REQUEST", "agentsMd is required");
+        const agentsMd = body.agentsMd;
+        return send(response, 200, await this.workConfigurations.updateMerged(principal, parts[3]!, (configuration) => ({ ...configuration, agentsMd }), async (configuration) => {
+          const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration);
+          const desiredContextId = this.store.getWorkConfiguration(parts[3]!)?.desiredContextId ?? undefined;
+          const snapshot = await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile), desiredContextId);
+          return { runtimeProfileJson: JSON.stringify(resolved.profile), sourceRuntimeRevision: resolved.sourceRuntimeRevision, snapshot: persistedSnapshot(snapshot, principal.userId) };
+        }));
+      }
       if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "apply" && request.method === "POST") {
         requireRuntime(this.state);
-        const body = await readJson<{ expectedRevision?: unknown }>(request);
-        if (!Number.isInteger(body.expectedRevision)) throw api(400, "INVALID_REQUEST", "expectedRevision is required");
-        await this.lifecycle.applyConfiguration(principal, parts[3]!, body.expectedRevision as number);
+        const body = await readJson<Record<string, unknown>>(request);
+        if (Object.keys(body).length !== 0) throw api(400, "INVALID_REQUEST", "apply request must be empty");
+        const internal = this.store.getWorkConfiguration(parts[3]!);
+        if (internal === undefined) throw api(404, "NOT_FOUND", "resource was not found");
+        await this.lifecycle.applyConfiguration(principal, parts[3]!, internal.desiredRevision);
         return send(response, 200, this.workConfigurations.get(principal, parts[3]!));
       }
       if (parts[2] === "works" && parts.length === 5 && request.method === "POST" && ["start", "stop", "retry", "delete"].includes(parts[4]!)) {
@@ -335,6 +501,14 @@ export class CoreApplication {
   }
 }
 
+function safeRuntimeFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : "runtime initialization failed";
+  return message
+    .replace(/(?:[A-Za-z]:\\|\/)[^\s"',)]+/g, "[redacted-path]")
+    .replace(/sha256:[a-f0-9]{64}/gi, "[redacted-digest]")
+    .slice(0, 512);
+}
+
 function proxyRuntime(current: () => WorkRuntimeAdapter): WorkRuntimeAdapter {
   return {
     prepare: (work, configuration) => current().prepare(work, configuration), start: (work, generation, configuration) => current().start(work, generation, configuration),
@@ -363,6 +537,9 @@ function send(response: ServerResponse, status: number, value: unknown): void { 
 function api(status: number, code: string, message: string): Error { return Object.assign(new Error(message), { status, code }); }
 export function mapError(error: unknown): { status: number; code: string; message: string; retryAfterMs?: number } {
   const item = error as { status?: number; code?: number | string; message?: string; retryAfterMs?: number; name?: string };
+  if (typeof item.code === "string" && (item.code.startsWith("SKILL_") || item.code === "AGENTS_INVALID")) {
+    return { status: item.code === "SKILL_ALREADY_EXISTS" ? 409 : item.code === "SKILL_UNAVAILABLE" ? 404 : 400, code: item.code, message: item.message ?? "Skill operation failed" };
+  }
   if (item.name === "AuthenticationFailedError" || item.name === "InvalidLoginSessionError") return { status: 401, code: "AUTHENTICATION_FAILED", message: "authentication failed" };
   if (item.name === "LoginRateLimitedError") return { status: 429, code: "RATE_LIMITED", message: "rate limited", retryAfterMs: item.retryAfterMs };
   if (item.name === "InvisibleResourceError" || item.name === "WorkNotFoundError") return { status: 404, code: "NOT_FOUND", message: "resource was not found" };
@@ -387,14 +564,47 @@ export function mapError(error: unknown): { status: number; code: string; messag
 
 function defaultWorkConfiguration(profile: RuntimeProfile): WorkConfig {
   return {
-    revision: 1,
     agentImage: { catalogId: runtimeImageCatalogId(profile.revision) },
     skills: [],
+    agentsMd: "",
     modelRef: runtimeModelCatalogId(profile.revision),
     mcpServers: [],
     resources: { cpuMillis: 1_000, memoryBytes: 768 * 1_024 * 1_024, maxServices: 0, maxRetainedVolumes: 1 },
     tools: { allowed: [], denied: [] },
   };
+}
+
+function publicWorkConfig(configuration: WorkConfig & { revision?: unknown }): WorkConfig {
+  const { revision: _legacyRevision, ...value } = configuration;
+  return value;
+}
+
+function persistedSnapshot(snapshot: WorkContextSnapshot, userId: string): WorkContextSnapshotInput {
+  return {
+    snapshotId: snapshot.snapshotId,
+    configurationJson: JSON.stringify(snapshot.configuration),
+    imageIdentity: snapshot.metadata.imageIdentity,
+    createdByUserId: userId,
+    createdAt: snapshot.metadata.createdAt,
+  };
+}
+
+function ensureDefaultWorkConfiguration(store: CoreStore, profile: RuntimeProfile): Record<string, unknown> {
+  const current = store.getDefaultWorkConfiguration();
+  if (current?.configuration !== null && current?.configuration !== undefined) return current as unknown as Record<string, unknown>;
+  const configuration = defaultWorkConfiguration(profile);
+  return store.compareAndSwapDefaultWorkConfiguration(current?.revision ?? 0, configuration, new Date().toISOString()) as unknown as Record<string, unknown>;
+}
+
+function syncDefaultRuntimeFields(store: CoreStore, profile: RuntimeProfile): void {
+  const current = store.getDefaultWorkConfiguration();
+  if (current?.configuration === null || current?.configuration === undefined) {
+    ensureDefaultWorkConfiguration(store, profile);
+    return;
+  }
+  const configuration = current.configuration as WorkConfig;
+  const next = { ...configuration, agentImage: { catalogId: runtimeImageCatalogId(profile.revision) }, modelRef: runtimeModelCatalogId(profile.revision) };
+  store.compareAndSwapDefaultWorkConfiguration(current.revision, next, new Date().toISOString());
 }
 
 function mapGrpcStatus(code: number): { status: number; code: string; message: string } {

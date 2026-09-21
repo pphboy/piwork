@@ -94,6 +94,47 @@ export interface CatalogEntryRecord {
 
 export type NewCatalogEntryRecord = CatalogEntryRecord;
 
+export interface ManagedSkillRecord {
+  readonly name: string;
+  readonly currentIdentity: string;
+  readonly enabled: boolean;
+  readonly fileCount: number;
+  readonly totalBytes: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ManagedSkillArtifactInput {
+  readonly name: string;
+  readonly identity: string;
+  readonly fileCount: number;
+  readonly totalBytes: number;
+  readonly now: string;
+}
+
+export interface FilesystemMigrationRecord {
+  readonly migrationKey: string;
+  readonly itemKey: string;
+  readonly state: "pending" | "running" | "succeeded" | "failed";
+  readonly errorCode: string | null;
+  readonly updatedAt: string;
+}
+
+export class SkillAlreadyExistsError extends Error {
+  readonly code = "SKILL_ALREADY_EXISTS";
+  constructor(readonly skillName: string) { super(`Skill ${skillName} already exists`); this.name = "SkillAlreadyExistsError"; }
+}
+
+export class ManagedSkillNotFoundError extends Error {
+  readonly code = "SKILL_NOT_FOUND";
+  constructor(readonly skillName: string) { super(`Skill ${skillName} is unavailable`); this.name = "ManagedSkillNotFoundError"; }
+}
+
+export class DefaultSkillReferenceError extends Error {
+  readonly code = "SKILL_DEFAULT_REFERENCE";
+  constructor(readonly skillName: string) { super(`Skill ${skillName} is selected by default Work configuration`); this.name = "DefaultSkillReferenceError"; }
+}
+
 export interface NewSecretReferenceRecord {
   readonly id: string;
   readonly ownerUserId: string | null;
@@ -122,14 +163,43 @@ export class ConfigurationRevisionConflictError extends Error {
   }
 }
 
+export class DefaultWorkConfigurationConflictError extends Error {
+  constructor(readonly expectedRevision: number, readonly actualRevision: number) {
+    super(`default Work configuration revision conflict: expected ${expectedRevision}, actual ${actualRevision}`);
+    this.name = "DefaultWorkConfigurationConflictError";
+  }
+}
+
+export interface DefaultWorkConfigurationEnvelope {
+  readonly version: 1;
+  readonly revision: number;
+  readonly configuration: unknown | null;
+  readonly updatedAt?: string;
+}
+
 export interface WorkConfigurationUpdate {
   readonly workId: string;
   readonly expectedRevision: number;
+  readonly allowLastCommitWins?: boolean;
   readonly configJson: string;
   readonly createdByUserId: string;
   readonly now: string;
   readonly runtimeProfileJson?: string;
   readonly sourceRuntimeRevision?: number | null;
+  readonly snapshot?: WorkContextSnapshotInput;
+}
+
+export interface WorkContextSnapshotInput {
+  readonly snapshotId: string;
+  readonly configurationJson: string;
+  readonly imageIdentity: string;
+  readonly createdByUserId: string;
+  readonly createdAt: string;
+}
+
+export interface WorkContextSnapshotRecord extends WorkContextSnapshotInput {
+  readonly workId: string;
+  readonly internalRevision: number | null;
 }
 
 export interface WorkConfigurationState {
@@ -140,6 +210,8 @@ export interface WorkConfigurationState {
   readonly desiredConfigJson: string;
   readonly activeConfigJson: string | null;
   readonly pendingRestart: boolean;
+  readonly desiredContextId: string | null;
+  readonly activeContextId: string | null;
 }
 
 export interface WorkConfigRevisionRecord {
@@ -328,6 +400,62 @@ export class CoreStore {
     this.database.prepare(`INSERT INTO control_metadata(key, value_json, updated_at)
       VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json,
       updated_at = excluded.updated_at`).run(key, JSON.stringify(value), now);
+  }
+
+  getDefaultWorkConfiguration(): DefaultWorkConfigurationEnvelope | undefined {
+    return this.getControlMetadata<DefaultWorkConfigurationEnvelope>("default_work_configuration");
+  }
+
+  compareAndSwapDefaultWorkConfiguration(
+    expectedRevision: number,
+    configuration: unknown,
+    now: string,
+  ): DefaultWorkConfigurationEnvelope {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.getDefaultWorkConfiguration() ?? { version: 1 as const, revision: 0, configuration: null };
+      if (current.revision !== expectedRevision) throw new DefaultWorkConfigurationConflictError(expectedRevision, current.revision);
+      const next: DefaultWorkConfigurationEnvelope = { version: 1, revision: expectedRevision + 1, configuration, updatedAt: now };
+      this.database.prepare(`INSERT INTO control_metadata(key, value_json, updated_at)
+        VALUES ('default_work_configuration', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`)
+        .run(JSON.stringify(next), now);
+      this.database.exec("COMMIT");
+      return next;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  updateDefaultWorkConfiguration(
+    patch: Readonly<Record<string, unknown>>,
+    now: string,
+  ): DefaultWorkConfigurationEnvelope {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.getDefaultWorkConfiguration() ?? { version: 1 as const, revision: 0, configuration: null };
+      const base = current.configuration !== null && typeof current.configuration === "object"
+        ? current.configuration as Record<string, unknown>
+        : {};
+      const next: DefaultWorkConfigurationEnvelope = {
+        version: 1,
+        revision: current.revision + 1,
+        configuration: { ...base, ...patch },
+        updatedAt: now,
+      };
+      this.database.prepare(`INSERT INTO control_metadata(key, value_json, updated_at)
+        VALUES ('default_work_configuration', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`)
+        .run(JSON.stringify(next), now);
+      this.database.exec("COMMIT");
+      return next;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   exec(sql: string): void {
@@ -564,6 +692,197 @@ export class CoreStore {
     return row === undefined ? undefined : mapCatalogEntry(row);
   }
 
+  addManagedSkill(input: ManagedSkillArtifactInput): ManagedSkillRecord {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.getCatalogEntry(input.name) !== undefined) throw new SkillAlreadyExistsError(input.name);
+      this.database.prepare(`INSERT INTO catalog_entries(
+        id, kind, name, mutable_reference, resolved_digest, metadata_json,
+        enabled, created_at, updated_at
+      ) VALUES (?, 'skill', ?, NULL, ?, '{}', 1, ?, ?)`).run(
+        input.name, input.name, input.identity, input.now, input.now,
+      );
+      this.insertManagedSkillArtifact(input);
+      this.database.exec("COMMIT");
+      return this.getManagedSkill(input.name)!;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      if (error instanceof SkillAlreadyExistsError) throw error;
+      if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) throw new SkillAlreadyExistsError(input.name);
+      throw error;
+    }
+  }
+
+  /** Adopt a legacy catalog Skill in place without retaining its host path. */
+  adoptLegacyManagedSkill(input: ManagedSkillArtifactInput): ManagedSkillRecord {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const entry = this.getCatalogEntry(input.name);
+      if (entry === undefined || entry.kind !== "skill") throw new ManagedSkillNotFoundError(input.name);
+      if (this.getManagedSkill(input.name) !== undefined) throw new SkillAlreadyExistsError(input.name);
+      this.insertManagedSkillArtifact(input);
+      this.database.prepare(`UPDATE catalog_entries SET resolved_digest = ?, mutable_reference = NULL,
+        updated_at = ? WHERE id = ? AND kind = 'skill'`).run(input.identity, input.now, input.name);
+      this.database.exec("COMMIT");
+      return this.getManagedSkill(input.name)!;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  getFilesystemMigration(migrationKey: string, itemKey: string): FilesystemMigrationRecord | undefined {
+    this.assertOpen();
+    const row = this.database.prepare(`SELECT migration_key, item_key, state, error_code, updated_at
+      FROM filesystem_migrations WHERE migration_key = ? AND item_key = ?`).get(migrationKey, itemKey) as Record<string, string | null> | undefined;
+    return row === undefined ? undefined : {
+      migrationKey: String(row.migration_key), itemKey: String(row.item_key),
+      state: String(row.state) as FilesystemMigrationRecord["state"],
+      errorCode: row.error_code === null ? null : String(row.error_code), updatedAt: String(row.updated_at),
+    };
+  }
+
+  setFilesystemMigration(record: FilesystemMigrationRecord): void {
+    this.assertOpen();
+    this.database.prepare(`INSERT INTO filesystem_migrations(migration_key, item_key, state, error_code, updated_at)
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT(migration_key, item_key) DO UPDATE SET
+      state = excluded.state, error_code = excluded.error_code, updated_at = excluded.updated_at`).run(
+      record.migrationKey, record.itemKey, record.state, record.errorCode, record.updatedAt,
+    );
+  }
+
+  listFilesystemMigrations(migrationKey?: string): FilesystemMigrationRecord[] {
+    this.assertOpen();
+    const rows = (migrationKey === undefined
+      ? this.database.prepare("SELECT migration_key, item_key, state, error_code, updated_at FROM filesystem_migrations ORDER BY migration_key, item_key").all()
+      : this.database.prepare("SELECT migration_key, item_key, state, error_code, updated_at FROM filesystem_migrations WHERE migration_key = ? ORDER BY item_key").all(migrationKey)) as Array<Record<string, string | null>>;
+    return rows.map((row) => ({ migrationKey: String(row.migration_key), itemKey: String(row.item_key), state: String(row.state) as FilesystemMigrationRecord["state"], errorCode: row.error_code === null ? null : String(row.error_code), updatedAt: String(row.updated_at) }));
+  }
+
+  rewriteSkillReferences(oldName: string, newName: string, now: string): void {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const rows = this.database.prepare("SELECT work_id, revision, config_json FROM work_config_revisions").all() as Array<{ work_id: string; revision: number; config_json: string }>;
+      for (const row of rows) {
+        const config = JSON.parse(row.config_json) as { skills?: unknown };
+        if (!Array.isArray(config.skills) || !config.skills.includes(oldName)) continue;
+        config.skills = config.skills.map((skill) => skill === oldName ? newName : skill);
+        this.database.prepare("UPDATE work_config_revisions SET config_json = ? WHERE work_id = ? AND revision = ?").run(JSON.stringify(config), row.work_id, row.revision);
+      }
+      const envelope = this.getDefaultWorkConfiguration();
+      if (envelope?.configuration !== null && envelope?.configuration !== undefined && typeof envelope.configuration === "object") {
+        const configuration = envelope.configuration as { skills?: unknown };
+        if (Array.isArray(configuration.skills) && configuration.skills.includes(oldName)) {
+          this.database.prepare("UPDATE control_metadata SET value_json = ?, updated_at = ? WHERE key = 'default_work_configuration'").run(JSON.stringify({ ...envelope, configuration: { ...configuration, skills: configuration.skills.map((skill) => skill === oldName ? newName : skill) } }), now);
+        }
+      }
+      this.database.exec("COMMIT");
+    } catch (error) { this.database.exec("ROLLBACK"); throw error; }
+  }
+
+  retireLegacyCatalogSkill(id: string, now: string): void {
+    this.assertOpen();
+    this.database.prepare(`UPDATE catalog_entries SET enabled = 0, mutable_reference = NULL, resolved_digest = NULL, updated_at = ?
+      WHERE id = ? AND kind = 'skill'`).run(now, id);
+  }
+
+  updateManagedSkillCurrent(input: ManagedSkillArtifactInput): ManagedSkillRecord {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.getManagedSkill(input.name) === undefined) throw new ManagedSkillNotFoundError(input.name);
+      this.insertManagedSkillArtifact(input);
+      this.database.prepare(`UPDATE catalog_entries SET resolved_digest = ?, mutable_reference = NULL,
+        updated_at = ? WHERE id = ? AND kind = 'skill'`).run(input.identity, input.now, input.name);
+      this.database.exec("COMMIT");
+      return this.getManagedSkill(input.name)!;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  getManagedSkill(name: string): ManagedSkillRecord | undefined {
+    this.assertOpen();
+    const row = this.database.prepare(`SELECT c.id, c.resolved_digest, c.enabled, c.created_at,
+      c.updated_at, a.file_count, a.total_bytes
+      FROM catalog_entries c JOIN managed_skill_artifacts a
+        ON a.skill_name = c.id AND a.content_identity = c.resolved_digest
+      WHERE c.id = ? AND c.kind = 'skill'`).get(name) as Record<string, string | number> | undefined;
+    return row === undefined ? undefined : mapManagedSkill(row);
+  }
+
+  listManagedSkills(enabledOnly = false): ManagedSkillRecord[] {
+    this.assertOpen();
+    const rows = this.database.prepare(`SELECT c.id, c.resolved_digest, c.enabled, c.created_at,
+      c.updated_at, a.file_count, a.total_bytes
+      FROM catalog_entries c JOIN managed_skill_artifacts a
+        ON a.skill_name = c.id AND a.content_identity = c.resolved_digest
+      WHERE c.kind = 'skill' ${enabledOnly ? "AND c.enabled = 1" : ""}
+      ORDER BY c.id`).all() as Array<Record<string, string | number>>;
+    return rows.map(mapManagedSkill);
+  }
+
+  setManagedSkillEnabled(name: string, enabled: boolean, now: string): ManagedSkillRecord {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.getManagedSkill(name) === undefined) throw new ManagedSkillNotFoundError(name);
+      if (!enabled && this.defaultWorkSelectsSkill(name)) throw new DefaultSkillReferenceError(name);
+      this.database.prepare("UPDATE catalog_entries SET enabled = ?, updated_at = ? WHERE id = ? AND kind = 'skill'")
+        .run(enabled ? 1 : 0, now, name);
+      this.database.exec("COMMIT");
+      return this.getManagedSkill(name)!;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  removeManagedSkill(name: string): readonly string[] {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.getManagedSkill(name) === undefined) throw new ManagedSkillNotFoundError(name);
+      if (this.defaultWorkSelectsSkill(name)) throw new DefaultSkillReferenceError(name);
+      const artifacts = this.database.prepare("SELECT content_identity FROM managed_skill_artifacts WHERE skill_name = ?")
+        .all(name) as Array<{ content_identity: string }>;
+      this.database.prepare("DELETE FROM catalog_entries WHERE id = ? AND kind = 'skill'").run(name);
+      this.database.exec("COMMIT");
+      return artifacts.map((item) => item.content_identity);
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  listReferencedManagedSkillArtifacts(): Array<{ name: string; identity: string }> {
+    this.assertOpen();
+    return (this.database.prepare("SELECT skill_name, content_identity FROM managed_skill_artifacts ORDER BY skill_name, content_identity")
+      .all() as Array<{ skill_name: string; content_identity: string }>).map((row) => ({ name: row.skill_name, identity: row.content_identity }));
+  }
+
+  private insertManagedSkillArtifact(input: ManagedSkillArtifactInput): void {
+    this.database.prepare(`INSERT INTO managed_skill_artifacts(
+      skill_name, content_identity, file_count, total_bytes, created_at
+    ) VALUES (?, ?, ?, ?, ?) ON CONFLICT(skill_name, content_identity) DO UPDATE SET
+      file_count = excluded.file_count, total_bytes = excluded.total_bytes`).run(
+      input.name, input.identity, input.fileCount, input.totalBytes, input.now,
+    );
+  }
+
+  private defaultWorkSelectsSkill(name: string): boolean {
+    const envelope = this.getDefaultWorkConfiguration();
+    if (envelope?.configuration === null || typeof envelope?.configuration !== "object") return false;
+    const skills = (envelope.configuration as { skills?: unknown }).skills;
+    return Array.isArray(skills) && skills.some((skill) => skill === name || (
+      skill !== null && typeof skill === "object" && (skill as { catalogId?: unknown }).catalogId === name
+    ));
+  }
+
   createSecretReference(record: NewSecretReferenceRecord): void {
     this.assertOpen();
     this.database.prepare(`INSERT INTO secret_refs(
@@ -603,7 +922,7 @@ export class CoreStore {
         | { owner_user_id: string; desired_revision: number; active_revision: number | null }
         | undefined;
       if (work === undefined) throw new Error(`Work ${update.workId} was not found`);
-      if (work.desired_revision !== update.expectedRevision) {
+      if (!update.allowLastCommitWins && work.desired_revision !== update.expectedRevision) {
         throw new ConfigurationRevisionConflictError(update.workId, update.expectedRevision, work.desired_revision);
       }
       const nextRevision = work.desired_revision + 1;
@@ -619,9 +938,14 @@ export class CoreStore {
         update.runtimeProfileJson ?? null,
         update.sourceRuntimeRevision ?? null,
       );
+      if (update.snapshot !== undefined) {
+        if (update.snapshot.configurationJson !== update.configJson) throw new Error("Work context configuration does not match desired configuration");
+        this.insertWorkContextSnapshot(update.workId, nextRevision, update.snapshot);
+      }
       this.database.prepare(`UPDATE works SET
-        desired_revision = ?, control_version = control_version + 1, updated_at = ?
-        WHERE id = ?`).run(nextRevision, update.now, update.workId);
+        desired_revision = ?, desired_context_id = COALESCE(?, desired_context_id),
+        control_version = control_version + 1, updated_at = ?
+        WHERE id = ?`).run(nextRevision, update.snapshot?.snapshotId ?? null, update.now, update.workId);
       this.database.exec("COMMIT");
       return this.getWorkConfiguration(update.workId)!;
     } catch (error) {
@@ -630,7 +954,144 @@ export class CoreStore {
     }
   }
 
-  activateWorkConfiguration(workId: string, expectedRevision: number, now: string): WorkConfigurationState {
+  insertInitialWorkContext(workId: string, revision: number, snapshot: WorkContextSnapshotInput): void {
+    this.insertWorkContextSnapshot(workId, revision, snapshot);
+    const result = this.database.prepare(`UPDATE works SET desired_context_id = ?, active_context_id = ?,
+      active_revision = ? WHERE id = ?`).run(snapshot.snapshotId, snapshot.snapshotId, revision, workId);
+    if (result.changes !== 1) throw new Error(`Work ${workId} was not found`);
+  }
+
+  /** Attach migrated snapshots to an existing legacy Work atomically. */
+  attachMigratedWorkContexts(input: {
+    readonly workId: string;
+    readonly desiredRevision: number;
+    readonly desired: WorkContextSnapshotInput;
+    readonly activeRevision: number | null;
+    readonly active?: WorkContextSnapshotInput;
+    readonly now: string;
+  }): void {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const work = this.database.prepare("SELECT id FROM works WHERE id = ? AND deleted_at IS NULL").get(input.workId);
+      if (work === undefined) throw new Error(`Work ${input.workId} was not found`);
+      this.insertMigratedWorkContextSnapshot(input.workId, input.desiredRevision, input.desired);
+      if (input.active !== undefined && input.activeRevision !== null && input.active.snapshotId !== input.desired.snapshotId) {
+        this.insertMigratedWorkContextSnapshot(input.workId, input.activeRevision, input.active);
+      }
+      this.database.prepare(`UPDATE works SET desired_context_id = ?, active_context_id = ?,
+        desired_revision = ?, active_revision = ?, updated_at = ? WHERE id = ?`)
+        .run(input.desired.snapshotId, input.active?.snapshotId ?? null, input.desiredRevision,
+          input.activeRevision, input.now, input.workId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  /** Preserve a reconstructable active context when a legacy pending context still needs operator repair. */
+  attachMigratedActiveContext(input: {
+    readonly workId: string;
+    readonly activeRevision: number;
+    readonly active: WorkContextSnapshotInput;
+    readonly now: string;
+  }): void {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const work = this.database.prepare("SELECT id FROM works WHERE id = ? AND deleted_at IS NULL").get(input.workId);
+      if (work === undefined) throw new Error(`Work ${input.workId} was not found`);
+      this.insertMigratedWorkContextSnapshot(input.workId, input.activeRevision, input.active);
+      this.database.prepare(`UPDATE works SET active_context_id = ?, updated_at = ? WHERE id = ?`)
+        .run(input.active.snapshotId, input.now, input.workId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private insertMigratedWorkContextSnapshot(
+    workId: string,
+    internalRevision: number,
+    snapshot: WorkContextSnapshotInput,
+  ): void {
+    const existing = this.getWorkContextSnapshot(workId, snapshot.snapshotId);
+    if (existing === undefined) {
+      this.insertWorkContextSnapshot(workId, internalRevision, snapshot);
+      return;
+    }
+    if (existing.internalRevision !== internalRevision
+      || existing.configurationJson !== snapshot.configurationJson
+      || existing.imageIdentity !== snapshot.imageIdentity
+      || existing.createdByUserId !== snapshot.createdByUserId) {
+      throw new Error("migrated Work context snapshot is inconsistent");
+    }
+  }
+
+  private insertWorkContextSnapshot(workId: string, internalRevision: number, snapshot: WorkContextSnapshotInput): void {
+    this.database.prepare(`INSERT INTO work_context_snapshots(
+      snapshot_id, work_id, internal_revision, configuration_json, image_identity,
+      created_by_user_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+      snapshot.snapshotId, workId, internalRevision, snapshot.configurationJson,
+      snapshot.imageIdentity, snapshot.createdByUserId, snapshot.createdAt,
+    );
+  }
+
+  getWorkContextSnapshot(workId: string, snapshotId: string): WorkContextSnapshotRecord | undefined {
+    this.assertOpen();
+    const row = this.database.prepare(`SELECT snapshot_id, work_id, internal_revision,
+      configuration_json, image_identity, created_by_user_id, created_at
+      FROM work_context_snapshots WHERE work_id = ? AND snapshot_id = ?`).get(workId, snapshotId) as
+      | Record<string, string | number | null>
+      | undefined;
+    return row === undefined ? undefined : {
+      snapshotId: String(row.snapshot_id),
+      workId: String(row.work_id),
+      internalRevision: row.internal_revision === null ? null : Number(row.internal_revision),
+      configurationJson: String(row.configuration_json),
+      imageIdentity: String(row.image_identity),
+      createdByUserId: String(row.created_by_user_id),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  listWorkContextSnapshots(): WorkContextSnapshotRecord[] {
+    this.assertOpen();
+    const rows = this.database.prepare(`SELECT snapshot_id, work_id, internal_revision,
+      configuration_json, image_identity, created_by_user_id, created_at
+      FROM work_context_snapshots ORDER BY work_id, created_at, snapshot_id`).all() as Array<Record<string, string | number | null>>;
+    return rows.map((row) => ({
+      snapshotId: String(row.snapshot_id),
+      workId: String(row.work_id),
+      internalRevision: row.internal_revision === null ? null : Number(row.internal_revision),
+      configurationJson: String(row.configuration_json),
+      imageIdentity: String(row.image_identity),
+      createdByUserId: String(row.created_by_user_id),
+      createdAt: String(row.created_at),
+    }));
+  }
+
+  activateWorkContext(workId: string, snapshotId: string, now: string): WorkConfigurationState {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const snapshot = this.getWorkContextSnapshot(workId, snapshotId);
+      if (snapshot === undefined || snapshot.internalRevision === null) throw new Error("Work context is unavailable");
+      const result = this.database.prepare(`UPDATE works SET active_context_id = ?, active_revision = ?, updated_at = ?
+        WHERE id = ? AND deleted_at IS NULL`).run(snapshotId, snapshot.internalRevision, now, workId);
+      if (result.changes !== 1) throw new Error(`Work ${workId} was not found`);
+      this.database.exec("COMMIT");
+      return this.getWorkConfiguration(workId)!;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  activateWorkConfiguration(workId: string, expectedRevision: number, now: string, allowDesiredDrift = false): WorkConfigurationState {
     this.assertOpen();
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -639,7 +1100,7 @@ export class CoreStore {
         | { desired_revision: number; active_revision: number | null }
         | undefined;
       if (work === undefined) throw new Error(`Work ${workId} was not found`);
-      if (work.desired_revision !== expectedRevision) {
+      if (!allowDesiredDrift && work.desired_revision !== expectedRevision) {
         throw new ConfigurationRevisionConflictError(workId, expectedRevision, work.desired_revision);
       }
       if (work.active_revision !== expectedRevision) {
@@ -667,7 +1128,7 @@ export class CoreStore {
     if (result.changes !== 1) throw new Error(`Work configuration ${workId}@${revision} was not found`);
   }
 
-  backfillWorkRuntimeProfiles(runtimeProfileJson: string, sourceRuntimeRevision: number, now: string): number {
+  backfillWorkRuntimeProfiles(runtimeProfileJson: string, sourceRuntimeRevision: number, now: string, preserveActive = false): number {
     this.assertOpen();
     this.database.exec("BEGIN IMMEDIATE");
     try {
@@ -684,8 +1145,10 @@ export class CoreStore {
             UNION
             SELECT active_revision FROM works WHERE id = ? AND active_revision IS NOT NULL
           )`).run(runtimeProfileJson, sourceRuntimeRevision, id, id, id);
-        this.database.prepare(`UPDATE works SET active_revision = desired_revision, updated_at = ? WHERE id = ?`)
-          .run(now, id);
+        if (!preserveActive) {
+          this.database.prepare(`UPDATE works SET active_revision = desired_revision, updated_at = ? WHERE id = ?`)
+            .run(now, id);
+        }
       }
       this.database.exec("COMMIT");
       return legacy.length;
@@ -702,6 +1165,8 @@ export class CoreStore {
       works.owner_user_id,
       works.desired_revision,
       works.active_revision,
+      works.desired_context_id,
+      works.active_context_id,
       desired.config_json AS desired_config_json,
       active.config_json AS active_config_json
       FROM works
@@ -722,7 +1187,11 @@ export class CoreStore {
       activeRevision,
       desiredConfigJson: String(row.desired_config_json),
       activeConfigJson: row.active_config_json === null ? null : String(row.active_config_json),
-      pendingRestart: desiredRevision !== activeRevision,
+      pendingRestart: row.desired_context_id !== null || row.active_context_id !== null
+        ? row.desired_context_id !== row.active_context_id
+        : desiredRevision !== activeRevision,
+      desiredContextId: row.desired_context_id === null ? null : String(row.desired_context_id),
+      activeContextId: row.active_context_id === null ? null : String(row.active_context_id),
     };
   }
 
@@ -741,6 +1210,13 @@ export class CoreStore {
       runtimeProfileJson: row.runtime_profile_json,
       sourceRuntimeRevision: row.source_runtime_revision,
     };
+  }
+
+  updateWorkConfigJson(workId: string, revision: number, configJson: string): void {
+    this.assertOpen();
+    const result = this.database.prepare("UPDATE work_config_revisions SET config_json = ? WHERE work_id = ? AND revision = ?")
+      .run(configJson, workId, revision);
+    if (result.changes !== 1) throw new Error(`Work configuration ${workId}@${revision} was not found`);
   }
 
   nextRuntimeGeneration(workId: string): number {
@@ -1271,6 +1747,18 @@ function mapCatalogEntry(row: Record<string, string | number | null>): CatalogEn
     resolvedDigest: row.resolved_digest === null ? null : String(row.resolved_digest),
     metadataJson: String(row.metadata_json),
     enabled: row.enabled === 1,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapManagedSkill(row: Record<string, string | number>): ManagedSkillRecord {
+  return {
+    name: String(row.id),
+    currentIdentity: String(row.resolved_digest),
+    enabled: row.enabled === 1,
+    fileCount: Number(row.file_count),
+    totalBytes: Number(row.total_bytes),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };

@@ -7,7 +7,7 @@ import test from "node:test";
 
 const cli = resolve("dist/cli.js");
 
-test("piwork-serve publishes only operator commands and rejects legacy or user commands locally", () => {
+test("piwork-serve publishes operator commands, keeps piwork as a compatibility alias, and rejects user commands locally", () => {
   const help = run(["--help"]);
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /admin bootstrap/);
@@ -27,10 +27,10 @@ test("piwork-serve publishes only operator commands and rejects legacy or user c
   }
 });
 
-test("workspace package metadata exposes only piwork-serve and piwork-cli", () => {
+test("workspace package metadata exposes piwork-serve, piwork compatibility, and piwork-cli", () => {
   const core = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { bin?: Record<string, string> };
   const client = JSON.parse(readFileSync(resolve("../cli/package.json"), "utf8")) as { bin?: Record<string, string> };
-  assert.deepEqual(Object.keys(core.bin ?? {}), ["piwork-serve"]);
+  assert.deepEqual(Object.keys(core.bin ?? {}), ["piwork-serve", "piwork"]);
   assert.deepEqual(Object.keys(client.bin ?? {}), ["piwork-cli"]);
 });
 

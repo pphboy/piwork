@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ChannelCredentials, Metadata, type ServiceError } from "@grpc/grpc-js";
 import {
   AgentServiceClient,
@@ -13,6 +13,7 @@ import {
   type SessionHistory,
   type SubmitRunResponse,
 } from "@piwork/contracts";
+import { resolveBuiltInWorkTools } from "@piwork/contracts";
 import type { WorkRecord } from "@piwork/core-store";
 import { DockerRuntime } from "@piwork/runtime-docker";
 import type { ResolvedWorkRuntimeConfiguration, WorkRuntimeAdapter, WorkRuntimeState } from "../work-management/lifecycle.js";
@@ -24,6 +25,7 @@ const AGENT_LOGICAL_ID = "agentd";
 const GENERATION_LABEL = "piwork.generation";
 const INSTANCE_LABEL = "piwork.instance_id";
 const PROTOCOL_LABEL = "piwork.protocol_version";
+const CONTEXT_LABEL = "piwork.context_identity";
 
 interface RuntimeRecord {
   readonly workId: string;
@@ -58,7 +60,7 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   private readonly clients = new Map<string, AgentServiceClient>();
 
   constructor(private readonly paths: CorePaths, readonly installationId: string) {
-    this.docker = new DockerRuntime(installationId, undefined, [paths.runtimeDirectory]);
+    this.docker = new DockerRuntime(installationId, undefined, [paths.runtimeDirectory, paths.workContextsDirectory]);
     this.profiles = new RuntimeProfileStore(paths.runtimeProfilePath, paths.secretsDirectory);
   }
 
@@ -68,7 +70,16 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     if (!image.imageId.startsWith("sha256:")) throw new Error("agent image has no immutable Docker identity");
   }
 
+  async resolveImageIdentity(reference: string): Promise<string> {
+    const image = await this.docker.prepareImage(reference);
+    if (!/^sha256:[a-f0-9]{64}$/.test(image.imageId)) throw new Error("agent image has no immutable Docker identity");
+    return image.imageId;
+  }
+
   async prepare(work: WorkRecord, configuration?: ResolvedWorkRuntimeConfiguration): Promise<void> {
+    if (configuration?.contextDirectory === undefined) {
+      throw new Error("Work runtime configuration has no validated context snapshot");
+    }
     const profile = this.profile(configuration);
     await Promise.all([this.docker.prepareImage(profile.agentImage), this.docker.ensureWorkNetwork(work.id), this.docker.ensureManagedVolume(work.id, "work-data")]);
   }
@@ -76,12 +87,23 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   async start(work: WorkRecord, generation: number, configuration?: ResolvedWorkRuntimeConfiguration): Promise<{ readonly instanceId: string; readonly generation: number }> {
     const current = await this.docker.inspectContainer(work.id, "agent", AGENT_LOGICAL_ID);
     if (current.exists) {
+      if (configuration?.contextDirectory === undefined) {
+        throw new Error("Work runtime configuration has no validated context snapshot");
+      }
+      const expectedContext = configuration.contextIdentity ?? `${work.id}@legacy`;
+      if (current.labels?.[CONTEXT_LABEL] !== expectedContext) {
+        throw new Error("Work runtime context does not match the active Work context");
+      }
+      this.validateExistingMounts(current.mounts ?? [], configuration.contextDirectory);
       const record = this.readRecord(work.id);
       await this.docker.startContainer(work.id, "agent", AGENT_LOGICAL_ID);
       await this.waitReady(record);
       return { instanceId: record.instanceId, generation: record.generation };
     }
     const profile = this.profile(configuration);
+    if (configuration?.contextDirectory === undefined) {
+      throw new Error("Work runtime configuration has no validated context snapshot");
+    }
     const image = await this.docker.prepareImage(profile.agentImage);
     const network = await this.docker.ensureWorkNetwork(work.id);
     const volume = await this.docker.ensureManagedVolume(work.id, "work-data");
@@ -112,6 +134,12 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       listen: "0.0.0.0:7443",
       dataDirectory: "/var/data",
       deterministic: profile.model.provider === "piwork-deterministic",
+      ...(configuration === undefined ? {} : {
+        contextConfigPath: "/run/piwork/config.json",
+        agentsMdPath: "/run/piwork/AGENTS.md",
+        contextIdentity: configuration.contextIdentity ?? `${work.id}@legacy`,
+        resolvedTools: resolveBuiltInWorkTools(configuration.workConfig.tools),
+      }),
       model: {
         provider: profile.model.provider,
         id: profile.model.id,
@@ -139,9 +167,12 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       cpuMillis: configuration?.workConfig.resources.cpuMillis ?? 1_000,
       memoryBytes: configuration?.workConfig.resources.memoryBytes ?? 768 * 1_024 * 1_024,
       network: { name: network.name, workId: work.id, aliases: ["agentd"] },
-      labels: { [GENERATION_LABEL]: String(generation), [INSTANCE_LABEL]: record.instanceId, [PROTOCOL_LABEL]: CONTRACT_VERSION },
+      labels: { [GENERATION_LABEL]: String(generation), [INSTANCE_LABEL]: record.instanceId, [PROTOCOL_LABEL]: CONTRACT_VERSION, ...(configuration === undefined ? {} : { [CONTEXT_LABEL]: configuration.contextIdentity ?? `${work.id}@legacy` }) },
       mounts: [
         { type: "volume", source: volume.volumeName, target: "/var/data" },
+        ...(configuration === undefined ? [] : [
+          { type: "bind" as const, source: configuration.contextDirectory!, target: "/run/piwork", readOnly: true },
+        ]),
         { type: "bind", source: configPath, target: "/etc/piwork/runtime.json", readOnly: true },
         { type: "bind", source: record.tls.caCertificatePath, target: "/etc/piwork/tls/installation-ca.crt", readOnly: true },
         { type: "bind", source: record.tls.serverCertificatePath, target: "/etc/piwork/tls/agent-server.crt", readOnly: true },
@@ -219,6 +250,26 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     return profile;
   }
 
+  private validateExistingMounts(
+    mounts: readonly { readonly type: string; readonly source: string; readonly destination: string; readonly readOnly: boolean }[],
+    contextDirectory: string,
+  ): void {
+    const expectedContext = realpathSync(contextDirectory);
+    const runtimeRoot = realpathSync(this.paths.runtimeDirectory);
+    const contextMounts = mounts.filter((mount) => mount.destination === "/run/piwork");
+    if (contextMounts.length !== 1) throw new Error("Work runtime context mount is invalid");
+    const context = contextMounts[0]!;
+    if (context.type !== "bind" || !context.readOnly || realpathSync(context.source) !== expectedContext) {
+      throw new Error("Work runtime context mount is invalid");
+    }
+    for (const mount of mounts) {
+      if (mount.type !== "bind" || mount === context) continue;
+      const source = realpathSync(mount.source);
+      if (!isWithin(runtimeRoot, source)) throw new Error("Work runtime contains an unauthorized bind mount");
+    }
+  }
+
+
   private async waitReady(record: RuntimeRecord): Promise<void> {
     const deadline = Date.now() + 30_000;
     let last: unknown;
@@ -262,6 +313,11 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   private recordPath(workId: string): string { return join(this.runtimeDirectory(workId), "runtime-state.json"); }
   private writeRecord(record: RuntimeRecord): void { atomicJson(this.recordPath(record.workId), record); }
   private readRecord(workId: string): RuntimeRecord { const path = this.recordPath(workId); if (!existsSync(path)) throw new Error("Work runtime state is missing"); return JSON.parse(readFileSync(path, "utf8")) as RuntimeRecord; }
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const child = relative(resolve(root), resolve(candidate));
+  return child === "" || (child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child));
 }
 
 export function ensureInstallationId(paths: CorePaths): string {

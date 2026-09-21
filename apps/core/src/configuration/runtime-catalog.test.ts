@@ -40,9 +40,9 @@ function profile(revision: number, agentImage: string, model: string, credential
 
 function config(image: string, model: string): WorkConfig {
   return {
-    revision: 1,
     agentImage: { catalogId: image },
     skills: [],
+    agentsMd: "",
     modelRef: model,
     mcpServers: [],
     resources: { cpuMillis: 1_000, memoryBytes: 805_306_368, maxServices: 0, maxRetainedVolumes: 1 },

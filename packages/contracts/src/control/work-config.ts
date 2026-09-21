@@ -14,6 +14,23 @@ export const ArtifactReferenceSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Public image selection. Resolved image identities are internal snapshot data. */
+export const ImageSelectionSchema = Type.Object(
+  { catalogId: ResourceIdSchema },
+  { additionalProperties: false },
+);
+
+export const SkillNameSchema = Type.String({
+  pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
+  minLength: 1,
+  maxLength: 64,
+});
+
+export const SkillSelectionSchema = Type.Array(SkillNameSchema, {
+  maxItems: 128,
+  uniqueItems: true,
+});
+
 export const McpServerSchema = Type.Object(
   {
     serverId: IdentifierSchema,
@@ -47,11 +64,32 @@ export const ToolPolicySchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Pi SDK tools that are available inside the isolated Work container. */
+export const BUILT_IN_WORK_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
+
+export type BuiltInWorkTool = typeof BUILT_IN_WORK_TOOLS[number];
+
+export const AGENTS_MD_MAX_BYTES = 256 * 1024;
+
+export function normalizeAgentsMd(value: unknown): string {
+  if (typeof value !== "string") throw new TypeError("agentsMd must be a string");
+  const bytes = Buffer.byteLength(value, "utf8");
+  if (bytes > AGENTS_MD_MAX_BYTES) throw new RangeError(`agentsMd exceeds ${AGENTS_MD_MAX_BYTES} bytes`);
+  return value;
+}
+
+export function resolveBuiltInWorkTools(policy: WorkConfig["tools"]): BuiltInWorkTool[] {
+  const allowed = new Set(policy.allowed);
+  const denied = new Set(policy.denied);
+  const names = BUILT_IN_WORK_TOOLS.filter((name) => (allowed.size === 0 || allowed.has(name)) && !denied.has(name));
+  return [...names];
+}
+
 export const WorkConfigSchema = Type.Object(
   {
-    revision: Type.Integer({ minimum: 1 }),
-    agentImage: ArtifactReferenceSchema,
-    skills: Type.Array(ArtifactReferenceSchema, { maxItems: 128 }),
+    agentImage: ImageSelectionSchema,
+    skills: SkillSelectionSchema,
+    agentsMd: Type.String({ maxLength: AGENTS_MD_MAX_BYTES }),
     modelRef: ResourceIdSchema,
     mcpServers: Type.Array(McpServerSchema, { maxItems: 128 }),
     resources: ResourcePolicySchema,
@@ -60,7 +98,47 @@ export const WorkConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Revision-free public state for one Work's effective context. */
+export const WorkConfigurationViewSchema = Type.Object(
+  {
+    workId: ResourceIdSchema,
+    active: Type.Union([WorkConfigSchema, Type.Null()]),
+    desired: WorkConfigSchema,
+    pendingApply: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+/** Whole-context replacement. Unknown legacy revision fields are rejected. */
+export const SetWorkConfigurationRequestSchema = Type.Object(
+  { configuration: WorkConfigSchema },
+  { additionalProperties: false },
+);
+
+/** Presence of skills is significant: omitted preserves/inherits; [] clears. */
+export const WorkConfigurationPatchSchema = Type.Partial(WorkConfigSchema, {
+  additionalProperties: false,
+});
+
+export const SetWorkSkillsRequestSchema = Type.Object(
+  { skills: SkillSelectionSchema },
+  { additionalProperties: false },
+);
+
+export const SetWorkAgentsRequestSchema = Type.Object(
+  { agentsMd: Type.String({ maxLength: AGENTS_MD_MAX_BYTES }) },
+  { additionalProperties: false },
+);
+
 export type ArtifactReference = Type.Static<typeof ArtifactReferenceSchema>;
+export type ImageSelection = Type.Static<typeof ImageSelectionSchema>;
+export type SkillName = Type.Static<typeof SkillNameSchema>;
+export type SkillSelection = Type.Static<typeof SkillSelectionSchema>;
 export type McpServer = Type.Static<typeof McpServerSchema>;
 export type ResourcePolicy = Type.Static<typeof ResourcePolicySchema>;
 export type WorkConfig = Type.Static<typeof WorkConfigSchema>;
+export type WorkConfigurationView = Type.Static<typeof WorkConfigurationViewSchema>;
+export type SetWorkConfigurationRequest = Type.Static<typeof SetWorkConfigurationRequestSchema>;
+export type WorkConfigurationPatch = Type.Static<typeof WorkConfigurationPatchSchema>;
+export type SetWorkSkillsRequest = Type.Static<typeof SetWorkSkillsRequestSchema>;
+export type SetWorkAgentsRequest = Type.Static<typeof SetWorkAgentsRequestSchema>;

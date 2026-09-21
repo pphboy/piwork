@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import test from "node:test";
-import { CursorExpiredError, DEFAULT_MAX_RUN_EVENTS, SubmitConflictError, WorkBusyError, WorkStore } from "./store.js";
+import { CursorExpiredError, DEFAULT_MAX_RUN_EVENTS, SubmitConflictError, WorkBusyError, WORK_SCHEMA_VERSION, WorkStore } from "./store.js";
 
 const NOW = "2026-09-20T00:00:00Z";
 
@@ -12,7 +12,7 @@ test("Session locator, Run, event sequence, and activity survive database reopen
   const fixture = await createFixture();
   try {
     let store = WorkStore.open(fixture.databasePath);
-    assert.equal(store.schemaVersion, 2);
+    assert.equal(store.schemaVersion, WORK_SCHEMA_VERSION);
     store.createSession(session());
     const accepted = store.acceptRun(submit({ submissionKey: "submit-1" }));
     assert.equal(accepted.reused, false);
@@ -74,6 +74,22 @@ test("same submission retries reuse one Run before activity checks and changed c
   }
 });
 
+test("Sessions and accepted Runs retain an internal active context identity", async () => {
+  const fixture = await createFixture();
+  const store = WorkStore.open(fixture.databasePath);
+  try {
+    store.createSession({ ...session(), contextIdentity: "context-a" });
+    const accepted = store.acceptRun(submit({ submissionKey: "contexted", contextIdentity: "context-a" }));
+    assert.equal(store.getSession("work-1", "session-1")?.contextIdentity, "context-a");
+    assert.equal(store.getRun(accepted.run.runId)?.contextIdentity, "context-a");
+    store.completeRun(accepted.run.runId, "succeeded", "done", null);
+    assert.throws(() => store.acceptRun(submit({ submissionKey: "wrong-context", contextIdentity: "context-b" })), /context is no longer active/);
+  } finally {
+    store.close();
+    await fixture.cleanup();
+  }
+});
+
 test("Work Store indexes SDK history without storing a second transcript", async () => {
   const fixture = await createFixture();
   const store = WorkStore.open(fixture.databasePath);
@@ -115,7 +131,7 @@ test("event retention publishes an earliest cursor while final Run state remains
   }
 });
 
-test("v1 databases migrate to v2 without losing Session or Run records", async () => {
+test("legacy databases migrate without losing Session or Run records", async () => {
   const fixture = await createFixture();
   let store = WorkStore.open(fixture.databasePath);
   try {
@@ -124,11 +140,11 @@ test("v1 databases migrate to v2 without losing Session or Run records", async (
     store.close();
     const database = new DatabaseSync(fixture.databasePath);
     database.exec("DROP TABLE session_idempotency");
-    database.exec("DELETE FROM schema_migrations WHERE version = 2");
+    database.exec("DELETE FROM schema_migrations WHERE version IN (2, 3)");
     database.close();
 
     store = WorkStore.open(fixture.databasePath);
-    assert.equal(store.schemaVersion, 2);
+    assert.equal(store.schemaVersion, WORK_SCHEMA_VERSION);
     assert.equal(store.getSession("work-1", "session-1")?.sessionId, "session-1");
     assert.equal(store.getRun(accepted.run.runId)?.submissionKey, "before-migration");
     assert.ok(store.listTables().includes("session_idempotency"));

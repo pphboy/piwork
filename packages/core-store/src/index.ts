@@ -17,8 +17,12 @@ export {
 } from "./store.js";
 export {
   ConfigurationRevisionConflictError,
+  DefaultWorkConfigurationConflictError,
+  type DefaultWorkConfigurationEnvelope,
   type WorkConfigurationState,
   type WorkConfigurationUpdate,
+  type WorkContextSnapshotInput,
+  type WorkContextSnapshotRecord,
 } from "./store.js";
 export {
   type CatalogKind,
@@ -26,6 +30,13 @@ export {
   type NewCatalogEntryRecord,
   type NewSecretReferenceRecord,
   type SecretReferenceRecord,
+} from "./store.js";
+export {
+  DefaultSkillReferenceError,
+  ManagedSkillNotFoundError,
+  SkillAlreadyExistsError,
+  type ManagedSkillArtifactInput,
+  type ManagedSkillRecord,
 } from "./store.js";
 export {
   LastEnabledAdministratorError,

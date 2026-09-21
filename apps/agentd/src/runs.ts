@@ -7,6 +7,7 @@ export interface RunExecutionContext {
   readonly sessionId: string;
   readonly runId: string;
   readonly prompt: string;
+  readonly contextIdentity?: string | null;
   readonly signal: AbortSignal;
   emit(eventType: string, payload: unknown): void;
 }
@@ -42,6 +43,8 @@ export class RunManager {
   }): AcceptedRun {
     if (input.prompt.trim() === "") throw new Error("prompt must not be empty");
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
+    const session = this.store.getSession(input.workId, input.sessionId);
+    if (session === undefined) throw new Error(`session ${input.sessionId} does not exist in Work ${input.workId}`);
     const requestDigest = digest(JSON.stringify({ sessionId: input.sessionId, prompt: input.prompt }));
     const accepted = this.store.acceptRun({
       workId: input.workId,
@@ -49,6 +52,7 @@ export class RunManager {
       submissionKey: input.submissionKey,
       requestDigest,
       promptDigest: digest(input.prompt),
+      contextIdentity: session.contextIdentity ?? null,
       now: this.now().toISOString(),
     });
     if (!accepted.reused) this.launch(accepted.run, input.prompt);
@@ -99,6 +103,7 @@ export class RunManager {
           sessionId: run.sessionId,
           runId: run.runId,
           prompt,
+          contextIdentity: run.contextIdentity ?? null,
           signal: controller.signal,
           emit: (eventType, payload) => {
             this.store.appendEvent(run.runId, eventType, JSON.stringify(payload), this.now().toISOString());

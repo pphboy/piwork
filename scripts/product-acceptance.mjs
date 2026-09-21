@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 
 const root = new URL("../", import.meta.url).pathname;
 const temporary = await mkdtemp(join(tmpdir(), "piwork-acceptance-"));
@@ -33,6 +34,12 @@ try {
     "--agent-image", "piwork-agentd:acceptance",
     "--model-provider", "piwork-deterministic", "--model", "fixture-v1", "--api-key-stdin",
   ], `${modelCredential}\n`);
+  const importedSkill = join(temporary, "skills", "directory-derived");
+  await mkdir(importedSkill, { recursive: true });
+  await writeFile(join(importedSkill, "SKILL.md"), "---\nname: frontmatter-name\ndescription: Original acceptance fixture\n---\nUse the supporting file.\n");
+  await writeFile(join(importedSkill, "support.txt"), "original-supporting-content\n");
+  serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "skills", "add", "--path", importedSkill]);
+  await rm(importedSkill, { recursive: true, force: true });
 
   cli(["--core", originalUrl, "--json", "status"]);
   cli(["--core", originalUrl, "--json", "login", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
@@ -40,9 +47,11 @@ try {
   assert.equal(identity.account, "admin");
   assert.deepEqual(firstJson(cli(["--json", "work", "list"])), { works: [] });
 
-  const creation = jsonLines(cli(["--json", "work", "create", "--name", "acceptance-work", "--wait"]));
+  const creation = jsonLines(cli(["--json", "work", "create", "--name", "acceptance-work", "--skill", "directory-derived", "--wait"]));
   const workId = creation[0].workId;
   assert.equal(creation.at(-1).state, "succeeded");
+  assert.deepEqual(firstJson(cli(["--json", "skills", "show", "directory-derived"])), { name: "directory-derived" });
+  assert.deepEqual(firstJson(cli(["--json", "work", "config", "show", workId])).active.skills, ["directory-derived"]);
   const containerBefore = dockerContainer(workId);
   const inspection = JSON.parse(checked("docker", ["inspect", containerBefore]))[0];
   assertNoSensitive(JSON.stringify(inspection), [adminPassword, modelCredential], "Docker inspection");
@@ -50,6 +59,7 @@ try {
   assert.equal(inspection.Config.User, "10001:10001");
   assert.deepEqual(inspection.HostConfig.PortBindings, {});
   assert.equal(inspection.Mounts.some((mount) => mount.Destination === "/var/run/docker.sock"), false);
+  assert.equal(checked("docker", ["exec", containerBefore, "cat", "/run/piwork/skills/directory-derived/support.txt"]).trim(), "original-supporting-content");
 
   const first = jsonLines(cli(["--json", "chat", workId, "--message", "acceptance first turn"]));
   assert.equal(first.some(isExpectedText), true);
@@ -59,11 +69,26 @@ try {
   assert.equal(String(run.finalText), "fixture tool completed");
   assert.equal(firstJson(cli(["--json", "session", "show", workId, sessionId])).messages.length > 0, true);
 
+  await mkdir(importedSkill, { recursive: true });
+  await writeFile(join(importedSkill, "SKILL.md"), "---\nname: another-frontmatter-name\ndescription: Updated acceptance fixture\n---\nUse the updated supporting file.\n");
+  await writeFile(join(importedSkill, "support.txt"), "updated-supporting-content\n");
+  serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "skills", "update", "directory-derived", "--path", importedSkill]);
+  await rm(importedSkill, { recursive: true, force: true });
+  const creationB = jsonLines(cli(["--json", "work", "create", "--name", "acceptance-work-current", "--skill", "directory-derived", "--wait"]));
+  const currentWorkId = creationB[0].workId;
+  assert.equal(creationB.at(-1).state, "succeeded");
+  assert.equal(checked("docker", ["exec", dockerContainer(currentWorkId), "cat", "/run/piwork/skills/directory-derived/support.txt"]).trim(), "updated-supporting-content");
+  serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "skills", "disable", "directory-derived"]);
+  serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "skills", "remove", "directory-derived"]);
+  assert.deepEqual(firstJson(cli(["--json", "skills", "list"])), { skills: [] });
+
   await stopCore(core);
   core = undefined;
   assert.equal(checked("docker", ["inspect", "--format", "{{.State.Running}}", containerBefore]).trim(), "true");
   core = await startCore(Number(new URL(originalUrl).port));
   assert.equal(core.url, originalUrl);
+  const resumedStatus = firstJson(serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "--json", "status"]));
+  if (resumedStatus.ready !== true) throw new Error(`Core restart was not ready: ${safeFailure(`${JSON.stringify(resumedStatus)}\n${core.stderr()}`)}`);
   assert.equal(firstJson(cli(["--json", "whoami"])).account, "admin");
   assert.equal(dockerContainer(workId), containerBefore);
   const second = jsonLines(cli(["--json", "chat", workId, "--session", sessionId, "--message", "acceptance second turn"]));
@@ -71,8 +96,31 @@ try {
 
   assert.equal(jsonLines(cli(["--json", "work", "stop", workId, "--wait"])).at(-1).state, "succeeded");
   assert.equal(jsonLines(cli(["--json", "work", "start", workId, "--wait"])).at(-1).state, "succeeded");
-  const third = jsonLines(cli(["--json", "chat", workId, "--session", sessionId, "--message", "acceptance third turn"]));
-  assert.equal(third.some(isExpectedText), true);
+  assert.equal(jsonLines(cli(["--json", "work", "stop", currentWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(jsonLines(cli(["--json", "work", "start", currentWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(checked("docker", ["exec", dockerContainer(workId), "cat", "/run/piwork/skills/directory-derived/support.txt"]).trim(), "original-supporting-content");
+  assert.equal(checked("docker", ["exec", dockerContainer(currentWorkId), "cat", "/run/piwork/skills/directory-derived/support.txt"]).trim(), "updated-supporting-content");
+
+  const credential = JSON.parse(await readFile(configPath, "utf8"));
+  const agentsB = join(temporary, "agents-b.md");
+  const agentsC = join(temporary, "agents-c.md");
+  await writeFile(agentsB, "acceptance context B\n");
+  await writeFile(agentsC, "acceptance context C\n");
+  cli(["--json", "work", "config", "agents", "set", workId, "--file", agentsB]);
+  const applyB = api(originalUrl, credential.token, "POST", `/api/v1/works/${workId}/configuration/apply`, {});
+  await waitFor(() => latestApplyState(workId) === "running", "apply operation did not enter running state");
+  await api(originalUrl, credential.token, "PUT", `/api/v1/works/${workId}/configuration/agents`, { agentsMd: "acceptance context C\n" });
+  await applyB;
+  const raced = firstJson(cli(["--json", "work", "config", "show", workId]));
+  assert.equal(raced.active.agentsMd, "acceptance context B\n");
+  assert.equal(raced.desired.agentsMd, "acceptance context C\n");
+  assert.equal(raced.pendingApply, true);
+  const contextA = await contextIdentity(workId, "");
+  const contextB = await contextIdentity(workId, "acceptance context B\n");
+  const laterSessionId = firstJson(cli(["--json", "session", "create", workId])).sessionId;
+  const bindings = dockerContextBindings(dockerContainer(workId), firstRunId, laterSessionId);
+  assert.equal(bindings.runContext, contextA);
+  assert.equal(bindings.sessionContext, contextB);
 
   const saved = JSON.parse(await readFile(configPath, "utf8"));
   assertNoSensitive(capturedProcessOutput.join("\n"), [adminPassword, modelCredential, saved.token], "process output");
@@ -83,6 +131,7 @@ try {
   assertNoSensitive(await rejected.text(), [saved.token], "HTTP authentication error");
   cli(["--core", originalUrl, "--json", "login", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
   assert.equal(jsonLines(cli(["--json", "work", "delete", workId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(jsonLines(cli(["--json", "work", "delete", currentWorkId, "--wait"])).at(-1).state, "succeeded");
   assert.equal(dockerIds("container", workId).length, 0);
   assert.equal(dockerIds("network", workId).length, 0);
   assert.equal(dockerIds("volume", workId).length, 1, "delete retains conversation data volume by policy");
@@ -97,7 +146,7 @@ function cli(args, input) { return checked("node", ["apps/cli/dist/main.js", ...
 function serveCli(args, input) { return checked("node", ["apps/core/dist/cli.js", ...args], input); }
 function checked(command, args, input) {
   const result = spawnSync(command, args, { cwd: root, env: environment, input, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
-  if (result.status !== 0) throw new Error(`${command} ${args.slice(0, 3).join(" ")} failed (${result.status}): ${safeFailure(result.stderr)}`);
+  if (result.status !== 0) throw new Error(`${command} ${args.slice(0, 3).join(" ")} failed (${result.status}): ${safeFailure(`${result.stderr}\n${result.stdout}`)}`);
   capturedProcessOutput.push(result.stdout, result.stderr);
   assertNoSensitive(`${result.stdout}\n${result.stderr}`, [adminPassword, modelCredential], `${command} output`);
   return result.stdout;
@@ -121,7 +170,7 @@ async function startCore(port) {
   ]);
   const record = JSON.parse(line);
   assert.equal(record.event, "core.listening");
-  return { child, url: record.url };
+  return { child, url: record.url, stderr: () => stderr };
 }
 function readLine(stream) {
   return new Promise((resolve, reject) => {
@@ -156,6 +205,62 @@ function cleanupDocker() {
     const ids = spawnSync("docker", [...noun, "--filter", `label=piwork.installation_id=${installationId}`], { cwd: root, encoding: "utf8" }).stdout?.trim().split("\n").filter(Boolean) ?? [];
     if (ids.length > 0) spawnSync("docker", [kind, "rm", ...(kind === "container" ? ["-f"] : []), ...ids], { cwd: root, encoding: "utf8" });
   }
+}
+
+async function api(base, token, method, path, body) {
+  const response = await fetch(`${base}${path}`, {
+    method,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const value = await response.json();
+  if (!response.ok) throw new Error(`HTTP ${response.status}: ${safeFailure(JSON.stringify(value))}`);
+  return value;
+}
+
+function latestApplyState(workId) {
+  const database = new DatabaseSync(join(dataDirectory, "core.sqlite"), { readOnly: true });
+  try {
+    return database.prepare(`SELECT state FROM operations
+      WHERE work_id = ? AND kind = 'apply-work-configuration'
+      ORDER BY created_at DESC, id DESC LIMIT 1`).get(workId)?.state;
+  } finally {
+    database.close();
+  }
+}
+
+async function waitFor(check, message) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(message);
+}
+
+async function contextIdentity(workId, agentsMd) {
+  const contexts = join(dataDirectory, "works", workId, "contexts");
+  for (const name of await readdir(contexts)) {
+    if (name.startsWith(".staging-")) continue;
+    const configuration = JSON.parse(await readFile(join(contexts, name, "config.json"), "utf8"));
+    if (configuration.agentsMd !== agentsMd) continue;
+    return JSON.parse(await readFile(join(contexts, name, "metadata.json"), "utf8")).snapshotId;
+  }
+  throw new Error("expected Work context was not found");
+}
+
+function dockerContextBindings(container, runId, sessionId) {
+  const source = `
+    import { DatabaseSync } from "node:sqlite";
+    const [runId, sessionId] = process.argv.slice(-2);
+    const database = new DatabaseSync("/var/data/work.sqlite", { readOnly: true });
+    const run = database.prepare("SELECT context_identity FROM runs WHERE run_id = ?").get(runId);
+    const session = database.prepare("SELECT active_context_identity FROM sessions WHERE session_id = ?").get(sessionId);
+    process.stdout.write(JSON.stringify({ runContext: run?.context_identity, sessionContext: session?.active_context_identity }));
+  `;
+  const result = spawnSync("docker", ["exec", container, "node", "--no-warnings", "--input-type=module", "-e", source, runId, sessionId], { cwd: root, env: environment, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`Docker context query failed: ${safeFailure(result.stderr)}`);
+  return JSON.parse(result.stdout);
 }
 function scrubbedEnvironment(extra) {
   const blocked = /(?:OPENAI|ANTHROPIC|GOOGLE|GEMINI|MISTRAL|GROQ|XAI|MODEL).*?(?:KEY|TOKEN|CREDENTIAL)|(?:KEY|TOKEN|CREDENTIAL).*?(?:OPENAI|ANTHROPIC|MODEL)/i;

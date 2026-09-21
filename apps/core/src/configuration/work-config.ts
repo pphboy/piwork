@@ -1,6 +1,6 @@
 import { Check } from "typebox/value";
-import { WorkConfigSchema, type WorkConfig } from "@piwork/contracts";
-import { CoreStore, type WorkConfigurationState } from "@piwork/core-store";
+import { WorkConfigSchema, type WorkConfig, type WorkConfigurationView as WorkConfigurationViewContract } from "@piwork/contracts";
+import { ConfigurationRevisionConflictError, CoreStore, type WorkConfigurationState, type WorkContextSnapshotInput } from "@piwork/core-store";
 import {
   authorizeWorkResource,
   type UserPrincipal,
@@ -14,13 +14,7 @@ export class InvalidWorkConfigurationError extends InputValidationError {
   }
 }
 
-export interface WorkConfigurationView {
-  readonly workId: string;
-  readonly desiredRevision: number;
-  readonly activeRevision: number | null;
-  readonly desired: WorkConfig;
-  readonly active: WorkConfig | null;
-  readonly pendingRestart: boolean;
+export interface WorkConfigurationView extends WorkConfigurationViewContract {
 }
 
 export class WorkConfigurationService {
@@ -38,23 +32,68 @@ export class WorkConfigurationService {
   update(
     principal: UserPrincipal,
     workId: string,
-    expectedRevision: number,
-    configuration: WorkConfig,
-    runtimeBinding?: { readonly runtimeProfileJson: string; readonly sourceRuntimeRevision: number | null },
+    configurationOrExpectedRevision: WorkConfig | number,
+    maybeConfiguration?: WorkConfig,
+    runtimeBinding?: { readonly runtimeProfileJson: string; readonly sourceRuntimeRevision: number | null; readonly snapshot?: WorkContextSnapshotInput },
   ): WorkConfigurationView {
+    const configuration = typeof configurationOrExpectedRevision === "number" ? maybeConfiguration! : configurationOrExpectedRevision;
     if (!Check(WorkConfigSchema, configuration)) throw new InvalidWorkConfigurationError();
     const existing = this.store.getWorkConfiguration(workId);
     authorizeConfiguration(principal, existing, "control");
-    const next = { ...configuration, revision: expectedRevision + 1 };
+    const expectedRevision = typeof configurationOrExpectedRevision === "number"
+      ? configurationOrExpectedRevision
+      : existing?.desiredRevision;
     const updated = this.store.updateWorkConfiguration({
       workId,
-      expectedRevision,
-      configJson: JSON.stringify(next),
+      expectedRevision: expectedRevision ?? 0,
+      allowLastCommitWins: typeof configurationOrExpectedRevision !== "number",
+      configJson: JSON.stringify(configuration),
       createdByUserId: principal.userId,
       now: this.now().toISOString(),
       ...runtimeBinding,
     });
     return view(updated);
+  }
+
+  /**
+   * Merge a field-specific edit against the latest desired state. The CAS is
+   * internal only: callers never see a revision, and a concurrent commit is
+   * retried from the new desired document so unrelated fields are preserved.
+   */
+  async updateMerged(
+    principal: UserPrincipal,
+    workId: string,
+    merge: (current: WorkConfig) => WorkConfig,
+    prepare: (configuration: WorkConfig) => Promise<{
+      readonly runtimeProfileJson: string;
+      readonly sourceRuntimeRevision: number | null;
+      readonly snapshot?: WorkContextSnapshotInput;
+    }>,
+  ): Promise<WorkConfigurationView> {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const existing = this.store.getWorkConfiguration(workId);
+      authorizeConfiguration(principal, existing, "control");
+      if (existing === undefined) throw new InvalidWorkConfigurationError();
+      const current = JSON.parse(existing.desiredConfigJson) as WorkConfig;
+      const configuration = merge(current);
+      if (!Check(WorkConfigSchema, configuration)) throw new InvalidWorkConfigurationError();
+      const binding = await prepare(configuration);
+      try {
+        const updated = this.store.updateWorkConfiguration({
+          workId,
+          expectedRevision: existing.desiredRevision,
+          allowLastCommitWins: false,
+          configJson: JSON.stringify(configuration),
+          createdByUserId: principal.userId,
+          now: this.now().toISOString(),
+          ...binding,
+        });
+        return view(updated);
+      } catch (error) {
+        if (!(error instanceof ConfigurationRevisionConflictError)) throw error;
+      }
+    }
+    throw new Error("Work configuration changed too frequently; retry the operation");
   }
 }
 
@@ -78,10 +117,13 @@ function authorizeConfiguration(
 function view(state: WorkConfigurationState): WorkConfigurationView {
   return {
     workId: state.workId,
-    desiredRevision: state.desiredRevision,
-    activeRevision: state.activeRevision,
-    desired: JSON.parse(state.desiredConfigJson) as WorkConfig,
-    active: state.activeConfigJson === null ? null : JSON.parse(state.activeConfigJson) as WorkConfig,
-    pendingRestart: state.pendingRestart,
+    desired: publicConfig(state.desiredConfigJson),
+    active: state.activeConfigJson === null ? null : publicConfig(state.activeConfigJson),
+    pendingApply: state.pendingRestart,
   };
+}
+
+function publicConfig(json: string): WorkConfig {
+  const { revision: _internalRevision, ...configuration } = JSON.parse(json) as WorkConfig & { revision?: number };
+  return configuration;
 }

@@ -4,7 +4,7 @@ piwork supports one Linux host with Docker Engine. Core listens on loopback by d
 
 ## Process and command boundaries
 
-`piwork-serve` is the Core daemon and operator control client. It owns `serve`, status, administrator/user management, and the global runtime default. `piwork-cli` is the logged-in user client. It owns Work lifecycle, per-Work configuration, Sessions, Runs, and chat. Only these two binaries are published.
+`piwork-serve` is the Core daemon and operator control client. It owns `serve`, status, administrator/user management, global runtime/default Work configuration, and managed Skill lifecycle. `piwork-cli` is the logged-in user client. It owns Work lifecycle, per-Work configuration, Sessions, Runs, chat, and read-only Skill discovery. `piwork` is a compatibility alias for `piwork-serve`; `piwork-core` is removed.
 
 Operator authentication uses `<data-dir>/operator.credential`. User authentication uses `$XDG_CONFIG_HOME/piwork/client.json`, `$HOME/.config/piwork/client.json`, or `PIWORK_CONFIG_PATH`. Both files require mode `0600` and a private parent directory; symlinks are refused. The credentials are independent: an operator credential cannot read conversation content, and a user bearer token cannot mutate users or global defaults.
 
@@ -121,15 +121,21 @@ npm run cli -- run cancel <workId> <runId>
 
 Startup creates no Work. A new Work copies the current global default. Existing Works keep their own desired and active configuration snapshots after the global default changes.
 
+### Managed Skills and Work context
+
+Operators import a complete Skill directory with `piwork-serve skills add --path <absolute-directory>`. The final directory basename is the Skill name and must match `[a-z0-9][a-z0-9-]{0,63}`; Core does not parse `SKILL.md` to assign identity. An import permits at most 2,048 regular files, 32 MiB total, and 8 MiB per file, and rejects symlinks or special files. Core validates and stores the complete tree, and a Work copies selected enabled Skills into its own immutable context. Import validates the file tree rather than Pi SDK metadata, so malformed `SKILL.md` content is reported later when that copied Work context is started or applied. A Work keeps its copy when the source directory or managed Skill is later changed, disabled, or removed. To adopt new content, select the Skill again and apply the Work configuration.
+
+Users can inspect selectable Skills with `piwork-cli skills list` and `piwork-cli skills show <skill-name>`. Work creation inherits default Skills when no selection is supplied, replaces them with repeated `--skill` options, or uses an empty selection with `--no-skills`. The same tri-state applies to `work config skills set`; no public revision or `expected-revision` option is accepted.
+
 ## Per-Work configuration
 
 ```bash
 npm run cli -- work config show <workId>
-npm run cli -- work config set <workId> --config ./work-config.json --expected-revision 1
-npm run cli -- work config apply <workId> --expected-revision 2
+npm run cli -- work config set <workId> --config ./work-config.json
+npm run cli -- work config apply <workId>
 ```
 
-`set` uses compare-and-swap. A stale expected revision returns a conflict and leaves the first update intact. It changes only desired configuration and does not interrupt the current runtime or Run. `apply` explicitly prepares the desired snapshot, restarts the selected Work when needed, verifies readiness, and then advances active revision. A failed apply leaves the prior active revision recorded and attempts to restore its runtime.
+`set` replaces the desired context without a public precondition. Field-specific updates merge against the latest desired context, preserve unrelated fields, and leave the active runtime and Run untouched. `apply` captures the desired context in a durable Operation, restarts the selected Work when needed, verifies readiness, and then activates exactly that captured context. A later edit remains pending; a failed apply leaves the prior active context usable and attempts to restore its runtime.
 
 ## Restart and lifecycle
 

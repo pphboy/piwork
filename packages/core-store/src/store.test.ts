@@ -30,6 +30,9 @@ test("empty database upgrades once and contains every durable Core entity", asyn
       "catalog_entries",
       "secret_refs",
       "control_metadata",
+      "managed_skill_artifacts",
+      "work_context_snapshots",
+      "filesystem_migrations",
     ]) {
       assert.match(tables?.names ?? "", new RegExp(`(?:^|,)${name}(?:,|$)`));
     }
@@ -88,6 +91,72 @@ test("data survives close and reopen", async () => {
   } finally {
     await fixture.cleanup();
   }
+});
+
+test("default Work configuration uses revisioned compare-and-swap", async () => {
+  const fixture = await createFixture();
+  try {
+    const store = CoreStore.open({ databasePath: fixture.databasePath });
+    const initial = store.getDefaultWorkConfiguration();
+    assert.equal(initial?.revision, 0);
+    const next = store.compareAndSwapDefaultWorkConfiguration(0, { agentsMd: "hello" }, "2026-09-20T00:00:00Z");
+    assert.equal(next.revision, 1);
+    assert.deepEqual(store.getDefaultWorkConfiguration()?.configuration, { agentsMd: "hello" });
+    assert.throws(() => store.compareAndSwapDefaultWorkConfiguration(0, { agentsMd: "stale" }, "2026-09-20T00:00:01Z"), /revision conflict/);
+    assert.deepEqual(store.getDefaultWorkConfiguration()?.configuration, { agentsMd: "hello" });
+    store.close();
+  } finally { await fixture.cleanup(); }
+});
+
+test("default Work updates merge atomically without exposing a public CAS input", async () => {
+  const fixture = await createFixture();
+  try {
+    const store = CoreStore.open({ databasePath: fixture.databasePath });
+    store.updateDefaultWorkConfiguration({ skills: ["code-review"], agentsMd: "A" }, "2026-09-20T00:00:00Z");
+    const next = store.updateDefaultWorkConfiguration({ agentsMd: "B" }, "2026-09-20T00:00:01Z");
+    assert.deepEqual(next.configuration, { skills: ["code-review"], agentsMd: "B" });
+    store.updateDefaultWorkConfiguration({ skills: [] }, "2026-09-20T00:00:02Z");
+    assert.deepEqual(store.getDefaultWorkConfiguration()?.configuration, { skills: [], agentsMd: "B" });
+    store.close();
+  } finally { await fixture.cleanup(); }
+});
+
+test("managed Skills use basename identity, null host reference and transactional current pointers", async () => {
+  const fixture = await createFixture();
+  try {
+    const store = CoreStore.open({ databasePath: fixture.databasePath });
+    const first = store.addManagedSkill({
+      name: "code-review", identity: `sha256:${"a".repeat(64)}`, fileCount: 2, totalBytes: 100,
+      now: "2026-09-20T00:00:00Z",
+    });
+    assert.equal(first.name, "code-review");
+    assert.equal(store.getCatalogEntry("code-review")?.mutableReference, null);
+    assert.throws(() => store.addManagedSkill({
+      name: "code-review", identity: `sha256:${"b".repeat(64)}`, fileCount: 2, totalBytes: 101,
+      now: "2026-09-20T00:00:01Z",
+    }), /already exists/);
+    assert.equal(store.getManagedSkill("code-review")?.currentIdentity, `sha256:${"a".repeat(64)}`);
+    store.updateManagedSkillCurrent({
+      name: "code-review", identity: `sha256:${"b".repeat(64)}`, fileCount: 3, totalBytes: 200,
+      now: "2026-09-20T00:00:02Z",
+    });
+    assert.equal(store.getManagedSkill("code-review")?.currentIdentity, `sha256:${"b".repeat(64)}`);
+    assert.deepEqual(store.listManagedSkills().map(({ name }) => name), ["code-review"]);
+    store.setControlMetadata("default_work_configuration", {
+      version: 1, revision: 0, configuration: { skills: ["code-review"] },
+    }, "2026-09-20T00:00:03Z");
+    assert.throws(() => store.setManagedSkillEnabled("code-review", false, "2026-09-20T00:00:04Z"), /selected by default/);
+    assert.throws(() => store.removeManagedSkill("code-review"), /selected by default/);
+    assert.equal(store.getManagedSkill("code-review")?.enabled, true);
+    store.setControlMetadata("default_work_configuration", {
+      version: 1, revision: 0, configuration: { skills: [] },
+    }, "2026-09-20T00:00:05Z");
+    store.setManagedSkillEnabled("code-review", false, "2026-09-20T00:00:06Z");
+    assert.deepEqual(store.listManagedSkills(true), []);
+    assert.deepEqual(store.removeManagedSkill("code-review"), [`sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`]);
+    assert.equal(store.getManagedSkill("code-review"), undefined);
+    store.close();
+  } finally { await fixture.cleanup(); }
 });
 
 test("a second Core is rejected while the first owns the store", async () => {

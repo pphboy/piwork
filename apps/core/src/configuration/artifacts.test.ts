@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,8 +13,6 @@ import {
 } from "./artifacts.js";
 
 const NOW = "2026-09-20T00:00:00Z";
-const SKILL_BYTES = new TextEncoder().encode("---\nname: fixture\ndescription: fixture\n---\nUse fixtures.\n");
-const SKILL_DIGEST = `sha256:${createHash("sha256").update(SKILL_BYTES).digest("hex")}`;
 const IMAGE_A = `sha256:${"a".repeat(64)}`;
 const IMAGE_B = `sha256:${"b".repeat(64)}`;
 
@@ -24,7 +21,7 @@ test("mutable image tag resolves once and original revision stays pinned after t
     const service = new ArtifactPreparationService(store, resolver);
     const first = await service.prepare("work-1", 1);
     assert.equal(first.image.digest, IMAGE_A);
-    assert.equal(first.skills[0]?.digest, SKILL_DIGEST);
+    assert.deepEqual(first.skills, []);
     resolver.image = { digest: IMAGE_B, entrypoint: ["piwork-agentd"] };
     const second = await service.prepare("work-1", 1);
     assert.equal(second.image.digest, IMAGE_A);
@@ -44,21 +41,8 @@ test("incompatible image entrypoint is rejected before binding", async () => {
   });
 });
 
-test("Skill content digest mismatch blocks preparation without partial image binding", async () => {
-  await withArtifacts(async ({ store, resolver }) => {
-    resolver.skillBytes = new TextEncoder().encode("corrupted skill");
-    await assert.rejects(
-      new ArtifactPreparationService(store, resolver).prepare("work-1", 1),
-      (error) => error instanceof ArtifactPreparationError && /digest mismatch/.test(error.message),
-    );
-    assert.deepEqual(store.listWorkConfigArtifactBindings("work-1", 1), []);
-    assert.equal(store.getWorkConfigRevision("work-1", 1)?.resolvedImageDigest, null);
-  });
-});
-
 class FixtureResolver implements ArtifactResolver {
   image: ResolvedImage = { digest: IMAGE_A, entrypoint: ["piwork-agentd"] };
-  skillBytes = SKILL_BYTES;
   imageCalls = 0;
 
   async resolveImage(): Promise<ResolvedImage> {
@@ -66,9 +50,6 @@ class FixtureResolver implements ArtifactResolver {
     return this.image;
   }
 
-  async readSkill(): Promise<Uint8Array> {
-    return this.skillBytes;
-  }
 }
 
 async function withArtifacts(
@@ -93,9 +74,9 @@ function seed(store: CoreStore): void {
     desired_revision, active_revision, control_version, created_at, updated_at
   ) VALUES ('work-1', 'user-1', 'fixture', 'stopped', 'stopped', 1, NULL, 1, '${NOW}', '${NOW}')`);
   const configuration: WorkConfig = {
-    revision: 1,
     agentImage: { catalogId: "agent_image-0199abcd" },
-    skills: [{ catalogId: "skill-0199e6d8abcd", digest: SKILL_DIGEST }],
+    skills: ["skill-0199e6d8abcd"],
+    agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [],
     resources: { cpuMillis: 1_000, memoryBytes: 1_073_741_824, maxServices: 8, maxRetainedVolumes: 16 },
@@ -120,7 +101,7 @@ function seed(store: CoreStore): void {
     kind: "skill",
     name: "fixture",
     mutableReference: "artifact://fixture-skill",
-    resolvedDigest: SKILL_DIGEST,
+    resolvedDigest: `sha256:${"c".repeat(64)}`,
     metadataJson: "{}",
     enabled: true,
     createdAt: NOW,

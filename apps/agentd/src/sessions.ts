@@ -13,8 +13,13 @@ export class AgentSessionService {
     private readonly store: WorkStore,
     private readonly workspace: string,
     private readonly sessionRoot: string,
+    private readonly contextIdentity?: string,
     private readonly now: () => Date = () => new Date(),
   ) {}
+
+  bindLegacyContexts(): void {
+    if (this.contextIdentity !== undefined) this.store.bindUnboundSessionContexts(this.workId, this.contextIdentity);
+  }
 
   create(idempotencyKey?: string): SessionRecord {
     const sdk = initializePersistentSession({ cwd: this.workspace, sessionRoot: this.sessionRoot });
@@ -26,6 +31,7 @@ export class AgentSessionService {
       sdkHistoryPath: snapshot.historyPath,
       createdAt: now,
       updatedAt: now,
+      contextIdentity: this.contextIdentity ?? null,
     };
     if (idempotencyKey === undefined) { this.store.createSession(record); return record; }
     const accepted = this.store.createSessionIdempotent(record, idempotencyKey);
@@ -56,6 +62,9 @@ export class AgentSessionService {
   private requireRecord(sessionId: string): SessionRecord {
     const record = this.store.getSession(this.workId, sessionId);
     if (record === undefined) throw new Error(`session ${sessionId} does not exist in Work ${this.workId}`);
+    if (this.contextIdentity !== undefined && record.contextIdentity !== this.contextIdentity) {
+      throw new Error(`session ${sessionId} context is unavailable`);
+    }
     return record;
   }
 }

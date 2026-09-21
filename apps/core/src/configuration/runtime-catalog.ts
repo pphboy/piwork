@@ -72,7 +72,7 @@ export function resolveRuntimeProfileFromWorkConfig(
     profile: {
       version: 1,
       revision: metadata.sourceRuntimeRevision,
-      agentImage: configuration.agentImage.digest ?? image.resolvedDigest ?? image.mutableReference,
+      agentImage: image.resolvedDigest ?? image.mutableReference,
       model: {
         provider: metadata.provider,
         id: metadata.id,

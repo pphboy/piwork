@@ -2,6 +2,7 @@ import { createAgentSession, defineTool, ModelRuntime } from "@earendil-works/pi
 import { lstatSync, readFileSync } from "node:fs";
 import { Type } from "typebox";
 import { createDeterministicRuntime, mapSdkEvent } from "@piwork/pi-adapter";
+import { loadConfiguredSkills } from "./skills.js";
 import type { RunExecutionContext, RunExecutor } from "./runs.js";
 import type { AgentSessionService } from "./sessions.js";
 
@@ -16,6 +17,7 @@ export class PiSdkRunExecutor implements RunExecutor {
       readonly credentialPath?: string;
       readonly deterministic: boolean;
     },
+    private readonly context: { readonly skillRoot?: string; readonly skills: readonly { readonly name: string; readonly digest: string }[]; readonly agentsMd?: string; readonly resolvedTools?: readonly string[] } = { skills: [] },
   ) {}
 
   async execute(context: RunExecutionContext): Promise<{ readonly finalText: string }> {
@@ -32,6 +34,7 @@ export class PiSdkRunExecutor implements RunExecutor {
         details: {},
       }),
     });
+    const isolated = this.context.skillRoot === undefined ? undefined : await loadConfiguredSkills(this.context.skillRoot, this.context.skills, this.context.agentsMd);
     const { session } = await createAgentSession({
       cwd: process.cwd(),
       agentDir: this.agentDirectory,
@@ -39,8 +42,9 @@ export class PiSdkRunExecutor implements RunExecutor {
       model,
       thinkingLevel: "off",
       sessionManager: this.sessions.continue(context.sessionId),
-      tools: this.modelConfig.deterministic ? ["read", "fixture_echo"] : ["read"],
+      tools: this.modelConfig.deterministic ? ["read", "fixture_echo"] : [...(this.context.resolvedTools ?? ["read", "bash", "edit", "write", "grep", "find", "ls"])],
       customTools: this.modelConfig.deterministic ? [fixture] : [],
+      ...(isolated === undefined ? {} : { resourceLoader: isolated.loader }),
     });
     let finalText = "";
     const unsubscribe = session.subscribe((event) => {

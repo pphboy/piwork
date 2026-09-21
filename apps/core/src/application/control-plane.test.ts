@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -19,6 +19,11 @@ const runtime: WorkRuntimeAdapter = {
 
 test("empty Core listens, reports staged readiness, and separates operator from user authorization", async () => {
   const root = await mkdtemp(join(tmpdir(), "piwork-control-plane-"));
+  const skillSource = join(root, "source", "code-review");
+  await mkdir(skillSource, { recursive: true });
+  await writeFile(join(skillSource, "SKILL.md"), "---\nname: deliberately-different\n---\nUse refs/rules.md.\n");
+  await mkdir(join(skillSource, "refs"));
+  await writeFile(join(skillSource, "refs", "rules.md"), "review carefully\n");
   const paths = ensureCorePaths(root);
   const application = await CoreApplication.create({ paths, runtimeFactory: async () => runtime });
   try {
@@ -51,6 +56,10 @@ test("empty Core listens, reports staged readiness, and separates operator from 
     assert.equal(configured.response.status, 200);
     assert.equal(application.status().state, "READY");
     assert.equal(JSON.stringify(configured.body).includes("model-secret"), false);
+    const defaultWork = await json(base, "/control/default-work", { authorization: `Operator ${operator}` });
+    assert.equal(defaultWork.response.status, 200);
+    assert.equal(defaultWork.body.revision, undefined);
+    assert.equal((defaultWork.body.configuration as Record<string, unknown>).agentsMd, "");
 
     const login = await json(base, "/api/v1/login", {
       method: "POST",
@@ -58,8 +67,28 @@ test("empty Core listens, reports staged readiness, and separates operator from 
     });
     assert.equal(login.response.status, 200);
     const token = String(login.body.token);
+    const importedSkill = await json(base, "/control/skills", {
+      method: "POST", authorization: `Operator ${operator}`, body: { path: skillSource },
+    });
+    assert.equal(importedSkill.response.status, 201, JSON.stringify(importedSkill.body));
+    assert.equal(importedSkill.body.name, "code-review");
+    assert.equal("path" in importedSkill.body || "identity" in importedSkill.body || "content" in importedSkill.body, false);
+    const operatorSkills = await json(base, "/control/skills", { authorization: `Operator ${operator}` });
+    assert.deepEqual((operatorSkills.body.skills as Array<Record<string, unknown>>).map((skill) => skill.name), ["code-review"]);
+    const userSkills = await json(base, "/api/v1/skills", { authorization: `Bearer ${token}` });
+    assert.deepEqual(userSkills.body, { skills: [{ name: "code-review" }] });
+    const currentDefault = (defaultWork.body.configuration as Record<string, unknown>);
+    const selectedDefault = await json(base, "/control/default-work", {
+      method: "PUT", authorization: `Operator ${operator}`, body: { configuration: { ...currentDefault, skills: ["code-review"] } },
+    });
+    assert.equal(selectedDefault.response.status, 200, JSON.stringify(selectedDefault.body));
+    const protectedDisable = await json(base, "/control/skills/code-review/disable", { method: "POST", authorization: `Operator ${operator}`, body: {} });
+    assert.equal(protectedDisable.response.status, 400);
+    await rm(join(root, "source"), { recursive: true, force: true });
     const forbiddenControl = await json(base, "/control/runtime", { authorization: `Bearer ${token}` });
     assert.equal(forbiddenControl.response.status, 401);
+    const forbiddenDefault = await json(base, "/control/default-work", { authorization: `Bearer ${token}` });
+    assert.equal(forbiddenDefault.response.status, 401);
     const forbiddenConversation = await json(base, "/api/v1/works", { authorization: `Operator ${operator}` });
     assert.equal(forbiddenConversation.response.status, 401);
     const invalidUser = await json(base, "/control/users", {
@@ -78,6 +107,7 @@ test("empty Core listens, reports staged readiness, and separates operator from 
       body: { name: "work-a", idempotencyKey: "create-a" },
     });
     assert.equal(workA.response.status, 202);
+    assert.deepEqual(application.store.getWorkConfiguration(String(workA.body.workId)) === undefined ? [] : JSON.parse(application.store.getWorkConfiguration(String(workA.body.workId))!.desiredConfigJson).skills, ["code-review"]);
     const profileA = application.store.getWorkConfigRevision(String(workA.body.workId), 1)?.runtimeProfileJson;
     assert.equal((JSON.parse(profileA!) as { model: { id: string } }).model.id, "claude-test");
 
@@ -98,14 +128,20 @@ test("empty Core listens, reports staged readiness, and separates operator from 
 
     const configurationA = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration`, { authorization: `Bearer ${token}` });
     const desiredA = configurationA.body.desired as Record<string, unknown>;
-    const updatedA = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration`, {
+    const rejectedRevision = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration`, {
       method: "PUT",
       authorization: `Bearer ${token}`,
       body: { expectedRevision: 1, configuration: { ...desiredA, modelRef: "runtime-model-00000002" } },
     });
+    assert.equal(rejectedRevision.response.status, 400);
+    const updatedA = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration`, {
+      method: "PUT",
+      authorization: `Bearer ${token}`,
+      body: { configuration: { ...desiredA, modelRef: "runtime-model-00000002" } },
+    });
     assert.equal(updatedA.response.status, 200, JSON.stringify(updatedA.body));
-    assert.equal(updatedA.body.desiredRevision, 2);
-    assert.equal(updatedA.body.pendingRestart, true);
+    assert.equal(updatedA.body.desiredRevision, undefined);
+    assert.equal(updatedA.body.pendingApply, true);
     const desiredProfileA = application.store.getWorkConfigRevision(String(workA.body.workId), 2)?.runtimeProfileJson;
     assert.equal((JSON.parse(desiredProfileA!) as { model: { id: string } }).model.id, "claude-next");
     assert.equal((JSON.parse(profileA!) as { model: { id: string } }).model.id, "claude-test");
@@ -113,7 +149,7 @@ test("empty Core listens, reports staged readiness, and separates operator from 
     const invalidConfiguration = await json(base, `/api/v1/works/${String(workA.body.workId)}/configuration`, {
       method: "PUT",
       authorization: `Bearer ${token}`,
-      body: { expectedRevision: 2, configuration: { ...desiredA, modelRef: "missing-model" } },
+      body: { configuration: { ...desiredA, modelRef: "missing-model" } },
     });
     assert.equal(invalidConfiguration.response.status, 400);
     assert.equal(invalidConfiguration.body.code, "INVALID_CONFIGURATION");

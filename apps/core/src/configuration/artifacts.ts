@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { WorkConfig } from "@piwork/contracts";
 import { CoreStore, type ArtifactBindingRecord, type CatalogEntryRecord } from "@piwork/core-store";
 
@@ -16,7 +15,6 @@ export interface ResolvedImage {
 
 export interface ArtifactResolver {
   resolveImage(reference: string): Promise<ResolvedImage>;
-  readSkill(reference: string): Promise<Uint8Array>;
 }
 
 export interface PreparedArtifacts {
@@ -49,23 +47,6 @@ export class ArtifactPreparationService {
       throw new ArtifactPreparationError(`agent image ${imageCatalog.id} has incompatible entrypoint`);
     }
 
-    const skills: Array<{ catalogId: string; digest: string }> = [];
-    for (const reference of config.skills) {
-      const catalog = this.requiredCatalog(reference.catalogId, "skill");
-      const expected = reference.digest ?? catalog.resolvedDigest;
-      if (expected === null || expected === undefined) {
-        throw new ArtifactPreparationError(`Skill ${catalog.id} has no fixed digest`);
-      }
-      const source = catalog.mutableReference ?? catalog.resolvedDigest;
-      if (source === null) throw new ArtifactPreparationError(`Skill ${catalog.id} has no source reference`);
-      const bytes = await this.resolver.readSkill(source);
-      const actual = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-      if (actual !== expected) {
-        throw new ArtifactPreparationError(`Skill ${catalog.id} digest mismatch: expected ${expected}, actual ${actual}`);
-      }
-      skills.push({ catalogId: catalog.id, digest: actual });
-    }
-
     return prepared(
       workId,
       revision,
@@ -73,7 +54,7 @@ export class ArtifactPreparationService {
         workId,
         revision,
         { catalogId: imageCatalog.id, digest: image.digest },
-        skills,
+        [],
       ),
     );
   }

@@ -21,6 +21,15 @@ export const SERVE_USAGE = `usage: piwork-serve [--core <url>] [--env-file <path
   admin users reset-credential <userId> [--password-stdin]
   config show
   config set --agent-image <image> --model-provider <provider> --model <id> [--model-base-url <url>] [--api-key-stdin | --api-key-file <path>]
+  config default-work show
+  config default-work set [--base-image <image>] [--skill <skill-name>]... [--no-skills] [--agents-md-file <path>]
+  skills list
+  skills show <skill-name>
+  skills add --path <absolute-directory>
+  skills update <skill-name> --path <absolute-directory>
+  skills enable <skill-name>
+  skills disable <skill-name>
+  skills remove <skill-name>
 `;
 
 interface Globals {
@@ -65,6 +74,7 @@ export async function runServeCli(argv: readonly string[]): Promise<number> {
     return adminCommand(operatorContext(globals, true), args);
   }
   if (command === "config") return configCommand(operatorContext(globals, true), args);
+  if (command === "skills") return skillsCommand(operatorContext(globals, true), args);
   throw usage(wrongSurface(command));
 }
 
@@ -136,6 +146,26 @@ function offlineBootstrapNeeded(globals: Globals): boolean {
 
 async function configCommand(context: OperatorContext, args: readonly string[]): Promise<number> {
   const [action, ...rest] = args;
+  if (action === "default-work") {
+    const [subaction, ...options] = rest;
+    if (subaction === "show") { noArgs(options); output(context, await context.client.defaultWorkConfiguration()); return 0; }
+    if (subaction !== "set") throw usage("config default-work requires show or set");
+    known(options, ["--base-image", "--skill", "--no-skills", "--agents-md-file"]);
+    const current = await context.client.defaultWorkConfiguration();
+    const envelope = current as { revision?: number; configuration?: Record<string, unknown> | null };
+    if (envelope.configuration === null || envelope.configuration === undefined) throw usage("default Work configuration is not initialized; configure runtime first");
+    const configuration = { ...envelope.configuration } as Record<string, unknown>;
+    const baseImage = optional(options, "--base-image");
+    if (baseImage !== undefined) configuration.agentImage = { catalogId: baseImage };
+    const skills = repeated(options, "--skill");
+    if (skills.length > 0 && options.includes("--no-skills")) throw usage("--skill and --no-skills are mutually exclusive");
+    if (options.includes("--no-skills")) configuration.skills = [];
+    else if (skills.length > 0) configuration.skills = skills;
+    const agentsFile = optional(options, "--agents-md-file");
+    if (agentsFile !== undefined) configuration.agentsMd = readFileSync(agentsFile, "utf8");
+    output(context, await context.client.configureDefaultWorkConfiguration(configuration, baseImage === undefined ? undefined : { baseImage }));
+    return 0;
+  }
   if (action === "show") {
     noArgs(rest);
     output(context, await context.client.runtimeProfile());
@@ -158,6 +188,17 @@ async function configCommand(context: OperatorContext, args: readonly string[]):
     ...(baseUrl === undefined ? {} : { baseUrl }),
   }));
   return 0;
+}
+
+async function skillsCommand(context: OperatorContext, args: readonly string[]): Promise<number> {
+  const [action, ...rest] = args;
+  if (action === "list") { noArgs(rest); output(context, await context.client.managedSkills()); return 0; }
+  if (action === "show") { exact(rest, 1); output(context, await context.client.managedSkill(rest[0]!)); return 0; }
+  if (action === "add") { known(rest, ["--path"]); output(context, await context.client.addManagedSkill(required(rest, "--path"))); return 0; }
+  if (action === "update") { const name = rest[0]; if (name === undefined || name.startsWith("--")) throw usage("skills update requires <skill-name>"); const options = rest.slice(1); known(options, ["--path"]); output(context, await context.client.updateManagedSkill(name, required(options, "--path"))); return 0; }
+  if (action === "enable" || action === "disable") { exact(rest, 1); output(context, await context.client.setManagedSkillEnabled(rest[0]!, action === "enable")); return 0; }
+  if (action === "remove") { exact(rest, 1); await context.client.removeManagedSkill(rest[0]!); output(context, { removed: rest[0] }); return 0; }
+  throw usage("skills requires list, show, add, update, enable, disable, or remove");
 }
 
 function operatorContext(globals: Globals, authenticated: boolean): OperatorContext {
@@ -239,6 +280,14 @@ function known(args: readonly string[], names: readonly string[]): void {
       index += 1;
     }
   }
+}
+
+function repeated(args: readonly string[], name: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) if (args[index] === name) {
+    const value = args[index + 1]; if (value === undefined || value.startsWith("--")) throw usage(`${name} requires a value`); values.push(value); index += 1;
+  }
+  return values;
 }
 function optional(args: readonly string[], name: string): string | undefined { const indexes = args.flatMap((value, index) => value === name ? [index] : []); if (indexes.length > 1) throw usage(`${name} may be specified only once`); const index = indexes[0]; return index === undefined ? undefined : args[index + 1]; }
 function required(args: readonly string[], name: string): string { const value = optional(args, name); if (value === undefined) throw usage(`${name} is required`); return value; }

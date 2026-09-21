@@ -10,6 +10,7 @@ import {
 } from "@grpc/grpc-js";
 import {
   AgentServiceService,
+  resolveBuiltInWorkTools,
   RunState,
   type AgentServiceServer,
   type CancelRunRequest,
@@ -35,6 +36,7 @@ import { AgentDaemonControl } from "./daemon.js";
 import { PiSdkRunExecutor } from "./pi-sdk-executor.js";
 import { RunManager } from "./runs.js";
 import { AgentSessionService } from "./sessions.js";
+import { loadConfiguredSkills, type ConfiguredSkill } from "./skills.js";
 
 export const AGENT_PROTOCOL_VERSION = "v1";
 
@@ -46,6 +48,11 @@ export interface AgentRuntimeConfig {
   readonly listen: string;
   readonly dataDirectory: string;
   readonly deterministic: boolean;
+  readonly contextConfigPath?: string;
+  readonly skills?: readonly ConfiguredSkill[];
+  readonly agentsMdPath?: string;
+  readonly contextIdentity?: string;
+  readonly resolvedTools?: readonly string[];
   readonly model: {
     readonly provider: string;
     readonly id: string;
@@ -89,11 +96,14 @@ export class AgentApplication {
       const sessionRoot = join(config.dataDirectory, "sessions");
       mkdirSync(workspace, { recursive: true });
       mkdirSync(sessionRoot, { recursive: true });
-      const sessions = new AgentSessionService(config.workId, store, workspace, sessionRoot);
+      const sessions = new AgentSessionService(config.workId, store, workspace, sessionRoot, config.contextIdentity);
+      sessions.bindLegacyContexts();
+      const context = loadWorkContext(config);
       const runs = new RunManager(store, daemon, new PiSdkRunExecutor(
         sessions,
         join(config.dataDirectory, "agent"),
         { ...config.model, deterministic: config.deterministic },
+        context,
       ));
       runs.recover();
       daemon.configure({ modelCredentialStatus: "available" });
@@ -177,7 +187,7 @@ export class AgentApplication {
       }),
       submitRun: unary((request: SubmitRunRequest): SubmitRunResponse => {
         this.verifyWork(request.workId);
-        const result = this.runs.submit(request);
+    const result = this.runs.submit(request);
         return { run: runMessage(result.run), reused: result.reused };
       }),
       getRun: unary((request: GetRunRequest): Run => runMessage(this.requireRun(request.workId, request.runId))),
@@ -263,6 +273,34 @@ function readConfig(path: string): AgentRuntimeConfig {
     || typeof value.tls.serverPrivateKeyPath !== "string"
     || typeof value.tls.expectedClientCommonName !== "string") throw new Error("agent configuration is invalid");
   return value as AgentRuntimeConfig;
+}
+
+function loadWorkContext(config: AgentRuntimeConfig): { readonly skillRoot?: string; readonly skills: readonly ConfiguredSkill[]; readonly agentsMd?: string; readonly contextIdentity?: string; readonly resolvedTools?: readonly string[] } {
+  const configPath = config.contextConfigPath ?? "/run/piwork/config.json";
+  try {
+    const value = JSON.parse(readFileSync(configPath, "utf8")) as { skills?: unknown; agentsMdPath?: unknown; contextIdentity?: unknown; resolvedTools?: unknown; tools?: Parameters<typeof resolveBuiltInWorkTools>[0] };
+    const metadata = JSON.parse(readFileSync(join(configPath, "..", "metadata.json"), "utf8")) as { snapshotId?: unknown; workId?: unknown; skills?: Array<{ name?: unknown; identity?: unknown }> };
+    if (metadata.workId !== config.workId || typeof metadata.snapshotId !== "string" || metadata.snapshotId !== config.contextIdentity) {
+      throw new Error("Work context identity mismatch");
+    }
+    if (!Array.isArray(value.skills) || !value.skills.every((name) => typeof name === "string") || !Array.isArray(metadata.skills)) {
+      throw new Error("invalid Work Skill descriptor");
+    }
+    const configuredNames = value.skills as string[];
+    const skills = metadata.skills.map((skill, index) => {
+      if (typeof skill.name !== "string" || typeof skill.identity !== "string" || skill.name !== configuredNames[index]) throw new Error("invalid Work Skill descriptor");
+      return { name: skill.name, digest: skill.identity };
+    });
+    const agentsPath = typeof value.agentsMdPath === "string" ? value.agentsMdPath : config.agentsMdPath ?? "/run/piwork/AGENTS.md";
+    const agentsMd = readFileSync(agentsPath, "utf8");
+    const resolvedTools = Array.isArray(value.resolvedTools)
+      ? value.resolvedTools.filter((item): item is string => typeof item === "string")
+      : value.tools === undefined ? undefined : resolveBuiltInWorkTools(value.tools);
+    return { skillRoot: "/run/piwork/skills", skills, ...(agentsMd === undefined ? {} : { agentsMd }), contextIdentity: metadata.snapshotId, ...(resolvedTools === undefined ? {} : { resolvedTools }) };
+  } catch (error) {
+    if (config.contextConfigPath === undefined && (error as NodeJS.ErrnoException).code === "ENOENT") return { skills: [] };
+    throw error;
+  }
 }
 
 function readBoundedRegularFile(path: string): Buffer {

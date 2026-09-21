@@ -7,7 +7,7 @@ The command surface has two clients:
 - `piwork-serve` starts Core and performs operator administration. It reads the protected operator credential in the Core data directory. It cannot log in as a user, create Works, or read conversations.
 - `piwork-cli` is the logged-in user client. It manages Works, Sessions, Runs, chat, and per-Work configuration. Its bearer credential is stored separately in `$XDG_CONFIG_HOME/piwork/client.json` or `$HOME/.config/piwork/client.json`.
 
-Only these two binary names are published. There are no `piwork-core` or `piwork` compatibility aliases.
+`piwork-core` is removed. `piwork` remains a compatibility alias for the operator client; `piwork-cli` is the separate user client.
 
 ## Requirements
 
@@ -70,15 +70,15 @@ npm run cli -- session list <workId>
 npm run cli -- chat <workId> --session <sessionId> --message "Continue"
 ```
 
-Each Work has desired and active configuration revisions:
+Each Work has an active context, a desired context, and a revision-free pending flag:
 
 ```bash
 npm run cli -- work config show <workId>
-npm run cli -- work config set <workId> --config ./work-config.json --expected-revision 1
-npm run cli -- work config apply <workId> --expected-revision 2
+npm run cli -- work config set <workId> --config ./work-config.json
+npm run cli -- work config apply <workId>
 ```
 
-`set` only creates a desired revision and sets `pendingRestart`; it does not interrupt a Run. `apply` explicitly prepares or restarts that Work and advances the active revision after the new runtime reports ready. Existing Works never follow later global `config set` changes.
+`set` only creates a desired context and sets `pendingApply`; it does not interrupt a Run. `apply` explicitly prepares or restarts that Work and activates the captured context after the new runtime reports ready. Existing Works never follow later global changes.
 
 ## Environment-file startup and deployment test
 
@@ -114,6 +114,7 @@ admin users disable
 admin users reset-credential
 config show
 config set
+skills list|show|add|update|enable|disable|remove
 ```
 
 `piwork-cli` provides:
@@ -125,6 +126,9 @@ logout
 whoami
 work create|list|show|start|stop|retry|delete
 work config show|set|apply
+work config skills set
+work config agents set
+skills list|show
 operation show
 session create|list|show
 run show|watch|cancel

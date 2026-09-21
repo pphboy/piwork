@@ -89,6 +89,26 @@ test("operator authentication is distinct from user bearer authentication", asyn
   await assert.rejects(new PiworkClient({ coreUrl: "http://core.test", token: "user", operatorToken: "operator" }).health(), /cannot be used together/);
 });
 
+test("revision-free Skill and Work configuration methods send the new request shapes", async () => {
+  const calls: Array<{ method?: string; url: string; body?: unknown }> = [];
+  const client = new PiworkClient({
+    coreUrl: "http://core.test",
+    token: "user-token",
+    operatorToken: undefined,
+    fetch: async (input, init) => {
+      calls.push({ method: init?.method, url: String(input), body: init?.body === undefined ? undefined : JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    },
+  });
+  await client.skills();
+  await client.workConfiguration("work-1");
+  await client.updateWorkConfiguration("work-1", { skills: [] });
+  await client.applyWorkConfiguration("work-1");
+  assert.equal(calls[0]?.url.endsWith("/api/v1/skills"), true);
+  assert.deepEqual(calls.slice(2).map((call) => call.body), [{ configuration: { skills: [] } }, {}]);
+  assert.equal(JSON.stringify(calls).includes("expectedRevision"), false);
+});
+
 test("shared CLI error rendering redacts credentials and secret paths", () => {
   const rendered = safeErrorMessage(new Error("Bearer user-token password=hunter2 api_key=sk-test /tmp/core/secrets/model.secret"));
   assert.equal(rendered.includes("user-token"), false);
