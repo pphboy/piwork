@@ -52,6 +52,27 @@ test("MCP transport mismatches and duplicate server IDs are rejected", async () 
   });
 });
 
+test("the built-in work-services adapter cannot be substituted or depend on a service", async () => {
+  await withValidator(async ({ validator }) => {
+    const base = config();
+    base.mcpServers = [{
+      serverId: "work-services", transport: "stdio", required: true,
+      command: "/usr/local/bin/piwork-service-mcp", args: [],
+    }];
+    assert.equal(validator.validate({ workOwnerUserId: "user-1", configuration: base }).mcpServers[0]?.serverId, "work-services");
+    for (const replacement of [
+      { ...base.mcpServers[0]!, command: "other" },
+      { ...base.mcpServers[0]!, required: false },
+      { ...base.mcpServers[0]!, requiredServiceId: "service-0199e6d8other" },
+    ]) {
+      assert.throws(
+        () => validator.validate({ workOwnerUserId: "user-1", configuration: { ...base, mcpServers: [replacement] } }),
+        /reserved built-in MCP adapter/,
+      );
+    }
+  });
+});
+
 test("UNSUPPORTED_LIMIT is returned before runtime creation", async () => {
   await withValidator(async ({ validator }) => {
     let runtimeCreates = 0;
@@ -91,7 +112,7 @@ function config(): WorkConfig {
         secretRefs: [{ secretId: "secret-0199e6d8abcd" }],
       },
     ],
-    resources: { cpuMillis: 1_000, memoryBytes: 1_073_741_824, maxServices: 8, maxRetainedVolumes: 16 },
+  resources: { cpuMillis: 1_000, memoryBytes: 1_073_741_824, agentCpuMillis: 500, agentMemoryBytes: 536_870_912, maxServices: 8, maxRetainedVolumes: 16 },
     tools: { allowed: ["read"], denied: [] },
   };
 }

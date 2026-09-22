@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { McpBridge, RequiredMcpUnavailableError } from "./mcp-bridge.js";
+import { McpBridge, RequiredMcpUnavailableError, modelMcpToolName } from "./mcp-bridge.js";
 import { startHttpMcpFixture } from "./testing/mcp-http-fixture.js";
 
 const fixture = join(dirname(fileURLToPath(import.meta.url)), "testing", "mcp-stdio-fixture.js");
@@ -16,7 +16,10 @@ test("two stdio servers namespace identical tools and route calls correctly", as
     { serverId: "two", required: true, transport: "stdio", command: process.execPath, args: [fixture] },
   ]);
   try {
-    assert.deepEqual(bridge.listTools().map((tool) => tool.namespacedName), ["one.echo", "two.echo"]);
+    assert.deepEqual(bridge.listTools().map((tool) => [tool.namespacedName, tool.modelName]), [
+      ["one.echo", "one__echo"],
+      ["two.echo", "two__echo"],
+    ]);
     const one = await bridge.callTool("one.echo", { text: "hello" }) as { content: unknown };
     const two = await bridge.callTool("two.echo", { text: "hello" }) as { content: unknown };
     assert.deepEqual(one.content, [{ type: "text", text: "stdio:hello" }]);
@@ -26,6 +29,14 @@ test("two stdio servers namespace identical tools and route calls correctly", as
   } finally {
     await bridge.close();
   }
+});
+
+test("model-facing MCP names satisfy provider identifier limits without changing canonical routing", () => {
+  assert.equal(modelMcpToolName("work-services", "deployment_context"), "work-services__deployment_context");
+  assert.match(modelMcpToolName("server.with.dots", "tool/with/slashes"), /^[a-zA-Z0-9_-]+$/);
+  const long = modelMcpToolName("s".repeat(64), "t".repeat(64));
+  assert.equal(long.length, 64);
+  assert.match(long, /^[a-zA-Z0-9_-]+$/);
 });
 
 test("HTTP secrets are injected only as configured and required/optional failures affect readiness", async () => {
@@ -62,6 +73,30 @@ test("closing the bridge reaps its local stdio process", async () => {
     await bridge.close();
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.throws(() => process.kill(pid, 0));
+  } finally {
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed stdio call is not replayed and the next explicit call reconnects", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-mcp-reconnect-"));
+  const pidFile = join(root, "pid");
+  const bridge = new McpBridge();
+  try {
+    await bridge.initialize([{
+      serverId: "local", required: true, transport: "stdio", command: process.execPath, args: [fixture],
+      environment: { PIWORK_MCP_PID_FILE: pidFile }, timeoutMs: 500, reconnectAttempts: 2,
+    }]);
+    const originalPid = Number(await readFile(pidFile, "utf8"));
+    process.kill(originalPid, "SIGKILL");
+    await assert.rejects(bridge.callTool("local.echo", { text: "uncertain" }));
+    assert.deepEqual((await bridge.callTool("local.echo", { text: "explicit-retry" }) as any).content, [
+      { type: "text", text: "stdio:explicit-retry" },
+    ]);
+    const replacementPid = Number(await readFile(pidFile, "utf8"));
+    assert.notEqual(replacementPid, originalPid);
+    assert.deepEqual(bridge.unavailableServerIds(), []);
   } finally {
     await bridge.close();
     await rm(root, { recursive: true, force: true });

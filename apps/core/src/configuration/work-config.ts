@@ -21,6 +21,7 @@ export class WorkConfigurationService {
   constructor(
     private readonly store: CoreStore,
     private readonly now: () => Date = () => new Date(),
+    private readonly hostQuota = { cpuMillis: 128_000, memoryBytes: 256 * 1_024 * 1_024 * 1_024 },
   ) {}
 
   get(principal: UserPrincipal, workId: string): WorkConfigurationView {
@@ -40,6 +41,7 @@ export class WorkConfigurationService {
     if (!Check(WorkConfigSchema, configuration)) throw new InvalidWorkConfigurationError();
     const existing = this.store.getWorkConfiguration(workId);
     authorizeConfiguration(principal, existing, "control");
+    this.assertAllocation(workId, configuration);
     const expectedRevision = typeof configurationOrExpectedRevision === "number"
       ? configurationOrExpectedRevision
       : existing?.desiredRevision;
@@ -51,6 +53,8 @@ export class WorkConfigurationService {
       createdByUserId: principal.userId,
       now: this.now().toISOString(),
       ...runtimeBinding,
+      hostCpuMillis: this.hostQuota.cpuMillis,
+      hostMemoryBytes: this.hostQuota.memoryBytes,
     });
     return view(updated);
   }
@@ -77,6 +81,7 @@ export class WorkConfigurationService {
       const current = JSON.parse(existing.desiredConfigJson) as WorkConfig;
       const configuration = merge(current);
       if (!Check(WorkConfigSchema, configuration)) throw new InvalidWorkConfigurationError();
+      this.assertAllocation(workId, configuration);
       const binding = await prepare(configuration);
       try {
         const updated = this.store.updateWorkConfiguration({
@@ -87,6 +92,8 @@ export class WorkConfigurationService {
           createdByUserId: principal.userId,
           now: this.now().toISOString(),
           ...binding,
+          hostCpuMillis: this.hostQuota.cpuMillis,
+          hostMemoryBytes: this.hostQuota.memoryBytes,
         });
         return view(updated);
       } catch (error) {
@@ -94,6 +101,15 @@ export class WorkConfigurationService {
       }
     }
     throw new Error("Work configuration changed too frequently; retry the operation");
+  }
+
+  private assertAllocation(workId: string, configuration: WorkConfig): void {
+    const serviceReservations = this.store.listQuotaReservations(workId).filter((item) => item.subjectKind === "service");
+    const cpu = configuration.resources.agentCpuMillis + serviceReservations.reduce((sum, item) => sum + Math.max(item.desiredCpuMillis, item.occupiedCpuMillis), 0);
+    const memory = configuration.resources.agentMemoryBytes + serviceReservations.reduce((sum, item) => sum + Math.max(item.desiredMemoryBytes, item.occupiedMemoryBytes), 0);
+    if (cpu > configuration.resources.cpuMillis || memory > configuration.resources.memoryBytes) throw new InvalidWorkConfigurationError();
+    if (this.store.listServices(workId).length > configuration.resources.maxServices) throw new InvalidWorkConfigurationError();
+    if (this.store.countVolumePolicySlots(workId) > configuration.resources.maxRetainedVolumes) throw new InvalidWorkConfigurationError();
   }
 }
 

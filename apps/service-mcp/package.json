@@ -1,0 +1,21 @@
+{
+  "name": "@piwork/service-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "piwork-service-mcp": "dist/main.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "1.14.5",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@piwork/contracts": "0.1.0",
+    "zod": "4.6.5"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "test:unit": "npm run build && node --test dist/**/*.test.js"
+  }
+}

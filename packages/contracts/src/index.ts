@@ -1,6 +1,7 @@
-export const CONTRACT_VERSION = "v1" as const;
+export const CONTRACT_VERSION = "v2" as const;
 
 export * from "./agent.js";
+export * from "./work-services.js";
 export * from "./common.js";
 export * from "./control/errors.js";
 export * from "./control/diagnostics.js";

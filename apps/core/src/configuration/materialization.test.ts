@@ -62,7 +62,7 @@ function configuration(): WorkConfig {
       args: ["server.js"],
       secretRefs: [{ secretId: "secret-0199e6d8abcd", key: "API_TOKEN" }],
     }],
-    resources: { cpuMillis: 1_000, memoryBytes: 1_073_741_824, maxServices: 8, maxRetainedVolumes: 16 },
+  resources: { cpuMillis: 1_000, memoryBytes: 1_073_741_824, agentCpuMillis: 500, agentMemoryBytes: 536_870_912, maxServices: 8, maxRetainedVolumes: 16 },
     tools: { allowed: ["read"], denied: [] },
   };
 }

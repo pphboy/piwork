@@ -6,7 +6,7 @@ import test from "node:test";
 import type { WorkConfig } from "@piwork/contracts";
 import { CoreStore, type WorkContextSnapshotInput } from "@piwork/core-store";
 import { createWorkHttpServer } from "./http-api.js";
-import { WorkLifecycleService, type WorkRuntimeAdapter, type WorkRuntimeState } from "./lifecycle.js";
+import { WorkLifecycleService, WorkResourceQuotaError, type WorkRuntimeAdapter, type WorkRuntimeState } from "./lifecycle.js";
 import { WorkConfigurationService } from "../configuration/work-config.js";
 import { WorkContextStore } from "../configuration/work-context.js";
 
@@ -89,6 +89,40 @@ test("startup recovery adopts an existing instance and Core shutdown stops it", 
     assert.equal(store.getWork(accepted.workId)?.observedState, "ready");
     assert.ok(store.listOperations().some((operation) =>
       operation.workId === accepted.workId && operation.kind === "recover-work-after-core-restart" && operation.state === "succeeded"));
+  });
+});
+
+test("Core shutdown still stops the agent and reports failure when a service cannot confirm shutdown", async () => {
+  await withFixture(async ({ store, lifecycle: original, runtime, contexts, create }) => {
+    const created = create({ name: "shutdown-failure", configuration: config(), idempotencyKey: "shutdown-failure-1" });
+    await original.waitForIdle();
+    const lifecycle = new WorkLifecycleService(store, runtime, () => new Date(NOW), 10, 10, {
+      async prepareEnabledServices() {},
+      async stopServices() { throw new Error("service remains running"); },
+      async removeServiceInstances() {},
+    }, contexts);
+    runtime.events.length = 0;
+    await assert.rejects(lifecycle.shutdown(true), AggregateError);
+    assert.ok(runtime.events.includes("stop"));
+    assert.equal(runtime.state.running, false);
+    assert.notEqual(store.getWork(created.workId)?.observedState, "stopped");
+  });
+});
+
+test("Work acceptance reserves agent allocation and rejects host oversubscription transactionally", async () => {
+  await withFixture(async ({ store, runtime, contexts, createInput }) => {
+    const limited = new WorkLifecycleService(store, runtime, () => new Date(NOW), 10, 10, undefined, contexts, undefined, undefined, {
+      cpuMillis: 700,
+      memoryBytes: 700 * 1_024 * 1_024,
+    });
+    const first = limited.create(owner, createInput({ name: "quota-a", configuration: config(), idempotencyKey: "quota-a" }));
+    assert.equal(store.getQuotaReservation(first.workId, "agent", "agentd")?.desiredCpuMillis, 500);
+    assert.throws(
+      () => limited.create(owner, createInput({ name: "quota-b", configuration: config(), idempotencyKey: "quota-b" })),
+      WorkResourceQuotaError,
+    );
+    assert.equal(store.listWorks().length, 1);
+    await limited.waitForIdle();
   });
 });
 
@@ -707,7 +741,7 @@ function config(): WorkConfig {
   return {
     agentImage: { catalogId: "image-0199e6d8abcd" },
     skills: [], agentsMd: "", modelRef: "model-0199e6d8abcd", mcpServers: [],
-    resources: { cpuMillis: 1000, memoryBytes: 1_073_741_824, maxServices: 8, maxRetainedVolumes: 16 },
+    resources: { cpuMillis: 1000, memoryBytes: 1_073_741_824, agentCpuMillis: 500, agentMemoryBytes: 536_870_912, maxServices: 8, maxRetainedVolumes: 16 },
     tools: { allowed: [], denied: [] },
   };
 }

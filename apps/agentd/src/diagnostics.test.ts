@@ -34,4 +34,9 @@ test("agent diagnostic logger emits only allowlisted fields and static text", ()
   }, { write: (line) => lines.push(line) });
   assert.equal(JSON.parse(lines[2]!).outcome, "started");
   assert.equal(JSON.parse(lines[3]!).message, "Work context Skills were validated by the SDK.");
+  emitAgentDiagnostic({
+    stage: "mcp-initialize", outcome: "succeeded", code: "MCP_INITIALIZATION_FAILED",
+    correlationId: "operation-3", workId: "work-3",
+  }, { write: (line) => lines.push(line) });
+  assert.equal(JSON.parse(lines[4]!).message, "Required Work MCP tools were initialized.");
 });

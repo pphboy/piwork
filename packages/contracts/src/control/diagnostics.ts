@@ -6,18 +6,30 @@ export const DiagnosticStageSchema = Type.Union([
   Type.Literal("context-copy"), Type.Literal("context-validate"),
   Type.Literal("runtime-prepare"), Type.Literal("runtime-start"),
   Type.Literal("skill-validate"), Type.Literal("skill-load"),
+  Type.Literal("mcp-initialize"),
   Type.Literal("readiness"), Type.Literal("activation"), Type.Literal("rollback"),
+  Type.Literal("service-accept"), Type.Literal("service-image"),
+  Type.Literal("service-storage"), Type.Literal("service-start"),
+  Type.Literal("service-readiness"), Type.Literal("service-recovery"),
+  Type.Literal("service-stop"), Type.Literal("service-remove"),
 ]);
 
 export const DiagnosticCodeSchema = Type.Union([
   Type.Literal("CONTEXT_COPY_FAILED"), Type.Literal("CONTEXT_NOT_FOUND"),
   Type.Literal("CONTEXT_FORMAT_UNSUPPORTED"), Type.Literal("SKILL_VALIDATION_FAILED"),
   Type.Literal("SKILL_LOAD_FAILED"), Type.Literal("SKILL_DIRECTORY_MISMATCH"),
+  Type.Literal("MCP_INITIALIZATION_FAILED"),
   Type.Literal("RUNTIME_PREPARE_FAILED"), Type.Literal("RUNTIME_START_FAILED"),
   Type.Literal("AGENT_CONTEXT_INCOMPATIBLE"), Type.Literal("AGENT_CONTEXT_MISMATCH"),
   Type.Literal("AGENT_EXITED"), Type.Literal("AGENT_READINESS_TIMEOUT"),
   Type.Literal("WORK_BUSY"), Type.Literal("ROLLBACK_FAILED"),
   Type.Literal("DIAGNOSTIC_COLLECTION_FAILED"), Type.Literal("DIAGNOSTIC_PERSIST_FAILED"),
+  Type.Literal("INVALID_SERVICE_DEFINITION"), Type.Literal("UNSUPPORTED_SERVICE_OPTION"),
+  Type.Literal("SERVICE_FORMAT_UNSUPPORTED"), Type.Literal("IMAGE_UNAVAILABLE"),
+  Type.Literal("MOUNT_DENIED"), Type.Literal("QUOTA_EXCEEDED"),
+  Type.Literal("SERVICE_START_FAILED"), Type.Literal("SERVICE_EXITED"),
+  Type.Literal("SERVICE_READINESS_TIMEOUT"), Type.Literal("DOCKER_UNAVAILABLE"),
+  Type.Literal("OPERATION_SUPERSEDED"),
   Type.Literal("WORK_OPERATION_FAILED"),
 ]);
 
@@ -29,6 +41,8 @@ export const SafeDiagnosticSchema = Type.Object({
   remediation: Type.String({ minLength: 1, maxLength: 1_024 }),
   field: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
   skillName: Type.Optional(SkillNameSchema),
+  serviceId: Type.Optional(ResourceIdSchema),
+  correlationId: Type.Optional(ResourceIdSchema),
   exitCode: Type.Optional(Type.Integer()),
 }, { additionalProperties: false });
 
@@ -40,6 +54,7 @@ export const SafeTerminalStageEventSchema = Type.Object({
   code: DiagnosticCodeSchema,
   message: Type.String({ minLength: 1, maxLength: 1_024 }),
   skillName: Type.Optional(SkillNameSchema),
+  serviceId: Type.Optional(ResourceIdSchema),
 }, { additionalProperties: false });
 
 export const DiagnosticCollectionSchema = Type.Object({

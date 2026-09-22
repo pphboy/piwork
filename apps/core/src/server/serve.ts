@@ -4,12 +4,14 @@ import { readEnvironmentFile, resolveEnvironment } from "../application/env-file
 import { resolve } from "node:path";
 
 export async function runServe(args: readonly string[]): Promise<void> {
-  assertKnownOptions(args, ["--data-dir", "--listen", "--allow-insecure-remote", "--env-file"]);
+  assertKnownOptions(args, ["--data-dir", "--listen", "--agent-grpc-listen", "--agent-grpc-advertise", "--allow-insecure-remote", "--env-file"]);
   const envFile = optionalValue(args, "--env-file");
   const fileValues = envFile === undefined ? {} : readEnvironmentFile(envFile);
   const explicit: Record<string, string> = {};
   const explicitData = optionalValue(args, "--data-dir"); if (explicitData !== undefined) explicit.PIWORK_DATA_DIR = explicitData;
   const explicitListen = optionalValue(args, "--listen"); if (explicitListen !== undefined) explicit.PIWORK_LISTEN = explicitListen;
+  const explicitAgentListen = optionalValue(args, "--agent-grpc-listen"); if (explicitAgentListen !== undefined) explicit.PIWORK_AGENT_GRPC_LISTEN = explicitAgentListen;
+  const explicitAgentAdvertise = optionalValue(args, "--agent-grpc-advertise"); if (explicitAgentAdvertise !== undefined) explicit.PIWORK_AGENT_GRPC_ADVERTISE = explicitAgentAdvertise;
   const environment = resolveEnvironment(fileValues, process.env, explicit);
   const dataDirectory = environment.PIWORK_DATA_DIR;
   if (dataDirectory === undefined || dataDirectory === "") throw new Error("--data-dir or PIWORK_DATA_DIR is required");
@@ -18,13 +20,18 @@ export async function runServe(args: readonly string[]): Promise<void> {
     ? defaultPaths
     : { ...defaultPaths, operatorCredentialPath: resolve(environment.PIWORK_OPERATOR_CREDENTIAL_PATH) };
   const requested = parseListenAddress(environment.PIWORK_LISTEN, args.includes("--allow-insecure-remote"));
-  const application = await CoreApplication.create({ paths, initialization: initialization(environment) });
+  const application = await CoreApplication.create({
+    paths,
+    initialization: initialization(environment),
+    agentGrpcListen: environment.PIWORK_AGENT_GRPC_LISTEN ?? "0.0.0.0:7172",
+    agentGrpcAdvertise: environment.PIWORK_AGENT_GRPC_ADVERTISE ?? "piwork-core:7172",
+  });
   try {
     const bound = await application.listen(requested);
     process.stdout.write(`${JSON.stringify({ event: "core.listening", url: formatHttpUrl(bound), pid: process.pid, dataDirectory: paths.dataDirectory })}\n`);
     await waitForSignal();
   } finally {
-    await withTimeout(application.close(), 10_000, "Core shutdown exceeded 10 seconds");
+    await withTimeout(application.close(), 45_000, "Core shutdown exceeded 45 seconds");
   }
 }
 

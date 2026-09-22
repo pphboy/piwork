@@ -5,6 +5,8 @@ import { ChannelCredentials, Metadata, type ServiceError } from "@grpc/grpc-js";
 import {
   AgentServiceClient,
   CONTRACT_VERSION,
+  WORK_SERVICE_MCP_SERVER_ID,
+  WORK_SERVICE_MCP_TOOL_NAMES,
   type DiagnosticCode,
   type DiagnosticStage,
   type OperationDiagnostics,
@@ -19,12 +21,13 @@ import {
 } from "@piwork/contracts";
 import { resolveBuiltInWorkTools } from "@piwork/contracts";
 import type { WorkRecord } from "@piwork/core-store";
-import { DockerRuntime } from "@piwork/runtime-docker";
+import { DockerRuntime, managedVolumeName } from "@piwork/runtime-docker";
 import type { ResolvedWorkRuntimeConfiguration, WorkRuntimeAdapter, WorkRuntimeState } from "../work-management/lifecycle.js";
 import type { CorePaths } from "../application/paths.js";
 import { RuntimeProfileStore } from "../configuration/runtime-profile.js";
 import { WorkContextStore } from "../configuration/work-context.js";
-import { ensureGenerationTlsIdentity, readTlsFile } from "./mtls.js";
+import { ensureGenerationTlsIdentity, readTlsFile, type GenerationTlsIdentity } from "./mtls.js";
+import { DockerServiceRuntimeAdapter } from "./docker-service-runtime.js";
 
 const AGENT_LOGICAL_ID = "agentd";
 const GENERATION_LABEL = "piwork.generation";
@@ -53,15 +56,7 @@ interface RuntimeRecord {
   readonly imageId: string;
   readonly contextIdentity: string;
   readonly correlationId: string;
-  readonly tls: {
-    readonly caCertificatePath: string;
-    readonly serverCertificatePath: string;
-    readonly serverPrivateKeyPath: string;
-    readonly clientCertificatePath: string;
-    readonly clientPrivateKeyPath: string;
-    readonly serverName: string;
-    readonly clientCommonName: string;
-  };
+  readonly tls: GenerationTlsIdentity;
 }
 
 export interface ConversationGateway {
@@ -93,7 +88,12 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly readinessTimeoutMs: number;
 
-  constructor(private readonly paths: CorePaths, readonly installationId: string, timing: RuntimeTiming = {}) {
+  constructor(
+    private readonly paths: CorePaths,
+    readonly installationId: string,
+    timing: RuntimeTiming = {},
+    private readonly agentGrpcAdvertise = "piwork-core:7172",
+  ) {
     this.docker = new DockerRuntime(installationId, undefined, [paths.runtimeDirectory, paths.workContextsDirectory]);
     this.profiles = new RuntimeProfileStore(paths.runtimeProfilePath, paths.secretsDirectory);
     this.now = timing.now ?? Date.now;
@@ -107,6 +107,8 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     if (!image.imageId.startsWith("sha256:")) throw new Error("agent image has no immutable Docker identity");
   }
 
+  serviceRuntime(): DockerServiceRuntimeAdapter { return new DockerServiceRuntimeAdapter(this.docker); }
+
   async resolveImageIdentity(reference: string): Promise<string> {
     const image = await this.docker.prepareImage(reference);
     if (!/^sha256:[a-f0-9]{64}$/.test(image.imageId)) throw new Error("agent image has no immutable Docker identity");
@@ -117,7 +119,19 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     if (configuration === undefined) {
       throw new Error("Work runtime configuration has no validated context snapshot");
     }
-    await Promise.all([this.prepareCapturedImage(configuration.imageIdentity), this.docker.ensureWorkNetwork(work.id), this.docker.ensureManagedVolume(work.id, "work-data")]);
+    const established = existsSync(this.recordPath(work.id));
+    const [image] = await Promise.all([
+      this.prepareCapturedImage(configuration.imageIdentity),
+      this.docker.ensureWorkNetwork(work.id),
+      established ? this.docker.requireManagedVolume(work.id, "work-private") : this.docker.ensureManagedVolume(work.id, "work-private"),
+      established ? this.docker.requireManagedVolume(work.id, "work-workspace") : this.docker.ensureManagedVolume(work.id, "work-workspace"),
+    ]);
+    if (!established) {
+      await Promise.all([
+        this.docker.initializeManagedVolume(work.id, "work-private", image.imageId),
+        this.docker.initializeManagedVolume(work.id, "work-workspace", image.imageId),
+      ]);
+    }
   }
 
   async start(work: WorkRecord, generation: number, configuration?: ResolvedWorkRuntimeConfiguration): Promise<{ readonly instanceId: string; readonly generation: number }> {
@@ -128,22 +142,25 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       }
       const expectedContext = configuration.contextIdentity;
       if (current.labels?.[CONTEXT_LABEL] !== expectedContext) {
-        throw new Error("Work runtime context does not match the active Work context");
+        throw runtimeStartInvariant("context-mismatch", "Work runtime context does not match the active Work context");
       }
       if (current.labels?.[PROTOCOL_LABEL] !== CONTRACT_VERSION) {
-        throw new Error("Work runtime protocol does not match the required runtime contract");
+        throw runtimeStartInvariant("protocol-mismatch", "Work runtime protocol does not match the required runtime contract");
       }
       const record = this.readRecord(work.id);
       if (current.labels?.[GENERATION_LABEL] !== String(record.generation)
         || current.labels?.[INSTANCE_LABEL] !== record.instanceId) {
-        throw new Error("Work runtime identity does not match the active runtime generation");
+        throw runtimeStartInvariant("identity-mismatch", "Work runtime identity does not match the active runtime generation");
       }
       if (current.image !== configuration.imageIdentity || record.imageId !== configuration.imageIdentity) {
-        throw new Error("Work runtime image does not match the captured Work image");
+        throw runtimeStartInvariant("image-mismatch", "Work runtime image does not match the captured Work image");
       }
-      this.validateExistingMounts(current.mounts ?? [], configuration.contextDirectory);
-      await this.docker.startContainer(work.id, "agent", AGENT_LOGICAL_ID);
-      await this.waitReady(record, configuration, current.containerId);
+      try { this.validateExistingMounts(work.id, current.mounts ?? [], configuration.contextDirectory); }
+      catch (error) { throw withRuntimeStartReason(error, "mount-validation-failed"); }
+      try { await this.docker.startContainer(work.id, "agent", AGENT_LOGICAL_ID); }
+      catch (error) { throw withRuntimeStartReason(error, "container-start-failed"); }
+      try { await this.waitReady(record, configuration, current.containerId); }
+      catch (error) { throw withRuntimeStartReason(error, "readiness-failed"); }
       return { instanceId: record.instanceId, generation: record.generation };
     }
     const profile = this.profile(configuration);
@@ -152,17 +169,20 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     }
     const image = await this.prepareCapturedImage(configuration.imageIdentity);
     const network = await this.docker.ensureWorkNetwork(work.id);
-    const volume = await this.docker.ensureManagedVolume(work.id, "work-data");
+    const privateVolume = await this.docker.requireManagedVolume(work.id, "work-private");
+    const workspaceVolume = await this.docker.requireManagedVolume(work.id, "work-workspace");
+    const instanceId = `agent-${randomUUID()}`;
     const tls = ensureGenerationTlsIdentity({
       runtimeDirectory: this.paths.runtimeDirectory,
       installationId: this.installationId,
       workId: work.id,
       generation,
+      instanceId,
     });
     const record: RuntimeRecord = {
       workId: work.id,
       generation,
-      instanceId: `agent-${randomUUID()}`,
+      instanceId,
       networkName: network.name,
       imageId: image.imageId,
       contextIdentity: configuration.contextIdentity,
@@ -172,8 +192,16 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     const directory = this.runtimeDirectory(work.id);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const configPath = join(directory, "agent-config.json");
+    const serviceControlPath = join(directory, "service-control.json");
     const modelCredentialPath = join(directory, "model-credential.secret");
     atomicSecret(modelCredentialPath, this.profiles.resolveCredential(profile));
+    const serviceControl = {
+      endpoint: this.agentGrpcAdvertise,
+      serverName: "piwork-core",
+      caCertificatePath: "/etc/piwork/control/installation-ca.crt",
+      clientCertificatePath: "/etc/piwork/control/agent-service-client.crt",
+      clientPrivateKeyPath: "/etc/piwork/control/agent-service-client.key",
+    };
     atomicJson(configPath, {
       version: 1,
       workId: record.workId,
@@ -203,9 +231,11 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
         expectedClientCommonName: record.tls.clientCommonName,
       },
     });
+    atomicJson(serviceControlPath, { serviceControl });
     // The parent directory remains 0700. The numeric container user needs read
     // access to this single bind-mounted file without receiving host ownership.
     chmodSync(configPath, 0o644);
+    chmodSync(serviceControlPath, 0o644);
     this.writeRecord(record);
     const ensured = await this.docker.ensureContainer({
       workId: work.id,
@@ -214,17 +244,24 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       image: image.imageId,
       command: ["--config", "/etc/piwork/runtime.json"],
       user: "10001:10001",
-      cpuMillis: configuration?.workConfig.resources.cpuMillis ?? 1_000,
-      memoryBytes: configuration?.workConfig.resources.memoryBytes ?? 768 * 1_024 * 1_024,
+      cpuMillis: configuration.workConfig.resources.agentCpuMillis,
+      memoryBytes: configuration.workConfig.resources.agentMemoryBytes,
+      workingDirectory: "/var/data/workspace",
+      controlHost: { hostname: "piwork-core", address: "host-gateway" },
       network: { name: network.name, workId: work.id, aliases: ["agentd"] },
       labels: { [GENERATION_LABEL]: String(generation), [INSTANCE_LABEL]: record.instanceId, [PROTOCOL_LABEL]: CONTRACT_VERSION, [CONTEXT_LABEL]: configuration.contextIdentity },
       mounts: [
-        { type: "volume", source: volume.volumeName, target: "/var/data" },
+        { type: "volume", source: privateVolume.volumeName, target: "/var/data" },
+        { type: "volume", source: workspaceVolume.volumeName, target: "/var/data/workspace" },
         { type: "bind" as const, source: configuration.contextDirectory, target: "/run/piwork", readOnly: true },
         { type: "bind", source: configPath, target: "/etc/piwork/runtime.json", readOnly: true },
+        { type: "bind", source: serviceControlPath, target: "/etc/piwork/service-control.json", readOnly: true },
         { type: "bind", source: record.tls.caCertificatePath, target: "/etc/piwork/tls/installation-ca.crt", readOnly: true },
         { type: "bind", source: record.tls.serverCertificatePath, target: "/etc/piwork/tls/agent-server.crt", readOnly: true },
         { type: "bind", source: record.tls.serverPrivateKeyPath, target: "/etc/piwork/tls/agent-server.key", readOnly: true },
+        { type: "bind", source: record.tls.caCertificatePath, target: "/etc/piwork/control/installation-ca.crt", readOnly: true },
+        { type: "bind", source: record.tls.serviceClientCertificatePath, target: "/etc/piwork/control/agent-service-client.crt", readOnly: true },
+        { type: "bind", source: record.tls.serviceClientPrivateKeyPath, target: "/etc/piwork/control/agent-service-client.key", readOnly: true },
         ...(profile.model.provider === "piwork-deterministic" ? [] : [{ type: "bind" as const, source: modelCredentialPath, target: "/run/secrets/model-api-key", readOnly: true }]),
         { type: "tmpfs", target: "/tmp" },
       ],
@@ -350,6 +387,7 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
   }
 
   private validateExistingMounts(
+    workId: string,
     mounts: readonly { readonly type: string; readonly source: string; readonly destination: string; readonly readOnly: boolean }[],
     contextDirectory: string,
   ): void {
@@ -366,6 +404,16 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       const source = realpathSync(mount.source);
       if (!isWithin(runtimeRoot, source)) throw new Error("Work runtime contains an unauthorized bind mount");
     }
+    const requiredVolumes = [
+      { destination: "/var/data", source: managedVolumeName(this.installationId, workId, "work-private") },
+      { destination: "/var/data/workspace", source: managedVolumeName(this.installationId, workId, "work-workspace") },
+    ];
+    for (const required of requiredVolumes) {
+      const matches = mounts.filter((mount) => mount.type === "volume" && mount.destination === required.destination && mount.source === required.source && !mount.readOnly);
+      if (matches.length !== 1) throw new Error("Work runtime persistent volume layout is invalid");
+    }
+    const unexpectedVolumes = mounts.filter((mount) => mount.type === "volume" && !requiredVolumes.some((required) => required.destination === mount.destination && required.source === mount.source));
+    if (unexpectedVolumes.length > 0) throw new Error("Work runtime contains an unauthorized volume mount");
   }
 
 
@@ -467,6 +515,10 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     const client = new AgentServiceClient(`${addresses[0]}:7443`, credentials, {
       "grpc.ssl_target_name_override": record.tls.serverName,
       "grpc.default_authority": record.tls.serverName,
+      // This address is selected from Docker's trusted inspection result and
+      // is reachable only on the Work bridge. Host proxy settings must not
+      // redirect the private mTLS control channel through an HTTP proxy.
+      "grpc.enable_http_proxy": 0,
     });
     this.clients.set(workId, client);
     return client;
@@ -500,8 +552,27 @@ export function verifyExpectedReadiness(
   }
   if (configuration.initializationOnly !== true && !value.acceptingRuns) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
   if (configuration.initializationOnly === true && value.acceptingRuns) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
-  const expectedTools = resolveBuiltInWorkTools(configuration.workConfig.tools);
-  if (JSON.stringify(value.resolvedTools) !== JSON.stringify(expectedTools)) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  const expectedBuiltIns = resolveBuiltInWorkTools(configuration.workConfig.tools);
+  if (JSON.stringify(value.resolvedTools.slice(0, expectedBuiltIns.length)) !== JSON.stringify(expectedBuiltIns)) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  const serverIds = new Set(configuration.workConfig.mcpServers.map((server) => server.serverId));
+  const allowed = new Set(configuration.workConfig.tools.allowed);
+  const denied = new Set(configuration.workConfig.tools.denied);
+  const customTools = value.resolvedTools.slice(expectedBuiltIns.length);
+  if (new Set(value.resolvedTools).size !== value.resolvedTools.length
+    || customTools.some((tool) => {
+      const separator = tool.indexOf(".");
+      return separator < 1 || !serverIds.has(tool.slice(0, separator))
+        || (allowed.size > 0 && !allowed.has(tool)) || denied.has(tool);
+    })) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  const serviceAdapter = configuration.workConfig.mcpServers.find((server) => server.serverId === WORK_SERVICE_MCP_SERVER_ID);
+  const actualServiceTools = customTools.filter((tool) => tool.startsWith(`${WORK_SERVICE_MCP_SERVER_ID}.`)).sort();
+  const expectedServiceTools = serviceAdapter === undefined ? [] : WORK_SERVICE_MCP_TOOL_NAMES
+    .map((name) => `${WORK_SERVICE_MCP_SERVER_ID}.${name}`)
+    .filter((tool) => (allowed.size === 0 || allowed.has(tool)) && !denied.has(tool))
+    .sort();
+  if (JSON.stringify(actualServiceTools) !== JSON.stringify(expectedServiceTools)) {
+    throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  }
   if (value.loadedSkills.length !== configuration.skillIdentities.length) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
   const skillsMatch = value.loadedSkills.every((skill, index) => {
     const expected = configuration.skillIdentities[index];
@@ -540,11 +611,22 @@ function recognizeInitializationEvidence(
 }
 
 function isDiagnosticStage(value: unknown): value is DiagnosticStage {
-  return typeof value === "string" && ["context-copy", "context-validate", "runtime-prepare", "runtime-start", "skill-validate", "skill-load", "readiness", "activation", "rollback"].includes(value);
+  return typeof value === "string" && ["context-copy", "context-validate", "runtime-prepare", "runtime-start", "skill-validate", "skill-load", "mcp-initialize", "readiness", "activation", "rollback"].includes(value);
 }
 
 function delay(ms: number): Promise<void> {
   return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function runtimeStartInvariant(reason: string, message: string): Error {
+  return Object.assign(new Error(message), { diagnosticReason: reason });
+}
+
+function withRuntimeStartReason(error: unknown, reason: string): unknown {
+  if (typeof error === "object" && error !== null && Object.isExtensible(error)) {
+    Object.assign(error, { diagnosticReason: reason });
+  }
+  return error;
 }
 
 function recordCorrelationId(workId: string, generation: number): string {

@@ -29,6 +29,9 @@ export interface DockerContainerSpec {
   readonly cpuMillis?: number;
   readonly memoryBytes?: number;
   readonly user?: string;
+  readonly workingDirectory?: string;
+  /** Trusted Core-authored host route. Only agent containers may receive it. */
+  readonly controlHost?: { readonly hostname: string; readonly address: "host-gateway" };
   readonly network?: {
     readonly name: string;
     readonly workId: string;
@@ -170,6 +173,10 @@ export class DockerRuntime {
     const memoryBytes = spec.memoryBytes ?? 64 * 1_024 * 1_024;
     const user = spec.user ?? "65532:65532";
     validateResources(cpuMillis, memoryBytes, user);
+    if (spec.workingDirectory !== undefined && (!spec.workingDirectory.startsWith("/") || posix.normalize(spec.workingDirectory) !== spec.workingDirectory)) {
+      throw new Error("workingDirectory must be a canonical absolute path");
+    }
+    if (spec.controlHost !== undefined && spec.kind !== "agent") throw new Error("controlHost is restricted to agent containers");
     args.push(
       "--cpus", (cpuMillis / 1_000).toFixed(3),
       "--memory", `${memoryBytes}b`,
@@ -180,6 +187,11 @@ export class DockerRuntime {
       "--security-opt", "no-new-privileges:true",
       "--pids-limit", "512",
     );
+    if (spec.workingDirectory !== undefined) args.push("--workdir", spec.workingDirectory);
+    if (spec.controlHost !== undefined) {
+      validateIdentity(spec.controlHost.hostname, "control host name");
+      args.push("--add-host", `${spec.controlHost.hostname}:${spec.controlHost.address}`);
+    }
     for (const [key, value] of Object.entries(labels).sort(([left], [right]) => left.localeCompare(right))) {
       args.push("--label", `${key}=${value}`);
     }
@@ -317,6 +329,34 @@ export class DockerRuntime {
     }
   }
 
+  async initializeManagedVolume(
+    workId: string,
+    logicalId: string,
+    image: string,
+    owner = "10001:10001",
+  ): Promise<void> {
+    if (!/^[0-9]+:[0-9]+$/.test(owner)) throw new Error("volume owner must be a numeric uid:gid");
+    const volume = await this.requireManagedVolume(workId, logicalId);
+    const helperName = `${managedVolumeName(this.installationId, workId, logicalId)}-init`;
+    const args = [
+      "container", "run", "--rm", "--name", helperName,
+      "--user", "0:0",
+      "--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "CHOWN",
+      "--security-opt", "no-new-privileges:true", "--pids-limit", "32",
+      "--label", `piwork.installation_id=${this.installationId}`,
+      "--label", `${MANAGED_LABEL}=true`, "--label", `${WORK_LABEL}=${workId}`,
+      "--label", `${RESOURCE_KIND_LABEL}=volume-init`, "--label", `${LOGICAL_ID_LABEL}=${logicalId}`,
+      "--mount", `type=volume,src=${volume.volumeName},dst=/target`,
+      "--entrypoint", "/bin/chown", image, owner, "/target",
+    ];
+    try {
+      await this.run(args, 30_000);
+    } catch (error) {
+      await this.run(["container", "rm", "--force", helperName], 5_000).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async assertDiskCapacity(requiredBytes: number): Promise<number> {
     if (!Number.isSafeInteger(requiredBytes) || requiredBytes < 0) throw new Error("requiredBytes must be a non-negative safe integer");
     const dockerRoot = (await this.run(["info", "--format", "{{.DockerRootDir}}"])).trim();
@@ -356,17 +396,32 @@ export class DockerRuntime {
     tail = 200,
     expectedContainerId?: string,
   ): Promise<ContainerLogCollection> {
-    const found = await this.findOne(workId, kind, logicalId);
+    const found = await this.findOne(workId, kind, logicalId, 2_000);
     if (found === undefined) return { text: "", truncated: false };
     if (expectedContainerId !== undefined && !sameContainerId(found, expectedContainerId)) {
       throw new Error("Docker container identity changed before log collection");
     }
     const immutableId = expectedContainerId ?? found;
-    await this.inspectExpected(immutableId, workId, kind, logicalId);
+    await this.inspectExpected(immutableId, workId, kind, logicalId, 2_000);
     const output = await this.run(["container", "logs", "--tail", String(Math.min(Math.max(tail, 1), 200)), immutableId], 2_000);
     const bytes = Buffer.from(output, "utf8");
     if (bytes.length <= 64 * 1024) return { text: output, truncated: false };
     return { text: bytes.subarray(bytes.length - 64 * 1024).toString("utf8"), truncated: true };
+  }
+
+  async execContainer(
+    workId: string,
+    kind: DockerResourceKind,
+    logicalId: string,
+    command: readonly string[],
+    timeoutMs = 2_000,
+  ): Promise<string> {
+    if (command.length === 0 || command.length > 128) throw new Error("exec command is outside policy");
+    const found = await this.findOne(workId, kind, logicalId, timeoutMs);
+    if (found === undefined) throw new Error(`container ${logicalId} does not exist`);
+    const container = await this.inspectExpected(found, workId, kind, logicalId, timeoutMs);
+    if (!container.running || container.containerId === undefined) throw new Error(`container ${logicalId} is not running`);
+    return this.run(["container", "exec", container.containerId, ...command], Math.min(timeoutMs, 2_000));
   }
 
   async stopContainer(
@@ -573,7 +628,12 @@ export class DockerRuntime {
       labels: inspection.Config.Labels ?? {},
       image: inspection.Image,
       user: inspection.Config.User,
-      mounts: (inspection.Mounts ?? []).map((mount) => ({ type: mount.Type, source: mount.Source, destination: mount.Destination, readOnly: !mount.RW })),
+      mounts: (inspection.Mounts ?? []).map((mount) => ({
+        type: mount.Type,
+        source: mount.Type === "volume" && mount.Name !== undefined ? mount.Name : mount.Source,
+        destination: mount.Destination,
+        readOnly: !mount.RW,
+      })),
       networkAddresses: Object.fromEntries(Object.entries(inspection.NetworkSettings?.Networks ?? {}).map(([name, network]) => [name, network.IPAddress])),
     };
   }
@@ -603,7 +663,7 @@ interface RawContainerInspection {
   readonly Name: string;
   readonly Config: { readonly Labels?: Readonly<Record<string, string>>; readonly Image?: string; readonly User?: string };
   readonly State: { readonly Running: boolean; readonly Status: string; readonly ExitCode: number };
-  readonly Mounts?: readonly { readonly Type: string; readonly Source: string; readonly Destination: string; readonly RW: boolean }[];
+  readonly Mounts?: readonly { readonly Type: string; readonly Name?: string; readonly Source: string; readonly Destination: string; readonly RW: boolean }[];
   readonly NetworkSettings?: { readonly Networks?: Readonly<Record<string, { readonly IPAddress: string }>> };
 }
 
@@ -651,6 +711,8 @@ function hashSpec(spec: DockerContainerSpec): string {
     cpuMillis: spec.cpuMillis ?? 100,
     memoryBytes: spec.memoryBytes ?? 64 * 1_024 * 1_024,
     user: spec.user ?? "65532:65532",
+    workingDirectory: spec.workingDirectory ?? null,
+    controlHost: spec.controlHost ?? null,
     network: spec.network === undefined ? null : {
       name: spec.network.name,
       workId: spec.network.workId,
@@ -678,7 +740,7 @@ function workNetworkName(installationId: string, workId: string): string {
   return `piwork-net-${suffix}`;
 }
 
-function managedVolumeName(installationId: string, workId: string, logicalId: string): string {
+export function managedVolumeName(installationId: string, workId: string, logicalId: string): string {
   const suffix = createHash("sha256")
     .update(`${installationId}\0${workId}\0volume\0${logicalId}`)
     .digest("hex")
@@ -694,6 +756,7 @@ function renderMount(mount: NonNullable<DockerContainerSpec["mounts"]>[number]):
   const fields = [`type=${mount.type}`];
   if (mount.source !== undefined) fields.push(`src=${mount.source}`);
   fields.push(`dst=${mount.target}`);
+  if (mount.type === "volume") fields.push("volume-nocopy");
   if (mount.readOnly) fields.push("readonly");
   return fields.join(",");
 }

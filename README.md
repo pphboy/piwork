@@ -22,8 +22,13 @@ npm ci
 npm run build
 npm run agent:image
 mkdir -p .piwork
-npm run serve -- serve --data-dir "$PWD/.piwork/core" --listen 127.0.0.1:7171
+npm run serve -- serve --data-dir "$PWD/.piwork/core" \
+  --listen 127.0.0.1:7171 \
+  --agent-grpc-listen 0.0.0.0:7172 \
+  --agent-grpc-advertise piwork-core:7172
 ```
+
+The second listener is the mutual-TLS control endpoint used only by Work agents. Core adds `piwork-core` as a host-gateway name inside agent containers, and every Work receives its own short-lived client identity. Keep port 7172 private to the Docker host; it is not a user API. The shown values are also the defaults.
 
 An empty Core still starts. `GET /healthz` returns success while `GET /readyz` reports `ADMIN_REQUIRED`. Core creates `$PWD/.piwork/core/operator.credential` with mode `0600`; it does not print that credential.
 
@@ -120,6 +125,39 @@ npm run cli -- session list <workId>
 npm run cli -- chat <workId> --session <sessionId> --message "Continue"
 ```
 
+## Agent-managed Work services
+
+On a fresh installation, the default Work context selects the bundled `deploy-work-service` Skill and the required `work-services` MCP adapter. They are copied into each new Work context and loaded before agentd reports ready. The Skill teaches the agent how to deploy an existing image; the MCP adapter is the only service-control path available to the model. Adding or updating this Skill does not rebuild the agent image. An explicit `--no-skills` removes the instructions from that Work, while an explicit configuration with `mcpServers: []` also removes the deployment tools after apply.
+
+Application containers share the Work bridge network with agentd. A service named `demo` is reachable inside that Work as `svc-demo`; Core never publishes a host port. Services may mount only the Work workspace at `/var/data/workspace` and never receive agentd's private `/var/data`, control credentials, the Docker socket, host paths, or another network. Core uses an existing local or registry image and does not build or commit an application image.
+
+The workspace volume is the persistence boundary. Put source under `/var/data/workspace/apps/<service-name>` and mutable data under `/var/data/workspace/data/<service-name>`. Bind servers to `0.0.0.0`. The container writable layer and `/tmp` are disposable.
+
+This CLI demo asks the agent to write a Python standard-library server, deploy it, and verify it from the same Work:
+
+```bash
+npm run cli -- work create --name service-demo --wait
+# Copy workId from the response.
+npm run cli -- chat <workId> --message '
+Use the deploy-work-service Skill. Create apps/demo/server.py using
+http.server.ThreadingHTTPServer on 0.0.0.0:8000. Store an atomic JSON counter in
+data/demo/counter.json. Deploy it from an existing Python image as service demo,
+with a read-write workspace mount, internal TCP port http:8000, and HTTP
+readiness at /health. Wait for the Operation, request http://svc-demo:8000/
+from this Work twice, and report the counter values and service ID.'
+```
+
+The expected model tool flow is `work-services__deployment_context`, file writes through the SDK, `work-services__service_create`, then polling `work-services__operation_get` and `work-services__service_get`. The agent can call `work-services__service_logs` for bounded application output. These provider-safe names map internally to canonical MCP names such as `work-services.service_create`, which remain the names used by tool policy and runtime readiness. A successful result must include the durable service and Operation IDs and an actual request to `svc-demo`; a text-only claim is not deployment evidence.
+
+Service actions have distinct durable meanings:
+
+- `service_restart` replaces the current enabled instance and keeps future restoration enabled.
+- `service_stop` disables the service. It remains defined but will not return on Work start until `service_start` enables it.
+- `work stop` stops every application service and agentd while retaining enabled state, definitions, and workspace data. `work start` restores enabled services.
+- `service_remove` tombstones the service and removes its container while retaining the shared workspace. Work deletion retains its managed volumes for explicit owner cleanup.
+
+Mutations return after durable acceptance, before image resolution and readiness complete. Keep the returned `operationId`, poll it with `operation_get`, and reuse the same idempotency key and payload if a reply is lost. Do not submit a new key merely because image preparation is slow. Failures expose fixed diagnostic codes and stages such as `IMAGE_UNAVAILABLE` at `service-image`, `SERVICE_EXITED` or `SERVICE_READINESS_TIMEOUT` at `service-readiness`, and `DOCKER_UNAVAILABLE`. `service_logs` returns at most 200 lines and 64 KiB, defaults to 100 lines, uses a two-second collection bound, and is available only to the Work owner or its current agent identity. Log content remains application data and is never copied into Core's durable error message.
+
 Each Work has an active context, a desired context, and a revision-free pending flag:
 
 ```bash
@@ -147,7 +185,7 @@ npm run cli -- work config apply <workId> --idempotency-key apply-2 --wait
 
 To adopt updated managed Skill content, select that Skill again for the Work and apply the new desired context. Existing Work copies remain usable if the managed Skill is later updated, disabled, removed, or if its original source directory disappears. Configuration commands do not accept or expose numeric revisions.
 
-This is the initial pre-0.1 storage format. Core performs structural database initialization and same-version recovery, but it does not convert older experimental Work context descriptors or attach unbound Sessions. An unsupported context fails explicitly and remains untouched.
+This is the initial pre-0.1 storage format. Core performs structural database initialization and same-version recovery, but it does not migrate older experimental Work contexts, one-volume Work layouts, or service records without captured image identities. Unsupported data fails explicitly and remains untouched; create a new Work with the current version and remove retained old data explicitly when it is no longer needed.
 
 ## Environment-file startup and deployment test
 
@@ -162,6 +200,7 @@ The script builds the workspace, selects a free loopback port, starts the compil
 For normal startup, `piwork-serve serve --env-file <path>` recognizes:
 
 - `PIWORK_DATA_DIR`, `PIWORK_LISTEN`, and `PIWORK_CORE_URL`
+- `PIWORK_AGENT_GRPC_LISTEN` and `PIWORK_AGENT_GRPC_ADVERTISE` for the private agent-to-Core service-control endpoint
 - `PIWORK_ADMIN_ACCOUNT` and `PIWORK_ADMIN_PASSWORD`
 - `PIWORK_AGENT_IMAGE`, `PIWORK_MODEL_PROVIDER`, `PIWORK_MODEL`, optional `PIWORK_MODEL_BASE_URL`, and `PIWORK_API_KEY`; `PIWORK_MODEL_ID` and `PIWORK_MODEL_API_KEY` are accepted as compatibility environment names
 - `PIWORK_OPERATOR_CREDENTIAL_PATH` for operator client commands
@@ -325,7 +364,7 @@ piwork-serve --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
   --json skills list
 ```
 
-Core prints one JSON `core.listening` record after startup checks complete. Stop it with `SIGTERM` or `Ctrl-C`; healthy Work containers remain alive and the next Core process adopts them using each Work's active configuration. See [operations](docs/operations.md) for readiness, restart, backup, credentials, and data retention.
+Core prints one JSON `core.listening` record after startup checks complete. Stop it with `SIGTERM` or `Ctrl-C`; Core closes new admission, drains active Runs, reaps MCP subprocesses, stops every Work service even if agentd is missing, then stops agentd. Shutdown is bounded to 45 seconds and fails instead of claiming a clean exit when an owned container cannot be confirmed stopped. The next Core process restores only Works whose desired state is still running. See [operations](docs/operations.md) for readiness, restart, backup, credentials, and data retention.
 
 ## Verification
 

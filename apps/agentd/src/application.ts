@@ -10,6 +10,7 @@ import {
 } from "@grpc/grpc-js";
 import {
   AgentServiceService,
+  CONTRACT_VERSION,
   resolveBuiltInWorkTools,
   RunState,
   type AgentServiceServer,
@@ -40,9 +41,11 @@ import { RunManager } from "./runs.js";
 import { AgentSessionService } from "./sessions.js";
 import { loadConfiguredSkills, type ConfiguredSkill } from "./skills.js";
 import { emitAgentDiagnostic } from "./diagnostics.js";
-import type { ResourceLoader } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ResourceLoader, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { McpBridge, type McpBridgeServer } from "@piwork/pi-adapter";
+import type { McpServer } from "@piwork/contracts";
 
-export const AGENT_PROTOCOL_VERSION = "v1";
+export const AGENT_PROTOCOL_VERSION = CONTRACT_VERSION;
 
 export interface AgentRuntimeConfig {
   readonly version: 1;
@@ -71,6 +74,13 @@ export interface AgentRuntimeConfig {
     readonly serverPrivateKeyPath: string;
     readonly expectedClientCommonName: string;
   };
+  readonly serviceControl?: {
+    readonly endpoint: string;
+    readonly serverName: string;
+    readonly caCertificatePath: string;
+    readonly clientCertificatePath: string;
+    readonly clientPrivateKeyPath: string;
+  };
 }
 
 interface CapturedWorkContext {
@@ -79,6 +89,8 @@ interface CapturedWorkContext {
   readonly agentsMd: string;
   readonly contextIdentity: string;
   readonly resolvedTools: readonly string[];
+  readonly toolPolicy: { readonly allowed: readonly string[]; readonly denied: readonly string[] };
+  readonly mcpServers: readonly McpServer[];
 }
 
 export interface LoadedWorkContext {
@@ -92,6 +104,8 @@ export interface LoadedWorkContext {
     readonly modelVisible: boolean;
     readonly visibilityReason: "" | "model-invocation-disabled" | "read-tools-disabled";
   }[];
+  readonly mcpServers: readonly McpServer[];
+  readonly toolPolicy: CapturedWorkContext["toolPolicy"];
 }
 
 export class AgentApplication {
@@ -104,6 +118,7 @@ export class AgentApplication {
     private readonly daemon: AgentDaemonControl,
     private readonly sessions: AgentSessionService,
     private readonly runs: RunManager,
+    private readonly mcp: McpBridge,
   ) {}
 
   static async create(configPath: string): Promise<AgentApplication> {
@@ -113,13 +128,14 @@ export class AgentApplication {
     }
     mkdirSync(config.dataDirectory, { recursive: true, mode: 0o700 });
     const store = WorkStore.open(join(config.dataDirectory, "work.sqlite"));
+    let mcp: McpBridge | undefined;
     try {
       const daemon = new AgentDaemonControl({
         workId: config.workId,
         generation: config.generation,
         instanceId: config.instanceId,
       });
-      const workspace = join(config.dataDirectory, "workspace");
+      const workspace = "/var/data/workspace";
       const sessionRoot = join(config.dataDirectory, "sessions");
       mkdirSync(workspace, { recursive: true });
       mkdirSync(sessionRoot, { recursive: true });
@@ -130,18 +146,31 @@ export class AgentApplication {
         correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
       });
       const loaded = await loadValidatedWorkContext(context);
+      mcp = new McpBridge();
+      emitAgentDiagnostic({ stage: "mcp-initialize", outcome: "started", code: "MCP_INITIALIZATION_FAILED", correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
+      try {
+        await mcp.initialize(loaded.mcpServers.map(mcpServer));
+        emitAgentDiagnostic({ stage: "mcp-initialize", outcome: "succeeded", code: "MCP_INITIALIZATION_FAILED", correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
+      } catch (error) {
+        emitAgentDiagnostic({ stage: "mcp-initialize", outcome: "failed", code: "MCP_INITIALIZATION_FAILED", correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
+        throw error;
+      }
+      const bridgedTools = mcpTools(mcp, loaded.toolPolicy);
+      const customTools = bridgedTools.map((tool) => tool.definition);
+      const resolvedTools = [...loaded.resolvedTools, ...bridgedTools.map((tool) => tool.canonicalName)];
+      const sdkTools = [...loaded.resolvedTools, ...customTools.map((tool) => tool.name)];
       const runs = new RunManager(store, daemon, new PiSdkRunExecutor(
         sessions,
         join(config.dataDirectory, "agent"),
         { ...config.model, deterministic: config.deterministic },
-        { resourceLoader: loaded.loader, resolvedTools: loaded.resolvedTools },
+        { resourceLoader: loaded.loader, resolvedTools: sdkTools, customTools },
       ));
       runs.recover();
       daemon.configure({
         modelCredentialStatus: "available",
         contextIdentity: loaded.contextIdentity,
         loadedSkills: loaded.skills,
-        resolvedTools: [...loaded.resolvedTools],
+        resolvedTools,
         initializationComplete: true,
         initializationOnly: config.initializationOnly,
       });
@@ -149,12 +178,16 @@ export class AgentApplication {
         stage: "skill-load", outcome: "succeeded", code: "SKILL_LOAD_FAILED",
         correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
       });
-      return new AgentApplication(config, store, daemon, sessions, runs);
+      return new AgentApplication(config, store, daemon, sessions, runs, mcp);
     } catch (error) {
       emitAgentDiagnostic({
         stage: "skill-load", outcome: "failed", code: "SKILL_LOAD_FAILED",
         correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
       });
+      if (mcp !== undefined) await Promise.race([
+        mcp.close(),
+        new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+      ]);
       store.close();
       throw error;
     }
@@ -181,6 +214,10 @@ export class AgentApplication {
     if (this.closed) return;
     this.closed = true;
     await this.runs.drain(5_000);
+    await Promise.race([
+      this.mcp.close(),
+      new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+    ]);
     await new Promise<void>((resolve) => this.server.tryShutdown(() => resolve()));
     this.store.close();
   }
@@ -340,14 +377,19 @@ function readConfig(path: string): AgentRuntimeConfig {
     || value.tls === undefined || typeof value.tls.caCertificatePath !== "string"
     || typeof value.tls.serverCertificatePath !== "string"
     || typeof value.tls.serverPrivateKeyPath !== "string"
-    || typeof value.tls.expectedClientCommonName !== "string") throw new Error("agent configuration is invalid");
+    || typeof value.tls.expectedClientCommonName !== "string"
+    || (value.serviceControl !== undefined && (typeof value.serviceControl.endpoint !== "string"
+      || typeof value.serviceControl.serverName !== "string"
+      || typeof value.serviceControl.caCertificatePath !== "string"
+      || typeof value.serviceControl.clientCertificatePath !== "string"
+      || typeof value.serviceControl.clientPrivateKeyPath !== "string"))) throw new Error("agent configuration is invalid");
   return value as AgentRuntimeConfig;
 }
 
 function loadWorkContext(config: AgentRuntimeConfig): CapturedWorkContext {
   const configPath = config.contextConfigPath ?? "/run/piwork/config.json";
   try {
-    const value = JSON.parse(readFileSync(configPath, "utf8")) as { skills?: unknown; agentsMdPath?: unknown; contextIdentity?: unknown; resolvedTools?: unknown; tools?: Parameters<typeof resolveBuiltInWorkTools>[0] };
+    const value = JSON.parse(readFileSync(configPath, "utf8")) as { skills?: unknown; agentsMdPath?: unknown; contextIdentity?: unknown; resolvedTools?: unknown; tools?: Parameters<typeof resolveBuiltInWorkTools>[0]; mcpServers?: unknown };
     const metadata = JSON.parse(readFileSync(join(configPath, "..", "metadata.json"), "utf8")) as { snapshotId?: unknown; workId?: unknown; skills?: Array<{ name?: unknown; identity?: unknown }> };
     if (metadata.workId !== config.workId || typeof metadata.snapshotId !== "string" || metadata.snapshotId !== config.contextIdentity) {
       throw new Error("Work context identity mismatch");
@@ -366,7 +408,8 @@ function loadWorkContext(config: AgentRuntimeConfig): CapturedWorkContext {
       ? value.resolvedTools.filter((item): item is string => typeof item === "string")
       : value.tools === undefined ? undefined : resolveBuiltInWorkTools(value.tools);
     if (resolvedTools === undefined) throw new Error("Work tool policy is unavailable");
-    return { skillRoot: "/run/piwork/skills", skills, agentsMd, contextIdentity: metadata.snapshotId, resolvedTools };
+    if (value.tools === undefined || !Array.isArray(value.mcpServers)) throw new Error("Work MCP configuration is unavailable");
+    return { skillRoot: "/run/piwork/skills", skills, agentsMd, contextIdentity: metadata.snapshotId, resolvedTools, toolPolicy: value.tools, mcpServers: value.mcpServers as McpServer[] };
   } catch (error) { throw error; }
 }
 
@@ -377,6 +420,8 @@ async function loadValidatedWorkContext(context: CapturedWorkContext): Promise<L
     contextIdentity: context.contextIdentity,
     loader: loaded.loader,
     resolvedTools: context.resolvedTools,
+    mcpServers: context.mcpServers,
+    toolPolicy: context.toolPolicy,
     skills: loaded.statuses.map((status) => {
       const skill = loaded.skills.find((item) => item.name === status.name);
       const visibility = skillVisibility(skill?.disableModelInvocation, tools);
@@ -388,6 +433,45 @@ async function loadValidatedWorkContext(context: CapturedWorkContext): Promise<L
       };
     }),
   };
+}
+
+function mcpServer(server: McpServer): McpBridgeServer {
+  if (server.transport === "stdio") {
+    if (server.command === undefined) throw new Error(`stdio MCP ${server.serverId} has no command`);
+    return {
+      serverId: server.serverId,
+      required: server.required,
+      transport: "stdio",
+      command: server.command,
+      args: server.args,
+      timeoutMs: server.timeoutMs,
+    };
+  }
+  if (server.url === undefined) throw new Error(`HTTP MCP ${server.serverId} has no URL`);
+  return { serverId: server.serverId, required: server.required, transport: "streamable-http", url: server.url, timeoutMs: server.timeoutMs };
+}
+
+function mcpTools(
+  bridge: McpBridge,
+  policy: CapturedWorkContext["toolPolicy"],
+): Array<{ readonly canonicalName: string; readonly definition: ToolDefinition }> {
+  const allowed = new Set(policy.allowed);
+  const denied = new Set(policy.denied);
+  return bridge.listTools()
+    .filter((tool) => (allowed.size === 0 || allowed.has(tool.namespacedName)) && !denied.has(tool.namespacedName))
+    .map((tool) => ({
+      canonicalName: tool.namespacedName,
+      definition: defineTool({
+        name: tool.modelName,
+        label: tool.namespacedName,
+        description: `${tool.description ?? `MCP tool ${tool.namespacedName}`} (canonical name: ${tool.namespacedName})`,
+        parameters: tool.inputSchema as any,
+        execute: async (_id, parameters) => {
+          const result = await bridge.callTool(tool.namespacedName, parameters) as { content?: unknown; isError?: boolean };
+          return { content: Array.isArray(result.content) ? result.content as any : [{ type: "text", text: JSON.stringify(result) }], details: { serverId: tool.serverId, canonicalName: tool.namespacedName, isError: result.isError === true } };
+        },
+      }),
+    }));
 }
 
 export function skillVisibility(

@@ -1,4 +1,4 @@
-import { createAgentSession, ModelRuntime, type ResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, ModelRuntime, type ResourceLoader, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { lstatSync, readFileSync } from "node:fs";
 import { createDeterministicRuntime, mapSdkEvent } from "@piwork/pi-adapter";
 import type { RunExecutionContext, RunExecutor } from "./runs.js";
@@ -15,7 +15,7 @@ export class PiSdkRunExecutor implements RunExecutor {
       readonly credentialPath?: string;
       readonly deterministic: boolean;
     },
-    private readonly context: { readonly resourceLoader: ResourceLoader; readonly resolvedTools: readonly string[] },
+    private readonly context: { readonly resourceLoader: ResourceLoader; readonly resolvedTools: readonly string[]; readonly customTools?: readonly ToolDefinition[] },
   ) {}
 
   async execute(context: RunExecutionContext): Promise<{ readonly finalText: string }> {
@@ -23,13 +23,14 @@ export class PiSdkRunExecutor implements RunExecutor {
       ? await createDeterministicRuntime()
       : await this.productionRuntime();
     const { session } = await createAgentSession({
-      cwd: process.cwd(),
+      cwd: this.sessions.workspaceDirectory(),
       agentDir: this.agentDirectory,
       modelRuntime: runtime,
       model,
       thinkingLevel: "off",
       sessionManager: this.sessions.continue(context.sessionId),
       tools: [...this.context.resolvedTools],
+      customTools: [...(this.context.customTools ?? [])],
       resourceLoader: this.context.resourceLoader,
     });
     let finalText = "";

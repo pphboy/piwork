@@ -50,6 +50,8 @@ export const ResourcePolicySchema = Type.Object(
   {
     cpuMillis: Type.Integer({ minimum: 100, maximum: 128_000 }),
     memoryBytes: Type.Integer({ minimum: 64 * 1_024 * 1_024 }),
+    agentCpuMillis: Type.Integer({ minimum: 100, maximum: 128_000 }),
+    agentMemoryBytes: Type.Integer({ minimum: 64 * 1_024 * 1_024 }),
     maxServices: Type.Integer({ minimum: 0, maximum: 1_000 }),
     maxRetainedVolumes: Type.Integer({ minimum: 0, maximum: 10_000 }),
   },
@@ -166,3 +168,12 @@ export type SetWorkConfigurationRequest = Type.Static<typeof SetWorkConfiguratio
 export type WorkConfigurationPatch = Type.Static<typeof WorkConfigurationPatchSchema>;
 export type SetWorkSkillsRequest = Type.Static<typeof SetWorkSkillsRequestSchema>;
 export type SetWorkAgentsRequest = Type.Static<typeof SetWorkAgentsRequestSchema>;
+
+export function validateResourcePolicy(resources: ResourcePolicy): void {
+  if (resources.agentCpuMillis > resources.cpuMillis) {
+    throw new RangeError("resources.agentCpuMillis exceeds the Work CPU budget");
+  }
+  if (resources.agentMemoryBytes > resources.memoryBytes) {
+    throw new RangeError("resources.agentMemoryBytes exceeds the Work memory budget");
+  }
+}

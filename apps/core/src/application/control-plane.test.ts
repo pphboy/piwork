@@ -87,9 +87,9 @@ test("empty Core listens, reports staged readiness, and separates operator from 
     assert.equal(importedSkill.body.name, "code-review");
     assert.equal("path" in importedSkill.body || "identity" in importedSkill.body || "content" in importedSkill.body, false);
     const operatorSkills = await json(base, "/control/skills", { authorization: `Operator ${operator}` });
-    assert.deepEqual((operatorSkills.body.skills as Array<Record<string, unknown>>).map((skill) => skill.name), ["code-review"]);
+    assert.deepEqual((operatorSkills.body.skills as Array<Record<string, unknown>>).map((skill) => skill.name), ["code-review", "deploy-work-service"]);
     const userSkills = await json(base, "/api/v1/skills", { authorization: `Bearer ${token}` });
-    assert.deepEqual(userSkills.body, { skills: [{ name: "code-review" }] });
+    assert.deepEqual(userSkills.body, { skills: [{ name: "code-review" }, { name: "deploy-work-service" }] });
     const currentDefault = (defaultWork.body.configuration as Record<string, unknown>);
     const selectedDefault = await json(base, "/control/default-work", {
       method: "PUT", authorization: `Operator ${operator}`, body: { configuration: { ...currentDefault, skills: ["code-review"] } },
@@ -139,6 +139,44 @@ test("empty Core listens, reports staged readiness, and separates operator from 
     assert.ok(initialSkillIdentityA);
     const profileA = application.store.getWorkConfigRevision(String(workA.body.workId), 1)?.runtimeProfileJson;
     assert.equal((JSON.parse(profileA!) as { model: { id: string } }).model.id, "claude-test");
+
+    const otherWork = await json(base, "/api/v1/works", {
+      method: "POST", authorization: `Bearer ${otherToken}`,
+      body: { name: "service-routes", idempotencyKey: "service-routes-work" },
+    });
+    const otherWorkId = String(otherWork.body.workId);
+    const serviceDefinition = {
+      name: "route-demo", image: { reference: "python:3.13-slim" }, command: "/bin/true",
+      args: [], environment: {}, secretRefs: [], workingDirectory: "/", mounts: [], ports: [],
+      cpuMillis: 250, memoryBytes: 134_217_728, enabled: false, required: false, restartPolicy: "bounded",
+    };
+    const serviceCreate = await json(base, `/api/v1/works/${otherWorkId}/services`, {
+      method: "POST", authorization: `Bearer ${otherToken}`,
+      body: { definition: serviceDefinition, idempotencyKey: "service-route-create" },
+    });
+    assert.equal(serviceCreate.response.status, 202, JSON.stringify(serviceCreate.body));
+    assert.equal(serviceCreate.body.workId, otherWorkId);
+    assert.equal(serviceCreate.body.correlationId, serviceCreate.body.operationId);
+    const serviceId = String(serviceCreate.body.serviceId);
+    assert.equal((await json(base, `/api/v1/works/${otherWorkId}/services`, { authorization: `Bearer ${token}` })).response.status, 200);
+    assert.equal((await json(base, `/api/v1/works/${otherWorkId}/services/${serviceId}`, { authorization: `Bearer ${token}` })).response.status, 200);
+    assert.equal((await json(base, `/api/v1/works/${otherWorkId}/services/${serviceId}/logs`, { authorization: `Bearer ${token}` })).response.status, 403);
+    assert.equal((await json(base, `/api/v1/works/${otherWorkId}/services/${serviceId}/revisions`, { authorization: `Bearer ${otherToken}` })).response.status, 200);
+    assert.equal((await json(base, `/api/v1/operations/${String(serviceCreate.body.operationId)}`, { authorization: `Bearer ${otherToken}` })).response.status, 200);
+    const serviceUpdate = await json(base, `/api/v1/works/${otherWorkId}/services/${serviceId}`, {
+      method: "PUT", authorization: `Bearer ${otherToken}`,
+      body: { expectedRevision: 1, definition: { ...serviceDefinition, args: ["--help"] }, idempotencyKey: "service-route-update" },
+    });
+    assert.equal(serviceUpdate.response.status, 202, JSON.stringify(serviceUpdate.body));
+    const serviceDisable = await json(base, `/api/v1/works/${otherWorkId}/services/${serviceId}/disable`, {
+      method: "POST", authorization: `Bearer ${otherToken}`, body: { idempotencyKey: "service-route-disable" },
+    });
+    assert.equal(serviceDisable.response.status, 202, JSON.stringify(serviceDisable.body));
+    const serviceRemove = await json(base, `/api/v1/works/${otherWorkId}/services/${serviceId}/remove`, {
+      method: "POST", authorization: `Bearer ${otherToken}`, body: { idempotencyKey: "service-route-remove" },
+    });
+    assert.equal(serviceRemove.response.status, 202, JSON.stringify(serviceRemove.body));
+    await application.services.waitForIdle();
 
     await json(base, "/control/runtime", {
       method: "PUT",

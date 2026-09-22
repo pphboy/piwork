@@ -4,6 +4,7 @@ ARG NPM_REGISTRY=https://npmreg.proxy.ustclug.org
 WORKDIR /workspace
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/agentd/package.json apps/agentd/tsconfig.json ./apps/agentd/
+COPY apps/service-mcp/package.json apps/service-mcp/tsconfig.json ./apps/service-mcp/
 COPY packages/contracts/package.json packages/contracts/tsconfig.json ./packages/contracts/
 COPY packages/work-store/package.json packages/work-store/tsconfig.json ./packages/work-store/
 COPY packages/pi-adapter/package.json packages/pi-adapter/tsconfig.json ./packages/pi-adapter/
@@ -15,6 +16,7 @@ RUN --mount=type=cache,target=/root/.npm npm config set registry "$NPM_REGISTRY"
  && npm config set fetch-timeout 600000 \
  && for attempt in 1 2 3; do npm ci --ignore-scripts && break; test "$attempt" = 3 && exit 1; done
 COPY apps/agentd/src ./apps/agentd/src
+COPY apps/service-mcp/src ./apps/service-mcp/src
 COPY packages/contracts/src ./packages/contracts/src
 COPY packages/contracts/proto ./packages/contracts/proto
 COPY packages/work-store/src ./packages/work-store/src
@@ -22,22 +24,28 @@ COPY packages/pi-adapter/src ./packages/pi-adapter/src
 RUN npm run build -w @piwork/contracts \
  && npm run build -w @piwork/work-store \
  && npm run build -w @piwork/pi-adapter \
+ && npm run build -w @piwork/service-mcp \
  && npm run build -w @piwork/agentd
 
 FROM node:24-bookworm-slim AS runtime
-LABEL io.piwork.agent.protocol="v1" io.piwork.agent.version="0.1.0"
+LABEL io.piwork.agent.protocol="v2" io.piwork.agent.version="0.1.0"
 ENV HOME=/var/data
 WORKDIR /workspace
 COPY --from=build /workspace/node_modules ./node_modules
 COPY --from=build /workspace/apps/agentd/package.json ./apps/agentd/package.json
 COPY --from=build /workspace/apps/agentd/dist ./apps/agentd/dist
+COPY --from=build /workspace/apps/service-mcp/package.json ./apps/service-mcp/package.json
+COPY --from=build /workspace/apps/service-mcp/dist ./apps/service-mcp/dist
 COPY --from=build /workspace/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
 COPY --from=build /workspace/packages/work-store/package.json ./packages/work-store/package.json
 COPY --from=build /workspace/packages/work-store/dist ./packages/work-store/dist
 COPY --from=build /workspace/packages/pi-adapter/package.json ./packages/pi-adapter/package.json
 COPY --from=build /workspace/packages/pi-adapter/dist ./packages/pi-adapter/dist
-RUN mkdir -p /var/data /workspace/apps/agentd && chown -R 10001:10001 /var/data /workspace/apps/agentd
+RUN chmod 0755 /workspace/apps/service-mcp/dist/main.js \
+ && ln -s /workspace/apps/service-mcp/dist/main.js /usr/local/bin/piwork-service-mcp \
+ && mkdir -p /var/data /workspace/apps/agentd \
+ && chown -R 10001:10001 /var/data /workspace/apps/agentd
 USER 10001:10001
 ENTRYPOINT ["node", "/workspace/apps/agentd/dist/main.js"]
 

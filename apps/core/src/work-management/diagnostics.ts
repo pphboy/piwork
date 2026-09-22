@@ -15,6 +15,7 @@ const messages: Record<DiagnosticCode, readonly [string, string, boolean]> = {
   SKILL_VALIDATION_FAILED: ["The selected Skill content is invalid.", "Correct the named Skill tree, reselect it, and apply.", false],
   SKILL_LOAD_FAILED: ["The selected Skill could not be loaded.", "Correct SDK-compatible Skill content, reselect it, and apply.", false],
   SKILL_DIRECTORY_MISMATCH: ["The Skill was loaded from an unexpected directory.", "Correct Work context binding and retry.", false],
+  MCP_INITIALIZATION_FAILED: ["A required Work MCP server could not be initialized.", "Inspect the MCP server configuration and retry the Work operation.", true],
   RUNTIME_PREPARE_FAILED: ["The Work runtime could not be prepared.", "Restore the runtime dependency and retry with a new key.", true],
   RUNTIME_START_FAILED: ["The Work runtime could not be started.", "Restore the runtime dependency and retry with a new key.", true],
   AGENT_CONTEXT_INCOMPATIBLE: ["The agent runtime does not support this Work context contract.", "Deploy a compatible Core and agentd image, then explicitly select it for this Work.", false],
@@ -25,6 +26,17 @@ const messages: Record<DiagnosticCode, readonly [string, string, boolean]> = {
   ROLLBACK_FAILED: ["The previous Work runtime could not be restored.", "Restore the runtime dependency and retry the retained active context.", true],
   DIAGNOSTIC_COLLECTION_FAILED: ["Runtime diagnostics could not be collected.", "Restore Docker access before retrying.", true],
   DIAGNOSTIC_PERSIST_FAILED: ["Operation diagnostics could not be persisted.", "Restore Core storage before retrying.", true],
+  INVALID_SERVICE_DEFINITION: ["The service definition is invalid.", "Correct the identified service field and submit a new request.", false],
+  UNSUPPORTED_SERVICE_OPTION: ["The service definition contains an unsupported option.", "Remove the unsupported option and submit a new request.", false],
+  SERVICE_FORMAT_UNSUPPORTED: ["The stored service format is unsupported.", "Create a new service definition with the current pre-0.1 version.", false],
+  IMAGE_UNAVAILABLE: ["The selected service image is unavailable.", "Restore access to the captured image and retry the service.", true],
+  MOUNT_DENIED: ["The requested service storage mount is not allowed.", "Use only the Work workspace mount and retry.", false],
+  QUOTA_EXCEEDED: ["The service exceeds an available resource quota.", "Reduce the service allocation or free Work capacity before retrying.", true],
+  SERVICE_START_FAILED: ["The service runtime could not be started.", "Inspect the service Operation and bounded logs, then retry.", true],
+  SERVICE_EXITED: ["The service exited before it became ready.", "Inspect bounded service logs and correct the startup command before retrying.", true],
+  SERVICE_READINESS_TIMEOUT: ["The service did not become ready before its deadline.", "Inspect the readiness probe and bounded service logs before retrying.", true],
+  DOCKER_UNAVAILABLE: ["The service container runtime is unavailable.", "Restore Docker access and retry the service.", true],
+  OPERATION_SUPERSEDED: ["The service Operation was superseded by a newer target.", "Observe the newer service Operation instead.", false],
   WORK_OPERATION_FAILED: ["The Work operation failed.", "Inspect the identified stage and correct the configuration before retrying.", false],
 };
 
@@ -35,6 +47,8 @@ export function emptyOperationDiagnostics(): OperationDiagnostics {
 export function safeDiagnostic(code: DiagnosticCode, stage: DiagnosticStage, input: {
   readonly field?: string;
   readonly skillName?: string;
+  readonly serviceId?: string;
+  readonly correlationId?: string;
   readonly exitCode?: number;
 } = {}): SafeDiagnostic {
   const [message, remediation, retryable] = messages[code];
@@ -50,7 +64,9 @@ export function diagnosticFromError(error: unknown, stage: DiagnosticStage, inpu
         : "WORK_OPERATION_FAILED";
   const resolvedStage = typeof item.stage === "string" && [
     "context-copy", "context-validate", "runtime-prepare", "runtime-start", "skill-validate",
-    "skill-load", "readiness", "activation", "rollback",
+    "skill-load", "mcp-initialize", "readiness", "activation", "rollback",
+    "service-accept", "service-image", "service-storage", "service-start",
+    "service-readiness", "service-recovery", "service-stop", "service-remove",
   ].includes(item.stage) ? item.stage as DiagnosticStage : stage;
   return safeDiagnostic(code, resolvedStage, {
     ...input,
@@ -66,6 +82,7 @@ export function appendStage(diagnostics: OperationDiagnostics, stage: Diagnostic
     timestamp: now, component, stage, outcome, code: diagnostic.code,
     message: outcome === "failed" ? diagnostic.message : terminalStageMessage(stage, outcome),
     ...(diagnostic.skillName === undefined ? {} : { skillName: diagnostic.skillName }),
+    ...(diagnostic.serviceId === undefined ? {} : { serviceId: diagnostic.serviceId }),
   }];
   let truncated = diagnostics.truncated;
   while (stages.length > 64 || Buffer.byteLength(JSON.stringify(stages), "utf8") > 64 * 1024) {
@@ -83,9 +100,18 @@ function terminalStageMessage(stage: DiagnosticStage, outcome: "succeeded" | "fa
     "runtime-start": "Work runtime was started.",
     "skill-validate": "Work Skill directories were validated.",
     "skill-load": "Work Skills were validated by the agent SDK.",
+    "mcp-initialize": "Required Work MCP servers were initialized.",
     readiness: "Work runtime readiness was verified.",
     activation: "Work configuration activation completed.",
     rollback: "The previous Work runtime was restored.",
+    "service-accept": "The service request was accepted durably.",
+    "service-image": "The service image identity was captured.",
+    "service-storage": "The service storage was prepared.",
+    "service-start": "The service runtime was started.",
+    "service-readiness": "The service readiness probe succeeded.",
+    "service-recovery": "The service runtime was reconciled.",
+    "service-stop": "The service runtime was stopped.",
+    "service-remove": "The service runtime was removed.",
   };
   return messagesByStage[stage];
 }
@@ -177,6 +203,21 @@ const nonFailureMessages: Partial<Record<`${DiagnosticStage}:${"started" | "succ
   "readiness:succeeded": "Work runtime readiness was verified.",
   "rollback:succeeded": "The previous Work runtime was restored.",
   "runtime-start:interrupted": "Work runtime reconciliation was interrupted and will be recovered.",
+  "service-accept:succeeded": "The service request was accepted durably.",
+  "service-image:started": "Service image resolution started.",
+  "service-image:succeeded": "The service image identity was captured.",
+  "service-storage:started": "Service storage and network preparation started.",
+  "service-storage:succeeded": "Service storage and network preparation completed.",
+  "service-start:started": "Service runtime startup started.",
+  "service-start:succeeded": "The service runtime was started.",
+  "service-readiness:started": "Service readiness verification started.",
+  "service-readiness:succeeded": "The service readiness probe succeeded.",
+  "service-recovery:started": "Service runtime reconciliation started.",
+  "service-recovery:succeeded": "The service runtime was reconciled.",
+  "service-stop:started": "Service runtime shutdown started.",
+  "service-stop:succeeded": "The service runtime was stopped.",
+  "service-remove:started": "Service runtime removal started.",
+  "service-remove:succeeded": "The service runtime was removed.",
 };
 
 export function emitDiagnostic(input: {
@@ -191,6 +232,8 @@ export function emitDiagnostic(input: {
   readonly workId?: string;
   readonly operationId?: string;
   readonly skillName?: string;
+  readonly serviceId?: string;
+  readonly reason?: string;
 }, logger: JsonLineLogger = stderrLogger): void {
   const skillName = input.skillName !== undefined && skillNamePattern.test(input.skillName)
     ? input.skillName
@@ -199,12 +242,17 @@ export function emitDiagnostic(input: {
   const message = input.outcome === "failed"
     ? diagnostic.message
     : nonFailureMessages[`${input.stage}:${input.outcome}`] ?? "Work operation state changed.";
+  const reason = input.reason !== undefined && /^[a-z0-9][a-z0-9-]{0,63}$/.test(input.reason)
+    ? input.reason
+    : undefined;
   logger.write(`${JSON.stringify({
     timestamp: input.timestamp, level: input.level, component: input.component,
     stage: input.stage, outcome: input.outcome, correlationId: input.correlationId,
     code: diagnostic.code, message,
     ...(input.workId === undefined ? {} : { workId: input.workId }),
     ...(input.operationId === undefined ? {} : { operationId: input.operationId }),
+    ...(input.serviceId === undefined ? {} : { serviceId: input.serviceId }),
+    ...(reason === undefined ? {} : { reason }),
     ...(diagnostic.skillName === undefined ? {} : { skillName: diagnostic.skillName }),
   })}\n`);
 }
@@ -223,6 +271,8 @@ function parseError(value: string | null): SafeDiagnostic | null {
     return safeDiagnostic(parsed.code as DiagnosticCode, parsed.stage as DiagnosticStage, {
       ...(typeof parsed.field === "string" ? { field: parsed.field } : {}),
       ...(typeof parsed.skillName === "string" ? { skillName: parsed.skillName } : {}),
+      ...(typeof parsed.serviceId === "string" ? { serviceId: parsed.serviceId } : {}),
+      ...(typeof parsed.correlationId === "string" ? { correlationId: parsed.correlationId } : {}),
       ...(typeof parsed.exitCode === "number" ? { exitCode: parsed.exitCode } : {}),
     });
   } catch { return null; }

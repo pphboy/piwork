@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { exitCodeFor, parseSkillSelection } from "./main.js";
+import { exitCodeFor, formatTerminalRunFailure, parseSkillSelection } from "./main.js";
 import { PiworkApiError } from "@piwork/client-sdk";
 
 const executable = resolve("dist/main.js");
@@ -40,6 +40,18 @@ test("documented safe error classes map to stable exit statuses", () => {
   assert.equal(exitCodeFor(new PiworkApiError(503, "UNAVAILABLE", "down")), 5);
   assert.equal(exitCodeFor(new PiworkApiError(409, "CONFLICT", "stale")), 6);
   assert.equal(exitCodeFor(new Error("unexpected")), 1);
+});
+
+test("terminal chat failures print the safe Run error and recovery command", () => {
+  const message = formatTerminalRunFailure("work-1", "run-1", {
+    state: 5,
+    error: { code: "MODEL_EXECUTION_FAILED", message: "Model execution failed.", retryable: true },
+  });
+  assert.match(message, /State: failed/);
+  assert.match(message, /Code: MODEL_EXECUTION_FAILED/);
+  assert.match(message, /Reason: Model execution failed\./);
+  assert.match(message, /Retryable: yes/);
+  assert.match(message, /piwork-cli run show work-1 run-1/);
 });
 
 test("Skill selection flags distinguish default, explicit, and empty selections", () => {

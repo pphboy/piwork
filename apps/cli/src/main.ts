@@ -285,8 +285,37 @@ async function submitChat(context: Context, workId: string, sessionId: string, p
   }
   if (cancelling) await waitRunTerminal(context, workId, runId);
   const result = await context.client.getRun(workId, runId);
-  if (["RUN_STATE_FAILED", "RUN_STATE_CANCELLED", "RUN_STATE_INTERRUPTED", 5, 6, 7].includes(result.state as never)) return 7;
+  if (["RUN_STATE_FAILED", "RUN_STATE_CANCELLED", "RUN_STATE_INTERRUPTED", 5, 6, 7].includes(result.state as never)) {
+    if (context.json) streamOutput(context, { type: "run-terminal", ...result });
+    else process.stderr.write(`${formatTerminalRunFailure(workId, runId, result)}\n`);
+    return 7;
+  }
   return 0;
+}
+
+export function formatTerminalRunFailure(
+  workId: string,
+  runId: string,
+  result: { readonly state?: unknown; readonly error?: { readonly code?: unknown; readonly message?: unknown; readonly retryable?: unknown } },
+): string {
+  const error = result.error;
+  return [
+    `Run: ${runId}`,
+    `State: ${runStateName(result.state)}`,
+    ...(error === undefined ? [] : [
+      `Code: ${typeof error.code === "string" ? error.code : "RUN_FAILED"}`,
+      `Reason: ${typeof error.message === "string" ? error.message : "Run failed."}`,
+      `Retryable: ${error.retryable === true ? "yes" : "no"}`,
+    ]),
+    `Inspect: piwork-cli run show ${workId} ${runId}`,
+  ].join("\n");
+}
+
+function runStateName(state: unknown): string {
+  if (state === 5 || state === "RUN_STATE_FAILED") return "failed";
+  if (state === 6 || state === "RUN_STATE_CANCELLED") return "cancelled";
+  if (state === 7 || state === "RUN_STATE_INTERRUPTED") return "interrupted";
+  return String(state ?? "unknown");
 }
 
 async function renderEvents(context: Context, workId: string, runId: string, after: number, chat = false, signal?: AbortSignal, interrupted?: () => boolean): Promise<void> {

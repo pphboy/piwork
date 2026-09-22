@@ -25,6 +25,16 @@ export interface GenerationTlsIdentity {
   readonly clientPrivateKeyPath: string;
   readonly serverName: string;
   readonly clientCommonName: string;
+  readonly serviceClientCertificatePath: string;
+  readonly serviceClientPrivateKeyPath: string;
+  readonly serviceClientCommonName: string;
+}
+
+export interface CoreServiceTlsIdentity {
+  readonly caCertificatePath: string;
+  readonly serverCertificatePath: string;
+  readonly serverPrivateKeyPath: string;
+  readonly serverName: string;
 }
 
 export function ensureInstallationAuthority(runtimeDirectory: string, installationId: string): InstallationAuthority {
@@ -67,18 +77,25 @@ export function ensureGenerationTlsIdentity(input: {
   readonly installationId: string;
   readonly workId: string;
   readonly generation: number;
+  readonly instanceId?: string;
 }): GenerationTlsIdentity {
+  const instanceId = input.instanceId ?? "agent-test";
   const authority = ensureInstallationAuthority(input.runtimeDirectory, input.installationId);
   const directory = join(input.runtimeDirectory, input.workId, `tls-generation-${input.generation}`);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
   const serverName = `agent.g${input.generation}.${input.workId}.piwork`;
   const clientCommonName = `core.g${input.generation}.${input.workId}.piwork`;
+  // The complete scoped identity is carried in the URI SAN. OpenSSL limits a
+  // Common Name to 64 bytes, which is too short for Work and instance UUIDs.
+  const serviceClientCommonName = "agent-service-client";
   const paths = {
     serverCertificatePath: join(directory, "agent-server.crt"),
     serverPrivateKeyPath: join(directory, "agent-server.key"),
     clientCertificatePath: join(directory, "core-client.crt"),
     clientPrivateKeyPath: join(directory, "core-client.key"),
+    serviceClientCertificatePath: join(directory, "agent-service-client.crt"),
+    serviceClientPrivateKeyPath: join(directory, "agent-service-client.key"),
   };
   const present = Object.values(paths).filter(existsSync).length;
   if (present !== 0 && present !== Object.keys(paths).length) {
@@ -88,10 +105,13 @@ export function ensureGenerationTlsIdentity(input: {
     const ca = new X509Certificate(readTlsFile(authority.certificatePath));
     const server = new X509Certificate(readTlsFile(paths.serverCertificatePath));
     const client = new X509Certificate(readTlsFile(paths.clientCertificatePath));
+    const serviceClient = new X509Certificate(readTlsFile(paths.serviceClientCertificatePath));
     const valid = certificateIsCurrent(server) && certificateIsCurrent(client)
-      && certificateIsTrusted(server, ca) && certificateIsTrusted(client, ca)
+      && certificateIsCurrent(serviceClient)
+      && certificateIsTrusted(server, ca) && certificateIsTrusted(client, ca) && certificateIsTrusted(serviceClient, ca)
       && server.checkHost(serverName) !== undefined
-      && client.subject.includes(`CN=${clientCommonName}`);
+      && client.subject.includes(`CN=${clientCommonName}`)
+      && serviceClient.subject.includes(`CN=${serviceClientCommonName}`);
     if (!valid) for (const path of Object.values(paths)) rmSync(path, { force: true });
   }
   if (!existsSync(paths.serverCertificatePath)) {
@@ -101,6 +121,13 @@ export function ensureGenerationTlsIdentity(input: {
       privateKeyPath: paths.serverPrivateKeyPath,
       commonName: serverName,
       extension: `basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:${serverName},URI:spiffe://piwork/work/${input.workId}/generation/${input.generation}/agent\n`,
+    });
+    issueCertificate({
+      authority,
+      certificatePath: paths.serviceClientCertificatePath,
+      privateKeyPath: paths.serviceClientPrivateKeyPath,
+      commonName: serviceClientCommonName,
+      extension: `basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=clientAuth\nsubjectAltName=URI:spiffe://piwork/installation/${input.installationId}/work/${input.workId}/generation/${input.generation}/instance/${instanceId}/role/agent-service-client\n`,
     });
     issueCertificate({
       authority,
@@ -118,7 +145,29 @@ export function ensureGenerationTlsIdentity(input: {
   chmodSync(authority.certificatePath, 0o644);
   chmodSync(paths.serverPrivateKeyPath, 0o644);
   chmodSync(paths.serverCertificatePath, 0o644);
-  return { caCertificatePath: authority.certificatePath, ...paths, serverName, clientCommonName };
+  chmodSync(paths.serviceClientPrivateKeyPath, 0o644);
+  chmodSync(paths.serviceClientCertificatePath, 0o644);
+  return { caCertificatePath: authority.certificatePath, ...paths, serverName, clientCommonName, serviceClientCommonName };
+}
+
+export function ensureCoreServiceTlsIdentity(runtimeDirectory: string, installationId: string): CoreServiceTlsIdentity {
+  const authority = ensureInstallationAuthority(runtimeDirectory, installationId);
+  const directory = join(runtimeDirectory, "pki");
+  const serverName = "piwork-core";
+  const serverCertificatePath = join(directory, "core-service-server.crt");
+  const serverPrivateKeyPath = join(directory, "core-service-server.key");
+  if (existsSync(serverCertificatePath) !== existsSync(serverPrivateKeyPath)) throw new Error("Core service TLS identity is incomplete");
+  if (!existsSync(serverCertificatePath)) issueCertificate({
+    authority,
+    certificatePath: serverCertificatePath,
+    privateKeyPath: serverPrivateKeyPath,
+    commonName: serverName,
+    extension: `basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:${serverName}\n`,
+  });
+  chmodSync(authority.certificatePath, 0o644);
+  chmodSync(serverCertificatePath, 0o600);
+  chmodSync(serverPrivateKeyPath, 0o600);
+  return { caCertificatePath: authority.certificatePath, serverCertificatePath, serverPrivateKeyPath, serverName };
 }
 
 export function readTlsFile(path: string, maximumBytes = 1024 * 1024): Buffer {

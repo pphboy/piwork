@@ -6,6 +6,9 @@
   "engines": {
     "node": ">=24 <25"
   },
+  "config": {
+    "protocVersion": "36.2"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"

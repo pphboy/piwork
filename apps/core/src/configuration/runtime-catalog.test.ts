@@ -45,7 +45,7 @@ function config(image: string, model: string): WorkConfig {
     agentsMd: "",
     modelRef: model,
     mcpServers: [],
-    resources: { cpuMillis: 1_000, memoryBytes: 805_306_368, maxServices: 0, maxRetainedVolumes: 1 },
+    resources: { cpuMillis: 1_000, memoryBytes: 805_306_368, agentCpuMillis: 1_000, agentMemoryBytes: 805_306_368, maxServices: 0, maxRetainedVolumes: 1 },
     tools: { allowed: [], denied: [] },
   };
 }

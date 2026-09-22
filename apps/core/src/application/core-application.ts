@@ -1,6 +1,7 @@
 import { createHash, randomUUID as cryptoRandomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CoreStore } from "@piwork/core-store";
 import { status as grpcStatus } from "@grpc/grpc-js";
 import { IdentityService } from "../identity/sessions.js";
@@ -23,6 +24,8 @@ import { CoreSkillService } from "../configuration/skills.js";
 import { WorkContextStore, type WorkContextSnapshot } from "../configuration/work-context.js";
 import type { WorkContextSnapshotInput } from "@piwork/core-store";
 import { emitDiagnostic } from "../work-management/diagnostics.js";
+import { WorkServiceManagementService, type ServiceRuntimeAdapter } from "../work-services/service-management.js";
+import { WorkServiceGrpcServer } from "../work-services/service-grpc-server.js";
 
 export type ReadinessReason = "STORE_OPEN" | "LISTENING" | "ADMIN_REQUIRED" | "RUNTIME_NOT_CONFIGURED" | "RUNTIME_UNAVAILABLE" | "FILESYSTEM_MIGRATION_REQUIRED" | "RECOVERING" | "READY" | "SHUTTING_DOWN";
 
@@ -42,6 +45,8 @@ export interface CoreApplicationOptions {
   readonly runtimeFactory?: (application: CoreApplication) => Promise<WorkRuntimeAdapter>;
   readonly dependencyCheck?: () => Promise<void>;
   readonly initialization?: FirstRunInitialization;
+  readonly agentGrpcAdvertise?: string;
+  readonly agentGrpcListen?: string;
 }
 
 export class CoreApplication {
@@ -54,8 +59,11 @@ export class CoreApplication {
   readonly skills: CoreSkillService;
   readonly workContexts: WorkContextStore;
   readonly skillArtifacts: SkillArtifactStore;
+  readonly services: WorkServiceManagementService;
   private runtime?: WorkRuntimeAdapter & Partial<ConversationGateway> & { close?: () => void };
+  private serviceRuntime?: ServiceRuntimeAdapter;
   private server?: Server;
+  private serviceGrpc?: WorkServiceGrpcServer;
   private state: ReadinessReason = "STORE_OPEN";
   private closed = false;
   private constructor(
@@ -64,11 +72,13 @@ export class CoreApplication {
     identity: IdentityService,
     lifecycle: WorkLifecycleService,
     workContexts: WorkContextStore,
+    services: WorkServiceManagementService,
     private readonly options: CoreApplicationOptions,
   ) {
     this.store = store;
     this.identity = identity;
     this.lifecycle = lifecycle;
+    this.services = services;
     this.users = new UserAdministrationService(store);
     this.workConfigurations = new WorkConfigurationService(store);
     this.workContexts = workContexts;
@@ -102,14 +112,16 @@ export class CoreApplication {
       if (profiles.inspect().configured) {
         const profile = profiles.load();
         registerRuntimeProfileCatalog(store, profile);
+        ensureBundledDeploymentSkill(store, options.paths);
         ensureDefaultWorkConfiguration(store, profile);
       }
       const identity = await IdentityService.create({ store });
       const workContexts = new WorkContextStore(options.paths.workContextsDirectory);
       let application!: CoreApplication;
       let runtime: WorkRuntimeAdapter = unavailableRuntime("runtime is not initialized");
-      const lifecycle = new WorkLifecycleService(store, proxyRuntime(() => application?.runtime ?? runtime), undefined, undefined, undefined, undefined, workContexts);
-      application = new CoreApplication(options.paths, store, identity, lifecycle, workContexts, options);
+      const services = new WorkServiceManagementService(store, proxyServiceRuntime(() => application?.serviceRuntime));
+      const lifecycle = new WorkLifecycleService(store, proxyRuntime(() => application?.runtime ?? runtime), undefined, undefined, undefined, services, workContexts, undefined, ensureInstallationId(options.paths));
+      application = new CoreApplication(options.paths, store, identity, lifecycle, workContexts, services, options);
       if (!store.hasEnabledAdministrator()) application.state = "ADMIN_REQUIRED";
       else if (!profiles.inspect().configured) application.state = "RUNTIME_NOT_CONFIGURED";
       else application.state = "STORE_OPEN";
@@ -134,6 +146,10 @@ export class CoreApplication {
     });
     const actual = this.server.address();
     if (actual === null || typeof actual === "string") throw new Error("Core HTTP listener has no TCP address");
+    if (this.options.agentGrpcListen !== undefined) {
+      this.serviceGrpc = new WorkServiceGrpcServer(this.paths, ensureInstallationId(this.paths), this.store, this.services);
+      await this.serviceGrpc.start(this.options.agentGrpcListen);
+    }
     await this.refreshRuntime();
     return { host: address.host, port: actual.port };
   }
@@ -161,12 +177,14 @@ export class CoreApplication {
     try {
       await this.options.dependencyCheck?.();
       runtime = this.options.runtimeFactory === undefined
-        ? new DockerWorkRuntimeAdapter(this.paths, ensureInstallationId(this.paths))
+        ? new DockerWorkRuntimeAdapter(this.paths, ensureInstallationId(this.paths), {}, this.options.agentGrpcAdvertise)
         : await this.options.runtimeFactory(this);
       if (runtime instanceof DockerWorkRuntimeAdapter) await runtime.verifyDependency();
+      this.serviceRuntime = runtime instanceof DockerWorkRuntimeAdapter ? runtime.serviceRuntime() : undefined;
       this.runtime = runtime;
       this.state = "RECOVERING";
       await this.lifecycle.recover();
+      this.services.startReconciliation();
       if (previous !== undefined && previous !== runtime) previous.close?.();
       this.state = "READY";
     } catch (error) {
@@ -181,10 +199,21 @@ export class CoreApplication {
     if (this.closed) return;
     this.closed = true;
     this.state = "SHUTTING_DOWN";
+    this.services.closeAdmission();
+    const failures: unknown[] = [];
     try {
-      await closeServer(this.server);
-      await this.lifecycle.shutdown(true);
-      this.runtime?.close?.();
+      for (const close of [
+        () => closeServer(this.server),
+        () => this.serviceGrpc?.close() ?? Promise.resolve(),
+        () => this.lifecycle.shutdown(true),
+        () => this.services.shutdown(),
+      ]) {
+        try { await close(); }
+        catch (error) { failures.push(error); }
+      }
+      try { this.runtime?.close?.(); }
+      catch (error) { failures.push(error); }
+      if (failures.length > 0) throw new AggregateError(failures, `Core shutdown failed in ${failures.length} stage(s)`);
     } finally {
       this.store.close();
     }
@@ -260,7 +289,7 @@ export class CoreApplication {
       ? { state: "failed", checkedAt: null, skills: [] }
       : work.observedState === "starting" || work.observedState === "provisioning"
         ? { state: "initializing", checkedAt: null, skills: [] }
-        : work.observedState !== "ready" || runtime?.runtimeSkillState === undefined
+        : !["ready", "degraded"].includes(work.observedState) || runtime?.runtimeSkillState === undefined
           ? { state: "unavailable", checkedAt: null, skills: [] }
           : await runtime.runtimeSkillState(workId);
     return { ...value, runtime: observation };
@@ -335,6 +364,7 @@ export class CoreApplication {
           const configured = this.runtimeProfiles.configure({ agentImage: body.agentImage, provider: body.provider, model: body.model, credential: body.credential, ...(body.baseUrl === undefined ? {} : { baseUrl: body.baseUrl }) });
           const profile = this.runtimeProfiles.load();
           registerRuntimeProfileCatalog(this.store, profile);
+          ensureBundledDeploymentSkill(this.store, this.paths);
           syncDefaultRuntimeFields(this.store, profile);
           await this.refreshRuntime(true);
           if (this.state !== "READY") throw api(503, "RUNTIME_UNAVAILABLE", "the configured runtime is unavailable");
@@ -479,6 +509,40 @@ export class CoreApplication {
         if (result === undefined) throw api(404, "NOT_FOUND", "route not found");
         return send(response, 202, result);
       }
+      if (parts[2] === "works" && parts[4] === "services") {
+        const workId = parts[3]!;
+        if (parts.length === 5 && request.method === "GET") return send(response, 200, { services: this.services.list(principal, workId) });
+        if (parts.length === 5 && request.method === "POST") {
+          const body = await readJson<{ definition?: unknown; idempotencyKey?: unknown }>(request);
+          if (body.definition === undefined || typeof body.idempotencyKey !== "string") throw api(400, "INVALID_REQUEST", "definition and idempotencyKey are required");
+          return send(response, 202, this.services.create(principal, workId, { definition: body.definition as any, idempotencyKey: body.idempotencyKey }));
+        }
+        const serviceId = parts[5];
+        if (serviceId !== undefined && parts.length === 6 && request.method === "GET") return send(response, 200, this.services.show(principal, workId, serviceId));
+        if (serviceId !== undefined && parts.length === 6 && request.method === "PUT") {
+          const body = await readJson<{ definition?: unknown; expectedRevision?: unknown; idempotencyKey?: unknown }>(request);
+          if (body.definition === undefined || !Number.isSafeInteger(body.expectedRevision) || typeof body.idempotencyKey !== "string") throw api(400, "INVALID_REQUEST", "definition, expectedRevision, and idempotencyKey are required");
+          return send(response, 202, this.services.update(principal, workId, serviceId, Number(body.expectedRevision), body.definition as any, body.idempotencyKey));
+        }
+        if (serviceId !== undefined && parts.length === 7 && parts[6] === "revisions" && request.method === "GET") return send(response, 200, { revisions: this.services.revisions(principal, workId, serviceId) });
+        if (serviceId !== undefined && parts.length === 7 && parts[6] === "logs" && request.method === "GET") {
+          const work = this.lifecycle.show(principal, workId);
+          if (work.ownerUserId !== principal.userId) throw api(403, "PERMISSION_DENIED", "application log content is available only to the Work owner");
+          const tailLines = Number(url.searchParams.get("tailLines") ?? "100");
+          if (!Number.isSafeInteger(tailLines) || tailLines < 1 || tailLines > 200) throw api(400, "INVALID_REQUEST", "tailLines must be from 1 through 200");
+          return send(response, 200, await this.services.logs(principal, workId, serviceId, tailLines));
+        }
+        if (serviceId !== undefined && parts.length === 7 && request.method === "POST") {
+          const body = await readJson<{ idempotencyKey?: unknown }>(request);
+          if (typeof body.idempotencyKey !== "string") throw api(400, "INVALID_REQUEST", "idempotencyKey is required");
+          const result = parts[6] === "restart" ? this.services.restart(principal, workId, serviceId, body.idempotencyKey)
+            : parts[6] === "enable" ? this.services.enable(principal, workId, serviceId, body.idempotencyKey)
+            : parts[6] === "disable" ? this.services.disable(principal, workId, serviceId, body.idempotencyKey)
+            : parts[6] === "remove" ? this.services.remove(principal, workId, serviceId, body.idempotencyKey)
+            : parts[6] === "retry" ? this.services.retry(principal, workId, serviceId, body.idempotencyKey) : undefined;
+          if (result !== undefined) return send(response, 202, result);
+        }
+      }
       if (parts[2] === "operations" && parts.length === 4 && request.method === "GET") return send(response, 200, this.lifecycle.operation(principal, parts[3]!));
       if (parts[2] === "works" && parts.length >= 5) {
         const workId = parts[3]!;
@@ -523,7 +587,7 @@ export class CoreApplication {
   private requireConversation(principal: UserPrincipal, workId: string): void {
     const work = this.lifecycle.show(principal, workId);
     if (work.ownerUserId !== principal.userId) throw api(403, "PERMISSION_DENIED", "conversation content is available only to the Work owner");
-    if (work.observedState !== "ready") throw api(503, "WORK_UNAVAILABLE", "Work is not ready");
+    if (work.observedState !== "ready" && work.observedState !== "degraded") throw api(503, "WORK_UNAVAILABLE", "Work is not ready");
     if (this.runtime?.createSession === undefined) throw api(503, "RUNTIME_UNAVAILABLE", "conversation gateway is unavailable");
   }
 }
@@ -546,6 +610,22 @@ function proxyRuntime(current: () => WorkRuntimeAdapter): WorkRuntimeAdapter {
       ?? Promise.reject(new Error("runtime cannot prepare configuration replacement")),
     stop: (workId, timeout) => current().stop(workId, timeout), remove: (workId) => current().remove(workId),
     listManagedInstances: () => current().listManagedInstances?.() ?? Promise.resolve([]),
+  };
+}
+function proxyServiceRuntime(current: () => ServiceRuntimeAdapter | undefined): ServiceRuntimeAdapter {
+  const runtime = () => {
+    const value = current();
+    if (value === undefined) throw new Error("service runtime is unavailable");
+    return value;
+  };
+  return {
+    resolveImage: (workId, definition) => runtime().resolveImage?.(workId, definition) ?? Promise.reject(new Error("service image resolution is unavailable")),
+    start: (workId, definition, imageIdentity) => runtime().start(workId, definition, imageIdentity),
+    waitReady: (workId, definition, timeoutMs) => runtime().waitReady?.(workId, definition, timeoutMs) ?? Promise.resolve(true),
+    stop: (workId, definition) => runtime().stop?.(workId, definition) ?? Promise.resolve(),
+    remove: (workId, definition) => runtime().remove?.(workId, definition) ?? Promise.resolve(),
+    logs: (workId, serviceId, tailLines) => runtime().logs?.(workId, serviceId, tailLines) ?? Promise.reject(new Error("service logs are unavailable")),
+    inspect: (workId, serviceId) => runtime().inspect?.(workId, serviceId) ?? Promise.reject(new Error("service inspection is unavailable")),
   };
 }
 function unavailableRuntime(message: string): WorkRuntimeAdapter { const fail = async (): Promise<never> => { throw new Error(message); }; return { prepare: fail, start: fail, inspect: fail, drain: fail, stop: fail, remove: fail }; }
@@ -578,6 +658,9 @@ export function mapError(error: unknown): { status: number; code: string; messag
   if (item.name === "WorkBusyError") return { status: 409, code: "WORK_BUSY", message: "Work is busy" };
   if (item.name === "CursorExpiredError" || item.name === "WatchCursorExpiredError") return { status: 416, code: "CURSOR_EXPIRED", message: "Run cursor has expired; query durable Run status or Session history" };
   if (item.name === "DockerDependencyError") return { status: 503, code: "RUNTIME_UNAVAILABLE", message: "runtime dependency is unavailable" };
+  if (item.name === "ServiceDefinitionValidationError") return { status: 400, code: "INVALID_SERVICE_DEFINITION", message: item.message ?? "service definition is invalid" };
+  if (item.name === "ServiceQuotaExceededError" || item.name === "WorkResourceQuotaError" || item.name === "WorkConfigurationAllocationError") return { status: 429, code: "QUOTA_EXCEEDED", message: item.message ?? "resource quota is exceeded" };
+  if (item.name === "ServicePreconditionError") return { status: 409, code: "FAILED_PRECONDITION", message: item.message ?? "service precondition failed" };
   if (item.name === "IdempotencyConflictError" || item.name === "RevisionConflictError" || item.name === "ServiceNameConflictError" || item.name === "ServiceRevisionConflictError") return { status: 409, code: "CONFLICT", message: "request conflicts with current state" };
   if (item.name === "ConfigurationRevisionConflictError" || item.name === "InitialAdministratorExistsError" || item.name === "DuplicateAccountError") return { status: 409, code: "CONFLICT", message: "request conflicts with current state" };
   if (item.name === "AdministrationPermissionError") return { status: 403, code: "PERMISSION_DENIED", message: "permission denied" };
@@ -596,13 +679,45 @@ export function mapError(error: unknown): { status: number; code: string; messag
 function defaultWorkConfiguration(profile: RuntimeProfile): WorkConfig {
   return {
     agentImage: { catalogId: runtimeImageCatalogId(profile.revision) },
-    skills: [],
+    skills: ["deploy-work-service"],
     agentsMd: "",
     modelRef: runtimeModelCatalogId(profile.revision),
-    mcpServers: [],
-    resources: { cpuMillis: 1_000, memoryBytes: 768 * 1_024 * 1_024, maxServices: 0, maxRetainedVolumes: 1 },
+    mcpServers: [{
+      serverId: "work-services",
+      transport: "stdio",
+      required: true,
+      command: "/usr/local/bin/piwork-service-mcp",
+      args: [],
+      timeoutMs: 30_000,
+    }],
+    resources: {
+      cpuMillis: 2_000,
+      memoryBytes: 1_536 * 1_024 * 1_024,
+      agentCpuMillis: 1_000,
+      agentMemoryBytes: 768 * 1_024 * 1_024,
+      maxServices: 4,
+      maxRetainedVolumes: 2,
+    },
     tools: { allowed: [], denied: [] },
   };
+}
+
+function ensureBundledDeploymentSkill(store: CoreStore, paths: CorePaths): void {
+  const marker = "bundled_skill.deploy-work-service.v1";
+  if (store.getControlMetadata(marker) !== undefined) return;
+  const artifacts = new SkillArtifactStore(paths.skillsDirectory);
+  if (store.getManagedSkill("deploy-work-service") === undefined) {
+    const source = fileURLToPath(new URL("../../assets/skills/deploy-work-service", import.meta.url));
+    const artifact = artifacts.import(source, "deploy-work-service");
+    store.addManagedSkill({
+      name: artifact.name,
+      identity: artifact.identity,
+      fileCount: artifact.fileCount,
+      totalBytes: artifact.totalBytes,
+      now: new Date().toISOString(),
+    });
+  }
+  store.putControlMetadataIfAbsent(marker, { seeded: true }, new Date().toISOString());
 }
 
 function publicWorkConfig(configuration: WorkConfig & { revision?: unknown }): WorkConfig {

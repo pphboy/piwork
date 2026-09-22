@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { CORE_SCHEMA_VERSION, CoreStore } from "./store.js";
 import { CoreAlreadyRunningError } from "./store-lock.js";
 
@@ -32,9 +33,12 @@ test("empty database upgrades once and contains every durable Core entity", asyn
       "control_metadata",
       "managed_skill_artifacts",
       "work_context_snapshots",
+      "service_runtime_bindings",
+      "volume_references",
     ]) {
       assert.match(tables?.names ?? "", new RegExp(`(?:^|,)${name}(?:,|$)`));
     }
+    assert.deepEqual(store.getControlMetadata("work_storage_format"), { version: 2, layout: "split-private-workspace" });
     store.close();
 
     const reopened = CoreStore.open({ databasePath: fixture.databasePath });
@@ -45,6 +49,44 @@ test("empty database upgrades once and contains every durable Core entity", asyn
   } finally {
     await fixture.cleanup();
   }
+});
+
+test("service runtime binding and recovery state survive same-version reopen", async () => {
+  const fixture = await createFixture();
+  try {
+    const store = CoreStore.open({ databasePath: fixture.databasePath });
+    store.putServiceRuntimeBinding({
+      workId: "work-0199e6d8abcd", serviceId: "service-0199e6d8abcd", revision: 2,
+      containerId: "container-1", imageIdentity: `sha256:${"a".repeat(64)}`, recoveryCount: 2,
+      recoveryWindowStartedAt: "2026-09-20T00:00:00Z", nextRetryAt: "2026-09-20T00:00:05Z",
+      readySince: null, updatedAt: "2026-09-20T00:00:01Z",
+    });
+    store.close();
+    const reopened = CoreStore.open({ databasePath: fixture.databasePath });
+    assert.equal(reopened.getServiceRuntimeBinding("work-0199e6d8abcd", "service-0199e6d8abcd")?.recoveryCount, 2);
+    reopened.close();
+  } finally { await fixture.cleanup(); }
+});
+
+test("pre-release combined storage schema is rejected without rewriting it", async () => {
+  const fixture = await createFixture();
+  try {
+    await mkdir(join(fixture.databasePath, ".."), { recursive: true });
+    const legacy = new DatabaseSync(fixture.databasePath);
+    legacy.exec(`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL) STRICT;
+      INSERT INTO schema_migrations(version, applied_at) VALUES (5, '2026-09-20T00:00:00Z');
+      CREATE TABLE legacy_sentinel(value TEXT NOT NULL) STRICT;
+      INSERT INTO legacy_sentinel(value) VALUES ('preserve-me')`);
+    legacy.close();
+    assert.throws(
+      () => CoreStore.open({ databasePath: fixture.databasePath }),
+      (error) => (error as { code?: string }).code === "CONTEXT_FORMAT_UNSUPPORTED",
+    );
+    const unchanged = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    assert.equal((unchanged.prepare("SELECT value FROM legacy_sentinel").get() as { value: string }).value, "preserve-me");
+    assert.equal((unchanged.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 5);
+    unchanged.close();
+  } finally { await fixture.cleanup(); }
 });
 
 test("data survives close and reopen", async () => {

@@ -11,7 +11,7 @@ import { readSecretInput } from "./application/secret-input.js";
 import { bootstrapAdministrator } from "./identity/bootstrap-admin.js";
 
 export const SERVE_USAGE = `usage: piwork-serve [--core <url>] [--env-file <path>] [--data-dir <path>] [--operator-credential-file <path>] [--json] <command>
-  serve [--data-dir <path>] [--listen <host:port>] [--env-file <path>] [--allow-insecure-remote]
+  serve [--data-dir <path>] [--listen <host:port>] [--agent-grpc-listen <host:port>] [--agent-grpc-advertise <host:port>] [--env-file <path>] [--allow-insecure-remote]
   status
   admin bootstrap --account <name> [--password-stdin]
   admin users list
@@ -261,7 +261,7 @@ function readProtectedSecretFile(path: string): string {
 }
 
 function commandHelp(command: string): string {
-  if (command === "serve") return "usage: piwork-serve serve [--data-dir <path>] [--listen <host:port>] [--env-file <path>] [--allow-insecure-remote]\n";
+  if (command === "serve") return "usage: piwork-serve serve [--data-dir <path>] [--listen <host:port>] [--agent-grpc-listen <host:port>] [--agent-grpc-advertise <host:port>] [--env-file <path>] [--allow-insecure-remote]\n";
   if (command === "status") return "usage: piwork-serve status\n";
   if (command === "admin") return "usage: piwork-serve admin <bootstrap|users> ...\n";
   if (command === "config") return "usage: piwork-serve config <show|set|default-work> ...\n  Manage runtime settings and the context copied into future Works.\n";

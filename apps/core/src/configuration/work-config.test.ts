@@ -79,6 +79,19 @@ test("field updates retry against the latest desired state and preserve unrelate
   });
 });
 
+test("resource reductions below retained service occupation are rejected without changing desired configuration", async () => {
+  await withConfiguration(async ({ store, service }) => {
+    store.exec(`INSERT INTO quota_reservations(
+      work_id, subject_kind, subject_id, desired_cpu_millis, desired_memory_bytes,
+      occupied_cpu_millis, occupied_memory_bytes, service_slots, volume_slots, updated_at
+    ) VALUES ('work-1', 'service', 'service-a', 300, 134217728, 400, 134217728, 1, 0, '${NOW}')`);
+    const reduced = { ...config("skill-one"), resources: { ...config("skill-one").resources, cpuMillis: 800 } };
+    assert.throws(() => service.update(owner, "work-1", reduced), /supported schema/);
+    assert.equal(store.getWorkConfiguration("work-1")?.desiredRevision, 1);
+    assert.equal(store.getQuotaReservation("work-1", "agent", "agentd")?.desiredCpuMillis, 500);
+  });
+});
+
 function config(skillId: string): WorkConfig {
   return {
     agentImage: { catalogId: "image-0199e6d8abcd" },
@@ -86,7 +99,7 @@ function config(skillId: string): WorkConfig {
     agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [],
-    resources: { cpuMillis: 1_000, memoryBytes: 1_073_741_824, maxServices: 8, maxRetainedVolumes: 16 },
+  resources: { cpuMillis: 1_000, memoryBytes: 1_073_741_824, agentCpuMillis: 500, agentMemoryBytes: 536_870_912, maxServices: 8, maxRetainedVolumes: 16 },
     tools: { allowed: ["read"], denied: [] },
   };
 }
@@ -105,6 +118,10 @@ async function withConfiguration(
   store.exec(`INSERT INTO work_config_revisions(
     work_id, revision, config_json, created_by_user_id, created_at
   ) VALUES ('work-1', 1, '${JSON.stringify(config("skill-one"))}', 'user-1', '${NOW}')`);
+  store.exec(`INSERT INTO quota_reservations(
+    work_id, subject_kind, subject_id, desired_cpu_millis, desired_memory_bytes,
+    occupied_cpu_millis, occupied_memory_bytes, service_slots, volume_slots, updated_at
+  ) VALUES ('work-1', 'agent', 'agentd', 500, 536870912, 500, 536870912, 0, 2, '${NOW}')`);
   const service = new WorkConfigurationService(store, () => new Date(NOW));
   try {
     await run({ store, service });

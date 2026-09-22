@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package piwork.core.services.v1;
+
+message Empty {}
+
+message ServiceImage { string reference = 1; }
+message ServiceMount { string source = 1; string target = 2; bool read_only = 3; }
+message ServicePort { string name = 1; uint32 container_port = 2; string protocol = 3; }
+message ReadinessProbe {
+  string kind = 1;
+  string port_name = 2;
+  string path = 3;
+  repeated string command = 4;
+  uint32 deadline_ms = 5;
+  uint32 timeout_ms = 6;
+}
+message ServiceDefinition {
+  string name = 1;
+  ServiceImage image = 2;
+  string command = 3;
+  repeated string args = 4;
+  map<string, string> environment = 5;
+  repeated string secret_refs = 6;
+  string working_directory = 7;
+  repeated ServiceMount mounts = 8;
+  repeated ServicePort ports = 9;
+  uint32 cpu_millis = 10;
+  uint64 memory_bytes = 11;
+  bool enabled = 12;
+  bool required = 13;
+  optional ReadinessProbe readiness = 14;
+  string restart_policy = 15;
+}
+message ServiceEndpoint { string name = 1; string protocol = 2; string host = 3; uint32 port = 4; string url = 5; }
+message SafeError { string code = 1; string message = 2; string field = 3; string remediation = 4; string correlation_id = 5; }
+message ServiceView {
+  string work_id = 1;
+  string service_id = 2;
+  string name = 3;
+  uint32 desired_revision = 4;
+  optional uint32 applied_revision = 5;
+  bool enabled = 6;
+  string observed_state = 7;
+  ServiceDefinition definition = 8;
+  repeated ServiceEndpoint endpoints = 9;
+  optional SafeError last_error = 10;
+  string created_at = 11;
+}
+message OperationView {
+  string operation_id = 1;
+  string work_id = 2;
+  string service_id = 3;
+  string kind = 4;
+  string state = 5;
+  string created_at = 6;
+  string updated_at = 7;
+  optional SafeError error = 8;
+}
+message Acceptance {
+  string service_id = 1;
+  string operation_id = 2;
+  bool reused = 3;
+  string work_id = 4;
+  string correlation_id = 5;
+}
+message DeploymentContext {
+  string work_id = 1;
+  string workspace_path = 2;
+  bool workspace_writable = 3;
+  string lifecycle = 4;
+  uint32 total_cpu_millis = 5;
+  uint64 total_memory_bytes = 6;
+  uint32 agent_cpu_millis = 7;
+  uint64 agent_memory_bytes = 8;
+  uint32 available_cpu_millis = 9;
+  uint64 available_memory_bytes = 10;
+  uint32 default_service_cpu_millis = 11;
+  uint64 default_service_memory_bytes = 12;
+  string api_version = 13;
+}
+message CreateServiceRequest { ServiceDefinition definition = 1; string idempotency_key = 2; }
+message ListServicesResponse { repeated ServiceView services = 1; }
+message ServiceIdRequest { string service_id = 1; }
+message MutateServiceRequest { string service_id = 1; string idempotency_key = 2; }
+message UpdateServiceRequest { string service_id = 1; uint32 expected_revision = 2; ServiceDefinition definition = 3; string idempotency_key = 4; }
+message OperationIdRequest { string operation_id = 1; }
+message ReadServiceLogsRequest { string service_id = 1; uint32 tail_lines = 2; }
+message ServiceLogs { string service_id = 1; string status = 2; string text = 3; bool truncated = 4; string collected_at = 5; optional SafeError error = 6; }
+
+service WorkServices {
+  rpc GetDeploymentContext(Empty) returns (DeploymentContext);
+  rpc CreateService(CreateServiceRequest) returns (Acceptance);
+  rpc ListServices(Empty) returns (ListServicesResponse);
+  rpc GetService(ServiceIdRequest) returns (ServiceView);
+  rpc UpdateService(UpdateServiceRequest) returns (Acceptance);
+  rpc StartService(MutateServiceRequest) returns (Acceptance);
+  rpc StopService(MutateServiceRequest) returns (Acceptance);
+  rpc RestartService(MutateServiceRequest) returns (Acceptance);
+  rpc RemoveService(MutateServiceRequest) returns (Acceptance);
+  rpc RetryService(MutateServiceRequest) returns (Acceptance);
+  rpc GetOperation(OperationIdRequest) returns (OperationView);
+  rpc ReadServiceLogs(ReadServiceLogsRequest) returns (ServiceLogs);
+}

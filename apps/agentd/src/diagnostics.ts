@@ -14,6 +14,7 @@ const messages: Record<DiagnosticCode, string> = {
   SKILL_VALIDATION_FAILED: "The selected Skill content is invalid.",
   SKILL_LOAD_FAILED: "Work context Skill initialization failed.",
   SKILL_DIRECTORY_MISMATCH: "A Skill was loaded from an unexpected directory.",
+  MCP_INITIALIZATION_FAILED: "Required Work MCP tools could not be initialized.",
   RUNTIME_PREPARE_FAILED: "The Work runtime could not be prepared.",
   RUNTIME_START_FAILED: "The Work runtime could not be started.",
   AGENT_CONTEXT_INCOMPATIBLE: "The agent runtime does not support this Work context contract.",
@@ -24,6 +25,17 @@ const messages: Record<DiagnosticCode, string> = {
   ROLLBACK_FAILED: "The previous Work runtime could not be restored.",
   DIAGNOSTIC_COLLECTION_FAILED: "Runtime diagnostics could not be collected.",
   DIAGNOSTIC_PERSIST_FAILED: "Operation diagnostics could not be persisted.",
+  INVALID_SERVICE_DEFINITION: "The service definition is invalid.",
+  UNSUPPORTED_SERVICE_OPTION: "The service definition contains an unsupported option.",
+  SERVICE_FORMAT_UNSUPPORTED: "The stored service format is unsupported.",
+  IMAGE_UNAVAILABLE: "The selected service image is unavailable.",
+  MOUNT_DENIED: "The requested service storage mount is not allowed.",
+  QUOTA_EXCEEDED: "The service exceeds an available resource quota.",
+  SERVICE_START_FAILED: "The service runtime could not be started.",
+  SERVICE_EXITED: "The service exited before it became ready.",
+  SERVICE_READINESS_TIMEOUT: "The service did not become ready before its deadline.",
+  DOCKER_UNAVAILABLE: "The service container runtime is unavailable.",
+  OPERATION_SUPERSEDED: "The service Operation was superseded.",
   WORK_OPERATION_FAILED: "The Work operation failed.",
 };
 
@@ -41,6 +53,8 @@ export function emitAgentDiagnostic(input: {
     : undefined;
   const message = input.outcome === "succeeded" && input.stage === "skill-load"
     ? "Work context Skills were validated by the SDK."
+    : input.outcome === "succeeded" && input.stage === "mcp-initialize"
+      ? "Required Work MCP tools were initialized."
     : messages[input.code];
   logger.write(`${JSON.stringify({
     timestamp: new Date().toISOString(),

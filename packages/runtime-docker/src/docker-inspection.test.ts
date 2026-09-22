@@ -102,6 +102,75 @@ test("log collection accepts Docker's short listing ID for the exact full immuta
   assert.equal(calls.find((args) => args[1] === "logs")?.at(-1), full);
 });
 
+test("container creation emits trusted workdir/control route and keeps service privilege restricted", async () => {
+  const calls: Array<readonly string[]> = [];
+  const commandRunner: DockerCommandRunner = {
+    async run(args) {
+      calls.push(args);
+      if (args[0] === "container" && args[1] === "ls") return "";
+      if (args[0] === "container" && args[1] === "create") return `container-${calls.length}`;
+      throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+    },
+  };
+  const runtime = new DockerRuntime(installationId, commandRunner);
+  await runtime.ensureContainer({
+    workId, kind: "agent", logicalId: "agent-control", image: "sha256:image",
+    workingDirectory: "/var/data/workspace", controlHost: { hostname: "piwork-core", address: "host-gateway" },
+  });
+  const created = calls.find((args) => args[1] === "create")!;
+  assert.ok(created.includes("--read-only"));
+  assert.deepEqual(created.slice(created.indexOf("--cap-drop"), created.indexOf("--cap-drop") + 2), ["--cap-drop", "ALL"]);
+  assert.deepEqual(created.slice(created.indexOf("--workdir"), created.indexOf("--workdir") + 2), ["--workdir", "/var/data/workspace"]);
+  assert.deepEqual(created.slice(created.indexOf("--add-host"), created.indexOf("--add-host") + 2), ["--add-host", "piwork-core:host-gateway"]);
+  await assert.rejects(runtime.ensureContainer({
+    workId, kind: "service", logicalId: "service-control", image: "sha256:image",
+    controlHost: { hostname: "piwork-core", address: "host-gateway" },
+  }), /restricted to agent/);
+});
+
+test("managed volume mounts preserve initialized ownership and contents", async () => {
+  const calls: Array<readonly string[]> = [];
+  const runtime = new DockerRuntime(installationId, {
+    async run(args) {
+      calls.push(args);
+      if (args[0] === "container" && args[1] === "ls") return "";
+      if (args[0] === "container" && args[1] === "create") return "container-volume";
+      if (args[0] === "volume" && args[1] === "ls") return "workspace-volume\n";
+      if (args[0] === "volume" && args[1] === "inspect") return JSON.stringify([{
+        Name: "workspace-volume",
+        Labels: { "piwork.installation_id": installationId, "piwork.managed": "true", "piwork.work_id": workId, "piwork.logical_id": "workspace", "piwork.volume_kind": "managed-data" },
+      }]);
+      throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+    },
+  });
+  await runtime.ensureContainer({
+    workId, kind: "agent", logicalId: "agent-volume", image: "sha256:image",
+    mounts: [{ type: "volume", source: "workspace-volume", target: "/var/data/workspace" }],
+  });
+  const created = calls.find((args) => args[1] === "create")!;
+  const rendered = created[created.indexOf("--mount") + 1];
+  assert.match(rendered!, /(?:^|,)volume-nocopy(?:,|$)/);
+});
+
+test("volume initialization helper is bounded, non-networked, and does not recursively rewrite data", async () => {
+  const calls: Array<{ args: readonly string[]; timeoutMs?: number }> = [];
+  const runtime = new DockerRuntime(installationId, {
+    async run(args, timeoutMs) {
+      calls.push({ args, timeoutMs });
+      if (args[0] === "volume" && args[1] === "ls") return "volume-a\n";
+      if (args[0] === "container" && args[1] === "run") return "";
+      throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+    },
+  });
+  await runtime.initializeManagedVolume(workId, "workspace", "sha256:image");
+  const helper = calls.find((call) => call.args[1] === "run")!;
+  assert.equal(helper.timeoutMs, 30_000);
+  assert.deepEqual(helper.args.slice(helper.args.indexOf("--user"), helper.args.indexOf("--user") + 2), ["--user", "0:0"]);
+  assert.ok(helper.args.includes("none"));
+  assert.ok(helper.args.includes("CHOWN"));
+  assert.equal(helper.args.includes("-R"), false);
+});
+
 function runner(ids: readonly string[], record: unknown): DockerCommandRunner {
   return {
     async run(args) {
@@ -131,7 +200,7 @@ function inspection(overrides: Readonly<Record<string, string>> = {}) {
       },
     },
     State: { Running: true, Status: "running", ExitCode: 0 },
-    Mounts: [{ Type: "volume", Source: "data-volume", Destination: "/var/data", RW: true }],
+    Mounts: [{ Type: "volume", Name: "data-volume", Source: "/var/lib/docker/volumes/data-volume/_data", Destination: "/var/data", RW: true }],
     NetworkSettings: { Networks: { "work-network": { IPAddress: "172.30.0.7" } } },
   }];
 }

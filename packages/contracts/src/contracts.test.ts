@@ -19,6 +19,12 @@ import {
   normalizeAgentsMd,
   resolveBuiltInWorkTools,
   AGENTS_MD_MAX_BYTES,
+  normalizeServiceDefinitionInput,
+  ServiceDefinitionValidationError,
+  validateResourcePolicy,
+  WorkServiceAcceptanceCodec,
+  WorkServiceCreateRequestCodec,
+  WorkServicesService,
 } from "./index.js";
 
 const validWorkConfig: WorkConfig = {
@@ -39,6 +45,8 @@ const validWorkConfig: WorkConfig = {
   resources: {
     cpuMillis: 1_000,
     memoryBytes: 1_073_741_824,
+    agentCpuMillis: 500,
+    agentMemoryBytes: 536_870_912,
     maxServices: 8,
     maxRetainedVolumes: 16,
   },
@@ -59,12 +67,14 @@ test("control and internal contract samples validate", () => {
     serviceId: "service-0199e6d8abcd",
     name: "notes",
     revision: 1,
-    image: { catalogId: "image-0199e6d8abcd" },
+    image: { reference: "python:3.13-slim" },
+    command: "python3",
     args: [],
     environment: {},
     secretRefs: [],
+    workingDirectory: "/",
     mounts: [],
-    ports: [{ name: "http", containerPort: 8080, protocol: "tcp", alias: "notes" }],
+    ports: [{ name: "http", containerPort: 8080, protocol: "tcp" }],
     cpuMillis: 250,
     memoryBytes: 268_435_456,
     enabled: true,
@@ -187,4 +197,69 @@ test("runtime and operation projections are bounded and reject internal fields",
       code: "SKILL_LOAD_FAILED", message: "The selected Skill could not be loaded.", path: "/private",
     }] },
   }), false);
+});
+
+test("service deployment input has exact fields, explicit storage, normalized defaults, and bounded probes", () => {
+  const minimal = {
+    name: "notes",
+    image: { reference: "python:3.13-slim" },
+    command: "python3",
+    mounts: [{ source: "workspace" as const, target: "/var/data/workspace" as const, readOnly: false }],
+  };
+  const normalized = normalizeServiceDefinitionInput(minimal);
+  assert.deepEqual(normalized, {
+    ...minimal,
+    args: [], environment: {}, secretRefs: [], workingDirectory: "/var/data/workspace", ports: [],
+    cpuMillis: 250, memoryBytes: 134_217_728, enabled: true, required: false, restartPolicy: "bounded",
+  });
+  assert.deepEqual(normalizeServiceDefinitionInput({ ...minimal, mounts: [], workingDirectory: "/" }).workingDirectory, "/");
+  for (const invalid of [
+    { ...minimal, mounts: [] },
+    { ...minimal, build: "." },
+    { ...minimal, secretRefs: ["secret-a"] },
+    { ...minimal, image: { reference: "https://registry/image" } },
+    { ...minimal, image: { reference: "user:password@registry/image" } },
+    { ...minimal, name: "agentd" },
+    { ...minimal, ports: [{ name: "http", containerPort: 8080, protocol: "tcp" }, { name: "http", containerPort: 8081, protocol: "tcp" }] },
+    { ...minimal, ports: [{ name: "http", containerPort: 8080, protocol: "tcp" }], readiness: { kind: "http", portName: "missing", path: "/ready" } },
+    { ...minimal, readiness: { kind: "exec", command: ["true"], path: "/invalid" } },
+  ]) assert.throws(() => normalizeServiceDefinitionInput(invalid), ServiceDefinitionValidationError);
+  assert.throws(
+    () => normalizeServiceDefinitionInput({ ...minimal, args: ["界".repeat(2_000)] }),
+    (error) => error instanceof ServiceDefinitionValidationError && error.field === "args",
+  );
+  assert.throws(() => normalizeServiceDefinitionInput({ ...minimal, environment: { BIG: "x".repeat(1_048_576) } }), /1 MiB/);
+});
+
+test("work-services protobuf binding round trips without caller-controlled Work or Docker identity", () => {
+  const request = {
+    definition: {
+      name: "notes", image: { reference: "python:3.13-slim" }, command: "python3", args: ["app.py"],
+      environment: {}, secretRefs: [], workingDirectory: "/var/data/workspace",
+      mounts: [{ source: "workspace", target: "/var/data/workspace", readOnly: false }],
+      ports: [{ name: "http", containerPort: 8080, protocol: "tcp" }], cpuMillis: 250,
+      memoryBytes: 134_217_728n, enabled: true, required: false, readiness: undefined, restartPolicy: "bounded",
+    },
+    idempotencyKey: "deploy-notes-v1",
+  };
+  assert.deepEqual(WorkServiceCreateRequestCodec.decode(WorkServiceCreateRequestCodec.encode(request).finish()), request);
+  const acceptance = {
+    workId: "work-0199e6d8abcd", serviceId: "service-0199e6d8abcd", operationId: "operation-0199e6d8abcd",
+    correlationId: "operation-0199e6d8abcd", reused: false,
+  };
+  assert.deepEqual(WorkServiceAcceptanceCodec.decode(WorkServiceAcceptanceCodec.encode(acceptance).finish()), acceptance);
+  assert.deepEqual(Object.keys(WorkServicesService), [
+    "getDeploymentContext", "createService", "listServices", "getService", "updateService", "startService",
+    "stopService", "restartService", "removeService", "retryService", "getOperation", "readServiceLogs",
+  ]);
+  const encoded = JSON.stringify(request, (_key, value) => typeof value === "bigint" ? value.toString() : value);
+  for (const forbidden of ["workId", "runtimeIdentity", "dockerId", "hostPath", "network", "privileged", "hostPort"]) {
+    assert.equal(encoded.includes(forbidden), false);
+  }
+});
+
+test("agent allocation must fit within aggregate Work resources", () => {
+  assert.doesNotThrow(() => validateResourcePolicy(validWorkConfig.resources));
+  assert.throws(() => validateResourcePolicy({ ...validWorkConfig.resources, agentCpuMillis: 1_001 }), /CPU budget/);
+  assert.throws(() => validateResourcePolicy({ ...validWorkConfig.resources, agentMemoryBytes: validWorkConfig.resources.memoryBytes + 1 }), /memory budget/);
 });

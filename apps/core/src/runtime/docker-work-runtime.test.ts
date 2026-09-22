@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { CONTRACT_VERSION, WORK_SERVICE_MCP_TOOL_NAMES } from "@piwork/contracts";
+import { managedVolumeName } from "@piwork/runtime-docker";
 import { DockerWorkRuntimeAdapter, RuntimeReadinessError, verifyExpectedReadiness } from "./docker-work-runtime.js";
 import { ensureCorePaths } from "../application/paths.js";
 import { RuntimeProfileStore } from "../configuration/runtime-profile.js";
@@ -15,12 +17,12 @@ test("readiness requires the complete captured context, ordered Skills, and effe
   const record = { workId: WORK.id, generation: 4, instanceId: "agent-4" };
   const workConfig = {
     agentImage: { catalogId: "image-a" }, skills: ["alpha"], agentsMd: "", modelRef: "model-a", mcpServers: [],
-    resources: { cpuMillis: 1000, memoryBytes: 512 * 1024 * 1024, maxServices: 0, maxRetainedVolumes: 0 },
+    resources: { cpuMillis: 1000, memoryBytes: 512 * 1024 * 1024, agentCpuMillis: 1000, agentMemoryBytes: 512 * 1024 * 1024, maxServices: 0, maxRetainedVolumes: 0 },
     tools: { allowed: ["read"], denied: [] },
   };
   const configuration = { contextIdentity: "context-a", skillIdentities: [{ name: "alpha", identity: "sha256:alpha" }], workConfig };
   const ready = {
-    workId: WORK.id, generation: 4n, instanceId: "agent-4", protocolVersion: "v1",
+    workId: WORK.id, generation: 4n, instanceId: "agent-4", protocolVersion: CONTRACT_VERSION,
     acceptingRuns: true, draining: false, contextContractVersion: 1, contextIdentity: "context-a",
     initializationComplete: true,
     loadedSkills: [{ name: "alpha", identity: "sha256:alpha", loaded: true, modelVisible: true, visibilityReason: "" }],
@@ -45,6 +47,26 @@ test("readiness requires the complete captured context, ordered Skills, and effe
     assert.throws(() => verifyExpectedReadiness(mismatch, record, configuration),
       (error) => error instanceof RuntimeReadinessError && error.code === "AGENT_CONTEXT_MISMATCH");
   }
+
+  const serviceTools = WORK_SERVICE_MCP_TOOL_NAMES.map((name) => `work-services.${name}`);
+  const serviceWorkConfig = {
+    ...workConfig,
+    mcpServers: [{
+      serverId: "work-services", transport: "stdio" as const, required: true,
+      command: "/usr/local/bin/piwork-service-mcp", args: [],
+    }],
+    tools: { allowed: ["read", ...serviceTools], denied: [] },
+  };
+  assert.doesNotThrow(() => verifyExpectedReadiness(
+    { ...ready, resolvedTools: ["read", ...serviceTools] },
+    record,
+    { ...configuration, workConfig: serviceWorkConfig },
+  ));
+  assert.throws(() => verifyExpectedReadiness(
+    { ...ready, resolvedTools: ["read", ...serviceTools.slice(1)] },
+    record,
+    { ...configuration, workConfig: serviceWorkConfig },
+  ), (error) => error instanceof RuntimeReadinessError && error.code === "AGENT_CONTEXT_MISMATCH");
 });
 
 test("readiness polling detects an exited exact generation and retains only recognized diagnostics", async () => {
@@ -56,7 +78,7 @@ test("readiness polling detects an exited exact generation and retains only reco
     const configuration = runtimeConfiguration("context-seven");
     const labels = {
       "piwork.generation": "7", "piwork.instance_id": "agent-7",
-      "piwork.protocol_version": "v1", "piwork.context_identity": "context-seven",
+      "piwork.protocol_version": CONTRACT_VERSION, "piwork.context_identity": "context-seven",
     };
     const target = adapter as unknown as {
       readiness: () => Promise<never>;
@@ -130,7 +152,7 @@ test("readiness polling preserves the 30-second budget with bounded concurrent a
         inspectionCalls += 1;
         return { exists: true, containerId: "container-8", running: true, labels: {
           "piwork.generation": "8", "piwork.instance_id": "agent-8",
-          "piwork.protocol_version": "v1", "piwork.context_identity": "context-eight",
+          "piwork.protocol_version": CONTRACT_VERSION, "piwork.context_identity": "context-eight",
         } };
       },
       async collectContainerLogs() { return { text: "unknown output", truncated: false }; },
@@ -158,7 +180,7 @@ test("runtime Skill state is live evidence for the exact recorded context and ge
     const skill = inspectSkillTree(skillDirectory);
     const configuration = {
       agentImage: { catalogId: "image-0199e6d8abcd" }, skills: ["alpha"], agentsMd: "", modelRef: "model-0199e6d8abcd", mcpServers: [],
-      resources: { cpuMillis: 1000, memoryBytes: 1024 * 1024 * 1024, maxServices: 8, maxRetainedVolumes: 16 },
+      resources: { cpuMillis: 1000, memoryBytes: 1024 * 1024 * 1024, agentCpuMillis: 500, agentMemoryBytes: 512 * 1024 * 1024, maxServices: 8, maxRetainedVolumes: 16 },
       tools: { allowed: ["read"], denied: [] },
     };
     new WorkContextStore(paths.workContextsDirectory).build({
@@ -176,7 +198,7 @@ test("runtime Skill state is live evidence for the exact recorded context and ge
     const adapter = new DockerWorkRuntimeAdapter(paths, "install-status");
     let inspection = {
       exists: true, running: true,
-      labels: { "piwork.generation": "9", "piwork.instance_id": "agent-9", "piwork.protocol_version": "v1", "piwork.context_identity": "context-status" },
+      labels: { "piwork.generation": "9", "piwork.instance_id": "agent-9", "piwork.protocol_version": CONTRACT_VERSION, "piwork.context_identity": "context-status" },
     };
     const target = adapter as unknown as {
       docker: { inspectContainer(): Promise<unknown> };
@@ -184,7 +206,7 @@ test("runtime Skill state is live evidence for the exact recorded context and ge
     };
     target.docker = { async inspectContainer() { return inspection; } };
     target.readiness = async () => ({
-      workId: WORK.id, generation: 9n, instanceId: "agent-9", protocolVersion: "v1",
+      workId: WORK.id, generation: 9n, instanceId: "agent-9", protocolVersion: CONTRACT_VERSION,
       acceptingRuns: true, draining: false, contextContractVersion: 1, contextIdentity: "context-status",
       initializationComplete: true,
       loadedSkills: [{ name: "alpha", identity: skill.identity, loaded: true, modelVisible: false, visibilityReason: "read-tools-disabled" }],
@@ -212,7 +234,7 @@ function runtimeConfiguration(contextIdentity: string) {
     skillIdentities: [],
     workConfig: {
       agentImage: { catalogId: "image-a" }, skills: [], agentsMd: "", modelRef: "model-a", mcpServers: [],
-      resources: { cpuMillis: 1000, memoryBytes: 512 * 1024 * 1024, maxServices: 0, maxRetainedVolumes: 0 },
+      resources: { cpuMillis: 1000, memoryBytes: 512 * 1024 * 1024, agentCpuMillis: 1000, agentMemoryBytes: 512 * 1024 * 1024, maxServices: 0, maxRetainedVolumes: 0 },
       tools: { allowed: [], denied: [] },
     },
   };
@@ -238,10 +260,11 @@ test("Docker runtime requires a validated active context and a read-only context
       exists: true,
       running: false,
       image: `sha256:${"a".repeat(64)}`,
-      labels: { "piwork.context_identity": "other", "piwork.generation": "1", "piwork.instance_id": "agent-1", "piwork.protocol_version": "v1" },
+      labels: { "piwork.context_identity": "other", "piwork.generation": "1", "piwork.instance_id": "agent-1", "piwork.protocol_version": CONTRACT_VERSION },
       mounts: [{ type: "bind", source: context, destination: "/run/piwork", readOnly: true }],
     };
     const preparedReferences: string[] = [];
+    let retainedVolumeMissing = false;
     const fakeDocker = {
       inspectContainer: async () => inspection,
       startContainer: async () => inspection,
@@ -251,6 +274,11 @@ test("Docker runtime requires a validated active context and a read-only context
       },
       ensureWorkNetwork: async () => ({ name: "network", networkId: "network", created: false }),
       ensureManagedVolume: async () => ({ volumeName: "volume", created: false }),
+      requireManagedVolume: async () => {
+        if (retainedVolumeMissing) throw new Error("retained workspace volume is missing");
+        return { volumeName: "volume", created: false };
+      },
+      initializeManagedVolume: async () => {},
     };
     (adapter as unknown as { docker: unknown }).docker = fakeDocker;
     (adapter as unknown as { waitReady: () => Promise<void> }).waitReady = async () => {};
@@ -260,6 +288,9 @@ test("Docker runtime requires a validated active context and a read-only context
     const configuration = { workConfig: {} as never, runtimeProfileJson: "{}", contextIdentity: "expected", contextDirectory: context, imageIdentity: `sha256:${"a".repeat(64)}`, skillIdentities: [] };
     await adapter.prepare(WORK, configuration);
     assert.deepEqual(preparedReferences, [configuration.imageIdentity]);
+    retainedVolumeMissing = true;
+    await assert.rejects(() => adapter.prepare(WORK, configuration), /retained workspace volume is missing/);
+    retainedVolumeMissing = false;
 
     preparedReferences.length = 0;
     fakeDocker.prepareImage = async (reference: string) => {
@@ -276,7 +307,7 @@ test("Docker runtime requires a validated active context and a read-only context
 
     await assert.rejects(() => adapter.start(WORK, 1, configuration), /does not match the active Work context/);
 
-    inspection = { ...inspection, labels: { "piwork.context_identity": "expected", "piwork.generation": "1", "piwork.instance_id": "agent-1", "piwork.protocol_version": "v1" }, mounts: [{ type: "bind", source: root, destination: "/run/piwork", readOnly: true }] };
+    inspection = { ...inspection, labels: { "piwork.context_identity": "expected", "piwork.generation": "1", "piwork.instance_id": "agent-1", "piwork.protocol_version": CONTRACT_VERSION }, mounts: [{ type: "bind", source: root, destination: "/run/piwork", readOnly: true }] };
     await assert.rejects(() => adapter.start(WORK, 1, configuration), /context mount is invalid/);
 
     inspection = { ...inspection, mounts: [] };
@@ -299,11 +330,18 @@ test("Docker runtime requires a validated active context and a read-only context
     inspection = { ...inspection, mounts: [{ type: "bind", source: context, destination: "/run/piwork", readOnly: true }] };
     inspection = { ...inspection, image: `sha256:${"b".repeat(64)}` };
     await assert.rejects(() => adapter.start(WORK, 1, configuration), /image does not match/);
-    inspection = { ...inspection, image: `sha256:${"a".repeat(64)}`, labels: { "piwork.context_identity": "expected", "piwork.generation": "2", "piwork.instance_id": "agent-1", "piwork.protocol_version": "v1" } };
+    inspection = { ...inspection, image: `sha256:${"a".repeat(64)}`, labels: { "piwork.context_identity": "expected", "piwork.generation": "2", "piwork.instance_id": "agent-1", "piwork.protocol_version": CONTRACT_VERSION } };
     await assert.rejects(() => adapter.start(WORK, 1, configuration), /identity does not match/);
     inspection = { ...inspection, labels: { "piwork.context_identity": "expected", "piwork.generation": "1", "piwork.instance_id": "agent-1", "piwork.protocol_version": "0" } };
     await assert.rejects(() => adapter.start(WORK, 1, configuration), /protocol does not match/);
-    inspection = { ...inspection, labels: { "piwork.context_identity": "expected", "piwork.generation": "1", "piwork.instance_id": "agent-1", "piwork.protocol_version": "v1" } };
+    inspection = { ...inspection,
+      labels: { "piwork.context_identity": "expected", "piwork.generation": "1", "piwork.instance_id": "agent-1", "piwork.protocol_version": CONTRACT_VERSION },
+      mounts: [
+        { type: "bind", source: context, destination: "/run/piwork", readOnly: true },
+        { type: "volume", source: managedVolumeName("install-0199e6d8abcd", WORK.id, "work-private"), destination: "/var/data", readOnly: false },
+        { type: "volume", source: managedVolumeName("install-0199e6d8abcd", WORK.id, "work-workspace"), destination: "/var/data/workspace", readOnly: false },
+      ],
+    };
     assert.deepEqual(await adapter.start(WORK, 1, configuration), { instanceId: "agent-1", generation: 1 });
   } finally {
     rmSync(root, { recursive: true, force: true });

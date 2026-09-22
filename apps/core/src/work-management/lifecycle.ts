@@ -4,6 +4,7 @@ import { CoreStore, type OperationRecord, type WorkConfigurationState, type Work
 import { authorizeWorkResource, filterVisibleResources, type UserPrincipal } from "../work-access/policy.js";
 import { WorkContextError, WorkContextStore } from "../configuration/work-context.js";
 import { diagnosticFromError, emitDiagnostic, errorEnvelope, operationEnvelope, operationWithStage, publicOperation, safeDiagnostic, type JsonLineLogger } from "./diagnostics.js";
+import { managedVolumeName } from "@piwork/runtime-docker";
 
 export interface WorkRuntimeState {
   readonly exists: boolean;
@@ -45,6 +46,7 @@ export interface WorkServiceCoordinator {
   prepareEnabledServices(work: WorkRecord): Promise<void>;
   stopServices(workId: string, timeoutMs: number): Promise<void>;
   removeServiceInstances(workId: string): Promise<void>;
+  hasFailedServices?(workId: string): boolean;
 }
 
 const NO_SERVICES: WorkServiceCoordinator = {
@@ -76,6 +78,11 @@ class OperationSupersededError extends Error {
   }
 }
 
+export class WorkResourceQuotaError extends Error {
+  readonly code = "QUOTA_EXCEEDED";
+  constructor(message: string) { super(message); this.name = "WorkResourceQuotaError"; }
+}
+
 export class WorkLifecycleService {
   private readonly queues = new Map<string, Promise<void>>();
   private shuttingDown = false;
@@ -89,6 +96,8 @@ export class WorkLifecycleService {
     private readonly services: WorkServiceCoordinator = NO_SERVICES,
     private readonly contexts?: WorkContextStore,
     private readonly diagnosticLogger?: JsonLineLogger,
+    private readonly installationId?: string,
+    private readonly hostQuota = { cpuMillis: 128_000, memoryBytes: 256 * 1_024 * 1_024 * 1_024 },
   ) {}
 
   create(
@@ -126,6 +135,11 @@ export class WorkLifecycleService {
         now: this.now().toISOString(),
       }, (tx) => {
         const now = this.now().toISOString();
+        const host = tx.get<{ cpu: number; memory: number }>(`SELECT
+          COALESCE(SUM(MAX(desired_cpu_millis, occupied_cpu_millis)), 0) AS cpu,
+          COALESCE(SUM(MAX(desired_memory_bytes, occupied_memory_bytes)), 0) AS memory FROM quota_reservations`) ?? { cpu: 0, memory: 0 };
+        if (host.cpu + input.configuration.resources.agentCpuMillis > this.hostQuota.cpuMillis) throw new WorkResourceQuotaError("host CPU budget would be exceeded");
+        if (host.memory + input.configuration.resources.agentMemoryBytes > this.hostQuota.memoryBytes) throw new WorkResourceQuotaError("host memory budget would be exceeded");
         tx.run(`INSERT INTO works(
           id, owner_user_id, name, desired_state, observed_state,
           desired_revision, active_revision, control_version, created_at, updated_at
@@ -135,6 +149,28 @@ export class WorkLifecycleService {
           runtime_profile_json, source_runtime_revision
         ) VALUES (?, 1, ?, ?, ?, ?, ?)`, workId, JSON.stringify(input.configuration), principal.userId, now,
           input.runtimeProfileJson ?? null, input.sourceRuntimeRevision ?? null);
+        tx.run(`INSERT INTO quota_reservations(
+          work_id, subject_kind, subject_id, desired_cpu_millis, desired_memory_bytes,
+          occupied_cpu_millis, occupied_memory_bytes, service_slots, volume_slots, updated_at
+        ) VALUES (?, 'agent', 'agentd', ?, ?, ?, ?, 0, 2, ?)`,
+        workId,
+        input.configuration.resources.agentCpuMillis,
+        input.configuration.resources.agentMemoryBytes,
+        input.configuration.resources.agentCpuMillis,
+        input.configuration.resources.agentMemoryBytes,
+        now);
+        if (this.installationId !== undefined) {
+          for (const [role, logicalId] of [["agent-private", "work-private"], ["workspace", "work-workspace"]] as const) {
+            const volumeId = `volume-${createHash("sha256").update(`${this.installationId}\0${workId}\0${logicalId}`).digest("hex").slice(0, 24)}`;
+            tx.run(`INSERT INTO volume_records(
+              id, installation_id, work_id, service_id, volume_role, runtime_name, state,
+              reference_count, retained_at, purged_at, created_at
+            ) VALUES (?, ?, ?, NULL, ?, ?, 'active', 1, NULL, NULL, ?)`,
+            volumeId, this.installationId, workId, role, managedVolumeName(this.installationId, workId, logicalId), now);
+            tx.run(`INSERT INTO volume_references(volume_id, consumer_kind, consumer_id, created_at)
+              VALUES (?, 'work', ?, ?)`, volumeId, workId, now);
+          }
+        }
         if (input.snapshot !== undefined) this.store.insertInitialWorkContext(workId, 1, input.snapshot);
         return { resourceId: workId };
       });
@@ -244,7 +280,7 @@ export class WorkLifecycleService {
     const unfinishedWorkIds = new Set(this.store.listOperations(["pending", "running"])
       .flatMap((operation) => operation.workId === null ? [] : [operation.workId]));
     for (const work of this.store.listWorks(true)) {
-      if (work.desiredState === "running" && work.observedState === "stopped" && !unfinishedWorkIds.has(work.id)) {
+      if (work.desiredState === "running" && !unfinishedWorkIds.has(work.id)) {
         this.mutateDesired(
           { userId: work.ownerUserId, role: "user" },
           work.id,
@@ -277,13 +313,17 @@ export class WorkLifecycleService {
     this.shuttingDown = true;
     await this.waitForIdle();
     if (!stopManagedRuntimes) return;
-    for (const work of this.store.listWorks(true)) {
-      if (work.desiredState === "deleted") continue;
-      try { await this.ensureStopped(work); }
-      catch (error) {
+    const works = this.store.listWorks(true).filter((work) => work.desiredState !== "deleted");
+    const results = await Promise.allSettled(works.map((work) => this.ensureStopped(work)));
+    const failures: unknown[] = [];
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        const work = works[index]!;
+        failures.push(result.reason);
         emitDiagnostic({ timestamp: this.now().toISOString(), level: "error", component: "core", stage: "rollback", outcome: "failed", correlationId: `shutdown-${work.id}`, code: "WORK_OPERATION_FAILED", message: "Managed Work shutdown failed.", workId: work.id });
       }
-    }
+    });
+    if (failures.length > 0) throw new AggregateError(failures, `Core shutdown left ${failures.length} managed Work runtime(s) unresolved`);
   }
 
   async waitForIdle(): Promise<void> {
@@ -434,7 +474,8 @@ export class WorkLifecycleService {
         resultJson: persisted.resultJson,
         errorJson: errorEnvelope(diagnostic),
       }, current.id, workId);
-      emitDiagnostic({ timestamp: this.now().toISOString(), level: "error", component: "core", stage: diagnostic.stage, outcome: "failed", correlationId, code: diagnostic.code, message: diagnostic.message, workId, operationId: current.id, ...(diagnostic.skillName === undefined ? {} : { skillName: diagnostic.skillName }) });
+      const reason = (primary as { diagnosticReason?: unknown }).diagnosticReason;
+      emitDiagnostic({ timestamp: this.now().toISOString(), level: "error", component: "core", stage: diagnostic.stage, outcome: "failed", correlationId, code: diagnostic.code, message: diagnostic.message, workId, operationId: current.id, ...(diagnostic.skillName === undefined ? {} : { skillName: diagnostic.skillName }), ...(typeof reason === "string" ? { reason } : {}) });
     }
   }
 
@@ -511,7 +552,6 @@ export class WorkLifecycleService {
     this.recordOperationStage(operationId, work.id, "context-validate");
     if (!actual.exists) {
       await this.runOperationStage(operationId, work.id, "runtime-prepare", "RUNTIME_PREPARE_FAILED", () => this.runtime.prepare(work, configuration));
-      await this.services.prepareEnabledServices(work);
       this.store.ensureRuntimeGeneration(work.id, work.controlVersion, this.now().toISOString());
       const started = await this.runOperationStage(operationId, work.id, "runtime-start", "RUNTIME_START_FAILED", () => this.runtime.start(work, work.controlVersion, configuration));
       this.store.updateRuntimeGeneration(work.id, work.controlVersion, "starting", this.now().toISOString(), {
@@ -532,6 +572,7 @@ export class WorkLifecycleService {
         readySince: actual.ready ? this.now().toISOString() : undefined,
       });
     }
+    await this.services.prepareEnabledServices(work);
     const ready = await this.runtime.inspect(work.id);
     if (!ready.exists || !ready.running || !ready.ready) throw new Error("daemon did not become ready");
     this.recordOperationStage(operationId, work.id, "skill-validate");
@@ -546,7 +587,7 @@ export class WorkLifecycleService {
       this.store.activateWorkContext(work.id, contextId, this.now().toISOString());
       this.recordOperationStage(operationId, work.id, "activation");
     }
-    this.store.updateWorkObservedState(work.id, "ready", this.now().toISOString(), runtimeRevision);
+    this.store.updateWorkObservedState(work.id, this.services.hasFailedServices?.(work.id) === true ? "degraded" : "ready", this.now().toISOString(), runtimeRevision);
   }
 
   private async applyConfigurationNow(workId: string, expectedRevision: number, capturedContextId: string | null, targetVersion: number, operationId: string, correlationId: string): Promise<WorkConfigurationState> {
@@ -720,27 +761,44 @@ export class WorkLifecycleService {
 
   private async ensureStopped(work: WorkRecord): Promise<void> {
     this.store.updateWorkObservedState(work.id, "stopping", this.now().toISOString());
-    const actual = await this.runtime.inspect(work.id);
-    if (actual.exists && actual.running) {
+    let actual: WorkRuntimeState | undefined;
+    const failures: unknown[] = [];
+    try { actual = await this.runtime.inspect(work.id); }
+    catch (error) { failures.push(error); }
+    let drainFailure: unknown;
+    if (actual?.exists && actual.running) {
       if (actual.generation !== undefined && this.store.getRuntimeGeneration(work.id, actual.generation) !== undefined) {
         this.store.updateRuntimeGeneration(work.id, actual.generation, "draining", this.now().toISOString());
       }
-      await this.runtime.drain(work.id, this.drainTimeoutMs);
-      await this.services.stopServices(work.id, this.stopTimeoutMs);
-      await this.runtime.stop(work.id, this.stopTimeoutMs);
+      try { await this.runtime.drain(work.id, this.drainTimeoutMs); }
+      catch (error) { drainFailure = error; }
     }
-    const stopped = await this.runtime.inspect(work.id);
-    if (stopped.exists && stopped.running) throw new Error("runtime could not confirm shutdown");
-    if (actual.generation !== undefined && this.store.getRuntimeGeneration(work.id, actual.generation) !== undefined) {
+    let serviceFailure = false;
+    try { await this.services.stopServices(work.id, this.stopTimeoutMs); }
+    catch (error) { serviceFailure = true; failures.push(error); }
+    if (actual?.running || actual === undefined) {
+      try { await this.runtime.stop(work.id, this.stopTimeoutMs); }
+      catch (error) { failures.push(error); }
+    }
+    let runtimeStopped = false;
+    try {
+      const stopped = await this.runtime.inspect(work.id);
+      runtimeStopped = !stopped.exists || !stopped.running;
+      if (!runtimeStopped) failures.push(new Error("runtime could not confirm shutdown"));
+    } catch (error) { failures.push(error); }
+    if (runtimeStopped && actual?.generation !== undefined && this.store.getRuntimeGeneration(work.id, actual.generation) !== undefined) {
       this.store.updateRuntimeGeneration(work.id, actual.generation, "stopped", this.now().toISOString());
     }
-    this.store.updateWorkObservedState(work.id, "stopped", this.now().toISOString());
+    if (runtimeStopped && !serviceFailure) this.store.updateWorkObservedState(work.id, "stopped", this.now().toISOString());
+    if (drainFailure !== undefined) failures.push(drainFailure);
+    if (failures.length > 0) throw new AggregateError(failures, `Work ${work.id} shutdown was not fully confirmed`);
   }
 
   private async ensureDeleted(work: WorkRecord): Promise<void> {
     await this.ensureStopped(work);
     await this.services.removeServiceInstances(work.id);
     await this.runtime.remove(work.id);
+    this.store.retainWorkVolumes(work.id, this.now().toISOString());
     const actual = await this.runtime.inspect(work.id);
     if (actual.exists) throw new Error("runtime could not confirm deletion");
     this.store.updateWorkObservedState(work.id, "deleted", this.now().toISOString());

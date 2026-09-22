@@ -17,6 +17,8 @@ export class AgentSessionService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
+  workspaceDirectory(): string { return this.workspace; }
+
   create(idempotencyKey?: string): SessionRecord {
     const sdk = initializePersistentSession({ cwd: this.workspace, sessionRoot: this.sessionRoot });
     const snapshot = readPersistentSession(sdk);

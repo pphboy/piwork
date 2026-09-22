@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const CORE_SCHEMA_VERSION = 5;
+export const CORE_SCHEMA_VERSION = 6;
 
 interface Migration {
   readonly version: number;
@@ -113,6 +113,7 @@ const migrations: readonly Migration[] = [
         installation_id TEXT NOT NULL,
         work_id TEXT NOT NULL,
         service_id TEXT,
+        volume_role TEXT NOT NULL CHECK (volume_role IN ('agent-private', 'workspace', 'service-data')),
         runtime_name TEXT NOT NULL UNIQUE,
         state TEXT NOT NULL,
         reference_count INTEGER NOT NULL,
@@ -234,6 +235,33 @@ const migrations: readonly Migration[] = [
       `CREATE INDEX work_context_snapshots_work_id ON work_context_snapshots(work_id, created_at)`,
     ],
   },
+  {
+    version: 6,
+    statements: [
+      `CREATE TABLE service_runtime_bindings (
+        work_id TEXT NOT NULL,
+        service_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        container_id TEXT,
+        image_identity TEXT,
+        recovery_count INTEGER NOT NULL DEFAULT 0,
+        recovery_window_started_at TEXT,
+        next_retry_at TEXT,
+        ready_since TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(work_id, service_id)
+      ) STRICT`,
+      `CREATE TABLE volume_references (
+        volume_id TEXT NOT NULL REFERENCES volume_records(id) ON DELETE CASCADE,
+        consumer_kind TEXT NOT NULL CHECK (consumer_kind IN ('work', 'service')),
+        consumer_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(volume_id, consumer_kind, consumer_id)
+      ) STRICT`,
+      `INSERT INTO control_metadata(key, value_json, updated_at)
+        VALUES ('work_storage_format', '{"version":2,"layout":"split-private-workspace"}', datetime('now'))`,
+    ],
+  },
 ];
 
 export function migrateCoreDatabase(database: DatabaseSync): void {
@@ -245,6 +273,9 @@ export function migrateCoreDatabase(database: DatabaseSync): void {
   const current = database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as {
     version: number;
   };
+  if (current.version > 0 && current.version < CORE_SCHEMA_VERSION) {
+    throw Object.assign(new Error("CONTEXT_FORMAT_UNSUPPORTED: pre-0.1 combined Work storage is not migrated"), { code: "CONTEXT_FORMAT_UNSUPPORTED" });
+  }
 
   for (const migration of migrations) {
     if (migration.version <= current.version) continue;

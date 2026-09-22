@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
+import { createServer } from "node:net";
 
 const root = new URL("../", import.meta.url).pathname;
 const temporary = await mkdtemp(join(tmpdir(), "piwork-acceptance-"));
@@ -19,8 +20,13 @@ const environment = scrubbedEnvironment({
   PIWORK_INSTALLATION_ID: installationId,
 });
 let core;
+let agentGrpcPort;
 let originalAcceptanceImage;
 let retagImage;
+let serviceWorkId;
+let serviceId;
+let serviceAgentBefore;
+let serviceContainerBefore;
 const manifestA = "---\nname: frontmatter-name\ndescription: Original acceptance fixture\n---\nSupporting file: support.txt\n";
 const supportA = "original-supporting-content\n";
 const manifestB = "---\nname: another-frontmatter-name\ndescription: Updated acceptance fixture\n---\nSupporting file: support.txt\n";
@@ -33,10 +39,12 @@ const markerC = skillMarker(manifestC, supportC);
 
 try {
   prerequisite("docker", ["info"]);
+  ensureDockerImage("python:3.13-slim");
   if (process.env.PIWORK_ACCEPTANCE_SKIP_BUILD !== "1") {
     checked("npm", ["run", "build"]);
     checked("docker", ["build", "-f", "Dockerfile.agentd", "--target", "acceptance", "-t", "piwork-agentd:acceptance", "."]);
   }
+  agentGrpcPort = await findAvailablePort();
   core = await startCore(0);
   const originalUrl = core.url;
   serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "status"]);
@@ -46,6 +54,34 @@ try {
     "--agent-image", "piwork-agentd:acceptance",
     "--model-provider", "piwork-deterministic", "--model", "fixture-v1", "--api-key-stdin",
   ], `${modelCredential}\n`);
+  cli(["--core", originalUrl, "--json", "login", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
+  const serviceCreation = jsonLines(cli(["--json", "work", "create", "--name", "acceptance-service", "--wait"]));
+  serviceWorkId = serviceCreation[0].workId;
+  assert.equal(serviceCreation.at(-1).state, "succeeded");
+  const serviceConfiguration = firstJson(cli(["--json", "work", "config", "show", serviceWorkId]));
+  assert.deepEqual(serviceConfiguration.active.skills, ["deploy-work-service"]);
+  assert.equal(serviceConfiguration.active.mcpServers[0].serverId, "work-services");
+  const deployment = jsonLines(cli(["--json", "chat", serviceWorkId, "--message", "deploy deterministic service"]));
+  const deploymentText = deployment.filter((item) => item?.kind?.$case === "text").map((item) => item.kind.text.delta).join("");
+  if (!/service-deployed:service-/.test(deploymentText)) {
+    const deploymentSessionId = deployment.find((item) => item.type === "session")?.sessionId;
+    const transcript = deploymentSessionId === undefined ? "session unavailable" : cli(["--json", "session", "show", serviceWorkId, deploymentSessionId]);
+    throw new Error(`deterministic deployment failed: ${safeFailure(`${deploymentText}\n${JSON.stringify(serviceRecord(serviceWorkId))}\n${managedWorkspaceState(serviceWorkId)}\n${transcript}\n${core.stderr()}\n${managedContainerLogs()}`)}`);
+  }
+  assert.equal(JSON.stringify(deployment).includes("work-services__service_create"), true, "tool trace must include MCP service_create");
+  serviceId = serviceRecord(serviceWorkId).service_id;
+  assert.equal(serviceRecord(serviceWorkId).observed_state, "ready");
+  serviceAgentBefore = dockerContainerKind(serviceWorkId, "agent");
+  serviceContainerBefore = dockerContainerKind(serviceWorkId, "service");
+  const serviceInspection = JSON.parse(checked("docker", ["inspect", serviceContainerBefore]))[0];
+  assert.deepEqual(serviceInspection.HostConfig.PortBindings, {});
+  assert.equal(serviceInspection.Mounts.some((mount) => mount.Destination === "/var/data"), false);
+  assert.equal(serviceInspection.Mounts.some((mount) => mount.Destination === "/var/data/workspace"), true);
+  const counterBefore = serviceCounter(serviceAgentBefore);
+  assert.equal(jsonLines(cli(["--json", "work", "stop", serviceWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(jsonLines(cli(["--json", "work", "start", serviceWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(dockerContainerKind(serviceWorkId, "service"), serviceContainerBefore);
+  assert.equal(serviceCounter(dockerContainerKind(serviceWorkId, "agent")), counterBefore + 1);
   const importedSkill = join(temporary, "skills", "directory-derived");
   await mkdir(importedSkill, { recursive: true });
   await writeFile(join(importedSkill, "SKILL.md"), manifestA);
@@ -66,7 +102,8 @@ try {
   cli(["--core", originalUrl, "--json", "login", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
   const identity = firstJson(cli(["--json", "whoami"]));
   assert.equal(identity.account, "admin");
-  assert.deepEqual(firstJson(cli(["--json", "work", "list"])), { works: [] });
+  const initialWorks = firstJson(cli(["--json", "work", "list"]));
+  assert.deepEqual(initialWorks.works.map((work) => work.id), [serviceWorkId]);
 
   const invalidCreation = cliFailure(["--json", "work", "create", "--name", "acceptance-invalid", "--skill", "sdk-invalid", "--wait"], 6);
   const invalidTerminal = jsonLines(invalidCreation.stdout);
@@ -164,7 +201,7 @@ try {
   serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "skills", "remove", "directory-derived"]);
   serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "skills", "disable", "sdk-invalid"]);
   serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "skills", "remove", "sdk-invalid"]);
-  assert.deepEqual(firstJson(cli(["--json", "skills", "list"])), { skills: [] });
+  assert.deepEqual(firstJson(cli(["--json", "skills", "list"])), { skills: [{ name: "deploy-work-service" }] });
 
   const firstCoreStderr = core.stderr();
   assert.equal(firstCoreStderr.includes('"stage":"skill-load","outcome":"succeeded"'), true);
@@ -172,6 +209,8 @@ try {
   await stopCore(core);
   core = undefined;
   assert.equal(checked("docker", ["inspect", "--format", "{{.State.Running}}", containerBefore]).trim(), "false", "Core shutdown gracefully stops its Work daemon");
+  assert.equal(checked("docker", ["inspect", "--format", "{{.State.Running}}", serviceAgentBefore]).trim(), "false");
+  assert.equal(checked("docker", ["inspect", "--format", "{{.State.Running}}", serviceContainerBefore]).trim(), "false");
   core = await startCore(Number(new URL(originalUrl).port));
   assert.equal(core.url, originalUrl);
   const resumedStatus = firstJson(serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "--json", "status"]));
@@ -179,7 +218,10 @@ try {
   assert.equal(firstJson(cli(["--json", "whoami"])).account, "admin");
   assert.equal(firstJson(cli(["--json", "operation", "show", invalidOperationId])).error.code, "SKILL_LOAD_FAILED");
   await waitFor(() => workObservedState(workId) === "ready", "Work did not recover after Core restart");
+  await waitFor(() => workObservedState(serviceWorkId) === "ready", "service Work did not recover after Core restart");
   assert.equal(dockerContainer(workId), containerBefore);
+  assert.equal(dockerContainerKind(serviceWorkId, "service"), serviceContainerBefore);
+  assert.equal(serviceRecord(serviceWorkId).service_id, serviceId);
   const second = jsonLines(cli(["--json", "chat", workId, "--session", sessionId, "--message", "acceptance second turn"]));
   assert.equal(second.some((item) => isExpectedText(item, markerA)), true);
 
@@ -229,9 +271,10 @@ try {
   assert.equal(jsonLines(cli(["--json", "work", "delete", explicitWorkId, "--wait"])).at(-1).state, "succeeded");
   assert.equal(jsonLines(cli(["--json", "work", "delete", emptyWorkId, "--wait"])).at(-1).state, "succeeded");
   assert.equal(jsonLines(cli(["--json", "work", "delete", invalidWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(jsonLines(cli(["--json", "work", "delete", serviceWorkId, "--wait"])).at(-1).state, "succeeded");
   assert.equal(dockerIds("container", workId).length, 0);
   assert.equal(dockerIds("network", workId).length, 0);
-  assert.equal(dockerIds("volume", workId).length, 1, "delete retains conversation data volume by policy");
+  assert.equal(dockerIds("volume", workId).length, 2, "delete retains private and workspace volumes by policy");
   process.stdout.write(`product acceptance passed: ${workId} ${sessionId}\n`);
 } finally {
   if (core !== undefined) await stopCore(core).catch(() => {});
@@ -252,20 +295,49 @@ function cliFailure(args, expectedStatus) {
 }
 function checked(command, args, input) {
   const result = spawnSync(command, args, { cwd: root, env: environment, input, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
-  if (result.status !== 0) throw new Error(`${command} ${args.slice(0, 3).join(" ")} failed (${result.status}): ${safeFailure(`${result.stderr}\n${result.stdout}`)}`);
+  if (result.status !== 0) throw new Error(`${command} ${args.slice(0, 3).join(" ")} failed (${result.status}): ${safeFailure(`${result.stderr}\n${result.stdout}\n${core?.stderr?.() ?? ""}\n${managedContainerLogs()}`)}`);
   capturedProcessOutput.push(result.stdout, result.stderr);
   assertNoSensitive(`${result.stdout}\n${result.stderr}`, [adminPassword, modelCredential], `${command} output`);
   return result.stdout;
 }
+function managedContainerLogs() {
+  const listed = spawnSync("docker", ["ps", "-aq", "--filter", `label=piwork.installation_id=${installationId}`], { cwd: root, encoding: "utf8" });
+  return (listed.stdout ?? "").trim().split("\n").filter(Boolean).map((id) => {
+    const logs = spawnSync("docker", ["logs", "--tail", "100", id], { cwd: root, encoding: "utf8" });
+    return `${id}:\n${logs.stderr ?? ""}${logs.stdout ?? ""}`;
+  }).join("\n");
+}
+function managedWorkspaceState(workId) {
+  try {
+    const agent = dockerContainerKind(workId, "agent");
+    const inspection = spawnSync("docker", ["inspect", "--format", "{{json .Mounts}}", agent], { cwd: root, encoding: "utf8" });
+    const files = spawnSync("docker", ["exec", agent, "sh", "-c", "pwd; id; stat -c '%u:%g %a %n' /var/data /var/data/workspace; find /var/data/workspace -maxdepth 4 -type f -print"], { cwd: root, encoding: "utf8" });
+    return `agent inspection:\n${inspection.stdout ?? inspection.stderr}\nagent workspace:\n${files.stdout ?? files.stderr}`;
+  } catch (error) {
+    return `agent workspace inspection failed: ${String(error)}`;
+  }
+}
 function prerequisite(command, args) { checked(command, args); }
+function ensureDockerImage(image) {
+  const present = spawnSync("docker", ["image", "inspect", image], { cwd: root, encoding: "utf8" });
+  if (present.status !== 0) checked("docker", ["pull", image]);
+}
 function jsonLines(value) { return value.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)); }
 function firstJson(value) { return jsonLines(value)[0]; }
 function isExpectedText(item, expected) { return item?.kind?.$case === "text" && item.kind.text?.delta === expected; }
 function skillMarker(manifest, support) { return `skill-read:${createHash("sha256").update(manifest).update("\0").update(support).digest("hex").slice(0, 16)}`; }
-function safeFailure(value) { return String(value).replace(/[A-Za-z0-9_-]{24,}/g, "[redacted]").slice(0, 2_000); }
+function safeFailure(value) {
+  const redacted = String(value).replace(/[A-Za-z0-9_-]{24,}/g, "[redacted]");
+  return redacted.length <= 16_000 ? redacted : `${redacted.slice(0, 8_000)}\n...[diagnostic output truncated]...\n${redacted.slice(-8_000)}`;
+}
 
 async function startCore(port) {
-  const child = spawn("node", ["apps/core/dist/cli.js", "serve", "--data-dir", dataDirectory, "--listen", `127.0.0.1:${port}`], {
+  if (!Number.isSafeInteger(agentGrpcPort)) throw new Error("acceptance agent gRPC port is unavailable");
+  const child = spawn("node", [
+    "apps/core/dist/cli.js", "serve", "--data-dir", dataDirectory, "--listen", `127.0.0.1:${port}`,
+    "--agent-grpc-listen", `0.0.0.0:${agentGrpcPort}`,
+    "--agent-grpc-advertise", `piwork-core:${agentGrpcPort}`,
+  ], {
     cwd: root, env: environment, stdio: ["ignore", "pipe", "pipe"],
   });
   let stderr = "";
@@ -273,11 +345,24 @@ async function startCore(port) {
   const line = await Promise.race([
     readLine(child.stdout),
     new Promise((_, reject) => setTimeout(() => reject(new Error("Core startup timed out")), 20_000)),
-    new Promise((_, reject) => child.once("exit", (code) => reject(new Error(`Core exited during startup (${code}): ${safeFailure(stderr)}`)))),
-  ]);
+    new Promise((_, reject) => child.once("exit", (code) => reject(new Error(`Core exited during startup (${code})`)))),
+  ]).catch((error) => {
+    throw new Error(`${error instanceof Error ? error.message : "Core startup failed"}: ${safeFailure(stderr)}`);
+  });
   const record = JSON.parse(line);
   assert.equal(record.event, "core.listening");
   return { child, url: record.url, stderr: () => stderr };
+}
+async function findAvailablePort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("could not reserve an acceptance TCP port");
+  await new Promise((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+  return address.port;
 }
 function readLine(stream) {
   return new Promise((resolve, reject) => {
@@ -292,7 +377,7 @@ async function stopCore(value) {
   value.child.kill("SIGTERM");
   const code = await Promise.race([
     new Promise((resolve) => value.child.once("exit", resolve)),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("Core shutdown exceeded 10 seconds")), 10_000)),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("Core shutdown exceeded 45 seconds")), 45_000)),
   ]);
   assert.equal(code, 0);
 }
@@ -300,6 +385,25 @@ function dockerContainer(workId) {
   const ids = dockerIds("container", workId);
   assert.equal(ids.length, 1);
   return ids[0];
+}
+function dockerContainerKind(workId, kind) {
+  const output = checked("docker", ["ps", "-aq", "--filter", `label=piwork.installation_id=${installationId}`,
+    "--filter", `label=piwork.work_id=${workId}`, "--filter", `label=piwork.resource_kind=${kind}`]);
+  const ids = output.trim().split("\n").filter(Boolean);
+  assert.equal(ids.length, 1, `${workId} must have one ${kind} container`);
+  return ids[0];
+}
+function serviceCounter(agentContainer) {
+  const script = "fetch('http://svc-demo:8000/').then(r=>r.json()).then(v=>console.log(JSON.stringify(v)))";
+  const result = spawnSync("docker", ["exec", agentContainer, "node", "-e", script], { cwd: root, env: environment, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`service request failed: ${safeFailure(result.stderr)}`);
+  return JSON.parse(result.stdout).count;
+}
+function serviceRecord(workId) {
+  const database = new DatabaseSync(join(dataDirectory, "core.sqlite"), { readOnly: true });
+  try {
+    return database.prepare("SELECT service_id, observed_state FROM service_heads WHERE work_id = ? AND tombstoned_at IS NULL").get(workId);
+  } finally { database.close(); }
 }
 function dockerIds(kind, workId) {
   const noun = kind === "container" ? ["ps", "-aq"] : [kind, "ls", "-q"];
@@ -355,7 +459,7 @@ function operationState(operationId) {
 }
 
 async function waitFor(check, message) {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (check()) return;
     await new Promise((resolve) => setTimeout(resolve, 20));

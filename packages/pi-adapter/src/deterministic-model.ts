@@ -9,9 +9,11 @@ import {
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
+import { modelMcpToolName } from "./mcp-bridge.js";
 
 const PROVIDER_ID = "piwork-deterministic";
 const MODEL_ID = "fixture-v1";
+const serviceTool = (name: string) => modelMcpToolName("work-services", name);
 
 export async function createDeterministicRuntime(): Promise<{
   readonly runtime: ModelRuntime;
@@ -76,8 +78,12 @@ function streamDeterministic(
       .join("\n");
     const manifestPath = decodeXml(systemPrompt.match(/<location>([^<]*\/SKILL\.md)<\/location>/)?.[1] ?? "");
     const toolResults = context.messages.slice(latestUserIndex + 1).filter((message) => message.role === "toolResult");
+    if (prompt.includes("deploy deterministic service")) {
+      deterministicDeployment(stream, output, toolResults, manifestPath);
+      return;
+    }
     if (toolResults.length === 0 && manifestPath !== "") {
-      emitToolCall(stream, output, "fixture-read-manifest", manifestPath);
+      emitToolCall(stream, output, "fixture-read-manifest", "read", { path: manifestPath });
       return;
     }
     if (toolResults.length === 1 && manifestPath !== "") {
@@ -85,7 +91,7 @@ function streamDeterministic(
       const reference = manifest.match(/(?:supporting file|support)\s*:\s*([a-zA-Z0-9._/-]+)/i)?.[1]
         ?? manifest.match(/\[[^\]]+\]\(([^)]+)\)/)?.[1];
       if (reference === undefined || reference.startsWith("/") || reference.includes("..")) throw new Error("deterministic Skill fixture has no safe supporting-file reference");
-      emitToolCall(stream, output, "fixture-read-support", resolve(dirname(manifestPath), reference));
+      emitToolCall(stream, output, "fixture-read-support", "read", { path: resolve(dirname(manifestPath), reference) });
       return;
     }
 
@@ -108,13 +114,133 @@ function streamDeterministic(
   return stream;
 }
 
-function emitToolCall(stream: AssistantMessageEventStream, output: AssistantMessage, id: string, path: string): void {
-  const toolCall = { type: "toolCall" as const, id, name: "read", arguments: { path } };
+function deterministicDeployment(
+  stream: AssistantMessageEventStream,
+  output: AssistantMessage,
+  results: readonly Extract<TranscriptContext["messages"][number], { role: "toolResult" }>[],
+  manifestPath: string,
+): void {
+  const has = (name: string) => results.some((result) => result.toolName === name);
+  const reads = results.filter((result) => result.toolName === "read");
+  if (manifestPath === "") {
+    emitText(stream, output, "service-deployment-failed:skill-unavailable");
+    return;
+  }
+  if (reads.length === 0) {
+    emitToolCall(stream, output, "deploy-read-skill", "read", { path: manifestPath });
+    return;
+  }
+  if (reads.length === 1) {
+    emitToolCall(stream, output, "deploy-read-reference", "read", { path: resolve(dirname(manifestPath), "reference.md") });
+    return;
+  }
+  if (!has(serviceTool("deployment_context"))) {
+    emitToolCall(stream, output, "deploy-context", serviceTool("deployment_context"), {});
+    return;
+  }
+  if (!has("write")) {
+    emitToolCall(stream, output, "deploy-write", "write", {
+      path: "apps/demo/server.py",
+      content: `from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+import json, os, threading
+
+DATA = Path("/var/data/workspace/data/demo/counter.json")
+LOCK = threading.Lock()
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            body = b"ok"
+        else:
+            with LOCK:
+                DATA.parent.mkdir(parents=True, exist_ok=True)
+                try: count = json.loads(DATA.read_text())["count"]
+                except (FileNotFoundError, KeyError, ValueError): count = 0
+                count += 1
+                temporary = DATA.with_suffix(".tmp")
+                temporary.write_text(json.dumps({"count": count}))
+                os.replace(temporary, DATA)
+            body = json.dumps({"count": count}).encode()
+        self.send_response(200); self.end_headers(); self.wfile.write(body)
+    def log_message(self, format, *args): pass
+ThreadingHTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
+`,
+    });
+    return;
+  }
+  if (reads.length === 2) {
+    emitToolCall(stream, output, "deploy-read-source", "read", { path: "apps/demo/server.py" });
+    return;
+  }
+  if (!toolResultText(reads[2]!).includes("ThreadingHTTPServer")) {
+    emitText(stream, output, "service-deployment-failed:workspace-write");
+    return;
+  }
+  if (!has(serviceTool("service_create"))) {
+    emitToolCall(stream, output, "deploy-create", serviceTool("service_create"), {
+      definition: {
+        name: "demo", image: { reference: "python:3.13-slim" }, command: "python3",
+        args: ["/var/data/workspace/apps/demo/server.py"], environment: {}, secretRefs: [],
+        workingDirectory: "/var/data/workspace",
+        mounts: [{ source: "workspace", target: "/var/data/workspace", readOnly: false }],
+        ports: [{ name: "http", containerPort: 8000, protocol: "tcp" }],
+        cpuMillis: 250, memoryBytes: 134217728, enabled: true, required: false,
+        readiness: { kind: "http", portName: "http", path: "/health", deadlineMs: 120000, timeoutMs: 2000 },
+        restartPolicy: "bounded",
+      },
+      idempotencyKey: "deterministic-demo-v1",
+    });
+    return;
+  }
+  const acceptance = parseToolJson(results.find((result) => result.toolName === serviceTool("service_create"))!);
+  const operationId = String(acceptance.operationId ?? "");
+  const serviceId = String(acceptance.serviceId ?? "");
+  const operations = results.filter((result) => result.toolName === serviceTool("operation_get"));
+  const latestOperation = operations.length === 0 ? undefined : parseToolJson(operations.at(-1)!);
+  if (latestOperation === undefined || latestOperation.state === "pending" || latestOperation.state === "running") {
+    emitToolCall(stream, output, `deploy-operation-${operations.length}`, serviceTool("operation_get"), { operationId });
+    return;
+  }
+  if (latestOperation.state !== "succeeded") {
+    emitText(stream, output, `service-deployment-failed:${serviceId}:${String(latestOperation.state)}`);
+    return;
+  }
+  if (!has(serviceTool("service_get"))) {
+    emitToolCall(stream, output, "deploy-inspect", serviceTool("service_get"), { serviceId });
+    return;
+  }
+  if (!has("bash")) {
+    emitToolCall(stream, output, "deploy-request", "bash", {
+      command: "node -e 'Promise.all([fetch(\"http://svc-demo:8000/\").then(r=>r.json()),fetch(\"http://svc-demo:8000/\").then(r=>r.json())]).then(v=>console.log(JSON.stringify(v)))'",
+    });
+    return;
+  }
+  const request = results.find((result) => result.toolName === "bash")!;
+  emitText(stream, output, `service-deployed:${serviceId}:${toolResultText(request).trim()}`);
+}
+
+function parseToolJson(message: Extract<TranscriptContext["messages"][number], { role: "toolResult" }>): Record<string, unknown> {
+  try { return JSON.parse(toolResultText(message)) as Record<string, unknown>; }
+  catch { return {}; }
+}
+
+function emitToolCall(stream: AssistantMessageEventStream, output: AssistantMessage, id: string, name: string, args: Record<string, unknown>): void {
+  const toolCall = { type: "toolCall" as const, id, name, arguments: args as any };
   output.content.push(toolCall);
   stream.push({ type: "toolcall_start", contentIndex: 0, partial: output });
   stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: output });
   output.stopReason = "toolUse";
   stream.push({ type: "done", reason: "toolUse", message: output });
+  stream.end();
+}
+
+function emitText(stream: AssistantMessageEventStream, output: AssistantMessage, text: string): void {
+  output.content.push({ type: "text", text });
+  stream.push({ type: "text_start", contentIndex: 0, partial: output });
+  stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
+  stream.push({ type: "text_end", contentIndex: 0, content: text, partial: output });
+  output.stopReason = "stop";
+  stream.push({ type: "done", reason: "stop", message: output });
   stream.end();
 }
 

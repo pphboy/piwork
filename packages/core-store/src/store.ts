@@ -179,6 +179,13 @@ export interface WorkConfigurationUpdate {
   readonly runtimeProfileJson?: string;
   readonly sourceRuntimeRevision?: number | null;
   readonly snapshot?: WorkContextSnapshotInput;
+  readonly hostCpuMillis?: number;
+  readonly hostMemoryBytes?: number;
+}
+
+export class WorkConfigurationAllocationError extends Error {
+  readonly code = "QUOTA_EXCEEDED";
+  constructor(message: string) { super(message); this.name = "WorkConfigurationAllocationError"; }
 }
 
 export interface WorkContextSnapshotInput {
@@ -307,6 +314,7 @@ export interface VolumeRecord {
   readonly installationId: string;
   readonly workId: string;
   readonly serviceId: string | null;
+  readonly volumeRole: "agent-private" | "workspace" | "service-data";
   readonly runtimeName: string;
   readonly state: VolumeRecordState;
   readonly referenceCount: number;
@@ -320,9 +328,23 @@ export interface NewVolumeRecord {
   readonly installationId: string;
   readonly workId: string;
   readonly serviceId?: string | null;
+  readonly volumeRole?: VolumeRecord["volumeRole"];
   readonly runtimeName: string;
   readonly referenceCount: number;
   readonly createdAt: string;
+}
+
+export interface ServiceRuntimeBindingRecord {
+  readonly workId: string;
+  readonly serviceId: string;
+  readonly revision: number;
+  readonly containerId: string | null;
+  readonly imageIdentity: string | null;
+  readonly recoveryCount: number;
+  readonly recoveryWindowStartedAt: string | null;
+  readonly nextRetryAt: string | null;
+  readonly readySince: string | null;
+  readonly updatedAt: string;
 }
 
 export class ReferencedVolumeError extends Error {
@@ -343,14 +365,16 @@ export class CoreStore {
   static open(options: CoreStoreOptions): CoreStore {
     mkdirSync(dirname(options.databasePath), { recursive: true, mode: 0o700 });
     const lock = StoreLock.acquire(options.lockPath ?? `${options.databasePath}.lock`);
+    let database: DatabaseSync | undefined;
     try {
-      const database = new DatabaseSync(options.databasePath);
+      database = new DatabaseSync(options.databasePath);
       database.exec("PRAGMA journal_mode = WAL");
       database.exec("PRAGMA foreign_keys = ON");
       database.exec("PRAGMA busy_timeout = 5000");
       migrateCoreDatabase(database);
       return new CoreStore(database, lock);
     } catch (error) {
+      database?.close();
       lock.release();
       throw error;
     }
@@ -842,6 +866,40 @@ export class CoreStore {
       if (!update.allowLastCommitWins && work.desired_revision !== update.expectedRevision) {
         throw new ConfigurationRevisionConflictError(update.workId, update.expectedRevision, work.desired_revision);
       }
+      const resources = (JSON.parse(update.configJson) as { resources?: {
+        cpuMillis?: unknown; memoryBytes?: unknown; agentCpuMillis?: unknown; agentMemoryBytes?: unknown;
+        maxServices?: unknown; maxRetainedVolumes?: unknown;
+      } }).resources;
+      if (typeof resources?.cpuMillis !== "number" || typeof resources.memoryBytes !== "number"
+        || typeof resources.agentCpuMillis !== "number" || typeof resources.agentMemoryBytes !== "number"
+        || typeof resources.maxServices !== "number" || typeof resources.maxRetainedVolumes !== "number") {
+        throw new WorkConfigurationAllocationError("Work configuration has no complete resource policy");
+      }
+      const serviceUsage = this.database.prepare(`SELECT
+        COALESCE(SUM(MAX(desired_cpu_millis, occupied_cpu_millis)), 0) AS cpu,
+        COALESCE(SUM(MAX(desired_memory_bytes, occupied_memory_bytes)), 0) AS memory
+        FROM quota_reservations WHERE work_id = ? AND subject_kind = 'service'`).get(update.workId) as { cpu: number; memory: number };
+      const serviceCount = (this.database.prepare("SELECT COUNT(*) AS count FROM service_heads WHERE work_id = ? AND tombstoned_at IS NULL").get(update.workId) as { count: number }).count;
+      const volumeCount = (this.database.prepare("SELECT COUNT(*) AS count FROM volume_records WHERE work_id = ? AND state != 'purged'").get(update.workId) as { count: number }).count;
+      if (resources.agentCpuMillis + serviceUsage.cpu > resources.cpuMillis
+        || resources.agentMemoryBytes + serviceUsage.memory > resources.memoryBytes
+        || serviceCount > resources.maxServices || volumeCount > resources.maxRetainedVolumes) {
+        throw new WorkConfigurationAllocationError("Work resource reduction is below retained reservations or occupation");
+      }
+      const currentAgent = this.database.prepare(`SELECT desired_cpu_millis, desired_memory_bytes,
+        occupied_cpu_millis, occupied_memory_bytes FROM quota_reservations
+        WHERE work_id = ? AND subject_kind = 'agent' AND subject_id = 'agentd'`).get(update.workId) as
+        | { desired_cpu_millis: number; desired_memory_bytes: number; occupied_cpu_millis: number; occupied_memory_bytes: number }
+        | undefined;
+      const host = this.database.prepare(`SELECT
+        COALESCE(SUM(MAX(desired_cpu_millis, occupied_cpu_millis)), 0) AS cpu,
+        COALESCE(SUM(MAX(desired_memory_bytes, occupied_memory_bytes)), 0) AS memory FROM quota_reservations`).get() as { cpu: number; memory: number };
+      const currentAgentCpu = currentAgent === undefined ? 0 : Math.max(currentAgent.desired_cpu_millis, currentAgent.occupied_cpu_millis);
+      const currentAgentMemory = currentAgent === undefined ? 0 : Math.max(currentAgent.desired_memory_bytes, currentAgent.occupied_memory_bytes);
+      const candidateAgentCpu = Math.max(resources.agentCpuMillis, currentAgent?.occupied_cpu_millis ?? 0);
+      const candidateAgentMemory = Math.max(resources.agentMemoryBytes, currentAgent?.occupied_memory_bytes ?? 0);
+      if (update.hostCpuMillis !== undefined && host.cpu - currentAgentCpu + candidateAgentCpu > update.hostCpuMillis) throw new WorkConfigurationAllocationError("host CPU budget would be exceeded");
+      if (update.hostMemoryBytes !== undefined && host.memory - currentAgentMemory + candidateAgentMemory > update.hostMemoryBytes) throw new WorkConfigurationAllocationError("host memory budget would be exceeded");
       const nextRevision = work.desired_revision + 1;
       this.database.prepare(`INSERT INTO work_config_revisions(
         work_id, revision, config_json, created_by_user_id, created_at,
@@ -863,6 +921,9 @@ export class CoreStore {
         desired_revision = ?, desired_context_id = COALESCE(?, desired_context_id),
         updated_at = ?
         WHERE id = ?`).run(nextRevision, update.snapshot?.snapshotId ?? null, update.now, update.workId);
+      this.database.prepare(`UPDATE quota_reservations SET desired_cpu_millis = ?, desired_memory_bytes = ?,
+        updated_at = ? WHERE work_id = ? AND subject_kind = 'agent' AND subject_id = 'agentd'`)
+        .run(resources.agentCpuMillis, resources.agentMemoryBytes, update.now, update.workId);
       this.database.exec("COMMIT");
       return this.getWorkConfiguration(update.workId)!;
     } catch (error) {
@@ -1210,6 +1271,21 @@ export class CoreStore {
     }));
   }
 
+  bindServiceImage(workId: string, serviceId: string, revision: number, imageIdentity: string): ServiceRevisionRecord {
+    this.assertOpen();
+    const row = this.database.prepare(`SELECT resolved_image_digest FROM service_revisions
+      WHERE work_id = ? AND service_id = ? AND revision = ?`).get(workId, serviceId, revision) as
+      { resolved_image_digest: string | null } | undefined;
+    if (row === undefined) throw new Error(`service revision ${serviceId}:${revision} was not found`);
+    if (row.resolved_image_digest !== null && row.resolved_image_digest !== imageIdentity) {
+      throw new Error(`service revision ${serviceId}:${revision} already captured a different image`);
+    }
+    this.database.prepare(`UPDATE service_revisions SET resolved_image_digest = ?
+      WHERE work_id = ? AND service_id = ? AND revision = ? AND resolved_image_digest IS NULL`)
+      .run(imageIdentity, workId, serviceId, revision);
+    return this.listServiceRevisions(workId, serviceId).find((candidate) => candidate.revision === revision)!;
+  }
+
   updateServiceObservedState(
     workId: string,
     serviceId: string,
@@ -1247,6 +1323,48 @@ export class CoreStore {
     return row === undefined ? undefined : mapQuotaReservation(row);
   }
 
+  listQuotaReservations(workId: string): QuotaReservationRecord[] {
+    this.assertOpen();
+    const rows = this.database.prepare(`SELECT work_id, subject_kind, subject_id,
+      desired_cpu_millis, desired_memory_bytes, occupied_cpu_millis, occupied_memory_bytes,
+      service_slots, volume_slots, updated_at FROM quota_reservations WHERE work_id = ?
+      ORDER BY subject_kind, subject_id`).all(workId) as Array<Record<string, string | number>>;
+    return rows.map(mapQuotaReservation);
+  }
+
+  getServiceRuntimeBinding(workId: string, serviceId: string): ServiceRuntimeBindingRecord | undefined {
+    this.assertOpen();
+    const row = this.database.prepare(`SELECT work_id, service_id, revision, container_id, image_identity,
+      recovery_count, recovery_window_started_at, next_retry_at, ready_since, updated_at
+      FROM service_runtime_bindings WHERE work_id = ? AND service_id = ?`).get(workId, serviceId) as
+      | Record<string, string | number | null>
+      | undefined;
+    return row === undefined ? undefined : mapServiceRuntimeBinding(row);
+  }
+
+  putServiceRuntimeBinding(input: ServiceRuntimeBindingRecord): ServiceRuntimeBindingRecord {
+    this.assertOpen();
+    this.database.prepare(`INSERT INTO service_runtime_bindings(
+      work_id, service_id, revision, container_id, image_identity, recovery_count,
+      recovery_window_started_at, next_retry_at, ready_since, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(work_id, service_id) DO UPDATE SET
+      revision = excluded.revision, container_id = excluded.container_id,
+      image_identity = excluded.image_identity, recovery_count = excluded.recovery_count,
+      recovery_window_started_at = excluded.recovery_window_started_at,
+      next_retry_at = excluded.next_retry_at, ready_since = excluded.ready_since,
+      updated_at = excluded.updated_at`).run(
+      input.workId, input.serviceId, input.revision, input.containerId, input.imageIdentity,
+      input.recoveryCount, input.recoveryWindowStartedAt, input.nextRetryAt, input.readySince, input.updatedAt,
+    );
+    return this.getServiceRuntimeBinding(input.workId, input.serviceId)!;
+  }
+
+  deleteServiceRuntimeBinding(workId: string, serviceId: string): void {
+    this.assertOpen();
+    this.database.prepare("DELETE FROM service_runtime_bindings WHERE work_id = ? AND service_id = ?").run(workId, serviceId);
+  }
+
   updateQuotaOccupation(
     workId: string,
     subjectKind: string,
@@ -1266,6 +1384,15 @@ export class CoreStore {
       subjectKind,
       subjectId,
     );
+    if (result.changes !== 1) throw new Error(`quota reservation ${subjectKind}/${subjectId} was not found`);
+    return this.getQuotaReservation(workId, subjectKind, subjectId)!;
+  }
+
+  updateQuotaDesired(workId: string, subjectKind: string, subjectId: string, cpuMillis: number, memoryBytes: number, now: string): QuotaReservationRecord {
+    this.assertOpen();
+    const result = this.database.prepare(`UPDATE quota_reservations SET desired_cpu_millis = ?,
+      desired_memory_bytes = ?, updated_at = ? WHERE work_id = ? AND subject_kind = ? AND subject_id = ?`)
+      .run(cpuMillis, memoryBytes, now, workId, subjectKind, subjectId);
     if (result.changes !== 1) throw new Error(`quota reservation ${subjectKind}/${subjectId} was not found`);
     return this.getQuotaReservation(workId, subjectKind, subjectId)!;
   }
@@ -1478,13 +1605,14 @@ export class CoreStore {
     if (!Number.isInteger(record.referenceCount) || record.referenceCount < 0) throw new Error("invalid volume reference count");
     try {
       this.database.prepare(`INSERT INTO volume_records(
-        id, installation_id, work_id, service_id, runtime_name, state,
+        id, installation_id, work_id, service_id, volume_role, runtime_name, state,
         reference_count, retained_at, purged_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, 'active', ?, NULL, NULL, ?)`).run(
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL, ?)`).run(
         record.id,
         record.installationId,
         record.workId,
         record.serviceId ?? null,
+        record.volumeRole ?? "service-data",
         record.runtimeName,
         record.referenceCount,
         record.createdAt,
@@ -1506,7 +1634,7 @@ export class CoreStore {
   getVolumeRecord(id: string): VolumeRecord | undefined {
     this.assertOpen();
     const row = this.database.prepare(`SELECT
-      id, installation_id, work_id, service_id, runtime_name, state,
+      id, installation_id, work_id, service_id, volume_role, runtime_name, state,
       reference_count, retained_at, purged_at, created_at
       FROM volume_records WHERE id = ?`).get(id) as Record<string, string | number | null> | undefined;
     return row === undefined ? undefined : mapVolumeRecord(row);
@@ -1522,7 +1650,7 @@ export class CoreStore {
     }
     if (!includePurged) conditions.push("state != 'purged'");
     const rows = this.database.prepare(`SELECT
-      id, installation_id, work_id, service_id, runtime_name, state,
+      id, installation_id, work_id, service_id, volume_role, runtime_name, state,
       reference_count, retained_at, purged_at, created_at
       FROM volume_records
       ${conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`}
@@ -1535,6 +1663,32 @@ export class CoreStore {
     const row = this.database.prepare(`SELECT COUNT(*) AS count FROM volume_records
       WHERE work_id = ? AND state != 'purged'`).get(workId) as { count: number };
     return row.count;
+  }
+
+  retainWorkVolumes(workId: string, now: string): void {
+    this.assertOpen();
+    this.database.prepare(`DELETE FROM volume_references
+      WHERE volume_id IN (SELECT id FROM volume_records WHERE work_id = ?)`).run(workId);
+    this.database.prepare(`UPDATE volume_records SET reference_count = 0, state = 'retained', retained_at = ?
+      WHERE work_id = ? AND state = 'active'`).run(now, workId);
+  }
+
+  detachServiceVolumeReferences(workId: string, serviceId: string, now: string): void {
+    this.assertOpen();
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`DELETE FROM volume_references WHERE consumer_kind = 'service' AND consumer_id = ?
+        AND volume_id IN (SELECT id FROM volume_records WHERE work_id = ?)`).run(serviceId, workId);
+      this.database.prepare(`UPDATE volume_records SET
+        reference_count = (SELECT COUNT(*) FROM volume_references WHERE volume_id = volume_records.id),
+        state = CASE WHEN (SELECT COUNT(*) FROM volume_references WHERE volume_id = volume_records.id) = 0 THEN 'retained' ELSE 'active' END,
+        retained_at = CASE WHEN (SELECT COUNT(*) FROM volume_references WHERE volume_id = volume_records.id) = 0 THEN COALESCE(retained_at, ?) ELSE NULL END
+        WHERE work_id = ? AND state IN ('active', 'retained')`).run(now, workId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   setVolumeReferenceCount(id: string, referenceCount: number, now: string): VolumeRecord {
@@ -1640,6 +1794,7 @@ function mapVolumeRecord(row: Record<string, string | number | null>): VolumeRec
     installationId: String(row.installation_id),
     workId: String(row.work_id),
     serviceId: row.service_id === null ? null : String(row.service_id),
+    volumeRole: String(row.volume_role) as VolumeRecord["volumeRole"],
     runtimeName: String(row.runtime_name),
     state: String(row.state) as VolumeRecordState,
     referenceCount: Number(row.reference_count),
@@ -1709,6 +1864,19 @@ function mapQuotaReservation(row: Record<string, string | number | null>): Quota
     occupiedMemoryBytes: Number(row.occupied_memory_bytes),
     serviceSlots: Number(row.service_slots),
     volumeSlots: Number(row.volume_slots),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function mapServiceRuntimeBinding(row: Record<string, string | number | null>): ServiceRuntimeBindingRecord {
+  return {
+    workId: String(row.work_id), serviceId: String(row.service_id), revision: Number(row.revision),
+    containerId: row.container_id === null ? null : String(row.container_id),
+    imageIdentity: row.image_identity === null ? null : String(row.image_identity),
+    recoveryCount: Number(row.recovery_count),
+    recoveryWindowStartedAt: row.recovery_window_started_at === null ? null : String(row.recovery_window_started_at),
+    nextRetryAt: row.next_retry_at === null ? null : String(row.next_retry_at),
+    readySince: row.ready_since === null ? null : String(row.ready_since),
     updatedAt: String(row.updated_at),
   };
 }

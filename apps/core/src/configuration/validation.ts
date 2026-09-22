@@ -1,5 +1,5 @@
 import { Check } from "typebox/value";
-import { BUILT_IN_WORK_TOOLS, normalizeAgentsMd, WorkConfigSchema, type McpServer, type WorkConfig } from "@piwork/contracts";
+import { BUILT_IN_WORK_TOOLS, normalizeAgentsMd, validateResourcePolicy, WorkConfigSchema, type McpServer, type WorkConfig } from "@piwork/contracts";
 import { CoreStore, type CatalogKind } from "@piwork/core-store";
 
 export type ConfigurationValidationCode =
@@ -39,6 +39,11 @@ export class WorkConfigurationValidator {
     }
     const config = context.configuration;
     try {
+      validateResourcePolicy(config.resources);
+    } catch (error) {
+      throw new ConfigurationValidationError("INVALID_CONFIGURATION", error instanceof Error ? error.message : "resource allocation is invalid", "resources");
+    }
+    try {
       normalizeAgentsMd(config.agentsMd);
     } catch (error) {
       throw new ConfigurationValidationError("INVALID_CONFIGURATION", error instanceof Error ? error.message : "agentsMd is invalid", "agentsMd");
@@ -71,6 +76,7 @@ export class WorkConfigurationValidator {
         );
       }
       serverIds.add(server.serverId);
+      validateReservedMcpServer(server, index);
       if (server.requiredServiceId !== undefined && context.availableServiceIds !== undefined && !context.availableServiceIds.has(server.requiredServiceId)) {
         throw new ConfigurationValidationError("INVALID_REFERENCE", `required service ${server.requiredServiceId} does not exist`, `mcpServers.${index}.requiredServiceId`);
       }
@@ -205,6 +211,24 @@ function validateMcpTransport(server: McpServer, index: number): void {
       "INVALID_CONFIGURATION",
       `remote MCP ${server.serverId} must use HTTPS`,
       `mcpServers.${index}.url`,
+    );
+  }
+}
+
+function validateReservedMcpServer(server: McpServer, index: number): void {
+  if (server.serverId !== "work-services") return;
+  const valid = server.transport === "stdio"
+    && server.required
+    && server.command === "/usr/local/bin/piwork-service-mcp"
+    && (server.args?.length ?? 0) === 0
+    && server.url === undefined
+    && server.requiredServiceId === undefined
+    && (server.secretRefs?.length ?? 0) === 0;
+  if (!valid) {
+    throw new ConfigurationValidationError(
+      "INVALID_CONFIGURATION",
+      "work-services is a reserved built-in MCP adapter and cannot be substituted",
+      `mcpServers.${index}`,
     );
   }
 }
