@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import {
   constants,
   chmodSync,
+  closeSync,
   existsSync,
   lstatSync,
+  fsyncSync,
   mkdirSync,
   readFileSync,
+  openSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -63,6 +66,32 @@ export interface WorkContextSnapshot {
 export class WorkContextStore {
   constructor(readonly rootDirectory: string) {
     mkdirSync(rootDirectory, { recursive: true, mode: 0o700 });
+  }
+
+  /** The helper has restored and verified this package-owned Skill root. Never consult global Skills. */
+  buildImported(input: {
+    readonly workId: string; readonly snapshotId: string; readonly configuration: WorkConfig;
+    readonly imageIdentity: string; readonly verifiedSkillsDirectory: string; readonly agentsBytes: Uint8Array; readonly createdAt: string;
+  }): WorkContextSnapshot {
+    const information = lstatSync(input.verifiedSkillsDirectory);
+    if (!information.isDirectory() || information.isSymbolicLink() || realpathSync(input.verifiedSkillsDirectory) !== input.verifiedSkillsDirectory) throw new WorkContextError("CONTEXT_UNSAFE", "skills");
+    if (!Buffer.from(input.configuration.agentsMd).equals(input.agentsBytes)) throw new WorkContextError("AGENTS_INVALID", "agentsMd");
+    const actual = safeNames(input.verifiedSkillsDirectory), expected = [...input.configuration.skills].sort();
+    if (actual.length !== expected.length || actual.some((name, index) => name !== expected[index])) throw new WorkContextError("SKILL_LOAD_FAILED", "skills");
+    const skills = input.configuration.skills.map((name) => {
+      assertSegment(name, "skills"); const directory = join(input.verifiedSkillsDirectory, name);
+      const inspected = inspectSkillTree(directory, { expectedName: name, physicalNameMustMatch: true });
+      return { name, directory, identity: inspected.identity };
+    });
+    const snapshot = this.build({ ...input, skills });
+    try {
+      syncSnapshotTree(snapshot.directory);
+      for (const parent of [join(this.rootDirectory, input.workId, "contexts"), join(this.rootDirectory, input.workId), this.rootDirectory]) {
+        const fd = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+        try { fsyncSync(fd); } finally { closeSync(fd); }
+      }
+      return snapshot;
+    } catch (error) { this.remove(input.workId, input.snapshotId); throw redactContextError(error); }
   }
 
   build(input: {
@@ -227,6 +256,20 @@ function copyInspectedTree(source: SkillTreeInspection, destination: string): vo
     const bytes = readRegularFileNoFollow(file.absolutePath, file.size, source.name);
     writeFileSync(join(destination, ...file.relativePath.split("/")), bytes, { flag: "wx", mode: 0o400 });
   }
+}
+
+function syncSnapshotTree(directory: string): void {
+  for (const name of safeNames(directory)) {
+    const path = join(directory, name), information = lstatSync(path);
+    if (information.isDirectory() && !information.isSymbolicLink()) syncSnapshotTree(path);
+    else {
+      if (!information.isFile() || information.isSymbolicLink()) throw new WorkContextError("CONTEXT_UNSAFE");
+      const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try { fsyncSync(fd); } finally { closeSync(fd); }
+    }
+  }
+  const fd = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
 function writeJsonExclusive(path: string, value: unknown): void {

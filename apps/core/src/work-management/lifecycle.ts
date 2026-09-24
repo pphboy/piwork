@@ -5,6 +5,7 @@ import { authorizeWorkResource, filterVisibleResources, type UserPrincipal } fro
 import { WorkContextError, WorkContextStore } from "../configuration/work-context.js";
 import { diagnosticFromError, emitDiagnostic, errorEnvelope, operationEnvelope, operationWithStage, publicOperation, safeDiagnostic, type JsonLineLogger } from "./diagnostics.js";
 import { managedVolumeName } from "@piwork/runtime-docker";
+import { snapshotOperation } from "../work-snapshots/access.js";
 
 export interface WorkRuntimeState {
   readonly exists: boolean;
@@ -22,7 +23,7 @@ export interface WorkRuntimeAdapter {
   prepareConfigurationChange?(workId: string): Promise<{ readonly prepared: boolean; readonly busy: boolean; readonly activeRunCount: number }>;
   drain(workId: string, timeoutMs: number): Promise<void>;
   stop(workId: string, timeoutMs: number): Promise<void>;
-  remove(workId: string): Promise<void>;
+  remove(workId: string, options?: { readonly preserveNetwork?: boolean }): Promise<void>;
   listManagedInstances?(): Promise<readonly { readonly workId: string; readonly instanceId: string }[]>;
 }
 
@@ -135,6 +136,7 @@ export class WorkLifecycleService {
         now: this.now().toISOString(),
       }, (tx) => {
         const now = this.now().toISOString();
+        this.store.snapshots.assertNameAvailable(principal.userId, input.name);
         const host = tx.get<{ cpu: number; memory: number }>(`SELECT
           COALESCE(SUM(MAX(desired_cpu_millis, occupied_cpu_millis)), 0) AS cpu,
           COALESCE(SUM(MAX(desired_memory_bytes, occupied_memory_bytes)), 0) AS memory FROM quota_reservations`) ?? { cpu: 0, memory: 0 };
@@ -200,6 +202,8 @@ export class WorkLifecycleService {
   }
 
   operation(principal: UserPrincipal, operationId: string): PublicOperation {
+    const snapshot = snapshotOperation(this.store, principal, operationId);
+    if (snapshot !== undefined) return snapshot;
     const operation = this.store.getOperation(operationId);
     if (operation === undefined || operation.workId === null) throw invisible();
     const work = this.store.getWork(operation.workId, true);
@@ -278,8 +282,10 @@ export class WorkLifecycleService {
     const orphanedInstances = managed.filter((instance) => !knownWorks.has(instance.workId));
     const adoptedWorkIds = managed.filter((instance) => knownWorks.has(instance.workId)).map((instance) => instance.workId);
     const unfinishedWorkIds = new Set(this.store.listOperations(["pending", "running"])
+      .filter((operation) => this.store.snapshots.getJob(operation.id) === undefined)
       .flatMap((operation) => operation.workId === null ? [] : [operation.workId]));
     for (const work of this.store.listWorks(true)) {
+      if (this.store.snapshots.getLock(work.id)) continue;
       if (work.desiredState === "running" && !unfinishedWorkIds.has(work.id)) {
         this.mutateDesired(
           { userId: work.ownerUserId, role: "user" },
@@ -292,6 +298,7 @@ export class WorkLifecycleService {
       }
     }
     for (const operation of this.store.listOperations(["pending", "running"])) {
+      if (this.store.snapshots.getJob(operation.id) || (operation.workId !== null && this.store.snapshots.getLock(operation.workId))) continue;
       if (operation.state === "running") {
         const interrupted = operationWithStage({
           record: operation,
@@ -385,10 +392,11 @@ export class WorkLifecycleService {
   }
 
   private async reconcile(workId: string): Promise<void> {
+    if (this.store.snapshots.getLock(workId)) return;
     const work = this.store.getWork(workId, true);
     if (work === undefined) return;
     const operations = this.store.listOperations(["pending", "running"])
-      .filter((operation) => operation.workId === workId)
+      .filter((operation) => operation.workId === workId && this.store.snapshots.getJob(operation.id) === undefined)
       .sort((left, right) => left.targetVersion - right.targetVersion);
     const current = operations.at(-1);
     if (current === undefined) return;
@@ -609,6 +617,12 @@ export class WorkLifecycleService {
     // and the old active revision unchanged.
     await this.runOperationStage(operationId, workId, "runtime-prepare", "RUNTIME_PREPARE_FAILED", () => this.runtime.prepare(work, candidate));
     if (work.desiredState !== "running") {
+      const existing = await this.runtime.inspect(workId);
+      if (existing.exists) {
+        if (existing.running) await this.runtime.stop(workId, this.stopTimeoutMs);
+        await this.runtime.remove(workId, { preserveNetwork: true });
+        await this.runOperationStage(operationId, workId, "runtime-prepare", "RUNTIME_PREPARE_FAILED", () => this.runtime.prepare(work, candidate));
+      }
       const validation = { ...candidate, initializationOnly: true };
       const generation = this.nextRuntimeGeneration(workId);
       this.store.ensureRuntimeGeneration(workId, generation, this.now().toISOString());
@@ -619,7 +633,7 @@ export class WorkLifecycleService {
       await this.runtime.stop(workId, this.stopTimeoutMs);
       const stopped = await this.runtime.inspect(workId);
       if (stopped.running) throw new Error("runtime could not confirm initialization shutdown");
-      await this.runtime.remove(workId);
+      await this.runtime.remove(workId, { preserveNetwork: true });
       this.assertCurrentTarget(workId, targetVersion);
       return projectedActivation(this.store.getWorkConfiguration(workId)!, candidateContextId, expectedRevision, candidate.workConfig);
     }
@@ -645,13 +659,14 @@ export class WorkLifecycleService {
         this.store.updateWorkObservedState(workId, "starting", this.now().toISOString());
       }
       if (actual.exists) {
+        await this.services.stopServices(workId, this.stopTimeoutMs);
         if (actual.running) await this.runtime.stop(workId, this.stopTimeoutMs);
         for (const item of this.store.listRuntimeGenerations(workId)) {
           if (["preparing", "starting", "ready", "draining", "stopping"].includes(item.state)) {
             this.store.updateRuntimeGeneration(workId, item.generation, "stopped", this.now().toISOString());
           }
         }
-        await this.runtime.remove(workId);
+        await this.runtime.remove(workId, { preserveNetwork: true });
       }
       await this.runOperationStage(operationId, workId, "runtime-prepare", "RUNTIME_PREPARE_FAILED", () => this.runtime.prepare(work, candidate));
       this.store.ensureRuntimeGeneration(workId, generation, this.now().toISOString());
@@ -661,6 +676,7 @@ export class WorkLifecycleService {
       this.recordOperationStage(operationId, workId, "readiness");
       const ready = await this.runtime.inspect(workId);
       if (!ready.exists || !ready.running || !ready.ready) throw new Error("updated Work runtime did not become ready");
+      await this.services.prepareEnabledServices(work);
       this.store.updateRuntimeGeneration(workId, generation, "ready", this.now().toISOString(), {
         instanceId: started.instanceId,
         readySince: this.now().toISOString(),
@@ -669,7 +685,7 @@ export class WorkLifecycleService {
         this.assertCurrentTarget(workId, targetVersion);
       } catch (error) {
         await this.runtime.stop(workId, this.stopTimeoutMs).catch(() => undefined);
-        await this.runtime.remove(workId).catch(() => undefined);
+        await this.runtime.remove(workId, { preserveNetwork: true }).catch(() => undefined);
         throw error;
       }
       return projectedActivation(this.store.getWorkConfiguration(workId)!, candidateContextId, expectedRevision, candidate.workConfig);
@@ -692,13 +708,14 @@ export class WorkLifecycleService {
         try {
           const failed = await this.runtime.inspect(workId);
           if (failed.exists && failed.running) await this.runtime.stop(workId, this.stopTimeoutMs);
-          if (failed.exists) await this.runtime.remove(workId);
+          if (failed.exists) await this.runtime.remove(workId, { preserveNetwork: true });
           await this.runtime.prepare(work, previous);
           const rollbackGeneration = generation + 1;
           this.store.ensureRuntimeGeneration(workId, rollbackGeneration, this.now().toISOString());
           const restored = await this.runtime.start(work, rollbackGeneration, previous);
           const restoredState = await this.runtime.inspect(workId);
           if (!restoredState.exists || !restoredState.running || !restoredState.ready) throw new Error("previous Work runtime could not be restored");
+          await this.services.prepareEnabledServices(work);
           this.store.updateRuntimeGeneration(workId, rollbackGeneration, "ready", this.now().toISOString(), {
             instanceId: restored.instanceId,
             readySince: this.now().toISOString(),

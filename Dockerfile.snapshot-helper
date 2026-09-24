@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+FROM node:24-bookworm-slim AS build
+ARG NPM_REGISTRY=https://npmreg.proxy.ustclug.org
+WORKDIR /workspace
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY apps/snapshot-helper ./apps/snapshot-helper
+COPY packages/contracts ./packages/contracts
+COPY packages/work-package ./packages/work-package
+COPY packages/work-store ./packages/work-store
+RUN --mount=type=cache,target=/root/.npm npm config set registry "$NPM_REGISTRY" \
+ && npm config set replace-registry-host always \
+ && npm ci --ignore-scripts --include=optional \
+ && npm run build -w @piwork/contracts \
+ && npm run build -w @piwork/work-store \
+ && npm run build -w @piwork/work-package \
+ && npm run build -w @piwork/snapshot-helper
+
+FROM node:24-bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+ && apt-get clean
+WORKDIR /workspace
+ENV PYTHONDONTWRITEBYTECODE=1
+COPY --from=build /workspace/node_modules ./node_modules
+COPY --from=build /workspace/packages/contracts/package.json ./packages/contracts/package.json
+COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
+COPY --from=build /workspace/packages/work-package/package.json ./packages/work-package/package.json
+COPY --from=build /workspace/packages/work-package/dist ./packages/work-package/dist
+COPY --from=build /workspace/packages/work-store/package.json ./packages/work-store/package.json
+COPY --from=build /workspace/packages/work-store/dist ./packages/work-store/dist
+COPY --from=build /workspace/apps/snapshot-helper/package.json ./apps/snapshot-helper/package.json
+COPY --from=build /workspace/apps/snapshot-helper/dist ./apps/snapshot-helper/dist
+COPY --from=build /workspace/apps/snapshot-helper/filesystem.py ./apps/snapshot-helper/filesystem.py
+ENTRYPOINT ["node", "/workspace/apps/snapshot-helper/dist/main.js"]

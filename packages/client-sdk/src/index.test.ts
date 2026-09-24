@@ -3,6 +3,7 @@ import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { ReadableStream } from "node:stream/web";
 import { defaultCredentialPath, FileCredentialStore, PiworkApiError, PiworkClient, resolveCoreEndpoint, safeErrorMessage, type CredentialRecord } from "./index.js";
 
 const record: CredentialRecord = {
@@ -12,6 +13,114 @@ const record: CredentialRecord = {
   expiresAt: "2026-09-21T00:00:00Z",
   user: { id: "user-1", account: "admin", role: "admin" },
 };
+
+const service = {
+  workId: "work-1", serviceId: "service-1", name: "demo", enabled: true,
+  observedState: "failed", desiredRevision: 2, appliedRevision: null,
+  lastError: { code: "FAILED", message: "password=sentinel", retryable: true, internal: "sentinel" },
+  endpoints: [{ name: "http", protocol: "tcp", host: "svc-demo", port: 8000, url: "http://svc-demo:8000", private: "sentinel" }],
+  createdAt: "2026-09-23T00:00:00Z", definition: { environment: { SECRET: "sentinel" } }, extra: "sentinel",
+};
+
+test("service SDK uses authenticated scoped routes, action bodies, and safe metadata projections", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const acceptance = { workId: "work-1", serviceId: "service-1", operationId: "op-1", correlationId: "op-1", reused: true };
+  const logs = { serviceId: "service-1", status: "available", text: "ok", truncated: false, collectedAt: service.createdAt };
+  const responses: unknown[] = [
+    { services: [service, { ...service, name: "aaa", serviceId: "z" }, { ...service, name: "aaa", serviceId: "a" }] },
+    service, { services: [] }, { ...service, lastError: null },
+    ...Array.from({ length: 5 }, () => acceptance), logs, logs,
+  ];
+  const client = new PiworkClient({ coreUrl: "http://core.test", token: "user-token", fetch: async (input, init) => {
+    calls.push({ url: String(input), init });
+    return Response.json(responses.shift());
+  } });
+  const list = await client.workServices("work/a");
+  assert.deepEqual(list.services.map((item) => item.serviceId), ["a", "z", "service-1"]);
+  const shown = await client.workService("work/a", "service/?");
+  assert.equal(shown.observedState, "failed");
+  assert.equal(shown.appliedRevision, null);
+  assert.deepEqual(Object.keys(shown).sort(), ["workId", "serviceId", "name", "enabled", "observedState", "desiredRevision", "appliedRevision", "lastError", "endpoints", "createdAt"].sort());
+  assert.deepEqual(shown.lastError, { code: "FAILED", message: "password=[REDACTED]", retryable: true });
+  assert.equal(JSON.stringify(list).includes("sentinel"), false);
+  assert.equal(JSON.stringify(shown).includes("sentinel"), false);
+  assert.deepEqual(await client.workServices("work/a"), { services: [] });
+  assert.equal((await client.workService("work/a", "service/?")).lastError, null);
+  for (const action of ["enable", "disable", "restart", "retry", "remove"] as const) {
+    assert.deepEqual(await client.workServiceAction("work/a", "service/?", action, "exact-key"), acceptance);
+  }
+  assert.deepEqual(await client.workServiceLogs("work/a", "service/?"), logs);
+  await client.workServiceLogs("work/a", "service/?", 200);
+  for (const call of calls) assert.equal(new Headers(call.init?.headers).get("authorization"), "Bearer user-token");
+  assert.match(calls[0]!.url, /works\/work%2Fa\/services$/);
+  assert.match(calls[1]!.url, /services\/service%2F%3F$/);
+  for (const [index, action] of ["enable", "disable", "restart", "retry", "remove"].entries()) {
+    const call = calls[index + 4]!;
+    assert.equal(call.init?.method, "POST");
+    assert.ok(call.url.endsWith(`/service%2F%3F/${action}`));
+    assert.deepEqual(JSON.parse(String(call.init?.body)), { idempotencyKey: "exact-key" });
+  }
+  assert.ok(calls[9]!.url.endsWith("/logs?tailLines=100"));
+  assert.ok(calls[10]!.url.endsWith("/logs?tailLines=200"));
+  const denied = new PiworkClient({ coreUrl: "http://core.test", fetch: async () => Response.json({ code: "NOT_FOUND", message: "missing" }, { status: 404 }) });
+  await assert.rejects(denied.workService("w", "s"), (error) => error instanceof PiworkApiError && error.status === 404);
+});
+
+test("operation signals interrupt both fetch and stalled response bodies", async () => {
+  for (const phase of ["fetch", "body"] as const) {
+    const controller = new AbortController();
+    let bodyCancelled = false;
+    const client = new PiworkClient({ coreUrl: "http://core.test", fetch: async (_input, init) => {
+      assert.equal(init?.signal, controller.signal);
+      if (phase === "fetch") return new Promise<Response>((_resolve, reject) => {
+        init!.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+      return new Response(new ReadableStream<Uint8Array>({
+        start(stream) { stream.enqueue(Buffer.from('{"state":')); },
+        cancel() { bodyCancelled = true; },
+      }));
+    } });
+    const pending = client.operation("op", { signal: controller.signal });
+    const rejected = assert.rejects(pending);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    await rejected;
+    if (phase === "body") assert.equal(bodyCancelled, true);
+  }
+  const controller = new AbortController();
+  const normal = new PiworkClient({ coreUrl: "http://core.test", fetch: async () => Response.json({ state: "succeeded" }) });
+  assert.deepEqual(await normal.operation("op", { signal: controller.signal }), { state: "succeeded" });
+  assert.deepEqual(await normal.operation("op"), { state: "succeeded" });
+});
+
+test("snapshot SDK keeps JSON and binary transport separate with auth, encoded IDs and cancellable streams", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [], digest = "a".repeat(64), bytes = Buffer.from("PIWORK1\nfixture");
+  const client = new PiworkClient({ coreUrl: "http://core.test", token: "snapshot-token", fetch: async (input, init) => {
+    calls.push({ url: String(input), init });
+    if (String(input).endsWith("/content")) return new Response(bytes, { headers: { "content-type": "application/vnd.piwork.work-package", "content-length": String(bytes.length), "x-piwork-sha256": digest } });
+    if (String(input).endsWith("/work-packages")) {
+      assert.equal(new Headers(init?.headers).get("content-length"), String(bytes.length));
+      assert.equal(new Headers(init?.headers).get("x-piwork-sha256"), digest);
+      assert.equal((init as RequestInit & { duplex?: string }).duplex, "half");
+      return Response.json({ packageId: "package-1", digest, size: bytes.length, expiresAt: "later", bindingRequirements: { models: [], secrets: [] } }, { status: 201 });
+    }
+    return Response.json({ operationId: "operation-1", workId: "work-1", snapshotId: "snapshot-1", reused: false });
+  } });
+  const signal = new AbortController().signal;
+  assert.equal((await client.exportWork("work/?", "key", { signal })).snapshotId, "snapshot-1");
+  await client.workSnapshot("snapshot/?", { signal });
+  await client.importWork({ packageId: "package-1", name: "copy", idempotencyKey: "key" }, { signal });
+  await client.importProvenance("work/?", { signal });
+  const upload = await client.uploadWorkPackage((async function* () { yield bytes; })(), digest, bytes.length, { signal });
+  assert.equal(upload.packageId, "package-1");
+  const download = await client.downloadWorkSnapshot("snapshot/?", { signal });
+  assert.equal(download.digest, digest); assert.equal(download.size, bytes.length);
+  const reader = download.stream.getReader(); assert.deepEqual(Buffer.from((await reader.read()).value!), bytes); await reader.cancel();
+  assert.ok(calls[0]!.url.endsWith("/works/work%2F%3F/exports"));
+  assert.ok(calls[1]!.url.endsWith("/work-snapshots/snapshot%2F%3F"));
+  assert.ok(calls[5]!.url.endsWith("/work-snapshots/snapshot%2F%3F/content"));
+  for (const call of calls) assert.equal(new Headers(call.init?.headers).get("authorization"), "Bearer snapshot-token");
+});
 
 test("credential URL precedence and atomic POSIX save/load/clear", async () => {
   assert.equal(resolveCoreEndpoint({ explicit: "http://explicit", environment: "http://environment", saved: "http://saved" }), "http://explicit");

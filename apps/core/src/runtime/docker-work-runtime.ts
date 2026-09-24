@@ -346,12 +346,12 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     await this.docker.stopContainer(workId, "agent", AGENT_LOGICAL_ID, Math.max(1, Math.ceil(timeoutMs / 1_000)));
   }
 
-  async remove(workId: string): Promise<void> {
+  async remove(workId: string, options?: { readonly preserveNetwork?: boolean }): Promise<void> {
     this.closeClient(workId);
     const existing = await this.docker.inspectContainer(workId, "agent", AGENT_LOGICAL_ID);
     if (existing.running) await this.docker.stopContainer(workId, "agent", AGENT_LOGICAL_ID, 10);
     await this.docker.deleteContainer(workId, "agent", AGENT_LOGICAL_ID);
-    await this.docker.deleteWorkNetwork(workId);
+    if (!options?.preserveNetwork) await this.docker.deleteWorkNetwork(workId);
     rmSync(this.runtimeDirectory(workId), { recursive: true, force: true });
   }
 

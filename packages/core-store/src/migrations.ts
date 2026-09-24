@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const CORE_SCHEMA_VERSION = 6;
+export const CORE_SCHEMA_VERSION = 7;
 
 interface Migration {
   readonly version: number;
@@ -262,6 +262,93 @@ const migrations: readonly Migration[] = [
         VALUES ('work_storage_format', '{"version":2,"layout":"split-private-workspace"}', datetime('now'))`,
     ],
   },
+  {
+    version: 7,
+    statements: [
+      `CREATE TABLE snapshot_jobs (
+        operation_id TEXT PRIMARY KEY REFERENCES operations(id),
+        owner_user_id TEXT NOT NULL REFERENCES users(id),
+        kind TEXT NOT NULL CHECK (kind IN ('export', 'import')),
+        source_work_id TEXT,
+        target_work_id TEXT,
+        snapshot_id TEXT UNIQUE,
+        package_id TEXT REFERENCES snapshot_packages(id),
+        name TEXT,
+        request_digest TEXT NOT NULL,
+        phase TEXT NOT NULL CHECK (phase IN ('accepted', 'verifying', 'capturing', 'sealing', 'restoring', 'publishing', 'succeeded', 'failed', 'cleanup-pending', 'cleaned')),
+        deadline_at TEXT NOT NULL,
+        worker_epoch INTEGER NOT NULL CHECK (worker_epoch >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        cleanup_error TEXT
+      ) STRICT`,
+      `CREATE UNIQUE INDEX snapshot_single_active ON snapshot_jobs((1)) WHERE phase NOT IN ('succeeded', 'cleaned')`,
+      `CREATE TABLE work_snapshot_locks (
+        work_id TEXT PRIMARY KEY REFERENCES works(id),
+        operation_id TEXT NOT NULL UNIQUE REFERENCES snapshot_jobs(operation_id),
+        worker_epoch INTEGER NOT NULL CHECK (worker_epoch >= 1)
+      ) STRICT`,
+      `CREATE TABLE snapshot_packages (
+        id TEXT PRIMARY KEY,
+        owner_user_id TEXT NOT NULL REFERENCES users(id),
+        digest TEXT,
+        size INTEGER NOT NULL CHECK (size >= 0),
+        state TEXT NOT NULL CHECK (state IN ('staging', 'ready', 'expired', 'deleting')),
+        job_id TEXT REFERENCES snapshot_jobs(operation_id),
+        created_at TEXT NOT NULL,
+        ready_at TEXT,
+        expires_at TEXT,
+        CHECK (state != 'ready' OR (digest IS NOT NULL AND ready_at IS NOT NULL AND expires_at IS NOT NULL))
+      ) STRICT`,
+      `CREATE TABLE snapshot_artifacts (
+        operation_id TEXT NOT NULL REFERENCES snapshot_jobs(operation_id),
+        artifact_key TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        logical_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('planned', 'created', 'ready', 'cleaning', 'cleaned')),
+        PRIMARY KEY(operation_id, artifact_key)
+      ) STRICT`,
+      `CREATE TABLE snapshot_transfers (
+        id TEXT PRIMARY KEY,
+        owner_user_id TEXT NOT NULL REFERENCES users(id),
+        package_id TEXT REFERENCES snapshot_packages(id),
+        snapshot_id TEXT REFERENCES snapshot_jobs(snapshot_id),
+        kind TEXT NOT NULL CHECK (kind IN ('upload', 'download')),
+        phase TEXT NOT NULL CHECK (phase IN ('accepted', 'streaming', 'verifying', 'cleanup-pending')),
+        deadline_at TEXT NOT NULL,
+        last_progress_at TEXT NOT NULL,
+        helper_id TEXT,
+        created_at TEXT NOT NULL
+      ) STRICT`,
+      `CREATE INDEX snapshot_transfers_package ON snapshot_transfers(package_id)`,
+      `CREATE TABLE work_import_names (
+        owner_user_id TEXT NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        operation_id TEXT NOT NULL UNIQUE REFERENCES snapshot_jobs(operation_id),
+        PRIMARY KEY(owner_user_id, name)
+      ) STRICT`,
+      `CREATE TABLE work_owned_images (
+        work_id TEXT NOT NULL REFERENCES works(id),
+        selection_id TEXT NOT NULL,
+        image_identity TEXT NOT NULL,
+        source_reference TEXT NOT NULL,
+        PRIMARY KEY(work_id, selection_id)
+      ) STRICT`,
+      `CREATE TABLE imported_work_history (
+        work_id TEXT NOT NULL REFERENCES works(id),
+        operation_id TEXT NOT NULL UNIQUE,
+        source_operation_id TEXT NOT NULL,
+        record_json TEXT NOT NULL,
+        PRIMARY KEY(work_id, operation_id)
+      ) STRICT`,
+      `CREATE TABLE work_import_provenance (
+        work_id TEXT PRIMARY KEY REFERENCES works(id),
+        package_digest TEXT NOT NULL,
+        import_operation_id TEXT NOT NULL REFERENCES snapshot_jobs(operation_id),
+        identity_map_json TEXT NOT NULL
+      ) STRICT`,
+    ],
+  },
 ];
 
 export function migrateCoreDatabase(database: DatabaseSync): void {
@@ -273,7 +360,7 @@ export function migrateCoreDatabase(database: DatabaseSync): void {
   const current = database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as {
     version: number;
   };
-  if (current.version > 0 && current.version < CORE_SCHEMA_VERSION) {
+  if (current.version > 0 && current.version < 6) {
     throw Object.assign(new Error("CONTEXT_FORMAT_UNSUPPORTED: pre-0.1 combined Work storage is not migrated"), { code: "CONTEXT_FORMAT_UNSUPPORTED" });
   }
 

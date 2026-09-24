@@ -58,9 +58,11 @@ export function runtimeModelCatalogId(revision: number): string {
 export function resolveRuntimeProfileFromWorkConfig(
   store: CoreStore,
   configuration: WorkConfig,
+  workId?: string,
 ): { readonly profile: RuntimeProfile; readonly sourceRuntimeRevision: number } {
+  const ownedImage = workId === undefined ? undefined : store.snapshots.getOwnedImage(workId, configuration.agentImage.catalogId);
   const image = store.getCatalogEntry(configuration.agentImage.catalogId);
-  if (image === undefined || image.kind !== "agent_image" || !image.enabled || image.mutableReference === null) {
+  if (ownedImage === undefined && (image === undefined || image.kind !== "agent_image" || !image.enabled || image.mutableReference === null)) {
     throw new InputValidationError("Work agent image reference is unavailable");
   }
   const model = store.getCatalogEntry(configuration.modelRef);
@@ -72,7 +74,7 @@ export function resolveRuntimeProfileFromWorkConfig(
     profile: {
       version: 1,
       revision: metadata.sourceRuntimeRevision,
-      agentImage: image.resolvedDigest ?? image.mutableReference,
+      agentImage: ownedImage?.imageIdentity ?? image!.resolvedDigest ?? image!.mutableReference!,
       model: {
         provider: metadata.provider,
         id: metadata.id,

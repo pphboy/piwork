@@ -391,6 +391,7 @@ export class WorkServiceManagementService {
       },
       "read-metadata",
     );
+    if (service === undefined) throw new Error(`service ${serviceId} was not found`);
     return toView(service!);
   }
 
@@ -418,6 +419,7 @@ export class WorkServiceManagementService {
     this.reconciling = true;
     try {
       for (const work of this.store.listWorks()) {
+        if (this.store.snapshots.getLock(work.id)) continue;
         if (work.desiredState !== "running" || work.observedState === "stopping" || work.observedState === "deleting") continue;
         for (const service of this.store.listServices(work.id)) await this.reconcileService(work, service);
         const latest = this.store.getWork(work.id);
@@ -833,6 +835,7 @@ export class WorkServiceManagementService {
   }
 
   private async reconcileService(work: WorkRecord, service: ServiceRecord): Promise<void> {
+    if (this.store.snapshots.getLock(work.id)) return;
     if (!service.enabled || this.runtime.inspect === undefined) return;
     const definition = parseDefinition(service);
     let actual;

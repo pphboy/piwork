@@ -43,6 +43,24 @@ test("WorkContextStore supports an empty isolated Skill set", () => withFixture(
   assert.deepEqual(store.load("work-0199e6d8abcd", snapshot.snapshotId).configuration.skills, []);
 }));
 
+test("imported contexts use only verified owned Skills and retain complete files without a global catalog", () => withFixture(({ store, source }) => {
+  mkdirSync(join(source.directory, "empty"));
+  const original = store.build({ workId: "work-source-00000001", snapshotId: "context-source-00000001", configuration: config,
+    imageIdentity: `sha256:${"a".repeat(64)}`, skills: [{ name: "code-review", identity: source.identity, directory: source.directory }], createdAt: "2026-09-23T00:00:00.000Z" });
+  rmSync(source.directory, { recursive: true }); // The global/source Skill no longer exists.
+  const restored = store.buildImported({ workId: "work-target-00000001", snapshotId: "context-target-00000001", configuration: { ...config, agentImage: { catalogId: "owned-image-00000001" } },
+    imageIdentity: original.metadata.imageIdentity, verifiedSkillsDirectory: join(original.directory, "skills"), agentsBytes: Buffer.from(config.agentsMd), createdAt: original.metadata.createdAt });
+  assert.equal(readFileSync(join(restored.directory, "AGENTS.md"), "utf8"), config.agentsMd);
+  assert.equal(readFileSync(join(restored.directory, "skills", "code-review", "references", "guide.txt"), "utf8"), "supporting");
+  assert.ok(existsSync(join(restored.directory, "skills", "code-review", "empty")));
+  assert.equal(restored.metadata.skills[0]?.identity, original.metadata.skills[0]?.identity);
+  assert.equal(restored.metadata.workId, "work-target-00000001");
+  assert.throws(() => store.buildImported({ workId: "work-target-00000002", snapshotId: "context-target-00000002", configuration: config,
+    imageIdentity: original.metadata.imageIdentity, verifiedSkillsDirectory: join(original.directory, "skills"), agentsBytes: Buffer.from("wrong bytes"), createdAt: original.metadata.createdAt }), WorkContextError);
+  assert.throws(() => store.buildImported({ workId: "work-target-00000003", snapshotId: "context-target-00000003", configuration: { ...config, skills: ["missing"] },
+    imageIdentity: original.metadata.imageIdentity, verifiedSkillsDirectory: join(original.directory, "skills"), agentsBytes: Buffer.from(config.agentsMd), createdAt: original.metadata.createdAt }), WorkContextError);
+}));
+
 test("WorkContextStore rejects mismatched content atomically and preserves no partial snapshot", () => withFixture(({ store, source }) => {
   const bad = { ...source, identity: `sha256:${"0".repeat(64)}` };
   assert.throws(() => store.build({

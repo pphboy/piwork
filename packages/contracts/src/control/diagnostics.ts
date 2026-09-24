@@ -31,6 +31,8 @@ export const DiagnosticCodeSchema = Type.Union([
   Type.Literal("SERVICE_READINESS_TIMEOUT"), Type.Literal("DOCKER_UNAVAILABLE"),
   Type.Literal("OPERATION_SUPERSEDED"),
   Type.Literal("WORK_OPERATION_FAILED"),
+  Type.Literal("PACKAGE_INCOMPATIBLE"),
+  Type.Literal("TARGET_MODEL_UNAVAILABLE"),
 ]);
 
 export const SafeDiagnosticSchema = Type.Object({

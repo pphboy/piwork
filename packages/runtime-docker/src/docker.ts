@@ -2,6 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { realpath, statfs } from "node:fs/promises";
 import { posix, relative, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { encodeImageLoadArchive, normalizeImageArchive, type CapturedWorkImage, type ImageBlobStore, type NormalizedImage } from "@piwork/work-package";
+import { DockerCliStreamingRunner, type DockerStreamingRunner } from "./stream.js";
+import { snapshotHelperCreateArgs, SNAPSHOT_JOB_LABEL, type SnapshotHelperSpec } from "./snapshot-helper.js";
 
 export const MANAGED_LABEL = "piwork.managed";
 export const WORK_LABEL = "piwork.work_id";
@@ -132,6 +137,7 @@ export class DockerRuntime {
     readonly installationId: string,
     private readonly runner: DockerCommandRunner = new DockerCliRunner(),
     private readonly allowedBindRoots: readonly string[] = [],
+    private readonly streamingRunner: DockerStreamingRunner = new DockerCliStreamingRunner(),
   ) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(installationId)) {
       throw new Error("installationId contains unsupported Docker label characters");
@@ -146,6 +152,105 @@ export class DockerRuntime {
       await this.run(["image", "pull", reference]);
       return this.inspectImage(reference);
     }
+  }
+
+  /** Snapshot paths never resolve tags or pull missing content. */
+  async resolveSnapshotHelperImage(reference: string): Promise<string> {
+    if (!reference || reference.startsWith("-") || /\s|\0/.test(reference)) throw new TypeError("Invalid configured helper image");
+    const image = await this.inspectImage(reference);
+    await this.inspectCapturedImage(image.imageId);
+    return image.imageId;
+  }
+
+  async inspectCapturedImage(imageId: string): Promise<Pick<CapturedWorkImage, "imageId" | "platform">> {
+    if (!/^sha256:[a-f0-9]{64}$/.test(imageId)) throw new TypeError("Captured image identity required");
+    const records = JSON.parse(await this.run(["image", "inspect", imageId])) as Array<{ Id: string; Os: string; Architecture: string; Variant?: string }>;
+    const image = records[0];
+    if (records.length !== 1 || image?.Id !== imageId || image.Os !== "linux" || typeof image.Architecture !== "string" || !image.Architecture || (image.Variant !== undefined && typeof image.Variant !== "string")) throw new Error("SNAPSHOT_IMAGE_INCOMPATIBLE");
+    return { imageId, platform: { os: "linux", architecture: image.Architecture, variant: image.Variant || null } };
+  }
+
+  async inspectHostPlatform(): Promise<CapturedWorkImage["platform"]> {
+    const server = JSON.parse(await this.run(["version", "--format", "{{json .Server}}"]));
+    if (server?.Os !== "linux" || typeof server.Arch !== "string" || !server.Arch) throw new Error("SNAPSHOT_RUNTIME_PLATFORM_UNAVAILABLE");
+    const [architecture, variant, extra] = server.Arch.split("/");
+    if (!architecture || extra !== undefined) throw new Error("SNAPSHOT_RUNTIME_PLATFORM_UNAVAILABLE");
+    return { os: "linux", architecture, variant: variant || null };
+  }
+
+  async saveCapturedImage(imageId: string, store: ImageBlobStore, signal?: AbortSignal): Promise<NormalizedImage> {
+    const captured = await this.inspectCapturedImage(imageId);
+    signal?.throwIfAborted();
+    const process = this.streamingRunner.spawn(["image", "save", imageId], { signal, timeoutMs: 30 * 60_000 });
+    process.stdin.end();
+    try { const normalized = await normalizeImageArchive(process.stdout, captured, store, { signal }); await process.completed; return normalized; }
+    catch (error) { process.abort(); await process.completed.catch(() => undefined); throw error; }
+  }
+
+  async loadVerifiedImage(normalized: NormalizedImage, store: ImageBlobStore, signal?: AbortSignal): Promise<{ readonly imageId: string; readonly reused: boolean }> {
+    const { image } = normalized;
+    const verify = (inspection: Pick<CapturedWorkImage, "imageId" | "platform">) => {
+      if (inspection.imageId !== image.imageId || inspection.platform.os !== image.platform.os || inspection.platform.architecture !== image.platform.architecture || inspection.platform.variant !== image.platform.variant) throw new Error("SNAPSHOT_IMAGE_INCOMPATIBLE");
+    };
+    try { verify(await this.inspectCapturedImage(image.imageId)); return { imageId: image.imageId, reused: true }; }
+    catch (error) { if (!(error instanceof DockerDependencyError && error.reason === "RESOURCE_MISSING")) throw error; }
+    signal?.throwIfAborted();
+    const process = this.streamingRunner.spawn(["image", "load", "--quiet"], { signal, timeoutMs: 30 * 60_000 });
+    // Docker output may contain user-controlled config text; drain without logging or collecting it.
+    const draining = (async () => { for await (const _chunk of process.stdout) { signal?.throwIfAborted(); } })();
+    void draining.catch(() => undefined);
+    try {
+      await pipeline(Readable.from(encodeImageLoadArchive(image, normalized.blobs, store, signal), { objectMode: false, highWaterMark: 1024 * 1024 }), process.stdin, { signal });
+      await draining; await process.completed; verify(await this.inspectCapturedImage(image.imageId));
+      return { imageId: image.imageId, reused: false };
+    } catch (error) { process.abort(); await Promise.allSettled([draining, process.completed]); throw error; }
+  }
+
+  /** The caller journals creation before this call and owns the helper until removeSnapshotHelper confirms exit. */
+  async createSnapshotHelper(spec: SnapshotHelperSpec): Promise<string> {
+    if (spec.installationId !== this.installationId) throw new TypeError("Snapshot helper installation mismatch");
+    const id = (await this.run(snapshotHelperCreateArgs(spec), 30_000)).trim();
+    await this.inspectSnapshotHelper(spec.name, spec.jobId);
+    return id;
+  }
+
+  async inspectSnapshotHelper(name: string, jobId: string): Promise<ContainerInspection | undefined> {
+    let raw: RawContainerInspection;
+    try { raw = await this.inspectRaw(name, 30_000); }
+    catch (error) { if (error instanceof DockerDependencyError && error.reason === "RESOURCE_MISSING") return undefined; throw error; }
+    const labels = raw.Config.Labels ?? {};
+    if (labels["piwork.installation_id"] !== this.installationId || labels[SNAPSHOT_JOB_LABEL] !== jobId
+      || labels[RESOURCE_KIND_LABEL] !== "snapshot-helper" || labels[MANAGED_LABEL] !== "true") throw new DockerDependencyError("STATE_UNKNOWN", "snapshot helper ownership mismatch", false);
+    return { exists: true, containerId: raw.Id, name: raw.Name.replace(/^\//, ""), running: raw.State.Running,
+      status: raw.State.Status, exitCode: raw.State.ExitCode, labels, image: raw.Image };
+  }
+
+  async startSnapshotHelper(name: string, jobId: string, signal?: AbortSignal): Promise<unknown> {
+    const existing = await this.inspectSnapshotHelper(name, jobId);
+    if (!existing || existing.running) throw new DockerDependencyError("STATE_UNKNOWN", "snapshot helper is missing or already running", false);
+    const process = this.streamingRunner.spawn(["container", "start", "--attach", name], { signal, timeoutMs: 30 * 60_000 });
+    process.stdin.end();
+    const chunks: Buffer[] = []; let bytes = 0;
+    try {
+      for await (const chunk of process.stdout) {
+        bytes += chunk.length;
+        if (bytes > 64 * 1024) throw new DockerDependencyError("STATE_UNKNOWN", "snapshot helper response exceeded limit", false);
+        chunks.push(Buffer.from(chunk));
+      }
+      await process.completed;
+      const after = await this.inspectSnapshotHelper(name, jobId);
+      if (!after || after.running || after.exitCode !== 0) throw new DockerDependencyError("STATE_UNKNOWN", "snapshot helper did not exit successfully", false);
+      const output = Buffer.concat(chunks, bytes).toString("utf8").trim();
+      return output === "" ? null : JSON.parse(output) as unknown;
+    } catch (error) { process.abort(); await process.completed.catch(() => undefined); throw error; }
+  }
+
+  /** Destructive only after exact installation/job labels are rechecked. */
+  async removeSnapshotHelper(name: string, jobId: string): Promise<void> {
+    const helper = await this.inspectSnapshotHelper(name, jobId);
+    if (!helper) return;
+    await this.run(["container", "rm", "--force", helper.containerId!], 30_000);
+    if (await this.inspectSnapshotHelper(name, jobId)) throw new DockerDependencyError("STATE_UNKNOWN", "snapshot helper still exists", true);
   }
 
   async ensureContainer(spec: DockerContainerSpec): Promise<EnsuredContainer> {
@@ -262,9 +367,10 @@ export class DockerRuntime {
     await this.run(["network", "rm", existing[0]!]);
   }
 
-  async ensureManagedVolume(workId: string, logicalId: string): Promise<EnsuredManagedVolume> {
+  async ensureManagedVolume(workId: string, logicalId: string, options?: { readonly snapshotJobId?: string }): Promise<EnsuredManagedVolume> {
     validateIdentity(workId, "workId");
     validateIdentity(logicalId, "volume logicalId");
+    if (options?.snapshotJobId) validateIdentity(options.snapshotJobId, "snapshot job ID");
     const existing = await this.findManagedVolumes(workId, logicalId);
     if (existing.length > 1) throw new Error(`multiple Docker volumes claim logical identity ${logicalId}`);
     if (existing.length === 1) return { volumeName: existing[0]!, created: false };
@@ -277,6 +383,7 @@ export class DockerRuntime {
       "--label", `${WORK_LABEL}=${workId}`,
       "--label", `${LOGICAL_ID_LABEL}=${logicalId}`,
       "--label", `${VOLUME_KIND_LABEL}=managed-data`,
+      ...(options?.snapshotJobId ? ["--label", `${SNAPSHOT_JOB_LABEL}=${options.snapshotJobId}`] : []),
       name,
     ];
     try {
@@ -290,10 +397,14 @@ export class DockerRuntime {
     }
   }
 
-  async deleteManagedVolume(workId: string, logicalId: string): Promise<void> {
+  async deleteManagedVolume(workId: string, logicalId: string, options?: { readonly snapshotJobId?: string }): Promise<void> {
     const existing = await this.findManagedVolumes(workId, logicalId);
     if (existing.length === 0) return;
     if (existing.length > 1) throw new Error(`multiple Docker volumes claim logical identity ${logicalId}`);
+    if (options?.snapshotJobId) {
+      validateIdentity(options.snapshotJobId, "snapshot job ID");
+      if ((await this.inspectVolume(existing[0]!)).Labels?.[SNAPSHOT_JOB_LABEL] !== options.snapshotJobId) return;
+    }
     await this.run(["volume", "rm", existing[0]!]);
   }
 

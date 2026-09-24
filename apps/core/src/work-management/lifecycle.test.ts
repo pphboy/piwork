@@ -315,7 +315,7 @@ test("stopped apply validates in initialization-only mode and remains stopped", 
     assert.equal(store.getWork(created.workId)?.observedState, "stopped");
     assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, "context-stopped-candidate");
     assert.equal(runtime.startConfigurations.at(-1)?.initializationOnly, true);
-    assert.deepEqual(runtime.events, ["stop", "remove"]);
+    assert.deepEqual(runtime.events, ["remove", "stop", "remove"]);
     assert.equal(runtime.state.exists, false);
   });
 });

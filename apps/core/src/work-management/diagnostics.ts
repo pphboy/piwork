@@ -38,6 +38,8 @@ const messages: Record<DiagnosticCode, readonly [string, string, boolean]> = {
   DOCKER_UNAVAILABLE: ["The service container runtime is unavailable.", "Restore Docker access and retry the service.", true],
   OPERATION_SUPERSEDED: ["The service Operation was superseded by a newer target.", "Observe the newer service Operation instead.", false],
   WORK_OPERATION_FAILED: ["The Work operation failed.", "Inspect the identified stage and correct the configuration before retrying.", false],
+  PACKAGE_INCOMPATIBLE: ["The Work package does not match the target Docker platform.", "Import into a compatible Docker installation.", false],
+  TARGET_MODEL_UNAVAILABLE: ["The target Core model needed by this Work is unavailable.", "Configure an enabled matching model with a readable credential on the target Core, then import again.", false],
 };
 
 export function emptyOperationDiagnostics(): OperationDiagnostics {

@@ -127,6 +127,23 @@ npm run cli -- chat <workId> --session <sessionId> --message "Continue"
 
 ## Agent-managed Work services
 
+After pi-agentd creates a service, use `piwork-cli work service list <workId>` to obtain its serviceId. The command group supports `show`, `start`, `stop`, `restart`, `retry`, `remove`, and bounded `logs`; creation and definition updates stay with pi-agentd. Controls support `--wait` and `--idempotency-key`, and global `--json` goes before `work`. Stop is persistent across Work restarts; remove preserves shared workspace data. See [service commands and recovery](docs/operations.md#manage-existing-work-services) for examples, log permissions, and Operation observation.
+
+## Share a complete Work
+
+Stop the source Work, export one complete `.work` package, then import it as a new stopped Work under the recipient account:
+
+```sh
+piwork-cli work stop <sourceWorkId> --wait
+piwork-cli work export <sourceWorkId>
+piwork-cli work package inspect <sourceWorkId>.work
+# On the recipient installation, after logging in there:
+piwork-cli work import <sourceWorkId>.work --wait
+piwork-cli work start <newWorkId> --wait
+```
+
+The package carries both managed volume trees (workspace and agent-private data), Work-owned code and configuration, retained Skills and AGENTS.md, service definitions and state, reservations, history, and fixed images. It is a full copy: `.env`, user-written credentials, business databases, and development dependencies are not filtered. Share it only with someone you trust. The target Core must already have an enabled matching model with a readable credential; it selects that model automatically, and built-in `work-services` reconnects to the target Core when the Work starts. Custom external MCP platform secrets are not migrated in this version. Import automatically chooses a non-conflicting name from the package unless `--name` is supplied, and never auto-starts the Work, runs user code, replaces an existing Work, or copies the source installation's platform credentials. The first explicit start creates the recipient's runtime network and TLS identity. Container writable layers and anonymous volumes are not part of Work's persistent storage contract. See [the user guide](docs/work-snapshot.md) and [operator notes](docs/operations.md#work-snapshot-operations).
+
 On a fresh installation, the default Work context selects the bundled `deploy-work-service` Skill and the required `work-services` MCP adapter. They are copied into each new Work context and loaded before agentd reports ready. The Skill teaches the agent how to deploy an existing image; the MCP adapter is the only service-control path available to the model. Adding or updating this Skill does not rebuild the agent image. An explicit `--no-skills` removes the instructions from that Work, while an explicit configuration with `mcpServers: []` also removes the deployment tools after apply.
 
 Application containers share the Work bridge network with agentd. A service named `demo` is reachable inside that Work as `svc-demo`; Core never publishes a host port. Services may mount only the Work workspace at `/var/data/workspace` and never receive agentd's private `/var/data`, control credentials, the Docker socket, host paths, or another network. Core uses an existing local or registry image and does not build or commit an application image.

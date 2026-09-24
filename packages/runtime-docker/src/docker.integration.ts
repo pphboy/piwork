@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -188,6 +189,23 @@ test("managed volumes persist across replacement and enforce Work ownership and 
       await runtime.deleteContainer(workA, kind, logicalId).catch(() => undefined);
     }
     await runtime.deleteManagedVolume(workA, "workspace").catch(() => undefined);
+  }
+});
+
+test("snapshot cleanup removes only a volume carrying the exact job label", async () => {
+  const installationId = assertTestInstallationId(process.env.PIWORK_TEST_INSTALLATION_ID ?? "");
+  const runtime = new DockerRuntime(installationId), workId = `work-${randomUUID()}`;
+  const jobId = `operation-${randomUUID()}`;
+  const created = await runtime.ensureManagedVolume(workId, "work-workspace", { snapshotJobId: jobId });
+  try {
+    const labels = JSON.parse((await execFile("docker", ["volume", "inspect", created.volumeName])).stdout)[0].Labels as Record<string, string>;
+    assert.equal(labels["piwork.snapshot_job_id"], jobId);
+    await runtime.deleteManagedVolume(workId, "work-workspace", { snapshotJobId: `operation-${randomUUID()}` });
+    assert.equal((await runtime.requireManagedVolume(workId, "work-workspace")).volumeName, created.volumeName);
+    await runtime.deleteManagedVolume(workId, "work-workspace", { snapshotJobId: jobId });
+    await assert.rejects(runtime.requireManagedVolume(workId, "work-workspace"), /missing/);
+  } finally {
+    await runtime.deleteManagedVolume(workId, "work-workspace").catch(() => undefined);
   }
 });
 

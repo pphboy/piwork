@@ -451,7 +451,7 @@ function mcpServer(server: McpServer): McpBridgeServer {
   return { serverId: server.serverId, required: server.required, transport: "streamable-http", url: server.url, timeoutMs: server.timeoutMs };
 }
 
-function mcpTools(
+export function mcpTools(
   bridge: McpBridge,
   policy: CapturedWorkContext["toolPolicy"],
 ): Array<{ readonly canonicalName: string; readonly definition: ToolDefinition }> {

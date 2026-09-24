@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { SnapshotStoreError } from "./snapshot-errors.js";
 
 export class IdempotencyConflictError extends Error {
   constructor(readonly idempotencyKey: string) {
@@ -45,6 +46,7 @@ export interface AcceptedMutation {
 }
 
 export interface MutationContext {
+  readonly operationId: string;
   run(sql: string, ...parameters: SQLInputValue[]): void;
   get<T>(sql: string, ...parameters: SQLInputValue[]): T | undefined;
   tombstoneWork(workId: string, deletedAt: string): void;
@@ -81,6 +83,7 @@ export function acceptMutation(
       return { operationId: prior.operation_id, resourceId: prior.resource_id, reused: true };
     }
 
+    if (request.operationKind !== "export-work" && request.workId !== undefined && database.prepare("SELECT 1 FROM work_snapshot_locks WHERE work_id = ?").get(request.workId)) throw new SnapshotStoreError("WORK_SNAPSHOT_BUSY");
     verifyExpectedVersion(database, request);
 
     const now = request.now ?? new Date().toISOString();
@@ -98,7 +101,7 @@ export function acceptMutation(
       now,
     );
 
-    const mutation = effect(createContext(database));
+    const mutation = effect(createMutationContext(database, operationId));
     database.prepare(`INSERT INTO idempotency_records(
       principal_id, work_scope, operation_kind, idempotency_key,
       request_digest, resource_id, operation_id, created_at
@@ -134,8 +137,9 @@ function verifyExpectedVersion(database: DatabaseSync, request: MutationRequest)
   }
 }
 
-function createContext(database: DatabaseSync): MutationContext {
+export function createMutationContext(database: DatabaseSync, operationId: string): MutationContext {
   return {
+    operationId,
     run(sql, ...parameters) {
       database.prepare(sql).run(...parameters);
     },

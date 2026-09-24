@@ -10,6 +10,7 @@ export interface CorePaths {
   readonly runtimeDirectory: string;
   readonly skillsDirectory: string;
   readonly workContextsDirectory: string;
+  readonly snapshotsDirectory: string;
   readonly operatorCredentialPath: string;
 }
 
@@ -30,14 +31,17 @@ export function ensureCorePaths(dataDirectory: string): CorePaths {
   const runtimeDirectory = join(root, "runtime");
   const skillsDirectory = join(root, "skills");
   const workContextsDirectory = join(root, "works");
+  const snapshotsDirectory = join(root, "snapshots");
   mkdirSync(secretsDirectory, { recursive: true, mode: 0o700 });
   mkdirSync(runtimeDirectory, { recursive: true, mode: 0o700 });
   mkdirSync(skillsDirectory, { recursive: true, mode: 0o700 });
   mkdirSync(workContextsDirectory, { recursive: true, mode: 0o700 });
+  mkdirSync(snapshotsDirectory, { recursive: true, mode: 0o700 });
   chmodSync(secretsDirectory, 0o700);
   chmodSync(runtimeDirectory, 0o700);
   chmodSync(skillsDirectory, 0o700);
   chmodSync(workContextsDirectory, 0o700);
+  chmodSync(snapshotsDirectory, 0o700);
   return {
     dataDirectory: root,
     databasePath: join(root, "core.sqlite"),
@@ -46,6 +50,7 @@ export function ensureCorePaths(dataDirectory: string): CorePaths {
     runtimeDirectory,
     skillsDirectory,
     workContextsDirectory,
+    snapshotsDirectory,
     operatorCredentialPath: join(root, "operator.credential"),
   };
 }

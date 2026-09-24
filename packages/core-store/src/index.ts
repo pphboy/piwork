@@ -1,4 +1,4 @@
-export { CORE_SCHEMA_VERSION, CoreStore, type CoreStoreOptions } from "./store.js";
+export { CORE_SCHEMA_VERSION, CoreStore, type CoreStoreOptions, type WorkControlIdempotencyRecord } from "./store.js";
 export { InitialAdministratorExistsError, type InitialAdministratorRecord } from "./store.js";
 export {
   type AuthenticationUserRecord,
@@ -50,6 +50,7 @@ export {
   type VolumeRecordState,
 } from "./store.js";
 export { CoreAlreadyRunningError } from "./store-lock.js";
+export * from "./snapshots.js";
 export {
   IdempotencyConflictError,
   RevisionConflictError,

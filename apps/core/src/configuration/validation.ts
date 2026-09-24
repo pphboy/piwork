@@ -21,6 +21,9 @@ export class ConfigurationValidationError extends Error {
 
 export interface ConfigurationValidationContext {
   readonly workOwnerUserId: string;
+  /** Existing Work scope; never supplied from the configuration document. */
+  readonly workId?: string;
+  readonly reselectSkills?: boolean;
   readonly configuration: unknown;
   /** Service identities already accepted for this Work, used by required MCP dependencies. */
   readonly availableServiceIds?: ReadonlySet<string>;
@@ -48,7 +51,13 @@ export class WorkConfigurationValidator {
     } catch (error) {
       throw new ConfigurationValidationError("INVALID_CONFIGURATION", error instanceof Error ? error.message : "agentsMd is invalid", "agentsMd");
     }
-    this.catalog(config.agentImage.catalogId, "agent_image", "agentImage.catalogId");
+    const state = context.workId === undefined ? undefined : this.store.getWorkConfiguration(context.workId);
+    const ownWork = state?.ownerUserId === context.workOwnerUserId;
+    const ownedImage = ownWork ? this.store.snapshots.getOwnedImage(context.workId!, config.agentImage.catalogId) : undefined;
+    if (ownedImage === undefined) this.catalog(config.agentImage.catalogId, "agent_image", "agentImage.catalogId");
+    const previous = ownWork && state?.desiredContextId !== null ? JSON.parse(state!.desiredConfigJson) as WorkConfig : undefined;
+    const retainSkills = !context.reselectSkills && previous !== undefined
+      && JSON.stringify(previous.skills) === JSON.stringify(config.skills);
     const skillIds = new Set<string>();
     config.skills.forEach((skillName, index) => {
       if (skillIds.has(skillName)) {
@@ -56,7 +65,7 @@ export class WorkConfigurationValidator {
       }
       skillIds.add(skillName);
       const skill = this.store.getManagedSkill(skillName);
-      if (skill === undefined || !skill.enabled) {
+      if (!retainSkills && (skill === undefined || !skill.enabled)) {
         throw new ConfigurationValidationError(
           "INVALID_REFERENCE",
           `Skill ${skillName} is unavailable`,

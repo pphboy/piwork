@@ -203,7 +203,7 @@ function grpcError(error: unknown): Error & { code: number } {
   const code = item.grpcCode ?? (item.name === "ServiceDefinitionValidationError" ? status.INVALID_ARGUMENT
     : item.name === "ServiceQuotaExceededError" ? status.RESOURCE_EXHAUSTED
     : item.name === "ServiceNameConflictError" || item.name === "ServiceRevisionConflictError" || item.name === "IdempotencyConflictError" ? status.ABORTED
-    : item.name === "ServicePreconditionError" ? status.FAILED_PRECONDITION
+    : item.name === "ServicePreconditionError" || item.name === "SnapshotStoreError" ? status.FAILED_PRECONDITION
     : /not found/i.test(item.message ?? "") ? status.NOT_FOUND : status.UNAVAILABLE);
   return Object.assign(new Error(item.message ?? "service request failed"), { code });
 }

@@ -25,6 +25,7 @@ export async function runServe(args: readonly string[]): Promise<void> {
     initialization: initialization(environment),
     agentGrpcListen: environment.PIWORK_AGENT_GRPC_LISTEN ?? "0.0.0.0:7172",
     agentGrpcAdvertise: environment.PIWORK_AGENT_GRPC_ADVERTISE ?? "piwork-core:7172",
+    snapshotHelperImage: environment.PIWORK_SNAPSHOT_HELPER_IMAGE,
   });
   try {
     const bound = await application.listen(requested);

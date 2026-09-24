@@ -173,6 +173,8 @@ test("workspace references attach once per service and detach only after removal
     await services.waitForIdle();
     assert.equal(store.getVolumeRecord("volume-workspace")?.referenceCount, 1);
     assert.equal(store.getVolumeRecord("volume-workspace")?.state, "active");
+    assert.equal(store.getVolumeRecord("volume-workspace")?.purgedAt, null);
+    assert.equal(store.getVolumeRecord("volume-workspace")?.runtimeName, "piwork-workspace");
     assert.equal(store.get<{ count: number }>(`SELECT COUNT(*) AS count FROM volume_references WHERE volume_id = 'volume-workspace'`)?.count, 1);
   });
 });
@@ -250,7 +252,7 @@ test("service updates retain revision history and failed replacement keeps persi
 });
 
 test("disable persists across Work stop/start and restart enforces preconditions", async () => {
-  await withFixture(async ({ store, services, runtime }) => {
+  await withFixture(async ({ store, services, runtime, contexts }) => {
     const accepted = services.create(owner, WORK_ID, { definition: definition(), idempotencyKey: "disable-create" });
     runtime.release();
     await services.waitForIdle();
@@ -259,10 +261,21 @@ test("disable persists across Work stop/start and restart enforces preconditions
     assert.equal(store.getOperation(disabled.operationId)?.state, "succeeded");
     assert.equal(store.getService(WORK_ID, accepted.serviceId)?.observedState, "disabled");
     assert.equal(store.getQuotaReservation(WORK_ID, "service", accepted.serviceId)?.desiredCpuMillis, 0);
-    store.exec(`UPDATE works SET desired_state = 'stopped', observed_state = 'stopped' WHERE id = '${WORK_ID}'`);
-    await services.prepareEnabledServices(store.getWork(WORK_ID)!);
-    assert.equal(runtime.starts, 1);
     assert.throws(() => services.restart(owner, WORK_ID, accepted.serviceId, "restart-disabled"), ServicePreconditionError);
+    const companion = services.create(owner, WORK_ID, { definition: definition({ name: "companion" }), idempotencyKey: "companion" });
+    await services.waitForIdle();
+    const lifecycle = new WorkLifecycleService(store, new LifecycleRuntime(), () => new Date(NOW), 10, 10, services, contexts);
+    lifecycle.stop(owner, WORK_ID, "stop-with-disabled-service");
+    await lifecycle.waitForIdle();
+    assert.throws(() => services.restart(owner, WORK_ID, companion.serviceId, "restart-stopped-work"), ServicePreconditionError);
+    lifecycle.start(owner, WORK_ID, "start-with-disabled-service");
+    await lifecycle.waitForIdle();
+    assert.equal(store.getWork(WORK_ID)?.observedState, "ready");
+    assert.equal(store.getService(WORK_ID, accepted.serviceId)?.enabled, false);
+    assert.equal(store.getService(WORK_ID, accepted.serviceId)?.observedState, "disabled");
+    assert.equal(store.getService(WORK_ID, companion.serviceId)?.enabled, true);
+    assert.equal(store.getService(WORK_ID, companion.serviceId)?.observedState, "ready");
+    assert.equal(runtime.starts, 3); // Initial service, companion, restored companion only.
   });
 });
 
@@ -451,6 +464,10 @@ test("automatic reconciliation persists 1/5/15 recovery budget across manager re
     await replacement.waitForIdle();
     assert.equal(store.getOperation(retried.operationId)?.state, "failed");
     assert.equal(store.getServiceRuntimeBinding(WORK_ID, accepted.serviceId)?.recoveryCount, 0);
+    const starts = replacementRuntime.starts;
+    assert.deepEqual(replacement.retry(owner, WORK_ID, accepted.serviceId, "explicit-retry"), { ...retried, reused: true });
+    await replacement.waitForIdle();
+    assert.equal(replacementRuntime.starts, starts);
   });
 });
 

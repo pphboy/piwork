@@ -40,6 +40,13 @@ test("actual mTLS gRPC authenticates the current Work instance and fences stale 
     assert.equal(context.workId, WORK_ID);
     assert.equal(context.workspacePath, "/var/data/workspace");
     assert.equal(context.apiVersion, "v2");
+    store.exec(`INSERT INTO works(id,owner_user_id,name,desired_state,observed_state,desired_revision,control_version,created_at,updated_at)
+      VALUES ('work-foreign-00000001','user-owner','foreign','stopped','stopped',1,1,'${NOW}','${NOW}')`);
+    store.exec(`INSERT INTO service_heads(work_id,service_id,name,desired_revision,applied_revision,enabled,observed_state,tombstoned_at,last_error_json)
+      VALUES ('work-foreign-00000001','service-foreign-00000001','foreign-service',1,NULL,0,'disabled',NULL,NULL)`);
+    await assert.rejects(new Promise((resolve, reject) => client!.getService({ serviceId: "service-foreign-00000001" },
+      (error, response) => error === null ? resolve(response) : reject(error))),
+    (error: ServiceError) => error.code === status.NOT_FOUND);
 
     const wrongRole = new WorkServicesClient(`127.0.0.1:${port}`, ChannelCredentials.createSsl(
       readFileSync(identity.caCertificatePath),

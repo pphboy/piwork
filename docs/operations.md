@@ -4,7 +4,7 @@ piwork supports one Linux host with Docker Engine. Core listens on loopback by d
 
 ## Process and command boundaries
 
-`piwork-serve` is the Core daemon and operator control client. It owns `serve`, status, administrator/user management, global runtime/default Work configuration, and managed Skill lifecycle. `piwork-cli` is the logged-in user client. It owns Work lifecycle, per-Work configuration, Sessions, Runs, chat, and read-only Skill discovery. `piwork` is a compatibility alias for `piwork-serve`; `piwork-core` is removed.
+`piwork-serve` is the Core daemon and operator control client. It owns `serve`, status, administrator/user management, global runtime/default Work configuration, and managed Skill lifecycle. `piwork-cli` is the logged-in user client. It owns Work and existing service lifecycle, per-Work configuration, Sessions, Runs, chat, and read-only Skill discovery. `piwork` is a compatibility alias for `piwork-serve`; `piwork-core` is removed.
 
 Operator authentication uses `<data-dir>/operator.credential`. User authentication uses `$XDG_CONFIG_HOME/piwork/client.json`, `$HOME/.config/piwork/client.json`, or `PIWORK_CONFIG_PATH`. Both files require mode `0600` and a private parent directory; symlinks are refused. The credentials are independent: an operator credential cannot read conversation content, and a user bearer token cannot mutate users or global defaults.
 
@@ -153,6 +153,59 @@ npm run cli -- logout
 ```
 
 Work conversation data lives in a Docker named volume. Stop and delete retain that volume by policy. Delete removes the agent container, private network, and Core runtime material. Remove retained volumes separately only after confirming their data is no longer needed.
+
+## Work snapshot operations
+
+See [the user workflow](work-snapshot.md) for stop/export/import/start and [the package format](work-package-format.md) for the durable Work boundary. Snapshot support needs an operator-built, trusted `Dockerfile.snapshot-helper` image and `PIWORK_SNAPSHOT_HELPER_IMAGE` set to that image reference before starting Core. Core resolves it to a fixed local image ID at startup. A missing or unresolvable helper disables snapshot requests with 503 but leaves ordinary Work management available. Do not configure a user-controlled image as the helper. The helper runs without network, Docker socket, model credentials, or host runtime secrets; it has only the named source/target volume and its private spool.
+
+Export requires a stopped Work and performs a second actual-container check while holding the Work snapshot gate. It does not require stale source resource-occupancy counters to be zero. `work export <workId>` writes `<workId>.work` by default; `work import <file> --wait` needs only that file, and returns the chosen Work name. Export fails as a whole on unsupported filesystem metadata, unverified history, missing fixed images, an inconsistent managed-volume graph, or unreadable bytes; it never emits a partial successful package. Import requires a verified ready package, target Core with an enabled matching model and readable credential, and sufficient quota. Core selects the model automatically; the user does not provide bindings. Custom external MCP platform secret references are not migrated in this version and fail before acceptance, while built-in `work-services` uses new target Core control credentials at first start. Import creates new platform identities, two new managed volumes, and a stopped Work; no Work container, network, or TLS identity is created before explicit start. Platform-managed source credentials are never copied. User content may include secrets because there is no content filter.
+
+Only one snapshot job and two concurrent binary transfers are admitted per Core installation. Jobs have a 30-minute deadline; upload/download also enforce 60 seconds without progress and 30 minutes total. A ready package is retained for 24 hours. A current download or import lease protects its bytes from collection; expiration prevents new downloads/imports, while the owner can still distinguish an expired package from an unknown one. The snapshot directory under the Core data root needs room for staging plus ready bytes; Docker's data root needs room for new volumes and missing image layers. V1 caps both package size and logical restored bytes at 100 GiB. Ensure backups of the Core data root include the snapshot directory while a transfer or job is in progress; a copied `.work` file is independently usable.
+
+Core records job-owned helpers, volumes, contexts, and transfer leases before use. Startup fences interrupted jobs, removes only their recorded artifacts after ownership checks, and releases their name/quota/gate reservations. A committed import is not rolled back. If Docker cannot confirm helper exit or a target volume's ownership, the job stays `cleanup-pending` and holds its reservations; investigate Docker availability and the exact job labels before retrying recovery. Do not manually delete a different Work's volume or clear SQLite reservations to make room. Core shutdown aborts snapshot work and waits within its 45-second coordination window; any unfinished job is handled by the next startup recovery. Normal Work containers are not stopped for a snapshot job.
+
+The supported rollback is to delete the newly imported Work through normal Work lifecycle commands after confirming it is the intended target; the source Work and downloaded package remain unchanged. Import never overwrites a Work. A failed pre-publication import is cleaned from its own journal and exposes no partial Work. Failed export leaves its source Work stopped. A restored Work may still depend on external URLs or credentials embedded in user files; content-preserving export does not make external systems portable. No automatic registry pull, dependency reinstall, or source platform credential reuse is performed.
+
+For release verification, run `npm run build`, `npm run typecheck`, affected workspace tests, the Docker helper/image integrations with `PIWORK_SNAPSHOT_HELPER_TEST_IMAGE` set, and `node scripts/work-snapshot-acceptance.mjs` on a Docker-enabled Linux host. The acceptance script uses disposable labeled installations, builds/restores a Work, and confirms continued Session/Run use after a second export/import.
+
+## Manage existing Work services
+
+Use `piwork-cli work service` to inspect and control services created by pi-agentd. Creating and updating service definitions remain in the agent workflow; the CLI has no service create/update commands. All service commands use your saved user login and the existing Core HTTP API.
+
+```bash
+piwork-cli work service --help
+piwork-cli work service list <workId>
+# Copy serviceId from list; service names are not accepted as name selectors.
+piwork-cli work service show <workId> <serviceId>
+piwork-cli work service stop <workId> <serviceId> --wait
+piwork-cli work service start <workId> <serviceId> --wait
+piwork-cli work service restart <workId> <serviceId> --wait
+piwork-cli work service retry <workId> <serviceId> --wait
+piwork-cli work service logs <workId> <serviceId> --tail 100
+piwork-cli work service remove <workId> <serviceId> --wait
+```
+
+For a source checkout, replace `piwork-cli` with `npm run cli --`. Pass global options before `work`, for example:
+
+```bash
+piwork-cli --core http://127.0.0.1:7171 --json work service list <workId>
+piwork-cli --json work service stop <workId> <serviceId> --idempotency-key stop-demo-1 --wait
+piwork-cli operation show <operationId>
+```
+
+`start` persistently enables the service; on a stopped Work it saves that choice and completes without starting the Work or claiming readiness. Run `work start` separately to start the Work. `stop` persistently disables the service, so later Work restarts do not restore it. Stopping the Work itself preserves the enabled choices of its services. `restart` requires an enabled service and a running Work target. `retry` reconciles the existing definition and resets its automatic recovery budget; it does not create or update a definition.
+
+`remove` executes without prompting, removes the service's restoration target and runtime, and retains shared workspace data. The service disappears from list/show; start cannot undo removal. There is no purge-data option. Its accepted Operation remains queryable after removal.
+
+Control commands return Work, service, Operation and correlation IDs plus `reused` immediately unless `--wait` is supplied. An explicit idempotency key is sent unchanged; omitted keys are generated for each invocation. The CLI does not automatically resubmit a mutation on errors. Reusing a key follows Core's existing idempotency and lifecycle preconditions.
+
+`--wait` observes for up to 120 seconds and does not cancel the operation when observation times out or disconnects. It retains the IDs and reports `waiting`; inspect the durable result with `operation show`. Service readiness can take longer than the CLI observation deadline. JSON waiting mode prints exactly one result, including serviceId, and never prints an earlier acceptance or progress lines. Waiting exits 0 for succeeded, 6 for failed/superseded, and 5 for timeout or unavailable observation. `operation show` exits 0 whenever the query succeeds, even for a failed Operation.
+
+List/show display lifecycle metadata, enabled/observed state, desired/applied revisions, public errors and Work-private endpoints. They omit full definitions and environment values. Querying a failed service still exits 0. An endpoint such as `svc-demo` is reachable inside its Work network, not a published host address.
+
+Owners and authorized administrators can read metadata and control services. Only the Work owner can read application logs. Logs are a single bounded read: 100 lines by default, `--tail` accepts 1 through 200, with at most 64 KiB of Core-redacted UTF-8 text. There is no follow mode. JSON reports available/truncated/unavailable, text, truncation and collection time; text mode sends truncation/unavailability notices to stderr. Available or truncated logs exit 0, including empty available logs; unavailable logs exit 5.
+
+Before acceptance, usage errors exit 2, missing login or HTTP 401/403 exit 3, not found exits 4, network/502/503/504 exits 5, conflicts exit 6, and other errors retain fallback exit 1. These request errors leave stdout empty and print safe errors on stderr, including with `--json`.
 
 ## Backup and restore
 

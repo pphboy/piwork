@@ -41,6 +41,7 @@ export class WorkConfigurationService {
     if (!Check(WorkConfigSchema, configuration)) throw new InvalidWorkConfigurationError();
     const existing = this.store.getWorkConfiguration(workId);
     authorizeConfiguration(principal, existing, "control");
+    this.store.snapshots.assertWorkMutable(workId);
     this.assertAllocation(workId, configuration);
     const expectedRevision = typeof configurationOrExpectedRevision === "number"
       ? configurationOrExpectedRevision
@@ -77,6 +78,7 @@ export class WorkConfigurationService {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const existing = this.store.getWorkConfiguration(workId);
       authorizeConfiguration(principal, existing, "control");
+      this.store.snapshots.assertWorkMutable(workId);
       if (existing === undefined) throw new InvalidWorkConfigurationError();
       const current = JSON.parse(existing.desiredConfigJson) as WorkConfig;
       const configuration = merge(current);

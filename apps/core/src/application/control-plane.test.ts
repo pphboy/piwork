@@ -168,6 +168,67 @@ test("empty Core listens, reports staged readiness, and separates operator from 
       body: { expectedRevision: 1, definition: { ...serviceDefinition, args: ["--help"] }, idempotencyKey: "service-route-update" },
     });
     assert.equal(serviceUpdate.response.status, 202, JSON.stringify(serviceUpdate.body));
+    await application.lifecycle.waitForIdle();
+    await application.services.waitForIdle();
+    const servicePath = `/api/v1/works/${otherWorkId}/services/${serviceId}`;
+    const serviceAction = (action: string, key: string, credential = otherToken) => json(base, `${servicePath}/${action}`, {
+      method: "POST", authorization: `Bearer ${credential}`, body: { idempotencyKey: key },
+    });
+    const disabledRestart = await serviceAction("restart", "disabled-restart");
+    assert.equal(disabledRestart.response.status, 409);
+    assert.equal(disabledRestart.body.code, "FAILED_PRECONDITION");
+    // A stopped Work fixture proves enable/retry persist without needing Docker.
+    application.store.exec(`UPDATE works SET desired_state = 'stopped', observed_state = 'stopped' WHERE id = '${otherWorkId}'`);
+    const enabled = await serviceAction("enable", "enable-stopped", token);
+    assert.equal(enabled.response.status, 202);
+    await application.services.waitForIdle();
+    const replay = await serviceAction("enable", "enable-stopped", token);
+    assert.deepEqual(replay.body, { ...enabled.body, reused: true });
+    const enabledOperation = await json(base, `/api/v1/operations/${String(enabled.body.operationId)}`, { authorization: `Bearer ${otherToken}` });
+    assert.equal(enabledOperation.body.state, "succeeded");
+    assert.equal(application.store.getWork(otherWorkId)?.desiredState, "stopped");
+    const stoppedService = await json(base, servicePath, { authorization: `Bearer ${otherToken}` });
+    assert.equal(stoppedService.body.enabled, true);
+    assert.equal(stoppedService.body.observedState, "stopped");
+    const stoppedRestart = await serviceAction("restart", "stopped-restart");
+    assert.equal(stoppedRestart.response.status, 409);
+    const retry = await serviceAction("retry", "retry-stopped");
+    assert.equal(retry.response.status, 202);
+    await application.services.waitForIdle();
+    assert.equal((await json(base, `/api/v1/operations/${String(retry.body.operationId)}`, { authorization: `Bearer ${otherToken}` })).body.state, "succeeded");
+
+    for (const tail of [undefined, "1", "200"]) {
+      const result = await json(base, `${servicePath}/logs${tail === undefined ? "" : `?tailLines=${tail}`}`, { authorization: `Bearer ${otherToken}` });
+      assert.equal(result.response.status, 200);
+      assert.equal(result.body.status, "unavailable"); // This fixture has no Docker service runtime.
+    }
+    for (const tail of ["0", "201", "1.5", "bad"]) {
+      const result = await json(base, `${servicePath}/logs?tailLines=${tail}`, { authorization: `Bearer ${otherToken}` });
+      assert.equal(result.response.status, 400);
+      assert.equal(result.body.code, "INVALID_REQUEST");
+    }
+    const adminService = await json(base, `/api/v1/works/${String(workA.body.workId)}/services`, {
+      method: "POST", authorization: `Bearer ${token}`, body: { definition: serviceDefinition, idempotencyKey: "admin-service" },
+    });
+    assert.equal(adminService.response.status, 202);
+    const adminServicePath = `/api/v1/works/${String(workA.body.workId)}/services/${String(adminService.body.serviceId)}`;
+    for (const suffix of ["", "/logs", "/disable"]) {
+      const result = await json(base, `${adminServicePath}${suffix}`, { authorization: `Bearer ${otherToken}`, ...(suffix === "/disable" ? { method: "POST", body: { idempotencyKey: "unauthorized" } } : {}) });
+      assert.equal(result.response.status, 404);
+      assert.equal(result.body.code, "NOT_FOUND");
+    }
+    const mismatched = `/api/v1/works/${otherWorkId}/services/${String(adminService.body.serviceId)}`;
+    assert.equal((await json(base, mismatched, { authorization: `Bearer ${otherToken}` })).response.status, 404);
+    assert.equal((await json(base, `${mismatched}/disable`, { method: "POST", authorization: `Bearer ${otherToken}`, body: { idempotencyKey: "wrong-work" } })).response.status, 404);
+    const adminServiceRemoval = await json(base, `${adminServicePath}/remove`, { method: "POST", authorization: `Bearer ${token}`, body: { idempotencyKey: "admin-service-remove" } });
+    assert.equal(adminServiceRemoval.response.status, 202);
+    await application.services.waitForIdle();
+    application.store.exec(`UPDATE works SET desired_state = 'running', observed_state = 'failed' WHERE id = '${otherWorkId}'`);
+    const restarted = await serviceAction("restart", "restart-running");
+    assert.equal(restarted.response.status, 202);
+    await application.services.waitForIdle();
+    const restartedOperation = await json(base, `/api/v1/operations/${String(restarted.body.operationId)}`, { authorization: `Bearer ${otherToken}` });
+    assert.equal(restartedOperation.body.state, "failed"); // Accepted operation reports the missing runtime durably.
     const serviceDisable = await json(base, `/api/v1/works/${otherWorkId}/services/${serviceId}/disable`, {
       method: "POST", authorization: `Bearer ${otherToken}`, body: { idempotencyKey: "service-route-disable" },
     });
@@ -177,6 +238,12 @@ test("empty Core listens, reports staged readiness, and separates operator from 
     });
     assert.equal(serviceRemove.response.status, 202, JSON.stringify(serviceRemove.body));
     await application.services.waitForIdle();
+    assert.equal((await json(base, servicePath, { authorization: `Bearer ${otherToken}` })).response.status, 404);
+    assert.deepEqual((await json(base, `/api/v1/works/${otherWorkId}/services`, { authorization: `Bearer ${otherToken}` })).body.services, []);
+    const retainedOperation = await json(base, `/api/v1/operations/${String(serviceRemove.body.operationId)}`, { authorization: `Bearer ${otherToken}` });
+    assert.equal(retainedOperation.response.status, 200);
+    assert.equal(retainedOperation.body.operationId, serviceRemove.body.operationId);
+    assert.deepEqual((await serviceAction("remove", "service-route-remove")).body, { ...serviceRemove.body, reused: true });
 
     await json(base, "/control/runtime", {
       method: "PUT",

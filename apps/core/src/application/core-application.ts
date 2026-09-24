@@ -1,8 +1,20 @@
 import { createHash, randomUUID as cryptoRandomUUID } from "node:crypto";
+import { constants, createReadStream } from "node:fs";
+import { link, mkdir, open, rm, stat, unlink } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { CoreStore } from "@piwork/core-store";
+import { DockerRuntime } from "@piwork/runtime-docker";
+import { SnapshotHelperAvailability } from "../work-snapshots/helper-availability.js";
+import { authorizeSnapshotOwner, importProvenance } from "../work-snapshots/access.js";
+import { WorkSnapshotAdmission } from "../work-snapshots/admission.js";
+import { preflightWorkSnapshot } from "../work-snapshots/preflight.js";
+import { executeExportSnapshot } from "../work-snapshots/export-worker.js";
+import { executeImportSnapshot } from "../work-snapshots/import-worker.js";
+import { recoverSnapshotJobs } from "../work-snapshots/recovery.js";
+import { collectSnapshotGarbage } from "../work-snapshots/gc.js";
 import { status as grpcStatus } from "@grpc/grpc-js";
 import { IdentityService } from "../identity/sessions.js";
 import { bootstrapAdministrator } from "../identity/bootstrap-admin.js";
@@ -12,7 +24,8 @@ import { WorkLifecycleService, type WorkRuntimeAdapter } from "../work-managemen
 import type { CorePaths, ListenAddress } from "./paths.js";
 import { RuntimeProfileStore, validateRuntimeProfileInput, type RuntimeProfile } from "../configuration/runtime-profile.js";
 import { WorkConfigurationService } from "../configuration/work-config.js";
-import type { RuntimeSkillState, WorkConfig } from "@piwork/contracts";
+import { WORK_PACKAGE_MIME, type RuntimeSkillState, type WorkConfig, type ImportWorkRequest } from "@piwork/contracts";
+import { parseWorkJson, readWorkPackage, WORK_PACKAGE_LIMITS } from "@piwork/work-package";
 import { DockerWorkRuntimeAdapter, ensureInstallationId, type ConversationGateway, type RuntimeSkillStateGateway } from "../runtime/docker-work-runtime.js";
 import { ensureOperatorCredential, verifyOperatorCredential } from "./operator-credential.js";
 import { assertValidPassword } from "../identity/password.js";
@@ -47,6 +60,9 @@ export interface CoreApplicationOptions {
   readonly initialization?: FirstRunInitialization;
   readonly agentGrpcAdvertise?: string;
   readonly agentGrpcListen?: string;
+  readonly snapshotHelperImage?: string;
+  readonly snapshotHelperResolver?: (reference: string) => Promise<string>;
+  readonly snapshotDockerFactory?: (installationId: string) => DockerRuntime;
 }
 
 export class CoreApplication {
@@ -60,6 +76,14 @@ export class CoreApplication {
   readonly workContexts: WorkContextStore;
   readonly skillArtifacts: SkillArtifactStore;
   readonly services: WorkServiceManagementService;
+  readonly snapshotHelper: SnapshotHelperAvailability;
+  readonly snapshotAdmission: WorkSnapshotAdmission;
+  private readonly snapshotTasks = new Set<Promise<unknown>>();
+  private readonly snapshotAbort = new AbortController();
+  private snapshotRecoveryDone = false;
+  private snapshotGcTimer?: NodeJS.Timeout;
+  private snapshotGcTask?: Promise<void>;
+  private snapshotGcRunning = false;
   private runtime?: WorkRuntimeAdapter & Partial<ConversationGateway> & { close?: () => void };
   private serviceRuntime?: ServiceRuntimeAdapter;
   private server?: Server;
@@ -73,20 +97,23 @@ export class CoreApplication {
     lifecycle: WorkLifecycleService,
     workContexts: WorkContextStore,
     services: WorkServiceManagementService,
+    snapshotHelper: SnapshotHelperAvailability,
     private readonly options: CoreApplicationOptions,
   ) {
     this.store = store;
     this.identity = identity;
     this.lifecycle = lifecycle;
     this.services = services;
+    this.snapshotHelper = snapshotHelper;
     this.users = new UserAdministrationService(store);
     this.workConfigurations = new WorkConfigurationService(store);
     this.workContexts = workContexts;
     this.runtimeProfiles = new RuntimeProfileStore(paths.runtimeProfilePath, paths.secretsDirectory);
+    this.snapshotAdmission = new WorkSnapshotAdmission(store, this.runtimeProfiles);
     this.skillArtifacts = new SkillArtifactStore(paths.skillsDirectory);
     this.skills = new CoreSkillService(store, this.skillArtifacts);
     this.skills.cleanupOrphans();
-    this.workContexts.cleanupOrphans(new Set(
+    if (this.store.snapshots.listJobs(true).length === 0) this.workContexts.cleanupOrphans(new Set(
       this.store.listWorkContextSnapshots().map((snapshot) => `${snapshot.workId}\0${snapshot.snapshotId}`),
     ));
   }
@@ -121,7 +148,9 @@ export class CoreApplication {
       let runtime: WorkRuntimeAdapter = unavailableRuntime("runtime is not initialized");
       const services = new WorkServiceManagementService(store, proxyServiceRuntime(() => application?.serviceRuntime));
       const lifecycle = new WorkLifecycleService(store, proxyRuntime(() => application?.runtime ?? runtime), undefined, undefined, undefined, services, workContexts, undefined, ensureInstallationId(options.paths));
-      application = new CoreApplication(options.paths, store, identity, lifecycle, workContexts, services, options);
+      const snapshotHelper = await SnapshotHelperAvailability.resolve(options.snapshotHelperImage,
+        options.snapshotHelperResolver ?? ((reference) => new DockerRuntime(ensureInstallationId(options.paths)).resolveSnapshotHelperImage(reference)));
+      application = new CoreApplication(options.paths, store, identity, lifecycle, workContexts, services, snapshotHelper, options);
       if (!store.hasEnabledAdministrator()) application.state = "ADMIN_REQUIRED";
       else if (!profiles.inspect().configured) application.state = "RUNTIME_NOT_CONFIGURED";
       else application.state = "STORE_OPEN";
@@ -183,6 +212,25 @@ export class CoreApplication {
       this.serviceRuntime = runtime instanceof DockerWorkRuntimeAdapter ? runtime.serviceRuntime() : undefined;
       this.runtime = runtime;
       this.state = "RECOVERING";
+      if (!this.snapshotRecoveryDone) {
+        await recoverSnapshotJobs({ store: this.store, contexts: this.workContexts, runtime: this.snapshotDocker(), snapshotsDirectory: this.paths.snapshotsDirectory });
+        if (this.store.snapshots.listJobs(true).length === 0) this.workContexts.cleanupOrphans(new Set(
+          this.store.listWorkContextSnapshots().map((snapshot) => `${snapshot.workId}\0${snapshot.snapshotId}`)));
+        await collectSnapshotGarbage({ store: this.store, runtime: this.snapshotDocker(), snapshotsDirectory: this.paths.snapshotsDirectory });
+        this.snapshotRecoveryDone = true;
+      }
+      if (!this.snapshotGcTimer) {
+        this.snapshotGcTimer = setInterval(() => {
+          if (this.snapshotGcRunning || this.closed) return;
+          this.snapshotGcRunning = true;
+          this.snapshotGcTask = (async () => {
+            if (this.snapshotTasks.size === 0) await recoverSnapshotJobs({ store: this.store, contexts: this.workContexts,
+              runtime: this.snapshotDocker(), snapshotsDirectory: this.paths.snapshotsDirectory, onlyCleanupPending: true });
+            await collectSnapshotGarbage({ store: this.store, runtime: this.snapshotDocker(), snapshotsDirectory: this.paths.snapshotsDirectory });
+          })().catch(() => undefined).finally(() => { this.snapshotGcRunning = false; this.snapshotGcTask = undefined; });
+        }, 60_000);
+        this.snapshotGcTimer.unref();
+      }
       await this.lifecycle.recover();
       this.services.startReconciliation();
       if (previous !== undefined && previous !== runtime) previous.close?.();
@@ -199,11 +247,14 @@ export class CoreApplication {
     if (this.closed) return;
     this.closed = true;
     this.state = "SHUTTING_DOWN";
+    if (this.snapshotGcTimer) clearInterval(this.snapshotGcTimer);
+    this.snapshotAbort.abort(new Error("CORE_SHUTDOWN"));
     this.services.closeAdmission();
     const failures: unknown[] = [];
     try {
       for (const close of [
         () => closeServer(this.server),
+        () => this.waitSnapshotTasks(),
         () => this.serviceGrpc?.close() ?? Promise.resolve(),
         () => this.lifecycle.shutdown(true),
         () => this.services.shutdown(),
@@ -247,23 +298,25 @@ export class CoreApplication {
           const artifact = this.skillArtifacts.inspect(name, record.currentIdentity);
           return { name, identity: record.currentIdentity, directory: artifact.directory };
         });
-    const image = this.store.getCatalogEntry(configuration.agentImage.catalogId);
-    if (image === undefined || image.kind !== "agent_image" || !image.enabled) {
-      throw api(400, "INVALID_CONFIGURATION", "Work agent image reference is unavailable");
-    }
-    const reference = image.resolvedDigest ?? image.mutableReference;
-    if (reference === null) throw api(400, "INVALID_CONFIGURATION", "Work agent image reference is unavailable");
+    const ownedImage = this.store.snapshots.getOwnedImage(workId, configuration.agentImage.catalogId);
     const preserveImage = retained !== undefined
       && retained.configuration.agentImage.catalogId === configuration.agentImage.catalogId;
     let imageIdentity: string;
     if (preserveImage) {
       imageIdentity = retained.metadata.imageIdentity;
-    } else if (/^sha256:[a-f0-9]{64}$/.test(image.resolvedDigest ?? "")) {
-      imageIdentity = image.resolvedDigest!;
+    } else if (ownedImage !== undefined) {
+      imageIdentity = ownedImage.imageIdentity;
     } else {
+      const image = this.store.getCatalogEntry(configuration.agentImage.catalogId);
+      if (image === undefined || image.kind !== "agent_image" || !image.enabled) throw api(400, "INVALID_CONFIGURATION", "Work agent image reference is unavailable");
+      const reference = image.resolvedDigest ?? image.mutableReference;
+      if (reference === null) throw api(400, "INVALID_CONFIGURATION", "Work agent image reference is unavailable");
+      if (/^sha256:[a-f0-9]{64}$/.test(image.resolvedDigest ?? "")) imageIdentity = image.resolvedDigest!;
+      else {
       const resolved = await this.runtime?.resolveImageIdentity?.(reference);
       if (resolved === undefined) throw api(503, "RUNTIME_UNAVAILABLE", "Work agent image identity could not be captured");
       imageIdentity = resolved;
+      }
     }
     const snapshot = this.workContexts.build({
       workId,
@@ -404,6 +457,7 @@ export class CoreApplication {
       const session = this.identity.authenticate(token);
       const principal: UserPrincipal = { userId: session.user.id, role: session.user.role };
       const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+      if (await this.snapshotRoute(request, response, principal, parts)) return;
       if (request.method === "GET" && url.pathname === "/api/v1/me") return send(response, 200, { ...session.user, expiresAt: session.expiresAt });
       if (request.method === "GET" && url.pathname === "/api/v1/skills") return send(response, 200, { skills: this.skills.listForUser(principal) });
       if (request.method === "GET" && parts.length === 4 && parts[2] === "skills") return send(response, 200, this.skills.showForUser(principal, parts[3]!));
@@ -439,6 +493,9 @@ export class CoreApplication {
         }));
       }
       if (parts[2] === "works" && parts.length === 4 && request.method === "GET") return send(response, 200, this.lifecycle.show(principal, parts[3]!));
+      if (parts[2] === "works" && parts.length === 5 && parts[4] === "import-provenance" && request.method === "GET") {
+        return send(response, 200, importProvenance(this.store, principal, parts[3]!));
+      }
       if (parts[2] === "works" && parts.length === 5 && parts[4] === "configuration" && request.method === "GET") {
         return send(response, 200, await this.workConfigurationView(principal, parts[3]!));
       }
@@ -451,10 +508,11 @@ export class CoreApplication {
         const work = this.lifecycle.show(principal, parts[3]!);
         const configuration = new WorkConfigurationValidator(this.store).validate({
           workOwnerUserId: work.ownerUserId,
+          workId: work.id,
           configuration: body.configuration,
           availableServiceIds: new Set(this.store.listServices(work.id).map((service) => service.serviceId)),
         });
-        const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration);
+        const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration, work.id);
         const result = this.workConfigurations.update(principal, parts[3]!, configuration, undefined, {
           runtimeProfileJson: JSON.stringify(resolved.profile),
           sourceRuntimeRevision: resolved.sourceRuntimeRevision,
@@ -469,10 +527,10 @@ export class CoreApplication {
         const body = await readJson<{ skills?: unknown }>(request);
         if (!Array.isArray(body.skills)) throw api(400, "INVALID_REQUEST", "skills are required");
         return send(response, 200, await this.workConfigurations.updateMerged(principal, parts[3]!, (current) => {
-          const configuration = new WorkConfigurationValidator(this.store).validate({ workOwnerUserId: principal.userId, configuration: { ...current, skills: body.skills } });
+          const configuration = new WorkConfigurationValidator(this.store).validate({ workOwnerUserId: principal.userId, workId: parts[3]!, reselectSkills: true, configuration: { ...current, skills: body.skills } });
           return configuration;
         }, async (configuration) => {
-          const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration);
+          const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration, parts[3]!);
           const snapshot = await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile), undefined, true, correlationId);
           return { runtimeProfileJson: JSON.stringify(resolved.profile), sourceRuntimeRevision: resolved.sourceRuntimeRevision, snapshot: persistedSnapshot(snapshot, principal.userId) };
         }));
@@ -484,7 +542,7 @@ export class CoreApplication {
         if (typeof body.agentsMd !== "string") throw api(400, "INVALID_REQUEST", "agentsMd is required");
         const agentsMd = body.agentsMd;
         return send(response, 200, await this.workConfigurations.updateMerged(principal, parts[3]!, (configuration) => ({ ...configuration, agentsMd }), async (configuration) => {
-          const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration);
+          const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration, parts[3]!);
           const desiredContextId = this.store.getWorkConfiguration(parts[3]!)?.desiredContextId ?? undefined;
           const snapshot = await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile), desiredContextId, false, correlationId);
           return { runtimeProfileJson: JSON.stringify(resolved.profile), sourceRuntimeRevision: resolved.sourceRuntimeRevision, snapshot: persistedSnapshot(snapshot, principal.userId) };
@@ -551,20 +609,26 @@ export class CoreApplication {
         if (parts[4] === "sessions" && parts.length === 5 && request.method === "POST") {
           const body = await readJson<{ idempotencyKey?: unknown }>(request);
           if (typeof body.idempotencyKey !== "string") throw api(400, "INVALID_REQUEST", "idempotencyKey is required");
-          return send(response, 201, await gateway.createSession(workId, body.idempotencyKey));
+          const release = this.store.snapshots.beginTransientMutation(workId);
+          try { return send(response, 201, await gateway.createSession(workId, body.idempotencyKey)); }
+          finally { release(); }
         }
         if (parts[4] === "sessions" && parts.length === 5 && request.method === "GET") return send(response, 200, { sessions: await gateway.listSessions(workId) });
         if (parts[4] === "sessions" && parts.length === 6 && request.method === "GET") return send(response, 200, await gateway.readSession(workId, parts[5]!));
         if (parts[4] === "runs" && parts.length === 5 && request.method === "POST") {
           const body = await readJson<{ sessionId?: unknown; submissionKey?: unknown; prompt?: unknown }>(request);
           if (typeof body.sessionId !== "string" || typeof body.submissionKey !== "string" || typeof body.prompt !== "string") throw api(400, "INVALID_REQUEST", "sessionId, submissionKey, and prompt are required");
-          return send(response, 202, await gateway.submitRun(workId, body.sessionId, body.submissionKey, body.prompt));
+          const release = this.store.snapshots.beginTransientMutation(workId);
+          try { return send(response, 202, await gateway.submitRun(workId, body.sessionId, body.submissionKey, body.prompt)); }
+          finally { release(); }
         }
         if (parts[4] === "runs" && parts.length === 6 && request.method === "GET") return send(response, 200, await gateway.getRun(workId, parts[5]!));
         if (parts[4] === "runs" && parts.length === 7 && parts[6] === "cancel" && request.method === "POST") {
           const body = await readJson<{ idempotencyKey?: unknown }>(request);
           if (typeof body.idempotencyKey !== "string") throw api(400, "INVALID_REQUEST", "idempotencyKey is required");
-          return send(response, 200, await gateway.cancelRun(workId, parts[5]!, body.idempotencyKey));
+          const release = this.store.snapshots.beginTransientMutation(workId);
+          try { return send(response, 200, await gateway.cancelRun(workId, parts[5]!, body.idempotencyKey)); }
+          finally { release(); }
         }
         if (parts[4] === "runs" && parts.length === 7 && parts[6] === "events" && request.method === "GET") {
           const after = Number(url.searchParams.get("after") ?? "0");
@@ -579,9 +643,192 @@ export class CoreApplication {
       }
       throw api(404, "NOT_FOUND", "route not found");
     } catch (error) {
+      if (response.headersSent) { response.destroy(); return; }
       const mapped = mapError(error);
       send(response, mapped.status, { code: mapped.code, message: mapped.message, correlationId, ...(mapped.retryAfterMs === undefined ? {} : { retryAfterMs: mapped.retryAfterMs }) });
     }
+  }
+
+  private snapshotDocker(): DockerRuntime {
+    const installationId = ensureInstallationId(this.paths);
+    return this.options.snapshotDockerFactory?.(installationId) ?? new DockerRuntime(installationId);
+  }
+
+  private startSnapshotTask(task: Promise<unknown>): void {
+    this.snapshotTasks.add(task);
+    void task.catch(() => undefined).finally(() => this.snapshotTasks.delete(task));
+  }
+
+  private async waitSnapshotTasks(): Promise<void> {
+    if (this.snapshotTasks.size === 0 && !this.snapshotGcTask) return;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const completed = await Promise.race([Promise.allSettled([...this.snapshotTasks, ...(this.snapshotGcTask ? [this.snapshotGcTask] : [])]).then(() => true),
+        new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), 45_000); })]);
+      if (!completed) {
+        for (const job of this.store.snapshots.listJobs(true)) {
+          if (job.phase !== "cleanup-pending") this.store.snapshots.fenceWorker(job.operationId, new Date().toISOString());
+        }
+      }
+    }
+    finally { if (timer) clearTimeout(timer); }
+  }
+
+  private async snapshotRoute(request: IncomingMessage, response: ServerResponse, principal: UserPrincipal, parts: string[]): Promise<boolean> {
+    if (parts[2] === "works" && parts.length === 5 && parts[4] === "exports" && request.method === "POST") {
+      requireRuntime(this.state);
+      requireSnapshotJson(request);
+      const imageId = this.snapshotHelper.requireImage(), runtime = this.snapshotDocker(), installationId = ensureInstallationId(this.paths);
+      const body = await readSnapshotJson<{ idempotencyKey: string }>(request);
+      const accepted = await this.snapshotAdmission.export(principal, parts[3]!, body,
+        async () => { await preflightWorkSnapshot({ store: this.store, contexts: this.workContexts, runtime, installationId, workId: parts[3]! }); });
+      if (!accepted.reused) this.startSnapshotTask(executeExportSnapshot({ store: this.store, contexts: this.workContexts, runtime,
+        installationId, helperImageId: imageId, snapshotsDirectory: this.paths.snapshotsDirectory,
+        operationId: accepted.operationId, epoch: 1, signal: this.snapshotAbort.signal }));
+      send(response, 202, accepted); return true;
+    }
+    if (parts[2] === "work-snapshots" && parts.length >= 4 && parts.length <= 5 && request.method === "GET") {
+      const job = this.store.snapshots.getJobBySnapshot(parts[3]!);
+      authorizeSnapshotOwner(principal, job?.ownerUserId, parts[3]!);
+      if (!job || !job.snapshotId || !job.packageId || !job.sourceWorkId) throw api(404, "NOT_FOUND", "resource was not found");
+      const packageRecord = this.store.snapshots.getPackage(job.packageId);
+      const operation = this.store.getOperation(job.operationId);
+      if (!packageRecord || !operation) throw api(404, "NOT_FOUND", "resource was not found");
+      if (parts.length === 4) {
+        send(response, 200, { workId: job.sourceWorkId, snapshotId: job.snapshotId, operationId: job.operationId, state: operation.state,
+          digest: packageRecord.state === "ready" ? packageRecord.digest : null, size: packageRecord.state === "ready" ? packageRecord.size : null,
+          expiresAt: packageRecord.state === "ready" ? packageRecord.expiresAt : null,
+          error: operation.state === "failed" ? { code: "SNAPSHOT_EXPORT_FAILED", message: "Work export failed" } : null }); return true;
+      }
+      if (parts[4] !== "content") return false;
+      if (singleHeader(request, "range") !== undefined) throw api(416, "RANGE_NOT_SUPPORTED", "Work package downloads do not support Range");
+      if (packageRecord.state === "expired" || (packageRecord.expiresAt !== null && packageRecord.expiresAt <= new Date().toISOString())) throw api(410, "PACKAGE_EXPIRED", "package has expired");
+      if (packageRecord.state !== "ready" || !packageRecord.digest) throw api(409, "PACKAGE_NOT_READY", "package is not ready");
+      await this.downloadSnapshotPackage(request, response, principal, job.packageId, job.snapshotId, packageRecord.digest, packageRecord.size);
+      return true;
+    }
+    if (parts[2] === "work-packages" && parts.length === 3 && request.method === "POST") {
+      requireRuntime(this.state);
+      const imageId = this.snapshotHelper.requireImage();
+      await this.uploadSnapshotPackage(request, response, principal, this.snapshotDocker(), imageId);
+      return true;
+    }
+    if (parts[2] === "work-imports" && parts.length === 3 && request.method === "POST") {
+      requireRuntime(this.state);
+      requireSnapshotJson(request);
+      const imageId = this.snapshotHelper.requireImage(), runtime = this.snapshotDocker();
+      const body = await readSnapshotJson<ImportWorkRequest>(request);
+      const packageRecord = this.store.snapshots.getPackage(body.packageId);
+      authorizeSnapshotOwner(principal, packageRecord?.ownerUserId, body.packageId);
+      if (!packageRecord || !packageRecord.digest) throw api(404, "NOT_FOUND", "resource was not found");
+      // Replay is resolved before package expiry or physical bytes are required.
+      let verified;
+      if (packageRecord.state === "ready") {
+        const packagePath = join(this.paths.snapshotsDirectory, "packages", `${safeSnapshotSegment(body.packageId)}.work`);
+        try { verified = await readWorkPackage(createReadStream(packagePath, { highWaterMark: WORK_PACKAGE_LIMITS.streamChunkBytes })); }
+        catch { /* admission may still resolve an old idempotent replay */ }
+      }
+      const accepted = this.snapshotAdmission.import(principal, body, verified);
+      if (!accepted.reused) this.startSnapshotTask(executeImportSnapshot({ store: this.store, contexts: this.workContexts,
+        profiles: this.runtimeProfiles, runtime, installationId: ensureInstallationId(this.paths), helperImageId: imageId,
+        snapshotsDirectory: this.paths.snapshotsDirectory, operationId: accepted.operationId, epoch: 1, signal: this.snapshotAbort.signal }));
+      send(response, 202, accepted); return true;
+    }
+    return false;
+  }
+
+  private async downloadSnapshotPackage(_request: IncomingMessage, response: ServerResponse, principal: UserPrincipal,
+    packageId: string, snapshotId: string, digest: string, size: number): Promise<void> {
+    const now = new Date().toISOString(), transferId = `transfer-${cryptoRandomUUID()}`;
+    this.store.snapshots.acceptTransfer({ id: transferId, ownerUserId: principal.userId, packageId, snapshotId, kind: "download",
+      phase: "streaming", deadlineAt: new Date(Date.now() + 30 * 60_000).toISOString(), lastProgressAt: now, helperId: null, createdAt: now });
+    const deadline = setTimeout(() => response.destroy(new Error("SNAPSHOT_TRANSFER_TIMEOUT")), 30 * 60_000);
+    try {
+      const path = join(this.paths.snapshotsDirectory, "packages", `${safeSnapshotSegment(packageId)}.work`);
+      if ((await stat(path)).size !== size) throw api(503, "PACKAGE_UNAVAILABLE", "package storage is unavailable");
+      response.setTimeout(60_000, () => response.destroy(new Error("SNAPSHOT_TRANSFER_IDLE")));
+      response.writeHead(200, { "content-type": WORK_PACKAGE_MIME, "content-length": size, "x-piwork-sha256": digest,
+        "content-disposition": 'attachment; filename="snapshot.work"', "cache-control": "no-store" });
+      await pipeline(createReadStream(path, { highWaterMark: WORK_PACKAGE_LIMITS.streamChunkBytes }), response);
+    } finally { clearTimeout(deadline); this.store.snapshots.finishTransfer(transferId); }
+  }
+
+  private async uploadSnapshotPackage(request: IncomingMessage, response: ServerResponse, principal: UserPrincipal,
+    runtime: DockerRuntime, helperImageId: string): Promise<void> {
+    if (singleHeader(request, "content-type") !== WORK_PACKAGE_MIME) throw api(415, "UNSUPPORTED_MEDIA_TYPE", "expected Work package content type");
+    const lengthText = singleHeader(request, "content-length"), expectedDigest = singleHeader(request, "x-piwork-sha256");
+    const expectedLength = Number(lengthText);
+    if (!/^(?:[1-9][0-9]*)$/.test(lengthText ?? "") || !Number.isSafeInteger(expectedLength)) throw api(400, "CONTENT_LENGTH_REQUIRED", "valid Content-Length is required");
+    if (expectedLength > WORK_PACKAGE_LIMITS.packageBytes) throw api(413, "PACKAGE_LIMIT_EXCEEDED", "package is too large");
+    if (!/^[a-f0-9]{64}$/.test(expectedDigest ?? "")) throw api(400, "INVALID_DIGEST", "X-Piwork-SHA256 is required");
+    const transferId = `transfer-${cryptoRandomUUID()}`, packageId = `package-${cryptoRandomUUID()}`, now = new Date().toISOString();
+    const transferDirectory = join(this.paths.snapshotsDirectory, "transfers", transferId), packagesDirectory = join(this.paths.snapshotsDirectory, "packages");
+    this.store.snapshots.acceptTransfer({ id: transferId, ownerUserId: principal.userId, packageId, snapshotId: null, kind: "upload",
+      phase: "accepted", deadlineAt: new Date(Date.now() + 30 * 60_000).toISOString(), lastProgressAt: now, helperId: null, createdAt: now },
+    { id: packageId, ownerUserId: principal.userId, digest: null, size: 0, state: "staging", jobId: null, createdAt: now, readyAt: null, expiresAt: null });
+    try { await mkdir(transferDirectory, { recursive: true, mode: 0o700 }); await mkdir(packagesDirectory, { recursive: true, mode: 0o700 }); }
+    catch (error) {
+      this.store.snapshots.finishTransfer(transferId);
+      this.store.exec(`UPDATE snapshot_packages SET state = 'expired' WHERE id = '${packageId}' AND state = 'staging'`);
+      await rm(transferDirectory, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+    const uploadPath = join(transferDirectory, "package.work"), readyPath = join(packagesDirectory, `${packageId}.work`);
+    const helperName = `snapshot-upload-${transferId}`;
+    let helperCreated = false, linked = false, sealed = false;
+    const deadline = setTimeout(() => request.destroy(new Error("SNAPSHOT_TRANSFER_TIMEOUT")), 30 * 60_000);
+    try {
+      const file = await open(uploadPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+      const hash = createHash("sha256"); let size = 0;
+      request.setTimeout(60_000, () => request.destroy(new Error("SNAPSHOT_UPLOAD_IDLE")));
+      try {
+        for await (const raw of request) {
+          const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw); size += chunk.length;
+          if (size > expectedLength || size > WORK_PACKAGE_LIMITS.packageBytes) throw api(413, "PACKAGE_LIMIT_EXCEEDED", "package is too large");
+          hash.update(chunk);
+          for (let offset = 0; offset < chunk.length;) { const written = await file.write(chunk, offset); if (!written.bytesWritten) throw new Error("SNAPSHOT_WRITE_FAILED"); offset += written.bytesWritten; }
+          this.store.snapshots.updateTransfer(transferId, "streaming", new Date().toISOString(), null);
+        }
+        await file.sync();
+      } finally { await file.close(); }
+      if (size !== expectedLength || hash.digest("hex") !== expectedDigest) throw api(400, "PACKAGE_INVALID", "package digest or length mismatch");
+      const uid = process.getuid?.(), gid = process.getgid?.();
+      if (uid === undefined || gid === undefined) throw api(503, "SNAPSHOT_HELPER_UNAVAILABLE", "upload verification is unavailable");
+      this.store.snapshots.updateTransfer(transferId, "verifying", new Date().toISOString(), helperName);
+      helperCreated = true;
+      await runtime.createSnapshotHelper({ installationId: ensureInstallationId(this.paths), jobId: transferId, name: helperName,
+        imageId: helperImageId, spoolDirectory: transferDirectory, action: "verify-package", spoolUser: `${uid}:${gid}` });
+      let verified: { digest?: unknown; size?: unknown; bindingRequirements?: unknown } | null;
+      try { verified = await runtime.startSnapshotHelper(helperName, transferId) as typeof verified; }
+      catch (error) {
+        const inspection = await runtime.inspectSnapshotHelper(helperName, transferId).catch(() => undefined);
+        if (inspection && !inspection.running && inspection.exitCode !== undefined && inspection.exitCode !== 0)
+          throw api(400, "PACKAGE_INVALID", "package verification failed");
+        throw error;
+      }
+      await runtime.removeSnapshotHelper(helperName, transferId); helperCreated = false;
+      if (!verified || verified.digest !== expectedDigest || verified.size !== expectedLength || !verified.bindingRequirements) throw api(400, "PACKAGE_INVALID", "package verification failed");
+      await link(uploadPath, readyPath); linked = true; await syncSnapshotDirectory(packagesDirectory);
+      const readyAt = new Date().toISOString(), expiresAt = new Date(Date.parse(readyAt) + 24 * 60 * 60_000).toISOString();
+      const selected = this.store.snapshots.sealOrReusePackage(packageId, principal.userId, expectedDigest!, expectedLength, readyAt, expiresAt); sealed = true;
+      if (selected.id !== packageId) { await unlink(readyPath); linked = false; }
+      this.store.snapshots.finishTransfer(transferId);
+      await rm(transferDirectory, { recursive: true, force: true }).catch(() => undefined);
+      send(response, 201, { packageId: selected.id, digest: expectedDigest, size: expectedLength, expiresAt: selected.expiresAt,
+        bindingRequirements: verified.bindingRequirements });
+    } catch (error) {
+      if (helperCreated) {
+        try { await runtime.removeSnapshotHelper(helperName, transferId); helperCreated = false; }
+        catch { this.store.snapshots.updateTransfer(transferId, "cleanup-pending", new Date().toISOString(), helperName); throw error; }
+      }
+      if (!sealed) {
+        if (linked) await unlink(readyPath).catch(() => undefined);
+        this.store.exec(`UPDATE snapshot_packages SET state = 'expired' WHERE id = '${packageId}' AND state = 'staging'`);
+      }
+      this.store.snapshots.finishTransfer(transferId);
+      await rm(transferDirectory, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    } finally { clearTimeout(deadline); }
   }
 
   private requireConversation(principal: UserPrincipal, workId: string): void {
@@ -608,7 +855,7 @@ function proxyRuntime(current: () => WorkRuntimeAdapter): WorkRuntimeAdapter {
     inspect: (workId) => current().inspect(workId), drain: (workId, timeout) => current().drain(workId, timeout),
     prepareConfigurationChange: (workId) => current().prepareConfigurationChange?.(workId)
       ?? Promise.reject(new Error("runtime cannot prepare configuration replacement")),
-    stop: (workId, timeout) => current().stop(workId, timeout), remove: (workId) => current().remove(workId),
+    stop: (workId, timeout) => current().stop(workId, timeout), remove: (workId, options) => current().remove(workId, options),
     listManagedInstances: () => current().listManagedInstances?.() ?? Promise.resolve([]),
   };
 }
@@ -643,11 +890,68 @@ function requireOperator(request: IncomingMessage, store: CoreStore): void {
   }
 }
 async function readJson<T>(request: IncomingMessage): Promise<T> { const chunks: Buffer[] = []; let length = 0; for await (const chunk of request) { const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); length += value.length; if (length > 1_048_576) throw api(413, "REQUEST_TOO_LARGE", "request body is too large"); chunks.push(value); } try { return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T; } catch { throw api(400, "INVALID_JSON", "request body must be valid JSON"); } }
+async function readSnapshotJson<T>(request: IncomingMessage): Promise<T> {
+  const chunks: Buffer[] = []; let size = 0;
+  for await (const raw of request) {
+    const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw); size += chunk.length;
+    if (size > 1_048_576) throw api(413, "REQUEST_TOO_LARGE", "request body is too large");
+    chunks.push(chunk);
+  }
+  try { return parseWorkJson(Buffer.concat(chunks, size)) as T; }
+  catch { throw api(400, "INVALID_JSON", "request body must be strict JSON without duplicate keys"); }
+}
+function singleHeader(request: IncomingMessage, name: string): string | undefined {
+  const values: string[] = [];
+  for (let index = 0; index < request.rawHeaders.length; index += 2) if (request.rawHeaders[index]!.toLowerCase() === name) values.push(request.rawHeaders[index + 1]!);
+  if (values.length > 1) throw api(400, "DUPLICATE_HEADER", `duplicate ${name} header`);
+  return values[0];
+}
+function requireSnapshotJson(request: IncomingMessage): void {
+  if (singleHeader(request, "content-type") !== "application/json") throw api(415, "UNSUPPORTED_MEDIA_TYPE", "expected application/json");
+}
+function safeSnapshotSegment(value: string): string {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9-]{0,127}$/.test(value)) throw api(400, "INVALID_REQUEST", "invalid snapshot identifier");
+  return value;
+}
+async function syncSnapshotDirectory(path: string): Promise<void> {
+  const descriptor = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try { await descriptor.sync(); } finally { await descriptor.close(); }
+}
 function safeJson(value: unknown): string { return JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item); }
 function send(response: ServerResponse, status: number, value: unknown): void { if (response.headersSent) return; const body = safeJson(value); response.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(body), "cache-control": "no-store" }); response.end(body); }
 function api(status: number, code: string, message: string): Error { return Object.assign(new Error(message), { status, code }); }
 export function mapError(error: unknown): { status: number; code: string; message: string; retryAfterMs?: number } {
   const item = error as { status?: number; code?: number | string; message?: string; retryAfterMs?: number; name?: string };
+  if (item.name === "SnapshotAdmissionError") {
+    const code = String(item.code);
+    const hints: Record<string, string> = {
+      PACKAGE_INVALID: "The Work package or import request is invalid; validate the file and request fields.",
+      PACKAGE_EXPIRED: "The uploaded Work package expired; upload the file again.",
+      PACKAGE_NOT_READY: "The Work package is not ready; upload and validate it before importing.",
+      QUOTA_EXCEEDED: "The target Core lacks capacity for this Work; free capacity or adjust its quota.",
+      SNAPSHOT_REQUIRES_STOPPED: "Stop the Work and its services before exporting.",
+      WORK_BUSY: "Wait for the current Work operation to finish and retry.",
+    };
+    return { status: code === "PACKAGE_EXPIRED" ? 410 : code === "PACKAGE_INVALID" ? 400
+      : code === "QUOTA_EXCEEDED" || code === "PACKAGE_NOT_READY" || code === "WORK_BUSY" || code === "SNAPSHOT_REQUIRES_STOPPED" ? 409 : 503,
+    code, message: hints[code] ?? "Check the Work snapshot prerequisites and retry." };
+  }
+  if (item.name === "SnapshotPreflightError") return { status: item.code === "SNAPSHOT_RUNTIME_UNAVAILABLE" ? 503 : 409,
+    code: String(item.code), message: "Work snapshot preflight failed" };
+  if (item.name === "SnapshotHelperUnavailableError") return { status: 503, code: "SNAPSHOT_HELPER_UNAVAILABLE", message: "snapshot helper is unavailable" };
+  if (item.name === "WorkBindingError") {
+    const code = String(item.code);
+    return { status: 400, code, message: code === "TARGET_MODEL_UNAVAILABLE"
+      ? "Configure an enabled matching model with a readable credential on the target Core, then import again."
+      : code === "EXTERNAL_MCP_SECRET_UNAVAILABLE"
+        ? "This version cannot migrate platform secrets for custom external MCP servers; remove that dependency before exporting."
+        : "The target Work model is unavailable or incompatible." };
+  }
+  if (item.name === "WorkPackageValidationError") return { status: item.code === "PACKAGE_LIMIT_EXCEEDED" ? 413 : 400,
+    code: String(item.code), message: "Work package is invalid" };
+  if (item.name === "SnapshotStoreError") return { status: item.code === "SNAPSHOT_TRANSFER_BUSY" ? 503 : 409, code: String(item.code), message:
+    item.code === "WORK_NAME_CONFLICT" ? "That Work name is already in use; choose another name or omit --name for automatic naming."
+      : "Work snapshot state conflicts with this request" };
   if (typeof item.code === "string" && (item.code.startsWith("SKILL_") || item.code === "AGENTS_INVALID")) {
     return { status: item.code === "SKILL_ALREADY_EXISTS" ? 409 : item.code === "SKILL_UNAVAILABLE" ? 404 : 400, code: item.code, message: item.message ?? "Skill operation failed" };
   }

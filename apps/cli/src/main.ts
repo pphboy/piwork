@@ -2,6 +2,8 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { executeWorkServiceCommand, parseWorkServiceCommand, WORK_SERVICE_USAGE } from "./work-service.js";
+import { executeWorkSnapshotCommand, parseWorkSnapshotCommand, WORK_SNAPSHOT_USAGE } from "./work-snapshot.js";
 import {
   FileCredentialStore,
   PiworkApiError,
@@ -23,6 +25,11 @@ export const CLI_USAGE = `usage: piwork-cli [--core <url>] [--json] <command>
   work list
   work show <workId>
   work <start|stop|retry|delete> <workId> [--wait]
+  work service <list|show|start|stop|restart|retry|remove|logs> ...
+  work export <workId> [--output <file>]
+  work snapshot download <snapshotId> --output <file>
+  work package inspect <file>
+  work import <file> [--name <name>] [--wait]
   work config show <workId>
   work config set <workId> --config <file>
   work config skills list <workId>
@@ -45,7 +52,7 @@ const COMMAND_HELP: Readonly<Record<string, string>> = {
   login: "usage: piwork-cli login --account <name> [--password-stdin]\n  Authenticate and save the credential locally.\n",
   whoami: "usage: piwork-cli whoami\n  Show the current authenticated identity.\n",
   logout: "usage: piwork-cli logout\n  Revoke the current session and remove the saved credential.\n",
-  work: "usage: piwork-cli work <create|list|show|start|stop|retry|delete|config> ...\n  Manage Work resources and per-Work configuration.\n",
+  work: "usage: piwork-cli work <create|list|show|start|stop|retry|delete|config|service> ...\n  Manage Work resources and per-Work configuration.\n  work service <list|show|start|stop|restart|retry|remove|logs> ...\n",
   skills: "usage: piwork-cli skills <list|show> [skill-name]\n  Discover enabled Skills available to the current user.\n",
   operation: "usage: piwork-cli operation show <operationId>\n  Inspect an asynchronous Work operation.\n",
   session: "usage: piwork-cli session <create|list|show> <workId> [sessionId]\n  Manage persistent conversation sessions.\n",
@@ -62,16 +69,31 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   const globals = parseGlobals(argv);
   const [command, ...args] = globals.rest;
   if (command === undefined || command === "help" || command === "--help" || command === "-h") { process.stdout.write(CLI_USAGE); return 0; }
+  const serviceCommand = command === "work" && args[0] === "service" ? parseWorkServiceCommand(args.slice(1)) : undefined;
+  const snapshotCommand = command === "work" ? parseWorkSnapshotCommand(args) : undefined;
+  if (serviceCommand?.kind === "help") { process.stdout.write(WORK_SERVICE_USAGE); return 0; }
+  if (snapshotCommand?.kind === "help") { process.stdout.write(WORK_SNAPSHOT_USAGE); return 0; }
   if (args.includes("--help") || args.includes("-h")) {
     const help = COMMAND_HELP[command];
     if (help === undefined) throw usage(`unknown command: ${command}`);
     process.stdout.write(help);
     return 0;
   }
+  if (snapshotCommand?.kind === "inspect") return executeWorkSnapshotCommand({ client: new PiworkClient({ coreUrl: "http://127.0.0.1:7171" }),
+    json: globals.json, stdout: (text) => { process.stdout.write(text); }, stderr: (text) => { process.stderr.write(text); } }, snapshotCommand);
   const store = new FileCredentialStore();
   const credential = await store.load();
   const coreUrl = resolveCoreEndpoint({ explicit: globals.core, environment: process.env.PIWORK_CORE_URL, saved: credential?.coreUrl });
   const context: Context = { coreUrl, json: globals.json, store, ...(credential === undefined ? {} : { credential }), client: new PiworkClient({ coreUrl, token: credential?.token }) };
+  if (serviceCommand !== undefined) {
+    requireCredential(context);
+    return executeWorkServiceCommand({ client: context.client, json: context.json, stdout: (text) => { process.stdout.write(text); }, stderr: (text) => { process.stderr.write(text); } }, serviceCommand);
+  }
+  if (snapshotCommand !== undefined) {
+    requireCredential(context);
+    return executeWorkSnapshotCommand({ client: context.client, json: context.json,
+      stdout: (text) => { process.stdout.write(text); }, stderr: (text) => { process.stderr.write(text); } }, snapshotCommand);
+  }
   if (command === "status") return statusCommand(context, args);
   if (command === "login") return loginCommand(context, args);
   if (command === "whoami") return whoamiCommand(context, args);
@@ -452,5 +474,8 @@ export function exitCodeFor(error: unknown): number {
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runCli(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error: unknown) => { process.stderr.write(`${safeErrorMessage(error)}\n`); process.exitCode = exitCodeFor(error); });
+  runCli(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error: unknown) => {
+    process.stderr.write(`${error instanceof PiworkApiError ? `${error.code}: ` : ""}${safeErrorMessage(error)}\n`);
+    process.exitCode = exitCodeFor(error);
+  });
 }

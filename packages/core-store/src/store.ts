@@ -10,12 +10,18 @@ import {
   type MutationRequest,
 } from "./mutation.js";
 import { StoreLock } from "./store-lock.js";
+import { SnapshotStore } from "./snapshots.js";
 
 export { CORE_SCHEMA_VERSION };
 
 export interface CoreStoreOptions {
   readonly databasePath: string;
   readonly lockPath?: string;
+}
+
+export interface WorkControlIdempotencyRecord {
+  readonly principalId: string; readonly workScope: string; readonly operationKind: string; readonly idempotencyKey: string;
+  readonly requestDigest: string; readonly resourceId: string; readonly operationId: string; readonly createdAt: string;
 }
 
 export interface InitialAdministratorRecord {
@@ -323,6 +329,13 @@ export interface VolumeRecord {
   readonly createdAt: string;
 }
 
+export interface VolumeReferenceRecord {
+  readonly volumeId: string;
+  readonly consumerKind: "work" | "service";
+  readonly consumerId: string;
+  readonly createdAt: string;
+}
+
 export interface NewVolumeRecord {
   readonly id: string;
   readonly installationId: string;
@@ -356,11 +369,12 @@ export class ReferencedVolumeError extends Error {
 
 export class CoreStore {
   private closed = false;
+  readonly snapshots: SnapshotStore;
 
   private constructor(
     private readonly database: DatabaseSync,
     private readonly lock: StoreLock,
-  ) {}
+  ) { this.snapshots = new SnapshotStore(database); }
 
   static open(options: CoreStoreOptions): CoreStore {
     mkdirSync(dirname(options.databasePath), { recursive: true, mode: 0o700 });
@@ -482,6 +496,20 @@ export class CoreStore {
   get<T>(sql: string): T | undefined {
     this.assertOpen();
     return this.database.prepare(sql).get() as T | undefined;
+  }
+
+  /** Synchronous, consistent Core metadata read. The callback must not write or await. */
+  readSnapshot<T>(read: () => T): T {
+    this.assertOpen();
+    this.database.exec("BEGIN");
+    try {
+      const result = read();
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   acceptMutation(
@@ -858,6 +886,7 @@ export class CoreStore {
     this.assertOpen();
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      this.snapshots.assertWorkMutable(update.workId);
       const work = this.database.prepare(`SELECT owner_user_id, desired_revision, active_revision
         FROM works WHERE id = ? AND deleted_at IS NULL`).get(update.workId) as
         | { owner_user_id: string; desired_revision: number; active_revision: number | null }
@@ -939,6 +968,7 @@ export class CoreStore {
   }
 
   private insertWorkContextSnapshot(workId: string, internalRevision: number, snapshot: WorkContextSnapshotInput): void {
+    this.snapshots.assertWorkMutable(workId);
     this.database.prepare(`INSERT INTO work_context_snapshots(
       snapshot_id, work_id, internal_revision, configuration_json, image_identity,
       created_by_user_id, created_at
@@ -966,11 +996,11 @@ export class CoreStore {
     };
   }
 
-  listWorkContextSnapshots(): WorkContextSnapshotRecord[] {
+  listWorkContextSnapshots(workId?: string): WorkContextSnapshotRecord[] {
     this.assertOpen();
     const rows = this.database.prepare(`SELECT snapshot_id, work_id, internal_revision,
       configuration_json, image_identity, created_by_user_id, created_at
-      FROM work_context_snapshots ORDER BY work_id, created_at, snapshot_id`).all() as Array<Record<string, string | number | null>>;
+      FROM work_context_snapshots ${workId === undefined ? "" : "WHERE work_id = ?"} ORDER BY work_id, created_at, snapshot_id`).all(...(workId === undefined ? [] : [workId])) as Array<Record<string, string | number | null>>;
     return rows.map((row) => ({
       snapshotId: String(row.snapshot_id),
       workId: String(row.work_id),
@@ -986,6 +1016,7 @@ export class CoreStore {
     this.assertOpen();
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      this.snapshots.assertWorkMutable(workId);
       const snapshot = this.getWorkContextSnapshot(workId, snapshotId);
       if (snapshot === undefined || snapshot.internalRevision === null) throw new Error("Work context is unavailable");
       const result = this.database.prepare(`UPDATE works SET active_context_id = ?, active_revision = ?, updated_at = ?
@@ -1011,6 +1042,7 @@ export class CoreStore {
     this.assertOpen();
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      this.snapshots.assertWorkMutable(input.workId);
       const work = this.database.prepare(`SELECT control_version FROM works
         WHERE id = ? AND deleted_at IS NULL`).get(input.workId) as { control_version: number } | undefined;
       const operation = this.database.prepare(`SELECT state, target_version, work_id FROM operations
@@ -1044,6 +1076,7 @@ export class CoreStore {
     this.assertOpen();
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      this.snapshots.assertWorkMutable(workId);
       const work = this.database.prepare(`SELECT desired_revision, active_revision FROM works
         WHERE id = ? AND deleted_at IS NULL`).get(workId) as
         | { desired_revision: number; active_revision: number | null }
@@ -1071,6 +1104,7 @@ export class CoreStore {
     sourceRuntimeRevision: number | null,
   ): void {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     const result = this.database.prepare(`UPDATE work_config_revisions SET
       runtime_profile_json = ?, source_runtime_revision = ?
       WHERE work_id = ? AND revision = ?`).run(runtimeProfileJson, sourceRuntimeRevision, workId, revision);
@@ -1131,8 +1165,15 @@ export class CoreStore {
     };
   }
 
+  listWorkConfigRevisions(workId: string): WorkConfigRevisionRecord[] {
+    this.assertOpen();
+    const rows = this.database.prepare("SELECT revision FROM work_config_revisions WHERE work_id = ? ORDER BY revision").all(workId) as Array<{ revision: number }>;
+    return rows.map((row) => this.getWorkConfigRevision(workId, row.revision)!);
+  }
+
   updateWorkConfigJson(workId: string, revision: number, configJson: string): void {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     const result = this.database.prepare("UPDATE work_config_revisions SET config_json = ? WHERE work_id = ? AND revision = ?")
       .run(configJson, workId, revision);
     if (result.changes !== 1) throw new Error(`Work configuration ${workId}@${revision} was not found`);
@@ -1273,6 +1314,7 @@ export class CoreStore {
 
   bindServiceImage(workId: string, serviceId: string, revision: number, imageIdentity: string): ServiceRevisionRecord {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     const row = this.database.prepare(`SELECT resolved_image_digest FROM service_revisions
       WHERE work_id = ? AND service_id = ? AND revision = ?`).get(workId, serviceId, revision) as
       { resolved_image_digest: string | null } | undefined;
@@ -1294,6 +1336,7 @@ export class CoreStore {
     values: { readonly appliedRevision?: number | null; readonly lastErrorJson?: string | null } = {},
   ): ServiceRecord {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     const result = this.database.prepare(`UPDATE service_heads SET
       observed_state = ?,
       applied_revision = CASE WHEN ? IS NULL THEN applied_revision ELSE ? END,
@@ -1344,6 +1387,7 @@ export class CoreStore {
 
   putServiceRuntimeBinding(input: ServiceRuntimeBindingRecord): ServiceRuntimeBindingRecord {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(input.workId);
     this.database.prepare(`INSERT INTO service_runtime_bindings(
       work_id, service_id, revision, container_id, image_identity, recovery_count,
       recovery_window_started_at, next_retry_at, ready_since, updated_at
@@ -1362,6 +1406,7 @@ export class CoreStore {
 
   deleteServiceRuntimeBinding(workId: string, serviceId: string): void {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     this.database.prepare("DELETE FROM service_runtime_bindings WHERE work_id = ? AND service_id = ?").run(workId, serviceId);
   }
 
@@ -1374,6 +1419,7 @@ export class CoreStore {
     now: string,
   ): QuotaReservationRecord {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     const result = this.database.prepare(`UPDATE quota_reservations SET
       occupied_cpu_millis = ?, occupied_memory_bytes = ?, updated_at = ?
       WHERE work_id = ? AND subject_kind = ? AND subject_id = ?`).run(
@@ -1390,6 +1436,7 @@ export class CoreStore {
 
   updateQuotaDesired(workId: string, subjectKind: string, subjectId: string, cpuMillis: number, memoryBytes: number, now: string): QuotaReservationRecord {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     const result = this.database.prepare(`UPDATE quota_reservations SET desired_cpu_millis = ?,
       desired_memory_bytes = ?, updated_at = ? WHERE work_id = ? AND subject_kind = ? AND subject_id = ?`)
       .run(cpuMillis, memoryBytes, now, workId, subjectKind, subjectId);
@@ -1433,6 +1480,29 @@ export class CoreStore {
     return rows.map(mapOperationRecord);
   }
 
+  /** Includes native create/import Operations whose work_id is still NULL. No global tables are exported. */
+  listWorkControlOperations(workId: string): OperationRecord[] {
+    this.assertOpen();
+    const rows = this.database.prepare(`SELECT DISTINCT o.* FROM operations o
+      LEFT JOIN idempotency_records i ON i.operation_id = o.id
+      WHERE o.work_id = ? OR i.resource_id = ? OR i.resource_id IN
+        (SELECT service_id FROM service_heads WHERE work_id = ?)
+      ORDER BY o.id`).all(workId, workId, workId) as Array<Record<string, string | number | null>>;
+    return rows.map(mapOperationRecord);
+  }
+
+  listWorkControlIdempotency(workId: string): WorkControlIdempotencyRecord[] {
+    this.assertOpen();
+    return this.database.prepare(`SELECT i.principal_id AS principalId, i.work_scope AS workScope,
+      i.operation_kind AS operationKind, i.idempotency_key AS idempotencyKey,
+      i.request_digest AS requestDigest, i.resource_id AS resourceId,
+      i.operation_id AS operationId, i.created_at AS createdAt
+      FROM idempotency_records i JOIN operations o ON o.id = i.operation_id
+      WHERE o.work_id = ? OR i.resource_id = ? OR i.resource_id IN
+        (SELECT service_id FROM service_heads WHERE work_id = ?)
+      ORDER BY i.principal_id, i.work_scope, i.operation_kind, i.idempotency_key`).all(workId, workId, workId) as unknown as WorkControlIdempotencyRecord[];
+  }
+
   attachOperationToWork(operationId: string, workId: string): void {
     this.assertOpen();
     this.database.prepare("UPDATE operations SET work_id = ? WHERE id = ? AND work_id IS NULL").run(workId, operationId);
@@ -1456,6 +1526,7 @@ export class CoreStore {
 
   updateWorkObservedState(workId: string, observedState: string, now: string, activeRevision?: number): void {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     this.database.prepare(`UPDATE works SET
       observed_state = ?,
       active_revision = COALESCE(?, active_revision),
@@ -1658,6 +1729,16 @@ export class CoreStore {
     return rows.map(mapVolumeRecord);
   }
 
+  listVolumeReferences(workId: string): VolumeReferenceRecord[] {
+    this.assertOpen();
+    const rows = this.database.prepare(`SELECT r.volume_id, r.consumer_kind, r.consumer_id, r.created_at
+      FROM volume_references AS r JOIN volume_records AS v ON v.id = r.volume_id
+      WHERE v.work_id = ? ORDER BY r.volume_id, r.consumer_kind, r.consumer_id`).all(workId) as Array<{
+        volume_id: string; consumer_kind: "work" | "service"; consumer_id: string; created_at: string;
+      }>;
+    return rows.map((row) => ({ volumeId: row.volume_id, consumerKind: row.consumer_kind, consumerId: row.consumer_id, createdAt: row.created_at }));
+  }
+
   countVolumePolicySlots(workId: string): number {
     this.assertOpen();
     const row = this.database.prepare(`SELECT COUNT(*) AS count FROM volume_records
@@ -1667,6 +1748,7 @@ export class CoreStore {
 
   retainWorkVolumes(workId: string, now: string): void {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     this.database.prepare(`DELETE FROM volume_references
       WHERE volume_id IN (SELECT id FROM volume_records WHERE work_id = ?)`).run(workId);
     this.database.prepare(`UPDATE volume_records SET reference_count = 0, state = 'retained', retained_at = ?
@@ -1675,6 +1757,7 @@ export class CoreStore {
 
   detachServiceVolumeReferences(workId: string, serviceId: string, now: string): void {
     this.assertOpen();
+    this.snapshots.assertWorkMutable(workId);
     this.database.exec("BEGIN IMMEDIATE");
     try {
       this.database.prepare(`DELETE FROM volume_references WHERE consumer_kind = 'service' AND consumer_id = ?
@@ -1709,6 +1792,7 @@ export class CoreStore {
     try {
       const current = this.getVolumeRecord(id);
       if (current === undefined) throw new Error(`volume ${id} was not found`);
+      this.snapshots.assertWorkMutable(current.workId);
       if (current.state === "purged" || current.state === "purge_pending") {
         this.database.exec("COMMIT");
         return current;

@@ -11,3 +11,4 @@ export {
   type RunEventRecord,
   type SessionRecord,
 } from "./store.js";
+export * from "./snapshot.js";

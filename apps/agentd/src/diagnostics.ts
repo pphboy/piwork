@@ -37,6 +37,8 @@ const messages: Record<DiagnosticCode, string> = {
   DOCKER_UNAVAILABLE: "The service container runtime is unavailable.",
   OPERATION_SUPERSEDED: "The service Operation was superseded.",
   WORK_OPERATION_FAILED: "The Work operation failed.",
+  PACKAGE_INCOMPATIBLE: "The Work package does not match the target Docker platform.",
+  TARGET_MODEL_UNAVAILABLE: "The target Core model needed by this Work is unavailable.",
 };
 
 /** Emits only server-authored text. Callers must never include caught errors here. */

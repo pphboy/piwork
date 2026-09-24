@@ -1,0 +1,218 @@
+import { constants, openSync, closeSync, fstatSync, readSync, writeSync, fsyncSync, mkdtempSync, rmSync, fchmodSync, fchownSync, renameSync, unlinkSync, chownSync } from "node:fs";
+import { join, isAbsolute, normalize } from "node:path";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { migrateWorkDatabase } from "./migrations.js";
+
+export class WorkHistoryValidationError extends Error {
+  constructor(readonly code: "SNAPSHOT_HISTORY_INVALID" | "SNAPSHOT_HISTORY_BUSY" | "SNAPSHOT_HISTORY_UNSUPPORTED" | "SNAPSHOT_HISTORY_LIMIT") { super(code); this.name = "WorkHistoryValidationError"; }
+}
+function invalid(): never { throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_INVALID"); }
+const TABLES = ["schema_migrations", "sessions", "runs", "run_events", "submit_idempotency", "session_idempotency", "work_activity"] as const;
+type Table = typeof TABLES[number];
+type Row = Record<string, SQLInputValue>;
+const FILES = ["work.sqlite", "work.sqlite-wal", "work.sqlite-shm"] as const;
+const MAX_ROWS = 1_000_000, MAX_ROW_BYTES = 64 * 1024 ** 2;
+
+interface SchemaRow { type: string; name: string; tbl_name: string; sql: string | null }
+function schema(database: DatabaseSync): SchemaRow[] {
+  return database.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name").all() as unknown as SchemaRow[];
+}
+function sameSchema(actual: SchemaRow[], expected: SchemaRow[]): boolean {
+  const normalized = (rows: SchemaRow[]) => rows.map((row) => [row.type, row.name, row.tbl_name, row.sql?.replace(/\s+/g, " ").trim() ?? null]);
+  return JSON.stringify(normalized(actual)) === JSON.stringify(normalized(expected));
+}
+function directory(path: string): number {
+  if (!isAbsolute(path) || normalize(path) !== path) invalid();
+  let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY);
+  try {
+    for (const part of path.split("/").filter(Boolean)) {
+      const next = openSync(`/proc/self/fd/${fd}/${part}`, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      closeSync(fd); fd = next;
+    }
+    return fd;
+  } catch (error) { closeSync(fd); throw error; }
+}
+function regular(root: number, relative: string): number {
+  const parts = relative.split("/");
+  if (parts.some((part) => !part || part === "." || part === ".." || part.includes("\0"))) invalid();
+  let parent = root;
+  try {
+    for (const part of parts.slice(0, -1)) {
+      const fd = openSync(`/proc/self/fd/${parent}/${part}`, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      if (parent !== root) closeSync(parent); parent = fd;
+    }
+    const fd = openSync(`/proc/self/fd/${parent}/${parts.at(-1)!}`, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!fstatSync(fd).isFile()) { closeSync(fd); invalid(); }
+    return fd;
+  } finally { if (parent !== root) closeSync(parent); }
+}
+function copy(fd: number, target: string): void {
+  const before = fstatSync(fd, { bigint: true });
+  const output = openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try {
+    const buffer = Buffer.allocUnsafe(1024 * 1024); let length: number;
+    while ((length = readSync(fd, buffer)) > 0) {
+      for (let offset = 0; offset < length;) { const count = writeSync(output, buffer, offset, length - offset); if (!count) invalid(); offset += count; }
+    }
+    fsyncSync(output);
+    const after = fstatSync(fd, { bigint: true });
+    for (const key of ["dev", "ino", "size", "mtimeNs", "ctimeNs", "mode", "uid", "gid", "nlink"] as const) if (before[key] !== after[key]) invalid();
+  } finally { closeSync(output); }
+}
+function nonempty(value: SQLInputValue | undefined): value is string { return typeof value === "string" && value.length > 0 && !value.includes("\0"); }
+function timestamp(value: SQLInputValue | undefined): boolean { return typeof value === "string" && Number.isFinite(Date.parse(value)); }
+function integer(value: SQLInputValue | undefined, minimum = 0): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum; }
+
+export interface WorkHistoryScope {
+  readonly sourceWorkId: string;
+  readonly contextIds: ReadonlySet<string>;
+  /** Private helper-owned writable directory, not an input package path. */
+  readonly scratchDirectory: string;
+  /** Upload validation may prove regular SDK files against an already verified package tree. */
+  readonly sdkPathIsRegular?: (path: string) => boolean;
+}
+export interface WorkHistorySummary { readonly sessions: number; readonly runs: number; readonly events: number }
+
+/** Only call inside the isolated trusted helper (tests may call directly).
+ * The source database is never opened by SQLite: a byte copy is read-only validated first. */
+export class WorkHistorySnapshot {
+  private closed = false;
+  private constructor(private readonly database: DatabaseSync, private readonly scratch: string, readonly scope: WorkHistoryScope, readonly summary: WorkHistorySummary) {}
+
+  static open(privateDirectory: string, scope: WorkHistoryScope): WorkHistorySnapshot | undefined {
+    let root: number | undefined, scratch: string | undefined, database: DatabaseSync | undefined;
+    try {
+      root = directory(privateDirectory);
+      let main: number;
+      try { main = regular(root, FILES[0]); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        for (const name of FILES.slice(1)) {
+          try { const fd = regular(root, name); closeSync(fd); invalid(); }
+          catch (sidecarError) { if ((sidecarError as NodeJS.ErrnoException).code !== "ENOENT") throw sidecarError; }
+        }
+        return undefined;
+      }
+      try {
+        scratch = mkdtempSync(join(scope.scratchDirectory, "work-history-"));
+        const scratchParent = directory(scope.scratchDirectory);
+        try { const owner = fstatSync(scratchParent); chownSync(scratch, owner.uid, owner.gid); }
+        finally { closeSync(scratchParent); }
+        copy(main, join(scratch, FILES[0]));
+      } finally { closeSync(main); }
+      for (const name of FILES.slice(1)) {
+        let fd: number;
+        try { fd = regular(root, name); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+        try { copy(fd, join(scratch, name)); } finally { closeSync(fd); }
+      }
+      database = new DatabaseSync(join(scratch, FILES[0]), { readOnly: true, allowExtension: false, enableDoubleQuotedStringLiterals: false, enableForeignKeyConstraints: true });
+      database.exec("PRAGMA trusted_schema = OFF; PRAGMA query_only = ON; PRAGMA busy_timeout = 1000");
+      const expected = new DatabaseSync(":memory:");
+      try {
+        migrateWorkDatabase(expected);
+        if (!sameSchema(schema(database), schema(expected))) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
+      } finally { expected.close(); }
+      const integrity = database.prepare("PRAGMA integrity_check").all();
+      if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok" || database.prepare("PRAGMA foreign_key_check").get() !== undefined) invalid();
+      const summary = validateRows(database, root, scope);
+      const result = new WorkHistorySnapshot(database, scratch, scope, summary); database = undefined; scratch = undefined;
+      return result;
+    } catch (error) {
+      if (error instanceof WorkHistoryValidationError) throw error;
+      throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_INVALID");
+    } finally {
+      database?.close(); if (root !== undefined) closeSync(root);
+      if (scratch !== undefined) rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+
+  /** Rebuild only the platform DB in an unpublished new private volume; never user DBs/SDK text. */
+  rebuild(targetPrivateDirectory: string, targetWorkId: string, contexts: ReadonlyMap<string, string>): void {
+    if (this.closed || !nonempty(targetWorkId) || targetWorkId === this.scope.sourceWorkId) invalid();
+    if (contexts.size !== this.scope.contextIds.size || new Set(contexts.values()).size !== contexts.size || [...this.scope.contextIds].some((id) => !nonempty(contexts.get(id)))) invalid();
+    const root = directory(targetPrivateDirectory);
+    let staged: string | undefined, target: DatabaseSync | undefined;
+    try {
+      const original = regular(root, FILES[0]); const attributes = fstatSync(original); closeSync(original);
+      // Exclusive temporary name inside the trusted target directory. No source SQL is executed.
+      const temporaryDirectory = mkdtempSync(`/proc/self/fd/${root}/.work-history-`);
+      staged = temporaryDirectory;
+      const path = join(temporaryDirectory, FILES[0]);
+      target = new DatabaseSync(path, { allowExtension: false, enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
+      target.exec("PRAGMA trusted_schema = OFF; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL");
+      migrateWorkDatabase(target);
+      target.exec("BEGIN IMMEDIATE; DELETE FROM schema_migrations");
+      try {
+        for (const table of TABLES) {
+          const columns = (target.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
+          const insert = target.prepare(`INSERT INTO ${table}(${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`);
+          for (const source of this.database.prepare(`SELECT * FROM ${table}`).iterate()) {
+            const row = { ...source } as Row;
+            if (Object.hasOwn(row, "work_id")) row.work_id = targetWorkId;
+            for (const field of ["active_context_identity", "context_identity"]) if (typeof row[field] === "string") row[field] = contexts.get(row[field]) ?? invalid();
+            // run_events payload_json is user text, not a WorkId-bearing DTO. Public RunEvent
+            // envelope workId is derived from the rebuilt runs row by AgentApplication.
+            insert.run(...columns.map((column) => row[column]!));
+          }
+        }
+        if (target.prepare("PRAGMA foreign_key_check").get() !== undefined) invalid();
+        target.exec("COMMIT");
+      } catch (error) { target.exec("ROLLBACK"); throw error; }
+      target.close(); target = undefined;
+      const file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try { fchownSync(file, attributes.uid, attributes.gid); fchmodSync(file, attributes.mode & 0o7777); fsyncSync(file); }
+      finally { closeSync(file); }
+      renameSync(path, `/proc/self/fd/${root}/${FILES[0]}`);
+      for (const name of FILES.slice(1)) {
+        try { const fd = regular(root, name); closeSync(fd); unlinkSync(`/proc/self/fd/${root}/${name}`); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+      fsyncSync(root);
+    } catch (error) {
+      if (error instanceof WorkHistoryValidationError) throw error;
+      throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_INVALID");
+    } finally { target?.close(); if (staged !== undefined) rmSync(staged, { recursive: true, force: true }); closeSync(root); }
+  }
+
+  close(): void { if (this.closed) return; this.closed = true; this.database.close(); rmSync(this.scratch, { recursive: true, force: true }); }
+}
+
+function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHistoryScope): WorkHistorySummary {
+  if (!nonempty(scope.sourceWorkId)) invalid();
+  let count = 0; const counts = new Map<Table, number>();
+  for (const table of TABLES) {
+    let tableCount = 0;
+    for (const row of database.prepare(`SELECT * FROM ${table}`).iterate() as Iterable<Row>) {
+      if (++count > MAX_ROWS) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_LIMIT"); tableCount++;
+      let bytes = 0;
+      for (const value of Object.values(row)) { if (typeof value === "string") bytes += Buffer.byteLength(value); else if (value !== null && (typeof value !== "number" || !Number.isSafeInteger(value))) invalid(); }
+      if (bytes > MAX_ROW_BYTES) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_LIMIT");
+      if (Object.hasOwn(row, "work_id") && row.work_id !== scope.sourceWorkId) invalid();
+      for (const field of ["active_context_identity", "context_identity"]) if (Object.hasOwn(row, field) && row[field] !== null && (typeof row[field] !== "string" || !scope.contextIds.has(row[field]))) invalid();
+      for (const field of ["created_at", "updated_at", "accepted_at", "applied_at"]) if (Object.hasOwn(row, field) && !timestamp(row[field])) invalid();
+      if (table === "schema_migrations" && ![1, 2, 3].includes(row.version as number)) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
+      if (table === "sessions") {
+        if (!nonempty(row.session_id) || typeof row.sdk_history_path !== "string" || !row.sdk_history_path.startsWith("/var/data/sessions/")) invalid();
+        if (scope.sdkPathIsRegular) { if (!scope.sdkPathIsRegular(row.sdk_history_path)) invalid(); }
+        else { const sdk = regular(privateRoot, row.sdk_history_path.slice("/var/data/".length)); closeSync(sdk); }
+      } else if (table === "runs") {
+        if (!["succeeded", "failed", "cancelled", "interrupted"].includes(row.state as string)) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY");
+        if (!nonempty(row.run_id) || !nonempty(row.session_id) || !nonempty(row.submission_key) || !nonempty(row.prompt_digest) || !timestamp(row.finished_at) || (row.started_at !== null && !timestamp(row.started_at)) || !integer(row.earliest_available_sequence, 1) || !integer(row.latest_sequence) || row.latest_sequence < row.earliest_available_sequence - 1) invalid();
+      } else if (table === "run_events") {
+        if (!integer(row.sequence, 1) || !nonempty(row.event_type) || typeof row.payload_json !== "string") invalid();
+      } else if (table === "submit_idempotency") {
+        if (!nonempty(row.submission_key) || !nonempty(row.request_digest)) invalid();
+      } else if (table === "session_idempotency") {
+        if (!nonempty(row.idempotency_key)) invalid();
+      } else if (table === "work_activity") throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY");
+    }
+    counts.set(table, tableCount);
+  }
+  if (counts.get("schema_migrations") !== 3) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
+  if (database.prepare(`SELECT 1 FROM submit_idempotency i JOIN runs r ON r.run_id = i.run_id WHERE i.work_id != r.work_id OR i.submission_key != r.submission_key LIMIT 1`).get()) invalid();
+  if (database.prepare(`SELECT 1 FROM runs r LEFT JOIN run_events e ON e.run_id = r.run_id GROUP BY r.run_id
+    HAVING COUNT(e.sequence) != r.latest_sequence - r.earliest_available_sequence + 1
+      OR (COUNT(e.sequence) > 0 AND (MIN(e.sequence) != r.earliest_available_sequence OR MAX(e.sequence) != r.latest_sequence)) LIMIT 1`).get()) invalid();
+  return { sessions: counts.get("sessions")!, runs: counts.get("runs")!, events: counts.get("run_events")! };
+}

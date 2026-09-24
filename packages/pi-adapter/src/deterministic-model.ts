@@ -82,6 +82,10 @@ function streamDeterministic(
       deterministicDeployment(stream, output, toolResults, manifestPath);
       return;
     }
+    if (prompt.includes("verify restored web service")) {
+      deterministicRestoredService(stream, output, toolResults);
+      return;
+    }
     if (toolResults.length === 0 && manifestPath !== "") {
       emitToolCall(stream, output, "fixture-read-manifest", "read", { path: manifestPath });
       return;
@@ -112,6 +116,37 @@ function streamDeterministic(
   });
 
   return stream;
+}
+
+/** Exercise the real pi-agentd SDK -> built-in MCP -> Core service path in snapshot acceptance. */
+function deterministicRestoredService(
+  stream: AssistantMessageEventStream,
+  output: AssistantMessage,
+  results: readonly Extract<TranscriptContext["messages"][number], { role: "toolResult" }>[],
+): void {
+  const listed = results.find((result) => result.toolName === serviceTool("service_list"));
+  if (!listed) { emitToolCall(stream, output, "snapshot-list", serviceTool("service_list"), {}); return; }
+  const services = parseToolJson(listed).services;
+  const web = Array.isArray(services) ? services.find((item) => item && typeof item === "object" && (item as { name?: string }).name === "web") as { serviceId?: string } | undefined : undefined;
+  const serviceId = web?.serviceId;
+  if (!serviceId) { emitText(stream, output, "snapshot-service-missing"); return; }
+  const stop = results.find((result) => result.toolName === serviceTool("service_stop"));
+  if (!stop) { emitToolCall(stream, output, "snapshot-stop", serviceTool("service_stop"), { serviceId, idempotencyKey: `snapshot-stop-${serviceId}` }); return; }
+  const stopId = String(parseToolJson(stop).operationId ?? "");
+  const observations = results.filter((result) => result.toolName === serviceTool("operation_get"));
+  const stopObservation = observations.filter((result) => parseToolJson(result).operationId === stopId).at(-1);
+  if (!stopObservation || ["pending", "running"].includes(String(parseToolJson(stopObservation).state))) {
+    emitToolCall(stream, output, `snapshot-stop-observe-${observations.length}`, serviceTool("operation_get"), { operationId: stopId }); return;
+  }
+  if (parseToolJson(stopObservation).state !== "succeeded") { emitText(stream, output, "snapshot-service-stop-failed"); return; }
+  const start = results.find((result) => result.toolName === serviceTool("service_start"));
+  if (!start) { emitToolCall(stream, output, "snapshot-start", serviceTool("service_start"), { serviceId, idempotencyKey: `snapshot-start-${serviceId}` }); return; }
+  const startId = String(parseToolJson(start).operationId ?? "");
+  const startObservation = observations.filter((result) => parseToolJson(result).operationId === startId).at(-1);
+  if (!startObservation || ["pending", "running"].includes(String(parseToolJson(startObservation).state))) {
+    emitToolCall(stream, output, `snapshot-start-observe-${observations.length}`, serviceTool("operation_get"), { operationId: startId }); return;
+  }
+  emitText(stream, output, parseToolJson(startObservation).state === "succeeded" ? `snapshot-service-restored:${serviceId}` : "snapshot-service-start-failed");
 }
 
 function deterministicDeployment(
