@@ -74,6 +74,21 @@ test("the last enabled administrator cannot be disabled", async () => {
   });
 });
 
+test("session recheck after password hashing prevents a revoked actor from committing", async () => {
+  await withFixture(async ({ admin, users, identity }) => {
+    await assert.rejects(users.createUser(admin, { account: "blocked", password: USER_PASSWORD }, () => {
+      throw new InvalidLoginSessionError();
+    }), InvalidLoginSessionError);
+    assert.equal(users.listUsers(admin).some((user) => user.account === "blocked"), false);
+    const created = await users.createUser(admin, { account: "alice", password: USER_PASSWORD });
+    await assert.rejects(users.resetPassword(admin, created.id, RESET_PASSWORD, () => {
+      throw new InvalidLoginSessionError();
+    }), InvalidLoginSessionError);
+    assert.equal((await identity.login("alice", USER_PASSWORD, "source-a")).user.id, created.id);
+    await assert.rejects(identity.login("alice", RESET_PASSWORD, "source-b"));
+  });
+});
+
 async function withFixture(
   run: (fixture: {
     store: CoreStore;

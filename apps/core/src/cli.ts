@@ -179,24 +179,21 @@ async function configCommand(context: OperatorContext, args: readonly string[]):
     const current = await context.client.defaultWorkConfiguration();
     const envelope = current as { revision?: number; configuration?: Record<string, unknown> | null };
     if (envelope.configuration === null || envelope.configuration === undefined) throw usage("default Work configuration is not initialized; configure runtime first");
-    const configuration = { ...envelope.configuration } as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
     const baseImage = optional(options, "--base-image");
-    if (baseImage !== undefined) configuration.agentImage = { catalogId: baseImage };
+    if (baseImage !== undefined) patch.baseImage = baseImage;
     const skills = repeated(options, "--skill");
     const noSkillsCount = options.filter((value) => value === "--no-skills").length;
     if (noSkillsCount > 1) throw usage("--no-skills may be specified only once");
     if (new Set(skills).size !== skills.length) throw usage("--skill may not be repeated");
     if (skills.length > 0 && noSkillsCount === 1) throw usage("--skill and --no-skills are mutually exclusive");
-    if (options.includes("--no-skills")) configuration.skills = [];
-    else if (skills.length > 0) configuration.skills = skills;
+    if (options.includes("--no-skills")) patch.skills = [];
+    else if (skills.length > 0) patch.skills = skills;
     const packages = parsePackageSelection(options);
-    if (packages !== undefined) configuration.packages = packages;
+    if (packages !== undefined) patch.packages = packages;
     const agentsFile = optional(options, "--agents-md-file");
-    if (agentsFile !== undefined) configuration.agentsMd = readFileSync(agentsFile, "utf8");
-    if (baseImage === undefined) {
-      const patch = Object.fromEntries(["skills", "packages", "agentsMd"].filter((field) => configuration[field] !== envelope.configuration?.[field]).map((field) => [field, configuration[field]]));
-      output(context, await context.client.request("PUT", "/control/default-work", { patch }));
-    } else output(context, await context.client.configureDefaultWorkConfiguration(configuration, { baseImage }));
+    if (agentsFile !== undefined) patch.agentsMd = readFileSync(agentsFile, "utf8");
+    output(context, await context.client.request("PUT", "/control/default-work", { patch }));
     return 0;
   }
   if (action === "show") {

@@ -2,10 +2,11 @@
 
 piwork is a local, single-host runtime for durable AI agent workspaces. One Core process owns authentication, global defaults, Work lifecycle, and recovery. Each running Work has an independent configuration and a non-root `agentd` container.
 
-The command surface has two clients:
+The command surface has two clients and one optional browser console:
 
 - `piwork-serve` starts Core and performs operator administration. It reads the protected operator credential in the Core data directory. It cannot log in as a user, create Works, or read conversations.
 - `piwork-cli` is the logged-in user client. It manages Works, Sessions, Runs, chat, and per-Work configuration. Its bearer credential is stored separately in `$XDG_CONFIG_HOME/piwork/client.json` or `$HOME/.config/piwork/client.json`.
+- `piwork-console` starts an independent HTTPS administrator panel on the Core host. It connects to Core over loopback; browsers may connect from other devices. Core and both CLIs work without it.
 
 `piwork-core` is removed. `piwork` remains a compatibility alias for the operator client; `piwork-cli` is the separate user client.
 
@@ -53,6 +54,8 @@ npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" config 
 ```
 
 Core changes readiness online; it does not need a restart after bootstrap or runtime configuration.
+
+To manage Serve in a browser, start the optional `piwork-console serve` process after bootstrap. See [Serve 管理面板](docs/serve-console.md) for TLS, startup, role, local directory and ZIP upload, `AGENTS.md` editing, and Operation recovery.
 
 ## Managed Skills and default Work context
 

@@ -71,6 +71,46 @@ test("piwork-serve keeps the explicit local bootstrap entry under the new comman
   }
 });
 
+test("default Work CLI sends only edited fields including base image", async () => {
+  const root = mkdtempSync(join(tmpdir(), "piwork-default-work-cli-"));
+  const credential = join(root, "operator-token"), agentsFile = join(root, "AGENTS.md");
+  writeFileSync(credential, `${"o".repeat(40)}\n`, { mode: 0o600 });
+  writeFileSync(agentsFile, "new notes\n");
+  const requests: Array<Record<string, unknown>> = [];
+  const server = createServer(async (request, response) => {
+    response.setHeader("content-type", "application/json");
+    if (request.url === "/control/default-work" && request.method === "GET") {
+      response.end(JSON.stringify({ configuration: { agentImage: { catalogId: "image-original" }, skills: ["code-review"],
+        packages: [], agentsMd: "old notes", modelRef: "model-original" } })); return;
+    }
+    if (request.url === "/control/default-work" && request.method === "PUT") {
+      const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(chunk);
+      requests.push(JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>);
+      response.end('{"configuration":{}}'); return;
+    }
+    response.statusCode = 404; response.end("{}");
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const invoke = (args: string[]) => new Promise<{ status: number | null; stderr: string }>((resolveResult, reject) => {
+    const child = spawn(process.execPath, [cli, "--core", `http://127.0.0.1:${address.port}`, "--operator-credential-file", credential,
+      "config", "default-work", "set", ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = ""; child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    child.once("error", reject); child.once("close", (status) => resolveResult({ status, stderr }));
+  });
+  try {
+    const image = await invoke(["--base-image", "piwork-agentd:new"]);
+    assert.equal(image.status, 0, image.stderr);
+    assert.deepEqual(requests[0], { patch: { baseImage: "piwork-agentd:new" } });
+    const agents = await invoke(["--agents-md-file", agentsFile]);
+    assert.equal(agents.status, 0, agents.stderr);
+    assert.deepEqual(requests[1], { patch: { agentsMd: "new notes\n" } });
+  } finally {
+    await new Promise<void>((done) => server.close(() => done()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("operator package CLI routes four sources, defaults, scoped names, and errors", async () => {
   const root = mkdtempSync(join(tmpdir(), "piwork-serve-package-cli-"));
   const credential = join(root, "operator-token");

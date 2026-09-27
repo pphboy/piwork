@@ -20,6 +20,7 @@ export async function receivePiPackageUpload(input: {
   readonly actorId: string;
   readonly scope: { readonly kind: "core" } | { readonly kind: "work"; readonly workId: string };
   readonly now?: Date;
+  readonly beforeCommit?: () => void;
 }): Promise<{ uploadId: string; expiresAt: string }> {
   const { request } = input;
   if (header(request, "content-type") !== "application/zip") throw new PiPackageInputError("PI_PACKAGE_UNSUPPORTED_MEDIA_TYPE", "package upload requires application/zip");
@@ -61,6 +62,7 @@ export async function receivePiPackageUpload(input: {
     if (bytes !== length || hash.digest("hex") !== expectedDigest) throw new PiPackageInputError("PI_PACKAGE_INVALID_SOURCE", "package upload length or digest mismatch");
     await extractPiPackageZip(staging, inspectionRoot);
     await rm(inspectionRoot, { recursive: true, force: true });
+    input.beforeCommit?.();
     await rename(staging, finalPath);
     const now = input.now ?? new Date();
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60_000).toISOString();

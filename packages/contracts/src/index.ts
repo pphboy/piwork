@@ -4,6 +4,7 @@ export * from "./agent.js";
 export * from "./work-services.js";
 export * from "./common.js";
 export * from "./control/errors.js";
+export * from "./control/admin.js";
 export * from "./control/diagnostics.js";
 export * from "./control/operations.js";
 export * from "./control/pi-packages.js";

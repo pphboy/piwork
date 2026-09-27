@@ -6,6 +6,8 @@ piwork supports one Linux host with Docker Engine. Core listens on loopback by d
 
 `piwork-serve` is the Core daemon and operator control client. It owns `serve`, status, administrator/user management, global runtime/default Work configuration, and managed Skill lifecycle. `piwork-cli` is the logged-in user client. It owns Work and existing service lifecycle, per-Work configuration, Sessions, Runs, chat, and read-only Skill discovery. `piwork` is a compatibility alias for `piwork-serve`; `piwork-core` is removed.
 
+The optional `piwork-console serve` process hosts the HTTPS administrator browser panel on the Core machine. It uses Core's loopback API and can be stopped independently. See [Serve 管理面板](serve-console.md) for setup and usage.
+
 Operator authentication uses `<data-dir>/operator.credential`. User authentication uses `$XDG_CONFIG_HOME/piwork/client.json`, `$HOME/.config/piwork/client.json`, or `PIWORK_CONFIG_PATH`. Both files require mode `0600` and a private parent directory; symlinks are refused. The credentials are independent: an operator credential cannot read conversation content, and a user bearer token cannot mutate users or global defaults.
 
 For `.piwork/core`, Core stores:

@@ -10,7 +10,7 @@
 
 **Identifier:** PKG-001
 
-Core 与 Work SHALL 同时接受 npm spec、Git spec、本地目录和 `.zip` 四种来源。npm/Git SHALL 按本次解析的确切版本或 commit 冻结；本地内容 SHALL 来自执行 CLI 的机器，经有界上传传给 Core，不把客户端路径解释成服务器路径。ZIP SHALL 包含根 package.json 或唯一外层目录中的 package.json，多个根包 SHALL 拒绝。所有来源 SHALL 形成独立、完整、包含运行依赖的不可变制品；后续启动/导出不得依赖来源目录、上传、registry 或 Git。
+Core 与 Work SHALL 同时接受 npm spec、Git spec、本地目录和 `.zip` 四种来源。npm/Git SHALL 按本次解析的确切版本或 commit 冻结；本地内容 SHALL 来自客户端所选择的本地输入，经有界上传传给 Core，不把客户端路径解释成服务器路径；CLI 与浏览器适配器都可提交相同的 Core 上传协议。ZIP SHALL 包含根 package.json 或唯一外层目录中的 package.json，多个根包 SHALL 拒绝。所有来源 SHALL 形成独立、完整、包含运行依赖的不可变制品；后续启动/导出不得依赖来源目录、上传、registry 或 Git。
 
 包身份 SHALL 使用 package.json.name，长度 1–214，匹配 `^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`；不得缺失、为空或从目录名猜测。version 缺失 SHALL 返回 null。相同 name/version 的不同内容 SHALL 被视为不同制品。静态 manifest/资源声明失败 SHALL 明确失败，安装成功 MUST NOT 宣称已执行 SDK 加载。不得通过输入来源 URL 传入明文凭证或新增交互式私有源登录。
 
@@ -29,6 +29,10 @@ Core 与 Work SHALL 同时接受 npm spec、Git spec、本地目录和 `.zip` �
 #### Scenario: Freeze a mutable source
 - **WHEN** tag、branch、npm dist-tag 或本地目录在安装完成后改变
 - **THEN** 已安装 bytes 保持不变，只有新一次显式 update 重新捕获来源
+
+#### Scenario: 浏览器提供本地输入
+- **WHEN** 管理客户端上传浏览器选择的本地目录快照或 ZIP
+- **THEN** Core 使用收到的内容执行同一 manifest 和制品校验，不读取浏览器上报的宿主路径
 
 ### Requirement: Prepare executable dependencies outside the control plane
 
@@ -72,6 +76,8 @@ Core 与 Work SHALL 同时接受 npm spec、Git spec、本地目录和 `.zip` �
 
 准备 helper 的临时工作卷 SHALL 监测总用量，并以每个 helper 4 GiB 为终止阈值，计入下载缓存、Git checkout、依赖安装及 staging 副本；检测到超限 SHALL 终止准备，以 `PI_PACKAGE_LIMIT_EXCEEDED` 使 Operation 失败并清理临时资源，不发布制品或改变原 catalog/desired/active。该运行期监测不宣称为 Docker volume 的硬磁盘配额；来源树和最终制品的上述静态限额仍须独立验证。
 
+Core scope 的 actor SHALL 为 operator 或实际已登录管理员 userId；Work scope 继续沿用既有 Work 授权。上传接受和安装引用都 SHALL 验证 actor/scope；普通 user 不得创建 Core scope 上传。有效管理员会话在上传期间失效时，完成提交 SHALL 拒绝。上传由同一账号重新登录后仍可在有效期内使用，不授予其他管理员消费权限。
+
 #### Scenario: Use another scope's upload
 - **WHEN** 调用者将另一 actor 或另一 Work 的 uploadId 用于安装
 - **THEN** Core 拒绝访问且不泄露上传名称、内容或所属人
@@ -92,13 +98,17 @@ Core 与 Work SHALL 同时接受 npm spec、Git spec、本地目录和 `.zip` �
 - **WHEN** npm/Git 来源树、依赖缓存或 lifecycle script 持续写入，使来源树超过 1 GiB 或临时工作卷的监测用量超过 4 GiB
 - **THEN** 准备阶段以 `PI_PACKAGE_LIMIT_EXCEEDED` 失败并停止 helper，原 catalog/desired/active 不变，临时 volume 与来源引用在确认 helper 退出后清理
 
+#### Scenario: Core 上传隔离管理员
+- **WHEN** 管理员尝试安装由其他管理员、operator 或 Work scope 上传的内容
+- **THEN** 返回统一不可用错误，不泄露上传内容或所有者，也不产生 Operation
+
 ### Requirement: Manage the Core catalog separately from default selection
 
 **Identifier:** PKG-004
 
-仅 operator SHALL 管理 Core package catalog。普通 install SHALL 发布 enabled=true 且不加入默认；install --default SHALL 原子发布并追加默认集合，保留其他默认项。默认选择最多 64 个唯一 enabled 包；显式空集合 SHALL 有效。Core update SHALL 保留 enabled 和默认引用；默认引用中的包 disable/remove SHALL 返回 `PI_PACKAGE_IN_DEFAULTS`，先移出默认后才能操作。Core 更新/禁用/移除 SHALL NOT 修改已创建 Work 的任何副本。
+仅 operator 和已启用管理员 SHALL 通过各自受保护的管理 API 管理 Core package catalog；普通 user 仍只能使用原有 enabled catalog 只读能力。普通 install SHALL 发布 enabled=true 且不加入默认；install --default SHALL 原子发布并追加默认集合，保留其他默认项。默认选择最多 64 个唯一 enabled 包；显式空集合 SHALL 有效。Core update SHALL 保留 enabled 和默认引用；默认引用中的包 disable/remove SHALL 返回 `PI_PACKAGE_IN_DEFAULTS`，先移出默认后才能操作。Core 更新/禁用/移除 SHALL NOT 修改已创建 Work 的任何副本。
 
-用户只读 catalog SHALL 只公开 enabled 包；operator SHALL 能看到 enabled/disabled 和 isDefault。列表 SHALL 按 name 的 UTF-8 字节顺序返回，不返回制品文件内容、宿主路径、secret 或内部 digest。
+用户只读 catalog SHALL 只公开 enabled 包；operator 及通过管理 API 访问的管理员 SHALL 能看到 enabled/disabled 和 isDefault。列表 SHALL 按 name 的 UTF-8 字节顺序返回，不返回制品文件内容、宿主路径、secret 或内部 digest。
 
 #### Scenario: Install without changing defaults
 - **WHEN** operator 安装 tools 且没有 --default
@@ -115,6 +125,10 @@ Core 与 Work SHALL 同时接受 npm spec、Git spec、本地目录和 `.zip` �
 #### Scenario: Future Works observe the new head
 - **WHEN** A 捕获 tools v1 后 Core 将 tools 更新为 v2，再创建 B
 - **THEN** A 的 desired/active 仍为自己的 v1，B 获得 v2
+
+#### Scenario: 管理员和 operator 共享同一 Core 库
+- **WHEN** 管理员安装或修改 Core package 后 operator 查询，或反向执行
+- **THEN** 双方观察到同一 catalog/defaults，并共同遵守 Core package 并发门禁，已有 Work 副本不变
 
 ### Requirement: Distinguish install update and state-only mutations
 
@@ -152,7 +166,9 @@ install/update SHALL 返回持久 Operation acceptance；成功仅表示完整�
 
 Core 重启 SHALL 保留 Operation、阶段、结果和发布状态；能够验证原 helper 及完整结果时继续收尾，无法证明时明确失败，不重复执行第三方脚本。查询 SHALL 区分 pending/running/succeeded/failed/superseded，失败返回安全 stage/code/message，不输出未经处理的子进程日志、凭证或宿主路径。客户端停止等待 SHALL 不取消已接受任务。
 
-Core 与 Work 的 package Operation 查询 SHALL 额外返回 `packagePhase`，取值仅为 `queued|source|prepare|validate|publish|cleanup-pending|succeeded|failed|superseded`，反映该 Operation 已持久化的当前准备阶段；非 package Operation 不返回该字段。该字段 SHALL 经过原有 operator/Work 查询授权，不包含 helper 标识、命令参数、来源路径、子进程输出或凭据，也不改变 Operation 的 `state` 及结果契约。
+Core 与 Work 的 package Operation 查询 SHALL 额外返回 `packagePhase`，取值仅为 `queued|source|prepare|validate|publish|cleanup-pending|succeeded|failed|superseded`，反映该 Operation 已持久化的当前准备阶段；非 package Operation 不返回该字段。该字段 SHALL 经过 operator、启用管理员的 Core 管理查询授权或原有 Work 查询授权，不包含 helper 标识、命令参数、来源路径、子进程输出或凭据，也不改变 Operation 的 `state` 及结果契约。
+
+Core 操作的幂等 actor SHALL 区分各管理员 userId 与 operator。任何启用管理员或 operator SHALL 能按已知 ID 查询 Core package Operation 的安全详情；该权限不允许查询用户 Work Operation 或消费其他 actor 的上传。相同 key 在不同 actor 下不是同一请求，仍须遵守整个 Core catalog 的唯一非终态准备门禁。
 
 #### Scenario: Retry an accepted request after a lost response
 - **WHEN** install 已接受而响应丢失，调用者以同键及同内容重新提交
@@ -169,6 +185,14 @@ Core 与 Work 的 package Operation 查询 SHALL 额外返回 `packagePhase`，�
 #### Scenario: Crash at publication
 - **WHEN** 制品落盘后、状态提交前 Core 崩溃，或状态已提交后响应前崩溃
 - **THEN** 重启分别识别不可见暂存或唯一已成功结果，不出现半包、重复默认项或重复 desired 更新
+
+#### Scenario: 管理员按 ID 恢复 Core 任务
+- **WHEN** 任一启用管理员在新会话查询已知 Core package Operation ID
+- **THEN** 返回原持久状态及安全阶段，Work Operation 或不存在 ID 则返回相同不可用结果
+
+#### Scenario: 同键不串用管理员
+- **WHEN** 管理员 A、B 和 operator 分别使用相同幂等 key
+- **THEN** 各自的重放空间隔离，不错误返回另一个 actor 的接受结果
 
 ### Requirement: Fence concurrency and merge unrelated desired edits
 

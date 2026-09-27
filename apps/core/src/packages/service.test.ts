@@ -37,7 +37,7 @@ for (const scope of ["core", "work"] as const) test(`${scope} package acceptance
     const service = new CorePiPackageService(store, runtime, profiles, "trusted", "installation-1", root);
     service.worker.kick = () => undefined;
     const submit = (key: string) => scope === "core"
-      ? service.install({ kind: "npm", spec: "tools@1.0.0" }, false, key)
+      ? service.install({ kind: "npm", spec: "tools@1.0.0" }, false, key, "operator")
       : service.acceptWork({ actorId: "admin-1", workId: "work-1", imageIdentity: prepareImageId, kind: "install",
         name: null, source: { kind: "npm", spec: "tools@1.0.0" }, idempotencyKey: key });
     await assert.rejects(submit("missing-prepare"), (error) =>
@@ -100,7 +100,7 @@ for (const scope of ["core", "work"] as const) test(`${scope} package requests r
     const service = new CorePiPackageService(store, runtime, profiles, imageId, "installation-1", root);
     service.worker.kick = () => undefined;
     const submit = (id: string, key: string) => scope === "core"
-      ? service.install({ kind: "upload", uploadId: id }, false, key)
+      ? service.install({ kind: "upload", uploadId: id }, false, key, actorId)
       : service.acceptWork({ actorId, workId: workId!, imageIdentity: imageId, kind: "install", name: null,
         source: { kind: "upload", uploadId: id }, idempotencyKey: key });
     const first = await submit(uploadId, "original-key");

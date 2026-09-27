@@ -38,6 +38,7 @@ export class UserAdministrationService {
   async createUser(
     actor: AdministrationActor,
     input: { readonly account: string; readonly password: string; readonly role?: "admin" | "user" },
+    beforeCommit?: () => void,
   ): Promise<ManagedUserRecord> {
     assertAdministrator(actor);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(input.account)) {
@@ -53,6 +54,7 @@ export class UserAdministrationService {
       createdAt: now,
       updatedAt: now,
     } as const;
+    beforeCommit?.();
     try {
       this.store.createManagedUser(record);
     } catch (error) {
@@ -75,9 +77,10 @@ export class UserAdministrationService {
     if (!this.store.setUserEnabled(userId, enabled, this.now().toISOString())) throw new UserNotFoundError(userId);
   }
 
-  async resetPassword(actor: AdministrationActor, userId: string, password: string): Promise<void> {
+  async resetPassword(actor: AdministrationActor, userId: string, password: string, beforeCommit?: () => void): Promise<void> {
     assertAdministrator(actor);
     const digest = await hashPassword(password);
+    beforeCommit?.();
     if (!this.store.resetUserPassword(userId, digest, this.now().toISOString())) throw new UserNotFoundError(userId);
   }
 }

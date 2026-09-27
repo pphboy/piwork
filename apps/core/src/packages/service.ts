@@ -72,16 +72,19 @@ export class CorePiPackageService {
     return undefined;
   }
 
-  async install(source: PiPackageSource, addToDefaults: boolean, idempotencyKey: string): Promise<PiPackageOperationAcceptance> {
-    return this.accept("install", null, source, addToDefaults, idempotencyKey);
+  async install(source: PiPackageSource, addToDefaults: boolean, idempotencyKey: string,
+    actorId: string, beforeCommit?: () => void): Promise<PiPackageOperationAcceptance> {
+    return this.accept("install", null, source, addToDefaults, idempotencyKey, actorId, beforeCommit);
   }
 
-  async update(name: string, source: PiPackageSource, idempotencyKey: string): Promise<PiPackageOperationAcceptance> {
+  async update(name: string, source: PiPackageSource, idempotencyKey: string,
+    actorId: string, beforeCommit?: () => void): Promise<PiPackageOperationAcceptance> {
     this.assertName(name);
-    return this.accept("update", name, source, false, idempotencyKey);
+    return this.accept("update", name, source, false, idempotencyKey, actorId, beforeCommit);
   }
 
-  private async accept(kind: "install" | "update", name: string | null, source: PiPackageSource, addToDefaults: boolean, idempotencyKey: string): Promise<PiPackageOperationAcceptance> {
+  private async accept(kind: "install" | "update", name: string | null, source: PiPackageSource, addToDefaults: boolean,
+    idempotencyKey: string, actorId: string, beforeCommit?: () => void): Promise<PiPackageOperationAcceptance> {
     if (!Check(PiPackageSourceSchema, source) || source.kind === "core") throw new TypeError("invalid Core package source");
     if (typeof idempotencyKey !== "string" || idempotencyKey.length === 0 || idempotencyKey.length > 256) throw new TypeError("invalid idempotency key");
     let sourceSemantic: unknown, sourceUploadId: string | undefined;
@@ -90,7 +93,7 @@ export class CorePiPackageService {
       sourceSemantic = { kind: parsed.kind, spec: source.spec };
     } else {
       const upload = this.store.packages.getUpload(source.uploadId);
-      if (!upload || upload.actorId !== "operator" || upload.scopeKind !== "core" || !upload.digest) {
+      if (!upload || upload.actorId !== actorId || upload.scopeKind !== "core" || !upload.digest) {
         throw new PiPackageStoreError("PI_PACKAGE_NOT_FOUND", "package upload is unavailable");
       }
       sourceSemantic = { kind: upload.sourceKind, digest: upload.digest, size: upload.size };
@@ -98,7 +101,7 @@ export class CorePiPackageService {
     }
     const now = new Date();
     const requestDigest = createHash("sha256").update(JSON.stringify({ kind, name, source: sourceSemantic, addToDefaults })).digest("hex");
-    const replay = this.store.packages.findReplay("operator", { kind: "core" }, kind, idempotencyKey, requestDigest);
+    const replay = this.store.packages.findReplay(actorId, { kind: "core" }, kind, idempotencyKey, requestDigest);
     if (replay) return { operationId: replay.operationId, workId: null, correlationId: replay.operationId,
       reused: true, scope: "core", kind: `pi-package-${kind}`, name };
     if (sourceUploadId !== undefined && this.store.packages.getUpload(sourceUploadId)?.state !== "ready") {
@@ -112,7 +115,8 @@ export class CorePiPackageService {
     const trusted = await this.runtime.prepareImage(this.trustedHelperImage);
     await this.assertHelperImages(image.imageId, trusted.imageId);
     const environment = await this.runtime.inspectPiPackageEnvironment(image.imageId);
-    const accepted = this.store.packages.accept({ actorId: "operator", scope: { kind: "core" }, kind,
+    beforeCommit?.();
+    const accepted = this.store.packages.accept({ actorId, scope: { kind: "core" }, kind,
       prepareImageId: image.imageId, trustedHelperImageId: trusted.imageId,
       preparedEnvironmentJson: JSON.stringify(environment), addToDefaults, idempotencyKey, requestDigest,
       requestJson: JSON.stringify({ kind, name, source, addToDefaults }), sourceJson: JSON.stringify(source),

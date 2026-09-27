@@ -7,7 +7,11 @@ import { dirname, join } from "node:path";
 import { parsePiPackageSource, stagePiPackageUpload } from "@piwork/pi-package";
 import { WORK_PACKAGE_MIME, type AcceptedWorkExport, type AcceptedWorkImport, type ImportWorkRequest, type UploadedWorkPackage,
   type WorkImportProvenance, type WorkSnapshot, type PiPackageSource, type PiPackageOperationAcceptance,
-  type PiPackageUploadResult, type PiPackageSelectionEntry } from "@piwork/contracts";
+  type PiPackageUploadResult, type PiPackageSelectionEntry, encodeAdminPathSegment,
+  type AdminStatus, type AdminRuntimeView, type AdminRuntimeInput, type AdminRuntimeResult,
+  type AdminDefaultWorkView, type AdminDefaultWorkPatch, type AdminPackageSource,
+  type AdminPackageOperationAcceptance, type AdminPackageOperation, type ManagedSkill,
+  type User, type PiPackageCatalogEntry } from "@piwork/contracts";
 
 export interface ClientOptions { readonly coreUrl: string; readonly fetch?: typeof globalThis.fetch; readonly token?: string; readonly operatorToken?: string; }
 export interface PublicIdentity { readonly id: string; readonly account: string; readonly role: "admin" | "user"; }
@@ -42,6 +46,10 @@ export interface WorkServiceLogs {
   readonly reason?: string;
 }
 export interface RequestOptions { readonly signal?: AbortSignal; }
+export interface AdminSkillFile {
+  readonly relativePath: string;
+  readonly content: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>;
+}
 export interface PiPackageWaitProgress {
   readonly kind: "phase" | "heartbeat" | "retry" | "recovered" | "terminal";
   readonly elapsedMs: number;
@@ -217,6 +225,63 @@ export class PiworkClient {
     }
     return value as T;
   }
+  private async adminRequest<T>(method: string, path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
+    this.requireAdminBearer();
+    return this.request<T>(method, `/api/v1/admin${path}`, body, options);
+  }
+  private requireAdminBearer(): void {
+    if (this.options.token === undefined || this.options.operatorToken !== undefined) {
+      throw new TypeError("admin API requires a bearer token and no operator credential");
+    }
+  }
+  adminStatus(options?: RequestOptions) { return this.adminRequest<AdminStatus>("GET", "/status", undefined, options); }
+  adminUsers(options?: RequestOptions) { return this.adminRequest<{ users: User[] }>("GET", "/users", undefined, options); }
+  adminCreateUser(input: { account: string; password: string; role?: "admin" | "user" }, options?: RequestOptions) {
+    return this.adminRequest<User>("POST", "/users", input, options);
+  }
+  adminSetUserEnabled(userId: string, enabled: boolean, options?: RequestOptions) {
+    return this.adminRequest<{ userId: string; enabled: boolean }>("POST", `/users/${encodeAdminPathSegment(userId)}/${enabled ? "enable" : "disable"}`, {}, options);
+  }
+  adminResetUserCredential(userId: string, password: string, options?: RequestOptions) {
+    return this.adminRequest<{ userId: string; credentialReset: true }>("POST", `/users/${encodeAdminPathSegment(userId)}/reset-credential`, { password }, options);
+  }
+  adminRuntime(options?: RequestOptions) { return this.adminRequest<AdminRuntimeView>("GET", "/runtime", undefined, options); }
+  adminConfigureRuntime(input: AdminRuntimeInput, options?: RequestOptions) {
+    return this.adminRequest<AdminRuntimeResult>("PUT", "/runtime", input, options);
+  }
+  adminDefaultWork(options?: RequestOptions) { return this.adminRequest<AdminDefaultWorkView>("GET", "/default-work", undefined, options); }
+  adminPatchDefaultWork(patch: AdminDefaultWorkPatch, options?: RequestOptions) {
+    return this.adminRequest<AdminDefaultWorkView>("PATCH", "/default-work", patch, options);
+  }
+  adminSkills(options?: RequestOptions) { return this.adminRequest<{ skills: ManagedSkill[] }>("GET", "/skills", undefined, options); }
+  adminSkill(name: string, options?: RequestOptions) {
+    return this.adminRequest<ManagedSkill>("GET", `/skills/${encodeAdminPathSegment(name)}`, undefined, options);
+  }
+  adminSetSkillEnabled(name: string, enabled: boolean, options?: RequestOptions) {
+    return this.adminRequest<ManagedSkill>("POST", `/skills/${encodeAdminPathSegment(name)}/${enabled ? "enable" : "disable"}`, {}, options);
+  }
+  adminRemoveSkill(name: string, options?: RequestOptions) {
+    return this.adminRequest<void>("DELETE", `/skills/${encodeAdminPathSegment(name)}`, undefined, options);
+  }
+  adminPackages(options?: RequestOptions) { return this.adminRequest<{ packages: PiPackageCatalogEntry[] }>("GET", "/packages", undefined, options); }
+  adminPackage(name: string, options?: RequestOptions) {
+    return this.adminRequest<PiPackageCatalogEntry & { resolvedSource: string }>("GET", `/packages/${encodeAdminPathSegment(name)}`, undefined, options);
+  }
+  adminInstallPackage(source: AdminPackageSource, idempotencyKey: string, addToDefaults = false, options?: RequestOptions) {
+    return this.adminRequest<AdminPackageOperationAcceptance>("POST", "/packages", { source, idempotencyKey, addToDefaults }, options);
+  }
+  adminUpdatePackage(name: string, source: AdminPackageSource, idempotencyKey: string, options?: RequestOptions) {
+    return this.adminRequest<AdminPackageOperationAcceptance>("POST", `/packages/${encodeAdminPathSegment(name)}/update`, { source, idempotencyKey }, options);
+  }
+  adminSetPackageEnabled(name: string, enabled: boolean, options?: RequestOptions) {
+    return this.adminRequest<PiPackageCatalogEntry>("POST", `/packages/${encodeAdminPathSegment(name)}/${enabled ? "enable" : "disable"}`, {}, options);
+  }
+  adminRemovePackage(name: string, options?: RequestOptions) {
+    return this.adminRequest<void>("DELETE", `/packages/${encodeAdminPathSegment(name)}`, undefined, options);
+  }
+  adminOperation(operationId: string, options?: RequestOptions) {
+    return this.adminRequest<AdminPackageOperation>("GET", `/operations/${encodeAdminPathSegment(operationId)}`, undefined, options);
+  }
   health() { return this.request<{ status: string }>("GET", "/healthz"); }
   readiness() { return this.request<{ status: string; reason?: string }>("GET", "/readyz"); }
   controlStatus() { return this.request<Record<string, unknown>>("GET", "/control/status"); }
@@ -313,9 +378,18 @@ export class PiworkClient {
   async uploadPiPackage(source: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>, digest: string, size: number,
     displayName: string, sourceKind: "local" | "zip", scope: { readonly kind: "core" } | { readonly kind: "work"; readonly workId: string },
     options: RequestOptions = {}): Promise<PiPackageUploadResult> {
+    const path = scope.kind === "core" ? "/control/package-uploads" : `/api/v1/works/${encodeURIComponent(scope.workId)}/package-uploads`;
+    return this.uploadPiPackageToPath(path, source, digest, size, displayName, sourceKind, options);
+  }
+  adminUploadPiPackage(source: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>, digest: string, size: number,
+    displayName: string, sourceKind: "local" | "zip", options: RequestOptions = {}): Promise<PiPackageUploadResult> {
+    this.requireAdminBearer();
+    return this.uploadPiPackageToPath("/api/v1/admin/package-uploads", source, digest, size, displayName, sourceKind, options);
+  }
+  private async uploadPiPackageToPath(path: string, source: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>, digest: string, size: number,
+    displayName: string, sourceKind: "local" | "zip", options: RequestOptions): Promise<PiPackageUploadResult> {
     if (!/^[a-f0-9]{64}$/.test(digest) || !Number.isSafeInteger(size) || size <= 0 || !displayName || displayName.includes("/") || displayName.includes("\\")) throw new TypeError("Invalid Pi package upload metadata");
     const body = source instanceof ReadableStream ? source : iterableStream(source, options.signal);
-    const path = scope.kind === "core" ? "/control/package-uploads" : `/api/v1/works/${encodeURIComponent(scope.workId)}/package-uploads`;
     const response = await this.binaryFetch(path, { method: "POST", headers: {
       accept: "application/json", ...authorization(this.options), "content-type": "application/zip",
       "content-length": String(size), "x-piwork-sha256": digest, "x-piwork-package-source": sourceKind,
@@ -325,6 +399,21 @@ export class PiworkClient {
     const payload = await boundedText(response, 1_048_576, options.signal);
     try { return JSON.parse(payload) as PiPackageUploadResult; }
     catch { throw new PiworkApiError(response.status, "MALFORMED_RESPONSE", "Core returned malformed Pi package upload metadata"); }
+  }
+  async adminUploadSkill(directoryName: string, files: AsyncIterable<AdminSkillFile>, targetName?: string,
+    options: RequestOptions = {}): Promise<ManagedSkill> {
+    this.requireAdminBearer();
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(directoryName)) throw new TypeError("Invalid Skill directory name");
+    const boundary = `piwork-${randomBytes(18).toString("hex")}`;
+    const body = iterableStream(skillMultipart(boundary, directoryName, files, options.signal), options.signal);
+    const path = `/api/v1/admin/skills${targetName === undefined ? "" : `/${encodeAdminPathSegment(targetName)}`}`;
+    const response = await this.binaryFetch(path, { method: targetName === undefined ? "POST" : "PUT", headers: {
+      accept: "application/json", ...authorization(this.options), "content-type": `multipart/form-data; boundary=${boundary}`,
+    }, body, signal: options.signal, duplex: "half" } as RequestInit & { duplex: "half" });
+    if (!response.ok) throw await binaryError(response, options.signal);
+    const payload = await boundedText(response, 1_048_576, options.signal);
+    try { return JSON.parse(payload) as ManagedSkill; }
+    catch { throw new PiworkApiError(response.status, "MALFORMED_RESPONSE", "Core returned malformed Skill metadata"); }
   }
   async workServices(workId: string): Promise<{ services: WorkServiceSummary[] }> {
     const result = await this.request<{ services: WorkServiceSummary[] }>("GET", servicePath(workId));
@@ -375,6 +464,21 @@ export class PiworkClient {
   }
 }
 
+async function* skillMultipart(boundary: string, directoryName: string, files: AsyncIterable<AdminSkillFile>, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
+  const bytes = (value: string) => Buffer.from(value, "utf8");
+  yield bytes(`--${boundary}\r\nContent-Disposition: form-data; name="directoryName"\r\n\r\n${directoryName}\r\n`);
+  for await (const file of files) {
+    signal?.throwIfAborted();
+    if (!file.relativePath || file.relativePath.startsWith("/") || file.relativePath.includes("\\") || file.relativePath.split("/").some((part) => !part || part === "." || part === "..")) {
+      throw new TypeError("Invalid Skill relative path");
+    }
+    yield bytes(`--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${encodeURIComponent(file.relativePath)}"\r\nContent-Type: application/octet-stream\r\n\r\n`);
+    for await (const chunk of file.content) { signal?.throwIfAborted(); yield chunk; }
+    yield bytes("\r\n");
+  }
+  yield bytes(`--${boundary}--\r\n`);
+}
+
 function iterableStream(source: AsyncIterable<Uint8Array>, signal?: AbortSignal): ReadableStream<Uint8Array> {
   const iterator = source[Symbol.asyncIterator]();
   return new ReadableStream<Uint8Array>({
@@ -391,7 +495,8 @@ async function binaryError(response: Response, signal?: AbortSignal): Promise<Pi
   let item: { code?: unknown; message?: unknown } = {};
   try { item = JSON.parse(text) as typeof item; } catch { /* preserve HTTP status */ }
   return new PiworkApiError(response.status, typeof item.code === "string" ? item.code : "HTTP_ERROR",
-    typeof item.message === "string" ? item.message : `HTTP ${response.status}`);
+    typeof item.message === "string" ? item.message : `HTTP ${response.status}`,
+    item !== null && typeof item === "object" ? item as Record<string, unknown> : undefined);
 }
 
 function normalizedUrl(value: string): URL { const url = new URL(value); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Core URL must use HTTP or HTTPS"); if (!url.pathname.endsWith("/")) url.pathname += "/"; return url; }

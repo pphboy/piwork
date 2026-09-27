@@ -10,12 +10,14 @@
   "dependencies": {
     "@grpc/grpc-js": "1.14.5",
     "@node-rs/argon2": "2.0.2",
+    "@piwork/client-sdk": "0.1.0",
     "@piwork/contracts": "0.1.0",
     "@piwork/core-store": "0.1.0",
-    "@piwork/client-sdk": "0.1.0",
-    "@piwork/runtime-docker": "0.1.0",
     "@piwork/pi-package": "0.1.0",
-    "@piwork/work-package": "0.1.0"
+    "@piwork/runtime-docker": "0.1.0",
+    "@piwork/work-package": "0.1.0",
+    "@types/busboy": "^1.5.4",
+    "busboy": "^1.6.0"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
