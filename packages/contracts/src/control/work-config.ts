@@ -5,6 +5,7 @@ import {
   ResourceIdSchema,
   SecretReferenceSchema,
 } from "../common.js";
+import { PiPackageNameSchema, PiPackageSelectionSchema, PiPackageToolPolicyKeySchema } from "./pi-packages.js";
 
 export const ArtifactReferenceSchema = Type.Object(
   {
@@ -58,10 +59,18 @@ export const ResourcePolicySchema = Type.Object(
   { additionalProperties: false },
 );
 
+const ExistingWorkToolPolicyKeySchema = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: "^(?!package:)[a-zA-Z0-9][a-zA-Z0-9._:-]*$",
+});
+
+export const WorkToolPolicyKeySchema = Type.Union([ExistingWorkToolPolicyKeySchema, PiPackageToolPolicyKeySchema]);
+
 export const ToolPolicySchema = Type.Object(
   {
-    allowed: Type.Array(IdentifierSchema, { maxItems: 256, uniqueItems: true }),
-    denied: Type.Array(IdentifierSchema, { maxItems: 256, uniqueItems: true }),
+    allowed: Type.Array(WorkToolPolicyKeySchema, { maxItems: 256, uniqueItems: true }),
+    denied: Type.Array(WorkToolPolicyKeySchema, { maxItems: 256, uniqueItems: true }),
   },
   { additionalProperties: false },
 );
@@ -91,6 +100,7 @@ export const WorkConfigSchema = Type.Object(
   {
     agentImage: ImageSelectionSchema,
     skills: SkillSelectionSchema,
+    packages: PiPackageSelectionSchema,
     agentsMd: Type.String({ maxLength: AGENTS_MD_MAX_BYTES }),
     modelRef: ResourceIdSchema,
     mcpServers: Type.Array(McpServerSchema, { maxItems: 128 }),
@@ -117,6 +127,11 @@ export const RuntimeSkillStateSchema = Type.Object(
     state: Type.Union([Type.Literal("ready"), Type.Literal("initializing"), Type.Literal("failed"), Type.Literal("unavailable")]),
     checkedAt: Type.Union([Type.String({ format: "date-time" }), Type.Null()]),
     skills: Type.Array(RuntimeSkillSchema, { maxItems: 128 }),
+    packages: Type.Optional(Type.Array(Type.Object({
+      name: PiPackageNameSchema,
+      loaded: Type.Boolean(),
+      diagnostics: Type.Array(Type.String({ maxLength: 4096 }), { maxItems: 128 }),
+    }, { additionalProperties: false }), { maxItems: 64 })),
   },
   { additionalProperties: false },
 );

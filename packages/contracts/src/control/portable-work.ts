@@ -4,6 +4,7 @@ import { DigestSchema, IdentifierSchema, ResourceIdSchema, TimestampSchema } fro
 import { SafeDiagnosticSchema } from "./diagnostics.js";
 import { ServiceDefinitionSchema, normalizeServiceDefinitionInput } from "./services.js";
 import { McpServerSchema, WorkConfigSchema, validateResourcePolicy } from "./work-config.js";
+import { PiPackageArtifactMetadataSchema, PiPackageNameSchema, validatePiPackageSelection } from "./pi-packages.js";
 
 const exact = { additionalProperties: false } as const;
 export const WorkLogicalKeySchema = Type.String({ pattern: "^[a-z][a-z0-9-]{0,63}$" });
@@ -36,6 +37,18 @@ export const PortableWorkContextSchema = Type.Object({
   key: WorkLogicalKeySchema, createdAt: TimestampSchema,
   configuration: PortableWorkConfigurationSchema,
   skillsTree: WorkBlobDigestSchema, agentsBlob: WorkBlobDigestSchema, imageKey: WorkLogicalKeySchema,
+  packageBindings: Type.Array(Type.Object({ name: PiPackageNameSchema, artifactKey: DigestSchema }, exact), { maxItems: 64 }),
+}, exact);
+export const PortablePiPackageArtifactSchema = Type.Object({
+  key: DigestSchema,
+  ...PiPackageArtifactMetadataSchema.properties,
+  treeDigest: WorkBlobDigestSchema,
+  resourceInventory: Type.Object({
+    extensions: Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), { maxItems: 100_000 }),
+    skills: Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), { maxItems: 100_000 }),
+    prompts: Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), { maxItems: 100_000 }),
+    themes: Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), { maxItems: 100_000 }),
+  }, exact),
 }, exact);
 export const PortableServiceDefinitionSchema = Type.Omit(ServiceDefinitionSchema, ["serviceId", "revision"], exact);
 export const PortableWorkServiceSchema = Type.Object({
@@ -80,9 +93,11 @@ export const PortableWorkSpecSchema = Type.Object({
   sourceName: Type.String({ minLength: 1, maxLength: 128 }),
   compatibility: Type.Object({ ...WorkImagePlatformSchema.properties,
     agentProtocol: Type.Literal("v2"), workHistorySchema: Type.Literal(3), storageLayout: Type.Literal(2),
+    piPackageContract: Type.Literal(1),
   }, exact),
   activeContext: nullableKey, desiredContext: WorkLogicalKeySchema,
   contexts: Type.Array(PortableWorkContextSchema, { minItems: 1 }),
+  piPackageArtifacts: Type.Array(PortablePiPackageArtifactSchema),
   services: Type.Array(PortableWorkServiceSchema),
   quotaReservations: Type.Array(PortableWorkQuotaReservationSchema, { minItems: 1 }),
   images: Type.Array(PortableWorkImageSchema),
@@ -124,6 +139,7 @@ export const WorkSourceIdentityMapSchema = Type.Object({
 
 export type PortableWorkSpec = Type.Static<typeof PortableWorkSpecSchema>;
 export type PortableWorkContext = Type.Static<typeof PortableWorkContextSchema>;
+export type PortablePiPackageArtifact = Type.Static<typeof PortablePiPackageArtifactSchema>;
 export type PortableWorkService = Type.Static<typeof PortableWorkServiceSchema>;
 export type PortableWorkQuotaReservation = Type.Static<typeof PortableWorkQuotaReservationSchema>;
 export type PortableWorkImage = Type.Static<typeof PortableWorkImageSchema>;
@@ -160,6 +176,16 @@ export function validatePortableWorkSpec(value: unknown): PortableWorkSpec {
   const spec = value as PortableWorkSpec;
   if (!Number.isFinite(Date.parse(spec.createdAt))) invalid("createdAt");
   const contexts = new Map(spec.contexts.map((item) => [item.key, item]));
+  sortedUnique(spec.piPackageArtifacts, (item) => item.key, "piPackageArtifacts");
+  const packageArtifacts = new Map(spec.piPackageArtifacts.map((item) => [item.key, item]));
+  const usedPackageArtifacts = new Set<string>();
+  for (const artifact of spec.piPackageArtifacts) {
+    if (artifact.key !== artifact.contentDigest) invalid("piPackageArtifacts.key");
+    for (const kind of ["extensions", "skills", "prompts", "themes"] as const) {
+      if (artifact.resourceInventory[kind].length !== artifact.resourceCounts[kind]) invalid("piPackageArtifacts.resourceCounts");
+      sortedUnique(artifact.resourceInventory[kind], (path) => path, `piPackageArtifacts.${kind}`);
+    }
+  }
   const services = new Map(spec.services.map((item) => [item.key, item]));
   const images = new Map(spec.images.map((item) => [item.key, item]));
   const models = new Map(spec.bindings.models.map((item) => [item.key, item]));
@@ -187,6 +213,15 @@ export function validatePortableWorkSpec(value: unknown): PortableWorkSpec {
   for (const context of spec.contexts) {
     if (!images.has(context.imageKey) || !models.has(context.configuration.modelBindingKey)) invalid("context.binding");
     ref(context.skillsTree, "tree"); ref(context.agentsBlob, "file");
+    try { validatePiPackageSelection(context.configuration.packages); }
+    catch { invalid("context.packages"); }
+    if (context.packageBindings.length !== context.configuration.packages.length) invalid("context.packageBindings");
+    for (const [index, binding] of context.packageBindings.entries()) {
+      const artifact = packageArtifacts.get(binding.artifactKey);
+      if (binding.name !== context.configuration.packages[index]?.name || artifact?.name !== binding.name) invalid("context.packageBindings");
+      usedPackageArtifacts.add(binding.artifactKey);
+      ref(artifact.treeDigest, "tree");
+    }
     try { validateResourcePolicy(context.configuration.resources); } catch { invalid("context.resources"); }
     const serverIds = new Set<string>();
     for (const server of context.configuration.mcpServers) {
@@ -197,6 +232,7 @@ export function validatePortableWorkSpec(value: unknown): PortableWorkSpec {
       }
     }
   }
+  if (usedPackageArtifacts.size !== spec.piPackageArtifacts.length) invalid("piPackageArtifacts.unused");
   for (const secret of spec.bindings.secrets) for (const use of secret.uses) {
     const server = contexts.get(use.contextKey)?.configuration.mcpServers.find((server) => server.serverId === use.serverId);
     if (!server?.secretRefs?.some((ref) => ref.bindingKey === secret.key && (ref.key ?? null) === use.key)) invalid("secret.uses");

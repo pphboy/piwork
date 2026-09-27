@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { PortableWorkSpec, WorkControlHistory, WorkSourceIdentityMap } from "@piwork/contracts";
 import { WorkContextStore } from "../configuration/work-context.js";
+import { packageNameKey } from "../configuration/work-context.js";
+import { validatePiPackageArtifact } from "@piwork/pi-package";
 import { prepareImportedContexts, type VerifiedContextMaterial } from "./import-contexts.js";
 import type { ResolvedWorkBindings } from "./bindings.js";
 import type { WorkIdentityTargets } from "./metadata.js";
@@ -19,7 +21,7 @@ function fixture() {
   writeFileSync(join(skills, "tool", "SKILL.md"), skillContent);
   const agentsA = Buffer.from("Source AGENTS A USER_TOKEN_SENTINEL\n"), agentsB = Buffer.from("Source AGENTS B\n");
   const contexts = ["c-000001", "c-000002"] as const;
-  const config = { modelBindingKey: "m-000001", skills: ["tool"], tools: { allowed: ["read"], denied: [] }, mcpServers: [],
+  const config = { modelBindingKey: "m-000001", skills: ["tool"], packages: [], tools: { allowed: ["read"], denied: [] }, mcpServers: [],
     resources: { cpuMillis: 1000, memoryBytes: 1073741824, agentCpuMillis: 500, agentMemoryBytes: 536870912, maxServices: 2, maxRetainedVolumes: 4 } };
   const imageDigest = digest("fixed-image"), treeDigest = digest("tree"), controlDigest = digest("history"), identityDigest = digest("identities");
   const blobs: PortableWorkSpec["blobs"] = [
@@ -32,11 +34,11 @@ function fixture() {
   ];
   const spec: PortableWorkSpec = {
     formatVersion: 1, snapshotKind: "cold-full", createdAt: NOW, sourceName: "source",
-    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2 },
+    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2, piPackageContract: 1 },
     activeContext: "c-000001", desiredContext: "c-000002",
-    contexts: contexts.map((key, index) => ({ key, createdAt: NOW, configuration: config, skillsTree: treeDigest,
+    contexts: contexts.map((key, index) => ({ key, createdAt: NOW, configuration: config, skillsTree: treeDigest, packageBindings: [],
       agentsBlob: digest(index === 0 ? agentsA : agentsB), imageKey: "i-000001" })),
-    services: [], quotaReservations: [{ subjectKind: "agent", subjectKey: "agentd", desiredCpuMillis: 500, desiredMemoryBytes: 536870912, serviceSlots: 0, volumeSlots: 2 }],
+    piPackageArtifacts: [], services: [], quotaReservations: [{ subjectKind: "agent", subjectKey: "agentd", desiredCpuMillis: 500, desiredMemoryBytes: 536870912, serviceSlots: 0, volumeSlots: 2 }],
     volumes: [{ role: "agent-private", tree: treeDigest, serviceRefKeys: [] }, { role: "workspace", tree: treeDigest, serviceRefKeys: [] }],
     images: [{ key: "i-000001", imageId: `sha256:${imageDigest}`, platform: { os: "linux", architecture: "amd64", variant: null }, config: imageDigest, layers: [] }],
     bindings: { models: [{ key: "m-000001", provider: "deterministic", model: "fixture", baseUrl: null }], secrets: [] },
@@ -97,5 +99,40 @@ test("null active is retained; missing context, changed AGENTS or missing Skill 
     rmSync(join(f.skills, "tool", "SKILL.md"));
     assert.throws(() => f.prepare());
     assert.equal(existsSync(join(f.contextStore.rootDirectory, WORK, "contexts", "context-target-00000001")), false);
+  } finally { f.close(); }
+});
+
+test("import reconstructs active and desired package versions from staged bytes without Core catalog", async () => {
+  const f = fixture();
+  try {
+    const name = "@example/pi-tools";
+    const artifacts = [];
+    for (const [index, context] of f.spec.contexts.entries()) {
+      const version = `${index + 1}.0.0`, source = join(f.root, `source-${index}`);
+      mkdirSync(source);
+      writeFileSync(join(source, "package.json"), JSON.stringify({ name, version }));
+      writeFileSync(join(source, "version.txt"), version);
+      const metadata = (await validatePiPackageArtifact({ root: source, sourceKind: "local", resolvedSource: `fixture:${version}`,
+        preparedEnvironment: { os: "linux", architecture: "amd64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.0" } })).metadata;
+      const packageDirectory = join(f.root, `staged-${index}`);
+      mkdirSync(packageDirectory);
+      cpSync(source, join(packageDirectory, packageNameKey(name)), { recursive: true });
+      rmSync(source, { recursive: true, force: true });
+      const material = f.materials.get(context.key)!;
+      f.materials.set(context.key, { ...material, packagesDirectory: packageDirectory });
+      context.configuration = { ...context.configuration, packages: [{ name, enabled: index === 0 }] };
+      context.packageBindings = [{ name, artifactKey: metadata.contentDigest }];
+      artifacts.push({ key: metadata.contentDigest, ...metadata,
+        resourceCounts: { extensions: metadata.resourceCounts.extensions, prompts: metadata.resourceCounts.prompts,
+          skills: metadata.resourceCounts.skills, themes: metadata.resourceCounts.themes }, treeDigest: f.spec.volumes[0].tree,
+        resourceInventory: { extensions: [], skills: [], prompts: [], themes: [] } });
+    }
+    f.spec.piPackageArtifacts = artifacts.sort((a, b) => a.key.localeCompare(b.key));
+    const result = f.prepare();
+    assert.deepEqual(result.contexts.map((item) => item.snapshot.metadata.packageBindings[0]?.artifact.version), ["1.0.0", "2.0.0"]);
+    assert.equal(result.contexts[0]!.configuration.packages[0]?.enabled, true);
+    assert.equal(result.contexts[1]!.configuration.packages[0]?.enabled, false);
+    for (const material of f.materials.values()) if (material.packagesDirectory) rmSync(material.packagesDirectory, { recursive: true, force: true });
+    for (const item of result.contexts) assert.ok(existsSync(join(item.snapshot.directory, "packages", packageNameKey(name), "version.txt")));
   } finally { f.close(); }
 });

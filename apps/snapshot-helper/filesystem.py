@@ -353,9 +353,9 @@ def main():
     try:
         if action == "capture" and len(sys.argv) == 4:
             result = capture(root, spool)
-        elif action in ("restore", "restore-context") and len(sys.argv) == 5:
+        elif action in ("restore", "restore-context", "restore-package") and len(sys.argv) == 5:
             result = restore(root, spool, sys.argv[4])
-            if action == "restore-context":
+            if action in ("restore-context", "restore-package"):
                 owner = os.fstat(spool)
                 for directory, dirs, files, fd in os.fwalk(root_path, topdown=False, follow_symlinks=False):
                     for name in files + dirs:

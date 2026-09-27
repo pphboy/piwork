@@ -37,7 +37,7 @@ const CONTEXT_LABEL = "piwork.context_identity";
 
 export class RuntimeReadinessError extends Error {
   constructor(
-    readonly code: "AGENT_CONTEXT_INCOMPATIBLE" | "AGENT_CONTEXT_MISMATCH" | "AGENT_EXITED" | "AGENT_READINESS_TIMEOUT" | "RUNTIME_START_FAILED" | "SKILL_VALIDATION_FAILED" | "SKILL_LOAD_FAILED" | "SKILL_DIRECTORY_MISMATCH",
+    readonly code: "AGENT_CONTEXT_INCOMPATIBLE" | "AGENT_CONTEXT_MISMATCH" | "AGENT_EXITED" | "AGENT_READINESS_TIMEOUT" | "RUNTIME_START_FAILED" | "SKILL_VALIDATION_FAILED" | "SKILL_LOAD_FAILED" | "SKILL_DIRECTORY_MISMATCH" | "PACKAGE_LOAD_FAILED",
     readonly exitCode?: number,
     readonly stage: DiagnosticStage = code === "AGENT_EXITED" || code === "RUNTIME_START_FAILED" ? "runtime-start" : "readiness",
     readonly skillName?: string,
@@ -298,14 +298,27 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
       }
       const context = new WorkContextStore(this.paths.workContextsDirectory).load(workId, record.contextIdentity);
       const value = await this.readiness(record, 2_000);
-      verifyExpectedReadiness(value, record, {
-        contextIdentity: record.contextIdentity,
-        workConfig: context.configuration,
-        skillIdentities: context.metadata.skills,
-      });
+      const packages = context.configuration.packages.map(({ name }) => ({ name,
+        loaded: value.loadedPackages.some((item) => item.name === name),
+        diagnostics: value.packageDiagnostics.filter((item) => item.packageName === name).map((item) => item.code.slice(0, 4096)),
+      }));
+      try {
+        verifyExpectedReadiness(value, record, {
+          contextIdentity: record.contextIdentity,
+          workConfig: context.configuration,
+          skillIdentities: context.metadata.skills,
+          packageBindings: context.metadata.packageBindings,
+        });
+      } catch {
+        if (value.workId !== workId || Number(value.generation) !== record.generation || value.contextIdentity !== record.contextIdentity) {
+          return { state: "unavailable", checkedAt: null, skills: [] };
+        }
+        return { state: "failed", checkedAt: new Date().toISOString(), skills: [], packages };
+      }
       return {
         state: "ready",
         checkedAt: new Date().toISOString(),
+        packages,
         skills: value.loadedSkills.map((skill) => ({
           name: skill.name,
           loaded: true,
@@ -539,9 +552,9 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
 export function verifyExpectedReadiness(
   value: ReadinessResponse,
   record: Pick<RuntimeRecord, "workId" | "generation" | "instanceId">,
-  configuration: Pick<ResolvedWorkRuntimeConfiguration, "contextIdentity" | "initializationOnly" | "skillIdentities" | "workConfig">,
+  configuration: Pick<ResolvedWorkRuntimeConfiguration, "contextIdentity" | "initializationOnly" | "skillIdentities" | "workConfig" | "packageBindings">,
 ): void {
-  if (value.protocolVersion !== CONTRACT_VERSION || value.contextContractVersion !== 1
+  if (value.protocolVersion !== CONTRACT_VERSION || value.contextContractVersion !== 1 || value.packageContractVersion !== 1
     || value.workId.length === 0 || Number(value.generation) < 1 || value.instanceId.length === 0
     || value.contextIdentity.length === 0 || !value.initializationComplete) {
     throw new RuntimeReadinessError("AGENT_CONTEXT_INCOMPATIBLE");
@@ -558,8 +571,47 @@ export function verifyExpectedReadiness(
   const allowed = new Set(configuration.workConfig.tools.allowed);
   const denied = new Set(configuration.workConfig.tools.denied);
   const customTools = value.resolvedTools.slice(expectedBuiltIns.length);
+  const selected = configuration.workConfig.packages ?? [];
+  const bindings = configuration.packageBindings ?? [];
+  if (bindings.length !== selected.length) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  const enabled = new Map(selected.filter((item) => item.enabled).map((item) => [item.name, bindings.find((binding) => binding.name === item.name)]));
+  if (enabled.size !== value.loadedPackages.length || value.packageDiagnostics.length > 0) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  for (const loaded of value.loadedPackages) {
+    const binding = enabled.get(loaded.name);
+    if (!binding || loaded.contentDigest !== binding.artifact.contentDigest
+      || loaded.extensions !== binding.artifact.resourceCounts.extensions
+      || loaded.skills !== binding.artifact.resourceCounts.skills
+      || loaded.prompts !== binding.artifact.resourceCounts.prompts
+      || loaded.themes !== binding.artifact.resourceCounts.themes) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+    enabled.delete(loaded.name);
+  }
+  if (enabled.size !== 0) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  const resourcesByPackage = new Map<string, { extensions: number; skills: number; prompts: number; themes: number }>();
+  const resourceNames = new Set<string>();
+  for (const item of value.packageResources) {
+    if (!selected.some((entry) => entry.name === item.packageName && entry.enabled)
+      || !["extension", "skill", "prompt", "theme"].includes(item.kind) || !item.name) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+    const key = `${item.kind}:${item.name}`;
+    if (resourceNames.has(key) && item.kind !== "extension") throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+    resourceNames.add(key);
+    const count = resourcesByPackage.get(item.packageName) ?? { extensions: 0, skills: 0, prompts: 0, themes: 0 };
+    if (item.kind === "extension") count.extensions += 1;
+    else if (item.kind === "skill") count.skills += 1;
+    else if (item.kind === "prompt") count.prompts += 1;
+    else count.themes += 1;
+    resourcesByPackage.set(item.packageName, count);
+  }
+  for (const item of value.loadedPackages) {
+    const actual = resourcesByPackage.get(item.name) ?? { extensions: 0, skills: 0, prompts: 0, themes: 0 };
+    if (item.extensions !== actual.extensions || item.skills !== actual.skills || item.prompts !== actual.prompts || item.themes !== actual.themes) throw new RuntimeReadinessError("AGENT_CONTEXT_MISMATCH");
+  }
   if (new Set(value.resolvedTools).size !== value.resolvedTools.length
     || customTools.some((tool) => {
+      if (tool.startsWith("package:")) {
+        const match = /^package:((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*):([A-Za-z0-9_-]{1,64})$/.exec(tool);
+        return !match || !selected.some((item) => item.name === match[1] && item.enabled)
+          || (allowed.size > 0 && !allowed.has(tool)) || denied.has(tool);
+      }
       const separator = tool.indexOf(".");
       return separator < 1 || !serverIds.has(tool.slice(0, separator))
         || (allowed.size > 0 && !allowed.has(tool)) || denied.has(tool);
@@ -583,7 +635,7 @@ export function verifyExpectedReadiness(
 
 const recognizedAgentCodes = new Set<DiagnosticCode>([
   "CONTEXT_NOT_FOUND", "CONTEXT_FORMAT_UNSUPPORTED", "SKILL_VALIDATION_FAILED",
-  "SKILL_LOAD_FAILED", "SKILL_DIRECTORY_MISMATCH", "AGENT_CONTEXT_INCOMPATIBLE",
+  "SKILL_LOAD_FAILED", "SKILL_DIRECTORY_MISMATCH", "PACKAGE_LOAD_FAILED", "AGENT_CONTEXT_INCOMPATIBLE",
   "AGENT_CONTEXT_MISMATCH",
 ]);
 
@@ -611,7 +663,7 @@ function recognizeInitializationEvidence(
 }
 
 function isDiagnosticStage(value: unknown): value is DiagnosticStage {
-  return typeof value === "string" && ["context-copy", "context-validate", "runtime-prepare", "runtime-start", "skill-validate", "skill-load", "mcp-initialize", "readiness", "activation", "rollback"].includes(value);
+  return typeof value === "string" && ["context-copy", "context-validate", "runtime-prepare", "runtime-start", "skill-validate", "skill-load", "package-load", "mcp-initialize", "readiness", "activation", "rollback"].includes(value);
 }
 
 function delay(ms: number): Promise<void> {

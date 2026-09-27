@@ -75,7 +75,7 @@ function seed(store: CoreStore): void {
   ) VALUES ('work-1', 'user-1', 'fixture', 'stopped', 'stopped', 1, NULL, 1, '${NOW}', '${NOW}')`);
   const configuration: WorkConfig = {
     agentImage: { catalogId: "agent_image-0199abcd" },
-    skills: ["skill-0199e6d8abcd"],
+    skills: ["skill-0199e6d8abcd"], packages: [],
     agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [],

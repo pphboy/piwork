@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   constants,
   chmodSync,
   closeSync,
+  cpSync,
   existsSync,
   lstatSync,
   fsyncSync,
@@ -17,7 +18,8 @@ import {
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { TextDecoder } from "node:util";
 import { Check } from "typebox/value";
-import { AGENTS_MD_MAX_BYTES, WorkConfigSchema, type WorkConfig } from "@piwork/contracts";
+import { AGENTS_MD_MAX_BYTES, WorkConfigSchema, PiPackageArtifactMetadataSchema, type PiPackageArtifactMetadata, type WorkConfig } from "@piwork/contracts";
+import { validatePiPackageArtifactSync } from "@piwork/pi-package";
 import { inspectSkillTree, readRegularFileNoFollow, type SkillTreeInspection } from "./skill-tree.js";
 
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -31,7 +33,8 @@ export type WorkContextErrorCode =
   | "CONTEXT_UNSAFE"
   | "CONFIGURATION_INVALID"
   | "AGENTS_INVALID"
-  | "SKILL_LOAD_FAILED";
+  | "SKILL_LOAD_FAILED"
+  | "PACKAGE_LOAD_FAILED";
 
 export class WorkContextError extends Error {
   constructor(readonly code: WorkContextErrorCode, readonly field?: string, readonly skillName?: string) {
@@ -46,12 +49,30 @@ export interface WorkContextSkillSource {
   readonly directory: string;
 }
 
+export interface WorkContextPackageSource {
+  readonly name: string;
+  readonly directory: string;
+  readonly metadata: PiPackageArtifactMetadata;
+}
+
+export interface WorkContextPackageBinding {
+  readonly name: string;
+  readonly nameKey: string;
+  readonly artifact: PiPackageArtifactMetadata;
+}
+
+export function packageNameKey(name: string): string {
+  return createHash("sha256").update(name).digest("hex");
+}
+
 export interface WorkContextMetadata {
   readonly version: 1;
   readonly snapshotId: string;
   readonly workId: string;
   readonly imageIdentity: string;
   readonly skills: ReadonlyArray<{ readonly name: string; readonly identity: string }>;
+  readonly packageContractVersion: 1;
+  readonly packageBindings: readonly WorkContextPackageBinding[];
   readonly createdAt: string;
 }
 
@@ -72,6 +93,7 @@ export class WorkContextStore {
   buildImported(input: {
     readonly workId: string; readonly snapshotId: string; readonly configuration: WorkConfig;
     readonly imageIdentity: string; readonly verifiedSkillsDirectory: string; readonly agentsBytes: Uint8Array; readonly createdAt: string;
+    readonly verifiedPackagesDirectory?: string; readonly packages?: readonly WorkContextPackageSource[];
   }): WorkContextSnapshot {
     const information = lstatSync(input.verifiedSkillsDirectory);
     if (!information.isDirectory() || information.isSymbolicLink() || realpathSync(input.verifiedSkillsDirectory) !== input.verifiedSkillsDirectory) throw new WorkContextError("CONTEXT_UNSAFE", "skills");
@@ -83,7 +105,21 @@ export class WorkContextStore {
       const inspected = inspectSkillTree(directory, { expectedName: name, physicalNameMustMatch: true });
       return { name, directory, identity: inspected.identity };
     });
-    const snapshot = this.build({ ...input, skills });
+    const packages = input.packages ?? [];
+    if (packages.length !== input.configuration.packages.length || (packages.length > 0 && input.verifiedPackagesDirectory === undefined)) {
+      throw new WorkContextError("PACKAGE_LOAD_FAILED", "packages");
+    }
+    if (input.verifiedPackagesDirectory !== undefined) {
+      const packageInformation = lstatSync(input.verifiedPackagesDirectory);
+      if (!packageInformation.isDirectory() || packageInformation.isSymbolicLink()
+        || realpathSync(input.verifiedPackagesDirectory) !== input.verifiedPackagesDirectory) throw new WorkContextError("CONTEXT_UNSAFE", "packages");
+      const actualPackages = safeNames(input.verifiedPackagesDirectory);
+      const expectedPackages = packages.map((item) => packageNameKey(item.name)).sort();
+      if (actualPackages.length !== expectedPackages.length || actualPackages.some((name, index) => name !== expectedPackages[index])) {
+        throw new WorkContextError("PACKAGE_LOAD_FAILED", "packages");
+      }
+    }
+    const snapshot = this.build({ ...input, skills, packages });
     try {
       syncSnapshotTree(snapshot.directory);
       for (const parent of [join(this.rootDirectory, input.workId, "contexts"), join(this.rootDirectory, input.workId), this.rootDirectory]) {
@@ -100,6 +136,7 @@ export class WorkContextStore {
     readonly configuration: WorkConfig;
     readonly imageIdentity: string;
     readonly skills: readonly WorkContextSkillSource[];
+    readonly packages?: readonly WorkContextPackageSource[];
     readonly createdAt: string;
   }): WorkContextSnapshot {
     assertSegment(input.workId, "workId");
@@ -113,6 +150,11 @@ export class WorkContextStore {
     if (input.skills.length !== input.configuration.skills.length
       || input.skills.some((skill, index) => skill.name !== input.configuration.skills[index])) {
       throw new WorkContextError("CONFIGURATION_INVALID", "skills");
+    }
+    const packageSources = input.packages ?? [];
+    if (packageSources.length !== input.configuration.packages.length
+      || packageSources.some((source, index) => source.name !== input.configuration.packages[index]?.name)) {
+      throw new WorkContextError("CONFIGURATION_INVALID", "packages");
     }
     const contexts = join(this.rootDirectory, input.workId, "contexts");
     mkdirSync(contexts, { recursive: true, mode: 0o700 });
@@ -135,6 +177,21 @@ export class WorkContextStore {
         if (copied.identity !== source.identity) throw new WorkContextError("SKILL_LOAD_FAILED", `skills.${source.name}`, source.name);
         capturedSkills.push({ name: source.name, identity: source.identity });
       }
+      mkdirSync(join(staging, "packages"), { mode: 0o700 });
+      const packageBindings: WorkContextPackageBinding[] = [];
+      for (const source of packageSources) {
+        if (!Check(PiPackageArtifactMetadataSchema, source.metadata) || source.metadata.name !== source.name) {
+          throw new WorkContextError("PACKAGE_LOAD_FAILED", `packages.${source.name}`);
+        }
+        try { validatePiPackageArtifactSync(source.directory, source.metadata); }
+        catch { throw new WorkContextError("PACKAGE_LOAD_FAILED", `packages.${source.name}`); }
+        const nameKey = packageNameKey(source.name);
+        const destination = join(staging, "packages", nameKey);
+        cpSync(source.directory, destination, { recursive: true, force: false, errorOnExist: true, verbatimSymlinks: true, preserveTimestamps: true });
+        try { validatePiPackageArtifactSync(destination, source.metadata); }
+        catch { throw new WorkContextError("PACKAGE_LOAD_FAILED", `packages.${source.name}`); }
+        packageBindings.push({ name: source.name, nameKey, artifact: source.metadata });
+      }
       writeFileSync(join(staging, "AGENTS.md"), input.configuration.agentsMd, { encoding: "utf8", flag: "wx", mode: 0o400 });
       writeJsonExclusive(join(staging, "config.json"), input.configuration);
       const metadata: WorkContextMetadata = {
@@ -143,6 +200,8 @@ export class WorkContextStore {
         workId: input.workId,
         imageIdentity: input.imageIdentity,
         skills: capturedSkills,
+        packageContractVersion: 1,
+        packageBindings,
         createdAt: input.createdAt,
       };
       writeJsonExclusive(join(staging, "metadata.json"), metadata);
@@ -214,7 +273,8 @@ function validateSnapshotDirectory(rootDirectory: string, directory: string, exp
     }
     const metadata = JSON.parse(readFileSync(join(canonical, "metadata.json"), "utf8")) as Partial<WorkContextMetadata>;
     if (metadata.version !== 1 || !/^sha256:[a-f0-9]{64}$/.test(metadata.imageIdentity ?? "")
-      || !Array.isArray(metadata.skills) || typeof metadata.createdAt !== "string") {
+      || !Array.isArray(metadata.skills) || metadata.packageContractVersion !== 1
+      || !Array.isArray(metadata.packageBindings) || typeof metadata.createdAt !== "string") {
       throw new WorkContextError("CONTEXT_FORMAT_UNSUPPORTED");
     }
     if (metadata.workId !== expectedWorkId || metadata.snapshotId !== expectedSnapshotId) throw new WorkContextError("CONTEXT_OWNERSHIP");
@@ -236,6 +296,22 @@ function validateSnapshotDirectory(rootDirectory: string, directory: string, exp
     const actualSkillNames = safeNames(join(canonical, "skills"));
     if (actualSkillNames.length !== metadata.skills.length || actualSkillNames.some((name, index) => name !== [...metadata.skills!].map((skill) => skill.name).sort()[index])) {
       throw new WorkContextError("CONTEXT_UNSAFE", "skills");
+    }
+    if (metadata.packageBindings.length !== config.packages.length) throw new WorkContextError("CONFIGURATION_INVALID", "packages");
+    for (const [index, binding] of metadata.packageBindings.entries()) {
+      const selection = config.packages[index];
+      if (binding === null || typeof binding !== "object" || binding.name !== selection?.name
+        || binding.nameKey !== packageNameKey(binding.name) || !Check(PiPackageArtifactMetadataSchema, binding.artifact)
+        || binding.artifact.name !== binding.name) throw new WorkContextError("PACKAGE_LOAD_FAILED", `packages.${index}`);
+      try { validatePiPackageArtifactSync(join(canonical, "packages", binding.nameKey), binding.artifact); }
+      catch { throw new WorkContextError("PACKAGE_LOAD_FAILED", `packages.${binding.name}`); }
+    }
+    const expectedPackageNames = metadata.packageBindings.map((binding) => binding.nameKey).sort();
+    const packageRoot = join(canonical, "packages");
+    if (!lstatSync(packageRoot).isDirectory() || lstatSync(packageRoot).isSymbolicLink()) throw new WorkContextError("CONTEXT_UNSAFE", "packages");
+    const actualPackageNames = safeNames(join(canonical, "packages"));
+    if (actualPackageNames.length !== expectedPackageNames.length || actualPackageNames.some((name, index) => name !== expectedPackageNames[index])) {
+      throw new WorkContextError("CONTEXT_UNSAFE", "packages");
     }
     return {
       snapshotId: expectedSnapshotId,
@@ -262,7 +338,10 @@ function syncSnapshotTree(directory: string): void {
   for (const name of safeNames(directory)) {
     const path = join(directory, name), information = lstatSync(path);
     if (information.isDirectory() && !information.isSymbolicLink()) syncSnapshotTree(path);
-    else {
+    else if (information.isSymbolicLink()) {
+      // The package verifier has already checked link targets and chains.
+      if (!directory.includes(`${sep}packages${sep}`)) throw new WorkContextError("CONTEXT_UNSAFE");
+    } else {
       if (!information.isFile() || information.isSymbolicLink()) throw new WorkContextError("CONTEXT_UNSAFE");
       const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try { fsyncSync(fd); } finally { closeSync(fd); }
@@ -281,7 +360,8 @@ function sealSnapshotTree(directory: string): void {
     const path = join(directory, name);
     const information = lstatSync(path);
     if (information.isDirectory()) sealSnapshotTree(path);
-    else if (information.isFile() && !information.isSymbolicLink()) chmodSync(path, 0o444);
+    else if (information.isFile() && !information.isSymbolicLink()) chmodSync(path, information.mode & 0o111 ? 0o555 : 0o444);
+    else if (information.isSymbolicLink() && directory.includes(`${sep}packages${sep}`)) { /* validated relative package link */ }
     else throw new WorkContextError("CONTEXT_UNSAFE");
   }
   // The Core data root remains 0700. Snapshot directories are executable by
@@ -332,7 +412,8 @@ function redactContextError(error: unknown): WorkContextError {
 
 function safeContextMessage(code: WorkContextErrorCode, field?: string, skillName?: string): string {
   if (code === "SKILL_LOAD_FAILED") return `Skill ${skillName ?? "unknown"} could not be loaded from the Work context`;
-  const messages: Record<Exclude<WorkContextErrorCode, "SKILL_LOAD_FAILED">, string> = {
+  if (code === "PACKAGE_LOAD_FAILED") return `Package ${field ?? "unknown"} could not be loaded from the Work context`;
+  const messages: Record<Exclude<WorkContextErrorCode, "SKILL_LOAD_FAILED" | "PACKAGE_LOAD_FAILED">, string> = {
     CONTEXT_ID_INVALID: "Work context identifier is invalid",
     CONTEXT_EXISTS: "Work context already exists",
     CONTEXT_NOT_FOUND: "Work context is unavailable",

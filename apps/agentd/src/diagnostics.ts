@@ -14,6 +14,7 @@ const messages: Record<DiagnosticCode, string> = {
   SKILL_VALIDATION_FAILED: "The selected Skill content is invalid.",
   SKILL_LOAD_FAILED: "Work context Skill initialization failed.",
   SKILL_DIRECTORY_MISMATCH: "A Skill was loaded from an unexpected directory.",
+  PACKAGE_LOAD_FAILED: "A selected package could not be loaded in this agent environment.",
   MCP_INITIALIZATION_FAILED: "Required Work MCP tools could not be initialized.",
   RUNTIME_PREPARE_FAILED: "The Work runtime could not be prepared.",
   RUNTIME_START_FAILED: "The Work runtime could not be started.",
@@ -55,6 +56,8 @@ export function emitAgentDiagnostic(input: {
     : undefined;
   const message = input.outcome === "succeeded" && input.stage === "skill-load"
     ? "Work context Skills were validated by the SDK."
+    : input.outcome === "succeeded" && input.stage === "package-load"
+      ? "Selected Work packages were loaded."
     : input.outcome === "succeeded" && input.stage === "mcp-initialize"
       ? "Required Work MCP tools were initialized."
     : messages[input.code];

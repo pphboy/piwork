@@ -41,7 +41,7 @@ function profile(revision: number, agentImage: string, model: string, credential
 function config(image: string, model: string): WorkConfig {
   return {
     agentImage: { catalogId: image },
-    skills: [],
+    skills: [], packages: [],
     agentsMd: "",
     modelRef: model,
     mcpServers: [],

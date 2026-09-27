@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { WorkConfig } from "@piwork/contracts";
+import { validatePiPackageArtifact } from "@piwork/pi-package";
 import { inspectSkillTree } from "./skill-tree.js";
 import { WorkContextError, WorkContextStore } from "./work-context.js";
 
 const config: WorkConfig = {
   agentImage: { catalogId: "image-0199e6d8abcd" },
-  skills: ["code-review"],
+  skills: ["code-review"], packages: [],
   agentsMd: "# Work rules\n",
   modelRef: "model-0199e6d8abcd",
   mcpServers: [],
@@ -42,6 +43,46 @@ test("WorkContextStore supports an empty isolated Skill set", () => withFixture(
   assert.deepEqual(snapshot.metadata.skills, []);
   assert.deepEqual(store.load("work-0199e6d8abcd", snapshot.snapshotId).configuration.skills, []);
 }));
+
+test("WorkContextStore captures a disabled package with dependency bytes and safe symlinks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "piwork-context-package-"));
+  try {
+    const source = join(root, "package-source");
+    mkdirSync(join(source, "node_modules", "left-pad"), { recursive: true });
+    writeFileSync(join(source, "package.json"), JSON.stringify({ name: "@example/tools", version: "1.0.0", dependencies: { "left-pad": "1.0.0" }, pi: { extensions: ["extension.js"] } }));
+    writeFileSync(join(source, "extension.js"), "export default function () {};");
+    writeFileSync(join(source, "node_modules", "left-pad", "package.json"), JSON.stringify({ name: "left-pad", version: "1.0.0" }));
+    writeFileSync(join(source, "node_modules", "left-pad", "index.js"), "export default () => 1;");
+    symlinkSync("index.js", join(source, "node_modules", "left-pad", "main.js"));
+    const preparedEnvironment = { os: "linux" as const, architecture: "x64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.0" };
+    const verified = await validatePiPackageArtifact({ root: source, sourceKind: "local", resolvedSource: "local:fixture", preparedEnvironment });
+    const store = new WorkContextStore(join(root, "works"));
+    assert.throws(() => store.build({ workId: "work-0199e6d8abcd", snapshotId: "context-invalid-package", configuration: { ...config, skills: [], packages: [{ name: "@example/tools", enabled: false }] },
+      imageIdentity: `sha256:${"a".repeat(64)}`, skills: [], packages: [{ name: "@example/tools", directory: source, metadata: { ...verified.metadata, contentDigest: `sha256:${"0".repeat(64)}` } }], createdAt: "2026-09-21T00:00:00Z" }),
+    (error) => error instanceof WorkContextError && error.code === "PACKAGE_LOAD_FAILED");
+    assert.throws(() => store.load("work-0199e6d8abcd", "context-invalid-package"));
+    const snapshot = store.build({ workId: "work-0199e6d8abcd", configuration: { ...config, skills: [], packages: [{ name: "@example/tools", enabled: false }] },
+      imageIdentity: `sha256:${"a".repeat(64)}`, skills: [], packages: [{ name: "@example/tools", directory: source, metadata: verified.metadata }], createdAt: "2026-09-21T00:00:00Z" });
+    const binding = snapshot.metadata.packageBindings[0]!;
+    assert.equal(binding.artifact.contentDigest, verified.metadata.contentDigest);
+    assert.equal(readFileSync(join(snapshot.directory, "packages", binding.nameKey, "node_modules", "left-pad", "main.js"), "utf8"), "export default () => 1;");
+    rmSync(source, { recursive: true, force: true });
+    assert.equal(store.load(snapshot.workId, snapshot.snapshotId).configuration.packages[0]?.enabled, false);
+    const edited = store.build({ workId: snapshot.workId, configuration: { ...snapshot.configuration, agentsMd: "edited" },
+      imageIdentity: snapshot.metadata.imageIdentity, skills: [], packages: [{ name: binding.name,
+        directory: join(snapshot.directory, "packages", binding.nameKey), metadata: binding.artifact }], createdAt: "2026-09-21T00:00:01Z" });
+    assert.equal(edited.metadata.packageBindings[0]?.artifact.contentDigest, binding.artifact.contentDigest);
+    const imported = store.buildImported({ workId: "work-target-00000001", snapshotId: "context-target-00000001",
+      configuration: snapshot.configuration, imageIdentity: snapshot.metadata.imageIdentity,
+      verifiedSkillsDirectory: join(snapshot.directory, "skills"), verifiedPackagesDirectory: join(snapshot.directory, "packages"),
+      packages: [{ name: binding.name, directory: join(snapshot.directory, "packages", binding.nameKey), metadata: binding.artifact }],
+      agentsBytes: Buffer.from(snapshot.configuration.agentsMd), createdAt: snapshot.metadata.createdAt });
+    assert.equal(imported.metadata.packageBindings[0]?.artifact.contentDigest, binding.artifact.contentDigest);
+    chmodSync(join(snapshot.directory, "packages", binding.nameKey, "extension.js"), 0o600);
+    writeFileSync(join(snapshot.directory, "packages", binding.nameKey, "extension.js"), "tampered");
+    assert.throws(() => store.load(snapshot.workId, snapshot.snapshotId), (error) => error instanceof WorkContextError && error.code === "PACKAGE_LOAD_FAILED");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("imported contexts use only verified owned Skills and retain complete files without a global catalog", () => withFixture(({ store, source }) => {
   mkdirSync(join(source.directory, "empty"));

@@ -103,6 +103,23 @@ test("bounded drain rejects new Runs, aborts at the deadline, and waits for the 
   });
 });
 
+test("drain returns for container shutdown when a background child ignores parent abort", async () => {
+  await withStore(async (store) => {
+    let signal: AbortSignal | undefined;
+    let running!: () => void;
+    const started = new Promise<void>((resolve) => { running = resolve; });
+    const manager = readyManager(store, { execute(context) {
+      signal = context.signal;
+      running();
+      return new Promise(() => undefined);
+    } });
+    manager.submit({ workId: "work-a", sessionId: "session-a", submissionKey: "detached-child", prompt: "wait" });
+    await started;
+    await Promise.race([manager.drain(1), new Promise<never>((_, reject) => setTimeout(() => reject(new Error("drain hung")), 5_000))]);
+    assert.equal(signal?.aborted, true);
+  });
+});
+
 class ControlledExecutor implements RunExecutor {
   readonly running = new Map<string, { resolve: (text: string) => void; reject: (error: Error) => void }>();
   execute(context: RunExecutionContext): Promise<{ finalText: string }> {

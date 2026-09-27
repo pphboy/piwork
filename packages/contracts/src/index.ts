@@ -6,6 +6,7 @@ export * from "./common.js";
 export * from "./control/errors.js";
 export * from "./control/diagnostics.js";
 export * from "./control/operations.js";
+export * from "./control/pi-packages.js";
 export * from "./control/services.js";
 export * from "./control/skills.js";
 export * from "./control/users.js";

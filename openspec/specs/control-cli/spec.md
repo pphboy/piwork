@@ -79,6 +79,8 @@ The `piwork whoami` command SHALL display the public identity associated with th
 
 SDK-invalid imported Skill bytes SHALL be diagnosed asynchronously during required initialization rather than rejected as a CLI syntax error. Both `work config set <workId> --config <file>` and `work config skills set <workId>` SHALL update desired state consistently; omitted fields in field-specific commands SHALL preserve unrelated desired fields. `--no-skills` SHALL be parsed as a boolean flag on create, per-Work Skill set, and operator default-Work set. Missing selection on the field-specific Skill-set command SHALL be a usage error, not implicit clearing. `work config apply <workId> [--wait] [--idempotency-key <key>]` SHALL report acceptance immediately unless waiting was requested and use the same durable Operation observation behavior as create/start.
 
+work create SHALL 额外支持重复 --package <name> 或互斥 --no-packages，优先于配置文件 packages 与默认集合；重复/空 name 或矛盾选项在 auth/file/network 前拒绝。work config set 同样支持该选择，对已存在 Work 只引用自身 desired 已安装包；flags 选中项 enabled=true，其他字段省略保留，disabled 可用专用命令或完整配置表示。包安装与 apply 分离，create --wait 的成功仍要求最终完整 context ready。
+
 #### Scenario: Create from the current default
 - **WHEN** 用户运行 `piwork-cli work create --name <name> --wait` without a Skill selection
 - **THEN** the Work receives independent copies of the current default Skills and other effective context, and later default or managed-Skill changes do not alter it
@@ -142,6 +144,18 @@ SDK-invalid imported Skill bytes SHALL be diagnosed asynchronously during requir
 #### Scenario: Repeated apply key
 - **WHEN** a caller repeats an apply with the same idempotency key
 - **THEN** the CLI receives the original Operation and reused true, without causing another initialization
+
+#### Scenario: Create from package defaults
+- **WHEN** 用户不提供 package flags 或配置字段创建 Work
+- **THEN** 继承当时默认包的独立副本，不持续跟随 Core
+
+#### Scenario: Override package selection
+- **WHEN** 用户提供 --package tools 或 --no-packages
+- **THEN** 分别替换为 tools 或 []，不与文件/defaults 合并
+
+#### Scenario: Reject duplicate package flags before I/O
+- **WHEN** 用户重复同名 --package 或与 --no-packages 同用
+- **THEN** exit 2 且不读取凭证、本地文件或发起网络请求
 
 ### Requirement: Create and continue persistent conversations
 
@@ -442,6 +456,8 @@ export SHALL 提交一次请求并等待最多 120 秒（含每次 poll），串
 
 本地输出 SHALL 使用安全新建、同目录临时文件、0600 权限及校验后的无覆盖发布；已有目标、symlink 目标/父路径或读取错误 exit 2，不改原文件。失败只清理本次临时文件，不留名为最终目标的半包。transfer 超时按 WSNAP-005；包永不写 stdout。export/import 前 stderr SHALL 明确提示原样携带敏感内容和不自动执行包，非交互模式不额外要求输入确认。
 
+work export/import SHALL 无条件携带完整 Pi package 闭包；不新增 skip-packages 或“导入时重新安装”模式。既有单数 work package inspect SHALL 报 WSNAP-002 的安全包摘要，与复数 work packages 管理命令区分。导入成功保持 stopped，不暗中 apply pending desired 或加载 extension。
+
 #### Scenario: Export and share
 - **WHEN** 所有者导出已停止 Work 到不存在的 demo.work
 - **THEN** 命令返回完整校验后的 0600 文件和一条结果，不打印包内配置/历史，不自动启动或停止 Work
@@ -466,6 +482,14 @@ export SHALL 提交一次请求并等待最多 120 秒（含每次 poll），串
 - **WHEN** export 超过 CLI 观察期限但服务端仍在工作
 - **THEN** CLI exit 5 保留 snapshotId，用户可以 operation show 后 snapshot download 而无需再 export
 
+#### Scenario: Inspect packages without executing them
+- **WHEN** 用户执行 work package inspect demo.work，文件包含 Pi extension/lifecycle scripts
+- **THEN** 本地完整验证后显示包数量/安全名称版本，不执行内容、不连接 Core，标明尚未运行验证
+
+#### Scenario: Keep packages in the standard export command
+- **WHEN** 用户运行原有 work export/import 命令而没有新增 package 选项
+- **THEN** 所有 retained context 的包与依赖自动完整搬迁
+
 ### Requirement: Keep snapshot output and existing commands compatible
 
 **Identifier:** CLI-SNAPSHOT-002
@@ -481,3 +505,110 @@ syntax/local file exit 2；缺登录/401/403 exit 3；404 exit 4；网络、503�
 #### Scenario: Preserve service boundary
 - **WHEN** 用户运行 work service create 或 update
 - **THEN** 仍是 usage error，本变更仅支持作为整个包恢复服务定义
+
+### Requirement: Manage Core packages from the operator CLI
+
+**Identifier:** CLI-PKG-001
+
+`piwork-serve` SHALL 提供以下命令，使用 operator 身份；全局 --core/--json 沿用现有解析：
+
+```text
+packages list
+packages show <name>
+packages install <source> [--default] [--wait] [--verbose]
+packages update <name> --source <source> [--wait] [--verbose]
+packages enable|disable|remove <name>
+config default-work show
+config default-work set [--package <name>]... [--no-packages]
+operation show <operation-id>
+```
+
+source SHALL 支持 PKG-001 四种形式，本地目录/ZIP 先按 PKG-003 上传。install --default SHALL 原子追加；default-work set --package SHALL 替换全部默认包，--no-packages 显式清空，两者互斥，均省略则保留原 packages。其他默认字段省略 SHALL 保留。operation show SHALL 只查询 Core package Operation，不提供 Work 内容读取。enable/disable/remove SHALL 同步返回结果，不接受 --wait。
+
+#### Scenario: Install each operator source
+- **WHEN** operator 分别使用 npm:spec、git:spec、本地目录或 .zip 执行 packages install --wait
+- **THEN** CLI 提交对应来源并等待原 Operation，成功时显示实际 name/version 和 enabled/default 状态
+
+#### Scenario: Update does not guess a source
+- **WHEN** operator 执行 packages update tools 却缺少 --source
+- **THEN** exit 2 且未发请求，不尝试重新读取历史本机目录
+
+#### Scenario: Observe a Core preparation failure
+- **WHEN** Core 包安装脚本失败，operator 使用 operation show 查询返回的 ID
+- **THEN** 显示持久 failed/stage/code，查询成功 exit 0，不泄露未经处理的脚本日志
+
+### Requirement: Manage independent Work packages from the user CLI
+
+**Identifier:** CLI-PKG-002
+
+`piwork-cli` SHALL 提供 enabled Core catalog 的 `packages list` 和 `packages show <name>`，以及下列 Work 命令，采用现有用户/Work 授权：
+
+```text
+work packages list <work-id>
+work packages show <work-id> <name>
+work packages install <work-id> <source> [--wait] [--verbose]
+work packages install <work-id> --from-core <name> [--wait] [--verbose]
+work packages update <work-id> <name> --source <source> [--wait] [--verbose]
+work packages update <work-id> <name> --from-core [--wait] [--verbose]
+work packages enable|disable|remove <work-id> <name>
+```
+
+install 的位置 source 与 --from-core <name> SHALL 恰选其一；update 的 --source 与 boolean --from-core SHALL 恰选其一。四类直接来源 SHALL 与 Core 语义一致；from-core 只复制当前 enabled Core 制品。所有修改 SHALL 仅作用 desired，命令不得隐式 apply。list/show SHALL 显示 PKG-008 的 desired/active/runtime 状态，指明需显式 work config apply；操作成功不能用 installed 代替 loaded。
+
+#### Scenario: Install locally and activate explicitly
+- **WHEN** 用户 work packages install W ./tools.zip --wait 后查询配置，再 work config apply W --wait
+- **THEN** 第一步只等待 desired 提交；第二步才验证和激活，list/show 能分别观察两个时点
+
+#### Scenario: Copy from Core after import
+- **WHEN** 用户对已导入 Work 执行 work packages update W tools --from-core
+- **THEN** 选择当前连接 Core 的 tools，不联系最初导出 Core；同名不存在/disabled 时明确失败
+
+#### Scenario: Reject source ambiguity
+- **WHEN** install 同时给位置 source 和 --from-core，或 update 两者都缺失/都存在
+- **THEN** CLI exit 2，在 credential、文件和网络 I/O 前拒绝
+
+### Requirement: Preserve package acceptance waiting and output semantics
+
+**Identifier:** CLI-PKG-003
+
+两个 CLI 的 package install/update SHALL 在未 --wait 时输出一次 acceptance 并 exit 0；CLI 每次提交 SHALL 自动生成 UUID 幂等键，不提供用户传入幂等键的 package 命令参数。--wait SHALL 对同一 Operation 串行观察直至 succeeded、failed 或 superseded，不设置本地总等待时限；正常观察每 250 ms 一次，单次观察请求有界。单次请求超时、暂时网络中断或服务暂不可用 SHALL 以 250 ms 起、最多 5 秒的退避间隔重试读取原 Operation，成功观察后恢复 250 ms 间隔，不重提安装或取消后台任务；鉴权被拒、Operation 不存在等无法继续观察的确定性错误 SHALL exit 5 并保留 ID 与恢复查询命令。用户以 Ctrl+C 主动中断等待 SHALL exit 130，保留 ID 与恢复查询命令，不取消已接受的 Operation。succeeded exit 0、failed/superseded exit 6，服务端真实失败不得被无限等待掩盖。operation show 查询成功 SHALL exit 0，包括任务失败。--json 的 stdout SHALL 恰有一条 acceptance、最终 observation，或在不可恢复观察错误/主动中断时带原 Operation ID 的 waiting 结果；进度和恢复命令输出 stderr。
+
+两个 CLI 的 package install/update SHALL 仅在与 --wait 同用时接受 --verbose；单独 --verbose SHALL 在鉴权、文件及网络 I/O 前以 usage exit 2 拒绝。--verbose SHALL 在 stderr 显示原 Operation ID、安全的 packagePhase 变化、已等待时间、每 30 秒仍处于同一阶段的心跳、暂时观察故障的重试/恢复，以及终态安全 stage/code；同一阶段的普通 250 ms 轮询不得逐次打印。--verbose 不改变 Operation、轮询语义、退出码或 --json 的单值 stdout。任何模式 SHALL NOT 输出 npm/Git 原始 stdout/stderr、命令参数、来源绝对路径、凭据、helper ID 或内部 digest。
+
+接受前 syntax=2、auth=3、missing=4、network=5、conflict=6、其他=1。未知 flag、额外位置参数、空值和组合矛盾 SHALL 在 auth/file/network 前拒绝；各级 help SHALL 不读取凭证或文件。公共输出 SHALL 不含 source 绝对路径、secret、内部 digest/revision。文档 SHALL 包含四来源测试示例和 install→desired→apply→loaded→stop/export/import/start 的完整示例。
+
+#### Scenario: Preparation exceeds two minutes
+- **WHEN** --wait 在 120 秒内未观察到终态，而后原 Operation 完成
+- **THEN** CLI 继续观察原 Operation 并显示最终结果，不重新发起 install
+
+#### Scenario: Observation becomes unavailable
+- **WHEN** --wait 的单次观察请求超时或连接中断
+- **THEN** CLI 保留原 Operation ID、限频重试读取，连接恢复后显示该 Operation 的最终结果；不重新发起 install，暂时故障不产生终态 stdout
+
+#### Scenario: User interrupts package waiting
+- **WHEN** 用户在 install/update --wait 期间按 Ctrl+C
+- **THEN** CLI exit 130；stdout 仅输出一条带原 Operation ID 的 waiting 结果，stderr 给出 operation show 恢复命令；后台 Operation 不被取消
+
+#### Scenario: Observation cannot be authorized
+- **WHEN** 已接受包 Operation 后，观察请求被确定性拒绝鉴权或报告该 Operation 不存在
+- **THEN** CLI exit 5；stdout 仅输出一条带原 Operation ID 的 waiting 结果，stderr 给出恢复查询命令；不重新发起 install
+
+#### Scenario: Wait for failure in JSON mode
+- **WHEN** 已接受 Operation 随后 failed 且启用 --json --wait
+- **THEN** stdout 恰好一条最终 failed observation，包含安全 stage/code 与 ID，exit 6
+
+#### Scenario: Verbose package wait without leaking output
+- **WHEN** operator 或 Work 用户运行 package install/update --wait --verbose，Operation 经过 queued、prepare 并完成，期间某次观察暂时断线
+- **THEN** stderr 显示该 Operation 的阶段变化、已等待时间、重试及恢复，超过 30 秒的未变阶段有心跳；--json stdout 仍只有一条最终结果，不打印第三方进程输出或敏感字段，也不重复提交安装
+
+#### Scenario: Reject verbose without waiting
+- **WHEN** package install/update 指定 --verbose 而未指定 --wait
+- **THEN** CLI exit 2，且不读取凭证、来源文件或联系 Core
+
+#### Scenario: Reject a caller-supplied package idempotency key
+- **WHEN** Core 或 Work 的 package install/update 命令带有 --idempotency-key
+- **THEN** CLI exit 2，且不读取凭证、来源文件或联系 Core；不带该参数的有效请求仍由 CLI 自动生成请求幂等键
+
+#### Scenario: Help with unavailable authentication
+- **WHEN** 用户执行任一 package 命令 --help 且凭证文件不可读
+- **THEN** help 成功，不读凭证、不读本地来源或发送请求

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const CORE_SCHEMA_VERSION = 7;
+export const CORE_SCHEMA_VERSION = 8;
 
 interface Migration {
   readonly version: number;
@@ -349,9 +349,90 @@ const migrations: readonly Migration[] = [
       ) STRICT`,
     ],
   },
+  {
+    version: 8,
+    statements: [
+      `CREATE TABLE pi_package_artifacts (
+        id TEXT PRIMARY KEY,
+        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('core', 'work')),
+        work_id TEXT REFERENCES works(id),
+        name TEXT NOT NULL,
+        content_digest TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        storage_path TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        lease_count INTEGER NOT NULL DEFAULT 0 CHECK (lease_count >= 0),
+        CHECK ((scope_kind = 'core' AND work_id IS NULL) OR (scope_kind = 'work' AND work_id IS NOT NULL))
+      ) STRICT`,
+      `CREATE INDEX pi_package_artifacts_scope ON pi_package_artifacts(scope_kind, work_id, name)`,
+      `CREATE TABLE pi_package_catalog (
+        name TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        head_artifact_id TEXT NOT NULL REFERENCES pi_package_artifacts(id),
+        generation INTEGER NOT NULL CHECK (generation >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT`,
+      `CREATE TABLE pi_package_uploads (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('core', 'work')),
+        work_id TEXT REFERENCES works(id),
+        source_kind TEXT NOT NULL CHECK (source_kind IN ('local', 'zip')),
+        display_name TEXT NOT NULL,
+        digest TEXT,
+        size INTEGER NOT NULL CHECK (size >= 0 AND size <= 268435456),
+        state TEXT NOT NULL CHECK (state IN ('staging', 'ready', 'expired')),
+        expires_at TEXT,
+        lease_count INTEGER NOT NULL DEFAULT 0 CHECK (lease_count >= 0),
+        created_at TEXT NOT NULL,
+        CHECK ((scope_kind = 'core' AND work_id IS NULL) OR (scope_kind = 'work' AND work_id IS NOT NULL)),
+        CHECK (state != 'ready' OR (digest IS NOT NULL AND expires_at IS NOT NULL))
+      ) STRICT`,
+      `CREATE INDEX pi_package_uploads_expiry ON pi_package_uploads(state, expires_at)`,
+      `CREATE TABLE pi_package_jobs (
+        operation_id TEXT PRIMARY KEY REFERENCES operations(id),
+        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('core', 'work')),
+        work_id TEXT REFERENCES works(id),
+        actor_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('install', 'update')),
+        prepare_image_id TEXT NOT NULL,
+        trusted_helper_image_id TEXT NOT NULL,
+        prepared_environment_json TEXT NOT NULL,
+        add_to_defaults INTEGER NOT NULL CHECK (add_to_defaults IN (0, 1)),
+        source_json TEXT NOT NULL,
+        source_upload_id TEXT REFERENCES pi_package_uploads(id),
+        request_digest TEXT NOT NULL,
+        package_name TEXT,
+        phase TEXT NOT NULL CHECK (phase IN ('queued', 'source', 'prepare', 'validate', 'publish', 'succeeded', 'failed', 'superseded', 'cleanup-pending')),
+        worker_epoch INTEGER NOT NULL CHECK (worker_epoch >= 1),
+        helper_id TEXT,
+        deadline_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        cleanup_error TEXT,
+        leases_released INTEGER NOT NULL DEFAULT 0 CHECK (leases_released IN (0, 1)),
+        CHECK ((scope_kind = 'core' AND work_id IS NULL) OR (scope_kind = 'work' AND work_id IS NOT NULL))
+      ) STRICT`,
+      `CREATE UNIQUE INDEX pi_package_one_scope_job ON pi_package_jobs(scope_kind, COALESCE(work_id, ''))
+        WHERE phase NOT IN ('succeeded', 'failed', 'superseded')`,
+      `CREATE INDEX pi_package_jobs_phase ON pi_package_jobs(phase, created_at)`,
+    ],
+  },
 ];
 
 export function migrateCoreDatabase(database: DatabaseSync): void {
+  const existing = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>;
+  const hasMigrationTable = existing.some((row) => row.name === "schema_migrations");
+  if (existing.length > 0 && !hasMigrationTable) {
+    throw Object.assign(new Error("CORE_STORAGE_FORMAT_UNSUPPORTED: existing storage has no final V1 schema marker"), { code: "CORE_STORAGE_FORMAT_UNSUPPORTED" });
+  }
+  if (hasMigrationTable) {
+    const row = database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as { version: number };
+    if (row.version !== CORE_SCHEMA_VERSION) {
+      throw Object.assign(new Error("CORE_STORAGE_FORMAT_UNSUPPORTED: existing storage is not final V1"), { code: "CORE_STORAGE_FORMAT_UNSUPPORTED" });
+    }
+  }
   database.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
@@ -360,10 +441,6 @@ export function migrateCoreDatabase(database: DatabaseSync): void {
   const current = database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as {
     version: number;
   };
-  if (current.version > 0 && current.version < 6) {
-    throw Object.assign(new Error("CONTEXT_FORMAT_UNSUPPORTED: pre-0.1 combined Work storage is not migrated"), { code: "CONTEXT_FORMAT_UNSUPPORTED" });
-  }
-
   for (const migration of migrations) {
     if (migration.version <= current.version) continue;
     database.exec("BEGIN IMMEDIATE");

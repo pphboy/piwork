@@ -33,12 +33,12 @@ export function goldenWorkFixture(fileContent = Buffer.from("PRIVATE_CONTENT_SEN
   const control = add(encodeWorkJson(history), "control-history"), sourceIdentityMap = add(encodeWorkJson(identities), "identity-map");
   const spec: PortableWorkSpec = {
     formatVersion: 1, snapshotKind: "cold-full", createdAt: now, sourceName: "golden",
-    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2 },
+    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2, piPackageContract: 1 },
     activeContext: null, desiredContext: "c-000001",
-    contexts: [{ key: "c-000001", createdAt: now, skillsTree: emptyTree, agentsBlob: agents, imageKey: "i-000001", configuration: {
-      modelBindingKey: "m-000001", skills: [], mcpServers: [], tools: { allowed: [], denied: [] },
+    contexts: [{ key: "c-000001", createdAt: now, skillsTree: emptyTree, agentsBlob: agents, imageKey: "i-000001", packageBindings: [], configuration: {
+      modelBindingKey: "m-000001", skills: [], packages: [], mcpServers: [], tools: { allowed: [], denied: [] },
       resources: { cpuMillis: 1000, memoryBytes: 268435456, agentCpuMillis: 500, agentMemoryBytes: 134217728, maxServices: 2, maxRetainedVolumes: 4 },
-    } }], services: [],
+    } }], piPackageArtifacts: [], services: [],
     quotaReservations: [{ subjectKind: "agent", subjectKey: "agentd", desiredCpuMillis: 500, desiredMemoryBytes: 134217728, serviceSlots: 0, volumeSlots: 2 }],
     volumes: [{ role: "agent-private", tree, serviceRefKeys: [] }, { role: "workspace", tree, serviceRefKeys: [] }],
     images: [{ key: "i-000001", imageId: `sha256:${imageConfig}`, platform: { os: "linux", architecture: "amd64", variant: null }, config: imageConfig, layers: [] }],

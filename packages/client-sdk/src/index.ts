@@ -1,8 +1,13 @@
 import { randomBytes } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { parsePiPackageSource, stagePiPackageUpload } from "@piwork/pi-package";
 import { WORK_PACKAGE_MIME, type AcceptedWorkExport, type AcceptedWorkImport, type ImportWorkRequest, type UploadedWorkPackage,
-  type WorkImportProvenance, type WorkSnapshot } from "@piwork/contracts";
+  type WorkImportProvenance, type WorkSnapshot, type PiPackageSource, type PiPackageOperationAcceptance,
+  type PiPackageUploadResult, type PiPackageSelectionEntry } from "@piwork/contracts";
 
 export interface ClientOptions { readonly coreUrl: string; readonly fetch?: typeof globalThis.fetch; readonly token?: string; readonly operatorToken?: string; }
 export interface PublicIdentity { readonly id: string; readonly account: string; readonly role: "admin" | "user"; }
@@ -37,6 +42,99 @@ export interface WorkServiceLogs {
   readonly reason?: string;
 }
 export interface RequestOptions { readonly signal?: AbortSignal; }
+export interface PiPackageWaitProgress {
+  readonly kind: "phase" | "heartbeat" | "retry" | "recovered" | "terminal";
+  readonly elapsedMs: number;
+  readonly packagePhase?: string;
+  readonly retryMs?: number;
+  readonly state?: string;
+  readonly stage?: string;
+  readonly code?: string;
+}
+export function formatPiPackageWaitProgress(operationId: string, progress: PiPackageWaitProgress): string {
+  const seconds = Math.floor(progress.elapsedMs / 1_000);
+  const phase = progress.packagePhase === undefined ? "" : ` phase=${progress.packagePhase}`;
+  if (progress.kind === "retry") return `Package Operation ${operationId}: observation unavailable; retry in ${progress.retryMs}ms (${seconds}s elapsed)\n`;
+  if (progress.kind === "recovered") return `Package Operation ${operationId}: observation restored (${seconds}s elapsed)\n`;
+  if (progress.kind === "terminal") return `Package Operation ${operationId}: ${progress.state}${phase}${progress.stage ? ` stage=${progress.stage}` : ""}${progress.code ? ` code=${progress.code}` : ""} (${seconds}s elapsed)\n`;
+  if (progress.kind === "phase") return `Package Operation ${operationId}: package${phase} (${seconds}s elapsed)\n`;
+  return `Package Operation ${operationId}: ${progress.kind}${phase} (${seconds}s elapsed)\n`;
+}
+
+/** Parse and upload a local snapshot; Core receives only an opaque upload ID. */
+export async function resolvePiPackageSource(client: PiworkClient, argument: string,
+  scope: { readonly kind: "core" } | { readonly kind: "work"; readonly workId: string }, options: RequestOptions = {}): Promise<PiPackageSource> {
+  const source = parsePiPackageSource(argument);
+  if (source.kind === "npm" || source.kind === "git") return { kind: source.kind, spec: source.spec };
+  const scratch = await mkdtemp(join(tmpdir(), "piwork-pi-package-"));
+  try {
+    const staged = await stagePiPackageUpload(source, scratch);
+    try {
+      const uploaded = await client.uploadPiPackage(createReadStream(staged.path), staged.sha256, staged.bytes,
+        staged.displayName, staged.sourceKind, scope, options);
+      return { kind: "upload", uploadId: uploaded.uploadId };
+    } finally { await staged.cleanup(); }
+  } finally { await rm(scratch, { recursive: true, force: true }); }
+}
+
+export async function waitPiPackageOperation(client: PiworkClient, accepted: PiPackageOperationAcceptance,
+  options: { readonly now?: () => number; readonly sleep?: (milliseconds: number) => Promise<void>; readonly deadlineMs?: number;
+    readonly signal?: AbortSignal; readonly onProgress?: (progress: PiPackageWaitProgress) => void } = {}): Promise<Record<string, unknown>> {
+  const now = options.now ?? Date.now, sleep = options.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  const started = now(), deadline = options.deadlineMs === undefined ? undefined : started + options.deadlineMs;
+  let lastPhase: string | undefined, lastHeartbeat = started, retryMs = 250, observingFailure = false;
+  const progress = (event: Omit<PiPackageWaitProgress, "elapsedMs">) => options.onProgress?.({ ...event, elapsedMs: now() - started });
+  const interrupted = () => new PiworkApiError(0, "OPERATION_WAIT_INTERRUPTED", `Stopped waiting for package Operation ${accepted.operationId}.`);
+  const pause = async (milliseconds: number) => {
+    if (options.signal?.aborted) throw interrupted();
+    if (options.sleep) { await sleep(milliseconds); }
+    else await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { options.signal?.removeEventListener("abort", onAbort); resolve(); }, milliseconds);
+      const onAbort = () => { clearTimeout(timer); reject(interrupted()); };
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+    });
+    if (options.signal?.aborted) throw interrupted();
+  };
+  for (;;) {
+    if (options.signal?.aborted) throw interrupted();
+    const remaining = deadline === undefined ? undefined : deadline - now();
+    if (remaining !== undefined && remaining <= 0) throw new PiworkApiError(0, "OPERATION_WAIT_TIMEOUT", `Timed out waiting for package Operation ${accepted.operationId}; inspect it with operation show ${accepted.operationId}.`);
+    const signal = AbortSignal.any([AbortSignal.timeout(Math.min(30_000, remaining ?? 30_000)), ...(options.signal ? [options.signal] : [])]);
+    let operation: Record<string, unknown>;
+    try {
+      operation = accepted.scope === "core"
+        ? await client.managedOperation(accepted.operationId, { signal })
+        : await client.operation(accepted.operationId, { signal });
+    } catch (error) {
+      if (options.signal?.aborted) throw interrupted();
+      if (deadline !== undefined && now() >= deadline) throw new PiworkApiError(0, "OPERATION_WAIT_TIMEOUT", `Timed out waiting for package Operation ${accepted.operationId}.`);
+      const temporary = signal.aborted || (error instanceof PiworkApiError &&
+        (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504));
+      if (!temporary) throw error;
+      progress({ kind: "retry", retryMs });
+      observingFailure = true;
+      await pause(retryMs);
+      retryMs = Math.min(retryMs * 2, 5_000);
+      continue;
+    }
+    if (observingFailure) { progress({ kind: "recovered" }); observingFailure = false; }
+    retryMs = 250;
+    const phase = typeof operation.packagePhase === "string" &&
+      ["queued", "source", "prepare", "validate", "publish", "cleanup-pending", "succeeded", "failed", "superseded"].includes(operation.packagePhase)
+      ? operation.packagePhase : undefined;
+    if (phase !== undefined && phase !== lastPhase) { progress({ kind: "phase", packagePhase: phase }); lastPhase = phase; lastHeartbeat = now(); }
+    else if (now() - lastHeartbeat >= 30_000) { progress({ kind: "heartbeat", packagePhase: phase }); lastHeartbeat = now(); }
+    const state = String(operation.state);
+    if (state === "succeeded" || state === "failed" || state === "superseded") {
+      const error = operation.error && typeof operation.error === "object" ? operation.error as Record<string, unknown> : null;
+      progress({ kind: "terminal", state, packagePhase: phase,
+        ...(typeof error?.stage === "string" && /^[a-z-]+$/.test(error.stage) ? { stage: error.stage } : {}),
+        ...(typeof error?.code === "string" && /^[A-Z0-9_]+$/.test(error.code) ? { code: error.code } : {}) });
+      return operation;
+    }
+    await pause(Math.min(250, Math.max(0, deadline === undefined ? 250 : deadline - now())));
+  }
+}
 
 export function resolveCoreEndpoint(options: {
   readonly explicit?: string;
@@ -130,6 +228,7 @@ export class PiworkClient {
   runtimeProfile() { return this.request<Record<string, unknown>>("GET", "/control/runtime"); }
   configureRuntime(input: { agentImage: string; provider: string; model: string; baseUrl?: string; credential: string }) { return this.request<Record<string, unknown>>("PUT", "/control/runtime", input); }
   defaultWorkConfiguration() { return this.request<Record<string, unknown>>("GET", "/control/default-work"); }
+  patchDefaultWorkPackages(packages: readonly PiPackageSelectionEntry[]) { return this.request<Record<string, unknown>>("PUT", "/control/default-work", { patch: { packages } }); }
   configureDefaultWorkConfiguration(configuration: unknown, overrides?: { readonly baseImage?: string }) { return this.request<Record<string, unknown>>("PUT", "/control/default-work", { configuration, ...(overrides?.baseImage === undefined ? {} : { baseImage: overrides.baseImage }) }); }
   managedSkills() { return this.request<{ skills: unknown[] }>("GET", "/control/skills"); }
   managedSkill(name: string) { return this.request<Record<string, unknown>>("GET", `/control/skills/${encodeURIComponent(name)}`); }
@@ -137,8 +236,35 @@ export class PiworkClient {
   updateManagedSkill(name: string, path: string) { return this.request<Record<string, unknown>>("PUT", `/control/skills/${encodeURIComponent(name)}`, { path }); }
   setManagedSkillEnabled(name: string, enabled: boolean) { return this.request<Record<string, unknown>>("POST", `/control/skills/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`); }
   removeManagedSkill(name: string) { return this.request<void>("DELETE", `/control/skills/${encodeURIComponent(name)}`); }
+  managedPackages() { return this.request<{ packages: unknown[] }>("GET", "/control/packages"); }
+  managedPackage(name: string) { return this.request<Record<string, unknown>>("GET", `/control/packages/${encodeURIComponent(name)}`); }
+  installManagedPackage(source: PiPackageSource, idempotencyKey: string, addToDefaults = false) {
+    return this.request<PiPackageOperationAcceptance>("POST", "/control/packages", { source, idempotencyKey, addToDefaults });
+  }
+  updateManagedPackage(name: string, source: PiPackageSource, idempotencyKey: string) {
+    return this.request<PiPackageOperationAcceptance>("POST", `/control/packages/${encodeURIComponent(name)}/update`, { source, idempotencyKey });
+  }
+  setManagedPackageEnabled(name: string, enabled: boolean) {
+    return this.request<Record<string, unknown>>("POST", `/control/packages/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`);
+  }
+  removeManagedPackage(name: string) { return this.request<void>("DELETE", `/control/packages/${encodeURIComponent(name)}`); }
+  managedOperation(operationId: string, options?: RequestOptions) { return this.request<Record<string, unknown>>("GET", `/control/operations/${encodeURIComponent(operationId)}`, undefined, options); }
   skills() { return this.request<{ skills: unknown[] }>("GET", "/api/v1/skills"); }
   skill(name: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/skills/${encodeURIComponent(name)}`); }
+  packages() { return this.request<{ packages: unknown[] }>("GET", "/api/v1/packages"); }
+  package(name: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/packages/${encodeURIComponent(name)}`); }
+  workPackages(workId: string) { return this.request<{ packages: unknown[] }>("GET", `/api/v1/works/${encodeURIComponent(workId)}/packages`); }
+  workPackage(workId: string, name: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/packages/${encodeURIComponent(name)}`); }
+  installWorkPackage(workId: string, source: PiPackageSource, idempotencyKey: string) {
+    return this.request<PiPackageOperationAcceptance>("POST", `/api/v1/works/${encodeURIComponent(workId)}/packages`, { source, idempotencyKey });
+  }
+  updateWorkPackage(workId: string, name: string, source: PiPackageSource, idempotencyKey: string) {
+    return this.request<PiPackageOperationAcceptance>("POST", `/api/v1/works/${encodeURIComponent(workId)}/packages/${encodeURIComponent(name)}/update`, { source, idempotencyKey });
+  }
+  setWorkPackageEnabled(workId: string, name: string, enabled: boolean) {
+    return this.request<Record<string, unknown>>("POST", `/api/v1/works/${encodeURIComponent(workId)}/packages/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`);
+  }
+  removeWorkPackage(workId: string, name: string) { return this.request<Record<string, unknown>>("DELETE", `/api/v1/works/${encodeURIComponent(workId)}/packages/${encodeURIComponent(name)}`); }
   login(account: string, password: string) { return this.request<{ token: string; expiresAt: string; user: PublicIdentity }>("POST", "/api/v1/login", { account, password }); }
   me() { return this.request<PublicIdentity & { expiresAt: string }>("GET", "/api/v1/me"); }
   logout() { return this.request<void>("POST", "/api/v1/logout"); }
@@ -184,6 +310,22 @@ export class PiworkClient {
     try { return JSON.parse(payload) as UploadedWorkPackage; }
     catch { throw new PiworkApiError(response.status, "MALFORMED_RESPONSE", "Core returned malformed Work package metadata"); }
   }
+  async uploadPiPackage(source: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>, digest: string, size: number,
+    displayName: string, sourceKind: "local" | "zip", scope: { readonly kind: "core" } | { readonly kind: "work"; readonly workId: string },
+    options: RequestOptions = {}): Promise<PiPackageUploadResult> {
+    if (!/^[a-f0-9]{64}$/.test(digest) || !Number.isSafeInteger(size) || size <= 0 || !displayName || displayName.includes("/") || displayName.includes("\\")) throw new TypeError("Invalid Pi package upload metadata");
+    const body = source instanceof ReadableStream ? source : iterableStream(source, options.signal);
+    const path = scope.kind === "core" ? "/control/package-uploads" : `/api/v1/works/${encodeURIComponent(scope.workId)}/package-uploads`;
+    const response = await this.binaryFetch(path, { method: "POST", headers: {
+      accept: "application/json", ...authorization(this.options), "content-type": "application/zip",
+      "content-length": String(size), "x-piwork-sha256": digest, "x-piwork-package-source": sourceKind,
+      "x-piwork-package-name": encodeURIComponent(displayName),
+    }, body, signal: options.signal, duplex: "half" } as RequestInit & { duplex: "half" });
+    if (!response.ok) throw await binaryError(response, options.signal);
+    const payload = await boundedText(response, 1_048_576, options.signal);
+    try { return JSON.parse(payload) as PiPackageUploadResult; }
+    catch { throw new PiworkApiError(response.status, "MALFORMED_RESPONSE", "Core returned malformed Pi package upload metadata"); }
+  }
   async workServices(workId: string): Promise<{ services: WorkServiceSummary[] }> {
     const result = await this.request<{ services: WorkServiceSummary[] }>("GET", servicePath(workId));
     return { services: result.services.map(serviceSummary).sort((a, b) => compare(a.name, b.name) || compare(a.serviceId, b.serviceId)) };
@@ -202,6 +344,8 @@ export class PiworkClient {
   applyWorkConfiguration(workId: string, idempotencyKey: string) { return this.request<{ workId: string; operationId: string; reused: boolean }>("POST", `/api/v1/works/${encodeURIComponent(workId)}/configuration/apply`, { idempotencyKey }); }
   workSkills(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration/skills`); }
   updateWorkSkills(workId: string, skills: unknown[]) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration/skills`, { skills }); }
+  workPackageSelection(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration/packages`); }
+  updateWorkPackageSelection(workId: string, packages: readonly PiPackageSelectionEntry[]) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration/packages`, { packages }); }
   workAgents(workId: string) { return this.request<Record<string, unknown>>("GET", `/api/v1/works/${encodeURIComponent(workId)}/configuration/agents`); }
   updateWorkAgents(workId: string, agentsMd: string) { return this.request<Record<string, unknown>>("PUT", `/api/v1/works/${encodeURIComponent(workId)}/configuration/agents`, { agentsMd }); }
   operation(operationId: string, options?: RequestOptions) { return this.request<Record<string, unknown>>("GET", `/api/v1/operations/${encodeURIComponent(operationId)}`, undefined, options); }

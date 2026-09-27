@@ -16,7 +16,7 @@ test("Work-owned image and retained Skills survive unrelated edits without regis
   try {
     store.createInitialAdministrator({ id: OWNER, account: "owner", passwordDigest: "password", now: NOW });
     registerRuntimeProfileCatalog(store, { version: 1, revision: 1, agentImage: "recipient:default", model: { provider: "deterministic", id: "fixture", credentialRef: "recipient.secret" }, updatedAt: NOW });
-    const config: WorkConfig = { agentImage: { catalogId: "owned-image-00000001" }, modelRef: "runtime-model-00000001", agentsMd: "original rules\n", skills: ["retained-tool"], mcpServers: [],
+    const config: WorkConfig = { agentImage: { catalogId: "owned-image-00000001" }, modelRef: "runtime-model-00000001", agentsMd: "original rules\n", skills: ["retained-tool"], packages: [], mcpServers: [],
       resources: { cpuMillis: 1000, memoryBytes: 1024 ** 3, agentCpuMillis: 500, agentMemoryBytes: 512 * 1024 ** 2, maxServices: 8, maxRetainedVolumes: 16 }, tools: { allowed: ["read"], denied: [] } };
     const skills = join(root, "verified-skills"); mkdirSync(join(skills, "retained-tool"), { recursive: true });
     writeFileSync(join(skills, "retained-tool", "SKILL.md"), "---\nname: retained-tool\ndescription: Retained tool\n---\nKeep this content.\n");

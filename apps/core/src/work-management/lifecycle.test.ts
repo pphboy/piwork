@@ -16,6 +16,29 @@ const IMAGE_A = `sha256:${"a".repeat(64)}`;
 const IMAGE_B = `sha256:${"b".repeat(64)}`;
 const PROFILE_A = JSON.stringify({ version: 1, revision: 1, agentImage: "image:a", model: { provider: "test", id: "a", credentialRef: "a.secret" }, updatedAt: NOW });
 
+test("Work package Operation projects persisted phase only after owner authorization", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const work = create({ name: "package-phase", configuration: config(), idempotencyKey: "create-package-phase" });
+    await lifecycle.waitForIdle();
+    const accepted = store.packages.accept({ actorId: owner.userId, scope: { kind: "work", workId: work.workId },
+      kind: "install", prepareImageId: IMAGE_A, trustedHelperImageId: IMAGE_A,
+      preparedEnvironmentJson: JSON.stringify({ os: "linux", architecture: "amd64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.1" }),
+      addToDefaults: false, idempotencyKey: "package-phase", requestDigest: "safe-digest", requestJson: "{}",
+      sourceJson: JSON.stringify({ kind: "npm", spec: "secret-source@1.0.0" }),
+      deadlineAt: "2026-09-20T01:00:00.000Z", now: NOW });
+    const operationId = accepted.operationId;
+    assert.equal(lifecycle.operation(owner, operationId).packagePhase, "queued");
+    store.packages.advanceJob(operationId, 1, "prepare", NOW, { helperId: "secret-helper-id" });
+    const restarted = new WorkLifecycleService(store, runtime, () => new Date(NOW), 10, 10, undefined, contexts);
+    const observed = restarted.operation(owner, operationId);
+    assert.equal(observed.packagePhase, "prepare");
+    assert.equal(observed.state, "running");
+    assert.doesNotMatch(JSON.stringify(observed), /secret-helper-id|secret-source|sourceJson|helperId/);
+    assert.throws(() => restarted.operation({ userId: "user-other", role: "user" }, operationId));
+    assert.equal(restarted.operation(owner, work.operationId).packagePhase, undefined);
+  });
+});
+
 test("HTTP Work lifecycle is authorized, idempotent, asynchronous, and follows the latest persisted target", async () => {
   await withFixture(async ({ store, lifecycle, runtime, create }) => {
     const server = createWorkHttpServer(
@@ -317,6 +340,11 @@ test("stopped apply validates in initialization-only mode and remains stopped", 
     assert.equal(runtime.startConfigurations.at(-1)?.initializationOnly, true);
     assert.deepEqual(runtime.events, ["remove", "stop", "remove"]);
     assert.equal(runtime.state.exists, false);
+    assert.equal(store.listRuntimeGenerations(created.workId).at(-1)?.state, "stopped");
+    const restarted = lifecycle.start(owner, created.workId, "stopped-apply-start");
+    await lifecycle.waitForIdle();
+    assert.equal(store.getOperation(restarted.operationId)?.state, "succeeded");
+    assert.equal(store.getWorkConfiguration(created.workId)?.activeContextId, "context-stopped-candidate");
   });
 });
 
@@ -544,12 +572,33 @@ test("missing, mismatched, and wrongly owned captured contexts fail before runti
       workId: "work-another-owner",
       imageIdentity: IMAGE_A,
       skills: [],
+      packageContractVersion: 1,
+      packageBindings: [],
       createdAt: NOW,
     })}\n`);
     const ownership = lifecycle.create(owner, ownershipInput);
     await lifecycle.waitForIdle();
     assert.equal(JSON.parse(store.getOperation(ownership.operationId)?.errorJson ?? "{}").code, "SKILL_VALIDATION_FAILED");
     assert.equal(runtime.starts, 0);
+  });
+});
+
+test("package preparation blocks start/apply and stop fences a queued Work package job", async () => {
+  await withFixture(async ({ store, lifecycle, create }) => {
+    const created = create({ name: "package-gate", configuration: config(), idempotencyKey: "package-gate-create", snapshotId: "context-package-gate" });
+    await lifecycle.waitForIdle();
+    const accepted = store.packages.accept({ actorId: owner.userId, scope: { kind: "work", workId: created.workId }, kind: "install",
+      prepareImageId: IMAGE_A, trustedHelperImageId: IMAGE_A,
+      preparedEnvironmentJson: JSON.stringify({ os: "linux", architecture: "amd64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.0" }),
+      addToDefaults: false, idempotencyKey: "package-gate-job", requestDigest: "package-gate-job", requestJson: "{}",
+      sourceJson: JSON.stringify({ kind: "npm", spec: "@example/tools@1.0.0" }),
+      deadlineAt: "2026-09-20T00:30:00Z", now: NOW });
+    assert.throws(() => lifecycle.start(owner, created.workId, "package-gate-start"), { code: "PI_PACKAGE_BUSY" });
+    assert.throws(() => lifecycle.applyConfiguration(owner, created.workId, "package-gate-apply"), { code: "PI_PACKAGE_BUSY" });
+    lifecycle.stop(owner, created.workId, "package-gate-stop");
+    assert.equal(store.packages.getJob(accepted.operationId)?.phase, "superseded");
+    assert.equal(store.getOperation(accepted.operationId)?.state, "superseded");
+    await lifecycle.waitForIdle();
   });
 });
 
@@ -740,7 +789,7 @@ function capture(
 function config(): WorkConfig {
   return {
     agentImage: { catalogId: "image-0199e6d8abcd" },
-    skills: [], agentsMd: "", modelRef: "model-0199e6d8abcd", mcpServers: [],
+    skills: [], packages: [], agentsMd: "", modelRef: "model-0199e6d8abcd", mcpServers: [],
     resources: { cpuMillis: 1000, memoryBytes: 1_073_741_824, agentCpuMillis: 500, agentMemoryBytes: 536_870_912, maxServices: 8, maxRetainedVolumes: 16 },
     tools: { allowed: [], denied: [] },
   };

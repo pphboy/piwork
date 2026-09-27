@@ -19,11 +19,11 @@ function packageSpec(serviceBudget = 250): PortableWorkSpec {
   const definition = normalizeServiceDefinitionInput({ name: "worker", image: { reference: "worker:fixed" }, command: "node", workingDirectory: "/", enabled: false });
   const shared = hash("a");
   return validatePortableWorkSpec({ formatVersion: 1, snapshotKind: "cold-full", createdAt: NOW, sourceName: "source",
-    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2 },
-    activeContext: null, desiredContext: "c-000001", contexts: [{ key: "c-000001", createdAt: NOW, imageKey: "i-000001", skillsTree: shared, agentsBlob: shared,
-      configuration: { modelBindingKey: "m-000001", skills: [], mcpServers: [], tools: { allowed: [], denied: [] },
+    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2, piPackageContract: 1 },
+    activeContext: null, desiredContext: "c-000001", contexts: [{ key: "c-000001", createdAt: NOW, imageKey: "i-000001", skillsTree: shared, agentsBlob: shared, packageBindings: [],
+      configuration: { modelBindingKey: "m-000001", skills: [], packages: [], mcpServers: [], tools: { allowed: [], denied: [] },
         resources: { cpuMillis: 1000, memoryBytes: 1073741824, agentCpuMillis: 500, agentMemoryBytes: 536870912, maxServices: 2, maxRetainedVolumes: 2 } } }],
-    services: [{ key: "s-000001", name: "worker", desiredRevision: 1, appliedRevision: null, enabled: false, tombstonedAt: null,
+    piPackageArtifacts: [], services: [{ key: "s-000001", name: "worker", desiredRevision: 1, appliedRevision: null, enabled: false, tombstonedAt: null,
       revisions: [{ revision: 1, createdAt: NOW, definition, imageKey: null }],
       recovery: { count: 0, windowStartedAt: null, nextRetryAt: null, readySince: null }, sourceObservation: { state: "disabled", lastError: null } }],
     quotaReservations: [{ subjectKind: "agent", subjectKey: "agentd", desiredCpuMillis: 500, desiredMemoryBytes: 536870912, serviceSlots: 0, volumeSlots: 2 },

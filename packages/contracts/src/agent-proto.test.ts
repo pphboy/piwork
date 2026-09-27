@@ -102,6 +102,7 @@ test("readiness and configuration-gate messages preserve the context handshake",
     workId: "work-0199e6d8abcd", generation: 1n, instanceId: "instance-1", protocolVersion: "v1",
     acceptingRuns: false, draining: false, contextContractVersion: 0, contextIdentity: "",
     initializationComplete: false, loadedSkills: [], resolvedTools: [], activeRunCount: 0,
+    packageContractVersion: 0, loadedPackages: [], packageResources: [], packageDiagnostics: [],
   });
   assert.equal(absent.contextContractVersion, 0);
   assert.deepEqual(absent.loadedSkills, []);
@@ -109,6 +110,7 @@ test("readiness and configuration-gate messages preserve the context handshake",
   const ready = roundTrip(ReadinessResponse, {
     ...absent,
     contextContractVersion: 1,
+    packageContractVersion: 1,
     contextIdentity: "context-0199e6d8abcd",
     initializationComplete: true,
     loadedSkills: [{ name: "code-review", identity: "sha256:abc", loaded: true, modelVisible: true, visibilityReason: "" }],

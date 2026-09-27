@@ -3,12 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { CoreStore } from "./store.js";
 import { SnapshotStoreError, type SnapshotJobRecord, type SnapshotPackageRecord, type SnapshotTransferRecord } from "./snapshots.js";
 import { IdempotencyConflictError } from "./mutation.js";
 
 const NOW = "2026-09-23T00:00:00.000Z", DEADLINE = "2026-09-23T00:30:00.000Z", EXPIRES = "2026-09-24T00:00:00.000Z";
-const NEW_TABLES = ["work_import_provenance", "imported_work_history", "work_owned_images", "work_import_names", "snapshot_transfers", "snapshot_artifacts", "work_snapshot_locks", "snapshot_packages", "snapshot_jobs"];
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "piwork-snapshot-store-")), path = join(root, "core.sqlite");
   const store = CoreStore.open({ databasePath: path });
@@ -32,29 +32,20 @@ function accept(store: CoreStore, key = "export-1", digest = "digest") {
   });
 }
 
-test("schema6 upgrades additively to schema7, preserving every original row and migration on reopen", () => {
-  const f = fixture(); let reopened: CoreStore | undefined;
+test("schema7 Work storage is rejected before a package migration changes user data", () => {
+  const f = fixture();
   try {
     f.store.exec("PRAGMA foreign_keys = OFF");
-    for (const table of NEW_TABLES) f.store.exec(`DROP TABLE ${table}`);
-    f.store.exec("DELETE FROM schema_migrations WHERE version = 7; PRAGMA foreign_keys = ON");
-    const names = (f.store.get<{ names: string }>("SELECT group_concat(name) AS names FROM sqlite_master WHERE type = 'table'")!.names).split(",");
-    const rows = (store: CoreStore, name: string) => {
-      const columns = JSON.parse(store.get<{ names: string }>(`SELECT json_group_array(name) AS names FROM pragma_table_info('${name}')`)!.names) as string[];
-      return store.get<{ content: string }>(`SELECT json_group_array(json_array(${columns.map((field) => `"${field}"`).join(",")})) AS content FROM ${name} ${name === "schema_migrations" ? "WHERE version <= 6" : ""} ORDER BY rowid`)?.content;
-    };
-    const records = new Map(names.map((name) => [name, rows(f.store, name)]));
-    const work = f.store.getWork("work-source"), user = f.store.getAuthenticationUserByAccount("alice");
-    f.store.close(); reopened = CoreStore.open({ databasePath: f.path }); assert.equal(reopened.schemaVersion, 7);
-    for (const name of names) assert.equal(rows(reopened, name), records.get(name));
-    assert.deepEqual(reopened.getWork("work-source"), work); assert.deepEqual(reopened.getAuthenticationUserByAccount("alice"), user);
-    assert.equal(reopened.get<{ config_json: string }>("SELECT config_json FROM work_config_revisions")?.config_json, '{"sentinel":"original config"}');
-    assert.equal(reopened.get<{ storage_path: string }>("SELECT storage_path FROM secret_refs")?.storage_path, "/private/unexported-path");
-    assert.equal(reopened.get("PRAGMA foreign_key_check"), undefined);
-    reopened.close(); reopened = CoreStore.open({ databasePath: f.path }); assert.equal(reopened.schemaVersion, 7);
-    assert.equal(reopened.get<{ count: number }>("SELECT COUNT(*) AS count FROM schema_migrations")?.count, 7);
-    for (const table of NEW_TABLES) assert.equal(reopened.get<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`)?.count, 0);
-  } finally { reopened?.close(); f.close(); }
+    for (const table of ["pi_package_jobs", "pi_package_uploads", "pi_package_catalog", "pi_package_artifacts"]) f.store.exec(`DROP TABLE ${table}`);
+    f.store.exec("DELETE FROM schema_migrations WHERE version = 8; PRAGMA foreign_keys = ON");
+    f.store.close();
+    assert.throws(() => CoreStore.open({ databasePath: f.path }), (error) => (error as { code?: string }).code === "CORE_STORAGE_FORMAT_UNSUPPORTED");
+    const unchanged = new DatabaseSync(f.path, { readOnly: true });
+    assert.equal((unchanged.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 7);
+    assert.equal((unchanged.prepare("SELECT config_json FROM work_config_revisions").get() as { config_json: string }).config_json, '{"sentinel":"original config"}');
+    assert.equal((unchanged.prepare("SELECT storage_path FROM secret_refs").get() as { storage_path: string }).storage_path, "/private/unexported-path");
+    unchanged.close();
+  } finally { f.close(); }
 });
 
 test("acceptance reserves one active job and a durable fence; replay precedes capacity and conflicts", () => {

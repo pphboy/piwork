@@ -46,6 +46,12 @@ test("context restoration is confined to the job spool and rejects unsafe logica
   assert.deepEqual(args.slice(-3), ["restore-context", "b".repeat(64), "c-000001"]);
   assert.throws(() => snapshotHelperCreateArgs({ ...spec, volumeName: undefined, action: "restore-context", treeDigest: "b".repeat(64), contextKey: "../escape" }));
   assert.throws(() => snapshotHelperCreateArgs({ ...spec, action: "restore-context", treeDigest: "b".repeat(64), contextKey: "c-000001" }));
+  const packageArgs = snapshotHelperCreateArgs({ ...spec, volumeName: undefined, action: "restore-package", treeDigest: "b".repeat(64),
+    contextKey: "c-000001", packageKey: "c".repeat(64) });
+  assert.deepEqual(packageArgs.slice(-4), ["restore-package", "b".repeat(64), "c-000001", "c".repeat(64)]);
+  assert.equal(packageArgs.filter((value) => value === "--mount").length, 1);
+  assert.throws(() => snapshotHelperCreateArgs({ ...spec, volumeName: undefined, action: "restore-package", treeDigest: "b".repeat(64),
+    contextKey: "c-000001", packageKey: "../escape" }));
 });
 
 test("helper execution and cleanup recheck exact installation/job ownership", async () => {

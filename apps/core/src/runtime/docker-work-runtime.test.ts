@@ -10,13 +10,14 @@ import { ensureCorePaths } from "../application/paths.js";
 import { RuntimeProfileStore } from "../configuration/runtime-profile.js";
 import { WorkContextStore } from "../configuration/work-context.js";
 import { inspectSkillTree } from "../configuration/skill-tree.js";
+import { validatePiPackageArtifact } from "@piwork/pi-package";
 
 const WORK = { id: "work-0199e6d8abcd", ownerUserId: "user-1", name: "fixture", desiredState: "running", observedState: "ready", desiredRevision: 1, activeRevision: 1, controlVersion: 1, deletedAt: null, createdAt: "2026-09-21T00:00:00Z", updatedAt: "2026-09-21T00:00:00Z" } as const;
 
 test("readiness requires the complete captured context, ordered Skills, and effective tools", () => {
   const record = { workId: WORK.id, generation: 4, instanceId: "agent-4" };
   const workConfig = {
-    agentImage: { catalogId: "image-a" }, skills: ["alpha"], agentsMd: "", modelRef: "model-a", mcpServers: [],
+    agentImage: { catalogId: "image-a" }, skills: ["alpha"], packages: [], agentsMd: "", modelRef: "model-a", mcpServers: [],
     resources: { cpuMillis: 1000, memoryBytes: 512 * 1024 * 1024, agentCpuMillis: 1000, agentMemoryBytes: 512 * 1024 * 1024, maxServices: 0, maxRetainedVolumes: 0 },
     tools: { allowed: ["read"], denied: [] },
   };
@@ -27,6 +28,7 @@ test("readiness requires the complete captured context, ordered Skills, and effe
     initializationComplete: true,
     loadedSkills: [{ name: "alpha", identity: "sha256:alpha", loaded: true, modelVisible: true, visibilityReason: "" }],
     resolvedTools: ["read"], activeRunCount: 0,
+    packageContractVersion: 1, loadedPackages: [], packageResources: [], packageDiagnostics: [],
   };
   assert.doesNotThrow(() => verifyExpectedReadiness(ready, record, configuration));
   for (const incompatible of [
@@ -69,6 +71,35 @@ test("readiness requires the complete captured context, ordered Skills, and effe
   ), (error) => error instanceof RuntimeReadinessError && error.code === "AGENT_CONTEXT_MISMATCH");
 });
 
+test("readiness binds package bytes and tools to the active context", () => {
+  const record = { workId: WORK.id, generation: 2, instanceId: "agent-2" };
+  const name = "@example/tools", digest = `sha256:${"a".repeat(64)}`;
+  const workConfig = {
+    agentImage: { catalogId: "image-a" }, skills: [], packages: [{ name, enabled: true }], agentsMd: "", modelRef: "model-a", mcpServers: [],
+    resources: { cpuMillis: 1000, memoryBytes: 512 * 1024 * 1024, agentCpuMillis: 1000, agentMemoryBytes: 512 * 1024 * 1024, maxServices: 0, maxRetainedVolumes: 0 },
+    tools: { allowed: ["read", `package:${name}:hello`], denied: [] },
+  };
+  const configuration = { contextIdentity: "context-a", skillIdentities: [], workConfig,
+    packageBindings: [{ name, artifact: { contentDigest: digest, resourceCounts: { extensions: 1, skills: 0, prompts: 0, themes: 0 } } }] };
+  const ready = { workId: WORK.id, generation: 2n, instanceId: "agent-2", protocolVersion: CONTRACT_VERSION,
+    acceptingRuns: true, draining: false, contextContractVersion: 1, contextIdentity: "context-a", initializationComplete: true,
+    loadedSkills: [], resolvedTools: ["read", `package:${name}:hello`], activeRunCount: 0, packageContractVersion: 1,
+    loadedPackages: [{ name, contentDigest: digest, extensions: 1, skills: 0, prompts: 0, themes: 0 }],
+    packageResources: [{ packageName: name, kind: "extension", name: "extensions/tool.js" }], packageDiagnostics: [] };
+  assert.doesNotThrow(() => verifyExpectedReadiness(ready, record, configuration));
+  for (const invalid of [
+    { ...ready, packageContractVersion: 0 },
+    { ...ready, loadedPackages: [{ ...ready.loadedPackages[0]!, contentDigest: `sha256:${"b".repeat(64)}` }] },
+    { ...ready, loadedPackages: [] },
+    { ...ready, loadedPackages: [ready.loadedPackages[0]!, ready.loadedPackages[0]!] },
+    { ...ready, loadedPackages: [{ ...ready.loadedPackages[0]!, name: "other" }] },
+    { ...ready, packageDiagnostics: [{ packageName: name, code: "PACKAGE_LOAD_FAILED", message: "safe" }] },
+    { ...ready, generation: 1n },
+    { ...ready, resolvedTools: ["read", "package:other:hello"] },
+    { ...ready, packageResources: [] },
+  ]) assert.throws(() => verifyExpectedReadiness(invalid, record, configuration), RuntimeReadinessError);
+});
+
 test("readiness polling detects an exited exact generation and retains only recognized diagnostics", async () => {
   const root = mkdtempSync(join(tmpdir(), "piwork-readiness-exit-"));
   try {
@@ -109,6 +140,18 @@ test("readiness polling detects an exited exact generation and retains only reco
         && error.stage === "skill-load"
         && error.skillName === "alpha"
         && error.exitCode === 23
+        && error.diagnosticCollection.state === "available",
+    );
+
+    target.docker.collectContainerLogs = async () => ({ text: JSON.stringify({
+      component: "agentd", outcome: "failed", code: "PACKAGE_LOAD_FAILED", stage: "package-load",
+      correlationId: "agent-7", workId: WORK.id,
+    }), truncated: false });
+    await assert.rejects(
+      target.waitReady(record, configuration, "container-7"),
+      (error) => error instanceof RuntimeReadinessError
+        && error.code === "PACKAGE_LOAD_FAILED"
+        && error.stage === "package-load"
         && error.diagnosticCollection.state === "available",
     );
 
@@ -178,8 +221,13 @@ test("runtime Skill state is live evidence for the exact recorded context and ge
     mkdirSync(skillDirectory, { recursive: true });
     writeFileSync(join(skillDirectory, "SKILL.md"), "---\ndescription: alpha\n---\nAlpha\n");
     const skill = inspectSkillTree(skillDirectory);
+    const packageDirectory = join(root, "package");
+    mkdirSync(packageDirectory, { recursive: true });
+    writeFileSync(join(packageDirectory, "package.json"), '{"name":"@example/status","version":"1.0.0"}');
+    const packageMetadata = (await validatePiPackageArtifact({ root: packageDirectory, sourceKind: "local", resolvedSource: "local:fixture",
+      preparedEnvironment: { os: "linux", architecture: "amd64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.0" } })).metadata;
     const configuration = {
-      agentImage: { catalogId: "image-0199e6d8abcd" }, skills: ["alpha"], agentsMd: "", modelRef: "model-0199e6d8abcd", mcpServers: [],
+      agentImage: { catalogId: "image-0199e6d8abcd" }, skills: ["alpha"], packages: [{ name: packageMetadata.name, enabled: true }], agentsMd: "", modelRef: "model-0199e6d8abcd", mcpServers: [],
       resources: { cpuMillis: 1000, memoryBytes: 1024 * 1024 * 1024, agentCpuMillis: 500, agentMemoryBytes: 512 * 1024 * 1024, maxServices: 8, maxRetainedVolumes: 16 },
       tools: { allowed: ["read"], denied: [] },
     };
@@ -187,6 +235,7 @@ test("runtime Skill state is live evidence for the exact recorded context and ge
       workId: WORK.id, snapshotId: "context-status", configuration,
       imageIdentity: `sha256:${"a".repeat(64)}`,
       skills: [{ name: "alpha", identity: skill.identity, directory: skillDirectory }],
+      packages: [{ name: packageMetadata.name, metadata: packageMetadata, directory: packageDirectory }],
       createdAt: "2026-09-21T00:00:00Z",
     });
     mkdirSync(join(paths.runtimeDirectory, WORK.id), { recursive: true });
@@ -205,17 +254,28 @@ test("runtime Skill state is live evidence for the exact recorded context and ge
       readiness(): Promise<unknown>;
     };
     target.docker = { async inspectContainer() { return inspection; } };
+    let packageLoadFails = false;
     target.readiness = async () => ({
       workId: WORK.id, generation: 9n, instanceId: "agent-9", protocolVersion: CONTRACT_VERSION,
       acceptingRuns: true, draining: false, contextContractVersion: 1, contextIdentity: "context-status",
       initializationComplete: true,
       loadedSkills: [{ name: "alpha", identity: skill.identity, loaded: true, modelVisible: false, visibilityReason: "read-tools-disabled" }],
       resolvedTools: ["read"], activeRunCount: 0,
+      packageContractVersion: 1,
+      loadedPackages: packageLoadFails ? [] : [{ name: packageMetadata.name, contentDigest: packageMetadata.contentDigest,
+        extensions: 0, skills: 0, prompts: 0, themes: 0 }],
+      packageResources: [], packageDiagnostics: packageLoadFails ? [{ packageName: packageMetadata.name, code: "PACKAGE_LOAD_FAILED", message: "private path" }] : [],
     });
     const ready = await adapter.runtimeSkillState(WORK.id);
     assert.equal(ready.state, "ready");
     assert.equal(typeof ready.checkedAt, "string");
     assert.deepEqual(ready.skills, [{ name: "alpha", loaded: true, modelVisible: false, visibilityReason: "read-tools-disabled" }]);
+    assert.deepEqual(ready.packages, [{ name: packageMetadata.name, loaded: true, diagnostics: [] }]);
+    packageLoadFails = true;
+    const failed = await adapter.runtimeSkillState(WORK.id);
+    assert.equal(failed.state, "failed");
+    assert.deepEqual(failed.packages, [{ name: packageMetadata.name, loaded: false, diagnostics: ["PACKAGE_LOAD_FAILED"] }]);
+    packageLoadFails = false;
     inspection = { ...inspection, labels: { ...inspection.labels, "piwork.generation": "8" } };
     assert.deepEqual((await adapter.runtimeSkillState(WORK.id)).skills, []);
     inspection = { ...inspection, running: false };
@@ -233,7 +293,7 @@ function runtimeConfiguration(contextIdentity: string) {
     runtimeProfileJson: "{}",
     skillIdentities: [],
     workConfig: {
-      agentImage: { catalogId: "image-a" }, skills: [], agentsMd: "", modelRef: "model-a", mcpServers: [],
+      agentImage: { catalogId: "image-a" }, skills: [], packages: [], agentsMd: "", modelRef: "model-a", mcpServers: [],
       resources: { cpuMillis: 1000, memoryBytes: 512 * 1024 * 1024, agentCpuMillis: 1000, agentMemoryBytes: 512 * 1024 * 1024, maxServices: 0, maxRetainedVolumes: 0 },
       tools: { allowed: [], denied: [] },
     },

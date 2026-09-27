@@ -675,7 +675,7 @@ function definition(overrides: Partial<ServiceDefinitionInput> = {}): ServiceDef
 function workConfig(): WorkConfig {
   return {
     agentImage: { catalogId: "image-0199e6d8abcd" },
-    skills: [],
+    skills: [], packages: [],
     agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [],

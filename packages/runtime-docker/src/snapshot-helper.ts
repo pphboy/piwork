@@ -10,11 +10,12 @@ export interface SnapshotHelperSpec {
   /** Core-resolved staging directory, never taken from a request. */
   readonly spoolDirectory: string;
   readonly volumeName?: string;
-  readonly action: "capture" | "restore" | "restore-context" | "verify-history" | "restore-history" | "verify-package";
+  readonly action: "capture" | "restore" | "restore-context" | "restore-package" | "verify-history" | "restore-history" | "verify-package";
   /** The Core process uid:gid, used only by a no-capabilities upload verifier. */
   readonly spoolUser?: string;
   readonly treeDigest?: string;
   readonly contextKey?: string;
+  readonly packageKey?: string;
 }
 
 /** Only the trusted helper can receive restoration capabilities; user runtime specs are unchanged. */
@@ -24,12 +25,13 @@ export function snapshotHelperCreateArgs(spec: SnapshotHelperSpec): string[] {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value)) throw new TypeError("Invalid helper resource identity");
   }
   if (!isAbsolute(spec.spoolDirectory) || normalize(spec.spoolDirectory) !== spec.spoolDirectory || /[,\x00\r\n]/.test(spec.spoolDirectory) || spec.spoolDirectory === "/") throw new TypeError("Invalid helper staging directory");
-  if (!(["capture", "restore", "restore-context", "verify-history", "restore-history", "verify-package"] as readonly string[]).includes(spec.action)
-    || (!["restore", "restore-context"].includes(spec.action) && spec.treeDigest !== undefined)
-    || (["restore", "restore-context"].includes(spec.action) && !/^[a-f0-9]{64}$/.test(spec.treeDigest ?? ""))
-    || (spec.action === "restore-context" ? !/^[a-z][a-z0-9-]{0,63}$/.test(spec.contextKey ?? "") : spec.contextKey !== undefined)) throw new TypeError("Invalid helper action");
+  if (!(["capture", "restore", "restore-context", "restore-package", "verify-history", "restore-history", "verify-package"] as readonly string[]).includes(spec.action)
+    || (!["restore", "restore-context", "restore-package"].includes(spec.action) && spec.treeDigest !== undefined)
+    || (["restore", "restore-context", "restore-package"].includes(spec.action) && !/^[a-f0-9]{64}$/.test(spec.treeDigest ?? ""))
+    || (["restore-context", "restore-package"].includes(spec.action) ? !/^[a-z][a-z0-9-]{0,63}$/.test(spec.contextKey ?? "") : spec.contextKey !== undefined)
+    || (spec.action === "restore-package" ? !/^[a-f0-9]{64}$/.test(spec.packageKey ?? "") : spec.packageKey !== undefined)) throw new TypeError("Invalid helper action");
   const upload = spec.action === "verify-package";
-  const noVolume = upload || spec.action === "restore-context";
+  const noVolume = upload || spec.action === "restore-context" || spec.action === "restore-package";
   if (noVolume !== (spec.volumeName === undefined)
     || (upload ? !/^[0-9]+:[0-9]+$/.test(spec.spoolUser ?? "") : spec.spoolUser !== undefined)) throw new TypeError("Invalid helper mounts or user");
   const readOnlyVolume = spec.action === "capture" || spec.action === "verify-history";
@@ -44,5 +46,6 @@ export function snapshotHelperCreateArgs(spec: SnapshotHelperSpec): string[] {
     "--entrypoint", "node", spec.imageId, "/workspace/apps/snapshot-helper/dist/main.js", spec.action,
     ...(spec.treeDigest === undefined ? [] : [spec.treeDigest]),
     ...(spec.contextKey === undefined ? [] : [spec.contextKey]),
+    ...(spec.packageKey === undefined ? [] : [spec.packageKey]),
   ];
 }

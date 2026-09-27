@@ -61,6 +61,13 @@ test("real helper captures both volume roots read-only and restores independent 
     assert.equal((JSON.parse(owned.output) as { tree: string }).tree, captured[1]);
     assert.equal((await stat(join(spoolDirectory, "contexts", "c-000001", ".env"))).uid, process.getuid!());
     assert.equal((await readFile(join(spoolDirectory, "contexts", "c-000001", ".env"), "utf8")), "TOKEN=original");
+    const packageKey = "c".repeat(64);
+    await mkdir(join(spoolDirectory, "context-packages", "c-000001", packageKey), { recursive: true, mode: 0o700 });
+    const packageRestore = await container(snapshotHelperCreateArgs({ installationId, jobId: installationId,
+      name: `${installationId}-package`, imageId, spoolDirectory, action: "restore-package", treeDigest: captured[1]!,
+      contextKey: "c-000001", packageKey }));
+    assert.equal((JSON.parse(packageRestore.output) as { tree: string }).tree, captured[1]);
+    assert.equal((await readFile(join(spoolDirectory, "context-packages", "c-000001", packageKey, ".env"), "utf8")), "TOKEN=original");
     // A second capture produces the same tree, including root metadata and byte names.
     for (let index = 0; index < 4; index++) {
       const copy = await container(snapshotHelperCreateArgs({ installationId, jobId: installationId, name: `${installationId}-verify-${index}`, imageId, spoolDirectory, volumeName: volumes[index]!, action: "capture" }));

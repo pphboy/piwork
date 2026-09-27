@@ -26,13 +26,22 @@ export async function runServe(args: readonly string[]): Promise<void> {
     agentGrpcListen: environment.PIWORK_AGENT_GRPC_LISTEN ?? "0.0.0.0:7172",
     agentGrpcAdvertise: environment.PIWORK_AGENT_GRPC_ADVERTISE ?? "piwork-core:7172",
     snapshotHelperImage: environment.PIWORK_SNAPSHOT_HELPER_IMAGE,
+    packageHelperImage: environment.PIWORK_PACKAGE_HELPER_IMAGE,
   });
+  let startupError: unknown;
   try {
     const bound = await application.listen(requested);
     process.stdout.write(`${JSON.stringify({ event: "core.listening", url: formatHttpUrl(bound), pid: process.pid, dataDirectory: paths.dataDirectory })}\n`);
     await waitForSignal();
+  } catch (error) {
+    startupError = error;
+    throw error;
   } finally {
-    await withTimeout(application.close(), 45_000, "Core shutdown exceeded 45 seconds");
+    try { await withTimeout(application.close(), 45_000, "Core shutdown exceeded 45 seconds"); }
+    catch (error) {
+      if (startupError === undefined) throw error;
+      process.stderr.write(`${JSON.stringify({ event: "core.shutdown-failed-after-startup-error" })}\n`);
+    }
   }
 }
 

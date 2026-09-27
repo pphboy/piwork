@@ -1,5 +1,5 @@
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, open, readdir } from "node:fs/promises";
+import { lstat, open, readdir, readlink } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { WorkPackageValidationError } from "@piwork/contracts";
 import { encodeWorkJson, type WorkBlobDirectory, type WorkTree, WORK_PACKAGE_LIMITS } from "@piwork/work-package";
@@ -23,6 +23,15 @@ function bytePath(entry: WorkTree["entries"][number]): Buffer {
 
 /** Context Skills are Core-owned immutable files, not an arbitrary host tree. */
 export async function captureOwnedSkillTree(directory: string, blobs: WorkBlobDirectory, signal?: AbortSignal): Promise<{ digest: string; size: number; entries: number }> {
+  return captureOwnedTree(directory, blobs, false, signal);
+}
+
+/** Pi package trees may include safe relative dependency symlinks. */
+export async function captureOwnedPackageTree(directory: string, blobs: WorkBlobDirectory, signal?: AbortSignal): Promise<{ digest: string; size: number; entries: number }> {
+  return captureOwnedTree(directory, blobs, true, signal);
+}
+
+async function captureOwnedTree(directory: string, blobs: WorkBlobDirectory, allowSymlinks: boolean, signal?: AbortSignal): Promise<{ digest: string; size: number; entries: number }> {
   const entries: WorkTree["entries"] = [];
   const walk = async (path: string | Buffer, segments: Buffer[]): Promise<void> => {
     signal?.throwIfAborted();
@@ -48,6 +57,10 @@ export async function captureOwnedSkillTree(directory: string, blobs: WorkBlobDi
           if (stored.size !== size || !same(initial, await file.stat({ bigint: true })) || !same(initial, await lstat(nextPath, { bigint: true }))) unsupported();
           entries.push({ type: "file", ...fields(initial, nextSegments), blob: stored.digest, size });
         } finally { await file.close(); }
+      } else if (allowSymlinks && initial.isSymbolicLink()) {
+        const target = await readlink(nextPath, { encoding: "buffer" });
+        if (target.length === 0 || target.length > WORK_PACKAGE_LIMITS.pathBytes || target.includes(0) || !(await lstat(nextPath, { bigint: true })).isSymbolicLink()) unsupported();
+        entries.push({ type: "symlink", ...fields(initial, nextSegments), targetBase64: target.toString("base64") });
       } else unsupported();
       if (entries.length > WORK_PACKAGE_LIMITS.entries) throw new WorkPackageValidationError("PACKAGE_LIMIT_EXCEEDED", "context.entries");
     }

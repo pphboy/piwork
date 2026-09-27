@@ -34,6 +34,31 @@ message ReadinessResponse {
   repeated LoadedSkill loaded_skills = 10;
   repeated string resolved_tools = 11;
   uint32 active_run_count = 12;
+  uint32 package_contract_version = 13;
+  repeated LoadedPackage loaded_packages = 14;
+  repeated PackageResource package_resources = 15;
+  repeated PackageDiagnostic package_diagnostics = 16;
+}
+
+message LoadedPackage {
+  string name = 1;
+  string content_digest = 2;
+  uint32 extensions = 3;
+  uint32 skills = 4;
+  uint32 prompts = 5;
+  uint32 themes = 6;
+}
+
+message PackageResource {
+  string package_name = 1;
+  string kind = 2;
+  string name = 3;
+}
+
+message PackageDiagnostic {
+  string package_name = 1;
+  string code = 2;
+  string message = 3;
 }
 
 message LoadedSkill {

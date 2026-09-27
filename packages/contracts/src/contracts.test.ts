@@ -15,6 +15,15 @@ import {
   PublicSkillSchema,
   OperatorSkillSchema,
   SkillPathRequestSchema,
+  PiPackageNameSchema,
+  PiPackageToolPolicyKeySchema,
+  WorkToolPolicyKeySchema,
+  parsePiPackageToolPolicyKey,
+  PiPackageSelectionSchema,
+  PiPackageArtifactMetadataSchema,
+  PiPackageCatalogEntrySchema,
+  validatePiPackageSelection,
+  sortPiPackageSelection,
   type WorkConfig,
   normalizeAgentsMd,
   resolveBuiltInWorkTools,
@@ -30,6 +39,7 @@ import {
 const validWorkConfig: WorkConfig = {
   agentImage: { catalogId: "image-0199e6d8abcd" },
   skills: ["code-review", "release-notes"],
+  packages: [],
   agentsMd: "",
   modelRef: "model-0199e6d8abcd",
   mcpServers: [
@@ -119,6 +129,7 @@ test("Work configuration contracts are revision-free and reject malformed select
     runtime: { state: "unavailable", checkedAt: null, skills: [] },
   }), true);
   assert.equal(Check(WorkConfigSchema, { ...validWorkConfig, revision: 1 }), false);
+  assert.equal(Check(WorkConfigSchema, Object.fromEntries(Object.entries(validWorkConfig).filter(([key]) => key !== "packages"))), false);
   assert.equal(Check(WorkConfigurationViewSchema, {
     workId: "work-0199e6d8abcd",
     active: validWorkConfig,
@@ -133,6 +144,44 @@ test("Work configuration contracts are revision-free and reject malformed select
   assert.equal(Check(SetWorkSkillsRequestSchema, { skills: ["code-review", "code-review"] }), false);
   assert.equal(Check(SetWorkSkillsRequestSchema, { skills: ["Code_Review"] }), false);
   assert.equal(Check(SetWorkSkillsRequestSchema, { skills: ["code-review"], expectedRevision: 1 }), false);
+});
+
+test("package identity, selection, metadata and public projection are bounded", () => {
+  for (const name of ["tools", "@example/pi-tools", "a.b_c-1"]) assert.equal(Check(PiPackageNameSchema, name), true);
+  for (const name of ["", ".", "..", "@scope/", "@/tools", "Bad", "/tmp/tools", "x".repeat(215)]) {
+    assert.equal(Check(PiPackageNameSchema, name), false);
+  }
+  assert.equal(Check(PiPackageSelectionSchema, []), true);
+  assert.equal(Check(PiPackageSelectionSchema, [{ name: "tools", enabled: true }]), true);
+  assert.equal(Check(PiPackageSelectionSchema, Array.from({ length: 65 }, (_, index) => ({ name: `tool-${index}`, enabled: true }))), false);
+  assert.equal(Check(PiPackageSelectionSchema, [{ name: "tools", enabled: true, path: "/tmp" }]), false);
+  assert.throws(() => validatePiPackageSelection([{ name: "tools", enabled: true }, { name: "tools", enabled: false }]), /duplicate/);
+  assert.deepEqual(sortPiPackageSelection([{ name: "z", enabled: true }, { name: "a", enabled: false }]).map(({ name }) => name), ["a", "z"]);
+  const counts = { extensions: 1, skills: 1, prompts: 1, themes: 1 };
+  const metadata = {
+    name: "@example/pi-tools", version: null, sourceKind: "zip", resolvedSource: "tools.zip",
+    preparedEnvironment: { os: "linux", architecture: "amd64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.0" },
+    resourceCounts: counts, contentDigest: `sha256:${"a".repeat(64)}`,
+  };
+  assert.equal(Check(PiPackageArtifactMetadataSchema, metadata), true);
+  assert.equal(Check(PiPackageArtifactMetadataSchema, { ...metadata, version: "1.0.0", contentDigest: `sha256:${"b".repeat(64)}` }), true);
+  assert.equal(Check(PiPackageCatalogEntrySchema, { name: metadata.name, version: null, sourceKind: "zip", enabled: true, isDefault: false, resourceCounts: counts }), true);
+  assert.equal(Check(PiPackageCatalogEntrySchema, { name: metadata.name, version: null, sourceKind: "zip", enabled: true, isDefault: false, resourceCounts: counts, contentDigest: metadata.contentDigest }), false);
+});
+
+test("package tool policy names support scoped identities without widening old identifiers", () => {
+  const scoped = "package:@example/pi-tools:hello";
+  assert.equal(Check(PiPackageToolPolicyKeySchema, scoped), true);
+  assert.equal(Check(WorkToolPolicyKeySchema, scoped), true);
+  assert.deepEqual(parsePiPackageToolPolicyKey(scoped), { packageName: "@example/pi-tools", toolName: "hello" });
+  assert.equal(Check(WorkToolPolicyKeySchema, "read"), true);
+  assert.equal(Check(WorkToolPolicyKeySchema, "notes.search"), true);
+  for (const invalid of ["package:tools:", "package:@example/Tools:hello", "package:tools:has.dot", "package:tools:tool/escape", "package:tools:" + "x".repeat(65)]) {
+    assert.equal(Check(PiPackageToolPolicyKeySchema, invalid), false);
+    assert.equal(parsePiPackageToolPolicyKey(invalid), undefined);
+  }
+  assert.equal(Check(WorkToolPolicyKeySchema, "package:@example/pi-tools:" + "x".repeat(500)), false);
+  assert.equal(Check(WorkConfigSchema, { ...validWorkConfig, tools: { allowed: [scoped], denied: [] } }), true);
 });
 
 test("Skill projections permit only approved public and operator fields", () => {
@@ -183,6 +232,8 @@ test("runtime and operation projections are bounded and reject internal fields",
     diagnostics: { stages: [], truncated: false, rollback: { state: "not-required" }, diagnosticCollection: { state: "unrecognized" } },
   };
   assert.equal(Check(PublicOperationSchema, operation), true);
+  assert.equal(Check(PublicOperationSchema, { ...operation, packagePhase: "prepare" }), true);
+  assert.equal(Check(PublicOperationSchema, { ...operation, packagePhase: "private-helper-stage" }), false);
   for (const forbidden of ["requestJson", "targetVersion", "contextIdentity", "imageIdentity", "digest", "hostPath", "storagePath"]) {
     assert.equal(Check(PublicOperationSchema, { ...operation, [forbidden]: "token=/tmp/private" }), false);
   }

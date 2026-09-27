@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ReadableStream } from "node:stream/web";
-import { defaultCredentialPath, FileCredentialStore, PiworkApiError, PiworkClient, resolveCoreEndpoint, safeErrorMessage, type CredentialRecord } from "./index.js";
+import { defaultCredentialPath, FileCredentialStore, PiworkApiError, PiworkClient, resolveCoreEndpoint, safeErrorMessage, waitPiPackageOperation, type CredentialRecord } from "./index.js";
 
 const record: CredentialRecord = {
   version: 1,
@@ -91,6 +91,103 @@ test("operation signals interrupt both fetch and stalled response bodies", async
   const normal = new PiworkClient({ coreUrl: "http://core.test", fetch: async () => Response.json({ state: "succeeded" }) });
   assert.deepEqual(await normal.operation("op", { signal: controller.signal }), { state: "succeeded" });
   assert.deepEqual(await normal.operation("op"), { state: "succeeded" });
+});
+
+test("Pi package SDK encodes scoped routes, sends only source descriptors, and uploads ZIP headers", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetcher: typeof globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), init });
+    return Response.json(String(input).endsWith("package-uploads") ? { uploadId: "upload-1", expiresAt: "later" }
+      : { operationId: "operation-1", workId: "work/a", scope: "work", kind: "pi-package-install", name: null, reused: false, correlationId: "c" });
+  };
+  const client = new PiworkClient({ coreUrl: "http://core.test", token: "user-token", fetch: fetcher });
+  const operator = new PiworkClient({ coreUrl: "http://core.test", operatorToken: "operator-token", fetch: fetcher });
+  await client.installWorkPackage("work/a", { kind: "npm", spec: "@example/tools@1.0.0" }, "key");
+  await client.updateWorkPackage("work/a", "@example/tools", { kind: "core", name: "@example/tools" }, "key-2");
+  await operator.installManagedPackage({ kind: "git", spec: "github.com/example/tools@v1" }, "core-key", true);
+  await client.uploadPiPackage((async function* () { yield Buffer.from("zip"); })(), "a".repeat(64), 3, "tools.zip", "zip", { kind: "work", workId: "work/a" });
+  assert.ok(calls[0]!.url.endsWith("/works/work%2Fa/packages"));
+  assert.deepEqual(JSON.parse(String(calls[0]!.init?.body)), { source: { kind: "npm", spec: "@example/tools@1.0.0" }, idempotencyKey: "key" });
+  assert.ok(calls[1]!.url.endsWith("/works/work%2Fa/packages/%40example%2Ftools/update"));
+  assert.deepEqual(JSON.parse(String(calls[1]!.init?.body)).source, { kind: "core", name: "@example/tools" });
+  assert.deepEqual(JSON.parse(String(calls[2]!.init?.body)).addToDefaults, true);
+  assert.equal(new Headers(calls[3]!.init?.headers).get("x-piwork-package-name"), "tools.zip");
+  assert.equal(new Headers(calls[3]!.init?.headers).get("content-type"), "application/zip");
+  assert.equal(JSON.stringify(calls).includes("/home/"), false);
+});
+
+test("Pi package wait follows one accepted operation beyond two minutes unless a deadline is requested", async () => {
+  let polls = 0, now = 0;
+  const client = new PiworkClient({ coreUrl: "http://core.test", operatorToken: "operator-token", fetch: async () => {
+    polls += 1; return Response.json({ state: polls === 3 ? "succeeded" : "running" });
+  } });
+  const accepted = { operationId: "operation-1", workId: null, scope: "core" as const, kind: "pi-package-install" as const, name: null, reused: false, correlationId: "c" };
+  assert.equal((await waitPiPackageOperation(client, accepted, { now: () => now, sleep: async (ms) => { now += ms; } })).state, "succeeded");
+  assert.equal(polls, 3); assert.equal(now, 500);
+  let delayedPolls = 0, delayedClock = 0;
+  const delayed = new PiworkClient({ coreUrl: "http://core.test", token: "user-token", fetch: async (input, init) => {
+    assert.equal(init?.method ?? "GET", "GET", "waiting must never resubmit the package mutation");
+    assert.match(String(input), /\/operations\/operation-1$/);
+    delayedPolls += 1;
+    return Response.json({ state: delayedPolls === 2 ? "failed" : "running" });
+  } });
+  assert.equal((await waitPiPackageOperation(delayed, { ...accepted, scope: "work", workId: "work-1" }, {
+    now: () => delayedClock, sleep: async () => { delayedClock += 121_000; },
+  })).state, "failed");
+  assert.equal(delayedPolls, 2);
+  let timeoutPolls = 0, timeoutClock = 0;
+  const running = new PiworkClient({ coreUrl: "http://core.test", operatorToken: "operator-token", fetch: async (_input, init) => {
+    assert.equal(init?.method ?? "GET", "GET", "waiting must never resubmit the package mutation");
+    timeoutPolls += 1;
+    return Response.json({ state: "running" });
+  } });
+  await assert.rejects(waitPiPackageOperation(running, accepted, { deadlineMs: 500, now: () => timeoutClock,
+    sleep: async (ms) => { timeoutClock += ms; } }),
+  (error: unknown) => error instanceof PiworkApiError && error.code === "OPERATION_WAIT_TIMEOUT" && error.message.includes("operation-1"));
+  assert.equal(timeoutPolls, 2);
+});
+
+test("Pi package wait retries temporary observation failures and reports only safe progress", async () => {
+  const accepted = { operationId: "operation-1", workId: null, scope: "core" as const, kind: "pi-package-install" as const,
+    name: null, reused: false, correlationId: "operation-1" };
+  let calls = 0, clock = 0;
+  const sleeps: number[] = [], progress: string[] = [];
+  const client = new PiworkClient({ coreUrl: "http://core.test", operatorToken: "private-token", fetch: async (_input, init) => {
+    assert.equal(init?.method, "GET");
+    calls += 1;
+    if (calls === 1) return Response.json({ code: "UNAVAILABLE", message: "secret raw log" }, { status: 503 });
+    if (calls === 2) throw new Error("network down with secret raw log");
+    if (calls === 3) return Response.json({ state: "running", packagePhase: "prepare", helperId: "private-helper" });
+    return Response.json({ state: "failed", packagePhase: "failed", error: { stage: "prepare", code: "PI_PACKAGE_DEPENDENCY_INSTALL_FAILED", message: "secret raw log" } });
+  } });
+  const final = await waitPiPackageOperation(client, accepted, { now: () => clock,
+    sleep: async (ms) => { sleeps.push(ms); clock += ms; },
+    onProgress: (event) => progress.push(JSON.stringify(event)) });
+  assert.equal(final.state, "failed");
+  assert.equal(calls, 4);
+  assert.deepEqual(sleeps, [250, 500, 250]);
+  assert.deepEqual(progress.map((event) => JSON.parse(event).kind), ["retry", "retry", "recovered", "phase", "phase", "terminal"]);
+  assert.doesNotMatch(progress.join(""), /private|secret raw log|helperId/);
+  assert.match(progress.at(-1)!, /PI_PACKAGE_DEPENDENCY_INSTALL_FAILED/);
+  const forbidden = new PiworkClient({ coreUrl: "http://core.test", operatorToken: "private-token", fetch: async () =>
+    Response.json({ code: "NOT_FOUND" }, { status: 404 }) });
+  await assert.rejects(waitPiPackageOperation(forbidden, accepted, { sleep: async () => { throw new Error("should not retry"); } }),
+    (error: unknown) => error instanceof PiworkApiError && error.status === 404);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(waitPiPackageOperation(client, accepted, { signal: controller.signal }),
+    (error: unknown) => error instanceof PiworkApiError && error.code === "OPERATION_WAIT_INTERRUPTED");
+});
+
+test("Pi package wait emits one phase line and a heartbeat, without per-poll chatter", async () => {
+  const accepted = { operationId: "operation-1", workId: null, scope: "core" as const, kind: "pi-package-install" as const,
+    name: null, reused: false, correlationId: "operation-1" };
+  let polls = 0, clock = 0;
+  const kinds: string[] = [];
+  const client = new PiworkClient({ coreUrl: "http://core.test", operatorToken: "token", fetch: async () =>
+    Response.json({ state: ++polls === 4 ? "succeeded" : "running", packagePhase: "prepare" }) });
+  await waitPiPackageOperation(client, accepted, { now: () => clock, sleep: async () => { clock += 15_000; },
+    onProgress: ({ kind }) => kinds.push(kind) });
+  assert.deepEqual(kinds, ["phase", "heartbeat", "terminal"]);
 });
 
 test("snapshot SDK keeps JSON and binary transport separate with auth, encoded IDs and cancellable streams", async () => {

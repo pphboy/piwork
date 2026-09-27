@@ -87,7 +87,16 @@ export class RunManager {
     try {
       if (await Promise.race([settled.then(() => "settled" as const), expired]) === "timeout") {
         for (const execution of this.active.values()) execution.controller.abort();
-        await Promise.allSettled([...this.active.values()].map((execution) => execution.settled));
+        // A headless extension can wait for an independently running child after
+        // the parent aborts. Keep gRPC drain bounded so Core can stop the Work
+        // container, which is the final boundary for all child processes.
+        let abortTimer: NodeJS.Timeout | undefined;
+        try {
+          await Promise.race([
+            Promise.allSettled([...this.active.values()].map((execution) => execution.settled)),
+            new Promise<void>((resolve) => { abortTimer = setTimeout(resolve, 2_000); }),
+          ]);
+        } finally { if (abortTimer !== undefined) clearTimeout(abortTimer); }
       }
     } finally { if (timer !== undefined) clearTimeout(timer); }
   }

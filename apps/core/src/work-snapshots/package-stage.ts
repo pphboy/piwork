@@ -1,7 +1,7 @@
 import { createReadStream, constants } from "node:fs";
 import { mkdir, open } from "node:fs/promises";
 import { WorkPackageValidationError } from "@piwork/contracts";
-import { readWorkPackage, WorkBlobDirectory, WORK_PACKAGE_LIMITS, type VerifiedWorkPackage } from "@piwork/work-package";
+import { readWorkPackage, validatePiPackageContentDigests, WorkBlobDirectory, WORK_PACKAGE_LIMITS, type VerifiedWorkPackage } from "@piwork/work-package";
 
 /** Re-hash a ready package while materializing its blobs in a private, job-owned spool. */
 export async function stageVerifiedPackage(input: {
@@ -23,6 +23,7 @@ export async function stageVerifiedPackage(input: {
       if (staged.digest !== blob.digest || staged.size !== blob.size) throw new WorkPackageValidationError("PACKAGE_INVALID", "package.blob");
     } });
     if (verified.digest !== expectedDigest || verified.size !== expectedSize) throw new WorkPackageValidationError("PACKAGE_INVALID", "package.digest");
+    await validatePiPackageContentDigests(verified.spec, verified.metadata, (digest) => blobs.read(digest));
     const after = await descriptor.stat();
     if (after.dev !== stat.dev || after.ino !== stat.ino || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs)
       throw new WorkPackageValidationError("PACKAGE_INVALID", "package.changed");

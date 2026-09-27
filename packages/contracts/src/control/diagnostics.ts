@@ -1,11 +1,12 @@
 import { Type } from "typebox";
 import { ResourceIdSchema, TimestampSchema } from "../common.js";
 import { SkillNameSchema, WorkConfigurationViewSchema, RuntimeSkillStateSchema } from "./work-config.js";
+import { PiPackagePhaseSchema } from "./pi-packages.js";
 
 export const DiagnosticStageSchema = Type.Union([
   Type.Literal("context-copy"), Type.Literal("context-validate"),
   Type.Literal("runtime-prepare"), Type.Literal("runtime-start"),
-  Type.Literal("skill-validate"), Type.Literal("skill-load"),
+  Type.Literal("skill-validate"), Type.Literal("skill-load"), Type.Literal("package-load"),
   Type.Literal("mcp-initialize"),
   Type.Literal("readiness"), Type.Literal("activation"), Type.Literal("rollback"),
   Type.Literal("service-accept"), Type.Literal("service-image"),
@@ -17,7 +18,7 @@ export const DiagnosticStageSchema = Type.Union([
 export const DiagnosticCodeSchema = Type.Union([
   Type.Literal("CONTEXT_COPY_FAILED"), Type.Literal("CONTEXT_NOT_FOUND"),
   Type.Literal("CONTEXT_FORMAT_UNSUPPORTED"), Type.Literal("SKILL_VALIDATION_FAILED"),
-  Type.Literal("SKILL_LOAD_FAILED"), Type.Literal("SKILL_DIRECTORY_MISMATCH"),
+  Type.Literal("SKILL_LOAD_FAILED"), Type.Literal("SKILL_DIRECTORY_MISMATCH"), Type.Literal("PACKAGE_LOAD_FAILED"),
   Type.Literal("MCP_INITIALIZATION_FAILED"),
   Type.Literal("RUNTIME_PREPARE_FAILED"), Type.Literal("RUNTIME_START_FAILED"),
   Type.Literal("AGENT_CONTEXT_INCOMPATIBLE"), Type.Literal("AGENT_CONTEXT_MISMATCH"),
@@ -94,6 +95,7 @@ export const PublicOperationSchema = Type.Object({
   operationId: ResourceIdSchema,
   workId: ResourceIdSchema,
   kind: Type.String({ minLength: 1, maxLength: 128 }),
+  packagePhase: Type.Optional(PiPackagePhaseSchema),
   state: Type.Union([
     Type.Literal("pending"), Type.Literal("running"), Type.Literal("succeeded"),
     Type.Literal("failed"), Type.Literal("superseded"),

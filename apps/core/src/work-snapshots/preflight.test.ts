@@ -15,7 +15,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "piwork-preflight-"));
   const store = CoreStore.open({ databasePath: join(root, "core.sqlite") }), contexts = new WorkContextStore(join(root, "works"));
   store.createManagedUser({ id: OWNER, account: "owner", passwordDigest: "hash", role: "user", enabled: true, createdAt: NOW, updatedAt: NOW });
-  const config: WorkConfig = { agentImage: { catalogId: "runtime-image-00000001" }, modelRef: "runtime-model-00000001", agentsMd: "source context", skills: [], mcpServers: [],
+  const config: WorkConfig = { agentImage: { catalogId: "runtime-image-00000001" }, modelRef: "runtime-model-00000001", agentsMd: "source context", skills: [], packages: [], mcpServers: [],
     resources: { cpuMillis: 1000, memoryBytes: 1073741824, agentCpuMillis: 500, agentMemoryBytes: 536870912, maxServices: 2, maxRetainedVolumes: 2 },
     tools: { allowed: [], denied: [] } };
   const snapshot = contexts.build({ workId: WORK, snapshotId: "context-snapshot-0001", configuration: config, imageIdentity: IMAGE, skills: [], createdAt: NOW });

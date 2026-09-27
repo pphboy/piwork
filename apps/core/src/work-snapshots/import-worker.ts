@@ -6,7 +6,7 @@ import { CoreStore } from "@piwork/core-store";
 import { encodeWorkJson, WorkBlobDirectory, type NormalizedImage } from "@piwork/work-package";
 import { managedVolumeName, type DockerRuntime, type SnapshotHelperSpec } from "@piwork/runtime-docker";
 import type { WorkControlHistory, WorkImportBindings, WorkSourceIdentityMap } from "@piwork/contracts";
-import { WorkContextStore } from "../configuration/work-context.js";
+import { WorkContextStore, packageNameKey } from "../configuration/work-context.js";
 import type { RuntimeProfileStore } from "../configuration/runtime-profile.js";
 import { errorEnvelope, safeDiagnostic } from "../work-management/diagnostics.js";
 import { revalidateCapturedWorkBindings, type BoundWorkModel, type ResolvedWorkBindings } from "./bindings.js";
@@ -64,11 +64,11 @@ export async function executeImportSnapshot(input: {
   const images = new Map<string, ImportedImageSelection>();
   let prepared: ReturnType<typeof prepareImportedContexts> | undefined;
   let committed = false;
-  const runHelper = async (suffix: string, action: SnapshotHelperSpec["action"], volumeName?: string, treeDigest?: string, contextKey?: string) => {
+  const runHelper = async (suffix: string, action: SnapshotHelperSpec["action"], volumeName?: string, treeDigest?: string, contextKey?: string, packageKey?: string) => {
     const name = helperName(operationId, suffix);
     const spec: SnapshotHelperSpec = { installationId, jobId: operationId, name, imageId: helperImageId, spoolDirectory: jobPath,
       action, ...(volumeName === undefined ? {} : { volumeName }), ...(treeDigest === undefined ? {} : { treeDigest }),
-      ...(contextKey === undefined ? {} : { contextKey }) };
+      ...(contextKey === undefined ? {} : { contextKey }), ...(packageKey === undefined ? {} : { packageKey }) };
     store.snapshots.insertArtifact({ operationId, artifactKey: name, kind: "helper", logicalId: name, state: "planned" }, epoch);
     await runtime.createSnapshotHelper(spec);
     try { return await runtime.startSnapshotHelper(name, operationId, signal); }
@@ -131,7 +131,18 @@ export async function executeImportSnapshot(input: {
       await mkdir(skillsDirectory, { recursive: true, mode: 0o700 });
       const response = await runHelper(`restore-context-${context.key}`, "restore-context", undefined, context.skillsTree, context.key) as { tree?: unknown } | null;
       if (!response || response.tree !== context.skillsTree) throw new Error("SNAPSHOT_CONTEXT_INVALID");
-      materials.set(context.key, { skillsDirectory, agentsBytes: await readSmallBlob(blobs, context.agentsBlob, 4 * 1024 * 1024) });
+      const packagesDirectory = join(jobPath, "context-packages", context.key);
+      await mkdir(packagesDirectory, { recursive: true, mode: 0o700 });
+      for (const binding of context.packageBindings) {
+        const artifact = spec.piPackageArtifacts.find((item) => item.key === binding.artifactKey);
+        if (!artifact) throw new Error("SNAPSHOT_CONTEXT_INVALID");
+        const nameKey = packageNameKey(binding.name);
+        await mkdir(join(packagesDirectory, nameKey), { mode: 0o700 });
+        const restored = await runHelper(`restore-package-${context.key}-${nameKey.slice(0, 12)}`, "restore-package",
+          undefined, artifact.treeDigest, context.key, nameKey) as { tree?: unknown } | null;
+        if (!restored || restored.tree !== artifact.treeDigest) throw new Error("SNAPSHOT_CONTEXT_INVALID");
+      }
+      materials.set(context.key, { skillsDirectory, packagesDirectory, agentsBytes: await readSmallBlob(blobs, context.agentsBlob, 4 * 1024 * 1024) });
       store.snapshots.insertArtifact({ operationId, artifactKey: `context-${context.key}`, kind: "context", logicalId: targets.contexts.find((target) => target.key === context.key)?.id ?? "",
         state: "planned" }, epoch);
     }

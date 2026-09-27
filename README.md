@@ -96,7 +96,7 @@ npm run cli -- work create --name first-work --wait
 npm run cli -- work list
 ```
 
-Startup never creates a default Work. Work creation without Skill flags copies the current default Skills and other effective context into independent Work-owned storage. Explicit options replace the corresponding defaults:
+Startup never creates a default Work. Work creation without Skill or Pi package flags copies the current defaults into independent Work-owned storage. Explicit options replace the corresponding defaults:
 
 ```bash
 npm run cli -- work create --name reviewed-work \
@@ -105,6 +105,49 @@ npm run cli -- work create --name no-skill-work --no-skills --wait
 ```
 
 Repeat `--skill` to select multiple enabled Skills. `--skill` and `--no-skills` are mutually exclusive. Creation also accepts `--base-image <image>` and `--config <file>`. Later changes to defaults, managed Skill content, or the original import directory do not alter an existing Work.
+
+## Pi packages
+
+An operator can install a Pi package from npm, Git, a local directory, or a ZIP file. The local directory and ZIP are uploaded from the CLI machine. The install lines below illustrate alternative sources for a package. These examples use the installed `piwork-serve` and `piwork-cli` commands (or `npm run serve --` and `npm run cli --` from this checkout):
+
+```bash
+piwork-serve packages install npm:@example/pi-tools@1.0.0 --default --wait
+piwork-serve packages install git:github.com/example/pi-tools@v1 --wait
+piwork-serve packages install ./local-package --wait
+piwork-serve packages install ./local-package.zip --wait
+piwork-serve packages list
+piwork-serve packages show @example/pi-tools
+piwork-serve packages update @example/pi-tools --source npm:@example/pi-tools@1.0.1 --wait
+piwork-serve packages enable @example/pi-tools
+piwork-serve packages disable @example/pi-tools
+piwork-serve packages remove @example/pi-tools
+piwork-serve operation show <operationId>
+```
+
+`--default` installs and adds the package to the default Work selection in one operation. A package selected by default must first be removed from that selection before it can be disabled or removed from Core. `piwork-serve config default-work set --package <name>` replaces the default package list; `--no-packages` clears it. Changes to Core packages and defaults affect only Works created afterwards. Existing Works own their package bytes and change only through their own package commands.
+
+Choose one source form for each install; use `update` to replace an existing package.
+
+```bash
+piwork-cli packages list
+piwork-cli work create --name demo --package @example/pi-tools --wait
+piwork-cli work packages list <workId>
+piwork-cli work packages install <workId> npm:@example/pi-tools@1.0.0 --wait
+piwork-cli work packages install <workId> git:github.com/example/pi-tools@v1 --wait
+piwork-cli work packages install <workId> ./local-package --wait
+piwork-cli work packages install <workId> ./local-package.zip --wait
+piwork-cli work packages install <workId> --from-core @example/pi-tools --wait
+piwork-cli work packages update <workId> @example/pi-tools --from-core --wait
+piwork-cli work packages update <workId> @example/pi-tools --source ./local-package --wait
+piwork-cli work packages enable <workId> @example/pi-tools
+piwork-cli work packages disable <workId> @example/pi-tools
+piwork-cli work packages remove <workId> @example/pi-tools
+piwork-cli work config packages set <workId> --package @example/pi-tools
+piwork-cli work config packages set <workId> --no-packages
+piwork-cli work config apply <workId> --wait
+```
+
+Package install, update, selection, enable, disable, and removal change the desired context. An existing Work keeps its active package set across restarts until explicit `work config apply`; a newly created Work starts with its copied initial selection. `work packages list` shows desired, active, and loaded state. Use `--wait` to observe installation until the Operation finishes; interrupting the CLI or losing observation does not cancel the accepted Operation, which remains queryable by ID. The singular `work package inspect <file.work>` checks a complete Work archive, while plural `work packages` manages Pi packages within a Work.
 
 For every create or configuration edit, Core materializes one immutable Work context. The data path is:
 
@@ -142,7 +185,7 @@ piwork-cli work import <sourceWorkId>.work --wait
 piwork-cli work start <newWorkId> --wait
 ```
 
-The package carries both managed volume trees (workspace and agent-private data), Work-owned code and configuration, retained Skills and AGENTS.md, service definitions and state, reservations, history, and fixed images. It is a full copy: `.env`, user-written credentials, business databases, and development dependencies are not filtered. Share it only with someone you trust. The target Core must already have an enabled matching model with a readable credential; it selects that model automatically, and built-in `work-services` reconnects to the target Core when the Work starts. Custom external MCP platform secrets are not migrated in this version. Import automatically chooses a non-conflicting name from the package unless `--name` is supplied, and never auto-starts the Work, runs user code, replaces an existing Work, or copies the source installation's platform credentials. The first explicit start creates the recipient's runtime network and TLS identity. Container writable layers and anonymous volumes are not part of Work's persistent storage contract. See [the user guide](docs/work-snapshot.md) and [operator notes](docs/operations.md#work-snapshot-operations).
+The package carries both managed volume trees (workspace and agent-private data), Work-owned code and configuration, retained Skills, Pi packages with prepared dependencies, and AGENTS.md, service definitions and state, reservations, history, and fixed images. It is a full copy: `.env`, user-written credentials, business databases, and development dependencies are not filtered. Share it only with someone you trust. The target Core must already have an enabled matching model with a readable credential; it selects that model automatically, and built-in `work-services` reconnects to the target Core when the Work starts. Custom external MCP platform secrets are not migrated in this version. Import automatically chooses a non-conflicting name from the package unless `--name` is supplied, and never auto-starts the Work, runs user code, replaces an existing Work, or copies the source installation's platform credentials. The first explicit start creates the recipient's runtime network and TLS identity. Container writable layers and anonymous volumes are not part of Work's persistent storage contract. See [the user guide](docs/work-snapshot.md) and [operator notes](docs/operations.md#work-snapshot-operations).
 
 On a fresh installation, the default Work context selects the bundled `deploy-work-service` Skill and the required `work-services` MCP adapter. They are copied into each new Work context and loaded before agentd reports ready. The Skill teaches the agent how to deploy an existing image; the MCP adapter is the only service-control path available to the model. Adding or updating this Skill does not rebuild the agent image. An explicit `--no-skills` removes the instructions from that Work, while an explicit configuration with `mcpServers: []` also removes the deployment tools after apply.
 

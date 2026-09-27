@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   AGENTS_MD_MAX_BYTES, WorkPackageValidationError, validatePortableWorkSpec, validateWorkHistory,
   type PortableWorkSpec, type WorkBlob, type WorkBlobKind,
 } from "@piwork/contracts";
 import { parseWorkJson, encodeWorkJson } from "./json.js";
 import { validateWorkTree, type WorkTree } from "./tree.js";
+import { validatePiPackageContentDigests, validatePiPackageWorkTree } from "./package-tree.js";
+import { WorkBlobDirectory } from "./blob-directory.js";
 import { WORK_PACKAGE_LIMITS, type WorkPackageLimits } from "./limits.js";
 
 export const WORK_PACKAGE_MAGIC = Buffer.from("PIWORK1\n", "ascii");
@@ -149,6 +154,12 @@ export function validatePackageContents(spec: PortableWorkSpec, metadata: Readon
   for (const context of spec.contexts) {
     useTree(context.skillsTree); use(context.agentsBlob, "file");
     restoredBytes += blobs.get(context.agentsBlob)!.size;
+    for (const binding of context.packageBindings) {
+      const artifact = spec.piPackageArtifacts.find((item) => item.key === binding.artifactKey);
+      if (!artifact) invalid("piPackageArtifacts.binding");
+      useTree(artifact.treeDigest);
+      validatePiPackageWorkTree(trees.get(artifact.treeDigest)!.tree, artifact.resourceInventory);
+    }
   }
   use(spec.history.control, "control-history"); use(spec.history.sourceIdentityMap, "identity-map");
   validateWorkHistory(spec, metadata.get(spec.history.control), metadata.get(spec.history.sourceIdentityMap));
@@ -196,14 +207,25 @@ export async function* encodeWorkPackage(spec: PortableWorkSpec, openBlob: (blob
 
 /** Only explicitly selected metadata is public; no file paths, names, env or history. */
 export async function inspectWorkPackage(source: AsyncIterable<Uint8Array>, signal?: AbortSignal) {
-  const result = await readWorkPackage(source, { signal });
+  const directory = await mkdtemp(join(tmpdir(), "piwork-work-inspect-"));
+  try {
+  const blobs = new WorkBlobDirectory(directory);
+  const result = await readWorkPackage(source, { signal, onBlob: async (blob, chunks) => {
+    const staged = await blobs.put(chunks, blob.size, signal);
+    if (staged.digest !== blob.digest || staged.size !== blob.size) invalid("blobHash");
+  } });
+  await validatePiPackageContentDigests(result.spec, result.metadata, (digest) => blobs.read(digest));
   return {
     formatVersion: result.spec.formatVersion, snapshotKind: result.spec.snapshotKind,
     platform: result.spec.compatibility, digest: result.digest, size: result.size,
     restoredBytes: result.restoredBytes,
-    counts: { contexts: result.spec.contexts.length, services: result.spec.services.length, images: result.spec.images.length, entries: result.entryCount, blobs: result.spec.blobs.length },
+    counts: { contexts: result.spec.contexts.length, services: result.spec.services.length, images: result.spec.images.length,
+      packages: result.spec.piPackageArtifacts.length, entries: result.entryCount, blobs: result.spec.blobs.length },
+    packages: result.spec.piPackageArtifacts.map((item) => ({ name: item.name, version: item.version }))
+      .sort((a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)) || Buffer.compare(Buffer.from(a.version ?? ""), Buffer.from(b.version ?? ""))),
     bindingRequirements: { models: result.spec.bindings.models.map((model) => ({ ...model })), secrets: result.spec.bindings.secrets.map((secret) => ({ key: secret.key })) },
     integrityVerified: true as const, installationValidated: false as const,
     warning: "This package contains complete private Work content and may include credentials. Import does not execute it.",
   };
+  } finally { await rm(directory, { recursive: true, force: true }); }
 }

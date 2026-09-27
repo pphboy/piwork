@@ -51,7 +51,7 @@ test("materializes isolated paths, selected Skills, and only referenced secrets"
 function configuration(): WorkConfig {
   return {
     agentImage: { catalogId: "image-0199e6d8abcd" },
-    skills: ["skill-0199e6d8abcd"],
+    skills: ["skill-0199e6d8abcd"], packages: [],
     agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [{

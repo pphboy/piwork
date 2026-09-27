@@ -100,7 +100,7 @@ function deploymentContext(client: WorkServicesClient): Promise<RpcDeploymentCon
 
 function seedWork(store: CoreStore): void {
   const configuration: WorkConfig = {
-    agentImage: { catalogId: "catalog-agent" }, skills: [], agentsMd: "", modelRef: "catalog-model", mcpServers: [],
+    agentImage: { catalogId: "catalog-agent" }, skills: [], packages: [], agentsMd: "", modelRef: "catalog-model", mcpServers: [],
     resources: { cpuMillis: 2_000, memoryBytes: 1_610_612_736, agentCpuMillis: 1_000, agentMemoryBytes: 805_306_368, maxServices: 4, maxRetainedVolumes: 2 },
     tools: { allowed: [], denied: [] },
   };

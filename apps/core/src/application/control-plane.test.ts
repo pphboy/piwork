@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,6 +19,28 @@ const runtime: WorkRuntimeAdapter = {
   async remove() {},
   async listManagedInstances() { return []; },
 };
+
+test("failed listen closes Core without trying to stop Works before runtime initialization", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-listen-failure-"));
+  const blocker = createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const address = blocker.address();
+  assert.ok(address && typeof address !== "string");
+  const application = await CoreApplication.create({ paths: ensureCorePaths(root) });
+  try {
+    const now = new Date().toISOString();
+    application.store.exec(`INSERT INTO users(id, account, password_digest, role, enabled, created_at, updated_at)
+      VALUES ('user-one', 'one', 'digest', 'user', 1, '${now}', '${now}');
+      INSERT INTO works(id, owner_user_id, name, desired_state, observed_state, desired_revision, control_version, created_at, updated_at)
+      VALUES ('work-one', 'user-one', 'one', 'running', 'ready', 1, 1, '${now}', '${now}')`);
+    await assert.rejects(application.listen({ host: "127.0.0.1", port: address.port }), { code: "EADDRINUSE" });
+    await application.close();
+  } finally {
+    await application.close();
+    await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("empty Core listens, reports staged readiness, and separates operator from user authorization", async () => {
   const root = await mkdtemp(join(tmpdir(), "piwork-control-plane-"));

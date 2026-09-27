@@ -15,6 +15,7 @@ const messages: Record<DiagnosticCode, readonly [string, string, boolean]> = {
   SKILL_VALIDATION_FAILED: ["The selected Skill content is invalid.", "Correct the named Skill tree, reselect it, and apply.", false],
   SKILL_LOAD_FAILED: ["The selected Skill could not be loaded.", "Correct SDK-compatible Skill content, reselect it, and apply.", false],
   SKILL_DIRECTORY_MISMATCH: ["The Skill was loaded from an unexpected directory.", "Correct Work context binding and retry.", false],
+  PACKAGE_LOAD_FAILED: ["A selected package could not be loaded.", "Update the package for the selected agent image and retry.", false],
   MCP_INITIALIZATION_FAILED: ["A required Work MCP server could not be initialized.", "Inspect the MCP server configuration and retry the Work operation.", true],
   RUNTIME_PREPARE_FAILED: ["The Work runtime could not be prepared.", "Restore the runtime dependency and retry with a new key.", true],
   RUNTIME_START_FAILED: ["The Work runtime could not be started.", "Restore the runtime dependency and retry with a new key.", true],
@@ -66,7 +67,7 @@ export function diagnosticFromError(error: unknown, stage: DiagnosticStage, inpu
         : "WORK_OPERATION_FAILED";
   const resolvedStage = typeof item.stage === "string" && [
     "context-copy", "context-validate", "runtime-prepare", "runtime-start", "skill-validate",
-    "skill-load", "mcp-initialize", "readiness", "activation", "rollback",
+    "skill-load", "package-load", "mcp-initialize", "readiness", "activation", "rollback",
     "service-accept", "service-image", "service-storage", "service-start",
     "service-readiness", "service-recovery", "service-stop", "service-remove",
   ].includes(item.stage) ? item.stage as DiagnosticStage : stage;
@@ -102,6 +103,7 @@ function terminalStageMessage(stage: DiagnosticStage, outcome: "succeeded" | "fa
     "runtime-start": "Work runtime was started.",
     "skill-validate": "Work Skill directories were validated.",
     "skill-load": "Work Skills were validated by the agent SDK.",
+    "package-load": "Work packages were loaded by the agent SDK.",
     "mcp-initialize": "Required Work MCP servers were initialized.",
     readiness: "Work runtime readiness was verified.",
     activation: "Work configuration activation completed.",
@@ -201,6 +203,7 @@ const nonFailureMessages: Partial<Record<`${DiagnosticStage}:${"started" | "succ
   "runtime-start:succeeded": "Work runtime was started.",
   "skill-validate:succeeded": "Work Skill directories were validated.",
   "skill-load:succeeded": "Work Skills were validated by the agent SDK.",
+  "package-load:succeeded": "Work packages were loaded by the agent SDK.",
   "activation:succeeded": "Work configuration activation completed.",
   "readiness:succeeded": "Work runtime readiness was verified.",
   "rollback:succeeded": "The previous Work runtime was restored.",

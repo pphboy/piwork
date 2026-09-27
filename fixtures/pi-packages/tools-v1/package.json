@@ -1,0 +1,13 @@
+{
+  "name": "@piwork/fixture-tools",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "postinstall": "node prepare.js" },
+  "dependencies": { "fixture-dependency": "file:vendor/fixture-dependency" },
+  "pi": {
+    "extensions": ["extensions/tool.js"],
+    "skills": ["skills/fixture/SKILL.md"],
+    "prompts": ["prompts/review.md"],
+    "themes": ["themes/fixture.json"]
+  }
+}

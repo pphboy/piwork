@@ -4,13 +4,15 @@ import {
   validatePortableWorkSpec, validateWorkHistory, WorkPackageValidationError,
   type PortableWorkSpec, type WorkControlHistory, type WorkSourceIdentityMap, type WorkConfig,
 } from "@piwork/contracts";
-import { WorkContextStore, type WorkContextSnapshot } from "../configuration/work-context.js";
+import { join } from "node:path";
+import { WorkContextStore, packageNameKey, type WorkContextSnapshot } from "../configuration/work-context.js";
 import { captureImportedRuntimeProfile, type ResolvedWorkBindings } from "./bindings.js";
 import { restorePortableConfiguration, type WorkIdentityTargets } from "./metadata.js";
 
 export interface VerifiedContextMaterial {
   /** Root restored by the trusted package helper from a verified skillsTree. */
   readonly skillsDirectory: string;
+  readonly packagesDirectory?: string;
   readonly agentsBytes: Uint8Array;
 }
 export interface ImportedImageSelection { readonly identity: string; readonly selectionId: string }
@@ -60,9 +62,15 @@ export function prepareImportedContexts(input: {
       catch { invalid("import.agentsUtf8"); }
       const configuration = restorePortableConfiguration(context.configuration, agentsMd, model.catalogId, image.selectionId, services, bindings.secrets);
       const profile = captureImportedRuntimeProfile(bindings, context.configuration.modelBindingKey, image.identity);
+      const packages = context.packageBindings.map((binding) => {
+        const artifact = spec.piPackageArtifacts.find((item) => item.key === binding.artifactKey);
+        if (!artifact || material.packagesDirectory === undefined) invalid("import.packageBinding");
+        const { key: _key, treeDigest: _treeDigest, resourceInventory: _resourceInventory, ...artifactMetadata } = artifact;
+        return { name: binding.name, directory: join(material.packagesDirectory, packageNameKey(binding.name)), metadata: artifactMetadata };
+      });
       const snapshot = contextStore.buildImported({ workId: targets.workId, snapshotId: targetContexts.get(context.key)!.id,
         configuration, imageIdentity: image.identity, verifiedSkillsDirectory: material.skillsDirectory,
-        agentsBytes: material.agentsBytes, createdAt });
+        verifiedPackagesDirectory: material.packagesDirectory, packages, agentsBytes: material.agentsBytes, createdAt });
       prepared.push({ key: context.key, revision: revisions.get(context.key)!.revision, snapshot, configuration,
         runtimeProfileJson: JSON.stringify(profile), sourceRuntimeRevision: profile.revision });
     }

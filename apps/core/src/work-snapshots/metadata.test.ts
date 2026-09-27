@@ -14,7 +14,7 @@ function fixture(workId = WORK, contextId = CONTEXT, serviceId = SERVICE) {
   const root = mkdtempSync(join(tmpdir(), "piwork-snapshot-metadata-"));
   const store = CoreStore.open({ databasePath: join(root, "core.sqlite") }), contexts = new WorkContextStore(join(root, "works"));
   store.createInitialAdministrator({ id: OWNER, account: "source-account-never-exported", passwordDigest: "PLATFORM_PASSWORD_SENTINEL", now: NOW });
-  const configuration: WorkConfig = { agentImage: { catalogId: "runtime-image-00000001" }, modelRef: "runtime-model-00000001", skills: [], agentsMd: "USER_AGENTS_SECRET_SENTINEL\n", tools: { allowed: ["read"], denied: [] },
+  const configuration: WorkConfig = { agentImage: { catalogId: "runtime-image-00000001" }, modelRef: "runtime-model-00000001", skills: [], packages: [], agentsMd: "USER_AGENTS_SECRET_SENTINEL\n", tools: { allowed: ["read"], denied: [] },
     resources: { cpuMillis: 1000, memoryBytes: 1024 ** 3, agentCpuMillis: 500, agentMemoryBytes: 512 * 1024 ** 2, maxServices: 8, maxRetainedVolumes: 16 },
     mcpServers: [{ serverId: "configured-mcp", transport: "stdio", command: "node", required: true, requiredServiceId: serviceId, secretRefs: [{ secretId: "secret-source-00000001", key: "TOKEN" }] }],
   };

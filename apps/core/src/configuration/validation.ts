@@ -1,5 +1,5 @@
 import { Check } from "typebox/value";
-import { BUILT_IN_WORK_TOOLS, normalizeAgentsMd, validateResourcePolicy, WorkConfigSchema, type McpServer, type WorkConfig } from "@piwork/contracts";
+import { BUILT_IN_WORK_TOOLS, normalizeAgentsMd, parsePiPackageToolPolicyKey, sortPiPackageSelection, validateResourcePolicy, WorkConfigSchema, type McpServer, type WorkConfig } from "@piwork/contracts";
 import { CoreStore, type CatalogKind } from "@piwork/core-store";
 
 export type ConfigurationValidationCode =
@@ -41,6 +41,12 @@ export class WorkConfigurationValidator {
       );
     }
     const config = context.configuration;
+    let packages: WorkConfig["packages"];
+    try {
+      packages = sortPiPackageSelection(config.packages);
+    } catch (error) {
+      throw new ConfigurationValidationError("INVALID_CONFIGURATION", error instanceof Error ? error.message : "packages is invalid", "packages");
+    }
     try {
       validateResourcePolicy(config.resources);
     } catch (error) {
@@ -109,14 +115,31 @@ export class WorkConfigurationValidator {
       }
     }
     const mcpToolPrefixes = new Set(config.mcpServers.map((server) => server.serverId));
+    const selectedPackageNames = new Set(packages.map((item) => item.name));
+    if (context.workId === undefined) for (const [index, selected] of packages.entries()) {
+      const entry = this.store.packages.getCatalog(selected.name);
+      if (entry === undefined || !entry.enabled) {
+        throw new ConfigurationValidationError("INVALID_REFERENCE", `package ${selected.name} is unavailable`, `packages.${index}.name`);
+      }
+    }
+    if (context.workId !== undefined && previous !== undefined) {
+      const installed = new Set(previous.packages.map((item) => item.name));
+      for (const [index, selected] of packages.entries()) {
+        if (!installed.has(selected.name)) {
+          throw new ConfigurationValidationError("INVALID_REFERENCE", `package ${selected.name} is not installed in this Work`, `packages.${index}.name`);
+        }
+      }
+    }
     for (const [field, names] of [["tools.allowed", config.tools.allowed], ["tools.denied", config.tools.denied] ] as const) {
       for (const [index, name] of names.entries()) {
+        const packageTool = parsePiPackageToolPolicyKey(name);
         const valid = (BUILT_IN_WORK_TOOLS as readonly string[]).includes(name)
-          || name.includes(".") && mcpToolPrefixes.has(name.split(".", 1)[0]!);
+          || name.includes(".") && mcpToolPrefixes.has(name.split(".", 1)[0]!)
+          || packageTool !== undefined && selectedPackageNames.has(packageTool.packageName);
         if (!valid) throw new ConfigurationValidationError("INVALID_CONFIGURATION", `unsupported tool ${name}`, `${field}.${index}`);
       }
     }
-    return config;
+    return { ...config, packages };
   }
 
   async validateBeforeRuntime<T>(

@@ -24,6 +24,10 @@ export interface AgentReadiness {
   }[];
   readonly resolvedTools: readonly string[];
   readonly activeRunCount: number;
+  readonly packageContractVersion: number;
+  readonly loadedPackages: readonly { readonly name: string; readonly contentDigest: string; readonly extensions: number; readonly skills: number; readonly prompts: number; readonly themes: number }[];
+  readonly packageResources: readonly { readonly packageName: string; readonly kind: string; readonly name: string }[];
+  readonly packageDiagnostics: readonly { readonly packageName: string; readonly code: string; readonly message: string }[];
 }
 
 export class RuntimeIdentityError extends Error {
@@ -45,6 +49,8 @@ export class AgentDaemonControl {
   private initializationComplete = false;
   private loadedSkills: AgentReadiness["loadedSkills"] = [];
   private resolvedTools: string[] = [];
+  private loadedPackages: AgentReadiness["loadedPackages"] = [];
+  private packageResources: AgentReadiness["packageResources"] = [];
 
   constructor(readonly identity: RuntimeIdentity) {}
 
@@ -56,6 +62,8 @@ export class AgentDaemonControl {
     readonly resolvedTools: readonly string[];
     readonly initializationComplete: boolean;
     readonly initializationOnly?: boolean;
+    readonly loadedPackages?: AgentReadiness["loadedPackages"];
+    readonly packageResources?: AgentReadiness["packageResources"];
   }): void {
     if (!status.initializationComplete || status.contextIdentity === "" || status.loadedSkills.some((skill) => !skill.loaded)) {
       throw new Error("agent context initialization is incomplete");
@@ -67,6 +75,8 @@ export class AgentDaemonControl {
     this.initializationComplete = status.initializationComplete;
     this.loadedSkills = [...status.loadedSkills];
     this.resolvedTools = [...status.resolvedTools];
+    this.loadedPackages = [...(status.loadedPackages ?? [])];
+    this.packageResources = [...(status.packageResources ?? [])];
     this.acceptingRuns = status.modelCredentialStatus === "available" && this.initializationComplete && !status.initializationOnly && !this.draining;
   }
 
@@ -91,6 +101,10 @@ export class AgentDaemonControl {
       loadedSkills: this.loadedSkills,
       resolvedTools: this.resolvedTools,
       activeRunCount: this.activeRuns,
+      packageContractVersion: 1,
+      loadedPackages: this.loadedPackages,
+      packageResources: this.packageResources,
+      packageDiagnostics: [],
     };
   }
 

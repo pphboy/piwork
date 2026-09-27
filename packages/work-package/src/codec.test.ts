@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, symlink, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -10,6 +10,7 @@ import { encodeWorkPackage, readWorkPackage, inspectWorkPackage, validatePackage
 import { parseWorkJson, encodeWorkJson } from "./json.js";
 import { goldenWorkFixture } from "./fixture.js";
 import { WORK_PACKAGE_LIMITS } from "./limits.js";
+import { validatePiPackageArtifact } from "@piwork/pi-package";
 
 async function goldenBytes(): Promise<Buffer> {
   const { spec, data } = goldenWorkFixture();
@@ -17,8 +18,8 @@ async function goldenBytes(): Promise<Buffer> {
 }
 test("golden .work round-trips with an empty blob and one-byte streaming reads", async () => {
   const bytes = await goldenBytes();
-  assert.equal(bytes.length, 4120);
-  assert.equal(createHash("sha256").update(bytes).digest("hex"), "ae1b7061432eb476f8eef268183e77bdea96257b6eab6737f16e3e1a49f2e3cd");
+  assert.equal(bytes.length, 4201);
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), "da7cde726ef093c5e9721bf0ca24b7e1ed19e59f9ca124fc8582124dacd15969");
   const folder = await mkdtemp(join(tmpdir(), "piwork-package-test-"));
   try {
     const file = join(folder, "golden.work"); await writeFile(file, bytes, { mode: 0o600 });
@@ -90,6 +91,50 @@ test("duplicate file references count independently towards restore limits", () 
   file.size = 50 * 1024 ** 3 + 1;
   spec.blobs.find((blob) => blob.digest === file.blob)!.size = file.size;
   assert.throws(() => validatePackageContents(spec, metadata), { code: "PACKAGE_LIMIT_EXCEEDED" });
+});
+test("Pi package tree bindings count logical bytes, inspect offline, and reject links outside the artifact", async () => {
+  const packageRoot = await mkdtemp(join(tmpdir(), "piwork-package-inspect-"));
+  try {
+  const fixture = goldenWorkFixture();
+  const file = Buffer.from('{"name":"@example/tools","version":"1.0.0"}');
+  await writeFile(join(packageRoot, "package.json"), file);
+  await symlink("package.json", join(packageRoot, "shortcut"));
+  const preparedEnvironment = { os: "linux" as const, architecture: "amd64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.0" };
+  const artifactMetadata = (await validatePiPackageArtifact({ root: packageRoot, sourceKind: "local", resolvedSource: "local:fixture", preparedEnvironment })).metadata;
+  const fileDigest = createHash("sha256").update(file).digest("hex");
+  const common = { uid: 10001, gid: 10001, mode: 420, mtimeNs: "1727049600123456789" };
+  const path = (name: string) => [Buffer.from(name).toString("base64")];
+  const packageTree = { version: 1, entries: [
+    { ...common, type: "directory", mode: 493, segmentsBase64: [] },
+    { ...common, type: "file", segmentsBase64: path("package.json"), blob: fileDigest, size: file.length },
+    { ...common, type: "symlink", segmentsBase64: path("shortcut"), targetBase64: Buffer.from("package.json").toString("base64") },
+  ] };
+  const treeBytes = encodeWorkJson(packageTree), treeDigest = createHash("sha256").update(treeBytes).digest("hex");
+  fixture.spec.blobs.push({ digest: fileDigest, size: file.length, kinds: ["file"] }, { digest: treeDigest, size: treeBytes.length, kinds: ["tree"] });
+  fixture.spec.blobs.sort((a, b) => a.digest.localeCompare(b.digest));
+  fixture.data.set(fileDigest, file);
+  fixture.data.set(treeDigest, treeBytes);
+  fixture.metadata.set(treeDigest, packageTree);
+  const artifactKey = artifactMetadata.contentDigest;
+  fixture.spec.piPackageArtifacts.push({ key: artifactKey, name: "@example/tools", version: "1.0.0", sourceKind: "local", resolvedSource: "local:fixture",
+    preparedEnvironment: { os: "linux", architecture: "amd64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.0" },
+    resourceCounts: { extensions: 0, skills: 0, prompts: 0, themes: 0 }, contentDigest: artifactKey,
+    treeDigest, resourceInventory: { extensions: [], skills: [], prompts: [], themes: [] } });
+  fixture.spec.contexts[0]!.configuration.packages.push({ name: "@example/tools", enabled: false });
+  fixture.spec.contexts[0]!.packageBindings.push({ name: "@example/tools", artifactKey });
+  const before = validatePackageContents(goldenWorkFixture().spec, goldenWorkFixture().metadata).restoredBytes;
+  const after = validatePackageContents(fixture.spec, fixture.metadata).restoredBytes;
+  assert.equal(after - before, file.length);
+  const summary = await inspectWorkPackage(Readable.from(encodeWorkPackage(fixture.spec,
+    (blob) => Readable.from([fixture.data.get(blob.digest)!]))));
+  assert.deepEqual(summary.packages, [{ name: "@example/tools", version: "1.0.0" }]);
+  assert.equal(summary.counts.packages, 1);
+  assert.equal(summary.integrityVerified, true);
+  assert.equal(summary.installationValidated, false);
+  assert.throws(() => validatePackageContents(fixture.spec, fixture.metadata, { ...WORK_PACKAGE_LIMITS, restoredBytes: after - 1 }), { code: "PACKAGE_LIMIT_EXCEEDED" });
+  (packageTree.entries[2]! as { targetBase64: string }).targetBase64 = Buffer.from("../escape").toString("base64");
+  assert.throws(() => validatePackageContents(fixture.spec, fixture.metadata), /piPackageArtifacts.symlinkEscape/);
+  } finally { await rm(packageRoot, { recursive: true, force: true }); }
 });
 test("large file content streams in bounded chunks and cross-kind content deduplicates", async () => {
   const fixture = goldenWorkFixture(Buffer.alloc(2 * 1024 * 1024 + 1, 7));

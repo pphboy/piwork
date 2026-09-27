@@ -39,4 +39,11 @@ test("agent diagnostic logger emits only allowlisted fields and static text", ()
     correlationId: "operation-3", workId: "work-3",
   }, { write: (line) => lines.push(line) });
   assert.equal(JSON.parse(lines[4]!).message, "Required Work MCP tools were initialized.");
+  emitAgentDiagnostic({
+    stage: "package-load", outcome: "failed", code: "PACKAGE_LOAD_FAILED",
+    correlationId: "operation-4", workId: "work-4",
+  }, { write: (line) => lines.push(line) });
+  assert.equal(JSON.parse(lines[5]!).code, "PACKAGE_LOAD_FAILED");
+  assert.equal(JSON.parse(lines[5]!).stage, "package-load");
+  assert.doesNotMatch(lines[5]!, /token=|\/host\//);
 });

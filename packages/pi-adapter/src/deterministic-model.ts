@@ -86,6 +86,12 @@ function streamDeterministic(
       deterministicRestoredService(stream, output, toolResults);
       return;
     }
+    const packageTool = /^invoke package tool ([A-Za-z0-9_-]{1,64})$/.exec(prompt.trim())?.[1];
+    if (packageTool !== undefined) {
+      if (toolResults.length === 0) emitToolCall(stream, output, `package-${packageTool}`, packageTool, {});
+      else emitText(stream, output, `package-tool-result:${packageTool}:${toolResultText(toolResults[0]!).trim()}`);
+      return;
+    }
     if (toolResults.length === 0 && manifestPath !== "") {
       emitToolCall(stream, output, "fixture-read-manifest", "read", { path: manifestPath });
       return;

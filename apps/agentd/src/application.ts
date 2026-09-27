@@ -10,6 +10,7 @@ import {
 } from "@grpc/grpc-js";
 import {
   AgentServiceService,
+  BUILT_IN_WORK_TOOLS,
   CONTRACT_VERSION,
   resolveBuiltInWorkTools,
   RunState,
@@ -36,7 +37,7 @@ import {
 } from "@piwork/contracts";
 import { WorkStore, type RunEventRecord, type RunRecord, type SessionRecord } from "@piwork/work-store";
 import { AgentDaemonControl } from "./daemon.js";
-import { PiSdkRunExecutor } from "./pi-sdk-executor.js";
+import { initializeChildAgentDirectory, PiSdkRunExecutor } from "./pi-sdk-executor.js";
 import { RunManager } from "./runs.js";
 import { AgentSessionService } from "./sessions.js";
 import { loadConfiguredSkills, type ConfiguredSkill } from "./skills.js";
@@ -44,6 +45,8 @@ import { emitAgentDiagnostic } from "./diagnostics.js";
 import { defineTool, type ResourceLoader, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { McpBridge, type McpBridgeServer } from "@piwork/pi-adapter";
 import type { McpServer } from "@piwork/contracts";
+import type { PiPackageSelectionEntry } from "@piwork/contracts";
+import { createPackageResourceLoader, type PackageBinding, type LoadedPackageResource } from "./package-resources.js";
 
 export const AGENT_PROTOCOL_VERSION = CONTRACT_VERSION;
 
@@ -91,12 +94,17 @@ interface CapturedWorkContext {
   readonly resolvedTools: readonly string[];
   readonly toolPolicy: { readonly allowed: readonly string[]; readonly denied: readonly string[] };
   readonly mcpServers: readonly McpServer[];
+  readonly packages: readonly PiPackageSelectionEntry[];
+  readonly packageBindings: readonly PackageBinding[];
 }
 
 export interface LoadedWorkContext {
   readonly contextIdentity: string;
-  readonly loader: ResourceLoader;
+  readonly loaderFactory: () => Promise<ResourceLoader>;
   readonly resolvedTools: readonly string[];
+  readonly packageTools: ReadonlyMap<string, string>;
+  readonly packages: readonly LoadedPackageResource[];
+  readonly packageResources: readonly { readonly packageName: string; readonly kind: string; readonly name: string }[];
   readonly skills: readonly {
     readonly name: string;
     readonly identity: string;
@@ -126,9 +134,11 @@ export class AgentApplication {
     if (config.deterministic && process.env.PIWORK_AGENT_VARIANT !== "acceptance") {
       throw new Error("deterministic model configuration requires the acceptance image variant");
     }
+    if (!config.deterministic) await initializeChildAgentDirectory();
     mkdirSync(config.dataDirectory, { recursive: true, mode: 0o700 });
     const store = WorkStore.open(join(config.dataDirectory, "work.sqlite"));
     let mcp: McpBridge | undefined;
+    let loadingStage: "skill-load" | "package-load" | undefined = "skill-load";
     try {
       const daemon = new AgentDaemonControl({
         workId: config.workId,
@@ -145,7 +155,16 @@ export class AgentApplication {
         stage: "skill-load", outcome: "started", code: "SKILL_LOAD_FAILED",
         correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
       });
-      const loaded = await loadValidatedWorkContext(context);
+      const loaded = await loadValidatedWorkContext(context, workspace, join(config.dataDirectory, "agent"), () => {
+        emitAgentDiagnostic({ stage: "skill-load", outcome: "succeeded", code: "SKILL_LOAD_FAILED",
+          correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
+        loadingStage = "package-load";
+        emitAgentDiagnostic({ stage: "package-load", outcome: "started", code: "PACKAGE_LOAD_FAILED",
+          correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
+      });
+      emitAgentDiagnostic({ stage: "package-load", outcome: "succeeded", code: "PACKAGE_LOAD_FAILED",
+        correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
+      loadingStage = undefined;
       mcp = new McpBridge();
       emitAgentDiagnostic({ stage: "mcp-initialize", outcome: "started", code: "MCP_INITIALIZATION_FAILED", correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
       try {
@@ -157,31 +176,31 @@ export class AgentApplication {
       }
       const bridgedTools = mcpTools(mcp, loaded.toolPolicy);
       const customTools = bridgedTools.map((tool) => tool.definition);
-      const resolvedTools = [...loaded.resolvedTools, ...bridgedTools.map((tool) => tool.canonicalName)];
-      const sdkTools = [...loaded.resolvedTools, ...customTools.map((tool) => tool.name)];
+      const reserved = new Set<string>([...BUILT_IN_WORK_TOOLS, ...customTools.map((tool) => tool.name)]);
+      const packageTools = selectPackageTools(loaded.packageTools, loaded.toolPolicy, reserved);
+      const resolvedTools = [...loaded.resolvedTools, ...bridgedTools.map((tool) => tool.canonicalName), ...packageTools.map(([canonical]) => canonical)];
+      const sdkTools = [...loaded.resolvedTools, ...customTools.map((tool) => tool.name), ...packageTools.map(([, native]) => native)];
       const runs = new RunManager(store, daemon, new PiSdkRunExecutor(
         sessions,
         join(config.dataDirectory, "agent"),
         { ...config.model, deterministic: config.deterministic },
-        { resourceLoader: loaded.loader, resolvedTools: sdkTools, customTools },
+        { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools },
       ));
       runs.recover();
       daemon.configure({
         modelCredentialStatus: "available",
         contextIdentity: loaded.contextIdentity,
         loadedSkills: loaded.skills,
+        loadedPackages: loaded.packages.map((item) => ({ name: item.name, contentDigest: item.digest, ...item.resourceCounts })),
+        packageResources: loaded.packageResources,
         resolvedTools,
         initializationComplete: true,
         initializationOnly: config.initializationOnly,
       });
-      emitAgentDiagnostic({
-        stage: "skill-load", outcome: "succeeded", code: "SKILL_LOAD_FAILED",
-        correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
-      });
       return new AgentApplication(config, store, daemon, sessions, runs, mcp);
     } catch (error) {
-      emitAgentDiagnostic({
-        stage: "skill-load", outcome: "failed", code: "SKILL_LOAD_FAILED",
+      if (loadingStage !== undefined) emitAgentDiagnostic({
+        stage: loadingStage, outcome: "failed", code: loadingStage === "skill-load" ? "SKILL_LOAD_FAILED" : "PACKAGE_LOAD_FAILED",
         correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
       });
       if (mcp !== undefined) await Promise.race([
@@ -253,6 +272,10 @@ export class AgentApplication {
           })),
           resolvedTools: [...value.resolvedTools],
           activeRunCount: value.activeRunCount,
+          packageContractVersion: value.packageContractVersion,
+          loadedPackages: value.loadedPackages.map((item) => ({ ...item })),
+          packageResources: [...value.packageResources],
+          packageDiagnostics: [...value.packageDiagnostics],
         };
       }),
       prepareConfigurationChange: unary((request: PrepareConfigurationChangeRequest): PrepareConfigurationChangeResponse => {
@@ -348,6 +371,13 @@ export class AgentApplication {
   }
 }
 
+export function selectPackageTools(packageTools: ReadonlyMap<string, string>,
+  policy: { readonly allowed: readonly string[]; readonly denied: readonly string[] }, reserved: ReadonlySet<string>): Array<[string, string]> {
+  for (const name of packageTools.values()) if (reserved.has(name)) throw new Error(`package tool conflicts with existing tool ${name}`);
+  const allowed = new Set(policy.allowed), denied = new Set(policy.denied);
+  return [...packageTools].filter(([canonical]) => (allowed.size === 0 || allowed.has(canonical)) && !denied.has(canonical));
+}
+
 export interface AgentAuthContext {
   readonly transportSecurityType?: string;
   readonly sslPeerCertificate?: { readonly subject?: { readonly CN?: string | string[] } };
@@ -389,14 +419,15 @@ function readConfig(path: string): AgentRuntimeConfig {
 function loadWorkContext(config: AgentRuntimeConfig): CapturedWorkContext {
   const configPath = config.contextConfigPath ?? "/run/piwork/config.json";
   try {
-    const value = JSON.parse(readFileSync(configPath, "utf8")) as { skills?: unknown; agentsMdPath?: unknown; contextIdentity?: unknown; resolvedTools?: unknown; tools?: Parameters<typeof resolveBuiltInWorkTools>[0]; mcpServers?: unknown };
-    const metadata = JSON.parse(readFileSync(join(configPath, "..", "metadata.json"), "utf8")) as { snapshotId?: unknown; workId?: unknown; skills?: Array<{ name?: unknown; identity?: unknown }> };
+    const value = JSON.parse(readFileSync(configPath, "utf8")) as { skills?: unknown; packages?: unknown; agentsMdPath?: unknown; contextIdentity?: unknown; resolvedTools?: unknown; tools?: Parameters<typeof resolveBuiltInWorkTools>[0]; mcpServers?: unknown };
+    const metadata = JSON.parse(readFileSync(join(configPath, "..", "metadata.json"), "utf8")) as { snapshotId?: unknown; workId?: unknown; skills?: Array<{ name?: unknown; identity?: unknown }>; packageContractVersion?: unknown; packageBindings?: unknown };
     if (metadata.workId !== config.workId || typeof metadata.snapshotId !== "string" || metadata.snapshotId !== config.contextIdentity) {
       throw new Error("Work context identity mismatch");
     }
     if (!Array.isArray(value.skills) || !value.skills.every((name) => typeof name === "string") || !Array.isArray(metadata.skills)) {
       throw new Error("invalid Work Skill descriptor");
     }
+    if (metadata.packageContractVersion !== 1 || !Array.isArray(metadata.packageBindings) || !Array.isArray(value.packages)) throw new Error("Work package contract is unavailable");
     const configuredNames = value.skills as string[];
     const skills = metadata.skills.map((skill, index) => {
       if (typeof skill.name !== "string" || typeof skill.identity !== "string" || skill.name !== configuredNames[index]) throw new Error("invalid Work Skill descriptor");
@@ -409,17 +440,25 @@ function loadWorkContext(config: AgentRuntimeConfig): CapturedWorkContext {
       : value.tools === undefined ? undefined : resolveBuiltInWorkTools(value.tools);
     if (resolvedTools === undefined) throw new Error("Work tool policy is unavailable");
     if (value.tools === undefined || !Array.isArray(value.mcpServers)) throw new Error("Work MCP configuration is unavailable");
-    return { skillRoot: "/run/piwork/skills", skills, agentsMd, contextIdentity: metadata.snapshotId, resolvedTools, toolPolicy: value.tools, mcpServers: value.mcpServers as McpServer[] };
+    return { skillRoot: "/run/piwork/skills", skills, agentsMd, contextIdentity: metadata.snapshotId, resolvedTools, toolPolicy: value.tools, mcpServers: value.mcpServers as McpServer[],
+      packages: value.packages as PiPackageSelectionEntry[], packageBindings: metadata.packageBindings as PackageBinding[] };
   } catch (error) { throw error; }
 }
 
-async function loadValidatedWorkContext(context: CapturedWorkContext): Promise<LoadedWorkContext> {
+async function loadValidatedWorkContext(context: CapturedWorkContext, workspace: string, agentDirectory: string, onSkillsLoaded: () => void): Promise<LoadedWorkContext> {
   const loaded = await loadConfiguredSkills(context.skillRoot, context.skills, context.agentsMd);
+  onSkillsLoaded();
+  const loaderFactory = () => createPackageResourceLoader({ root: "/run/piwork/packages", bindings: context.packageBindings,
+    selection: context.packages, standaloneSkills: loaded.skills, agentsMd: context.agentsMd, workspace, agentDirectory });
+  const packageResources = await loaderFactory();
   const tools = new Set(context.resolvedTools);
   return {
     contextIdentity: context.contextIdentity,
-    loader: loaded.loader,
+    loaderFactory: async () => (await loaderFactory()).loader,
     resolvedTools: context.resolvedTools,
+    packageTools: packageResources.toolNames,
+    packages: packageResources.packages,
+    packageResources: packageResources.resources,
     mcpServers: context.mcpServers,
     toolPolicy: context.toolPolicy,
     skills: loaded.statuses.map((status) => {

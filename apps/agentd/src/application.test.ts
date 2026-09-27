@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { status } from "@grpc/grpc-js";
-import { assertAgentPeerIdentity, mcpTools, skillVisibility } from "./application.js";
+import { assertAgentPeerIdentity, mcpTools, selectPackageTools, skillVisibility } from "./application.js";
 import type { McpBridge } from "@piwork/pi-adapter";
 
 const expected = "core.g3.work-11111111-1111-4111-8111-111111111111.piwork";
@@ -46,4 +46,12 @@ test("retained Work tool policy hides a denied built-in service tool", () => {
   assert.deepEqual(mcpTools(bridge, { allowed: [], denied: ["work-services.service_stop"] }).map((tool) => tool.canonicalName),
     ["work-services.service_list", "work-services.operation_get"]);
   assert.deepEqual(mcpTools({ listTools: () => [] } as unknown as McpBridge, { allowed: [], denied: [] }), []);
+});
+
+test("package tool policy maps canonical keys to native SDK names with deny precedence", () => {
+  const tools = new Map([["package:@example/tools:hello", "hello"], ["package:@example/tools:other", "other"]]);
+  assert.deepEqual(selectPackageTools(tools, { allowed: [], denied: ["package:@example/tools:other"] }, new Set(["read"])),
+    [["package:@example/tools:hello", "hello"]]);
+  assert.deepEqual(selectPackageTools(tools, { allowed: ["package:@example/tools:hello"], denied: ["package:@example/tools:hello"] }, new Set()), []);
+  assert.throws(() => selectPackageTools(tools, { allowed: [], denied: [] }, new Set(["hello"])), /conflicts with existing tool/);
 });

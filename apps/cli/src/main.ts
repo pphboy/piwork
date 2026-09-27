@@ -6,10 +6,13 @@ import { executeWorkServiceCommand, parseWorkServiceCommand, WORK_SERVICE_USAGE 
 import { executeWorkSnapshotCommand, parseWorkSnapshotCommand, WORK_SNAPSHOT_USAGE } from "./work-snapshot.js";
 import {
   FileCredentialStore,
+  formatPiPackageWaitProgress,
   PiworkApiError,
   PiworkClient,
   resolveCoreEndpoint,
   safeErrorMessage,
+  resolvePiPackageSource,
+  waitPiPackageOperation,
   type CredentialRecord,
 } from "@piwork/client-sdk";
 
@@ -21,7 +24,9 @@ export const CLI_USAGE = `usage: piwork-cli [--core <url>] [--json] <command>
   logout
   skills list
   skills show <skill-name>
-  work create --name <name> [--base-image <image>] [--skill <skill-name>]... [--no-skills] [--agents-md-file <path>] [--config <file>] [--wait]
+  packages list
+  packages show <package-name>
+  work create --name <name> [--base-image <image>] [--skill <skill-name>]... [--no-skills] [--package <package-name>]... [--no-packages] [--agents-md-file <path>] [--config <file>] [--wait]
   work list
   work show <workId>
   work <start|stop|retry|delete> <workId> [--wait]
@@ -29,11 +34,13 @@ export const CLI_USAGE = `usage: piwork-cli [--core <url>] [--json] <command>
   work export <workId> [--output <file>]
   work snapshot download <snapshotId> --output <file>
   work package inspect <file>
+  work packages <list|show|install|update|enable|disable|remove> ...
   work import <file> [--name <name>] [--wait]
   work config show <workId>
   work config set <workId> --config <file>
   work config skills list <workId>
   work config skills set <workId> (--skill <skill-name>)... | --no-skills
+  work config packages set <workId> (--package <package-name>)... | --no-packages
   work config agents show <workId>
   work config agents set <workId> --file <path>
   work config apply <workId> [--idempotency-key <key>] [--wait]
@@ -52,8 +59,9 @@ const COMMAND_HELP: Readonly<Record<string, string>> = {
   login: "usage: piwork-cli login --account <name> [--password-stdin]\n  Authenticate and save the credential locally.\n",
   whoami: "usage: piwork-cli whoami\n  Show the current authenticated identity.\n",
   logout: "usage: piwork-cli logout\n  Revoke the current session and remove the saved credential.\n",
-  work: "usage: piwork-cli work <create|list|show|start|stop|retry|delete|config|service> ...\n  Manage Work resources and per-Work configuration.\n  work service <list|show|start|stop|restart|retry|remove|logs> ...\n",
+  work: "usage: piwork-cli work <create|list|show|start|stop|retry|delete|config|service|packages|export|import> ...\n  Manage Work resources and per-Work configuration.\n  work service <list|show|start|stop|restart|retry|remove|logs> ...\n  work packages <list|show|install|update|enable|disable|remove> <workId> ...\n  work packages install <workId> <npm:...|git:...|./directory|./archive.zip> [--wait] [--verbose]\n  work packages install <workId> --from-core <name> [--wait] [--verbose]\n  work packages update <workId> <name> (--source <source>|--from-core) [--wait] [--verbose]\n  --verbose requires --wait.\n  work config apply <workId> [--wait] activates desired packages.\n",
   skills: "usage: piwork-cli skills <list|show> [skill-name]\n  Discover enabled Skills available to the current user.\n",
+  packages: "usage: piwork-cli packages <list|show> [package-name]\n  Discover Core packages available to new Works.\n",
   operation: "usage: piwork-cli operation show <operationId>\n  Inspect an asynchronous Work operation.\n",
   session: "usage: piwork-cli session <create|list|show> <workId> [sessionId]\n  Manage persistent conversation sessions.\n",
   run: "usage: piwork-cli run <show|watch|cancel> <workId> <runId> [options]\n  Inspect, stream, or cancel a Run.\n",
@@ -81,6 +89,27 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   }
   if (snapshotCommand?.kind === "inspect") return executeWorkSnapshotCommand({ client: new PiworkClient({ coreUrl: "http://127.0.0.1:7171" }),
     json: globals.json, stdout: (text) => { process.stdout.write(text); }, stderr: (text) => { process.stderr.write(text); } }, snapshotCommand);
+  if (command === "work" && args[0] === "create") {
+    const options = args.slice(1);
+    known(options, ["--name", "--config", "--wait", "--idempotency-key", "--base-image", "--skill", "--no-skills", "--package", "--no-packages", "--agents-md-file"]);
+    parseSkillSelection(options, false);
+    parsePackageSelection(options, false);
+  }
+  if (command === "work" && args[0] === "config" && args[1] === "set") {
+    const options = args.slice(3);
+    known(options, ["--config", "--package", "--no-packages"]);
+    parsePackageSelection(options, false);
+  }
+  if (command === "work" && args[0] === "config" && args[1] === "packages" && args[2] === "set") {
+    const options = args.slice(4);
+    known(options, ["--package", "--no-packages"]);
+    parsePackageSelection(options, true);
+  }
+  if (command === "work" && args[0] === "packages" && (args[1] === "install" || args[1] === "update")) {
+    const options = args.slice(args[1] === "install" && args[3] === "--from-core" ? 5 : 4);
+    known(options, args[1] === "install" ? ["--wait", "--verbose"] : ["--source", "--from-core", "--wait", "--verbose"]);
+    if (options.includes("--verbose") && !options.includes("--wait")) throw usage("--verbose requires --wait");
+  }
   const store = new FileCredentialStore();
   const credential = await store.load();
   const coreUrl = resolveCoreEndpoint({ explicit: globals.core, environment: process.env.PIWORK_CORE_URL, saved: credential?.coreUrl });
@@ -99,6 +128,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   if (command === "whoami") return whoamiCommand(context, args);
   if (command === "logout") return logoutCommand(context, args);
   if (command === "skills") return skillsCommand(context, args);
+  if (command === "packages") return packagesCommand(context, args);
   if (command === "work") return workCommand(context, args);
   if (command === "operation") return operationCommand(context, args);
   if (command === "session") return sessionCommand(context, args);
@@ -145,19 +175,28 @@ async function skillsCommand(context: Context, args: readonly string[]): Promise
   throw usage("skills requires list or show");
 }
 
+async function packagesCommand(context: Context, args: readonly string[]): Promise<number> {
+  requireCredential(context);
+  if (args[0] === "list") { noArgs(args.slice(1)); output(context, await context.client.packages()); return 0; }
+  if (args[0] === "show") { exact(args.slice(1), 1); output(context, await context.client.package(args[1]!)); return 0; }
+  throw usage("packages requires list or show");
+}
+
 async function workCommand(context: Context, args: readonly string[]): Promise<number> {
   requireCredential(context);
   const [action, ...rest] = args;
+  if (action === "packages") return workPackagesCommand(context, rest);
   if (action === "list") { noArgs(rest); output(context, await context.client.works()); return 0; }
   if (action === "show") { exact(rest, 1); output(context, await context.client.work(rest[0]!)); return 0; }
   if (action === "create") {
-    known(rest, ["--name", "--config", "--wait", "--idempotency-key", "--base-image", "--skill", "--no-skills", "--agents-md-file"]);
+    known(rest, ["--name", "--config", "--wait", "--idempotency-key", "--base-image", "--skill", "--no-skills", "--package", "--no-packages", "--agents-md-file"]);
     const name = required(rest, "--name");
     const configPath = optional(rest, "--config");
     const configuration = configPath === undefined ? undefined : JSON.parse(readFileSync(configPath, "utf8"));
     const selectedSkills = parseSkillSelection(rest, false);
+    const selectedPackages = parsePackageSelection(rest, false);
     const agentsFile = optional(rest, "--agents-md-file");
-    const accepted = await context.client.createWork({ name, ...(configuration === undefined ? {} : { configuration }), ...(optional(rest, "--base-image") === undefined ? {} : { baseImage: optional(rest, "--base-image") }), ...(selectedSkills === undefined ? {} : { skills: selectedSkills }), ...(agentsFile === undefined ? {} : { agentsMd: readFileSync(agentsFile, "utf8") }), idempotencyKey: optional(rest, "--idempotency-key") ?? randomUUID() });
+    const accepted = await context.client.createWork({ name, ...(configuration === undefined ? {} : { configuration }), ...(optional(rest, "--base-image") === undefined ? {} : { baseImage: optional(rest, "--base-image") }), ...(selectedSkills === undefined ? {} : { skills: selectedSkills }), ...(selectedPackages === undefined ? {} : { packages: selectedPackages }), ...(agentsFile === undefined ? {} : { agentsMd: readFileSync(agentsFile, "utf8") }), idempotencyKey: optional(rest, "--idempotency-key") ?? randomUUID() });
     if (rest.includes("--wait")) {
       if (!context.json) output(context, accepted);
       await waitOperation(context, accepted);
@@ -173,6 +212,13 @@ async function workCommand(context: Context, args: readonly string[]): Promise<n
       if (sub === "set") { known(options, ["--skill", "--no-skills"]); const selected = parseSkillSelection(options, true)!; outputConfiguration(context, await context.client.updateWorkSkills(workId, selected), true); return 0; }
       throw usage("work config skills requires list or set");
     }
+    if (configAction === "packages") {
+      const [sub, workId, ...options] = configArgs;
+      if (workId === undefined || workId.startsWith("--")) throw usage("work config packages requires <workId>");
+      if (sub === "list") { noArgs(options); outputConfiguration(context, await context.client.workPackageSelection(workId)); return 0; }
+      if (sub === "set") { known(options, ["--package", "--no-packages"]); const selected = parsePackageSelection(options, true)!; outputConfiguration(context, await context.client.updateWorkPackageSelection(workId, selected), true); return 0; }
+      throw usage("work config packages requires list or set");
+    }
     if (configAction === "agents") {
       const [sub, workId, ...options] = configArgs;
       if (workId === undefined || workId.startsWith("--")) throw usage("work config agents requires <workId>");
@@ -184,9 +230,13 @@ async function workCommand(context: Context, args: readonly string[]): Promise<n
     if (workId === undefined || workId.startsWith("--")) throw usage("work config requires <workId>");
     if (configAction === "show") { noArgs(options); outputConfiguration(context, await context.client.workConfiguration(workId)); return 0; }
     if (configAction === "set") {
-      known(options, ["--config"]);
-      const configuration = JSON.parse(readFileSync(required(options, "--config"), "utf8"));
-      outputConfiguration(context, await context.client.updateWorkConfiguration(workId, configuration), true);
+      known(options, ["--config", "--package", "--no-packages"]);
+      const selectedPackages = parsePackageSelection(options, false);
+      const file = optional(options, "--config");
+      if (file === undefined && selectedPackages === undefined) throw usage("work config set requires --config or package selection");
+      if (file === undefined) { outputConfiguration(context, await context.client.updateWorkPackageSelection(workId, selectedPackages!), true); return 0; }
+      const configuration = JSON.parse(readFileSync(file, "utf8"));
+      outputConfiguration(context, await context.client.updateWorkConfiguration(workId, selectedPackages === undefined ? configuration : { ...configuration, packages: selectedPackages }), true);
       return 0;
     }
     if (configAction === "apply") {
@@ -213,6 +263,64 @@ async function workCommand(context: Context, args: readonly string[]): Promise<n
   throw usage("work requires create, list, show, start, stop, retry, delete, or config");
 }
 
+async function workPackagesCommand(context: Context, args: readonly string[]): Promise<number> {
+  const [action, workId, ...rest] = args;
+  if (!workId || workId.startsWith("--")) throw usage("work packages requires <workId>");
+  if (action === "list") { noArgs(rest); output(context, await context.client.workPackages(workId)); return 0; }
+  if (action === "show") { exact(rest, 1); output(context, await context.client.workPackage(workId, rest[0]!)); return 0; }
+  if (action === "enable" || action === "disable") { exact(rest, 1); output(context, await context.client.setWorkPackageEnabled(workId, rest[0]!, action === "enable")); return 0; }
+  if (action === "remove") { exact(rest, 1); output(context, await context.client.removeWorkPackage(workId, rest[0]!)); return 0; }
+  if (action === "install") {
+    let source: Parameters<PiworkClient["installWorkPackage"]>[1] | undefined;
+    let options: readonly string[];
+    let raw: string | undefined;
+    if (rest[0] === "--from-core") {
+      const name = rest[1]; if (!name || name.startsWith("--")) throw usage("--from-core requires a package name");
+      source = { kind: "core", name }; options = rest.slice(2);
+    } else {
+      raw = rest[0]; if (!raw || raw.startsWith("--")) throw usage("work packages install requires a source or --from-core <name>");
+      options = rest.slice(1);
+    }
+    known(options, ["--wait", "--verbose"]);
+    if (options.includes("--verbose") && !options.includes("--wait")) throw usage("--verbose requires --wait");
+    if (raw !== undefined) source = await resolvePiPackageSource(context.client, raw, { kind: "work", workId });
+    const accepted = await context.client.installWorkPackage(workId, source!, randomUUID());
+    return finishPackageOperation(context, accepted, options.includes("--wait"), options.includes("--verbose"));
+  }
+  if (action === "update") {
+    const name = rest[0]; if (!name || name.startsWith("--")) throw usage("work packages update requires <package-name>");
+    const options = rest.slice(1);
+    known(options, ["--source", "--from-core", "--wait", "--verbose"]);
+    if (options.includes("--verbose") && !options.includes("--wait")) throw usage("--verbose requires --wait");
+    const raw = optional(options, "--source"), fromCore = options.includes("--from-core");
+    if ((raw === undefined) === !fromCore) throw usage("choose exactly one of --source or --from-core");
+    const source = fromCore ? { kind: "core" as const, name } : await resolvePiPackageSource(context.client, raw!, { kind: "work", workId });
+    const accepted = await context.client.updateWorkPackage(workId, name, source, randomUUID());
+    return finishPackageOperation(context, accepted, options.includes("--wait"), options.includes("--verbose"));
+  }
+  throw usage("work packages requires list, show, install, update, enable, disable, or remove");
+}
+
+async function finishPackageOperation(context: Context, accepted: { readonly operationId: string; readonly scope: "core" | "work" }, wait: boolean, verbose: boolean): Promise<number> {
+  if (!wait) { output(context, accepted); return 0; }
+  const controller = new AbortController();
+  const interrupt = () => controller.abort();
+  process.once("SIGINT", interrupt);
+  if (verbose) process.stderr.write(`Package Operation ${accepted.operationId}: accepted; waiting\n`);
+  let final: Record<string, unknown>;
+  try { final = await waitPiPackageOperation(context.client, accepted as Parameters<typeof waitPiPackageOperation>[1], { signal: controller.signal,
+    ...(verbose ? { onProgress: (progress) => process.stderr.write(formatPiPackageWaitProgress(accepted.operationId, progress)) } : {}) }); }
+  catch (error) {
+    const interrupted = error instanceof PiworkApiError && error.code === "OPERATION_WAIT_INTERRUPTED";
+    const code = interrupted ? "OPERATION_WAIT_INTERRUPTED" : "OPERATION_OBSERVATION_UNAVAILABLE";
+    output(context, { ...accepted, state: "waiting", result: null, error: { code, message: "The package Operation remains queryable." } });
+    throw Object.assign(new Error(`Package Operation ${accepted.operationId} is still queryable. Inspect: piwork-cli operation show ${accepted.operationId}`), { exitCode: interrupted ? 130 : 5 });
+  } finally { process.removeListener("SIGINT", interrupt); }
+  output(context, final);
+  if (final.state === "failed" || final.state === "superseded") throw Object.assign(new Error(`Package Operation ${accepted.operationId} ${String(final.state)}.`), { exitCode: 6 });
+  return 0;
+}
+
 function repeated(args: readonly string[], name: string): string[] {
   const values: string[] = [];
   for (let index = 0; index < args.length; index += 1) if (args[index] === name) {
@@ -230,6 +338,18 @@ export function parseSkillSelection(args: readonly string[], requiredSelection: 
   if (noSkillsCount === 1) return [];
   if (skills.length > 0) return skills;
   if (requiredSelection) throw usage("select at least one --skill or use --no-skills");
+  return undefined;
+}
+
+export function parsePackageSelection(args: readonly string[], requiredSelection: boolean): Array<{ name: string; enabled: true }> | undefined {
+  const names = repeated(args, "--package");
+  const none = args.filter((value) => value === "--no-packages").length;
+  if (none > 1 || (none && names.length)) throw usage("--package and --no-packages are mutually exclusive");
+  if (new Set(names).size !== names.length) throw usage("--package may not be repeated");
+  if (names.length > 64 || names.some((name) => name.length > 214 || !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name))) throw usage("invalid package selection");
+  if (none) return [];
+  if (names.length) return names.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))).map((name) => ({ name, enabled: true }));
+  if (requiredSelection) throw usage("select at least one --package or use --no-packages");
   return undefined;
 }
 
@@ -417,7 +537,7 @@ function parseGlobals(argv: readonly string[]): GlobalOptions {
   }
   return { ...(core === undefined ? {} : { core }), json, rest: [...argv.slice(index)] };
 }
-function known(args: readonly string[], names: readonly string[]): void { const boolean = new Set(["--wait", "--password-stdin", "--no-skills"]); for (let index = 0; index < args.length; index += 1) { const value = args[index]!; if (!value.startsWith("--") || !names.includes(value)) throw usage(`unknown option: ${value}`); if (!boolean.has(value)) { if (args[index + 1] === undefined || args[index +1]!.startsWith("--")) throw usage(`${value} requires a value`); index += 1; } } }
+function known(args: readonly string[], names: readonly string[]): void { const boolean = new Set(["--wait", "--verbose", "--password-stdin", "--no-skills", "--no-packages", "--from-core"]); for (let index = 0; index < args.length; index += 1) { const value = args[index]!; if (!value.startsWith("--") || !names.includes(value)) throw usage(`unknown option: ${value}`); if (!boolean.has(value)) { if (args[index + 1] === undefined || args[index +1]!.startsWith("--")) throw usage(`${value} requires a value`); index += 1; } } }
 function optional(args: readonly string[], name: string): string | undefined { const indexes = args.flatMap((value, index) => value === name ? [index] : []); if (indexes.length > 1) throw usage(`${name} may be specified only once`); const index = indexes[0]; return index === undefined ? undefined : args[index + 1]; }
 function required(args: readonly string[], name: string): string { const value = optional(args, name); if (value === undefined) throw usage(`${name} is required`); return value; }
 function positiveInteger(value: string, name: string): number { const parsed = Number(value); if (!Number.isSafeInteger(parsed) || parsed < 1) throw usage(`${name} must be a positive integer`); return parsed; }

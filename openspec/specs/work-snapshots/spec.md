@@ -14,6 +14,8 @@
 
 接受 export SHALL 原子保存 Operation、snapshotId 和持久独占 Work 快照锁；随后捕获完整持久内容并校验，包全部持久化之后才报告 succeeded。在捕获开始前再次验证实际停止和数据库完整性；发现仍非终态 Run 返回 SNAPSHOT_NOT_QUIESCENT，不修改源历史。检查到任何缺失、读取失败、变化或不支持数据 SHALL 整体失败。锁期以 WLIFE-SNAPSHOT-001 为准。导出计算的单个 blob 哈希、长度和最终 package SHA-256 必须与下载内容一致。
 
+Pi package 非终态 install/update SHALL 纳入控制 Operation 门禁；desired≠active 本身 SHALL 不阻止 export。捕获 SHALL 遍历全部 retained context 的包绑定及完整依赖，禁止为补缺触发下载安装。任一被引用包缺失/损坏 SHALL 整体失败为 PI_PACKAGE_ARTIFACT_MISSING 或完整性错误，不产生可下载部分文件。
+
 #### Scenario: Export a stopped Work
 - **WHEN** 所有者导出实际停止、配置和数据完整的 Work
 - **THEN** 返回稳定 Work/snapshot/Operation ID，最终生成完整可校验包，源保持 stopped 且内容不变
@@ -38,6 +40,14 @@
 - **WHEN** 已停止 Work 的两个受管卷和 desired context 均存在、active=null，且私有卷从未生成 work.sqlite、-wal、-shm
 - **THEN** export 将其作为合法空 Session/Run 历史打包，不为导出而启动 agentd 或在源卷生成数据库
 
+#### Scenario: Export unapplied package changes
+- **WHEN** stopped Work 无非终态任务但 active=v1、desired=v2
+- **THEN** 导出成功并同时保留两份制品和 pendingApply，不隐式 apply
+
+#### Scenario: Fail an incomplete package snapshot
+- **WHEN** 历史 context 的 package tree 已缺失，即使当前 active 不使用它
+- **THEN** 整个 export failed，不略过历史依赖或临时从 Core 取同名包
+
 ### Requirement: Validate complete bounded packages before installation
 
 **Identifier:** WSNAP-002
@@ -47,6 +57,8 @@ v1 package SHALL 使用完整性校验，不宣称签名或加密。接收端 SH
 v1 SHALL 限制包总字节为 100 GiB，文件恢复逻辑字节（跨树重复引用重复计数，硬链接只计一次）加去重镜像层字节也最多100 GiB；manifest 及每个 JSON metadata blob 各最多 64 MiB，累计 metadata 最多 256 MiB，总文件条目最多 1,000,000，路径最多 4096 字节和 128 层，所有 blob 均受同一包字节上限，不按文件类型设置过滤规则。上传/下载 SHALL 流式执行，不能以 Base64 JSON、一次性内存 Buffer 或原有 1 MiB JSON 路由传输；超限返回 413 PACKAGE_LIMIT_EXCEEDED，截断/尾随字节/hash 错误返回 400 PACKAGE_INVALID。中断/未验证包不可用于 import。接收端解包 SHALL 不访问允许根之外的路径、不跟随文件树内链接写入、不创建特殊设备或执行包内程序。
 
 离线 inspect SHALL 完整校验 framing、manifest/树/镜像声明结构、持久卷引用闭包和全部 blob 字节，但不执行包内 SQLite、不代替目标平台兼容性、历史数据库语义、目标模型可用性和 quota 校验；摘要 SHALL 明确 integrityVerified=true、installationValidated=false。服务器 SHALL 在 package 标记可导入前完成隔离历史数据库语义检查，导入发布前再次验证目标相关约束。active=null 且三个受管 Work SQLite 文件全部缺席是合法空私有历史；存在孤立 WAL/SHM，或 active 非 null 却缺主数据库 SHALL 拒绝，不能自动创建一个空数据库冒充来源。
+
+静态验证 SHALL 扩展到最终 V1 的 Pi package 表、context bindings、manifest name、resourceInventory、完整树/hash 与依赖链接，PKG-003 的单包展开限制与本规格整包总量限制同时生效。复用 blob 不得绕过按 context 引用累计的逻辑恢复量限制。inspect SHALL 增加安全 Pi package name/version 和 uniqueArtifacts/contextBindings/enabledDesired/enabledActive 摘要，保持 integrityVerified=true、installationValidated=false，不执行 npm/Git/extension/SDK 或联系源 registry。
 
 #### Scenario: A package exceeds JSON request size
 - **WHEN** 用户传输一个合法 8 MiB 包
@@ -68,6 +80,14 @@ v1 SHALL 限制包总字节为 100 GiB，文件恢复逻辑字节（跨树重复
 - **WHEN** 一个包内含恶意 startup 命令和 AGENTS 指令
 - **THEN** inspect 只验证数据和显示安全摘要，不执行这些内容或联系网络
 
+#### Scenario: Inspect a Work containing packages
+- **WHEN** 离线用户 inspect 包含 extension 和 lifecycle script 的合法 .work
+- **THEN** 验证全部 bytes 并显示安全包数量/名称/版本，不运行脚本或将 loaded 标为 true
+
+#### Scenario: Reject a missing package blob
+- **WHEN** manifest 包绑定有效但一个依赖树 blob 缺失或摘要错误
+- **THEN** 校验返回 PACKAGE_INVALID，无可导入记录或已发布 Work
+
 ### Requirement: Install atomically as a stopped independent Work
 
 **Identifier:** WSNAP-003
@@ -77,6 +97,8 @@ v1 SHALL 限制每个安装同时一个 active export/import job，新任务超�
 导入 SHALL 要求一个已验证、归调用者所有且未过期的 package 与非空 idempotencyKey；name 可省略，bindings 不属于导入请求。未指定名称时 Core SHALL 在接受事务内以包内 sourceName 为候选，若已被同一所有者的现存/已删除 Work 或在途导入占用，则依次尝试 `-2`、`-3` 等后缀，在 128 字符限制内截断基础名，选择首个可用名称并原子保留。显式指定名称被占用 SHALL 返回 409 WORK_NAME_CONFLICT，不覆盖、合并或自动改名。模型及自定义外部 MCP 凭证依赖按 PWORK-004 检查；接收策略/配额 SHALL 按包内 agent 与全部保留 service 的持久 desired 预留原子检查，包含 disabled 或 tombstone 中尚未释放的预算，并计入接收端已有资源占用；预算不足 SHALL 在接受前冲突失败，不降配、不按 enabled 重算。
 
 导入 SHALL 返回预分配 Work ID 与持久 Operation；恢复在不可见暂存中完成，不执行包内代码或模型。只有全部镜像、文件、上下文、历史、服务、预留与引用验证并持久保存后，才原子发布 stopped Work 并使 Operation succeeded。发布时 SHALL 将包内逐项持久预留及卷引用映射到新 Work/service 身份，目标运行占用从零开始；此成功仅表示安装完整，不表示服务 ready。导入阶段 SHALL 不创建 agent/service 容器、Work 网络或 TLS 凭证；新的运行身份只在接收者显式启动时建立。失败 SHALL 不发布 Work 或占住名称；已分配临时卷/context/配额 SHALL 可恢复清理，既有 Work 不受影响。用户 SHALL 能通过返回的 Operation 查询失败，即使目标 Work 从未发布。加载的新内容寻址镜像可以留作共享 cache，不可删除目标已有镜像或覆盖其 tags。
+
+发布条件 SHALL 同时要求每个 context 的 Pi package bytes/dependencies 和 bindings 已完整恢复、身份与兼容验证通过。恢复 SHALL 静态进行，不执行包 script/extension，不访问来源 registry/Git/local/ZIP，不查询或修改接收 Core package catalog/defaults。active/desired 差异、active=null、disabled 和历史版本按 PWORK-001/002 保留。缺失包数据导致的失败 SHALL 同样清理所有暂存/lease/预留，不能发布可见半成品。
 
 #### Scenario: A complete installation
 - **WHEN** 一个无自定义外部 MCP secret 的合法包在目标模型可用且预算足够时只凭 packageId 导入
@@ -106,6 +128,14 @@ v1 SHALL 限制每个安装同时一个 active export/import job，新任务超�
 - **WHEN** 包声明 host mount、privileged service 或超过接收方预算
 - **THEN** 导入拒绝而不是重放原平台的许可或静默改配置
 
+#### Scenario: Import without source or catalog packages
+- **WHEN** 目标模型与平台兼容，源包服务已离线，目标 Core 未安装对应 Pi 包
+- **THEN** 只凭 .work 发布完整 stopped Work，显式 start 使用导入 active，目标 catalog 不变
+
+#### Scenario: Fail while restoring package data
+- **WHEN** 第二个 context 的包树还原失败
+- **THEN** 没有可见新 Work，原有 Work 不变，Operation 可查询，暂存清理或记录 cleanup-pending
+
 ### Requirement: Retain durable snapshot operations and idempotency
 
 **Identifier:** WSNAP-004
@@ -113,6 +143,8 @@ v1 SHALL 限制每个安装同时一个 active export/import job，新任务超�
 export/import SHALL 使用持久 Operation，返回 workId、operationId、correlationId、reused；import 额外返回最终选定的 name，export 额外返回 snapshotId。幂等 scope SHALL 包含接收安装的调用者与操作种类，export 还包含源 Work；相同 key 同规范化请求返回原 Operation，不重新捕获或产生另一 Work；相同 key 异内容返回 409 IDEMPOTENCY_CONFLICT。import 比较 package digest 与显式 name（未提供时为 null），不比较事务内自动选出的 name、目标模型选择或可更换的 upload packageId。export replay 在重新检查源生命周期之前解析，已过期包不能被静默重新生成。新 key 表示一次新尝试。
 
 任务 SHALL 在接受后 30 分钟内成功或失败为 SNAPSHOT_DEADLINE_EXCEEDED；网络观察断开不取消任务。Core 启动 SHALL 在普通 Work 恢复前处理 snapshot journal：未发布且无完成标记任务失败为 SNAPSHOT_INTERRUPTED 并清理；已完成发布事务保留 succeeded；已原子落盘且经过完整验证的 export 可以完成原 Operation。任何原任务的迟到 worker 不可重新发布或释放新锁。cleanup 未确认完成前 SHALL 保留相应 gate/资源记录，不得对未知资源做全局清理。
+
+Pi package 恢复 SHALL 纳入同一导入 journal 与成功发布事务，不创建会被重放的 package install 操作。重启清理 SHALL 保留所有有效包引用，不能在处理导入前回收其 staged 制品。
 
 #### Scenario: Lost acceptance response
 - **WHEN** import 已接受但客户端未收到响应，并以同 digest/显式 name 或省略 name/key 重试
@@ -126,15 +158,21 @@ export/import SHALL 使用持久 Operation，返回 workId、operationId、corre
 - **WHEN** Work 发布与 Operation 成功事务已提交但响应未返回
 - **THEN** 恢复保留一个 stopped Work，同键返回原成功结果
 
+#### Scenario: Crash after package restore before Work publication
+- **WHEN** 包树已恢复但 Work 尚未原子发布时 Core 崩溃
+- **THEN** 原 import 按 journal 中断清理，不自动安装、执行 extension 或启动 Work；新 key 可重试
+
 ### Requirement: Scope transfer lifetime and errors explicitly
 
 **Identifier:** WSNAP-005
 
 接口 SHALL 提供导出接受、快照安全详情、快照二进制下载、二进制上传和导入接受入口；新内容接口使用 application/vnd.piwork.work-package，上传必须提供 Content-Length 与 X-Piwork-SHA256，下载返回同名校验字段及 Cache-Control:no-store。非适用 Content-Type 返回415，缺失或错误 header 返回400；不支持 Range，显式 Range 返回416。JSON 元数据请求仍受1MiB上限约束，具体路径/DTO遵循本变更设计的接口表。
 
-上传 SHALL 先认证，再流式落入 owner-only 暂存；完整验证后返回 packageId、digest、size、expiresAt、bindingRequirements；末字段仅为兼容既有 v1 上传响应的只读平台依赖摘要，不得要求客户端据此填写 bindings。已完成 upload 和 export 包 SHALL 从就绪起保留 24 小时；任务或下载持有有效引用时不可回收，其后新请求返回 410 PACKAGE_EXPIRED，不影响已导入 Work 或 Operation 历史。新 transfer SHALL 限定 60 秒无进展超时及 30 分钟总时限；中断上传删除未完成暂存，下载可以从头重试，不承诺 range/resume。上传同 owner/digest 复用现存完整内容，不能允许另一用户仅凭 digest 获得字节。
+上传 SHALL 先认证，再流式落入 owner-only 暂存；完整验证后返回 packageId、digest、size、expiresAt、bindingRequirements；末字段为最终 V1 的只读平台依赖摘要，不得要求客户端据此填写 bindings。已完成 upload 和 export 包 SHALL 从就绪起保留 24 小时；任务或下载持有有效引用时不可回收，其后新请求返回 410 PACKAGE_EXPIRED，不影响已导入 Work 或 Operation 历史。新 transfer SHALL 限定 60 秒无进展超时及 30 分钟总时限；中断上传删除未完成暂存，下载可以从头重试，不承诺 range/resume。上传同 owner/digest 复用现存完整内容，不能允许另一用户仅凭 digest 获得字节。
 
 接口 SHALL 使用 400 表示包/请求不合法或 TARGET_MODEL_UNAVAILABLE/EXTERNAL_MCP_SECRET_UNAVAILABLE，401 表示未认证，403 表示非所有者管理员内容访问被拒，404 表示普通跨所有者或未知资源，409 表示状态/名称/幂等/配额冲突，410 表示本人的已过期包，413 表示限额，503 表示运行依赖或暂存不可用。错误体只包含安全 code/message/field；导入前置条件错误 SHALL 给出具体 code 与可执行处理方向，不得统一映射为 `Work snapshot request cannot be accepted`。接受后的失败通过 Operation 报告，不能在流已开始后插入 JSON。包字节是完整内容通道，不经过普通日志/JSON 脱敏器；控制响应和日志仍禁止输出用户内容和凭证。
+
+完整 `.work` 传输对象 SHALL 与独立 Pi package upload 分属不同接口/作用域，ID 不得互换。导入后 `.work` 或其 upload 过期 SHALL 不影响 Work 自有 package bytes；export/import 控制诊断不得输出包脚本日志或来源 credential。
 
 #### Scenario: Retry a download
 - **WHEN** export 成功后的下载断开，用户在保留期内重新下载
@@ -147,3 +185,7 @@ export/import SHALL 使用持久 Operation，返回 workId、operationId、corre
 #### Scenario: Disabled user during observation
 - **WHEN** 任务已接受后调用者凭证失效
 - **THEN** 后续读取重新鉴权，任务不因观察失败而重提；重新登录后仍按所属用户访问原结果
+
+#### Scenario: Expire the original Work upload
+- **WHEN** 完整 import 成功后原 .work upload 过期
+- **THEN** 导入 Work 的 package 仍可 start/apply/export，不从过期上传重新取数据

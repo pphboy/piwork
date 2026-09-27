@@ -7,6 +7,7 @@ export interface RuntimeResourceIdentity {
 export * from "./docker.js";
 export * from "./stream.js";
 export * from "./snapshot-helper.js";
+export * from "./pi-package-helper.js";
 
 export {
   INSTALLATION_LABEL,

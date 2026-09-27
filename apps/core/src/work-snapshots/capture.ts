@@ -4,11 +4,12 @@ import { mkdir, open, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { WORK_BLOB_KINDS, WorkPackageValidationError, type PortableWorkSpec, type WorkBlobKind } from "@piwork/contracts";
+import { validatePiPackageArtifact } from "@piwork/pi-package";
 import { WorkBlobDirectory, encodeWorkJson, encodeWorkPackage, parseWorkJson, readWorkPackage,
-  type NormalizedImage, type VerifiedWorkPackage, WORK_PACKAGE_LIMITS } from "@piwork/work-package";
+  validatePiPackageContentDigests, type NormalizedImage, type VerifiedWorkPackage, WORK_PACKAGE_LIMITS } from "@piwork/work-package";
 import type { SnapshotHelperSpec } from "@piwork/runtime-docker";
 import type { WorkSnapshotMetadata } from "./metadata.js";
-import { captureOwnedSkillTree } from "./owned-tree.js";
+import { captureOwnedPackageTree, captureOwnedSkillTree } from "./owned-tree.js";
 
 export interface SnapshotCaptureRuntime {
   createSnapshotHelper(spec: SnapshotHelperSpec): Promise<string>;
@@ -97,14 +98,40 @@ export async function captureWorkPackage(input: {
     await tree(result.tree, result.size); volumeTrees.set(volume.role, result.tree);
   }
   const contexts: PortableWorkSpec["contexts"] = [];
+  const piPackageArtifacts = new Map<string, PortableWorkSpec["piPackageArtifacts"][number]>();
   for (const source of metadata.contexts) {
     signal?.throwIfAborted();
     const skillRoot = join(source.snapshot.directory, "skills");
     const captured = await captureOwnedSkillTree(skillRoot, blobs, signal);
     await tree(captured.digest, captured.size);
     const agentsBlob = await put(Buffer.from(source.snapshot.configuration.agentsMd, "utf8"), "file");
+    const packageBindings: PortableWorkSpec["contexts"][number]["packageBindings"] = [];
+    for (const binding of source.snapshot.metadata.packageBindings) {
+      const packageRoot = join(source.snapshot.directory, "packages", binding.nameKey);
+      const verified = await validatePiPackageArtifact({ root: packageRoot, sourceKind: binding.artifact.sourceKind,
+        resolvedSource: binding.artifact.resolvedSource, preparedEnvironment: binding.artifact.preparedEnvironment,
+        expectedDigest: binding.artifact.contentDigest });
+      if (verified.metadata.name !== binding.name || verified.metadata.version !== binding.artifact.version
+        || (["extensions", "skills", "prompts", "themes"] as const).some((kind) =>
+          verified.metadata.resourceCounts[kind] !== binding.artifact.resourceCounts[kind])) invalid("context.packageBinding");
+      const previous = piPackageArtifacts.get(binding.artifact.contentDigest);
+      if (previous !== undefined) {
+        if (previous.name !== binding.name || previous.version !== binding.artifact.version
+          || (["os", "architecture", "variant", "nodeAbi", "piSdkVersion"] as const).some((field) =>
+            previous.preparedEnvironment[field] !== binding.artifact.preparedEnvironment[field])) invalid("piPackageArtifacts.collision");
+        packageBindings.push({ name: binding.name, artifactKey: binding.artifact.contentDigest });
+        continue;
+      }
+      const capturedPackage = await captureOwnedPackageTree(packageRoot, blobs, signal);
+      await tree(capturedPackage.digest, capturedPackage.size);
+      piPackageArtifacts.set(binding.artifact.contentDigest, { key: binding.artifact.contentDigest,
+        ...binding.artifact, treeDigest: capturedPackage.digest,
+        resourceInventory: { extensions: [...verified.inventory.extensions], skills: [...verified.inventory.skills],
+          prompts: [...verified.inventory.prompts], themes: [...verified.inventory.themes] } });
+      packageBindings.push({ name: binding.name, artifactKey: binding.artifact.contentDigest });
+    }
     contexts.push({ key: source.key, createdAt: source.snapshot.metadata.createdAt, configuration: source.configuration,
-      imageKey: source.imageKey, skillsTree: captured.digest, agentsBlob });
+      imageKey: source.imageKey, skillsTree: captured.digest, agentsBlob, packageBindings });
   }
   const images: PortableWorkSpec["images"] = [];
   let platform: PortableWorkSpec["compatibility"] | undefined;
@@ -114,7 +141,7 @@ export async function captureWorkPackage(input: {
     if (normalized.image.imageId !== source.imageId) invalid("image.identity");
     const image = { key: source.key, ...normalized.image };
     images.push(image);
-    platform ??= { ...image.platform, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2 };
+    platform ??= { ...image.platform, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2, piPackageContract: 1 };
     for (const [digest, kind] of [[image.config, "image-config"], ...image.layers.map((layer) => [layer, "image-layer"])] as Array<[string, WorkBlobKind]>) {
       const blob = normalized.blobs.find((item) => item.digest === digest);
       if (!blob) invalid("image.blob");
@@ -127,7 +154,8 @@ export async function captureWorkPackage(input: {
   const spec: PortableWorkSpec = {
     formatVersion: 1, snapshotKind: "cold-full", createdAt, sourceName: metadata.work.name, compatibility: platform,
     activeContext: metadata.activeContext, desiredContext: metadata.desiredContext,
-    contexts, services: metadata.services, quotaReservations: metadata.quotaReservations,
+    contexts, piPackageArtifacts: [...piPackageArtifacts.values()].sort((a, b) => a.key.localeCompare(b.key)),
+    services: metadata.services, quotaReservations: metadata.quotaReservations,
     volumes: [{ role: "agent-private", tree: volumeTrees.get("agent-private")!, serviceRefKeys: [] },
       { role: "workspace", tree: volumeTrees.get("workspace")!, serviceRefKeys: workspaceVolume.serviceRefKeys }],
     images, bindings: metadata.bindings, history: { control, sourceIdentityMap },
@@ -147,6 +175,7 @@ export async function captureWorkPackage(input: {
     await file.sync();
   } finally { await file.close(); }
   const verified = await readWorkPackage(createReadStream(stagingPath, { highWaterMark: WORK_PACKAGE_LIMITS.streamChunkBytes }), { signal });
+  await validatePiPackageContentDigests(verified.spec, verified.metadata, (digest) => blobs.read(digest));
   const onDisk = await stat(stagingPath);
   if (verified.size !== onDisk.size) invalid("package.size");
   return { stagingPath, verified };

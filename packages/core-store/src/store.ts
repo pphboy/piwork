@@ -11,6 +11,7 @@ import {
 } from "./mutation.js";
 import { StoreLock } from "./store-lock.js";
 import { SnapshotStore } from "./snapshots.js";
+import { PiPackageStore } from "./pi-packages.js";
 
 export { CORE_SCHEMA_VERSION };
 
@@ -370,11 +371,12 @@ export class ReferencedVolumeError extends Error {
 export class CoreStore {
   private closed = false;
   readonly snapshots: SnapshotStore;
+  readonly packages: PiPackageStore;
 
   private constructor(
     private readonly database: DatabaseSync,
     private readonly lock: StoreLock,
-  ) { this.snapshots = new SnapshotStore(database); }
+  ) { this.snapshots = new SnapshotStore(database); this.packages = new PiPackageStore(database); }
 
   static open(options: CoreStoreOptions): CoreStore {
     mkdirSync(dirname(options.databasePath), { recursive: true, mode: 0o700 });
@@ -462,6 +464,7 @@ export class CoreStore {
   updateDefaultWorkConfiguration(
     patch: Readonly<Record<string, unknown>>,
     now: string,
+    validate?: (candidate: Readonly<Record<string, unknown>>) => unknown,
   ): DefaultWorkConfigurationEnvelope {
     this.assertOpen();
     this.database.exec("BEGIN IMMEDIATE");
@@ -470,10 +473,11 @@ export class CoreStore {
       const base = current.configuration !== null && typeof current.configuration === "object"
         ? current.configuration as Record<string, unknown>
         : {};
+      const candidate = { ...base, ...patch };
       const next: DefaultWorkConfigurationEnvelope = {
         version: 1,
         revision: current.revision + 1,
-        configuration: { ...base, ...patch },
+        configuration: validate ? validate(candidate) : candidate,
         updatedAt: now,
       };
       this.database.prepare(`INSERT INTO control_metadata(key, value_json, updated_at)

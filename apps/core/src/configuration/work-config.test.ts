@@ -95,7 +95,7 @@ test("resource reductions below retained service occupation are rejected without
 function config(skillId: string): WorkConfig {
   return {
     agentImage: { catalogId: "image-0199e6d8abcd" },
-    skills: [skillId],
+    skills: [skillId], packages: [],
     agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [],

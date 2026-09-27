@@ -5,9 +5,11 @@ WORKDIR /workspace
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/agentd/package.json apps/agentd/tsconfig.json ./apps/agentd/
 COPY apps/service-mcp/package.json apps/service-mcp/tsconfig.json ./apps/service-mcp/
+COPY apps/package-helper/package.json apps/package-helper/tsconfig.json ./apps/package-helper/
 COPY packages/contracts/package.json packages/contracts/tsconfig.json ./packages/contracts/
 COPY packages/work-store/package.json packages/work-store/tsconfig.json ./packages/work-store/
 COPY packages/pi-adapter/package.json packages/pi-adapter/tsconfig.json ./packages/pi-adapter/
+COPY packages/pi-package/package.json packages/pi-package/tsconfig.json ./packages/pi-package/
 RUN --mount=type=cache,target=/root/.npm npm config set registry "$NPM_REGISTRY" \
  && npm config set replace-registry-host always \
  && npm config set fetch-retries 8 \
@@ -17,31 +19,44 @@ RUN --mount=type=cache,target=/root/.npm npm config set registry "$NPM_REGISTRY"
  && for attempt in 1 2 3; do npm ci --ignore-scripts && break; test "$attempt" = 3 && exit 1; done
 COPY apps/agentd/src ./apps/agentd/src
 COPY apps/service-mcp/src ./apps/service-mcp/src
+COPY apps/package-helper/src ./apps/package-helper/src
 COPY packages/contracts/src ./packages/contracts/src
 COPY packages/contracts/proto ./packages/contracts/proto
 COPY packages/work-store/src ./packages/work-store/src
 COPY packages/pi-adapter/src ./packages/pi-adapter/src
+COPY packages/pi-package/src ./packages/pi-package/src
 RUN npm run build -w @piwork/contracts \
  && npm run build -w @piwork/work-store \
  && npm run build -w @piwork/pi-adapter \
+ && npm run build -w @piwork/pi-package \
+ && npm run build -w @piwork/package-helper \
  && npm run build -w @piwork/service-mcp \
  && npm run build -w @piwork/agentd
 
 FROM node:24-bookworm-slim AS runtime
-LABEL io.piwork.agent.protocol="v2" io.piwork.agent.version="0.1.0"
-ENV HOME=/var/data
+LABEL io.piwork.agent.protocol="v2" io.piwork.agent.version="0.1.0" io.piwork.package-helper.contract="1"
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+ENV HOME=/var/data \
+    PATH=/workspace/node_modules/.bin:$PATH \
+    PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/workspace/node_modules/@earendil-works/pi-coding-agent \
+    PI_CODING_AGENT_DIR=/tmp/piwork-child-agent
 WORKDIR /workspace
 COPY --from=build /workspace/node_modules ./node_modules
 COPY --from=build /workspace/apps/agentd/package.json ./apps/agentd/package.json
 COPY --from=build /workspace/apps/agentd/dist ./apps/agentd/dist
 COPY --from=build /workspace/apps/service-mcp/package.json ./apps/service-mcp/package.json
 COPY --from=build /workspace/apps/service-mcp/dist ./apps/service-mcp/dist
+COPY --from=build /workspace/apps/package-helper/package.json ./apps/package-helper/package.json
+COPY --from=build /workspace/apps/package-helper/dist ./apps/package-helper/dist
 COPY --from=build /workspace/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
 COPY --from=build /workspace/packages/work-store/package.json ./packages/work-store/package.json
 COPY --from=build /workspace/packages/work-store/dist ./packages/work-store/dist
 COPY --from=build /workspace/packages/pi-adapter/package.json ./packages/pi-adapter/package.json
 COPY --from=build /workspace/packages/pi-adapter/dist ./packages/pi-adapter/dist
+COPY --from=build /workspace/packages/pi-package/package.json ./packages/pi-package/package.json
+COPY --from=build /workspace/packages/pi-package/dist ./packages/pi-package/dist
 RUN chmod 0755 /workspace/apps/service-mcp/dist/main.js \
  && ln -s /workspace/apps/service-mcp/dist/main.js /usr/local/bin/piwork-service-mcp \
  && mkdir -p /var/data /workspace/apps/agentd \

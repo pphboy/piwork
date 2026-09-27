@@ -26,11 +26,11 @@ function fixture() {
   registerRuntimeProfileCatalog(store, profiles.load());
   const definition = normalizeServiceDefinitionInput({ name: "worker", image: { reference: "worker:fixed" }, command: "node", workingDirectory: "/", enabled: false });
   const spec = validatePortableWorkSpec({ formatVersion: 1, snapshotKind: "cold-full", createdAt: NOW, sourceName: "source",
-    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2 },
-    activeContext: null, desiredContext: "c-000001", contexts: [{ key: "c-000001", createdAt: NOW, imageKey: "i-000001", skillsTree: hash("a"), agentsBlob: hash("b"),
-      configuration: { modelBindingKey: "m-000001", skills: [], mcpServers: [], tools: { allowed: [], denied: [] },
+    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2, piPackageContract: 1 },
+    activeContext: null, desiredContext: "c-000001", contexts: [{ key: "c-000001", createdAt: NOW, imageKey: "i-000001", skillsTree: hash("a"), agentsBlob: hash("b"), packageBindings: [],
+      configuration: { modelBindingKey: "m-000001", skills: [], packages: [], mcpServers: [], tools: { allowed: [], denied: [] },
         resources: { cpuMillis: 1000, memoryBytes: 1073741824, agentCpuMillis: 500, agentMemoryBytes: 536870912, maxServices: 2, maxRetainedVolumes: 2 } } }],
-    services: [{ key: "s-000001", name: "worker", desiredRevision: 1, appliedRevision: null, enabled: false, tombstonedAt: NOW,
+    piPackageArtifacts: [], services: [{ key: "s-000001", name: "worker", desiredRevision: 1, appliedRevision: null, enabled: false, tombstonedAt: NOW,
       revisions: [{ revision: 1, createdAt: NOW, definition, imageKey: null }], recovery: { count: 3, windowStartedAt: NOW, nextRetryAt: null, readySince: null },
       sourceObservation: { state: "disabled", lastError: null } }],
     quotaReservations: [{ subjectKind: "agent", subjectKey: "agentd", desiredCpuMillis: 500, desiredMemoryBytes: 536870912, serviceSlots: 0, volumeSlots: 2 },
@@ -56,7 +56,7 @@ function fixture() {
   const config = restorePortableConfiguration(spec.contexts[0]!.configuration, "AGENTS", "runtime-model-00000001", "owned-image-00000001", new Map([["s-000001", targets.services[0]!.id]]), new Map());
   const prepared = { contexts: [{ key: "c-000001", revision: 1, configuration: config, runtimeProfileJson: JSON.stringify(profiles.load()), sourceRuntimeRevision: 1,
     snapshot: { snapshotId: targets.contexts[0]!.id, workId: targets.workId, directory: join(root, "owned"), configuration: config,
-      metadata: { version: 1 as const, snapshotId: targets.contexts[0]!.id, workId: targets.workId, imageIdentity: spec.images[0]!.imageId, skills: [], createdAt: NOW } } }],
+      metadata: { version: 1 as const, snapshotId: targets.contexts[0]!.id, workId: targets.workId, imageIdentity: spec.images[0]!.imageId, skills: [], packageContractVersion: 1 as const, packageBindings: [], createdAt: NOW } } }],
     activeContextId: null, desiredContextId: targets.contexts[0]!.id };
   const images = new Map([["i-000001", { identity: spec.images[0]!.imageId, selectionId: "owned-image-00000001" }]]);
   const volumes = [{ role: "agent-private" as const, id: "volume-target-private", runtimeName: managedVolumeName(INSTALLATION, targets.workId, "work-private") },

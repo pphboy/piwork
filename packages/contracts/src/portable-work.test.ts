@@ -12,13 +12,13 @@ const digest = "a".repeat(64);
 function manifest(): PortableWorkSpec {
   return {
     formatVersion: 1, snapshotKind: "cold-full", createdAt: "2026-09-23T00:00:00Z", sourceName: "demo",
-    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2 },
+    compatibility: { os: "linux", architecture: "amd64", variant: null, agentProtocol: "v2", workHistorySchema: 3, storageLayout: 2, piPackageContract: 1 },
     activeContext: null, desiredContext: "c-000001",
-    contexts: [{ key: "c-000001", createdAt: "2026-09-23T00:00:00Z", imageKey: "i-000001", skillsTree: digest, agentsBlob: digest,
-      configuration: { modelBindingKey: "m-000001", skills: [], mcpServers: [], tools: { allowed: [], denied: [] },
+    contexts: [{ key: "c-000001", createdAt: "2026-09-23T00:00:00Z", imageKey: "i-000001", skillsTree: digest, agentsBlob: digest, packageBindings: [],
+      configuration: { modelBindingKey: "m-000001", skills: [], packages: [], mcpServers: [], tools: { allowed: [], denied: [] },
         resources: { cpuMillis: 1000, memoryBytes: 268435456, agentCpuMillis: 500, agentMemoryBytes: 134217728, maxServices: 2, maxRetainedVolumes: 4 } },
     }],
-    services: [],
+    piPackageArtifacts: [], services: [],
     quotaReservations: [{ subjectKind: "agent", subjectKey: "agentd", desiredCpuMillis: 500, desiredMemoryBytes: 134217728, serviceSlots: 0, volumeSlots: 2 }],
     volumes: [{ role: "agent-private", tree: digest, serviceRefKeys: [] }, { role: "workspace", tree: digest, serviceRefKeys: [] }],
     images: [{ key: "i-000001", imageId: `sha256:${digest}`, platform: { os: "linux", architecture: "amd64", variant: null }, config: digest, layers: [] }],
@@ -44,6 +44,50 @@ test("portable manifest preserves empty collections and uninitialized active con
   assert.equal(validatePortableWorkSpec(value), value);
   value.activeContext = value.desiredContext;
   assert.equal(validatePortableWorkSpec(value), value);
+});
+test("final V1 requires explicit empty Pi package graph and validates bindings", () => {
+  const base = manifest();
+  assert.throws(() => validatePortableWorkSpec({ ...base, piPackageArtifacts: undefined }));
+  assert.throws(() => validatePortableWorkSpec({ ...base, compatibility: { ...base.compatibility, piPackageContract: undefined } }));
+  assert.throws(() => validatePortableWorkSpec({ ...base, contexts: [{ ...base.contexts[0]!, packageBindings: undefined }] }));
+  const artifact = { key: `sha256:${digest}`, name: "@example/tools", version: "1.0.0", sourceKind: "local" as const,
+    resolvedSource: "local:fixture", preparedEnvironment: { os: "linux" as const, architecture: "amd64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.0" },
+    resourceCounts: { extensions: 0, skills: 0, prompts: 0, themes: 0 }, contentDigest: `sha256:${digest}`,
+    treeDigest: digest, resourceInventory: { extensions: [], skills: [], prompts: [], themes: [] } };
+  const value = manifest();
+  value.piPackageArtifacts.push(artifact);
+  value.contexts[0]!.configuration.packages.push({ name: artifact.name, enabled: false });
+  value.contexts[0]!.packageBindings.push({ name: artifact.name, artifactKey: artifact.key });
+  assert.equal(validatePortableWorkSpec(value), value);
+  value.contexts[0]!.packageBindings[0]!.artifactKey = `sha256:${"b".repeat(64)}`;
+  assert.throws(() => validatePortableWorkSpec(value), /context.packageBindings/);
+});
+test("portable graph retains distinct package versions and same-version content across historical contexts", () => {
+  const value = manifest();
+  const artifact = (hex: string, version: string) => ({ key: `sha256:${hex.repeat(64)}`, name: "@example/tools", version,
+    sourceKind: "local" as const, resolvedSource: `fixture-${hex}`,
+    preparedEnvironment: { os: "linux" as const, architecture: "amd64", variant: null, nodeAbi: "137", piSdkVersion: "0.86.0" },
+    resourceCounts: { extensions: 0, skills: 0, prompts: 0, themes: 0 }, contentDigest: `sha256:${hex.repeat(64)}`,
+    treeDigest: digest, resourceInventory: { extensions: [], skills: [], prompts: [], themes: [] } });
+  value.piPackageArtifacts.push(artifact("b", "1.0.0"), artifact("c", "1.0.0"), artifact("d", "2.0.0"));
+  for (const [index, key] of ["b", "c", "d"].entries()) {
+    const context = structuredClone(value.contexts[0]!);
+    context.key = `c-00000${index + 1}`;
+    context.configuration.packages = [{ name: "@example/tools", enabled: index !== 1 }];
+    context.packageBindings = [{ name: "@example/tools", artifactKey: `sha256:${key.repeat(64)}` }];
+    if (index === 0) value.contexts[0] = context; else value.contexts.push(context);
+  }
+  value.activeContext = "c-000001";
+  value.desiredContext = "c-000003";
+  assert.equal(validatePortableWorkSpec(value), value);
+  const missing = structuredClone(value); missing.contexts[1]!.packageBindings[0]!.artifactKey = `sha256:${"e".repeat(64)}`;
+  assert.throws(() => validatePortableWorkSpec(missing), /context.packageBindings/);
+  const duplicateName = structuredClone(value);
+  duplicateName.contexts[0]!.configuration.packages.push({ name: "@example/tools", enabled: false });
+  duplicateName.contexts[0]!.packageBindings.push({ name: "@example/tools", artifactKey: duplicateName.piPackageArtifacts[0]!.key });
+  assert.throws(() => validatePortableWorkSpec(duplicateName), /context.packages/);
+  const missingTree = structuredClone(value); missingTree.piPackageArtifacts[0]!.treeDigest = "e".repeat(64);
+  assert.throws(() => validatePortableWorkSpec(missingTree), /blob.tree/);
 });
 test("manifest rejects unknown fields, versions and unsafe integers", () => {
   assert.throws(() => validatePortableWorkSpec({ ...manifest(), formatVersion: 2 }), { code: "PACKAGE_FORMAT_UNSUPPORTED" });

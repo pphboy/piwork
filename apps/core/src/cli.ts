@@ -2,7 +2,8 @@
 
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { PiworkApiError, PiworkClient, resolveCoreEndpoint, safeErrorMessage } from "@piwork/client-sdk";
+import { PiworkApiError, PiworkClient, formatPiPackageWaitProgress, resolveCoreEndpoint, resolvePiPackageSource, safeErrorMessage, waitPiPackageOperation } from "@piwork/client-sdk";
+import { randomUUID } from "node:crypto";
 import { CoreStore } from "@piwork/core-store";
 import { readEnvironmentFile, resolveEnvironment } from "./application/env-file.js";
 import { ensureCorePaths } from "./application/paths.js";
@@ -22,7 +23,7 @@ export const SERVE_USAGE = `usage: piwork-serve [--core <url>] [--env-file <path
   config show
   config set --agent-image <image> --model-provider <provider> --model <id> [--model-base-url <url>] [--api-key-stdin | --api-key-file <path>]
   config default-work show
-  config default-work set [--base-image <image>] [--skill <skill-name>]... [--no-skills] [--agents-md-file <path>]
+  config default-work set [--base-image <image>] [--skill <skill-name>]... [--no-skills] [--package <package-name>]... [--no-packages] [--agents-md-file <path>]
   skills list
   skills show <skill-name>
   skills add --path <absolute-directory>
@@ -30,6 +31,12 @@ export const SERVE_USAGE = `usage: piwork-serve [--core <url>] [--env-file <path
   skills enable <skill-name>
   skills disable <skill-name>
   skills remove <skill-name>
+  packages list
+  packages show <package-name>
+  packages install <source> [--default] [--wait] [--verbose]
+  packages update <package-name> --source <source> [--wait] [--verbose]
+  packages <enable|disable|remove> <package-name>
+  operation show <operationId>
 `;
 
 interface Globals {
@@ -69,12 +76,30 @@ export async function runServeCli(argv: readonly string[]): Promise<number> {
     output(context, await context.client.controlStatus());
     return 0;
   }
+  if (command === "config" && args[0] === "default-work" && args[1] === "set") {
+    const options = args.slice(2);
+    known(options, ["--base-image", "--skill", "--no-skills", "--package", "--no-packages", "--agents-md-file"]);
+    parsePackageSelection(options);
+  }
+  if (command === "packages" && (args[0] === "install" || args[0] === "update")) {
+    const options = args.slice(2);
+    known(options, args[0] === "install" ? ["--default", "--wait", "--verbose"] : ["--source", "--wait", "--verbose"]);
+    if (options.includes("--verbose") && !options.includes("--wait")) throw usage("--verbose requires --wait");
+  }
   if (command === "admin") {
     if (args[0] === "bootstrap" && offlineBootstrapNeeded(globals)) return offlineBootstrap(globals, args.slice(1));
     return adminCommand(operatorContext(globals, true), args);
   }
   if (command === "config") return configCommand(operatorContext(globals, true), args);
   if (command === "skills") return skillsCommand(operatorContext(globals, true), args);
+  if (command === "packages") return packagesCommand(operatorContext(globals, true), args);
+  if (command === "operation") {
+    if (args[0] !== "show") throw usage("operation requires show");
+    exact(args.slice(1), 1);
+    const context = operatorContext(globals, true);
+    output(context, await context.client.managedOperation(args[1]!));
+    return 0;
+  }
   throw usage(wrongSurface(command));
 }
 
@@ -150,7 +175,7 @@ async function configCommand(context: OperatorContext, args: readonly string[]):
     const [subaction, ...options] = rest;
     if (subaction === "show") { noArgs(options); output(context, await context.client.defaultWorkConfiguration()); return 0; }
     if (subaction !== "set") throw usage("config default-work requires show or set");
-    known(options, ["--base-image", "--skill", "--no-skills", "--agents-md-file"]);
+    known(options, ["--base-image", "--skill", "--no-skills", "--package", "--no-packages", "--agents-md-file"]);
     const current = await context.client.defaultWorkConfiguration();
     const envelope = current as { revision?: number; configuration?: Record<string, unknown> | null };
     if (envelope.configuration === null || envelope.configuration === undefined) throw usage("default Work configuration is not initialized; configure runtime first");
@@ -164,9 +189,14 @@ async function configCommand(context: OperatorContext, args: readonly string[]):
     if (skills.length > 0 && noSkillsCount === 1) throw usage("--skill and --no-skills are mutually exclusive");
     if (options.includes("--no-skills")) configuration.skills = [];
     else if (skills.length > 0) configuration.skills = skills;
+    const packages = parsePackageSelection(options);
+    if (packages !== undefined) configuration.packages = packages;
     const agentsFile = optional(options, "--agents-md-file");
     if (agentsFile !== undefined) configuration.agentsMd = readFileSync(agentsFile, "utf8");
-    output(context, await context.client.configureDefaultWorkConfiguration(configuration, baseImage === undefined ? undefined : { baseImage }));
+    if (baseImage === undefined) {
+      const patch = Object.fromEntries(["skills", "packages", "agentsMd"].filter((field) => configuration[field] !== envelope.configuration?.[field]).map((field) => [field, configuration[field]]));
+      output(context, await context.client.request("PUT", "/control/default-work", { patch }));
+    } else output(context, await context.client.configureDefaultWorkConfiguration(configuration, { baseImage }));
     return 0;
   }
   if (action === "show") {
@@ -202,6 +232,61 @@ async function skillsCommand(context: OperatorContext, args: readonly string[]):
   if (action === "enable" || action === "disable") { exact(rest, 1); output(context, await context.client.setManagedSkillEnabled(rest[0]!, action === "enable")); return 0; }
   if (action === "remove") { exact(rest, 1); await context.client.removeManagedSkill(rest[0]!); output(context, { removed: rest[0] }); return 0; }
   throw usage("skills requires list, show, add, update, enable, disable, or remove");
+}
+
+async function packagesCommand(context: OperatorContext, args: readonly string[]): Promise<number> {
+  const [action, ...rest] = args;
+  if (action === "list") { noArgs(rest); output(context, await context.client.managedPackages()); return 0; }
+  if (action === "show") { exact(rest, 1); output(context, await context.client.managedPackage(rest[0]!)); return 0; }
+  if (action === "enable" || action === "disable") { exact(rest, 1); output(context, await context.client.setManagedPackageEnabled(rest[0]!, action === "enable")); return 0; }
+  if (action === "remove") { exact(rest, 1); await context.client.removeManagedPackage(rest[0]!); output(context, { name: rest[0], removed: true }); return 0; }
+  if (action === "install") {
+    const raw = rest[0]; if (!raw || raw.startsWith("--")) throw usage("packages install requires <source>");
+    const options = rest.slice(1);
+    known(options, ["--default", "--wait", "--verbose"]);
+    if (options.includes("--verbose") && !options.includes("--wait")) throw usage("--verbose requires --wait");
+    const source = await resolvePiPackageSource(context.client, raw, { kind: "core" });
+    const accepted = await context.client.installManagedPackage(source, randomUUID(), options.includes("--default"));
+    return finishPackageOperation(context, accepted, options.includes("--wait"), options.includes("--verbose"));
+  }
+  if (action === "update") {
+    const name = rest[0]; if (!name || name.startsWith("--")) throw usage("packages update requires <package-name>");
+    const options = rest.slice(1);
+    known(options, ["--source", "--wait", "--verbose"]);
+    if (options.includes("--verbose") && !options.includes("--wait")) throw usage("--verbose requires --wait");
+    const raw = required(options, "--source");
+    const source = await resolvePiPackageSource(context.client, raw, { kind: "core" });
+    const accepted = await context.client.updateManagedPackage(name, source, randomUUID());
+    return finishPackageOperation(context, accepted, options.includes("--wait"), options.includes("--verbose"));
+  }
+  throw usage("packages requires list, show, install, update, enable, disable, or remove");
+}
+
+async function finishPackageOperation(context: OperatorContext, accepted: Parameters<typeof waitPiPackageOperation>[1], wait: boolean, verbose: boolean): Promise<number> {
+  if (!wait) { output(context, accepted); return 0; }
+  const controller = new AbortController();
+  const interrupt = () => controller.abort();
+  process.once("SIGINT", interrupt);
+  if (verbose) process.stderr.write(`Package Operation ${accepted.operationId}: accepted; waiting\n`);
+  let final: Record<string, unknown>;
+  try { final = await waitPiPackageOperation(context.client, accepted, { signal: controller.signal,
+    ...(verbose ? { onProgress: (progress) => process.stderr.write(formatPiPackageWaitProgress(accepted.operationId, progress)) } : {}) }); }
+  catch (error) {
+    const interrupted = error instanceof PiworkApiError && error.code === "OPERATION_WAIT_INTERRUPTED";
+    const code = interrupted ? "OPERATION_WAIT_INTERRUPTED" : "OPERATION_OBSERVATION_UNAVAILABLE";
+    output(context, { ...accepted, state: "waiting", result: null, error: { code, message: "The package Operation remains queryable." } });
+    throw Object.assign(new Error(`Package Operation ${accepted.operationId} is still queryable. Inspect: piwork-serve operation show ${accepted.operationId}`), { exitCode: interrupted ? 130 : 5 });
+  } finally { process.removeListener("SIGINT", interrupt); }
+  output(context, final);
+  if (final.state === "failed" || final.state === "superseded") throw Object.assign(new Error(`Package Operation ${accepted.operationId} ${String(final.state)}.`), { exitCode: 6 });
+  return 0;
+}
+
+function parsePackageSelection(args: readonly string[]): Array<{ name: string; enabled: true }> | undefined {
+  const names = repeated(args, "--package"), none = args.filter((item) => item === "--no-packages").length;
+  if (none > 1 || (none && names.length) || new Set(names).size !== names.length || names.length > 64
+    || names.some((name) => name.length > 214 || !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name))) throw usage("invalid package selection");
+  return none ? [] : names.length ? names.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))).map((name) => ({ name, enabled: true })) : undefined;
 }
 
 function operatorContext(globals: Globals, authenticated: boolean): OperatorContext {
@@ -265,16 +350,18 @@ function commandHelp(command: string): string {
   if (command === "status") return "usage: piwork-serve status\n";
   if (command === "admin") return "usage: piwork-serve admin <bootstrap|users> ...\n";
   if (command === "config") return "usage: piwork-serve config <show|set|default-work> ...\n  Manage runtime settings and the context copied into future Works.\n";
+  if (command === "packages") return "usage: piwork-serve packages <list|show|install|update|enable|disable|remove> ...\n  packages install <npm:...|git:...|./directory|./archive.zip> [--default] [--wait] [--verbose]\n  packages update <name> --source <source> [--wait] [--verbose]\n  packages <enable|disable|remove> <name>\n  --default adds the package to new Works only; --verbose requires --wait.\n";
+  if (command === "operation") return "usage: piwork-serve operation show <operationId>\n";
   throw usage(`unknown command: ${command}`);
 }
 
 function wrongSurface(command: string): string {
-  if (["login", "logout", "whoami", "work", "operation", "session", "run", "chat"].includes(command)) return `${command} is a user command; use piwork-cli`;
+  if (["login", "logout", "whoami", "work", "session", "run", "chat"].includes(command)) return `${command} is a user command; use piwork-cli`;
   return `unknown command: ${command}`;
 }
 
 function known(args: readonly string[], names: readonly string[]): void {
-  const boolean = new Set(["--password-stdin", "--api-key-stdin", "--no-skills"]);
+  const boolean = new Set(["--password-stdin", "--api-key-stdin", "--no-skills", "--no-packages", "--default", "--wait", "--verbose"]);
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index]!;
     if (!value.startsWith("--") || !names.includes(value)) throw usage(`unknown option: ${value}`);
@@ -316,7 +403,9 @@ function isDirectExecution(): boolean { const entry = process.argv[1]; return en
 
 if (isDirectExecution()) {
   runServeCli(process.argv.slice(2)).then((code) => { process.exitCode = code; }).catch((error: unknown) => {
-    process.stderr.write(`${safeErrorMessage(error)}\n`);
+    const prefix = error instanceof PiworkApiError && error.code === "PI_PACKAGE_HELPER_INCOMPATIBLE"
+      ? `${error.code}: ` : "";
+    process.stderr.write(`${prefix}${safeErrorMessage(error)}\n`);
     process.exitCode = serveExitCodeFor(error);
   });
 }

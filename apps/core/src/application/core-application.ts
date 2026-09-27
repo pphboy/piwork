@@ -5,8 +5,16 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
-import { CoreStore } from "@piwork/core-store";
+import { CoreStore, type PiPackageJobRecord } from "@piwork/core-store";
+import { PiPackageStoreError } from "@piwork/core-store";
 import { DockerRuntime } from "@piwork/runtime-docker";
+import { PiPackageInstallRequestSchema, PiPackageUpdateRequestSchema, PiPackageNameSchema, sortPiPackageSelection,
+  type PiPackageArtifactMetadata, type PiPackageWorkEntry } from "@piwork/contracts";
+import { Check } from "typebox/value";
+import { CorePiPackageService } from "../packages/service.js";
+import { receivePiPackageUpload } from "../packages/upload.js";
+import { collectPiPackageArtifactGarbage, collectPiPackageUploadGarbage } from "../packages/gc.js";
+import { PiPackageInputError } from "@piwork/pi-package";
 import { SnapshotHelperAvailability } from "../work-snapshots/helper-availability.js";
 import { authorizeSnapshotOwner, importProvenance } from "../work-snapshots/access.js";
 import { WorkSnapshotAdmission } from "../work-snapshots/admission.js";
@@ -34,7 +42,7 @@ import { WorkConfigurationValidator } from "../configuration/validation.js";
 import { registerRuntimeProfileCatalog, resolveRuntimeProfileFromWorkConfig, runtimeImageCatalogId, runtimeModelCatalogId } from "../configuration/runtime-catalog.js";
 import { SkillArtifactStore } from "../configuration/skill-artifact-store.js";
 import { CoreSkillService } from "../configuration/skills.js";
-import { WorkContextStore, type WorkContextSnapshot } from "../configuration/work-context.js";
+import { WorkContextStore, packageNameKey, type WorkContextPackageSource, type WorkContextSnapshot } from "../configuration/work-context.js";
 import type { WorkContextSnapshotInput } from "@piwork/core-store";
 import { emitDiagnostic } from "../work-management/diagnostics.js";
 import { WorkServiceManagementService, type ServiceRuntimeAdapter } from "../work-services/service-management.js";
@@ -61,8 +69,10 @@ export interface CoreApplicationOptions {
   readonly agentGrpcAdvertise?: string;
   readonly agentGrpcListen?: string;
   readonly snapshotHelperImage?: string;
+  readonly packageHelperImage?: string;
   readonly snapshotHelperResolver?: (reference: string) => Promise<string>;
   readonly snapshotDockerFactory?: (installationId: string) => DockerRuntime;
+  readonly packageDockerFactory?: (installationId: string) => DockerRuntime;
 }
 
 export class CoreApplication {
@@ -78,6 +88,7 @@ export class CoreApplication {
   readonly services: WorkServiceManagementService;
   readonly snapshotHelper: SnapshotHelperAvailability;
   readonly snapshotAdmission: WorkSnapshotAdmission;
+  readonly packages: CorePiPackageService;
   private readonly snapshotTasks = new Set<Promise<unknown>>();
   private readonly snapshotAbort = new AbortController();
   private snapshotRecoveryDone = false;
@@ -89,6 +100,7 @@ export class CoreApplication {
   private server?: Server;
   private serviceGrpc?: WorkServiceGrpcServer;
   private state: ReadinessReason = "STORE_OPEN";
+  private packageRecoveryDone = false;
   private closed = false;
   private constructor(
     readonly paths: CorePaths,
@@ -110,6 +122,10 @@ export class CoreApplication {
     this.workContexts = workContexts;
     this.runtimeProfiles = new RuntimeProfileStore(paths.runtimeProfilePath, paths.secretsDirectory);
     this.snapshotAdmission = new WorkSnapshotAdmission(store, this.runtimeProfiles);
+    const installationId = ensureInstallationId(paths);
+    this.packages = new CorePiPackageService(store, options.packageDockerFactory?.(installationId) ?? new DockerRuntime(installationId), this.runtimeProfiles,
+      options.packageHelperImage ?? "piwork-agentd:local", installationId, paths.dataDirectory,
+      (job, metadata, artifactDirectory) => this.publishWorkPackage(job, metadata, artifactDirectory));
     this.skillArtifacts = new SkillArtifactStore(paths.skillsDirectory);
     this.skills = new CoreSkillService(store, this.skillArtifacts);
     this.skills.cleanupOrphans();
@@ -180,6 +196,7 @@ export class CoreApplication {
       await this.serviceGrpc.start(this.options.agentGrpcListen);
     }
     await this.refreshRuntime();
+    this.packages.worker.kick();
     return { host: address.host, port: actual.port };
   }
 
@@ -219,6 +236,12 @@ export class CoreApplication {
         await collectSnapshotGarbage({ store: this.store, runtime: this.snapshotDocker(), snapshotsDirectory: this.paths.snapshotsDirectory });
         this.snapshotRecoveryDone = true;
       }
+      if (!this.packageRecoveryDone) {
+        await this.packages.worker.recover();
+        await collectPiPackageUploadGarbage(this.store, this.paths.dataDirectory).catch(() => undefined);
+        await collectPiPackageArtifactGarbage(this.store, this.paths.dataDirectory).catch(() => undefined);
+        this.packageRecoveryDone = true;
+      }
       if (!this.snapshotGcTimer) {
         this.snapshotGcTimer = setInterval(() => {
           if (this.snapshotGcRunning || this.closed) return;
@@ -227,6 +250,7 @@ export class CoreApplication {
             if (this.snapshotTasks.size === 0) await recoverSnapshotJobs({ store: this.store, contexts: this.workContexts,
               runtime: this.snapshotDocker(), snapshotsDirectory: this.paths.snapshotsDirectory, onlyCleanupPending: true });
             await collectSnapshotGarbage({ store: this.store, runtime: this.snapshotDocker(), snapshotsDirectory: this.paths.snapshotsDirectory });
+            await collectPiPackageUploadGarbage(this.store, this.paths.dataDirectory);
           })().catch(() => undefined).finally(() => { this.snapshotGcRunning = false; this.snapshotGcTask = undefined; });
         }, 60_000);
         this.snapshotGcTimer.unref();
@@ -250,21 +274,23 @@ export class CoreApplication {
     if (this.snapshotGcTimer) clearInterval(this.snapshotGcTimer);
     this.snapshotAbort.abort(new Error("CORE_SHUTDOWN"));
     this.services.closeAdmission();
-    const failures: unknown[] = [];
+    const failures: Array<{ stage: string; error: unknown }> = [];
     try {
-      for (const close of [
-        () => closeServer(this.server),
-        () => this.waitSnapshotTasks(),
-        () => this.serviceGrpc?.close() ?? Promise.resolve(),
-        () => this.lifecycle.shutdown(true),
-        () => this.services.shutdown(),
-      ]) {
+      for (const [stage, close] of [
+        ["http-listener", () => closeServer(this.server)],
+        ["package-worker", () => this.packages.worker.shutdown()],
+        ["snapshot-tasks", () => this.waitSnapshotTasks()],
+        ["service-grpc", () => this.serviceGrpc?.close() ?? Promise.resolve()],
+        ["work-runtime", () => this.lifecycle.shutdown(this.runtime !== undefined)],
+        ["services", () => this.services.shutdown()],
+      ] as const) {
         try { await close(); }
-        catch (error) { failures.push(error); }
+        catch (error) { failures.push({ stage, error }); }
       }
       try { this.runtime?.close?.(); }
-      catch (error) { failures.push(error); }
-      if (failures.length > 0) throw new AggregateError(failures, `Core shutdown failed in ${failures.length} stage(s)`);
+      catch (error) { failures.push({ stage: "runtime-client", error }); }
+      if (failures.length > 0) throw new AggregateError(failures.map((item) => item.error),
+        `Core shutdown failed in: ${failures.map((item) => item.stage).join(", ")}`);
     } finally {
       this.store.close();
     }
@@ -278,7 +304,9 @@ export class CoreApplication {
     preserveContextId?: string,
     reselectSkills = false,
     correlationId = `correlation-${cryptoRandomUUID()}`,
+    packageOverride?: WorkContextPackageSource,
   ) {
+    let leasedCoreArtifactIds: string[] = [];
     emitDiagnostic({ timestamp: new Date().toISOString(), level: "info", component: "core", stage: "context-copy", outcome: "started", correlationId, code: "CONTEXT_COPY_FAILED", message: "Work context copy started.", workId });
     try {
     const currentDesiredContextId = this.store.getWorkConfiguration(workId)?.desiredContextId;
@@ -298,6 +326,23 @@ export class CoreApplication {
           const artifact = this.skillArtifacts.inspect(name, record.currentIdentity);
           return { name, identity: record.currentIdentity, directory: artifact.directory };
         });
+    const coreNames = retained === undefined ? configuration.packages.filter(({ name }) => packageOverride?.name !== name).map(({ name }) => name) : [];
+    const coreHeads = this.store.packages.leaseCatalogHeads(coreNames);
+    leasedCoreArtifactIds = coreHeads.map(({ id }) => id);
+    const coreByName = new Map(coreHeads.map((artifact) => [artifact.name, artifact]));
+    const packageSources = configuration.packages.map(({ name }) => {
+      if (packageOverride?.name === name) return packageOverride;
+      const retainedBinding = retained?.metadata.packageBindings.find((binding) => binding.name === name);
+      if (retainedBinding !== undefined) {
+        return { name, metadata: retainedBinding.artifact,
+          directory: join(retained!.directory, "packages", retainedBinding.nameKey) };
+      }
+      if (retained !== undefined) throw api(400, "PI_PACKAGE_NOT_INSTALLED", `Package ${name} is not installed in this Work`);
+      const artifact = coreByName.get(name);
+      if (artifact === undefined) throw api(400, "PI_PACKAGE_NOT_FOUND", `Package ${name} is unavailable`);
+      return { name, metadata: JSON.parse(artifact.metadataJson) as import("@piwork/contracts").PiPackageArtifactMetadata,
+        directory: artifact.storagePath };
+    });
     const ownedImage = this.store.snapshots.getOwnedImage(workId, configuration.agentImage.catalogId);
     const preserveImage = retained !== undefined
       && retained.configuration.agentImage.catalogId === configuration.agentImage.catalogId;
@@ -318,11 +363,21 @@ export class CoreApplication {
       imageIdentity = resolved;
       }
     }
+    if (packageOverride === undefined) {
+      const incompatible = await this.packages.incompatiblePackage(imageIdentity, packageSources.map((source, index) => ({
+        name: source.name,
+        enabled: configuration.packages[index]!.enabled,
+        metadata: source.metadata,
+      })));
+      if (incompatible !== undefined) throw api(409, "PI_PACKAGE_ENVIRONMENT_MISMATCH",
+        `Package ${incompatible} was prepared for a different agent environment; update it for this Work image before retrying.`);
+    }
     const snapshot = this.workContexts.build({
       workId,
       configuration,
       imageIdentity,
       skills: sources,
+      packages: packageSources,
       createdAt: new Date().toISOString(),
     });
     emitDiagnostic({ timestamp: new Date().toISOString(), level: "info", component: "core", stage: "context-copy", outcome: "succeeded", correlationId, code: "CONTEXT_COPY_FAILED", message: "Work context content was copied.", workId });
@@ -331,7 +386,46 @@ export class CoreApplication {
     } catch (error) {
       emitDiagnostic({ timestamp: new Date().toISOString(), level: "error", component: "core", stage: "context-copy", outcome: "failed", correlationId, code: "CONTEXT_COPY_FAILED", message: "The selected Work context could not be copied.", workId });
       throw error;
+    } finally {
+      this.store.packages.releaseArtifactLeases(leasedCoreArtifactIds);
     }
+  }
+
+  private async publishWorkPackage(job: PiPackageJobRecord, metadata: PiPackageArtifactMetadata, artifactDirectory: string): Promise<void> {
+    if (!job.workId) throw new Error("Work package job has no Work identity");
+    const workId = job.workId;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const state = this.store.getWorkConfiguration(workId);
+      if (!state || !state.desiredContextId) throw new PiPackageStoreError("PI_PACKAGE_STALE_JOB", "Work no longer exists");
+      const current = JSON.parse(state.desiredConfigJson) as WorkConfig;
+      const existing = current.packages.find((item) => item.name === metadata.name);
+      if (job.kind === "install" && existing) throw new PiPackageStoreError("PI_PACKAGE_ALREADY_INSTALLED", "Package is already installed in this Work");
+      if (job.kind === "update" && !existing) throw new PiPackageStoreError("PI_PACKAGE_NOT_FOUND", "Package is no longer installed in this Work");
+      const configuration: WorkConfig = { ...current, packages: sortPiPackageSelection(job.kind === "install"
+        ? [...current.packages, { name: metadata.name, enabled: true }] : current.packages) };
+      const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration, workId);
+      const snapshot = await this.buildWorkContext(workId, job.actorId, configuration, JSON.stringify(resolved.profile),
+        state.desiredContextId, false, `correlation-${cryptoRandomUUID()}`,
+        { name: metadata.name, metadata, directory: artifactDirectory });
+      try {
+        const createdAt = new Date().toISOString();
+        this.store.packages.publishWork({ operationId: job.operationId, workerEpoch: job.workerEpoch,
+          expectedRevision: state.desiredRevision, configJson: JSON.stringify(configuration),
+          runtimeProfileJson: JSON.stringify(resolved.profile), sourceRuntimeRevision: resolved.sourceRuntimeRevision,
+          snapshot: persistedSnapshot(snapshot, job.actorId),
+          artifact: { id: `${workId}:${snapshot.snapshotId}:${metadata.contentDigest}`, scopeKind: "work", workId,
+            name: metadata.name, contentDigest: metadata.contentDigest, metadataJson: JSON.stringify(metadata),
+            storagePath: join(snapshot.directory, "packages", packageNameKey(metadata.name)), createdAt },
+          now: createdAt, resultJson: JSON.stringify({ name: metadata.name, version: metadata.version,
+            resourceCounts: metadata.resourceCounts, scope: "work", pendingApply: true }) });
+        return;
+      } catch (error) {
+        this.workContexts.remove(workId, snapshot.snapshotId);
+        if (error instanceof PiPackageStoreError && error.code === "PI_PACKAGE_REVISION_CONFLICT") continue;
+        throw error;
+      }
+    }
+    throw new PiPackageStoreError("PI_PACKAGE_REVISION_CONFLICT", "Work changed too frequently during package publication");
   }
 
   private async workConfigurationView(principal: UserPrincipal, workId: string) {
@@ -346,6 +440,57 @@ export class CoreApplication {
           ? { state: "unavailable", checkedAt: null, skills: [] }
           : await runtime.runtimeSkillState(workId);
     return { ...value, runtime: observation };
+  }
+
+  private async workPackageList(principal: UserPrincipal, workId: string): Promise<PiPackageWorkEntry[]> {
+    const work = this.lifecycle.show(principal, workId);
+    const state = this.store.getWorkConfiguration(workId);
+    if (!state || !state.desiredContextId) throw api(404, "NOT_FOUND", "Work context was not found");
+    const desired = this.workContexts.load(workId, state.desiredContextId);
+    const active = state.activeContextId === null ? null : this.workContexts.load(workId, state.activeContextId);
+    const runtime = this.runtime as Partial<RuntimeSkillStateGateway> | undefined;
+    const runtimeObservation = ["ready", "degraded"].includes(work.observedState) && runtime?.runtimeSkillState !== undefined
+      ? await runtime.runtimeSkillState(workId) : { state: "unavailable" as const, packages: [] };
+    const names = new Set<string>();
+    for (const snapshot of this.store.listWorkContextSnapshots(workId)) {
+      for (const binding of this.workContexts.load(workId, snapshot.snapshotId).metadata.packageBindings) names.add(binding.name);
+    }
+    const entry = (context: WorkContextSnapshot | null, name: string) => {
+      const selected = context?.configuration.packages.find((item) => item.name === name);
+      const binding = context?.metadata.packageBindings.find((item) => item.name === name);
+      return selected && binding ? { version: binding.artifact.version, enabled: selected.enabled, digest: binding.artifact.contentDigest } : null;
+    };
+    return [...names].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))).map((name) => {
+      const desiredEntry = entry(desired, name), activeEntry = entry(active, name);
+      const observed = runtimeObservation.packages?.find((item) => item.name === name);
+      return { name,
+        desired: desiredEntry === null ? null : { version: desiredEntry.version, enabled: desiredEntry.enabled },
+        active: activeEntry === null ? null : { version: activeEntry.version, enabled: activeEntry.enabled },
+        pendingApply: desiredEntry?.digest !== activeEntry?.digest || desiredEntry?.enabled !== activeEntry?.enabled,
+        runtime: { availability: runtimeObservation.state === "ready" ? "available" : "unavailable",
+          loaded: runtimeObservation.state === "ready" ? observed?.loaded ?? false : null,
+          diagnostics: observed?.diagnostics ?? [] },
+      };
+    });
+  }
+
+  private async editWorkPackageSelection(principal: UserPrincipal, workId: string, name: string,
+    action: "enable" | "disable" | "remove"): Promise<PiPackageWorkEntry | null> {
+    if (!Check(PiPackageNameSchema, name)) throw api(400, "INVALID_REQUEST", "invalid package name");
+    const current = (await this.workPackageList(principal, workId)).find((item) => item.name === name);
+    if (!current || current.desired === null) throw api(404, "PI_PACKAGE_NOT_FOUND", "Package is not installed in this Work");
+    if (this.store.packages.listJobs(true).some((job) => job.workId === workId)) throw api(409, "PI_PACKAGE_BUSY", "Work package operation is active");
+    if (action !== "remove" && current.desired.enabled === (action === "enable")) return current;
+    await this.workConfigurations.updateMerged(principal, workId, (configuration) => ({ ...configuration,
+      packages: action === "remove" ? configuration.packages.filter((item) => item.name !== name)
+        : configuration.packages.map((item) => item.name === name ? { ...item, enabled: action === "enable" } : item),
+    }), async (configuration) => {
+      const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration, workId);
+      const snapshot = await this.buildWorkContext(workId, principal.userId, configuration, JSON.stringify(resolved.profile));
+      return { runtimeProfileJson: JSON.stringify(resolved.profile), sourceRuntimeRevision: resolved.sourceRuntimeRevision,
+        snapshot: persistedSnapshot(snapshot, principal.userId) };
+    });
+    return (await this.workPackageList(principal, workId)).find((item) => item.name === name) ?? null;
   }
 
   private async route(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -390,6 +535,34 @@ export class CoreApplication {
           }
         }
         if (request.method === "GET" && url.pathname === "/control/runtime") return send(response, 200, this.runtimeProfiles.inspect());
+        if (request.method === "GET" && url.pathname === "/control/packages") return send(response, 200, { packages: this.packages.list(true) });
+        if (request.method === "POST" && url.pathname === "/control/package-uploads") {
+          return send(response, 201, await receivePiPackageUpload({ request, store: this.store, dataDirectory: this.paths.dataDirectory,
+            actorId: "operator", scope: { kind: "core" } }));
+        }
+        if (request.method === "POST" && url.pathname === "/control/packages") {
+          const body = await readJson<unknown>(request);
+          if (!Check(PiPackageInstallRequestSchema, body)) throw api(400, "INVALID_REQUEST", "package install request is invalid");
+          return send(response, 202, await this.packages.install(body.source, body.addToDefaults ?? false, body.idempotencyKey));
+        }
+        if (control[0] === "control" && control[1] === "packages" && control.length === 3) {
+          const name = control[2]!;
+          if (request.method === "GET") return send(response, 200, this.packages.show(name, true));
+          if (request.method === "DELETE") { this.packages.remove(name); response.writeHead(204); response.end(); return; }
+        }
+        if (control[0] === "control" && control[1] === "packages" && control.length === 4 && request.method === "POST") {
+          const name = control[2]!;
+          if (control[3] === "enable") return send(response, 200, this.packages.setEnabled(name, true));
+          if (control[3] === "disable") return send(response, 200, this.packages.setEnabled(name, false));
+          if (control[3] === "update") {
+            const body = await readJson<unknown>(request);
+            if (!Check(PiPackageUpdateRequestSchema, body)) throw api(400, "INVALID_REQUEST", "package update request is invalid");
+            return send(response, 202, await this.packages.update(name, body.source, body.idempotencyKey));
+          }
+        }
+        if (control[0] === "control" && control[1] === "operations" && control.length === 3 && request.method === "GET") {
+          return send(response, 200, this.packages.operation(control[2]!));
+        }
         if (request.method === "GET" && url.pathname === "/control/skills") return send(response, 200, { skills: this.skills.listForOperator(actor) });
         if (request.method === "POST" && url.pathname === "/control/skills") {
           const body = await readJson<{ path?: unknown }>(request);
@@ -433,8 +606,21 @@ export class CoreApplication {
           return send(response, 200, { configuration: publicWorkConfig(resolved.configuration as WorkConfig) });
         }
         if (request.method === "PUT" && url.pathname === "/control/default-work") {
-          const body = await readJson<{ expectedRevision?: unknown; configuration?: unknown; baseImage?: unknown }>(request);
-          if (body.expectedRevision !== undefined || body.configuration === null || typeof body.configuration !== "object") throw api(400, "INVALID_REQUEST", "configuration is required and expectedRevision is obsolete");
+          const body = await readJson<{ expectedRevision?: unknown; configuration?: unknown; patch?: unknown; baseImage?: unknown }>(request);
+          if (body.expectedRevision !== undefined) throw api(400, "INVALID_REQUEST", "expectedRevision is obsolete");
+          if (body.patch !== undefined) {
+            if (body.configuration !== undefined || body.baseImage !== undefined || body.patch === null || typeof body.patch !== "object" || Array.isArray(body.patch)) {
+              throw api(400, "INVALID_REQUEST", "patch must be an object and cannot accompany configuration");
+            }
+            const patch = body.patch as Record<string, unknown>;
+            if (Object.keys(patch).some((key) => !["agentImage", "skills", "packages", "agentsMd", "modelRef", "mcpServers", "resources", "tools"].includes(key))) {
+              throw api(400, "INVALID_REQUEST", "patch contains an unknown Work configuration field");
+            }
+            const result = this.store.updateDefaultWorkConfiguration(patch, new Date().toISOString(), (candidate) =>
+              new WorkConfigurationValidator(this.store).validate({ workOwnerUserId: "operator", configuration: candidate }));
+            return send(response, 200, { configuration: publicWorkConfig(result.configuration as WorkConfig) });
+          }
+          if (body.configuration === null || typeof body.configuration !== "object" || Array.isArray(body.configuration)) throw api(400, "INVALID_REQUEST", "configuration is required");
           let candidate = body.configuration as Record<string, unknown>;
           if (typeof body.baseImage === "string") {
             const id = `image-${createHash("sha256").update(body.baseImage).digest("hex").slice(0, 24)}`;
@@ -459,24 +645,27 @@ export class CoreApplication {
       const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
       if (await this.snapshotRoute(request, response, principal, parts)) return;
       if (request.method === "GET" && url.pathname === "/api/v1/me") return send(response, 200, { ...session.user, expiresAt: session.expiresAt });
+      if (request.method === "GET" && url.pathname === "/api/v1/packages") return send(response, 200, { packages: this.packages.list(false) });
+      if (request.method === "GET" && parts.length === 4 && parts[2] === "packages") return send(response, 200, this.packages.show(parts[3]!, false));
       if (request.method === "GET" && url.pathname === "/api/v1/skills") return send(response, 200, { skills: this.skills.listForUser(principal) });
       if (request.method === "GET" && parts.length === 4 && parts[2] === "skills") return send(response, 200, this.skills.showForUser(principal, parts[3]!));
       if (request.method === "POST" && url.pathname === "/api/v1/logout") { this.identity.logout(token); response.writeHead(204); response.end(); return; }
       if (parts[2] === "works" && parts.length === 3 && request.method === "GET") return send(response, 200, { works: this.lifecycle.list(principal) });
       if (parts[2] === "works" && parts.length === 3 && request.method === "POST") {
         requireRuntime(this.state);
-        const body = await readJson<{ name?: unknown; configuration?: unknown; baseImage?: unknown; skills?: unknown; agentsMd?: unknown; idempotencyKey?: unknown }>(request);
+        const body = await readJson<{ name?: unknown; configuration?: unknown; baseImage?: unknown; skills?: unknown; packages?: unknown; agentsMd?: unknown; idempotencyKey?: unknown }>(request);
         if (typeof body.name !== "string" || typeof body.idempotencyKey !== "string" || (body.configuration !== undefined && (body.configuration === null || typeof body.configuration !== "object"))) throw api(400, "INVALID_REQUEST", "name and idempotencyKey are required");
         const profile = this.runtimeProfiles.load();
         const envelope = this.store.getDefaultWorkConfiguration();
         let configuration = body.configuration === undefined
           ? (envelope?.configuration === null || envelope?.configuration === undefined ? defaultWorkConfiguration(profile) : envelope.configuration as WorkConfig)
           : body.configuration as WorkConfig;
-        if (body.baseImage !== undefined || body.skills !== undefined || body.agentsMd !== undefined) {
+        if (body.baseImage !== undefined || body.skills !== undefined || body.packages !== undefined || body.agentsMd !== undefined) {
           if (body.baseImage !== undefined && typeof body.baseImage !== "string") throw api(400, "INVALID_REQUEST", "baseImage must be a string");
           if (body.skills !== undefined && !Array.isArray(body.skills)) throw api(400, "INVALID_REQUEST", "skills must be an array");
+          if (body.packages !== undefined && !Array.isArray(body.packages)) throw api(400, "INVALID_REQUEST", "packages must be an array");
           if (body.agentsMd !== undefined && typeof body.agentsMd !== "string") throw api(400, "INVALID_REQUEST", "agentsMd must be a string");
-          configuration = { ...configuration, ...(body.baseImage === undefined ? {} : { agentImage: { catalogId: body.baseImage } }), ...(body.skills === undefined ? {} : { skills: body.skills }), ...(body.agentsMd === undefined ? {} : { agentsMd: body.agentsMd }) } as WorkConfig;
+          configuration = { ...configuration, ...(body.baseImage === undefined ? {} : { agentImage: { catalogId: body.baseImage } }), ...(body.skills === undefined ? {} : { skills: body.skills }), ...(body.packages === undefined ? {} : { packages: body.packages }), ...(body.agentsMd === undefined ? {} : { agentsMd: body.agentsMd }) } as WorkConfig;
         }
         configuration = new WorkConfigurationValidator(this.store).validate({ workOwnerUserId: principal.userId, configuration });
         const workId = `work-${cryptoRandomUUID()}`;
@@ -493,6 +682,46 @@ export class CoreApplication {
         }));
       }
       if (parts[2] === "works" && parts.length === 4 && request.method === "GET") return send(response, 200, this.lifecycle.show(principal, parts[3]!));
+      if (parts[2] === "works" && parts.length === 5 && parts[4] === "package-uploads" && request.method === "POST") {
+        const workId = parts[3]!;
+        this.lifecycle.show(principal, workId);
+        this.store.snapshots.assertWorkMutable(workId);
+        return send(response, 201, await receivePiPackageUpload({ request, store: this.store, dataDirectory: this.paths.dataDirectory,
+          actorId: principal.userId, scope: { kind: "work", workId } }));
+      }
+      if (parts[2] === "works" && parts[4] === "packages") {
+        const workId = parts[3]!;
+        if (parts.length === 5 && request.method === "GET") return send(response, 200, { packages: await this.workPackageList(principal, workId) });
+        if ((parts.length === 5 && request.method === "POST")
+          || (parts.length === 7 && parts[6] === "update" && request.method === "POST")) {
+          this.lifecycle.show(principal, workId);
+          const kind = parts.length === 5 ? "install" : "update";
+          const name = kind === "update" ? parts[5]! : null;
+          if (name !== null && !(await this.workPackageList(principal, workId)).some((item) => item.name === name && item.desired !== null)) {
+            throw api(404, "PI_PACKAGE_NOT_FOUND", "Package is not installed in this Work");
+          }
+          const body = await readJson(request);
+          if (!Check(PiPackageUpdateRequestSchema, body)) throw api(400, "INVALID_REQUEST", "package source and idempotency key are required");
+          const state = this.store.getWorkConfiguration(workId);
+          if (!state?.desiredContextId) throw api(404, "NOT_FOUND", "Work context was not found");
+          const imageIdentity = this.workContexts.load(workId, state.desiredContextId).metadata.imageIdentity;
+          return send(response, 202, await this.packages.acceptWork({ actorId: principal.userId, workId, imageIdentity,
+            kind, name, source: body.source, idempotencyKey: body.idempotencyKey }));
+        }
+        if (parts.length === 6 && request.method === "GET") {
+          if (!Check(PiPackageNameSchema, parts[5])) throw api(400, "INVALID_REQUEST", "invalid package name");
+          const item = (await this.workPackageList(principal, workId)).find((entry) => entry.name === parts[5]);
+          if (!item) throw api(404, "PI_PACKAGE_NOT_FOUND", "Package was not found");
+          return send(response, 200, item);
+        }
+        if (parts.length === 7 && request.method === "POST" && ["enable", "disable"].includes(parts[6]!)) {
+          return send(response, 200, await this.editWorkPackageSelection(principal, workId, parts[5]!, parts[6] as "enable" | "disable"));
+        }
+        if (parts.length === 6 && request.method === "DELETE") {
+          await this.editWorkPackageSelection(principal, workId, parts[5]!, "remove");
+          return send(response, 200, { name: parts[5], removed: true });
+        }
+      }
       if (parts[2] === "works" && parts.length === 5 && parts[4] === "import-provenance" && request.method === "GET") {
         return send(response, 200, importProvenance(this.store, principal, parts[3]!));
       }
@@ -522,6 +751,22 @@ export class CoreApplication {
       }
       if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "skills" && request.method === "GET") {
         const state = await this.workConfigurationView(principal, parts[3]!); return send(response, 200, { skills: state.desired.skills, active: state.active?.skills ?? [], pendingApply: state.pendingApply, runtime: state.runtime });
+      }
+      if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "packages" && request.method === "GET") {
+        const state = await this.workConfigurationView(principal, parts[3]!);
+        return send(response, 200, { packages: state.desired.packages, active: state.active?.packages ?? [], pendingApply: state.pendingApply });
+      }
+      if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "packages" && request.method === "PUT") {
+        const body = await readJson<{ packages?: unknown }>(request);
+        if (!Array.isArray(body.packages)) throw api(400, "INVALID_REQUEST", "packages are required");
+        return send(response, 200, await this.workConfigurations.updateMerged(principal, parts[3]!, (current) =>
+          new WorkConfigurationValidator(this.store).validate({ workOwnerUserId: principal.userId, workId: parts[3]!,
+            configuration: { ...current, packages: body.packages } }), async (configuration) => {
+          const resolved = resolveRuntimeProfileFromWorkConfig(this.store, configuration, parts[3]!);
+          const snapshot = await this.buildWorkContext(parts[3]!, principal.userId, configuration, JSON.stringify(resolved.profile), undefined, true, correlationId);
+          return { runtimeProfileJson: JSON.stringify(resolved.profile), sourceRuntimeRevision: resolved.sourceRuntimeRevision,
+            snapshot: persistedSnapshot(snapshot, principal.userId) };
+        }));
       }
       if (parts[2] === "works" && parts.length === 6 && parts[4] === "configuration" && parts[5] === "skills" && request.method === "PUT") {
         const body = await readJson<{ skills?: unknown }>(request);
@@ -922,6 +1167,11 @@ function send(response: ServerResponse, status: number, value: unknown): void { 
 function api(status: number, code: string, message: string): Error { return Object.assign(new Error(message), { status, code }); }
 export function mapError(error: unknown): { status: number; code: string; message: string; retryAfterMs?: number } {
   const item = error as { status?: number; code?: number | string; message?: string; retryAfterMs?: number; name?: string };
+  if (error instanceof PiPackageStoreError) return { status: error.code === "PI_PACKAGE_NOT_FOUND" ? 404 : 409,
+    code: error.code, message: error.code === "PI_PACKAGE_NOT_FOUND" ? "Package was not found" : error.message };
+  if (error instanceof PiPackageInputError) return { status: error.code === "PI_PACKAGE_LIMIT_EXCEEDED" ? 413
+    : error.code === "PI_PACKAGE_UNSUPPORTED_MEDIA_TYPE" ? 415 : 400, code: error.code, message: error.message };
+  if (error instanceof TypeError && /^invalid (?:Core )?package/.test(error.message)) return { status: 400, code: "INVALID_REQUEST", message: error.message };
   if (item.name === "SnapshotAdmissionError") {
     const code = String(item.code);
     const hints: Record<string, string> = {
@@ -984,6 +1234,7 @@ function defaultWorkConfiguration(profile: RuntimeProfile): WorkConfig {
   return {
     agentImage: { catalogId: runtimeImageCatalogId(profile.revision) },
     skills: ["deploy-work-service"],
+    packages: [],
     agentsMd: "",
     modelRef: runtimeModelCatalogId(profile.revision),
     mcpServers: [{

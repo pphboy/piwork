@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -96,10 +97,50 @@ test("UNSUPPORTED_LIMIT is returned before runtime creation", async () => {
   });
 });
 
+test("Work package selections reject duplicate identities and normalize order", async () => {
+  await withValidator(async ({ store, validator }) => {
+    const duplicated = { ...config(), packages: [{ name: "tools", enabled: true }, { name: "tools", enabled: false }] };
+    assert.throws(
+      () => validator.validate({ workOwnerUserId: "user-1", configuration: duplicated }),
+      (error) => error instanceof ConfigurationValidationError && error.field === "packages",
+    );
+    installCatalogFixture(store, "z");
+    installCatalogFixture(store, "@example/a");
+    const ordered = validator.validate({ workOwnerUserId: "user-1", configuration: {
+      ...config(), packages: [{ name: "z", enabled: true }, { name: "@example/a", enabled: false }],
+    } });
+    assert.deepEqual(ordered.packages.map(({ name }) => name), ["@example/a", "z"]);
+  });
+});
+
+test("package tool keys require a selected package and preserve deny syntax", async () => {
+  await withValidator(async ({ store, validator }) => {
+    installCatalogFixture(store, "@example/pi-tools");
+    const configured = config();
+    configured.packages = [{ name: "@example/pi-tools", enabled: true }];
+    configured.tools = { allowed: ["read", "package:@example/pi-tools:hello"], denied: ["package:@example/pi-tools:hello"] };
+    assert.deepEqual(validator.validate({ workOwnerUserId: "user-1", configuration: configured }).tools, configured.tools);
+    assert.throws(() => validator.validate({ workOwnerUserId: "user-1", configuration: {
+      ...configured, packages: [],
+    } }), (error) => error instanceof ConfigurationValidationError && error.field === "tools.allowed.1");
+    assert.throws(() => validator.validate({ workOwnerUserId: "user-1", configuration: {
+      ...configured, tools: { allowed: ["package:@example/pi-tools:bad.name"], denied: [] },
+    } }), (error) => error instanceof ConfigurationValidationError && error.field === undefined);
+  });
+});
+
+function installCatalogFixture(store: CoreStore, name: string): void {
+  const digest = `sha256:${createHash("sha256").update(name).digest("hex")}`;
+  store.exec(`INSERT INTO pi_package_artifacts(id,scope_kind,work_id,name,content_digest,metadata_json,storage_path,created_at)
+    VALUES ('${digest}','core',NULL,'${name}','${digest}','{}','/fixture','${NOW}')`);
+  store.exec(`INSERT INTO pi_package_catalog(name,enabled,head_artifact_id,generation,created_at,updated_at)
+    VALUES ('${name}',1,'${digest}',1,'${NOW}','${NOW}')`);
+}
+
 function config(): WorkConfig {
   return {
     agentImage: { catalogId: "image-0199e6d8abcd" },
-    skills: ["fixture-skill"],
+    skills: ["fixture-skill"], packages: [],
     agentsMd: "",
     modelRef: "model-0199e6d8abcd",
     mcpServers: [

@@ -4,7 +4,7 @@ import { link, lstat, open, realpath, unlink, type FileHandle } from "node:fs/pr
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { ResourceIdSchema } from "@piwork/contracts";
 import { PiworkClient } from "@piwork/client-sdk";
-import { inspectWorkPackage, readWorkPackage, WORK_PACKAGE_LIMITS } from "@piwork/work-package";
+import { inspectWorkPackage, WORK_PACKAGE_LIMITS } from "@piwork/work-package";
 import { Check } from "typebox/value";
 
 export const WORK_SNAPSHOT_USAGE = `usage:
@@ -113,7 +113,7 @@ async function saveDownload(context: CommandContext, snapshotId: string, outputP
     }
     if (size !== downloaded.size || hash.digest("hex") !== downloaded.digest) throw new Error("download digest mismatch");
     await file.sync();
-    const verified = await readWorkPackage(file.createReadStream({ start: 0, autoClose: false, highWaterMark: WORK_PACKAGE_LIMITS.streamChunkBytes }));
+    const verified = await inspectWorkPackage(file.createReadStream({ start: 0, autoClose: false, highWaterMark: WORK_PACKAGE_LIMITS.streamChunkBytes }));
     if (verified.digest !== downloaded.digest || verified.size !== downloaded.size) throw new Error("downloaded package verification failed");
     await link(temporary, target.anchored); published = true;
     await unlink(temporary); await target.directory.sync();
@@ -175,7 +175,7 @@ export async function executeWorkSnapshotCommand(context: CommandContext, comman
   const file = await openInput(command.path);
   try {
     const before = await file.stat();
-    const verified = await readWorkPackage(file.createReadStream({ start: 0, autoClose: false, highWaterMark: WORK_PACKAGE_LIMITS.streamChunkBytes }));
+    const verified = await inspectWorkPackage(file.createReadStream({ start: 0, autoClose: false, highWaterMark: WORK_PACKAGE_LIMITS.streamChunkBytes }));
     if (!sameFile(before, await file.stat())) syntax("input package changed during validation");
     const uploaded = await context.client.uploadWorkPackage(file.createReadStream({ start: 0, autoClose: false, highWaterMark: WORK_PACKAGE_LIMITS.streamChunkBytes }),
       verified.digest, verified.size, { signal: AbortSignal.timeout(30 * 60_000) });

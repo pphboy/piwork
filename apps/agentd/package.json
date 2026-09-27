@@ -5,9 +5,10 @@
   "type": "module",
   "dependencies": {
     "@grpc/grpc-js": "1.14.5",
-    "@earendil-works/pi-coding-agent": "0.86.0",
+    "@earendil-works/pi-coding-agent": "0.86.1",
     "@piwork/contracts": "0.1.0",
     "@piwork/pi-adapter": "0.1.0",
+    "@piwork/pi-package": "0.1.0",
     "@piwork/work-store": "0.1.0",
     "typebox": "1.3.34"
   },

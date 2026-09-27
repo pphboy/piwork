@@ -111,6 +111,31 @@ export interface ReadinessResponse {
   loadedSkills: LoadedSkill[];
   resolvedTools: string[];
   activeRunCount: number;
+  packageContractVersion: number;
+  loadedPackages: LoadedPackage[];
+  packageResources: PackageResource[];
+  packageDiagnostics: PackageDiagnostic[];
+}
+
+export interface LoadedPackage {
+  name: string;
+  contentDigest: string;
+  extensions: number;
+  skills: number;
+  prompts: number;
+  themes: number;
+}
+
+export interface PackageResource {
+  packageName: string;
+  kind: string;
+  name: string;
+}
+
+export interface PackageDiagnostic {
+  packageName: string;
+  code: string;
+  message: string;
 }
 
 export interface LoadedSkill {
@@ -395,6 +420,10 @@ function createBaseReadinessResponse(): ReadinessResponse {
     loadedSkills: [],
     resolvedTools: [],
     activeRunCount: 0,
+    packageContractVersion: 0,
+    loadedPackages: [],
+    packageResources: [],
+    packageDiagnostics: [],
   };
 }
 
@@ -438,6 +467,18 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     }
     if (message.activeRunCount !== 0) {
       writer.uint32(96).uint32(message.activeRunCount);
+    }
+    if (message.packageContractVersion !== 0) {
+      writer.uint32(104).uint32(message.packageContractVersion);
+    }
+    for (const v of message.loadedPackages) {
+      LoadedPackage.encode(v!, writer.uint32(114).fork()).join();
+    }
+    for (const v of message.packageResources) {
+      PackageResource.encode(v!, writer.uint32(122).fork()).join();
+    }
+    for (const v of message.packageDiagnostics) {
+      PackageDiagnostic.encode(v!, writer.uint32(130).fork()).join();
     }
     return writer;
   },
@@ -551,6 +592,38 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
             message.activeRunCount = reader.uint32();
             continue;
           }
+          case 13: {
+            if (tag !== 104) {
+              break;
+            }
+
+            message.packageContractVersion = reader.uint32();
+            continue;
+          }
+          case 14: {
+            if (tag !== 114) {
+              break;
+            }
+
+            message.loadedPackages.push(LoadedPackage.decode(reader, reader.uint32()));
+            continue;
+          }
+          case 15: {
+            if (tag !== 122) {
+              break;
+            }
+
+            message.packageResources.push(PackageResource.decode(reader, reader.uint32()));
+            continue;
+          }
+          case 16: {
+            if (tag !== 130) {
+              break;
+            }
+
+            message.packageDiagnostics.push(PackageDiagnostic.decode(reader, reader.uint32()));
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -617,6 +690,26 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
         : isSet(object.active_run_count)
         ? globalThis.Number(object.active_run_count)
         : 0,
+      packageContractVersion: isSet(object.packageContractVersion)
+        ? globalThis.Number(object.packageContractVersion)
+        : isSet(object.package_contract_version)
+        ? globalThis.Number(object.package_contract_version)
+        : 0,
+      loadedPackages: globalThis.Array.isArray(object?.loadedPackages)
+        ? object.loadedPackages.map((e: any) => LoadedPackage.fromJSON(e))
+        : globalThis.Array.isArray(object?.loaded_packages)
+        ? object.loaded_packages.map((e: any) => LoadedPackage.fromJSON(e))
+        : [],
+      packageResources: globalThis.Array.isArray(object?.packageResources)
+        ? object.packageResources.map((e: any) => PackageResource.fromJSON(e))
+        : globalThis.Array.isArray(object?.package_resources)
+        ? object.package_resources.map((e: any) => PackageResource.fromJSON(e))
+        : [],
+      packageDiagnostics: globalThis.Array.isArray(object?.packageDiagnostics)
+        ? object.packageDiagnostics.map((e: any) => PackageDiagnostic.fromJSON(e))
+        : globalThis.Array.isArray(object?.package_diagnostics)
+        ? object.package_diagnostics.map((e: any) => PackageDiagnostic.fromJSON(e))
+        : [],
     };
   },
 
@@ -658,6 +751,18 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     if (message.activeRunCount !== 0) {
       obj.activeRunCount = Math.round(message.activeRunCount);
     }
+    if (message.packageContractVersion !== 0) {
+      obj.packageContractVersion = Math.round(message.packageContractVersion);
+    }
+    if (message.loadedPackages?.length) {
+      obj.loadedPackages = message.loadedPackages.map((e) => LoadedPackage.toJSON(e));
+    }
+    if (message.packageResources?.length) {
+      obj.packageResources = message.packageResources.map((e) => PackageResource.toJSON(e));
+    }
+    if (message.packageDiagnostics?.length) {
+      obj.packageDiagnostics = message.packageDiagnostics.map((e) => PackageDiagnostic.toJSON(e));
+    }
     return obj;
   },
 
@@ -680,6 +785,373 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     message.loadedSkills = object.loadedSkills?.map((e) => LoadedSkill.fromPartial(e)) || [];
     message.resolvedTools = object.resolvedTools?.map((e) => e) || [];
     message.activeRunCount = object.activeRunCount ?? 0;
+    message.packageContractVersion = object.packageContractVersion ?? 0;
+    message.loadedPackages = object.loadedPackages?.map((e) => LoadedPackage.fromPartial(e)) || [];
+    message.packageResources = object.packageResources?.map((e) => PackageResource.fromPartial(e)) || [];
+    message.packageDiagnostics = object.packageDiagnostics?.map((e) => PackageDiagnostic.fromPartial(e)) || [];
+    return message;
+  },
+};
+
+function createBaseLoadedPackage(): LoadedPackage {
+  return { name: "", contentDigest: "", extensions: 0, skills: 0, prompts: 0, themes: 0 };
+}
+
+export const LoadedPackage: MessageFns<LoadedPackage> = {
+  encode(message: LoadedPackage, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.contentDigest !== "") {
+      writer.uint32(18).string(message.contentDigest);
+    }
+    if (message.extensions !== 0) {
+      writer.uint32(24).uint32(message.extensions);
+    }
+    if (message.skills !== 0) {
+      writer.uint32(32).uint32(message.skills);
+    }
+    if (message.prompts !== 0) {
+      writer.uint32(40).uint32(message.prompts);
+    }
+    if (message.themes !== 0) {
+      writer.uint32(48).uint32(message.themes);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): LoadedPackage {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseLoadedPackage();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.name = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.contentDigest = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 24) {
+              break;
+            }
+
+            message.extensions = reader.uint32();
+            continue;
+          }
+          case 4: {
+            if (tag !== 32) {
+              break;
+            }
+
+            message.skills = reader.uint32();
+            continue;
+          }
+          case 5: {
+            if (tag !== 40) {
+              break;
+            }
+
+            message.prompts = reader.uint32();
+            continue;
+          }
+          case 6: {
+            if (tag !== 48) {
+              break;
+            }
+
+            message.themes = reader.uint32();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): LoadedPackage {
+    return {
+      name: isSet(object.name) ? globalThis.String(object.name) : "",
+      contentDigest: isSet(object.contentDigest)
+        ? globalThis.String(object.contentDigest)
+        : isSet(object.content_digest)
+        ? globalThis.String(object.content_digest)
+        : "",
+      extensions: isSet(object.extensions) ? globalThis.Number(object.extensions) : 0,
+      skills: isSet(object.skills) ? globalThis.Number(object.skills) : 0,
+      prompts: isSet(object.prompts) ? globalThis.Number(object.prompts) : 0,
+      themes: isSet(object.themes) ? globalThis.Number(object.themes) : 0,
+    };
+  },
+
+  toJSON(message: LoadedPackage): unknown {
+    const obj: any = {};
+    if (message.name !== "") {
+      obj.name = message.name;
+    }
+    if (message.contentDigest !== "") {
+      obj.contentDigest = message.contentDigest;
+    }
+    if (message.extensions !== 0) {
+      obj.extensions = Math.round(message.extensions);
+    }
+    if (message.skills !== 0) {
+      obj.skills = Math.round(message.skills);
+    }
+    if (message.prompts !== 0) {
+      obj.prompts = Math.round(message.prompts);
+    }
+    if (message.themes !== 0) {
+      obj.themes = Math.round(message.themes);
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<LoadedPackage>): LoadedPackage {
+    return LoadedPackage.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<LoadedPackage>): LoadedPackage {
+    const message = createBaseLoadedPackage();
+    message.name = object.name ?? "";
+    message.contentDigest = object.contentDigest ?? "";
+    message.extensions = object.extensions ?? 0;
+    message.skills = object.skills ?? 0;
+    message.prompts = object.prompts ?? 0;
+    message.themes = object.themes ?? 0;
+    return message;
+  },
+};
+
+function createBasePackageResource(): PackageResource {
+  return { packageName: "", kind: "", name: "" };
+}
+
+export const PackageResource: MessageFns<PackageResource> = {
+  encode(message: PackageResource, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.packageName !== "") {
+      writer.uint32(10).string(message.packageName);
+    }
+    if (message.kind !== "") {
+      writer.uint32(18).string(message.kind);
+    }
+    if (message.name !== "") {
+      writer.uint32(26).string(message.name);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PackageResource {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePackageResource();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.packageName = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.kind = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.name = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): PackageResource {
+    return {
+      packageName: isSet(object.packageName)
+        ? globalThis.String(object.packageName)
+        : isSet(object.package_name)
+        ? globalThis.String(object.package_name)
+        : "",
+      kind: isSet(object.kind) ? globalThis.String(object.kind) : "",
+      name: isSet(object.name) ? globalThis.String(object.name) : "",
+    };
+  },
+
+  toJSON(message: PackageResource): unknown {
+    const obj: any = {};
+    if (message.packageName !== "") {
+      obj.packageName = message.packageName;
+    }
+    if (message.kind !== "") {
+      obj.kind = message.kind;
+    }
+    if (message.name !== "") {
+      obj.name = message.name;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<PackageResource>): PackageResource {
+    return PackageResource.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<PackageResource>): PackageResource {
+    const message = createBasePackageResource();
+    message.packageName = object.packageName ?? "";
+    message.kind = object.kind ?? "";
+    message.name = object.name ?? "";
+    return message;
+  },
+};
+
+function createBasePackageDiagnostic(): PackageDiagnostic {
+  return { packageName: "", code: "", message: "" };
+}
+
+export const PackageDiagnostic: MessageFns<PackageDiagnostic> = {
+  encode(message: PackageDiagnostic, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.packageName !== "") {
+      writer.uint32(10).string(message.packageName);
+    }
+    if (message.code !== "") {
+      writer.uint32(18).string(message.code);
+    }
+    if (message.message !== "") {
+      writer.uint32(26).string(message.message);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PackageDiagnostic {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePackageDiagnostic();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.packageName = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.code = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.message = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): PackageDiagnostic {
+    return {
+      packageName: isSet(object.packageName)
+        ? globalThis.String(object.packageName)
+        : isSet(object.package_name)
+        ? globalThis.String(object.package_name)
+        : "",
+      code: isSet(object.code) ? globalThis.String(object.code) : "",
+      message: isSet(object.message) ? globalThis.String(object.message) : "",
+    };
+  },
+
+  toJSON(message: PackageDiagnostic): unknown {
+    const obj: any = {};
+    if (message.packageName !== "") {
+      obj.packageName = message.packageName;
+    }
+    if (message.code !== "") {
+      obj.code = message.code;
+    }
+    if (message.message !== "") {
+      obj.message = message.message;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<PackageDiagnostic>): PackageDiagnostic {
+    return PackageDiagnostic.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<PackageDiagnostic>): PackageDiagnostic {
+    const message = createBasePackageDiagnostic();
+    message.packageName = object.packageName ?? "";
+    message.code = object.code ?? "";
+    message.message = object.message ?? "";
     return message;
   },
 };

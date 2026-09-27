@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createReadStream, existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { ChannelCredentials, status } from "@grpc/grpc-js";
@@ -14,14 +14,15 @@ import { normalizeServiceDefinitionInput, WorkServicesClient } from "@piwork/con
 import { DockerRuntime, managedVolumeName } from "@piwork/runtime-docker";
 import { FileCredentialStore } from "@piwork/client-sdk";
 import { readWorkPackage } from "@piwork/work-package";
-import { registerRuntimeProfileCatalog } from "../apps/core/dist/configuration/runtime-catalog.js";
+import { packPiPackageDirectory } from "@piwork/pi-package";
+import { startPiPackageSources } from "./pi-package-sources.mjs";
 
 const command = promisify(execFile), root = await mkdtemp(join(process.env.PIWORK_SNAPSHOT_ACCEPTANCE_TEMP_PARENT ?? "/var/tmp", "piwork-snapshot-acceptance-"));
 const helperReference = process.env.PIWORK_SNAPSHOT_HELPER_TEST_IMAGE ?? "piwork-snapshot-helper:apply-context-20260923";
 const imageReference = process.env.PIWORK_SNAPSHOT_ACCEPTANCE_IMAGE ?? "python:3.13-slim";
-const agentReference = process.env.PIWORK_SNAPSHOT_ACCEPTANCE_AGENT_IMAGE ?? "piwork-agentd:acceptance";
+let agentReference = process.env.PIWORK_SNAPSHOT_ACCEPTANCE_AGENT_IMAGE ?? "piwork-agentd:acceptance";
 const fixtureId = randomUUID(), serviceImageReference = `unreachable.invalid/piwork/portable:${fixtureId}`;
-let serviceImageId, fixtureContainerId;
+let serviceImageId, fixtureContainerId, packageSources, agentImageId;
 const password = `snapshot-acceptance-${randomUUID()}`, credential = `recipient-platform-${randomUUID()}`;
 const createdVolumes = [];
 const installations = [];
@@ -29,7 +30,6 @@ const apps = [];
 const docker = async (...args) => (await command("docker", args, { timeout: 120_000, maxBuffer: 2 * 1024 * 1024 })).stdout.trim();
 const helperId = await docker("image", "inspect", "--format", "{{.Id}}", helperReference);
 const imageId = await docker("image", "inspect", "--format", "{{.Id}}", imageReference);
-const agentImageId = await docker("image", "inspect", "--format", "{{.Id}}", agentReference);
 const deterministicRuntime = { async prepare() {}, async start() { throw new Error("acceptance must not auto-start Work"); },
   async inspect() { return { exists: false, running: false, ready: false }; }, async drain() {}, async stop() {}, async remove() {} };
 
@@ -50,7 +50,8 @@ async function installation(name, realRuntime = false) {
     app = await CoreApplication.create({ paths, initialization: { administrator: { account: "owner", password },
       runtime: { agentImage: agentReference, provider: "piwork-deterministic", model: "fixture-v1", credential } },
     ...(realRuntime ? { agentGrpcListen: `0.0.0.0:${agentPort}`, agentGrpcAdvertise: `piwork-core:${agentPort}` } : { runtimeFactory: async () => deterministicRuntime }),
-    snapshotHelperImage: helperReference, snapshotHelperResolver: async () => helperId });
+    snapshotHelperImage: helperReference, snapshotHelperResolver: async () => helperId,
+    packageHelperImage: agentReference });
   } finally {
     if (previous === undefined) delete process.env.PIWORK_INSTALLATION_ID; else process.env.PIWORK_INSTALLATION_ID = previous;
   }
@@ -80,6 +81,91 @@ async function cli(site, ...args) {
     { cwd: root, env: { ...process.env, PIWORK_CONFIG_PATH: site.cliConfig, PIWORK_CORE_URL: site.base },
       timeout: 30 * 60_000, maxBuffer: 2 * 1024 * 1024 });
   return JSON.parse(stdout.trim());
+}
+
+const portablePackageName = "@example/portable-tools";
+async function packageFixture(version, marker) {
+  const directory = join(root, `pi-package-${version}`);
+  await mkdir(join(directory, "extensions"), { recursive: true });
+  await mkdir(join(directory, "vendor", "portable-dependency"), { recursive: true });
+  await writeFile(join(directory, "vendor", "portable-dependency", "package.json"), JSON.stringify({
+    name: "portable-dependency", version: "1.0.0", main: "index.js" }));
+  await writeFile(join(directory, "vendor", "portable-dependency", "index.js"),
+    `module.exports = ${JSON.stringify(`offline-dependency:${marker}`)};\n`);
+  await writeFile(join(directory, "package.json"), JSON.stringify({ name: portablePackageName, version,
+    dependencies: { "portable-dependency": "file:vendor/portable-dependency" },
+    pi: { extensions: ["extensions/hello.js"] } }));
+  await writeFile(join(directory, "extensions", "hello.js"),
+    `import dependency from "portable-dependency"; export default function (pi) { pi.registerTool({ name: "hello", label: "Hello", description: "Portable package", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [{ type: "text", text: ${JSON.stringify(marker)} + ":" + dependency }] }) }); }\n`);
+  return directory;
+}
+
+async function packageChat(site, workId, marker) {
+  const { stdout } = await command(process.execPath, [join(process.cwd(), "apps/cli/dist/main.js"), "--json", "chat",
+    workId, "--message", "invoke package tool hello"], { cwd: root,
+    env: { ...process.env, PIWORK_CONFIG_PATH: site.cliConfig, PIWORK_CORE_URL: site.base },
+    timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+  assert.match(stdout, new RegExp(`package-tool-result:hello:${marker}:offline-dependency:${marker}`));
+  const records = stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const session = records.find((record) => record.type === "session");
+  assert.ok(typeof session?.sessionId === "string", "package chat must expose the Session used for the package tool call");
+  return session.sessionId;
+}
+
+function assertPackageVersions(site, workId, activeVersion, desiredVersion) {
+  const state = site.app.store.getWorkConfiguration(workId);
+  const readVersion = (id) => id === null ? null : site.app.workContexts.load(workId, id).metadata.packageBindings
+    .find((binding) => binding.name === portablePackageName)?.artifact.version ?? null;
+  assert.equal(readVersion(state.activeContextId), activeVersion);
+  assert.equal(readVersion(state.desiredContextId), desiredVersion);
+}
+
+const fixturePackageName = "@piwork/fixture-tools";
+async function assertFixtureContexts(site, workId) {
+  const directory = join(site.paths.dataDirectory, "works", workId, "contexts");
+  const kinds = new Set();
+  for (const id of await readdir(directory)) {
+    if (id.startsWith(".staging-")) continue;
+    const context = site.app.workContexts.load(workId, id);
+    const binding = context.metadata.packageBindings.find((item) => item.name === fixturePackageName);
+    if (!binding) continue;
+    kinds.add(binding.artifact.sourceKind);
+    const root = join(context.directory, "packages", binding.nameKey);
+    assert.equal(await readFile(join(root, "prepared.txt"), "utf8"),
+      `prepared-${binding.artifact.version === "1.0.0" ? "v1" : "v2"}\n`);
+    assert.equal(await readFile(join(root, "node_modules", "fixture-dependency", "index.js"), "utf8"),
+      'export default "offline-dependency";\n');
+  }
+  assert.deepEqual([...kinds].sort(), ["git", "local", "npm", "zip"]);
+}
+
+async function fixtureChat(site, workId, version) {
+  const { stdout } = await command(process.execPath, [join(process.cwd(), "apps/cli/dist/main.js"), "--json", "chat",
+    workId, "--message", "invoke package tool fixture_hello"], { cwd: root,
+    env: { ...process.env, PIWORK_CONFIG_PATH: site.cliConfig, PIWORK_CORE_URL: site.base },
+    timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+  assert.match(stdout, new RegExp(`package-tool-result:fixture_hello:${version}:offline-dependency:started`));
+}
+
+async function installTargetCatalogFixture(site, addToDefaults = true) {
+  const directory = await packageFixture("3.0.0", "target-v3");
+  const uploads = join(site.paths.dataDirectory, "pi-packages", "uploads");
+  await mkdir(uploads, { recursive: true });
+  const uploadId = `upload-${randomUUID()}`;
+  const packed = await packPiPackageDirectory(directory, join(uploads, `${uploadId}.zip`));
+  const now = new Date();
+  site.app.store.packages.insertUpload({ id: uploadId, actorId: "operator", scopeKind: "core", workId: null,
+    sourceKind: "local", displayName: "target-fixture", digest: `sha256:${packed.digest}`, size: packed.bytes,
+    state: "ready", expiresAt: new Date(now.getTime() + 86400000).toISOString(), leaseCount: 0, createdAt: now.toISOString() });
+  const accepted = await site.app.packages.install({ kind: "upload", uploadId }, addToDefaults, `target-catalog-${randomUUID()}`);
+  for (let attempt = 0; attempt < 1200; attempt++) {
+    const operation = site.app.store.getOperation(accepted.operationId);
+    if (operation?.state === "succeeded") break;
+    assert.notEqual(operation?.state, "failed", `target package install failed: ${operation?.errorJson}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(site.app.packages.show(portablePackageName, true).version, "3.0.0");
+  await rm(directory, { recursive: true, force: true });
 }
 
 async function agentTools(site, workId) {
@@ -121,6 +207,12 @@ async function json(site, path, method = "GET", body) {
   assert.ok(response.ok, `${method} ${path}: ${response.status} ${JSON.stringify(result)}`);
   return result;
 }
+async function agentPhaseLogs(site, workId, runId) {
+  const privateVolume = managedVolumeName(site.installationId, workId, "work-private");
+  const script = "import json,sqlite3,sys; db=sqlite3.connect('/private/work.sqlite'); rows=db.execute('select event_type,payload_json from run_events where run_id=? order by sequence', (sys.argv[1],)); print('\\n'.join(json.dumps({'eventType': row[0], 'payload': json.loads(row[1])}) for row in rows if row[0]=='diagnostic'))";
+  return docker("run", "--rm", "--network", "none", "--mount", `type=volume,source=${privateVolume},target=/private`, imageId,
+    "python", "-c", script, runId).catch(() => "");
+}
 async function waitOperation(site, operationId) {
   for (let attempt = 0; attempt < 1200; attempt++) {
     const operation = await json(site, `/api/v1/operations/${operationId}`);
@@ -159,7 +251,9 @@ async function assertDormantImport(site, workId) {
     "--filter", `label=piwork.work_id=${workId}`), "", "import must not create a Work network");
 }
 async function importPackageViaCli(site, path) {
-  const result = await cli(site, "import", path, "--wait");
+  const result = await cli(site, "import", path, "--wait").catch((error) => {
+    throw new Error(`CLI import failed: ${site.snapshotErrors.at(-1)?.stack ?? "no worker error"}`, { cause: error });
+  });
   assert.equal(result.state, "succeeded");
   assert.ok(result.workId && result.operationId);
   await assertDormantImport(site, result.workId);
@@ -185,28 +279,6 @@ async function exportWorkViaCli(site, workId) {
   assert.equal(result.digest, snapshot.digest);
   assert.equal(result.size, snapshot.size);
   return { ...snapshot, path: result.path };
-}
-async function verifyLocalPackageImport() {
-  const packagePath = join(process.cwd(), "first.work");
-  if (!existsSync(packagePath)) return false;
-  const verified = await readWorkPackage(createReadStream(packagePath));
-  assert.equal(verified.spec.bindings.secrets.length, 0, "local package requires unavailable platform secrets");
-  const site = await installation("local-first-package", true);
-  const seen = new Set();
-  for (const model of verified.spec.bindings.models) {
-    const identity = JSON.stringify([model.provider, model.model, model.baseUrl]);
-    if (seen.has(identity)) continue;
-    seen.add(identity);
-    site.app.runtimeProfiles.configure({ agentImage: agentReference, provider: model.provider,
-      model: model.model, ...(model.baseUrl === null ? {} : { baseUrl: model.baseUrl }),
-      credential: "acceptance-import-only-no-runtime-start" });
-    registerRuntimeProfileCatalog(site.app.store, site.app.runtimeProfiles.load());
-  }
-  const workId = await importPackageViaCli(site, packagePath);
-  assert.equal(site.app.store.getWork(workId).name, verified.spec.sourceName);
-  assert.equal(site.app.store.listServices(workId, true).length, verified.spec.services.length);
-  trackImportedVolumes(site, workId);
-  return true;
 }
 async function downloadAndVerify(site, snapshot) {
   const response = await fetch(`${site.base}/api/v1/work-snapshots/${snapshot.snapshotId}/content`, { headers: site.headers });
@@ -242,7 +314,10 @@ async function conversationRound(site, workId, existingSessionId, prompt = "Repl
   for (let attempt = 0; attempt < 300; attempt++) {
     const run = await json(site, `/api/v1/works/${workId}/runs/${runId}`);
     if (run.state === "RUN_STATE_SUCCEEDED" || run.state === 4) return sessionId;
-    assert.ok(!["RUN_STATE_FAILED", "RUN_STATE_CANCELLED", "RUN_STATE_INTERRUPTED", 5, 6, 7].includes(run.state), JSON.stringify(run));
+    if (["RUN_STATE_FAILED", "RUN_STATE_CANCELLED", "RUN_STATE_INTERRUPTED", 5, 6, 7].includes(run.state)) {
+      const phases = await agentPhaseLogs(site, workId, runId);
+      throw new Error(`${JSON.stringify(run)}${phases === "" ? "" : `; agent phases: ${phases}`}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Run did not finish: ${runId}`);
@@ -321,7 +396,7 @@ Path('/project/.venv/lib/python3.13/site-packages/portable_dep.py').write_text("
 Path('/project/run.py').write_text("import sqlite3, portable_dep; from pathlib import Path; db=sqlite3.connect('/project/business.sqlite'); n=db.execute('select value from settings').fetchone()[0]; print('portable-code:'+str(n)+':'+Path('/project/.env').read_text().strip()+':'+portable_dep.marker)")
 db=sqlite3.connect('/project/business.sqlite'); db.execute('create table settings(value integer)'); db.execute('insert into settings values (7)'); db.commit(); db.close()`);
   const now = new Date().toISOString(), profile = site.app.runtimeProfiles.load();
-  const configuration = { agentImage: { catalogId: "runtime-image-00000001" }, modelRef: "runtime-model-00000001", skills: [], agentsMd: "User AGENTS.md stays in the package\n",
+  const configuration = { agentImage: { catalogId: "runtime-image-00000001" }, modelRef: "runtime-model-00000001", skills: [], packages: [], agentsMd: "User AGENTS.md stays in the package\n",
     mcpServers: includeServiceMcp ? [{ serverId: "work-services", transport: "stdio", required: true,
       command: "/usr/local/bin/piwork-service-mcp", args: [], timeoutMs: 30_000 }] : [],
     tools: { allowed: [], denied: deniedTools }, resources: { cpuMillis: 1000, memoryBytes: 1073741824, agentCpuMillis: 500,
@@ -373,15 +448,66 @@ db=sqlite3.connect('/project/business.sqlite'); db.execute('create table setting
 
 try {
   await docker("info", "--format", "{{.ServerVersion}}");
+  packageSources = await startPiPackageSources(root, agentReference);
+  agentReference = packageSources.image;
+  agentImageId = await docker("image", "inspect", "--format", "{{.Id}}", agentReference);
   fixtureContainerId = await docker("container", "create", "--network", "none", imageId, "python", "-c", "pass");
   serviceImageId = await docker("container", "commit", "--change", `LABEL piwork.acceptance=${fixtureId}`, fixtureContainerId, serviceImageReference);
   await docker("container", "rm", fixtureContainerId); fixtureContainerId = undefined;
   const source = await installation("source", true), target = await installation("target", true), third = await installation("third", true);
+  await installTargetCatalogFixture(source, false);
   const sourceId = await sourceWork(source);
   await runCode(source, sourceId);
   await startWork(source, sourceId);
+  const packageV1 = await packageFixture("1.0.0", "source-v1");
+  assert.equal((await cli(source, "packages", "install", sourceId, packageV1, "--wait")).state, "succeeded");
+  await rm(packageV1, { recursive: true, force: true });
+  const packageApply = await json(source, `/api/v1/works/${sourceId}/configuration/apply`, "POST", { idempotencyKey: `package-apply-${randomUUID()}` });
+  await waitOperation(source, packageApply.operationId);
+  assertPackageVersions(source, sourceId, "1.0.0", "1.0.0");
   await verifyWebService(source, sourceId);
-  const sessionId = await conversationRound(source, sourceId);
+  await stopWork(source, sourceId);
+  const fixtureLocal = join(root, "fixture-local"), fixtureZip = join(root, "fixture-v2.zip");
+  await cp(packageSources.local("v1"), fixtureLocal, { recursive: true });
+  await writeFile(join(fixtureLocal, "source-marker.txt"), "local\n");
+  const fixtureZipSource = join(root, "fixture-zip-source");
+  await cp(packageSources.local("v2"), fixtureZipSource, { recursive: true });
+  await writeFile(join(fixtureZipSource, "source-marker.txt"), "zip\n");
+  await packPiPackageDirectory(fixtureZipSource, fixtureZip);
+  const fixtureChange = async (action, version, input, kind) => {
+    const args = ["packages", action, sourceId, ...(action === "update" ? [fixturePackageName, "--source", input] : [input]), "--wait"];
+    assert.equal((await cli(source, ...args)).state, "succeeded");
+    const state = source.app.store.getWorkConfiguration(sourceId);
+    const binding = source.app.workContexts.load(sourceId, state.desiredContextId).metadata.packageBindings
+      .find((item) => item.name === fixturePackageName);
+    assert.equal(binding?.artifact.version, version);
+    assert.equal(binding?.artifact.sourceKind, kind);
+  };
+  const applyFixture = async () => {
+    const accepted = await json(source, `/api/v1/works/${sourceId}/configuration/apply`, "POST",
+      { idempotencyKey: `fixture-apply-${randomUUID()}` });
+    await waitOperation(source, accepted.operationId);
+  };
+  await fixtureChange("install", "1.0.0", fixtureLocal, "local"); await applyFixture();
+  await fixtureChange("update", "2.0.0", fixtureZip, "zip"); await applyFixture();
+  await fixtureChange("update", "1.0.0", packageSources.npm("1.0.0"), "npm"); await applyFixture();
+  await fixtureChange("update", "2.0.0", packageSources.git("v2"), "git");
+  await cli(source, "packages", "disable", sourceId, fixturePackageName);
+  await assertFixtureContexts(source, sourceId);
+  await packageSources.stopSources();
+  await rm(fixtureLocal, { recursive: true, force: true });
+  await rm(fixtureZipSource, { recursive: true, force: true });
+  await rm(fixtureZip, { force: true });
+  const packageV2 = await packageFixture("2.0.0", "source-v2");
+  assert.equal((await cli(source, "packages", "update", sourceId, portablePackageName, "--source", packageV2, "--wait")).state, "succeeded");
+  await rm(packageV2, { recursive: true, force: true });
+  assertPackageVersions(source, sourceId, "1.0.0", "2.0.0");
+  // Create the retained package Session while its bound context is still active.
+  // Later package edits remain pending, so the import still exercises active,
+  // desired, and historical context restoration without violating Session fencing.
+  await startWork(source, sourceId);
+  const packageSessionId = await packageChat(source, sourceId, "source-v1");
+  const sessionId = await conversationRound(source, sourceId, packageSessionId, "invoke package tool hello");
   await stopWork(source, sourceId);
   await leaveCommittedHistoryInWal(source, sourceId, sessionId);
   source.app.store.exec(`UPDATE service_runtime_bindings SET recovery_count = 3 WHERE work_id = '${sourceId}' AND service_id = (SELECT service_id FROM service_heads WHERE work_id = '${sourceId}' AND name = 'web')`);
@@ -389,7 +515,14 @@ try {
   await json(source, `/api/v1/works/${sourceId}/configuration`, "PUT", { configuration: { ...sourceConfiguration, agentsMd: "Pending desired context remains pending after import\n" } });
   const sourceContext = source.app.store.getWorkConfiguration(sourceId);
   assert.notEqual(sourceContext.activeContextId, sourceContext.desiredContextId);
-  const exported = await exportWorkViaCli(source, sourceId);
+  const exported = await exportWorkViaCli(source, sourceId).catch((error) => {
+    throw new Error(`source export failed: ${source.snapshotErrors.at(-1)?.stack ?? "no worker error"}`, { cause: error });
+  });
+  const exportedSpec = (await readWorkPackage(createReadStream(exported.path))).spec;
+  assert.deepEqual([...new Set(exportedSpec.piPackageArtifacts.filter((item) => item.name === fixturePackageName)
+    .map((item) => item.sourceKind))].sort(), ["git", "local", "npm", "zip"]);
+  source.app.packages.remove(portablePackageName);
+  assert.equal(source.app.store.packages.getCatalog(portablePackageName), undefined);
   assert.ok(exported.size > 8 * 1024 * 1024, "legal package must contain the 8 MiB fixture");
   const operationsBeforeOverwrite = source.app.store.listOperations().length;
   await assert.rejects(cli(source, "export", sourceId), /output already exists/);
@@ -414,8 +547,10 @@ try {
   }
   await docker("image", "rm", serviceImageReference);
   await assert.rejects(docker("image", "inspect", serviceImageId), "target must not already have the immutable service image");
+  await installTargetCatalogFixture(target);
   const uploaded = await upload(target, exported.path, exported.digest, exported.size);
-  const first = await importPackageViaCli(target, exported.path);
+  const first = await importPackage(target, uploaded.packageId);
+  await assertFixtureContexts(target, first);
   assert.equal(target.app.store.getWork(first).name, "portable-source");
   await verifyHistoryWalCommit(target, first, sessionId);
   assert.equal(await docker("image", "inspect", "--format", "{{.Id}}", serviceImageId), serviceImageId,
@@ -424,6 +559,8 @@ try {
   const firstConfiguration = target.app.store.getWorkConfiguration(first);
   assert.notEqual(firstConfiguration.activeContextId, firstConfiguration.desiredContextId, "pending desired context must survive import");
   assert.equal(firstConfiguration.pendingRestart, true);
+  assertPackageVersions(target, first, "1.0.0", "2.0.0");
+  assert.equal(target.app.packages.show(portablePackageName, true).version, "3.0.0");
   target.app.store.exec(`UPDATE quota_reservations SET desired_cpu_millis = 128000 WHERE work_id = '${first}' AND subject_kind = 'agent'`);
   try {
     const rejected = await fetch(`${target.base}/api/v1/work-imports`, { method: "POST", headers: { ...target.headers, "content-type": "application/json" },
@@ -437,6 +574,9 @@ try {
   assert.equal(target.app.store.getWork(second).name, "portable-source-2");
   await verifyHistoryWalCommit(target, second, sessionId);
   trackImportedVolumes(target, second);
+  assert.equal(target.app.store.snapshots.expirePackage(uploaded.packageId, new Date(Date.now() + 48 * 60 * 60_000).toISOString()), true);
+  await rm(exported.path, { force: true });
+  await rm(join(target.paths.snapshotsDirectory, "packages", `${uploaded.packageId}.work`), { force: true });
   const deniedUpload = await upload(target, deniedExport.path, deniedExport.digest, deniedExport.size);
   const deniedTargetId = await importPackage(target, deniedUpload.packageId, "denied-tool-copy");
   assert.ok(JSON.parse(target.app.store.getWorkConfiguration(deniedTargetId).activeConfigJson).tools.denied.includes("work-services.service_stop"),
@@ -473,6 +613,8 @@ try {
   await source.app.close();
   apps.splice(apps.indexOf(source.app), 1);
   await startWork(target, first);
+  await packageChat(target, first, "source-v1");
+  await fixtureChat(target, first, "v1");
   await verifyWebService(target, first);
   const foreignTargetWebId = target.app.store.listServices(second, true).find((item) => item.name === "web")?.serviceId;
   assert.ok(foreignTargetWebId);
@@ -483,6 +625,7 @@ try {
   assert.notEqual(webFirst.serviceId, sourceWebId, "target service identity must be new");
   assert.ok(target.app.store.getWorkConfiguration(first).activeConfigJson.includes("work-services"), "active built-in MCP must survive import");
   await conversationRound(target, first, undefined, "verify restored web service");
+  await conversationRound(target, first, sessionId, "invoke package tool hello");
   assert.equal(target.app.store.listServices(first, true).find((item) => item.name === "web")?.enabled, true);
   assert.ok(target.app.store.listOperations().some((item) => item.workId === first && item.kind === "disable-service"), "pi-agentd MCP must stop restored service");
   assert.ok(target.app.store.listOperations().some((item) => item.workId === first && item.kind === "enable-service"), "pi-agentd MCP must restart restored service");
@@ -491,7 +634,6 @@ try {
   assert.equal(target.app.store.getWorkConfiguration(first).pendingRestart, true);
   const targetSessions = await json(target, `/api/v1/works/${first}/sessions`);
   assert.ok(targetSessions.sessions.some((item) => item.sessionId === sessionId), "source Session must remain visible after first import");
-  await conversationRound(target, first, sessionId);
   await stopWork(target, first);
   await startWork(target, deniedTargetId);
   const deniedContextId = target.app.store.getWorkConfiguration(deniedTargetId).activeContextId;
@@ -504,11 +646,26 @@ try {
   await stopWork(target, deniedTargetId);
   await startWork(target, second);
   await verifyWebService(target, second);
-  await conversationRound(target, second, sessionId);
   await stopWork(target, second);
   const apply = await json(target, `/api/v1/works/${second}/configuration/apply`, "POST", { idempotencyKey: `apply-${randomUUID()}` });
   await waitOperation(target, apply.operationId);
   assert.equal(target.app.store.getWorkConfiguration(second).pendingRestart, false, "explicit apply must activate pending context");
+  assertPackageVersions(target, second, "2.0.0", "2.0.0");
+  await startWork(target, second);
+  await packageChat(target, second, "source-v2");
+  await stopWork(target, second);
+  const adoptTargetHead = await cli(target, "packages", "update", second, portablePackageName, "--from-core", "--wait");
+  assert.equal(adoptTargetHead.state, "succeeded");
+  assertPackageVersions(target, second, "2.0.0", "3.0.0");
+  await startWork(target, second);
+  await packageChat(target, second, "source-v2");
+  await stopWork(target, second);
+  const adoptApply = await json(target, `/api/v1/works/${second}/configuration/apply`, "POST", { idempotencyKey: `apply-${randomUUID()}` });
+  await waitOperation(target, adoptApply.operationId);
+  assertPackageVersions(target, second, "3.0.0", "3.0.0");
+  await startWork(target, second);
+  await packageChat(target, second, "target-v3");
+  await stopWork(target, second);
   for (const workId of [first, second]) {
     const service = target.app.store.listServices(workId, true).find((item) => item.name === "retained-worker");
     assert.ok(service?.tombstonedAt);
@@ -518,25 +675,27 @@ try {
     assert.equal(target.app.store.listVolumeReferences(workId).filter((item) => item.consumerKind === "service").length, 2);
   }
   const reexported = await exportWork(target, first);
-  const thirdPackage = await upload(third, reexported.path, reexported.digest, reexported.size);
-  const thirdId = await importPackage(third, thirdPackage.packageId, "copy-three");
+  const thirdId = await importPackageViaCli(third, reexported.path);
   trackImportedVolumes(third, thirdId);
+  await assertFixtureContexts(third, thirdId);
   await runCode(third, thirdId, 8);
   await startWork(third, thirdId);
+  assertPackageVersions(third, thirdId, "1.0.0", "2.0.0");
+  await packageChat(third, thirdId, "source-v1");
+  await fixtureChat(third, thirdId, "v1");
   await verifyWebService(third, thirdId);
   const sessions = await json(third, `/api/v1/works/${thirdId}/sessions`);
   assert.ok(sessions.sessions.some((item) => item.sessionId === sessionId), "imported Session must remain visible");
-  await conversationRound(third, thirdId, sessionId);
+  await conversationRound(third, thirdId, sessionId, "invoke package tool hello");
   await stopWork(third, thirdId);
   assert.equal(third.app.store.listVolumeReferences(thirdId).filter((item) => item.consumerKind === "service").length, 2);
-  const localFirstPackageImported = await verifyLocalPackageImport();
   console.log(JSON.stringify({ status: "passed", source: sourceId, copies: [first, second, thirdId], sessionId,
-    sourceDigest: exported.digest, reexportDigest: reexported.digest, coldSourceId, coldTargetId,
-    localFirstPackageImported }));
+    sourceDigest: exported.digest, reexportDigest: reexported.digest, coldSourceId, coldTargetId }));
 } finally {
   for (const app of apps.reverse()) await app.close().catch(() => undefined);
   if (fixtureContainerId) await docker("container", "rm", "--force", fixtureContainerId).catch(() => undefined);
   for (const installationId of installations.reverse()) {
+    if (process.env.PIWORK_KEEP_SNAPSHOT_ACCEPTANCE_CONTAINERS === "1") continue;
     try {
       assert.match(installationId, /^piwork-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
       const filter = `label=piwork.installation_id=${installationId}`;
@@ -561,5 +720,6 @@ try {
     const label = await docker("image", "inspect", "--format", '{{index .Config.Labels "piwork.acceptance"}}', serviceImageId).catch(() => "");
     if (label === fixtureId) await docker("image", "rm", "--force", serviceImageId).catch(() => undefined);
   }
-  await rm(root, { recursive: true, force: true });
+  await packageSources?.close();
+  if (process.env.PIWORK_KEEP_SNAPSHOT_ACCEPTANCE_TEMP !== "1") await rm(root, { recursive: true, force: true });
 }

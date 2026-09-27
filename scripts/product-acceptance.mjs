@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { createServer } from "node:net";
+import { packPiPackageDirectory } from "@piwork/pi-package";
+import { startPiPackageSources } from "./pi-package-sources.mjs";
 
 const root = new URL("../", import.meta.url).pathname;
 const temporary = await mkdtemp(join(tmpdir(), "piwork-acceptance-"));
@@ -18,11 +20,13 @@ const capturedProcessOutput = [];
 const environment = scrubbedEnvironment({
   PIWORK_CONFIG_PATH: configPath,
   PIWORK_INSTALLATION_ID: installationId,
+  PIWORK_PACKAGE_HELPER_IMAGE: "piwork-agentd:acceptance",
 });
 let core;
 let agentGrpcPort;
 let originalAcceptanceImage;
 let retagImage;
+let sourceFixture;
 let serviceWorkId;
 let serviceId;
 let serviceAgentBefore;
@@ -44,6 +48,8 @@ try {
     checked("npm", ["run", "build"]);
     checked("docker", ["build", "-f", "Dockerfile.agentd", "--target", "acceptance", "-t", "piwork-agentd:acceptance", "."]);
   }
+  sourceFixture = await startPiPackageSources(temporary);
+  environment.PIWORK_PACKAGE_HELPER_IMAGE = sourceFixture.image;
   agentGrpcPort = await findAvailablePort();
   core = await startCore(0);
   const originalUrl = core.url;
@@ -51,16 +57,38 @@ try {
   serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "admin", "bootstrap", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
   serveCli([
     "--core", originalUrl, "--data-dir", dataDirectory, "config", "set",
-    "--agent-image", "piwork-agentd:acceptance",
+    "--agent-image", sourceFixture.image,
     "--model-provider", "piwork-deterministic", "--model", "fixture-v1", "--api-key-stdin",
   ], `${modelCredential}\n`);
   cli(["--core", originalUrl, "--json", "login", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
+  const packageName = "@example/acceptance-tools";
+  const packageV1 = join(temporary, "package-v1");
+  await mkdir(join(packageV1, "extensions"), { recursive: true });
+  await writeFile(join(packageV1, "package.json"), JSON.stringify({ name: packageName, version: "1.0.0", pi: { extensions: ["extensions/hello.js"] } }));
+  await writeFile(join(packageV1, "extensions", "hello.js"), packageExtension("package-v1"));
+  const packageInstall = firstJson(serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "--json", "packages", "install", packageV1, "--default", "--wait"]));
+  assert.equal(packageInstall.state, "succeeded");
+  await rm(packageV1, { recursive: true, force: true });
+  const zipPackageName = "@example/zip-tools";
+  const zipSource = join(temporary, "package-zip-source");
+  const zipPath = join(temporary, "package-zip.zip");
+  await mkdir(join(zipSource, "extensions"), { recursive: true });
+  await writeFile(join(zipSource, "package.json"), JSON.stringify({ name: zipPackageName, version: "1.0.0", pi: { extensions: ["extensions/ziphello.js"] } }));
+  await writeFile(join(zipSource, "extensions", "ziphello.js"), packageExtension("package-zip", "ziphello"));
+  await packPiPackageDirectory(zipSource, zipPath);
+  const zipInstall = firstJson(serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "--json", "packages", "install", zipPath, "--default", "--wait"]));
+  assert.equal(zipInstall.state, "succeeded");
+  await rm(zipSource, { recursive: true, force: true });
+  await rm(zipPath, { force: true });
   const serviceCreation = jsonLines(cli(["--json", "work", "create", "--name", "acceptance-service", "--wait"]));
   serviceWorkId = serviceCreation[0].workId;
   assert.equal(serviceCreation.at(-1).state, "succeeded");
   const serviceConfiguration = firstJson(cli(["--json", "work", "config", "show", serviceWorkId]));
   assert.deepEqual(serviceConfiguration.active.skills, ["deploy-work-service"]);
+  assert.deepEqual(serviceConfiguration.active.packages, [{ name: packageName, enabled: true }, { name: zipPackageName, enabled: true }]);
   assert.equal(serviceConfiguration.active.mcpServers[0].serverId, "work-services");
+  assert.ok(cli(["--json", "chat", serviceWorkId, "--message", "invoke package tool hello"]).includes("package-tool-result:hello:package-v1"));
+  assert.ok(cli(["--json", "chat", serviceWorkId, "--message", "invoke package tool ziphello"]).includes("package-tool-result:ziphello:package-zip"));
   const deployment = jsonLines(cli(["--json", "chat", serviceWorkId, "--message", "deploy deterministic service"]));
   const deploymentText = deployment.filter((item) => item?.kind?.$case === "text").map((item) => item.kind.text.delta).join("");
   if (!/service-deployed:service-/.test(deploymentText)) {
@@ -149,6 +177,81 @@ try {
   assert.equal(String(run.finalText), markerA);
   assert.equal(firstJson(cli(["--json", "session", "show", workId, sessionId])).messages.length > 0, true);
 
+  const packageLifecycleCreation = jsonLines(cli(["--json", "work", "create", "--name", "acceptance-package-lifecycle", "--no-skills", "--wait"]));
+  const packageLifecycleWorkId = packageLifecycleCreation[0].workId;
+  assert.equal(packageLifecycleCreation.at(-1).state, "succeeded");
+  const fixedAgentImage = JSON.parse(checked("docker", ["inspect", dockerContainer(packageLifecycleWorkId)]))[0].Image;
+  const packageV2 = join(temporary, "package-v2");
+  await mkdir(join(packageV2, "extensions"), { recursive: true });
+  await writeFile(join(packageV2, "package.json"), JSON.stringify({ name: packageName, version: "2.0.0", pi: { extensions: ["extensions/hello.js"] } }));
+  await writeFile(join(packageV2, "extensions", "hello.js"), packageExtension("package-v2"));
+  assert.equal(firstJson(cli(["--json", "work", "packages", "update", packageLifecycleWorkId, packageName, "--source", packageV2, "--wait"])).state, "succeeded");
+  await rm(packageV2, { recursive: true, force: true });
+  let packageView = firstJson(cli(["--json", "work", "packages", "show", packageLifecycleWorkId, packageName]));
+  assert.equal(packageView.desired.version, "2.0.0");
+  assert.equal(packageView.active.version, "1.0.0");
+  assert.equal(packageView.pendingApply, true);
+  assert.ok(cli(["--json", "chat", packageLifecycleWorkId, "--message", "invoke package tool hello"]).includes("package-tool-result:hello:package-v1"));
+  assert.equal(jsonLines(cli(["--json", "work", "config", "apply", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.ok(cli(["--json", "chat", packageLifecycleWorkId, "--message", "invoke package tool hello"]).includes("package-tool-result:hello:package-v2"));
+  assert.equal(JSON.parse(checked("docker", ["inspect", dockerContainer(packageLifecycleWorkId)]))[0].Image, fixedAgentImage);
+  firstJson(cli(["--json", "work", "packages", "disable", packageLifecycleWorkId, packageName]));
+  packageView = firstJson(cli(["--json", "work", "packages", "show", packageLifecycleWorkId, packageName]));
+  assert.equal(packageView.desired.enabled, false);
+  assert.equal(packageView.active.enabled, true);
+  assert.equal(jsonLines(cli(["--json", "work", "config", "apply", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+  packageView = firstJson(cli(["--json", "work", "packages", "show", packageLifecycleWorkId, packageName]));
+  assert.equal(packageView.active.enabled, false);
+  assert.equal(packageView.runtime.loaded, false);
+  firstJson(cli(["--json", "work", "packages", "enable", packageLifecycleWorkId, packageName]));
+  assert.equal(jsonLines(cli(["--json", "work", "config", "apply", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.ok(cli(["--json", "chat", packageLifecycleWorkId, "--message", "invoke package tool hello"]).includes("package-tool-result:hello:package-v2"));
+  assert.equal(jsonLines(cli(["--json", "work", "stop", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(jsonLines(cli(["--json", "work", "start", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.ok(cli(["--json", "chat", packageLifecycleWorkId, "--message", "invoke package tool hello"]).includes("package-tool-result:hello:package-v2"));
+  assert.equal(JSON.parse(checked("docker", ["inspect", dockerContainer(packageLifecycleWorkId)]))[0].Image, fixedAgentImage);
+  firstJson(cli(["--json", "work", "packages", "remove", packageLifecycleWorkId, packageName]));
+  packageView = firstJson(cli(["--json", "work", "packages", "show", packageLifecycleWorkId, packageName]));
+  assert.equal(packageView.desired, null);
+  assert.equal(packageView.active.version, "2.0.0");
+  assert.equal(jsonLines(cli(["--json", "work", "config", "apply", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+  packageView = firstJson(cli(["--json", "work", "packages", "show", packageLifecycleWorkId, packageName]));
+  assert.equal(packageView.active, null);
+  assert.equal(packageView.runtime.loaded, false);
+  assert.equal(JSON.parse(checked("docker", ["inspect", dockerContainer(packageLifecycleWorkId)]))[0].Image, fixedAgentImage);
+  const workZipSource = join(temporary, "work-package-zip-source");
+  const workZipPath = join(temporary, "work-package.zip");
+  await mkdir(join(workZipSource, "extensions"), { recursive: true });
+  await writeFile(join(workZipSource, "package.json"), JSON.stringify({ name: "@example/work-zip-tools", version: "1.0.0",
+    pi: { extensions: ["extensions/workziphello.js"] } }));
+  await writeFile(join(workZipSource, "extensions", "workziphello.js"), packageExtension("work-zip", "workziphello"));
+  await packPiPackageDirectory(workZipSource, workZipPath);
+  assert.equal(firstJson(cli(["--json", "work", "packages", "install", packageLifecycleWorkId, workZipPath, "--wait"])).state, "succeeded");
+  await rm(workZipSource, { recursive: true, force: true });
+  await rm(workZipPath, { force: true });
+  assert.equal(jsonLines(cli(["--json", "work", "config", "apply", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.ok(cli(["--json", "chat", packageLifecycleWorkId, "--message", "invoke package tool workziphello"])
+    .includes("package-tool-result:workziphello:work-zip"));
+  const invalidPackage = join(temporary, "package-invalid-extension");
+  await mkdir(join(invalidPackage, "extensions"), { recursive: true });
+  await writeFile(join(invalidPackage, "package.json"), JSON.stringify({ name: "@example/invalid-tools", version: "1.0.0",
+    pi: { extensions: ["extensions/bad.js"] } }));
+  await writeFile(join(invalidPackage, "extensions", "bad.js"), "export default }\n");
+  assert.equal(firstJson(cli(["--json", "work", "packages", "install", packageLifecycleWorkId, invalidPackage, "--wait"])).state, "succeeded");
+  await rm(invalidPackage, { recursive: true, force: true });
+  const badApply = jsonLines(cliFailure(["--json", "work", "config", "apply", packageLifecycleWorkId, "--wait"], 6).stdout);
+  assert.equal(badApply.at(-1).state, "failed");
+  packageView = firstJson(cli(["--json", "work", "packages", "show", packageLifecycleWorkId, "@example/invalid-tools"]));
+  assert.equal(packageView.desired.version, "1.0.0");
+  assert.equal(packageView.active, null);
+  assert.equal(packageView.pendingApply, true);
+  assert.ok(cli(["--json", "chat", packageLifecycleWorkId, "--message", "invoke package tool ziphello"]).includes("package-tool-result:ziphello:package-zip"));
+  assert.equal(jsonLines(cli(["--json", "work", "stop", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(jsonLines(cliFailure(["--json", "work", "config", "apply", packageLifecycleWorkId, "--wait"], 6).stdout).at(-1).state, "failed");
+  assert.equal(jsonLines(cli(["--json", "work", "start", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.ok(cli(["--json", "chat", packageLifecycleWorkId, "--message", "invoke package tool ziphello"]).includes("package-tool-result:ziphello:package-zip"));
+  assert.equal(jsonLines(cli(["--json", "work", "delete", packageLifecycleWorkId, "--wait"])).at(-1).state, "succeeded");
+
   const explicitCreation = jsonLines(cli(["--json", "work", "create", "--name", "acceptance-explicit", "--skill", "directory-derived", "--wait"]));
   const explicitWorkId = explicitCreation[0].workId;
   assert.deepEqual(firstJson(cli(["--json", "work", "config", "show", explicitWorkId])).active.skills, ["directory-derived"]);
@@ -225,10 +328,10 @@ try {
   const second = jsonLines(cli(["--json", "chat", workId, "--session", sessionId, "--message", "acceptance second turn"]));
   assert.equal(second.some((item) => isExpectedText(item, markerA)), true);
 
-  originalAcceptanceImage = checked("docker", ["image", "inspect", "piwork-agentd:acceptance", "--format", "{{.Id}}"]).trim();
+  originalAcceptanceImage = checked("docker", ["image", "inspect", sourceFixture.image, "--format", "{{.Id}}"]).trim();
   retagImage = `piwork-agentd:acceptance-retag-${process.pid}`;
   checked("docker", ["commit", containerBefore, retagImage]);
-  checked("docker", ["tag", retagImage, "piwork-agentd:acceptance"]);
+  checked("docker", ["tag", retagImage, sourceFixture.image]);
 
   assert.equal(jsonLines(cli(["--json", "work", "stop", workId, "--wait"])).at(-1).state, "succeeded");
   assert.equal(jsonLines(cli(["--json", "work", "start", workId, "--wait"])).at(-1).state, "succeeded");
@@ -266,6 +369,65 @@ try {
   assert.equal(rejected.status, 401);
   assertNoSensitive(await rejected.text(), [saved.token], "HTTP authentication error");
   cli(["--core", originalUrl, "--json", "login", "--account", "admin", "--password-stdin"], `${adminPassword}\n`);
+  checked("docker", ["tag", originalAcceptanceImage, sourceFixture.image]);
+  const fixtureName = "@piwork/fixture-tools";
+  const fixtureLocal = join(temporary, "fixture-local");
+  const fixtureZip = join(temporary, "fixture-v2.zip");
+  await cp(sourceFixture.local("v1"), fixtureLocal, { recursive: true });
+  await packPiPackageDirectory(sourceFixture.local("v2"), fixtureZip);
+  const corePackage = (action, version, source, extra = []) => {
+    const args = ["--core", originalUrl, "--data-dir", dataDirectory, "--json", "packages", action,
+      ...(action === "update" ? [fixtureName, "--source", source] : [source]), ...extra, "--wait"];
+    assert.equal(firstJson(serveCli(args)).state, "succeeded");
+    const shown = firstJson(serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "--json", "packages", "show", fixtureName]));
+    assert.equal(shown.version, version);
+    return shown;
+  };
+  assert.equal(corePackage("install", "1.0.0", fixtureLocal, ["--default"]).sourceKind, "local");
+  const inherited = jsonLines(cli(["--json", "work", "create", "--name", "fixture-inherited", "--no-skills", "--wait"]))[0].workId;
+  assert.equal(firstJson(cli(["--json", "work", "packages", "show", inherited, fixtureName])).active.version, "1.0.0");
+  assert.ok(cli(["--json", "chat", inherited, "--message", "invoke package tool fixture_hello"])
+    .includes("package-tool-result:fixture_hello:v1:offline-dependency:started"));
+  assert.equal(corePackage("update", "2.0.0", fixtureZip).sourceKind, "zip");
+  assert.equal(corePackage("update", "1.0.0", sourceFixture.npm("1.0.0")).sourceKind, "npm");
+  assert.equal(corePackage("update", "2.0.0", sourceFixture.git("v2")).sourceKind, "git");
+  assert.equal(firstJson(cli(["--json", "work", "packages", "show", inherited, fixtureName])).active.version, "1.0.0");
+  const fixtureWork = jsonLines(cli(["--json", "work", "create", "--name", "fixture-own", "--no-skills", "--no-packages", "--wait"]))[0].workId;
+  const workPackage = (action, version, source, kind) => {
+    const args = ["--json", "work", "packages", action, fixtureWork,
+      ...(action === "update" ? [fixtureName, "--source", source] : [source]), "--wait"];
+    assert.equal(firstJson(cli(args)).state, "succeeded");
+    assert.equal(firstJson(cli(["--json", "work", "packages", "show", fixtureWork, fixtureName])).desired.version, version);
+    assert.equal(workArtifactKind(fixtureWork, fixtureName), kind);
+  };
+  workPackage("install", "1.0.0", fixtureLocal, "local");
+  assert.equal(jsonLines(cli(["--json", "work", "config", "apply", fixtureWork, "--wait"])).at(-1).state, "succeeded");
+  workPackage("update", "2.0.0", fixtureZip, "zip");
+  workPackage("update", "1.0.0", sourceFixture.npm("1.0.0"), "npm");
+  workPackage("update", "2.0.0", sourceFixture.git("v2"), "git");
+  assert.equal(firstJson(cli(["--json", "work", "packages", "show", fixtureWork, fixtureName])).active.version, "1.0.0");
+  cli(["--json", "work", "packages", "disable", fixtureWork, fixtureName]);
+  assert.equal(firstJson(cli(["--json", "work", "packages", "show", fixtureWork, fixtureName])).desired.enabled, false);
+  cli(["--json", "work", "packages", "enable", fixtureWork, fixtureName]);
+  assert.equal(firstJson(cli(["--json", "work", "packages", "show", fixtureWork, fixtureName])).desired.enabled, true);
+  await sourceFixture.stopSources();
+  await rm(fixtureLocal, { recursive: true, force: true });
+  await rm(fixtureZip, { force: true });
+  assert.equal(jsonLines(cli(["--json", "work", "config", "apply", fixtureWork, "--wait"])).at(-1).state, "succeeded");
+  assert.ok(cli(["--json", "chat", fixtureWork, "--message", "invoke package tool fixture_hello"])
+    .includes("package-tool-result:fixture_hello:v2:offline-dependency:started"));
+  assert.equal(firstJson(cli(["--json", "work", "packages", "update", inherited, fixtureName, "--from-core", "--wait"])).state, "succeeded");
+  assert.equal(firstJson(cli(["--json", "work", "packages", "show", inherited, fixtureName])).active.version, "1.0.0");
+  assert.equal(jsonLines(cli(["--json", "work", "config", "apply", inherited, "--wait"])).at(-1).state, "succeeded");
+  assert.ok(cli(["--json", "chat", inherited, "--message", "invoke package tool fixture_hello"])
+    .includes("package-tool-result:fixture_hello:v2:offline-dependency:started"));
+  await stopCore(core);
+  core = await startCore(Number(new URL(originalUrl).port));
+  assert.equal(firstJson(serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "--json", "packages", "show", fixtureName])).sourceKind, "git");
+  assert.ok(cli(["--json", "chat", fixtureWork, "--message", "invoke package tool fixture_hello"])
+    .includes("package-tool-result:fixture_hello:v2:offline-dependency:started"));
+  assert.equal(jsonLines(cli(["--json", "work", "delete", fixtureWork, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(jsonLines(cli(["--json", "work", "delete", inherited, "--wait"])).at(-1).state, "succeeded");
   assert.equal(jsonLines(cli(["--json", "work", "delete", workId, "--wait"])).at(-1).state, "succeeded");
   assert.equal(jsonLines(cli(["--json", "work", "delete", currentWorkId, "--wait"])).at(-1).state, "succeeded");
   assert.equal(jsonLines(cli(["--json", "work", "delete", explicitWorkId, "--wait"])).at(-1).state, "succeeded");
@@ -279,8 +441,9 @@ try {
 } finally {
   if (core !== undefined) await stopCore(core).catch(() => {});
   cleanupDocker();
-  if (originalAcceptanceImage !== undefined) spawnSync("docker", ["tag", originalAcceptanceImage, "piwork-agentd:acceptance"], { cwd: root, encoding: "utf8" });
+  if (originalAcceptanceImage !== undefined && sourceFixture !== undefined) spawnSync("docker", ["tag", originalAcceptanceImage, sourceFixture.image], { cwd: root, encoding: "utf8" });
   if (retagImage !== undefined) spawnSync("docker", ["image", "rm", "-f", retagImage], { cwd: root, encoding: "utf8" });
+  await sourceFixture?.close();
   await rm(temporary, { recursive: true, force: true });
 }
 
@@ -326,6 +489,7 @@ function jsonLines(value) { return value.trim().split("\n").filter(Boolean).map(
 function firstJson(value) { return jsonLines(value)[0]; }
 function isExpectedText(item, expected) { return item?.kind?.$case === "text" && item.kind.text?.delta === expected; }
 function skillMarker(manifest, support) { return `skill-read:${createHash("sha256").update(manifest).update("\0").update(support).digest("hex").slice(0, 16)}`; }
+function packageExtension(marker, toolName = "hello") { return `export default function (pi) { pi.registerTool({ name: ${JSON.stringify(toolName)}, label: "Hello", description: "Acceptance package tool", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [{ type: "text", text: ${JSON.stringify(marker)} }] }) }); }\n`; }
 function safeFailure(value) {
   const redacted = String(value).replace(/[A-Za-z0-9_-]{24,}/g, "[redacted]");
   return redacted.length <= 16_000 ? redacted : `${redacted.slice(0, 8_000)}\n...[diagnostic output truncated]...\n${redacted.slice(-8_000)}`;
@@ -456,6 +620,15 @@ function operationState(operationId) {
   } finally {
     database.close();
   }
+}
+
+function workArtifactKind(workId, name) {
+  const database = new DatabaseSync(join(dataDirectory, "core.sqlite"), { readOnly: true });
+  try {
+    const row = database.prepare(`SELECT metadata_json FROM pi_package_artifacts
+      WHERE scope_kind = 'work' AND work_id = ? AND name = ? ORDER BY rowid DESC LIMIT 1`).get(workId, name);
+    return row === undefined ? null : JSON.parse(row.metadata_json).sourceKind;
+  } finally { database.close(); }
 }
 
 async function waitFor(check, message) {

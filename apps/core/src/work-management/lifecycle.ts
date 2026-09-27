@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { OperationDiagnostics, PublicOperation, WorkConfig } from "@piwork/contracts";
-import { CoreStore, type OperationRecord, type WorkConfigurationState, type WorkContextSnapshotInput, type WorkRecord } from "@piwork/core-store";
+import { CoreStore, PiPackageStoreError, type OperationRecord, type WorkConfigurationState, type WorkContextSnapshotInput, type WorkRecord } from "@piwork/core-store";
 import { authorizeWorkResource, filterVisibleResources, type UserPrincipal } from "../work-access/policy.js";
 import { WorkContextError, WorkContextStore } from "../configuration/work-context.js";
 import { diagnosticFromError, emitDiagnostic, errorEnvelope, operationEnvelope, operationWithStage, publicOperation, safeDiagnostic, type JsonLineLogger } from "./diagnostics.js";
@@ -34,6 +34,7 @@ export interface ResolvedWorkRuntimeConfiguration {
   readonly contextDirectory: string;
   readonly imageIdentity: string;
   readonly skillIdentities: readonly { readonly name: string; readonly identity: string }[];
+  readonly packageBindings?: readonly { readonly name: string; readonly artifact: { readonly contentDigest: string; readonly resourceCounts: { readonly extensions: number; readonly skills: number; readonly prompts: number; readonly themes: number } } }[];
   readonly initializationOnly?: boolean;
   readonly correlationId?: string;
 }
@@ -208,7 +209,11 @@ export class WorkLifecycleService {
     if (operation === undefined || operation.workId === null) throw invisible();
     const work = this.store.getWork(operation.workId, true);
     authorizeWorkResource(principal, work === undefined ? undefined : { ...asOwnedWork(work), kind: "operation", id: operation.id }, "read-metadata");
-    return publicOperation(operation);
+    const result = publicOperation(operation);
+    const job = this.store.packages.getJob(operationId);
+    return job?.scopeKind === "work" && job.workId === operation.workId
+      ? { ...result, packagePhase: job.phase }
+      : result;
   }
 
   start(principal: UserPrincipal, workId: string, idempotencyKey: string): AcceptedWorkOperation {
@@ -237,6 +242,7 @@ export class WorkLifecycleService {
     this.assertAccepting();
     const work = this.store.getWork(workId);
     authorizeWorkResource(principal, work === undefined ? undefined : asOwnedWork(work), "control");
+    if (this.store.packages.listJobs(true).some((job) => job.workId === workId)) throw new PiPackageStoreError("PI_PACKAGE_BUSY", "Work package preparation is active");
     const state = this.store.getWorkConfiguration(workId);
     if (state === undefined) throw invisible();
     // Capture the desired immutable context before queueing. Later edits are
@@ -282,7 +288,7 @@ export class WorkLifecycleService {
     const orphanedInstances = managed.filter((instance) => !knownWorks.has(instance.workId));
     const adoptedWorkIds = managed.filter((instance) => knownWorks.has(instance.workId)).map((instance) => instance.workId);
     const unfinishedWorkIds = new Set(this.store.listOperations(["pending", "running"])
-      .filter((operation) => this.store.snapshots.getJob(operation.id) === undefined)
+      .filter((operation) => this.store.snapshots.getJob(operation.id) === undefined && this.store.packages.getJob(operation.id) === undefined)
       .flatMap((operation) => operation.workId === null ? [] : [operation.workId]));
     for (const work of this.store.listWorks(true)) {
       if (this.store.snapshots.getLock(work.id)) continue;
@@ -298,7 +304,8 @@ export class WorkLifecycleService {
       }
     }
     for (const operation of this.store.listOperations(["pending", "running"])) {
-      if (this.store.snapshots.getJob(operation.id) || (operation.workId !== null && this.store.snapshots.getLock(operation.workId))) continue;
+      if (this.store.snapshots.getJob(operation.id) || this.store.packages.getJob(operation.id)
+        || (operation.workId !== null && this.store.snapshots.getLock(operation.workId))) continue;
       if (operation.state === "running") {
         const interrupted = operationWithStage({
           record: operation,
@@ -348,6 +355,9 @@ export class WorkLifecycleService {
     this.assertAccepting();
     const work = this.store.getWork(workId, desiredState === "deleted");
     authorizeWorkResource(principal, work === undefined ? undefined : asOwnedWork(work), "control");
+    if (desiredState === "running" && this.store.packages.listJobs(true).some((job) => job.workId === workId)) {
+      throw new PiPackageStoreError("PI_PACKAGE_BUSY", "Work package preparation is active");
+    }
     const captured = desiredState === "running" ? this.selectRetainedContext(workId) : null;
     const publicRequestJson = stableJson({ desiredState, retry: forceVersion });
     const requestJson = stableJson({
@@ -377,6 +387,14 @@ export class WorkLifecycleService {
         updated_at = ? WHERE id = ?`, desiredState, now, workId);
       tx.run(`UPDATE operations SET state = 'superseded', updated_at = ?
         WHERE work_id = ? AND state IN ('pending', 'running') AND target_version < ?`, now, workId, targetVersion);
+      if (desiredState !== "running") {
+        this.store.packages.releaseQueuedWorkJobLeases(workId);
+        tx.run(`UPDATE operations SET state = 'superseded', updated_at = ? WHERE id IN
+          (SELECT operation_id FROM pi_package_jobs WHERE work_id = ? AND phase IN ('queued','source','prepare','validate','publish','cleanup-pending'))
+          AND state IN ('pending','running')`, now, workId);
+        tx.run(`UPDATE pi_package_jobs SET phase = 'superseded', updated_at = ? WHERE work_id = ?
+          AND phase IN ('queued','source','prepare','validate','publish','cleanup-pending')`, now, workId);
+      }
       return { resourceId: workId };
     });
     this.enqueue(workId);
@@ -396,7 +414,8 @@ export class WorkLifecycleService {
     const work = this.store.getWork(workId, true);
     if (work === undefined) return;
     const operations = this.store.listOperations(["pending", "running"])
-      .filter((operation) => operation.workId === workId && this.store.snapshots.getJob(operation.id) === undefined)
+      .filter((operation) => operation.workId === workId && this.store.snapshots.getJob(operation.id) === undefined
+        && this.store.packages.getJob(operation.id) === undefined)
       .sort((left, right) => left.targetVersion - right.targetVersion);
     const current = operations.at(-1);
     if (current === undefined) return;
@@ -626,16 +645,27 @@ export class WorkLifecycleService {
       const validation = { ...candidate, initializationOnly: true };
       const generation = this.nextRuntimeGeneration(workId);
       this.store.ensureRuntimeGeneration(workId, generation, this.now().toISOString());
-      await this.runOperationStage(operationId, workId, "runtime-start", "RUNTIME_START_FAILED", () => this.runtime.start(work, generation, validation));
-      this.recordOperationStage(operationId, workId, "skill-validate");
-      this.recordOperationStage(operationId, workId, "skill-load");
-      this.recordOperationStage(operationId, workId, "readiness");
-      await this.runtime.stop(workId, this.stopTimeoutMs);
-      const stopped = await this.runtime.inspect(workId);
-      if (stopped.running) throw new Error("runtime could not confirm initialization shutdown");
-      await this.runtime.remove(workId, { preserveNetwork: true });
-      this.assertCurrentTarget(workId, targetVersion);
-      return projectedActivation(this.store.getWorkConfiguration(workId)!, candidateContextId, expectedRevision, candidate.workConfig);
+      let validated = false;
+      try {
+        await this.runOperationStage(operationId, workId, "runtime-start", "RUNTIME_START_FAILED", () => this.runtime.start(work, generation, validation));
+        this.recordOperationStage(operationId, workId, "skill-validate");
+        this.recordOperationStage(operationId, workId, "skill-load");
+        this.recordOperationStage(operationId, workId, "readiness");
+        this.assertCurrentTarget(workId, targetVersion);
+        validated = true;
+        return projectedActivation(this.store.getWorkConfiguration(workId)!, candidateContextId, expectedRevision, candidate.workConfig);
+      } finally {
+        try {
+          await this.runtime.stop(workId, this.stopTimeoutMs);
+          const stopped = await this.runtime.inspect(workId);
+          if (stopped.running) throw new Error("runtime could not confirm initialization shutdown");
+          await this.runtime.remove(workId, { preserveNetwork: true });
+          this.store.updateRuntimeGeneration(workId, generation, validated ? "stopped" : "failed", this.now().toISOString());
+        } catch (cleanupError) {
+          this.store.updateRuntimeGeneration(workId, generation, "stopping", this.now().toISOString());
+          throw cleanupError;
+        }
+      }
     }
 
     const previous = state.activeContextId === null
@@ -760,6 +790,7 @@ export class WorkLifecycleService {
       contextDirectory: context.directory,
       imageIdentity: snapshot.imageIdentity,
       skillIdentities: context.metadata.skills,
+      packageBindings: context.metadata.packageBindings,
     };
   }
 

@@ -35,6 +35,10 @@ test("empty database upgrades once and contains every durable Core entity", asyn
       "work_context_snapshots",
       "service_runtime_bindings",
       "volume_references",
+      "pi_package_catalog",
+      "pi_package_artifacts",
+      "pi_package_uploads",
+      "pi_package_jobs",
     ]) {
       assert.match(tables?.names ?? "", new RegExp(`(?:^|,)${name}(?:,|$)`));
     }
@@ -68,7 +72,7 @@ test("service runtime binding and recovery state survive same-version reopen", a
   } finally { await fixture.cleanup(); }
 });
 
-test("pre-release combined storage schema is rejected without rewriting it", async () => {
+test("older nonempty Core storage is rejected without rewriting it", async () => {
   const fixture = await createFixture();
   try {
     await mkdir(join(fixture.databasePath, ".."), { recursive: true });
@@ -80,11 +84,26 @@ test("pre-release combined storage schema is rejected without rewriting it", asy
     legacy.close();
     assert.throws(
       () => CoreStore.open({ databasePath: fixture.databasePath }),
-      (error) => (error as { code?: string }).code === "CONTEXT_FORMAT_UNSUPPORTED",
+      (error) => (error as { code?: string }).code === "CORE_STORAGE_FORMAT_UNSUPPORTED",
     );
     const unchanged = new DatabaseSync(fixture.databasePath, { readOnly: true });
     assert.equal((unchanged.prepare("SELECT value FROM legacy_sentinel").get() as { value: string }).value, "preserve-me");
     assert.equal((unchanged.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 5);
+    unchanged.close();
+  } finally { await fixture.cleanup(); }
+});
+
+test("a nonempty database without a final V1 migration marker is not modified", async () => {
+  const fixture = await createFixture();
+  try {
+    await mkdir(join(fixture.databasePath, ".."), { recursive: true });
+    const legacy = new DatabaseSync(fixture.databasePath);
+    legacy.exec("CREATE TABLE legacy_sentinel(value TEXT NOT NULL) STRICT; INSERT INTO legacy_sentinel(value) VALUES ('preserve-me')");
+    legacy.close();
+    assert.throws(() => CoreStore.open({ databasePath: fixture.databasePath }), (error) => (error as { code?: string }).code === "CORE_STORAGE_FORMAT_UNSUPPORTED");
+    const unchanged = new DatabaseSync(fixture.databasePath, { readOnly: true });
+    assert.equal((unchanged.prepare("SELECT value FROM legacy_sentinel").get() as { value: string }).value, "preserve-me");
+    assert.equal((unchanged.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name = 'schema_migrations'").get() as { count: number }).count, 0);
     unchanged.close();
   } finally { await fixture.cleanup(); }
 });
@@ -131,6 +150,24 @@ test("default Work updates merge atomically without exposing a public CAS input"
     assert.deepEqual(next.configuration, { skills: ["code-review"], agentsMd: "B" });
     store.updateDefaultWorkConfiguration({ skills: [] }, "2026-09-20T00:00:02Z");
     assert.deepEqual(store.getDefaultWorkConfiguration()?.configuration, { skills: [], agentsMd: "B" });
+    store.close();
+  } finally { await fixture.cleanup(); }
+});
+
+test("validated default patch rolls back an invalid package selection without losing unrelated fields", async () => {
+  const fixture = await createFixture();
+  try {
+    const store = CoreStore.open({ databasePath: fixture.databasePath });
+    store.updateDefaultWorkConfiguration({ skills: ["code-review"], agentsMd: "A", packages: [] }, "2026-09-20T00:00:00Z");
+    const before = store.getDefaultWorkConfiguration();
+    assert.throws(() => store.updateDefaultWorkConfiguration({ packages: [{ name: "missing", enabled: true }] },
+      "2026-09-20T00:00:01Z", () => { throw new Error("package missing"); }), /package missing/);
+    assert.deepEqual(store.getDefaultWorkConfiguration(), before);
+    store.updateDefaultWorkConfiguration({ packages: [{ name: "tools", enabled: true }] }, "2026-09-20T00:00:02Z");
+    store.updateDefaultWorkConfiguration({ agentsMd: "B" }, "2026-09-20T00:00:03Z");
+    assert.deepEqual(store.getDefaultWorkConfiguration()?.configuration, {
+      skills: ["code-review"], agentsMd: "B", packages: [{ name: "tools", enabled: true }],
+    });
     store.close();
   } finally { await fixture.cleanup(); }
 });

@@ -5,8 +5,10 @@ import { posix, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { encodeImageLoadArchive, normalizeImageArchive, type CapturedWorkImage, type ImageBlobStore, type NormalizedImage } from "@piwork/work-package";
+import { PiPackageInputError } from "@piwork/pi-package";
 import { DockerCliStreamingRunner, type DockerStreamingRunner } from "./stream.js";
 import { snapshotHelperCreateArgs, SNAPSHOT_JOB_LABEL, type SnapshotHelperSpec } from "./snapshot-helper.js";
+import { piPackageHelperCreateArgs, PI_PACKAGE_JOB_LABEL, type PiPackageHelperSpec } from "./pi-package-helper.js";
 
 export const MANAGED_LABEL = "piwork.managed";
 export const WORK_LABEL = "piwork.work_id";
@@ -132,6 +134,14 @@ export class DockerDependencyError extends Error {
   }
 }
 
+/** Indicates a selected image predates the package-helper protocol. */
+export class PiPackageHelperIncompatibleError extends Error {
+  constructor() {
+    super("Selected agent image does not provide the package helper contract");
+    this.name = "PiPackageHelperIncompatibleError";
+  }
+}
+
 export class DockerRuntime {
   constructor(
     readonly installationId: string,
@@ -176,6 +186,40 @@ export class DockerRuntime {
     const [architecture, variant, extra] = server.Arch.split("/");
     if (!architecture || extra !== undefined) throw new Error("SNAPSHOT_RUNTIME_PLATFORM_UNAVAILABLE");
     return { os: "linux", architecture, variant: variant || null };
+  }
+
+  async inspectPiPackageEnvironment(imageId: string): Promise<{ os: "linux"; architecture: string; variant: string | null; nodeAbi: string; piSdkVersion: string }> {
+    const captured = await this.inspectCapturedImage(imageId);
+    const script = `const fs=require('node:fs');const p=JSON.parse(fs.readFileSync('/workspace/node_modules/@earendil-works/pi-coding-agent/package.json','utf8'));process.stdout.write(JSON.stringify({nodeAbi:process.versions.modules,piSdkVersion:p.version}))`;
+    const output = await this.run(["container", "run", "--rm", "--network", "none", "--read-only",
+      "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+      "--cpus", "0.25", "--memory", "128m", "--pids-limit", "32", "--entrypoint", "node", imageId,
+      "-e", script], 30_000);
+    const versions = JSON.parse(output) as { nodeAbi?: unknown; piSdkVersion?: unknown };
+    if (typeof versions.nodeAbi !== "string" || !/^[0-9]+$/.test(versions.nodeAbi) ||
+        typeof versions.piSdkVersion !== "string" || !/^\d+\.\d+\.\d+/.test(versions.piSdkVersion)) {
+      throw new Error("PI_PACKAGE_ENVIRONMENT_MISMATCH");
+    }
+    return { ...captured.platform, nodeAbi: versions.nodeAbi, piSdkVersion: versions.piSdkVersion };
+  }
+
+  async inspectPiPackageHelperContract(imageId: string): Promise<void> {
+    if (!/^sha256:[a-f0-9]{64}$/.test(imageId)) throw new TypeError("Immutable image identity required");
+    const records = JSON.parse(await this.run(["image", "inspect", imageId], 30_000)) as
+      Array<{ Id?: unknown; Config?: { Labels?: Record<string, unknown> } }>;
+    if (records.length !== 1 || records[0]?.Id !== imageId ||
+        records[0]?.Config?.Labels?.["io.piwork.package-helper.contract"] !== "1") {
+      throw new PiPackageHelperIncompatibleError();
+    }
+    const script = "const fs=require('node:fs');try{if(!fs.lstatSync('/workspace/apps/package-helper/dist/main.js').isFile())process.exit(42)}catch(e){if(e.code==='ENOENT')process.exit(42);throw e}";
+    try {
+      await this.run(["container", "run", "--rm", "--network", "none", "--read-only", "--user", "10001:10001",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--cpus", "0.25", "--memory", "128m",
+        "--pids-limit", "32", "--entrypoint", "node", imageId, "-e", script], 30_000);
+    } catch (error) {
+      if (error instanceof DockerRuntimeError && error.exitCode === 42) throw new PiPackageHelperIncompatibleError();
+      throw error;
+    }
   }
 
   async saveCapturedImage(imageId: string, store: ImageBlobStore, signal?: AbortSignal): Promise<NormalizedImage> {
@@ -251,6 +295,140 @@ export class DockerRuntime {
     if (!helper) return;
     await this.run(["container", "rm", "--force", helper.containerId!], 30_000);
     if (await this.inspectSnapshotHelper(name, jobId)) throw new DockerDependencyError("STATE_UNKNOWN", "snapshot helper still exists", true);
+  }
+
+  async createPiPackageHelper(spec: PiPackageHelperSpec): Promise<string> {
+    if (spec.installationId !== this.installationId) throw new TypeError("Package helper installation mismatch");
+    await this.assertPiPackageVolume(spec.volumeName, spec.jobId);
+    if (spec.action === "prepare") await this.assertPiPackageNetwork(spec.networkName!, spec.jobId);
+    const id = (await this.run(piPackageHelperCreateArgs(spec), 30_000)).trim();
+    await this.inspectPiPackageHelper(spec.name, spec.jobId);
+    return id;
+  }
+
+  async inspectPiPackageHelper(name: string, jobId: string): Promise<ContainerInspection | undefined> {
+    let raw: RawContainerInspection;
+    try { raw = await this.inspectRaw(name, 30_000); }
+    catch (error) { if (error instanceof DockerDependencyError && error.reason === "RESOURCE_MISSING") return undefined; throw error; }
+    const labels = raw.Config.Labels ?? {};
+    if (labels["piwork.installation_id"] !== this.installationId || labels[PI_PACKAGE_JOB_LABEL] !== jobId ||
+        labels[RESOURCE_KIND_LABEL] !== "pi-package-helper" || labels[MANAGED_LABEL] !== "true") {
+      throw new DockerDependencyError("STATE_UNKNOWN", "package helper ownership mismatch", false);
+    }
+    return { exists: true, containerId: raw.Id, name: raw.Name.replace(/^\//, ""), running: raw.State.Running,
+      status: raw.State.Status, exitCode: raw.State.ExitCode, labels, image: raw.Image };
+  }
+
+  async startPiPackageHelper(name: string, jobId: string, signal?: AbortSignal): Promise<unknown> {
+    const existing = await this.inspectPiPackageHelper(name, jobId);
+    if (!existing || existing.running) throw new DockerDependencyError("STATE_UNKNOWN", "package helper is missing or already running", false);
+    const process = this.streamingRunner.spawn(["container", "start", "--attach", name], { signal, timeoutMs: 30 * 60_000 });
+    process.stdin.end();
+    const chunks: Buffer[] = []; let bytes = 0;
+    try {
+      for await (const chunk of process.stdout) {
+        bytes += chunk.length;
+        if (bytes > 64 * 1024) throw new DockerDependencyError("STATE_UNKNOWN", "package helper response exceeded limit", false);
+        chunks.push(Buffer.from(chunk));
+      }
+      let completionError: unknown;
+      try { await process.completed; }
+      catch (error) { completionError = error; }
+      const after = await this.inspectPiPackageHelper(name, jobId);
+      const output = Buffer.concat(chunks, bytes).toString("utf8").trim();
+      if (!after || after.running) throw new DockerDependencyError("STATE_UNKNOWN", "package helper did not exit successfully", false);
+      if (after.exitCode !== 0) {
+        let reported: unknown;
+        try { reported = JSON.parse(output) as unknown; } catch { /* treat unrecognized output as a generic failure */ }
+        const code = typeof reported === "object" && reported !== null && "errorCode" in reported ? reported.errorCode : null;
+        if (["PI_PACKAGE_INVALID_SOURCE", "PI_PACKAGE_INVALID_MANIFEST", "PI_PACKAGE_UNSAFE_ARCHIVE",
+          "PI_PACKAGE_LIMIT_EXCEEDED", "PI_PACKAGE_UNSUPPORTED_MEDIA_TYPE", "PI_PACKAGE_SDK_VERSION_UNSUPPORTED"].includes(String(code))) {
+          throw new PiPackageInputError(code as PiPackageInputError["code"], "package input failed validation");
+        }
+        if (code === "PI_PACKAGE_SOURCE_FETCH_FAILED" || code === "PI_PACKAGE_DEPENDENCY_INSTALL_FAILED") {
+          throw Object.assign(new Error("package preparation command failed"), { code });
+        }
+        throw new DockerDependencyError("STATE_UNKNOWN", "package helper did not exit successfully", false);
+      }
+      if (completionError !== undefined) throw completionError;
+      return output === "" ? null : JSON.parse(output) as unknown;
+    } catch (error) { process.abort(); await process.completed.catch(() => undefined); throw error; }
+  }
+
+  /** Measure apparent bytes through a short-lived trusted, read-only helper. */
+  async measurePiPackageVolume(jobId: string, volumeName: string, trustedHelperImageId: string): Promise<number> {
+    validateIdentity(jobId, "package job ID");
+    if (!/^sha256:[a-f0-9]{64}$/.test(trustedHelperImageId)) throw new TypeError("trusted package helper image identity is invalid");
+    await this.assertPiPackageVolume(volumeName, jobId);
+    const output = await this.run(["container", "run", "--rm", "--network", "none", "--read-only",
+      "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+      "--cpus", "0.25", "--memory", "128m", "--pids-limit", "32",
+      "--label", `piwork.installation_id=${this.installationId}`, "--label", `${PI_PACKAGE_JOB_LABEL}=${jobId}`,
+      "--mount", `type=volume,source=${volumeName},target=/package/work,readonly`,
+      "--entrypoint", "node", trustedHelperImageId, "/workspace/apps/package-helper/dist/main.js", "measure"], 30_000);
+    const measured = JSON.parse(output) as { bytes?: unknown };
+    if (!Number.isSafeInteger(measured.bytes) || Number(measured.bytes) < 0) {
+      throw new DockerDependencyError("STATE_UNKNOWN", "package volume measurement is invalid", false);
+    }
+    return Number(measured.bytes);
+  }
+
+  async removePiPackageHelper(name: string, jobId: string): Promise<void> {
+    const helper = await this.inspectPiPackageHelper(name, jobId);
+    if (!helper) return;
+    await this.run(["container", "rm", "--force", helper.containerId!], 30_000);
+    if (await this.inspectPiPackageHelper(name, jobId)) throw new DockerDependencyError("STATE_UNKNOWN", "package helper still exists", true);
+  }
+
+  async ensurePiPackageResources(jobId: string): Promise<{ volumeName: string; networkName: string }> {
+    validateIdentity(jobId, "package job ID");
+    const suffix = createHash("sha256").update(`${this.installationId}\0${jobId}`).digest("hex").slice(0, 24);
+    const volumeName = `piwork-pkg-${suffix}-data`, networkName = `piwork-pkg-${suffix}-egress`;
+    try { await this.assertPiPackageVolume(volumeName, jobId); }
+    catch (error) {
+      if (!(error instanceof DockerDependencyError && error.reason === "RESOURCE_MISSING")) throw error;
+      await this.run(["volume", "create", "--label", `piwork.installation_id=${this.installationId}`,
+        "--label", `${MANAGED_LABEL}=true`, "--label", `${PI_PACKAGE_JOB_LABEL}=${jobId}`,
+        "--label", `${VOLUME_KIND_LABEL}=pi-package-temporary`, volumeName]);
+      await this.assertPiPackageVolume(volumeName, jobId);
+    }
+    try { await this.assertPiPackageNetwork(networkName, jobId); }
+    catch (error) {
+      if (!(error instanceof DockerDependencyError && error.reason === "RESOURCE_MISSING")) throw error;
+      await this.run(["network", "create", "--driver", "bridge", "--label", `piwork.installation_id=${this.installationId}`,
+        "--label", `${MANAGED_LABEL}=true`, "--label", `${PI_PACKAGE_JOB_LABEL}=${jobId}`,
+        "--label", `${NETWORK_KIND_LABEL}=pi-package-egress`, networkName]);
+      await this.assertPiPackageNetwork(networkName, jobId);
+    }
+    return { volumeName, networkName };
+  }
+
+  async removePiPackageResources(jobId: string): Promise<void> {
+    validateIdentity(jobId, "package job ID");
+    const suffix = createHash("sha256").update(`${this.installationId}\0${jobId}`).digest("hex").slice(0, 24);
+    const volumeName = `piwork-pkg-${suffix}-data`, networkName = `piwork-pkg-${suffix}-egress`;
+    try { await this.assertPiPackageNetwork(networkName, jobId); await this.run(["network", "rm", networkName]); }
+    catch (error) { if (!(error instanceof DockerDependencyError && error.reason === "RESOURCE_MISSING")) throw error; }
+    try { await this.assertPiPackageVolume(volumeName, jobId); await this.run(["volume", "rm", volumeName]); }
+    catch (error) { if (!(error instanceof DockerDependencyError && error.reason === "RESOURCE_MISSING")) throw error; }
+  }
+
+  private async assertPiPackageVolume(volumeName: string, jobId: string): Promise<void> {
+    const inspection = await this.inspectVolume(volumeName);
+    const labels = inspection.Labels ?? {};
+    if (labels["piwork.installation_id"] !== this.installationId || labels[MANAGED_LABEL] !== "true" ||
+        labels[PI_PACKAGE_JOB_LABEL] !== jobId || labels[VOLUME_KIND_LABEL] !== "pi-package-temporary") {
+      throw new DockerDependencyError("STATE_UNKNOWN", "package volume ownership mismatch", false);
+    }
+  }
+
+  private async assertPiPackageNetwork(networkName: string, jobId: string): Promise<void> {
+    const inspection = await this.inspectNetwork(networkName);
+    const labels = inspection.Labels ?? {};
+    if (labels["piwork.installation_id"] !== this.installationId || labels[MANAGED_LABEL] !== "true" ||
+        labels[PI_PACKAGE_JOB_LABEL] !== jobId || labels[NETWORK_KIND_LABEL] !== "pi-package-egress") {
+      throw new DockerDependencyError("STATE_UNKNOWN", "package network ownership mismatch", false);
+    }
   }
 
   async ensureContainer(spec: DockerContainerSpec): Promise<EnsuredContainer> {
