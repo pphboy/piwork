@@ -1,80 +1,64 @@
 schema: spec-driven
 
 context: |
-  This project uses a two-agent development workflow:
-  - A planning agent produces complete specifications, technical design, and implementation tasks.
-  - A separate implementation agent executes those artifacts later.
+  Every change must be implementation-ready before execution begins.
 
-  Planning artifacts are therefore an implementation handoff contract.
+  Specifications must fully define required behavior, constraints,
+  invariants, failure behavior, acceptance criteria, and verification.
 
-  The implementation agent MUST NOT be required to invent product behavior,
-  resolve architectural ambiguity, infer missing edge cases, or make
-  unspecified technical decisions.
-
-  Before producing planning artifacts, inspect the existing codebase and
-  existing OpenSpec specifications to understand current behavior,
-  architecture, conventions, APIs, data models, and relevant constraints.
-
-  Prefer existing architecture, conventions, abstractions, and dependencies
-  unless the change explicitly requires otherwise.
-
-  Preserve backward compatibility unless a breaking change is explicitly
-  specified and justified.
-
-  Avoid unrelated refactoring and scope expansion.
+  The implementation phase should execute approved decisions rather than
+  discover missing product, architecture, API, lifecycle, or behavioral decisions.
 
 rules:
+
   proposal:
-    - Define the problem, desired outcome, scope, and non-goals unambiguously.
-    - Explicitly identify affected capabilities, APIs, data, modules, and external systems.
-    - Call out breaking changes, migrations, compatibility impact, security impact, and significant risks.
-    - Do not hide unresolved product decisions behind implementation assumptions.
+    - Clearly define goals and non-goals.
+    - Define the user or system problem being solved.
+    - Identify affected subsystems and externally visible behavior.
+    - Identify relevant architectural, lifecycle, persistence, concurrency,
+      security, and compatibility concerns.
 
   specs:
-    - Treat specifications as executable behavioral contracts for another implementation agent.
-    - Every requirement MUST be deterministic, testable, observable, and unambiguous.
-    - Use normative SHALL/MUST language for required behavior.
-    - Give every requirement a stable identifier such as AUTH-001 or SEARCH-003.
-    - Every requirement MUST include sufficient scenarios to define expected behavior completely.
-    - Cover the happy path plus relevant boundary, invalid-input, failure, authorization, state-transition, retry, concurrency, and idempotency cases.
-    - Explicitly define inputs, outputs, defaults, limits, ordering, error behavior, and externally visible state changes when relevant.
-    - Specify behavior for missing, empty, malformed, duplicate, stale, unauthorized, and conflicting inputs when relevant.
-    - State compatibility expectations for existing behavior.
-    - Do not include internal implementation details that belong in design.md.
-    - Do not leave ambiguous terms such as "properly", "normally", "reasonable", "etc.", or "as needed".
-    - If behavior cannot be determined from requirements or the existing system, surface the ambiguity instead of inventing behavior.
+    - Every requirement MUST describe observable behavior.
+    - Every requirement MUST include testable scenarios.
+    - Define normal, failure, empty, loading, boundary, and state-transition
+      behavior where applicable.
+    - All critical user interactions MUST be fully specified.
+    - No behavior required for implementation may remain implicit.
+    - Blocking open questions MUST be resolved before implementation.
 
   design:
-    - Write the design so another coding agent can implement it without making architectural decisions.
-    - Base technical decisions on inspection of the existing codebase.
-    - Identify affected modules, components, services, interfaces, data models, APIs, and important files where practical.
-    - Define new or changed interfaces, API contracts, schemas, state transitions, and data flows precisely.
-    - Explain important implementation decisions and why they fit the existing architecture.
-    - Describe error handling and failure behavior.
-    - Address authentication, authorization, validation, security, and privacy when relevant.
-    - Address concurrency, transactions, consistency, retries, and idempotency when relevant.
-    - Address database migrations, backward compatibility, deployment ordering, and rollback when relevant.
-    - Define the testing strategy needed to prove the specification.
-    - Reference requirement identifiers where useful for traceability.
-    - Do not leave implementation-critical open questions unresolved.
+    - Resolve architecture and API decisions before implementation.
+    - Define relevant invariants and constraints.
+    - Define state transitions and data flow where applicable.
+    - Define error semantics and failure handling.
+    - Verify assumptions against the existing repository and system behavior.
+    - Explicitly identify affected components.
+    - Explicitly identify boundaries and behavior that MUST NOT change.
+    - Do not leave implementation-critical design decisions unresolved.
 
   tasks:
-    - Create an ordered implementation plan that can be executed mechanically by another coding agent.
-    - Every task MUST have a concrete, verifiable completion condition.
-    - Reference relevant requirement identifiers from the specs.
-    - Break large changes into small implementation units with clear dependencies.
-    - Include creation or modification of automated tests alongside behavior changes.
-    - Include migration, compatibility, security, error handling, and observability work when required by the design.
-    - Include a final task that runs relevant tests and verifies all specification requirements.
-    - Do not introduce behavior or scope not defined by the approved specs and design.
+    - Every task MUST be directly executable.
+    - Every task MUST have an explicit verification method.
+    - Tasks MUST map back to requirements or scenarios.
+    - State-changing behavior MUST include corresponding verification or tests.
+    - Tasks MUST NOT delegate unresolved architecture, product, or API decisions
+      to the implementation phase.
+    - Do not use vague tasks such as "figure out", "decide", or "investigate"
+      unless investigation itself is the explicitly approved task.
 
 operations:
+
   apply:
     guidance:
-      - Treat proposal, specs, design, and tasks as the authoritative implementation contract.
-      - Implement only behavior defined by the planning artifacts.
-      - Follow existing project patterns and architecture.
-      - Do not silently invent missing product behavior or architectural decisions.
-      - If the artifacts conflict with the codebase or contain implementation-blocking ambiguity, report the conflict instead of guessing.
-      - Complete relevant automated tests before marking a task complete.
-      - Keep unrelated refactoring out of the change.
+      - Treat approved specifications and design decisions as authoritative.
+      - Do not silently invent missing product, architecture, API, lifecycle,
+        or behavioral semantics.
+      - If repository reality contradicts the specification, stop and report
+        the conflict.
+      - If implementation requires an unresolved design decision, stop and
+        report the missing decision.
+      - Preserve documented invariants and architectural boundaries.
+      - Do not perform unrelated refactors.
+      - Execute the verification associated with each task.
+      - Before completion, verify the implementation against all acceptance scenarios.
