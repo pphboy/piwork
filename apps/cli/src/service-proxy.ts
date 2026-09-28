@@ -1,6 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Duplex } from "node:stream";
 import type { PiworkClient } from "@piwork/client-sdk";
+import { FILE_ACCESS_PROFILE, FILE_ACCESS_VERSION, FILE_LIMITS, type FileAccessCapability, type FileErrorCode } from "@piwork/contracts";
+import { FileAccessCapabilitySchema } from "@piwork/contracts";
+import { Check } from "typebox/value";
+import { FileProxyError, localFileError, mapDavXml, mapDestination, toCorePath, toLocalPath } from "./work-file-proxy.js";
 
 const domainPattern = /^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\.w-[a-f0-9]{8,61}\.work$/;
 const maxHeaderBytes = 32 * 1024;
@@ -23,6 +28,14 @@ export function validateProxyCoreUrl(raw: string): void {
 export async function runServiceProxy(client: PiworkClient, port: number,
   output: (message: string) => void = (message) => process.stdout.write(message)): Promise<number> {
   await client.gatewayCapability();
+  let fileCapability: FileAccessCapability | undefined;
+  try { fileCapability = await client.fileAccessCapability(); }
+  catch (error) {
+    if ((error as { status?: number }).status === 401) throw error;
+    /* An older Core still supports service access. */
+  }
+  const filePassword = randomBytes(32).toString("base64url");
+  const fileCredential = Buffer.from(`piwork:${filePassword}`);
   const sockets = new Set<Duplex>();
   const upstreamSockets = new Set<Duplex>();
   let sessionLost = false;
@@ -59,9 +72,15 @@ export async function runServiceProxy(client: PiworkClient, port: number,
       response.end(script);
       return;
     }
+    if ((request.url ?? "").startsWith("/works/")) {
+      await serveFile(request, response);
+      return;
+    }
     let target: ServiceTarget;
     try { target = serviceUrl(request.url ?? ""); }
     catch { return reject(response, 403, "PROXY_TARGET_DENIED"); }
+    if (sameFileBasic(request.headers.authorization, fileCredential))
+      return reject(response, 403, "LOCAL_CREDENTIAL_TARGET_DENIED");
     try {
       await client.resolveService(target.hostname, target.port);
       const upstream = client.gatewayRequest({ hostname: target.hostname, port: target.port,
@@ -79,11 +98,87 @@ export async function runServiceProxy(client: PiworkClient, port: number,
       reject(response, item.status ?? 502, item.code ?? "CORE_UNAVAILABLE");
     }
   }
+  async function serveFile(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const sendError = (code: FileErrorCode) => {
+      if (response.headersSent) { response.destroy(); return; }
+      const error = localFileError(code, request.method === "HEAD");
+      response.writeHead(error.status, error.headers);
+      response.end(error.body);
+    };
+    const host = request.headers.host;
+    const validHost = host === `127.0.0.1:${port}` || host === `localhost:${port}`;
+    const hostCount = request.rawHeaders.filter((name, index) => index % 2 === 0 && name.toLowerCase() === "host").length;
+    const origin = `http://${host}`;
+    if (!isLoopback(request.socket.remoteAddress ?? "") || !validHost || hostCount !== 1
+      || request.headers.origin !== undefined && request.headers.origin !== origin
+      || request.headers["sec-fetch-site"] === "cross-site" || request.headers.upgrade !== undefined)
+      return sendError("FILE_REQUEST_DENIED");
+    if (!sameFileBasic(request.headers.authorization, fileCredential)) return sendError("LOCAL_AUTH_REQUIRED");
+    let target: ReturnType<typeof toCorePath>;
+    try { target = toCorePath(request.url ?? ""); }
+    catch (error) { return sendError(error instanceof FileProxyError ? error.code : "FILE_PATH_INVALID"); }
+    try {
+      fileCapability = await client.fileAccessCapability();
+    } catch (error) {
+      if ((error as { status?: number }).status === 401) {
+        onPlatformError(401, { "x-piwork-gateway-error": "1" });
+        return;
+      }
+      return sendError((error as { status?: number }).status === 404 ? "FILE_ACCESS_UNSUPPORTED" : "CORE_UNAVAILABLE");
+    }
+    if (!Check(FileAccessCapabilitySchema, fileCapability)
+      || fileCapability.version !== FILE_ACCESS_VERSION || fileCapability.profile !== FILE_ACCESS_PROFILE)
+      return sendError("FILE_ACCESS_UNSUPPORTED");
+    if (!fileCapability.available) return sendError("FILE_HELPER_UNAVAILABLE");
+    const headers = { ...request.headers };
+    if (request.method === "COPY" || request.method === "MOVE") {
+      try { headers.destination = mapDestination(String(headers.destination ?? ""), target.workId, origin); }
+      catch { return sendError("FILE_DESTINATION_DENIED"); }
+    }
+    const upstream = client.fileRequest({ path: target.path, method: request.method ?? "GET", headers }, async (incoming) => {
+      const status = incoming.statusCode ?? 502;
+      if (status === 401) {
+        incoming.resume();
+        onPlatformError(401, { "x-piwork-gateway-error": "1" });
+        return;
+      }
+      try {
+        const returned = { ...incoming.headers };
+        for (const name of ["connection", "transfer-encoding", "keep-alive", "proxy-authenticate", "proxy-authorization", "upgrade"])
+          delete returned[name];
+        if (typeof returned.location === "string") returned.location = toLocalPath(returned.location, target.workId);
+        const type = returned["content-type"];
+        if (request.method !== "HEAD" && typeof type === "string" && /^application\/xml(?:\s*;|$)/i.test(type)) {
+          const chunks: Buffer[] = []; let size = 0;
+          for await (const chunk of incoming) {
+            size += chunk.length;
+            if (size > FILE_LIMITS.maxMetadataBytes) throw new FileProxyError("FILE_LIMIT_EXCEEDED");
+            chunks.push(chunk);
+          }
+          const mapped = mapDavXml(Buffer.concat(chunks), target.workId);
+          returned["content-length"] = String(mapped.length);
+          response.writeHead(status, returned); response.end(mapped);
+        } else {
+          response.writeHead(status, returned);
+          incoming.pipe(response);
+        }
+      } catch (error) {
+        if (error instanceof FileProxyError) sendError(error.code);
+        else sendError("CORE_UNAVAILABLE");
+      }
+    });
+    upstream.once("error", () => sendError("CORE_UNAVAILABLE"));
+    request.once("aborted", () => upstream.destroy());
+    response.once("close", () => { if (!response.writableEnded) upstream.destroy(); });
+    request.pipe(upstream);
+  }
   server.on("upgrade", (request, socket, head) => {
     void (async () => {
       try {
         const target = serviceUrl(request.url ?? "", true);
         if (request.headers.upgrade?.toLowerCase() !== "websocket") throw new Error("upgrade required");
+        if (sameFileBasic(request.headers.authorization, fileCredential))
+          throw Object.assign(new Error("local credential target denied"), { status: 403, code: "LOCAL_CREDENTIAL_TARGET_DENIED" });
         await client.resolveService(target.hostname, target.port);
         forwardUpgrade(client, target.hostname, target.port, target.rawPath, request.headers, socket, head, onPlatformError, upstreamSockets);
       } catch (error) {
@@ -117,6 +212,8 @@ export async function runServiceProxy(client: PiworkClient, port: number,
           socket.off("data", consume);
           const parsed = parseConnectUpgrade(pending.subarray(0, end + 4), host, targetPort);
           if (!parsed) return socket.destroy();
+          if (sameFileBasic(parsed.headers.authorization, fileCredential))
+            return rejectSocket(socket, 403, "LOCAL_CREDENTIAL_TARGET_DENIED");
           const extra = pending.subarray(end + 4);
           forwardUpgrade(client, host, targetPort, parsed.path, parsed.headers, socket, extra, onPlatformError, upstreamSockets);
         };
@@ -139,7 +236,9 @@ export async function runServiceProxy(client: PiworkClient, port: number,
     throw error;
   }
   process.on("SIGINT", interrupt);
-  output(`Proxy: http://127.0.0.1:${port}\nPAC: http://127.0.0.1:${port}/proxy.pac\n`);
+  const fileStatus = fileCapability && Check(FileAccessCapabilitySchema, fileCapability)
+    ? fileCapability.available ? "available" : "unavailable" : "unsupported";
+  output(`Proxy: http://127.0.0.1:${port}\nPAC: http://127.0.0.1:${port}/proxy.pac\nWebDAV: http://127.0.0.1:${port}/works/<workId>/files/\nWebDAV user: piwork\nWebDAV password: ${filePassword}\nWebDAV status: ${fileStatus}\n`);
   return completed;
 }
 
@@ -214,6 +313,14 @@ function pac(port: number): string {
 }
 
 function isLoopback(address: string): boolean { return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1"; }
+function sameFileBasic(value: string | undefined, expected: Buffer): boolean {
+  const match = /^basic[ \t]+([A-Za-z0-9+/]+={0,2})$/i.exec(value ?? "");
+  if (!match) return false;
+  const encoded = match[1]!;
+  const actual = Buffer.from(encoded, "base64");
+  if (actual.toString("base64").replace(/=+$/, "") !== encoded.replace(/=+$/, "")) return false;
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
 function reject(response: ServerResponse, status: number, code: string): void { if (response.headersSent) { response.destroy(); return; } const body = JSON.stringify({ code }); response.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(body) }); response.end(body); }
 function rejectSocket(socket: Duplex, status: number, code: string, platform = false): void { if (socket.destroyed || socket.writableEnded) return; const body = JSON.stringify({ code }); socket.end(`HTTP/1.1 ${status} Proxy Error\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n${platform ? "x-piwork-gateway-error: 1\r\n" : ""}connection: close\r\n\r\n${body}`); }
 function proxyUsage(message: string): Error { return Object.assign(new Error(message), { exitCode: 2 }); }

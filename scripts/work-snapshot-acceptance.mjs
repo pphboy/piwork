@@ -158,7 +158,7 @@ async function installTargetCatalogFixture(site, addToDefaults = true) {
   site.app.store.packages.insertUpload({ id: uploadId, actorId: "operator", scopeKind: "core", workId: null,
     sourceKind: "local", displayName: "target-fixture", digest: `sha256:${packed.digest}`, size: packed.bytes,
     state: "ready", expiresAt: new Date(now.getTime() + 86400000).toISOString(), leaseCount: 0, createdAt: now.toISOString() });
-  const accepted = await site.app.packages.install({ kind: "upload", uploadId }, addToDefaults, `target-catalog-${randomUUID()}`);
+  const accepted = await site.app.packages.install({ kind: "upload", uploadId }, addToDefaults, `target-catalog-${randomUUID()}`, "operator");
   for (let attempt = 0; attempt < 1200; attempt++) {
     const operation = site.app.store.getOperation(accepted.operationId);
     if (operation?.state === "succeeded") break;

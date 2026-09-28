@@ -10,3 +10,5 @@ apps/console/vite.config.d.ts
 
 .env.test
 *.work
+__pycache__/
+*.pyc

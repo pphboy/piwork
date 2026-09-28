@@ -115,6 +115,65 @@ test("startup recovery adopts an existing instance and Core shutdown stops it", 
   });
 });
 
+test("file cleanup failure keeps stop incomplete while retry recovers and reopens admission", async () => {
+  await withFixture(async ({ store, lifecycle, runtime, contexts, create }) => {
+    const accepted = create({ name: "file-stop", configuration: config(), idempotencyKey: "file-stop-create" });
+    await lifecycle.waitForIdle();
+    store.exec(`INSERT INTO login_sessions(id,user_id,token_digest,expires_at,created_at)
+      VALUES ('session-file-test','user-owner','digest-file','2026-10-01T00:00:00Z','${NOW}')`);
+    const job = store.files.acceptJob({ id: "filejob-stop-test", workId: accepted.workId,
+      ownerUserId: "user-owner", sessionId: "session-file-test", coreEpoch: 1,
+      runtimeGeneration: 1, kind: "GET", state: "accepted", trustedImageId: IMAGE_A,
+      volumeName: "workspace-test", pathSegmentsJson: "[]", destinationSegmentsJson: null,
+      acceptedAt: NOW, deadlineAt: "2026-09-20T00:30:00Z", updatedAt: NOW,
+      cleanedAt: null, errorCode: null });
+    store.files.updateJobState(job.id, "accepted", "cleanup-pending", NOW, "FILE_CLEANUP_REQUIRED");
+    let allowCleanup = false;
+    const serviceEvents: string[] = [];
+    const files = { async recoverWork() {
+      if (!allowCleanup) return false;
+      store.files.markCleaned(job.id, NOW);
+      return true;
+    } };
+    const controller = new WorkLifecycleService(store, runtime, () => new Date(NOW), 10, 10,
+      { async prepareEnabledServices() {}, async stopServices() { serviceEvents.push("stop"); },
+        async removeServiceInstances() {} }, contexts, undefined, undefined, undefined, files);
+    controller.stop(owner, accepted.workId, "file-stop-one");
+    await controller.waitForIdle();
+    assert.equal(runtime.state.running, false, "agent still stops when file cleanup fails");
+    assert.deepEqual(serviceEvents, ["stop"], "service stop is attempted when file cleanup fails");
+    assert.notEqual(store.getWork(accepted.workId)?.observedState, "stopped");
+    assert.equal(store.files.getGate(accepted.workId)?.closed, true);
+    allowCleanup = true;
+    controller.retry(owner, accepted.workId, "file-retry-one");
+    await controller.waitForIdle();
+    assert.equal(store.files.getJob(job.id)?.state, "cleaned");
+    assert.equal(store.files.getGate(accepted.workId)?.closed, false);
+    assert.equal(store.getWork(accepted.workId)?.observedState, "ready");
+  });
+});
+
+test("stop shares one file cleanup deadline and still stops the agent when a helper stalls", async () => {
+  await withFixture(async ({ store, lifecycle: original, runtime, contexts, create }) => {
+    const accepted = create({ name: "file-deadline", configuration: config(), idempotencyKey: "file-deadline-create" });
+    await original.waitForIdle();
+    const files = { async recoverWork(_workId: string, _retry?: boolean, options?: { deadlineAtMs?: number }) {
+      assert.ok(options?.deadlineAtMs !== undefined);
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, options.deadlineAtMs! - Date.now())));
+      return false;
+    } };
+    const controller = new WorkLifecycleService(store, runtime, () => new Date(NOW), 20, 10,
+      undefined, contexts, undefined, undefined, undefined, files);
+    const started = Date.now();
+    controller.stop(owner, accepted.workId, "file-deadline-stop");
+    await controller.waitForIdle();
+    assert.ok(Date.now() - started < 200, "stop uses the shared deadline");
+    assert.equal(runtime.state.running, false);
+    assert.notEqual(store.getWork(accepted.workId)?.observedState, "stopped");
+    assert.equal(store.files.getGate(accepted.workId)?.closed, true);
+  });
+});
+
 test("Core shutdown still stops the agent and reports failure when a service cannot confirm shutdown", async () => {
   await withFixture(async ({ store, lifecycle: original, runtime, contexts, create }) => {
     const created = create({ name: "shutdown-failure", configuration: config(), idempotencyKey: "shutdown-failure-1" });
@@ -251,6 +310,8 @@ test("Work config set leaves the runtime untouched and apply activates only afte
     assert.deepEqual(runtime.events, []);
 
     runtime.failPrepare = false;
+    let fileGateClosedDuringStop = false;
+    runtime.onStop = () => { fileGateClosedDuringStop = store.files.getGate(created.workId)?.closed === true; };
     const succeeded = lifecycle.applyConfiguration(owner, created.workId, "config-apply-success", 2);
     await lifecycle.waitForIdle();
     const applied = store.getWorkConfiguration(created.workId)!;
@@ -258,6 +319,8 @@ test("Work config set leaves the runtime untouched and apply activates only afte
     assert.equal(applied.pendingRestart, false);
     assert.deepEqual(runtime.events, ["prepare-change", "stop", "remove"]);
     assert.equal(runtime.state.ready, true);
+    assert.equal(fileGateClosedDuringStop, true);
+    assert.equal(store.files.getGate(created.workId)?.closed, false);
     const applyOperations = store.listOperations().filter((operation) => operation.kind === "apply-work-configuration");
     assert.equal(applyOperations.length, 2);
     assert.equal(JSON.parse(store.getOperation(succeeded.operationId)!.requestJson).capturedRevision, 2);
@@ -670,6 +733,7 @@ class FakeRuntime implements WorkRuntimeAdapter {
   leaveRunningOnStop = false;
   failStartContexts = new Set<string>();
   events: string[] = [];
+  onStop?: () => void;
   startConfigurations: Array<Parameters<WorkRuntimeAdapter["start"]>[2]> = [];
   private gate: (() => void) | undefined;
   private startHeld: (() => void) | undefined;
@@ -697,6 +761,7 @@ class FakeRuntime implements WorkRuntimeAdapter {
   async drain(): Promise<void> { this.events.push("drain"); }
   async stop(): Promise<void> {
     this.events.push("stop");
+    this.onStop?.();
     if (!this.leaveRunningOnStop) this.state = { ...this.state, running: false, ready: false };
   }
   async remove(): Promise<void> { this.events.push("remove"); this.state = { exists: false, running: false, ready: false }; }

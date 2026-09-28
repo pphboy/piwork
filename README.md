@@ -178,6 +178,8 @@ After pi-agentd creates a service, use `piwork-cli work service list <workId>` t
 
 Service list/show also returns `access.hostname`, `access.defaultUrl`, `access.ports`, and current availability. Start `piwork-cli proxy` in a separate terminal, then use the returned HTTP URL through `curl --proxy http://127.0.0.1:17890 http://<service>.<work-network-name>.work/`. Browsers can load the printed `/proxy.pac` URL. The proxy handles HTTP, SSE, and `ws://` WebSocket traffic; no Docker socket or host port is required on the CLI machine. See [CLI service proxy](docs/operations.md#access-work-service-web-apps-through-the-cli-proxy).
 
+The same `piwork-cli proxy` listener also serves each owned, running Work's workspace at `http://127.0.0.1:17890/works/<workId>/files/` using WebDAV. The CLI prints a temporary Basic username and password when it starts. Use the local URL directly in a WebDAV client; service proxy and PAC routing stay on the same port. See [Work file access](docs/work-files.md) for the supported methods, limits, rclone configuration, and export boundary.
+
 ## Share a complete Work
 
 Stop the source Work, export one complete `.work` package, then import it as a new stopped Work under the recipient account:

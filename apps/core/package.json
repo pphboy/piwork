@@ -17,7 +17,8 @@
     "@piwork/runtime-docker": "0.1.0",
     "@piwork/work-package": "0.1.0",
     "@types/busboy": "^1.5.4",
-    "busboy": "^1.6.0"
+    "busboy": "^1.6.0",
+    "saxes": "6.0.0"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",

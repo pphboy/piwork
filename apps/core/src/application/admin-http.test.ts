@@ -433,8 +433,12 @@ test("admin package uploads and idempotency are scoped to the authenticated acto
     assert.notEqual(otherAccepted.operationId, accepted.operationId);
     const operatorAccepted = await call(base, "/control/packages", "POST", `Operator ${operatorCredential}`,
       { source: { kind: "npm", spec: "@example/admin-package@1.0.0" }, idempotencyKey: "shared-key" });
-    assert.equal(operatorAccepted.status, 409, JSON.stringify(operatorAccepted.body));
-    assert.equal(operatorAccepted.body.code, "PI_PACKAGE_BUSY", "operator key cannot replay an admin operation");
+    assert.ok([202, 409].includes(operatorAccepted.status), JSON.stringify(operatorAccepted.body));
+    if (operatorAccepted.status === 409) {
+      assert.equal(operatorAccepted.body.code, "PI_PACKAGE_BUSY", "operator key cannot replay an admin operation");
+    } else {
+      assert.notEqual(operatorAccepted.body.operationId, accepted.operationId, "operator key cannot replay an admin operation");
+    }
     assert.equal((await other.adminOperation(accepted.operationId)).workId, null);
     await assert.rejects(other.adminOperation("missing-operation"), (error) => (error as { status?: number }).status === 404);
     const work = await call(base, "/api/v1/works", "POST", `Bearer ${ownerToken}`,

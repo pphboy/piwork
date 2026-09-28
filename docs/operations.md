@@ -70,6 +70,7 @@ PIWORK_MODEL_PROVIDER
 PIWORK_MODEL
 PIWORK_MODEL_BASE_URL
 PIWORK_API_KEY
+PIWORK_FILE_HELPER_IMAGE
 ```
 
 Existing deployments may use `PIWORK_MODEL_ID` in place of `PIWORK_MODEL` and
@@ -167,6 +168,20 @@ npm run cli -- logout
 
 Work conversation data lives in a Docker named volume. Stop and delete retain that volume by policy. Delete removes the agent container, private network, and Core runtime material. Remove retained volumes separately only after confirming their data is no longer needed.
 
+## Work 文件 helper 的部署与恢复
+
+Core 文件入口使用独立的可信镜像。先在 Core 所在主机执行 `npm run file-helper:image`，再在启动 Core 前设置 `PIWORK_FILE_HELPER_IMAGE=piwork-file-helper:local`。Core 在启动时检查本地镜像 ID、Linux 平台及 `piwork.file_protocol=1` 标签，并在本次进程中固定该镜像 ID；请求、Work 配置和用户 service 都不能选择文件执行镜像。部署机器无需在 CLI 客户端安装 Docker。
+
+登录用户可调用 `GET /api/v1/file-access` 检查 `available`。镜像未配置、镜像不存在、标签不匹配或 Docker 镜像检查失败时，该字段为 `false`，`reason` 为 `FILE_HELPER_UNAVAILABLE`；Core 仍继续运行，已有 Work 和 service 网关不受文件镜像故障影响。检查配置时可先用 `docker image inspect piwork-file-helper:local --format '{{.Id}} {{index .Config.Labels "piwork.file_protocol"}}'` 核对 ID 和标签，再重启 Core 重新解析。镜像不会自动从仓库拉取。
+
+文件 helper 是 Core 管理的内部容器，不出现在用户 service 列表或 `.work` 包中。每个请求只挂对应 Work 的 `work-workspace` 卷；只读请求以只读方式挂载。它以 `10001:10001` 运行，无网络、宿主端口、Docker socket、Work private 卷及平台凭据。Work 内的 agent/service 仍通过原有 `/var/data/workspace` 挂载共享数据。
+
+升级或禁用镜像前，先等待活动文件传输结束，停止受影响 Work，并确认文件任务和 `piwork.resource_kind=file-helper` 容器已经收尾。Core 重启会核对 journal 中的精确归属并清理旧 helper；如果 Docker 无法确认退出或暂存身份不符，该 Work 保持待清理，文件访问与冷快照会被拒绝。恢复 Docker 依赖后使用现有 `work stop` / `work retry` 触发重试；不要按文件名前缀删除 workspace 隐藏文件，也不要删除归属不明的容器或手工清空 journal。确认全部任务为 `cleaned` 且对应 helper 已移除后，才可以回滚到不识别新 schema 的 Core，并按数据库版本兼容规则恢复备份。禁用时移除环境变量并重启 Core，service 代理仍可用。
+
+Core 在运行时每 5 秒检查待清理任务，每个任务在 10 分钟窗口内最多自动尝试 3 次（包括首次）。身份无法确认的暂存项不会自动重试删除；该 Work 保持 `FILE_CLEANUP_REQUIRED`，也不能用于冷快照。先确认 Docker 能响应、受管 helper 已退出，再通过现有 `work stop` 或 `work retry` 发起显式收尾。运行诊断只应显示 Work/任务 ID、固定错误码和收尾阶段，不能写入用户文件路径、正文、卷名或凭据。
+
+文件验收需要显式构建并指定当前 file helper 与 snapshot helper 镜像，并在 `PATH` 中提供 rclone：`PIWORK_FILE_HELPER_TEST_IMAGE=piwork-file-helper:local PIWORK_SNAPSHOT_HELPER_TEST_IMAGE=piwork-snapshot-helper:pi-packages npm run work-files:acceptance`。脚本使用真实 Docker 卷和 rclone 通用 WebDAV 模式，缺少镜像、Docker 或 rclone 会失败；它在输出中记录 rclone 版本和验证结果，不输出临时密码。单独复查崩溃恢复可运行 `PIWORK_FILE_HELPER_TEST_IMAGE=piwork-file-helper:local node scripts/work-files-crash-acceptance.mjs`。完整快照仍按下文的现有镜像和命令验收。
+
 ## Work snapshot operations
 
 See [the user workflow](work-snapshot.md) for stop/export/import/start and [the package format](work-package-format.md) for the durable Work boundary. Snapshot support needs an operator-built, trusted `Dockerfile.snapshot-helper` image and `PIWORK_SNAPSHOT_HELPER_IMAGE` set to that image reference before starting Core. Core resolves it to a fixed local image ID at startup. A missing or unresolvable helper disables snapshot requests with 503 but leaves ordinary Work management available. Do not configure a user-controlled image as the helper. The helper runs without network, Docker socket, model credentials, or host runtime secrets; it has only the named source/target volume and its private spool.
@@ -244,7 +259,7 @@ The proxy prints its `http://127.0.0.1:<port>/proxy.pac` address. Configure that
 
 Only the Work owner can read application content through this route, including when another administrator can inspect or control the Work. Core returns gateway-marked `401 AUTH_REQUIRED` for an expired user session, `404 NOT_FOUND` for unknown or other users' domains, `404 PORT_NOT_DECLARED` for an unlisted TCP port, `400 PORT_REQUIRED` when no default port exists, `503 SERVICE_UNAVAILABLE` for stopped/unready services, and `502 SERVICE_UPSTREAM_UNAVAILABLE` when Docker or the application connection cannot be confirmed. Application 401/404/500 responses remain unchanged and are not treated as Core login failures. The foreground proxy exits 3 when its saved session expires; log in again and restart it. Ctrl+C closes its connections and exits 130.
 
-Core schema 9 upgrades a schema 8 database in one transaction and backfills stable domain identities. Back up the Core data directory before upgrading. An older schema 8 Core cannot open the upgraded database; restore the full pre-upgrade backup if you need to revert the binary. Importing the same `.work` package creates a fresh Work ID and therefore a new domain; imported Works remain stopped until explicitly started. The V1 package and any literal URLs inside application files are unchanged.
+Core schema 10 upgrades schema 9 by adding internal file task records and Work file gates; schema 8 first applies the existing domain identity migration. Back up the Core data directory before upgrading. Older Core binaries cannot open the upgraded database; restore the full pre-upgrade backup if you need to revert the binary. Importing the same `.work` package creates a fresh Work ID and therefore a new domain; imported Works remain stopped until explicitly started. The V1 package and any literal URLs inside application files are unchanged.
 
 ## Backup and restore
 

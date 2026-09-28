@@ -42,6 +42,10 @@ test("empty database upgrades once and contains every durable Core entity", asyn
       "pi_package_jobs",
       "work_network_names",
       "service_domain_labels",
+      "work_file_gates",
+      "work_file_jobs",
+      "work_file_attempts",
+      "work_file_temporaries",
     ]) {
       assert.match(tables?.names ?? "", new RegExp(`(?:^|,)${name}(?:,|$)`));
     }
@@ -101,7 +105,9 @@ test("schema 8 network identity backfill is atomic and ordered", async () => {
       ["work-a1b2c3d4-0000-4000-8000-000000000001", now],
     ]) store.exec(`INSERT INTO works(id,owner_user_id,name,desired_state,observed_state,desired_revision,control_version,created_at,updated_at)
       VALUES ('${id}','owner','${id}','stopped','stopped',1,1,'${created}','${created}')`);
-    store.exec(`DROP TABLE service_domain_labels; DROP TABLE work_network_names; DELETE FROM schema_migrations WHERE version = 9`);
+    store.exec(`DROP TABLE work_file_cleanup_retries; DROP TABLE work_file_temporaries; DROP TABLE work_file_attempts; DROP TABLE work_file_jobs;
+      DROP TABLE work_file_gates; DROP TABLE work_file_core_epoch; DROP TABLE service_domain_labels; DROP TABLE work_network_names;
+      DELETE FROM schema_migrations WHERE version >= 9`);
     store.close();
     const db = new DatabaseSync(fixture.databasePath);
     db.exec(`CREATE TRIGGER block_nine BEFORE INSERT ON schema_migrations WHEN NEW.version = 9

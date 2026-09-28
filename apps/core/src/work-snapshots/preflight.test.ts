@@ -33,7 +33,7 @@ function fixture() {
   });
   store.updateOperation(accepted.operationId, "succeeded", NOW);
   const runtime = {
-    async listManagedContainers(_kind?: "agent" | "service"): Promise<ContainerInspection[]> { return []; },
+    async listManagedContainers(_kind?: "agent" | "service" | "file-helper"): Promise<ContainerInspection[]> { return []; },
     async requireManagedVolume(_workId: string, logicalId: string) { return { volumeName: managedVolumeName(INSTALLATION, WORK, logicalId), created: false }; },
     async inspectCapturedImage(imageId: string) { return { imageId, platform: { os: "linux" as const, architecture: "amd64", variant: null } }; },
   };
@@ -69,4 +69,36 @@ test("preflight refuses missing fixed image or managed volume without substituti
       await assert.rejects(f.inspect(), { code: missing === "image" ? "SNAPSHOT_IMAGE_MISSING" : "SNAPSHOT_STORAGE_UNREADABLE" });
     } finally { f.close(); }
   }
+});
+
+test("preflight distinguishes a running file helper, exited residue, and unknown Docker state", async () => {
+  for (const [state, expected] of [["running", "SNAPSHOT_REQUIRES_STOPPED"],
+    ["exited", "WORK_BUSY"], ["unknown", "SNAPSHOT_RUNTIME_UNAVAILABLE"]] as const) {
+    const f = fixture();
+    try {
+      f.runtime.listManagedContainers = async (kind) => {
+        if (kind !== "file-helper") return [];
+        if (state === "unknown") throw new DockerDependencyError("RUNTIME_UNAVAILABLE", "offline", true);
+        return [{ exists: true, running: state === "running", status: state,
+          labels: { "piwork.work_id": WORK } } as ContainerInspection];
+      };
+      await assert.rejects(f.inspect(), { code: expected });
+    } finally { f.close(); }
+  }
+});
+
+test("snapshot admission and preflight reject a pending file job despite stopped metadata", async () => {
+  const f = fixture();
+  try {
+    f.store.exec(`INSERT INTO login_sessions(id,user_id,token_digest,expires_at,created_at)
+      VALUES ('session-file-preflight','${OWNER}','digest','2026-10-01T00:00:00Z','${NOW}');
+      UPDATE works SET desired_state='running', observed_state='ready' WHERE id='${WORK}'`);
+    f.store.files.acceptJob({ id: "filejob-preflight-1234", workId: WORK, ownerUserId: OWNER,
+      sessionId: "session-file-preflight", coreEpoch: 1, runtimeGeneration: 1,
+      kind: "PUT", state: "accepted", trustedImageId: IMAGE, volumeName: "workspace-test",
+      pathSegmentsJson: '["file.txt"]', destinationSegmentsJson: null, acceptedAt: NOW,
+      deadlineAt: "2026-09-23T00:30:00Z", updatedAt: NOW, cleanedAt: null, errorCode: null });
+    f.store.exec(`UPDATE works SET desired_state='stopped', observed_state='stopped' WHERE id='${WORK}'`);
+    await assert.rejects(f.inspect(), { code: "WORK_BUSY" });
+  } finally { f.close(); }
 });

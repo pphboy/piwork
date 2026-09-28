@@ -7,6 +7,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parsePiPackageSource, stagePiPackageUpload } from "@piwork/pi-package";
+import type { FileAccessCapability } from "@piwork/contracts";
 import { WORK_PACKAGE_MIME, type AcceptedWorkExport, type AcceptedWorkImport, type ImportWorkRequest, type UploadedWorkPackage,
   type WorkImportProvenance, type WorkSnapshot, type PiPackageSource, type PiPackageOperationAcceptance,
   type PiPackageUploadResult, type PiPackageSelectionEntry, encodeAdminPathSegment,
@@ -289,6 +290,37 @@ export class PiworkClient {
   }
   health() { return this.request<{ status: string }>("GET", "/healthz"); }
   gatewayCapability() { return this.request<{ version: number; protocols: string[] }>("GET", "/api/v1/service-access"); }
+  fileAccessCapability() { return this.request<FileAccessCapability>("GET", "/api/v1/file-access"); }
+
+  fileRequest(input: { readonly path: string; readonly method: string; readonly headers: IncomingHttpHeaders },
+    onResponse?: (response: IncomingMessage) => void): ClientRequest {
+    const token = this.options.token;
+    if (!token) throw new PiworkApiError(401, "AUTH_REQUIRED", "authentication is required");
+    const core = normalizedUrl(this.options.coreUrl);
+    if (!/^\/api\/v1\/works\/[A-Za-z0-9-]+\/files(?:\/|$)/.test(input.path))
+      throw new TypeError("invalid Work file path");
+    const headers: Record<string, string | string[]> = {};
+    for (const [name, value] of Object.entries(input.headers)) {
+      if (value === undefined || name === "host" || name === "authorization" || name === "cookie"
+        || name === "proxy-authorization" || name.startsWith("proxy-") || name.startsWith("x-piwork-")
+        || ["connection", "upgrade", "te", "trailer", "keep-alive", "transfer-encoding"].includes(name)) continue;
+      headers[name] = value;
+    }
+    headers.authorization = `Bearer ${token}`;
+    const send = core.protocol === "https:" ? httpsRequest : httpRequest;
+    const request = send({ protocol: core.protocol, hostname: core.hostname, port: core.port || undefined,
+      path: input.path, method: input.method, headers, agent: false }, onResponse);
+    const timer = setTimeout(() => request.destroy(new Error("Core connection timed out")), 10_000);
+    timer.unref();
+    const clear = () => clearTimeout(timer);
+    request.once("socket", (socket) => {
+      if (!socket.connecting && core.protocol === "http:") clear();
+      else socket.once(core.protocol === "https:" ? "secureConnect" : "connect", clear);
+    });
+    request.once("error", clear);
+    request.once("response", clear);
+    return request;
+  }
 
   async resolveService(hostname: string, port: number): Promise<{ hostname: string; workId: string; serviceId: string; port: number }> {
     const token = this.options.token;

@@ -11,6 +11,7 @@ import {
 } from "./mutation.js";
 import { StoreLock } from "./store-lock.js";
 import { SnapshotStore } from "./snapshots.js";
+import { WorkFileStore } from "./work-files.js";
 import { PiPackageStore } from "./pi-packages.js";
 import { assignServiceDomainLabel, assignWorkNetworkName } from "./network-identities.js";
 
@@ -373,11 +374,12 @@ export class CoreStore {
   private closed = false;
   readonly snapshots: SnapshotStore;
   readonly packages: PiPackageStore;
+  readonly files: WorkFileStore;
 
   private constructor(
     private readonly database: DatabaseSync,
     private readonly lock: StoreLock,
-  ) { this.snapshots = new SnapshotStore(database); this.packages = new PiPackageStore(database); }
+  ) { this.snapshots = new SnapshotStore(database); this.packages = new PiPackageStore(database); this.files = new WorkFileStore(database); }
 
   static open(options: CoreStoreOptions): CoreStore {
     mkdirSync(dirname(options.databasePath), { recursive: true, mode: 0o700 });

@@ -25,6 +25,8 @@
     "cli": "node apps/cli/dist/main.js",
     "agent:image": "docker build -f Dockerfile.agentd --target production -t piwork-agentd:local .",
     "agent:image:acceptance": "docker build -f Dockerfile.agentd --target acceptance -t piwork-agentd:acceptance .",
+    "file-helper:image": "docker build -f Dockerfile.file-helper -t piwork-file-helper:local .",
+    "work-files:acceptance": "node scripts/work-files-acceptance.mjs && node scripts/work-files-crash-acceptance.mjs",
     "acceptance": "node scripts/product-acceptance.mjs",
     "test:deployment": "./scripts/deployment-test.sh .env.test",
     "real-model-smoke": "node scripts/real-model-smoke.mjs"

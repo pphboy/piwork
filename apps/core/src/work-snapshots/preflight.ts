@@ -29,11 +29,16 @@ export async function preflightWorkSnapshot(input: {
   const { store, contexts, runtime, installationId, workId } = input;
   const work = store.getWork(workId, true);
   if (!work || work.deletedAt !== null || work.desiredState !== "stopped" || work.observedState !== "stopped") fail("SNAPSHOT_REQUIRES_STOPPED");
+  if (store.files.hasPending(workId)) fail("WORK_BUSY");
   if (store.listWorkControlOperations(workId).some((operation) => operation.id !== input.currentExportOperationId && (operation.state === "pending" || operation.state === "running"))) fail("WORK_BUSY");
-  let agent: ContainerInspection[], services: ContainerInspection[];
-  try { [agent, services] = await Promise.all([runtime.listManagedContainers("agent"), runtime.listManagedContainers("service")]); }
+  let agent: ContainerInspection[], services: ContainerInspection[], files: ContainerInspection[];
+  try { [agent, services, files] = await Promise.all([runtime.listManagedContainers("agent"),
+    runtime.listManagedContainers("service"), runtime.listManagedContainers("file-helper")]); }
   catch (error) { scope(error, "SNAPSHOT_RUNTIME_UNAVAILABLE"); }
   confirmStopped(agent!, workId); confirmStopped(services!, workId);
+  const workFileHelpers = files!.filter((container) => container.labels?.["piwork.work_id"] === workId);
+  if (workFileHelpers.some((container) => container.running)) fail("SNAPSHOT_REQUIRES_STOPPED");
+  if (workFileHelpers.length > 0) fail("WORK_BUSY");
   const metadata = collectWorkSnapshotMetadata(store, contexts, workId, input.currentExportOperationId ?? "", installationId);
   for (const volume of metadata.volumes) {
     const logicalId = volume.role === "agent-private" ? "work-private" : "work-workspace";

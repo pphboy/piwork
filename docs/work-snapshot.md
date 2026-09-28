@@ -4,7 +4,7 @@ A `.work` file is one full, cold copy of a Work. It includes the two managed vol
 
 ## Export
 
-Stop the Work first; export never stops it for you:
+Stop the Work first; export never stops it for you. The same CLI proxy can transfer the running Work's `/var/data/workspace` through `http://127.0.0.1:17890/works/<workId>/files/`. Stop closes file admission and waits for file helpers to exit and clean their precise temporary files. Export checks the file journal and actual helper containers again; a pending upload or unconfirmed cleanup blocks export even when Work metadata says stopped. Restore Docker and use `work stop` or `work retry` to resume cleanup. WebDAV's method subset does not reduce the existing `.work` export scope; see [Work file access](work-files.md).
 
 ```sh
 piwork-cli work stop <workId> --wait

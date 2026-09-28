@@ -6,8 +6,9 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { encodeImageLoadArchive, normalizeImageArchive, type CapturedWorkImage, type ImageBlobStore, type NormalizedImage } from "@piwork/work-package";
 import { PiPackageInputError } from "@piwork/pi-package";
-import { DockerCliStreamingRunner, type DockerStreamingRunner } from "./stream.js";
+import { DockerCliStreamingRunner, type DockerStreamProcess, type DockerStreamingRunner } from "./stream.js";
 import { snapshotHelperCreateArgs, SNAPSHOT_JOB_LABEL, type SnapshotHelperSpec } from "./snapshot-helper.js";
+import { fileHelperCreateArgs, FILE_ATTEMPT_LABEL, FILE_EPOCH_LABEL, FILE_JOB_LABEL, type FileHelperSpec } from "./file-helper.js";
 import { piPackageHelperCreateArgs, PI_PACKAGE_JOB_LABEL, type PiPackageHelperSpec } from "./pi-package-helper.js";
 
 export const MANAGED_LABEL = "piwork.managed";
@@ -18,7 +19,7 @@ export const SPEC_HASH_LABEL = "piwork.spec_hash";
 export const NETWORK_KIND_LABEL = "piwork.network_kind";
 export const VOLUME_KIND_LABEL = "piwork.volume_kind";
 
-export type DockerResourceKind = "agent" | "service";
+export type DockerResourceKind = "agent" | "service" | "file-helper";
 
 export interface DockerCommandRunner {
   run(args: readonly string[], timeoutMs?: number): Promise<string>;
@@ -174,6 +175,19 @@ export class DockerRuntime {
     return image.imageId;
   }
 
+  /** File execution only uses a locally inspected, protocol-labelled immutable image. */
+  async resolveFileHelperImage(reference: string): Promise<string> {
+    if (!reference || reference.startsWith("-") || /\s|\0/.test(reference)) throw new TypeError("Invalid configured file helper image");
+    const output = await this.run(["image", "inspect", reference]);
+    const records = JSON.parse(output) as Array<{ Id?: unknown; Os?: unknown; Config?: { Labels?: Record<string, string> } }>;
+    const image = records[0];
+    if (records.length !== 1 || typeof image?.Id !== "string" || !/^sha256:[a-f0-9]{64}$/.test(image.Id)
+      || image.Os !== "linux" || image.Config?.Labels?.["piwork.file_protocol"] !== "1") {
+      throw new Error("FILE_HELPER_IMAGE_INCOMPATIBLE");
+    }
+    return image.Id;
+  }
+
   async inspectCapturedImage(imageId: string): Promise<Pick<CapturedWorkImage, "imageId" | "platform">> {
     if (!/^sha256:[a-f0-9]{64}$/.test(imageId)) throw new TypeError("Captured image identity required");
     const records = JSON.parse(await this.run(["image", "inspect", imageId])) as Array<{ Id: string; Os: string; Architecture: string; Variant?: string }>;
@@ -297,6 +311,62 @@ export class DockerRuntime {
     if (!helper) return;
     await this.run(["container", "rm", "--force", helper.containerId!], 30_000);
     if (await this.inspectSnapshotHelper(name, jobId)) throw new DockerDependencyError("STATE_UNKNOWN", "snapshot helper still exists", true);
+  }
+
+  /** The caller has journaled this exact attempt before Docker create. */
+  async createFileHelper(spec: FileHelperSpec): Promise<string> {
+    if (spec.installationId !== this.installationId) throw new TypeError("File helper installation mismatch");
+    const volume = await this.inspectVolume(spec.volumeName);
+    const labels = volume.Labels ?? {};
+    if (labels["piwork.installation_id"] !== this.installationId || labels[MANAGED_LABEL] !== "true"
+      || labels[WORK_LABEL] !== spec.workId || labels[LOGICAL_ID_LABEL] !== "work-workspace"
+      || labels[VOLUME_KIND_LABEL] !== "managed-data") {
+      throw new DockerDependencyError("STATE_UNKNOWN", "file helper workspace ownership mismatch", false);
+    }
+    const id = (await this.run(fileHelperCreateArgs(spec), 10_000)).trim();
+    const inspection = await this.inspectFileHelper(spec);
+    if (!inspection || inspection.containerId !== id || inspection.image !== spec.imageId)
+      throw new DockerDependencyError("STATE_UNKNOWN", "file helper create identity mismatch", false);
+    return id;
+  }
+
+  async inspectFileHelper(spec: FileHelperSpec): Promise<ContainerInspection | undefined> {
+    let raw: RawContainerInspection;
+    try { raw = await this.inspectRaw(spec.name, 10_000); }
+    catch (error) { if (error instanceof DockerDependencyError && error.reason === "RESOURCE_MISSING") return undefined; throw error; }
+    const labels = raw.Config.Labels ?? {};
+    if (labels["piwork.installation_id"] !== this.installationId || labels[MANAGED_LABEL] !== "true"
+      || labels[WORK_LABEL] !== spec.workId || labels[RESOURCE_KIND_LABEL] !== "file-helper"
+      || labels[FILE_JOB_LABEL] !== spec.jobId || labels[FILE_ATTEMPT_LABEL] !== spec.attemptId
+      || labels[FILE_EPOCH_LABEL] !== String(spec.epoch) || raw.Image !== spec.imageId) {
+      throw new DockerDependencyError("STATE_UNKNOWN", "file helper ownership mismatch", false);
+    }
+    return { exists: true, containerId: raw.Id, name: raw.Name.replace(/^\//, ""), running: raw.State.Running,
+      status: raw.State.Status, exitCode: raw.State.ExitCode, labels, image: raw.Image };
+  }
+
+  async startFileHelper(spec: FileHelperSpec, signal?: AbortSignal): Promise<DockerStreamProcess> {
+    const helper = await this.inspectFileHelper(spec);
+    if (!helper || helper.running) throw new DockerDependencyError("STATE_UNKNOWN", "file helper is missing or already running", false);
+    return this.streamingRunner.spawn(["container", "start", "--attach", "--interactive", spec.name],
+      { signal, timeoutMs: 30 * 60_000 });
+  }
+
+  /** Killing a Docker CLI stream is never treated as proof of helper exit. */
+  async stopFileHelper(spec: FileHelperSpec): Promise<void> {
+    const helper = await this.inspectFileHelper(spec);
+    if (!helper) return;
+    if (helper.running) await this.run(["container", "stop", "--time", "3", helper.containerId!], 10_000);
+    const after = await this.inspectFileHelper(spec);
+    if (after?.running) throw new DockerDependencyError("STATE_UNKNOWN", "file helper still running", true);
+  }
+
+  async removeFileHelper(spec: FileHelperSpec): Promise<void> {
+    const helper = await this.inspectFileHelper(spec);
+    if (!helper) return;
+    if (helper.running) throw new DockerDependencyError("STATE_UNKNOWN", "file helper must exit before removal", true);
+    await this.run(["container", "rm", helper.containerId!], 10_000);
+    if (await this.inspectFileHelper(spec)) throw new DockerDependencyError("STATE_UNKNOWN", "file helper still exists", true);
   }
 
   async createPiPackageHelper(spec: PiPackageHelperSpec): Promise<string> {

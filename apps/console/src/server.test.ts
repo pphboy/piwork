@@ -156,7 +156,7 @@ test("HTTPS console serves fixed shell and login challenge while Core is unavail
     }); req.on("error", fail); req.end();
   });
   try {
-    const page = await get("/login"); assert.equal(page.status, 200); assert.match(page.body, /piwork 管理面板/);
+    const page = await get("/login"); assert.equal(page.status, 200); assert.match(page.body, /piwork admin console/);
     assert.match(String(page.headers["content-security-policy"]), /script-src 'self'/);
     assert.equal(page.headers["cache-control"], "no-store");
     assert.equal((await get("/unknown")).status, 404);

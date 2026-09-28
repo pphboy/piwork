@@ -51,6 +51,10 @@ export interface WorkServiceCoordinator {
   hasFailedServices?(workId: string): boolean;
 }
 
+export interface WorkFileLifecycleCoordinator {
+  recoverWork(workId: string, explicitRetry?: boolean, options?: { readonly deadlineAtMs?: number }): Promise<boolean>;
+}
+
 const NO_SERVICES: WorkServiceCoordinator = {
   async prepareEnabledServices() {},
   async stopServices() {},
@@ -100,6 +104,7 @@ export class WorkLifecycleService {
     private readonly diagnosticLogger?: JsonLineLogger,
     private readonly installationId?: string,
     private readonly hostQuota = { cpuMillis: 128_000, memoryBytes: 256 * 1_024 * 1_024 * 1_024 },
+    private readonly fileResources?: WorkFileLifecycleCoordinator,
   ) {}
 
   create(
@@ -324,12 +329,12 @@ export class WorkLifecycleService {
     return { adoptedWorkIds: [...new Set(adoptedWorkIds)], orphanedInstances };
   }
 
-  async shutdown(stopManagedRuntimes = false): Promise<void> {
+  async shutdown(stopManagedRuntimes = false, deadlineAtMs = Date.now() + 45_000): Promise<void> {
     this.shuttingDown = true;
     await this.waitForIdle();
     if (!stopManagedRuntimes) return;
     const works = this.store.listWorks(true).filter((work) => work.desiredState !== "deleted");
-    const results = await Promise.allSettled(works.map((work) => this.ensureStopped(work)));
+    const results = await Promise.allSettled(works.map((work) => this.ensureStopped(work, deadlineAtMs)));
     const failures: unknown[] = [];
     results.forEach((result, index) => {
       if (result.status === "rejected") {
@@ -383,6 +388,7 @@ export class WorkLifecycleService {
       now: this.now().toISOString(),
     }, (tx) => {
       const now = this.now().toISOString();
+      if (desiredState !== "running") this.store.files.closeGateInTransaction(workId, now);
       if (desiredState === "deleted") tx.tombstoneWork(workId, now);
       else tx.run(`UPDATE works SET desired_state = ?, control_version = control_version + 1,
         updated_at = ? WHERE id = ?`, desiredState, now, workId);
@@ -440,6 +446,8 @@ export class WorkLifecycleService {
           timestamp: this.now().toISOString(),
           result: { configuration: publicConfiguration(result) },
         });
+        if (this.store.getWork(workId)!.desiredState === "running" && this.store.files.getGate(workId)?.closed)
+          this.store.files.openGate(workId, this.now().toISOString());
         this.store.completeWorkContextActivation({
           workId,
           snapshotId: snapshotId!,
@@ -568,6 +576,12 @@ export class WorkLifecycleService {
   }
 
   private async ensureRunning(work: WorkRecord, capturedContextId: string | null, operationId: string, correlationId: string): Promise<void> {
+    if (this.store.files.hasPending(work.id)) {
+      if (!this.fileResources || !(await this.fileResources.recoverWork(work.id,
+        this.store.getOperation(operationId)?.kind === "retry-work")))
+        throw new Error("Work file helpers are not fully cleaned");
+    }
+    if (this.store.files.getGate(work.id)?.closed) this.store.files.openGate(work.id, this.now().toISOString());
     this.store.updateWorkObservedState(work.id, "starting", this.now().toISOString());
     const actual = await this.runtime.inspect(work.id);
     const state = this.store.getWorkConfiguration(work.id);
@@ -672,6 +686,7 @@ export class WorkLifecycleService {
     const previous = state.activeContextId === null
       ? undefined
       : { ...this.resolveContextRuntimeConfiguration(workId, state.activeContextId), correlationId };
+    const fileCleanupDeadlineAtMs = Date.now() + this.drainTimeoutMs + this.stopTimeoutMs;
     const actual = await this.runtime.inspect(workId);
     const generation = this.nextRuntimeGeneration(workId);
     try {
@@ -687,18 +702,35 @@ export class WorkLifecycleService {
         } else {
           await this.runtime.drain(workId, this.drainTimeoutMs);
         }
-        this.store.updateWorkObservedState(workId, "starting", this.now().toISOString());
       }
+      this.store.files.closeGate(workId, this.now().toISOString());
+      this.store.updateWorkObservedState(workId, "stopping", this.now().toISOString());
+      const fileCleanup = this.fileResources?.recoverWork(workId, false,
+        { deadlineAtMs: fileCleanupDeadlineAtMs }).catch(() => false);
+      const shutdownFailures: unknown[] = [];
       if (actual.exists) {
-        await this.services.stopServices(workId, this.stopTimeoutMs);
-        if (actual.running) await this.runtime.stop(workId, this.stopTimeoutMs);
-        for (const item of this.store.listRuntimeGenerations(workId)) {
-          if (["preparing", "starting", "ready", "draining", "stopping"].includes(item.state)) {
-            this.store.updateRuntimeGeneration(workId, item.generation, "stopped", this.now().toISOString());
-          }
+        try { await this.services.stopServices(workId, this.stopTimeoutMs); }
+        catch (error) { shutdownFailures.push(error); }
+        if (actual.running) {
+          try { await this.runtime.stop(workId, this.stopTimeoutMs); }
+          catch (error) { shutdownFailures.push(error); }
         }
-        await this.runtime.remove(workId, { preserveNetwork: true });
+        if (shutdownFailures.length === 0) {
+          for (const item of this.store.listRuntimeGenerations(workId)) {
+            if (["preparing", "starting", "ready", "draining", "stopping"].includes(item.state)) {
+              this.store.updateRuntimeGeneration(workId, item.generation, "stopped", this.now().toISOString());
+            }
+          }
+          try { await this.runtime.remove(workId, { preserveNetwork: true }); }
+          catch (error) { shutdownFailures.push(error); }
+        }
       }
+      let filesCleaned = true;
+      try { filesCleaned = await fileCleanup ?? true; }
+      catch { filesCleaned = false; }
+      if (!filesCleaned) throw Object.assign(new Error("Work file helpers are not fully cleaned"), { code: "FILE_CLEANUP_REQUIRED" });
+      if (shutdownFailures.length > 0) throw new AggregateError(shutdownFailures, "Previous Work runtime did not stop cleanly");
+      this.store.updateWorkObservedState(workId, "starting", this.now().toISOString());
       await this.runOperationStage(operationId, workId, "runtime-prepare", "RUNTIME_PREPARE_FAILED", () => this.runtime.prepare(work, candidate));
       this.store.ensureRuntimeGeneration(workId, generation, this.now().toISOString());
       const started = await this.runOperationStage(operationId, workId, "runtime-start", "RUNTIME_START_FAILED", () => this.runtime.start(work, generation, candidate));
@@ -723,6 +755,10 @@ export class WorkLifecycleService {
     } catch (error) {
       let rollback: OperationDiagnostics["rollback"] = { state: "not-required" };
       if (error instanceof OperationSupersededError) throw error;
+      if ((error as { code?: unknown }).code === "FILE_CLEANUP_REQUIRED") {
+        this.store.updateWorkObservedState(workId, "failed", this.now().toISOString());
+        throw new ApplyConfigurationFailure(error, rollback);
+      }
       if ((error as { code?: unknown }).code === "WORK_BUSY") {
         if (actual.generation !== undefined && this.store.getRuntimeGeneration(workId, actual.generation) !== undefined) {
           this.store.updateRuntimeGeneration(workId, actual.generation, "ready", this.now().toISOString(), {
@@ -752,6 +788,8 @@ export class WorkLifecycleService {
             readySince: this.now().toISOString(),
           });
           this.store.updateWorkObservedState(workId, "ready", this.now().toISOString(), state.activeRevision ?? undefined);
+          if (this.store.files.getGate(workId)?.closed && !this.store.files.hasPending(workId))
+            this.store.files.openGate(workId, this.now().toISOString());
           rollback = { state: "succeeded" };
           this.recordOperationStage(operationId, workId, "rollback");
         } catch {
@@ -808,8 +846,9 @@ export class WorkLifecycleService {
     return initial === undefined ? null : { snapshotId: initial.snapshotId, revision: 1 };
   }
 
-  private async ensureStopped(work: WorkRecord): Promise<void> {
+  private async ensureStopped(work: WorkRecord, deadlineAtMs = Date.now() + this.drainTimeoutMs + this.stopTimeoutMs): Promise<void> {
     this.store.updateWorkObservedState(work.id, "stopping", this.now().toISOString());
+    const fileCleanup = this.fileResources?.recoverWork(work.id, false, { deadlineAtMs }).catch(() => false);
     let actual: WorkRuntimeState | undefined;
     const failures: unknown[] = [];
     try { actual = await this.runtime.inspect(work.id); }
@@ -838,7 +877,11 @@ export class WorkLifecycleService {
     if (runtimeStopped && actual?.generation !== undefined && this.store.getRuntimeGeneration(work.id, actual.generation) !== undefined) {
       this.store.updateRuntimeGeneration(work.id, actual.generation, "stopped", this.now().toISOString());
     }
-    if (runtimeStopped && !serviceFailure) this.store.updateWorkObservedState(work.id, "stopped", this.now().toISOString());
+    let filesCleaned = true;
+    try { filesCleaned = await fileCleanup ?? true; }
+    catch (error) { filesCleaned = false; failures.push(error); }
+    if (!filesCleaned) failures.push(new Error("Work file helpers are not fully cleaned"));
+    if (runtimeStopped && !serviceFailure && filesCleaned) this.store.updateWorkObservedState(work.id, "stopped", this.now().toISOString());
     if (drainFailure !== undefined) failures.push(drainFailure);
     if (failures.length > 0) throw new AggregateError(failures, `Work ${work.id} shutdown was not fully confirmed`);
   }

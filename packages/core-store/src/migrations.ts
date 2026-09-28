@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { assignServiceDomainLabel, assignWorkNetworkName } from "./network-identities.js";
 
-export const CORE_SCHEMA_VERSION = 9;
+export const CORE_SCHEMA_VERSION = 10;
 
 interface Migration {
   readonly version: number;
@@ -439,6 +439,85 @@ const migrations: readonly Migration[] = [
       ) STRICT`,
     ],
   },
+  {
+    version: 10,
+    statements: [
+      `CREATE TABLE work_file_gates (
+        work_id TEXT PRIMARY KEY REFERENCES works(id),
+        epoch INTEGER NOT NULL CHECK (epoch >= 1),
+        closed INTEGER NOT NULL CHECK (closed IN (0, 1)),
+        updated_at TEXT NOT NULL
+      ) STRICT`,
+      `CREATE TABLE work_file_core_epoch (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        epoch INTEGER NOT NULL CHECK (epoch >= 0)
+      ) STRICT`,
+      `INSERT INTO work_file_core_epoch(id,epoch) VALUES (1,0)`,
+      `INSERT INTO work_file_gates(work_id, epoch, closed, updated_at)
+        SELECT id, 1, 0, updated_at FROM works`,
+      `CREATE TABLE work_file_jobs (
+        id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL REFERENCES works(id),
+        owner_user_id TEXT NOT NULL REFERENCES users(id),
+        session_id TEXT NOT NULL REFERENCES login_sessions(id),
+        core_epoch INTEGER NOT NULL CHECK (core_epoch >= 1),
+        work_epoch INTEGER NOT NULL CHECK (work_epoch >= 1),
+        runtime_generation INTEGER NOT NULL CHECK (runtime_generation >= 0),
+        kind TEXT NOT NULL CHECK (kind IN ('PROPFIND','GET','HEAD','PUT','MKCOL','COPY','MOVE','DELETE','PROPPATCH')),
+        state TEXT NOT NULL CHECK (state IN ('accepted','starting','running','prepared','committing','finished','cancelling','cleanup-pending','cleaned')),
+        trusted_image_id TEXT NOT NULL,
+        volume_name TEXT NOT NULL,
+        path_segments_json TEXT NOT NULL,
+        destination_segments_json TEXT,
+        accepted_at TEXT NOT NULL,
+        deadline_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        cleaned_at TEXT,
+        error_code TEXT,
+        CHECK (state != 'cleaned' OR cleaned_at IS NOT NULL)
+      ) STRICT`,
+      `CREATE INDEX work_file_jobs_active_work ON work_file_jobs(work_id, state)
+        WHERE state != 'cleaned'`,
+      `CREATE INDEX work_file_jobs_active_user ON work_file_jobs(owner_user_id, state)
+        WHERE state != 'cleaned'`,
+      `CREATE INDEX work_file_jobs_cleaned_at ON work_file_jobs(cleaned_at)
+        WHERE state = 'cleaned'`,
+      `CREATE UNIQUE INDEX work_file_one_mutation ON work_file_jobs(work_id)
+        WHERE state != 'cleaned' AND kind IN ('PUT','MKCOL','COPY','MOVE','DELETE','PROPPATCH')`,
+      `CREATE TABLE work_file_attempts (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL REFERENCES work_file_jobs(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('request','cleanup')),
+        epoch INTEGER NOT NULL CHECK (epoch >= 1),
+        container_name TEXT NOT NULL UNIQUE,
+        container_id TEXT,
+        state TEXT NOT NULL CHECK (state IN ('planned','creating','created','running','stopping','exited','removed','unknown')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT`,
+      `CREATE INDEX work_file_attempts_job ON work_file_attempts(job_id)`,
+      `CREATE TABLE work_file_temporaries (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL REFERENCES work_file_jobs(id) ON DELETE CASCADE,
+        parent_segments_json TEXT NOT NULL,
+        name TEXT NOT NULL,
+        device TEXT,
+        inode TEXT,
+        state TEXT NOT NULL CHECK (state IN ('planned','created','published','cleaned','uncertain')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(job_id, parent_segments_json, name),
+        CHECK ((device IS NULL AND inode IS NULL) OR (device IS NOT NULL AND inode IS NOT NULL))
+      ) STRICT`,
+      `CREATE INDEX work_file_temporaries_job ON work_file_temporaries(job_id)`,
+      `CREATE TABLE work_file_cleanup_retries (
+        job_id TEXT PRIMARY KEY REFERENCES work_file_jobs(id) ON DELETE CASCADE,
+        window_started_at TEXT NOT NULL,
+        attempts INTEGER NOT NULL CHECK (attempts >= 1),
+        last_attempt_at TEXT NOT NULL
+      ) STRICT`,
+    ],
+  },
 ];
 
 export function migrateCoreDatabase(database: DatabaseSync): void {
@@ -449,7 +528,7 @@ export function migrateCoreDatabase(database: DatabaseSync): void {
   }
   if (hasMigrationTable) {
     const row = database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as { version: number };
-    if (row.version !== CORE_SCHEMA_VERSION && row.version !== 8) {
+    if (row.version !== CORE_SCHEMA_VERSION && row.version !== 9 && row.version !== 8) {
       throw Object.assign(new Error("CORE_STORAGE_FORMAT_UNSUPPORTED: existing storage is not final V1"), { code: "CORE_STORAGE_FORMAT_UNSUPPORTED" });
     }
   }

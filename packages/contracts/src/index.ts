@@ -14,4 +14,5 @@ export * from "./control/users.js";
 export * from "./control/work-config.js";
 export * from "./control/portable-work.js";
 export * from "./control/work-snapshots.js";
+export * from "./control/work-files.js";
 export * from "./internal/runtime.js";

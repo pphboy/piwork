@@ -26,6 +26,7 @@ export async function runServe(args: readonly string[]): Promise<void> {
     agentGrpcListen: environment.PIWORK_AGENT_GRPC_LISTEN ?? "0.0.0.0:7172",
     agentGrpcAdvertise: environment.PIWORK_AGENT_GRPC_ADVERTISE ?? "piwork-core:7172",
     snapshotHelperImage: environment.PIWORK_SNAPSHOT_HELPER_IMAGE,
+    fileHelperImage: environment.PIWORK_FILE_HELPER_IMAGE,
     packageHelperImage: environment.PIWORK_PACKAGE_HELPER_IMAGE,
   });
   let startupError: unknown;

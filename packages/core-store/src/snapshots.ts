@@ -88,6 +88,8 @@ export class SnapshotStore {
   }
   lockWork(record: SnapshotLockRecord): void {
     this.assertWorkMutable(record.workId);
+    if (this.database.prepare("SELECT 1 FROM work_file_jobs WHERE work_id = ? AND state != 'cleaned' LIMIT 1").get(record.workId))
+      throw new SnapshotStoreError("WORK_BUSY");
     const job = this.assertFence(record.operationId, record.workerEpoch);
     if (job.kind !== "export" || job.sourceWorkId !== record.workId) throw new SnapshotStoreError("SNAPSHOT_RECORD_CONFLICT");
     this.insert("work_snapshot_locks", ["workId", "operationId", "workerEpoch"], record);

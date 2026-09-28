@@ -51,6 +51,7 @@ export {
 } from "./store.js";
 export { CoreAlreadyRunningError } from "./store-lock.js";
 export * from "./snapshots.js";
+export * from "./work-files.js";
 export * from "./pi-packages.js";
 export {
   IdempotencyConflictError,

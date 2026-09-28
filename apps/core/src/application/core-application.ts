@@ -20,6 +20,11 @@ import { receivePiPackageUpload } from "../packages/upload.js";
 import { collectPiPackageArtifactGarbage, collectPiPackageUploadGarbage } from "../packages/gc.js";
 import { PiPackageInputError } from "@piwork/pi-package";
 import { SnapshotHelperAvailability } from "../work-snapshots/helper-availability.js";
+import { FileHelperAvailability } from "../work-files/availability.js";
+import { WorkFileRecovery } from "../work-files/recovery.js";
+import { serveWorkFiles } from "../work-files/http.js";
+import { isRawFileTarget } from "../work-files/path.js";
+import { FILE_ACCESS_PROFILE, FILE_ACCESS_VERSION, FILE_LIMITS, FILE_ROOT_TEMPLATE } from "@piwork/contracts";
 import { authorizeSnapshotOwner, importProvenance } from "../work-snapshots/access.js";
 import { WorkSnapshotAdmission } from "../work-snapshots/admission.js";
 import { preflightWorkSnapshot } from "../work-snapshots/preflight.js";
@@ -75,10 +80,13 @@ export interface CoreApplicationOptions {
   readonly agentGrpcAdvertise?: string;
   readonly agentGrpcListen?: string;
   readonly snapshotHelperImage?: string;
+  readonly fileHelperImage?: string;
   readonly packageHelperImage?: string;
   readonly snapshotHelperResolver?: (reference: string) => Promise<string>;
+  readonly fileHelperResolver?: (reference: string) => Promise<string>;
   readonly snapshotDockerFactory?: (installationId: string) => DockerRuntime;
   readonly packageDockerFactory?: (installationId: string) => DockerRuntime;
+  readonly fileDockerFactory?: (installationId: string) => DockerRuntime;
 }
 
 export class CoreApplication {
@@ -94,14 +102,23 @@ export class CoreApplication {
   readonly services: WorkServiceManagementService;
   readonly serviceGateway: ServiceGateway;
   readonly snapshotHelper: SnapshotHelperAvailability;
+  readonly fileHelper: FileHelperAvailability;
+  readonly fileCoreEpoch: number;
+  readonly fileRecovery: WorkFileRecovery;
+  private readonly fileDocker: DockerRuntime;
   readonly snapshotAdmission: WorkSnapshotAdmission;
   readonly packages: CorePiPackageService;
   private readonly snapshotTasks = new Set<Promise<unknown>>();
   private readonly snapshotAbort = new AbortController();
+  private readonly fileAbort = new AbortController();
+  private readonly fileRecoveryAbort = new AbortController();
   private snapshotRecoveryDone = false;
   private snapshotGcTimer?: NodeJS.Timeout;
   private snapshotGcTask?: Promise<void>;
   private snapshotGcRunning = false;
+  private fileRecoveryDone = false;
+  private fileRecoveryTimer?: NodeJS.Timeout;
+  private fileRecoveryTask?: Promise<void>;
   private runtime?: WorkRuntimeAdapter & Partial<ConversationGateway> & { close?: () => void };
   private serviceRuntime?: ServiceRuntimeAdapter;
   private server?: Server;
@@ -120,6 +137,7 @@ export class CoreApplication {
     workContexts: WorkContextStore,
     services: WorkServiceManagementService,
     snapshotHelper: SnapshotHelperAvailability,
+    fileHelper: FileHelperAvailability,
     private readonly options: CoreApplicationOptions,
   ) {
     this.store = store;
@@ -128,6 +146,11 @@ export class CoreApplication {
     this.services = services;
     this.serviceGateway = new ServiceGateway(store, identity, services.domainResolver, () => this.serviceRuntime, () => this.state === "READY");
     this.snapshotHelper = snapshotHelper;
+    this.fileHelper = fileHelper;
+    this.fileCoreEpoch = store.files.nextCoreEpoch();
+    this.fileDocker = options.fileDockerFactory?.(ensureInstallationId(paths)) ?? new DockerRuntime(ensureInstallationId(paths));
+    this.fileRecovery = new WorkFileRecovery(store, this.fileDocker, ensureInstallationId(paths),
+      () => new Date().toISOString(), this.fileCoreEpoch);
     this.users = new UserAdministrationService(store);
     this.workConfigurations = new WorkConfigurationService(store);
     this.workContexts = workContexts;
@@ -177,10 +200,14 @@ export class CoreApplication {
       let application!: CoreApplication;
       let runtime: WorkRuntimeAdapter = unavailableRuntime("runtime is not initialized");
       const services = new WorkServiceManagementService(store, proxyServiceRuntime(() => application?.serviceRuntime));
-      const lifecycle = new WorkLifecycleService(store, proxyRuntime(() => application?.runtime ?? runtime), undefined, undefined, undefined, services, workContexts, undefined, ensureInstallationId(options.paths));
+      const lifecycle = new WorkLifecycleService(store, proxyRuntime(() => application?.runtime ?? runtime), undefined, undefined, undefined,
+        services, workContexts, undefined, ensureInstallationId(options.paths), undefined,
+        { recoverWork: (workId, explicitRetry, options) => application.fileRecovery.recoverWork(workId, explicitRetry, options) });
       const snapshotHelper = await SnapshotHelperAvailability.resolve(options.snapshotHelperImage,
         options.snapshotHelperResolver ?? ((reference) => new DockerRuntime(ensureInstallationId(options.paths)).resolveSnapshotHelperImage(reference)));
-      application = new CoreApplication(options.paths, store, identity, lifecycle, workContexts, services, snapshotHelper, options);
+      const fileHelper = await FileHelperAvailability.resolve(options.fileHelperImage,
+        options.fileHelperResolver ?? ((reference) => new DockerRuntime(ensureInstallationId(options.paths)).resolveFileHelperImage(reference)));
+      application = new CoreApplication(options.paths, store, identity, lifecycle, workContexts, services, snapshotHelper, fileHelper, options);
       if (!store.hasEnabledAdministrator()) application.state = "ADMIN_REQUIRED";
       else if (!profiles.inspect().configured) application.state = "RUNTIME_NOT_CONFIGURED";
       else application.state = "STORE_OPEN";
@@ -262,6 +289,10 @@ export class CoreApplication {
       this.serviceRuntime = runtime instanceof DockerWorkRuntimeAdapter ? runtime.serviceRuntime(this.store) : undefined;
       this.runtime = runtime;
       this.state = "RECOVERING";
+      if (!this.fileRecoveryDone) {
+        await this.fileRecovery.recoverAll();
+        this.fileRecoveryDone = true;
+      }
       if (!this.snapshotRecoveryDone) {
         await recoverSnapshotJobs({ store: this.store, contexts: this.workContexts, runtime: this.snapshotDocker(), snapshotsDirectory: this.paths.snapshotsDirectory });
         if (this.store.snapshots.listJobs(true).length === 0) this.workContexts.cleanupOrphans(new Set(
@@ -288,6 +319,14 @@ export class CoreApplication {
         }, 60_000);
         this.snapshotGcTimer.unref();
       }
+      if (!this.fileRecoveryTimer) {
+        this.fileRecoveryTimer = setInterval(() => {
+          if (this.closed || this.fileRecoveryTask) return;
+          this.fileRecoveryTask = this.fileRecovery.recoverAll({ signal: this.fileRecoveryAbort.signal }).then(() => undefined)
+            .catch(() => undefined).finally(() => { this.fileRecoveryTask = undefined; });
+        }, 5_000);
+        this.fileRecoveryTimer.unref();
+      }
       await this.lifecycle.recover();
       this.services.startReconciliation();
       if (previous !== undefined && previous !== runtime) previous.close?.();
@@ -300,12 +339,19 @@ export class CoreApplication {
     }
   }
 
-  async close(): Promise<void> {
+  async close(shutdownBudgetMs = 40_000): Promise<void> {
     if (this.closed) return;
+    // Leave time for runServe to report failure before its 45-second process deadline.
+    const deadlineAtMs = Date.now() + shutdownBudgetMs;
     this.closed = true;
     this.state = "SHUTTING_DOWN";
     if (this.snapshotGcTimer) clearInterval(this.snapshotGcTimer);
+    if (this.fileRecoveryTimer) clearInterval(this.fileRecoveryTimer);
+    this.fileRecoveryAbort.abort(new Error("CORE_SHUTDOWN"));
     this.snapshotAbort.abort(new Error("CORE_SHUTDOWN"));
+    for (const work of this.store.listWorks(true))
+      this.store.files.closeGate(work.id, new Date().toISOString());
+    this.fileAbort.abort(new Error("CORE_SHUTDOWN"));
     this.services.closeAdmission();
     const failures: Array<{ stage: string; error: unknown }> = [];
     try {
@@ -313,8 +359,9 @@ export class CoreApplication {
         ["http-listener", () => closeServer(this.server)],
         ["package-worker", () => this.packages.worker.shutdown()],
         ["snapshot-tasks", () => this.waitSnapshotTasks()],
+        ["file-recovery", () => this.fileRecoveryTask ?? Promise.resolve()],
         ["service-grpc", () => this.serviceGrpc?.close() ?? Promise.resolve()],
-        ["work-runtime", () => this.lifecycle.shutdown(this.runtime !== undefined)],
+        ["work-runtime", () => this.lifecycle.shutdown(this.runtime !== undefined, deadlineAtMs)],
         ["services", () => this.services.shutdown()],
       ] as const) {
         try { await close(); }
@@ -529,6 +576,13 @@ export class CoreApplication {
   private async route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const correlationId = `correlation-${cryptoRandomUUID()}`;
     try {
+      if (isRawFileTarget(request.url ?? "")) {
+        await serveWorkFiles(request, response, { store: this.store, identity: this.identity,
+          workRuntime: this.runtime ?? unavailableRuntime("runtime unavailable"), fileRuntime: this.fileDocker,
+          installationId: ensureInstallationId(this.paths), imageId: () => this.fileHelper.requireImage(),
+          coreEpoch: this.fileCoreEpoch, signal: this.fileAbort.signal });
+        return;
+      }
       const url = new URL(request.url ?? "/", "http://core.invalid");
       if (request.method === "GET" && url.pathname === "/healthz") return send(response, 200, { status: "healthy" });
       if (request.method === "GET" && url.pathname === "/readyz") {
@@ -537,6 +591,7 @@ export class CoreApplication {
       }
       if (request.method === "GET" && url.pathname === "/control/status") {
         if (this.state === "RUNTIME_UNAVAILABLE") await this.refreshRuntime();
+        else if (this.state === "RECOVERING") await this.runtimeRefreshTask;
         return send(response, 200, this.status());
       }
       if (url.pathname.startsWith("/control/")) {
@@ -701,6 +756,11 @@ export class CoreApplication {
       const principal: UserPrincipal = { userId: session.user.id, role: session.user.role };
       if (request.method === "GET" && url.pathname === "/api/v1/service-access") {
         return send(response, 200, { version: 1, protocols: ["http", "sse", "websocket"] });
+      }
+      if (request.method === "GET" && url.pathname === "/api/v1/file-access") {
+        const available = this.fileHelper.status().available;
+        return send(response, 200, { version: FILE_ACCESS_VERSION, protocol: "webdav", profile: FILE_ACCESS_PROFILE,
+          available, reason: available ? null : "FILE_HELPER_UNAVAILABLE", rootTemplate: FILE_ROOT_TEMPLATE, limits: FILE_LIMITS });
       }
       const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
       if (await this.snapshotRoute(request, response, principal, parts)) return;
@@ -1048,6 +1108,7 @@ export class CoreApplication {
     const at = (...expected: string[]) => parts.length === expected.length && parts.every((part, index) => part === expected[index]);
     if (request.method === "GET" && at("status")) {
       if (this.state === "RUNTIME_UNAVAILABLE") await this.refreshRuntime();
+      else if (this.state === "RECOVERING") await this.runtimeRefreshTask;
       return send(response, 200, { adminApiVersion: 1, ...this.status() });
     }
     if (request.method === "GET" && at("runtime")) return send(response, 200, this.adminRuntimeView());

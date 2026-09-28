@@ -3,6 +3,8 @@ import { createServer, request as httpRequest, type IncomingMessage } from "node
 import { connect } from "node:net";
 import test from "node:test";
 import type { PiworkClient } from "@piwork/client-sdk";
+import { PiworkClient as RealPiworkClient } from "@piwork/client-sdk";
+import { FILE_LIMITS } from "@piwork/contracts";
 import { parseProxyPort, runServiceProxy, validateProxyCoreUrl } from "./service-proxy.js";
 
 const hostname = "notes.w-a1b2c3d4.work";
@@ -257,4 +259,277 @@ test("platform WebSocket 401 ends the proxy with login exit code", async () => {
   assert.equal(await running, 3);
   socket.destroy();
   await new Promise<void>((resolve) => app.close(() => resolve()));
+});
+
+test("one proxy streams Work files with local Basic while service application credentials remain separate", async () => {
+  const work = "work-test-12345678";
+  const coreRoot = `/api/v1/works/${work}/files/`;
+  const localRoot = `/works/${work}/files/`;
+  let fileCalls = 0;
+  let serviceCalls = 0;
+  let lastServiceCookie: string | undefined;
+  let failedUploads = 0;
+  let lastDestination: string | undefined;
+  let uploaded = Buffer.alloc(0);
+  const core = createServer((request, response) => {
+    if (request.url === "/api/v1/service-access") {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ version: 1, protocols: ["http"] }));
+      return;
+    }
+    if (request.url === "/api/v1/file-access") {
+      assert.equal(request.headers.authorization, "Bearer platform-token");
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ version: 1, protocol: "webdav", profile: "workspace-transfer-v1",
+        available: true, reason: null, rootTemplate: "/api/v1/works/{workId}/files/", limits: FILE_LIMITS }));
+      return;
+    }
+    if (request.url?.startsWith(coreRoot)) {
+      fileCalls++;
+      assert.equal(request.headers.authorization, "Bearer platform-token");
+      assert.equal(request.headers.cookie, undefined);
+      assert.equal(request.headers["proxy-authorization"], undefined);
+      assert.equal(request.headers["x-piwork-spoof"], undefined);
+      if (request.url === `${coreRoot}fail.bin` && request.method === "PUT") {
+        failedUploads++;
+        request.resume(); request.on("end", () => response.destroy());
+      } else if (request.url === coreRoot && request.method === "GET") {
+        response.writeHead(308, { location: coreRoot }); response.end();
+      } else if (request.method === "PUT") {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk) => chunks.push(chunk));
+        request.on("end", () => { uploaded = Buffer.concat(chunks); response.writeHead(204); response.end(); });
+      } else if (request.method === "COPY") {
+        lastDestination = String(request.headers.destination);
+        response.writeHead(201); response.end();
+      } else if (request.method === "PROPFIND") {
+        request.resume();
+        request.on("end", () => {
+          response.writeHead(207, { "content-type": "application/xml; charset=utf-8" });
+          response.end(`<d:multistatus xmlns:d="DAV:"><d:response><d:href>${coreRoot}hello%20world</d:href></d:response></d:multistatus>`);
+        });
+      } else {
+        response.setHeader("content-type", "application/octet-stream");
+        response.end(uploaded.length ? uploaded : Buffer.from("initial"));
+      }
+      return;
+    }
+    if (request.url === `/api/v1/service-gateway/${hostname}/80${localRoot}hello`) {
+      serviceCalls++;
+      lastServiceCookie = request.headers.cookie;
+      response.end(`application:${request.headers.authorization}`);
+      return;
+    }
+    if (request.url?.startsWith("/api/v1/service-access/resolve")) {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ hostname, port: 80, workId: work, serviceId: "service" }));
+      return;
+    }
+    response.writeHead(404); response.end();
+  });
+  await new Promise<void>((resolve) => core.listen(0, "127.0.0.1", resolve));
+  const address = core.address(); assert.ok(address && typeof address !== "string");
+  const free = createServer();
+  await new Promise<void>((resolve) => free.listen(0, "127.0.0.1", resolve));
+  const freeAddress = free.address(); assert.ok(freeAddress && typeof freeAddress !== "string");
+  const port = freeAddress.port;
+  await new Promise<void>((resolve) => free.close(() => resolve()));
+  const client = new RealPiworkClient({ coreUrl: `http://127.0.0.1:${address.port}`, token: "platform-token" });
+  let output = "";
+  let ready!: () => void;
+  const started = new Promise<void>((resolve) => { ready = resolve; });
+  const running = runServiceProxy(client, port, (message) => { output = message; ready(); });
+  await started;
+  const password = /WebDAV password: ([A-Za-z0-9_-]+)/.exec(output)?.[1];
+  assert.ok(password);
+  const basic = `Basic ${Buffer.from(`piwork:${password}`).toString("base64")}`;
+  const send = (path: string, method = "GET", headers: Record<string, string> = {}, body?: Buffer | string) =>
+    new Promise<{ status: number; headers: IncomingMessage["headers"]; body: Buffer }>((resolve, reject) => {
+      const req = httpRequest({ host: "127.0.0.1", port, path, method, headers }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => resolve({ status: response.statusCode!, headers: response.headers,
+          body: Buffer.concat(chunks) }));
+      });
+      req.on("error", reject); req.end(body);
+    });
+  try {
+    assert.equal((await send(`${localRoot}hello`)).status, 401);
+    assert.equal((await send(`${localRoot}hello`, "GET", { authorization: "Basic wrong" })).status, 401);
+    assert.equal(fileCalls, 0);
+    const read = await send(`${localRoot}hello`, "GET", { authorization: basic,
+      cookie: "should=stay-local", "proxy-authorization": "secret", "x-piwork-spoof": "value" });
+    assert.equal(read.status, 200);
+    assert.equal(read.body.toString(), "initial");
+    assert.equal((await send(`${localRoot}hello`, "GET", { authorization: `basic ${basic.slice(6)}` })).status, 200);
+    assert.equal((await send(`${localRoot}hello`, "PUT", { authorization: basic }, "uploaded")).status, 204);
+    assert.equal((await send(`${localRoot}hello`, "GET", { authorization: basic })).body.toString(), "uploaded");
+    const redirect = await send(localRoot, "GET", { authorization: basic });
+    assert.equal(redirect.status, 308);
+    assert.equal(redirect.headers.location, localRoot);
+    const listed = await send(`${localRoot}`, "PROPFIND", { authorization: basic, depth: "1" });
+    assert.equal(listed.status, 207);
+    assert.match(listed.body.toString(), new RegExp(`${localRoot}hello%20world`));
+    assert.doesNotMatch(listed.body.toString(), /\/api\/v1\/works/);
+    const copied = await send(`${localRoot}hello`, "COPY", { authorization: basic,
+      destination: `http://127.0.0.1:${port}${localRoot}copy` });
+    assert.equal(copied.status, 201);
+    assert.equal(lastDestination, `${coreRoot}copy`);
+    const failed = await send(`${localRoot}fail.bin`, "PUT", { authorization: basic }, "once");
+    assert.equal(failed.status, 502);
+    assert.equal(failedUploads, 1);
+    const before = fileCalls;
+    assert.equal((await send(`${localRoot}hello`, "COPY", { authorization: basic,
+      destination: `http://evil.example/${localRoot}copy` })).status, 403);
+    assert.equal(fileCalls, before);
+    assert.equal((await send(`${localRoot}hello`, "GET", { authorization: basic, origin: "http://evil.example" })).status, 403);
+    assert.equal((await send(`${localRoot}hello`, "GET", { authorization: basic, host: "evil.example" })).status, 403);
+    assert.equal(fileCalls, before);
+    const app = await send(`http://${hostname}${localRoot}hello`, "GET", { authorization: "Basic application", cookie: "app=session" });
+    assert.equal(app.status, 200);
+    assert.equal(app.body.toString(), "application:Basic application");
+    assert.equal(lastServiceCookie, "app=session");
+    assert.equal(serviceCalls, 1);
+    for (const authorization of [basic, `basic ${basic.slice(6)}`, `bAsIc ${basic.slice(6)}`,
+      `Basic ${basic.slice(6).replace(/=+$/, "")}`])
+      assert.equal((await send(`http://${hostname}${localRoot}hello`, "GET", { authorization })).status, 403);
+    assert.equal(serviceCalls, 1, "the temporary password never reaches the application");
+    assert.equal((await send(`ws://${hostname}/socket`, "GET", { authorization: basic,
+      connection: "Upgrade", upgrade: "websocket" })).status, 403);
+  } finally {
+    process.emit("SIGINT");
+    assert.equal(await running, 130);
+    await new Promise<void>((resolve) => core.close(() => resolve()));
+  }
+});
+
+test("old Core leaves service proxy usable and file capability is rechecked", async () => {
+  const work = "work-test-12345678";
+  const free = createServer();
+  await new Promise<void>((resolve) => free.listen(0, "127.0.0.1", resolve));
+  const address = free.address(); assert.ok(address && typeof address !== "string");
+  const port = address.port;
+  await new Promise<void>((resolve) => free.close(() => resolve()));
+  let available = false;
+  let fileCalls = 0;
+  const core = createServer((request, response) => {
+    if (request.url === "/health") response.end("service-ok");
+    else { fileCalls++; response.end("file-ok"); }
+  });
+  await new Promise<void>((resolve) => core.listen(0, "127.0.0.1", resolve));
+  const coreAddress = core.address(); assert.ok(coreAddress && typeof coreAddress !== "string");
+  const client = {
+    async gatewayCapability() { return { version: 1 }; },
+    async fileAccessCapability() {
+      if (!available) throw Object.assign(new Error("old Core"), { status: 404 });
+      return { version: 1, protocol: "webdav", profile: "workspace-transfer-v1", available: true,
+        reason: null, rootTemplate: "/api/v1/works/{workId}/files/", limits: FILE_LIMITS };
+    },
+    async resolveService() { return { hostname, port: 80, workId: work, serviceId: "service" }; },
+    gatewayRequest(input: { path: string; method: string; headers: Record<string, string> }, callback?: (response: IncomingMessage) => void) {
+      return httpRequest({ host: "127.0.0.1", port: coreAddress.port, path: input.path,
+        method: input.method, headers: input.headers }, callback);
+    },
+    fileRequest(input: { path: string; method: string; headers: Record<string, string> }, callback?: (response: IncomingMessage) => void) {
+      return httpRequest({ host: "127.0.0.1", port: coreAddress.port, path: input.path,
+        method: input.method, headers: input.headers }, callback);
+    },
+  } as unknown as PiworkClient;
+  let output = "";
+  let ready!: () => void;
+  const running = runServiceProxy(client, port, (message) => { output = message; ready(); });
+  await new Promise<void>((resolve) => { ready = resolve; });
+  const password = /WebDAV password: ([A-Za-z0-9_-]+)/.exec(output)?.[1];
+  assert.ok(password);
+  const request = (path: string, basic?: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const req = httpRequest({ host: "127.0.0.1", port, path,
+      headers: basic ? { authorization: basic } : {} }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => resolve({ status: response.statusCode!, body: Buffer.concat(chunks).toString() }));
+    });
+    req.once("error", reject); req.end();
+  });
+  try {
+    const basic = `Basic ${Buffer.from(`piwork:${password}`).toString("base64")}`;
+    assert.equal((await request(`/works/${work}/files/a`, basic)).status, 501);
+    assert.equal((await request(`http://${hostname}/health`)).body, "service-ok");
+    assert.equal(fileCalls, 0);
+    available = true;
+    assert.equal((await request(`/works/${work}/files/a`, basic)).body, "file-ok");
+    assert.equal(fileCalls, 1);
+  } finally {
+    process.emit("SIGINT");
+    assert.equal(await running, 130);
+    await new Promise<void>((resolve) => core.close(() => resolve()));
+  }
+});
+
+test("local WebDAV password changes on proxy restart", async () => {
+  const free = createServer();
+  await new Promise<void>((resolve) => free.listen(0, "127.0.0.1", resolve));
+  const address = free.address(); assert.ok(address && typeof address !== "string");
+  const port = address.port;
+  await new Promise<void>((resolve) => free.close(() => resolve()));
+  const client = { async gatewayCapability() { return { version: 1 }; },
+    async fileAccessCapability() { return { version: 1, protocol: "webdav", profile: "workspace-transfer-v1",
+      available: true, reason: null, rootTemplate: "/api/v1/works/{workId}/files/", limits: FILE_LIMITS }; } } as unknown as PiworkClient;
+  const start = async () => {
+    let ready!: () => void;
+    const started = new Promise<void>((resolve) => { ready = resolve; });
+    let output = "";
+    const running = runServiceProxy(client, port, (message) => { output = message; ready(); });
+    await started;
+    return { running, password: /WebDAV password: ([A-Za-z0-9_-]+)/.exec(output)?.[1] };
+  };
+  const first = await start();
+  assert.ok(first.password);
+  process.emit("SIGINT");
+  assert.equal(await first.running, 130);
+  const second = await start();
+  try {
+    assert.ok(second.password);
+    assert.notEqual(first.password, second.password);
+    const response = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest({ host: "127.0.0.1", port,
+        path: "/works/work-test-12345678/files/a", headers: {
+          authorization: `Basic ${Buffer.from(`piwork:${first.password}`).toString("base64")}` } }, (incoming) => {
+          incoming.resume(); incoming.on("end", () => resolve(incoming.statusCode!));
+        });
+      req.once("error", reject); req.end();
+    });
+    assert.equal(response, 401);
+  } finally { process.emit("SIGINT"); assert.equal(await second.running, 130); }
+});
+
+test("trusted Core file 401 closes both proxy branches with login exit code", async () => {
+  const core = createServer((request, response) => {
+    if (request.url === "/api/v1/service-access") response.end(JSON.stringify({ version: 1, protocols: ["http"] }));
+    else if (request.url === "/api/v1/file-access") response.end(JSON.stringify({ version: 1, protocol: "webdav",
+      profile: "workspace-transfer-v1", available: true, reason: null,
+      rootTemplate: "/api/v1/works/{workId}/files/", limits: FILE_LIMITS }));
+    else { response.writeHead(401, { "content-type": "application/xml", "x-piwork-file-error": "AUTH_REQUIRED" });
+      response.end('<d:error xmlns:d="DAV:"/>'); }
+  });
+  await new Promise<void>((resolve) => core.listen(0, "127.0.0.1", resolve));
+  const coreAddress = core.address(); assert.ok(coreAddress && typeof coreAddress !== "string");
+  const free = createServer();
+  await new Promise<void>((resolve) => free.listen(0, "127.0.0.1", resolve));
+  const freeAddress = free.address(); assert.ok(freeAddress && typeof freeAddress !== "string");
+  const port = freeAddress.port;
+  await new Promise<void>((resolve) => free.close(() => resolve()));
+  const client = new RealPiworkClient({ coreUrl: `http://127.0.0.1:${coreAddress.port}`, token: "expired" });
+  let ready!: () => void;
+  const started = new Promise<void>((resolve) => { ready = resolve; });
+  let output = "";
+  const running = runServiceProxy(client, port, (message) => { output = message; ready(); });
+  await started;
+  const password = /WebDAV password: ([A-Za-z0-9_-]+)/.exec(output)?.[1];
+  assert.ok(password);
+  const req = httpRequest({ host: "127.0.0.1", port, path: "/works/work-test-12345678/files/a",
+    headers: { authorization: `Basic ${Buffer.from(`piwork:${password}`).toString("base64")}` } });
+  req.on("error", () => undefined);
+  req.end();
+  try { assert.equal(await running, 3); }
+  finally { req.destroy(); await new Promise<void>((resolve) => core.close(() => resolve())); }
 });
