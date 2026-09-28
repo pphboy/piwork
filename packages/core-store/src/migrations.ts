@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
+import { assignServiceDomainLabel, assignWorkNetworkName } from "./network-identities.js";
 
-export const CORE_SCHEMA_VERSION = 8;
+export const CORE_SCHEMA_VERSION = 9;
 
 interface Migration {
   readonly version: number;
@@ -419,6 +420,25 @@ const migrations: readonly Migration[] = [
       `CREATE INDEX pi_package_jobs_phase ON pi_package_jobs(phase, created_at)`,
     ],
   },
+  {
+    version: 9,
+    statements: [
+      `CREATE TABLE work_network_names (
+        work_id TEXT PRIMARY KEY REFERENCES works(id),
+        name TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      ) STRICT`,
+      `CREATE TABLE service_domain_labels (
+        work_id TEXT NOT NULL REFERENCES works(id),
+        service_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(work_id, service_id),
+        UNIQUE(work_id, label),
+        FOREIGN KEY(work_id, service_id) REFERENCES service_heads(work_id, service_id)
+      ) STRICT`,
+    ],
+  },
 ];
 
 export function migrateCoreDatabase(database: DatabaseSync): void {
@@ -429,7 +449,7 @@ export function migrateCoreDatabase(database: DatabaseSync): void {
   }
   if (hasMigrationTable) {
     const row = database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as { version: number };
-    if (row.version !== CORE_SCHEMA_VERSION) {
+    if (row.version !== CORE_SCHEMA_VERSION && row.version !== 8) {
       throw Object.assign(new Error("CORE_STORAGE_FORMAT_UNSUPPORTED: existing storage is not final V1"), { code: "CORE_STORAGE_FORMAT_UNSUPPORTED" });
     }
   }
@@ -446,6 +466,15 @@ export function migrateCoreDatabase(database: DatabaseSync): void {
     database.exec("BEGIN IMMEDIATE");
     try {
       for (const statement of migration.statements) database.exec(statement);
+      if (migration.version === 9) {
+        const works = database.prepare("SELECT id, created_at FROM works ORDER BY created_at, id").all() as Array<{ id: string; created_at: string }>;
+        for (const work of works) assignWorkNetworkName(database, work.id, work.created_at);
+        const services = database.prepare(`SELECT heads.work_id, heads.service_id, heads.name, revisions.created_at
+          FROM service_heads AS heads JOIN service_revisions AS revisions
+          ON revisions.work_id = heads.work_id AND revisions.service_id = heads.service_id AND revisions.revision = 1
+          ORDER BY revisions.created_at, heads.service_id`).all() as Array<{ work_id: string; service_id: string; name: string; created_at: string }>;
+        for (const service of services) assignServiceDomainLabel(database, service.work_id, service.service_id, service.name, service.created_at);
+      }
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(
         migration.version,
         new Date().toISOString(),

@@ -33,6 +33,8 @@ message ServiceDefinition {
   string restart_policy = 15;
 }
 message ServiceEndpoint { string name = 1; string protocol = 2; string host = 3; uint32 port = 4; string url = 5; }
+message ServiceAccessPort { string name = 1; uint32 port = 2; string url = 3; }
+message ServiceAccess { string hostname = 1; optional string default_url = 2; optional string default_port_name = 3; string status = 4; repeated ServiceAccessPort ports = 5; }
 message SafeError { string code = 1; string message = 2; string field = 3; string remediation = 4; string correlation_id = 5; }
 message ServiceView {
   string work_id = 1;
@@ -46,6 +48,7 @@ message ServiceView {
   repeated ServiceEndpoint endpoints = 9;
   optional SafeError last_error = 10;
   string created_at = 11;
+  ServiceAccess access = 12;
 }
 message OperationView {
   string operation_id = 1;

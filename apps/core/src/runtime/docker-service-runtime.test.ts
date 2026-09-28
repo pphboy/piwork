@@ -18,12 +18,13 @@ test("service adapter uses captured image, Work network alias, and only the gran
     async ensureContainer(spec: unknown) { captured = spec; return { containerId: "container-1", name: "service", created: true, specHash: "hash" }; },
     async startContainer() { return { exists: true, running: true, containerId: "container-1" }; },
   };
-  const adapter = new DockerServiceRuntimeAdapter(docker as never);
+  const adapter = new DockerServiceRuntimeAdapter(docker as never, { getWorkNetworkName: () => "w-a1b2c3d4" } as never);
   const definition = serviceDefinition();
   const image = await adapter.resolveImage(WORK_ID, definition);
   await adapter.prepare(WORK_ID, definition);
   await adapter.start(WORK_ID, definition, image);
   assert.equal(captured.image, image);
+  assert.equal(captured.displayName, "w-a1b2c3d4_notes");
   assert.deepEqual(captured.network, { name: "work-network", workId: WORK_ID, aliases: ["svc-notes"] });
   assert.equal(captured.user, "10001:10001");
   assert.equal(captured.workingDirectory, "/var/data/workspace");
@@ -37,8 +38,14 @@ test("service readiness distinguishes running, early exit, HTTP health, exec, an
   let inspection: any = { exists: true, running: true, containerId: "container-1", networkAddresses: { work: "127.0.0.1" } };
   let execCalls = 0;
   const docker = {
-    async inspectContainer() { return inspection; },
-    async execContainer() { execCalls += 1; return ""; },
+    async inspectContainer(_workId: string, _kind: string, _serviceId: string, timeoutMs: number) {
+      assert.equal(Number.isInteger(timeoutMs), true);
+      return inspection;
+    },
+    async execContainer(_workId: string, _kind: string, _serviceId: string, _command: string[], timeoutMs: number) {
+      assert.equal(Number.isInteger(timeoutMs), true);
+      execCalls += 1; return "";
+    },
   };
   const adapter = new DockerServiceRuntimeAdapter(docker as never);
   assert.equal(await adapter.waitReady(WORK_ID, serviceDefinition({ readiness: undefined }), 1_000), true);

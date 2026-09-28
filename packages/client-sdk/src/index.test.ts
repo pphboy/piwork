@@ -19,6 +19,7 @@ const service = {
   observedState: "failed", desiredRevision: 2, appliedRevision: null,
   lastError: { code: "FAILED", message: "password=sentinel", retryable: true, internal: "sentinel" },
   endpoints: [{ name: "http", protocol: "tcp", host: "svc-demo", port: 8000, url: "http://svc-demo:8000", private: "sentinel" }],
+  access: { hostname: "demo.w-a1b2c3d4.work", defaultUrl: "http://demo.w-a1b2c3d4.work/", defaultPortName: "http", status: "unavailable", ports: [{ name: "http", port: 8000, url: "http://demo.w-a1b2c3d4.work:8000/", private: "sentinel" }], private: "sentinel" },
   createdAt: "2026-09-23T00:00:00Z", definition: { environment: { SECRET: "sentinel" } }, extra: "sentinel",
 };
 
@@ -40,7 +41,9 @@ test("service SDK uses authenticated scoped routes, action bodies, and safe meta
   const shown = await client.workService("work/a", "service/?");
   assert.equal(shown.observedState, "failed");
   assert.equal(shown.appliedRevision, null);
-  assert.deepEqual(Object.keys(shown).sort(), ["workId", "serviceId", "name", "enabled", "observedState", "desiredRevision", "appliedRevision", "lastError", "endpoints", "createdAt"].sort());
+  assert.deepEqual(Object.keys(shown).sort(), ["workId", "serviceId", "name", "enabled", "observedState", "desiredRevision", "appliedRevision", "lastError", "endpoints", "access", "createdAt"].sort());
+  assert.equal("private" in shown.access, false);
+  assert.equal("private" in shown.access.ports[0]!, false);
   assert.deepEqual(shown.lastError, { code: "FAILED", message: "password=[REDACTED]", retryable: true });
   assert.equal(JSON.stringify(list).includes("sentinel"), false);
   assert.equal(JSON.stringify(shown).includes("sentinel"), false);

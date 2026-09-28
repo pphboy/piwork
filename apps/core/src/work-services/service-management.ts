@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { normalizeServiceDefinitionInput, type DiagnosticCode, type DiagnosticStage, type SafeDiagnostic, type ServiceDefinition, type ServiceDefinitionInput, type ServiceEndpoint } from "@piwork/contracts";
+import { normalizeServiceDefinitionInput, type DiagnosticCode, type DiagnosticStage, type SafeDiagnostic, type ServiceDefinition, type ServiceDefinitionInput, type ServiceEndpoint, type ServiceAccess } from "@piwork/contracts";
 import { CoreStore, IdempotencyConflictError, type ServiceRecord, type WorkRecord } from "@piwork/core-store";
 import { authorizeWorkResource, type UserPrincipal } from "../work-access/policy.js";
 import { emitDiagnostic, operationWithStage, safeDiagnostic, type JsonLineLogger } from "../work-management/diagnostics.js";
+import { ServiceDomainResolver } from "./service-domain-resolver.js";
 
 export type ServicePrincipal =
   | { readonly kind: "user"; readonly user: UserPrincipal }
@@ -26,6 +27,7 @@ export interface ServiceRuntimeAdapter {
   remove?(workId: string, definition: ServiceDefinition): Promise<void>;
   logs?(workId: string, serviceId: string, tailLines: number): Promise<{ readonly text: string; readonly truncated: boolean }>;
   inspect?(workId: string, serviceId: string): Promise<{ readonly exists: boolean; readonly running: boolean; readonly containerId?: string; readonly exitCode?: number }>;
+  routeTarget?(workId: string, serviceId: string): Promise<{ readonly address: string } | undefined>;
 }
 
 export interface AcceptedServiceOperation {
@@ -49,6 +51,7 @@ export interface ServiceView {
   readonly endpoints: readonly ServiceEndpoint[];
   readonly createdAt: string;
 }
+export type PublicServiceView = ServiceView & { readonly access: ServiceAccess };
 
 export class ServiceNameConflictError extends Error {
   readonly code = "CONFLICT";
@@ -90,6 +93,7 @@ export class WorkServiceManagementService {
   private admissionClosed = false;
   private reconciliationTimer?: NodeJS.Timeout;
   private reconciling = false;
+  readonly domainResolver: ServiceDomainResolver;
 
   constructor(
     private readonly store: CoreStore,
@@ -100,7 +104,10 @@ export class WorkServiceManagementService {
       hostMemoryBytes: 256 * 1_024 * 1_024 * 1_024,
     },
     private readonly diagnosticLogger?: JsonLineLogger,
-  ) {}
+  ) {
+    this.domainResolver = new ServiceDomainResolver(store, async (workId, serviceId) =>
+      runtime.inspect?.(workId, serviceId) ?? { exists: false, running: false });
+  }
 
   create(
     principal: ServicePrincipalInput,
@@ -191,6 +198,7 @@ export class WorkServiceManagementService {
           enabled, observed_state, tombstoned_at, last_error_json
         ) VALUES (?, ?, ?, 1, NULL, ?, 'pending', NULL, NULL)`,
         workId, serviceId, definition.name, definition.enabled ? 1 : 0);
+        tx.assignServiceDomainLabel(workId, serviceId, definition.name, now);
         tx.run(`INSERT INTO quota_reservations(
           work_id, subject_kind, subject_id, desired_cpu_millis, desired_memory_bytes,
           occupied_cpu_millis, occupied_memory_bytes, service_slots, volume_slots, updated_at
@@ -377,6 +385,11 @@ export class WorkServiceManagementService {
     return this.store.listServices(workId).map(toView);
   }
 
+  async listWithAccess(principal: ServicePrincipalInput, workId: string): Promise<PublicServiceView[]> {
+    const views = this.list(principal, workId);
+    return Promise.all(views.map(async (view) => ({ ...view, access: await this.domainResolver.describe(workId, view.serviceId) })));
+  }
+
   show(principal: ServicePrincipalInput, workId: string, serviceId: string): ServiceView {
     const work = this.store.getWork(workId);
     const service = this.store.getService(workId, serviceId);
@@ -393,6 +406,11 @@ export class WorkServiceManagementService {
     );
     if (service === undefined) throw new Error(`service ${serviceId} was not found`);
     return toView(service!);
+  }
+
+  async showWithAccess(principal: ServicePrincipalInput, workId: string, serviceId: string): Promise<PublicServiceView> {
+    const view = this.show(principal, workId, serviceId);
+    return { ...view, access: await this.domainResolver.describe(workId, serviceId) };
   }
 
   async waitForIdle(): Promise<void> {

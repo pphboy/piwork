@@ -33,6 +33,8 @@ import {
   validateResourcePolicy,
   WorkServiceAcceptanceCodec,
   WorkServiceCreateRequestCodec,
+  WorkServiceViewCodec,
+  ServiceAccessSchema,
   WorkServicesService,
 } from "./index.js";
 
@@ -299,6 +301,15 @@ test("work-services protobuf binding round trips without caller-controlled Work 
     correlationId: "operation-0199e6d8abcd", reused: false,
   };
   assert.deepEqual(WorkServiceAcceptanceCodec.decode(WorkServiceAcceptanceCodec.encode(acceptance).finish()), acceptance);
+  const access = { hostname: "notes.w-a1b2c3d4.work", defaultUrl: "http://notes.w-a1b2c3d4.work/",
+    defaultPortName: "http", status: "available", ports: [{ name: "http", port: 8080, url: "http://notes.w-a1b2c3d4.work:8080/" }] };
+  assert.equal(Check(ServiceAccessSchema, access), true);
+  assert.equal(Check(ServiceAccessSchema, { ...access, token: "secret" }), false);
+  const view = { workId: acceptance.workId, serviceId: acceptance.serviceId, name: "notes", desiredRevision: 1,
+    appliedRevision: 1, enabled: true, observedState: "ready", definition: request.definition,
+    endpoints: [{ name: "http", protocol: "tcp", host: "svc-notes", port: 8080, url: "" }],
+    lastError: undefined, createdAt: "2026-09-20T00:00:00Z", access };
+  assert.deepEqual(WorkServiceViewCodec.decode(WorkServiceViewCodec.encode(view).finish()), view);
   assert.deepEqual(Object.keys(WorkServicesService), [
     "getDeploymentContext", "createService", "listServices", "getService", "updateService", "startService",
     "stopService", "restartService", "removeService", "retryService", "getOperation", "readServiceLogs",

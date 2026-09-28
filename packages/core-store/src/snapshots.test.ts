@@ -37,7 +37,7 @@ test("schema7 Work storage is rejected before a package migration changes user d
   try {
     f.store.exec("PRAGMA foreign_keys = OFF");
     for (const table of ["pi_package_jobs", "pi_package_uploads", "pi_package_catalog", "pi_package_artifacts"]) f.store.exec(`DROP TABLE ${table}`);
-    f.store.exec("DELETE FROM schema_migrations WHERE version = 8; PRAGMA foreign_keys = ON");
+    f.store.exec("DELETE FROM schema_migrations WHERE version >= 8; PRAGMA foreign_keys = ON");
     f.store.close();
     assert.throws(() => CoreStore.open({ databasePath: f.path }), (error) => (error as { code?: string }).code === "CORE_STORAGE_FORMAT_UNSUPPORTED");
     const unchanged = new DatabaseSync(f.path, { readOnly: true });

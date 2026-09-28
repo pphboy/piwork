@@ -11,6 +11,7 @@ import { parseWorkJson, encodeWorkJson } from "./json.js";
 import { goldenWorkFixture } from "./fixture.js";
 import { WORK_PACKAGE_LIMITS } from "./limits.js";
 import { validatePiPackageArtifact } from "@piwork/pi-package";
+import { normalizeServiceDefinitionInput, type WorkControlHistory, type WorkSourceIdentityMap } from "@piwork/contracts";
 
 async function goldenBytes(): Promise<Buffer> {
   const { spec, data } = goldenWorkFixture();
@@ -30,6 +31,57 @@ test("golden .work round-trips with an empty blob and one-byte streaming reads",
     assert.equal(result.spec.activeContext, null);
     assert.deepEqual(result.spec, parseWorkJson(encodeWorkJson(goldenWorkFixture().spec)));
   } finally { await rm(folder, { recursive: true, force: true }); }
+});
+test("V1 HTTP service package preserves literal file and history URLs through import and re-export", async () => {
+  const sourceUrl = "http://worker.w-source123.work/api?q=1";
+  const fixture = goldenWorkFixture(Buffer.from(sourceUrl));
+  const spec = fixture.spec;
+  const replaceMetadata = (oldDigest: string, value: unknown, kind: "control-history" | "identity-map") => {
+    fixture.data.delete(oldDigest);
+    fixture.metadata.delete(oldDigest);
+    spec.blobs.splice(spec.blobs.findIndex((blob) => blob.digest === oldDigest), 1);
+    const bytes = encodeWorkJson(value), digest = createHash("sha256").update(bytes).digest("hex");
+    fixture.data.set(digest, bytes);
+    fixture.metadata.set(digest, value);
+    spec.blobs.push({ digest, size: bytes.length, kinds: [kind] });
+    spec.blobs.sort((a, b) => a.digest.localeCompare(b.digest));
+    return digest;
+  };
+  const history = fixture.metadata.get(spec.history.control) as WorkControlHistory;
+  history.operations[0]!.serviceId = "service-source-000001";
+  history.operations[0]!.requestJson = sourceUrl;
+  spec.history.control = replaceMetadata(spec.history.control, history, "control-history");
+  const identities = fixture.metadata.get(spec.history.sourceIdentityMap) as WorkSourceIdentityMap;
+  identities.services.push({ sourceId: "service-source-000001", key: "s-000001" });
+  spec.history.sourceIdentityMap = replaceMetadata(spec.history.sourceIdentityMap, identities, "identity-map");
+  const definition = normalizeServiceDefinitionInput({ name: "worker", image: { reference: "worker:fixed" }, command: "node",
+    workingDirectory: "/", enabled: true, ports: [{ name: "web", protocol: "tcp", containerPort: 80 }],
+    readiness: { kind: "http", portName: "web", path: "/health" } });
+  spec.services.push({ key: "s-000001", name: "worker", desiredRevision: 1, appliedRevision: 1, enabled: true, tombstonedAt: null,
+    revisions: [{ revision: 1, createdAt: spec.createdAt, definition, imageKey: "i-000001" }],
+    recovery: { count: 0, windowStartedAt: null, nextRetryAt: null, readySince: null },
+    sourceObservation: { state: "ready", lastError: null } });
+  spec.quotaReservations.push({ subjectKind: "service", subjectKey: "s-000001", desiredCpuMillis: 100,
+    desiredMemoryBytes: 67108864, serviceSlots: 1, volumeSlots: 0 });
+  spec.volumes[1]!.serviceRefKeys.push("s-000001");
+  const packageBytes = Buffer.from(await new Response(Readable.toWeb(Readable.from(encodeWorkPackage(spec,
+    (blob) => Readable.from([fixture.data.get(blob.digest)!])))) as ReadableStream<Uint8Array>).arrayBuffer());
+  const restored = new Map<string, Buffer>();
+  const importPackage = async (bytes: Buffer) => readWorkPackage(Readable.from([bytes]), { onBlob: async (blob, chunks) => {
+    const parts: Buffer[] = [];
+    for await (const chunk of chunks) parts.push(Buffer.from(chunk));
+    restored.set(blob.digest, Buffer.concat(parts));
+  } });
+  const first = await importPackage(packageBytes);
+  const second = await importPackage(packageBytes);
+  assert.equal(first.spec.services[0]!.enabled, true);
+  assert.equal(second.spec.services[0]!.name, "worker");
+  const reexport = Buffer.from(await new Response(Readable.toWeb(Readable.from(encodeWorkPackage(first.spec,
+    (blob) => Readable.from([restored.get(blob.digest)!])))) as ReadableStream<Uint8Array>).arrayBuffer());
+  const repeated = await importPackage(reexport);
+  assert.equal(restored.get(createHash("sha256").update(sourceUrl).digest("hex"))?.toString(), sourceUrl);
+  assert.equal((repeated.metadata.get(repeated.spec.history.control) as WorkControlHistory).operations[0]!.requestJson, sourceUrl);
+  assert.equal(reexport.equals(packageBytes), true);
 });
 test("strict JSON rejects duplicate/escaped keys, unsafe integers, invalid UTF-8 and excess depth", () => {
   for (const input of ['{"x":1,"x":2}', '{"x":1,"\\u0078":2}', "9007199254740992", "1e1000", "[1,]", "[01]", "true false", '"unterminated', "[".repeat(130) + "0" + "]".repeat(130)]) assert.throws(() => parseWorkJson(Buffer.from(input)));

@@ -176,6 +176,8 @@ npm run cli -- chat <workId> --session <sessionId> --message "Continue"
 
 After pi-agentd creates a service, use `piwork-cli work service list <workId>` to obtain its serviceId. The command group supports `show`, `start`, `stop`, `restart`, `retry`, `remove`, and bounded `logs`; creation and definition updates stay with pi-agentd. Controls support `--wait` and `--idempotency-key`, and global `--json` goes before `work`. Stop is persistent across Work restarts; remove preserves shared workspace data. See [service commands and recovery](docs/operations.md#manage-existing-work-services) for examples, log permissions, and Operation observation.
 
+Service list/show also returns `access.hostname`, `access.defaultUrl`, `access.ports`, and current availability. Start `piwork-cli proxy` in a separate terminal, then use the returned HTTP URL through `curl --proxy http://127.0.0.1:17890 http://<service>.<work-network-name>.work/`. Browsers can load the printed `/proxy.pac` URL. The proxy handles HTTP, SSE, and `ws://` WebSocket traffic; no Docker socket or host port is required on the CLI machine. See [CLI service proxy](docs/operations.md#access-work-service-web-apps-through-the-cli-proxy).
+
 ## Share a complete Work
 
 Stop the source Work, export one complete `.work` package, then import it as a new stopped Work under the recipient account:

@@ -6,6 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { createServer } from "node:net";
+import { request as httpRequest } from "node:http";
 import { packPiPackageDirectory } from "@piwork/pi-package";
 import { startPiPackageSources } from "./pi-package-sources.mjs";
 
@@ -23,6 +24,7 @@ const environment = scrubbedEnvironment({
   PIWORK_PACKAGE_HELPER_IMAGE: "piwork-agentd:acceptance",
 });
 let core;
+let proxy;
 let agentGrpcPort;
 let originalAcceptanceImage;
 let retagImage;
@@ -99,6 +101,16 @@ try {
   assert.equal(JSON.stringify(deployment).includes("work-services__service_create"), true, "tool trace must include MCP service_create");
   serviceId = serviceRecord(serviceWorkId).service_id;
   assert.equal(serviceRecord(serviceWorkId).observed_state, "ready");
+  const serviceView = firstJson(cli(["--json", "work", "service", "show", serviceWorkId, serviceId]));
+  const serviceHostname = serviceView.access.hostname;
+  assert.match(serviceHostname, /^demo\.w-[a-f0-9]{8,61}\.work$/);
+  assert.equal(serviceView.access.status, "available");
+  assert.equal(firstJson(cli(["--json", "work", "service", "list", serviceWorkId])).services[0].access.hostname, serviceHostname);
+  const proxyPort = await findAvailablePort();
+  proxy = await startProxy(originalUrl, proxyPort);
+  assert.equal(checked("curl", ["--silent", "--show-error", "--noproxy", "", "--proxy", `http://127.0.0.1:${proxyPort}`, `http://${serviceHostname}/health`]), "ok");
+  assert.equal(checked("curl", ["--silent", "--show-error", "--noproxy", "", "--proxy", `http://127.0.0.1:${proxyPort}`, `http://${serviceHostname}/events`]), "data: first\n\ndata: second\n\n");
+  assert.equal(await websocketEcho(proxyPort, serviceHostname, "acceptance-echo"), "acceptance-echo");
   serviceAgentBefore = dockerContainerKind(serviceWorkId, "agent");
   serviceContainerBefore = dockerContainerKind(serviceWorkId, "service");
   const serviceInspection = JSON.parse(checked("docker", ["inspect", serviceContainerBefore]))[0];
@@ -107,7 +119,10 @@ try {
   assert.equal(serviceInspection.Mounts.some((mount) => mount.Destination === "/var/data/workspace"), true);
   const counterBefore = serviceCounter(serviceAgentBefore);
   assert.equal(jsonLines(cli(["--json", "work", "stop", serviceWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(checked("curl", ["--silent", "--noproxy", "", "--proxy", `http://127.0.0.1:${proxyPort}`, "--output", "/dev/null", "--write-out", "%{http_code}", `http://${serviceHostname}/health`]), "503");
   assert.equal(jsonLines(cli(["--json", "work", "start", serviceWorkId, "--wait"])).at(-1).state, "succeeded");
+  assert.equal(firstJson(cli(["--json", "work", "service", "show", serviceWorkId, serviceId])).access.hostname, serviceHostname);
+  assert.equal(checked("curl", ["--silent", "--show-error", "--noproxy", "", "--proxy", `http://127.0.0.1:${proxyPort}`, `http://${serviceHostname}/health`]), "ok");
   assert.equal(dockerContainerKind(serviceWorkId, "service"), serviceContainerBefore);
   assert.equal(serviceCounter(dockerContainerKind(serviceWorkId, "agent")), counterBefore + 1);
   const importedSkill = join(temporary, "skills", "directory-derived");
@@ -423,6 +438,8 @@ try {
     .includes("package-tool-result:fixture_hello:v2:offline-dependency:started"));
   await stopCore(core);
   core = await startCore(Number(new URL(originalUrl).port));
+  assert.equal(firstJson(cli(["--json", "work", "service", "show", serviceWorkId, serviceId])).access.hostname, serviceHostname);
+  assert.equal(checked("curl", ["--silent", "--show-error", "--noproxy", "", "--proxy", `http://127.0.0.1:${proxyPort}`, `http://${serviceHostname}/health`]), "ok");
   assert.equal(firstJson(serveCli(["--core", originalUrl, "--data-dir", dataDirectory, "--json", "packages", "show", fixtureName])).sourceKind, "git");
   assert.ok(cli(["--json", "chat", fixtureWork, "--message", "invoke package tool fixture_hello"])
     .includes("package-tool-result:fixture_hello:v2:offline-dependency:started"));
@@ -439,6 +456,7 @@ try {
   assert.equal(dockerIds("volume", workId).length, 2, "delete retains private and workspace volumes by policy");
   process.stdout.write(`product acceptance passed: ${workId} ${sessionId}\n`);
 } finally {
+  if (proxy !== undefined) await stopProxy(proxy).catch(() => {});
   if (core !== undefined) await stopCore(core).catch(() => {});
   cleanupDocker();
   if (originalAcceptanceImage !== undefined && sourceFixture !== undefined) spawnSync("docker", ["tag", originalAcceptanceImage, sourceFixture.image], { cwd: root, encoding: "utf8" });
@@ -448,6 +466,51 @@ try {
 }
 
 function cli(args, input) { return checked("node", ["apps/cli/dist/main.js", ...args], input); }
+async function startProxy(coreUrl, port) {
+  const child = spawn("node", ["apps/cli/dist/main.js", "--core", coreUrl, "proxy", "--port", String(port)],
+    { cwd: root, env: environment, stdio: ["ignore", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+  const line = await Promise.race([
+    readLine(child.stdout),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("proxy startup timed out")), 20_000)),
+    new Promise((_, reject) => child.once("exit", (code) => reject(new Error(`proxy exited during startup (${code})`)))),
+  ]).catch((error) => { throw new Error(`${error.message}: ${safeFailure(stderr)}`); });
+  assert.equal(line, `Proxy: http://127.0.0.1:${port}`);
+  return { child, stderr: () => stderr };
+}
+async function stopProxy(value) {
+  value.child.kill("SIGINT");
+  const code = await Promise.race([
+    new Promise((resolve) => value.child.once("exit", resolve)),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("proxy shutdown timed out")), 20_000)),
+  ]);
+  assert.equal(code, 130);
+}
+async function websocketEcho(port, hostname, message) {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({ host: "127.0.0.1", port, path: `ws://${hostname}/ws`, headers: {
+      Host: hostname, Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13",
+    } });
+    request.once("upgrade", (_response, socket, head) => {
+      const bytes = Buffer.from(message);
+      const mask = Buffer.from([1, 2, 3, 4]);
+      const frame = Buffer.concat([Buffer.from([0x81, 0x80 | bytes.length]), mask,
+        Buffer.from(bytes.map((value, index) => value ^ mask[index % 4]))]);
+      const receive = (data) => {
+        const frame = Buffer.concat([head, data]);
+        if (frame.length < 2 + bytes.length) return;
+        socket.destroy();
+        resolve(frame.subarray(2, 2 + (frame[1] & 127)).toString());
+      };
+      socket.once("data", receive);
+      socket.write(frame);
+    });
+    request.once("response", (response) => reject(new Error(`WebSocket returned HTTP ${response.statusCode}`)));
+    request.once("error", reject);
+    request.end();
+  });
+}
 function serveCli(args, input) { return checked("node", ["apps/core/dist/cli.js", ...args], input); }
 function cliFailure(args, expectedStatus) {
   const result = spawnSync("node", ["apps/cli/dist/main.js", ...args], { cwd: root, env: environment, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });

@@ -12,6 +12,12 @@ import { createServiceMcpServer } from "./main.js";
 test("MCP exposes the exact Work-scoped service tools and maps calls to typed gRPC requests", async () => {
   let createRequest: Record<string, unknown> | undefined;
   const rpc = {
+    listServices(_request: unknown, _metadata: unknown, _options: unknown, done: (error: null, response: unknown) => void) {
+      done(null, { services: [{ serviceId: "service-one", endpoints: [{ host: "svc-demo", port: 8000 }],
+        access: { hostname: "demo.w-a1b2c3d4.work", defaultUrl: "http://demo.w-a1b2c3d4.work/", defaultPortName: "http", status: "available",
+          ports: [{ name: "http", port: 8000, url: "http://demo.w-a1b2c3d4.work:8000/" }] } }] });
+      return {} as ClientUnaryCall;
+    },
     getDeploymentContext(_request: unknown, done: (error: null, response: unknown) => void) {
       done(null, {
         workId: "work-current", workspacePath: "/var/data/workspace", workspaceWritable: true,
@@ -48,6 +54,11 @@ test("MCP exposes the exact Work-scoped service tools and maps calls to typed gR
     const context = await client.callTool({ name: "deployment_context", arguments: {} });
     assert.equal((context.structuredContent as Record<string, unknown>).totalMemoryBytes, "1610612736");
     assert.doesNotThrow(() => JSON.stringify(context.structuredContent));
+
+    const listed = await client.callTool({ name: "service_list", arguments: {} });
+    const listedService = ((listed.structuredContent as { services: unknown[] }).services[0]) as { access: { hostname: string }; endpoints: { host: string }[] };
+    assert.equal(listedService.access.hostname, "demo.w-a1b2c3d4.work");
+    assert.equal(listedService.endpoints[0]?.host, "svc-demo");
 
     const created = await client.callTool({
       name: "service_create",

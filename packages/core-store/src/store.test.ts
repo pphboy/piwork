@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +40,8 @@ test("empty database upgrades once and contains every durable Core entity", asyn
       "pi_package_artifacts",
       "pi_package_uploads",
       "pi_package_jobs",
+      "work_network_names",
+      "service_domain_labels",
     ]) {
       assert.match(tables?.names ?? "", new RegExp(`(?:^|,)${name}(?:,|$)`));
     }
@@ -53,6 +56,93 @@ test("empty database upgrades once and contains every durable Core entity", asyn
   } finally {
     await fixture.cleanup();
   }
+});
+
+test("network identities are stable, unique, and retain tombstoned labels", async () => {
+  const fixture = await createFixture();
+  try {
+    const store = CoreStore.open({ databasePath: fixture.databasePath });
+    const now = "2026-09-20T00:00:00Z";
+    store.exec(`INSERT INTO users VALUES ('owner', 'owner', 'digest', 'user', 1, '${now}', '${now}')`);
+    const first = "work-a1b2c3d4-0000-4000-8000-000000000001";
+    const second = "work-a1b2c3d4-0000-4000-8000-000000000002";
+    for (const id of [first, second]) {
+      store.exec(`INSERT INTO works(id,owner_user_id,name,desired_state,observed_state,desired_revision,control_version,created_at,updated_at)
+        VALUES ('${id}','owner','${id}','stopped','stopped',1,1,'${now}','${now}')`);
+    }
+    assert.equal(store.assignWorkNetworkName(first, now), "w-a1b2c3d4");
+    assert.equal(store.assignWorkNetworkName(second, now), "w-a1b2c3d40000");
+    assert.equal(store.assignWorkNetworkName(first, now), "w-a1b2c3d4");
+    store.exec(`INSERT INTO works(id,owner_user_id,name,desired_state,observed_state,desired_revision,control_version,created_at,updated_at)
+      VALUES ('work-legacy','owner','legacy','stopped','stopped',1,1,'${now}','${now}')`);
+    assert.equal(store.assignWorkNetworkName("work-legacy", now), `w-${createHash("sha256").update("work-legacy").digest("hex").slice(0, 8)}`);
+    const service = "service-1";
+    store.exec(`INSERT INTO service_heads VALUES ('${first}','${service}','demo-',1,NULL,0,'disabled',NULL,NULL)`);
+    assert.match(store.assignServiceDomainLabel(first, service, "demo-", now), /^demo-[a-f0-9]{8}$/);
+    const label = store.getServiceDomainLabel(first, service)!;
+    assert.equal(store.resolveServiceHostname(`${label}.w-a1b2c3d4.work`)?.workId, first);
+    assert.equal(store.resolveServiceHostname(`${label}.w-a1b2c3d4.work`)?.serviceId, service);
+    store.exec(`UPDATE service_heads SET tombstoned_at = '${now}' WHERE work_id = '${first}' AND service_id = '${service}'`);
+    assert.equal(store.resolveServiceHostname(`${label}.w-a1b2c3d4.work`), undefined);
+    store.exec(`INSERT INTO service_heads VALUES ('${first}','service-2','${label}',1,NULL,0,'disabled',NULL,NULL)`);
+    assert.notEqual(store.assignServiceDomainLabel(first, "service-2", label, now), label);
+    store.close();
+  } finally { await fixture.cleanup(); }
+});
+
+test("schema 8 network identity backfill is atomic and ordered", async () => {
+  const fixture = await createFixture();
+  try {
+    const now = "2026-09-20T00:00:00Z";
+    const store = CoreStore.open({ databasePath: fixture.databasePath });
+    store.exec(`INSERT INTO users VALUES ('owner', 'owner', 'digest', 'user', 1, '${now}', '${now}')`);
+    for (const [id, created] of [
+      ["work-a1b2c3d4-0000-4000-8000-000000000002", "2026-09-20T00:00:01Z"],
+      ["work-a1b2c3d4-0000-4000-8000-000000000001", now],
+    ]) store.exec(`INSERT INTO works(id,owner_user_id,name,desired_state,observed_state,desired_revision,control_version,created_at,updated_at)
+      VALUES ('${id}','owner','${id}','stopped','stopped',1,1,'${created}','${created}')`);
+    store.exec(`DROP TABLE service_domain_labels; DROP TABLE work_network_names; DELETE FROM schema_migrations WHERE version = 9`);
+    store.close();
+    const db = new DatabaseSync(fixture.databasePath);
+    db.exec(`CREATE TRIGGER block_nine BEFORE INSERT ON schema_migrations WHEN NEW.version = 9
+      BEGIN SELECT RAISE(ABORT, 'upgrade blocked'); END`);
+    db.close();
+    assert.throws(() => CoreStore.open({ databasePath: fixture.databasePath }), /upgrade blocked/);
+    const failed = new DatabaseSync(fixture.databasePath);
+    assert.equal((failed.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 8);
+    assert.equal((failed.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name = 'work_network_names'").get() as { count: number }).count, 0);
+    failed.exec("DROP TRIGGER block_nine");
+    failed.close();
+    const upgraded = CoreStore.open({ databasePath: fixture.databasePath });
+    assert.equal(upgraded.getWorkNetworkName("work-a1b2c3d4-0000-4000-8000-000000000001"), "w-a1b2c3d4");
+    assert.equal(upgraded.getWorkNetworkName("work-a1b2c3d4-0000-4000-8000-000000000002"), "w-a1b2c3d40000");
+    upgraded.close();
+  } finally { await fixture.cleanup(); }
+});
+
+test("concurrent Work accepts with the same display name keep distinct stable network names", async () => {
+  const fixture = await createFixture();
+  try {
+    const store = CoreStore.open({ databasePath: fixture.databasePath });
+    const now = "2026-09-20T00:00:00Z";
+    store.exec(`INSERT INTO users VALUES ('owner-a','a','digest','user',1,'${now}','${now}');
+      INSERT INTO users VALUES ('owner-b','b','digest','user',1,'${now}','${now}')`);
+    const ids = ["work-a1b2c3d4-0000-4000-8000-000000000001", "work-a1b2c3d4-0000-4000-8000-000000000002"];
+    const create = (index: number) => store.acceptMutation({ principalId: `owner-${index ? "b" : "a"}`, workScope: "new-work",
+      operationKind: "create-work", idempotencyKey: "create", requestDigest: "a".repeat(64), requestJson: "{}", targetVersion: 1, now }, (tx) => {
+      tx.run(`INSERT INTO works(id,owner_user_id,name,desired_state,observed_state,desired_revision,control_version,created_at,updated_at)
+        VALUES (?,?,'笔记项目','stopped','stopped',1,1,?,?)`, ids[index]!, `owner-${index ? "b" : "a"}`, now, now);
+      tx.assignWorkNetworkName(ids[index]!, now);
+      return { resourceId: ids[index]! };
+    });
+    const [first, second] = await Promise.all([Promise.resolve().then(() => create(0)), Promise.resolve().then(() => create(1))]);
+    assert.notEqual(store.getWorkNetworkName(first.resourceId), store.getWorkNetworkName(second.resourceId));
+    assert.equal(store.getWork(first.resourceId)?.name, "笔记项目");
+    assert.equal(store.getWork(second.resourceId)?.name, "笔记项目");
+    assert.equal(create(0).resourceId, first.resourceId);
+    assert.equal(store.getWorkNetworkName(first.resourceId), "w-a1b2c3d4");
+    store.close();
+  } finally { await fixture.cleanup(); }
 });
 
 test("service runtime binding and recovery state survive same-version reopen", async () => {

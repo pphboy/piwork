@@ -5,7 +5,7 @@ import { PiworkClient, type AcceptedServiceOperation } from "@piwork/client-sdk"
 import { executeWorkServiceCommand, parseWorkServiceCommand, type ServiceTiming } from "./work-service.js";
 
 const accepted: AcceptedServiceOperation = { workId: "w", serviceId: "s", operationId: "op", correlationId: "op", reused: false };
-const service = { workId: "w", serviceId: "s", name: "demo", enabled: true, observedState: "failed", desiredRevision: 2, appliedRevision: null, lastError: null, endpoints: [], createdAt: "now", definition: { environment: { KEY: "sentinel" } } };
+const service = { workId: "w", serviceId: "s", name: "demo", enabled: true, observedState: "failed", desiredRevision: 2, appliedRevision: null, lastError: null, endpoints: [], access: { hostname: "demo.w-a1b2c3d4.work", defaultUrl: null, defaultPortName: null, status: "unavailable", ports: [] }, createdAt: "now", definition: { environment: { KEY: "sentinel" } } };
 function operation(state: string) {
   return { operationId: "op", workId: "w", correlationId: "op", kind: "restart-service", state, createdAt: "now", updatedAt: "now", result: null, error: state === "failed" ? { stage: "service-start", code: "SERVICE_EXITED", message: "Failed", remediation: "Inspect logs" } : null, diagnostics: {} };
 }

@@ -80,6 +80,20 @@ export interface ServiceEndpoint {
   url: string;
 }
 
+export interface ServiceAccessPort {
+  name: string;
+  port: number;
+  url: string;
+}
+
+export interface ServiceAccess {
+  hostname: string;
+  defaultUrl?: string | undefined;
+  defaultPortName?: string | undefined;
+  status: string;
+  ports: ServiceAccessPort[];
+}
+
 export interface SafeError {
   code: string;
   message: string;
@@ -100,6 +114,7 @@ export interface ServiceView {
   endpoints: ServiceEndpoint[];
   lastError?: SafeError | undefined;
   createdAt: string;
+  access?: ServiceAccess | undefined;
 }
 
 export interface OperationView {
@@ -1256,6 +1271,248 @@ export const ServiceEndpoint: MessageFns<ServiceEndpoint> = {
   },
 };
 
+function createBaseServiceAccessPort(): ServiceAccessPort {
+  return { name: "", port: 0, url: "" };
+}
+
+export const ServiceAccessPort: MessageFns<ServiceAccessPort> = {
+  encode(message: ServiceAccessPort, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.port !== 0) {
+      writer.uint32(16).uint32(message.port);
+    }
+    if (message.url !== "") {
+      writer.uint32(26).string(message.url);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ServiceAccessPort {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseServiceAccessPort();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.name = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 16) {
+              break;
+            }
+
+            message.port = reader.uint32();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.url = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): ServiceAccessPort {
+    return {
+      name: isSet(object.name) ? globalThis.String(object.name) : "",
+      port: isSet(object.port) ? globalThis.Number(object.port) : 0,
+      url: isSet(object.url) ? globalThis.String(object.url) : "",
+    };
+  },
+
+  toJSON(message: ServiceAccessPort): unknown {
+    const obj: any = {};
+    if (message.name !== "") {
+      obj.name = message.name;
+    }
+    if (message.port !== 0) {
+      obj.port = Math.round(message.port);
+    }
+    if (message.url !== "") {
+      obj.url = message.url;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<ServiceAccessPort>): ServiceAccessPort {
+    return ServiceAccessPort.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ServiceAccessPort>): ServiceAccessPort {
+    const message = createBaseServiceAccessPort();
+    message.name = object.name ?? "";
+    message.port = object.port ?? 0;
+    message.url = object.url ?? "";
+    return message;
+  },
+};
+
+function createBaseServiceAccess(): ServiceAccess {
+  return { hostname: "", defaultUrl: undefined, defaultPortName: undefined, status: "", ports: [] };
+}
+
+export const ServiceAccess: MessageFns<ServiceAccess> = {
+  encode(message: ServiceAccess, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.hostname !== "") {
+      writer.uint32(10).string(message.hostname);
+    }
+    if (message.defaultUrl !== undefined) {
+      writer.uint32(18).string(message.defaultUrl);
+    }
+    if (message.defaultPortName !== undefined) {
+      writer.uint32(26).string(message.defaultPortName);
+    }
+    if (message.status !== "") {
+      writer.uint32(34).string(message.status);
+    }
+    for (const v of message.ports) {
+      ServiceAccessPort.encode(v!, writer.uint32(42).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ServiceAccess {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseServiceAccess();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.hostname = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.defaultUrl = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.defaultPortName = reader.string();
+            continue;
+          }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.status = reader.string();
+            continue;
+          }
+          case 5: {
+            if (tag !== 42) {
+              break;
+            }
+
+            message.ports.push(ServiceAccessPort.decode(reader, reader.uint32()));
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): ServiceAccess {
+    return {
+      hostname: isSet(object.hostname) ? globalThis.String(object.hostname) : "",
+      defaultUrl: isSet(object.defaultUrl)
+        ? globalThis.String(object.defaultUrl)
+        : isSet(object.default_url)
+        ? globalThis.String(object.default_url)
+        : undefined,
+      defaultPortName: isSet(object.defaultPortName)
+        ? globalThis.String(object.defaultPortName)
+        : isSet(object.default_port_name)
+        ? globalThis.String(object.default_port_name)
+        : undefined,
+      status: isSet(object.status) ? globalThis.String(object.status) : "",
+      ports: globalThis.Array.isArray(object?.ports) ? object.ports.map((e: any) => ServiceAccessPort.fromJSON(e)) : [],
+    };
+  },
+
+  toJSON(message: ServiceAccess): unknown {
+    const obj: any = {};
+    if (message.hostname !== "") {
+      obj.hostname = message.hostname;
+    }
+    if (message.defaultUrl !== undefined) {
+      obj.defaultUrl = message.defaultUrl;
+    }
+    if (message.defaultPortName !== undefined) {
+      obj.defaultPortName = message.defaultPortName;
+    }
+    if (message.status !== "") {
+      obj.status = message.status;
+    }
+    if (message.ports?.length) {
+      obj.ports = message.ports.map((e) => ServiceAccessPort.toJSON(e));
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<ServiceAccess>): ServiceAccess {
+    return ServiceAccess.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ServiceAccess>): ServiceAccess {
+    const message = createBaseServiceAccess();
+    message.hostname = object.hostname ?? "";
+    message.defaultUrl = object.defaultUrl ?? undefined;
+    message.defaultPortName = object.defaultPortName ?? undefined;
+    message.status = object.status ?? "";
+    message.ports = object.ports?.map((e) => ServiceAccessPort.fromPartial(e)) || [];
+    return message;
+  },
+};
+
 function createBaseSafeError(): SafeError {
   return { code: "", message: "", field: "", remediation: "", correlationId: "" };
 }
@@ -1406,6 +1663,7 @@ function createBaseServiceView(): ServiceView {
     endpoints: [],
     lastError: undefined,
     createdAt: "",
+    access: undefined,
   };
 }
 
@@ -1443,6 +1701,9 @@ export const ServiceView: MessageFns<ServiceView> = {
     }
     if (message.createdAt !== "") {
       writer.uint32(90).string(message.createdAt);
+    }
+    if (message.access !== undefined) {
+      ServiceAccess.encode(message.access, writer.uint32(98).fork()).join();
     }
     return writer;
   },
@@ -1548,6 +1809,14 @@ export const ServiceView: MessageFns<ServiceView> = {
             message.createdAt = reader.string();
             continue;
           }
+          case 12: {
+            if (tag !== 98) {
+              break;
+            }
+
+            message.access = ServiceAccess.decode(reader, reader.uint32());
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -1603,6 +1872,7 @@ export const ServiceView: MessageFns<ServiceView> = {
         : isSet(object.created_at)
         ? globalThis.String(object.created_at)
         : "",
+      access: isSet(object.access) ? ServiceAccess.fromJSON(object.access) : undefined,
     };
   },
 
@@ -1641,6 +1911,9 @@ export const ServiceView: MessageFns<ServiceView> = {
     if (message.createdAt !== "") {
       obj.createdAt = message.createdAt;
     }
+    if (message.access !== undefined) {
+      obj.access = ServiceAccess.toJSON(message.access);
+    }
     return obj;
   },
 
@@ -1664,6 +1937,9 @@ export const ServiceView: MessageFns<ServiceView> = {
       ? SafeError.fromPartial(object.lastError)
       : undefined;
     message.createdAt = object.createdAt ?? "";
+    message.access = (object.access !== undefined && object.access !== null)
+      ? ServiceAccess.fromPartial(object.access)
+      : undefined;
     return message;
   },
 };

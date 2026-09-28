@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ChannelCredentials, status, type ServiceError } from "@grpc/grpc-js";
-import { WorkServicesClient, type RpcDeploymentContext, type WorkConfig } from "@piwork/contracts";
+import { WorkServicesClient, normalizeServiceDefinitionInput, type RpcDeploymentContext, type RpcListServicesResponse, type WorkConfig } from "@piwork/contracts";
 import { CoreStore } from "@piwork/core-store";
 import { ensureCorePaths } from "../application/paths.js";
 import { ensureGenerationTlsIdentity } from "../runtime/mtls.js";
@@ -40,6 +40,10 @@ test("actual mTLS gRPC authenticates the current Work instance and fences stale 
     assert.equal(context.workId, WORK_ID);
     assert.equal(context.workspacePath, "/var/data/workspace");
     assert.equal(context.apiVersion, "v2");
+    const listed = await new Promise<RpcListServicesResponse>((resolve, reject) => client!.listServices({},
+      (error, response) => error === null ? resolve(response) : reject(error)));
+    assert.equal(listed.services[0]?.access?.hostname, `demo.${store.getWorkNetworkName(WORK_ID)}.work`);
+    assert.equal(listed.services[0]?.endpoints[0]?.host, "svc-demo");
     store.exec(`INSERT INTO works(id,owner_user_id,name,desired_state,observed_state,desired_revision,control_version,created_at,updated_at)
       VALUES ('work-foreign-00000001','user-owner','foreign','stopped','stopped',1,1,'${NOW}','${NOW}')`);
     store.exec(`INSERT INTO service_heads(work_id,service_id,name,desired_revision,applied_revision,enabled,observed_state,tombstoned_at,last_error_json)
@@ -109,6 +113,12 @@ function seedWork(store: CoreStore): void {
   store.exec(`INSERT INTO works(id, owner_user_id, name, desired_state, observed_state,
     desired_revision, active_revision, control_version, created_at, updated_at)
     VALUES ('${WORK_ID}', 'user-owner', 'grpc', 'running', 'ready', 1, 1, 1, '${NOW}', '${NOW}')`);
+  store.assignWorkNetworkName(WORK_ID, NOW);
+  const definition = { ...normalizeServiceDefinitionInput({ name: "demo", image: { reference: "python:3.13-slim" }, command: "python3",
+    workingDirectory: "/", enabled: false, ports: [{ name: "http", containerPort: 8000, protocol: "tcp" }] }), serviceId: "service-demo", revision: 1 };
+  store.exec(`INSERT INTO service_heads VALUES ('${WORK_ID}','service-demo','demo',1,NULL,0,'disabled',NULL,NULL);
+    INSERT INTO service_revisions VALUES ('${WORK_ID}','service-demo',1,'${JSON.stringify(definition)}',NULL,'${NOW}')`);
+  store.assignServiceDomainLabel(WORK_ID, "service-demo", "demo", NOW);
   store.exec(`INSERT INTO work_config_revisions(work_id, revision, config_json, created_by_user_id, created_at)
     VALUES ('${WORK_ID}', 1, '${JSON.stringify(configuration)}', 'user-owner', '${NOW}')`);
   store.exec(`INSERT INTO quota_reservations(work_id, subject_kind, subject_id, desired_cpu_millis,

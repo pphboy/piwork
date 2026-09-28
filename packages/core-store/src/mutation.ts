@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { SnapshotStoreError } from "./snapshot-errors.js";
+import { assignServiceDomainLabel, assignWorkNetworkName } from "./network-identities.js";
 
 export class IdempotencyConflictError extends Error {
   constructor(readonly idempotencyKey: string) {
@@ -51,6 +52,8 @@ export interface MutationContext {
   get<T>(sql: string, ...parameters: SQLInputValue[]): T | undefined;
   tombstoneWork(workId: string, deletedAt: string): void;
   tombstoneService(workId: string, serviceId: string, deletedAt: string): void;
+  assignWorkNetworkName(workId: string, now: string): string;
+  assignServiceDomainLabel(workId: string, serviceId: string, name: string, now: string): string;
 }
 
 interface IdempotencyRow {
@@ -158,5 +161,7 @@ export function createMutationContext(database: DatabaseSync, operationId: strin
         WHERE work_id = ? AND service_id = ? AND tombstoned_at IS NULL`).run(deletedAt, workId, serviceId);
       if (result.changes !== 1) throw new Error(`service ${serviceId} cannot be tombstoned`);
     },
+    assignWorkNetworkName(workId, now) { return assignWorkNetworkName(database, workId, now); },
+    assignServiceDomainLabel(workId, serviceId, name, now) { return assignServiceDomainLabel(database, workId, serviceId, name, now); },
   };
 }

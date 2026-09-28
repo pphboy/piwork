@@ -96,6 +96,18 @@ export const ServiceEndpointSchema = Type.Object({
   url: Type.Optional(Type.String({ maxLength: 2_048 })),
 }, { additionalProperties: false });
 
+export const ServiceAccessSchema = Type.Object({
+  hostname: Type.String({ minLength: 1, maxLength: 254 }),
+  defaultUrl: Type.Union([Type.String({ maxLength: 2_048 }), Type.Null()]),
+  defaultPortName: Type.Union([IdentifierSchema, Type.Null()]),
+  status: Type.Union([Type.Literal("available"), Type.Literal("unavailable"), Type.Literal("no-default-port")]),
+  ports: Type.Array(Type.Object({
+    name: IdentifierSchema,
+    port: Type.Integer({ minimum: 1, maximum: 65_535 }),
+    url: Type.String({ maxLength: 2_048 }),
+  }, { additionalProperties: false })),
+}, { additionalProperties: false });
+
 export class ServiceDefinitionValidationError extends Error {
   constructor(
     readonly field: string,
@@ -208,3 +220,4 @@ export type ServiceDefinition = Type.Static<typeof ServiceDefinitionSchema>;
 export type ServiceDefinitionInput = Type.Static<typeof ServiceDefinitionInputSchema>;
 export type NormalizedServiceDefinitionInput = Omit<ServiceDefinition, "serviceId" | "revision">;
 export type ServiceEndpoint = Type.Static<typeof ServiceEndpointSchema>;
+export type ServiceAccess = Type.Static<typeof ServiceAccessSchema>;

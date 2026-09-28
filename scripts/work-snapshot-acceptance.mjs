@@ -17,8 +17,9 @@ import { readWorkPackage } from "@piwork/work-package";
 import { packPiPackageDirectory } from "@piwork/pi-package";
 import { startPiPackageSources } from "./pi-package-sources.mjs";
 
+const helperReference = process.env.PIWORK_SNAPSHOT_HELPER_TEST_IMAGE?.trim();
+if (!helperReference) throw new Error("PIWORK_SNAPSHOT_HELPER_TEST_IMAGE is required; build the current Dockerfile.snapshot-helper image and set its tag before running snapshot acceptance");
 const command = promisify(execFile), root = await mkdtemp(join(process.env.PIWORK_SNAPSHOT_ACCEPTANCE_TEMP_PARENT ?? "/var/tmp", "piwork-snapshot-acceptance-"));
-const helperReference = process.env.PIWORK_SNAPSHOT_HELPER_TEST_IMAGE ?? "piwork-snapshot-helper:apply-context-20260923";
 const imageReference = process.env.PIWORK_SNAPSHOT_ACCEPTANCE_IMAGE ?? "python:3.13-slim";
 let agentReference = process.env.PIWORK_SNAPSHOT_ACCEPTANCE_AGENT_IMAGE ?? "piwork-agentd:acceptance";
 const fixtureId = randomUUID(), serviceImageReference = `unreachable.invalid/piwork/portable:${fixtureId}`;
@@ -335,6 +336,26 @@ async function runCode(site, workId, expected = 7) {
     imageId, "python", "-c", "print(open('/private/home-tool').read().strip())");
   assert.equal(privateResult, "private-tool-retained");
 }
+async function verifySourceUrlFile(site, workId, sourceUrl) {
+  const workspace = managedVolumeName(site.installationId, workId, "work-workspace");
+  await docker("run", "--rm", "--network", "none", "--mount", `type=volume,source=${workspace},target=/project`, imageId,
+    "python", "-c", "from pathlib import Path; import sys; assert Path('/project/service-url.txt').read_bytes() == sys.argv[1].encode()", sourceUrl);
+}
+async function verifySourceUrlPackage(path, sourceUrl) {
+  let fileFound = false;
+  const verified = await readWorkPackage(createReadStream(path), { onBlob: async (blob, chunks) => {
+    const parts = [];
+    for await (const chunk of chunks) if (blob.size <= 4096) parts.push(Buffer.from(chunk));
+    if (blob.kinds.includes("file") && Buffer.concat(parts).equals(Buffer.from(sourceUrl))) fileFound = true;
+  } });
+  assert.equal(verified.spec.formatVersion, 1);
+  assert.equal(verified.spec.services.some((service) => service.name === "web" && service.tombstonedAt === null), true);
+  assert.equal(fileFound, true, "source URL file bytes must survive the package");
+  const history = verified.metadata.get(verified.spec.history.control);
+  assert.equal(history.operations.some((operation) => operation.requestJson === sourceUrl), true,
+    "source URL history text must survive the package");
+  return verified.spec;
+}
 async function verifyWebService(site, workId) {
   let ready = false;
   for (let attempt = 0; attempt < 400; attempt++) {
@@ -457,7 +478,22 @@ try {
   const source = await installation("source", true), target = await installation("target", true), third = await installation("third", true);
   await installTargetCatalogFixture(source, false);
   const sourceId = await sourceWork(source);
+  const sourceWeb = source.app.store.listServices(sourceId, true).find((service) => service.name === "web");
+  assert.ok(sourceWeb);
+  const sourceNow = new Date().toISOString();
+  const sourceNetwork = source.app.store.assignWorkNetworkName(sourceId, sourceNow);
+  source.app.store.assignServiceDomainLabel(sourceId, sourceWeb.serviceId, "web", sourceNow);
+  const sourceUrl = `http://web.${sourceNetwork}.work/legacy?q=1`;
+  const sourceWorkspace = managedVolumeName(source.installationId, sourceId, "work-workspace");
+  await docker("run", "--rm", "--network", "none", "--mount", `type=volume,source=${sourceWorkspace},target=/project`, imageId,
+    "python", "-c", "from pathlib import Path; import sys; Path('/project/service-url.txt').write_bytes(sys.argv[1].encode())", sourceUrl);
+  const sourceHistory = source.app.store.acceptMutation({ principalId: source.app.store.listManagedUsers()[0].id, workId: sourceId,
+    workScope: sourceId, operationKind: "future-user-operation", idempotencyKey: `source-url-${randomUUID()}`,
+    requestDigest: createHash("sha256").update(sourceUrl).digest("hex"), requestJson: sourceUrl, targetVersion: 2, now: sourceNow },
+  () => ({ resourceId: sourceWeb.serviceId }));
+  source.app.store.updateOperation(sourceHistory.operationId, "succeeded", sourceNow);
   await runCode(source, sourceId);
+  await verifySourceUrlFile(source, sourceId, sourceUrl);
   await startWork(source, sourceId);
   const packageV1 = await packageFixture("1.0.0", "source-v1");
   assert.equal((await cli(source, "packages", "install", sourceId, packageV1, "--wait")).state, "succeeded");
@@ -518,7 +554,7 @@ try {
   const exported = await exportWorkViaCli(source, sourceId).catch((error) => {
     throw new Error(`source export failed: ${source.snapshotErrors.at(-1)?.stack ?? "no worker error"}`, { cause: error });
   });
-  const exportedSpec = (await readWorkPackage(createReadStream(exported.path))).spec;
+  const exportedSpec = await verifySourceUrlPackage(exported.path, sourceUrl);
   assert.deepEqual([...new Set(exportedSpec.piPackageArtifacts.filter((item) => item.name === fixturePackageName)
     .map((item) => item.sourceKind))].sort(), ["git", "local", "npm", "zip"]);
   source.app.packages.remove(portablePackageName);
@@ -583,6 +619,20 @@ try {
     "imported active context must retain the source tool denial");
   trackImportedVolumes(target, deniedTargetId);
   assert.notEqual(first, second);
+  const importedDomains = [];
+  for (const workId of [first, second]) {
+    const web = (await json(target, `/api/v1/works/${workId}/services`)).services.find((service) => service.name === "web");
+    assert.ok(web?.access?.hostname);
+    assert.equal(web.access.status, "unavailable", "an imported Work remains stopped");
+    importedDomains.push(web.access.hostname);
+    await verifySourceUrlFile(target, workId, sourceUrl);
+    const denied = await fetch(`${target.base}/api/v1/service-gateway/${web.access.hostname}/8000/`,
+      { headers: { "x-piwork-gateway-token": target.headers.authorization.slice(7) } });
+    assert.equal(denied.status, 503, "a stopped imported Work cannot serve its new domain");
+  }
+  assert.notEqual(importedDomains[0], importedDomains[1]);
+  assert.notEqual(importedDomains[0], new URL(sourceUrl).hostname);
+  assert.notEqual(importedDomains[1], new URL(sourceUrl).hostname);
   for (const workId of [first, second]) {
     const web = target.app.store.listServices(workId, true).find((item) => item.name === "web");
     assert.equal(web?.enabled, true); assert.equal(web?.observedState, "stopped");
@@ -616,6 +666,16 @@ try {
   await packageChat(target, first, "source-v1");
   await fixtureChat(target, first, "v1");
   await verifyWebService(target, first);
+  const firstWebAccess = (await json(target, `/api/v1/works/${first}/services`)).services.find((service) => service.name === "web").access;
+  const secondWebAccess = (await json(target, `/api/v1/works/${second}/services`)).services.find((service) => service.name === "web").access;
+  assert.equal(firstWebAccess.hostname, importedDomains[0]);
+  assert.equal(firstWebAccess.status, "no-default-port");
+  assert.equal(secondWebAccess.hostname, importedDomains[1]);
+  assert.equal(secondWebAccess.status, "unavailable", "starting one imported Work cannot expose the other");
+  const firstWebResponse = await fetch(`${target.base}/api/v1/service-gateway/${firstWebAccess.hostname}/8000/service-url.txt`,
+    { headers: { "x-piwork-gateway-token": target.headers.authorization.slice(7) } });
+  assert.equal(firstWebResponse.status, 200);
+  assert.equal(await firstWebResponse.text(), sourceUrl);
   const foreignTargetWebId = target.app.store.listServices(second, true).find((item) => item.name === "web")?.serviceId;
   assert.ok(foreignTargetWebId);
   const foreignBefore = target.app.store.getService(second, foreignTargetWebId, true);
@@ -675,6 +735,7 @@ try {
     assert.equal(target.app.store.listVolumeReferences(workId).filter((item) => item.consumerKind === "service").length, 2);
   }
   const reexported = await exportWork(target, first);
+  await verifySourceUrlPackage(reexported.path, sourceUrl);
   const thirdId = await importPackageViaCli(third, reexported.path);
   trackImportedVolumes(third, thirdId);
   await assertFixtureContexts(third, thirdId);

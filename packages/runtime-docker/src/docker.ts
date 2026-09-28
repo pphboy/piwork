@@ -28,6 +28,8 @@ export interface DockerContainerSpec {
   readonly workId: string;
   readonly kind: DockerResourceKind;
   readonly logicalId: string;
+  /** Core-authored display name for newly created service containers; excluded from spec identity. */
+  readonly displayName?: string;
   readonly image: string;
   readonly command?: readonly string[];
   readonly entrypoint?: readonly string[];
@@ -441,7 +443,10 @@ export class DockerRuntime {
     if (existing.length > 1) throw new Error(`multiple containers claim logical identity ${spec.logicalId}`);
     if (existing.length === 1) return this.adopt(existing[0]!, spec, specHash);
 
-    const name = containerName(this.installationId, spec);
+    if (spec.displayName !== undefined && (spec.kind !== "service" || !/^w-[a-f0-9]{8,61}_[a-z][a-z0-9-]{0,47}$/.test(spec.displayName) || spec.displayName.length > 128)) {
+      throw new Error("service container display name is invalid");
+    }
+    const name = spec.displayName ?? containerName(this.installationId, spec);
     const labels = {
       ["piwork.installation_id"]: this.installationId,
       [MANAGED_LABEL]: "true",
@@ -502,7 +507,7 @@ export class DockerRuntime {
     } catch (error) {
       if (!(error instanceof DockerRuntimeError) || !/already in use|Conflict/i.test(error.stderr)) throw error;
       const raced = await this.find(spec.workId, spec.kind, spec.logicalId);
-      if (raced.length !== 1) throw error;
+      if (raced.length !== 1) throw new DockerSpecConflictError(spec.logicalId);
       return this.adopt(raced[0]!, spec, specHash);
     }
   }
@@ -536,6 +541,15 @@ export class DockerRuntime {
       const inspection = await this.inspectNetwork(raced[0]!);
       return { networkId: inspection.Id, name: inspection.Name, created: false };
     }
+  }
+
+  /** Read-only network verification for service routing. Never creates a network. */
+  async inspectManagedWorkNetwork(workId: string): Promise<string | undefined> {
+    validateIdentity(workId, "workId");
+    const found = await this.findWorkNetworks(workId);
+    if (found.length !== 1) return undefined;
+    await this.assertManagedWorkNetwork(found[0]!, workId, workId);
+    return (await this.inspectNetwork(found[0]!)).Name;
   }
 
   async deleteWorkNetwork(workId: string): Promise<void> {

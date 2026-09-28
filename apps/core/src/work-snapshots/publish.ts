@@ -60,6 +60,7 @@ export function publishImportedWork(input: {
     if (temporary.desiredCpuMillis !== cpu || temporary.desiredMemoryBytes !== memory || temporary.occupiedCpuMillis !== 0 || temporary.occupiedMemoryBytes !== 0) invalid("quotaHold");
     tx.run(`INSERT INTO works(id,owner_user_id,name,desired_state,observed_state,desired_revision,active_revision,control_version,created_at,updated_at)
       VALUES (?,?,?,'stopped','stopped',?,?,1,?,?)`, targets.workId, job.ownerUserId, job.name, desiredRevision, activeRevision, now, now);
+    tx.assignWorkNetworkName(targets.workId, now);
     for (const image of spec.images) {
       const selection = images.get(image.key)!;
       store.snapshots.insertOwnedImage({ workId: targets.workId, selectionId: selection.selectionId, imageIdentity: image.imageId, sourceReference: image.imageId });
@@ -84,6 +85,7 @@ export function publishImportedWork(input: {
       tx.run(`INSERT INTO service_heads(work_id,service_id,name,desired_revision,applied_revision,enabled,observed_state,tombstoned_at,last_error_json)
         VALUES (?,?,?,?,?,?,?,?,NULL)`, targets.workId, serviceId, service.name, service.desiredRevision, service.appliedRevision,
         service.enabled && service.tombstonedAt === null ? 1 : 0, service.tombstonedAt !== null || !service.enabled ? "disabled" : "stopped", service.tombstonedAt);
+      tx.assignServiceDomainLabel(targets.workId, serviceId, service.name, now);
       const selectedRevision = service.appliedRevision ?? service.desiredRevision;
       const selected = service.revisions.find((revision) => revision.revision === selectedRevision)!;
       tx.run(`INSERT INTO service_runtime_bindings(work_id,service_id,revision,container_id,image_identity,recovery_count,recovery_window_started_at,next_retry_at,ready_since,updated_at)

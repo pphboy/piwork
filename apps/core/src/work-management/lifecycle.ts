@@ -147,6 +147,7 @@ export class WorkLifecycleService {
           id, owner_user_id, name, desired_state, observed_state,
           desired_revision, active_revision, control_version, created_at, updated_at
         ) VALUES (?, ?, ?, 'running', 'provisioning', 1, NULL, 1, ?, ?)`, workId, principal.userId, input.name, now, now);
+        tx.assignWorkNetworkName(workId, now);
         tx.run(`INSERT INTO work_config_revisions(
           work_id, revision, config_json, created_by_user_id, created_at,
           runtime_profile_json, source_runtime_revision

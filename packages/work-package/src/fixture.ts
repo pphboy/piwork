@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { WORK_BLOB_KINDS, type PortableWorkSpec, type WorkBlobKind, type WorkControlHistory, type WorkSourceIdentityMap } from "@piwork/contracts";
+import { WORK_BLOB_KINDS, normalizeServiceDefinitionInput, type PortableWorkSpec, type WorkBlobKind, type WorkControlHistory, type WorkSourceIdentityMap } from "@piwork/contracts";
 import { encodeWorkJson } from "./json.js";
 
 /** Deterministic fixture source; no Docker, SQLite or executable content is opened. */
-export function goldenWorkFixture(fileContent = Buffer.from("PRIVATE_CONTENT_SENTINEL")) {
+export function goldenWorkFixture(fileContent = Buffer.from("PRIVATE_CONTENT_SENTINEL"), serviceUrl?: string) {
   const data = new Map<string, Buffer>();
   const kinds = new Map<string, Set<WorkBlobKind>>();
   const add = (bytes: Buffer, kind: WorkBlobKind) => {
@@ -30,6 +30,11 @@ export function goldenWorkFixture(fileContent = Buffer.from("PRIVATE_CONTENT_SEN
       requestJson: "HISTORY_PRIVATE_SENTINEL", resultJson: null, errorJson: null, createdAt: now, updatedAt: now }], idempotency: [],
   };
   const identities: WorkSourceIdentityMap = { version: 1, sourceWorkId, contexts: [{ sourceId: "context-000000000001", key: "c-000001" }], services: [], operations: [{ sourceId: "operation-000000000001", key: "o-000001" }] };
+  if (serviceUrl) {
+    history.operations[0]!.serviceId = "service-source-000001";
+    history.operations[0]!.requestJson = serviceUrl;
+    identities.services.push({ sourceId: "service-source-000001", key: "s-000001" });
+  }
   const control = add(encodeWorkJson(history), "control-history"), sourceIdentityMap = add(encodeWorkJson(identities), "identity-map");
   const spec: PortableWorkSpec = {
     formatVersion: 1, snapshotKind: "cold-full", createdAt: now, sourceName: "golden",
@@ -46,5 +51,17 @@ export function goldenWorkFixture(fileContent = Buffer.from("PRIVATE_CONTENT_SEN
     history: { control, sourceIdentityMap },
     blobs: [...data].sort(([a], [b]) => a.localeCompare(b)).map(([digest, bytes]) => ({ digest, size: bytes.length, kinds: WORK_BLOB_KINDS.filter((kind) => kinds.get(digest)!.has(kind)) })),
   };
+  if (serviceUrl) {
+    const definition = normalizeServiceDefinitionInput({ name: "worker", image: { reference: "worker:fixed" }, command: "node",
+      workingDirectory: "/", enabled: true, ports: [{ name: "web", protocol: "tcp", containerPort: 80 }],
+      readiness: { kind: "http", portName: "web", path: "/health" } });
+    spec.services.push({ key: "s-000001", name: "worker", desiredRevision: 1, appliedRevision: 1, enabled: true, tombstonedAt: null,
+      revisions: [{ revision: 1, createdAt: now, definition, imageKey: "i-000001" }],
+      recovery: { count: 0, windowStartedAt: null, nextRetryAt: null, readySince: null },
+      sourceObservation: { state: "ready", lastError: null } });
+    spec.quotaReservations.push({ subjectKind: "service", subjectKey: "s-000001", desiredCpuMillis: 100,
+      desiredMemoryBytes: 67108864, serviceSlots: 1, volumeSlots: 0 });
+    spec.volumes[1]!.serviceRefKeys.push("s-000001");
+  }
   return { spec, data, metadata: new Map(spec.blobs.filter((blob) => blob.kinds.some((kind) => kind !== "file" && kind !== "image-layer")).map((blob) => [blob.digest, JSON.parse(data.get(blob.digest)!.toString()) as unknown])) };
 }

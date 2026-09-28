@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { request as httpRequest, type ClientRequest, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { createReadStream } from "node:fs";
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
@@ -35,6 +37,9 @@ export interface WorkServiceSummary {
   readonly appliedRevision: number | null;
   readonly lastError: { readonly code?: string; readonly message?: string; readonly retryable?: boolean } | null;
   readonly endpoints: readonly { readonly name: string; readonly protocol: string; readonly host: string; readonly port: number; readonly url?: string }[];
+  readonly access: { readonly hostname: string; readonly defaultUrl: string | null; readonly defaultPortName: string | null;
+    readonly status: "available" | "unavailable" | "no-default-port";
+    readonly ports: readonly { readonly name: string; readonly port: number; readonly url: string }[] };
   readonly createdAt: string;
 }
 export interface WorkServiceLogs {
@@ -283,6 +288,50 @@ export class PiworkClient {
     return this.adminRequest<AdminPackageOperation>("GET", `/operations/${encodeAdminPathSegment(operationId)}`, undefined, options);
   }
   health() { return this.request<{ status: string }>("GET", "/healthz"); }
+  gatewayCapability() { return this.request<{ version: number; protocols: string[] }>("GET", "/api/v1/service-access"); }
+
+  async resolveService(hostname: string, port: number): Promise<{ hostname: string; workId: string; serviceId: string; port: number }> {
+    const token = this.options.token;
+    if (!token) throw new PiworkApiError(401, "AUTH_REQUIRED", "authentication is required");
+    const url = new URL(`/api/v1/service-access/resolve?hostname=${encodeURIComponent(hostname)}&port=${port}`, normalizedUrl(this.options.coreUrl));
+    let response: Response;
+    try { response = await this.requestFetch(url, { headers: { "x-piwork-gateway-token": token } }); }
+    catch { throw new PiworkApiError(0, "NETWORK_ERROR", "Core is unavailable"); }
+    const body = await boundedText(response, 32_768);
+    let value: any;
+    try { value = JSON.parse(body); } catch { throw new PiworkApiError(response.status, "MALFORMED_RESPONSE", "Core returned malformed JSON"); }
+    if (!response.ok) throw new PiworkApiError(response.status, String(value?.code ?? "REQUEST_FAILED"), String(value?.message ?? "service resolution failed"));
+    return value;
+  }
+
+  gatewayRequest(input: { hostname: string; port: number; path: string; method: string; headers: IncomingHttpHeaders },
+    onResponse?: (response: IncomingMessage) => void): ClientRequest {
+    const token = this.options.token;
+    if (!token) throw new PiworkApiError(401, "AUTH_REQUIRED", "authentication is required");
+    const core = normalizedUrl(this.options.coreUrl);
+    const headers: Record<string, string | string[]> = {};
+    for (const [name, value] of Object.entries(input.headers)) {
+      if (value === undefined || name.startsWith("proxy-") || name.startsWith("x-piwork-gateway-")) continue;
+      headers[name] = value;
+    }
+    headers["x-piwork-gateway-token"] = token;
+    delete headers.host;
+    const path = `/api/v1/service-gateway/${input.hostname}/${input.port}${input.path.startsWith("/") ? input.path : `/${input.path}`}`;
+    const send = core.protocol === "https:" ? httpsRequest : httpRequest;
+    const request = send({ protocol: core.protocol, hostname: core.hostname, port: core.port || undefined,
+      path, method: input.method, headers, agent: false }, onResponse);
+    const timer = setTimeout(() => request.destroy(new Error("Core connection timed out")), 10_000);
+    timer.unref();
+    const clear = () => clearTimeout(timer);
+    request.once("socket", (socket) => {
+      if (!socket.connecting && core.protocol === "http:") clear();
+      else socket.once(core.protocol === "https:" ? "secureConnect" : "connect", clear);
+    });
+    request.once("error", clear);
+    request.once("response", clear);
+    request.once("upgrade", clear);
+    return request;
+  }
   readiness() { return this.request<{ status: string; reason?: string }>("GET", "/readyz"); }
   controlStatus() { return this.request<Record<string, unknown>>("GET", "/control/status"); }
   bootstrapAdministrator(account: string, password: string) { return this.request<Record<string, unknown>>("POST", "/control/admin/bootstrap", { account, password }); }
@@ -545,6 +594,13 @@ function serviceSummary(value: WorkServiceSummary): WorkServiceSummary {
       ...(typeof error.retryable === "boolean" ? { retryable: error.retryable } : {}),
     },
     endpoints: value.endpoints.map(({ name, protocol, host, port, url }) => ({ name, protocol, host, port, ...(url === undefined ? {} : { url }) })),
+    access: {
+      hostname: value.access.hostname,
+      defaultUrl: value.access.defaultUrl,
+      defaultPortName: value.access.defaultPortName,
+      status: value.access.status,
+      ports: value.access.ports.map(({ name, port, url }) => ({ name, port, url })),
+    },
     createdAt: value.createdAt,
   };
 }

@@ -184,7 +184,7 @@ function deterministicDeployment(
       path: "apps/demo/server.py",
       content: `from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import json, os, threading
+import base64, hashlib, json, os, struct, threading
 
 DATA = Path("/var/data/workspace/data/demo/counter.json")
 LOCK = threading.Lock()
@@ -192,6 +192,32 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             body = b"ok"
+        elif self.path == "/events":
+            body = b"data: first\\n\\ndata: second\\n\\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body[:13]); self.wfile.flush()
+            self.wfile.write(body[13:]); self.wfile.flush()
+            return
+        elif self.path == "/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
+            key = self.headers["Sec-WebSocket-Key"]
+            accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+            self.send_response(101)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.end_headers()
+            head = self.rfile.read(2)
+            size = head[1] & 127
+            if size == 126: size = struct.unpack("!H", self.rfile.read(2))[0]
+            elif size == 127: size = struct.unpack("!Q", self.rfile.read(8))[0]
+            mask = self.rfile.read(4)
+            payload = self.rfile.read(size)
+            echo = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+            self.wfile.write(bytes([0x81, len(echo)]) + echo); self.wfile.flush()
+            return
         else:
             with LOCK:
                 DATA.parent.mkdir(parents=True, exist_ok=True)

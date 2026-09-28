@@ -35,6 +35,7 @@ test("service create persists revision, Operation, and quota reservation before 
       assert.deepEqual(retried.body, { ...created.body, reused: true });
 
       const serviceId = String(created.body.serviceId);
+      assert.equal(store.getServiceDomainLabel(WORK_ID, serviceId), "notes");
       const operationId = String(created.body.operationId);
       await runtime.started;
       assert.equal(runtime.starts, 1);
@@ -73,6 +74,7 @@ test("service create persists revision, Operation, and quota reservation before 
       assert.equal(operation.status, 200);
       assert.equal(operation.body.state, "succeeded");
       const shown = await request(base, "owner", "GET", `/works/${WORK_ID}/services/${serviceId}`);
+      assert.equal((shown.body.access as { hostname: string }).hostname, `notes.${store.getWorkNetworkName(WORK_ID)}.work`);
       assert.equal(shown.body.observedState, "ready");
       assert.equal(shown.body.desiredRevision, 1);
       assert.equal(shown.body.appliedRevision, 1);
@@ -603,6 +605,7 @@ async function withFixture(
     id, owner_user_id, name, desired_state, observed_state,
     desired_revision, active_revision, control_version, created_at, updated_at
   ) VALUES ('${WORK_ID}', 'user-owner', 'fixture', 'running', 'ready', 1, 1, 1, '${NOW}', '${NOW}')`);
+  store.assignWorkNetworkName(WORK_ID, NOW);
   const configuration = workConfig();
   store.exec(`INSERT INTO quota_reservations(
     work_id, subject_kind, subject_id, desired_cpu_millis, desired_memory_bytes,

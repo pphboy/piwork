@@ -12,6 +12,7 @@ import {
 import { StoreLock } from "./store-lock.js";
 import { SnapshotStore } from "./snapshots.js";
 import { PiPackageStore } from "./pi-packages.js";
+import { assignServiceDomainLabel, assignWorkNetworkName } from "./network-identities.js";
 
 export { CORE_SCHEMA_VERSION };
 
@@ -522,6 +523,37 @@ export class CoreStore {
   ): AcceptedMutation {
     this.assertOpen();
     return acceptMutation(this.database, request, effect);
+  }
+
+  /** Identity assignment must run within an existing write transaction for atomic creation. */
+  assignWorkNetworkName(workId: string, now: string): string {
+    this.assertOpen();
+    return assignWorkNetworkName(this.database, workId, now);
+  }
+
+  assignServiceDomainLabel(workId: string, serviceId: string, name: string, now: string): string {
+    this.assertOpen();
+    return assignServiceDomainLabel(this.database, workId, serviceId, name, now);
+  }
+
+  getWorkNetworkName(workId: string): string | undefined {
+    this.assertOpen();
+    return (this.database.prepare("SELECT name FROM work_network_names WHERE work_id = ?").get(workId) as { name: string } | undefined)?.name;
+  }
+
+  getServiceDomainLabel(workId: string, serviceId: string): string | undefined {
+    this.assertOpen();
+    return (this.database.prepare("SELECT label FROM service_domain_labels WHERE work_id = ? AND service_id = ?")
+      .get(workId, serviceId) as { label: string } | undefined)?.label;
+  }
+
+  resolveServiceHostname(hostname: string): { workId: string; serviceId: string } | undefined {
+    this.assertOpen();
+    return this.database.prepare(`SELECT labels.work_id AS workId, labels.service_id AS serviceId
+      FROM service_domain_labels AS labels JOIN work_network_names AS works ON works.work_id = labels.work_id
+      JOIN service_heads AS heads ON heads.work_id = labels.work_id AND heads.service_id = labels.service_id
+      WHERE labels.label || '.' || works.name || '.work' = ? AND heads.tombstoned_at IS NULL`)
+      .get(hostname) as { workId: string; serviceId: string } | undefined;
   }
 
   createInitialAdministrator(record: InitialAdministratorRecord): void {

@@ -6,16 +6,19 @@ import { join } from "node:path";
 import test from "node:test";
 import { CoreStore } from "@piwork/core-store";
 import { managedVolumeName, type SnapshotHelperSpec } from "@piwork/runtime-docker";
-import { encodeWorkPackage } from "@piwork/work-package";
+import { encodeWorkPackage, readWorkPackage } from "@piwork/work-package";
+import { Readable } from "node:stream";
 import { goldenWorkFixture } from "../../../../packages/work-package/dist/fixture.js";
 import { registerRuntimeProfileCatalog } from "../configuration/runtime-catalog.js";
 import { RuntimeProfileStore } from "../configuration/runtime-profile.js";
 import { WorkContextStore } from "../configuration/work-context.js";
 import { WorkSnapshotAdmission } from "./admission.js";
 import { executeImportSnapshot } from "./import-worker.js";
+import { ServiceDomainResolver } from "../work-services/service-domain-resolver.js";
+import { WorkServiceManagementService } from "../work-services/service-management.js";
 
 const NOW = "2026-09-23T00:00:00.000Z", OWNER = "owner-000000000001", INSTALLATION = "install-000000000001";
-async function fixture() {
+async function fixture(serviceUrl?: string) {
   const root = mkdtempSync(join(tmpdir(), "piwork-import-worker-")), snapshotsDirectory = join(root, "snapshots");
   mkdirSync(join(root, "secrets")); mkdirSync(join(snapshotsDirectory, "packages"), { recursive: true });
   const store = CoreStore.open({ databasePath: join(root, "core.sqlite") }), contexts = new WorkContextStore(join(root, "contexts"));
@@ -23,7 +26,7 @@ async function fixture() {
   const profiles = new RuntimeProfileStore(join(root, "runtime.json"), join(root, "secrets"), () => new Date(NOW));
   profiles.configure({ agentImage: "recipient:default", provider: "deterministic", model: "test", credential: "RECIPIENT_CREDENTIAL" });
   registerRuntimeProfileCatalog(store, profiles.load());
-  const golden = goldenWorkFixture(); const chunks: Buffer[] = [];
+  const golden = goldenWorkFixture(serviceUrl ? Buffer.from(serviceUrl) : undefined, serviceUrl); const chunks: Buffer[] = [];
   for await (const chunk of encodeWorkPackage(golden.spec, async function* (blob) { yield golden.data.get(blob.digest)!; })) chunks.push(Buffer.from(chunk));
   const bytes = Buffer.concat(chunks), digest = createHash("sha256").update(bytes).digest("hex"), packageId = "package-000000000001";
   writeFileSync(join(snapshotsDirectory, "packages", `${packageId}.work`), bytes);
@@ -51,11 +54,52 @@ async function fixture() {
     },
     async removeSnapshotHelper(name: string) { helpers.delete(name); },
   };
-  return { root, snapshotsDirectory, store, contexts, profiles, accepted, runtime, helpers, volumes,
+  return { root, snapshotsDirectory, store, contexts, profiles, accepted, runtime, helpers, volumes, golden, bytes, packageId, digest, admission,
     fail() { failRestore = true; }, failVolume() { failVolumeCreate = true; },
     setHostArchitecture(value: string) { hostArchitecture = value; },
     close() { store.close(); rmSync(root, { recursive: true, force: true }); } };
 }
+
+test("one V1 service package imports twice with isolated domains, stopped access, and literal source URLs", async () => {
+  const sourceUrl = "http://worker.w-source123.work/api?q=1";
+  const f = await fixture(sourceUrl);
+  const runImport = (operationId: string) => executeImportSnapshot({ store: f.store, contexts: f.contexts, profiles: f.profiles, runtime: f.runtime,
+    installationId: INSTALLATION, helperImageId: `sha256:${"f".repeat(64)}`, snapshotsDirectory: f.snapshotsDirectory,
+    operationId, epoch: 1, now: () => new Date(NOW) });
+  try {
+    const firstId = await runImport(f.accepted.operationId);
+    const second = f.admission.import({ userId: OWNER, role: "user" },
+      { packageId: f.packageId, name: "copied-twice", idempotencyKey: "import-key-2" },
+      { spec: f.golden.spec, digest: f.digest, size: f.bytes.length, restoredBytes: 0, entryCount: 0, metadata: f.golden.metadata });
+    const secondId = await runImport(second.operationId);
+    const services = new WorkServiceManagementService(f.store, { inspect: async () => ({ exists: true, running: true }) } as never);
+    const resolver = new ServiceDomainResolver(f.store, async () => ({ exists: true, running: true }));
+    const principal = { userId: OWNER, role: "user" as const };
+    const first = (await services.listWithAccess(principal, firstId))[0]!;
+    const other = (await services.listWithAccess(principal, secondId))[0]!;
+    assert.notEqual(first.access.hostname, other.access.hostname);
+    for (const [workId, view] of [[firstId, first], [secondId, other]] as const) {
+      assert.equal(view.access.status, "unavailable");
+      assert.equal((await services.showWithAccess(principal, workId, view.serviceId)).access.hostname, view.access.hostname);
+      await assert.rejects(resolver.resolveTarget(view.access.hostname, 80), { code: "SERVICE_UNAVAILABLE" });
+      assert.match(f.store.snapshots.listHistory(workId)[0]!.recordJson, /http:\/\/worker\.w-source123\.work\/api\?q=1/);
+    }
+    f.store.exec(`UPDATE works SET desired_state='running', observed_state='ready' WHERE id='${firstId}';
+      UPDATE service_heads SET observed_state='ready' WHERE work_id='${firstId}'`);
+    assert.equal((await services.showWithAccess(principal, firstId, first.serviceId)).access.status, "available");
+    assert.equal((await services.showWithAccess(principal, secondId, other.serviceId)).access.status, "unavailable");
+    await assert.rejects(resolver.resolveTarget(other.access.hostname, 80), { code: "SERVICE_UNAVAILABLE" });
+    const restored = new Map<string, Buffer>();
+    const imported = await readWorkPackage(Readable.from([f.bytes]), { onBlob: async (blob, stream) => {
+      const parts: Buffer[] = []; for await (const chunk of stream) parts.push(Buffer.from(chunk));
+      restored.set(blob.digest, Buffer.concat(parts));
+    } });
+    const reexport: Buffer[] = [];
+    for await (const chunk of encodeWorkPackage(imported.spec, async function* (blob) { yield restored.get(blob.digest)!; })) reexport.push(Buffer.from(chunk));
+    assert.deepEqual(Buffer.concat(reexport), f.bytes);
+    assert.equal(restored.get(createHash("sha256").update(sourceUrl).digest("hex"))?.toString(), sourceUrl);
+  } finally { f.close(); }
+});
 
 test("verified package stages two new volumes and publishes one stopped Work without starting runtime", async () => {
   const f = await fixture();

@@ -20,7 +20,7 @@ import {
   type SubmitRunResponse,
 } from "@piwork/contracts";
 import { resolveBuiltInWorkTools } from "@piwork/contracts";
-import type { WorkRecord } from "@piwork/core-store";
+import type { CoreStore, WorkRecord } from "@piwork/core-store";
 import { DockerRuntime, managedVolumeName } from "@piwork/runtime-docker";
 import type { ResolvedWorkRuntimeConfiguration, WorkRuntimeAdapter, WorkRuntimeState } from "../work-management/lifecycle.js";
 import type { CorePaths } from "../application/paths.js";
@@ -107,7 +107,7 @@ export class DockerWorkRuntimeAdapter implements WorkRuntimeAdapter, Conversatio
     if (!image.imageId.startsWith("sha256:")) throw new Error("agent image has no immutable Docker identity");
   }
 
-  serviceRuntime(): DockerServiceRuntimeAdapter { return new DockerServiceRuntimeAdapter(this.docker); }
+  serviceRuntime(store?: CoreStore): DockerServiceRuntimeAdapter { return new DockerServiceRuntimeAdapter(this.docker, store); }
 
   async resolveImageIdentity(reference: string): Promise<string> {
     const image = await this.docker.prepareImage(reference);

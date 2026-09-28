@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DockerRuntime,
+  DockerRuntimeError,
+  DockerSpecConflictError,
   type DockerCommandRunner,
 } from "./docker.js";
 
@@ -34,6 +36,42 @@ test("Docker inspection parses adoption fields and handles missing and ambiguous
     new DockerRuntime(installationId, runner(["one", "two"], inspection())).inspectContainer(workId, "agent", logicalId),
     /multiple containers claim logical identity/,
   );
+});
+
+test("display name changes do not replace a label-matched legacy service and foreign names conflict", async () => {
+  let labels: Record<string, string> | undefined;
+  let createdName: string | undefined;
+  const runner: DockerCommandRunner = { async run(args) {
+    if (args[0] === "container" && args[1] === "ls") return labels ? "old-container\n" : "";
+    if (args[0] === "container" && args[1] === "create") {
+      createdName = args[args.indexOf("--name") + 1];
+      labels = {};
+      for (let index = 0; index < args.length; index++) if (args[index] === "--label") {
+        const item = args[index + 1]!;
+        labels[item.slice(0, item.indexOf("="))] = item.slice(item.indexOf("=") + 1);
+      }
+      return "old-container";
+    }
+    if (args[0] === "container" && args[1] === "inspect") return JSON.stringify([{
+      Id: "old-container", Name: `/${createdName}`, Image: "sha256:image", Config: { Labels: labels, User: "65532:65532" },
+      State: { Running: true, Status: "running", ExitCode: 0 }, Mounts: [], NetworkSettings: { Networks: {} },
+    }]);
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  } };
+  const runtime = new DockerRuntime(installationId, runner);
+  const spec = { workId, kind: "service" as const, logicalId: "service-demo", image: "sha256:image" };
+  const original = await runtime.ensureContainer(spec);
+  assert.equal(original.created, true);
+  const adopted = await runtime.ensureContainer({ ...spec, displayName: "w-a1b2c3d4_demo" });
+  assert.equal(adopted.created, false);
+  assert.equal(adopted.name, original.name);
+
+  const foreign = new DockerRuntime(installationId, { async run(args) {
+    if (args[0] === "container" && args[1] === "ls") return "";
+    if (args[0] === "container" && args[1] === "create") throw new DockerRuntimeError("name in use", args, "Conflict. The container name is already in use", 125);
+    throw new Error(`unexpected Docker command: ${args.join(" ")}`);
+  } });
+  await assert.rejects(foreign.ensureContainer({ ...spec, displayName: "w-a1b2c3d4_demo" }), DockerSpecConflictError);
 });
 
 test("Docker inspection rejects cross-installation and mismatched Work identities", async () => {
@@ -126,6 +164,13 @@ test("container creation emits trusted workdir/control route and keeps service p
     workId, kind: "service", logicalId: "service-control", image: "sha256:image",
     controlHost: { hostname: "piwork-core", address: "host-gateway" },
   }), /restricted to agent/);
+  await runtime.ensureContainer({
+    workId, kind: "service", logicalId: "service-notes", image: "sha256:image",
+    displayName: "w-a1b2c3d4_notes",
+  });
+  const serviceCreate = calls.filter((args) => args[1] === "create").at(-1)!;
+  assert.deepEqual(serviceCreate.slice(0, 4), ["container", "create", "--name", "w-a1b2c3d4_notes"]);
+  assert.equal(serviceCreate.includes("--publish"), false);
 });
 
 test("managed volume mounts preserve initialized ownership and contents", async () => {

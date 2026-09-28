@@ -57,7 +57,7 @@ async function route(
   }
   if (segments[2] === "works" && segments[4] === "services" && segments.length === 5 && request.method === "GET") {
     if (services === undefined) return json(response, 404, { code: "NOT_FOUND", message: "route not found" });
-    return json(response, 200, { services: services.list(principal, segments[3]!) });
+    return json(response, 200, { services: await services.listWithAccess(principal, segments[3]!) });
   }
   if (segments[2] === "works" && segments[4] === "services" && segments.length === 5 && request.method === "POST") {
     if (services === undefined) return json(response, 404, { code: "NOT_FOUND", message: "route not found" });
@@ -70,7 +70,7 @@ async function route(
   }
   if (segments[2] === "works" && segments[4] === "services" && segments.length === 6 && request.method === "GET") {
     if (services === undefined) return json(response, 404, { code: "NOT_FOUND", message: "route not found" });
-    return json(response, 200, services.show(principal, segments[3]!, segments[5]!));
+    return json(response, 200, await services.showWithAccess(principal, segments[3]!, segments[5]!));
   }
   if (segments[2] === "works" && segments[4] === "services" && segments.length === 6 && request.method === "PATCH") {
     if (services === undefined) return json(response, 404, { code: "NOT_FOUND", message: "route not found" });

@@ -23,7 +23,7 @@ import {
 import type { CoreStore } from "@piwork/core-store";
 import { ensureCoreServiceTlsIdentity } from "../runtime/mtls.js";
 import type { CorePaths } from "../application/paths.js";
-import type { ServicePrincipal, ServiceView, WorkServiceManagementService } from "./service-management.js";
+import type { PublicServiceView, ServicePrincipal, WorkServiceManagementService } from "./service-management.js";
 import { publicOperation } from "../work-management/diagnostics.js";
 
 export class WorkServiceGrpcServer {
@@ -62,8 +62,8 @@ export class WorkServiceGrpcServer {
         if (request.definition === undefined) throw invalid("definition is required");
         return this.services.create(principal, principal.workId, { definition: fromRpcDefinition(request.definition), idempotencyKey: requiredKey(request.idempotencyKey) });
       }),
-      listServices: unary((principal, _request: Empty): ListServicesResponse => ({ services: this.services.list(principal, principal.workId).map(toRpcView) })),
-      getService: unary((principal, request: ServiceIdRequest): RpcServiceView => toRpcView(this.services.show(principal, principal.workId, request.serviceId))),
+      listServices: unary(async (principal, _request: Empty): Promise<ListServicesResponse> => ({ services: (await this.services.listWithAccess(principal, principal.workId)).map(toRpcView) })),
+      getService: unary(async (principal, request: ServiceIdRequest): Promise<RpcServiceView> => toRpcView(await this.services.showWithAccess(principal, principal.workId, request.serviceId))),
       updateService: unary((principal, request: UpdateServiceRequest): Acceptance => {
         if (request.definition === undefined) throw invalid("definition is required");
         return this.services.update(principal, principal.workId, request.serviceId, request.expectedRevision, fromRpcDefinition(request.definition), requiredKey(request.idempotencyKey));
@@ -176,7 +176,7 @@ function fromRpcDefinition(value: RpcServiceDefinition) {
   };
 }
 
-function toRpcView(value: ServiceView): RpcServiceView {
+function toRpcView(value: PublicServiceView): RpcServiceView {
   return {
     workId: value.workId, serviceId: value.serviceId, name: value.name, desiredRevision: value.desiredRevision,
     ...(value.appliedRevision === null ? {} : { appliedRevision: value.appliedRevision }), enabled: value.enabled,
@@ -189,6 +189,9 @@ function toRpcView(value: ServiceView): RpcServiceView {
       },
     },
     endpoints: value.endpoints.map((item) => ({ ...item, url: item.url ?? "" })),
+    access: { hostname: value.access.hostname, defaultUrl: value.access.defaultUrl ?? undefined,
+      defaultPortName: value.access.defaultPortName ?? undefined, status: value.access.status,
+      ports: value.access.ports.map((port) => ({ ...port })) },
     ...(value.lastError === null ? {} : { lastError: { code: "SERVICE_FAILED", message: safeMessage(value.lastError), field: "", remediation: "Inspect service logs and retry.", correlationId: value.serviceId } }),
     createdAt: value.createdAt,
   };

@@ -2,6 +2,7 @@ import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import type { ServiceDefinition } from "@piwork/contracts";
 import { DockerRuntime, type ContainerLogCollection } from "@piwork/runtime-docker";
+import type { CoreStore } from "@piwork/core-store";
 import type { ServiceRuntimeAdapter } from "../work-services/service-management.js";
 
 export class ServiceExitedError extends Error {
@@ -18,7 +19,7 @@ export class ServiceReadinessTimeoutError extends Error {
 }
 
 export class DockerServiceRuntimeAdapter implements ServiceRuntimeAdapter {
-  constructor(private readonly docker: DockerRuntime) {}
+  constructor(private readonly docker: DockerRuntime, private readonly store?: CoreStore) {}
 
   async resolveImage(_workId: string, definition: ServiceDefinition): Promise<string> {
     try { return (await this.docker.prepareImage(definition.image.reference)).imageId; }
@@ -52,6 +53,7 @@ export class DockerServiceRuntimeAdapter implements ServiceRuntimeAdapter {
       workId,
       kind: "service",
       logicalId: definition.serviceId,
+      ...(this.store?.getWorkNetworkName(workId) === undefined ? {} : { displayName: `${this.store.getWorkNetworkName(workId)}_${definition.name}` }),
       image: imageIdentity,
       entrypoint: [definition.command],
       command: definition.args,
@@ -77,10 +79,10 @@ export class DockerServiceRuntimeAdapter implements ServiceRuntimeAdapter {
     for (;;) {
       const remaining = deadline - performance.now();
       if (remaining <= 0) throw new ServiceReadinessTimeoutError();
-      const inspection = await this.docker.inspectContainer(workId, "service", definition.serviceId, Math.min(remaining, 2_000));
+      const inspection = await this.docker.inspectContainer(workId, "service", definition.serviceId, Math.max(1, Math.ceil(Math.min(remaining, 2_000))));
       if (!inspection.running) throw new ServiceExitedError(inspection.exitCode);
       if (definition.readiness === undefined) return true;
-      const probeTimeout = Math.max(1, Math.min(definition.readiness.timeoutMs ?? 2_000, remaining));
+      const probeTimeout = Math.max(1, Math.ceil(Math.min(definition.readiness.timeoutMs ?? 2_000, remaining)));
       try {
         if (definition.readiness.kind === "exec") {
           await this.docker.execContainer(workId, "service", definition.serviceId, definition.readiness.command!, probeTimeout);
@@ -122,6 +124,15 @@ export class DockerServiceRuntimeAdapter implements ServiceRuntimeAdapter {
     return { exists: value.exists, running: value.running === true,
       ...(value.containerId === undefined ? {} : { containerId: value.containerId }),
       ...(value.exitCode === undefined ? {} : { exitCode: value.exitCode }) };
+  }
+
+  async routeTarget(workId: string, serviceId: string): Promise<{ address: string } | undefined> {
+    const network = await this.docker.inspectManagedWorkNetwork(workId);
+    if (!network) return undefined;
+    const container = await this.docker.inspectContainer(workId, "service", serviceId, 2_000);
+    const address = container.networkAddresses?.[network];
+    if (!container.running || !address || !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(address)) return undefined;
+    return { address };
   }
 }
 

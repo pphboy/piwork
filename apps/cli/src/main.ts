@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { executeWorkServiceCommand, parseWorkServiceCommand, WORK_SERVICE_USAGE } from "./work-service.js";
 import { executeWorkSnapshotCommand, parseWorkSnapshotCommand, WORK_SNAPSHOT_USAGE } from "./work-snapshot.js";
+import { parseProxyPort, runServiceProxy, validateProxyCoreUrl } from "./service-proxy.js";
 import {
   FileCredentialStore,
   formatPiPackageWaitProgress,
@@ -22,6 +23,7 @@ export const CLI_USAGE = `usage: piwork-cli [--core <url>] [--json] <command>
   login --account <name> [--password-stdin]
   whoami
   logout
+  proxy [--port <1..65535>]
   skills list
   skills show <skill-name>
   packages list
@@ -59,6 +61,7 @@ const COMMAND_HELP: Readonly<Record<string, string>> = {
   login: "usage: piwork-cli login --account <name> [--password-stdin]\n  Authenticate and save the credential locally.\n",
   whoami: "usage: piwork-cli whoami\n  Show the current authenticated identity.\n",
   logout: "usage: piwork-cli logout\n  Revoke the current session and remove the saved credential.\n",
+  proxy: "usage: piwork-cli proxy [--port <1..65535>]\n  Serve a local HTTP/WS proxy for Work service domains.\n",
   work: "usage: piwork-cli work <create|list|show|start|stop|retry|delete|config|service|packages|export|import> ...\n  Manage Work resources and per-Work configuration.\n  work service <list|show|start|stop|restart|retry|remove|logs> ...\n  work packages <list|show|install|update|enable|disable|remove> <workId> ...\n  work packages install <workId> <npm:...|git:...|./directory|./archive.zip> [--wait] [--verbose]\n  work packages install <workId> --from-core <name> [--wait] [--verbose]\n  work packages update <workId> <name> (--source <source>|--from-core) [--wait] [--verbose]\n  --verbose requires --wait.\n  work config apply <workId> [--wait] activates desired packages.\n",
   skills: "usage: piwork-cli skills <list|show> [skill-name]\n  Discover enabled Skills available to the current user.\n",
   packages: "usage: piwork-cli packages <list|show> [package-name]\n  Discover Core packages available to new Works.\n",
@@ -111,9 +114,16 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     if (options.includes("--verbose") && !options.includes("--wait")) throw usage("--verbose requires --wait");
   }
   const store = new FileCredentialStore();
+  const proxyPort = command === "proxy" ? parseProxyPort(args) : undefined;
+  if (proxyPort !== undefined && globals.json) throw Object.assign(new Error("--json cannot be used with proxy"), { exitCode: 2 });
   const credential = await store.load();
   const coreUrl = resolveCoreEndpoint({ explicit: globals.core, environment: process.env.PIWORK_CORE_URL, saved: credential?.coreUrl });
   const context: Context = { coreUrl, json: globals.json, store, ...(credential === undefined ? {} : { credential }), client: new PiworkClient({ coreUrl, token: credential?.token }) };
+  if (proxyPort !== undefined) {
+    requireCredential(context);
+    validateProxyCoreUrl(coreUrl);
+    return runServiceProxy(context.client, proxyPort);
+  }
   if (serviceCommand !== undefined) {
     requireCredential(context);
     return executeWorkServiceCommand({ client: context.client, json: context.json, stdout: (text) => { process.stdout.write(text); }, stderr: (text) => { process.stderr.write(text); } }, serviceCommand);

@@ -120,6 +120,9 @@ test("service help and syntax precede credential loading, while valid commands r
   const noLogin = run(["work", "service", "list", "w"]);
   assert.equal(noLogin.status, 3);
   assert.match(noLogin.stderr, /not logged in/);
+  assert.equal(run(["proxy"]).status, 3);
+  assert.equal(run(["--json", "proxy"]).status, 2);
+  assert.equal(run(["proxy", "--port", "0"]).status, 2);
 });
 
 test("compiled service commands use HTTP, preserve one JSON result, and map request errors", async () => {
@@ -127,7 +130,7 @@ test("compiled service commands use HTTP, preserve one JSON result, and map requ
   const config = join(root, "client.json");
   const calls: Array<{ method: string; path: string; body: unknown; authorization?: string }> = [];
   const acceptance = { workId: "w", serviceId: "s", operationId: "op", correlationId: "op", reused: true };
-  const service = { workId: "w", serviceId: "s", name: "demo", enabled: true, observedState: "failed", desiredRevision: 1, appliedRevision: null, lastError: null, endpoints: [], createdAt: "now", definition: { environment: { PASSWORD: "sentinel" } } };
+  const service = { workId: "w", serviceId: "s", name: "demo", enabled: true, observedState: "failed", desiredRevision: 1, appliedRevision: null, lastError: null, endpoints: [], access: { hostname: "demo.w-a1b2c3d4.work", defaultUrl: null, defaultPortName: null, status: "unavailable", ports: [] }, createdAt: "now", definition: { environment: { PASSWORD: "sentinel" } } };
   let status = 200;
   let state = "succeeded";
   let observationStatus = 200;

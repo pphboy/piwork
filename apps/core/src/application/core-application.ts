@@ -52,6 +52,7 @@ import type { WorkContextSnapshotInput } from "@piwork/core-store";
 import { emitDiagnostic } from "../work-management/diagnostics.js";
 import { WorkServiceManagementService, type ServiceRuntimeAdapter } from "../work-services/service-management.js";
 import { WorkServiceGrpcServer } from "../work-services/service-grpc-server.js";
+import { ServiceGateway } from "../work-services/service-gateway.js";
 
 export type ReadinessReason = "STORE_OPEN" | "LISTENING" | "ADMIN_REQUIRED" | "RUNTIME_NOT_CONFIGURED" | "RUNTIME_UNAVAILABLE" | "FILESYSTEM_MIGRATION_REQUIRED" | "RECOVERING" | "READY" | "SHUTTING_DOWN";
 
@@ -91,6 +92,7 @@ export class CoreApplication {
   readonly workContexts: WorkContextStore;
   readonly skillArtifacts: SkillArtifactStore;
   readonly services: WorkServiceManagementService;
+  readonly serviceGateway: ServiceGateway;
   readonly snapshotHelper: SnapshotHelperAvailability;
   readonly snapshotAdmission: WorkSnapshotAdmission;
   readonly packages: CorePiPackageService;
@@ -124,6 +126,7 @@ export class CoreApplication {
     this.identity = identity;
     this.lifecycle = lifecycle;
     this.services = services;
+    this.serviceGateway = new ServiceGateway(store, identity, services.domainResolver, () => this.serviceRuntime, () => this.state === "READY");
     this.snapshotHelper = snapshotHelper;
     this.users = new UserAdministrationService(store);
     this.workConfigurations = new WorkConfigurationService(store);
@@ -191,8 +194,17 @@ export class CoreApplication {
   async listen(address: ListenAddress): Promise<ListenAddress> {
     if (this.closed) throw new Error("CoreApplication is closed");
     if (this.server !== undefined) throw new Error("CoreApplication is already listening");
-    this.server = createServer((request, response) => void this.route(request, response));
+    this.server = createServer({ maxHeaderSize: 32 * 1024 }, (request, response) => void this.route(request, response));
     this.server.requestTimeout = 31 * 60_000;
+    this.server.on("clientError", (error, socket) => {
+      if (socket.destroyed) return;
+      if ((error as NodeJS.ErrnoException).code !== "HPE_HEADER_OVERFLOW") { socket.destroy(); return; }
+      const body = JSON.stringify({ code: "HEADERS_TOO_LARGE", message: "service access failed" });
+      socket.end(`HTTP/1.1 431 Request Header Fields Too Large\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\nx-piwork-gateway-error: 1\r\nconnection: close\r\n\r\n${body}`);
+    });
+    this.server.on("upgrade", (request, socket, head) => {
+      void this.serviceGateway.upgrade(request, socket, head);
+    });
     if (this.state === "STORE_OPEN") this.state = "LISTENING";
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
@@ -247,7 +259,7 @@ export class CoreApplication {
         ? new DockerWorkRuntimeAdapter(this.paths, ensureInstallationId(this.paths), {}, this.options.agentGrpcAdvertise)
         : await this.options.runtimeFactory(this);
       if (runtime instanceof DockerWorkRuntimeAdapter) await runtime.verifyDependency();
-      this.serviceRuntime = runtime instanceof DockerWorkRuntimeAdapter ? runtime.serviceRuntime() : undefined;
+      this.serviceRuntime = runtime instanceof DockerWorkRuntimeAdapter ? runtime.serviceRuntime(this.store) : undefined;
       this.runtime = runtime;
       this.state = "RECOVERING";
       if (!this.snapshotRecoveryDone) {
@@ -678,9 +690,18 @@ export class CoreApplication {
         return;
       }
       if (!url.pathname.startsWith("/api/v1/")) throw api(404, "NOT_FOUND", "route not found");
+      if (url.pathname === "/api/v1/service-access/resolve" && request.method === "GET") {
+        return await this.serviceGateway.resolve(request, response, url);
+      }
+      if (url.pathname.startsWith("/api/v1/service-gateway/")) {
+        return await this.serviceGateway.http(request, response);
+      }
       const token = bearer(request);
       const session = this.identity.authenticate(token);
       const principal: UserPrincipal = { userId: session.user.id, role: session.user.role };
+      if (request.method === "GET" && url.pathname === "/api/v1/service-access") {
+        return send(response, 200, { version: 1, protocols: ["http", "sse", "websocket"] });
+      }
       const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
       if (await this.snapshotRoute(request, response, principal, parts)) return;
       if (request.method === "GET" && url.pathname === "/api/v1/me") return send(response, 200, { ...session.user, expiresAt: session.expiresAt });
@@ -853,14 +874,14 @@ export class CoreApplication {
       }
       if (parts[2] === "works" && parts[4] === "services") {
         const workId = parts[3]!;
-        if (parts.length === 5 && request.method === "GET") return send(response, 200, { services: this.services.list(principal, workId) });
+        if (parts.length === 5 && request.method === "GET") return send(response, 200, { services: await this.services.listWithAccess(principal, workId) });
         if (parts.length === 5 && request.method === "POST") {
           const body = await readJson<{ definition?: unknown; idempotencyKey?: unknown }>(request);
           if (body.definition === undefined || typeof body.idempotencyKey !== "string") throw api(400, "INVALID_REQUEST", "definition and idempotencyKey are required");
           return send(response, 202, this.services.create(principal, workId, { definition: body.definition as any, idempotencyKey: body.idempotencyKey }));
         }
         const serviceId = parts[5];
-        if (serviceId !== undefined && parts.length === 6 && request.method === "GET") return send(response, 200, this.services.show(principal, workId, serviceId));
+        if (serviceId !== undefined && parts.length === 6 && request.method === "GET") return send(response, 200, await this.services.showWithAccess(principal, workId, serviceId));
         if (serviceId !== undefined && parts.length === 6 && request.method === "PUT") {
           const body = await readJson<{ definition?: unknown; expectedRevision?: unknown; idempotencyKey?: unknown }>(request);
           if (body.definition === undefined || !Number.isSafeInteger(body.expectedRevision) || typeof body.idempotencyKey !== "string") throw api(400, "INVALID_REQUEST", "definition, expectedRevision, and idempotencyKey are required");
@@ -1349,6 +1370,7 @@ function proxyServiceRuntime(current: () => ServiceRuntimeAdapter | undefined): 
     remove: (workId, definition) => runtime().remove?.(workId, definition) ?? Promise.resolve(),
     logs: (workId, serviceId, tailLines) => runtime().logs?.(workId, serviceId, tailLines) ?? Promise.reject(new Error("service logs are unavailable")),
     inspect: (workId, serviceId) => runtime().inspect?.(workId, serviceId) ?? Promise.reject(new Error("service inspection is unavailable")),
+    routeTarget: (workId, serviceId) => runtime().routeTarget?.(workId, serviceId) ?? Promise.reject(new Error("service route inspection is unavailable")),
   };
 }
 function unavailableRuntime(message: string): WorkRuntimeAdapter { const fail = async (): Promise<never> => { throw new Error(message); }; return { prepare: fail, start: fail, inspect: fail, drain: fail, stop: fail, remove: fail }; }
