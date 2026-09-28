@@ -1,24 +1,6 @@
-# Serve UI Packages Specification
+# Spec Delta
 
-## Purpose
-
-定义 Core Pi package 库的浏览器管理及后台操作观察，涵盖 npm、Git、目录和 ZIP 来源以及默认引用，使管理员能够辨别上传、安装接受和最终发布，并在关闭页面后凭 Operation ID 恢复查询。
-
-## Requirements
-
-### Requirement: 查看 Core package 库
-
-**Identifier:** SUI-PKG-001
-
-Packages 页 SHALL 列出 enabled 和 disabled 的 Core package，显示 name、version（缺失显示未声明）、sourceKind、enabled、isDefault 和资源数量，按 name 排序并提供详情和刷新。详情 SHALL 只使用公共管理元数据及安全 resolvedSource。列表 SHALL 有加载、空态和失败状态。页面 SHALL 明确这是 Core 包库，不显示 Work loaded/pendingApply，也不提供 Work packages 或 .work 快照入口。
-
-#### Scenario: 包已安装但未默认选择
-- **WHEN** 普通安装已成功，isDefault 为 false
-- **THEN** 页面显示已安装且启用、未加入默认，不宣称已被某个 Work 加载
-
-#### Scenario: 空库或对象失效
-- **WHEN** 包库为空或详情对象已被其他管理员移除
-- **THEN** 分别显示安装入口或对象不可用提示，查询失败不被转换为空库
+## MODIFIED Requirements
 
 ### Requirement: 安装和更新四种 package 来源
 
@@ -77,17 +59,3 @@ Packages 页 SHALL 列出 enabled 和 disabled 的 Core package，显示 name、
 #### Scenario: 尝试查询 Work Operation
 - **WHEN** 输入 Work Operation ID 或不存在的 ID
 - **THEN** 两者显示相同不可用结果，不泄露 Work 身份、内容或包元数据
-
-### Requirement: 控制 Core package 状态与默认关联
-
-**Identifier:** SUI-PKG-005
-
-包详情 SHALL 提供 enable、disable、remove 和到默认 Work 页的入口。disable/remove 遇到 `PI_PACKAGE_IN_DEFAULTS` SHALL 提示先移出默认，不能隐式编辑默认列表；移除前 SHALL 确认目标名称。遇到 `PI_PACKAGE_BUSY` SHALL 提示 Core 包任务正在进行，原动作未执行，等待后可显式重试。开关和移除为同步动作，不创建虚假的等待 Operation。所有成功或失败 SHALL 保持已有 Work 副本不受面板动作影响。
-
-#### Scenario: 移除默认包
-- **WHEN** 对仍是默认的包确认移除
-- **THEN** 显示默认引用保护，包不被移除，提供修改默认集合的入口
-
-#### Scenario: Core 正在安装其他包
-- **WHEN** Core catalog 有非终态任务时提交包状态变更
-- **THEN** 显示 busy，既有任务继续，界面不提前切换 enabled 状态

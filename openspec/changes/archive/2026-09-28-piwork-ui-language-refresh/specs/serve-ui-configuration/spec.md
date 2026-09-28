@@ -1,10 +1,6 @@
-# Serve UI Configuration Specification
+# Spec Delta
 
-## Purpose
-
-提供 Core 状态、全局运行时及默认 Work 配置的浏览器管理流程，明确保存与 readiness 的区别、局部配置提交以及 AGENTS 内容编辑，使管理员能够完成部署后的配置并理解这些默认值对新 Work 的作用。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 展示 Core 的真实管理状态
 
@@ -71,21 +67,3 @@
 #### Scenario: 已选 Skill 不再可用
 - **WHEN** 默认配置中的已选 Skill 被禁用或移除
 - **THEN** 页面在对应项旁说明不可用及原因，仍保留其完整名称与顺序供管理员处理，不静默丢弃该项，也不将不可用状态误作保存成功
-
-### Requirement: 从文件或编辑器保存 AGENTS 内容
-
-**Identifier:** SUI-CFG-004
-
-AGENTS 编辑区 SHALL 允许选择本地 UTF-8 文本文件或直接编辑现有内容，字段及帮助文案统一使用 `AGENTS.md`。选择文件 SHALL 只在浏览器读取并填入编辑器，不要求服务器路径、不立即保存；已有未保存内容被替换前 SHALL 确认。文件选择取消、读取失败、非法 UTF-8 或超过 256 KiB SHALL 保留原草稿。直接编辑也 SHALL 按 UTF-8 字节数执行 256 KiB 限制；空文本表示显式清空。保存 SHALL 提交文本原文，不提交文件路径或自动解析 Markdown 指令。
-
-#### Scenario: 选择后继续编辑
-- **WHEN** 管理员选择合法文件，再编辑其中一行并保存
-- **THEN** Core 保存编辑器中的最终文本，后续读取一致，原文件路径不进入 Core
-
-#### Scenario: 文件超限或无效
-- **WHEN** 选中文件超过限制或无法按 UTF-8 解码
-- **THEN** 显示具体错误，已有编辑内容和服务端配置不变
-
-#### Scenario: 临界大小与清空
-- **WHEN** 文本编码后恰为 256 KiB，或管理员清空内容
-- **THEN** 两者可提交；大于 256 KiB 时阻止提交并提示超限

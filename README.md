@@ -56,6 +56,7 @@ npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" config 
 Core changes readiness online; it does not need a restart after bootstrap or runtime configuration.
 
 To manage Serve in a browser, start the optional `piwork-console serve` process after bootstrap. See [Serve 管理面板](docs/serve-console.md) for TLS, startup, role, local directory and ZIP upload, `AGENTS.md` editing, and Operation recovery.
+Future browser UI work follows the [UI language](docs/ui-language.md) for visual rules and the [product language](docs/product-language.md) for wording, information order, and actions.
 
 ## Managed Skills and default Work context
 

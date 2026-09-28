@@ -52,22 +52,22 @@ test.afterAll(async () => {
 
 test("real Core administrator logs in, creates a user, and uploads a browser Skill directory", async ({ page }) => {
   await page.goto(`${origin}/login`);
-  await page.getByLabel("账号", { exact: true }).fill("admin");
-  await page.getByLabel("密码", { exact: true }).fill("correct horse battery");
-  await page.getByRole("button", { name: "登录" }).click();
-  await expect(page.getByText("运行就绪：未就绪 · RUNTIME_NOT_CONFIGURED")).toBeVisible();
-  await page.getByRole("link", { name: "用户" }).click();
-  await page.getByLabel("账号", { exact: true }).fill("new-user");
-  await page.getByLabel("密码", { exact: true }).fill("new-user-password");
-  await page.getByLabel("确认密码").fill("new-user-password");
-  await page.getByRole("button", { name: "创建用户" }).click();
-  await expect(page.getByRole("row", { name: /new-user user/ })).toBeVisible();
+  await page.getByLabel("Account", { exact: true }).fill("admin");
+  await page.getByLabel("Password", { exact: true }).fill("correct horse battery");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByText("Runtime readiness: Not ready · RUNTIME_NOT_CONFIGURED")).toBeVisible();
+  await page.getByRole("link", { name: "Users" }).click();
+  await page.getByLabel("Account", { exact: true }).fill("new-user");
+  await page.getByLabel("Password", { exact: true }).fill("new-user-password");
+  await page.getByLabel("Confirm password").fill("new-user-password");
+  await page.getByRole("button", { name: "Create user" }).click();
+  await expect(page.getByRole("row").filter({ has: page.getByRole("cell", { name: "new-user", exact: true }) })).toBeVisible();
   const skillDirectory = join(root, "real-skill");
   await mkdir(skillDirectory);
   await writeFile(join(skillDirectory, "SKILL.md"), "# Real Skill\n");
   await page.getByRole("link", { name: "Skills" }).click();
-  await page.getByLabel("选择 Skill 目录").setInputFiles(skillDirectory);
-  await page.getByRole("button", { name: "上传 Skill" }).click();
+  await page.getByLabel("Select Skill directory").setInputFiles(skillDirectory);
+  await page.getByRole("button", { name: "Upload Skill" }).click();
   await expect(page.getByRole("link", { name: "real-skill" })).toBeVisible();
   const cookieText = JSON.stringify(await page.context().cookies());
   expect(cookieText).not.toContain("Bearer ");
