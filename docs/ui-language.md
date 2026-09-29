@@ -1,6 +1,6 @@
 # piwork 浏览器 UI 语言
 
-本文是仓库浏览器界面的视觉依据。它规定界面**看起来如何**：颜色、文字、密度、边界、控件状态与窄屏表现。页面内容顺序、按钮位置和文案由 [产品语言](product-language.md) 规定。当前首个实现是 `apps/console`；以后新建或调整浏览器界面也按本文检查。终端 CLI 不使用这里的 CSS 令牌。
+本文规定仓库浏览器界面的共享语义颜色，以及 `apps/console` Serve 管理面板的视觉布局。它说明界面**看起来如何**：颜色、文字、密度、边界、控件状态与窄屏表现。页面内容顺序、按钮位置和文案由 [产品语言](product-language.md) 规定。CLI Desktop WebUI 沿用本文的浅色颜色令牌，以 OpenSpec 能力 `desktop-ui-language`（DUL-001 至 DUL-016）统一规定产品、交互与 UI；容器及返回见 DUL-002，视觉与可达性见 DUL-007。变更期间以该能力的 delta spec 为准，同步后的主规范路径为 `openspec/specs/desktop-ui-language/spec.md`；本文仅提供 Desktop 规范入口，1100px 管理页面轨道、表单网格与顶栏导航只约束 Serve。终端 CLI 不使用这里的 CSS 令牌。
 
 ## 气质与适用原则
 

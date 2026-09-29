@@ -1,6 +1,6 @@
 # piwork 浏览器产品语言
 
-本文规定浏览器界面**如何让用户理解和操作**：术语、信息顺序、按钮位置、文案、状态与恢复。颜色、字阶和控件外观见 [UI 语言](ui-language.md)。当前首个实现是 `apps/console`；后续浏览器 UI 也应按本文检查。终端 CLI 保留自己的交互方式。参考 [GitHub Primer 导航](https://primer.style/product/ui-patterns/navigation/)、[保存](https://primer.style/product/ui-patterns/saving/)与[内容](https://primer.style/product/getting-started/foundations/content/)的清楚范围和明确动作，以及 [Linear 的低噪音表达](https://linear.app/now/behind-the-latest-design-refresh)，具体事实以 piwork 契约为准。
+本文规定浏览器界面共享的准确文案与状态原则，以及 `apps/console` Serve 管理面板**如何让用户理解和操作**：术语、信息顺序、按钮位置、文案、状态与恢复。颜色、字阶和控件外观见 [UI 语言](ui-language.md)。CLI Desktop WebUI 沿用共享术语、英文文案和真实状态原则，以 OpenSpec 能力 `desktop-ui-language`（DUL-001 至 DUL-016）统一规定产品、交互与 UI；产品用词见 DUL-003，目标用户和任务场景见 DUL-010。变更期间以该能力的 delta spec 为准，同步后的主规范路径为 `openspec/specs/desktop-ui-language/spec.md`；本文仅提供 Desktop 规范入口，下文的七项管理导航和管理页 section 规则只约束 Serve。终端 CLI 保留自己的交互方式。参考 [GitHub Primer 导航](https://primer.style/product/ui-patterns/navigation/)、[保存](https://primer.style/product/ui-patterns/saving/)与[内容](https://primer.style/product/getting-started/foundations/content/)的清楚范围和明确动作，以及 [Linear 的低噪音表达](https://linear.app/now/behind-the-latest-design-refresh)，具体事实以 piwork 契约为准。
 
 ## 术语
 
