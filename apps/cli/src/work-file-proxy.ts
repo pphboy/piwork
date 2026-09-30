@@ -77,7 +77,7 @@ export function localFileError(code: FileErrorCode, head = false): { status: num
 }
 
 /** Parse the bounded Core response and rewrite only DAV:href text nodes. */
-export function mapDavXml(bytes: Buffer, workId: string): Buffer {
+export function mapDavXml(bytes: Buffer, workId: string, localPrefix = ""): Buffer {
   if (bytes.length > FILE_LIMITS.maxMetadataBytes) throw new FileProxyError("FILE_LIMIT_EXCEEDED");
   let xml: string;
   try { xml = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
@@ -105,7 +105,7 @@ export function mapDavXml(bytes: Buffer, workId: string): Buffer {
   parser.on("closetag", () => {
     const current = stack.pop();
     if (!current) malformed();
-    if (current!.href) output.push(escapeXml(toLocalPath(current!.text, workId)));
+    if (current!.href) output.push(escapeXml(`${localPrefix}${toLocalPath(current!.text, workId)}`));
     output.push(`</${current!.name}>`);
   });
   parser.on("error", malformed);

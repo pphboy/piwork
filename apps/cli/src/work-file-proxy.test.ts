@@ -10,6 +10,7 @@ test("local paths and Destination preserve single-decode byte semantics", () => 
   const suffix = "%E4%B8%AD%E6%96%87%20%25%23/%252e";
   assert.deepEqual(toCorePath(`${local}${suffix}`), { workId: work, path: `${core}${suffix}` });
   assert.equal(toLocalPath(`${core}${suffix}`, work), `${local}${suffix}`);
+  assert.deepEqual(toCorePath(`${local}.hidden%20file`), { workId: work, path: `${core}.hidden%20file` });
   assert.equal(mapDestination(`http://127.0.0.1:17890${local}${suffix}`, work,
     "http://127.0.0.1:17890"), `${core}${suffix}`);
   for (const invalid of ["https://outside.example/a", `http://localhost:17890${local}a`,

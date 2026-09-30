@@ -23,6 +23,10 @@ const environment = scrubbedEnvironment({
   PIWORK_INSTALLATION_ID: installationId,
   PIWORK_PACKAGE_HELPER_IMAGE: "piwork-agentd:acceptance",
 });
+if (process.env.PIWORK_DESKTOP_REAL_ACCEPTANCE === "1") {
+  environment.PIWORK_FILE_HELPER_IMAGE = "piwork-file-helper:local";
+  environment.PIWORK_SNAPSHOT_HELPER_IMAGE = "piwork-snapshot-helper:cli-service-access";
+}
 let core;
 let proxy;
 let agentGrpcPort;
@@ -117,6 +121,10 @@ try {
   assert.deepEqual(serviceInspection.HostConfig.PortBindings, {});
   assert.equal(serviceInspection.Mounts.some((mount) => mount.Destination === "/var/data"), false);
   assert.equal(serviceInspection.Mounts.some((mount) => mount.Destination === "/var/data/workspace"), true);
+  if (process.env.PIWORK_DESKTOP_REAL_ACCEPTANCE === "1") runDesktopAcceptance(
+    { ...environment, PIWORK_LIVE_CORE_URL: originalUrl, PIWORK_LIVE_CONFIG_PATH: configPath,
+      PIWORK_LIVE_WORK_ID: serviceWorkId, PIWORK_LIVE_DATA_DIR: dataDirectory,
+      PIWORK_LIVE_BROWSERS: process.env.PIWORK_LIVE_BROWSERS ?? "" });
   const counterBefore = serviceCounter(serviceAgentBefore);
   assert.equal(jsonLines(cli(["--json", "work", "stop", serviceWorkId, "--wait"])).at(-1).state, "succeeded");
   assert.equal(checked("curl", ["--silent", "--noproxy", "", "--proxy", `http://127.0.0.1:${proxyPort}`, "--output", "/dev/null", "--write-out", "%{http_code}", `http://${serviceHostname}/health`]), "503");
@@ -466,6 +474,13 @@ try {
 }
 
 function cli(args, input) { return checked("node", ["apps/cli/dist/main.js", ...args], input); }
+function runDesktopAcceptance(commandEnvironment) {
+  const result = spawnSync("node", ["scripts/desktop-real-acceptance.mjs"], {
+    cwd: root, env: commandEnvironment, encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.status !== 0) throw new Error(`Desktop real acceptance failed (${result.status}): ${safeFailure(`${result.stdout}\n${result.stderr}`)}`);
+  process.stdout.write(result.stdout);
+}
 async function startProxy(coreUrl, port) {
   const child = spawn("node", ["apps/cli/dist/main.js", "--core", coreUrl, "proxy", "--port", String(port)],
     { cwd: root, env: environment, stdio: ["ignore", "pipe", "pipe"] });
@@ -519,8 +534,8 @@ function cliFailure(args, expectedStatus) {
   assertNoSensitive(`${result.stdout}\n${result.stderr}`, [adminPassword, modelCredential], "expected CLI failure");
   return result;
 }
-function checked(command, args, input) {
-  const result = spawnSync(command, args, { cwd: root, env: environment, input, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+function checked(command, args, input, commandEnvironment = environment) {
+  const result = spawnSync(command, args, { cwd: root, env: commandEnvironment, input, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`${command} ${args.slice(0, 3).join(" ")} failed (${result.status}): ${safeFailure(`${result.stderr}\n${result.stdout}\n${core?.stderr?.() ?? ""}\n${managedContainerLogs()}`)}`);
   capturedProcessOutput.push(result.stdout, result.stderr);
   assertNoSensitive(`${result.stdout}\n${result.stderr}`, [adminPassword, modelCredential], `${command} output`);
@@ -751,7 +766,8 @@ async function assertSecretPlacement(directory, password, modelKey, bearerToken)
       throw new Error(`bearer token leaked into temporary artifact: ${relative}`);
     }
     if (content.includes(Buffer.from("-----BEGIN PRIVATE KEY-----"))
-      && !(/^core\/runtime\/pki\//.test(relative) || /^core\/runtime\/work-[^/]+\/tls-generation-[^/]+\//.test(relative))) {
+      && !(/^core\/runtime\/pki\//.test(relative) || /^core\/runtime\/work-[^/]+\/tls-generation-[^/]+\//.test(relative)
+        || /^core\/snapshots\/packages\/package-[0-9a-f-]+\.work$/.test(relative))) {
       throw new Error(`certificate private key leaked into temporary artifact: ${relative}`);
     }
   }

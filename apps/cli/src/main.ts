@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { executeWorkServiceCommand, parseWorkServiceCommand, WORK_SERVICE_USAGE } from "./work-service.js";
 import { executeWorkSnapshotCommand, parseWorkSnapshotCommand, WORK_SNAPSHOT_USAGE } from "./work-snapshot.js";
 import { parseProxyPort, runServiceProxy, validateProxyCoreUrl } from "./service-proxy.js";
+import { parseDesktopOptions, runDesktop } from "./desktop/server.js";
 import {
   FileCredentialStore,
   formatPiPackageWaitProgress,
@@ -24,6 +25,7 @@ export const CLI_USAGE = `usage: piwork-cli [--core <url>] [--json] <command>
   whoami
   logout
   proxy [--port <1..65535>]
+  desktop [--port <1..65535>] [--no-open]
   skills list
   skills show <skill-name>
   packages list
@@ -62,6 +64,7 @@ const COMMAND_HELP: Readonly<Record<string, string>> = {
   whoami: "usage: piwork-cli whoami\n  Show the current authenticated identity.\n",
   logout: "usage: piwork-cli logout\n  Revoke the current session and remove the saved credential.\n",
   proxy: "usage: piwork-cli proxy [--port <1..65535>]\n  Serve Work service HTTP/WS and local WebDAV file access on one port.\n  File URL: http://127.0.0.1:<port>/works/<workId>/files/\n",
+  desktop: "usage: piwork-cli desktop [--port <1..65535>] [--no-open]\n  Open the Work owner WebUI on this computer.\n",
   work: "usage: piwork-cli work <create|list|show|start|stop|retry|delete|config|service|packages|export|import> ...\n  Manage Work resources and per-Work configuration.\n  work service <list|show|start|stop|restart|retry|remove|logs> ...\n  work packages <list|show|install|update|enable|disable|remove> <workId> ...\n  work packages install <workId> <npm:...|git:...|./directory|./archive.zip> [--wait] [--verbose]\n  work packages install <workId> --from-core <name> [--wait] [--verbose]\n  work packages update <workId> <name> (--source <source>|--from-core) [--wait] [--verbose]\n  --verbose requires --wait.\n  work config apply <workId> [--wait] activates desired packages.\n",
   skills: "usage: piwork-cli skills <list|show> [skill-name]\n  Discover enabled Skills available to the current user.\n",
   packages: "usage: piwork-cli packages <list|show> [package-name]\n  Discover Core packages available to new Works.\n",
@@ -115,7 +118,9 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   }
   const store = new FileCredentialStore();
   const proxyPort = command === "proxy" ? parseProxyPort(args) : undefined;
+  const desktopOptions = command === "desktop" ? parseDesktopOptions(args) : undefined;
   if (proxyPort !== undefined && globals.json) throw Object.assign(new Error("--json cannot be used with proxy"), { exitCode: 2 });
+  if (desktopOptions !== undefined && globals.json) throw Object.assign(new Error("--json cannot be used with desktop"), { exitCode: 2 });
   const credential = await store.load();
   const coreUrl = resolveCoreEndpoint({ explicit: globals.core, environment: process.env.PIWORK_CORE_URL, saved: credential?.coreUrl });
   const context: Context = { coreUrl, json: globals.json, store, ...(credential === undefined ? {} : { credential }), client: new PiworkClient({ coreUrl, token: credential?.token }) };
@@ -124,6 +129,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     validateProxyCoreUrl(coreUrl);
     return runServiceProxy(context.client, proxyPort);
   }
+  if (desktopOptions !== undefined) return runDesktop(coreUrl, desktopOptions, store, credential);
   if (serviceCommand !== undefined) {
     requireCredential(context);
     return executeWorkServiceCommand({ client: context.client, json: context.json, stdout: (text) => { process.stdout.write(text); }, stderr: (text) => { process.stderr.write(text); } }, serviceCommand);

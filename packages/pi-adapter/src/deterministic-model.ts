@@ -185,6 +185,7 @@ function deterministicDeployment(
       content: `from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import base64, hashlib, json, os, struct, threading
+from urllib.parse import parse_qs
 
 DATA = Path("/var/data/workspace/data/demo/counter.json")
 LOCK = threading.Lock()
@@ -192,6 +193,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             body = b"ok"
+        elif self.path == "/login":
+            body = b'<form method="post" action="/login"><label>Password<input name="password" type="password"></label><button>Sign in</button></form>'
+            self.send_response(200); self.send_header("Content-Type", "text/html")
+            self.end_headers(); self.wfile.write(body); return
+        elif self.path == "/private":
+            if "demo_auth=1" not in self.headers.get("Cookie", ""):
+                self.send_response(401); self.end_headers(); self.wfile.write(b"Sign in to the app"); return
+            body = b"private-ok"
         elif self.path == "/events":
             body = b"data: first\\n\\ndata: second\\n\\n"
             self.send_response(200)
@@ -229,6 +238,17 @@ class Handler(BaseHTTPRequestHandler):
                 os.replace(temporary, DATA)
             body = json.dumps({"count": count}).encode()
         self.send_response(200); self.end_headers(); self.wfile.write(body)
+    def do_POST(self):
+        if self.path != "/login":
+            self.send_response(404); self.end_headers(); return
+        size = min(int(self.headers.get("Content-Length", "0")), 1024)
+        values = parse_qs(self.rfile.read(size).decode())
+        if values.get("password") != ["service-secret"]:
+            self.send_response(401); self.end_headers(); return
+        self.send_response(303)
+        self.send_header("Set-Cookie", "demo_auth=1; Path=/; HttpOnly; SameSite=Lax")
+        self.send_header("Location", "/private")
+        self.end_headers()
     def log_message(self, format, *args): pass
 ThreadingHTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
 `,

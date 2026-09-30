@@ -352,4 +352,8 @@ test("client bounds and validates JSON, network errors, and incremental NDJSON o
   await assert.rejects(async () => { for await (const _ of outOfOrder.watchRun("work", "run")) {} }, /out of order/);
   const incomplete = new PiworkClient({ coreUrl: "http://core.test", fetch: async () => new Response('{"sequence":1}') });
   await assert.rejects(async () => { for await (const _ of incomplete.watchRun("work", "run")) {} }, /incomplete record/);
+  const oversizedEvents = new PiworkClient({ coreUrl: "http://core.test", fetch: async () =>
+    new Response("x".repeat(16 * 1_024 * 1_024 + 1)) });
+  await assert.rejects(async () => { for await (const _ of oversizedEvents.watchRun("work", "run")) {} },
+    (error) => error instanceof PiworkApiError && error.code === "RESPONSE_TOO_LARGE");
 });
