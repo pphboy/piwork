@@ -3,8 +3,8 @@ import { closeSync, lstatSync, openSync, readFileSync, readlinkSync, readdirSync
 import { dirname, join, resolve, sep } from "node:path";
 import type { PiPackageArtifactMetadata } from "@piwork/contracts";
 import { inspectPiPackageResources, type PiPackageTreePath } from "./inventory.js";
-import { PiPackageInputError, parsePiPackageManifest, PI_HOST_MODULES } from "./source.js";
-import { PI_PACKAGE_LIMITS } from "./zip.js";
+import { PiPackageInputError, parsePiPackageManifest, PI_HOST_MODULES } from "./manifest.js";
+import { PI_PACKAGE_LIMITS } from "./limits.js";
 
 
 function invalid(code: PiPackageInputError["code"], message: string): never { throw new PiPackageInputError(code, message); }

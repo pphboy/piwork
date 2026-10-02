@@ -10,7 +10,7 @@ export {
   type PersistentSessionOptions,
 } from "./session-persistence.js";
 export { createDeterministicRuntime } from "./deterministic-model.js";
-export { loadConfiguredIsolatedSkills, loadIsolatedSkills } from "./isolated-resources.js";
+export { loadConfiguredIsolatedSkills, loadIsolatedSkills, SkillDirectoryMismatchError } from "./isolated-resources.js";
 export { mapSdkEvent, type PiworkAgentEvent } from "./event-mapper.js";
 export {
   McpBridge,

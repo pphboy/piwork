@@ -1,0 +1,141 @@
+[
+  {
+    "name": "valid",
+    "code": null,
+    "summary": {
+      "sessions": 1,
+      "runs": 1,
+      "events": 2
+    },
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "trigger",
+    "code": "SNAPSHOT_HISTORY_UNSUPPORTED",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "extra-table",
+    "code": "SNAPSHOT_HISTORY_UNSUPPORTED",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "extra-column",
+    "code": "SNAPSHOT_HISTORY_UNSUPPORTED",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "wrong-schema",
+    "code": "SNAPSHOT_HISTORY_UNSUPPORTED",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "missing-schema",
+    "code": "SNAPSHOT_HISTORY_UNSUPPORTED",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "extra-index",
+    "code": "SNAPSHOT_HISTORY_UNSUPPORTED",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "wrong-work",
+    "code": "SNAPSHOT_HISTORY_INVALID",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "wrong-context",
+    "code": "SNAPSHOT_HISTORY_INVALID",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "sequence-gap",
+    "code": "SNAPSHOT_HISTORY_INVALID",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "wrong-key",
+    "code": "SNAPSHOT_HISTORY_INVALID",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "external-sdk",
+    "code": "SNAPSHOT_HISTORY_INVALID",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "traversal-sdk",
+    "code": "SNAPSHOT_HISTORY_INVALID",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "active-run",
+    "code": "SNAPSHOT_HISTORY_BUSY",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  },
+  {
+    "name": "work-activity",
+    "code": "SNAPSHOT_HISTORY_BUSY",
+    "summary": null,
+    "sourceWorkId": "work-source-000000000001",
+    "contextIds": [
+      "context-source-000000000001"
+    ]
+  }
+]

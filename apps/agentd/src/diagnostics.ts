@@ -1,4 +1,9 @@
-import type { DiagnosticCode, DiagnosticStage } from "@piwork/contracts";
+type DiagnosticStage =
+  | "context-copy" | "context-validate" | "runtime-prepare" | "runtime-start"
+  | "skill-validate" | "skill-load" | "package-load" | "mcp-initialize"
+  | "readiness" | "activation" | "rollback" | "service-accept"
+  | "service-image" | "service-storage" | "service-start" | "service-readiness"
+  | "service-recovery" | "service-stop" | "service-remove";
 
 export interface JsonLineLogger {
   write(line: string): void;
@@ -7,7 +12,7 @@ export interface JsonLineLogger {
 const stderrLogger: JsonLineLogger = { write: (line) => process.stderr.write(line) };
 const skillNamePattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-const messages: Record<DiagnosticCode, string> = {
+const messages = {
   CONTEXT_COPY_FAILED: "The Work context could not be prepared.",
   CONTEXT_NOT_FOUND: "The required Work context is unavailable.",
   CONTEXT_FORMAT_UNSUPPORTED: "The Work context format is unsupported.",
@@ -40,7 +45,9 @@ const messages: Record<DiagnosticCode, string> = {
   WORK_OPERATION_FAILED: "The Work operation failed.",
   PACKAGE_INCOMPATIBLE: "The Work package does not match the target Docker platform.",
   TARGET_MODEL_UNAVAILABLE: "The target Core model needed by this Work is unavailable.",
-};
+} satisfies Record<string, string>;
+
+type DiagnosticCode = keyof typeof messages;
 
 /** Emits only server-authored text. Callers must never include caught errors here. */
 export function emitAgentDiagnostic(input: {

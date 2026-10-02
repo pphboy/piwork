@@ -9,6 +9,17 @@ import { RunManager, type RunExecutionContext, type RunExecutor } from "./runs.j
 
 const NOW = "2026-09-20T00:00:00.000Z";
 
+test("unavailable Work storage rejects submission before executor side effects", async () => {
+  await withStore(async (store) => {
+    let executions = 0;
+    const manager = readyManager(store, { async execute() { executions += 1; return { finalText: "unrecorded" }; } });
+    store.close();
+    assert.throws(() => manager.submit({ workId: "work-a", sessionId: "session-a", submissionKey: "no-storage", prompt: "must not run" }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(executions, 0);
+  });
+});
+
 test("submission is durable and idempotent with one active slot per Work and parallel different Works", async () => {
   await withStore(async (store) => {
     const executor = new ControlledExecutor();

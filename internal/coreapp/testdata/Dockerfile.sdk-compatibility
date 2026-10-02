@@ -1,0 +1,18 @@
+# Development acceptance fixture only. Both variants retain the complete
+# harness and the real Go helpers from the selected native Agent image.
+ARG NATIVE_AGENT_IMAGE=piwork-agentd:go-migration-acceptance
+FROM ${NATIVE_AGENT_IMAGE} AS old-sdk
+USER 0:0
+ARG NPM_REGISTRY=https://registry.npmjs.org
+RUN mkdir /opt/pi-sdk-compatibility \
+ && npm install --prefix /opt/pi-sdk-compatibility --ignore-scripts --registry "$NPM_REGISTRY" \
+      @earendil-works/pi-coding-agent@0.86.0 @earendil-works/pi-ai@0.86.0 \
+      @earendil-works/pi-agent-core@0.86.0 @earendil-works/pi-tui@0.86.0 \
+ && cp -a /opt/pi-sdk-compatibility/node_modules/. /workspace/node_modules/ \
+ && rm -rf /opt/pi-sdk-compatibility
+USER 10001:10001
+
+FROM ${NATIVE_AGENT_IMAGE} AS unavailable-registry
+# A real unreachable registry is used, rather than replacing npm/helper with
+# a mock process. Its retries remain bounded by the package job deadline.
+ENV NPM_CONFIG_REGISTRY=http://127.0.0.1:9

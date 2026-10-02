@@ -82,6 +82,17 @@ function streamDeterministic(
       deterministicDeployment(stream, output, toolResults, manifestPath);
       return;
     }
+    if (prompt.includes("inspect restored web service")) {
+      const listed = toolResults.find((result) => result.toolName === serviceTool("service_list"));
+      if (!listed) { emitToolCall(stream, output, "snapshot-read-list", serviceTool("service_list"), {}); return; }
+      const services = parseToolJson(listed).services;
+      const web = Array.isArray(services) ? services.find((item) => item && typeof item === "object" && (item as { name?: string }).name === "web") as { serviceId?: string } | undefined : undefined;
+      if (!web?.serviceId) { emitText(stream, output, "snapshot-service-missing"); return; }
+      const observed = toolResults.find((result) => result.toolName === serviceTool("service_get"));
+      if (!observed) { emitToolCall(stream, output, "snapshot-read-get", serviceTool("service_get"), { serviceId: web.serviceId }); return; }
+      emitText(stream, output, parseToolJson(observed).observedState === "ready" ? `snapshot-service-observed:${web.serviceId}` : "snapshot-service-not-ready");
+      return;
+    }
     if (prompt.includes("verify restored web service")) {
       deterministicRestoredService(stream, output, toolResults);
       return;

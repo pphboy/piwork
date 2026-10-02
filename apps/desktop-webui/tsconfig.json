@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "rootDir": "src",
+    "outDir": "dist/browser",
+    "tsBuildInfoFile": "dist/.desktop-browser.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"]
+}

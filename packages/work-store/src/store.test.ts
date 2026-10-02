@@ -41,10 +41,11 @@ test("concurrent acceptance creates one active Run and no hidden queue", async (
   const fixture = await createFixture();
   const store = WorkStore.open(fixture.databasePath);
   store.createSession(session());
+  store.createSession({ ...session(), sessionId: "session-2", sdkHistoryPath: "/var/session/session-2.jsonl" });
   try {
     const attempts = await Promise.allSettled([
       Promise.resolve().then(() => store.acceptRun(submit({ submissionKey: "a", requestDigest: "digest-a" }))),
-      Promise.resolve().then(() => store.acceptRun(submit({ submissionKey: "b", requestDigest: "digest-b" }))),
+      Promise.resolve().then(() => store.acceptRun(submit({ sessionId: "session-2", submissionKey: "b", requestDigest: "digest-b" }))),
     ]);
     assert.equal(attempts.filter((result) => result.status === "fulfilled").length, 1);
     const rejected = attempts.find((result) => result.status === "rejected");

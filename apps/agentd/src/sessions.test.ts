@@ -32,6 +32,9 @@ test("real SDK Session create/list/read/continue survives daemon service replace
       { role: "user", text: "first turn" },
       { role: "assistant", text: "first answer" },
     ]);
+    const anotherWork = new AgentSessionService("work-2", store, workspace, sessionRoot);
+    assert.throws(() => anotherWork.read(created.sessionId), /does not exist in Work work-2/);
+    assert.throws(() => anotherWork.continue(created.sessionId), /does not exist in Work work-2/);
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });
@@ -72,6 +75,7 @@ test("Session context identity survives reopen and rejects a different Work cont
   try {
     let sessions = new AgentSessionService("work-1", store, workspace, sessionRoot, "context-a");
     const created = sessions.create("create-context");
+    appendUserMessage(sessions.continue(created.sessionId), "historical message");
     assert.equal(store.getSession("work-1", created.sessionId)?.contextIdentity, "context-a");
     store.close();
 
@@ -80,6 +84,9 @@ test("Session context identity survives reopen and rejects a different Work cont
     assert.equal(sessions.continue(created.sessionId).getSessionId(), created.sessionId);
 
     const replaced = new AgentSessionService("work-1", store, workspace, sessionRoot, "context-b");
+    assert.deepEqual(replaced.read(created.sessionId).entries.map(({ role, text }) => ({ role, text })), [
+      { role: "user", text: "historical message" },
+    ]);
     assert.throws(() => replaced.continue(created.sessionId), /context is unavailable/);
   } finally {
     store.close();

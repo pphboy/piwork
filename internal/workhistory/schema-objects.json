@@ -1,0 +1,92 @@
+[
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_run_events_1",
+    "tbl_name": "run_events",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_runs_1",
+    "tbl_name": "runs",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_session_idempotency_1",
+    "tbl_name": "session_idempotency",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_sessions_1",
+    "tbl_name": "sessions",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_sessions_2",
+    "tbl_name": "sessions",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_submit_idempotency_1",
+    "tbl_name": "submit_idempotency",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_work_activity_1",
+    "tbl_name": "work_activity",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_work_activity_2",
+    "tbl_name": "work_activity",
+    "sql": null
+  },
+  {
+    "type": "table",
+    "name": "run_events",
+    "tbl_name": "run_events",
+    "sql": "CREATE TABLE run_events (\n      run_id TEXT NOT NULL REFERENCES runs(run_id),\n      sequence INTEGER NOT NULL,\n      event_type TEXT NOT NULL,\n      payload_json TEXT NOT NULL,\n      created_at TEXT NOT NULL,\n      PRIMARY KEY(run_id, sequence)\n    ) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "runs",
+    "tbl_name": "runs",
+    "sql": "CREATE TABLE runs (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      run_id TEXT PRIMARY KEY,\n      submission_key TEXT NOT NULL,\n      prompt_digest TEXT NOT NULL,\n      state TEXT NOT NULL CHECK (state IN (\n        'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'\n      )),\n      final_text TEXT,\n      error_json TEXT,\n      accepted_at TEXT NOT NULL,\n      started_at TEXT,\n      finished_at TEXT,\n      earliest_available_sequence INTEGER NOT NULL DEFAULT 1,\n      latest_sequence INTEGER NOT NULL DEFAULT 0, context_identity TEXT,\n      FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)\n    ) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "schema_migrations",
+    "tbl_name": "schema_migrations",
+    "sql": "CREATE TABLE schema_migrations (\n    version INTEGER PRIMARY KEY,\n    applied_at TEXT NOT NULL\n  ) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "session_idempotency",
+    "tbl_name": "session_idempotency",
+    "sql": "CREATE TABLE session_idempotency (\n        work_id TEXT NOT NULL,\n        idempotency_key TEXT NOT NULL,\n        session_id TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(work_id, idempotency_key),\n        FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)\n      ) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "sessions",
+    "tbl_name": "sessions",
+    "sql": "CREATE TABLE sessions (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      sdk_history_path TEXT NOT NULL UNIQUE,\n      created_at TEXT NOT NULL,\n      updated_at TEXT NOT NULL, active_context_identity TEXT,\n      PRIMARY KEY(work_id, session_id)\n    ) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "submit_idempotency",
+    "tbl_name": "submit_idempotency",
+    "sql": "CREATE TABLE submit_idempotency (\n      work_id TEXT NOT NULL,\n      submission_key TEXT NOT NULL,\n      request_digest TEXT NOT NULL,\n      run_id TEXT NOT NULL REFERENCES runs(run_id),\n      created_at TEXT NOT NULL,\n      PRIMARY KEY(work_id, submission_key)\n    ) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "work_activity",
+    "tbl_name": "work_activity",
+    "sql": "CREATE TABLE work_activity (\n      work_id TEXT PRIMARY KEY,\n      active_run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id),\n      acquired_at TEXT NOT NULL\n    ) STRICT"
+  }
+]

@@ -1,8 +1,0 @@
-{
-  "name": "@piwork/file-helper",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "test:unit": "python3 -m unittest discover -s tests -v"
-  }
-}

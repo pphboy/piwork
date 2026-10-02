@@ -1,0 +1,473 @@
+{
+  "trees": [
+    {
+      "name": "skill-unicode-binary",
+      "kind": "skill",
+      "entries": [
+        {
+          "path": "SKILL.md",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "2d2d2d0a6e616d653a20666978747572650a6465736372697074696f6e3a20e4b8ade69687e7a4bae4be8b0a2d2d2d0a"
+        },
+        {
+          "path": "empty",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "中文.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "e4bda0e5a5bd0a"
+        },
+        {
+          "path": "😀.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "61737472616c"
+        },
+        {
+          "path": ".txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "626d70"
+        },
+        {
+          "path": "empty.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": ""
+        },
+        {
+          "path": "binary",
+          "type": "file",
+          "mode": 493,
+          "dataHex": "00ff017f80"
+        }
+      ],
+      "digest": "sha256:095725d5d553333febe31fe6c584cb6dd6276b4f0ab675509855d16fbcec2591"
+    },
+    {
+      "name": "skill-reverse-order",
+      "kind": "skill",
+      "entries": [
+        {
+          "path": "binary",
+          "type": "file",
+          "mode": 493,
+          "dataHex": "00ff017f80"
+        },
+        {
+          "path": "empty.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": ""
+        },
+        {
+          "path": ".txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "626d70"
+        },
+        {
+          "path": "😀.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "61737472616c"
+        },
+        {
+          "path": "中文.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "e4bda0e5a5bd0a"
+        },
+        {
+          "path": "empty",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "SKILL.md",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "2d2d2d0a6e616d653a20666978747572650a6465736372697074696f6e3a20e4b8ade69687e7a4bae4be8b0a2d2d2d0a"
+        }
+      ],
+      "digest": "sha256:095725d5d553333febe31fe6c584cb6dd6276b4f0ab675509855d16fbcec2591"
+    },
+    {
+      "name": "skill-execution-bit-ignored",
+      "kind": "skill",
+      "entries": [
+        {
+          "path": "SKILL.md",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "2d2d2d0a6e616d653a20666978747572650a6465736372697074696f6e3a20e4b8ade69687e7a4bae4be8b0a2d2d2d0a"
+        },
+        {
+          "path": "empty",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "中文.txt",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "e4bda0e5a5bd0a"
+        },
+        {
+          "path": "😀.txt",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "61737472616c"
+        },
+        {
+          "path": ".txt",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "626d70"
+        },
+        {
+          "path": "empty.txt",
+          "type": "file",
+          "mode": 384,
+          "dataHex": ""
+        },
+        {
+          "path": "binary",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "00ff017f80"
+        }
+      ],
+      "digest": "sha256:095725d5d553333febe31fe6c584cb6dd6276b4f0ab675509855d16fbcec2591"
+    },
+    {
+      "name": "skill-minimal-empty",
+      "kind": "skill",
+      "entries": [
+        {
+          "path": "SKILL.md",
+          "type": "file",
+          "mode": 420,
+          "dataHex": ""
+        }
+      ],
+      "digest": "sha256:21b9175834b8cb28a72c27a6f1a174d12639668baf53eab869e918ccc7eac0ef"
+    },
+    {
+      "name": "package-unicode-links",
+      "kind": "package",
+      "entries": [
+        {
+          "path": "package.json",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "7b226e616d65223a22406578616d706c652f66697874757265222c2276657273696f6e223a22312e302e30222c227069223a7b22657874656e73696f6e73223a5b22657874656e73696f6e2e6a73225d7d7d0a"
+        },
+        {
+          "path": "extension.js",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "6578706f72742064656661756c74202829203d3e207b7d3b0a"
+        },
+        {
+          "path": "empty",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "data",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "data/中文.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "e4bda0e5a5bd"
+        },
+        {
+          "path": "😀.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "61737472616c"
+        },
+        {
+          "path": ".txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "626d70"
+        },
+        {
+          "path": "empty.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": ""
+        },
+        {
+          "path": "run.sh",
+          "type": "file",
+          "mode": 448,
+          "dataHex": "23212f62696e2f73680a"
+        },
+        {
+          "path": "latest",
+          "type": "symlink",
+          "mode": 511,
+          "target": "data/中文.txt"
+        }
+      ],
+      "digest": "sha256:f5139afd58841581961ebff63ef74d01053ddc7e5c665980f61832fc81ba18c9"
+    },
+    {
+      "name": "package-reverse-order",
+      "kind": "package",
+      "entries": [
+        {
+          "path": "latest",
+          "type": "symlink",
+          "mode": 511,
+          "target": "data/中文.txt"
+        },
+        {
+          "path": "run.sh",
+          "type": "file",
+          "mode": 448,
+          "dataHex": "23212f62696e2f73680a"
+        },
+        {
+          "path": "empty.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": ""
+        },
+        {
+          "path": ".txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "626d70"
+        },
+        {
+          "path": "😀.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "61737472616c"
+        },
+        {
+          "path": "data/中文.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "e4bda0e5a5bd"
+        },
+        {
+          "path": "data",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "empty",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "extension.js",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "6578706f72742064656661756c74202829203d3e207b7d3b0a"
+        },
+        {
+          "path": "package.json",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "7b226e616d65223a22406578616d706c652f66697874757265222c2276657273696f6e223a22312e302e30222c227069223a7b22657874656e73696f6e73223a5b22657874656e73696f6e2e6a73225d7d7d0a"
+        }
+      ],
+      "digest": "sha256:f5139afd58841581961ebff63ef74d01053ddc7e5c665980f61832fc81ba18c9"
+    },
+    {
+      "name": "package-mode-normalization",
+      "kind": "package",
+      "entries": [
+        {
+          "path": "package.json",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "7b226e616d65223a22406578616d706c652f66697874757265222c2276657273696f6e223a22312e302e30222c227069223a7b22657874656e73696f6e73223a5b22657874656e73696f6e2e6a73225d7d7d0a"
+        },
+        {
+          "path": "extension.js",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "6578706f72742064656661756c74202829203d3e207b7d3b0a"
+        },
+        {
+          "path": "empty",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "data",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "data/中文.txt",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "e4bda0e5a5bd"
+        },
+        {
+          "path": "😀.txt",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "61737472616c"
+        },
+        {
+          "path": ".txt",
+          "type": "file",
+          "mode": 384,
+          "dataHex": "626d70"
+        },
+        {
+          "path": "empty.txt",
+          "type": "file",
+          "mode": 384,
+          "dataHex": ""
+        },
+        {
+          "path": "run.sh",
+          "type": "file",
+          "mode": 511,
+          "dataHex": "23212f62696e2f73680a"
+        },
+        {
+          "path": "latest",
+          "type": "symlink",
+          "mode": 511,
+          "target": "data/中文.txt"
+        }
+      ],
+      "digest": "sha256:f5139afd58841581961ebff63ef74d01053ddc7e5c665980f61832fc81ba18c9"
+    },
+    {
+      "name": "package-execution-bit-changed",
+      "kind": "package",
+      "entries": [
+        {
+          "path": "package.json",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "7b226e616d65223a22406578616d706c652f66697874757265222c2276657273696f6e223a22312e302e30222c227069223a7b22657874656e73696f6e73223a5b22657874656e73696f6e2e6a73225d7d7d0a"
+        },
+        {
+          "path": "extension.js",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "6578706f72742064656661756c74202829203d3e207b7d3b0a"
+        },
+        {
+          "path": "empty",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "data",
+          "type": "directory",
+          "mode": 448
+        },
+        {
+          "path": "data/中文.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "e4bda0e5a5bd"
+        },
+        {
+          "path": "😀.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "61737472616c"
+        },
+        {
+          "path": ".txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "626d70"
+        },
+        {
+          "path": "empty.txt",
+          "type": "file",
+          "mode": 420,
+          "dataHex": ""
+        },
+        {
+          "path": "run.sh",
+          "type": "file",
+          "mode": 420,
+          "dataHex": "23212f62696e2f73680a"
+        },
+        {
+          "path": "latest",
+          "type": "symlink",
+          "mode": 511,
+          "target": "data/中文.txt"
+        }
+      ],
+      "digest": "sha256:86c8e39b85f4d98595f869985078d412488f04093c676f440e1e39141496fada"
+    }
+  ],
+  "json": [
+    {
+      "input": "{\"中文\":\"你好\",\"😀\":[],\"\":null,\"a\":false,\"z\":\"<>&  \\n\\u0000\\\\u2028\"}",
+      "encodedHex": "7b2261223a66616c73652c227a223a223c3e26e280a8e280a95c6e5c75303030305c5c7532303238222c22e4b8ade69687223a22e4bda0e5a5bd222c22ee8080223a6e756c6c2c22f09f9880223a5b5d7d"
+    },
+    {
+      "input": "{\"tools\":{\"denied\":[],\"allowed\":[\"read\"]},\"packages\":[],\"skills\":[],\"agentsMd\":\"\",\"modelRef\":\"model-00000001\",\"agentImage\":{\"catalogId\":\"image-00000001\"}}",
+      "encodedHex": "7b226167656e74496d616765223a7b22636174616c6f674964223a22696d6167652d3030303030303031227d2c226167656e74734d64223a22222c226d6f64656c526566223a226d6f64656c2d3030303030303031222c227061636b61676573223a5b5d2c22736b696c6c73223a5b5d2c22746f6f6c73223a7b22616c6c6f776564223a5b2272656164225d2c2264656e696564223a5b5d7d7d"
+    },
+    {
+      "input": "{\"a\":0.000001,\"b\":1e-7,\"c\":9007199254740991,\"d\":0,\"e\":1.2345678901234567,\"f\":0.0001}",
+      "encodedHex": "7b2261223a302e3030303030312c2262223a31652d372c2263223a393030373139393235343734303939312c2264223a302c2265223a312e323334353637383930313233343536372c2266223a302e303030317d"
+    },
+    {
+      "input": "[]",
+      "encodedHex": "5b5d"
+    },
+    {
+      "input": "{}",
+      "encodedHex": "7b7d"
+    },
+    {
+      "input": "\"\"",
+      "encodedHex": "2222"
+    },
+    {
+      "input": "\"中文😀\"",
+      "encodedHex": "22e4b8ade69687f09f988022"
+    },
+    {
+      "input": "null",
+      "encodedHex": "6e756c6c"
+    }
+  ],
+  "names": [
+    {
+      "name": "@example/fixture",
+      "key": "4f82d8fc0c3c133aea821d006444ef368ef95e5d867282e197f7d72db38cf055"
+    },
+    {
+      "name": "fixture",
+      "key": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d"
+    },
+    {
+      "name": "中文",
+      "key": "72726d8818f693066ceb69afa364218b692e62ea92b385782363780f47529c21"
+    },
+    {
+      "name": "😀",
+      "key": "f0443a342c5ef54783a111b51ba56c938e474c32324d90c3a60c9c8e3a37e2d9"
+    }
+  ]
+}

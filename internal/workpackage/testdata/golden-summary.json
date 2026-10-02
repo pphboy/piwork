@@ -1,0 +1,12 @@
+[
+  {
+    "name": "golden",
+    "size": 4201,
+    "digest": "da7cde726ef093c5e9721bf0ca24b7e1ed19e59f9ca124fc8582124dacd15969"
+  },
+  {
+    "name": "golden-service",
+    "size": 5187,
+    "digest": "66b0b20f05a19aa950eed5d6871212a964687aaddbe82fb1619afe19040161a0"
+  }
+]

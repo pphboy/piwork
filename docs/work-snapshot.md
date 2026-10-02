@@ -41,4 +41,29 @@ Import creates a new Work owned by the logged-in recipient and leaves it stopped
 
 `--wait` observes import for at most 120 seconds. Without it, the command returns the accepted `operationId` immediately. On observation failure, retry `piwork-cli operation show <operationId>`; do not resubmit the package with a new idempotency key merely because it is slow. Import never starts the Work automatically.
 
-The durable Work boundary is the two managed volumes and Work-owned platform records above. Container temporary writable layers and anonymous Docker volumes are not exported. Files stored outside the Work's managed paths are not magically part of a Work. See [package format](work-package-format.md) for technical details and [operations](operations.md#work-snapshot-operations) for helper, cleanup, and rollback procedures.
+The durable Work boundary is the two managed volumes and Work-owned platform records above. Container temporary writable layers and anonymous Docker volumes are not exported. Files stored outside the Work's managed paths are not magically part of a Work. See [package format](work-package-format.md) for technical details and [operations](operations.md#证书恢复和退出) for helper, cleanup, and rollback procedures.
+
+## Native Go Core implementation
+
+The migration implementation uses the Go Core and a separate native `piwork-snapshot-helper` image. Core talks directly to the selected local Unix Engine API. It does not run Docker CLI, Node, Python, SQLite CLI, or a TS snapshot helper on the host. The helper is a bounded container with only the recorded job mounts; it copies archive bytes and rebuilds managed schema-3 history without executing imported programs. Pi Agentd and its SDK continue to run inside the imported Agent image after explicit Start.
+
+Core independently validates the full package and the embedded Agent image's native Service MCP and package helper, Node ABI, Pi SDK version, architecture, and protocol. An image containing only the previous TS platform helpers returns `PACKAGE_INCOMPATIBLE`; import never replaces an incompatible image or extends V1. An offline inspect reports `integrityVerified: true` and `installationValidated: false`, regardless of the target installation's credentials and quota.
+
+The HTTP sequence is: explicit Work Stop and confirmed stopped Operation → `POST /api/v1/works/<workId>/exports` → observe its Operation → full `GET /api/v1/work-snapshots/<snapshotId>/content` → offline inspect → full `POST /api/v1/work-packages` → `POST /api/v1/work-imports` → observe the stopped imported Work → explicit Work Start. Upload and download use complete bodies, declared size and SHA-256; snapshot content rejects every Range request with 416. Transfer failure preserves the original snapshot receipt; retry starts from byte zero with that receipt, without submitting another export.
+
+Snapshot Operations, including failed imports whose Work was never published, are visible only to the task owner. Imported terminal Operations are safely queryable using their new IDs; `GET /api/v1/works/<workId>/import-provenance` returns the package digest, import Operation, and historical ID map. These history records never enter an execution queue. An active import or transfer lease prevents GC from deleting package bytes. Cleanup uses exact recorded installation/Work/job identities, preserves shared images and unknown files, and retains reservations when resource absence cannot be confirmed.
+
+Native acceptance (the CLI migration has its own later gate):
+
+```sh
+bash scripts/build-go.sh
+TMPDIR="$HOME/.cache/piwork-native-tests" \
+PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:go-migration-acceptance \
+PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance \
+PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance \
+CGO_ENABLED=0 go test -mod=readonly -tags=integration ./internal/coreapp \
+  -run 'TestNativeSnapshotMovesServicesContextsAndPackagesBetweenOfflineInstallations|TestNativeCoreSnapshotJobsRecoverAcrossActualProcessCrashes' \
+  -count=1 -v -timeout=20m
+```
+
+The first test executes the sequence above with two independent installations, takes the source offline, continues a real SDK Session, calls the target Go MCP, and re-exports the imported Work. The second uses actual Core subprocess SIGKILL boundaries and a final SIGTERM; production has no fault-injection endpoints. See [migration acceptance](go-migration-acceptance.md) for the recorded runs and incomplete later gates.

@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+ARG GO_BUILDER_IMAGE=golang:1.25.5-alpine3.22
+FROM ${GO_BUILDER_IMAGE} AS build
+ARG GOPROXY=https://goproxy.cn,direct
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY internal ./internal
+COPY cmd/piwork-file-helper ./cmd/piwork-file-helper
+ARG PIWORK_COMMIT=unknown
+ARG PIWORK_DIRTY=true
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -ldflags="-s -w -X piwork/internal/buildinfo.Commit=${PIWORK_COMMIT} -X piwork/internal/buildinfo.Modified=${PIWORK_DIRTY}" -o /out/piwork-file-helper ./cmd/piwork-file-helper
+FROM scratch
+LABEL piwork.file_protocol="1"
+COPY --from=build --chmod=0555 /out/piwork-file-helper /usr/local/bin/piwork-file-helper
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/piwork-file-helper"]

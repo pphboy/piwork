@@ -1,6 +1,6 @@
 # CLI Desktop WebUI
 
-Desktop 是 Work 所有者在本机浏览器中使用的界面，由 `piwork-cli` 前台启动。首版验收桌面 Chrome 和 Edge 当前稳定版。运行 CLI 的机器需要 Node 24 和到 Core 的连接；浏览器不需要代理、PAC、hosts 修改或 Docker 权限。
+Desktop 是 Work 所有者在本机浏览器中使用的界面，由 Go `piwork-cli` 前台启动。首版验收桌面 Chrome 和 Edge 当前稳定版。运行 CLI 的机器需要到 Core 的连接，不需要安装 Node；浏览器不需要代理、PAC、hosts 修改或 Docker 权限。
 
 ```sh
 piwork-cli desktop
@@ -16,6 +16,8 @@ CLI 必须保持运行，本地 WebUI 和 Service 浏览器链接才可用。`Co
 启动时 CLI 会打印一次包含本地引导票据的浏览器地址。只在自己的电脑上打开该地址；不要分享完整启动地址。浏览器成功打开后会从地址栏移除票据，并使用 HttpOnly 本地会话。复制 Work 或 Service 的本机链接不会包含票据。若首次引导票据已用或超过五分钟，请重新启动 desktop 取得新地址。平台 token 保留在 CLI，不需要粘贴到网页。
 
 界面的 Core 地址默认沿用当前 CLI 配置和 `--core` 选择。保存的登录凭证只会用于其所属 Core；选择另一 Core 后需用该 Core 账号登录。`Core is unavailable` 表示连接暂时失败，界面保留最后确认的账号和时间；恢复后使用 **Check connection** 重新检查。确认平台登录过期会返回登录页，重新登录同一账号后可按原 ID 查 Operation。Sign out 会立刻结束本地内容访问，并尝试撤销共享的 Core 会话；若远端不可达，界面会说明撤销未确认。其他使用同一 Core token 的 CLI 进程也可能受到显式登出的影响。
+
+Desktop 与命令行共用 [用户 CLI 凭证存储](user-cli.md#登录与-work) 的权限、归属和路径检查。不安全的现有目录或符号链接不会被自动修正或继续读取；登录保存被拒绝时不会建立已登录状态，并尝试撤销本次新取得的 token，原凭证保持不变。
 
 关闭浏览器窗口不会停止 Work 或 Run。按 Ctrl+C 退出 desktop 只关闭本地入口和连接，不取消 Core 已接受的操作。重新启动后，应从新的启动地址进入；端口改变时旧本机链接失效。平台登录过期后可在 WebUI 中重新登录并用原 Operation ID 查询，不要重复提交未知结果的写入请求。
 

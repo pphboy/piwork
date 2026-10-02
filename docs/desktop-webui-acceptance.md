@@ -1,5 +1,15 @@
 # Desktop WebUI 本机验收记录
 
+## 当前 Go 后端验收
+
+2026-10-02，桌面 Chrome 154.0.8037.57 与 Edge 154.0.4258.37 均通过 `npm run test:real-core -w @piwork/desktop-webui`。使用真实 Go Core/CLI、Docker Engine、完整 TS Agent/Pi SDK 及 Go 文件/快照 helper；覆盖 Service 内嵌和独立打开、文件编辑与回复丢失、Save→Apply、Chat、Stop→Export→Inspect→Import→Start、历史恢复和加载/空/错误状态。完整命令、日志和 UI Review 见 [Go 迁移验收记录的 12.9](go-migration-acceptance.md)。
+
+执行时设置 `TMPDIR` 为至少可用1GiB的磁盘目录；用 `PIWORK_TEST_BROWSER_BIN` 指定实际浏览器，用 `PIWORK_TEST_SCREENSHOT_DIR` 保存截图。原有三个 fixture 浏览器测试继续由 `npm run test:browser -w @piwork/desktop-webui` 运行。
+
+## 迁移前历史记录
+
+> 以下记录属于迁移前 TS Core/CLI 的历史验收，所列旧脚本和旧测试路径已随 Go 平台迁移移除，不是当前发布 gate。Go CLI Desktop 的自动浏览器测试及真实 Go Core 证据见 [Go 迁移验收记录](go-migration-acceptance.md)；当前 Chrome/Edge 真实 Go 后端记录见上节。
+
 2026-09-29 在隔离目录启动本地真实 Core 和 CLI Desktop，Core 使用本机 Docker、`piwork-agentd:local`、File Helper 与 Snapshot Helper 镜像。该真实 Core 验收使用 Playwright Chromium 140.0.7339.186。模型凭据使用无效测试值，未提交 AI 请求，因此未创建真实 Service。
 
 同日另以本地隔离的模拟 Core 和真实桌面浏览器稳定版运行 Desktop 浏览器套件。Chrome 154.0.8037.57 与 Edge 154.0.4258.37 各 3 个用例均通过。Service 用例覆盖根路径、应用内登录、SSE、WebSocket、嵌入预览、独立标签页、Cookie/storage 跨 Service 隔离及停止后的访问状态；Work/迁移用例覆盖停止失败、快照锁拒绝、校验后下载、损坏/空间不足/过期恢复、离线 Inspect、导入重名、stopped 结果页。浏览器二进制来自 Google 官方 Chrome 包与 Microsoft 官方 Edge 稳定仓库，解包于 `/tmp`，未修改系统浏览器配置。模拟 Core 的结果不替代真实 Service 和真实 Agent 验收。

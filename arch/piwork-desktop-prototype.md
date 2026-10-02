@@ -68,7 +68,7 @@
 | 35 | Pi Package 详情与更新 | desired/active/runtime、Enable/Update/Remove；来源对应字段与目录/ZIP 选择 | `showSettings`；浏览器验证 scoped 名称详情、启停、更新、移除后 active 历史、五类来源失败恢复；真实 Core 更新待验 |
 | 36 | Apply 进行中和结果 | 接受与完成、后续编辑仍待应用、Run busy、失败回退/回退失败 | `showSettings` 与 Operation；Chrome 浏览器验证 busy 不取消 Run、失败后 active 不变、回退失败可见、新编辑仍 pending、stopped Apply 不 Start；真实 Core 回退待验 |
 
-上表每行的运行函数位于 [Desktop 浏览器实现](../apps/cli/src/desktop/browser/app.ts) 或 [Files 实现](../apps/cli/src/desktop/browser/files.ts)。浏览器行为证据来自 [Chrome/Edge 浏览器测试](../apps/cli/src/desktop/browser.test.ts) 的登录、生命周期、Service/Files/Chat/Settings 三组用例；本地授权、传输和退出证据来自 [Desktop 进程测试](../apps/cli/src/desktop/server.test.ts)。真实 Core 已通过及尚缺的场景逐项记录在 [本机验收记录](../docs/desktop-webui-acceptance.md)。因此每个 Frame 的“待验”表示其页面已落地而对应真实依赖场景尚未通过，不能把模拟结果写成真实验收。
+上表每行的运行函数位于 [Desktop 浏览器实现](../apps/desktop-webui/src/app.ts) 或 [Files 实现](../apps/desktop-webui/src/files.ts)。浏览器行为证据来自 [Chrome/Edge 浏览器测试](../apps/desktop-webui/test/browser.test.ts) 的登录、生命周期、Service/Files/Chat/Settings 三组用例；本地授权、传输和退出证据来自 [Desktop 进程测试](../internal/cli/user_desktop_test.go)。真实 Core 已通过及尚缺的场景逐项记录在 [本机验收记录](../docs/desktop-webui-acceptance.md)。因此每个 Frame 的“待验”表示其页面已落地而对应真实依赖场景尚未通过，不能把模拟结果写成真实验收。
 
 2026-09-29 人工查看 Chrome 的 1280px Work List、Service、Files、Chat、Settings 画面，以及 360px Files 和 Service 画面；对照 01—36 的入口、主要动作、状态与返回路径复核。由此修正了 360px Work 标题/Service 操作的过长纵向堆叠、Skills 选择框空白高度和被全局输入宽度拉伸的复选框。浏览器测试另检查长 Work 名不横溢、焦点轮廓、Escape 后焦点返回、减弱动画、360px 四个顶层视图互斥及操作状态。BSA-005 的直接应用标签页是例外：应用自己的安全头禁止嵌入时，Desktop 保留限制并提供独立标签，不伪装为内嵌成功。
 ## CLI 基础能力覆盖矩阵

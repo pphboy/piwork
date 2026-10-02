@@ -1,0 +1,146 @@
+[
+  {
+    "input": "",
+    "result": {}
+  },
+  {
+    "input": "# comment\nA=one\r\n",
+    "result": {
+      "A": "one"
+    }
+  },
+  {
+    "input": "export A = two\nB=value # comment",
+    "result": {
+      "A": "two",
+      "B": "value"
+    }
+  },
+  {
+    "input": "A='literal $HOME'",
+    "result": {
+      "A": "literal $HOME"
+    }
+  },
+  {
+    "input": "A=\"line\\nvalue\\tend\\r\"",
+    "result": {
+      "A": "line\nvalue\tend\r"
+    }
+  },
+  {
+    "input": "A=\"literal\\x and\\\\ end\"",
+    "result": {
+      "A": "literal\\x and\\ end"
+    }
+  },
+  {
+    "input": "A=\"escaped\\\" quote\"",
+    "result": {
+      "A": "escaped\" quote"
+    }
+  },
+  {
+    "input": "A=value#part",
+    "result": {
+      "A": "value#part"
+    }
+  },
+  {
+    "input": "A= # empty",
+    "result": {
+      "A": "# empty"
+    }
+  },
+  {
+    "input": "A=\"\"",
+    "result": {
+      "A": ""
+    }
+  },
+  {
+    "input": "A='two words'",
+    "result": {
+      "A": "two words"
+    }
+  },
+  {
+    "input": "A=1\nA=2",
+    "invalid": true
+  },
+  {
+    "input": "A=$(whoami)",
+    "invalid": true
+  },
+  {
+    "input": "A=`whoami`",
+    "invalid": true
+  },
+  {
+    "input": "A=$HOME",
+    "invalid": true
+  },
+  {
+    "input": "BROKEN",
+    "invalid": true
+  },
+  {
+    "input": "A='unterminated",
+    "invalid": true
+  },
+  {
+    "input": "A=\"unterminated",
+    "invalid": true
+  },
+  {
+    "input": "A=one # comment\nexport _TWO=2",
+    "result": {
+      "A": "one",
+      "_TWO": "2"
+    }
+  },
+  {
+    "input": "﻿A=value\n",
+    "result": {
+      "A": "value"
+    }
+  },
+  {
+    "input": "export A　= value",
+    "result": {
+      "A": "value"
+    }
+  },
+  {
+    "input": "A=value # comment",
+    "result": {
+      "A": "value"
+    }
+  },
+  {
+    "input": "A=value﻿# comment",
+    "result": {
+      "A": "value"
+    }
+  },
+  {
+    "input": "A=before after",
+    "invalid": true
+  },
+  {
+    "input": "A=before\rafter",
+    "invalid": true
+  },
+  {
+    "input": "A= value",
+    "result": {
+      "A": "value"
+    }
+  },
+  {
+    "input": "A=value# retained",
+    "result": {
+      "A": "value# retained"
+    }
+  }
+]

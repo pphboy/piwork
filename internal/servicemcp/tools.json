@@ -1,0 +1,638 @@
+[
+  {
+    "name": "deployment_context",
+    "description": "Read the current Work deployment scope and capacity",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_create",
+    "description": "Create a durable service from an existing image",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "definition": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,47}$"
+            },
+            "image": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048
+                }
+              },
+              "required": [
+                "reference"
+              ],
+              "additionalProperties": false
+            },
+            "command": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "args": {
+              "default": [],
+              "maxItems": 128,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "environment": {
+              "default": {},
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 16384
+              }
+            },
+            "secretRefs": {
+              "default": [],
+              "maxItems": 0,
+              "type": "array",
+              "items": {
+                "not": {}
+              }
+            },
+            "workingDirectory": {
+              "default": "/var/data/workspace",
+              "type": "string"
+            },
+            "mounts": {
+              "default": [],
+              "maxItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "workspace"
+                  },
+                  "target": {
+                    "type": "string",
+                    "const": "/var/data/workspace"
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "source",
+                  "target",
+                  "readOnly"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "ports": {
+              "default": [],
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "containerPort": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  "protocol": {
+                    "type": "string",
+                    "enum": [
+                      "tcp",
+                      "udp"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "containerPort",
+                  "protocol"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "cpuMillis": {
+              "default": 250,
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 128000
+            },
+            "memoryBytes": {
+              "default": 134217728,
+              "type": "integer",
+              "minimum": 16777216,
+              "maximum": 9007199254740991
+            },
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "required": {
+              "default": false,
+              "type": "boolean"
+            },
+            "readiness": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "tcp",
+                    "http",
+                    "exec"
+                  ]
+                },
+                "portName": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "command": {
+                  "maxItems": 128,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "deadlineMs": {
+                  "default": 120000,
+                  "type": "integer",
+                  "minimum": 1000,
+                  "maximum": 300000
+                },
+                "timeoutMs": {
+                  "default": 2000,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2000
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "restartPolicy": {
+              "default": "bounded",
+              "type": "string",
+              "enum": [
+                "never",
+                "bounded"
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "image",
+            "command"
+          ],
+          "additionalProperties": false
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "definition",
+        "idempotencyKey"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_list",
+    "description": "List services in this Work",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_get",
+    "description": "Inspect one service",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "serviceId"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_update",
+    "description": "Replace a service definition",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "definition": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,47}$"
+            },
+            "image": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048
+                }
+              },
+              "required": [
+                "reference"
+              ],
+              "additionalProperties": false
+            },
+            "command": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "args": {
+              "default": [],
+              "maxItems": 128,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "environment": {
+              "default": {},
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 16384
+              }
+            },
+            "secretRefs": {
+              "default": [],
+              "maxItems": 0,
+              "type": "array",
+              "items": {
+                "not": {}
+              }
+            },
+            "workingDirectory": {
+              "default": "/var/data/workspace",
+              "type": "string"
+            },
+            "mounts": {
+              "default": [],
+              "maxItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "const": "workspace"
+                  },
+                  "target": {
+                    "type": "string",
+                    "const": "/var/data/workspace"
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "source",
+                  "target",
+                  "readOnly"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "ports": {
+              "default": [],
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "containerPort": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  "protocol": {
+                    "type": "string",
+                    "enum": [
+                      "tcp",
+                      "udp"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "containerPort",
+                  "protocol"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "cpuMillis": {
+              "default": 250,
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 128000
+            },
+            "memoryBytes": {
+              "default": 134217728,
+              "type": "integer",
+              "minimum": 16777216,
+              "maximum": 9007199254740991
+            },
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "required": {
+              "default": false,
+              "type": "boolean"
+            },
+            "readiness": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "tcp",
+                    "http",
+                    "exec"
+                  ]
+                },
+                "portName": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "command": {
+                  "maxItems": 128,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "deadlineMs": {
+                  "default": 120000,
+                  "type": "integer",
+                  "minimum": 1000,
+                  "maximum": 300000
+                },
+                "timeoutMs": {
+                  "default": 2000,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2000
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "restartPolicy": {
+              "default": "bounded",
+              "type": "string",
+              "enum": [
+                "never",
+                "bounded"
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "image",
+            "command"
+          ],
+          "additionalProperties": false
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "serviceId",
+        "expectedRevision",
+        "definition",
+        "idempotencyKey"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_start",
+    "description": "Enable and start a service",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "serviceId",
+        "idempotencyKey"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_stop",
+    "description": "Disable and stop a service",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "serviceId",
+        "idempotencyKey"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_restart",
+    "description": "Restart an enabled service",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "serviceId",
+        "idempotencyKey"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_remove",
+    "description": "Remove a service while retaining shared workspace data",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "serviceId",
+        "idempotencyKey"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_retry",
+    "description": "Retry the current desired service revision",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "serviceId",
+        "idempotencyKey"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "operation_get",
+    "description": "Inspect a durable service operation",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "service_logs",
+    "description": "Read bounded stdout/stderr from the bound service container",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "serviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "tailLines": {
+          "default": 100,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "serviceId"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+]

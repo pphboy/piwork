@@ -1,0 +1,62 @@
+[
+  {
+    "name": "valid",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"size\":24,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": null
+  },
+  {
+    "name": "unknown-field",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001,\"extra\":true},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"size\":24,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  },
+  {
+    "name": "root-file",
+    "json": "{\"entries\":[{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"size\":24,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  },
+  {
+    "name": "duplicate-entry",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"size\":24,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"size\":24,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  },
+  {
+    "name": "invalid-base64",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"YQ\"],\"size\":24,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  },
+  {
+    "name": "encoded-slash",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"Li4vc2VjcmV0\"],\"size\":24,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  },
+  {
+    "name": "missing-parent",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"bm9uZQ==\",\"Y2hpbGQ=\"],\"size\":24,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  },
+  {
+    "name": "unsafe-uid",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":4294967296},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"size\":24,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  },
+  {
+    "name": "wrong-file-size",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"size\":25,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  },
+  {
+    "name": "invalid-time",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"01\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001},{\"blob\":\"cfee535c2842288aefb9bac49917ab7ecd60e2bd36fcbca2ea00325666efe3d0\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"size\":24,\"type\":\"file\",\"uid\":10001},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  },
+  {
+    "name": "absolute-symlink-is-opaque",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001},{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"type\":\"symlink\",\"uid\":10001,\"targetBase64\":\"L291dHNpZGUvc2VjcmV0\"},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": null
+  },
+  {
+    "name": "missing-hardlink-target",
+    "json": "{\"entries\":[{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[],\"type\":\"directory\",\"uid\":10001},{\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"LmVudg==\"],\"type\":\"hardlink\",\"uid\":10001,\"targetSegmentsBase64\":[\"bWlzc2luZw==\"]},{\"blob\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"gid\":10001,\"mode\":493,\"mtimeNs\":\"1727049600123456789\",\"segmentsBase64\":[\"ZW1wdHk=\"],\"size\":0,\"type\":\"file\",\"uid\":10001}],\"version\":1}",
+    "code": "PACKAGE_INVALID"
+  }
+]

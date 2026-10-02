@@ -5,8 +5,8 @@ import { dirname, join, resolve, sep } from "node:path";
 import { Check } from "typebox/value";
 import { PiPackagePreparedEnvironmentSchema, type PiPackageArtifactMetadata, type PiPackagePreparedEnvironment, type PiPackageSourceKind } from "@piwork/contracts";
 import { inspectPiPackageResources, type PiPackageInventory, type PiPackageTreePath } from "./inventory.js";
-import { PiPackageInputError, parsePiPackageManifest, PI_HOST_MODULES } from "./source.js";
-import { PI_PACKAGE_LIMITS } from "./zip.js";
+import { PiPackageInputError, parsePiPackageManifest, PI_HOST_MODULES } from "./manifest.js";
+import { PI_PACKAGE_LIMITS } from "./limits.js";
 
 
 export interface ValidatedPiPackageArtifact {

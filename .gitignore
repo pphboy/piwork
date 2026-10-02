@@ -5,10 +5,9 @@ test-results/
 .env
 .piwork/
 *.tsbuildinfo
-apps/console/vite.config.js
-apps/console/vite.config.d.ts
-
 .env.test
 *.work
+!/internal/workpackage/testdata/*.work
 __pycache__/
 *.pyc
+/.piwork-tools/

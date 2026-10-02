@@ -41,6 +41,7 @@ export class McpBridge {
   private readonly configurations = new Map<string, McpBridgeServer>();
   private readonly reconnecting = new Map<string, Promise<ConnectedServer>>();
   private readonly pendingClients = new Set<Client>();
+  private readonly closingClients = new Set<Promise<void>>();
   private closing = false;
 
   async initialize(servers: readonly McpBridgeServer[]): Promise<void> {
@@ -102,7 +103,11 @@ export class McpBridge {
       // A later explicit call may reconnect and supplies its original key.
       if (this.connected.get(serverId) === server) this.connected.delete(serverId);
       this.unavailable.add(serverId);
-      await server.client.close().catch(() => undefined);
+      // Closing a stdio transport can wait for the timed-out tool to finish.
+      // Return the call error at its deadline while retaining the cleanup for drain.
+      const closing = server.client.close().catch(() => undefined);
+      this.closingClients.add(closing);
+      void closing.then(() => this.closingClients.delete(closing));
       throw error;
     }
   }
@@ -115,7 +120,7 @@ export class McpBridge {
     ])];
     this.connected.clear();
     this.reconnecting.clear();
-    await Promise.allSettled(clients.map((client) => client.close()));
+    await Promise.allSettled([...clients.map((client) => client.close()), ...this.closingClients]);
   }
 
   private reconnect(config: McpBridgeServer): Promise<ConnectedServer> {

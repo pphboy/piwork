@@ -1,4 +1,5 @@
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { X509Certificate } from "node:crypto";
 import { join } from "node:path";
 import {
   Server,
@@ -40,7 +41,7 @@ import { AgentDaemonControl } from "./daemon.js";
 import { initializeChildAgentDirectory, PiSdkRunExecutor } from "./pi-sdk-executor.js";
 import { RunManager } from "./runs.js";
 import { AgentSessionService } from "./sessions.js";
-import { loadConfiguredSkills, type ConfiguredSkill } from "./skills.js";
+import { loadConfiguredSkills, RequiredSkillError, type ConfiguredSkill } from "./skills.js";
 import { emitAgentDiagnostic } from "./diagnostics.js";
 import { defineTool, type ResourceLoader, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { McpBridge, type McpBridgeServer } from "@piwork/pi-adapter";
@@ -119,6 +120,7 @@ export interface LoadedWorkContext {
 export class AgentApplication {
   private readonly server = new Server();
   private closed = false;
+  private readonly installationId: string;
 
   private constructor(
     readonly config: AgentRuntimeConfig,
@@ -127,7 +129,14 @@ export class AgentApplication {
     private readonly sessions: AgentSessionService,
     private readonly runs: RunManager,
     private readonly mcp: McpBridge,
-  ) {}
+  ) {
+    const authority = new X509Certificate(readBoundedRegularFile(config.tls.caCertificatePath));
+    const commonName = authority.toLegacyObject().subject.CN;
+    if (typeof commonName !== "string" || !/^piwork-installation-[a-zA-Z0-9][a-zA-Z0-9-]{0,127}$/.test(commonName)) {
+      throw new Error("agent installation authority is invalid");
+    }
+    this.installationId = commonName.slice("piwork-installation-".length);
+  }
 
   static async create(configPath: string): Promise<AgentApplication> {
     const config = readConfig(configPath);
@@ -151,16 +160,23 @@ export class AgentApplication {
       mkdirSync(sessionRoot, { recursive: true });
       const sessions = new AgentSessionService(config.workId, store, workspace, sessionRoot, config.contextIdentity);
       const context = loadWorkContext(config);
-      emitAgentDiagnostic({
-        stage: "skill-load", outcome: "started", code: "SKILL_LOAD_FAILED",
-        correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
-      });
+      const skillDiagnostics = (stage: "skill-validate" | "skill-load", outcome: "started" | "succeeded") => {
+        for (const skillName of context.skills.length === 0 ? [undefined] : context.skills.map((skill) => skill.name)) {
+          emitAgentDiagnostic({ stage, outcome,
+            code: stage === "skill-validate" ? "SKILL_VALIDATION_FAILED" : "SKILL_LOAD_FAILED",
+            correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
+            ...(skillName === undefined ? {} : { skillName }) });
+        }
+      };
+      skillDiagnostics("skill-validate", "started");
       const loaded = await loadValidatedWorkContext(context, workspace, join(config.dataDirectory, "agent"), () => {
-        emitAgentDiagnostic({ stage: "skill-load", outcome: "succeeded", code: "SKILL_LOAD_FAILED",
-          correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
+        skillDiagnostics("skill-load", "succeeded");
         loadingStage = "package-load";
         emitAgentDiagnostic({ stage: "package-load", outcome: "started", code: "PACKAGE_LOAD_FAILED",
           correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
+      }, () => {
+        skillDiagnostics("skill-validate", "succeeded");
+        skillDiagnostics("skill-load", "started");
       });
       emitAgentDiagnostic({ stage: "package-load", outcome: "succeeded", code: "PACKAGE_LOAD_FAILED",
         correlationId: config.correlationId ?? config.instanceId, workId: config.workId });
@@ -199,7 +215,16 @@ export class AgentApplication {
       });
       return new AgentApplication(config, store, daemon, sessions, runs, mcp);
     } catch (error) {
-      if (loadingStage !== undefined) emitAgentDiagnostic({
+      if (error instanceof RequiredSkillError) {
+        for (const status of error.statuses) emitAgentDiagnostic({
+          stage: error.phase === "validation" ? "skill-validate" : "skill-load",
+          outcome: status.loaded ? "succeeded" : "failed",
+          code: status.error === "SKILL_DIRECTORY_MISMATCH" ? "SKILL_DIRECTORY_MISMATCH"
+            : error.phase === "validation" ? "SKILL_VALIDATION_FAILED" : "SKILL_LOAD_FAILED",
+          correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
+          skillName: status.name,
+        });
+      } else if (loadingStage !== undefined) emitAgentDiagnostic({
         stage: loadingStage, outcome: "failed", code: loadingStage === "skill-load" ? "SKILL_LOAD_FAILED" : "PACKAGE_LOAD_FAILED",
         correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
       });
@@ -342,7 +367,10 @@ export class AgentApplication {
   }
 
   private authenticate(call: { getAuthContext(): AgentAuthContext }): void {
-    assertAgentPeerIdentity(call.getAuthContext(), this.config.tls.expectedClientCommonName);
+    assertAgentPeerIdentity(call.getAuthContext(), this.config.tls.expectedClientCommonName, {
+      installationId: this.installationId, workId: this.config.workId,
+      generation: this.config.generation, instanceId: this.config.instanceId,
+    });
   }
 
   private verify(value: { workId: string; generation: bigint; instanceId: string }): void {
@@ -380,14 +408,22 @@ export function selectPackageTools(packageTools: ReadonlyMap<string, string>,
 
 export interface AgentAuthContext {
   readonly transportSecurityType?: string;
-  readonly sslPeerCertificate?: { readonly subject?: { readonly CN?: string | string[] } };
+  readonly sslPeerCertificate?: {
+    readonly subject?: { readonly CN?: string | string[] };
+    readonly subjectaltname?: string;
+  };
 }
 
-export function assertAgentPeerIdentity(context: AgentAuthContext, expectedClientCommonName: string): void {
+export function assertAgentPeerIdentity(context: AgentAuthContext, expectedClientCommonName: string,
+  scope: { readonly installationId: string; readonly workId: string; readonly generation: number; readonly instanceId: string }): void {
   const commonName = context.sslPeerCertificate?.subject?.CN;
+  const expectedUri = `URI:spiffe://piwork/installation/${scope.installationId}/work/${scope.workId}/generation/${scope.generation}/instance/${scope.instanceId}/role/core-client`;
+  const identities = (context.sslPeerCertificate?.subjectaltname ?? "").split(/,\s*/)
+    .filter((value) => value.startsWith("URI:spiffe://piwork/installation/"));
   if (context.transportSecurityType !== "ssl"
     || Array.isArray(commonName)
-    || commonName !== expectedClientCommonName) {
+    || commonName !== expectedClientCommonName
+    || identities.length !== 1 || identities[0] !== expectedUri) {
     throw Object.assign(new Error("agent authentication failed"), { code: status.UNAUTHENTICATED });
   }
 }
@@ -445,8 +481,8 @@ function loadWorkContext(config: AgentRuntimeConfig): CapturedWorkContext {
   } catch (error) { throw error; }
 }
 
-async function loadValidatedWorkContext(context: CapturedWorkContext, workspace: string, agentDirectory: string, onSkillsLoaded: () => void): Promise<LoadedWorkContext> {
-  const loaded = await loadConfiguredSkills(context.skillRoot, context.skills, context.agentsMd);
+async function loadValidatedWorkContext(context: CapturedWorkContext, workspace: string, agentDirectory: string, onSkillsLoaded: () => void, onSkillsValidated: () => void): Promise<LoadedWorkContext> {
+  const loaded = await loadConfiguredSkills(context.skillRoot, context.skills, context.agentsMd, onSkillsValidated);
   onSkillsLoaded();
   const loaderFactory = () => createPackageResourceLoader({ root: "/run/piwork/packages", bindings: context.packageBindings,
     selection: context.packages, standaloneSkills: loaded.skills, agentsMd: context.agentsMd, workspace, agentDirectory });
@@ -571,7 +607,8 @@ function isTerminal(run: RunRecord): boolean {
 function grpcError(error: unknown): Error & { code: number } {
   const item = error as { message?: string; code?: number; name?: string };
   const code = item.code ?? (item.name === "WorkBusyError" ? status.RESOURCE_EXHAUSTED
-    : item.name === "CursorExpiredError" ? status.OUT_OF_RANGE
+    : item.name === "SubmitConflictError" ? status.ALREADY_EXISTS
+      : item.name === "CursorExpiredError" ? status.OUT_OF_RANGE
       : item.name === "RuntimeIdentityError" ? status.PERMISSION_DENIED : status.INTERNAL);
   return Object.assign(new Error(item.message ?? "agent request failed"), { code });
 }

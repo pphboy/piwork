@@ -1,11 +1,26 @@
 # syntax=docker/dockerfile:1
+ARG GO_BUILDER_IMAGE=golang:1.25.5-alpine3.22
+FROM ${GO_BUILDER_IMAGE} AS native-build
+ARG GOPROXY=https://goproxy.cn,direct
+ARG PIWORK_COMMIT=unknown
+ARG PIWORK_MODIFIED=true
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
+WORKDIR /source
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY internal ./internal
+COPY cmd/piwork-service-mcp ./cmd/piwork-service-mcp
+COPY cmd/piwork-package-helper ./cmd/piwork-package-helper
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go build -mod=readonly -trimpath \
+      -ldflags "-X piwork/internal/buildinfo.Commit=$PIWORK_COMMIT -X piwork/internal/buildinfo.Modified=$PIWORK_MODIFIED" \
+      -o /native/ ./cmd/piwork-service-mcp ./cmd/piwork-package-helper
+
 FROM node:24-bookworm-slim AS build
 ARG NPM_REGISTRY=https://npmreg.proxy.ustclug.org
 WORKDIR /workspace
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/agentd/package.json apps/agentd/tsconfig.json ./apps/agentd/
-COPY apps/service-mcp/package.json apps/service-mcp/tsconfig.json ./apps/service-mcp/
-COPY apps/package-helper/package.json apps/package-helper/tsconfig.json ./apps/package-helper/
 COPY packages/contracts/package.json packages/contracts/tsconfig.json ./packages/contracts/
 COPY packages/work-store/package.json packages/work-store/tsconfig.json ./packages/work-store/
 COPY packages/pi-adapter/package.json packages/pi-adapter/tsconfig.json ./packages/pi-adapter/
@@ -16,12 +31,12 @@ RUN --mount=type=cache,target=/root/.npm npm config set registry "$NPM_REGISTRY"
  && npm config set fetch-retry-mintimeout 1000 \
  && npm config set fetch-retry-maxtimeout 30000 \
  && npm config set fetch-timeout 600000 \
- && for attempt in 1 2 3; do npm ci --ignore-scripts && break; test "$attempt" = 3 && exit 1; done
+ && for attempt in 1 2 3; do npm ci --ignore-scripts --include-workspace-root \
+      -w @piwork/agentd -w @piwork/contracts -w @piwork/work-store \
+      -w @piwork/pi-adapter -w @piwork/pi-package && break; test "$attempt" = 3 && exit 1; done
 COPY apps/agentd/src ./apps/agentd/src
-COPY apps/service-mcp/src ./apps/service-mcp/src
-COPY apps/package-helper/src ./apps/package-helper/src
 COPY packages/contracts/src ./packages/contracts/src
-COPY packages/contracts/proto ./packages/contracts/proto
+COPY proto ./proto
 COPY packages/work-store/src ./packages/work-store/src
 COPY packages/pi-adapter/src ./packages/pi-adapter/src
 COPY packages/pi-package/src ./packages/pi-package/src
@@ -29,12 +44,17 @@ RUN npm run build -w @piwork/contracts \
  && npm run build -w @piwork/work-store \
  && npm run build -w @piwork/pi-adapter \
  && npm run build -w @piwork/pi-package \
- && npm run build -w @piwork/package-helper \
- && npm run build -w @piwork/service-mcp \
- && npm run build -w @piwork/agentd
+ && npm run build -w @piwork/agentd \
+ && npm prune --omit=dev --include-workspace-root \
+      -w @piwork/agentd -w @piwork/contracts -w @piwork/work-store \
+      -w @piwork/pi-adapter -w @piwork/pi-package \
+ && find /workspace/apps/agentd/dist /workspace/packages/*/dist -type f \
+      \( -name '*.test.*' -o -name '*.d.ts' -o -name '*.d.ts.map' -o -name '*.js.map' -o -name '.tsbuildinfo' -o -path '*/testing/*' \) -delete \
+ && find /workspace/apps/agentd/dist /workspace/packages/*/dist -depth -type d -empty -delete
 
 FROM node:24-bookworm-slim AS runtime
-LABEL io.piwork.agent.protocol="v2" io.piwork.agent.version="0.1.0" io.piwork.package-helper.contract="1"
+LABEL io.piwork.agent.protocol="v2" io.piwork.agent.version="0.1.0" \
+      io.piwork.package-helper.contract="2" io.piwork.service-mcp.contract="1"
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 ENV HOME=/var/data \
@@ -45,10 +65,6 @@ WORKDIR /workspace
 COPY --from=build /workspace/node_modules ./node_modules
 COPY --from=build /workspace/apps/agentd/package.json ./apps/agentd/package.json
 COPY --from=build /workspace/apps/agentd/dist ./apps/agentd/dist
-COPY --from=build /workspace/apps/service-mcp/package.json ./apps/service-mcp/package.json
-COPY --from=build /workspace/apps/service-mcp/dist ./apps/service-mcp/dist
-COPY --from=build /workspace/apps/package-helper/package.json ./apps/package-helper/package.json
-COPY --from=build /workspace/apps/package-helper/dist ./apps/package-helper/dist
 COPY --from=build /workspace/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
 COPY --from=build /workspace/packages/work-store/package.json ./packages/work-store/package.json
@@ -57,9 +73,9 @@ COPY --from=build /workspace/packages/pi-adapter/package.json ./packages/pi-adap
 COPY --from=build /workspace/packages/pi-adapter/dist ./packages/pi-adapter/dist
 COPY --from=build /workspace/packages/pi-package/package.json ./packages/pi-package/package.json
 COPY --from=build /workspace/packages/pi-package/dist ./packages/pi-package/dist
-RUN chmod 0755 /workspace/apps/service-mcp/dist/main.js \
- && ln -s /workspace/apps/service-mcp/dist/main.js /usr/local/bin/piwork-service-mcp \
- && mkdir -p /var/data /workspace/apps/agentd \
+COPY --from=native-build --chmod=0755 /native/piwork-service-mcp /usr/local/bin/piwork-service-mcp
+COPY --from=native-build --chmod=0755 /native/piwork-package-helper /usr/local/bin/piwork-package-helper
+RUN mkdir -p /var/data/workspace /workspace/apps/agentd \
  && chown -R 10001:10001 /var/data /workspace/apps/agentd
 USER 10001:10001
 ENTRYPOINT ["node", "/workspace/apps/agentd/dist/main.js"]

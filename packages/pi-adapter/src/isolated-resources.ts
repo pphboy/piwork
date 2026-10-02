@@ -8,6 +8,18 @@ import {
 import { realpathSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
+export class SkillDirectoryMismatchError extends Error {
+  readonly code = "SKILL_DIRECTORY_MISMATCH";
+  constructor() { super("The SDK Skill directory does not match the captured Work context."); }
+}
+
+/** Validate SDK metadata before it can become an active Work resource. */
+export function assertConfiguredSkillDirectory(skill: Pick<Skill, "baseDir" | "filePath">,
+  directory: string, manifest: string): void {
+  if (realpathSync(skill.baseDir) !== realpathSync(directory)
+    || realpathSync(skill.filePath) !== realpathSync(manifest)) throw new SkillDirectoryMismatchError();
+}
+
 export function loadIsolatedSkills(skillDir: string, agentsMd?: string): { readonly skills: Skill[]; readonly diagnostics: LoadSkillsResult["diagnostics"]; readonly loader: ResourceLoader } {
   return loadConfiguredIsolatedSkills(skillDir, undefined, agentsMd);
 }
@@ -21,10 +33,11 @@ export function loadConfiguredIsolatedSkills(skillDir: string, configuredNames?:
       const directory = realpathSync(resolve(canonicalRoot, name));
       const child = relative(canonicalRoot, directory);
       if (child === "" || child === ".." || child.startsWith(`..${sep}`)) {
-        throw new Error(`configured Skill ${name} is outside the isolated Skill root`);
+        throw new SkillDirectoryMismatchError();
       }
       const manifest = realpathSync(join(directory, "SKILL.md"));
       const result = loadSkillsFromDir({ dir: directory, source: "piwork-artifact" });
+      for (const skill of result.skills) assertConfiguredSkillDirectory(skill, directory, manifest);
       const matching = result.skills.filter((skill) => realpathSync(skill.baseDir) === directory
         && realpathSync(skill.filePath) === manifest);
       if (result.skills.length !== 1 || matching.length !== 1) {

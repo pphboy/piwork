@@ -1,0 +1,137 @@
+[
+  {
+    "name": "AuthenticationFailedError",
+    "code": "AUTHENTICATION_FAILED",
+    "expected": {
+      "status": 401,
+      "code": "AUTHENTICATION_FAILED",
+      "message": "authentication failed"
+    }
+  },
+  {
+    "name": "InvalidLoginSessionError",
+    "code": "AUTHENTICATION_FAILED",
+    "expected": {
+      "status": 401,
+      "code": "AUTHENTICATION_FAILED",
+      "message": "authentication failed"
+    }
+  },
+  {
+    "name": "InvisibleResourceError",
+    "code": "NOT_FOUND",
+    "expected": {
+      "status": 404,
+      "code": "NOT_FOUND",
+      "message": "resource was not found"
+    }
+  },
+  {
+    "name": "WorkNotFoundError",
+    "code": "NOT_FOUND",
+    "expected": {
+      "status": 404,
+      "code": "NOT_FOUND",
+      "message": "resource was not found"
+    }
+  },
+  {
+    "name": "ConversationAccessDeniedError",
+    "code": "PERMISSION_DENIED",
+    "expected": {
+      "status": 403,
+      "code": "PERMISSION_DENIED",
+      "message": "permission denied"
+    }
+  },
+  {
+    "name": "AdministrationPermissionError",
+    "code": "PERMISSION_DENIED",
+    "expected": {
+      "status": 403,
+      "code": "PERMISSION_DENIED",
+      "message": "permission denied"
+    }
+  },
+  {
+    "name": "WorkBusyError",
+    "code": "WORK_BUSY",
+    "expected": {
+      "status": 409,
+      "code": "WORK_BUSY",
+      "message": "Work is busy"
+    }
+  },
+  {
+    "name": "CursorExpiredError",
+    "code": "CURSOR_EXPIRED",
+    "expected": {
+      "status": 416,
+      "code": "CURSOR_EXPIRED",
+      "message": "Run cursor has expired; query durable Run status or Session history"
+    }
+  },
+  {
+    "name": "DockerDependencyError",
+    "code": "RUNTIME_UNAVAILABLE",
+    "expected": {
+      "status": 503,
+      "code": "RUNTIME_UNAVAILABLE",
+      "message": "runtime dependency is unavailable"
+    }
+  },
+  {
+    "name": "IdempotencyConflictError",
+    "code": "CONFLICT",
+    "expected": {
+      "status": 409,
+      "code": "CONFLICT",
+      "message": "request conflicts with current state"
+    }
+  },
+  {
+    "name": "RevisionConflictError",
+    "code": "CONFLICT",
+    "expected": {
+      "status": 409,
+      "code": "CONFLICT",
+      "message": "request conflicts with current state"
+    }
+  },
+  {
+    "name": "ServiceNameConflictError",
+    "code": "CONFLICT",
+    "expected": {
+      "status": 409,
+      "code": "CONFLICT",
+      "message": "request conflicts with current state"
+    }
+  },
+  {
+    "name": "LastEnabledAdministratorError",
+    "code": "LAST_ADMINISTRATOR",
+    "expected": {
+      "status": 409,
+      "code": "LAST_ADMINISTRATOR",
+      "message": "cannot disable the last enabled administrator"
+    }
+  },
+  {
+    "name": "UserNotFoundError",
+    "code": "NOT_FOUND",
+    "expected": {
+      "status": 404,
+      "code": "NOT_FOUND",
+      "message": "resource was not found"
+    }
+  },
+  {
+    "name": "Error",
+    "code": "INTERNAL_ERROR",
+    "expected": {
+      "status": 500,
+      "code": "INTERNAL_ERROR",
+      "message": "internal server error"
+    }
+  }
+]

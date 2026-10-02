@@ -1,283 +1,62 @@
-# piwork single-host operations
+# Go Core 运维
 
-piwork supports one Linux host with Docker Engine. Core listens on loopback by default and talks to each Work's `agentd` over a private Docker bridge with generation-scoped mutual TLS. Agent ports are not published on the host.
+piwork 支持一台 Linux 主机上的 Docker Engine。`piwork-serve` 是 Core daemon 和 operator 命令；`piwork-cli` 是用户命令；`piwork-console` 是独立 HTTPS 管理面板。Core 直接调用本机 Engine Unix API，不运行 Docker CLI 或 OpenSSL。Agent 通过 Work 私有 bridge 和代次绑定的双向 TLS 与 Core 通信，Agent 端口不发布到宿主。
 
-## Process and command boundaries
+## 数据目录和格式
 
-`piwork-serve` is the Core daemon and operator control client. It owns `serve`, status, administrator/user management, global runtime/default Work configuration, and managed Skill lifecycle. `piwork-cli` is the logged-in user client. It owns Work and existing service lifecycle, per-Work configuration, Sessions, Runs, chat, and read-only Skill discovery. `piwork` is a compatibility alias for `piwork-serve`; `piwork-core` is removed.
+Go Core 使用独立的**空目录**初始化 `piwork-go-core` 格式、schema 1。旧 TS Core 的开发数据目录不会自动转换、清空或接管。目录归当前 Core 用户所有，权限 0700，常规私有文件为 0600；marker、数据库和受管路径拒绝 symlink，数据库拒绝 hardlink。第二个进程无法获得目录 `flock` 时退出；进程崩溃后由 OS 释放锁。
 
-The optional `piwork-console serve` process hosts the HTTPS administrator browser panel on the Core machine. It uses Core's loopback API and can be stopped independently. See [Serve 管理面板](serve-console.md) for setup and usage.
+| 路径 | 内容 |
+| --- | --- |
+| `core-format.json` | 格式、schema、installation ID 和 initializing/ready 阶段 |
+| `core.sqlite`、WAL/SHM | Work、用户、Operation、幂等、配额、Service、文件、包与快照 journal |
+| `secrets/` | 受管凭据；不属于 Work workspace |
+| `runtime/` | 安装及 Work 代次证书、受控运行配置 |
+| `skills/`、`works/`、`snapshots/` | 受管制品、配置和快照字节 |
 
-Operator authentication uses `<data-dir>/operator.credential`. User authentication uses `$XDG_CONFIG_HOME/piwork/client.json`, `$HOME/.config/piwork/client.json`, or `PIWORK_CONFIG_PATH`. Both files require mode `0600` and a private parent directory; symlinks are refused. The credentials are independent: an operator credential cannot read conversation content, and a user bearer token cannot mutate users or global defaults.
+初始化中断只从身份一致的受管记录恢复。未知格式、损坏 marker、无合法 marker 的非空目录、数据库与 marker 不一致时，在开放业务路由和创建 Docker 资源前拒绝。不要手工改 marker、删除 WAL 或删除待清理资源来绕过拒绝。
 
-For `.piwork/core`, Core stores:
+备份应先停止 Core，再复制整个数据目录，并按 Work 持久卷的恢复策略单独保留对应 Docker volume。只复制 SQLite 主文件会漏掉 WAL、证书、制品和快照。恢复时保留原 owner/权限，使用同版本 Go Core 打开，并让 journal 协调完成；不要 prune Docker 资源。
 
-- `core.sqlite`: accounts, login sessions, Works, Operations, configuration revisions, and control metadata.
-- `operator.credential`: the local operator credential.
-- `runtime-profile.json`: the current global default image, provider, model, endpoint, and secret reference metadata.
-- `secrets/`: immutable model credentials referenced by global and Work revisions.
-- `runtime/`: installation identity, internal CA, generation identities, and Work runtime files.
+## Engine 和镜像
 
-## Clean installation
+目标优先级：非空 `DOCKER_CONTEXT` → 非空 `DOCKER_HOST` → Docker config `currentContext` → `unix:///var/run/docker.sock`。仅接受本机 Unix endpoint，包括 rootless socket；显式目标不可用时不切换 Engine，SSH/TCP context 与外部 credential helper 不受支持。镜像已经按固定 ID 存在时不读取 registry 凭据；需要 pull 时可用目标 registry 的静态凭据或匿名访问。镜像身份固定后不按移动的 tag 重新解析。
 
-Build and start an empty Core:
+先在构建机执行：
 
-```bash
-node --version                 # Node.js 24
-npm ci
-npm run build
-npm run agent:image
-export PIWORK_DATA_DIR="$PWD/.piwork/core"
-export PIWORK_CORE_URL=http://127.0.0.1:7171
-npm run serve -- serve --data-dir "$PIWORK_DATA_DIR" --listen 127.0.0.1:7171
+```sh
+make build native-agent-images native-helper-images
 ```
 
-The Agent image build uses the USTC npm proxy by default. To select another
-registry, pass `--build-arg NPM_REGISTRY=<registry>` to the Docker build.
+推荐在 Core 启动前显式配置镜像：
 
-Core binds even when it has no administrator or runtime default. In another terminal, initialize the running service:
-
-```bash
-printf '%s\n' "$PIWORK_ADMIN_PASSWORD" | npm run serve -- \
-  --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
-  admin bootstrap --account admin --password-stdin
-
-printf '%s\n' "$PIWORK_MODEL_API_KEY" | npm run serve -- \
-  --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
-  config set --agent-image piwork-agentd:local \
-  --model-provider anthropic --model claude-sonnet-4-5-20250929 \
-  --api-key-stdin
-
-npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" status
-npm run serve -- --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" config show
+```sh
+export PIWORK_PACKAGE_HELPER_IMAGE=piwork-agentd:go-migration-production
+export PIWORK_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance
+export PIWORK_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance
+./dist/go/piwork-serve serve --data-dir "$PIWORK_DATA_DIR" --listen 127.0.0.1:7171
 ```
 
-`--model-base-url <url>` configures a compatible endpoint. `--api-key-file <protected-file>` supports provisioning systems. Repeated administrator bootstrap fails without changing existing users. Updating the global default creates a new profile revision and affects only future Work creation.
+Agent image 由 `config set --agent-image` 指定；Package helper 必须是带原生 package-helper 能力的可信 Agent 镜像。Core 在启动或接受任务前核验对应镜像标签、原生文件、平台和固定 ID；缺失时相应能力返回明确错误，不启动旧 TS/Python helper。File helper 缺失不会破坏 Service 网关。Agent 镜像内仍运行完整 TS Pi SDK harness；Package helper 与 Service MCP 为镜像内 Go 二进制。用户 Service 镜像的语言不受限制。
 
-## Environment-file initialization
+## 初始化和权限
 
-`piwork-serve serve --env-file .env.test` parses plain `KEY=value`, quoted values, comments, and blank lines without executing shell expressions. It recognizes the following keys:
+Core 可以健康启动但尚未就绪。`GET /healthz` 表示 listener 活着；`GET /readyz` 区分 `ADMIN_REQUIRED`、`RUNTIME_NOT_CONFIGURED`、`RUNTIME_UNAVAILABLE`、`RECOVERING` 等状态。先运行 `admin bootstrap`，再 `config set`，命令示例见 [README](../README.md)。operator 凭证位于数据目录的私有文件，用户 CLI 凭证位于 `$XDG_CONFIG_HOME/piwork/client.json`、`$HOME/.config/piwork/client.json` 或 `PIWORK_CONFIG_PATH`。两种身份不能互用。密码、模型 key 使用隐藏输入或 `--password-stdin`、`--api-key-stdin`、`--api-key-file`，不要放在命令参数中。
 
-```text
-PIWORK_DATA_DIR
-PIWORK_LISTEN
-PIWORK_CORE_URL
-PIWORK_OPERATOR_CREDENTIAL_PATH
-PIWORK_ADMIN_ACCOUNT
-PIWORK_ADMIN_PASSWORD
-PIWORK_AGENT_IMAGE
-PIWORK_MODEL_PROVIDER
-PIWORK_MODEL
-PIWORK_MODEL_BASE_URL
-PIWORK_API_KEY
-PIWORK_FILE_HELPER_IMAGE
-```
+`--env-file` 读取普通 `KEY=value`、引号、注释和空行，不执行 shell 表达式。支持 `PIWORK_DATA_DIR`、`PIWORK_LISTEN`、`PIWORK_CORE_URL`、`PIWORK_ADMIN_ACCOUNT`、`PIWORK_ADMIN_PASSWORD`、`PIWORK_AGENT_IMAGE`、`PIWORK_MODEL_PROVIDER`、`PIWORK_MODEL`/`PIWORK_MODEL_ID`、`PIWORK_API_KEY`/`PIWORK_MODEL_API_KEY`、`PIWORK_FILE_HELPER_IMAGE` 等初始化项；显式命令参数和进程环境优先，已有持久记录不会被初始化值覆写。离线 bootstrap/config 仅在未显式选择 Core URL 且默认 loopback 确认连接被拒绝时使用同一目录锁。显式目标超时或响应丢失不回退为本地写入。
 
-Existing deployments may use `PIWORK_MODEL_ID` in place of `PIWORK_MODEL` and
-`PIWORK_MODEL_API_KEY` in place of `PIWORK_API_KEY`.
+用户会话只保存摘要。禁用/重置用户会撤销其全部会话；重新启用不会恢复旧 token。最后一个启用中的管理员受到事务保护。用户只能访问自己拥有的 Work；即使其他管理员可以检查运行状态，也不能通过 Service/File 网关读取应用内容。
 
-Explicit flags have highest transient precedence, then process environment, then the selected file. Persisted administrator, operator, and runtime records always win on restart. Initialization only fills missing state and never creates a default Work.
+## 证书、恢复和退出
 
-Use [`.env.test.example`](../.env.test.example) and run [deployment-test.sh](../scripts/deployment-test.sh) for the real Anthropic deployment path:
+安装 CA、Work generation/instance 的证书由 Go crypto 生成，私有材料留在 Core 数据目录。容器只得到当前代次所需的只读 PEM 和 runtime/control JSON。Core 每次 WorkServices RPC 核验当前 ready 身份；旧连接不能在 Work 代次替换后继续授权。CA 到期明确失败，不静默换根；不要把私钥复制进 workspace。
 
-```bash
-cp .env.test.example .env.test
-# Edit .env.test.
-./scripts/deployment-test.sh .env.test
-```
+Work Stop 保留共享 workspace 与 enabled Service 定义；Work Start 恢复启用的服务。`service_stop` 持久禁用单个 Service。Core 崩溃后按 Operation epoch、资源标签、job lease 和文件临时 inode 协调；未知 Docker 结果不能创建第二份实例或自动重放文件 mutation。清理失败保留 `cleanup-pending` 占用，恢复 Engine 后重试，不能全局 prune。
 
-## Health and readiness
+导出必须先 Stop 并确认 Agent、Service、文件与 Package helper 已停止写入。导入先静态校验，再恢复到隔离的目标资源，发布为 stopped Work，用户显式 Start。源安装可离线；目标使用自己的模型凭据与证书。原 snapshot ID 在保留期内可从头重下，不需要重新 Export。具体命令和失败语义见 [快照](work-snapshot.md) 与 [包格式](work-package-format.md)。
 
-`GET /healthz` reports listener/process health. `GET /readyz` reports whether Core can accept runtime operations. Healthy but non-ready states are:
+## 诊断和验收
 
-- `ADMIN_REQUIRED`: bootstrap the first administrator.
-- `RUNTIME_NOT_CONFIGURED`: save a global runtime default.
-- `RUNTIME_UNAVAILABLE`: Docker, the selected image, or another runtime dependency is unavailable.
-- `RECOVERING`: Core is adopting or reconciling persisted Works.
-- `SHUTTING_DOWN`: Core is closing.
+Core 的 Operation 保存安全的阶段、主要错误、回滚和诊断收集结果；原始容器日志是不可信内容，不直接当作公开错误。用 `piwork-serve operation show <id>` 或 `piwork-cli operation show <id>` 查询对应 scope。Console 独立运行和退出，配置见 [管理面板](serve-console.md)。Service 与 WebDAV 的用户链路见 [Service 访问](service-access.md)、[Work 文件](work-files.md)。
 
-`piwork-serve status` shows initialization and runtime checks without returning secrets. Bootstrap and config routes remain available while Core is healthy but not ready.
-
-## Login, Works, and conversation
-
-```bash
-printf '%s\n' "$PIWORK_ADMIN_PASSWORD" | npm run cli -- \
-  --core "$PIWORK_CORE_URL" login --account admin --password-stdin
-npm run cli -- status
-npm run cli -- whoami
-npm run cli -- work create --name project-a --wait
-npm run cli -- work list
-npm run cli -- work show <workId>
-npm run cli -- chat <workId> --message "First question"
-npm run cli -- session list <workId>
-npm run cli -- session show <workId> <sessionId>
-npm run cli -- chat <workId> --session <sessionId> --message "Continue"
-```
-
-Resume or cancel a Run without resubmitting its prompt:
-
-```bash
-npm run cli -- run show <workId> <runId>
-npm run cli -- run watch <workId> <runId> --after <lastSequence>
-npm run cli -- run cancel <workId> <runId>
-```
-
-Startup creates no Work. A new Work copies the current global default. Existing Works keep their own desired and active configuration snapshots after the global default changes.
-
-### Managed Skills and Work context
-
-Operators import a complete Skill directory with `piwork-serve skills add --path <absolute-directory>`. The final directory basename is the Skill name and must match `[a-z0-9][a-z0-9-]{0,63}`; Core does not parse `SKILL.md` to assign identity. An import permits at most 2,048 regular files, 32 MiB total, and 8 MiB per file, and rejects symlinks or special files. Core validates and stores the complete tree, and a Work copies selected enabled Skills into its own immutable context. Import validates the file tree rather than Pi SDK metadata, so malformed `SKILL.md` content is reported later when that copied Work context is started or applied. A Work keeps its copy when the source directory or managed Skill is later changed, disabled, or removed. To adopt new content, select the Skill again and apply the Work configuration.
-
-Users can inspect selectable Skills with `piwork-cli skills list` and `piwork-cli skills show <skill-name>`. Work creation inherits default Skills when no selection is supplied, replaces them with repeated `--skill` options, or uses an empty selection with `--no-skills`. The same tri-state applies to `work config skills set`; no public revision or `expected-revision` option is accepted.
-
-## Per-Work configuration
-
-```bash
-npm run cli -- work config show <workId>
-npm run cli -- work config set <workId> --config ./work-config.json
-npm run cli -- work config apply <workId>
-```
-
-`set` replaces the desired context without a public precondition. Field-specific updates merge against the latest desired context, preserve unrelated fields, and leave the active runtime and Run untouched. `apply` captures the desired context in a durable Operation, restarts the selected Work when needed, verifies readiness, and then activates exactly that captured context. A later edit remains pending; a failed apply leaves the prior active context usable and attempts to restore its runtime.
-
-If a selected package was prepared for a different agent SDK or Node ABI, update the Core package, then update the affected Work's frozen copy and apply its desired configuration when the Core and Work use the same agent environment:
-
-```bash
-npm run serve -- packages update <package-name> --source npm:<package-name>@<version> --wait --verbose
-npm run cli -- work packages update <workId> <package-name> --from-core --wait --verbose
-npm run cli -- work config apply <workId> --wait
-```
-
-`work retry` starts the retained active context, or the original context if the Work has never activated. It does not adopt a newer desired package revision; use `work config apply` after updating a package.
-If the Work uses a different agent image, use `work packages update <workId> <package-name> --source npm:<package-name>@<version> --wait --verbose` to prepare the package for that image before applying.
-
-## Restart and lifecycle
-
-Send Core `SIGTERM` or press `Ctrl-C`. Core closes HTTP, runtime channels, scheduling, and SQLite without stopping healthy Work containers. Restart the same data directory and address. Login sessions remain valid until expiration or logout. Recovery adopts each Work using its persisted active configuration, so changing the global default cannot switch an existing Work's model.
-
-```bash
-npm run serve -- serve --data-dir "$PIWORK_DATA_DIR" --listen 127.0.0.1:7171
-npm run cli -- work stop <workId> --wait
-npm run cli -- work start <workId> --wait
-npm run cli -- chat <workId> --session <sessionId> --message "After restart"
-npm run cli -- operation show <operationId>
-npm run cli -- work retry <workId> --wait
-npm run cli -- work delete <workId> --wait
-npm run cli -- logout
-```
-
-Work conversation data lives in a Docker named volume. Stop and delete retain that volume by policy. Delete removes the agent container, private network, and Core runtime material. Remove retained volumes separately only after confirming their data is no longer needed.
-
-## Work 文件 helper 的部署与恢复
-
-Core 文件入口使用独立的可信镜像。先在 Core 所在主机执行 `npm run file-helper:image`，再在启动 Core 前设置 `PIWORK_FILE_HELPER_IMAGE=piwork-file-helper:local`。Core 在启动时检查本地镜像 ID、Linux 平台及 `piwork.file_protocol=1` 标签，并在本次进程中固定该镜像 ID；请求、Work 配置和用户 service 都不能选择文件执行镜像。部署机器无需在 CLI 客户端安装 Docker。
-
-登录用户可调用 `GET /api/v1/file-access` 检查 `available`。镜像未配置、镜像不存在、标签不匹配或 Docker 镜像检查失败时，该字段为 `false`，`reason` 为 `FILE_HELPER_UNAVAILABLE`；Core 仍继续运行，已有 Work 和 service 网关不受文件镜像故障影响。检查配置时可先用 `docker image inspect piwork-file-helper:local --format '{{.Id}} {{index .Config.Labels "piwork.file_protocol"}}'` 核对 ID 和标签，再重启 Core 重新解析。镜像不会自动从仓库拉取。
-
-文件 helper 是 Core 管理的内部容器，不出现在用户 service 列表或 `.work` 包中。每个请求只挂对应 Work 的 `work-workspace` 卷；只读请求以只读方式挂载。它以 `10001:10001` 运行，无网络、宿主端口、Docker socket、Work private 卷及平台凭据。Work 内的 agent/service 仍通过原有 `/var/data/workspace` 挂载共享数据。
-
-升级或禁用镜像前，先等待活动文件传输结束，停止受影响 Work，并确认文件任务和 `piwork.resource_kind=file-helper` 容器已经收尾。Core 重启会核对 journal 中的精确归属并清理旧 helper；如果 Docker 无法确认退出或暂存身份不符，该 Work 保持待清理，文件访问与冷快照会被拒绝。恢复 Docker 依赖后使用现有 `work stop` / `work retry` 触发重试；不要按文件名前缀删除 workspace 隐藏文件，也不要删除归属不明的容器或手工清空 journal。确认全部任务为 `cleaned` 且对应 helper 已移除后，才可以回滚到不识别新 schema 的 Core，并按数据库版本兼容规则恢复备份。禁用时移除环境变量并重启 Core，service 代理仍可用。
-
-Core 在运行时每 5 秒检查待清理任务，每个任务在 10 分钟窗口内最多自动尝试 3 次（包括首次）。身份无法确认的暂存项不会自动重试删除；该 Work 保持 `FILE_CLEANUP_REQUIRED`，也不能用于冷快照。先确认 Docker 能响应、受管 helper 已退出，再通过现有 `work stop` 或 `work retry` 发起显式收尾。运行诊断只应显示 Work/任务 ID、固定错误码和收尾阶段，不能写入用户文件路径、正文、卷名或凭据。
-
-文件验收需要显式构建并指定当前 file helper 与 snapshot helper 镜像，并在 `PATH` 中提供 rclone：`PIWORK_FILE_HELPER_TEST_IMAGE=piwork-file-helper:local PIWORK_SNAPSHOT_HELPER_TEST_IMAGE=piwork-snapshot-helper:pi-packages npm run work-files:acceptance`。脚本使用真实 Docker 卷和 rclone 通用 WebDAV 模式，缺少镜像、Docker 或 rclone 会失败；它在输出中记录 rclone 版本和验证结果，不输出临时密码。单独复查崩溃恢复可运行 `PIWORK_FILE_HELPER_TEST_IMAGE=piwork-file-helper:local node scripts/work-files-crash-acceptance.mjs`。完整快照仍按下文的现有镜像和命令验收。
-
-## Work snapshot operations
-
-See [the user workflow](work-snapshot.md) for stop/export/import/start and [the package format](work-package-format.md) for the durable Work boundary. Snapshot support needs an operator-built, trusted `Dockerfile.snapshot-helper` image and `PIWORK_SNAPSHOT_HELPER_IMAGE` set to that image reference before starting Core. Core resolves it to a fixed local image ID at startup. A missing or unresolvable helper disables snapshot requests with 503 but leaves ordinary Work management available. Do not configure a user-controlled image as the helper. The helper runs without network, Docker socket, model credentials, or host runtime secrets; it has only the named source/target volume and its private spool.
-
-Pi package installation additionally needs `PIWORK_PACKAGE_HELPER_IMAGE` pointing at the trusted package-helper image built with the agent image. Core resolves the helper image and prepares npm/Git/local/ZIP packages in a short-lived isolated container; it publishes only a verified immutable artifact. A Work's context owns a copy of that artifact, including prepared runtime dependencies. Package install/update changes desired state and does not load extension code in an already running Work; use explicit `work config apply` to activate it, including for a stopped Work with an existing active context. Core default package changes affect future Work creation only. A Core package referenced by the default Work selection must be removed from that selection before disabling or removing it. For package install/update, `--wait` observes the accepted Operation until it finishes, even when online preparation exceeds two minutes; transient observation failures are retried against the same Operation. Add `--verbose` with `--wait` to see safe preparation phases and a 30-second heartbeat on stderr. Ctrl+C stops only local waiting and prints the Operation ID for `operation show <id>`; it does not cancel the background job. Package CLI commands generate their own idempotency keys and do not accept `--idempotency-key`.
-
-For online packages requiring Pi 0.86.1, build and deploy the production and acceptance agent images from the same revision (`npm run agent:image` and `npm run agent:image:acceptance`), then point `PIWORK_PACKAGE_HELPER_IMAGE` at a trusted image from that build. A new Core or Work install/update checks both selected images before accepting an Operation. HTTP 409 / CLI exit 6 with `PI_PACKAGE_HELPER_INCOMPATIBLE` means the selected agent or trusted helper image lacks the package-helper contract; rebuild both images and retry. An accepted package Operation that fails with `PI_PACKAGE_SDK_VERSION_UNSUPPORTED` means the package's Pi peer range does not match the selected immutable image. `PI_PACKAGE_INVALID_MANIFEST` instead means the declared peer range or manifest is invalid. These errors contain safe diagnostics; inspect `operation show <id>` for a failed accepted Operation. API callers can replay their original idempotency key to retrieve the same Operation even if the image has since been removed.
-
-An existing Work retains its captured agent image ID and frozen package bytes when the Core image tag changes. To upgrade it, explicitly select a compatible new image for that Work, install or copy a package prepared for that image, then run `piwork-cli work config apply <workId> --wait`. A 0.86.1 package artifact cannot be relabeled as compatible with a 0.86.0 Work; cross-image copy continues to fail the exact environment check. To roll back, explicitly select the previous image ID and previously frozen matching package, then apply. Moving the Core default image or default package selection affects future Works only.
-
-This change establishes the final V1 storage and `.work` format directly. Existing nonempty pre-change Core data directories and old `.work` files without required Pi package fields are rejected; there is no automatic migration or backfill. Deploy Core, both CLIs, contracts, agent image, and helpers together with a fresh data directory. Preserve old data separately if it is needed for the previous release.
-
-Export requires a stopped Work and performs a second actual-container check while holding the Work snapshot gate. It does not require stale source resource-occupancy counters to be zero. `work export <workId>` writes `<workId>.work` by default; `work import <file> --wait` needs only that file, and returns the chosen Work name. Export fails as a whole on unsupported filesystem metadata, unverified history, missing fixed images, an inconsistent managed-volume graph, or unreadable bytes; it never emits a partial successful package. Import requires a verified ready package, target Core with an enabled matching model and readable credential, and sufficient quota. Core selects the model automatically; the user does not provide bindings. Custom external MCP platform secret references are not migrated in this version and fail before acceptance, while built-in `work-services` uses new target Core control credentials at first start. Import creates new platform identities, two new managed volumes, and a stopped Work; no Work container, network, or TLS identity is created before explicit start. Platform-managed source credentials are never copied. User content may include secrets because there is no content filter.
-
-Only one snapshot job and two concurrent binary transfers are admitted per Core installation. Jobs have a 30-minute deadline; upload/download also enforce 60 seconds without progress and 30 minutes total. A ready package is retained for 24 hours. A current download or import lease protects its bytes from collection; expiration prevents new downloads/imports, while the owner can still distinguish an expired package from an unknown one. The snapshot directory under the Core data root needs room for staging plus ready bytes; Docker's data root needs room for new volumes and missing image layers. V1 caps both package size and logical restored bytes at 100 GiB. Ensure backups of the Core data root include the snapshot directory while a transfer or job is in progress; a copied `.work` file is independently usable.
-
-Core records job-owned helpers, volumes, contexts, and transfer leases before use. Startup fences interrupted jobs, removes only their recorded artifacts after ownership checks, and releases their name/quota/gate reservations. A committed import is not rolled back. If Docker cannot confirm helper exit or a target volume's ownership, the job stays `cleanup-pending` and holds its reservations; investigate Docker availability and the exact job labels before retrying recovery. Do not manually delete a different Work's volume or clear SQLite reservations to make room. Core shutdown aborts snapshot work and waits within its 45-second coordination window; any unfinished job is handled by the next startup recovery. Normal Work containers are not stopped for a snapshot job.
-
-The supported rollback is to delete the newly imported Work through normal Work lifecycle commands after confirming it is the intended target; the source Work and downloaded package remain unchanged. Import never overwrites a Work. A failed pre-publication import is cleaned from its own journal and exposes no partial Work. Failed export leaves its source Work stopped. A restored Work may still depend on external URLs or credentials embedded in user files; content-preserving export does not make external systems portable. No automatic registry pull, dependency reinstall, or source platform credential reuse is performed.
-
-For release verification, run `npm run typecheck`, `npm run build`, `npm test`, `npm run test:integration`, `npm run agent:image`, `npm run agent:image:acceptance`, `npm run acceptance`, `node scripts/pi-package-fault-acceptance.mjs`, and `node scripts/online-pi-package-acceptance.mjs` on a Docker-enabled Linux host. The online script uses the public npm registry and fixed `npm:pi-subagents@0.71.0`; registry or network failure fails the release check rather than skipping it. It copies the frozen Core package into a Work and drives foreground and background SDK calls against an ephemeral OpenAI-compatible model fixture in that Work's network namespace. Build the snapshot helper with `docker build -f Dockerfile.snapshot-helper -t piwork-snapshot-helper:pi-packages .`, then run `PIWORK_SNAPSHOT_HELPER_TEST_IMAGE=piwork-snapshot-helper:pi-packages node scripts/work-snapshot-acceptance.mjs`. This environment variable is required; the script has no fallback to an older helper image. The snapshot acceptance uses disposable labeled installations and verifies owned Pi packages across stop/export/import/start/apply/re-export and real SDK tool calls after a second import. The package fault acceptance checks real npm/Git source limits, unsafe and expanding ZIPs, lifecycle failure, safe Operation codes, and cleanup of owned Docker resources.
-
-## Manage existing Work services
-
-Use `piwork-cli work service` to inspect and control services created by pi-agentd. Creating and updating service definitions remain in the agent workflow; the CLI has no service create/update commands. All service commands use your saved user login and the existing Core HTTP API.
-
-```bash
-piwork-cli work service --help
-piwork-cli work service list <workId>
-# Copy serviceId from list; service names are not accepted as name selectors.
-piwork-cli work service show <workId> <serviceId>
-piwork-cli work service stop <workId> <serviceId> --wait
-piwork-cli work service start <workId> <serviceId> --wait
-piwork-cli work service restart <workId> <serviceId> --wait
-piwork-cli work service retry <workId> <serviceId> --wait
-piwork-cli work service logs <workId> <serviceId> --tail 100
-piwork-cli work service remove <workId> <serviceId> --wait
-```
-
-For a source checkout, replace `piwork-cli` with `npm run cli --`. Pass global options before `work`, for example:
-
-```bash
-piwork-cli --core http://127.0.0.1:7171 --json work service list <workId>
-piwork-cli --json work service stop <workId> <serviceId> --idempotency-key stop-demo-1 --wait
-piwork-cli operation show <operationId>
-```
-
-`start` persistently enables the service; on a stopped Work it saves that choice and completes without starting the Work or claiming readiness. Run `work start` separately to start the Work. `stop` persistently disables the service, so later Work restarts do not restore it. Stopping the Work itself preserves the enabled choices of its services. `restart` requires an enabled service and a running Work target. `retry` reconciles the existing definition and resets its automatic recovery budget; it does not create or update a definition.
-
-`remove` executes without prompting, removes the service's restoration target and runtime, and retains shared workspace data. The service disappears from list/show; start cannot undo removal. There is no purge-data option. Its accepted Operation remains queryable after removal.
-
-Control commands return Work, service, Operation and correlation IDs plus `reused` immediately unless `--wait` is supplied. An explicit idempotency key is sent unchanged; omitted keys are generated for each invocation. The CLI does not automatically resubmit a mutation on errors. Reusing a key follows Core's existing idempotency and lifecycle preconditions.
-
-For Work and service control commands, `--wait` observes for up to 120 seconds and does not cancel the operation when observation times out or disconnects. It retains the IDs and reports `waiting`; inspect the durable result with `operation show`. Service readiness can take longer than the CLI observation deadline. JSON waiting mode prints exactly one result, including serviceId, and never prints an earlier acceptance or progress lines. Waiting exits 0 for succeeded, 6 for failed/superseded, and 5 for timeout or unavailable observation. `operation show` exits 0 whenever the query succeeds, even for a failed Operation.
-
-List/show display lifecycle metadata, enabled/observed state, desired/applied revisions, public errors, Work-private endpoints, and `access` proxy URLs. They omit full definitions and environment values. Querying a failed service still exits 0. An endpoint such as `svc-demo` is reachable inside its Work network, not a published host address. `access.status` is `available`, `no-default-port`, or `unavailable`; the address stays stable while a Work is stopped.
-
-Owners and authorized administrators can read metadata and control services. Only the Work owner can read application logs. Logs are a single bounded read: 100 lines by default, `--tail` accepts 1 through 200, with at most 64 KiB of Core-redacted UTF-8 text. There is no follow mode. JSON reports available/truncated/unavailable, text, truncation and collection time; text mode sends truncation/unavailability notices to stderr. Available or truncated logs exit 0, including empty available logs; unavailable logs exit 5.
-
-Before acceptance, usage errors exit 2, missing login or HTTP 401/403 exit 3, not found exits 4, network/502/503/504 exits 5, conflicts exit 6, and other errors retain fallback exit 1. These request errors leave stdout empty and print safe errors on stderr, including with `--json`.
-
-## Access Work service web apps through the CLI proxy
-
-Start a foreground proxy using the same saved user login as `work service list`:
-
-```bash
-piwork-cli proxy
-# Or choose a local port: piwork-cli proxy --port 17891
-curl --proxy http://127.0.0.1:17890 http://demo.w-a1b2c3d4.work/
-```
-
-The proxy prints its `http://127.0.0.1:<port>/proxy.pac` address. Configure that PAC URL in a browser to send matching HTTP and `ws://` service domains to the local proxy; other sites use a direct connection. The proxy never changes system DNS, hosts, or global proxy settings. Use the actual `access.hostname` or `access.defaultUrl` from `work service show`; `demo.w-a1b2c3d4.work` above is illustrative. The `w-...` network name is derived from the stable Work ID, so a Chinese Work display name remains unchanged. New service containers use `<work-network-name>_<service-name>`; existing managed containers keep their old names until a normal replacement. No service port is published on the Docker host.
-
-`access.defaultUrl` exists when a service declares TCP 80 or has HTTP readiness on a declared TCP port. If it is null, choose a candidate `access.ports[].url`, for example `http://demo.w-a1b2c3d4.work:8000/`. Candidate URLs identify declared TCP ports; applications on those ports must actually speak HTTP. Readiness paths are health checks and do not change the URL path. The proxy supports streaming uploads/downloads, SSE, and WebSocket Upgrade over `ws://`. Application `Authorization`, Cookie, and Set-Cookie headers pass through; Core login credentials remain at the gateway. Browser applications should use relative URLs or the virtual Host: absolute `svc-demo` private-network redirects are not rewritten. Application-side HTTPS and `wss://` are outside this proxy's current scope. A remote Core URL must use HTTPS; HTTP Core URLs are accepted only on loopback.
-
-Only the Work owner can read application content through this route, including when another administrator can inspect or control the Work. Core returns gateway-marked `401 AUTH_REQUIRED` for an expired user session, `404 NOT_FOUND` for unknown or other users' domains, `404 PORT_NOT_DECLARED` for an unlisted TCP port, `400 PORT_REQUIRED` when no default port exists, `503 SERVICE_UNAVAILABLE` for stopped/unready services, and `502 SERVICE_UPSTREAM_UNAVAILABLE` when Docker or the application connection cannot be confirmed. Application 401/404/500 responses remain unchanged and are not treated as Core login failures. The foreground proxy exits 3 when its saved session expires; log in again and restart it. Ctrl+C closes its connections and exits 130.
-
-Core schema 10 upgrades schema 9 by adding internal file task records and Work file gates; schema 8 first applies the existing domain identity migration. Back up the Core data directory before upgrading. Older Core binaries cannot open the upgraded database; restore the full pre-upgrade backup if you need to revert the binary. Importing the same `.work` package creates a fresh Work ID and therefore a new domain; imported Works remain stopped until explicitly started. The V1 package and any literal URLs inside application files are unchanged.
-
-## Backup and restore
-
-Stop Core and copy the entire data directory as one unit so SQLite, profiles, secrets, operator credential, and internal CA remain consistent:
-
-```bash
-tar -C "$(dirname "$PIWORK_DATA_DIR")" -czf piwork-core-backup.tgz "$(basename "$PIWORK_DATA_DIR")"
-```
-
-Back up retained Docker volumes separately. Restore Core data with owner-only permissions and restore volumes before startup. Core reports missing credentials or runtime dependencies as unavailable instead of silently replacing persisted state.
-
-## Acceptance and real-model smoke
-
-`npm run acceptance` uses compiled subprocesses, Docker, mTLS, and an in-image deterministic provider. It needs no external model credential. The opt-in real-model smoke accepts `PIWORK_REAL_AGENT_IMAGE`, `PIWORK_REAL_MODEL_PROVIDER`, `PIWORK_REAL_MODEL_ID`, optional `PIWORK_REAL_MODEL_BASE_URL`, and `PIWORK_REAL_MODEL_API_KEY`:
-
-```bash
-PIWORK_REAL_AGENT_IMAGE=piwork-agentd:local \
-PIWORK_REAL_MODEL_PROVIDER=anthropic \
-PIWORK_REAL_MODEL_ID=claude-sonnet-4-5-20250929 \
-PIWORK_REAL_MODEL_API_KEY='...' npm run real-model-smoke
-```
+`make test-integration` 使用随机 installation label，只 inspect/清理自己创建的 Docker container/network/volume；不执行全局清理。阶段 gate、失败案例与实际证据见 [Go 迁移验收](go-migration-acceptance.md)。

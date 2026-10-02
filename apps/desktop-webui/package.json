@@ -1,0 +1,16 @@
+{
+  "name": "@piwork/desktop-webui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs && node ../../scripts/sync-desktop-assets.mjs",
+    "test:browser": "tsc -p tsconfig.test.json && node --test dist/test/browser.test.js",
+    "test:real-core": "node test/real-core.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.1"
+  }
+}

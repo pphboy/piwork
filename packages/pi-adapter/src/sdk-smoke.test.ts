@@ -11,6 +11,27 @@ import {
 import { Type } from "typebox";
 import { createDeterministicRuntime } from "./deterministic-model.js";
 import { loadIsolatedSkills } from "./isolated-resources.js";
+import { resolveBuiltInWorkTools } from "@piwork/contracts";
+
+test("all seven Work built-ins enter the SDK and explicit deny removes bash and write", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-sdk-builtins-"));
+  try {
+    await mkdir(join(root, "skills"));
+    for (const denied of [[], ["bash", "write"]]) {
+      const names = resolveBuiltInWorkTools({ allowed: [], denied });
+      const { runtime, model } = await createDeterministicRuntime();
+      const { session } = await createAgentSession({ cwd: root, agentDir: join(root, "agent"),
+        modelRuntime: runtime, model, sessionManager: SessionManager.inMemory(root),
+        resourceLoader: loadIsolatedSkills(join(root, "skills")).loader, tools: names });
+      try {
+        const actual = session.getActiveToolNames().sort();
+        assert.deepEqual(actual, names.slice().sort());
+        assert.equal(actual.length, denied.length === 0 ? 7 : 5);
+        for (const name of denied) assert.equal(actual.some(value => value === name), false);
+      } finally { session.dispose(); }
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("deterministic fixture discovers and reads the SDK Skill manifest and its supporting file", async () => {
   const root = await mkdtemp(join(tmpdir(), "piwork-sdk-smoke-"));

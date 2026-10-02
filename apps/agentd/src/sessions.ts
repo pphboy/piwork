@@ -44,7 +44,7 @@ export class AgentSessionService {
   }
 
   read(sessionId: string): PersistentSession {
-    this.requireRecord(sessionId);
+    this.requireRecord(sessionId, false);
     return readPersistentSession(loadPersistentSession({
       cwd: this.workspace,
       sessionRoot: this.sessionRoot,
@@ -57,10 +57,10 @@ export class AgentSessionService {
     return loadPersistentSession({ cwd: this.workspace, sessionRoot: this.sessionRoot, sessionId });
   }
 
-  private requireRecord(sessionId: string): SessionRecord {
+  private requireRecord(sessionId: string, requireActiveContext = true): SessionRecord {
     const record = this.store.getSession(this.workId, sessionId);
     if (record === undefined) throw new Error(`session ${sessionId} does not exist in Work ${this.workId}`);
-    if (this.contextIdentity !== undefined && record.contextIdentity !== this.contextIdentity) {
+    if (requireActiveContext && this.contextIdentity !== undefined && record.contextIdentity !== this.contextIdentity) {
       throw new Error(`session ${sessionId} context is unavailable`);
     }
     return record;

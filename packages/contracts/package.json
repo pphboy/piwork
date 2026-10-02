@@ -15,7 +15,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "proto:gen": "mkdir -p src/generated && protoc --plugin=protoc-gen-ts_proto=../../node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=src/generated --ts_proto_opt=outputServices=grpc-js,esModuleInterop=true,importSuffix=.js,env=node,useOptionals=messages,useExactTypes=false,forceLong=bigint,oneof=unions -I proto proto/agent.proto proto/work-services.proto",
+    "proto:gen": "node ../../scripts/generate-protocol.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json",
     "test:unit": "npm run build && node --test dist/**/*.test.js"

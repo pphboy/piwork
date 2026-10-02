@@ -1,5 +1,5 @@
 import { matchesGlob } from "node:path";
-import { PiPackageInputError, type PiPackageManifest } from "./source.js";
+import { PiPackageInputError, type PiPackageManifest } from "./manifest.js";
 
 export type PiPackageResourceKind = "extensions" | "skills" | "prompts" | "themes";
 export type PiPackageInventory = Readonly<Record<PiPackageResourceKind, readonly string[]>>;

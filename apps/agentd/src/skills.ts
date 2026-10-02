@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { loadConfiguredIsolatedSkills } from "@piwork/pi-adapter";
+import { loadConfiguredIsolatedSkills, SkillDirectoryMismatchError } from "@piwork/pi-adapter";
 
 export interface ConfiguredSkill {
   readonly name: string;
@@ -16,13 +16,13 @@ export interface SkillLoadStatus {
 }
 
 export class RequiredSkillError extends Error {
-  constructor(readonly statuses: readonly SkillLoadStatus[]) {
+  constructor(readonly statuses: readonly SkillLoadStatus[], readonly phase: "validation" | "load" = "validation") {
     super("one or more required Skills failed validation or loading");
     this.name = "RequiredSkillError";
   }
 }
 
-export async function loadConfiguredSkills(skillRoot: string, configured: readonly ConfiguredSkill[], agentsMd?: string) {
+export async function loadConfiguredSkills(skillRoot: string, configured: readonly ConfiguredSkill[], agentsMd?: string, onValidated?: () => void) {
   const statuses: SkillLoadStatus[] = [];
   const names = new Set<string>();
   for (const skill of configured) {
@@ -39,19 +39,20 @@ export async function loadConfiguredSkills(skillRoot: string, configured: readon
     }
   }
   if (statuses.some((status) => !status.loaded)) throw new RequiredSkillError(statuses);
+  onValidated?.();
   let isolated;
   try {
     isolated = loadConfiguredIsolatedSkills(skillRoot, configured.map((skill) => skill.name), agentsMd);
-  } catch {
+  } catch (error) {
     throw new RequiredSkillError(configured.map((skill) => ({
       name: skill.name,
       digest: skill.digest,
       loaded: false,
-      error: "SKILL_LOAD_FAILED",
-    })));
+      error: error instanceof SkillDirectoryMismatchError ? "SKILL_DIRECTORY_MISMATCH" : "SKILL_LOAD_FAILED",
+    })), "load");
   }
   if (isolated.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
-    throw new RequiredSkillError(configured.map((skill) => ({ name: skill.name, digest: skill.digest, loaded: false, error: "SKILL_LOAD_FAILED" })));
+    throw new RequiredSkillError(configured.map((skill) => ({ name: skill.name, digest: skill.digest, loaded: false, error: "SKILL_LOAD_FAILED" })), "load");
   }
   const loadedNames = isolated.skills.map((skill) => skill.name).sort();
   const expectedNames = configured.map((skill) => skill.name).sort();
@@ -61,7 +62,7 @@ export async function loadConfiguredSkills(skillRoot: string, configured: readon
       digest: configured.find((skill) => skill.name === name)!.digest,
       loaded: loadedNames.includes(name),
       ...(!loadedNames.includes(name) ? { error: "SDK did not load the configured Skill" } : {}),
-    })));
+    })), "load");
   }
   return { ...isolated, statuses };
 }

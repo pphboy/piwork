@@ -4,7 +4,7 @@
 
 ## 启动与连接
 
-Core 所在主机先构建 `npm run file-helper:image`，再以 `PIWORK_FILE_HELPER_IMAGE=piwork-file-helper:local` 启动 Core。`GET /api/v1/file-access` 使用用户 Bearer，返回文件能力及固定限额。镜像缺失时 `available=false`，service 代理仍可用。详细部署和恢复步骤见 [operations.md](operations.md)。
+Core 所在主机先执行 `make native-helper-images` 构建原生文件镜像，再以 `PIWORK_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance` 启动 Go Core。`GET /api/v1/file-access` 使用用户 Bearer，返回文件能力及固定限额。镜像缺失时 `available=false`，service 代理仍可用。详细部署和恢复步骤见 [operations.md](operations.md)。
 
 在已登录的 CLI 终端运行：
 
@@ -16,6 +16,18 @@ piwork-cli proxy
 `proxy` 默认监听 `127.0.0.1:17890`，同时提供 service HTTP/SSE/WebSocket 代理和 `http://127.0.0.1:17890/works/<workId>/files/`。后者是 WebDAV 服务器 URL，客户端直接连接，无需为它配置 PAC 或额外 HTTP 代理。可用 `--port <1..65535>` 改端口。CLI 启动时仅显示一次用户名 `piwork`、随机临时密码、URL 模板和能力状态；密码只在当前进程内存中，重启即失效。不要将它放进 URL、命令行参数或共享日志。一个 proxy 可访问多个当前用户拥有且正在运行的 Work，Work ID 从 `work list/show` 获取；`/` 和 `/works/` 不列出所有 Work。
 
 通用 rclone WebDAV 配置使用 `type = webdav`、`vendor = other`、上面的 `url`、`user = piwork` 和由 rclone 生成的混淆 `pass`。将配置放在权限为 0600 的临时文件，退出 proxy 后删除。客户端可用 `rclone lsf <remote>:` 浏览，`rclone copy <local> <remote>:` 上传，`rclone copy <remote>: <local>` 下载；`rclone mkdir`、`rclone moveto` 和 `rclone deletefile` 对应本页支持的方法。以客户端实际测试为准；首版验收范围是通用 WebDAV 文件传输，不承诺 Finder/Windows 系统挂载。
+
+例如将临时配置命名为 `work`，URL 填为 `http://127.0.0.1:17890/works/<workId>/files/`，在 `rclone config` 的交互输入中填写 CLI 输出的随机密码，然后执行：
+
+```sh
+rclone --config "$PIWORK_RCLONE_CONFIG" lsf work:
+rclone --config "$PIWORK_RCLONE_CONFIG" copyto ./note.txt work:note.txt
+rclone --config "$PIWORK_RCLONE_CONFIG" cat work:note.txt
+rclone --config "$PIWORK_RCLONE_CONFIG" moveto work:note.txt work:renamed.txt
+rclone --config "$PIWORK_RCLONE_CONFIG" deletefile work:renamed.txt
+```
+
+`PIWORK_RCLONE_CONFIG` 指向仅当前用户可读的配置文件；实际密码只在 rclone 交互配置和当前 proxy 进程内使用。上述命令不需要浏览器 PAC、系统挂载或 LOCK。
 
 直接用 HTTP 客户端时也可访问同一 URL。例如在交互 shell 中将临时密码读入变量并避免写入历史：
 
@@ -50,7 +62,7 @@ unset PIWORK_DAV_PASSWORD
 
 文件最大 10 GiB，单目录子项和递归任务各最多 10,000，路径最多 128 段/4096 字节，单段最多 255 字节。XML 请求最大 64 KiB/32 层/128 个属性；XML/元数据响应最大 16 MiB。Core/用户/Work 活动 helper 上限为 16/8/4，同 Work 同时仅 1 个文件 mutation；超出立即 429 且 `Retry-After: 1`。无进展 60 秒、单请求总计 30 分钟，授权至少每 2 秒复核。固定数值可从 `GET /api/v1/file-access` 查询。
 
-文件错误为 DAV:error XML，响应头 `X-Piwork-File-Error` 给出固定 code。常见状态：本地密码缺失/错误 401，其他所有者或不存在 Work 404，已授权但 Work 未运行/正在快照/待清理 409，权限或根操作 403，条件不符 412，helper 缺失 503，超时 504，磁盘不足 507。旧 Core 未提供文件能力时 CLI 文件分支返回 501，而现有 service 分支继续工作。会话失效时整个 proxy 退出并返回 CLI 登录退出码 3；普通文件错误或应用自身 401 不会退出 proxy。
+文件错误为 DAV:error XML，响应头 `X-Piwork-File-Error` 给出固定 code。常见状态：本地密码缺失/错误 401，其他所有者或不存在 Work 404，已授权但 Work 未运行/正在快照/待清理 409，权限或根操作 403，条件不符 412，helper 缺失 503，超时 504，磁盘不足 507。Core 未提供文件能力时 CLI 文件分支返回 501，而现有 service 分支继续工作。会话失效时整个 proxy 退出并返回 CLI 登录退出码 3；普通文件错误或应用自身 401 不会退出 proxy。
 
 文件 helper 每次请求后回收。若 Docker 无法确认退出或暂存 inode 归属，Work 进入待清理状态，阻止新文件写入及导出；恢复 Docker 后按 [operations.md](operations.md) 中的 stop/retry 步骤处理。不要按 `.piwork-file-*` 前缀删除用户文件。
 

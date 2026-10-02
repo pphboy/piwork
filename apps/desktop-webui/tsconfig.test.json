@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "rootDir": "test",
+    "outDir": "dist/test",
+    "tsBuildInfoFile": "dist/.desktop-browser-test.tsbuildinfo"
+  },
+  "include": ["test/**/*.ts"]
+}

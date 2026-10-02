@@ -5,20 +5,25 @@ import { assertAgentPeerIdentity, mcpTools, selectPackageTools, skillVisibility 
 import type { McpBridge } from "@piwork/pi-adapter";
 
 const expected = "core.g3.work-11111111-1111-4111-8111-111111111111.piwork";
+const peerScope = { installationId: "installation-native", workId: "work-11111111-1111-4111-8111-111111111111", generation: 3, instanceId: "agent-current" };
+const peerUri = "URI:spiffe://piwork/installation/installation-native/work/work-11111111-1111-4111-8111-111111111111/generation/3/instance/agent-current/role/core-client";
 
 test("agent mTLS peer verification rejects plaintext, wrong Work, and stale generation identities", () => {
   assert.doesNotThrow(() => assertAgentPeerIdentity({
     transportSecurityType: "ssl",
-    sslPeerCertificate: { subject: { CN: expected } },
-  }, expected));
+    sslPeerCertificate: { subject: { CN: expected }, subjectaltname: `${peerUri}, URI:spiffe://piwork/work/${peerScope.workId}/generation/3/core` },
+  }, expected, peerScope));
 
   for (const context of [
     { transportSecurityType: "insecure" },
     { transportSecurityType: "ssl", sslPeerCertificate: { subject: { CN: "core.g3.work-other.piwork" } } },
     { transportSecurityType: "ssl", sslPeerCertificate: { subject: { CN: "core.g2.work-11111111-1111-4111-8111-111111111111.piwork" } } },
+    ...["", peerUri.replace("installation-native", "installation-other"), peerUri.replace("work-11111111-1111-4111-8111-111111111111", "work-other"),
+      peerUri.replace("generation/3", "generation/2"), peerUri.replace("agent-current", "agent-other"), peerUri.replace("core-client", "agent-service-client"), `${peerUri}, ${peerUri}`]
+      .map((subjectaltname) => ({ transportSecurityType: "ssl", sslPeerCertificate: { subject: { CN: expected }, subjectaltname } })),
   ]) {
     assert.throws(
-      () => assertAgentPeerIdentity(context, expected),
+      () => assertAgentPeerIdentity(context, expected, peerScope),
       (error) => (error as { code?: number }).code === status.UNAUTHENTICATED,
     );
   }

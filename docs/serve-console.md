@@ -9,8 +9,8 @@
 先按 [操作文档](operations.md#clean-installation) 启动 Core，并使用 `piwork-serve admin bootstrap` 创建首个管理员。面板不提供 bootstrap。构建后，为公开域名准备 TLS 证书与私钥，再启动：
 
 ```bash
-npm run build
-npm run console -- serve \
+make build-go
+./dist/go/piwork-console serve \
   --core http://127.0.0.1:7171 \
   --listen 0.0.0.0:7173 \
   --public-origin https://console.example.com:7173 \
@@ -19,7 +19,7 @@ npm run console -- serve \
   --data-dir "$PWD/.piwork/console"
 ```
 
-证书的主机名必须覆盖 `console.example.com`；私钥仅允许所有者读取（例如模式 `0600`）。`--public-origin` 必须是浏览器实际使用的 HTTPS origin，端口须与 `--listen` 一致。`--core` 只接受 loopback 地址。未指定时，Core 地址为 `http://127.0.0.1:7171`，监听地址为 `0.0.0.0:7173`，数据目录为当前目录下的 `.piwork/console`。`npm run console -- --help` 查看参数。Core 暂时不可达时，登录页仍可打开并显示可用性。
+证书的主机名必须覆盖 `console.example.com`；私钥仅允许所有者读取（例如模式 `0600`）。`--public-origin` 必须是浏览器实际使用的 HTTPS origin，端口须与 `--listen` 一致。`--core` 只接受 loopback 地址。未指定时，Core 地址为 `http://127.0.0.1:7171`，监听地址为 `0.0.0.0:7173`，数据目录为当前目录下的 `.piwork/console`。`./dist/go/piwork-console --help` 查看参数。Core 暂时不可达时，登录页仍可打开并显示可用性。
 
 只允许管理员账号登录。管理员可以在“Users” 页创建普通用户或其他管理员、禁用账号和重置密码。普通用户使用 `piwork-cli` 管理自己的 Work，不能登录面板。面板浏览器只持有 `Secure`、`HttpOnly`、`SameSite=Strict` 会话 Cookie；Core bearer 保存在面板进程内存中。面板重启后需要重新登录。
 
@@ -36,8 +36,8 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 7 \
 chmod 600 .piwork/console-preview/key.pem
 PIWORK_PREVIEW_CERT="$PWD/.piwork/console-preview/cert.pem"
 PIWORK_PREVIEW_KEY="$PWD/.piwork/console-preview/key.pem"
-npm run build -w @piwork/console
-npm run console -- serve \
+make build-go
+./dist/go/piwork-console serve \
   --core http://127.0.0.1:7171 \
   --listen 127.0.0.1:7173 \
   --public-origin https://127.0.0.1:7173 \
@@ -46,13 +46,13 @@ npm run console -- serve \
   --data-dir "$PWD/.piwork/console-preview/data"
 ```
 
-浏览器打开 `https://127.0.0.1:7173/login`，首次使用自签证书时需要在本机浏览器信任该证书。修改 `apps/console/public/style.css`、`index.html` 或 `src/browser/app.ts` 后，停止面板进程，重新运行 `npm run build -w @piwork/console`，再用上述 `npm run console -- serve` 命令启动；面板在启动时将构建产物读入内存，单纯刷新页面不会装入新构建。Core 可以继续运行。
+浏览器打开 `https://127.0.0.1:7173/login`，首次使用自签证书时需要在本机浏览器信任该证书。修改 `apps/console-webui/public/` 或 `apps/console-webui/src/` 后，先执行 `npm run build -w @piwork/console-webui`，再执行 `make build-go` 并重启 `piwork-console`；浏览器资源嵌入 Go 程序，单纯刷新页面不会装入新构建。Core 可以继续运行。
 
 在浏览器开发者工具先检查 1440px 桌面宽度，再切到 360px 窄屏。所有七个已登录管理路由及 Skill、Package、Operation 详情均采用最大 1100px 的同一页面轨道：跨路由比较页标题、说明及一级卡片的左右边界；Runtime 和 Default Work 的表单只在卡片内部按 176px 标签列、16px 间距及最多 520px 控件列收束。登录使用相同外层轨道，只有标题、说明和表单卡片组成最大 420px 的居中窄列。窄屏下卡片两侧齐平，管理表单折为单列，整页不横向溢出。
 
 逐类核对顶栏和页面、一级 section、摘要、表单和字段组、选择与排序行、列表及表格、详情与技术披露、反馈及操作区。长名称、ID、表格和 `pre` 的换行或滚动应留在所属容器，全文仍可读取或复制，主要动作可到达；Default Skills 的空选择、长名称与不可用引用应分别显示入口、全文和原因。切换加载、空、错误、草稿、保存中、明确失败、结果未知、上传进度及 Operation 中断恢复时，反馈应贴近对应字段、section 或对象，一级卡片边界保持稳定；界面自有文字和无障碍名称使用英文，原始用户内容保持原文。危险确认核对目标与后果，键盘焦点保持可见。完整规则见两份语言文档的检查清单。
 
-运行 `npm run test:browser -w @piwork/console` 会在 `test-results/ui-preview/` 生成 1440px 与 360px 的登录、全部七个管理路由及三个代表性详情截图。截图使用临时 Core fixture，不含真实密码、API Key 或生产用户数据；它们用于复核视觉和文案，实际部署仍按上面的 HTTPS 命令打开面板检查。
+执行 `npx playwright test -c apps/console-webui/playwright.config.mjs apps/console-webui/browser-tests/console.spec.mjs` 会以原生 Console 和临时 Core fixture 验证登录、全部管理路由及详情，并在 `apps/console-webui/test-results/ui-preview/` 生成 1440px 与 360px 截图。截图不含生产密码、API Key 或用户数据。另用 `npx playwright test -c apps/console-webui/playwright.config.mjs apps/console-webui/browser-tests/real-core.spec.mjs` 验证真实 Core 的管理写入。两组测试均使用临时目录。
 
 ## 内容与配置
 

@@ -1,0 +1,6134 @@
+{
+  "objects": [
+    {
+      "type": "table",
+      "name": "users",
+      "tbl_name": "users",
+      "sql": "CREATE TABLE users (\n        id TEXT PRIMARY KEY,\n        account TEXT NOT NULL UNIQUE,\n        password_digest TEXT NOT NULL,\n        role TEXT NOT NULL CHECK (role IN ('admin', 'user')),\n        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "login_sessions",
+      "tbl_name": "login_sessions",
+      "sql": "CREATE TABLE login_sessions (\n        id TEXT PRIMARY KEY,\n        user_id TEXT NOT NULL REFERENCES users(id),\n        token_digest TEXT NOT NULL UNIQUE,\n        expires_at TEXT NOT NULL,\n        revoked_at TEXT,\n        created_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "works",
+      "tbl_name": "works",
+      "sql": "CREATE TABLE works (\n        id TEXT PRIMARY KEY,\n        owner_user_id TEXT NOT NULL REFERENCES users(id),\n        name TEXT NOT NULL,\n        desired_state TEXT NOT NULL,\n        observed_state TEXT NOT NULL,\n        desired_revision INTEGER NOT NULL,\n        active_revision INTEGER,\n        control_version INTEGER NOT NULL,\n        deleted_at TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL, desired_context_id TEXT REFERENCES work_context_snapshots(snapshot_id), active_context_id TEXT REFERENCES work_context_snapshots(snapshot_id),\n        UNIQUE(owner_user_id, name)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_config_revisions",
+      "tbl_name": "work_config_revisions",
+      "sql": "CREATE TABLE work_config_revisions (\n        work_id TEXT NOT NULL REFERENCES works(id),\n        revision INTEGER NOT NULL,\n        config_json TEXT NOT NULL,\n        resolved_image_digest TEXT,\n        created_by_user_id TEXT NOT NULL REFERENCES users(id),\n        created_at TEXT NOT NULL, runtime_profile_json TEXT, source_runtime_revision INTEGER,\n        PRIMARY KEY(work_id, revision)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "service_revisions",
+      "tbl_name": "service_revisions",
+      "sql": "CREATE TABLE service_revisions (\n        work_id TEXT NOT NULL REFERENCES works(id),\n        service_id TEXT NOT NULL,\n        revision INTEGER NOT NULL,\n        definition_json TEXT NOT NULL,\n        resolved_image_digest TEXT,\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(work_id, service_id, revision)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "service_heads",
+      "tbl_name": "service_heads",
+      "sql": "CREATE TABLE service_heads (\n        work_id TEXT NOT NULL REFERENCES works(id),\n        service_id TEXT NOT NULL,\n        name TEXT NOT NULL,\n        desired_revision INTEGER NOT NULL,\n        applied_revision INTEGER,\n        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),\n        observed_state TEXT NOT NULL,\n        tombstoned_at TEXT,\n        last_error_json TEXT,\n        PRIMARY KEY(work_id, service_id),\n        UNIQUE(work_id, name)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "operations",
+      "tbl_name": "operations",
+      "sql": "CREATE TABLE operations (\n        id TEXT PRIMARY KEY,\n        work_id TEXT REFERENCES works(id),\n        service_id TEXT,\n        kind TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (state IN ('pending', 'running', 'succeeded', 'failed', 'superseded')),\n        target_version INTEGER NOT NULL,\n        request_json TEXT NOT NULL,\n        result_json TEXT,\n        error_json TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "idempotency_records",
+      "tbl_name": "idempotency_records",
+      "sql": "CREATE TABLE idempotency_records (\n        principal_id TEXT NOT NULL,\n        work_scope TEXT NOT NULL,\n        operation_kind TEXT NOT NULL,\n        idempotency_key TEXT NOT NULL,\n        request_digest TEXT NOT NULL,\n        resource_id TEXT NOT NULL,\n        operation_id TEXT REFERENCES operations(id),\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(principal_id, work_scope, operation_kind, idempotency_key)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "resource_bindings",
+      "tbl_name": "resource_bindings",
+      "sql": "CREATE TABLE resource_bindings (\n        installation_id TEXT NOT NULL,\n        work_id TEXT NOT NULL,\n        resource_kind TEXT NOT NULL,\n        logical_id TEXT NOT NULL,\n        runtime_id TEXT NOT NULL,\n        generation INTEGER NOT NULL,\n        labels_json TEXT NOT NULL,\n        observed_at TEXT NOT NULL,\n        PRIMARY KEY(installation_id, resource_kind, logical_id)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "volume_records",
+      "tbl_name": "volume_records",
+      "sql": "CREATE TABLE volume_records (\n        id TEXT PRIMARY KEY,\n        installation_id TEXT NOT NULL,\n        work_id TEXT NOT NULL,\n        service_id TEXT,\n        volume_role TEXT NOT NULL CHECK (volume_role IN ('agent-private', 'workspace', 'service-data')),\n        runtime_name TEXT NOT NULL UNIQUE,\n        state TEXT NOT NULL,\n        reference_count INTEGER NOT NULL,\n        retained_at TEXT,\n        purged_at TEXT,\n        created_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "quota_reservations",
+      "tbl_name": "quota_reservations",
+      "sql": "CREATE TABLE quota_reservations (\n        work_id TEXT NOT NULL,\n        subject_kind TEXT NOT NULL,\n        subject_id TEXT NOT NULL,\n        desired_cpu_millis INTEGER NOT NULL,\n        desired_memory_bytes INTEGER NOT NULL,\n        occupied_cpu_millis INTEGER NOT NULL,\n        occupied_memory_bytes INTEGER NOT NULL,\n        service_slots INTEGER NOT NULL,\n        volume_slots INTEGER NOT NULL,\n        updated_at TEXT NOT NULL,\n        PRIMARY KEY(work_id, subject_kind, subject_id)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "runtime_generations",
+      "tbl_name": "runtime_generations",
+      "sql": "CREATE TABLE runtime_generations (\n        work_id TEXT NOT NULL REFERENCES works(id),\n        generation INTEGER NOT NULL,\n        instance_id TEXT,\n        state TEXT NOT NULL,\n        certificate_serial TEXT,\n        retry_count INTEGER NOT NULL,\n        retry_window_started_at TEXT,\n        next_retry_at TEXT,\n        ready_since TEXT,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        PRIMARY KEY(work_id, generation)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "catalog_entries",
+      "tbl_name": "catalog_entries",
+      "sql": "CREATE TABLE catalog_entries (\n        id TEXT PRIMARY KEY,\n        kind TEXT NOT NULL CHECK (kind IN ('agent_image', 'skill', 'model')),\n        name TEXT NOT NULL,\n        mutable_reference TEXT,\n        resolved_digest TEXT,\n        metadata_json TEXT NOT NULL,\n        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        UNIQUE(kind, name)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "secret_refs",
+      "tbl_name": "secret_refs",
+      "sql": "CREATE TABLE secret_refs (\n        id TEXT PRIMARY KEY,\n        owner_user_id TEXT REFERENCES users(id),\n        name TEXT NOT NULL,\n        storage_path TEXT NOT NULL UNIQUE,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        UNIQUE(owner_user_id, name)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_config_artifacts",
+      "tbl_name": "work_config_artifacts",
+      "sql": "CREATE TABLE work_config_artifacts (\n        work_id TEXT NOT NULL,\n        revision INTEGER NOT NULL,\n        artifact_kind TEXT NOT NULL CHECK (artifact_kind IN ('agent_image', 'skill')),\n        ordinal INTEGER NOT NULL,\n        catalog_id TEXT NOT NULL,\n        digest TEXT NOT NULL,\n        PRIMARY KEY(work_id, revision, artifact_kind, ordinal),\n        FOREIGN KEY(work_id, revision) REFERENCES work_config_revisions(work_id, revision)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "control_metadata",
+      "tbl_name": "control_metadata",
+      "sql": "CREATE TABLE control_metadata (\n        key TEXT PRIMARY KEY,\n        value_json TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "managed_skill_artifacts",
+      "tbl_name": "managed_skill_artifacts",
+      "sql": "CREATE TABLE managed_skill_artifacts (\n        skill_name TEXT NOT NULL REFERENCES catalog_entries(id) ON DELETE CASCADE,\n        content_identity TEXT NOT NULL,\n        file_count INTEGER NOT NULL CHECK (file_count >= 1 AND file_count <= 2048),\n        total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0 AND total_bytes <= 33554432),\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(skill_name, content_identity)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_context_snapshots",
+      "tbl_name": "work_context_snapshots",
+      "sql": "CREATE TABLE work_context_snapshots (\n        snapshot_id TEXT PRIMARY KEY,\n        work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,\n        internal_revision INTEGER,\n        configuration_json TEXT NOT NULL,\n        image_identity TEXT NOT NULL,\n        created_by_user_id TEXT NOT NULL REFERENCES users(id),\n        created_at TEXT NOT NULL,\n        UNIQUE(work_id, internal_revision)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "service_runtime_bindings",
+      "tbl_name": "service_runtime_bindings",
+      "sql": "CREATE TABLE service_runtime_bindings (\n        work_id TEXT NOT NULL,\n        service_id TEXT NOT NULL,\n        revision INTEGER NOT NULL,\n        container_id TEXT,\n        image_identity TEXT,\n        recovery_count INTEGER NOT NULL DEFAULT 0,\n        recovery_window_started_at TEXT,\n        next_retry_at TEXT,\n        ready_since TEXT,\n        updated_at TEXT NOT NULL,\n        PRIMARY KEY(work_id, service_id)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "volume_references",
+      "tbl_name": "volume_references",
+      "sql": "CREATE TABLE volume_references (\n        volume_id TEXT NOT NULL REFERENCES volume_records(id) ON DELETE CASCADE,\n        consumer_kind TEXT NOT NULL CHECK (consumer_kind IN ('work', 'service')),\n        consumer_id TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(volume_id, consumer_kind, consumer_id)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "snapshot_jobs",
+      "tbl_name": "snapshot_jobs",
+      "sql": "CREATE TABLE snapshot_jobs (\n        operation_id TEXT PRIMARY KEY REFERENCES operations(id),\n        owner_user_id TEXT NOT NULL REFERENCES users(id),\n        kind TEXT NOT NULL CHECK (kind IN ('export', 'import')),\n        source_work_id TEXT,\n        target_work_id TEXT,\n        snapshot_id TEXT UNIQUE,\n        package_id TEXT REFERENCES snapshot_packages(id),\n        name TEXT,\n        request_digest TEXT NOT NULL,\n        phase TEXT NOT NULL CHECK (phase IN ('accepted', 'verifying', 'capturing', 'sealing', 'restoring', 'publishing', 'succeeded', 'failed', 'cleanup-pending', 'cleaned')),\n        deadline_at TEXT NOT NULL,\n        worker_epoch INTEGER NOT NULL CHECK (worker_epoch >= 1),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        cleanup_error TEXT\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_snapshot_locks",
+      "tbl_name": "work_snapshot_locks",
+      "sql": "CREATE TABLE work_snapshot_locks (\n        work_id TEXT PRIMARY KEY REFERENCES works(id),\n        operation_id TEXT NOT NULL UNIQUE REFERENCES snapshot_jobs(operation_id),\n        worker_epoch INTEGER NOT NULL CHECK (worker_epoch >= 1)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "snapshot_packages",
+      "tbl_name": "snapshot_packages",
+      "sql": "CREATE TABLE snapshot_packages (\n        id TEXT PRIMARY KEY,\n        owner_user_id TEXT NOT NULL REFERENCES users(id),\n        digest TEXT,\n        size INTEGER NOT NULL CHECK (size >= 0),\n        state TEXT NOT NULL CHECK (state IN ('staging', 'ready', 'expired', 'deleting')),\n        job_id TEXT REFERENCES snapshot_jobs(operation_id),\n        created_at TEXT NOT NULL,\n        ready_at TEXT,\n        expires_at TEXT,\n        CHECK (state != 'ready' OR (digest IS NOT NULL AND ready_at IS NOT NULL AND expires_at IS NOT NULL))\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "snapshot_artifacts",
+      "tbl_name": "snapshot_artifacts",
+      "sql": "CREATE TABLE snapshot_artifacts (\n        operation_id TEXT NOT NULL REFERENCES snapshot_jobs(operation_id),\n        artifact_key TEXT NOT NULL,\n        kind TEXT NOT NULL,\n        logical_id TEXT NOT NULL,\n        state TEXT NOT NULL CHECK (state IN ('planned', 'created', 'ready', 'cleaning', 'cleaned')),\n        PRIMARY KEY(operation_id, artifact_key)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "snapshot_transfers",
+      "tbl_name": "snapshot_transfers",
+      "sql": "CREATE TABLE snapshot_transfers (\n        id TEXT PRIMARY KEY,\n        owner_user_id TEXT NOT NULL REFERENCES users(id),\n        package_id TEXT REFERENCES snapshot_packages(id),\n        snapshot_id TEXT REFERENCES snapshot_jobs(snapshot_id),\n        kind TEXT NOT NULL CHECK (kind IN ('upload', 'download')),\n        phase TEXT NOT NULL CHECK (phase IN ('accepted', 'streaming', 'verifying', 'cleanup-pending')),\n        deadline_at TEXT NOT NULL,\n        last_progress_at TEXT NOT NULL,\n        helper_id TEXT,\n        created_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_import_names",
+      "tbl_name": "work_import_names",
+      "sql": "CREATE TABLE work_import_names (\n        owner_user_id TEXT NOT NULL REFERENCES users(id),\n        name TEXT NOT NULL,\n        operation_id TEXT NOT NULL UNIQUE REFERENCES snapshot_jobs(operation_id),\n        PRIMARY KEY(owner_user_id, name)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_owned_images",
+      "tbl_name": "work_owned_images",
+      "sql": "CREATE TABLE work_owned_images (\n        work_id TEXT NOT NULL REFERENCES works(id),\n        selection_id TEXT NOT NULL,\n        image_identity TEXT NOT NULL,\n        source_reference TEXT NOT NULL,\n        PRIMARY KEY(work_id, selection_id)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "imported_work_history",
+      "tbl_name": "imported_work_history",
+      "sql": "CREATE TABLE imported_work_history (\n        work_id TEXT NOT NULL REFERENCES works(id),\n        operation_id TEXT NOT NULL UNIQUE,\n        source_operation_id TEXT NOT NULL,\n        record_json TEXT NOT NULL,\n        PRIMARY KEY(work_id, operation_id)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_import_provenance",
+      "tbl_name": "work_import_provenance",
+      "sql": "CREATE TABLE work_import_provenance (\n        work_id TEXT PRIMARY KEY REFERENCES works(id),\n        package_digest TEXT NOT NULL,\n        import_operation_id TEXT NOT NULL REFERENCES snapshot_jobs(operation_id),\n        identity_map_json TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "pi_package_artifacts",
+      "tbl_name": "pi_package_artifacts",
+      "sql": "CREATE TABLE pi_package_artifacts (\n        id TEXT PRIMARY KEY,\n        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('core', 'work')),\n        work_id TEXT REFERENCES works(id),\n        name TEXT NOT NULL,\n        content_digest TEXT NOT NULL,\n        metadata_json TEXT NOT NULL,\n        storage_path TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        lease_count INTEGER NOT NULL DEFAULT 0 CHECK (lease_count >= 0),\n        CHECK ((scope_kind = 'core' AND work_id IS NULL) OR (scope_kind = 'work' AND work_id IS NOT NULL))\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "pi_package_catalog",
+      "tbl_name": "pi_package_catalog",
+      "sql": "CREATE TABLE pi_package_catalog (\n        name TEXT PRIMARY KEY,\n        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),\n        head_artifact_id TEXT NOT NULL REFERENCES pi_package_artifacts(id),\n        generation INTEGER NOT NULL CHECK (generation >= 1),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "pi_package_uploads",
+      "tbl_name": "pi_package_uploads",
+      "sql": "CREATE TABLE pi_package_uploads (\n        id TEXT PRIMARY KEY,\n        actor_id TEXT NOT NULL,\n        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('core', 'work')),\n        work_id TEXT REFERENCES works(id),\n        source_kind TEXT NOT NULL CHECK (source_kind IN ('local', 'zip')),\n        display_name TEXT NOT NULL,\n        digest TEXT,\n        size INTEGER NOT NULL CHECK (size >= 0 AND size <= 268435456),\n        state TEXT NOT NULL CHECK (state IN ('staging', 'ready', 'expired')),\n        expires_at TEXT,\n        lease_count INTEGER NOT NULL DEFAULT 0 CHECK (lease_count >= 0),\n        created_at TEXT NOT NULL,\n        CHECK ((scope_kind = 'core' AND work_id IS NULL) OR (scope_kind = 'work' AND work_id IS NOT NULL)),\n        CHECK (state != 'ready' OR (digest IS NOT NULL AND expires_at IS NOT NULL))\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "pi_package_jobs",
+      "tbl_name": "pi_package_jobs",
+      "sql": "CREATE TABLE pi_package_jobs (\n        operation_id TEXT PRIMARY KEY REFERENCES operations(id),\n        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('core', 'work')),\n        work_id TEXT REFERENCES works(id),\n        actor_id TEXT NOT NULL,\n        kind TEXT NOT NULL CHECK (kind IN ('install', 'update')),\n        prepare_image_id TEXT NOT NULL,\n        trusted_helper_image_id TEXT NOT NULL,\n        prepared_environment_json TEXT NOT NULL,\n        add_to_defaults INTEGER NOT NULL CHECK (add_to_defaults IN (0, 1)),\n        source_json TEXT NOT NULL,\n        source_upload_id TEXT REFERENCES pi_package_uploads(id),\n        request_digest TEXT NOT NULL,\n        package_name TEXT,\n        phase TEXT NOT NULL CHECK (phase IN ('queued', 'source', 'prepare', 'validate', 'publish', 'succeeded', 'failed', 'superseded', 'cleanup-pending')),\n        worker_epoch INTEGER NOT NULL CHECK (worker_epoch >= 1),\n        helper_id TEXT,\n        deadline_at TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        cleanup_error TEXT,\n        leases_released INTEGER NOT NULL DEFAULT 0 CHECK (leases_released IN (0, 1)),\n        CHECK ((scope_kind = 'core' AND work_id IS NULL) OR (scope_kind = 'work' AND work_id IS NOT NULL))\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_network_names",
+      "tbl_name": "work_network_names",
+      "sql": "CREATE TABLE work_network_names (\n        work_id TEXT PRIMARY KEY REFERENCES works(id),\n        name TEXT NOT NULL UNIQUE,\n        created_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "service_domain_labels",
+      "tbl_name": "service_domain_labels",
+      "sql": "CREATE TABLE service_domain_labels (\n        work_id TEXT NOT NULL REFERENCES works(id),\n        service_id TEXT NOT NULL,\n        label TEXT NOT NULL,\n        created_at TEXT NOT NULL,\n        PRIMARY KEY(work_id, service_id),\n        UNIQUE(work_id, label),\n        FOREIGN KEY(work_id, service_id) REFERENCES service_heads(work_id, service_id)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_file_gates",
+      "tbl_name": "work_file_gates",
+      "sql": "CREATE TABLE work_file_gates (\n        work_id TEXT PRIMARY KEY REFERENCES works(id),\n        epoch INTEGER NOT NULL CHECK (epoch >= 1),\n        closed INTEGER NOT NULL CHECK (closed IN (0, 1)),\n        updated_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_file_core_epoch",
+      "tbl_name": "work_file_core_epoch",
+      "sql": "CREATE TABLE work_file_core_epoch (\n        id INTEGER PRIMARY KEY CHECK (id = 1),\n        epoch INTEGER NOT NULL CHECK (epoch >= 0)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_file_jobs",
+      "tbl_name": "work_file_jobs",
+      "sql": "CREATE TABLE work_file_jobs (\n        id TEXT PRIMARY KEY,\n        work_id TEXT NOT NULL REFERENCES works(id),\n        owner_user_id TEXT NOT NULL REFERENCES users(id),\n        session_id TEXT NOT NULL REFERENCES login_sessions(id),\n        core_epoch INTEGER NOT NULL CHECK (core_epoch >= 1),\n        work_epoch INTEGER NOT NULL CHECK (work_epoch >= 1),\n        runtime_generation INTEGER NOT NULL CHECK (runtime_generation >= 0),\n        kind TEXT NOT NULL CHECK (kind IN ('PROPFIND','GET','HEAD','PUT','MKCOL','COPY','MOVE','DELETE','PROPPATCH')),\n        state TEXT NOT NULL CHECK (state IN ('accepted','starting','running','prepared','committing','finished','cancelling','cleanup-pending','cleaned')),\n        trusted_image_id TEXT NOT NULL,\n        volume_name TEXT NOT NULL,\n        path_segments_json TEXT NOT NULL,\n        destination_segments_json TEXT,\n        accepted_at TEXT NOT NULL,\n        deadline_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        cleaned_at TEXT,\n        error_code TEXT,\n        CHECK (state != 'cleaned' OR cleaned_at IS NOT NULL)\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_file_attempts",
+      "tbl_name": "work_file_attempts",
+      "sql": "CREATE TABLE work_file_attempts (\n        id TEXT PRIMARY KEY,\n        job_id TEXT NOT NULL REFERENCES work_file_jobs(id) ON DELETE CASCADE,\n        kind TEXT NOT NULL CHECK (kind IN ('request','cleanup')),\n        epoch INTEGER NOT NULL CHECK (epoch >= 1),\n        container_name TEXT NOT NULL UNIQUE,\n        container_id TEXT,\n        state TEXT NOT NULL CHECK (state IN ('planned','creating','created','running','stopping','exited','removed','unknown')),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_file_temporaries",
+      "tbl_name": "work_file_temporaries",
+      "sql": "CREATE TABLE work_file_temporaries (\n        id TEXT PRIMARY KEY,\n        job_id TEXT NOT NULL REFERENCES work_file_jobs(id) ON DELETE CASCADE,\n        parent_segments_json TEXT NOT NULL,\n        name TEXT NOT NULL,\n        device TEXT,\n        inode TEXT,\n        state TEXT NOT NULL CHECK (state IN ('planned','created','published','cleaned','uncertain')),\n        created_at TEXT NOT NULL,\n        updated_at TEXT NOT NULL,\n        UNIQUE(job_id, parent_segments_json, name),\n        CHECK ((device IS NULL AND inode IS NULL) OR (device IS NOT NULL AND inode IS NOT NULL))\n      ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "work_file_cleanup_retries",
+      "tbl_name": "work_file_cleanup_retries",
+      "sql": "CREATE TABLE work_file_cleanup_retries (\n        job_id TEXT PRIMARY KEY REFERENCES work_file_jobs(id) ON DELETE CASCADE,\n        window_started_at TEXT NOT NULL,\n        attempts INTEGER NOT NULL CHECK (attempts >= 1),\n        last_attempt_at TEXT NOT NULL\n      ) STRICT"
+    },
+    {
+      "type": "index",
+      "name": "work_context_snapshots_work_id",
+      "tbl_name": "work_context_snapshots",
+      "sql": "CREATE INDEX work_context_snapshots_work_id ON work_context_snapshots(work_id, created_at)"
+    },
+    {
+      "type": "index",
+      "name": "snapshot_single_active",
+      "tbl_name": "snapshot_jobs",
+      "sql": "CREATE UNIQUE INDEX snapshot_single_active ON snapshot_jobs((1)) WHERE phase NOT IN ('succeeded', 'cleaned')"
+    },
+    {
+      "type": "index",
+      "name": "snapshot_transfers_package",
+      "tbl_name": "snapshot_transfers",
+      "sql": "CREATE INDEX snapshot_transfers_package ON snapshot_transfers(package_id)"
+    },
+    {
+      "type": "index",
+      "name": "pi_package_artifacts_scope",
+      "tbl_name": "pi_package_artifacts",
+      "sql": "CREATE INDEX pi_package_artifacts_scope ON pi_package_artifacts(scope_kind, work_id, name)"
+    },
+    {
+      "type": "index",
+      "name": "pi_package_uploads_expiry",
+      "tbl_name": "pi_package_uploads",
+      "sql": "CREATE INDEX pi_package_uploads_expiry ON pi_package_uploads(state, expires_at)"
+    },
+    {
+      "type": "index",
+      "name": "pi_package_one_scope_job",
+      "tbl_name": "pi_package_jobs",
+      "sql": "CREATE UNIQUE INDEX pi_package_one_scope_job ON pi_package_jobs(scope_kind, COALESCE(work_id, ''))\n        WHERE phase NOT IN ('succeeded', 'failed', 'superseded')"
+    },
+    {
+      "type": "index",
+      "name": "pi_package_jobs_phase",
+      "tbl_name": "pi_package_jobs",
+      "sql": "CREATE INDEX pi_package_jobs_phase ON pi_package_jobs(phase, created_at)"
+    },
+    {
+      "type": "index",
+      "name": "work_file_jobs_active_work",
+      "tbl_name": "work_file_jobs",
+      "sql": "CREATE INDEX work_file_jobs_active_work ON work_file_jobs(work_id, state)\n        WHERE state != 'cleaned'"
+    },
+    {
+      "type": "index",
+      "name": "work_file_jobs_active_user",
+      "tbl_name": "work_file_jobs",
+      "sql": "CREATE INDEX work_file_jobs_active_user ON work_file_jobs(owner_user_id, state)\n        WHERE state != 'cleaned'"
+    },
+    {
+      "type": "index",
+      "name": "work_file_jobs_cleaned_at",
+      "tbl_name": "work_file_jobs",
+      "sql": "CREATE INDEX work_file_jobs_cleaned_at ON work_file_jobs(cleaned_at)\n        WHERE state = 'cleaned'"
+    },
+    {
+      "type": "index",
+      "name": "work_file_one_mutation",
+      "tbl_name": "work_file_jobs",
+      "sql": "CREATE UNIQUE INDEX work_file_one_mutation ON work_file_jobs(work_id)\n        WHERE state != 'cleaned' AND kind IN ('PUT','MKCOL','COPY','MOVE','DELETE','PROPPATCH')"
+    },
+    {
+      "type": "index",
+      "name": "work_file_attempts_job",
+      "tbl_name": "work_file_attempts",
+      "sql": "CREATE INDEX work_file_attempts_job ON work_file_attempts(job_id)"
+    },
+    {
+      "type": "index",
+      "name": "work_file_temporaries_job",
+      "tbl_name": "work_file_temporaries",
+      "sql": "CREATE INDEX work_file_temporaries_job ON work_file_temporaries(job_id)"
+    }
+  ],
+  "tables": [
+    {
+      "name": "users",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "account",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "password_digest",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "role",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "enabled",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_users_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "account",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_users_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "login_sessions",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "token_digest",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "expires_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "revoked_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "users",
+          "from": "user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_login_sessions_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 2,
+              "name": "token_digest",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_login_sessions_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "works",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "owner_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "desired_state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "observed_state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "desired_revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "active_revision",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "control_version",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "deleted_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 11,
+          "name": "desired_context_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 12,
+          "name": "active_context_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "work_context_snapshots",
+          "from": "active_context_id",
+          "to": "snapshot_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "work_context_snapshots",
+          "from": "desired_context_id",
+          "to": "snapshot_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "users",
+          "from": "owner_user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_works_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "owner_user_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_works_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_config_revisions",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "config_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "resolved_image_digest",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "created_by_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "runtime_profile_json",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "source_runtime_revision",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "users",
+          "from": "created_by_user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_work_config_revisions_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "revision",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "service_revisions",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "service_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 3,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "definition_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "resolved_image_digest",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_service_revisions_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "service_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 2,
+              "name": "revision",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "service_heads",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "service_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "desired_revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "applied_revision",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "enabled",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "observed_state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "tombstoned_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "last_error_json",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_service_heads_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_service_heads_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "service_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "operations",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "service_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "target_version",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "request_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "result_json",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "error_json",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_operations_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "idempotency_records",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "principal_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "work_scope",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "operation_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 3,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "idempotency_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 4,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "request_digest",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "resource_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "operation_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "operations",
+          "from": "operation_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_idempotency_records_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "principal_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "work_scope",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 2,
+              "name": "operation_kind",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": 3,
+              "name": "idempotency_key",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 4,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "resource_bindings",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "installation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "resource_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "logical_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 3,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "runtime_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "generation",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "labels_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "observed_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_resource_bindings_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "installation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "resource_kind",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 3,
+              "name": "logical_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "volume_records",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "installation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "service_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "volume_role",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "runtime_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "reference_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "retained_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "purged_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_volume_records_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 5,
+              "name": "runtime_name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_volume_records_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "quota_reservations",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "subject_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "subject_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 3,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "desired_cpu_millis",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "desired_memory_bytes",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "occupied_cpu_millis",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "occupied_memory_bytes",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "service_slots",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "volume_slots",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_quota_reservations_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "subject_kind",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 2,
+              "name": "subject_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "runtime_generations",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "generation",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "instance_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "certificate_serial",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "retry_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "retry_window_started_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "next_retry_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "ready_since",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_runtime_generations_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "generation",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "catalog_entries",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "mutable_reference",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "resolved_digest",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "metadata_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "enabled",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_catalog_entries_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "kind",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_catalog_entries_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "secret_refs",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "owner_user_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "storage_path",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "users",
+          "from": "owner_user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_secret_refs_3",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "owner_user_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_secret_refs_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 3,
+              "name": "storage_path",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_secret_refs_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_config_artifacts",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "artifact_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 3,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "ordinal",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 4,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "catalog_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "digest",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "work_config_revisions",
+          "from": "work_id",
+          "to": "work_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "work_config_revisions",
+          "from": "revision",
+          "to": "revision",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_work_config_artifacts_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "revision",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 2,
+              "name": "artifact_kind",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": 3,
+              "name": "ordinal",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 4,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "control_metadata",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "value_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_control_metadata_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "key",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "managed_skill_artifacts",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "skill_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "content_identity",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "file_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "total_bytes",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "catalog_entries",
+          "from": "skill_name",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_managed_skill_artifacts_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "skill_name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "content_identity",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_context_snapshots",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "internal_revision",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "configuration_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "image_identity",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "created_by_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "users",
+          "from": "created_by_user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "work_context_snapshots_work_id",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 6,
+              "name": "created_at",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_work_context_snapshots_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "internal_revision",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_work_context_snapshots_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "snapshot_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "service_runtime_bindings",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "service_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "container_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "image_identity",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "recovery_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "recovery_window_started_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "next_retry_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "ready_since",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_service_runtime_bindings_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "service_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "volume_references",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "volume_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "consumer_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "consumer_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 3,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "volume_records",
+          "from": "volume_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_volume_references_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "volume_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "consumer_kind",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 2,
+              "name": "consumer_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "snapshot_jobs",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "operation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "owner_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "source_work_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "target_work_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "package_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "request_digest",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "phase",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "deadline_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 11,
+          "name": "worker_epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 12,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 13,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 14,
+          "name": "cleanup_error",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "snapshot_packages",
+          "from": "package_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "users",
+          "from": "owner_user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "operations",
+          "from": "operation_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "snapshot_single_active",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": -2,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_snapshot_jobs_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 5,
+              "name": "snapshot_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_snapshot_jobs_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "operation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_snapshot_locks",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "operation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "worker_epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "snapshot_jobs",
+          "from": "operation_id",
+          "to": "operation_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_work_snapshot_locks_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "operation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_work_snapshot_locks_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "snapshot_packages",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "owner_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "digest",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "size",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "ready_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "expires_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "snapshot_jobs",
+          "from": "job_id",
+          "to": "operation_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "users",
+          "from": "owner_user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_snapshot_packages_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "snapshot_artifacts",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "operation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "artifact_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "logical_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "snapshot_jobs",
+          "from": "operation_id",
+          "to": "operation_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_snapshot_artifacts_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "operation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "artifact_key",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "snapshot_transfers",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "owner_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "package_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "phase",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "deadline_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "last_progress_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "helper_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "snapshot_jobs",
+          "from": "snapshot_id",
+          "to": "snapshot_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "snapshot_packages",
+          "from": "package_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "users",
+          "from": "owner_user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "snapshot_transfers_package",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 2,
+              "name": "package_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_snapshot_transfers_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_import_names",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "owner_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "operation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "snapshot_jobs",
+          "from": "operation_id",
+          "to": "operation_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "users",
+          "from": "owner_user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_work_import_names_2",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "owner_user_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_work_import_names_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 2,
+              "name": "operation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_owned_images",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "selection_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "image_identity",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "source_reference",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_work_owned_images_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "selection_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "imported_work_history",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "operation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "source_operation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "record_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_imported_work_history_2",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "operation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_imported_work_history_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "operation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_import_provenance",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "package_digest",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "import_operation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "identity_map_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "snapshot_jobs",
+          "from": "import_operation_id",
+          "to": "operation_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_work_import_provenance_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pi_package_artifacts",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "scope_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "content_digest",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "metadata_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "storage_path",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "lease_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "pi_package_artifacts_scope",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "scope_kind",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 3,
+              "name": "name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_pi_package_artifacts_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pi_package_catalog",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "enabled",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "head_artifact_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "generation",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "pi_package_artifacts",
+          "from": "head_artifact_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_pi_package_catalog_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pi_package_uploads",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "actor_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "scope_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "source_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "display_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "digest",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "size",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "expires_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "lease_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 11,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "pi_package_uploads_expiry",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 8,
+              "name": "state",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 9,
+              "name": "expires_at",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_pi_package_uploads_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pi_package_jobs",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "operation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "scope_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "actor_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "prepare_image_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "trusted_helper_image_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "prepared_environment_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "add_to_defaults",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "source_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "source_upload_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 11,
+          "name": "request_digest",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 12,
+          "name": "package_name",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 13,
+          "name": "phase",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 14,
+          "name": "worker_epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 15,
+          "name": "helper_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 16,
+          "name": "deadline_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 17,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 18,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 19,
+          "name": "cleanup_error",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 20,
+          "name": "leases_released",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "pi_package_uploads",
+          "from": "source_upload_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "operations",
+          "from": "operation_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "pi_package_jobs_phase",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 13,
+              "name": "phase",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 17,
+              "name": "created_at",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "pi_package_one_scope_job",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "scope_kind",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -2,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_pi_package_jobs_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "operation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_network_names",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_work_network_names_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_work_network_names_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "service_domain_labels",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "service_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "label",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "service_heads",
+          "from": "work_id",
+          "to": "work_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "service_heads",
+          "from": "service_id",
+          "to": "service_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_service_domain_labels_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "label",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_service_domain_labels_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "service_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_file_gates",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "closed",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_work_file_gates_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_file_core_epoch",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [],
+      "indexes": []
+    },
+    {
+      "name": "work_file_jobs",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "work_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "owner_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "session_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "core_epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "work_epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "runtime_generation",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "trusted_image_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "volume_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 11,
+          "name": "path_segments_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 12,
+          "name": "destination_segments_json",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 13,
+          "name": "accepted_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 14,
+          "name": "deadline_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 15,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 16,
+          "name": "cleaned_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 17,
+          "name": "error_code",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "login_sessions",
+          "from": "session_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "users",
+          "from": "owner_user_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "works",
+          "from": "work_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "work_file_one_mutation",
+          "unique": 1,
+          "origin": "c",
+          "partial": 1,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "work_file_jobs_cleaned_at",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 16,
+              "name": "cleaned_at",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 2,
+          "name": "work_file_jobs_active_user",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 2,
+              "name": "owner_user_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 8,
+              "name": "state",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 3,
+          "name": "work_file_jobs_active_work",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "work_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 8,
+              "name": "state",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 4,
+          "name": "sqlite_autoindex_work_file_jobs_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_file_attempts",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "epoch",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "container_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "container_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "work_file_jobs",
+          "from": "job_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "work_file_attempts_job",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "job_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_work_file_attempts_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 4,
+              "name": "container_name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_work_file_attempts_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_file_temporaries",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "parent_segments_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "device",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "inode",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "state",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "work_file_jobs",
+          "from": "job_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "work_file_temporaries_job",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "job_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 1,
+          "name": "sqlite_autoindex_work_file_temporaries_2",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "job_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "parent_segments_json",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 3,
+              "name": "name",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_work_file_temporaries_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "work_file_cleanup_retries",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "window_started_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "attempts",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "last_attempt_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreignKeys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "work_file_jobs",
+          "from": "job_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "CASCADE",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "sqlite_autoindex_work_file_cleanup_retries_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 0,
+              "name": "job_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "seedMetadata": [
+    {
+      "key": "default_work_configuration",
+      "value_json": "{\"version\":1,\"revision\":0,\"configuration\":null}"
+    },
+    {
+      "key": "work_storage_format",
+      "value_json": "{\"version\":2,\"layout\":\"split-private-workspace\"}"
+    }
+  ]
+}
