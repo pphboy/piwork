@@ -27,6 +27,7 @@ async function consoleResponds(url) {
     request.end();
   });
 }
+test.use({ viewport: { width: 1440, height: 900 } });
 let root, core, consoleServer, origin;
 let nativeCoreOutput = "", nativeConsoleOutput = "";
 function captureProcessOutput(child, append) {
@@ -86,83 +87,73 @@ test.afterEach(async ({}, testInfo) => {
   }
 });
 
-test("real Core administrator logs in, creates a user, and uploads a browser Skill directory", async ({ page }) => {
+async function login(page) {
   await page.goto(`${origin}/login`);
-  await page.getByLabel("Account", { exact: true }).fill("admin");
-  await page.getByLabel("Password", { exact: true }).fill("correct horse battery");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByText("Runtime readiness: Not ready · RUNTIME_NOT_CONFIGURED")).toBeVisible();
-  await page.getByRole("link", { name: "Users" }).click();
-  await page.getByLabel("Account", { exact: true }).fill("new-user");
-  await page.getByLabel("Password", { exact: true }).fill("new-user-password");
-  await page.getByLabel("Confirm password").fill("new-user-password");
-  await page.getByRole("button", { name: "Create user" }).click();
-  await expect(page.getByRole("row").filter({ has: page.getByRole("cell", { name: "new-user", exact: true }) })).toBeVisible();
-  const skillDirectory = join(root, "real-skill");
-  await mkdir(skillDirectory);
-  await writeFile(join(skillDirectory, "SKILL.md"), "# Real Skill\n");
-  await page.getByRole("link", { name: "Skills" }).click();
-  await page.getByLabel("Select Skill directory").setInputFiles(skillDirectory);
-  await page.getByRole("button", { name: "Upload Skill" }).click();
-  await expect(page.getByRole("link", { name: "real-skill" })).toBeVisible();
-  const cookieText = JSON.stringify(await page.context().cookies());
-  expect(cookieText).not.toContain("Bearer ");
+  await page.getByLabel('Account', { exact: true }).fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('correct horse battery');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'What’s next for your Core?' })).toBeVisible();
+}
+test('delivered Serve UI uses real administrator users, revocation, and browser Skill upload', async ({page}) => {
+  await login(page);
+  await page.getByRole('link', { name: 'User access', exact: true }).click();
+  await page.getByRole('button', { name: 'Create user', exact: true }).click();
+  await page.getByLabel('Account', { exact: true }).fill('new-user');
+  await page.getByLabel('Password', { exact: true }).fill('new-user-password');
+  await page.getByLabel('Confirm password').fill('new-user-password');
+  await page.locator('#dialog-submit').click();
+  const user = page.getByRole('row').filter({ has: page.getByRole('button', {name:'new-user',exact:true}) });
+  await expect(user).toBeVisible();
+  await user.getByRole('button', {name:'Disable',exact:true}).click();
+  await page.locator('#dialog-submit').click();
+  await expect(user.getByText('Disabled', {exact:true})).toBeVisible();
+  await user.getByRole('button', {name:'Enable',exact:true}).click();
+  await page.locator('#dialog-submit').click();
+  await expect(user.getByText('Enabled', {exact:true})).toBeVisible();
+  await user.getByRole('button', {name:'Reset password',exact:true}).click();
+  await page.getByLabel('New password', {exact:true}).fill('replacement-password-123');
+  await page.getByLabel('Confirm password', {exact:true}).fill('replacement-password-123');
+  await page.locator('#dialog-submit').click();
+  await expect(user).toBeVisible();
+  const skillDirectory = join(root,'real-skill'); await mkdir(skillDirectory); await writeFile(join(skillDirectory,'SKILL.md'),'# Real Skill\n');
+  await page.getByRole('link',{name:'Work setup',exact:true}).click();
+  await page.getByRole('link',{name:'Skills',exact:true}).click();
+  await page.getByRole('button',{name:'Add Skill',exact:true}).click();
+  await page.getByLabel('Choose Skill directory').setInputFiles(skillDirectory);
+  await page.getByRole('button',{name:'Upload Skill',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'real-skill',exact:true})).toBeVisible();
+  expect(JSON.stringify(await page.context().cookies())).not.toContain('Bearer ');
 });
-
-test("real Core user controls and Default Work changes round trip through Go Console", async ({ page }) => {
-  test.setTimeout(120_000);
-  await page.goto(`${origin}/login`);
-  await page.getByLabel("Account", { exact: true }).fill("admin");
-  await page.getByLabel("Password", { exact: true }).fill("correct horse battery");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("link", { name: "Users" }).click();
-  const user = page.getByRole("row", { name: /new-user/ });
-  await expect(user).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
-  await user.getByRole("button", { name: "Disable" }).click();
-  await expect(user.getByText("Disabled")).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
-  await user.getByRole("button", { name: "Enable" }).click();
-  await expect(user.getByText("Enabled")).toBeVisible();
-  await user.getByRole("button", { name: "Reset password", exact: true }).click();
-  await page.getByLabel("New password", { exact: true }).fill("replacement-password-123");
-  await page.getByLabel("Confirm new password").fill("replacement-password-123");
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Confirm reset" }).click();
-  await expect(user).toBeVisible();
-  await page.getByRole("link", { name: "Runtime" }).click();
-  await expect(page.getByText("Runtime is not configured.")).toBeVisible();
-  await page.getByLabel("Agent image").fill(process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE || "piwork-agentd:go-migration-acceptance");
-  await page.getByLabel("Model provider").fill("anthropic");
-  await page.getByLabel("Model ID").fill("fixture");
-  await page.getByLabel("API Key").fill("browser-acceptance-only");
-  await page.getByRole("button", { name: "Save runtime" }).click();
-  await expect(page.getByText(/Configuration saved/)).toBeVisible({ timeout: 90_000 });
-  await page.getByRole("link", { name: "Default Work" }).click();
-  const editor = page.getByLabel("AGENTS.md content");
-  await editor.fill("# Console native default\n");
-  await page.getByRole("button", { name: "Save defaults" }).click();
-  await expect(page.getByText("Defaults saved. Only future Work is affected.")).toBeVisible();
+test('real Serve runtime and starting point distinguish saved changes from existing Work', async ({page}) => {
+  test.setTimeout(120000); await login(page);
+  await page.goto(`${origin}/runtime`);
+  await page.getByLabel('Agent image', {exact:true}).fill(process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE || 'piwork-agentd:go-migration-acceptance');
+  await page.getByLabel('Model provider', {exact:true}).fill('anthropic');
+  await page.getByLabel('Model ID', {exact:true}).fill('fixture');
+  await page.getByLabel('API Key', {exact:true}).fill('browser-acceptance-only');
+  await page.getByRole('button',{name:'Save runtime',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Edit runtime',exact:true})).toBeVisible({timeout:90000});
+  await page.getByRole('link',{name:'Work setup',exact:true}).click();
+  await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();
+  await page.locator('#agentsMd').fill('# Console native default\n');
+  await page.locator('[data-action="save-defaults"]').click();
+  await expect(page.getByText(/Saved.*confirmed|Starting point saved|Defaults saved/).first()).toBeVisible();
   await page.reload();
-  await expect(editor).toHaveValue("# Console native default\n");
+  await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();
+  await expect(page.locator('#agentsMd')).toHaveValue('# Console native default\n');
 });
-
-test("real Core accepts a browser Package directory through Go Console", async ({ page }) => {
-  test.setTimeout(120_000);
-  const directory = join(root, "native-console-package");
-  await mkdir(directory);
-  await writeFile(join(directory, "package.json"), '{"name":"native-console-package","version":"1.0.0","pi":{"prompts":["review.md"]}}');
-  await writeFile(join(directory, "review.md"), "# Review\n");
-  await page.goto(`${origin}/login`);
-  await page.getByLabel("Account", { exact: true }).fill("admin");
-  await page.getByLabel("Password", { exact: true }).fill("correct horse battery");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("link", { name: "Packages" }).click();
-  await page.getByLabel("Source type").selectOption("directory");
-  await page.getByLabel("Select local directory").setInputFiles(directory);
-  await page.getByRole("button", { name: "Install Package" }).click();
-  await expect(page.getByRole("heading", { name: "Operation details" })).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("Status: succeeded · Phase: succeeded")).toBeVisible({ timeout: 90_000 });
-  await page.getByRole("link", { name: "Packages" }).click();
-  await expect(page.getByRole("link", { name: "native-console-package" })).toBeVisible();
+test('real browser Package directory installs asynchronously and operation deep link recovers', async ({page}) => {
+  test.setTimeout(120000); const directory = join(root,'native-console-package'); await mkdir(directory);
+  await writeFile(join(directory,'package.json'),'{"name":"native-console-package","version":"1.0.0","pi":{"prompts":["review.md"]}}'); await writeFile(join(directory,'review.md'),'# Review\n');
+  await login(page); await page.goto(`${origin}/packages`);
+  await page.getByRole('button',{name:'Install Package',exact:true}).click();
+  await page.getByRole('button',{name:'Local directory',exact:true}).click();
+  await page.getByLabel('Choose Package directory').setInputFiles(directory);
+  await page.locator('#dialog-submit').click();
+  await expect(page.getByRole('heading',{name:'Package operation',exact:true})).toBeVisible({timeout:30000});
+  await expect(page.getByText(/^succeeded$/i).first()).toBeVisible({timeout:90000});
+  const operationURL = page.url(); await page.reload();
+  await expect(page.getByText(/^succeeded$/i).first()).toBeVisible(); expect(page.url()).toBe(operationURL);
+  await page.goto(`${origin}/packages`);
+  await expect(page.getByRole('link',{name:'native-console-package',exact:true})).toBeVisible();
 });

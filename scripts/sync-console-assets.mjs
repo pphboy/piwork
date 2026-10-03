@@ -1,13 +1,12 @@
-import { copyFileSync, mkdirSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-for (const [source, target] of [
-  ["apps/console-webui/dist/browser/app.js", "internal/consoleassets/static/browser/app.js"],
-  ["apps/console-webui/dist/public/index.html", "internal/consoleassets/static/public/index.html"],
-  ["apps/console-webui/dist/public/style.css", "internal/consoleassets/static/public/style.css"],
-]) {
-  mkdirSync(dirname(join(root, target)), { recursive: true });
-  copyFileSync(join(root, source), join(root, target));
+const app = "console-webui";
+for (const kind of ["browser", "public"]) {
+  const target = join(root, "internal/consoleassets/static", kind);
+  rmSync(target, { recursive: true, force: true });
+  mkdirSync(target, { recursive: true });
+  cpSync(join(root, "apps", app, "dist", kind), target, { recursive: true,
+    filter: (path) => !/\.(?:map|ts)$/.test(path) });
 }

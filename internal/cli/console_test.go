@@ -191,10 +191,13 @@ func TestNativeConsoleBrowserAndAdministratorSession(t *testing.T) {
 		c.ServeHTTP(w, r)
 		return w
 	}
-	if page := call("GET", "/", "", "", "", ""); page.Code != 200 || !strings.Contains(page.Body.String(), "piwork admin console") {
+	if page := call("GET", "/", "", "", "", ""); page.Code != 200 || !strings.Contains(page.Body.String(), "PiWork Serve") {
 		t.Fatal("embedded Console page failed", page.Code)
 	}
-	for _, path := range []string{"/login", "/users", "/runtime", "/default-work", "/skills", "/skills/example", "/packages", "/packages/example", "/operations", "/operations/operation-1"} {
+	if module := call("GET", "/browser/package-phase.js", "", "", "", ""); module.Code != 200 || !strings.Contains(module.Body.String(), "Unrecognized phase") {
+		t.Fatal("embedded package phase module failed", module.Code)
+	}
+	for _, path := range []string{"/login", "/users", "/runtime", "/default-work", "/skills", "/skills/example", "/packages", "/packages/example", "/packages/%40example%2Ftools", "/operations", "/operations/operation-1"} {
 		if page := call("GET", path, "", "", "", ""); page.Code != 200 {
 			t.Fatal("Console page is missing", path, page.Code)
 		}

@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -207,7 +206,22 @@ type nativeConsole struct {
 	uploads    int
 }
 
-var consoleShellPath = regexp.MustCompile(`^/(?:skills|packages|operations)/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+func consoleShellRoute(escapedPath string) bool {
+	parts := strings.Split(escapedPath, "/")
+	if len(parts) != 3 || parts[0] != "" {
+		return false
+	}
+	pattern := desktopIDPattern
+	switch parts[1] {
+	case "skills", "packages":
+		pattern = desktopNamePattern
+	case "operations":
+	default:
+		return false
+	}
+	_, valid := desktopResourcePart(parts[2], pattern)
+	return valid
+}
 
 func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -233,16 +247,16 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var path, contentType string
-	switch r.URL.Path {
-	case "/healthz":
+	switch {
+	case r.URL.Path == "/healthz":
 		consoleJSON(w, 200, map[string]string{"status": "healthy"})
 		return
-	case "/style.css":
+	case r.URL.Path == "/style.css":
 		path, contentType = "static/public/style.css", "text/css; charset=utf-8"
-	case "/browser/app.js":
-		path, contentType = "static/browser/app.js", "text/javascript; charset=utf-8"
+	case strings.HasPrefix(r.URL.Path, "/browser/") && nativeBrowserAsset.MatchString(strings.TrimPrefix(r.URL.Path, "/browser/")):
+		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/browser/"), "text/javascript; charset=utf-8"
 	default:
-		if strings.Contains("|/|/login|/users|/runtime|/default-work|/skills|/packages|/operations|", "|"+r.URL.Path+"|") || consoleShellPath.MatchString(r.URL.Path) {
+		if strings.Contains("|/|/login|/users|/runtime|/default-work|/skills|/packages|/operations|", "|"+r.URL.Path+"|") || consoleShellRoute(r.URL.EscapedPath()) {
 			path, contentType = "static/public/index.html", "text/html; charset=utf-8"
 		} else {
 			consoleFailure(w, 404, "NOT_FOUND")
@@ -251,7 +265,7 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	content, err := consoleassets.FS.ReadFile(path)
 	if err != nil {
-		consoleFailure(w, 503, "CONSOLE_ASSET_UNAVAILABLE")
+		consoleFailure(w, 404, "CONSOLE_ASSET_UNAVAILABLE")
 		return
 	}
 	w.Header().Set("Content-Type", contentType)

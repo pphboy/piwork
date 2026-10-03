@@ -161,13 +161,13 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 	response := request("GET", "/", "", "")
 	page, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != 200 || !strings.Contains(string(page), "Piwork Desktop") {
+	if response.StatusCode != 200 || !strings.Contains(string(page), "PiWork Desktop") {
 		t.Fatal("embedded page unavailable", response.StatusCode)
 	}
 	response = request("GET", "/desktop/browser/app.js", "", "")
 	script, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != 200 || !strings.Contains(string(script), "refreshIdentity") {
+	if response.StatusCode != 200 || !strings.Contains(string(script), "adapter.initialize") {
 		t.Fatal("embedded app unavailable", response.StatusCode)
 	}
 	response = request("POST", "/_desktop/api/bootstrap", `{"ticket":"`+ticket+`"}`, "http://desktop.localhost:"+strconv.Itoa(port))

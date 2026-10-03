@@ -220,10 +220,8 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/style.css":
 		path, contentType = "static/public/style.css", "text/css; charset=utf-8"
-	case r.URL.Path == "/desktop/browser/app.js":
-		path, contentType = "static/browser/app.js", "text/javascript; charset=utf-8"
-	case r.URL.Path == "/desktop/browser/files.js":
-		path, contentType = "static/browser/files.js", "text/javascript; charset=utf-8"
+	case strings.HasPrefix(r.URL.Path, "/desktop/browser/") && nativeBrowserAsset.MatchString(strings.TrimPrefix(r.URL.Path, "/desktop/browser/")):
+		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/desktop/browser/"), "text/javascript; charset=utf-8"
 	case r.URL.Path == "/" || desktopWorkRoute(r.URL.Path):
 		path = "static/public/index.html"
 	default:
@@ -232,7 +230,7 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	content, err := desktopassets.FS.ReadFile(path)
 	if err != nil {
-		desktopError(w, 503, "DESKTOP_ASSET_UNAVAILABLE")
+		desktopError(w, 404, "DESKTOP_ASSET_UNAVAILABLE")
 		return
 	}
 	w.Header().Set("Content-Type", contentType)

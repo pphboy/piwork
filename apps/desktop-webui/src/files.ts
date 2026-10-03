@@ -25,7 +25,7 @@ function child(parent: Element, name: string): Element | undefined {
 
 function value(parent: Element, name: string): string | undefined { return child(parent, name)?.textContent ?? undefined; }
 
-function parseEntries(xml: string, base: string): FileEntry[] {
+export function parseEntries(xml: string, base: string): FileEntry[] {
   if (xml.length > 16_777_216 || /<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error("File listing contains unsupported XML.");
   const documentXml = new DOMParser().parseFromString(xml, "application/xml");
   if (documentXml.querySelector("parsererror")) throw new Error("File listing is malformed.");
@@ -52,7 +52,7 @@ function parseEntries(xml: string, base: string): FileEntry[] {
   return entries;
 }
 
-function mutationResults(xml: string): { succeeded: string[]; failed: string[] } {
+export function mutationResults(xml: string): { succeeded: string[]; failed: string[] } {
   if (xml.length > 16_777_216 || /<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error("WebDAV result contains unsupported XML.");
   const documentXml = new DOMParser().parseFromString(xml, "application/xml");
   if (documentXml.querySelector("parsererror")) throw new Error("WebDAV result is malformed.");

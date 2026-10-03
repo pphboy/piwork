@@ -127,3 +127,127 @@ func TestNativeDesktopWorkPackageTransferUsesOriginalSnapshotAndSession(t *testi
 }
 
 func stringInt(value int) string { return strconv.Itoa(value) }
+
+func TestNativeDesktopAnonymousInspectionLoginAndExplicitRelease(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "workpackage", "testdata", "golden-native-pi-package.work"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uploads, imports int
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/login":
+			var input struct {
+				Account string `json:"account"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			if input.Account == "invalid" {
+				w.WriteHeader(401)
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": "AUTHENTICATION_FAILED"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "test-only-token", "expiresAt": "2099-01-01T00:00:00Z", "user": map[string]string{"id": input.Account, "account": input.Account, "role": "user"}})
+		case "/api/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "owner", "account": "owner", "role": "user"})
+		case "/api/v1/work-packages":
+			uploads++
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(201)
+			_ = json.NewEncoder(w).Encode(map[string]any{"packageId": "package-original", "digest": func() string { hash := sha256.Sum256(content); return hex.EncodeToString(hash[:]) }(), "size": len(content)})
+		case "/api/v1/work-imports":
+			imports++
+			w.WriteHeader(202)
+			_ = json.NewEncoder(w).Encode(map[string]string{"operationId": "operation-original", "workId": "work-imported"})
+		case "/api/v1/logout":
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer core.Close()
+	api, _ := client.New(core.URL, "")
+	d := &nativeDesktop{api: api, store: client.CredentialStore{Path: filepath.Join(t.TempDir(), "credentials", "client.json")}, port: 17891, origin: "http://desktop.localhost:17891", sessions: map[string]desktopSession{"local": {id: "local", csrf: "csrf", end: time.Now().Add(time.Hour)}}, identity: desktopIdentity{coreURL: core.URL, checked: true}}
+	defer func() {
+		if d.transfers != nil {
+			d.transfers.clear()
+		}
+	}()
+	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, d.origin+"/_desktop/api/"+path, bytes.NewReader(body))
+		r.Header.Set("Cookie", d.cookieName()+"=local")
+		r.Header.Set("X-Piwork-Csrf", "csrf")
+		r.Header.Set("Origin", d.origin)
+		if path == "work-packages" {
+			r.Header.Set("Content-Type", workPackageMIME)
+		} else {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		w := httptest.NewRecorder()
+		d.ServeHTTP(w, r)
+		return w
+	}
+	inspect := func() (string, string) {
+		w := request("POST", "work-packages", content)
+		if w.Code != 200 {
+			t.Fatal("inspection", w.Code, w.Body.String())
+		}
+		var result struct {
+			TransferID string `json:"transferId"`
+		}
+		if json.Unmarshal(w.Body.Bytes(), &result) != nil || result.TransferID == "" {
+			t.Fatal("missing transfer")
+		}
+		d.transfers.mu.Lock()
+		path := d.transfers.jobs[result.TransferID].path
+		d.transfers.mu.Unlock()
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal("staged file missing", err)
+		}
+		return result.TransferID, path
+	}
+	id, path := inspect()
+	if uploads != 0 || imports != 0 {
+		t.Fatal("anonymous inspect accessed Core package APIs")
+	}
+	if w := request("POST", "login", []byte(`{"account":"invalid","password":"test"}`)); w.Code != 401 {
+		t.Fatal("failed login", w.Code)
+	}
+	if w := request("GET", "work-packages/"+id, nil); w.Code != 200 {
+		t.Fatal("failed login discarded anonymous inspection", w.Code)
+	}
+	if w := request("POST", "login", []byte(`{"account":"owner","password":"test"}`)); w.Code != 200 {
+		t.Fatal("login", w.Code, w.Body.String())
+	}
+	if w := request("GET", "work-packages/"+id, nil); w.Code != 200 {
+		t.Fatal("login discarded original inspection", w.Code)
+	}
+	if uploads != 0 || imports != 0 {
+		t.Fatal("login submitted import")
+	}
+	if w := request("POST", "work-imports", []byte(`{"transferId":"`+id+`"}`)); w.Code != 202 {
+		t.Fatal("import original", w.Code, w.Body.String())
+	}
+	if uploads != 1 || imports != 1 {
+		t.Fatal("wrong upload/import count", uploads, imports)
+	}
+	// Ready unsubmitted packages are actually removed, not just hidden by the UI.
+	cancelID, cancelPath := inspect()
+	if w := request("DELETE", "work-packages/"+cancelID, nil); w.Code != 200 {
+		t.Fatal("delete", w.Code)
+	}
+	if _, err := os.Stat(cancelPath); !os.IsNotExist(err) {
+		t.Fatal("DELETE left staged file", err)
+	}
+	if w := request("DELETE", "work-packages/"+cancelID, nil); w.Code != 404 {
+		t.Fatal("repeat cleanup", w.Code)
+	}
+	if w := request("GET", "work-packages/"+id, nil); w.Code != 200 {
+		t.Fatal("cleanup affected accepted import", w.Code)
+	}
+	if w := request("POST", "logout", []byte(`{}`)); w.Code != 200 {
+		t.Fatal("logout", w.Code)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("logout retained private transfer", err)
+	}
+}

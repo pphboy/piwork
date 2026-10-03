@@ -71,7 +71,7 @@ func TestNativeDesktopEmbeddedBrowserAndLocalIdentity(t *testing.T) {
 		d.ServeHTTP(response, req)
 		return response
 	}
-	for path, fragment := range map[string]string{"/": "Piwork Desktop", "/style.css": "desktop", "/desktop/browser/app.js": "refreshIdentity", "/desktop/browser/files.js": "mountFiles"} {
+	for path, fragment := range map[string]string{"/": "PiWork Desktop", "/style.css": "work-layout", "/desktop/browser/app.js": "adapter.initialize", "/desktop/browser/files.js": "mountFiles", "/desktop/browser/configuration.js": "synchronizeConfiguration", "/desktop/browser/adapter.js": "If-None-Match"} {
 		response := serve("GET", path, nil, "", "", "")
 		if response.Code != 200 || !strings.Contains(response.Body.String(), fragment) {
 			t.Fatal("embedded Desktop asset", path, response.Code)

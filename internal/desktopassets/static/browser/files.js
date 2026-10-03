@@ -20,7 +20,7 @@ function child(parent, name) {
     return Array.from(parent.children).find((item) => item.namespaceURI === dav && item.localName === name);
 }
 function value(parent, name) { return child(parent, name)?.textContent ?? undefined; }
-function parseEntries(xml, base) {
+export function parseEntries(xml, base) {
     if (xml.length > 16_777_216 || /<!DOCTYPE|<!ENTITY/i.test(xml))
         throw new Error("File listing contains unsupported XML.");
     const documentXml = new DOMParser().parseFromString(xml, "application/xml");
@@ -56,7 +56,7 @@ function parseEntries(xml, base) {
     }
     return entries;
 }
-function mutationResults(xml) {
+export function mutationResults(xml) {
     if (xml.length > 16_777_216 || /<!DOCTYPE|<!ENTITY/i.test(xml))
         throw new Error("WebDAV result contains unsupported XML.");
     const documentXml = new DOMParser().parseFromString(xml, "application/xml");

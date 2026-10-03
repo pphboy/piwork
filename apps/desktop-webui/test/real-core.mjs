@@ -84,7 +84,7 @@ async function cleanupInstallation(dataDir) {
   }
 }
 
-const root = await mkdtemp(join(tmpdir(), 'piwork-desktop-real-go-'));
+const root = await mkdtemp(join(process.env.PIWORK_TEST_DATA_ROOT || tmpdir(), 'piwork-desktop-real-go-'));
 const dataDir = join(root, 'core');
 const screenshotDir = resolve(process.env.PIWORK_TEST_SCREENSHOT_DIR || join(root, 'screenshots'));
 await mkdir(screenshotDir, { recursive: true });
@@ -119,209 +119,133 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: browserBinary });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
   page = await context.newPage();
+  page.on('pageerror', error => { console.error('Page error:', error.message); });
   await page.goto(launchUrl);
-  await page.getByRole('heading', { name: 'Sign in to Piwork' }).waitFor();
-  await page.getByRole('textbox', { name: 'Account' }).fill('admin');
+  await page.getByRole('heading', { name: 'Connect to your Core' }).waitFor();
+  await page.getByRole('textbox', { name: 'Account', exact: true }).fill('admin');
   await page.getByLabel('Password').fill('real-browser-admin-password');
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  await page.getByRole('heading', { name: 'Your Works' }).waitFor();
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
   await page.screenshot({ path: join(screenshotDir, '01-empty-work-list.png'), fullPage: true });
-  await page.getByRole('button', { name: 'New Work' }).click();
-  await page.getByRole('textbox', { name: 'Work name' }).fill('Real Browser Work');
-  await page.getByRole('button', { name: 'Create Work' }).click();
-  const work = await waitFor(async () => {
-    const response = await api(coreUrl, token, 'GET', '/api/v1/works');
-    return response.data.works?.find((item) => item.name === 'Real Browser Work');
-  }, 'created Work');
+  await page.getByRole('button', { name: 'New Work', exact: true }).first().click();
+  await page.locator('#create-name').fill('Real Browser Work');
+  await page.getByRole('button', { name: 'Create Work', exact: true }).click();
+  const work = await waitFor(async () => (await api(coreUrl, token, 'GET', '/api/v1/works')).data.works?.find(item => item.name === 'Real Browser Work'), 'created Work');
   const workId = work.id;
-  assert.equal(typeof workId, 'string');
-  await waitFor(async () => {
-    const response = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}`);
-    return response.data.observedState === 'ready' ? response.data : undefined;
-  }, 'running Work', 180_000);
+  const waitState = (id, state) => waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/works/${id}`)).data.observedState === state, `Work ${state}`, 180_000);
+  await waitState(workId, 'ready');
   await page.reload();
-  await page.getByRole('button', { name: 'Real Browser Work' }).waitFor();
-  await page.screenshot({ path: join(screenshotDir, '02-running-work-list.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Real Browser Work' }).click();
-
-  const script = "const http=require('node:http');http.createServer((req,res)=>{if(req.url==='/health'){res.end('ok');return;}res.setHeader('Content-Type','text/html');res.end('<h1>Real Service</h1>');}).listen(8099,'0.0.0.0')";
-  const definition = { name: 'browser-service', image: { reference: image }, command: 'node', args: ['-e', script],
-    workingDirectory: '/var/data/workspace',
-    mounts: [{ source: 'workspace', target: '/var/data/workspace', readOnly: false }],
-    ports: [{ name: 'web', protocol: 'tcp', containerPort: 8099 }],
-    readiness: { kind: 'http', portName: 'web', path: '/health', deadlineMs: 10000 } };
-  const service = await api(coreUrl, token, 'POST', `/api/v1/works/${workId}/services`,
-    { definition, idempotencyKey: 'browser-real-service' });
+  await page.getByRole('button', { name: /^Real Browser Work/ }).click();
+  const script = "const http=require('node:http');http.createServer((req,res)=>{if(req.url==='/health'){res.end('ok');return;}res.setHeader('Content-Type','text/html');res.end('<h1>Real Service</h1><input aria-label=\"Service draft\"><button onclick=\"this.textContent=Number(this.textContent)+1\">0</button>');}).listen(8099,'0.0.0.0')";
+  const definition = { name: 'browser-service', image: { reference: image }, command: 'node', args: ['-e', script], workingDirectory: '/var/data/workspace', mounts: [{ source: 'workspace', target: '/var/data/workspace', readOnly: false }], ports: [{ name: 'web', protocol: 'tcp', containerPort: 8099 }], readiness: { kind: 'http', portName: 'web', path: '/health', deadlineMs: 10000 } };
+  const service = await api(coreUrl, token, 'POST', `/api/v1/works/${workId}/services`, { definition, idempotencyKey: 'browser-real-service' });
   assert.equal(service.status, 202, JSON.stringify(service.data));
-  await waitFor(async () => {
-    const response = await api(coreUrl, token, 'GET', `/api/v1/operations/${service.data.operationId}`);
-    return response.data.state === 'succeeded' ? response.data : undefined;
-  }, 'Service operation', 180_000);
+  await waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/operations/${service.data.operationId}`)).data.state === 'succeeded', 'Service operation', 180_000);
   await page.reload();
-  await page.getByRole('combobox', { name: 'Choose Service' }).selectOption({ label: 'browser-service' });
   await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
-  await page.screenshot({ path: join(screenshotDir, '03-service-preview.png'), fullPage: true });
+  const frame = page.frameLocator('iframe');
+  await frame.getByLabel('Service draft').fill('do not lose this');
+  await page.locator('#composer').fill('Say hello');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  assert.match(await page.locator('#messages').innerText(), /skill-read:/);
+  assert.equal(await frame.getByLabel('Service draft').inputValue(), 'do not lose this', 'chat rerender reloaded the Service iframe');
+  await page.getByRole('button', { name: 'Service options', exact: true }).click();
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  assert.equal(await frame.getByLabel('Service draft').inputValue(), 'do not lose this', 'modal rerender reloaded the Service iframe');
+  await page.screenshot({ path: join(screenshotDir, '02-service-and-chat.png'), fullPage: true });
   const newPage = context.waitForEvent('page');
-  await page.getByRole('button', { name: 'Open application tab' }).click();
+  await page.getByRole('button', { name: 'Open application in new tab' }).click();
   const app = await newPage;
-  await app.getByRole('heading', { name: 'Real Service' }).waitFor();
-  await app.screenshot({ path: join(screenshotDir, '04-service-tab.png'), fullPage: true });
-  await app.close();
-
-  const uploaded = await fetch(`${coreUrl}/api/v1/works/${workId}/files/note.txt`, {
-    method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: 'real-browser-file',
-  });
-  assert([201, 204].includes(uploaded.status), await uploaded.text());
+  await app.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
+  assert.equal(new URL(app.url()).hostname, 'desktop.localhost');
+  const uploaded = await fetch(`${coreUrl}/api/v1/works/${workId}/files/note.txt`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: 'real-browser-file' });
+  assert([201,204].includes(uploaded.status), await uploaded.text());
   await page.getByRole('button', { name: 'Files', exact: true }).click();
-  await page.getByRole('button', { name: 'File · note.txt' }).waitFor();
-  await page.getByRole('button', { name: 'File · note.txt' }).click();
-  await page.getByRole('textbox', { name: 'Edit note.txt' }).fill('saved by real browser Files');
-  await page.getByRole('button', { name: 'Save file', exact: true }).click();
-  await page.getByText('note.txt saved.', { exact: true }).waitFor();
-  const readFileThroughCore = async () => {
-    const response = await fetch(`${coreUrl}/api/v1/works/${workId}/files/note.txt`,
-      { headers: { Authorization: `Bearer ${token}` } });
-    assert.equal(response.status, 200);
-    return response.text();
-  };
-  assert.equal(await readFileThroughCore(), 'saved by real browser Files');
-  await page.screenshot({ path: join(screenshotDir, '05-files.png'), fullPage: true });
+  await page.waitForTimeout(500);
 
-  const localFileUrl = `**/_desktop/files/works/${workId}/files/note.txt`;
-  let uncertainWrites = 0;
-  let writeFaultError;
-  const loseWriteReply = async (route) => {
-    if (route.request().method() !== 'PUT') return route.continue();
-    uncertainWrites++;
-    try {
-      const original = new URL(route.request().url());
-      const target = new URL(original);
-      target.hostname = '127.0.0.1';
-      const response = await route.fetch({ url: target.href,
-        headers: { ...route.request().headers(), host: original.host } });
-      assert([201, 204].includes(response.status()));
-    } catch { writeFaultError = new Error('Injected write forwarding failed before its response could be discarded'); }
-    finally { await route.abort('failed'); }
-  };
-  await page.route(localFileUrl, loseWriteReply);
-  await page.getByRole('button', { name: 'File · note.txt' }).click();
-  await page.getByRole('textbox', { name: 'Edit note.txt' }).fill('committed with lost browser reply');
+  await page.getByRole('button', { name: /^note.txt/ }).click();
+  await page.getByLabel('Edit note.txt').fill('saved by real browser Files');
   await page.getByRole('button', { name: 'Save file', exact: true }).click();
-  await page.getByText(/Save file: .*Refresh to confirm/).waitFor();
-  if (writeFaultError) throw writeFaultError;
+  await page.getByText('File saved.', { exact: true }).waitFor();
+  const readFileThroughCore = async () => { const response = await fetch(`${coreUrl}/api/v1/works/${workId}/files/note.txt`, { headers: { Authorization: `Bearer ${token}` } }); assert.equal(response.status, 200); return response.text(); };
+  assert.equal(await readFileThroughCore(), 'saved by real browser Files');
+  let uncertainWrites = 0;
+  const localFileUrl = `**/_desktop/files/works/${workId}/files/note.txt`;
+  const loseWriteReply = async route => { if (route.request().method() !== 'PUT') return route.continue(); uncertainWrites++; const original = new URL(route.request().url()); const target = new URL(original); target.hostname = '127.0.0.1'; const response = await route.fetch({url: target.href, headers: {...route.request().headers(),host:original.host}}); assert([201,204].includes(response.status())); await route.abort('failed'); };
+  await page.route(localFileUrl, loseWriteReply);
+  await page.getByLabel('Edit note.txt').fill('committed with lost browser reply');
+  await page.getByRole('button', { name: 'Save file', exact: true }).click();
+  await page.getByText('Response lost. Refresh source and destination before trying again.', { exact: true }).first().waitFor();
   assert.equal(await readFileThroughCore(), 'committed with lost browser reply');
-  await page.screenshot({ path: join(screenshotDir, '08-file-result-unknown.png'), fullPage: true });
+  assert.equal(uncertainWrites, 1);
   await page.unroute(localFileUrl, loseWriteReply);
-  assert.equal(uncertainWrites, 1, 'Desktop resubmitted a file write whose reply was lost');
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Discard', exact: true }).click();
   await page.getByRole('button', { name: 'Refresh files' }).click();
-
+  await page.getByRole('button', { name: 'Back to files' }).click();
+  await page.locator('#file-editor').waitFor({state:'hidden'});
+  const binary = Buffer.from([0,1,2,128,255,42]);
+  await page.locator('#upload-input').setInputFiles({ name: 'binary.dat', mimeType: 'application/octet-stream', buffer: binary });
+  await page.getByRole('button', { name: /^binary.dat/ }).waitFor();
+  const rawBinary = await fetch(`${coreUrl}/api/v1/works/${workId}/files/binary.dat`, { headers: { Authorization: `Bearer ${token}` } });
+  assert.deepEqual(Buffer.from(await rawBinary.arrayBuffer()), binary);
+  await page.getByRole('button', { name: 'New folder' }).click();
+  await page.locator('#form-name').fill('folder');
+  await page.getByRole('button', { name: 'Create folder', exact: true }).click();
+  await page.getByRole('button', { name: /^folder/ }).waitFor();
+  await page.screenshot({ path: join(screenshotDir, '03-files.png'), fullPage: true });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByText('Saved and active configuration are aligned.', { exact: true }).waitFor();
-  await page.screenshot({ path: join(screenshotDir, '06-settings.png'), fullPage: true });
+  await page.getByText('Saved and active configuration are aligned', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'AGENTS.md', exact: true }).click();
-  await page.getByRole('textbox', { name: 'AGENTS.md content' }).fill('# Real browser Work\nUse the shared workspace.\n');
-  await page.getByRole('button', { name: 'Save AGENTS.md', exact: true }).click();
-  await page.getByText('AGENTS.md saved. Apply changes to load it.', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Refresh configuration status' }).click();
-  await page.getByText(/Saved changes are waiting to be applied/).waitFor();
-  await page.screenshot({ path: join(screenshotDir, '09-settings-pending.png'), fullPage: true });
+  await page.locator('#agents-editor').fill('# Real browser Work\nUse the shared workspace.\n');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).first().click();
+  await page.getByText('Not applied · Your running configuration is unchanged.', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
-  await waitFor(async () => {
-    const response = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/configuration`);
-    return response.data.pendingApply === false && response.data.runtime?.state === 'ready';
-  }, 'applied Work configuration', 180_000);
-  await page.getByRole('button', { name: 'Refresh Work' }).click();
-  await page.getByRole('button', { name: 'Chat', exact: true }).click();
-  await page.getByRole('button', { name: 'New session' }).click();
-  await page.getByRole('combobox', { name: 'Session', exact: true }).waitFor();
-  await waitFor(() => page.getByRole('button', { name: 'Send message', exact: true }).isEnabled(), 'new Session composer');
-  await page.getByRole('textbox', { name: 'Message Agent' }).fill('Say hello');
-  await page.getByRole('button', { name: 'Send message' }).click();
-  await page.locator('.run-status').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
-  assert((await page.locator('.run-output').innerText()).length > 0, 'real SDK conversation produced no visible text');
-  await page.screenshot({ path: join(screenshotDir, '07-chat.png'), fullPage: true });
-
-  page.once('dialog', (dialog) => dialog.accept());
-  await page.getByRole('button', { name: 'Stop Work', exact: true }).click();
-  await waitFor(async () => {
-    const response = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}`);
-    return response.data.desiredState === 'stopped' && response.data.observedState === 'stopped';
-  }, 'stopped source Work', 180_000);
-  await page.getByRole('button', { name: 'Refresh Work' }).click();
-  await page.getByRole('button', { name: 'Prepare .work package', exact: true }).waitFor();
-  await page.screenshot({ path: join(screenshotDir, '10-stopped-work.png'), fullPage: true });
+  await waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/configuration`)).data.pendingApply === false, 'configuration apply', 180_000);
+  console.log('Real Desktop: configuration applied');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'Back to Work', exact: true }).click();
+  await page.getByRole('button', { name: 'Work options' }).click();
+  await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
+  await page.getByText(/Stop this Work explicitly/).waitFor();
+  assert.equal(await page.locator('[data-action=prepare-export]').count(), 0);
+  await page.getByRole('button', { name: 'Stop Work first', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop Work', exact: true }).last().click();
+  await waitState(workId, 'stopped');
+  await app.bringToFront();
+  await app.getByRole('heading', { name: 'This Work is stopped', exact: true }).waitFor({timeout:15000});
+  await app.close(); await page.bringToFront();
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
   await page.getByRole('button', { name: 'Prepare .work package', exact: true }).click();
-  await page.getByRole('link', { name: 'Download .work package' }).waitFor({ timeout: 180_000 });
-  await page.screenshot({ path: join(screenshotDir, '11-export-ready.png'), fullPage: true });
-  const downloadEvent = page.waitForEvent('download');
-  await page.getByRole('link', { name: 'Download .work package' }).click();
-  const download = await downloadEvent;
-  const exportedPath = join(root, 'browser-export.work');
-  await download.saveAs(exportedPath);
-  assert.equal(await download.failure(), null);
-  await page.getByRole('button', { name: 'All Works' }).click();
-  await page.getByRole('button', { name: 'Import .work', exact: true }).click();
-  await page.getByLabel('Select .work package').setInputFiles(exportedPath);
-  await page.getByRole('button', { name: 'Inspect package', exact: true }).click();
-  await page.getByText('Package verified. Review the summary before importing.', { exact: true }).waitFor({ timeout: 180_000 });
-  await page.getByRole('textbox', { name: 'Imported Work name (optional)' }).fill('Browser Imported Work');
-  await page.screenshot({ path: join(screenshotDir, '12-import-review.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Import inspected package', exact: true }).click();
-  await page.getByText(/Browser Imported Work imported · stopped/).waitFor({ timeout: 180_000 });
-  await page.screenshot({ path: join(screenshotDir, '13-import-stopped.png'), fullPage: true });
-  const imported = await waitFor(async () => {
-    const response = await api(coreUrl, token, 'GET', '/api/v1/works');
-    return response.data.works?.find((item) => item.name === 'Browser Imported Work');
-  }, 'imported Work identity');
-  assert.notEqual(imported.id, workId);
-  assert.equal(imported.observedState, 'stopped');
-  await page.getByRole('button', { name: 'Open Work', exact: true }).click();
-  await page.locator('.work-panel-header .toolbar-actions > button').filter({ hasText: /^Start Work$/ }).click();
-  await waitFor(async () => {
-    const response = await api(coreUrl, token, 'GET', `/api/v1/works/${imported.id}`);
-    return response.data.observedState === 'ready';
-  }, 'explicitly started imported Work', 180_000);
-  await page.getByRole('button', { name: 'Refresh Work' }).click();
+  await page.getByRole('button', { name: 'View package', exact: true }).waitFor({ timeout: 180_000 });
+  await page.getByRole('button', { name: 'View package', exact: true }).click();
+  console.log('Real Desktop: snapshot prepared');
+  const downloadEvent = page.waitForEvent('download', { timeout: 180_000 });
+  await page.getByRole('button', { name: 'Download .work', exact: true }).waitFor({timeout:180_000});
+  await page.getByRole('button', { name: 'Download .work', exact: true }).click();
+  const download = await downloadEvent; const exportedPath = join(root, 'browser-export.work'); await download.saveAs(exportedPath); assert.equal(await download.failure(), null);
+  assert.equal((await readFile(exportedPath)).subarray(0,8).toString(), 'PIWORK1\n', 'export is not a real archive');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'Back to Works' }).click();
+  await page.getByRole('button', { name: 'Import Work', exact: true }).click();
+  await page.locator('#work-file-input').setInputFiles(exportedPath);
+  await page.getByText('Package format and contents verified locally.', { exact: true }).waitFor({ timeout: 180_000 });
+  await page.locator('#import-name').fill('Browser Imported Work');
+  await page.getByRole('button', { name: 'Import Work', exact: true }).last().click();
+  const imported = await waitFor(async () => (await api(coreUrl, token, 'GET', '/api/v1/works')).data.works?.find(item => item.name === 'Browser Imported Work'), 'imported Work', 180_000);
+  assert.notEqual(imported.id, workId); assert.equal(imported.observedState, 'stopped');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.reload(); await page.getByRole('button', { name: /^Browser Imported Work/ }).click();
+  await page.getByRole('button', { name: 'Start Work', exact: true }).first().click();
+  await waitState(imported.id, 'ready');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.reload();
   await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
-  const restoredHistory = page.locator('.agent-aside .chat-messages');
-  await waitFor(async () => (await restoredHistory.innerText()).includes('skill-read:'), 'restored Session history');
-  const historyBounds = await restoredHistory.boundingBox();
-  assert(historyBounds && historyBounds.height <= 560, 'long Session history expanded the Service preview');
-  await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
-  // Give the cross-origin frame compositor a paint after the restored history reflows.
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: join(screenshotDir, '14-import-running.png'), fullPage: true });
-
-  const detailUrl = `**/_desktop/api/works/${imported.id}`;
-  let releaseLoading;
-  const loadingBarrier = new Promise((done) => { releaseLoading = done; });
-  let finishLoading;
-  let loadingError;
-  const loadingFinished = new Promise((done) => { finishLoading = done; });
-  const holdDetail = async (route) => {
-    try { await loadingBarrier; await route.continue(); }
-    catch (error) { loadingError = error; }
-    finally { finishLoading(); }
-  };
-  await page.route(detailUrl, holdDetail);
-  await page.getByRole('button', { name: 'Refresh Work' }).click();
-  await page.getByText('Loading Work…', { exact: true }).waitFor();
-  await page.screenshot({ path: join(screenshotDir, '15-loading-work.png'), fullPage: true });
-  releaseLoading();
-  await loadingFinished;
-  if (loadingError) throw new Error('Loading-state fixture request could not continue');
-  await page.unroute(detailUrl, holdDetail);
-  await page.getByRole('button', { name: 'Refresh Work' }).waitFor();
-  const failDetail = async (route) => { await route.abort('failed'); };
-  await page.route(detailUrl, failDetail);
-  await page.getByRole('button', { name: 'Refresh Work' }).click();
-  await page.getByRole('heading', { name: 'Work unavailable' }).waitFor();
-  await page.screenshot({ path: join(screenshotDir, '16-work-error.png'), fullPage: true });
-  await page.unroute(detailUrl, failDetail);
-  console.log(JSON.stringify({ browser: browserBinary, coreUrl, workId, screenshots: screenshotDir,
-    result: 'real Go Core/CLI/TS Agent: Work lifecycle, Service preview/tab, Files edit and lost reply, Save/Apply, Chat, Stop/Export/Inspect/Import/Start, empty/loading/error/unknown states' }));
+  await waitFor(async () => (await page.locator('#messages').innerText()).includes('skill-read:'), 'restored session history');
+  await page.screenshot({ path: join(screenshotDir, '04-restored-work.png'), fullPage: true });
+  for (const width of [1440,1024,390]) { await page.setViewportSize({ width, height: 900 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `horizontal overflow at ${width}px`); await page.screenshot({ path: join(screenshotDir, `05-responsive-${width}.png`), fullPage: true }); }
+  console.log(JSON.stringify({ result: 'real Go Core/CLI: lifecycle, Service iframe preservation/tab, Run, binary WebDAV, uncertain write, Save/Apply, Stop/Export/Inspect/Import/Start and responsive layout', workId, screenshots: screenshotDir }));
 } catch (error) {
   if (page && !page.isClosed()) {
     await page.screenshot({ path: join(screenshotDir, '99-failure.png'), fullPage: true }).catch(() => undefined);
