@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import { createDeterministicRuntime, mapSdkEvent } from "@piwork/pi-adapter";
 import type { RunExecutionContext, RunExecutor } from "./runs.js";
 import type { AgentSessionService } from "./sessions.js";
+import { isBrainVerificationTarget, type RunModelSnapshot } from "@piwork/contracts";
+import type { RunModelResolver } from "./run-models.js";
 
 const CHILD_AGENT_DIRECTORY = "/tmp/piwork-child-agent";
 
@@ -20,16 +22,21 @@ export class PiSdkRunExecutor implements RunExecutor {
       readonly credentialPath?: string;
       readonly deterministic: boolean;
     },
-    private readonly context: { readonly resourceLoaderFactory: () => Promise<ResourceLoader>; readonly resolvedTools: readonly string[]; readonly customTools?: readonly ToolDefinition[] },
+    private readonly context: { readonly resourceLoaderFactory: (context?: RunExecutionContext) => Promise<ResourceLoader>; readonly resolvedTools: readonly string[]; readonly customTools?: readonly ToolDefinition[]; readonly models?: RunModelResolver;
+      readonly packageTools?: ReadonlyMap<string, string>;
+      readonly onSdkToolResult?: (context: RunExecutionContext, result: { toolName: string; toolCallId: string; args: unknown; isError: boolean; result: unknown }) => void },
   ) {}
 
   async execute(context: RunExecutionContext): Promise<{ readonly finalText: string }> {
     emitRunPhase(context, "runtime-started");
-    const { runtime, model } = this.modelConfig.deterministic
-      ? await createDeterministicRuntime()
-      : await this.productionRuntime();
+    // Credentials exist only in this invocation's ModelRuntime. The persisted
+    // descriptor and SDK history contain no credential or ambient auth authority.
+    const credential = context.actualModel && this.context.models ? await this.context.models.credential(context.actualModel) : undefined;
+    const { runtime, model } = this.modelConfig.deterministic && (!context.actualModel || context.actualModel.provider === "piwork-deterministic")
+      ? await createDeterministicRuntime(context.actualModel?.model)
+      : await this.productionRuntime(context.actualModel, credential);
     emitRunPhase(context, "runtime-created");
-    const resourceLoader = await this.context.resourceLoaderFactory();
+    const resourceLoader = await this.context.resourceLoaderFactory(context);
     emitRunPhase(context, "resource-loader-created");
     emitRunPhase(context, "session-continue-started");
     let sessionManager;
@@ -54,14 +61,21 @@ export class PiSdkRunExecutor implements RunExecutor {
     });
     emitRunPhase(context, "session-loaded");
     let finalText = "";
+    const toolInputs = new Map<string, unknown>();
     const unsubscribe = session.subscribe((event) => {
+      if (event.type === "tool_execution_start") toolInputs.set(event.toolCallId, event.args);
+      if (event.type === "tool_execution_end") {
+        this.context.onSdkToolResult?.(context, { ...event, args: toolInputs.get(event.toolCallId) }); toolInputs.delete(event.toolCallId);
+      }
       const mapped = mapSdkEvent(event);
       if (mapped?.type === "text-delta") {
         const delta = String(mapped.payload.delta ?? "");
         finalText += delta;
         context.emit("text", { delta });
       } else if (mapped?.type === "tool-start" || mapped?.type === "tool-end") {
-        context.emit(mapped.type, mapped.payload);
+        const canonical = event.type === "tool_execution_start" ? [...(this.context.packageTools ?? [])].find(([name, native]) => native === event.toolName && name.startsWith("package:piwork-brain:"))?.[0] : undefined;
+        const args = event.type === "tool_execution_start" && canonical && isBrainVerificationTarget({ contractVersion: 1, toolName: canonical, input: event.args, checkNames: ["sdk-input"] }) ? event.args : undefined;
+        context.emit(mapped.type, { ...mapped.payload, ...(args === undefined ? {} : { args }) });
       }
     });
     const abort = () => { void session.abort(); };
@@ -118,21 +132,34 @@ export class PiSdkRunExecutor implements RunExecutor {
     }
   }
 
-  private async productionRuntime() {
-    const credentialPath = this.modelConfig.credentialPath;
-    if (credentialPath === undefined) throw new Error("model credential is unavailable");
-    const information = lstatSync(credentialPath);
-    if (information.isSymbolicLink() || !information.isFile() || information.size < 1 || information.size > 64 * 1024) {
-      throw new Error("model credential is invalid");
+  private async productionRuntime(snapshot?: RunModelSnapshot, temporaryCredential?: string) {
+    let credential = temporaryCredential;
+    if (credential === undefined) {
+      if (snapshot?.modelRef) throw new Error("selected model credential is unavailable");
+      const credentialPath = this.modelConfig.credentialPath;
+      if (credentialPath === undefined) throw new Error("model credential is unavailable");
+      const information = lstatSync(credentialPath);
+      if (information.isSymbolicLink() || !information.isFile() || information.size < 1 || information.size > 64 * 1024) throw new Error("model credential is invalid");
+      credential = readFileSync(credentialPath, "utf8").replace(/[\r\n]+$/, "");
     }
-    const credential = readFileSync(credentialPath, "utf8").replace(/[\r\n]+$/, "");
     if (credential === "") throw new Error("model credential is invalid");
-    const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false });
-    const model = resolveProductionModel(runtime, this.modelConfig);
-    await runtime.setRuntimeApiKey(this.modelConfig.provider, credential);
-    await writeChildAgentModelFiles(CHILD_AGENT_DIRECTORY, model, credential);
+    const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
+    const config = snapshot ? { provider: snapshot.provider, id: snapshot.model, ...(snapshot.baseUrl ? { baseUrl: snapshot.baseUrl } : {}) } : this.modelConfig;
+    const model = resolveProductionModel(runtime, config);
+    await runtime.setRuntimeApiKey(config.provider, credential);
     return { runtime, model };
   }
+}
+
+/** Existing package children retain the Work default; overrides never rewrite it. */
+export async function initializeDefaultChildAgentModel(config: { readonly provider: string; readonly id: string; readonly baseUrl?: string; readonly credentialPath?: string }): Promise<void> {
+  if (!config.credentialPath) throw new Error("Work model credential is unavailable");
+  const information = lstatSync(config.credentialPath);
+  if (!information.isFile() || information.isSymbolicLink() || information.size < 1 || information.size > 64 * 1024) throw new Error("Work model credential is invalid");
+  const credential = readFileSync(config.credentialPath, "utf8").replace(/[\r\n]+$/, "");
+  if (!credential) throw new Error("Work model credential is invalid");
+  const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
+  await writeChildAgentModelFiles(CHILD_AGENT_DIRECTORY, resolveProductionModel(runtime, config), credential);
 }
 
 /** Remove credentials left by a previous agent generation before loading extensions. */

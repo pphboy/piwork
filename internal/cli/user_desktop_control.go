@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"piwork/internal/client"
+	"piwork/internal/contracts"
 )
 
 var desktopIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,127}$`)
@@ -204,7 +205,8 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			return desktopControl{}, false, nil
 		}
 	}
-	if r.URL.RawQuery != "" && !(len(parts) == 5 && parts[0] == "works" && parts[2] == "services" && parts[4] == "logs") {
+	feedbackRead := r.Method == http.MethodGet && len(parts) >= 3 && len(parts) <= 4 && parts[0] == "works" && parts[2] == "agent-requests"
+	if r.URL.RawQuery != "" && !feedbackRead && !(len(parts) == 5 && parts[0] == "works" && parts[2] == "services" && parts[4] == "logs") {
 		return desktopControl{}, true, errors.New("INVALID_INPUT")
 	}
 	method := r.Method
@@ -422,8 +424,90 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 		}
 		return desktopControl{}, false, nil
 	}
+	if parts[2] == "models" && len(parts) == 3 && method == http.MethodGet {
+		return create(method, base+"/models", nil, 200)
+	}
+	if parts[2] == "agent-requests" || parts[2] == "evidence" {
+		resource := parts[2]
+		path := base + "/" + resource
+		if len(parts) >= 4 {
+			id, err := identifier(parts[3])
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			path += "/" + id
+		}
+		if method == http.MethodGet && len(parts) <= 4 && (resource == "agent-requests" || len(parts) == 4) {
+			schema := "AgentRequestQuerySchema"
+			if len(parts) == 4 {
+				schema = "AgentEvidenceQuerySchema"
+			}
+			if resource == "evidence" && r.URL.RawQuery != "" {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			input := map[string]any{}
+			for key, values := range r.URL.Query() {
+				if len(values) != 1 || values[0] == "" {
+					return desktopControl{}, true, errors.New("INVALID_INPUT")
+				}
+				if key == "limit" {
+					n, err := strconv.ParseInt(values[0], 10, 64)
+					if err != nil {
+						return desktopControl{}, true, errors.New("INVALID_INPUT")
+					}
+					input[key] = n
+				} else {
+					input[key] = values[0]
+				}
+			}
+			if contracts.Validate(schema, input) != nil {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			if r.URL.RawQuery != "" {
+				path += "?" + r.URL.Query().Encode()
+			}
+			return create(method, path, nil, 200)
+		}
+		if resource == "agent-requests" && len(parts) == 5 && method == http.MethodPost {
+			if parts[4] == "cancel" {
+				input, err := desktopControlInput(r)
+				if err != nil {
+					return desktopControl{}, true, err
+				}
+				return create(method, path+"/cancel", input, 200)
+			}
+			if parts[4] == "retry" {
+				input, err := desktopControlInput(r, "submissionKey")
+				if err != nil {
+					return desktopControl{}, true, err
+				}
+				key, okay := desktopFieldString(input, "submissionKey", 256)
+				if !okay {
+					return desktopControl{}, true, errors.New("INVALID_INPUT")
+				}
+				return create(method, path+"/retry", map[string]string{"submissionKey": key}, 200)
+			}
+		}
+		return desktopControl{}, false, nil
+	}
 	if parts[2] == "sessions" {
 		path := base + "/sessions"
+		if len(parts) == 5 && parts[4] == "model" && method == http.MethodPatch {
+			sessionID, err := identifier(parts[3])
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			input, err := desktopControlInput(r, "modelRef")
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			raw, _ := json.Marshal(input)
+			value, err := contracts.ParseJSON(strings.NewReader(string(raw)), 4096)
+			if err != nil || contracts.Validate("SetSessionModelSchema", value) != nil {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			return create(method, path+"/"+sessionID+"/model", input, 200)
+		}
 		if len(parts) == 3 && method == http.MethodGet {
 			return create(method, path, nil, 200)
 		}
@@ -446,9 +530,15 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 	if parts[2] == "runs" {
 		path := base + "/runs"
 		if len(parts) == 3 && method == http.MethodPost {
-			input, err := desktopControlInput(r, "sessionId", "prompt")
+			input, err := desktopControlInput(r, "sessionId", "prompt", "modelRef")
 			if err != nil {
 				return desktopControl{}, true, err
+			}
+			if model, exists := input["modelRef"]; exists {
+				var value any
+				if json.Unmarshal(model, &value) != nil || value != nil && contracts.Validate("ResourceIdSchema", value) != nil {
+					return desktopControl{}, true, errors.New("INVALID_INPUT")
+				}
 			}
 			sessionID, valid := desktopFieldString(input, "sessionId", 128)
 			if _, okay := desktopResourcePart(sessionID, desktopIDPattern); !okay || !valid {

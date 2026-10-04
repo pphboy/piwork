@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-type oracleCase struct {
+type historyCase struct {
 	Name         string
 	Code         *string
 	Summary      *Summary
@@ -19,15 +19,15 @@ type oracleCase struct {
 	ContextIDs   []string
 }
 
-func oracle(t *testing.T) []oracleCase {
+func historyCases(t *testing.T) []historyCase {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/cases.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cases []oracleCase
+	var cases []historyCase
 	if json.Unmarshal(raw, &cases) != nil {
-		t.Fatal("oracle JSON")
+		t.Fatal("current history cases JSON")
 	}
 	return cases
 }
@@ -79,15 +79,15 @@ func fingerprint(t *testing.T, name string) map[string]string {
 	}
 	return values
 }
-func scopeFor(test oracleCase, scratch string) Scope {
+func scopeFor(test historyCase, scratch string) Scope {
 	contexts := map[string]bool{}
 	for _, id := range test.ContextIDs {
 		contexts[id] = true
 	}
 	return Scope{SourceWorkID: test.SourceWorkID, ContextIDs: contexts, ScratchDirectory: scratch}
 }
-func TestSchema3HistoryMatchesOriginalTSCasesWithoutSourceMutation(t *testing.T) {
-	for _, test := range oracle(t) {
+func TestCurrentHistoryCasesWithoutSourceMutation(t *testing.T) {
+	for _, test := range historyCases(t) {
 		t.Run(test.Name, func(t *testing.T) {
 			root := t.TempDir()
 			private := filepath.Join(root, "private")
@@ -96,7 +96,7 @@ func TestSchema3HistoryMatchesOriginalTSCasesWithoutSourceMutation(t *testing.T)
 			snapshot, err := Open(context.Background(), private, scopeFor(test, root))
 			if test.Code == nil {
 				if err != nil || snapshot == nil {
-					t.Fatal("TS accepted, Go rejected", err)
+					t.Fatal("valid current history rejected", err)
 				}
 				if !reflect.DeepEqual(snapshot.Summary, *test.Summary) {
 					t.Fatal(snapshot.Summary, test.Summary)
@@ -113,7 +113,7 @@ func TestSchema3HistoryMatchesOriginalTSCasesWithoutSourceMutation(t *testing.T)
 				}
 				own, ok := err.(*Error)
 				if !ok || own.Code != *test.Code {
-					t.Fatal("TS rejection mismatch", test.Code, err)
+					t.Fatal("current history rejection mismatch", test.Code, err)
 				}
 			}
 			if !reflect.DeepEqual(before, fingerprint(t, private)) {

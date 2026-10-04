@@ -24,6 +24,20 @@ export const protobufPackage = "piwork.core.services.v1";
 export interface Empty {
 }
 
+/** Authenticated only through the current agentd runtime mTLS identity. */
+export interface WorkPrivateRequest {
+  inputJson: string;
+}
+
+export interface WorkPrivateResponse {
+  valueJson: string;
+}
+
+export interface RunModelResolution {
+  modelJson: string;
+  credential: string;
+}
+
 export interface ServiceImage {
   reference: string;
 }
@@ -243,6 +257,241 @@ export const Empty: MessageFns<Empty> = {
   },
   fromPartial(_: DeepPartial<Empty>): Empty {
     const message = createBaseEmpty();
+    return message;
+  },
+};
+
+function createBaseWorkPrivateRequest(): WorkPrivateRequest {
+  return { inputJson: "" };
+}
+
+export const WorkPrivateRequest: MessageFns<WorkPrivateRequest> = {
+  encode(message: WorkPrivateRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.inputJson !== "") {
+      writer.uint32(10).string(message.inputJson);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): WorkPrivateRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseWorkPrivateRequest();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.inputJson = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): WorkPrivateRequest {
+    return {
+      inputJson: isSet(object.inputJson)
+        ? globalThis.String(object.inputJson)
+        : isSet(object.input_json)
+        ? globalThis.String(object.input_json)
+        : "",
+    };
+  },
+
+  toJSON(message: WorkPrivateRequest): unknown {
+    const obj: any = {};
+    if (message.inputJson !== "") {
+      obj.inputJson = message.inputJson;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<WorkPrivateRequest>): WorkPrivateRequest {
+    return WorkPrivateRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<WorkPrivateRequest>): WorkPrivateRequest {
+    const message = createBaseWorkPrivateRequest();
+    message.inputJson = object.inputJson ?? "";
+    return message;
+  },
+};
+
+function createBaseWorkPrivateResponse(): WorkPrivateResponse {
+  return { valueJson: "" };
+}
+
+export const WorkPrivateResponse: MessageFns<WorkPrivateResponse> = {
+  encode(message: WorkPrivateResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.valueJson !== "") {
+      writer.uint32(10).string(message.valueJson);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): WorkPrivateResponse {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseWorkPrivateResponse();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.valueJson = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): WorkPrivateResponse {
+    return {
+      valueJson: isSet(object.valueJson)
+        ? globalThis.String(object.valueJson)
+        : isSet(object.value_json)
+        ? globalThis.String(object.value_json)
+        : "",
+    };
+  },
+
+  toJSON(message: WorkPrivateResponse): unknown {
+    const obj: any = {};
+    if (message.valueJson !== "") {
+      obj.valueJson = message.valueJson;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<WorkPrivateResponse>): WorkPrivateResponse {
+    return WorkPrivateResponse.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<WorkPrivateResponse>): WorkPrivateResponse {
+    const message = createBaseWorkPrivateResponse();
+    message.valueJson = object.valueJson ?? "";
+    return message;
+  },
+};
+
+function createBaseRunModelResolution(): RunModelResolution {
+  return { modelJson: "", credential: "" };
+}
+
+export const RunModelResolution: MessageFns<RunModelResolution> = {
+  encode(message: RunModelResolution, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.modelJson !== "") {
+      writer.uint32(10).string(message.modelJson);
+    }
+    if (message.credential !== "") {
+      writer.uint32(18).string(message.credential);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): RunModelResolution {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseRunModelResolution();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.modelJson = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.credential = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): RunModelResolution {
+    return {
+      modelJson: isSet(object.modelJson)
+        ? globalThis.String(object.modelJson)
+        : isSet(object.model_json)
+        ? globalThis.String(object.model_json)
+        : "",
+      credential: isSet(object.credential) ? globalThis.String(object.credential) : "",
+    };
+  },
+
+  toJSON(message: RunModelResolution): unknown {
+    const obj: any = {};
+    if (message.modelJson !== "") {
+      obj.modelJson = message.modelJson;
+    }
+    if (message.credential !== "") {
+      obj.credential = message.credential;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<RunModelResolution>): RunModelResolution {
+    return RunModelResolution.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<RunModelResolution>): RunModelResolution {
+    const message = createBaseRunModelResolution();
+    message.modelJson = object.modelJson ?? "";
+    message.credential = object.credential ?? "";
     return message;
   },
 };
@@ -3437,6 +3686,51 @@ export const ServiceLogs: MessageFns<ServiceLogs> = {
 
 export type WorkServicesService = typeof WorkServicesService;
 export const WorkServicesService = {
+  listRunModels: {
+    path: "/piwork.core.services.v1.WorkServices/ListRunModels" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: Empty): Buffer => Buffer.from(Empty.encode(value).finish()),
+    requestDeserialize: (value: Buffer): Empty => Empty.decode(value),
+    responseSerialize: (value: WorkPrivateResponse): Buffer => Buffer.from(WorkPrivateResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): WorkPrivateResponse => WorkPrivateResponse.decode(value),
+  },
+  resolveRunModel: {
+    path: "/piwork.core.services.v1.WorkServices/ResolveRunModel" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: WorkPrivateRequest): Buffer => Buffer.from(WorkPrivateRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): WorkPrivateRequest => WorkPrivateRequest.decode(value),
+    responseSerialize: (value: RunModelResolution): Buffer => Buffer.from(RunModelResolution.encode(value).finish()),
+    responseDeserialize: (value: Buffer): RunModelResolution => RunModelResolution.decode(value),
+  },
+  getServiceInteractionBindings: {
+    path: "/piwork.core.services.v1.WorkServices/GetServiceInteractionBindings" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: Empty): Buffer => Buffer.from(Empty.encode(value).finish()),
+    requestDeserialize: (value: Buffer): Empty => Empty.decode(value),
+    responseSerialize: (value: WorkPrivateResponse): Buffer => Buffer.from(WorkPrivateResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): WorkPrivateResponse => WorkPrivateResponse.decode(value),
+  },
+  prepareBrainCandidate: {
+    path: "/piwork.core.services.v1.WorkServices/PrepareBrainCandidate" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: WorkPrivateRequest): Buffer => Buffer.from(WorkPrivateRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): WorkPrivateRequest => WorkPrivateRequest.decode(value),
+    responseSerialize: (value: WorkPrivateResponse): Buffer => Buffer.from(WorkPrivateResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): WorkPrivateResponse => WorkPrivateResponse.decode(value),
+  },
+  getBrainCandidateState: {
+    path: "/piwork.core.services.v1.WorkServices/GetBrainCandidateState" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: WorkPrivateRequest): Buffer => Buffer.from(WorkPrivateRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): WorkPrivateRequest => WorkPrivateRequest.decode(value),
+    responseSerialize: (value: WorkPrivateResponse): Buffer => Buffer.from(WorkPrivateResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): WorkPrivateResponse => WorkPrivateResponse.decode(value),
+  },
   getDeploymentContext: {
     path: "/piwork.core.services.v1.WorkServices/GetDeploymentContext" as const,
     requestStream: false as const,
@@ -3550,6 +3844,11 @@ export const WorkServicesService = {
 } as const;
 
 export interface WorkServicesServer extends UntypedServiceImplementation {
+  listRunModels: handleUnaryCall<Empty, WorkPrivateResponse>;
+  resolveRunModel: handleUnaryCall<WorkPrivateRequest, RunModelResolution>;
+  getServiceInteractionBindings: handleUnaryCall<Empty, WorkPrivateResponse>;
+  prepareBrainCandidate: handleUnaryCall<WorkPrivateRequest, WorkPrivateResponse>;
+  getBrainCandidateState: handleUnaryCall<WorkPrivateRequest, WorkPrivateResponse>;
   getDeploymentContext: handleUnaryCall<Empty, DeploymentContext>;
   createService: handleUnaryCall<CreateServiceRequest, Acceptance>;
   listServices: handleUnaryCall<Empty, ListServicesResponse>;
@@ -3565,6 +3864,81 @@ export interface WorkServicesServer extends UntypedServiceImplementation {
 }
 
 export interface WorkServicesClient extends Client {
+  listRunModels(
+    request: Empty,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  listRunModels(
+    request: Empty,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  listRunModels(
+    request: Empty,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  resolveRunModel(
+    request: WorkPrivateRequest,
+    callback: (error: ServiceError | null, response: RunModelResolution) => void,
+  ): ClientUnaryCall;
+  resolveRunModel(
+    request: WorkPrivateRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: RunModelResolution) => void,
+  ): ClientUnaryCall;
+  resolveRunModel(
+    request: WorkPrivateRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: RunModelResolution) => void,
+  ): ClientUnaryCall;
+  getServiceInteractionBindings(
+    request: Empty,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  getServiceInteractionBindings(
+    request: Empty,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  getServiceInteractionBindings(
+    request: Empty,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  prepareBrainCandidate(
+    request: WorkPrivateRequest,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  prepareBrainCandidate(
+    request: WorkPrivateRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  prepareBrainCandidate(
+    request: WorkPrivateRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  getBrainCandidateState(
+    request: WorkPrivateRequest,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  getBrainCandidateState(
+    request: WorkPrivateRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  getBrainCandidateState(
+    request: WorkPrivateRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
   getDeploymentContext(
     request: Empty,
     callback: (error: ServiceError | null, response: DeploymentContext) => void,

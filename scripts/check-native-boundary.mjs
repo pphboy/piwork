@@ -27,21 +27,31 @@ for (const root of ['apps', 'packages']) {
   for (const name of await readdir(root)) {
     const path = join(root, name);
     if (!(await stat(path)).isDirectory()) continue;
+    if(path==='apps/ui-shared' && !(await stat(join(path,'package.json')).then(()=>true,()=>false)))continue;
     const manifest = JSON.parse(await readFile(join(path, 'package.json'), 'utf8'));
     if (!allowedWorkspaces.has(manifest.name)) throw new Error(`Unexpected TS workspace: ${path}`);
   }
 }
 
-const forbiddenImports = /@piwork\/(?:core-store|runtime-docker|client-sdk|work-package)|apps\/(?:core|cli|console|file-helper|snapshot-helper|service-mcp|package-helper)\//;
+// Exact historical evidence files are read-only records, not current entry points.
+const historical = new Set(['docs/go-migration-acceptance.md','docs/go-migration-final-report.md','docs/go-migration-scenarios.json','docs/go-migration-boundary.json','docs/go-migration-ui-review.md','docs/ui-prototypes/workspace-shell.html']);
+const forbiddenImports = /@piwork\/(?:core-store|runtime-docker|client-sdk|work-package|core|cli|console|file-helper|snapshot-helper|service-mcp|package-helper)(?=[\s/\"'`]|$)|(?:apps\/(?:core|cli|console|file-helper|snapshot-helper|service-mcp|package-helper)|packages\/(?:core-store|runtime-docker|client-sdk|work-package))(?:[\/"'`\s]|$)|Dockerfile\.(?:file-helper|snapshot-helper)(?!\.native)\b/;
 async function scan(directory) {
   for (const item of await readdir(directory, { withFileTypes: true })) {
-    if (item.name === 'dist' || item.name === 'node_modules') continue;
+    if (['dist','node_modules','.git','.pi'].includes(item.name)) continue;
     const path = join(directory, item.name);
     if (item.isDirectory()) { await scan(path); continue; }
-    if (!/\.(?:ts|mjs|js)$/.test(path)) continue;
+    // Exclude only this rule-bearing file and its injected-fixture test.
+    if (path==='scripts/check-native-boundary.mjs'||path==='scripts/check-native-boundary.test.mjs'||historical.has(path))continue;
+    if (!/\.(?:ts|mjs|js|json|yaml|yml|toml|md|html|sh)$/.test(path) && !/^(?:Dockerfile[^/]*|Makefile)$/.test(item.name)) continue;
     if (forbiddenImports.test(await readFile(path, 'utf8'))) throw new Error(`Legacy platform reference: ${path}`);
   }
 }
-await scan('apps');
-await scan('packages');
-console.log('Retained TypeScript source and lockfile contain only harness and browser workspaces.');
+for (const directory of ['apps','packages','scripts','docs','.github']) {
+ if (await stat(directory).then(()=>true,()=>false))await scan(directory);
+}
+for(const item of await readdir('.',{withFileTypes:true})) {
+ if(!item.isFile()|| !(/\.(?:json|yaml|yml|toml|sh)$/.test(item.name)||/^(?:Dockerfile[^/]*|Makefile)$/.test(item.name)))continue;
+ if(forbiddenImports.test(await readFile(item.name,'utf8')))throw new Error(`Legacy platform reference: ${item.name}`);
+}
+console.log('Current sources, scripts, build/runtime configuration, locks and docs use native Go platform entry points.');

@@ -233,7 +233,7 @@ func (a *Application) captureSnapshotPackage(ctx context.Context, job corestore.
 			spec.Compatibility.Architecture = actual.Architecture
 			spec.Compatibility.Variant = snapshotVariant(actual.Variant)
 			spec.Compatibility.AgentProtocol = "v2"
-			spec.Compatibility.WorkHistorySchema = 3
+			spec.Compatibility.WorkHistorySchema = 4
 			spec.Compatibility.StorageLayout = 2
 			spec.Compatibility.PiPackageContract = 1
 		}

@@ -22,6 +22,7 @@ const tsVersion = JSON.parse(readFileSync(resolve(root, "node_modules/ts-proto/p
 if (tsVersion !== "2.12.4") throw new Error("Protocol generation requires ts-proto 2.12.4.");
 mkdirSync(toolDir, { recursive: true });
 mkdirSync(resolve(root, "packages/contracts/src/generated"), { recursive: true });
+mkdirSync(resolve(root, "internal/rpc/testdata"), { recursive: true });
 for (const [name, source] of [
   ["protoc-gen-go", "google.golang.org/protobuf/cmd/protoc-gen-go"],
   ["protoc-gen-go-grpc", "google.golang.org/grpc/cmd/protoc-gen-go-grpc"],
@@ -30,6 +31,7 @@ for (const [name, source] of [
 const mappings = ["Magent.proto=piwork/internal/rpc/agentv1", "Mwork-services.proto=piwork/internal/rpc/servicesv1"];
 run(process.execPath, [...protoc,
   "--proto_path=proto", "proto/agent.proto", "proto/work-services.proto",
+  "--descriptor_set_out=internal/rpc/testdata/wire-descriptor.pb",
   `--plugin=protoc-gen-go=${resolve(toolDir, "protoc-gen-go")}`,
   `--plugin=protoc-gen-go-grpc=${resolve(toolDir, "protoc-gen-go-grpc")}`,
   `--plugin=protoc-gen-ts_proto=${resolve(root, "node_modules/.bin/protoc-gen-ts_proto")}`,

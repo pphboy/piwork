@@ -7,15 +7,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"golang.org/x/sys/unix"
+	"piwork/internal/contracts"
 	"piwork/internal/workpackage"
 )
 
 // Rebuild remaps only managed Work/context columns. Run event payload_json,
 // final_text, SDK locators/JSONL and every business file retain original bytes.
-func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID string, contexts map[string]string) (returned error) {
+type RestoreBindings struct {
+	Models     []map[string]any
+	Operations map[string]string
+}
+
+func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID string, contexts map[string]string, bindings ...RestoreBindings) (returned error) {
+	var binding RestoreBindings
+	if len(bindings) > 1 {
+		return ErrInvalid
+	}
+	if len(bindings) == 1 {
+		binding = bindings[0]
+	}
+
 	defer func() {
 		if returned != nil && ctx.Err() == nil {
 			if _, ok := returned.(*Error); !ok {
@@ -76,11 +91,15 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 		return err
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, "PRAGMA defer_foreign_keys=ON"); err != nil {
+		return err
+	}
 	for _, table := range tables {
 		rows, err := s.database.QueryContext(ctx, "SELECT * FROM "+table)
 		if err != nil {
 			return err
 		}
+		defer rows.Close()
 		columns, err := rows.Columns()
 		if err != nil {
 			rows.Close()
@@ -95,6 +114,7 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 			rows.Close()
 			return err
 		}
+		defer statement.Close()
 		for rows.Next() {
 			row, err := rowValues(rows, columns)
 			if err != nil {
@@ -115,6 +135,109 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 					}
 					row[column] = mapped
 				}
+			}
+			if table == "service_events" || table == "agent_requests" || table == "agent_request_runs" {
+				row["disposition"] = "historical"
+			}
+			if table == "agent_requests" {
+				if row["package_submission_json"] != nil {
+					v, err := historyJSON(row["package_submission_json"])
+					if err != nil {
+						return ErrInvalid
+					}
+					submission := objectValue(v)
+					source := stringValue(submission["activeContextId"])
+					mapped := contexts[source]
+					if mapped == "" {
+						return ErrInvalid
+					}
+					submission["activeContextId"] = mapped
+					raw, err := contracts.EncodeCanonicalJSON(submission)
+					if err != nil {
+						return ErrInvalid
+					}
+					row["package_submission_json"] = string(raw)
+				}
+				if row["wait_ref_json"] != nil {
+					v, err := historyJSON(row["wait_ref_json"])
+					if err != nil {
+						return ErrInvalid
+					}
+					wait := objectValue(v)
+					if oneOf(wait["kind"], "package-operation", "apply") {
+						mapped := binding.Operations[stringValue(wait["id"])]
+						if mapped == "" {
+							return ErrInvalid
+						}
+						wait["id"] = mapped
+						raw, err := contracts.EncodeCanonicalJSON(wait)
+						if err != nil {
+							return ErrInvalid
+						}
+						row["wait_ref_json"] = string(raw)
+					}
+				}
+			}
+			if table == "agent_evidence" {
+				if row["kind"] == "package" {
+					if mapped := binding.Operations[stringValue(row["object_ref"])]; mapped != "" {
+						row["object_ref"] = mapped
+					}
+				}
+				if row["details_json"] != nil {
+					v, err := historyJSON(row["details_json"])
+					if err != nil {
+						return ErrInvalid
+					}
+					details := objectValue(v)
+					if details["verificationContractVersion"] == int64(1) {
+						mapped := contexts[stringValue(details["contextIdentity"])]
+						if mapped == "" {
+							return ErrInvalid
+						}
+						details["contextIdentity"] = mapped
+						raw, err := contracts.EncodeCanonicalJSON(details)
+						if err != nil {
+							return ErrInvalid
+						}
+						row["details_json"] = string(raw)
+					}
+				}
+			}
+			if table == "sessions" && row["model_preference_json"] != nil {
+				v, err := historyJSON(row["model_preference_json"])
+				if err != nil {
+					return ErrInvalid
+				}
+				pref := objectValue(v)
+				if !validHistoryModel(pref) {
+					return ErrInvalid
+				}
+				matches := []map[string]any{}
+				for _, model := range binding.Models {
+					if !validHistoryModel(model) {
+						return ErrInvalid
+					}
+					if model["provider"] == pref["provider"] && model["model"] == pref["model"] && reflect.DeepEqual(normalizedEndpoint(model["baseUrl"]), normalizedEndpoint(pref["baseUrl"])) {
+						matches = append(matches, model)
+					}
+				}
+				if pref["modelRef"] == nil {
+					pref["availability"] = "available"
+				} else if len(matches) == 1 {
+					pref = map[string]any{}
+					for key, value := range matches[0] {
+						pref[key] = value
+					}
+					pref["availability"] = "available"
+				} else {
+					pref["availability"] = "unavailable"
+				}
+				raw, err := contracts.EncodeCanonicalJSON(pref)
+				if err != nil {
+					return ErrInvalid
+				}
+				row["model_preference_json"] = string(raw)
 			}
 			values := make([]any, len(columns))
 			for i, column := range columns {
@@ -178,4 +301,19 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 		return err
 	}
 	return unix.Fsync(root)
+}
+
+func normalizedEndpoint(value any) any {
+	if value == nil {
+		return nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return value
+	}
+	endpoint, err := contracts.NormalizeModelEndpoint(&text)
+	if err != nil {
+		return value
+	}
+	return *endpoint
 }

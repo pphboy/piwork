@@ -8,6 +8,13 @@ import { validatePiPackageArtifact } from "@piwork/pi-package";
 import { createPackageResourceLoader, packageNameKey } from "./package-resources.js";
 import { initializeChildAgentDirectory, PiSdkRunExecutor, resolveProductionModel, writeChildAgentModelFiles } from "./pi-sdk-executor.js";
 import type { AgentSessionService } from "./sessions.js";
+import { AgentSessionService as RealAgentSessions } from "./sessions.js";
+import { AgentDaemonControl } from "./daemon.js";
+import { RunManager } from "./runs.js";
+import { AgentRunModels } from "./run-models.js";
+import { WorkStore } from "@piwork/work-store";
+import { createServer } from "node:http";
+import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 
 test("registers an Anthropic-compatible custom model at the configured endpoint", async () => {
   const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false });
@@ -41,6 +48,55 @@ test("rejects an unknown model without an Anthropic-compatible endpoint", async 
     () => resolveProductionModel(runtime, { provider: "anthropic", id: "unknown-custom-model" }),
     /configured model is not available/,
   );
+});
+
+test("actual SDK continues one Session with independently authenticated Run models and no persisted override credential", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-run-model-sdk-"));
+  const observed: Array<{ model: string; key: string }> = [];
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const input = JSON.parse(Buffer.concat(chunks).toString()) as { model: string };
+    observed.push({ model: input.model, key: String(request.headers["x-api-key"] ?? "") });
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    const emit = (type: string, payload: unknown) => response.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+    emit("message_start", { type: "message_start", message: { id: "fixture-message", type: "message", role: "assistant", model: input.model, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } });
+    emit("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    emit("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: `actual-model:${input.model}` } });
+    emit("content_block_stop", { type: "content_block_stop", index: 0 });
+    emit("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } });
+    emit("message_stop", { type: "message_stop" }); response.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const store = WorkStore.open(join(root, "work.sqlite"));
+  try {
+    const workspace = join(root, "workspace"), agentDirectory = join(root, "agent"); await mkdir(workspace); await mkdir(agentDirectory);
+    const credentialPath = join(root, "default-key"); await writeFile(credentialPath, "default-private-fixture-key\n");
+    const selected = { modelRef: "catalog-model-0002", label: "Second", provider: "anthropic", model: "fixture-model-two", baseUrl };
+    const modelConfig = { provider: "anthropic", id: "fixture-model-one", baseUrl, credentialPath, deterministic: false };
+    const models = new AgentRunModels(modelConfig, {
+      async models() { throw new Error("unused"); }, async resolveModel(ref) { return ref === null ? { model: { modelRef: null, label: "Default", provider: modelConfig.provider, model: modelConfig.id, baseUrl }, credential: "default-private-fixture-key" } : { model: selected, credential: "override-private-fixture-key" }; },
+    });
+    const sessions = new RealAgentSessions("work-model", store, workspace, join(root, "sessions"), "context-model"); const session = sessions.create();
+    const executor = new PiSdkRunExecutor(sessions, agentDirectory, modelConfig, { models, resolvedTools: [], resourceLoaderFactory: async () => {
+      const loader = new DefaultResourceLoader({ cwd: workspace, agentDir: agentDirectory, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
+      await loader.reload(); return loader;
+    } });
+    const daemon = new AgentDaemonControl({ workId: "work-model", generation: 1, instanceId: "agent-model" });
+    daemon.configure({ modelCredentialStatus: "available", contextIdentity: "context-model", loadedSkills: [], resolvedTools: [], initializationComplete: true });
+    const manager = new RunManager(store, daemon, executor, undefined, models);
+    const first = await manager.submitChat({ workId: "work-model", sessionId: session.sessionId, submissionKey: "first", prompt: "Answer one", modelRef: null });
+    assert.equal((await manager.wait(first.run.runId)).finalText, "actual-model:fixture-model-one");
+    const second = await manager.submitChat({ workId: "work-model", sessionId: session.sessionId, submissionKey: "second", prompt: "Answer two", modelRef: selected.modelRef });
+    assert.equal((await manager.wait(second.run.runId)).finalText, "actual-model:fixture-model-two");
+    assert.deepEqual(observed, [{ model: "fixture-model-one", key: "default-private-fixture-key" }, { model: "fixture-model-two", key: "override-private-fixture-key" }]);
+    const history = await readFile(session.sdkHistoryPath, "utf8");
+    assert.match(history, /fixture-model-one/); assert.match(history, /fixture-model-two/);
+    assert.doesNotMatch(history + JSON.stringify(manager.watch(first.run.runId)) + JSON.stringify(manager.watch(second.run.runId)) + JSON.stringify(store.getRun(second.run.runId)), /private-fixture-key/);
+    assert.equal(await readFile(credentialPath, "utf8"), "default-private-fixture-key\n");
+    const db = await readFile(join(root, "work.sqlite")); assert.equal(db.includes(Buffer.from("override-private-fixture-key")), false);
+  } finally { store.close(); await new Promise<void>((resolve) => server.close(() => resolve())); await rm(root, { recursive: true, force: true }); }
 });
 
 test("child Pi reads only the selected Work model and credential from private files", async () => {
@@ -85,7 +141,7 @@ export default function (pi) {
   pi.on("session_shutdown", (event) => { appendFileSync(${JSON.stringify(events)}, "shutdown:" + event.reason + "\\n");
     if (existsSync(${JSON.stringify(join(root, "fail-shutdown"))})) throw new Error("fixture shutdown failed"); });
   pi.registerTool({ name: "hello", label: "Hello", description: "Lifecycle tool", parameters: { type: "object", properties: {} },
-    execute: async () => ({ content: [{ type: "text", text: "lifecycle-ok" }] }) });
+    execute: async () => ({ content: [{ type: "text", text: "lifecycle-ok" }], details: { checks: [{ name: "actual_lifecycle", passed: true, summary: "Actual extension execution" }] } }) });
 }
 `);
     const metadata = (await validatePiPackageArtifact({ root: packageRoot, sourceKind: "local", resolvedSource: "fixture",
@@ -93,18 +149,24 @@ export default function (pi) {
         variant: null, nodeAbi: process.versions.modules, piSdkVersion: "0.86.1" } })).metadata;
     const sessions = { workspaceDirectory: () => workspace, continue: () => SessionManager.inMemory(workspace) } as unknown as AgentSessionService;
     let loaders = 0;
+    const actualResults: Array<{ toolName: string; args: unknown; result: unknown }> = [];
     const executor = new PiSdkRunExecutor(sessions, agentDirectory,
       { provider: "piwork-deterministic", id: "fixture-v1", deterministic: true },
       { resourceLoaderFactory: async () => { loaders += 1; return (await createPackageResourceLoader({
         root: join(root, "packages"), bindings: [{ name, nameKey: key, artifact: metadata }],
         selection: [{ name, enabled: true }], standaloneSkills: [], agentsMd: "# Agent\n", workspace, agentDirectory,
-      })).loader; }, resolvedTools: ["hello"] });
+      })).loader; }, resolvedTools: ["hello"], onSdkToolResult: (_run, result) => { actualResults.push(result); } });
     for (const sessionId of ["session-one", "session-two"]) {
       const result = await executor.execute({ workId: "work-000000000001", sessionId, runId: `run-${sessionId}`,
         prompt: "invoke package tool hello", signal: new AbortController().signal, emit() {} });
       assert.match(result.finalText, /package-tool-result:hello:lifecycle-ok/);
     }
     assert.equal(loaders, 2);
+    assert.equal(actualResults.length, 2);
+    for (const result of actualResults) {
+      assert.equal(result.toolName, "hello"); assert.deepEqual(result.args, {});
+      assert.deepEqual((result.result as { details: unknown }).details, { checks: [{ name: "actual_lifecycle", passed: true, summary: "Actual extension execution" }] });
+    }
     assert.deepEqual((await readFile(events, "utf8")).trim().split("\n"),
       ["start", "agent-start", "shutdown:quit", "start", "agent-start", "shutdown:quit"]);
     await writeFile(join(root, "fail-start"), "1");

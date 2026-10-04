@@ -184,7 +184,21 @@ func (a *Application) runCorePackageJob(parent context.Context, job corestore.Pa
 		return
 	}
 	identity := dockerengine.PackageIdentity{WorkID: packageWorkID(job), JobID: job.OperationID}
-	prepared, err := packageprepare.Prepare(ctx, packageprepare.Input{Runtime: a.dockerRuntime, Identity: identity, Epoch: job.WorkerEpoch, PrepareImageID: job.PrepareImageID, TrustedImageID: job.TrustedHelperImageID, SourceDirectory: sourceDir, SpoolDirectory: spoolDir, Environment: environment,
+	brainVolume, brainDigest := "", ""
+	if source.Kind == "brain" {
+		if source.Brain == nil || job.WorkID == nil {
+			a.finishCorePackage(job, stage, pipackage.ErrSource, false)
+			return
+		}
+		if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+			return tx.QueryRow(`SELECT runtime_name FROM volume_records WHERE work_id=? AND volume_role='workspace' AND purged_at IS NULL`, *job.WorkID).Scan(&brainVolume)
+		}); err != nil {
+			a.finishCorePackage(job, stage, err, false)
+			return
+		}
+		brainDigest = string(source.Brain.ExpectedSourceDigest)
+	}
+	prepared, err := packageprepare.Prepare(ctx, packageprepare.Input{Runtime: a.dockerRuntime, Identity: identity, Epoch: job.WorkerEpoch, PrepareImageID: job.PrepareImageID, TrustedImageID: job.TrustedHelperImageID, SourceDirectory: sourceDir, SpoolDirectory: spoolDir, Environment: environment, BrainSourceVolume: brainVolume, ExpectedSourceDigest: brainDigest,
 		OnPlanned: func(ctx context.Context, spec dockerengine.PackageHelperSpec) error {
 			name := a.dockerRuntime.PackageHelperName(spec)
 			return a.advanceCorePackage(ctx, job, "prepare", nil, &name)
@@ -332,7 +346,23 @@ func (a *Application) materializeCorePackageSource(ctx context.Context, job core
 	if source.Kind == "core" {
 		return nil
 	}
-	if source.Kind == "upload" {
+	if source.Kind == "brain" {
+		if source.Brain == nil || job.WorkID == nil {
+			return pipackage.ErrSource
+		}
+		capture, _ := json.Marshal(map[string]any{"contractVersion": 1, "expectedSourceDigest": source.Brain.ExpectedSourceDigest})
+		file, err := root.OpenFile("capture-request.json", os.O_CREATE|os.O_EXCL|os.O_WRONLY|unix.O_NOFOLLOW, 0644)
+		if err != nil {
+			return err
+		}
+		_, writeErr := file.Write(capture)
+		syncErr := file.Sync()
+		closeErr := file.Close()
+		if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
+			return err
+		}
+		requestSource = map[string]string{"kind": "local", "displayName": "piwork-brain"}
+	} else if source.Kind == "upload" {
 		var upload corestore.PackageUpload
 		if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
 			var err error

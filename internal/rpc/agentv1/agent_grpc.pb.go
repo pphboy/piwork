@@ -19,22 +19,31 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_Readiness_FullMethodName                  = "/piwork.agent.v1.AgentService/Readiness"
-	AgentService_PrepareConfigurationChange_FullMethodName = "/piwork.agent.v1.AgentService/PrepareConfigurationChange"
-	AgentService_Drain_FullMethodName                      = "/piwork.agent.v1.AgentService/Drain"
-	AgentService_CreateSession_FullMethodName              = "/piwork.agent.v1.AgentService/CreateSession"
-	AgentService_ListSessions_FullMethodName               = "/piwork.agent.v1.AgentService/ListSessions"
-	AgentService_ReadSession_FullMethodName                = "/piwork.agent.v1.AgentService/ReadSession"
-	AgentService_SubmitRun_FullMethodName                  = "/piwork.agent.v1.AgentService/SubmitRun"
-	AgentService_GetRun_FullMethodName                     = "/piwork.agent.v1.AgentService/GetRun"
-	AgentService_WatchRun_FullMethodName                   = "/piwork.agent.v1.AgentService/WatchRun"
-	AgentService_CancelRun_FullMethodName                  = "/piwork.agent.v1.AgentService/CancelRun"
+	AgentService_RefreshServiceInteractionBindings_FullMethodName = "/piwork.agent.v1.AgentService/RefreshServiceInteractionBindings"
+	AgentService_Readiness_FullMethodName                         = "/piwork.agent.v1.AgentService/Readiness"
+	AgentService_PrepareConfigurationChange_FullMethodName        = "/piwork.agent.v1.AgentService/PrepareConfigurationChange"
+	AgentService_Drain_FullMethodName                             = "/piwork.agent.v1.AgentService/Drain"
+	AgentService_CreateSession_FullMethodName                     = "/piwork.agent.v1.AgentService/CreateSession"
+	AgentService_ListSessions_FullMethodName                      = "/piwork.agent.v1.AgentService/ListSessions"
+	AgentService_ReadSession_FullMethodName                       = "/piwork.agent.v1.AgentService/ReadSession"
+	AgentService_SubmitRun_FullMethodName                         = "/piwork.agent.v1.AgentService/SubmitRun"
+	AgentService_GetRun_FullMethodName                            = "/piwork.agent.v1.AgentService/GetRun"
+	AgentService_WatchRun_FullMethodName                          = "/piwork.agent.v1.AgentService/WatchRun"
+	AgentService_CancelRun_FullMethodName                         = "/piwork.agent.v1.AgentService/CancelRun"
+	AgentService_ListRunModels_FullMethodName                     = "/piwork.agent.v1.AgentService/ListRunModels"
+	AgentService_SetSessionModel_FullMethodName                   = "/piwork.agent.v1.AgentService/SetSessionModel"
+	AgentService_ListAgentRequests_FullMethodName                 = "/piwork.agent.v1.AgentService/ListAgentRequests"
+	AgentService_GetAgentRequest_FullMethodName                   = "/piwork.agent.v1.AgentService/GetAgentRequest"
+	AgentService_CancelAgentRequest_FullMethodName                = "/piwork.agent.v1.AgentService/CancelAgentRequest"
+	AgentService_RetryAgentRequest_FullMethodName                 = "/piwork.agent.v1.AgentService/RetryAgentRequest"
+	AgentService_GetAgentEvidence_FullMethodName                  = "/piwork.agent.v1.AgentService/GetAgentEvidence"
 )
 
 // AgentServiceClient is the client API for AgentService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AgentServiceClient interface {
+	RefreshServiceInteractionBindings(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	Readiness(ctx context.Context, in *ReadinessRequest, opts ...grpc.CallOption) (*ReadinessResponse, error)
 	PrepareConfigurationChange(ctx context.Context, in *PrepareConfigurationChangeRequest, opts ...grpc.CallOption) (*PrepareConfigurationChangeResponse, error)
 	Drain(ctx context.Context, in *DrainRequest, opts ...grpc.CallOption) (*DrainResponse, error)
@@ -45,6 +54,13 @@ type AgentServiceClient interface {
 	GetRun(ctx context.Context, in *GetRunRequest, opts ...grpc.CallOption) (*Run, error)
 	WatchRun(ctx context.Context, in *WatchRunRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RunEvent], error)
 	CancelRun(ctx context.Context, in *CancelRunRequest, opts ...grpc.CallOption) (*Run, error)
+	ListRunModels(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	SetSessionModel(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*Session, error)
+	ListAgentRequests(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	GetAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	CancelAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	RetryAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	GetAgentEvidence(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 }
 
 type agentServiceClient struct {
@@ -53,6 +69,16 @@ type agentServiceClient struct {
 
 func NewAgentServiceClient(cc grpc.ClientConnInterface) AgentServiceClient {
 	return &agentServiceClient{cc}
+}
+
+func (c *agentServiceClient) RefreshServiceInteractionBindings(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_RefreshServiceInteractionBindings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *agentServiceClient) Readiness(ctx context.Context, in *ReadinessRequest, opts ...grpc.CallOption) (*ReadinessResponse, error) {
@@ -164,10 +190,81 @@ func (c *agentServiceClient) CancelRun(ctx context.Context, in *CancelRunRequest
 	return out, nil
 }
 
+func (c *agentServiceClient) ListRunModels(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_ListRunModels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) SetSessionModel(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*Session, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Session)
+	err := c.cc.Invoke(ctx, AgentService_SetSessionModel_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) ListAgentRequests(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_ListAgentRequests_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) GetAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_GetAgentRequest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) CancelAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_CancelAgentRequest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) RetryAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_RetryAgentRequest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) GetAgentEvidence(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_GetAgentEvidence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
 type AgentServiceServer interface {
+	RefreshServiceInteractionBindings(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	Readiness(context.Context, *ReadinessRequest) (*ReadinessResponse, error)
 	PrepareConfigurationChange(context.Context, *PrepareConfigurationChangeRequest) (*PrepareConfigurationChangeResponse, error)
 	Drain(context.Context, *DrainRequest) (*DrainResponse, error)
@@ -178,6 +275,13 @@ type AgentServiceServer interface {
 	GetRun(context.Context, *GetRunRequest) (*Run, error)
 	WatchRun(*WatchRunRequest, grpc.ServerStreamingServer[RunEvent]) error
 	CancelRun(context.Context, *CancelRunRequest) (*Run, error)
+	ListRunModels(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	SetSessionModel(context.Context, *AgentContentRequest) (*Session, error)
+	ListAgentRequests(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	GetAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	CancelAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	RetryAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	GetAgentEvidence(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -188,6 +292,9 @@ type AgentServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAgentServiceServer struct{}
 
+func (UnimplementedAgentServiceServer) RefreshServiceInteractionBindings(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RefreshServiceInteractionBindings not implemented")
+}
 func (UnimplementedAgentServiceServer) Readiness(context.Context, *ReadinessRequest) (*ReadinessResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Readiness not implemented")
 }
@@ -218,6 +325,27 @@ func (UnimplementedAgentServiceServer) WatchRun(*WatchRunRequest, grpc.ServerStr
 func (UnimplementedAgentServiceServer) CancelRun(context.Context, *CancelRunRequest) (*Run, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CancelRun not implemented")
 }
+func (UnimplementedAgentServiceServer) ListRunModels(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListRunModels not implemented")
+}
+func (UnimplementedAgentServiceServer) SetSessionModel(context.Context, *AgentContentRequest) (*Session, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetSessionModel not implemented")
+}
+func (UnimplementedAgentServiceServer) ListAgentRequests(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListAgentRequests not implemented")
+}
+func (UnimplementedAgentServiceServer) GetAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAgentRequest not implemented")
+}
+func (UnimplementedAgentServiceServer) CancelAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelAgentRequest not implemented")
+}
+func (UnimplementedAgentServiceServer) RetryAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RetryAgentRequest not implemented")
+}
+func (UnimplementedAgentServiceServer) GetAgentEvidence(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAgentEvidence not implemented")
+}
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
 
@@ -237,6 +365,24 @@ func RegisterAgentServiceServer(s grpc.ServiceRegistrar, srv AgentServiceServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&AgentService_ServiceDesc, srv)
+}
+
+func _AgentService_RefreshServiceInteractionBindings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).RefreshServiceInteractionBindings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_RefreshServiceInteractionBindings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).RefreshServiceInteractionBindings(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _AgentService_Readiness_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -412,6 +558,132 @@ func _AgentService_CancelRun_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_ListRunModels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).ListRunModels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_ListRunModels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).ListRunModels(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_SetSessionModel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).SetSessionModel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_SetSessionModel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).SetSessionModel(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_ListAgentRequests_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).ListAgentRequests(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_ListAgentRequests_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).ListAgentRequests(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_GetAgentRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetAgentRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetAgentRequest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetAgentRequest(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_CancelAgentRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).CancelAgentRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_CancelAgentRequest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).CancelAgentRequest(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_RetryAgentRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).RetryAgentRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_RetryAgentRequest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).RetryAgentRequest(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_GetAgentEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetAgentEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetAgentEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetAgentEvidence(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -419,6 +691,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "piwork.agent.v1.AgentService",
 	HandlerType: (*AgentServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "RefreshServiceInteractionBindings",
+			Handler:    _AgentService_RefreshServiceInteractionBindings_Handler,
+		},
 		{
 			MethodName: "Readiness",
 			Handler:    _AgentService_Readiness_Handler,
@@ -454,6 +730,34 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelRun",
 			Handler:    _AgentService_CancelRun_Handler,
+		},
+		{
+			MethodName: "ListRunModels",
+			Handler:    _AgentService_ListRunModels_Handler,
+		},
+		{
+			MethodName: "SetSessionModel",
+			Handler:    _AgentService_SetSessionModel_Handler,
+		},
+		{
+			MethodName: "ListAgentRequests",
+			Handler:    _AgentService_ListAgentRequests_Handler,
+		},
+		{
+			MethodName: "GetAgentRequest",
+			Handler:    _AgentService_GetAgentRequest_Handler,
+		},
+		{
+			MethodName: "CancelAgentRequest",
+			Handler:    _AgentService_CancelAgentRequest_Handler,
+		},
+		{
+			MethodName: "RetryAgentRequest",
+			Handler:    _AgentService_RetryAgentRequest_Handler,
+		},
+		{
+			MethodName: "GetAgentEvidence",
+			Handler:    _AgentService_GetAgentEvidence_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

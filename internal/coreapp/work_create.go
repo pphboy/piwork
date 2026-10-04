@@ -59,6 +59,20 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 	if a.Status().State != "READY" || a.engine == nil || a.inspector == nil {
 		return output, contracts.NewError("RUNTIME_UNAVAILABLE", "")
 	}
+	// Reject an already occupied name before package environment probes or
+	// context copying; the acceptance transaction repeats this check for races.
+	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM works WHERE owner_user_id=? AND name=? UNION ALL SELECT 1 FROM work_import_names WHERE owner_user_id=? AND name=?)`, actor.UserID, name, actor.UserID, name).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			return contracts.NewError("CONFLICT", "")
+		}
+		return nil
+	}); err != nil {
+		return output, err
+	}
 	_, configured, err := a.Settings.LoadRuntime()
 	if err != nil || !configured {
 		return output, contracts.NewError("RUNTIME_UNAVAILABLE", "")

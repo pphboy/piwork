@@ -16,10 +16,10 @@ import (
 	"time"
 )
 
-type Paths struct{ WorkRoot, SpoolRoot, SourceRoot, HostModuleRoot string }
+type Paths struct{ WorkRoot, SpoolRoot, SourceRoot, HostModuleRoot, BrainSourceRoot string }
 
 func DefaultPaths() Paths {
-	return Paths{"/package/work", "/package/spool", "/package/source", "/workspace/node_modules"}
+	return Paths{"/package/work", "/package/spool", "/package/source", "/workspace/node_modules", "/brain-source"}
 }
 
 type Helper struct {
@@ -70,6 +70,8 @@ func (h Helper) Run(ctx context.Context, action string) (any, error) {
 		return struct {
 			Bytes int64 `json:"bytes"`
 		}{size}, err
+	case "source-capture":
+		return h.captureBrainSource(ctx)
 	case "capture":
 		return h.capture(ctx)
 	case "prepare":

@@ -88,3 +88,6 @@ piwork-cli work start <importedWorkId> --wait
 ```
 
 导出只接受已停止的 Work；离线 `inspect` 不读取登录凭证，不连接 Core，也不判断目标安装是否兼容。导入得到 stopped Work，必须显式 Start。若下载中断，保留原 `snapshotId`，用 `work snapshot download <snapshotId> --output ./saved.work` 从头重取；不会重新发起导出。完整数据边界和保留期见 [快照](work-snapshot.md)。
+
+
+Chat JSON Run markers include only the accepted safe `actualModel` description, `source`, and `adoptedExperienceVersion`; existing chat arguments are unchanged. Credentials and private endpoints remain inside Go Core/Agent execution. The Desktop local API allowlists Work models, Session model preference PATCH and original request/evidence reads and cancel/retry, using the same current user, CSRF and credential-generation fence as the existing Work API. Query fields and pagination are strict; request details reject list-only filters. Cancellation and retry are runtime mutations and are rejected when the Work is stopped.

@@ -179,8 +179,74 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "AgentEvidenceQuerySchema":
+				value, err := Decode[AgentEvidenceQuery](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentEvidenceSchema":
+				value, err := Decode[AgentEvidence](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentRequestDetailSchema":
+				value, err := Decode[AgentRequestDetail](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentRequestDispositionSchema":
+				value, err := Decode[AgentRequestDisposition](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentRequestedPayloadSchema":
+				value, err := Decode[AgentRequestedPayload](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentRequestPageSchema":
+				value, err := Decode[AgentRequestPage](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentRequestQuerySchema":
+				value, err := Decode[AgentRequestQuery](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentRequestSchema":
+				value, err := Decode[AgentRequest](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentRequestStateSchema":
+				value, err := Decode[AgentRequestState](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentRunSourceSchema":
+				value, err := Decode[AgentRunSource](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "AgentRuntimeConfigSchema":
 				value, err := Decode[AgentRuntimeConfig](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentWaitRefSchema":
+				value, err := Decode[AgentWaitRef](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -205,6 +271,30 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "ArtifactReferenceSchema":
 				value, err := Decode[ArtifactReference](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "BrainBehaviorChecksSchema":
+				value, err := Decode[BrainBehaviorChecks](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "BrainCandidateSubmissionSchema":
+				value, err := Decode[BrainCandidateSubmission](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "BrainVerificationTargetSchema":
+				value, err := Decode[BrainVerificationTarget](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "BusinessOperationStateSchema":
+				value, err := Decode[BusinessOperationState](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -563,6 +653,30 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "RetryAgentRequestSchema":
+				value, err := Decode[RetryAgentRequest](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "RunModelDescriptionSchema":
+				value, err := Decode[RunModelDescription](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "RunModelListSchema":
+				value, err := Decode[RunModelList](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "RunModelSelectorSchema":
+				value, err := Decode[RunModelSelector](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "RuntimeSkillSchema":
 				value, err := Decode[RuntimeSkill](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -599,6 +713,24 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "ServiceActionResultSchema":
+				value, err := Decode[ServiceActionResult](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ServiceCapabilitiesSchema":
+				value, err := Decode[ServiceCapabilities](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ServiceConnectionSchema":
+				value, err := Decode[ServiceConnection](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "ServiceDefinitionInputSchema":
 				value, err := Decode[ServiceDefinitionInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -617,8 +749,20 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "ServiceEventSchema":
+				value, err := Decode[ServiceEvent](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "ServiceImageSchema":
 				value, err := Decode[ServiceImage](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ServiceJobResultSchema":
+				value, err := Decode[ServiceJobResult](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -631,6 +775,18 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "ServicePortSchema":
 				value, err := Decode[ServicePort](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ServiceQueryResultSchema":
+				value, err := Decode[ServiceQueryResult](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SetSessionModelSchema":
+				value, err := Decode[SetSessionModel](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -673,6 +829,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "SnapshotIdempotencyKeySchema":
 				value, err := Decode[SnapshotIdempotencyKey](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SubmitRunInputSchema":
+				value, err := Decode[SubmitRunInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}

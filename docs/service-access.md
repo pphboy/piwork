@@ -40,3 +40,13 @@ CGO_ENABLED=0 go test -mod=readonly -tags=integration -v ./internal/coreapp \
 ```
 
 测试只清理其 installation 标记的资源。证据和具体场景见 [Go 迁移验收](go-migration-acceptance.md)。用户使用 `piwork-cli proxy` 访问 `.work` 域名，或使用 `piwork-cli desktop` 的本机 Service 链接在浏览器直接打开；WebDAV 也由同一个 CLI proxy 提供，详见 [Work 文件访问](work-files.md)。本页的 Core 网关路径仅用于平台集成。
+
+## Service ↔ Pi 直接交互
+
+Go 在 Service 实例创建前持久化专属随机身份，确认容器归属后绑定 containerId。容器只读挂载 `/etc/piwork/interaction/config.json` 和同目录的安装 CA：config 包含当前 Work/持久 Service ID、Service 名称、Bearer token 和 `https://agentd:7444`。这些文件位于 Core 私有运行目录，不进入 workspace/private volume 的 `.work` 导出。Stop/Remove 撤销，Restart/重建更换 token；Agent-only Apply 不改运行 Service 身份。只能用当前 ready Agent 的安装/Work/代次/instance mTLS 身份调用 `GetServiceInteractionBindings`，用户或 Service 不能读取该私有接口。解析目标时核对完整 Docker 归属标签、实际容器 ID、持久 revision 和声明端口，不接受调用者 URL。
+
+Pi 开发服务时创建 `.pi/services/<name>.json`，声明 `{contractVersion:1,serviceName,apiPortName,mode:"pi-managed"}`。Agent 从当前私有绑定直连声明的 API 端口，Service 核对相同 token。`GET /pi/v1/capabilities` 描述查询/动作/事件原因和 Job 支持，Agent 按这些声明调用；普通外部服务使用 `mode:"external"`，只有运行状态观察，不强制插桩。
+
+Service 将持久 outbox 的原事件以 Bearer 发送到 Agent `POST /pi/v1/events`，先写 WorkStore 再回 receipt。页面事实只保留 pathname，普通事实不调用模型；只有声明原因的 `agent.requested` 创建目标。Service 只可查询/取消自己的 `/pi/v1/requests/:requestId`。同持久实体 Restart 后仍用原 outbox 事件和新 token 重投，原 origin 和 eventId 不改，Agent 返回原 receipt；导入副本有新 Work/Service ID，不能冒领源事件。普通事件、请求、Action/Job 的内容不会经由 Core 中转。
+
+业务 Action 使用稳定 actionId、声明 input 和预期 stateVersion，Service 原子判定同键异内容/并发状态冲突；Agent 在发送前记录效果身份，响应丢失只 GET 原 Action，禁止重复 POST。异步结果通过原 Job ID 和有界查询核对。服务无法连接 Agent 时保留原 outbox，收到已持久化 receipt 后才确认投递。

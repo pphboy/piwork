@@ -10,7 +10,7 @@ import (
 )
 
 func TestRebuildMapsManagedIdentityAndPreservesOpaqueContent(t *testing.T) {
-	test := oracle(t)[0]
+	test := historyCases(t)[0]
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	copyFixture(t, test.Name, source)

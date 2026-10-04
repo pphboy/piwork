@@ -58,7 +58,7 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 	if err := initial.Close(); err != nil {
 		t.Fatal(err)
 	}
-	a, base, _ := appFixture(t, Options{DataDirectory: dataDir, DockerOptions: dockerengine.SelectionOptions{DockerHost: host, DockerConfig: t.TempDir()}, Initialization: Initialization{
+	a, base, _ := appFixture(t, Options{AgentGRPCListen: "0.0.0.0:0", DataDirectory: dataDir, DockerOptions: dockerengine.SelectionOptions{DockerHost: host, DockerConfig: t.TempDir()}, Initialization: Initialization{
 		Administrator: &struct{ Account, Password string }{"admin", "development-fixture-pass"},
 		Runtime:       &RuntimeInput{AgentImage: imageRef, Provider: "piwork-deterministic", Model: "fixture-v1", Credential: "acceptance-only"},
 	}})
@@ -94,6 +94,7 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 		}
 	}
 	configuration := `{"agentImage":{"catalogId":"agent-image-0001"},"skills":[],"packages":[],"agentsMd":"","modelRef":"model-reference-1","mcpServers":[],"resources":{"cpuMillis":2000,"memoryBytes":1610612736,"agentCpuMillis":1000,"agentMemoryBytes":805306368,"maxServices":4,"maxRetainedVolumes":2},"tools":{"allowed":[],"denied":[]}}`
+	configuration = strings.Replace(configuration, "model-reference-1", string(runtimeModelCatalogID(profile.Revision)), 1)
 	metadata := `{"version":1,"snapshotId":"` + contextID + `","workId":"` + workID + `","imageIdentity":"` + image.ID + `","skills":[],"packageContractVersion":1,"packageBindings":[],"createdAt":"2026-09-30T00:00:00.000Z"}`
 	for name, value := range map[string]string{"config.json": configuration, "metadata.json": metadata, "AGENTS.md": ""} {
 		if err := os.WriteFile(filepath.Join(contextDir, name), []byte(value), 0644); err != nil {
@@ -429,7 +430,7 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 	if configurationErr != nil || closingErr != nil {
 		t.Fatal("could not update offline defaults", configurationErr, closingErr)
 	}
-	b, nextBase, _ := appFixture(t, Options{DataDirectory: dataDir, DockerOptions: dockerengine.SelectionOptions{DockerHost: host, DockerConfig: t.TempDir()}})
+	b, nextBase, _ := appFixture(t, Options{AgentGRPCListen: "0.0.0.0:0", DataDirectory: dataDir, DockerOptions: dockerengine.SelectionOptions{DockerHost: host, DockerConfig: t.TempDir()}})
 	if b.Status().State != "READY" {
 		t.Fatal("Go Core did not recover desired-running Work", b.Status())
 	}

@@ -44,8 +44,9 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
       else if (r.path === 'works/work-1/configuration') { if (r.method === 'PUT') desired = JSON.parse(r.body).configuration; reply = { json: { desired, active: desired, pendingApply: false, runtime: { state: 'ready' } } }; }
       else if (r.path.endsWith('/services')) reply = { json: { services: [] } };
       else if (r.path.endsWith('/packages')) reply = { json: { packages: [] } };
+      else if (r.path.endsWith('/models')) reply = {json:{models:[{modelRef:'model-test-0000000001',label:'Test model',provider:'fixture',model:'one'}],defaultModel:{modelRef:null,label:'Work model',provider:'fixture',model:'one'},availability:'available',checkedAt:new Date().toISOString()}};
       else if (r.path.endsWith('/sessions')) reply = { json: { sessions: [{ sessionId: 'session-1' }] } };
-      else if (r.path.endsWith('/sessions/session-1')) reply = { json: { messages: [{ role: 'user', text: 'original prompt' }] } };
+      else if (r.path.endsWith('/sessions/session-1')) reply = { json: {session:{workId:'work-1',sessionId:'session-1',modelPreference:null,source:{kind:'chat'}},messages:[{role:'user',text:'original prompt'}],runs:[]} };
       else if (r.path.startsWith('operations/')) reply = { json: { state: 'succeeded', operationId: r.path.split('/')[1] } };
       else reply = { status: 404, json: { code: 'NOT_FOUND' } };
     }
@@ -158,7 +159,7 @@ for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'set
     if (r.path.startsWith('/_desktop/files/')) return { status:207, body:listing('original',mtime1) };
     if (r.path.endsWith('/sessions') && r.method==='POST') return { json:{sessionId:'session-new'} };
     if (r.path.endsWith('/sessions')) return { json:{sessions:[{sessionId:'session-1'},{sessionId:'session-2'}]} };
-    if (r.path.endsWith('/sessions/session-2')) return {json:{messages:[]}};
+    if (r.path.endsWith('/sessions/session-2')) return {json:{session:{workId:'work-1',sessionId:'session-2',modelPreference:null,source:{kind:'chat'}},messages:[],runs:[]}};
     if (r.path === 'operations/op-read') return {json:{operationId:'op-read',state:'running',workId:'work-1'}};
     if (r.path === 'known-operations/op-read') return {json:{}};
     if (r.path === 'work-snapshots/snap-read') return {json:{snapshotId:'snap-read',workId:'work-1',operationId:'op-read',state:'succeeded'}};

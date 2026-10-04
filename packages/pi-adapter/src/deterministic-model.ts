@@ -12,10 +12,12 @@ import { dirname, resolve } from "node:path";
 import { modelMcpToolName } from "./mcp-bridge.js";
 
 const PROVIDER_ID = "piwork-deterministic";
+import { deterministicWorkstation } from "./deterministic-workstation.js";
+
 const MODEL_ID = "fixture-v1";
 const serviceTool = (name: string) => modelMcpToolName("work-services", name);
 
-export async function createDeterministicRuntime(): Promise<{
+export async function createDeterministicRuntime(modelId = MODEL_ID): Promise<{
   readonly runtime: ModelRuntime;
   readonly model: Model<any>;
 }> {
@@ -28,7 +30,7 @@ export async function createDeterministicRuntime(): Promise<{
     streamSimple: streamDeterministic,
     models: [
       {
-        id: MODEL_ID,
+        id: modelId,
         name: "piwork deterministic fixture",
         reasoning: false,
         input: ["text"],
@@ -38,7 +40,7 @@ export async function createDeterministicRuntime(): Promise<{
       },
     ],
   });
-  const model = runtime.getModel(PROVIDER_ID, MODEL_ID);
+  const model = runtime.getModel(PROVIDER_ID, modelId);
   if (model === undefined) throw new Error("deterministic model registration failed");
   return { runtime, model };
 }
@@ -61,6 +63,8 @@ function streamDeterministic(
         : latestUser.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
       : "";
 
+    if (prompt.trim() === "identify current model") { emitText(stream, output, `${model.provider}/${model.id}`); return; }
+
     if (prompt.includes("wait for abort")) {
       await waitForAbort(options?.signal);
       output.stopReason = "aborted";
@@ -76,10 +80,13 @@ function streamDeterministic(
         ? [typeof message.content === "string" ? message.content : message.content.map((part) => part.text).join(""), ...Object.values(message.sections ?? {}).filter((section): section is string => typeof section === "string")]
         : [])
       .join("\n");
-    const manifestPath = decodeXml(systemPrompt.match(/<location>([^<]*\/SKILL\.md)<\/location>/)?.[1] ?? "");
+    const skillLocations = [...systemPrompt.matchAll(/<location>([^<]*\/SKILL\.md)<\/location>/g)].map((match) => decodeXml(match[1]!));
+    const manifestPath = skillLocations.find((path) => !path.includes("piwork-brain") && !path.includes("/skills/deploy-work-service/")) ?? "";
     const toolResults = context.messages.slice(latestUserIndex + 1).filter((message) => message.role === "toolResult");
+    const brainSkill = [...systemPrompt.matchAll(/<location>([^<]*\/SKILL\.md)<\/location>/g)].map((match) => decodeXml(match[1]!)).find((path) => path.includes("deploy-work-service")) ?? manifestPath;
+    if (deterministicWorkstation(stream, output, toolResults, brainSkill, prompt.trim())) return;
     if (prompt.includes("deploy deterministic service")) {
-      deterministicDeployment(stream, output, toolResults, manifestPath);
+      deterministicDeployment(stream, output, toolResults, brainSkill);
       return;
     }
     if (prompt.includes("inspect restored web service")) {
@@ -97,11 +104,19 @@ function streamDeterministic(
       deterministicRestoredService(stream, output, toolResults);
       return;
     }
-    const packageTool = /^invoke package tool ([A-Za-z0-9_-]{1,64})$/.exec(prompt.trim())?.[1];
+    const packageInvocation = /^invoke package tool ([A-Za-z0-9_-]{1,64})(?: with (\{.*\}))?$/.exec(prompt.trim());
+    const packageTool = packageInvocation?.[1];
     if (packageTool !== undefined) {
-      if (toolResults.length === 0) emitToolCall(stream, output, `package-${packageTool}`, packageTool, {});
+      if (toolResults.length === 0) emitToolCall(stream, output, `package-${packageTool}`, packageTool, packageInvocation?.[2] ? JSON.parse(packageInvocation[2]) as Record<string, unknown> : {});
       else emitText(stream, output, `package-tool-result:${packageTool}:${toolResultText(toolResults[0]!).trim()}`);
       return;
+    }
+    if (prompt.trim() === "inspect piwork brain candidate cognition") {
+      emitText(stream, output, `brain-candidate-new:${systemPrompt.includes("Workstation candidate cognition")}`); return;
+    }
+    if (prompt.trim() === "inspect piwork brain cognition") {
+      emitText(stream, output, systemPrompt.includes("Piwork workstation cognition")
+        ? `brain-cognition:${[...systemPrompt.matchAll(/experience adopted for this Run \(version (\d+)\)/g)].at(-1)?.[1] ?? "missing"}:${systemPrompt.includes("confirmed-fixture-rule")}` : "brain-cognition:disabled"); return;
     }
     if (toolResults.length === 0 && manifestPath !== "") {
       emitToolCall(stream, output, "fixture-read-manifest", "read", { path: manifestPath });

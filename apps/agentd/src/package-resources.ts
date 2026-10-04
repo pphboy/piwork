@@ -10,6 +10,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { PiPackageArtifactMetadata, PiPackageSelectionEntry } from "@piwork/contracts";
 import { assertPiPackageEnvironment, validatePiPackageArtifactSync } from "@piwork/pi-package";
+import { BRAIN_PACKAGE_NAME } from "@piwork/contracts";
+import type { ExperienceSnapshot } from "@piwork/work-store";
+import { brainPrompt, readBrainCognition } from "./brain-resources.js";
 
 export interface PackageBinding {
   readonly name: string;
@@ -36,10 +39,12 @@ export async function createPackageResourceLoader(input: {
   readonly agentsMd: string;
   readonly workspace: string;
   readonly agentDirectory: string;
+  readonly experience?: ExperienceSnapshot;
 }): Promise<{ readonly loader: ResourceLoader; readonly packages: readonly LoadedPackageResource[]; readonly resources: readonly { readonly packageName: string; readonly kind: string; readonly name: string }[]; readonly toolNames: ReadonlyMap<string, string> }> {
   if (input.bindings.length !== input.selection.length) throw new Error("package binding count mismatch");
   const enabledRoots: string[] = [];
   const packages: LoadedPackageResource[] = [];
+  let cognition: string | undefined;
   for (const [index, selected] of input.selection.entries()) {
     const binding = input.bindings[index];
     if (!binding || binding.name !== selected.name || binding.artifact.name !== selected.name
@@ -50,6 +55,7 @@ export async function createPackageResourceLoader(input: {
       variant: null, nodeAbi: process.versions.modules, piSdkVersion: VERSION });
     validatePiPackageArtifactSync(root, binding.artifact);
     if (selected.enabled) {
+      if (selected.name === BRAIN_PACKAGE_NAME) cognition = readBrainCognition(root);
       enabledRoots.push(realpathSync(root));
       packages.push({ name: selected.name, digest: binding.artifact.contentDigest, resourceCounts: binding.artifact.resourceCounts });
     }
@@ -67,9 +73,12 @@ export async function createPackageResourceLoader(input: {
     agentsFilesOverride: () => ({ agentsFiles: [{ path: "/run/piwork/AGENTS.md", content: input.agentsMd }] }),
     skillsOverride: (result) => ({ skills: [...input.standaloneSkills, ...result.skills], diagnostics: result.diagnostics }),
     systemPromptOverride: () => undefined,
-    appendSystemPromptOverride: () => [],
+    appendSystemPromptOverride: () => cognition === undefined ? [] : brainPrompt(cognition, input.experience),
   });
   await sdk.reload();
+  if (cognition !== undefined && input.standaloneSkills.some((skill) => skill.name === "deploy-work-service")) {
+    throw new Error("Duplicate deploy-work-service Skill. Remove the standalone deploy-work-service from desired Skills and Apply again to use the Skill inside piwork-brain.");
+  }
   const errors = [
     ...sdk.getExtensions().errors.map((item) => item.error),
     ...sdk.getSkills().diagnostics.filter((item) => item.type === "error" || item.type === "collision").map((item) => item.message),
@@ -79,7 +88,9 @@ export async function createPackageResourceLoader(input: {
   if (errors.length > 0) throw new Error("required package resource failed to load");
   const allNames = new Set<string>();
   for (const skill of sdk.getSkills().skills) {
-    if (allNames.has(`skill:${skill.name}`)) throw new Error(`duplicate package Skill ${skill.name}`);
+    if (allNames.has(`skill:${skill.name}`)) throw new Error(skill.name === "deploy-work-service"
+      ? "Duplicate deploy-work-service Skill. Remove the standalone deploy-work-service from desired Skills and Apply again to use the Skill inside piwork-brain."
+      : `duplicate package Skill ${skill.name}`);
     allNames.add(`skill:${skill.name}`);
   }
   for (const prompt of sdk.getPrompts().prompts) {

@@ -22,6 +22,7 @@ import (
 	"piwork/internal/dockerengine"
 	"piwork/internal/identity"
 	"piwork/internal/internaltls"
+	"piwork/internal/packageprepare"
 	"piwork/internal/safefs"
 	"piwork/internal/skillartifact"
 	"piwork/internal/workfiles"
@@ -63,6 +64,7 @@ type Status struct {
 	} `json:"checks"`
 }
 type Application struct {
+	prepareBrainForTest   func(context.Context) (packageprepare.Result, error)
 	Store                 *corestore.Store
 	Identity              *identity.Service
 	Settings              *Settings
@@ -245,11 +247,6 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 		cancel()
 		return nil, err
 	}
-	if err := a.ensureBundledSkill(ctx); err != nil {
-		root.Close()
-		cancel()
-		return nil, err
-	}
 	// A crash after publishing bytes but before committing the catalog can
 	// leave an unreferenced digest or staging directory. Reclaim it before
 	// this Core accepts another Skill operation.
@@ -393,9 +390,6 @@ func (a *Application) RefreshRuntime(request context.Context) error {
 	if err := a.ensureRuntimeCatalog(ctx, profile); err != nil {
 		return err
 	}
-	if err := a.Store.SyncDefaultWorkRuntime(ctx, profile.Revision, runtimeImageCatalogID(profile.Revision), runtimeModelCatalogID(profile.Revision), defaultWorkConfiguration(profile)); err != nil {
-		return err
-	}
 	if a.options.DependencyCheck != nil {
 		err = a.options.DependencyCheck(ctx, a, profile)
 	} else {
@@ -404,6 +398,13 @@ func (a *Application) RefreshRuntime(request context.Context) error {
 	if err != nil {
 		a.setState("RUNTIME_UNAVAILABLE", true, true, false)
 		return contracts.NewError("RUNTIME_UNAVAILABLE", "")
+	}
+	if err := a.ensureBundledBrain(ctx); err != nil {
+		a.setState("RUNTIME_UNAVAILABLE", true, true, false)
+		return contracts.NewError("RUNTIME_UNAVAILABLE", "")
+	}
+	if err := a.Store.SyncDefaultWorkRuntime(ctx, profile.Revision, runtimeImageCatalogID(profile.Revision), runtimeModelCatalogID(profile.Revision), defaultWorkConfiguration(profile)); err != nil {
+		return err
 	}
 	if a.dockerRuntime != nil && !a.packagesRecovered {
 		if err := a.recoverCorePackageJobs(ctx); err != nil {

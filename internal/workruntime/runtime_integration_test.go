@@ -6,20 +6,35 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/moby/moby/client"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"piwork/internal/corestore"
 	"piwork/internal/dockerengine"
 	"piwork/internal/internaltls"
 	"piwork/internal/rpc/agentv1"
+	"piwork/internal/rpc/servicesv1"
 	"piwork/internal/safefs"
 	"piwork/internal/testsupport"
 )
+
+// This runtime-layer test supplies the current authenticated model RPC. Full
+// catalog/default/secret semantics are exercised by actual Core app tests.
+type runtimeModelFixture struct {
+	servicesv1.UnimplementedWorkServicesServer
+}
+
+func (*runtimeModelFixture) ResolveRunModel(context.Context, *servicesv1.WorkPrivateRequest) (*servicesv1.RunModelResolution, error) {
+	return &servicesv1.RunModelResolution{ModelJson: `{"modelRef":null,"label":"fixture-v1","provider":"piwork-deterministic","model":"fixture-v1"}`, Credential: "fixture-key"}, nil
+}
 
 // Run against the full retained TS harness, using only the native Engine API
 // and the actual Go-generated runtime config, certificates, and Docker mounts.
@@ -125,7 +140,20 @@ func TestNativeCoreStartsRealTSAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := &Runtime{Docker: resources, Inspector: inspector, TLS: manager}
+	current := func(candidate internaltls.Scope) bool { return candidate == spec.Scope }
+	serverTLS, err := manager.CoreServerConfig(ctx, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(serverTLS)), grpc.UnaryInterceptor(internaltls.ServiceUnaryInterceptor(scope.ID(), current)))
+	servicesv1.RegisterWorkServicesServer(server, &runtimeModelFixture{})
+	t.Cleanup(func() { server.Stop(); listener.Close() })
+	go server.Serve(listener)
+	runtime := &Runtime{Docker: resources, Inspector: inspector, TLS: manager, Endpoint: net.JoinHostPort("piwork-core", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))}
 	wrong := spec
 	wrong.ImageID = "sha256:" + strings.Repeat("f", 64)
 	if started, err := runtime.Start(ctx, wrong); !errors.Is(err, ErrContext) || started.Client != nil {
@@ -199,7 +227,7 @@ func TestNativeCoreStartsRealTSAgent(t *testing.T) {
 	if err != nil || len(sessions.GetSessions()) != 1 || sessions.GetSessions()[0].GetSessionId() != session.GetSessionId() {
 		t.Fatal("TS harness did not persist Session", err)
 	}
-	accepted, err := started.Client.SubmitRun(ctx, session.GetSessionId(), "native-runtime-run", "hello")
+	accepted, err := started.Client.SubmitRun(ctx, session.GetSessionId(), "native-runtime-run", "hello", nil)
 	if err != nil || accepted.GetRun().GetRunId() == "" || accepted.GetReused() {
 		t.Fatal("real TS SDK Run was not accepted", err)
 	}

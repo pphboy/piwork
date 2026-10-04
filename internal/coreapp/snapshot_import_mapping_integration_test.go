@@ -466,7 +466,7 @@ func TestNativeSnapshotMovesServicesContextsAndPackagesBetweenOfflineInstallatio
 		t.Fatal("desired/active or source text changed", view)
 	}
 	metadata, err := workcontext.Metadata(target.Store, targetWork, *work.ActiveContextID)
-	if err != nil || len(metadata.PackageBindings) != 3 || metadata.PackageBindings[0].Artifact.ContentDigest != sourceMetadata.PackageBindings[0].Artifact.ContentDigest {
+	if err != nil || len(metadata.PackageBindings) != len(sourceMetadata.PackageBindings) || metadata.PackageBindings[0].Artifact.ContentDigest != sourceMetadata.PackageBindings[0].Artifact.ContentDigest {
 		t.Fatal("package identity changed", metadata, err)
 	}
 	proof := filepath.Join(target.options.DataDirectory, "works", targetWork, "contexts", *work.ActiveContextID, "skills/portable-skill/references/proof.txt")
@@ -489,7 +489,7 @@ func TestNativeSnapshotMovesServicesContextsAndPackagesBetweenOfflineInstallatio
 		}
 		provenance, identityTargets = value.SourceIdentityMap, value.Targets
 		var catalogPackages int
-		if err := tx.QueryRow(`SELECT count(*) FROM pi_package_catalog`).Scan(&catalogPackages); err != nil {
+		if err := tx.QueryRow(`SELECT count(*) FROM pi_package_catalog WHERE name<>'piwork-brain'`).Scan(&catalogPackages); err != nil {
 			return err
 		}
 		if catalogPackages != 0 {

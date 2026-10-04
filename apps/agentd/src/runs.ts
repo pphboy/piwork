@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { WorkStore, type AcceptedRun, type RunEventRecord, type RunRecord } from "@piwork/work-store";
 import { AgentDaemonControl } from "./daemon.js";
+import { type AgentRunSource, type RunModelSelector, type RunModelSnapshot } from "@piwork/contracts";
+import { canonicalJson, type RequestPhase } from "@piwork/work-store";
+import { BRAIN_LIMITS } from "@piwork/contracts";
+import { RunModelError, type RunModelResolver } from "./run-models.js";
 
 export interface RunExecutionContext {
   readonly workId: string;
@@ -9,6 +13,9 @@ export interface RunExecutionContext {
   readonly prompt: string;
   readonly contextIdentity?: string | null;
   readonly signal: AbortSignal;
+  readonly actualModel?: RunModelSnapshot;
+  readonly source?: AgentRunSource;
+  readonly adoptedExperienceVersion?: number;
   emit(eventType: string, payload: unknown): void;
 }
 
@@ -23,16 +30,22 @@ interface ActiveExecution {
 
 export class RunManager {
   private readonly active = new Map<string, ActiveExecution>();
+  private readonly settledListeners = new Set<(run: RunRecord) => void>();
 
   constructor(
     private readonly store: WorkStore,
     private readonly daemon: AgentDaemonControl,
     private readonly executor: RunExecutor,
     private readonly now: () => Date = () => new Date(),
+    private readonly models?: RunModelResolver,
   ) {}
 
   recover(): RunRecord[] {
     return this.store.interruptActiveRuns(this.now().toISOString());
+  }
+
+  onSettled(listener: (run: RunRecord) => void): () => void {
+    this.settledListeners.add(listener); return () => { this.settledListeners.delete(listener); };
   }
 
   submit(input: {
@@ -40,12 +53,19 @@ export class RunManager {
     readonly sessionId: string;
     readonly submissionKey: string;
     readonly prompt: string;
+    readonly selector?: RunModelSelector;
+    readonly actualModel?: RunModelSnapshot;
+    readonly agentRequest?: { readonly requestId: string; readonly phase: RequestPhase };
   }): AcceptedRun {
+    const selector = input.selector ?? { kind: "session-preference" };
+    const requestDigest = submissionDigest(input.sessionId, input.prompt, selector);
+    const replay = this.store.findRunReplay(input.workId, input.submissionKey, requestDigest);
+    if (replay) return { run: replay, reused: true };
     if (input.prompt.trim() === "") throw new Error("prompt must not be empty");
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
     const session = this.store.getSession(input.workId, input.sessionId);
-    if (session === undefined) throw new Error(`session ${input.sessionId} does not exist in Work ${input.workId}`);
-    const requestDigest = digest(JSON.stringify({ sessionId: input.sessionId, prompt: input.prompt }));
+    if (session === undefined) throw Object.assign(new Error(`session ${input.sessionId} does not exist in Work ${input.workId}`), {name: "SessionNotFoundError"});
+    if (session.contextIdentity && session.contextIdentity !== this.daemon.readiness().contextIdentity) throw Object.assign(new Error("Session context is unavailable"), {name: "SessionContextUnavailableError"});
     const accepted = this.store.acceptRun({
       workId: input.workId,
       sessionId: input.sessionId,
@@ -54,9 +74,46 @@ export class RunManager {
       promptDigest: digest(input.prompt),
       contextIdentity: session.contextIdentity ?? null,
       now: this.now().toISOString(),
+      modelSelectorJson: JSON.stringify(selector),
+      ...(input.actualModel ? { actualModelJson: JSON.stringify(input.actualModel) } : {}),
+      sourceJson: JSON.stringify({ kind: "chat" }),
+      ...(input.agentRequest ? { agentRequest: input.agentRequest } : {}),
     });
     if (!accepted.reused) this.launch(accepted.run, input.prompt);
     return accepted;
+  }
+
+  async submitChat(input: { readonly workId: string; readonly sessionId: string; readonly submissionKey: string;
+    readonly prompt: string; readonly modelRef?: string | null }): Promise<AcceptedRun> {
+    const selector = modelSelector(input.modelRef);
+    const replay = this.store.findRunReplay(input.workId, input.submissionKey, submissionDigest(input.sessionId, input.prompt, selector));
+    if (replay) return { run: replay, reused: true };
+    if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
+    const session = this.store.getSession(input.workId, input.sessionId);
+    if (!session) throw Object.assign(new Error("Session not found"), {name: "SessionNotFoundError"});
+    if (session.contextIdentity && session.contextIdentity !== this.daemon.readiness().contextIdentity) throw Object.assign(new Error("Session context is unavailable"), {name: "SessionContextUnavailableError"});
+    if (!this.models) {
+      if (selector.kind !== "session-preference") throw new RunModelError("RUN_MODEL_SELECTION_UNSUPPORTED", "This Work does not support model selection.");
+      return this.submit({ ...input, selector });
+    }
+    let reference: string | null = selector.kind === "model" ? selector.modelRef : null;
+    if (selector.kind === "session-preference" && session.modelPreferenceJson) {
+      const preference = JSON.parse(session.modelPreferenceJson) as { modelRef: string | null; availability?: string };
+      if (preference.availability === "unavailable") throw new RunModelError("MODEL_UNAVAILABLE", "Session model preference is unavailable. Choose a model.");
+      reference = preference.modelRef;
+    }
+    const actualModel = await this.models.resolve(reference);
+    return this.submit({ ...input, selector, actualModel });
+  }
+
+  async submitAutomatic(input: { readonly workId: string; readonly sessionId: string; readonly submissionKey: string;
+    readonly prompt: string; readonly requestId: string; readonly phase: RequestPhase }): Promise<AcceptedRun> {
+    const selector: RunModelSelector = { kind: "work-default" };
+    const replay = this.store.findRunReplay(input.workId, input.submissionKey, submissionDigest(input.sessionId, input.prompt, selector));
+    if (replay) return { run: replay, reused: true };
+    if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
+    const actualModel = await this.models?.resolve(null);
+    return this.submit({ ...input, selector, ...(actualModel ? { actualModel } : {}), agentRequest: { requestId: input.requestId, phase: input.phase } });
   }
 
   get(runId: string): RunRecord | undefined {
@@ -103,6 +160,13 @@ export class RunManager {
 
   private launch(run: RunRecord, prompt: string): void {
     const controller = new AbortController();
+    const source = run.sourceJson ? JSON.parse(run.sourceJson) as AgentRunSource : undefined;
+    const goal = source?.requestId ? this.store.feedback.internal(run.workId, source.requestId) : undefined;
+    let budgetExpired = false;
+    const deadline = goal ? Math.min(Date.parse(run.acceptedAt) + BRAIN_LIMITS.runTimeoutMs, Date.parse(goal.request.expiresAt)) : null;
+    const deadlineCode = goal && Date.parse(goal.request.expiresAt) <= Date.parse(run.acceptedAt) + BRAIN_LIMITS.runTimeoutMs ? "REQUEST_EXPIRED" : "REQUEST_BUDGET_EXCEEDED";
+    const timer = deadline === null ? undefined : setTimeout(() => { budgetExpired = true; controller.abort(); }, Math.max(0, deadline - this.now().getTime()));
+    timer?.unref();
     const finishDaemonRun = this.daemon.beginRun();
     const settled = Promise.resolve().then(async () => {
       try {
@@ -114,33 +178,50 @@ export class RunManager {
           prompt,
           contextIdentity: run.contextIdentity ?? null,
           signal: controller.signal,
+          ...(run.actualModelJson ? { actualModel: JSON.parse(run.actualModelJson) as RunModelSnapshot } : {}),
+          ...(run.sourceJson ? { source: JSON.parse(run.sourceJson) as AgentRunSource } : {}),
+          adoptedExperienceVersion: run.adoptedExperienceVersion ?? 0,
           emit: (eventType, payload) => {
             this.store.appendEvent(run.runId, eventType, JSON.stringify(payload), this.now().toISOString());
             this.store.compactRunEvents(run.runId);
           },
         });
-        if (controller.signal.aborted) {
+        if (budgetExpired && this.store.getRun(run.runId)?.state !== "cancelling") {
+          this.store.tryCompleteRun(run.runId, "failed", null, JSON.stringify({ code: deadlineCode, message: "Automatic Run execution deadline passed", retryable: false }), this.now().toISOString());
+        } else if (controller.signal.aborted) {
           this.store.tryCompleteRun(run.runId, "cancelled", result.finalText, null, this.now().toISOString());
         } else {
           this.store.tryCompleteRun(run.runId, "succeeded", result.finalText, null, this.now().toISOString());
         }
       } catch (error) {
-        if (controller.signal.aborted) {
+        if (budgetExpired && this.store.getRun(run.runId)?.state !== "cancelling") {
+          this.store.tryCompleteRun(run.runId, "failed", null, JSON.stringify({ code: deadlineCode, message: "Automatic Run execution deadline passed", retryable: false }), this.now().toISOString());
+        } else if (controller.signal.aborted) {
           this.store.tryCompleteRun(run.runId, "cancelled", null, null, this.now().toISOString());
         } else {
           this.store.tryCompleteRun(run.runId, "failed", null, JSON.stringify({
-            code: "MODEL_EXECUTION_FAILED",
-            message: "Model execution failed.",
+            code: error instanceof RunModelError ? error.modelErrorCode : "MODEL_EXECUTION_FAILED",
+            message: error instanceof RunModelError ? error.message : "Model execution failed.",
             retryable: true,
           }), this.now().toISOString());
         }
       } finally {
+        if (timer) clearTimeout(timer);
         finishDaemonRun();
         this.active.delete(run.runId);
+        const final = this.store.getRun(run.runId);
+        if (final) for (const listener of this.settledListeners) { try { listener(final); } catch { /* Observation does not alter the durable outcome. */ } }
       }
     });
     this.active.set(run.runId, { controller, settled });
   }
+}
+
+export function modelSelector(reference: string | null | undefined): RunModelSelector {
+  return reference === undefined ? { kind: "session-preference" } : reference === null || reference === "" ? { kind: "work-default" } : { kind: "model", modelRef: reference };
+}
+function submissionDigest(sessionId: string, prompt: string, selector: RunModelSelector): string {
+  return digest(canonicalJson({ sessionId, prompt, selector }));
 }
 
 function digest(value: string): string {

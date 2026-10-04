@@ -1,6 +1,6 @@
 # Go Pi package helper
 
-`piwork-package-helper` 是镜像内的原生程序，提供 `prepare/init/capture/measure` 四个入口。宿主 Core 只通过 Docker Engine API 调度它；helper 不操作 Core 数据库，不读取 Core 凭据。Pi package 内容 contract 仍为 1。
+`piwork-package-helper` 是镜像内的原生程序，提供 `prepare/init/capture/measure/source-capture` 五个入口。宿主 Core 只通过 Docker Engine API 调度它；helper 不操作 Core 数据库，不读取 Core 凭据。Pi package 内容 contract 仍为 1。
 
 ## 构建与迁移状态
 
@@ -20,6 +20,7 @@ dist/go/piwork-package-helper --version
 | `init` | `/package/work` | 可信 root 程序初始化工作卷，必要时以 CHOWN 将目录交给 10001；不联网、不执行脚本 |
 | `prepare` | `/package/source/request.json`，local/ZIP 另有 `input.zip`；输出 `/package/work/result` | 仅在 Docker 容器内以非 root 运行；只允许镜像内 npm/Git 与安装脚本；受限网络、资源、独立工作卷 |
 | `capture` | `/package/spool/request.json`，只读的 `/package/work/result`；输出 `artifact.zip`、`result.json` | 可信程序静态验证并打包；无网络，不运行包代码；spool 文件发布为 0644 |
+| `source-capture` | 固定只读 Work workspace 的 `.pi/packages/piwork-brain/`；`capture-request.json` 只含 contractVersion=1 与 expectedSourceDigest；输出不可变 `input.zip`、`source-capture.json` | contract 2 原生静态捕获，禁止可选路径、链接父目录、外部 URL；来源摘要改变则冲突，捕获后编辑不改变候选；無网络，固定容器资源 |
 | `measure` | `/package/work`；输出逻辑字节数 | 不读取文件内容、不跟随目录链接；超过 4 GiB 返回上限加一，Core 据此终止准备 |
 
 标准输出始终是一条 JSON 结果。失败 exit 1，只输出 `errorCode`，不输出 npm/Git stderr、凭据、原始路径。未知内部错误的 code 为 null。帮助与版本查询不读取包、不启动工具。
@@ -82,3 +83,13 @@ CGO_ENABLED=0 PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:go-migration-acceptan
 ```
 
 第二个测试检查有效 peer、版本不满足、无效范围和禁止的 Pi 运行时依赖，失败保持原冻结 head。测试连接实际 registry，来源不可达会失败；Go Core 宿主不执行 npm。具体旧 Pi 0.86.0 镜像与升级场景尚未执行，不以未来版本范围的故障注入替代这些证据。
+
+## Work 脑包候选
+
+当前 Agent 用已有的完整安装/Work/代次 mTLS 身份调用 PrepareBrainCandidate/GetBrainCandidateState。Go 按稳定 `work-agent:<WorkID>` actor 保存整个固定 descriptor 和 submissionKey；进程更换后同键先返回原 Operation，不重新读取源码或跑 prepare。同键异来源、目标、input、checks 均冲突；初始化候选 Agent、旧代次及跨 Work 不能受理。候选准备 RPC 最多等待六十秒；状态查询保持十秒，并且丢失回执按原键查询。
+
+Core 选择自己的当前 workspace volume、固定兼容 prepare/trusted 镜像及三十分钟期限。只读 source-capture 确认预期源摘要和冻结 ZIP 的完整树后，沿用 init/prepare/measure/capture 的隔离准备。helper 的创建意图、确认清理、原 worker epoch 与结果 spool 都进入现有原生恢复；恢复只读已完成 capture，不能重跑来源或包脚本。
+
+发布同时核对 active context/摘要/启用和 desired 同名包摘要/启用，并受 Work control fence 约束。其他 desired 编辑从最新配置合并保留；脑包替换、移除、禁用、Stop/Delete 后迟到结果不能覆盖。保存只改变 desired。用户显式 Apply 后才改变 active，并由当前真实 SDK readiness 确认 loaded。固定行为工具/input/checks 的真实成功证据才确认 adoption；准备/Apply/加载状态各自独立。候选摘要、宿主路径和凭据不进入公开包或 Operation 视图。
+
+验证入口：`TestBrainSourceCapture*`、`TestBrainCandidate*`、`TestNativeBrainCandidateCapturesThroughScopedRPCAndExplicitApply`；后者使用当前 Go Core、真实 Agent mTLS RPC 和原生容器 helper，在无宿主工具 PATH 下验证编辑、捕获、同键重放、并发 desired 合并和显式 Apply。

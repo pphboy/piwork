@@ -266,7 +266,13 @@ func (a *Application) workPackageList(ctx context.Context, work corestore.WorkRe
 			}
 			runtime.Loaded, _ = json.Marshal(loaded)
 		}
-		result = append(result, contracts.PiPackageWorkEntry{Name: contracts.PiPackageName(name), Desired: desiredVersion, Active: activeVersion, PendingApply: desiredDigest != activeDigest || desiredEnabled != activeEnabled, Runtime: runtime})
+		entry := contracts.PiPackageWorkEntry{Name: contracts.PiPackageName(name), Desired: desiredVersion, Active: activeVersion, PendingApply: desiredDigest != activeDigest || desiredEnabled != activeEnabled, Runtime: runtime}
+		if name == brainPackageName {
+			if err := a.projectBrainCandidate(ctx, work, desiredDigest, activeDigest, desiredEnabled, activeEnabled, &entry); err != nil {
+				return nil, err
+			}
+		}
+		result = append(result, entry)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil

@@ -42,8 +42,8 @@ type PackageResources struct{ VolumeName, NetworkName string }
 
 type PackageHelperSpec struct {
 	PackageIdentity
-	Epoch                                            int64
-	Action, ImageID, SourceDirectory, SpoolDirectory string
+	Epoch                                                          int64
+	Action, ImageID, SourceDirectory, SpoolDirectory, SourceVolume string
 }
 
 func (r *Runtime) packageLabels(id PackageIdentity, kind, logical string) (map[string]string, error) {
@@ -172,6 +172,9 @@ func packageLogical(spec PackageHelperSpec) string {
 }
 
 func (r *Runtime) packageHelperPolicy(ctx context.Context, spec PackageHelperSpec) (string, *container.Config, *container.HostConfig, error) {
+	if spec.SourceVolume != "" && spec.Action != "source-capture" {
+		return "", nil, nil, ErrSpecification
+	}
 	if spec.Epoch < 1 || spec.Epoch > contracts.MaxSafeInteger || !imageIDPattern.MatchString(spec.ImageID) {
 		return "", nil, nil, ErrSpecification
 	}
@@ -221,6 +224,19 @@ func (r *Runtime) packageHelperPolicy(ctx context.Context, spec PackageHelperSpe
 			return "", nil, nil, err
 		}
 		host.Mounts[0].ReadOnly = true
+		host.CapAdd = []string{"DAC_OVERRIDE", "CHOWN"}
+	case "source-capture":
+		if spec.SourceDirectory != "" || spec.SpoolDirectory == "" || spec.SourceVolume == "" {
+			return "", nil, nil, ErrSpecification
+		}
+		if _, err := r.InspectVolume(ctx, spec.SourceVolume, spec.WorkID, "work-workspace"); err != nil {
+			return "", nil, nil, err
+		}
+		if err := bind(spec.SpoolDirectory, "/package/spool", false); err != nil {
+			return "", nil, nil, err
+		}
+		host.Mounts[0].ReadOnly = true
+		host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: spec.SourceVolume, Target: "/brain-source", ReadOnly: true, VolumeOptions: &mount.VolumeOptions{NoCopy: true}})
 		host.CapAdd = []string{"DAC_OVERRIDE", "CHOWN"}
 	case "measure":
 		if spec.SourceDirectory != "" || spec.SpoolDirectory != "" {
@@ -401,7 +417,7 @@ func (r *Runtime) RunPackageHelper(ctx context.Context, spec PackageHelperSpec) 
 				if fields, ok := parsed.(map[string]any); ok {
 					if code, ok := fields["errorCode"].(string); ok {
 						switch code {
-						case "PI_PACKAGE_INVALID_SOURCE", "PI_PACKAGE_INVALID_MANIFEST", "PI_PACKAGE_UNSAFE_ARCHIVE", "PI_PACKAGE_LIMIT_EXCEEDED", "PI_PACKAGE_UNSUPPORTED_MEDIA_TYPE", "PI_PACKAGE_SDK_VERSION_UNSUPPORTED", "PI_PACKAGE_SOURCE_FETCH_FAILED", "PI_PACKAGE_DEPENDENCY_INSTALL_FAILED":
+						case "PI_PACKAGE_INVALID_SOURCE", "PI_PACKAGE_INVALID_MANIFEST", "PI_PACKAGE_UNSAFE_ARCHIVE", "PI_PACKAGE_LIMIT_EXCEEDED", "PI_PACKAGE_UNSUPPORTED_MEDIA_TYPE", "PI_PACKAGE_SDK_VERSION_UNSUPPORTED", "PI_PACKAGE_SOURCE_FETCH_FAILED", "PI_PACKAGE_DEPENDENCY_INSTALL_FAILED", "PI_PACKAGE_CANDIDATE_CONFLICT":
 							return nil, &pipackage.InputError{Code: code}
 						}
 					}
@@ -534,7 +550,7 @@ func (r *Runtime) RemovePlannedPackageHelper(ctx context.Context, plan ResourceP
 	}
 	action := plan.Labels["piwork.package_action"]
 	switch action {
-	case "init", "prepare", "capture", "measure", "environment":
+	case "init", "prepare", "capture", "source-capture", "measure", "environment":
 	default:
 		return ErrIdentity
 	}

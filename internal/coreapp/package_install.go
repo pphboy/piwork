@@ -20,11 +20,12 @@ import (
 )
 
 type packageSourceInput struct {
-	Kind       string `json:"kind"`
-	Spec       string `json:"spec,omitempty"`
-	UploadID   string `json:"uploadId,omitempty"`
-	Name       string `json:"name,omitempty"`
-	ArtifactID string `json:"artifactId,omitempty"`
+	Kind       string                              `json:"kind"`
+	Spec       string                              `json:"spec,omitempty"`
+	UploadID   string                              `json:"uploadId,omitempty"`
+	Name       string                              `json:"name,omitempty"`
+	ArtifactID string                              `json:"artifactId,omitempty"`
+	Brain      *contracts.BrainCandidateSubmission `json:"brain,omitempty"`
 }
 
 func (a *Application) corePackageInstallHTTP(w http.ResponseWriter, r *http.Request, actor identity.Principal, admin bool, prefix string) (bool, error) {

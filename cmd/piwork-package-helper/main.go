@@ -19,7 +19,7 @@ func run() int {
 		return cli.Entry("piwork-package-helper", args, os.Stdout, os.Stderr)
 	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		fmt.Fprintln(os.Stdout, "Usage: piwork-package-helper <prepare|init|capture|measure>")
+		fmt.Fprintln(os.Stdout, "Usage: piwork-package-helper <prepare|init|capture|source-capture|measure>")
 		return 0
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

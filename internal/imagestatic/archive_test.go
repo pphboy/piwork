@@ -89,7 +89,7 @@ func makeImage(t *testing.T, oci, compressed bool, layers [][]byte, alter func(*
 	config.OS = "linux"
 	config.Architecture = "amd64"
 	config.RootFS.Type = "layers"
-	config.Config.Labels = map[string]string{"io.piwork.agent.protocol": "v2", "io.piwork.package-helper.contract": "2", "io.piwork.service-mcp.contract": "1"}
+	config.Config.Labels = map[string]string{"io.piwork.agent.protocol": "v2", "io.piwork.package-helper.contract": "2", "io.piwork.service-mcp.contract": "1", "io.piwork.work-history.schema": "4", "io.piwork.run-model.contract": "1", "io.piwork.work-feedback.contract": "1"}
 	config.Config.Entrypoint = []string{"node", "/workspace/apps/agentd/dist/main.js"}
 	config.Config.User = "10001:10001"
 	for _, l := range layers {

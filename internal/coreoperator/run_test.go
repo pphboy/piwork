@@ -3,6 +3,7 @@ package coreoperator
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -167,6 +168,15 @@ func TestOnlineOperatorUsesSeparateCredentialAndPublicOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeApp(t, a)
+	// This transport unit test models an administrator-maintained empty package default;
+	// actual native brain preparation is exercised in Core integration tests.
+	if err := a.Store.Write(context.Background(), func(tx *sql.Tx) error {
+		_, err := tx.Exec("INSERT INTO control_metadata(key,value_json,updated_at) VALUES('piwork_brain_seeded','{\"seeded\":true}','fixture')")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	address, err := a.Listen(coreapp.ListenAddress{Host: "127.0.0.1"})
 	if err != nil {
 		t.Fatal(err)
@@ -188,6 +198,10 @@ func TestOnlineOperatorUsesSeparateCredentialAndPublicOutput(t *testing.T) {
 	if code, body, stderr := invoke([]string{"config", "set", "--agent-image", "fixture/native", "--model-provider", "fixture", "--model", "first", "--api-key-stdin"}, "private-api-key"); code != 0 || body["configured"] != true || stderr != "" {
 		t.Fatal(code, body, stderr)
 	}
+	if code, body, stderr := invoke([]string{"config", "default-work", "set", "--no-packages"}, ""); code != 0 || stderr != "" {
+		t.Fatal(code, body, stderr)
+	}
+
 	if code, body, stderr := invoke([]string{"status"}, ""); code != 0 || body["ready"] != true || stderr != "" {
 		t.Fatal(code, body, stderr)
 	}

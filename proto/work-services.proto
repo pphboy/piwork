@@ -3,6 +3,10 @@ syntax = "proto3";
 package piwork.core.services.v1;
 
 message Empty {}
+// Authenticated only through the current agentd runtime mTLS identity.
+message WorkPrivateRequest { string input_json = 1; }
+message WorkPrivateResponse { string value_json = 1; }
+message RunModelResolution { string model_json = 1; string credential = 2; }
 
 message ServiceImage { string reference = 1; }
 message ServiceMount { string source = 1; string target = 2; bool read_only = 3; }
@@ -92,6 +96,11 @@ message ReadServiceLogsRequest { string service_id = 1; uint32 tail_lines = 2; }
 message ServiceLogs { string service_id = 1; string status = 2; string text = 3; bool truncated = 4; string collected_at = 5; optional SafeError error = 6; }
 
 service WorkServices {
+  rpc ListRunModels(Empty) returns (WorkPrivateResponse);
+  rpc ResolveRunModel(WorkPrivateRequest) returns (RunModelResolution);
+  rpc GetServiceInteractionBindings(Empty) returns (WorkPrivateResponse);
+  rpc PrepareBrainCandidate(WorkPrivateRequest) returns (WorkPrivateResponse);
+  rpc GetBrainCandidateState(WorkPrivateRequest) returns (WorkPrivateResponse);
   rpc GetDeploymentContext(Empty) returns (DeploymentContext);
   rpc CreateService(CreateServiceRequest) returns (Acceptance);
   rpc ListServices(Empty) returns (ListServicesResponse);

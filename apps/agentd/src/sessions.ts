@@ -6,6 +6,7 @@ import {
 } from "@piwork/pi-adapter";
 import { unlinkSync } from "node:fs";
 import { WorkStore, type SessionRecord } from "@piwork/work-store";
+import type { RunModelResolver } from "./run-models.js";
 
 export class AgentSessionService {
   constructor(
@@ -19,7 +20,7 @@ export class AgentSessionService {
 
   workspaceDirectory(): string { return this.workspace; }
 
-  create(idempotencyKey?: string): SessionRecord {
+  create(idempotencyKey?: string, sourceJson?: string): SessionRecord {
     const sdk = initializePersistentSession({ cwd: this.workspace, sessionRoot: this.sessionRoot });
     const snapshot = readPersistentSession(sdk);
     const now = this.now().toISOString();
@@ -30,6 +31,7 @@ export class AgentSessionService {
       createdAt: now,
       updatedAt: now,
       contextIdentity: this.contextIdentity ?? null,
+      ...(sourceJson ? { sourceJson } : {}),
     };
     if (idempotencyKey === undefined) { this.store.createSession(record); return record; }
     const accepted = this.store.createSessionIdempotent(record, idempotencyKey);
@@ -41,6 +43,13 @@ export class AgentSessionService {
 
   list(): SessionRecord[] {
     return this.store.listSessions(this.workId);
+  }
+
+  async setModelPreference(sessionId: string, modelRef: string | null, models: RunModelResolver): Promise<SessionRecord> {
+    this.requireRecord(sessionId);
+    const model = await models.resolve(modelRef);
+    this.requireRecord(sessionId);
+    return this.store.setSessionModelPreference(this.workId, sessionId, JSON.stringify({ ...model, availability: "available" }), this.now().toISOString());
   }
 
   read(sessionId: string): PersistentSession {
@@ -59,9 +68,9 @@ export class AgentSessionService {
 
   private requireRecord(sessionId: string, requireActiveContext = true): SessionRecord {
     const record = this.store.getSession(this.workId, sessionId);
-    if (record === undefined) throw new Error(`session ${sessionId} does not exist in Work ${this.workId}`);
+    if (record === undefined) throw Object.assign(new Error(`session ${sessionId} does not exist in Work ${this.workId}`), {name: "SessionNotFoundError"});
     if (requireActiveContext && this.contextIdentity !== undefined && record.contextIdentity !== this.contextIdentity) {
-      throw new Error(`session ${sessionId} context is unavailable`);
+      throw Object.assign(new Error(`session ${sessionId} context is unavailable`), {name: "SessionContextUnavailableError"});
     }
     return record;
   }

@@ -2,7 +2,7 @@ SHELL := /bin/bash
 export GOTOOLCHAIN := local
 export CGO_ENABLED := 0
 
-.PHONY: help generate build build-go native-agent-images native-helper-images native-compatibility-images test test-go test-integration test-integration-go test-native-host harness-fixtures webui-assets acceptance acceptance-index release
+.PHONY: help generate build build-go native-agent-images native-helper-images native-compatibility-images workstation-fixture test test-go test-integration test-integration-go test-native-host harness-fixtures webui-assets acceptance acceptance-index release
 
 help:
 	@echo 'generate             Generate fixed Go/TS protocols and native HTTP DTOs'
@@ -21,6 +21,7 @@ help:
 	@echo 'test-native-host     Run released programs in scratch against an independent Engine'
 
 generate:
+	node scripts/generate-work-history.mjs
 	node scripts/generate-protocol.mjs
 	npm run build -w @piwork/contracts
 	node scripts/generate-http-contracts.mjs
@@ -49,7 +50,7 @@ test-go:
 	go test -mod=readonly ./...
 
 test: build test-go
-	node --test scripts/check-go-acceptance.test.mjs
+	node --test scripts/check-go-acceptance.test.mjs scripts/check-native-boundary.test.mjs
 	npm run test:unit -w @piwork/contracts -w @piwork/pi-package -w @piwork/work-store -w @piwork/pi-adapter -w @piwork/agentd
 	npm run typecheck -w @piwork/desktop-webui -w @piwork/console-webui
 
@@ -57,13 +58,16 @@ harness-fixtures:
 	npm run clean -w @piwork/contracts -w @piwork/pi-package -w @piwork/work-store -w @piwork/pi-adapter -w @piwork/agentd
 	npm run build -w @piwork/contracts -w @piwork/pi-package -w @piwork/work-store -w @piwork/pi-adapter -w @piwork/agentd
 
-test-integration-go: harness-fixtures build-go native-compatibility-images native-helper-images
+workstation-fixture:
+	node scripts/build-workstation-fixture.mjs
+
+test-integration-go: harness-fixtures build-go native-compatibility-images native-helper-images workstation-fixture
 	PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:go-migration-acceptance \
 	PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance \
 	PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance \
 	PIWORK_TEST_NATIVE_OLD_SDK_IMAGE=piwork-agentd:go-migration-sdk-0860 \
 	PIWORK_TEST_NATIVE_UNAVAILABLE_REGISTRY_IMAGE=piwork-agentd:go-migration-registry-unavailable \
-	go test -mod=readonly -tags=integration -v -timeout=90m ./internal/testsupport ./internal/dockerengine ./internal/coreapp ./internal/workruntime ./internal/packageprepare
+	go test -mod=readonly -tags=integration -v -timeout=120m ./internal/testsupport ./internal/dockerengine ./internal/coreapp ./internal/workruntime ./internal/packageprepare
 
 test-integration: build test-integration-go
 	npm run test:browser -w @piwork/desktop-webui
@@ -73,7 +77,7 @@ test-integration: build test-integration-go
 acceptance-index:
 	node scripts/update-go-acceptance-index.mjs
 
-test-native-host: release
+test-native-host: release workstation-fixture
 	PIWORK_TEST_RELEASE_BIN="dist/release/piwork-linux-amd64-$$(git rev-parse --short=12 HEAD)/bin" node scripts/native-host-acceptance.mjs
 
 acceptance: test-integration test-native-host acceptance-index

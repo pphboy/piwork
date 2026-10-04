@@ -70,7 +70,7 @@ func TestNativeServiceRevisionsCounterAndRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstID := view.ID
-	if !strings.HasSuffix(view.Name, "_counter") || len(view.HostConfig.PortBindings) != 0 || len(view.HostConfig.Mounts) != 2 || len(view.NetworkSettings.Networks) != 1 {
+	if !strings.HasSuffix(view.Name, "_counter") || len(view.HostConfig.PortBindings) != 0 || len(view.HostConfig.Mounts) != 4 || len(view.NetworkSettings.Networks) != 1 {
 		t.Fatal("unsafe service container configuration")
 	}
 	count := func(want int) {

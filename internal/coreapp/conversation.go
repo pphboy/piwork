@@ -3,6 +3,7 @@ package coreapp
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -23,7 +24,7 @@ import (
 
 func conversationPath(r *http.Request) (workID, resource, item, action string, matched bool) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/")
-	if len(parts) < 5 || len(parts) > 7 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" {
+	if len(parts) < 5 || len(parts) > 7 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" && parts[4] != "models" && parts[4] != "agent-requests" && parts[4] != "evidence" {
 		return "", "", "", "", false
 	}
 	for i := 3; i < len(parts); i++ {
@@ -48,7 +49,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	if !matched {
 		return false, nil
 	}
-	valid := action == "" && (resource == "sessions" && (r.Method == "GET" || r.Method == "POST" && item == "") || resource == "runs" && (r.Method == "POST" && item == "" || r.Method == "GET" && item != "")) || resource == "runs" && item != "" && r.Method == "POST" && action == "cancel" || resource == "runs" && item != "" && r.Method == "GET" && action == "events"
+	valid := feedbackRoute(r.Method, resource, item, action) || resource == "models" && item == "" && action == "" && r.Method == "GET" || resource == "sessions" && item != "" && action == "model" && r.Method == "PATCH" || action == "" && (resource == "sessions" && (r.Method == "GET" || r.Method == "POST" && item == "") || resource == "runs" && (r.Method == "POST" && item == "" || r.Method == "GET" && item != "")) || resource == "runs" && item != "" && r.Method == "POST" && action == "cancel" || resource == "runs" && item != "" && r.Method == "GET" && action == "events"
 	if !valid {
 		return false, nil
 	}
@@ -82,7 +83,44 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	stopRouteWatch := context.AfterFunc(routeLifetime, cancelRoute)
 	defer stopRouteWatch()
 	r = r.WithContext(routeRequest)
+	if resource == "agent-requests" || resource == "evidence" {
+		return a.feedbackHTTP(w, r, agent, workID, resource, item, action)
+	}
+	if resource == "models" {
+		result, err := agent.ListRunModels(r.Context())
+		if err != nil {
+			return true, conversationError(err)
+		}
+		send(w, 200, result)
+		return true, nil
+	}
 	if resource == "sessions" {
+		if action == "model" {
+			input, err := readControlJSON[contracts.SetSessionModel](r, "SetSessionModelSchema", false)
+			if err != nil {
+				return true, err
+			}
+			var ref *string
+			if string(input.ModelRef) != "null" {
+				var value string
+				if json.Unmarshal(input.ModelRef, &value) != nil {
+					return true, contracts.NewError("INVALID_REQUEST", "modelRef")
+				}
+				ref = &value
+			}
+			release, err := a.Store.BeginTransientMutation(r.Context(), workID)
+			if err != nil {
+				return true, conversationError(err)
+			}
+			defer release()
+			session, err := agent.SetSessionModel(r.Context(), item, ref)
+			if err != nil {
+				return true, conversationError(err)
+			}
+			send(w, 200, sessionView(session))
+			return true, nil
+		}
+
 		if r.Method == "POST" {
 			var input struct {
 				IdempotencyKey *string `json:"idempotencyKey"`
@@ -117,7 +155,11 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			for _, message := range history.GetMessages() {
 				messages = append(messages, map[string]any{"entryId": message.GetEntryId(), "role": message.GetRole(), "text": message.GetText(), "createdAt": message.GetCreatedAt()})
 			}
-			send(w, 200, map[string]any{"session": sessionView(history.GetSession()), "messages": messages})
+			runs := make([]any, 0, len(history.GetRuns()))
+			for _, run := range history.GetRuns() {
+				runs = append(runs, runView(run))
+			}
+			send(w, 200, map[string]any{"session": sessionView(history.GetSession()), "messages": messages, "runs": runs})
 			return true, nil
 		}
 		list, err := agent.ListSessions(r.Context(), 1000, "")
@@ -132,23 +174,27 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 		return true, nil
 	}
 	if r.Method == "POST" && item == "" {
-		input, err := readJSON[struct {
-			SessionID     *string `json:"sessionId"`
-			SubmissionKey *string `json:"submissionKey"`
-			Prompt        *string `json:"prompt"`
-		}](r)
+		input, err := readControlJSON[contracts.SubmitRunInput](r, "SubmitRunInputSchema", false)
 		if err != nil {
 			return true, err
 		}
-		if input.SessionID == nil || input.SubmissionKey == nil || input.Prompt == nil {
-			return true, contracts.NewError("INVALID_REQUEST", "")
+		if strings.TrimSpace(input.Prompt) == "" {
+			return true, contracts.NewError("INVALID_REQUEST", "prompt")
+		}
+		var modelRef *string
+		if input.ModelRef.Present {
+			value := ""
+			if !input.ModelRef.Null && json.Unmarshal(input.ModelRef.Value, &value) != nil {
+				return true, contracts.NewError("INVALID_REQUEST", "modelRef")
+			}
+			modelRef = &value
 		}
 		release, err := a.Store.BeginTransientMutation(r.Context(), workID)
 		if err != nil {
 			return true, conversationError(err)
 		}
 		defer release()
-		result, err := agent.SubmitRun(r.Context(), *input.SessionID, *input.SubmissionKey, *input.Prompt)
+		result, err := agent.SubmitRun(r.Context(), string(input.SessionId), input.SubmissionKey, input.Prompt, modelRef)
 		if err != nil {
 			return true, conversationError(err)
 		}
@@ -198,7 +244,18 @@ func conversationError(err error) error {
 	if errors.Is(err, agentclient.ErrReadiness) {
 		return contracts.NewError("WORK_UNAVAILABLE", "")
 	}
+	if state, ok := status.FromError(err); ok {
+		for _, code := range []string{"MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
+			if strings.HasPrefix(state.Message(), code+":") {
+				return contracts.NewError(code, "")
+			}
+		}
+	}
 	switch status.Code(err) {
+	case codes.InvalidArgument:
+		return contracts.NewError("INVALID_REQUEST", "")
+	case codes.FailedPrecondition:
+		return contracts.NewError("WORK_UNAVAILABLE", "")
 	case codes.NotFound:
 		return contracts.NewError("NOT_FOUND", "")
 	case codes.PermissionDenied:
@@ -220,7 +277,18 @@ func sessionView(session *agentv1.Session) any {
 	if session == nil {
 		return nil
 	}
-	return map[string]any{"workId": session.GetWorkId(), "sessionId": session.GetSessionId(), "sdkHistoryPath": session.GetSdkHistoryPath(), "createdAt": session.GetCreatedAt(), "updatedAt": session.GetUpdatedAt()}
+	view := map[string]any{"workId": session.GetWorkId(), "sessionId": session.GetSessionId(), "sdkHistoryPath": session.GetSdkHistoryPath(), "createdAt": session.GetCreatedAt(), "updatedAt": session.GetUpdatedAt()}
+	if session.GetModelPreferenceJson() != "" {
+		view["modelPreference"] = decodePublicProjection(session.GetModelPreferenceJson())
+	} else {
+		view["modelPreference"] = nil
+	}
+	if session.GetSourceJson() != "" {
+		view["source"] = decodePublicProjection(session.GetSourceJson())
+	} else {
+		view["source"] = map[string]any{"kind": "chat"}
+	}
+	return view
 }
 
 func runView(run *agentv1.Run) any {
@@ -228,6 +296,17 @@ func runView(run *agentv1.Run) any {
 		return nil
 	}
 	view := map[string]any{"workId": run.GetWorkId(), "sessionId": run.GetSessionId(), "runId": run.GetRunId(), "submissionKey": run.GetSubmissionKey(), "state": int32(run.GetState()), "promptDigest": run.GetPromptDigest(), "finalText": run.GetFinalText(), "acceptedAt": run.GetAcceptedAt(), "startedAt": run.GetStartedAt(), "finishedAt": run.GetFinishedAt(), "earliestAvailableSequence": strconv.FormatUint(run.GetEarliestAvailableSequence(), 10), "latestSequence": strconv.FormatUint(run.GetLatestSequence(), 10)}
+	if run.GetActualModelJson() != "" {
+		view["actualModel"] = decodePublicProjection(run.GetActualModelJson())
+	} else {
+		view["actualModel"] = nil
+	}
+	if run.GetSourceJson() != "" {
+		view["source"] = decodePublicProjection(run.GetSourceJson())
+	} else {
+		view["source"] = map[string]any{"kind": "chat"}
+	}
+	view["adoptedExperienceVersion"] = run.GetAdoptedExperienceVersion()
 	if failure := run.GetError(); failure != nil {
 		view["error"] = map[string]any{"code": failure.GetCode(), "message": failure.GetMessage(), "retryable": failure.GetRetryable()}
 	}
@@ -248,4 +327,12 @@ func runEventView(event *agentv1.RunEvent) any {
 		view["kind"] = map[string]any{"$case": "state", "state": state}
 	}
 	return view
+}
+
+func decodePublicProjection(raw string) any {
+	value, err := contracts.ParseJSON(strings.NewReader(raw), 1<<20)
+	if err != nil {
+		return nil
+	}
+	return value
 }

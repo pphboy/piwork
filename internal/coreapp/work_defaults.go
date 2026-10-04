@@ -19,8 +19,8 @@ func runtimeModelCatalogID(revision int64) contracts.ResourceId {
 func defaultWorkConfiguration(profile RuntimeProfile) contracts.WorkConfig {
 	return contracts.WorkConfig{
 		AgentImage: contracts.ImageSelection{CatalogId: runtimeImageCatalogID(profile.Revision)},
-		Skills:     contracts.SkillSelection{"deploy-work-service"},
-		Packages:   contracts.PiPackageSelection{},
+		Skills:     contracts.SkillSelection{},
+		Packages:   contracts.PiPackageSelection{{Name: "piwork-brain", Enabled: true}},
 		AgentsMd:   "",
 		ModelRef:   runtimeModelCatalogID(profile.Revision),
 		McpServers: []contracts.McpServer{{

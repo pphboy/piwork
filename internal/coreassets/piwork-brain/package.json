@@ -1,0 +1,11 @@
+{
+  "name": "piwork-brain",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Workstation cognition, service feedback and verified evolution for Piwork",
+  "pi": {
+    "extensions": ["extensions/brain.js"],
+    "skills": ["skills"]
+  }
+}

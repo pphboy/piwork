@@ -52,8 +52,8 @@ func TestV1GoldenPackagesRoundTripByteForByte(t *testing.T) {
 			if verified.Size != expected.Size || verified.Digest != expected.Digest || verified.EntryCount != 7 {
 				t.Fatal(verified.Size, verified.Digest, verified.EntryCount, expected)
 			}
-			if expected.Name == "golden" && (expected.Size != 4201 || expected.Digest != "da7cde726ef093c5e9721bf0ca24b7e1ed19e59f9ca124fc8582124dacd15969") {
-				t.Fatal("TS golden contract changed", expected)
+			if expected.Name == "golden" && (expected.Size != 4201 || expected.Digest != "6e35ee29a5fc1b2de8d77832f773bf902f73f051851e6c7a4ad33b94fc7eb3e6") {
+				t.Fatal("Current Go golden contract changed", expected)
 			}
 			streamed, err := Read(context.Background(), byteReader{bytes.NewReader(data)}, ReadOptions{})
 			if err != nil || streamed.Digest != verified.Digest {
@@ -65,12 +65,12 @@ func TestV1GoldenPackagesRoundTripByteForByte(t *testing.T) {
 				return io.NopCloser(bytes.NewReader(data[offset : offset+int64(blob.Size)])), nil
 			}, &encoded)
 			if err != nil || !bytes.Equal(encoded.Bytes(), data) {
-				t.Fatal("Go bytes differ from TS V1", err, encoded.Len(), len(data))
+				t.Fatal("Current framing roundtrip differs", err, encoded.Len(), len(data))
 			}
 		})
 	}
 }
-func TestV1ManifestAndTreeValidationMatchesTSFixtures(t *testing.T) {
+func TestCurrentManifestAndTreeValidationCases(t *testing.T) {
 	_, verified := golden(t, "golden")
 	blobs := map[string]contracts.WorkBlob{}
 	for _, blob := range verified.Spec.Blobs {
@@ -98,10 +98,10 @@ func TestV1ManifestAndTreeValidationMatchesTSFixtures(t *testing.T) {
 				}
 				if test.Code == nil {
 					if err != nil {
-						t.Fatal("TS accepted, Go rejected", err, Code(err))
+						t.Fatal("Current contract rejected valid fixture", err, Code(err))
 					}
 				} else if err == nil || Code(err) != *test.Code {
-					t.Fatal("TS rejection mismatch", test.Code, Code(err), err)
+					t.Fatal("Current rejection mismatch", test.Code, Code(err), err)
 				}
 			})
 		}

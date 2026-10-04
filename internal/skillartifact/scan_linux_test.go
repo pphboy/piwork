@@ -7,23 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"piwork/internal/coreassets"
 )
 
-func TestScanMatchesBundledSkillIdentityAndSurvivesSourceDeletion(t *testing.T) {
-	source, err := filepath.Abs(filepath.Join("..", "coreassets", coreassets.DeploymentSkillName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := Scan(source, coreassets.DeploymentSkillName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, embeddedIdentity, err := coreassets.DeploymentSkill()
-	if err != nil || snapshot.Identity != embeddedIdentity || len(snapshot.Files) != 3 {
-		t.Fatal("source and embedded Skill identities differ", snapshot.Identity, embeddedIdentity, err)
-	}
+func TestScanCapturesIndependentSkillAndSurvivesSourceDeletion(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "my-skill")
 	if err := os.MkdirAll(filepath.Join(directory, "nested", "empty"), 0700); err != nil {
 		t.Fatal(err)

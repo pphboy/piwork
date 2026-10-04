@@ -45,7 +45,7 @@ The durable Work boundary is the two managed volumes and Work-owned platform rec
 
 ## Native Go Core implementation
 
-The migration implementation uses the Go Core and a separate native `piwork-snapshot-helper` image. Core talks directly to the selected local Unix Engine API. It does not run Docker CLI, Node, Python, SQLite CLI, or a TS snapshot helper on the host. The helper is a bounded container with only the recorded job mounts; it copies archive bytes and rebuilds managed schema-3 history without executing imported programs. Pi Agentd and its SDK continue to run inside the imported Agent image after explicit Start.
+The migration implementation uses the Go Core and a separate native `piwork-snapshot-helper` image. Core talks directly to the selected local Unix Engine API. It does not run Docker CLI, Node, Python, SQLite CLI, or a TS snapshot helper on the host. The helper is a bounded container with only the recorded job mounts; it copies archive bytes and rebuilds managed schema-4 history without executing imported programs. Pi Agentd and its SDK continue to run inside the imported Agent image after explicit Start.
 
 Core independently validates the full package and the embedded Agent image's native Service MCP and package helper, Node ABI, Pi SDK version, architecture, and protocol. An image containing only the previous TS platform helpers returns `PACKAGE_INCOMPATIBLE`; import never replaces an incompatible image or extends V1. An offline inspect reports `integrityVerified: true` and `installationValidated: false`, regardless of the target installation's credentials and quota.
 

@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/term"
 	"piwork/internal/client"
+	"piwork/internal/contracts"
 )
 
 func validCLIId(value string) bool {
@@ -153,7 +154,7 @@ func runUserChat(ctx context.Context, api *client.Client, args []string, jsonOut
 		if options.session == "" {
 			return nil, errors.New("Core did not return a Session ID")
 		}
-		if err := emitChatMarker(stdout, jsonOutput, map[string]string{"type": "session", "workId": options.workID, "sessionId": options.session}); err != nil {
+		if err := emitChatMarker(stdout, jsonOutput, map[string]any{"type": "session", "workId": options.workID, "sessionId": options.session}); err != nil {
 			return streamedOutput{}, err
 		}
 	}
@@ -190,7 +191,10 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 	base := "/api/v1/works/" + url.PathEscape(options.workID) + "/runs"
 	var accepted struct {
 		Run struct {
-			RunID string `json:"runId"`
+			RunID                    string                         `json:"runId"`
+			ActualModel              *contracts.RunModelDescription `json:"actualModel"`
+			Source                   *contracts.AgentRunSource      `json:"source"`
+			AdoptedExperienceVersion int64                          `json:"adoptedExperienceVersion"`
 		} `json:"run"`
 	}
 	err = api.Request(ctx, "POST", base, map[string]string{"sessionId": options.session, "submissionKey": key, "prompt": options.message}, &accepted)
@@ -201,7 +205,7 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 		return streamedOutput{}, errors.New("Core did not return a Run ID")
 	}
 	runID := accepted.Run.RunID
-	if err := emitChatMarker(stdout, jsonOutput, map[string]string{"type": "run", "workId": options.workID, "sessionId": options.session, "runId": runID}); err != nil {
+	if err := emitChatMarker(stdout, jsonOutput, map[string]any{"type": "run", "workId": options.workID, "sessionId": options.session, "runId": runID, "actualModel": accepted.Run.ActualModel, "source": accepted.Run.Source, "adoptedExperienceVersion": accepted.Run.AdoptedExperienceVersion}); err != nil {
 		return streamedOutput{}, err
 	}
 	streamPath := base + "/" + url.PathEscape(runID) + "/events?after=0"
@@ -289,10 +293,10 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 	return streamedOutput{}, nil
 }
 
-func emitChatMarker(stdout io.Writer, jsonOutput bool, marker map[string]string) error {
+func emitChatMarker(stdout io.Writer, jsonOutput bool, marker map[string]any) error {
 	if jsonOutput {
 		return json.NewEncoder(stdout).Encode(marker)
 	}
-	_, err := fmt.Fprintf(stdout, "%s: %s\n", marker["type"], marker[marker["type"]+"Id"])
+	_, err := fmt.Fprintf(stdout, "%s: %s\n", marker["type"], marker[fmt.Sprint(marker["type"])+"Id"])
 	return err
 }

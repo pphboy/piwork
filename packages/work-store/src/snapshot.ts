@@ -2,12 +2,15 @@ import { constants, openSync, closeSync, fstatSync, readSync, writeSync, fsyncSy
 import { join, isAbsolute, normalize } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { migrateWorkDatabase } from "./migrations.js";
+import { validateBrainHistory } from "./snapshot-brain.js";
+import { normalizeModelBaseUrl, type RunModelSnapshot } from "@piwork/contracts";
 
 export class WorkHistoryValidationError extends Error {
   constructor(readonly code: "SNAPSHOT_HISTORY_INVALID" | "SNAPSHOT_HISTORY_BUSY" | "SNAPSHOT_HISTORY_UNSUPPORTED" | "SNAPSHOT_HISTORY_LIMIT") { super(code); this.name = "WorkHistoryValidationError"; }
 }
 function invalid(): never { throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_INVALID"); }
-const TABLES = ["schema_migrations", "sessions", "runs", "run_events", "submit_idempotency", "session_idempotency", "work_activity"] as const;
+const BASE_TABLES = ["schema_migrations", "sessions", "runs", "run_events", "submit_idempotency", "session_idempotency", "work_activity"] as const;
+const TABLES = [...BASE_TABLES, "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "brain_experience_revisions", "brain_experience_heads"] as const;
 type Table = typeof TABLES[number];
 type Row = Record<string, SQLInputValue>;
 const FILES = ["work.sqlite", "work.sqlite-wal", "work.sqlite-shm"] as const;
@@ -77,9 +80,9 @@ export interface WorkHistorySummary { readonly sessions: number; readonly runs: 
  * The source database is never opened by SQLite: a byte copy is read-only validated first. */
 export class WorkHistorySnapshot {
   private closed = false;
-  private constructor(private readonly database: DatabaseSync, private readonly scratch: string, readonly scope: WorkHistoryScope, readonly summary: WorkHistorySummary) {}
+  private constructor(private readonly database: DatabaseSync, private readonly scratch: string, readonly scope: WorkHistoryScope, readonly summary: WorkHistorySummary, readonly schemaVersion: 4) {}
 
-  static open(privateDirectory: string, scope: WorkHistoryScope): WorkHistorySnapshot | undefined {
+  static open(privateDirectory: string, scope: WorkHistoryScope, stoppedWriterInspection = false): WorkHistorySnapshot | undefined {
     let root: number | undefined, scratch: string | undefined, database: DatabaseSync | undefined;
     try {
       root = directory(privateDirectory);
@@ -109,14 +112,15 @@ export class WorkHistorySnapshot {
       database = new DatabaseSync(join(scratch, FILES[0]), { readOnly: true, allowExtension: false, enableDoubleQuotedStringLiterals: false, enableForeignKeyConstraints: true });
       database.exec("PRAGMA trusted_schema = OFF; PRAGMA query_only = ON; PRAGMA busy_timeout = 1000");
       const expected = new DatabaseSync(":memory:");
+      const version = 4;
       try {
         migrateWorkDatabase(expected);
         if (!sameSchema(schema(database), schema(expected))) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
       } finally { expected.close(); }
       const integrity = database.prepare("PRAGMA integrity_check").all();
       if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok" || database.prepare("PRAGMA foreign_key_check").get() !== undefined) invalid();
-      const summary = validateRows(database, root, scope);
-      const result = new WorkHistorySnapshot(database, scratch, scope, summary); database = undefined; scratch = undefined;
+      const summary = validateRows(database, root, scope, version, stoppedWriterInspection);
+      const result = new WorkHistorySnapshot(database, scratch, scope, summary, version); database = undefined; scratch = undefined;
       return result;
     } catch (error) {
       if (error instanceof WorkHistoryValidationError) throw error;
@@ -128,8 +132,8 @@ export class WorkHistorySnapshot {
   }
 
   /** Rebuild only the platform DB in an unpublished new private volume; never user DBs/SDK text. */
-  rebuild(targetPrivateDirectory: string, targetWorkId: string, contexts: ReadonlyMap<string, string>): void {
-    if (this.closed || !nonempty(targetWorkId) || targetWorkId === this.scope.sourceWorkId) invalid();
+  rebuild(targetPrivateDirectory: string, targetWorkId: string, contexts: ReadonlyMap<string, string>, models: readonly RunModelSnapshot[] = [], operations: ReadonlyMap<string, string> = new Map()): void {
+    if (this.closed || this.schemaVersion !== 4 || !nonempty(targetWorkId) || targetWorkId === this.scope.sourceWorkId) invalid();
     if (contexts.size !== this.scope.contextIds.size || new Set(contexts.values()).size !== contexts.size || [...this.scope.contextIds].some((id) => !nonempty(contexts.get(id)))) invalid();
     const root = directory(targetPrivateDirectory);
     let staged: string | undefined, target: DatabaseSync | undefined;
@@ -142,7 +146,7 @@ export class WorkHistorySnapshot {
       target = new DatabaseSync(path, { allowExtension: false, enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
       target.exec("PRAGMA trusted_schema = OFF; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL");
       migrateWorkDatabase(target);
-      target.exec("BEGIN IMMEDIATE; DELETE FROM schema_migrations");
+      target.exec("BEGIN IMMEDIATE; PRAGMA defer_foreign_keys = ON; DELETE FROM schema_migrations");
       try {
         for (const table of TABLES) {
           const columns = (target.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
@@ -151,6 +155,25 @@ export class WorkHistorySnapshot {
             const row = { ...source } as Row;
             if (Object.hasOwn(row, "work_id")) row.work_id = targetWorkId;
             for (const field of ["active_context_identity", "context_identity"]) if (typeof row[field] === "string") row[field] = contexts.get(row[field]) ?? invalid();
+            if (["service_events", "agent_requests", "agent_request_runs"].includes(table)) row.disposition = "historical";
+            if (table === "agent_requests" && row.package_submission_json !== null) {
+              const submission = JSON.parse(String(row.package_submission_json)) as Record<string, unknown>;
+              if (typeof submission.activeContextId === "string") submission.activeContextId = contexts.get(submission.activeContextId) ?? invalid();
+              row.package_submission_json = JSON.stringify(submission);
+            }
+            if (table === "agent_requests" && row.wait_ref_json !== null) {
+              const ref = JSON.parse(String(row.wait_ref_json)) as { kind: string; id: string };
+              if (["package-operation", "apply"].includes(ref.kind)) { ref.id = operations.get(ref.id) ?? invalid(); row.wait_ref_json = JSON.stringify(ref); }
+            }
+            if (table === "agent_evidence" && row.kind === "package" && typeof row.object_ref === "string" && operations.has(row.object_ref)) row.object_ref = operations.get(row.object_ref)!;
+            if (table === "agent_evidence" && row.details_json !== null) {
+              const details = JSON.parse(String(row.details_json)) as Record<string, unknown>;
+              if (details.verificationContractVersion === 1) {
+                details.contextIdentity = contexts.get(String(details.contextIdentity)) ?? invalid();
+                row.details_json = JSON.stringify(details);
+              }
+            }
+            if (table === "sessions" && row.model_preference_json !== null) row.model_preference_json = rebindPreference(String(row.model_preference_json), models);
             // run_events payload_json is user text, not a WorkId-bearing DTO. Public RunEvent
             // envelope workId is derived from the rebuilt runs row by AgentApplication.
             insert.run(...columns.map((column) => row[column]!));
@@ -178,7 +201,7 @@ export class WorkHistorySnapshot {
   close(): void { if (this.closed) return; this.closed = true; this.database.close(); rmSync(this.scratch, { recursive: true, force: true }); }
 }
 
-function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHistoryScope): WorkHistorySummary {
+function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHistoryScope, version: 4, inspection: boolean): WorkHistorySummary {
   if (!nonempty(scope.sourceWorkId)) invalid();
   let count = 0; const counts = new Map<Table, number>();
   for (const table of TABLES) {
@@ -191,28 +214,37 @@ function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHi
       if (Object.hasOwn(row, "work_id") && row.work_id !== scope.sourceWorkId) invalid();
       for (const field of ["active_context_identity", "context_identity"]) if (Object.hasOwn(row, field) && row[field] !== null && (typeof row[field] !== "string" || !scope.contextIds.has(row[field]))) invalid();
       for (const field of ["created_at", "updated_at", "accepted_at", "applied_at"]) if (Object.hasOwn(row, field) && !timestamp(row[field])) invalid();
-      if (table === "schema_migrations" && ![1, 2, 3].includes(row.version as number)) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
+      if (table === "schema_migrations" && row.version !== version) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
       if (table === "sessions") {
         if (!nonempty(row.session_id) || typeof row.sdk_history_path !== "string" || !row.sdk_history_path.startsWith("/var/data/sessions/")) invalid();
         if (scope.sdkPathIsRegular) { if (!scope.sdkPathIsRegular(row.sdk_history_path)) invalid(); }
         else { const sdk = regular(privateRoot, row.sdk_history_path.slice("/var/data/".length)); closeSync(sdk); }
       } else if (table === "runs") {
-        if (!["succeeded", "failed", "cancelled", "interrupted"].includes(row.state as string)) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY");
-        if (!nonempty(row.run_id) || !nonempty(row.session_id) || !nonempty(row.submission_key) || !nonempty(row.prompt_digest) || !timestamp(row.finished_at) || (row.started_at !== null && !timestamp(row.started_at)) || !integer(row.earliest_available_sequence, 1) || !integer(row.latest_sequence) || row.latest_sequence < row.earliest_available_sequence - 1) invalid();
+        if (!inspection && !["succeeded", "failed", "cancelled", "interrupted"].includes(row.state as string)) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY");
+        if (!nonempty(row.run_id) || !nonempty(row.session_id) || !nonempty(row.submission_key) || !nonempty(row.prompt_digest) || (!inspection && !timestamp(row.finished_at)) || (row.started_at !== null && !timestamp(row.started_at)) || !integer(row.earliest_available_sequence, 1) || !integer(row.latest_sequence) || row.latest_sequence < row.earliest_available_sequence - 1) invalid();
       } else if (table === "run_events") {
         if (!integer(row.sequence, 1) || !nonempty(row.event_type) || typeof row.payload_json !== "string") invalid();
       } else if (table === "submit_idempotency") {
         if (!nonempty(row.submission_key) || !nonempty(row.request_digest)) invalid();
       } else if (table === "session_idempotency") {
         if (!nonempty(row.idempotency_key)) invalid();
-      } else if (table === "work_activity") throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY");
+      } else if (table === "work_activity" && !inspection) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY");
     }
     counts.set(table, tableCount);
   }
-  if (counts.get("schema_migrations") !== 3) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
+  if (counts.get("schema_migrations") !== 1) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
   if (database.prepare(`SELECT 1 FROM submit_idempotency i JOIN runs r ON r.run_id = i.run_id WHERE i.work_id != r.work_id OR i.submission_key != r.submission_key LIMIT 1`).get()) invalid();
   if (database.prepare(`SELECT 1 FROM runs r LEFT JOIN run_events e ON e.run_id = r.run_id GROUP BY r.run_id
     HAVING COUNT(e.sequence) != r.latest_sequence - r.earliest_available_sequence + 1
       OR (COUNT(e.sequence) > 0 AND (MIN(e.sequence) != r.earliest_available_sequence OR MAX(e.sequence) != r.latest_sequence)) LIMIT 1`).get()) invalid();
+  validateBrainHistory(database, scope.sourceWorkId, scope.contextIds);
   return { sessions: counts.get("sessions")!, runs: counts.get("runs")!, events: counts.get("run_events")! };
+}
+
+function rebindPreference(encoded: string, models: readonly RunModelSnapshot[]): string {
+  const preference = JSON.parse(encoded) as RunModelSnapshot & { availability?: string };
+  if (preference.modelRef === null) return JSON.stringify({ ...preference, availability: "available" });
+  const matches = models.filter((candidate) => candidate.provider === preference.provider && candidate.model === preference.model
+    && normalizeModelBaseUrl(candidate.baseUrl) === normalizeModelBaseUrl(preference.baseUrl));
+  return JSON.stringify(matches.length === 1 ? { ...matches[0], availability: "available" } : { ...preference, availability: "unavailable" });
 }

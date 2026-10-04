@@ -153,7 +153,7 @@ func TestNativePackageActivationRestartRollbackAndStoppedApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata, err := workcontext.Metadata(a.Store, id, *state.ActiveContextID)
-	if err != nil || len(metadata.PackageBindings) != 1 {
+	if err != nil || len(metadata.PackageBindings) != 2 {
 		t.Fatal(metadata, err)
 	}
 	owned := filepath.Join(options.DataDirectory, "works", id, "contexts", *state.ActiveContextID, "packages", contracts.PackageNameKey(name), "tool.js")

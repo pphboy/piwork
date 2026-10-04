@@ -261,7 +261,7 @@ func (a *Application) operationRead(w http.ResponseWriter, r *http.Request, acto
 	if _, err := workaccess.WorkOperation(r.Context(), a.Store, actor, *operation.WorkID); err != nil {
 		return true, err
 	}
-	if operation.Kind == "pi-package-install" || operation.Kind == "pi-package-update" {
+	if operation.Kind == "pi-package-install" || operation.Kind == "pi-package-update" || operation.Kind == brainCandidateKind {
 		var job corestore.PackageJob
 		if err := a.Store.Read(r.Context(), func(tx *sql.Tx) error { var err error; job, err = corestore.ReadPackageJob(tx, id); return err }); err != nil {
 			return true, err

@@ -47,13 +47,20 @@ export interface Message {
   source?: string;
   tool?: { name: string; status: string; content: string };
 }
+export interface RunModel { modelRef: string | null; label: string; provider: string; model: string }
 export interface Session {
   id: string;
   title: string;
   messages: Message[];
   legacy?: boolean;
+  modelPreference?: (RunModel & { availability: "available" | "unavailable" }) | null;
+  source?: { kind: "chat" | "service"; requestId?: string; serviceName?: string; phase?: string };
+  runs?: Run[];
 }
 export interface Run {
+  actualModel?: RunModel | null;
+  source?: Session["source"];
+  adoptedExperienceVersion?: number;
   cancellationRequested?: boolean;
   id: string;
   sessionId: string;

@@ -42,8 +42,9 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
       else if (r.path === 'works/work-1/configuration') { if (r.method === 'PUT') desired = JSON.parse(r.body).configuration; reply = { json: { desired, active: desired, pendingApply: false, runtime: { state: 'ready' } } }; }
       else if (r.path.endsWith('/services')) reply = { json: { services: [] } };
       else if (r.path.endsWith('/packages')) reply = { json: { packages: [] } };
+      else if (r.path.endsWith('/models')) reply = { json: {models:[{modelRef:'model-test-0000000001',label:'Test model',provider:'fixture',model:'one'}],defaultModel:{modelRef:null,label:'Work model',provider:'fixture',model:'one'},checkedAt:new Date().toISOString(),availability:'available'} };
       else if (r.path.endsWith('/sessions')) reply = { json: { sessions: [{ sessionId: 'session-1' }] } };
-      else if (r.path.endsWith('/sessions/session-1')) reply = { json: { messages: [{ role: 'user', text: 'original prompt' }] } };
+      else if (r.path.endsWith('/sessions/session-1')) reply = { json: {session:{sessionId:'session-1',workId:'work-1',modelPreference:null,source:{kind:'chat'}}, messages: [{ role: 'user', text: 'original prompt' }],runs:[] } };
       else if (r.path.startsWith('operations/')) reply = { json: { state: 'succeeded', operationId: r.path.split('/')[1] } };
       else reply = { status: 404, json: { code: 'NOT_FOUND' } };
     }
@@ -267,4 +268,120 @@ test('R5 inspection nonce rejects a forced late XHR completion after replacement
   await api(page, `const stale=window.fakeUploads[0]; stale.responseText=JSON.stringify({transferId:stale.headers['X-Piwork-Transfer-Id'],summary:{name:'old'}}); stale.onload();`);
   await page.waitForTimeout(100);
   assert.equal(await api(page, `return adapter.inspectionTransfer;`), fresh); assert.equal(await api(page, `return adapter.inspection.name;`), 'new'); assert(requests.filter(r => r.method === 'DELETE' && r.path === 'work-packages/'+old).length >= 2);
+});
+
+test('Brain model save lost reply blocks sending and reads the original Session without PATCH replay',async t=>{
+  const preference={modelRef:'model-test-0000000001',label:'Test model',provider:'fixture',model:'one',availability:'available'};
+  let saved=false;
+  const {page,requests}=await fixture(t,r=>{
+    if(r.path.endsWith('/sessions/session-1/model')){saved=true;return{abort:true};}
+    if(r.path.endsWith('/sessions/session-1'))return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:saved?preference:null,source:{kind:'chat'}},messages:[],runs:[]}};
+  });
+  await button(page,'tab-Chat').click();await page.locator('#composer').fill('keep my message');
+  await page.locator('#model-select').selectOption('model-test-0000000001');await expect(button(page,'send-message')).toBeDisabled();
+  await button(page,'save-model').click();await expect(button(page,'check-session-model')).toBeVisible();await expect(button(page,'send-message')).toBeDisabled();
+  assert.equal(requests.filter(r=>r.method==='PATCH').length,1);assert.equal(requests.filter(r=>r.path.endsWith('/runs')).length,0);
+  await button(page,'check-session-model').click();await expect(button(page,'send-message')).toBeEnabled();await expect(page.locator('#composer')).toHaveValue('keep my message');
+  assert.equal(requests.filter(r=>r.method==='PATCH').length,1);assert.equal(await api(page,"return adapter.getWork('work-1').sessions[0].modelPreference.modelRef"),preference.modelRef);
+});
+
+test('Brain saving preference survives a concurrent Session refresh and does not alter accepted Run metadata',async t=>{
+ let release!:()=>void;const gate=new Promise<void>(r=>release=r);t.after(async()=>release());
+ const model={modelRef:'model-test-0000000001',label:'Test model',provider:'fixture',model:'one'};
+ const {page}=await fixture(t,async r=>{
+  if(r.path.endsWith('/sessions/session-1/model')){await gate;return{json:{workId:'work-1',sessionId:'session-1',modelPreference:{...model,availability:'available'}}};}
+  if(r.path.endsWith('/sessions/session-1'))return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:null,source:{kind:'chat'}},messages:[],runs:[{runId:'run-original',sessionId:'session-1',state:4,actualModel:{...model,model:'original'},source:{kind:'chat'}}]}};
+ });
+ await api(page,"adapter.selectModel('work-1','session-1','model-test-0000000001'); window.modelSave=adapter.saveModel('work-1','session-1');");
+ await api(page,"await adapter.loadSessions('work-1')");release();await api(page,"await window.modelSave");
+ assert.equal(await api(page,"return adapter.modelSelection('work-1','session-1').phase"),'clean');
+ assert.equal(await api(page,"return adapter.getWork('work-1').sessions[0].modelPreference.modelRef"),model.modelRef);
+ assert.equal(await api(page,"return adapter.getWork('work-1').sessions[0].runs[0].actualModel.model"),'original');
+});
+
+test('Brain rejected preference preserves confirmed value and message; foreign Session reply cannot confirm',async t=>{
+ let foreign=false;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/sessions/session-1/model'))return foreign?{json:{workId:'work-foreign',sessionId:'session-1',modelPreference:null}}:{status:409,json:{code:'MODEL_UNAVAILABLE',message:'Model was disabled'}};
+ });
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft survives');await page.locator('#model-select').selectOption('model-test-0000000001');await button(page,'save-model').click();
+ assert.equal(await api(page,"return adapter.getWork('work-1').sessions[0].modelPreference"),null);await expect(page.locator('#composer')).toHaveValue('draft survives');await expect(button(page,'send-message')).toBeDisabled();
+ foreign=true;await button(page,'save-model').click();await expect(button(page,'check-session-model')).toBeVisible();assert.equal(requests.filter(r=>r.method==='PATCH').length,2);
+});
+
+test('Brain request pages use original IDs, historical retry stays readonly and lost live retry keeps one new key',async t=>{
+ const request={requestId:'req-original',goal:'Fix completed review',source:{kind:'service',serviceName:'workstation'},state:'needs_attention',disposition:'historical'};
+ let historical=true,lost=true;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests/req-original'))return{json:{request:{...request,disposition:historical?'historical':'live'},evidence:{items:[],nextCursor:null},runs:[]}};
+  if(r.path.endsWith('/agent-requests/req-original/retry'))return lost?{abort:true}:{json:{requestId:'req-new',retryOf:'req-original'}};
+ });
+ await assert.rejects(api(page,"await adapter.retryRequest('work-1','req-original')"));assert.equal(requests.filter(r=>r.method==='POST').length,0);
+ historical=false;await assert.rejects(api(page,"await adapter.retryRequest('work-1','req-original')"));const first=requests.filter(r=>r.method==='POST').at(-1)!;
+ await page.waitForTimeout(100);assert.equal(requests.filter(r=>r.method==='POST').length,1);lost=false;const result=await api(page,"return adapter.retryRequest('work-1','req-original')");
+ assert.equal(result.requestId,'req-new');assert.equal(requests.filter(r=>r.method==='POST').at(-1)!.body,first.body);
+});
+
+test('Brain request details keep imported history readonly and closing does not cancel',async t=>{
+ const request={requestId:'request-historical',goal:'Original imported review',source:{kind:'service',serviceName:'workstation'},state:'needs_attention',disposition:'historical',runIds:[],expiresAt:'2026-10-05T00:00:00Z',waitRef:{kind:'job',serviceName:'workstation',id:'job-original',deadlineAt:'2026-10-05T00:00:00Z'}};
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[request],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-historical'))return{json:{request,evidence:{items:[{evidenceId:'proof-original',kind:'query',objectRef:'review',stateVersion:'2',verified:true}],nextCursor:null},runs:[]}};
+ });
+ await button(page,'tab-Chat').click();await button(page,'pi-requests').click();await expect(page.locator('#modal')).toContainText('runtime observations');await button(page,'pi-request-detail').click();
+ await expect(page.locator('#modal')).toContainText('job-original');await expect(page.locator('#modal')).toContainText('Shared history is read only');await expect(page.locator('[data-action="retry-pi-request"]')).toHaveCount(0);await expect(page.locator('[data-action="cancel-pi-request"]')).toHaveCount(0);
+ await button(page,'close-modal').click();assert.equal(requests.filter(r=>r.method==='POST').length,0);
+});
+
+const brainCandidate = {source:'Work files',operationId:'operation-candidate-original',requestId:'req-original',preparation:'succeeded',desired:true,active:false,adoption:'not-confirmed',
+ baseline:{activeSelected:true,desiredSelected:true,activeMatchesCurrent:true,desiredMatchesCurrent:false},
+ verification:{goal:'Verify the personal review export',toolName:'package:piwork-brain:review_probe',inputSummary:'{"mode":"review"}',checkNames:['review-success','export-present']},
+ apply:{availability:'not-applied'}};
+
+test('Brain package details expose acceptance and fixed checks, and open the original Apply and request',async t=>{
+ const apply={availability:'available',operationId:'operation-apply-original',state:'failed',error:{code:'WORK_OPERATION_FAILED',message:'The prior active package was restored.'}};
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/configuration'))return{json:{desired:{skills:[],packages:[{name:'piwork-brain',enabled:true}],agentsMd:'',mcp:{servers:[]}},active:{},pendingApply:true,runtime:{state:'ready'}}};
+  if(r.path.endsWith('/packages'))return{json:{packages:[{name:'piwork-brain',pendingApply:true,runtime:{availability:'available',loaded:true},candidate:{...brainCandidate,apply}}]}};
+  if(r.path==='operations/operation-apply-original')return{json:{operationId:'operation-apply-original',workId:'work-1',kind:'apply-work-configuration',state:'failed',error:apply.error}};
+  if(r.path.endsWith('/agent-requests/req-original'))return{json:{request:{requestId:'req-original',goal:'Verify the personal review export',source:{kind:'chat'},state:'needs_attention',disposition:'live',evidenceIds:[],runIds:[],error:{code:'PI_PACKAGE_CANDIDATE_CONFLICT',message:'Apply failed'}},evidence:{items:[],nextCursor:null},runs:[]}};
+ });
+ await button(page,'settings').click();await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();await expect(page.locator('#app')).toContainText('Saved · Not applied · Loaded');await expect(page.locator('#app')).toContainText('Behavior not confirmed');await button(page,'package-detail').click();await expect(page.locator('#modal')).toContainText('.pi/packages/piwork-brain/');
+ const modal=page.locator('#modal');
+ for(const text of ['Active selection at acceptance','Enabled at acceptance · Still matches','Saved selection at acceptance','Changed since acceptance','Verify the personal review export','package:piwork-brain:review_probe','{"mode":"review"}','review-success','export-present','Published','Apply failed','operation-apply-original','The prior active package was restored.'])await expect(modal).toContainText(text);
+ for(const privateField of ['artifactDigest','contextId','credentialRef','sha256:'])assert.equal((await modal.innerText()).includes(privateField),false);
+ await page.locator('[data-action="operation"][data-id="operation-apply-original"]').click();await expect(modal).toContainText('operation-apply-original');await expect(modal).toContainText('failed');assert.ok(requests.some(r=>r.path==='operations/operation-apply-original'&&r.method==='GET'));
+ await button(page,'close-modal').click();await button(page,'package-detail').click();await button(page,'pi-request-detail').click();await expect(modal).toContainText('Verify the personal review export');assert.ok(requests.some(r=>r.path.endsWith('/agent-requests/req-original')&&r.method==='GET'));
+ assert.equal(requests.filter(r=>r.path.endsWith('/apply')).length,0);
+ assert.equal(requests.filter(r=>['POST','PUT','PATCH','DELETE'].includes(r.method)).length,0);
+});
+
+test('Brain details distinguish no Apply, observation failure and loaded behavior failure, retaining last confirmed details',async t=>{
+ let fail=false,candidate={...brainCandidate} as Record<string,any>;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/configuration'))return{json:{desired:{skills:[],packages:[{name:'piwork-brain',enabled:true}],agentsMd:'',mcp:{servers:[]}},active:{},pendingApply:true,runtime:{state:'ready'}}};
+  if(r.path.endsWith('/packages'))return fail?{status:503,json:{message:'Package state unavailable'}}:{json:{packages:[{name:'piwork-brain',pendingApply:true,runtime:{availability:'available',loaded:true},candidate}]}};
+ });
+ await button(page,'settings').click();await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();await button(page,'package-detail').click();const modal=page.locator('#modal');await expect(modal).toContainText('No matching Apply');
+ fail=true;await button(page,'refresh-package-detail').click();await expect(modal).toContainText('Package observation unavailable. Last confirmed details');await expect(modal).toContainText('Verify the personal review export');
+ fail=false;candidate={...brainCandidate,adoption:'unavailable',apply:{availability:'unavailable'}};await button(page,'refresh-package-detail').click();await expect(modal).toContainText('Apply observation unavailable');await expect(modal).toContainText('Behavior observation unavailable');await expect(modal).not.toContainText('Package observation unavailable. Last confirmed details');await expect(modal).not.toContainText('No matching Apply');
+ candidate={...brainCandidate,active:true,adoption:'failed',apply:{availability:'available',operationId:'operation-apply-original',state:'succeeded'}};await button(page,'refresh-package-detail').click();await expect(modal).toContainText('Apply succeeded');await expect(modal).toContainText('Behavior checks failed');await expect(modal).not.toContainText('Apply failed');
+ assert.equal(requests.filter(r=>['POST','PUT','PATCH','DELETE'].includes(r.method)).length,0);
+});
+
+test('opening and refreshing the existing candidate detail action preserves the Service iframe document',async t=>{
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/services'))return{json:{services:[{serviceId:'service-todo',name:'Todo',enabled:true,observedState:'ready',access:{hostname:'todo.work',defaultPortName:'web',ports:[{name:'web',port:8080,url:'http://todo.work/'}]}}]}};
+  if(r.path==='service-entries')return{json:{entryId:'entry-todo',entryUrl:base+'/_desktop/frame-app/',origin:base+'/_desktop/frame-app',embed:'allowed'}};
+  if(r.path==='service-entries/entry-todo')return{json:{embed:'allowed'}};
+  if(r.path==='/_desktop/frame-app/')return{headers:{'Content-Type':'text/html'},body:'<!doctype html><h1>Todo app</h1>'};
+  if(r.path.endsWith('/packages'))return{json:{packages:[{name:'piwork-brain',runtime:{availability:'available',loaded:true},candidate:brainCandidate}]}};
+ });
+ await button(page,'tab-Services').click();const frame=page.frameLocator('iframe');await expect(frame.getByRole('heading',{name:'Todo app'})).toBeVisible();await frame.locator('body').evaluate(node=>{node.dataset.kept='same-document';});
+ await api(page,"await adapter.loadPackages('work-1');");const writes=requests.filter(r=>['POST','PUT','PATCH','DELETE'].includes(r.method)).length;const loads=requests.filter(r=>r.path==='/_desktop/frame-app/').length;
+ // Exercise the registered detail action while the Work's application remains
+ // mounted; the action is normally reached from the Pi Packages selection.
+ await page.evaluate(()=>{const action=document.createElement('button');action.dataset.action='package-detail';action.dataset.id='piwork-brain';document.querySelector('#app')!.append(action);action.click();});
+ await expect(page.locator('#modal')).toContainText('Verify the personal review export');await button(page,'refresh-package-detail').click();await button(page,'close-modal').click();
+ assert.equal(await frame.locator('body').getAttribute('data-kept'),'same-document');assert.equal(requests.filter(r=>r.path==='/_desktop/frame-app/').length,loads);assert.equal(requests.filter(r=>['POST','PUT','PATCH','DELETE'].includes(r.method)).length,writes);
 });

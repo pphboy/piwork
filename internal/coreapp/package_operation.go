@@ -15,6 +15,8 @@ import (
 
 func packageSafeFailureCode(code string) bool {
 	switch code {
+	case "PI_PACKAGE_CANDIDATE_CONFLICT", "PI_PACKAGE_CANDIDATE_CHANGED":
+		return true
 	case "PI_PACKAGE_INVALID_SOURCE", "PI_PACKAGE_INVALID_MANIFEST", "PI_PACKAGE_UNSAFE_ARCHIVE", "PI_PACKAGE_LIMIT_EXCEEDED", "PI_PACKAGE_UNSUPPORTED_MEDIA_TYPE", "PI_PACKAGE_SDK_VERSION_UNSUPPORTED", "PI_PACKAGE_SOURCE_FETCH_FAILED", "PI_PACKAGE_DEPENDENCY_INSTALL_FAILED", "PI_PACKAGE_PREPARATION_FAILED", "PI_PACKAGE_INTERRUPTED", "PI_PACKAGE_CLEANUP_PENDING", "PI_PACKAGE_ALREADY_INSTALLED", "PI_PACKAGE_NAME_MISMATCH", "PI_PACKAGE_NOT_FOUND", "PI_PACKAGE_ENVIRONMENT_MISMATCH":
 		return true
 	}
@@ -65,6 +67,40 @@ func packageOperationProjection(operation corestore.OperationRecord, job coresto
 	if job.ScopeKind == "work" {
 		view := operationEnvelopeView(operation).(map[string]any)
 		view["packagePhase"] = job.Phase
+		if operation.ResultJSON != nil {
+			var result struct {
+				Name           contracts.PiPackageName           `json:"name"`
+				Version        json.RawMessage                   `json:"version"`
+				ResourceCounts contracts.PiPackageResourceCounts `json:"resourceCounts"`
+				Scope          string                            `json:"scope"`
+				PendingApply   bool                              `json:"pendingApply"`
+			}
+			if json.Unmarshal([]byte(*operation.ResultJSON), &result) != nil || !pipackage.ValidName(string(result.Name)) || result.Scope != "work" || !result.PendingApply {
+				return nil, corestore.ErrStorage
+			}
+			value := map[string]any{"name": result.Name, "version": result.Version, "resourceCounts": result.ResourceCounts, "scope": "work", "pendingApply": true}
+			raw, _ := json.Marshal(value)
+			parsed, err := contracts.ParseJSON(strings.NewReader(string(raw)), 64<<10)
+			if err != nil {
+				return nil, corestore.ErrStorage
+			}
+			view["result"] = parsed
+		}
+		if operation.ErrorJSON != nil {
+			var safe struct {
+				Code string `json:"code"`
+			}
+			if json.Unmarshal([]byte(*operation.ErrorJSON), &safe) != nil {
+				return nil, corestore.ErrStorage
+			}
+			if packageSafeFailureCode(safe.Code) {
+				view["error"] = map[string]any{"code": "WORK_OPERATION_FAILED", "stage": "package-prepare", "message": packageFailureMessage(safe.Code), "remediation": "Inspect the original package Operation before a new submission.", "retryable": false, "correlationId": operation.ID}
+			}
+		}
+		raw, _ := json.Marshal(view)
+		if _, err := contracts.Decode[contracts.PublicOperation](strings.NewReader(string(raw)), "PublicOperationSchema", 2<<20); err != nil {
+			return nil, corestore.ErrStorage
+		}
 		return view, nil
 	}
 	var result any

@@ -159,6 +159,9 @@ func TestNativeWorkApplyCapturesBusyAndStoppedBoundaries(t *testing.T) {
 }
 
 func nativeApplyFixture(t *testing.T, models ...RuntimeInput) (*Application, string, string, string, context.Context) {
+	return nativeApplyFixtureConfig(t, false, models...)
+}
+func nativeApplyFixtureConfig(t *testing.T, mcp bool, models ...RuntimeInput) (*Application, string, string, string, context.Context) {
 	t.Helper()
 	image := os.Getenv("PIWORK_TEST_NATIVE_AGENT_IMAGE")
 	if image == "" {
@@ -209,8 +212,13 @@ func nativeApplyFixture(t *testing.T, models ...RuntimeInput) (*Application, str
 	if err != nil {
 		t.Fatal(err)
 	}
+	if defaults.Configuration == nil {
+		t.Fatal("default brain seed failed", a.Status(), a.ensureBundledBrain(ctx))
+	}
 	config := *defaults.Configuration
-	config.McpServers = []contracts.McpServer{}
+	if !mcp {
+		config.McpServers = []contracts.McpServer{}
+	}
 	status, created := packageHTTPCall(t, base, "/api/v1/works", "POST", auth, map[string]any{"name": "Apply Work", "idempotencyKey": "create", "configuration": config})
 	if status != 202 {
 		t.Fatal(status, created)

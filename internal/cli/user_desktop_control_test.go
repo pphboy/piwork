@@ -74,6 +74,13 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		{"POST", "/_desktop/api/works/work-1/services/svc-1/stop", "", "/api/v1/works/work-1/services/svc-1/disable"},
 		{"GET", "/_desktop/api/works/work-1/packages/%40example%2Ftools", "", "/api/v1/works/work-1/packages/%40example%2Ftools"},
 		{"PUT", "/_desktop/api/works/work-1/configuration/agents", `{"agentsMd":"# Agent"}`, "/api/v1/works/work-1/configuration/agents"},
+		{"GET", "/_desktop/api/works/work-1/models", "", "/api/v1/works/work-1/models"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null}`, "/api/v1/works/work-1/sessions/session-1/model"},
+		{"GET", "/_desktop/api/works/work-1/agent-requests?serviceName=todo&limit=5", "", "/api/v1/works/work-1/agent-requests?limit=5&serviceName=todo"},
+		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1?cursor=page-1", "", "/api/v1/works/work-1/agent-requests/request-1?cursor=page-1"},
+		{"GET", "/_desktop/api/works/work-1/evidence/evidence-1", "", "/api/v1/works/work-1/evidence/evidence-1"},
+		{"POST", "/_desktop/api/works/work-1/agent-requests/request-1/retry", `{"submissionKey":"original-retry-key"}`, "/api/v1/works/work-1/agent-requests/request-1/retry"},
+		{"POST", "/_desktop/api/works/work-1/agent-requests/request-1/cancel", `{}`, "/api/v1/works/work-1/agent-requests/request-1/cancel"},
 		{"POST", "/_desktop/api/works/work-1/runs", `{"sessionId":"session-1","prompt":"你好"}`, "/api/v1/works/work-1/runs"},
 	} {
 		response := request(item.method, item.path, item.payload, "csrf")
@@ -89,7 +96,7 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		if last.method != item.method || last.path != item.forwarded || last.auth != "Bearer secret-core-token" {
 			t.Fatalf("wrong Core request: %+v", last)
 		}
-		if item.method == "POST" && item.path != "/_desktop/api/works/work-1/runs" {
+		if item.method == "POST" && item.path != "/_desktop/api/works/work-1/runs" && !strings.Contains(item.path, "/agent-requests/") {
 			if key, _ := last.body["idempotencyKey"].(string); !strings.HasPrefix(key, "desktop-") {
 				t.Fatalf("mutation has no idempotency key: %+v", last)
 			}
@@ -104,6 +111,13 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 	before := len(calls)
 	mu.Unlock()
 	for _, item := range []struct{ method, path, payload, csrf string }{
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null,"credential":"not-allowed"}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null}`, "wrong"},
+		{"GET", "/_desktop/api/works/work-1/agent-requests?limit=101", "", ""},
+		{"GET", "/_desktop/api/works/work-1/agent-requests?limit=1&limit=2", "", ""},
+		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1?serviceName=todo", "", ""},
+		{"GET", "/_desktop/api/works/work-1/agent-requests?unknown=true", "", ""},
+		{"POST", "/_desktop/api/works/work-1/agent-requests/request-1/retry", `{"idempotencyKey":"invented"}`, "csrf"},
 		{"POST", "/_desktop/api/works", `{"name":"bad","idempotencyKey":"attacker"}`, "csrf"},
 		{"POST", "/_desktop/api/works/work-1", "", "csrf"},
 		{"GET", "/_desktop/api/works/work-1/services/svc-1/logs?tailLines=201", "", ""},

@@ -159,19 +159,11 @@ func issueLeaf(authority keyPair, scope Scope, role string, now time.Time) (keyP
 	if role == AgentServer || role == CoreServiceServer {
 		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
 		template.DNSNames = []string{scope.commonName(role)}
+		if role == AgentServer {
+			template.DNSNames = append(template.DNSNames, "agentd")
+		}
 	} else {
 		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
-	}
-	// Keep legacy Agent/Core URI SANs while adding the full installation and
-	// instance scope required for native peer verification.
-	if role == AgentServer || role == CoreClient {
-		legacyRole := "agent"
-		if role == CoreClient {
-			legacyRole = "core"
-			template.DNSNames = []string{scope.commonName(role)}
-		}
-		legacy, _ := url.Parse(fmt.Sprintf("spiffe://piwork/work/%s/generation/%d/%s", scope.WorkID, scope.Generation, legacyRole))
-		template.URIs = append(template.URIs, legacy)
 	}
 	return makePair(template, ca, key)
 }

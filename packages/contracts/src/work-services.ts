@@ -7,6 +7,9 @@ export {
   Acceptance as WorkServiceAcceptanceCodec,
 } from "./generated/work-services.js";
 export type {
+  WorkPrivateRequest as RpcWorkPrivateRequest,
+  WorkPrivateResponse as RpcWorkPrivateResponse,
+  RunModelResolution as RpcRunModelResolution,
   Empty as RpcEmpty,
   ServiceImage as RpcServiceImage,
   ServiceMount as RpcServiceMount,

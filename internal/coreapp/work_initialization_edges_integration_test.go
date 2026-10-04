@@ -91,7 +91,7 @@ func TestNativeInitialSkillFailureTransientApplyRetryAndMCPRemoval(t *testing.T)
 	}
 	candidate := *state.DesiredContextID
 	root := filepath.Join(a.options.DataDirectory, "works", id, "contexts", candidate)
-	manifest := filepath.Join(root, "skills", "deploy-work-service", "SKILL.md")
+	manifest := filepath.Join(root, "packages", contracts.PackageNameKey("piwork-brain"), "skills", "deploy-work-service", "SKILL.md")
 	if err := os.Chmod(filepath.Dir(manifest), 0755); err != nil {
 		t.Fatal(err)
 	}

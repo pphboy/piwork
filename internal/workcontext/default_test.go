@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"piwork/internal/contracts"
-	"piwork/internal/coreassets"
 	"piwork/internal/corestore"
 	"piwork/internal/skillartifact"
 )
@@ -23,14 +22,18 @@ func TestBuildDefaultPublishesAgentReadableIndependentContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	files, identity, err := coreassets.DeploymentSkill()
-	if err != nil {
+	source := filepath.Join(t.TempDir(), "context-skill")
+	if err := os.MkdirAll(filepath.Join(source, "examples"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	seed := skillartifact.Snapshot{Name: coreassets.DeploymentSkillName, Identity: identity, Directories: []string{"examples"}}
-	for _, file := range files {
-		seed.Files = append(seed.Files, skillartifact.File{Path: file.Path, Data: file.Data})
-		seed.TotalBytes += int64(len(file.Data))
+	for name, body := range map[string]string{"SKILL.md": "# Context Skill", "reference.md": "Reference", "examples/example.txt": "Example"} {
+		if err := os.WriteFile(filepath.Join(source, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed, err := skillartifact.Scan(source, "context-skill")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := skillartifact.Publish(store, seed); err != nil {
 		t.Fatal(err)
@@ -43,7 +46,7 @@ func TestBuildDefaultPublishesAgentReadableIndependentContext(t *testing.T) {
 	}
 	configuration := contracts.WorkConfig{
 		AgentImage: contracts.ImageSelection{CatalogId: "runtime-image-00000001"},
-		Skills:     contracts.SkillSelection{coreassets.DeploymentSkillName}, Packages: contracts.PiPackageSelection{},
+		Skills:     contracts.SkillSelection{"context-skill"}, Packages: contracts.PiPackageSelection{},
 		AgentsMd: "# 中文说明", ModelRef: "runtime-model-00000001", McpServers: []contracts.McpServer{},
 		Resources: contracts.ResourcePolicy{CpuMillis: 2000, MemoryBytes: 1610612736, AgentCpuMillis: 1000, AgentMemoryBytes: 805306368, MaxServices: 4, MaxRetainedVolumes: 2},
 		Tools:     contracts.ToolPolicy{Allowed: []contracts.WorkToolPolicyKey{}, Denied: []contracts.WorkToolPolicyKey{}},
@@ -65,7 +68,7 @@ func TestBuildDefaultPublishesAgentReadableIndependentContext(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(published.Directory, "AGENTS.md")); err != nil || string(data) != configuration.AgentsMd {
 		t.Fatal("AGENTS.md was not captured", err)
 	}
-	for _, name := range []string{"config.json", "metadata.json", "AGENTS.md", "skills/deploy-work-service/SKILL.md", "skills/deploy-work-service/reference.md", "skills/deploy-work-service/examples/python-http.md"} {
+	for _, name := range []string{"config.json", "metadata.json", "AGENTS.md", "skills/context-skill/SKILL.md", "skills/context-skill/reference.md", "skills/context-skill/examples/example.txt"} {
 		info, err := os.Lstat(filepath.Join(published.Directory, name))
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0444 {
 			t.Fatal("context file is not immutable and Agent-readable", name, err)

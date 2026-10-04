@@ -223,6 +223,12 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 		return result, err
 	}
 	config := agentConfig(spec, captured.config, identity)
+	config.ServiceControl.Present = true
+	config.ServiceControl.Value.Endpoint = endpoint
+	config.ServiceControl.Value.ServerName = "piwork-core"
+	config.ServiceControl.Value.CaCertificatePath = "/etc/piwork/control/installation-ca.crt"
+	config.ServiceControl.Value.ClientCertificatePath = "/etc/piwork/control/agent-service-client.crt"
+	config.ServiceControl.Value.ClientPrivateKeyPath = "/etc/piwork/control/agent-service-client.key"
 	configPath, err := r.TLS.WriteAgentConfig(ctx, spec.Scope, config)
 	if err != nil {
 		return result, err
@@ -330,6 +336,7 @@ func (r *Runtime) StopAgent(ctx context.Context, scope internaltls.Scope, contex
 
 func agentConfig(spec StartSpec, work contracts.WorkConfig, identity internaltls.GenerationIdentity) contracts.AgentRuntimeConfig {
 	config := contracts.AgentRuntimeConfig{Version: 1, WorkId: spec.Scope.WorkID, Generation: spec.Scope.Generation, InstanceId: spec.Scope.InstanceID, Listen: "0.0.0.0:7443", DataDirectory: "/var/data", Deterministic: spec.Model.Provider == "piwork-deterministic"}
+	config.FeedbackListen = contracts.Supplied("0.0.0.0:7444")
 	config.ContextConfigPath = contracts.Supplied("/run/piwork/config.json")
 	config.AgentsMdPath = contracts.Supplied("/run/piwork/AGENTS.md")
 	config.ContextIdentity = contracts.Supplied(spec.ContextID)

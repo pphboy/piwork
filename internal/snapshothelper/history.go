@@ -22,9 +22,11 @@ import (
 var scopeID = regexp.MustCompile(`^[a-zA-Z0-9-]{16,128}$`)
 
 type historyRequest struct {
-	SourceWorkID string   `json:"sourceWorkId"`
-	ContextIDs   []string `json:"contextIds"`
-	TargetWorkID string   `json:"targetWorkId,omitempty"`
+	Models       []map[string]any  `json:"models,omitempty"`
+	Operations   map[string]string `json:"operations,omitempty"`
+	SourceWorkID string            `json:"sourceWorkId"`
+	ContextIDs   []string          `json:"contextIds"`
+	TargetWorkID string            `json:"targetWorkId,omitempty"`
 	Contexts     []struct {
 		SourceID string `json:"sourceId"`
 		TargetID string `json:"targetId"`
@@ -53,7 +55,7 @@ func readRequest(spool string) (historyRequest, error) {
 	}
 	for key := range object {
 		switch key {
-		case "sourceWorkId", "contextIds", "targetWorkId", "contexts":
+		case "sourceWorkId", "contextIds", "targetWorkId", "contexts", "models", "operations":
 		default:
 			return request, workhistory.ErrInvalid
 		}
@@ -94,6 +96,54 @@ func readRequest(spool string) (historyRequest, error) {
 			}
 		}
 	}
+	if value, exists := object["models"]; exists {
+		items, ok := value.([]any)
+		if !ok || len(items) > 256 {
+			return request, workhistory.ErrInvalid
+		}
+		refs := map[string]bool{}
+		for _, item := range items {
+			m, ok := item.(map[string]any)
+			if !ok {
+				return request, workhistory.ErrInvalid
+			}
+			public := map[string]any{}
+			for k, v := range m {
+				if k != "baseUrl" {
+					public[k] = v
+				}
+			}
+			ref, ok := m["modelRef"].(string)
+			if !ok || refs[ref] || contracts.Validate("RunModelDescriptionSchema", public) != nil {
+				return request, workhistory.ErrInvalid
+			}
+			refs[ref] = true
+			if v, exists := m["baseUrl"]; exists {
+				endpoint, ok := v.(string)
+				if !ok {
+					return request, workhistory.ErrInvalid
+				}
+				if _, err := contracts.NormalizeModelEndpoint(&endpoint); err != nil {
+					return request, workhistory.ErrInvalid
+				}
+			}
+		}
+	}
+	if value, exists := object["operations"]; exists {
+		items, ok := value.(map[string]any)
+		if !ok || len(items) > 100000 {
+			return request, workhistory.ErrInvalid
+		}
+		seen := map[string]bool{}
+		for source, v := range items {
+			target, ok := v.(string)
+			if !ok || !scopeID.MatchString(source) || !scopeID.MatchString(target) || seen[target] {
+				return request, workhistory.ErrInvalid
+			}
+			seen[target] = true
+		}
+	}
+
 	return request, nil
 }
 func verifyVolumeHistory(ctx context.Context, volume, spool string, restore bool) (any, error) {
@@ -126,7 +176,7 @@ func verifyVolumeHistory(ctx context.Context, volume, spool string, restore bool
 			mapping[item.SourceID] = item.TargetID
 		}
 		if snapshot != nil {
-			if err := snapshot.Rebuild(ctx, volume, request.TargetWorkID, mapping); err != nil {
+			if err := snapshot.Rebuild(ctx, volume, request.TargetWorkID, mapping, workhistory.RestoreBindings{Models: request.Models, Operations: request.Operations}); err != nil {
 				return nil, err
 			}
 		}
@@ -136,7 +186,7 @@ func verifyVolumeHistory(ctx context.Context, volume, spool string, restore bool
 		workhistory.Summary
 	}{snapshot != nil, summary}, nil
 }
-func verifyPackageHistory(ctx context.Context, verified workpackage.Verified, blobs *workpackage.BlobDirectory, spool string) error {
+func verifyPackageHistory(ctx context.Context, verified workpackage.Verified, openBlob func(contracts.WorkBlob) (io.ReadCloser, error), spool string) error {
 	spec := verified.Spec
 	var identities contracts.WorkSourceIdentityMap
 	if json.Unmarshal(verified.Metadata[string(spec.History.SourceIdentityMap)], &identities) != nil {
@@ -194,7 +244,7 @@ func verifyPackageHistory(ctx context.Context, verified workpackage.Verified, bl
 		if !ok {
 			return workhistory.ErrInvalid
 		}
-		source, err := blobs.Read(string(entry.Blob))
+		source, err := openBlob(descriptors[string(entry.Blob)])
 		if err != nil {
 			return err
 		}
@@ -271,14 +321,6 @@ func verifyUploadedPackage(ctx context.Context, spool string) (any, error) {
 		return nil, err
 	}
 	defer unix.Close(root)
-	if err := unix.Mkdirat(root, "blobs", 0700); err != nil && err != unix.EEXIST {
-		return nil, err
-	}
-	blobs, err := workpackage.OpenBlobDirectory(filepath.Join(spool, "blobs"))
-	if err != nil {
-		return nil, err
-	}
-	defer blobs.Close()
 	file, err := workhistory.Regular(root, "package.work")
 	if err != nil {
 		return nil, err
@@ -288,26 +330,21 @@ func verifyUploadedPackage(ctx context.Context, spool string) (any, error) {
 	if unix.Fstat(int(file.Fd()), &before) != nil {
 		return nil, workhistory.ErrInvalid
 	}
-	verified, err := workpackage.Read(ctx, file, workpackage.ReadOptions{OnBlob: func(blob contracts.WorkBlob, source io.Reader) error {
-		stored, err := blobs.Put(ctx, source, int64(blob.Size))
-		if err != nil {
-			return err
-		}
-		if stored.Digest != string(blob.Digest) || stored.Size != int64(blob.Size) {
-			return &workpackage.ValidationError{Code: "PACKAGE_INVALID", Field: "blob"}
-		}
-		return nil
-	}})
+	// Read validates every blob hash and records bounded archive offsets. Use
+	// those sections directly: duplicating image blobs into a tmpfs spool can
+	// exhaust the helper's memory limit even though validation itself streams.
+	verified, err := workpackage.Read(ctx, file, workpackage.ReadOptions{})
 	if err != nil {
 		return nil, err
 	}
-	if err := workpackage.ValidatePackageContent(ctx, verified, func(blob contracts.WorkBlob) (io.ReadCloser, error) { return blobs.Read(string(blob.Digest)) }); err != nil {
+	openBlob := verified.Open(file)
+	if err := workpackage.ValidatePackageContent(ctx, verified, openBlob); err != nil {
 		return nil, err
 	}
 	if err := workpackage.ValidateImages(ctx, verified, file); err != nil {
 		return nil, err
 	}
-	if err := verifyPackageHistory(ctx, verified, blobs, spool); err != nil {
+	if err := verifyPackageHistory(ctx, verified, openBlob, spool); err != nil {
 		return nil, err
 	}
 	var after unix.Stat_t

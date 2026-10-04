@@ -19,6 +19,8 @@ make test-native-host  # 发布包 + scratch 宿主 + 独立 Engine 的完整运
 
 集成测试只使用固定的确定性模型和真实 Pi SDK，不会默认调用付费模型。需要真实提供商时，另行显式运行专用 smoke；它不替代确定性验收。
 
+Go Engine 完整批次的单包时间上限为 120 分钟，包含真实故障、包准备和全闭包快照往返。若批次失败或超时，记录已完成、失败和未执行清单，以当前代码逐项复验；不能把超时命令记录为 PASS，也不能用历史场景索引替代实际执行。
+
 ## Docker 隔离
 
 `internal/testsupport` 为每次测试生成独立的 `piwork-test-<uuid>` 安装身份。测试创建的 Docker container/network/volume 均带 `piwork.installation_id`，发现、inspect 和清理只针对该身份。不得使用全局 prune、模糊名称过滤或跨安装清理。需要独立 Engine 时设置 `PIWORK_TEST_DOCKER_HOST=unix:///path/to/docker.sock`；测试宿主可以没有 Docker CLI，但构建镜像的开发入口需要它。
@@ -31,3 +33,8 @@ Desktop 的真实 Go Core/CLI 联合脚本已接入 `make test-integration`，�
 完整包包含固定镜像，大包验收应将 `TMPDIR` 指向空间充足的磁盘目录；内存盘 `/tmp` 的可用空间不足时，Desktop 按规定保留 1 GiB 余量并拒绝暂存，不能降低生产空间限制来通过测试。
 
 `make test-native-host` 使用开发机 Docker CLI/Node/OpenSSL 准备测试夹具；这些工具不在被测宿主内。测试创建带唯一 fixture label 的临时 `docker:27-dind` 特权容器作为独立 Engine，并把发布包三个程序放在 scratch 容器中，共享该 Engine 的 Unix socket 和同机数据路径。被测 Core/CLI/Console 的根文件系统没有解释器、shell、Go、Docker CLI 或 OpenSSL，PATH 为 `/nonexistent`。脚本验证真实 SDK→Go MCP 部署、Service proxy、WebDAV、嵌入 Desktop/Console、Export/Inspect/Import/Start 和 workspace 数据，再核对实际进程及缺失工具。准备 fixture 时需要 `docker:27-dind` 和 `python:3.13-slim`；后者仅运行用户测试 Service。结束只清理该 fixture 的 container、volume、scratch image，不清理其他安装。此 gate 已接入 `make acceptance`。
+
+
+当前 brain 回归使用 `internal/coreapp/brain_workstation_integration_test.go`、`brain_candidates_integration_test.go`、`run_models_integration_test.go` 和 `service_interactions_integration_test.go`；所有平台控制由 Go Core 与原生 helper 处理，确定性模型只在 acceptance Agent 镜像中注册。工作站 fixture 的 Python/NiceGUI 是示例 Service 的运行环境，不是宿主依赖，也不限制用户选择技术栈。
+
+`node scripts/check-native-boundary.mjs` 扫描当前 apps/packages、scripts、构建与运行配置、锁文件及当前 docs。仅规则文件自身、注入测试和明确列出的历史验收记录排除；不会排除整个 scripts。`node --test scripts/check-native-boundary.test.mjs` 注入旧启动脚本、动态 import、运行配置、lock 和当前文档，验证 gate 逐一拒绝，合法 Agent/browser 引用仍通过。镜像和 release 有各自独立的内容 gate。

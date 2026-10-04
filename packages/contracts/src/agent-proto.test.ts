@@ -21,6 +21,8 @@ test("session and run messages survive binary serialization", () => {
     sdkHistoryPath: "/var/session/history.jsonl",
     createdAt: "2026-09-20T00:00:00Z",
     updatedAt: "2026-09-20T00:01:00Z",
+    modelPreferenceJson: "",
+    sourceJson: "",
   });
   assert.equal(session.sessionId, "session-0199e6d8abcd");
 
@@ -38,6 +40,9 @@ test("session and run messages survive binary serialization", () => {
     finishedAt: "2026-09-20T00:02:02Z",
     earliestAvailableSequence: 41n,
     latestSequence: 10_041n,
+    actualModelJson: "",
+    sourceJson: "",
+    adoptedExperienceVersion: 0,
   });
   assert.equal(run.state, RunState.RUN_STATE_INTERRUPTED);
   assert.equal(run.earliestAvailableSequence, 41n);
@@ -82,6 +87,7 @@ test("submit idempotency, watch cursor, cancellation, and event union serialize"
 
 test("generated grpc-js service exposes the durable Agent API", () => {
   assert.deepEqual(Object.keys(AgentServiceService), [
+    "refreshServiceInteractionBindings",
     "readiness",
     "prepareConfigurationChange",
     "drain",
@@ -92,6 +98,13 @@ test("generated grpc-js service exposes the durable Agent API", () => {
     "getRun",
     "watchRun",
     "cancelRun",
+    "listRunModels",
+    "setSessionModel",
+    "listAgentRequests",
+    "getAgentRequest",
+    "cancelAgentRequest",
+    "retryAgentRequest",
+    "getAgentEvidence",
   ]);
   assert.equal(AgentServiceService.watchRun.responseStream, true);
   assert.equal(AgentServiceService.submitRun.responseStream, false);
@@ -103,6 +116,7 @@ test("readiness and configuration-gate messages preserve the context handshake",
     acceptingRuns: false, draining: false, contextContractVersion: 0, contextIdentity: "",
     initializationComplete: false, loadedSkills: [], resolvedTools: [], activeRunCount: 0,
     packageContractVersion: 0, loadedPackages: [], packageResources: [], packageDiagnostics: [],
+    runModelContractVersion: 0, workFeedbackContractVersion: 0, workHistorySchemaVersion: 0,
   });
   assert.equal(absent.contextContractVersion, 0);
   assert.deepEqual(absent.loadedSkills, []);

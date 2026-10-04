@@ -18,7 +18,7 @@ func TestDefaultWorkConfigurationMatchesPublicContract(t *testing.T) {
 	if err != nil {
 		t.Fatal("default Work configuration fails current contract", err, string(raw))
 	}
-	if decoded.AgentImage.CatalogId != "runtime-image-00000012" || decoded.ModelRef != "runtime-model-00000012" || len(decoded.Skills) != 1 || decoded.Skills[0] != "deploy-work-service" || len(decoded.McpServers) != 1 {
+	if decoded.AgentImage.CatalogId != "runtime-image-00000012" || decoded.ModelRef != "runtime-model-00000012" || len(decoded.Skills) != 0 || len(decoded.Packages) != 1 || decoded.Packages[0].Name != "piwork-brain" || len(decoded.McpServers) != 1 {
 		t.Fatal("default Work resource references drifted", decoded)
 	}
 	if string(raw) == "" || bytes.Contains(raw, []byte(`"revision"`)) {

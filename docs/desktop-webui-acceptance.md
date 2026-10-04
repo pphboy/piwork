@@ -41,4 +41,4 @@
 
 Settings 的模拟 Core 浏览器验收逐一覆盖五种 Pi Package 来源：Core/npm/Git 来源先拒绝后更正并接受；ZIP 坏包被本地拒绝后用有效 ZIP 安装；本地目录先因未选择而拒绝，再选择目录上传并提交 Work 范围安装。Skills 的未知名称、Pi Packages 的未安装选择、AGENTS.md 超 1 MiB、Advanced 的无效 modelRef 均先显示错误、保留输入，再更正保存。Save 与 Apply 分开；Apply 的 Run busy、成功、验证失败与回退失败均按原 Operation 检查，随后刷新 active/runtime。真实 Core 的 Chrome/Edge AGENTS.md 保存→Apply→Operation succeeded 已通过；真实 Core 的其他配置字段错误仍由分层测试覆盖。
 
-Export 的准入由真实 Core 的 [snapshot admission/preflight 测试](../apps/core/src/work-snapshots/admission.test.ts) 和 [preflight 测试](../apps/core/src/work-snapshots/preflight.test.ts) 覆盖：stopped 元数据过期、正在运行的容器、文件任务/控制任务/Run 占锁时均拒绝，且不留下半成品包。Desktop 浏览器模拟拒绝、损坏和空间不足；扩展真实 Core 浏览器链路另实际触发了首个 Export 未结束时的第二次 Export 锁拒绝，UI 保留明确错误与原 ID 恢复路径。
+Export 的准入由真实 Core 的 [原生 snapshot 准入及预检测试](../internal/coreapp/snapshot_preflight_integration_test.go) 覆盖：stopped 元数据过期、正在运行的容器、文件任务/控制任务/Run 占锁时均拒绝，且不留下半成品包。Desktop 浏览器模拟拒绝、损坏和空间不足；扩展真实 Core 浏览器链路另实际触发了首个 Export 未结束时的第二次 Export 锁拒绝，UI 保留明确错误与原 ID 恢复路径。

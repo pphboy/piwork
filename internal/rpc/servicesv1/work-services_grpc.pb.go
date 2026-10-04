@@ -19,24 +19,34 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	WorkServices_GetDeploymentContext_FullMethodName = "/piwork.core.services.v1.WorkServices/GetDeploymentContext"
-	WorkServices_CreateService_FullMethodName        = "/piwork.core.services.v1.WorkServices/CreateService"
-	WorkServices_ListServices_FullMethodName         = "/piwork.core.services.v1.WorkServices/ListServices"
-	WorkServices_GetService_FullMethodName           = "/piwork.core.services.v1.WorkServices/GetService"
-	WorkServices_UpdateService_FullMethodName        = "/piwork.core.services.v1.WorkServices/UpdateService"
-	WorkServices_StartService_FullMethodName         = "/piwork.core.services.v1.WorkServices/StartService"
-	WorkServices_StopService_FullMethodName          = "/piwork.core.services.v1.WorkServices/StopService"
-	WorkServices_RestartService_FullMethodName       = "/piwork.core.services.v1.WorkServices/RestartService"
-	WorkServices_RemoveService_FullMethodName        = "/piwork.core.services.v1.WorkServices/RemoveService"
-	WorkServices_RetryService_FullMethodName         = "/piwork.core.services.v1.WorkServices/RetryService"
-	WorkServices_GetOperation_FullMethodName         = "/piwork.core.services.v1.WorkServices/GetOperation"
-	WorkServices_ReadServiceLogs_FullMethodName      = "/piwork.core.services.v1.WorkServices/ReadServiceLogs"
+	WorkServices_ListRunModels_FullMethodName                 = "/piwork.core.services.v1.WorkServices/ListRunModels"
+	WorkServices_ResolveRunModel_FullMethodName               = "/piwork.core.services.v1.WorkServices/ResolveRunModel"
+	WorkServices_GetServiceInteractionBindings_FullMethodName = "/piwork.core.services.v1.WorkServices/GetServiceInteractionBindings"
+	WorkServices_PrepareBrainCandidate_FullMethodName         = "/piwork.core.services.v1.WorkServices/PrepareBrainCandidate"
+	WorkServices_GetBrainCandidateState_FullMethodName        = "/piwork.core.services.v1.WorkServices/GetBrainCandidateState"
+	WorkServices_GetDeploymentContext_FullMethodName          = "/piwork.core.services.v1.WorkServices/GetDeploymentContext"
+	WorkServices_CreateService_FullMethodName                 = "/piwork.core.services.v1.WorkServices/CreateService"
+	WorkServices_ListServices_FullMethodName                  = "/piwork.core.services.v1.WorkServices/ListServices"
+	WorkServices_GetService_FullMethodName                    = "/piwork.core.services.v1.WorkServices/GetService"
+	WorkServices_UpdateService_FullMethodName                 = "/piwork.core.services.v1.WorkServices/UpdateService"
+	WorkServices_StartService_FullMethodName                  = "/piwork.core.services.v1.WorkServices/StartService"
+	WorkServices_StopService_FullMethodName                   = "/piwork.core.services.v1.WorkServices/StopService"
+	WorkServices_RestartService_FullMethodName                = "/piwork.core.services.v1.WorkServices/RestartService"
+	WorkServices_RemoveService_FullMethodName                 = "/piwork.core.services.v1.WorkServices/RemoveService"
+	WorkServices_RetryService_FullMethodName                  = "/piwork.core.services.v1.WorkServices/RetryService"
+	WorkServices_GetOperation_FullMethodName                  = "/piwork.core.services.v1.WorkServices/GetOperation"
+	WorkServices_ReadServiceLogs_FullMethodName               = "/piwork.core.services.v1.WorkServices/ReadServiceLogs"
 )
 
 // WorkServicesClient is the client API for WorkServices service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type WorkServicesClient interface {
+	ListRunModels(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*WorkPrivateResponse, error)
+	ResolveRunModel(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*RunModelResolution, error)
+	GetServiceInteractionBindings(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*WorkPrivateResponse, error)
+	PrepareBrainCandidate(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*WorkPrivateResponse, error)
+	GetBrainCandidateState(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*WorkPrivateResponse, error)
 	GetDeploymentContext(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*DeploymentContext, error)
 	CreateService(ctx context.Context, in *CreateServiceRequest, opts ...grpc.CallOption) (*Acceptance, error)
 	ListServices(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListServicesResponse, error)
@@ -57,6 +67,56 @@ type workServicesClient struct {
 
 func NewWorkServicesClient(cc grpc.ClientConnInterface) WorkServicesClient {
 	return &workServicesClient{cc}
+}
+
+func (c *workServicesClient) ListRunModels(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*WorkPrivateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkPrivateResponse)
+	err := c.cc.Invoke(ctx, WorkServices_ListRunModels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workServicesClient) ResolveRunModel(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*RunModelResolution, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunModelResolution)
+	err := c.cc.Invoke(ctx, WorkServices_ResolveRunModel_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workServicesClient) GetServiceInteractionBindings(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*WorkPrivateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkPrivateResponse)
+	err := c.cc.Invoke(ctx, WorkServices_GetServiceInteractionBindings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workServicesClient) PrepareBrainCandidate(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*WorkPrivateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkPrivateResponse)
+	err := c.cc.Invoke(ctx, WorkServices_PrepareBrainCandidate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workServicesClient) GetBrainCandidateState(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*WorkPrivateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkPrivateResponse)
+	err := c.cc.Invoke(ctx, WorkServices_GetBrainCandidateState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *workServicesClient) GetDeploymentContext(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*DeploymentContext, error) {
@@ -183,6 +243,11 @@ func (c *workServicesClient) ReadServiceLogs(ctx context.Context, in *ReadServic
 // All implementations must embed UnimplementedWorkServicesServer
 // for forward compatibility.
 type WorkServicesServer interface {
+	ListRunModels(context.Context, *Empty) (*WorkPrivateResponse, error)
+	ResolveRunModel(context.Context, *WorkPrivateRequest) (*RunModelResolution, error)
+	GetServiceInteractionBindings(context.Context, *Empty) (*WorkPrivateResponse, error)
+	PrepareBrainCandidate(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error)
+	GetBrainCandidateState(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error)
 	GetDeploymentContext(context.Context, *Empty) (*DeploymentContext, error)
 	CreateService(context.Context, *CreateServiceRequest) (*Acceptance, error)
 	ListServices(context.Context, *Empty) (*ListServicesResponse, error)
@@ -205,6 +270,21 @@ type WorkServicesServer interface {
 // pointer dereference when methods are called.
 type UnimplementedWorkServicesServer struct{}
 
+func (UnimplementedWorkServicesServer) ListRunModels(context.Context, *Empty) (*WorkPrivateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListRunModels not implemented")
+}
+func (UnimplementedWorkServicesServer) ResolveRunModel(context.Context, *WorkPrivateRequest) (*RunModelResolution, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResolveRunModel not implemented")
+}
+func (UnimplementedWorkServicesServer) GetServiceInteractionBindings(context.Context, *Empty) (*WorkPrivateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetServiceInteractionBindings not implemented")
+}
+func (UnimplementedWorkServicesServer) PrepareBrainCandidate(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PrepareBrainCandidate not implemented")
+}
+func (UnimplementedWorkServicesServer) GetBrainCandidateState(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetBrainCandidateState not implemented")
+}
 func (UnimplementedWorkServicesServer) GetDeploymentContext(context.Context, *Empty) (*DeploymentContext, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDeploymentContext not implemented")
 }
@@ -260,6 +340,96 @@ func RegisterWorkServicesServer(s grpc.ServiceRegistrar, srv WorkServicesServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&WorkServices_ServiceDesc, srv)
+}
+
+func _WorkServices_ListRunModels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkServicesServer).ListRunModels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkServices_ListRunModels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkServicesServer).ListRunModels(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkServices_ResolveRunModel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkPrivateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkServicesServer).ResolveRunModel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkServices_ResolveRunModel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkServicesServer).ResolveRunModel(ctx, req.(*WorkPrivateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkServices_GetServiceInteractionBindings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkServicesServer).GetServiceInteractionBindings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkServices_GetServiceInteractionBindings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkServicesServer).GetServiceInteractionBindings(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkServices_PrepareBrainCandidate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkPrivateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkServicesServer).PrepareBrainCandidate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkServices_PrepareBrainCandidate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkServicesServer).PrepareBrainCandidate(ctx, req.(*WorkPrivateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkServices_GetBrainCandidateState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkPrivateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkServicesServer).GetBrainCandidateState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkServices_GetBrainCandidateState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkServicesServer).GetBrainCandidateState(ctx, req.(*WorkPrivateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _WorkServices_GetDeploymentContext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -485,6 +655,26 @@ var WorkServices_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "piwork.core.services.v1.WorkServices",
 	HandlerType: (*WorkServicesServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListRunModels",
+			Handler:    _WorkServices_ListRunModels_Handler,
+		},
+		{
+			MethodName: "ResolveRunModel",
+			Handler:    _WorkServices_ResolveRunModel_Handler,
+		},
+		{
+			MethodName: "GetServiceInteractionBindings",
+			Handler:    _WorkServices_GetServiceInteractionBindings_Handler,
+		},
+		{
+			MethodName: "PrepareBrainCandidate",
+			Handler:    _WorkServices_PrepareBrainCandidate_Handler,
+		},
+		{
+			MethodName: "GetBrainCandidateState",
+			Handler:    _WorkServices_GetBrainCandidateState_Handler,
+		},
 		{
 			MethodName: "GetDeploymentContext",
 			Handler:    _WorkServices_GetDeploymentContext_Handler,

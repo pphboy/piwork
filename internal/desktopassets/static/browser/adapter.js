@@ -24,6 +24,11 @@ export class DesktopAdapter {
     state = { works: [], operations: [], snapshots: [], scenario: 'loading', signedIn: false,
         browserAccess: 'checking', browserAccessReason: '', browserAccessChecked: '', cleanupRequired: false,
         core: { address: '', name: 'Core', account: '', role: '', proxyPort: '', username: '' }, transfers: [], lastChecked: '' };
+    requests = new Map();
+    requestDetails = new Map();
+    requestRetries = new Map();
+    models = new Map();
+    modelSelections = new Map();
     status = {};
     inspection = null;
     inspectionTransfer = '';
@@ -129,6 +134,11 @@ export class DesktopAdapter {
         this.uploadProgress.clear();
         this.transfersByWork.clear();
         this.directories.clear();
+        this.models.clear();
+        this.modelSelections.clear();
+        this.requests.clear();
+        this.requestDetails.clear();
+        this.requestRetries.clear();
         for (const status of Object.values(this.catalog))
             Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });
         this.uploadIntents.clear();
@@ -623,7 +633,7 @@ export class DesktopAdapter {
         }
         if (['Ready', 'Degraded'].includes(work.status)) {
             try {
-                await this.loadSessions(id);
+                await Promise.all([this.loadSessions(id), this.loadModels(id)]);
             }
             catch (error) {
                 work.resourceErrors.agent = errorText(error);
@@ -686,6 +696,7 @@ export class DesktopAdapter {
             throw new DesktopError('INVALID_RESPONSE', 'Package listing is incomplete.');
         (work.resourceChecked ??= {}).packages = new Date().toISOString();
         work.packageEntries = value.packages;
+        delete work.resourceErrors?.packages;
     }
     catch (error) {
         (work.resourceErrors ??= {}).packages = errorText(error);
@@ -693,6 +704,174 @@ export class DesktopAdapter {
     }
     finally {
         work.resourceLoading.packages = false;
+        this.emit();
+    } }
+    requestPage(id, serviceName = '') { return this.requests.get(`${id}:${serviceName}`); }
+    async loadRequests(id, serviceName = '', more = false) {
+        const key = `${id}:${serviceName}`, state = this.requests.get(key) ?? { loading: false, error: '', items: [], nextCursor: null }, epoch = this.epoch;
+        if (state.loading)
+            return;
+        this.requests.set(key, state);
+        state.loading = true;
+        state.error = '';
+        this.emit();
+        const query = new URLSearchParams({ limit: '25', ...(serviceName ? { serviceName } : {}), ...(more && state.nextCursor ? { cursor: state.nextCursor } : {}) });
+        try {
+            const value = await this.request(`works/${part(id)}/agent-requests?${query}`);
+            if (!Array.isArray(value.items))
+                throw new DesktopError('INVALID_RESPONSE', 'Pi request page is incomplete.');
+            if (epoch !== this.epoch)
+                return;
+            state.items = more ? [...state.items, ...value.items] : value.items;
+            state.nextCursor = value.nextCursor;
+            state.checkedAt = value.checkedAt;
+        }
+        catch (error) {
+            if (epoch === this.epoch)
+                state.error = errorText(error);
+            throw error;
+        }
+        finally {
+            if (epoch === this.epoch) {
+                state.loading = false;
+                this.emit();
+            }
+        }
+    }
+    async loadRequest(id, requestId, more = false) {
+        const key = `${id}:${requestId}`, previous = this.requestDetails.get(key), cursor = more ? previous?.evidence?.nextCursor : null;
+        const query = new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}) });
+        const value = await this.request(`works/${part(id)}/agent-requests/${part(requestId)}?${query}`);
+        if (value.request?.requestId !== requestId || !Array.isArray(value.evidence?.items))
+            throw new DesktopError('INVALID_RESPONSE', 'Pi request detail does not match the original ID.');
+        if (more && previous)
+            value.evidence.items = [...previous.evidence.items, ...value.evidence.items];
+        this.requestDetails.set(key, value);
+        this.emit();
+        return value;
+    }
+    async cancelRequest(id, requestId) {
+        const value = await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/cancel`, 'POST', {});
+        if (value.requestId !== requestId)
+            throw new DesktopError('INVALID_RESPONSE', 'Cancellation needs original request readback.');
+        await this.loadRequest(id, requestId);
+        return value;
+    }
+    async retryRequest(id, requestId) {
+        const original = await this.loadRequest(id, requestId);
+        if (original.request.disposition !== 'live' || !['failed', 'cancelled', 'needs_attention'].includes(original.request.state))
+            throw new DesktopError('REQUEST_RETRY_NOT_ALLOWED', 'Only an eligible live terminal request can be retried.');
+        const key = `${id}:${requestId}`;
+        let submissionKey = this.requestRetries.get(key);
+        if (!submissionKey) {
+            submissionKey = crypto.randomUUID();
+            this.requestRetries.set(key, submissionKey);
+        }
+        const value = await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/retry`, 'POST', { submissionKey });
+        if (value.retryOf !== requestId || typeof value.requestId !== 'string')
+            throw new DesktopError('INVALID_RESPONSE', 'Retry receipt needs original submission readback.');
+        this.requestRetries.delete(key);
+        this.emit();
+        return value;
+    }
+    runRecord(raw, sessionId) { return { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, created: raw.acceptedAt ?? '', actualModel: raw.actualModel ?? null, source: raw.source, adoptedExperienceVersion: raw.adoptedExperienceVersion }; }
+    modelSelection(id, sessionId) {
+        const key = `${id}:${sessionId}`;
+        let state = this.modelSelections.get(key);
+        if (!state) {
+            const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+            state = { phase: 'clean', ref: session?.modelPreference?.modelRef ?? null, error: '', revision: 0 };
+            this.modelSelections.set(key, state);
+        }
+        return state;
+    }
+    modelReady(id, sessionId) {
+        const catalog = this.models.get(id), session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+        return !!catalog?.confirmed && !catalog.error && !catalog.loading && catalog.models.length > 0 && this.modelSelection(id, sessionId).phase === 'clean'
+            && (!session?.modelPreference || session.modelPreference.availability === 'available');
+    }
+    async loadModels(id) {
+        const epoch = this.epoch, state = { loading: true, confirmed: false, error: '', models: [], ...this.models.get(id) };
+        state.loading = true;
+        this.models.set(id, state);
+        this.emit();
+        try {
+            const value = await this.request(`works/${part(id)}/models`);
+            if (!Array.isArray(value.models) || !value.defaultModel)
+                throw new DesktopError('INVALID_RESPONSE', 'Model list is incomplete.');
+            if (epoch !== this.epoch)
+                return;
+            Object.assign(state, { confirmed: true, models: value.models, defaultModel: value.defaultModel, checkedAt: value.checkedAt, error: '' });
+        }
+        catch (error) {
+            if (epoch === this.epoch)
+                state.error = errorText(error);
+            throw error;
+        }
+        finally {
+            if (epoch === this.epoch) {
+                state.loading = false;
+                this.emit();
+            }
+        }
+    }
+    selectModel(id, sessionId, ref) { const state = this.modelSelection(id, sessionId); if (state.phase === 'saving' || state.phase === 'unknown')
+        throw new DesktopError('MODEL_NOT_CONFIRMED', 'Check the original Session model first.'); state.ref = ref; state.phase = 'dirty'; state.error = ''; state.revision++; this.emit(); }
+    confirmSessionModel(id, session, raw) {
+        if (!raw || raw.sessionId !== session.id || raw.workId !== id)
+            throw new DesktopError('INVALID_RESPONSE', 'Session model response belongs to another object.');
+        session.modelPreference = raw.modelPreference ?? null;
+        session.source = raw.source;
+        const state = this.modelSelections.get(`${id}:${session.id}`);
+        if (state && (state.phase === 'unknown' || state.phase === 'clean')) {
+            state.ref = session.modelPreference?.modelRef ?? null;
+            state.phase = 'clean';
+            state.error = '';
+        }
+    }
+    async saveModel(id, sessionId) {
+        const state = this.modelSelection(id, sessionId), session = this.getWork(id)?.sessions.find(s => s.id === sessionId), epoch = this.epoch;
+        if (!session || state.phase !== 'dirty')
+            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Choose a model before saving.');
+        const catalog = this.models.get(id);
+        if (!catalog?.confirmed || !catalog.models.length || state.ref !== null && !catalog.models.some(m => m.modelRef === state.ref))
+            throw new DesktopError('MODEL_UNAVAILABLE', 'Choose an available model.');
+        const revision = state.revision, ref = state.ref;
+        state.phase = 'saving';
+        state.error = '';
+        this.emit();
+        try {
+            const raw = await this.request(`works/${part(id)}/sessions/${part(sessionId)}/model`, 'PATCH', { modelRef: ref });
+            if (epoch !== this.epoch)
+                return;
+            const currentSession = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+            if (!currentSession)
+                return;
+            if (raw.workId !== id || raw.sessionId !== sessionId)
+                throw new DesktopError('INVALID_RESPONSE', 'Model save could not be confirmed for the original Session.');
+            currentSession.modelPreference = raw.modelPreference ?? null;
+            if (state.revision === revision) {
+                state.phase = 'clean';
+                state.ref = currentSession.modelPreference?.modelRef ?? null;
+                state.error = '';
+            }
+        }
+        catch (error) {
+            if (epoch === this.epoch) {
+                const code = error.code;
+                state.phase = ['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'CORE_UNAVAILABLE', 'REQUEST_TIMEOUT', 'RUNTIME_UNAVAILABLE'].includes(code) ? 'unknown' : 'dirty';
+                state.error = state.phase === 'unknown' ? 'Model save is unconfirmed. Read this Session before sending; the change will not be resent.' : errorText(error);
+            }
+            throw error;
+        }
+        finally {
+            if (epoch === this.epoch)
+                this.emit();
+        }
+    }
+    async checkSessionModel(id, sessionId) { const epoch = this.epoch; const raw = await this.request(`works/${part(id)}/sessions/${part(sessionId)}`); if (epoch !== this.epoch)
+        return; const session = this.getWork(id)?.sessions.find(s => s.id === sessionId); if (session) {
+        this.confirmSessionModel(id, session, raw.session);
         this.emit();
     } }
     async loadSessions(id) {
@@ -705,7 +884,7 @@ export class DesktopAdapter {
                 throw new DesktopError('INVALID_RESPONSE', 'Session listing is incomplete.');
             (work.resourceChecked ??= {}).agent = new Date().toISOString();
             const existing = new Map(work.sessions.map(session => [session.id, session]));
-            work.sessions = value.sessions.map((raw) => ({ id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: existing.get(raw.sessionId)?.messages ?? [] }));
+            work.sessions = value.sessions.map((raw) => ({ id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: existing.get(raw.sessionId)?.messages ?? [], modelPreference: raw.modelPreference ?? null, source: raw.source, runs: existing.get(raw.sessionId)?.runs ?? [] }));
             if (work.sessions[0] && !this.streams.has(id))
                 await this.loadSession(id, work.sessions[0].id);
             if (work.resourceErrors)
@@ -727,6 +906,10 @@ export class DesktopAdapter {
             return;
         const value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}`);
         const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+        if (session) {
+            this.confirmSessionModel(id, session, value.session);
+            session.runs = (value.runs ?? []).map((run) => this.runRecord(run, sessionId));
+        }
         if (session)
             session.messages = (value.messages ?? []).filter((message) => ['user', 'assistant', 'toolResult'].includes(message.role)).map((message) => message.role === 'toolResult' ? ({ role: 'assistant', text: '', tool: { name: 'Tool result', status: 'Saved result', content: message.text ?? '' } }) : ({ role: message.role, text: message.text ?? '' }));
         this.emit();
@@ -1007,7 +1190,7 @@ export class DesktopAdapter {
         if (!work || !this.project(work).usable)
             return Promise.resolve();
         const pending = (async () => {
-            await Promise.allSettled([this.loadServices(id), this.loadSessions(id), this.loadConfiguration(id), this.loadPackages(id)]);
+            await Promise.allSettled([this.loadServices(id), this.loadSessions(id), this.loadModels(id), this.loadConfiguration(id), this.loadPackages(id)]);
         })().finally(() => { if (this.capabilityReads.get(id) === pending)
             this.capabilityReads.delete(id); });
         this.capabilityReads.set(id, pending);
@@ -1030,15 +1213,18 @@ export class DesktopAdapter {
         this.emit();
     }
     async newSession(id) { const value = await this.request(`works/${part(id)}/sessions`, 'POST'); const sessionId = value.sessionId ?? value.session?.sessionId; if (typeof sessionId !== 'string' || !sessionId)
-        throw new DesktopError('INVALID_RESPONSE', 'Session acceptance has no ID. Read Sessions before creating again.'); this.getWork(id).sessions.unshift({ id: sessionId, title: `Session ${sessionId}`, messages: [] }); this.emit(); return sessionId; }
+        throw new DesktopError('INVALID_RESPONSE', 'Session acceptance has no ID. Read Sessions before creating again.'); this.getWork(id).sessions.unshift({ id: sessionId, title: `Session ${sessionId}`, messages: [], modelPreference: value.modelPreference ?? null, source: value.source, runs: [] }); this.emit(); return sessionId; }
     async send(id, sessionId, text, includeIdentity) {
         if (!text.trim())
             throw new Error('Write a message first.');
         const work = this.getWork(id);
+        if (!this.modelReady(id, sessionId))
+            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Confirm an available Session model before sending.');
         const prompt = includeIdentity ? `${text}\n\nSelected Service: ${work.services.find(s => s.id === this.selectedService)?.domain ?? ''}` : text;
         const value = await this.request(`works/${part(id)}/runs`, 'POST', { sessionId, prompt });
         const raw = value.run;
-        work.run = { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, created: raw.acceptedAt ?? '' };
+        work.run = this.runRecord(raw, sessionId);
+        (work.sessions.find(s => s.id === sessionId).runs ??= []).push(work.run);
         work.sessions.find(s => s.id === sessionId).messages.push({ role: 'user', text }, { role: 'assistant', text: '' });
         this.emit();
         void this.resumeRun(id);

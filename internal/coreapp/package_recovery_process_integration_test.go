@@ -209,7 +209,7 @@ func TestNativeCorePackageJobsSurviveSignalsWithoutReinstallation(t *testing.T) 
 				if err := tx.QueryRow(`SELECT count(*) FROM resource_bindings WHERE resource_kind LIKE 'package-%'`).Scan(&bindings); err != nil {
 					return err
 				}
-				if err := tx.QueryRow(`SELECT count(*) FROM pi_package_catalog`).Scan(&heads); err != nil {
+				if err := tx.QueryRow(`SELECT count(*) FROM pi_package_catalog WHERE name<>'piwork-brain'`).Scan(&heads); err != nil {
 					return err
 				}
 				if leases != 0 || bindings != 0 || heads != 0 {

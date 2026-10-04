@@ -1,6 +1,6 @@
 //go:build linux
 
-// Package workhistory validates only the managed schema-3 history database in
+// Package workhistory validates only the managed schema-4 history database in
 // isolated snapshot helpers. SDK JSONL and business databases remain opaque.
 package workhistory
 
@@ -30,7 +30,7 @@ var schemaSQL string
 
 //go:embed schema-objects.json
 var schemaObjects []byte
-var tables = []string{"schema_migrations", "sessions", "runs", "run_events", "submit_idempotency", "session_idempotency", "work_activity"}
+var tables = []string{"schema_migrations", "sessions", "runs", "run_events", "submit_idempotency", "session_idempotency", "work_activity", "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "brain_experience_revisions", "brain_experience_heads"}
 var files = []string{"work.sqlite", "work.sqlite-wal", "work.sqlite-shm"}
 
 type Error struct{ Code string }
@@ -406,7 +406,7 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 			return Summary{}, ErrInvalid
 		}
 	}
-	if counts["schema_migrations"] != 3 {
+	if counts["schema_migrations"] != 1 {
 		return Summary{}, ErrUnsupported
 	}
 	for _, query := range []string{`SELECT 1 FROM submit_idempotency i JOIN runs r ON r.run_id=i.run_id WHERE i.work_id!=r.work_id OR i.submission_key!=r.submission_key LIMIT 1`, `SELECT 1 FROM runs r LEFT JOIN run_events e ON e.run_id=r.run_id GROUP BY r.run_id HAVING COUNT(e.sequence)!=r.latest_sequence-r.earliest_available_sequence+1 OR (COUNT(e.sequence)>0 AND (MIN(e.sequence)!=r.earliest_available_sequence OR MAX(e.sequence)!=r.latest_sequence)) LIMIT 1`} {
@@ -416,12 +416,15 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 			return Summary{}, ErrInvalid
 		}
 	}
+	if err := validateBrainHistory(ctx, db, scope); err != nil {
+		return Summary{}, err
+	}
 	return Summary{counts["sessions"], counts["runs"], counts["run_events"]}, nil
 }
 func validateRow(table string, row map[string]any, root int, scope Scope) error {
 	switch table {
 	case "schema_migrations":
-		if row["version"] != int64(1) && row["version"] != int64(2) && row["version"] != int64(3) {
+		if row["version"] != int64(4) {
 			return ErrUnsupported
 		}
 	case "sessions":

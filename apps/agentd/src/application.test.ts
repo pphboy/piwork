@@ -11,7 +11,7 @@ const peerUri = "URI:spiffe://piwork/installation/installation-native/work/work-
 test("agent mTLS peer verification rejects plaintext, wrong Work, and stale generation identities", () => {
   assert.doesNotThrow(() => assertAgentPeerIdentity({
     transportSecurityType: "ssl",
-    sslPeerCertificate: { subject: { CN: expected }, subjectaltname: `${peerUri}, URI:spiffe://piwork/work/${peerScope.workId}/generation/3/core` },
+    sslPeerCertificate: { subject: { CN: expected }, subjectaltname: `${peerUri}` },
   }, expected, peerScope));
 
   for (const context of [

@@ -92,6 +92,16 @@ export function runStateToJSON(object: RunState): string {
   }
 }
 
+export interface AgentContentRequest {
+  workId: string;
+  objectId: string;
+  inputJson: string;
+}
+
+export interface AgentContentResponse {
+  valueJson: string;
+}
+
 export interface ReadinessRequest {
   workId: string;
   generation: bigint;
@@ -115,6 +125,9 @@ export interface ReadinessResponse {
   loadedPackages: LoadedPackage[];
   packageResources: PackageResource[];
   packageDiagnostics: PackageDiagnostic[];
+  runModelContractVersion: number;
+  workFeedbackContractVersion: number;
+  workHistorySchemaVersion: number;
 }
 
 export interface LoadedPackage {
@@ -175,6 +188,8 @@ export interface Session {
   sdkHistoryPath: string;
   createdAt: string;
   updatedAt: string;
+  modelPreferenceJson: string;
+  sourceJson: string;
 }
 
 export interface CreateSessionRequest {
@@ -201,6 +216,7 @@ export interface ReadSessionRequest {
 export interface SessionHistory {
   session?: Session | undefined;
   messages: SessionMessage[];
+  runs: Run[];
 }
 
 export interface SessionMessage {
@@ -230,6 +246,9 @@ export interface Run {
   finishedAt: string;
   earliestAvailableSequence: bigint;
   latestSequence: bigint;
+  actualModelJson: string;
+  sourceJson: string;
+  adoptedExperienceVersion: number;
 }
 
 export interface SubmitRunRequest {
@@ -237,6 +256,8 @@ export interface SubmitRunRequest {
   sessionId: string;
   submissionKey: string;
   prompt: string;
+  /** Missing: Session preference; present empty: explicit Work default. */
+  modelRef?: string | undefined;
 }
 
 export interface SubmitRunResponse {
@@ -291,6 +312,192 @@ export interface RunEvent {
     | { $case: "state"; state: StateEvent }
     | undefined;
 }
+
+function createBaseAgentContentRequest(): AgentContentRequest {
+  return { workId: "", objectId: "", inputJson: "" };
+}
+
+export const AgentContentRequest: MessageFns<AgentContentRequest> = {
+  encode(message: AgentContentRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.workId !== "") {
+      writer.uint32(10).string(message.workId);
+    }
+    if (message.objectId !== "") {
+      writer.uint32(18).string(message.objectId);
+    }
+    if (message.inputJson !== "") {
+      writer.uint32(26).string(message.inputJson);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): AgentContentRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseAgentContentRequest();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.workId = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.objectId = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.inputJson = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): AgentContentRequest {
+    return {
+      workId: isSet(object.workId)
+        ? globalThis.String(object.workId)
+        : isSet(object.work_id)
+        ? globalThis.String(object.work_id)
+        : "",
+      objectId: isSet(object.objectId)
+        ? globalThis.String(object.objectId)
+        : isSet(object.object_id)
+        ? globalThis.String(object.object_id)
+        : "",
+      inputJson: isSet(object.inputJson)
+        ? globalThis.String(object.inputJson)
+        : isSet(object.input_json)
+        ? globalThis.String(object.input_json)
+        : "",
+    };
+  },
+
+  toJSON(message: AgentContentRequest): unknown {
+    const obj: any = {};
+    if (message.workId !== "") {
+      obj.workId = message.workId;
+    }
+    if (message.objectId !== "") {
+      obj.objectId = message.objectId;
+    }
+    if (message.inputJson !== "") {
+      obj.inputJson = message.inputJson;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<AgentContentRequest>): AgentContentRequest {
+    return AgentContentRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<AgentContentRequest>): AgentContentRequest {
+    const message = createBaseAgentContentRequest();
+    message.workId = object.workId ?? "";
+    message.objectId = object.objectId ?? "";
+    message.inputJson = object.inputJson ?? "";
+    return message;
+  },
+};
+
+function createBaseAgentContentResponse(): AgentContentResponse {
+  return { valueJson: "" };
+}
+
+export const AgentContentResponse: MessageFns<AgentContentResponse> = {
+  encode(message: AgentContentResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.valueJson !== "") {
+      writer.uint32(10).string(message.valueJson);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): AgentContentResponse {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseAgentContentResponse();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.valueJson = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): AgentContentResponse {
+    return {
+      valueJson: isSet(object.valueJson)
+        ? globalThis.String(object.valueJson)
+        : isSet(object.value_json)
+        ? globalThis.String(object.value_json)
+        : "",
+    };
+  },
+
+  toJSON(message: AgentContentResponse): unknown {
+    const obj: any = {};
+    if (message.valueJson !== "") {
+      obj.valueJson = message.valueJson;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<AgentContentResponse>): AgentContentResponse {
+    return AgentContentResponse.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<AgentContentResponse>): AgentContentResponse {
+    const message = createBaseAgentContentResponse();
+    message.valueJson = object.valueJson ?? "";
+    return message;
+  },
+};
 
 function createBaseReadinessRequest(): ReadinessRequest {
   return { workId: "", generation: 0n, instanceId: "" };
@@ -424,6 +631,9 @@ function createBaseReadinessResponse(): ReadinessResponse {
     loadedPackages: [],
     packageResources: [],
     packageDiagnostics: [],
+    runModelContractVersion: 0,
+    workFeedbackContractVersion: 0,
+    workHistorySchemaVersion: 0,
   };
 }
 
@@ -479,6 +689,15 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     }
     for (const v of message.packageDiagnostics) {
       PackageDiagnostic.encode(v!, writer.uint32(130).fork()).join();
+    }
+    if (message.runModelContractVersion !== 0) {
+      writer.uint32(136).uint32(message.runModelContractVersion);
+    }
+    if (message.workFeedbackContractVersion !== 0) {
+      writer.uint32(144).uint32(message.workFeedbackContractVersion);
+    }
+    if (message.workHistorySchemaVersion !== 0) {
+      writer.uint32(152).uint32(message.workHistorySchemaVersion);
     }
     return writer;
   },
@@ -624,6 +843,30 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
             message.packageDiagnostics.push(PackageDiagnostic.decode(reader, reader.uint32()));
             continue;
           }
+          case 17: {
+            if (tag !== 136) {
+              break;
+            }
+
+            message.runModelContractVersion = reader.uint32();
+            continue;
+          }
+          case 18: {
+            if (tag !== 144) {
+              break;
+            }
+
+            message.workFeedbackContractVersion = reader.uint32();
+            continue;
+          }
+          case 19: {
+            if (tag !== 152) {
+              break;
+            }
+
+            message.workHistorySchemaVersion = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -710,6 +953,21 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
         : globalThis.Array.isArray(object?.package_diagnostics)
         ? object.package_diagnostics.map((e: any) => PackageDiagnostic.fromJSON(e))
         : [],
+      runModelContractVersion: isSet(object.runModelContractVersion)
+        ? globalThis.Number(object.runModelContractVersion)
+        : isSet(object.run_model_contract_version)
+        ? globalThis.Number(object.run_model_contract_version)
+        : 0,
+      workFeedbackContractVersion: isSet(object.workFeedbackContractVersion)
+        ? globalThis.Number(object.workFeedbackContractVersion)
+        : isSet(object.work_feedback_contract_version)
+        ? globalThis.Number(object.work_feedback_contract_version)
+        : 0,
+      workHistorySchemaVersion: isSet(object.workHistorySchemaVersion)
+        ? globalThis.Number(object.workHistorySchemaVersion)
+        : isSet(object.work_history_schema_version)
+        ? globalThis.Number(object.work_history_schema_version)
+        : 0,
     };
   },
 
@@ -763,6 +1021,15 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     if (message.packageDiagnostics?.length) {
       obj.packageDiagnostics = message.packageDiagnostics.map((e) => PackageDiagnostic.toJSON(e));
     }
+    if (message.runModelContractVersion !== 0) {
+      obj.runModelContractVersion = Math.round(message.runModelContractVersion);
+    }
+    if (message.workFeedbackContractVersion !== 0) {
+      obj.workFeedbackContractVersion = Math.round(message.workFeedbackContractVersion);
+    }
+    if (message.workHistorySchemaVersion !== 0) {
+      obj.workHistorySchemaVersion = Math.round(message.workHistorySchemaVersion);
+    }
     return obj;
   },
 
@@ -789,6 +1056,9 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     message.loadedPackages = object.loadedPackages?.map((e) => LoadedPackage.fromPartial(e)) || [];
     message.packageResources = object.packageResources?.map((e) => PackageResource.fromPartial(e)) || [];
     message.packageDiagnostics = object.packageDiagnostics?.map((e) => PackageDiagnostic.fromPartial(e)) || [];
+    message.runModelContractVersion = object.runModelContractVersion ?? 0;
+    message.workFeedbackContractVersion = object.workFeedbackContractVersion ?? 0;
+    message.workHistorySchemaVersion = object.workHistorySchemaVersion ?? 0;
     return message;
   },
 };
@@ -1718,7 +1988,15 @@ export const DrainResponse: MessageFns<DrainResponse> = {
 };
 
 function createBaseSession(): Session {
-  return { workId: "", sessionId: "", sdkHistoryPath: "", createdAt: "", updatedAt: "" };
+  return {
+    workId: "",
+    sessionId: "",
+    sdkHistoryPath: "",
+    createdAt: "",
+    updatedAt: "",
+    modelPreferenceJson: "",
+    sourceJson: "",
+  };
 }
 
 export const Session: MessageFns<Session> = {
@@ -1737,6 +2015,12 @@ export const Session: MessageFns<Session> = {
     }
     if (message.updatedAt !== "") {
       writer.uint32(42).string(message.updatedAt);
+    }
+    if (message.modelPreferenceJson !== "") {
+      writer.uint32(50).string(message.modelPreferenceJson);
+    }
+    if (message.sourceJson !== "") {
+      writer.uint32(58).string(message.sourceJson);
     }
     return writer;
   },
@@ -1794,6 +2078,22 @@ export const Session: MessageFns<Session> = {
             message.updatedAt = reader.string();
             continue;
           }
+          case 6: {
+            if (tag !== 50) {
+              break;
+            }
+
+            message.modelPreferenceJson = reader.string();
+            continue;
+          }
+          case 7: {
+            if (tag !== 58) {
+              break;
+            }
+
+            message.sourceJson = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -1833,6 +2133,16 @@ export const Session: MessageFns<Session> = {
         : isSet(object.updated_at)
         ? globalThis.String(object.updated_at)
         : "",
+      modelPreferenceJson: isSet(object.modelPreferenceJson)
+        ? globalThis.String(object.modelPreferenceJson)
+        : isSet(object.model_preference_json)
+        ? globalThis.String(object.model_preference_json)
+        : "",
+      sourceJson: isSet(object.sourceJson)
+        ? globalThis.String(object.sourceJson)
+        : isSet(object.source_json)
+        ? globalThis.String(object.source_json)
+        : "",
     };
   },
 
@@ -1853,6 +2163,12 @@ export const Session: MessageFns<Session> = {
     if (message.updatedAt !== "") {
       obj.updatedAt = message.updatedAt;
     }
+    if (message.modelPreferenceJson !== "") {
+      obj.modelPreferenceJson = message.modelPreferenceJson;
+    }
+    if (message.sourceJson !== "") {
+      obj.sourceJson = message.sourceJson;
+    }
     return obj;
   },
 
@@ -1866,6 +2182,8 @@ export const Session: MessageFns<Session> = {
     message.sdkHistoryPath = object.sdkHistoryPath ?? "";
     message.createdAt = object.createdAt ?? "";
     message.updatedAt = object.updatedAt ?? "";
+    message.modelPreferenceJson = object.modelPreferenceJson ?? "";
+    message.sourceJson = object.sourceJson ?? "";
     return message;
   },
 };
@@ -2259,7 +2577,7 @@ export const ReadSessionRequest: MessageFns<ReadSessionRequest> = {
 };
 
 function createBaseSessionHistory(): SessionHistory {
-  return { session: undefined, messages: [] };
+  return { session: undefined, messages: [], runs: [] };
 }
 
 export const SessionHistory: MessageFns<SessionHistory> = {
@@ -2269,6 +2587,9 @@ export const SessionHistory: MessageFns<SessionHistory> = {
     }
     for (const v of message.messages) {
       SessionMessage.encode(v!, writer.uint32(18).fork()).join();
+    }
+    for (const v of message.runs) {
+      Run.encode(v!, writer.uint32(26).fork()).join();
     }
     return writer;
   },
@@ -2302,6 +2623,14 @@ export const SessionHistory: MessageFns<SessionHistory> = {
             message.messages.push(SessionMessage.decode(reader, reader.uint32()));
             continue;
           }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.runs.push(Run.decode(reader, reader.uint32()));
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2320,6 +2649,7 @@ export const SessionHistory: MessageFns<SessionHistory> = {
       messages: globalThis.Array.isArray(object?.messages)
         ? object.messages.map((e: any) => SessionMessage.fromJSON(e))
         : [],
+      runs: globalThis.Array.isArray(object?.runs) ? object.runs.map((e: any) => Run.fromJSON(e)) : [],
     };
   },
 
@@ -2330,6 +2660,9 @@ export const SessionHistory: MessageFns<SessionHistory> = {
     }
     if (message.messages?.length) {
       obj.messages = message.messages.map((e) => SessionMessage.toJSON(e));
+    }
+    if (message.runs?.length) {
+      obj.runs = message.runs.map((e) => Run.toJSON(e));
     }
     return obj;
   },
@@ -2343,6 +2676,7 @@ export const SessionHistory: MessageFns<SessionHistory> = {
       ? Session.fromPartial(object.session)
       : undefined;
     message.messages = object.messages?.map((e) => SessionMessage.fromPartial(e)) || [];
+    message.runs = object.runs?.map((e) => Run.fromPartial(e)) || [];
     return message;
   },
 };
@@ -2588,6 +2922,9 @@ function createBaseRun(): Run {
     finishedAt: "",
     earliestAvailableSequence: 0n,
     latestSequence: 0n,
+    actualModelJson: "",
+    sourceJson: "",
+    adoptedExperienceVersion: 0,
   };
 }
 
@@ -2639,6 +2976,15 @@ export const Run: MessageFns<Run> = {
         throw new globalThis.Error("value provided for field message.latestSequence of type uint64 too large");
       }
       writer.uint32(104).uint64(message.latestSequence);
+    }
+    if (message.actualModelJson !== "") {
+      writer.uint32(114).string(message.actualModelJson);
+    }
+    if (message.sourceJson !== "") {
+      writer.uint32(122).string(message.sourceJson);
+    }
+    if (message.adoptedExperienceVersion !== 0) {
+      writer.uint32(128).uint32(message.adoptedExperienceVersion);
     }
     return writer;
   },
@@ -2760,6 +3106,30 @@ export const Run: MessageFns<Run> = {
             message.latestSequence = reader.uint64() as bigint;
             continue;
           }
+          case 14: {
+            if (tag !== 114) {
+              break;
+            }
+
+            message.actualModelJson = reader.string();
+            continue;
+          }
+          case 15: {
+            if (tag !== 122) {
+              break;
+            }
+
+            message.sourceJson = reader.string();
+            continue;
+          }
+          case 16: {
+            if (tag !== 128) {
+              break;
+            }
+
+            message.adoptedExperienceVersion = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2831,6 +3201,21 @@ export const Run: MessageFns<Run> = {
         : isSet(object.latest_sequence)
         ? BigInt(object.latest_sequence)
         : 0n,
+      actualModelJson: isSet(object.actualModelJson)
+        ? globalThis.String(object.actualModelJson)
+        : isSet(object.actual_model_json)
+        ? globalThis.String(object.actual_model_json)
+        : "",
+      sourceJson: isSet(object.sourceJson)
+        ? globalThis.String(object.sourceJson)
+        : isSet(object.source_json)
+        ? globalThis.String(object.source_json)
+        : "",
+      adoptedExperienceVersion: isSet(object.adoptedExperienceVersion)
+        ? globalThis.Number(object.adoptedExperienceVersion)
+        : isSet(object.adopted_experience_version)
+        ? globalThis.Number(object.adopted_experience_version)
+        : 0,
     };
   },
 
@@ -2875,6 +3260,15 @@ export const Run: MessageFns<Run> = {
     if (message.latestSequence !== 0n) {
       obj.latestSequence = message.latestSequence.toString();
     }
+    if (message.actualModelJson !== "") {
+      obj.actualModelJson = message.actualModelJson;
+    }
+    if (message.sourceJson !== "") {
+      obj.sourceJson = message.sourceJson;
+    }
+    if (message.adoptedExperienceVersion !== 0) {
+      obj.adoptedExperienceVersion = Math.round(message.adoptedExperienceVersion);
+    }
     return obj;
   },
 
@@ -2903,12 +3297,15 @@ export const Run: MessageFns<Run> = {
     message.latestSequence = (object.latestSequence !== undefined && object.latestSequence !== null)
       ? BigInt(object.latestSequence)
       : 0n;
+    message.actualModelJson = object.actualModelJson ?? "";
+    message.sourceJson = object.sourceJson ?? "";
+    message.adoptedExperienceVersion = object.adoptedExperienceVersion ?? 0;
     return message;
   },
 };
 
 function createBaseSubmitRunRequest(): SubmitRunRequest {
-  return { workId: "", sessionId: "", submissionKey: "", prompt: "" };
+  return { workId: "", sessionId: "", submissionKey: "", prompt: "", modelRef: undefined };
 }
 
 export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
@@ -2924,6 +3321,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     }
     if (message.prompt !== "") {
       writer.uint32(34).string(message.prompt);
+    }
+    if (message.modelRef !== undefined) {
+      writer.uint32(42).string(message.modelRef);
     }
     return writer;
   },
@@ -2973,6 +3373,14 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
             message.prompt = reader.string();
             continue;
           }
+          case 5: {
+            if (tag !== 42) {
+              break;
+            }
+
+            message.modelRef = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -3003,6 +3411,11 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
         ? globalThis.String(object.submission_key)
         : "",
       prompt: isSet(object.prompt) ? globalThis.String(object.prompt) : "",
+      modelRef: isSet(object.modelRef)
+        ? globalThis.String(object.modelRef)
+        : isSet(object.model_ref)
+        ? globalThis.String(object.model_ref)
+        : undefined,
     };
   },
 
@@ -3020,6 +3433,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     if (message.prompt !== "") {
       obj.prompt = message.prompt;
     }
+    if (message.modelRef !== undefined) {
+      obj.modelRef = message.modelRef;
+    }
     return obj;
   },
 
@@ -3032,6 +3448,7 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     message.sessionId = object.sessionId ?? "";
     message.submissionKey = object.submissionKey ?? "";
     message.prompt = object.prompt ?? "";
+    message.modelRef = object.modelRef ?? undefined;
     return message;
   },
 };
@@ -3991,6 +4408,16 @@ export const RunEvent: MessageFns<RunEvent> = {
 
 export type AgentServiceService = typeof AgentServiceService;
 export const AgentServiceService = {
+  refreshServiceInteractionBindings: {
+    path: "/piwork.agent.v1.AgentService/RefreshServiceInteractionBindings" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
   readiness: {
     path: "/piwork.agent.v1.AgentService/Readiness" as const,
     requestStream: false as const,
@@ -4086,9 +4513,79 @@ export const AgentServiceService = {
     responseSerialize: (value: Run): Buffer => Buffer.from(Run.encode(value).finish()),
     responseDeserialize: (value: Buffer): Run => Run.decode(value),
   },
+  listRunModels: {
+    path: "/piwork.agent.v1.AgentService/ListRunModels" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  setSessionModel: {
+    path: "/piwork.agent.v1.AgentService/SetSessionModel" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: Session): Buffer => Buffer.from(Session.encode(value).finish()),
+    responseDeserialize: (value: Buffer): Session => Session.decode(value),
+  },
+  listAgentRequests: {
+    path: "/piwork.agent.v1.AgentService/ListAgentRequests" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  getAgentRequest: {
+    path: "/piwork.agent.v1.AgentService/GetAgentRequest" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  cancelAgentRequest: {
+    path: "/piwork.agent.v1.AgentService/CancelAgentRequest" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  retryAgentRequest: {
+    path: "/piwork.agent.v1.AgentService/RetryAgentRequest" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  getAgentEvidence: {
+    path: "/piwork.agent.v1.AgentService/GetAgentEvidence" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
 } as const;
 
 export interface AgentServiceServer extends UntypedServiceImplementation {
+  refreshServiceInteractionBindings: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   readiness: handleUnaryCall<ReadinessRequest, ReadinessResponse>;
   prepareConfigurationChange: handleUnaryCall<PrepareConfigurationChangeRequest, PrepareConfigurationChangeResponse>;
   drain: handleUnaryCall<DrainRequest, DrainResponse>;
@@ -4099,9 +4596,31 @@ export interface AgentServiceServer extends UntypedServiceImplementation {
   getRun: handleUnaryCall<GetRunRequest, Run>;
   watchRun: handleServerStreamingCall<WatchRunRequest, RunEvent>;
   cancelRun: handleUnaryCall<CancelRunRequest, Run>;
+  listRunModels: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  setSessionModel: handleUnaryCall<AgentContentRequest, Session>;
+  listAgentRequests: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  getAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  cancelAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  retryAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  getAgentEvidence: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
 }
 
 export interface AgentServiceClient extends Client {
+  refreshServiceInteractionBindings(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  refreshServiceInteractionBindings(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  refreshServiceInteractionBindings(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
   readiness(
     request: ReadinessRequest,
     callback: (error: ServiceError | null, response: ReadinessResponse) => void,
@@ -4236,6 +4755,111 @@ export interface AgentServiceClient extends Client {
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: Run) => void,
+  ): ClientUnaryCall;
+  listRunModels(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  listRunModels(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  listRunModels(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  setSessionModel(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: Session) => void,
+  ): ClientUnaryCall;
+  setSessionModel(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: Session) => void,
+  ): ClientUnaryCall;
+  setSessionModel(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: Session) => void,
+  ): ClientUnaryCall;
+  listAgentRequests(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  listAgentRequests(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  listAgentRequests(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getAgentRequest(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getAgentRequest(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getAgentRequest(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  cancelAgentRequest(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  cancelAgentRequest(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  cancelAgentRequest(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  retryAgentRequest(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  retryAgentRequest(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  retryAgentRequest(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getAgentEvidence(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getAgentEvidence(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getAgentEvidence(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
   ): ClientUnaryCall;
 }
 

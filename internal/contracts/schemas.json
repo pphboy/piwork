@@ -480,6 +480,41 @@
             "type": "null"
           }
         ]
+      },
+      "brainInitialization": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "pending"
+              },
+              {
+                "type": "string",
+                "const": "failed"
+              },
+              {
+                "type": "string",
+                "const": "unavailable"
+              }
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9-]+$"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          }
+        },
+        "additionalProperties": false
       }
     },
     "additionalProperties": false
@@ -1695,6 +1730,1448 @@
     },
     "additionalProperties": false
   },
+  "AgentEvidenceQuerySchema": {
+    "type": "object",
+    "properties": {
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    },
+    "additionalProperties": false
+  },
+  "AgentEvidenceSchema": {
+    "type": "object",
+    "required": [
+      "evidenceId",
+      "runId",
+      "requestId",
+      "kind",
+      "objectRef",
+      "observedAt",
+      "summary",
+      "verified"
+    ],
+    "properties": {
+      "evidenceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "runId": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "requestId": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "serviceName": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "query"
+          },
+          {
+            "type": "string",
+            "const": "action"
+          },
+          {
+            "type": "string",
+            "const": "job"
+          },
+          {
+            "type": "string",
+            "const": "artifact"
+          },
+          {
+            "type": "string",
+            "const": "event"
+          },
+          {
+            "type": "string",
+            "const": "package"
+          },
+          {
+            "type": "string",
+            "const": "sdk"
+          }
+        ]
+      },
+      "objectRef": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      },
+      "observedAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "stateVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "codeVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "summary": {
+        "type": "string",
+        "maxLength": 8192
+      },
+      "verified": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "AgentRequestDetailSchema": {
+    "type": "object",
+    "required": [
+      "request",
+      "evidence",
+      "checkedAt",
+      "availability"
+    ],
+    "properties": {
+      "request": {
+        "type": "object",
+        "required": [
+          "requestId",
+          "source",
+          "goal",
+          "state",
+          "disposition",
+          "createdAt",
+          "updatedAt",
+          "expiresAt",
+          "retryOf",
+          "autoRunCount",
+          "waitRef",
+          "runIds",
+          "evidenceIds",
+          "result",
+          "error"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "chat"
+                  },
+                  {
+                    "type": "string",
+                    "const": "service"
+                  }
+                ]
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+              },
+              "serviceName": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+              },
+              "phase": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "handling"
+                  },
+                  {
+                    "type": "string",
+                    "const": "verifying"
+                  },
+                  {
+                    "type": "string",
+                    "const": "adopting"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "pending"
+              },
+              {
+                "type": "string",
+                "const": "running"
+              },
+              {
+                "type": "string",
+                "const": "waiting_result"
+              },
+              {
+                "type": "string",
+                "const": "waiting_apply"
+              },
+              {
+                "type": "string",
+                "const": "cancelling"
+              },
+              {
+                "type": "string",
+                "const": "completed"
+              },
+              {
+                "type": "string",
+                "const": "failed"
+              },
+              {
+                "type": "string",
+                "const": "cancelled"
+              },
+              {
+                "type": "string",
+                "const": "needs_attention"
+              }
+            ]
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "live"
+              },
+              {
+                "type": "string",
+                "const": "historical"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 40,
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+          },
+          "updatedAt": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 40,
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+          },
+          "expiresAt": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 40,
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+          },
+          "retryOf": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "autoRunCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "waitRef": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "id",
+                  "deadlineAt",
+                  "nextPhase",
+                  "verificationGoal"
+                ],
+                "properties": {
+                  "kind": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": "job"
+                      },
+                      {
+                        "type": "string",
+                        "const": "action"
+                      },
+                      {
+                        "type": "string",
+                        "const": "package-operation"
+                      },
+                      {
+                        "type": "string",
+                        "const": "apply"
+                      }
+                    ]
+                  },
+                  "serviceName": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                  },
+                  "deadlineAt": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 40,
+                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+                  },
+                  "nextPhase": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": "verifying"
+                      },
+                      {
+                        "type": "string",
+                        "const": "adopting"
+                      }
+                    ]
+                  },
+                  "verificationGoal": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            }
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            }
+          },
+          "evidenceCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evidenceTruncated": {
+            "type": "boolean"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 2048
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "evidence": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "evidenceId",
+                "runId",
+                "requestId",
+                "kind",
+                "objectRef",
+                "observedAt",
+                "summary",
+                "verified"
+              ],
+              "properties": {
+                "evidenceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                "runId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "requestId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "serviceName": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "query"
+                    },
+                    {
+                      "type": "string",
+                      "const": "action"
+                    },
+                    {
+                      "type": "string",
+                      "const": "job"
+                    },
+                    {
+                      "type": "string",
+                      "const": "artifact"
+                    },
+                    {
+                      "type": "string",
+                      "const": "event"
+                    },
+                    {
+                      "type": "string",
+                      "const": "package"
+                    },
+                    {
+                      "type": "string",
+                      "const": "sdk"
+                    }
+                  ]
+                },
+                "objectRef": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "observedAt": {
+                  "type": "string",
+                  "minLength": 20,
+                  "maxLength": 40,
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+                },
+                "stateVersion": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                "codeVersion": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                "summary": {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                "verified": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "maxItems": 100
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "checkedAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "availability": {
+        "type": "string",
+        "const": "available"
+      }
+    },
+    "additionalProperties": false
+  },
+  "AgentRequestDispositionSchema": {
+    "anyOf": [
+      {
+        "type": "string",
+        "const": "live"
+      },
+      {
+        "type": "string",
+        "const": "historical"
+      }
+    ]
+  },
+  "AgentRequestedPayloadSchema": {
+    "type": "object",
+    "required": [
+      "reason",
+      "goal",
+      "evidenceRefs"
+    ],
+    "properties": {
+      "reason": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "goal": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      },
+      "evidenceRefs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        },
+        "maxItems": 100
+      }
+    },
+    "additionalProperties": false
+  },
+  "AgentRequestPageSchema": {
+    "type": "object",
+    "required": [
+      "items",
+      "nextCursor",
+      "checkedAt",
+      "availability"
+    ],
+    "properties": {
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "requestId",
+            "source",
+            "goal",
+            "state",
+            "disposition",
+            "createdAt",
+            "updatedAt",
+            "expiresAt",
+            "retryOf",
+            "autoRunCount",
+            "waitRef",
+            "runIds",
+            "evidenceIds",
+            "result",
+            "error"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
+            "source": {
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "chat"
+                    },
+                    {
+                      "type": "string",
+                      "const": "service"
+                    }
+                  ]
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                "serviceName": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+                },
+                "phase": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "handling"
+                    },
+                    {
+                      "type": "string",
+                      "const": "verifying"
+                    },
+                    {
+                      "type": "string",
+                      "const": "adopting"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "goal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "state": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "pending"
+                },
+                {
+                  "type": "string",
+                  "const": "running"
+                },
+                {
+                  "type": "string",
+                  "const": "waiting_result"
+                },
+                {
+                  "type": "string",
+                  "const": "waiting_apply"
+                },
+                {
+                  "type": "string",
+                  "const": "cancelling"
+                },
+                {
+                  "type": "string",
+                  "const": "completed"
+                },
+                {
+                  "type": "string",
+                  "const": "failed"
+                },
+                {
+                  "type": "string",
+                  "const": "cancelled"
+                },
+                {
+                  "type": "string",
+                  "const": "needs_attention"
+                }
+              ]
+            },
+            "disposition": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "live"
+                },
+                {
+                  "type": "string",
+                  "const": "historical"
+                }
+              ]
+            },
+            "createdAt": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 40,
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+            },
+            "updatedAt": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 40,
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+            },
+            "expiresAt": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 40,
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+            },
+            "retryOf": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "autoRunCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            },
+            "waitRef": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "id",
+                    "deadlineAt",
+                    "nextPhase",
+                    "verificationGoal"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "job"
+                        },
+                        {
+                          "type": "string",
+                          "const": "action"
+                        },
+                        {
+                          "type": "string",
+                          "const": "package-operation"
+                        },
+                        {
+                          "type": "string",
+                          "const": "apply"
+                        }
+                      ]
+                    },
+                    "serviceName": {
+                      "type": "string",
+                      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+                    },
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                    },
+                    "deadlineAt": {
+                      "type": "string",
+                      "minLength": 20,
+                      "maxLength": 40,
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+                    },
+                    "nextPhase": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "verifying"
+                        },
+                        {
+                          "type": "string",
+                          "const": "adopting"
+                        }
+                      ]
+                    },
+                    "verificationGoal": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 8192
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "runIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+              }
+            },
+            "evidenceIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+              }
+            },
+            "evidenceCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "evidenceTruncated": {
+              "type": "boolean"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 32768
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+                    },
+                    "message": {
+                      "type": "string",
+                      "maxLength": 2048
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 100
+      },
+      "nextCursor": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "checkedAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "availability": {
+        "type": "string",
+        "const": "available"
+      }
+    },
+    "additionalProperties": false
+  },
+  "AgentRequestQuerySchema": {
+    "type": "object",
+    "properties": {
+      "serviceName": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "state": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "pending"
+          },
+          {
+            "type": "string",
+            "const": "running"
+          },
+          {
+            "type": "string",
+            "const": "waiting_result"
+          },
+          {
+            "type": "string",
+            "const": "waiting_apply"
+          },
+          {
+            "type": "string",
+            "const": "cancelling"
+          },
+          {
+            "type": "string",
+            "const": "completed"
+          },
+          {
+            "type": "string",
+            "const": "failed"
+          },
+          {
+            "type": "string",
+            "const": "cancelled"
+          },
+          {
+            "type": "string",
+            "const": "needs_attention"
+          }
+        ]
+      },
+      "disposition": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "live"
+          },
+          {
+            "type": "string",
+            "const": "historical"
+          }
+        ]
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cursor": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    },
+    "additionalProperties": false
+  },
+  "AgentRequestSchema": {
+    "type": "object",
+    "required": [
+      "requestId",
+      "source",
+      "goal",
+      "state",
+      "disposition",
+      "createdAt",
+      "updatedAt",
+      "expiresAt",
+      "retryOf",
+      "autoRunCount",
+      "waitRef",
+      "runIds",
+      "evidenceIds",
+      "result",
+      "error"
+    ],
+    "properties": {
+      "requestId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "source": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "chat"
+              },
+              {
+                "type": "string",
+                "const": "service"
+              }
+            ]
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          "serviceName": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "handling"
+              },
+              {
+                "type": "string",
+                "const": "verifying"
+              },
+              {
+                "type": "string",
+                "const": "adopting"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "goal": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      },
+      "state": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "pending"
+          },
+          {
+            "type": "string",
+            "const": "running"
+          },
+          {
+            "type": "string",
+            "const": "waiting_result"
+          },
+          {
+            "type": "string",
+            "const": "waiting_apply"
+          },
+          {
+            "type": "string",
+            "const": "cancelling"
+          },
+          {
+            "type": "string",
+            "const": "completed"
+          },
+          {
+            "type": "string",
+            "const": "failed"
+          },
+          {
+            "type": "string",
+            "const": "cancelled"
+          },
+          {
+            "type": "string",
+            "const": "needs_attention"
+          }
+        ]
+      },
+      "disposition": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "live"
+          },
+          {
+            "type": "string",
+            "const": "historical"
+          }
+        ]
+      },
+      "createdAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "updatedAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "expiresAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "retryOf": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "autoRunCount": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4
+      },
+      "waitRef": {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "deadlineAt",
+              "nextPhase",
+              "verificationGoal"
+            ],
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "job"
+                  },
+                  {
+                    "type": "string",
+                    "const": "action"
+                  },
+                  {
+                    "type": "string",
+                    "const": "package-operation"
+                  },
+                  {
+                    "type": "string",
+                    "const": "apply"
+                  }
+                ]
+              },
+              "serviceName": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+              },
+              "deadlineAt": {
+                "type": "string",
+                "minLength": 20,
+                "maxLength": 40,
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+              },
+              "nextPhase": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "verifying"
+                  },
+                  {
+                    "type": "string",
+                    "const": "adopting"
+                  }
+                ]
+              },
+              "verificationGoal": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "runIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        }
+      },
+      "evidenceIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+        }
+      },
+      "evidenceCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "evidenceTruncated": {
+        "type": "boolean"
+      },
+      "result": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 32768
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "error": {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 2048
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "AgentRequestStateSchema": {
+    "anyOf": [
+      {
+        "type": "string",
+        "const": "pending"
+      },
+      {
+        "type": "string",
+        "const": "running"
+      },
+      {
+        "type": "string",
+        "const": "waiting_result"
+      },
+      {
+        "type": "string",
+        "const": "waiting_apply"
+      },
+      {
+        "type": "string",
+        "const": "cancelling"
+      },
+      {
+        "type": "string",
+        "const": "completed"
+      },
+      {
+        "type": "string",
+        "const": "failed"
+      },
+      {
+        "type": "string",
+        "const": "cancelled"
+      },
+      {
+        "type": "string",
+        "const": "needs_attention"
+      }
+    ]
+  },
+  "AgentRunSourceSchema": {
+    "type": "object",
+    "required": [
+      "kind"
+    ],
+    "properties": {
+      "kind": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "chat"
+          },
+          {
+            "type": "string",
+            "const": "service"
+          }
+        ]
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "serviceName": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "phase": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "handling"
+          },
+          {
+            "type": "string",
+            "const": "verifying"
+          },
+          {
+            "type": "string",
+            "const": "adopting"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
   "AgentRuntimeConfigSchema": {
     "type": "object",
     "properties": {
@@ -1834,6 +3311,10 @@
           "clientPrivateKeyPath"
         ],
         "additionalProperties": false
+      },
+      "feedbackListen": {
+        "type": "string",
+        "const": "0.0.0.0:7444"
       }
     },
     "required": [
@@ -1847,6 +3328,72 @@
       "model",
       "tls"
     ],
+    "additionalProperties": false
+  },
+  "AgentWaitRefSchema": {
+    "type": "object",
+    "required": [
+      "kind",
+      "id",
+      "deadlineAt",
+      "nextPhase",
+      "verificationGoal"
+    ],
+    "properties": {
+      "kind": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "job"
+          },
+          {
+            "type": "string",
+            "const": "action"
+          },
+          {
+            "type": "string",
+            "const": "package-operation"
+          },
+          {
+            "type": "string",
+            "const": "apply"
+          }
+        ]
+      },
+      "serviceName": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "deadlineAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "nextPhase": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "verifying"
+          },
+          {
+            "type": "string",
+            "const": "adopting"
+          }
+        ]
+      },
+      "verificationGoal": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
     "additionalProperties": false
   },
   "ApiErrorSchema": {
@@ -2149,6 +3696,179 @@
       }
     },
     "additionalProperties": false
+  },
+  "BrainBehaviorChecksSchema": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "required": [
+        "name",
+        "passed",
+        "summary"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      },
+      "additionalProperties": false
+    },
+    "minItems": 1,
+    "maxItems": 100
+  },
+  "BrainCandidateSubmissionSchema": {
+    "type": "object",
+    "required": [
+      "submissionKey",
+      "requestId",
+      "verificationGoal",
+      "verificationTarget",
+      "expectedSourceDigest",
+      "activeDigest",
+      "desiredDigest",
+      "activeContextId"
+    ],
+    "properties": {
+      "submissionKey": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "verificationGoal": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      },
+      "verificationTarget": {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "toolName",
+          "input",
+          "checkNames"
+        ],
+        "properties": {
+          "contractVersion": {
+            "type": "number",
+            "const": 1
+          },
+          "toolName": {
+            "type": "string",
+            "pattern": "^package:piwork-brain:(?!brain_feedback$|brain_package_update$)[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+          },
+          "input": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {}
+            }
+          },
+          "checkNames": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+            },
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "expectedSourceDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "activeDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "desiredDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "activeContextId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      }
+    },
+    "additionalProperties": false
+  },
+  "BrainVerificationTargetSchema": {
+    "type": "object",
+    "required": [
+      "contractVersion",
+      "toolName",
+      "input",
+      "checkNames"
+    ],
+    "properties": {
+      "contractVersion": {
+        "type": "number",
+        "const": 1
+      },
+      "toolName": {
+        "type": "string",
+        "pattern": "^package:piwork-brain:(?!brain_feedback$|brain_package_update$)[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "input": {
+        "type": "object",
+        "patternProperties": {
+          "^.*$": {}
+        }
+      },
+      "checkNames": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+        },
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true
+      }
+    },
+    "additionalProperties": false
+  },
+  "BusinessOperationStateSchema": {
+    "anyOf": [
+      {
+        "type": "string",
+        "const": "accepted"
+      },
+      {
+        "type": "string",
+        "const": "running"
+      },
+      {
+        "type": "string",
+        "const": "succeeded"
+      },
+      {
+        "type": "string",
+        "const": "failed"
+      },
+      {
+        "type": "string",
+        "const": "cancelled"
+      }
+    ]
   },
   "CreateUserRequestSchema": {
     "type": "object",
@@ -2641,6 +4361,86 @@
       {
         "type": "string",
         "const": "INTERNAL"
+      },
+      {
+        "type": "string",
+        "const": "MODEL_UNAVAILABLE"
+      },
+      {
+        "type": "string",
+        "const": "MODEL_NOT_SUPPORTED"
+      },
+      {
+        "type": "string",
+        "const": "MODEL_LIST_UNAVAILABLE"
+      },
+      {
+        "type": "string",
+        "const": "RUN_MODEL_SELECTION_UNSUPPORTED"
+      },
+      {
+        "type": "string",
+        "const": "AGENT_CONTEXT_INCOMPATIBLE"
+      },
+      {
+        "type": "string",
+        "const": "BRAIN_UNAVAILABLE"
+      },
+      {
+        "type": "string",
+        "const": "PI_BRAIN_INITIALIZING"
+      },
+      {
+        "type": "string",
+        "const": "SERVICE_CAPABILITY_INVALID"
+      },
+      {
+        "type": "string",
+        "const": "SERVICE_EVENT_CONFLICT"
+      },
+      {
+        "type": "string",
+        "const": "SERVICE_EVENT_ORIGIN_MISMATCH"
+      },
+      {
+        "type": "string",
+        "const": "ACTION_STATE_CONFLICT"
+      },
+      {
+        "type": "string",
+        "const": "ACTION_IDEMPOTENCY_CONFLICT"
+      },
+      {
+        "type": "string",
+        "const": "ACTION_RESULT_UNKNOWN"
+      },
+      {
+        "type": "string",
+        "const": "REQUEST_EXPIRED"
+      },
+      {
+        "type": "string",
+        "const": "REQUEST_BUDGET_EXCEEDED"
+      },
+      {
+        "type": "string",
+        "const": "REQUEST_RETRY_NOT_ALLOWED"
+      },
+      {
+        "type": "string",
+        "const": "VERIFICATION_REQUIRED"
+      },
+      {
+        "type": "string",
+        "const": "PI_PACKAGE_CANDIDATE_CHANGED"
+      },
+      {
+        "type": "string",
+        "const": "PI_PACKAGE_CANDIDATE_CONFLICT"
+      },
+      {
+        "type": "string",
+        "const": "EXPERIENCE_LIMIT_EXCEEDED"
       }
     ]
   },
@@ -5985,6 +7785,202 @@
           }
         },
         "additionalProperties": false
+      },
+      "candidate": {
+        "type": "object",
+        "required": [
+          "source",
+          "operationId",
+          "requestId",
+          "preparation",
+          "desired",
+          "active",
+          "adoption",
+          "baseline",
+          "verification",
+          "apply"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "const": "Work files"
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9-]+$"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          "preparation": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "desired": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "adoption": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "verified"
+              },
+              {
+                "type": "string",
+                "const": "not-confirmed"
+              },
+              {
+                "type": "string",
+                "const": "unavailable"
+              },
+              {
+                "type": "string",
+                "const": "failed"
+              }
+            ]
+          },
+          "baseline": {
+            "type": "object",
+            "required": [
+              "activeSelected",
+              "desiredSelected",
+              "activeMatchesCurrent",
+              "desiredMatchesCurrent"
+            ],
+            "properties": {
+              "activeSelected": {
+                "type": "boolean"
+              },
+              "desiredSelected": {
+                "type": "boolean"
+              },
+              "activeMatchesCurrent": {
+                "type": "boolean"
+              },
+              "desiredMatchesCurrent": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "verification": {
+            "type": "object",
+            "required": [
+              "goal",
+              "toolName",
+              "inputSummary",
+              "checkNames"
+            ],
+            "properties": {
+              "goal": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "toolName": {
+                "type": "string",
+                "pattern": "^package:piwork-brain:(?!brain_feedback$|brain_package_update$)[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+              },
+              "inputSummary": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "checkNames": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+                },
+                "minItems": 1,
+                "maxItems": 8,
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false
+          },
+          "apply": {
+            "type": "object",
+            "required": [
+              "availability"
+            ],
+            "properties": {
+              "availability": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "available"
+                  },
+                  {
+                    "type": "string",
+                    "const": "not-applied"
+                  },
+                  {
+                    "type": "string",
+                    "const": "unavailable"
+                  }
+                ]
+              },
+              "operationId": {
+                "type": "string",
+                "minLength": 16,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9-]+$"
+              },
+              "state": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "pending"
+                  },
+                  {
+                    "type": "string",
+                    "const": "running"
+                  },
+                  {
+                    "type": "string",
+                    "const": "succeeded"
+                  },
+                  {
+                    "type": "string",
+                    "const": "failed"
+                  },
+                  {
+                    "type": "string",
+                    "const": "superseded"
+                  }
+                ]
+              },
+              "error": {
+                "type": "object",
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 4096
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
       }
     },
     "additionalProperties": false
@@ -7898,7 +9894,7 @@
           },
           "workHistorySchema": {
             "type": "number",
-            "const": 3
+            "const": 4
           },
           "storageLayout": {
             "type": "number",
@@ -10247,6 +12243,75 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "version",
+              "resourceCounts",
+              "scope",
+              "pendingApply"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 214,
+                "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "resourceCounts": {
+                "type": "object",
+                "required": [
+                  "extensions",
+                  "skills",
+                  "prompts",
+                  "themes"
+                ],
+                "properties": {
+                  "extensions": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "skills": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "prompts": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "themes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  }
+                },
+                "additionalProperties": false
+              },
+              "scope": {
+                "type": "string",
+                "const": "work"
+              },
+              "pendingApply": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "additionalProperties": false
           }
         ]
       },
@@ -11278,6 +13343,31 @@
           }
         },
         "additionalProperties": false
+      },
+      "packageSource": {
+        "type": "object",
+        "required": [
+          "kind",
+          "label",
+          "requestId"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "work-files"
+          },
+          "label": {
+            "type": "string",
+            "const": "Work files"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9-]+$"
+          }
+        },
+        "additionalProperties": false
       }
     },
     "additionalProperties": false
@@ -11447,6 +13537,224 @@
       }
     },
     "additionalProperties": false
+  },
+  "RetryAgentRequestSchema": {
+    "type": "object",
+    "required": [
+      "submissionKey"
+    ],
+    "properties": {
+      "submissionKey": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "additionalProperties": false
+  },
+  "RunModelDescriptionSchema": {
+    "type": "object",
+    "required": [
+      "modelRef",
+      "label",
+      "provider",
+      "model"
+    ],
+    "properties": {
+      "modelRef": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9-]+$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "provider": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "model": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "additionalProperties": false
+  },
+  "RunModelListSchema": {
+    "type": "object",
+    "required": [
+      "models",
+      "defaultModel",
+      "checkedAt",
+      "availability"
+    ],
+    "properties": {
+      "models": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "modelRef",
+            "label",
+            "provider",
+            "model"
+          ],
+          "properties": {
+            "modelRef": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 16,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9-]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "provider": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 256
+      },
+      "defaultModel": {
+        "type": "object",
+        "required": [
+          "modelRef",
+          "label",
+          "provider",
+          "model"
+        ],
+        "properties": {
+          "modelRef": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 16,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "additionalProperties": false
+      },
+      "checkedAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "availability": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "available"
+          },
+          {
+            "type": "string",
+            "const": "unavailable"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "RunModelSelectorSchema": {
+    "anyOf": [
+      {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "session-preference"
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "work-default"
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "kind",
+          "modelRef"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "model"
+          },
+          "modelRef": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9-]+$"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
   },
   "RuntimeSkillSchema": {
     "type": "object",
@@ -12255,6 +14563,299 @@
     },
     "additionalProperties": false
   },
+  "ServiceActionResultSchema": {
+    "type": "object",
+    "required": [
+      "actionId",
+      "actionName",
+      "input",
+      "expectedStateVersion",
+      "state",
+      "stateVersion",
+      "observedAt"
+    ],
+    "properties": {
+      "actionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "actionName": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "input": {},
+      "expectedStateVersion": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "state": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "accepted"
+          },
+          {
+            "type": "string",
+            "const": "running"
+          },
+          {
+            "type": "string",
+            "const": "succeeded"
+          },
+          {
+            "type": "string",
+            "const": "failed"
+          },
+          {
+            "type": "string",
+            "const": "cancelled"
+          }
+        ]
+      },
+      "stateVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "observedAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "result": {},
+      "jobId": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "error": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "ServiceCapabilitiesSchema": {
+    "type": "object",
+    "required": [
+      "contractVersion",
+      "logicalServiceName",
+      "codeVersion",
+      "stateVersion",
+      "queries",
+      "actions",
+      "events",
+      "jobs"
+    ],
+    "properties": {
+      "contractVersion": {
+        "type": "number",
+        "const": 1
+      },
+      "logicalServiceName": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "codeVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "stateVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "queries": {
+        "type": "object",
+        "patternProperties": {
+          "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$": {
+            "type": "object",
+            "required": [
+              "inputSchema",
+              "description"
+            ],
+            "properties": {
+              "inputSchema": {
+                "type": "object",
+                "patternProperties": {
+                  "^.*$": {}
+                }
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 2048
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "actions": {
+        "type": "object",
+        "patternProperties": {
+          "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$": {
+            "type": "object",
+            "required": [
+              "inputSchema",
+              "description",
+              "mutation",
+              "requiresExpectedStateVersion",
+              "verificationQuery",
+              "mode",
+              "maxWaitMs"
+            ],
+            "properties": {
+              "inputSchema": {
+                "type": "object",
+                "patternProperties": {
+                  "^.*$": {}
+                }
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 2048
+              },
+              "mutation": {
+                "type": "boolean"
+              },
+              "requiresExpectedStateVersion": {
+                "type": "boolean"
+              },
+              "verificationQuery": {
+                "type": "string",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+              },
+              "mode": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "sync"
+                  },
+                  {
+                    "type": "string",
+                    "const": "async"
+                  }
+                ]
+              },
+              "maxWaitMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 86400000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "events": {
+        "type": "object",
+        "required": [
+          "facts",
+          "requestReasons"
+        ],
+        "properties": {
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "maxItems": 128
+          },
+          "requestReasons": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+            },
+            "maxItems": 64
+          }
+        },
+        "additionalProperties": false
+      },
+      "jobs": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "ServiceConnectionSchema": {
+    "type": "object",
+    "required": [
+      "contractVersion",
+      "serviceName",
+      "apiPortName",
+      "mode"
+    ],
+    "properties": {
+      "contractVersion": {
+        "type": "number",
+        "const": 1
+      },
+      "serviceName": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "apiPortName": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "mode": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "pi-managed"
+          },
+          {
+            "type": "string",
+            "const": "external"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
   "ServiceDefinitionInputSchema": {
     "type": "object",
     "required": [
@@ -12748,6 +15349,149 @@
     },
     "additionalProperties": false
   },
+  "ServiceEventSchema": {
+    "type": "object",
+    "required": [
+      "contractVersion",
+      "eventId",
+      "origin",
+      "serviceName",
+      "type",
+      "occurredAt",
+      "stateVersion",
+      "payload"
+    ],
+    "properties": {
+      "contractVersion": {
+        "type": "number",
+        "const": 1
+      },
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "origin": {
+        "type": "object",
+        "required": [
+          "workId",
+          "serviceId"
+        ],
+        "properties": {
+          "workId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9-]+$"
+          },
+          "serviceId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9-]+$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "serviceName": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+      },
+      "type": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "occurredAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "stateVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "entityRef": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "actionId": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "jobId": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "causationRequestId": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "actor": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "user"
+          },
+          {
+            "type": "string",
+            "const": "agent"
+          },
+          {
+            "type": "string",
+            "const": "service"
+          }
+        ]
+      },
+      "payload": {
+        "type": "object",
+        "patternProperties": {
+          "^.*$": {}
+        }
+      }
+    },
+    "additionalProperties": false
+  },
   "ServiceImageSchema": {
     "type": "object",
     "required": [
@@ -12758,6 +15502,98 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 2048
+      }
+    },
+    "additionalProperties": false
+  },
+  "ServiceJobResultSchema": {
+    "type": "object",
+    "required": [
+      "jobId",
+      "actionId",
+      "state",
+      "observedAt",
+      "deadlineAt",
+      "artifacts"
+    ],
+    "properties": {
+      "jobId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "actionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "state": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "accepted"
+          },
+          {
+            "type": "string",
+            "const": "running"
+          },
+          {
+            "type": "string",
+            "const": "succeeded"
+          },
+          {
+            "type": "string",
+            "const": "failed"
+          },
+          {
+            "type": "string",
+            "const": "cancelled"
+          }
+        ]
+      },
+      "observedAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "deadlineAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "artifacts": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "maxItems": 100
+      },
+      "result": {},
+      "error": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        "additionalProperties": false
       }
     },
     "additionalProperties": false
@@ -12812,6 +15648,87 @@
           {
             "type": "string",
             "const": "udp"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "ServiceQueryResultSchema": {
+    "type": "object",
+    "required": [
+      "stateVersion",
+      "codeVersion",
+      "observedAt",
+      "value"
+    ],
+    "properties": {
+      "stateVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "codeVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "observedAt": {
+        "type": "string",
+        "minLength": 20,
+        "maxLength": 40,
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      },
+      "value": {},
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "name",
+            "passed",
+            "summary"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+            },
+            "passed": {
+              "type": "boolean"
+            },
+            "summary": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 100
+      }
+    },
+    "additionalProperties": false
+  },
+  "SetSessionModelSchema": {
+    "type": "object",
+    "required": [
+      "modelRef"
+    ],
+    "properties": {
+      "modelRef": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9-]+$"
+          },
+          {
+            "type": "null"
           }
         ]
       }
@@ -13156,6 +16073,45 @@
     "minLength": 1,
     "maxLength": 256,
     "pattern": "^(?=.*\\S)[^\\u0000]+$"
+  },
+  "SubmitRunInputSchema": {
+    "type": "object",
+    "required": [
+      "sessionId",
+      "submissionKey",
+      "prompt"
+    ],
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+      },
+      "submissionKey": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "prompt": {
+        "type": "string",
+        "minLength": 1
+      },
+      "modelRef": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9-]+$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
   },
   "TimestampSchema": {
     "type": "string",

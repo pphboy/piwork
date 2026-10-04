@@ -132,7 +132,7 @@ test("event retention publishes an earliest cursor while final Run state remains
   }
 });
 
-test("older structural schemas upgrade without losing Session or Run records", async () => {
+test("unsupported structural schemas fail without reconstructing missing tables or losing records", async () => {
   const fixture = await createFixture();
   let store = WorkStore.open(fixture.databasePath);
   try {
@@ -141,14 +141,16 @@ test("older structural schemas upgrade without losing Session or Run records", a
     store.close();
     const database = new DatabaseSync(fixture.databasePath);
     database.exec("DROP TABLE session_idempotency");
-    database.exec("DELETE FROM schema_migrations WHERE version IN (2, 3)");
+    database.exec("DELETE FROM schema_migrations WHERE version = 4");
     database.close();
 
-    store = WorkStore.open(fixture.databasePath);
-    assert.equal(store.schemaVersion, WORK_SCHEMA_VERSION);
-    assert.equal(store.getSession("work-1", "session-1")?.sessionId, "session-1");
-    assert.equal(store.getRun(accepted.run.runId)?.submissionKey, "before-migration");
-    assert.ok(store.listTables().includes("session_idempotency"));
+    assert.throws(() => WorkStore.open(fixture.databasePath), /WORK_HISTORY_FORMAT_UNSUPPORTED/);
+    const verify = new DatabaseSync(fixture.databasePath);
+    try {
+      assert.equal(verify.prepare("SELECT session_id FROM sessions").get()?.session_id, "session-1");
+      assert.equal(verify.prepare("SELECT submission_key FROM runs").get()?.submission_key, "before-migration");
+      assert.equal(verify.prepare("SELECT name FROM sqlite_master WHERE name='session_idempotency'").get(), undefined);
+    } finally { verify.close(); }
   } finally {
     store.close();
     await fixture.cleanup();

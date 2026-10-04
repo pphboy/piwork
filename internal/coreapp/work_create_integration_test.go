@@ -102,8 +102,13 @@ func TestNativeDefaultWorkCreateAndSession(t *testing.T) {
 	if status, sessions := httpCall(t, base, "/api/v1/works/"+workID+"/sessions", "GET", authorization, nil); status != 200 || sessions["sessions"] == nil {
 		t.Fatal("created Work did not expose its real Agent", status, sessions)
 	}
-	if status, view := httpCall(t, base, "/api/v1/works/"+workID+"/configuration", "GET", authorization, nil); status != 200 || view["pendingApply"] != false || view["active"] == nil || view["desired"] == nil || view["desiredRevision"] != nil || view["activeRevision"] != nil || view["runtime"].(map[string]any)["state"] != "ready" || len(view["runtime"].(map[string]any)["skills"].([]any)) != 1 {
-		t.Fatal("created Work configuration leaked internals or lacked live Skill evidence", status, view)
+	if status, view := httpCall(t, base, "/api/v1/works/"+workID+"/configuration", "GET", authorization, nil); status != 200 || view["pendingApply"] != false || view["active"] == nil || view["desired"] == nil || view["desiredRevision"] != nil || view["activeRevision"] != nil || view["runtime"].(map[string]any)["state"] != "ready" || len(view["runtime"].(map[string]any)["skills"].([]any)) != 0 {
+		t.Fatal("created Work configuration leaked internals or retained an independent default Skill", status, view)
+	} else {
+		packages := view["runtime"].(map[string]any)["packages"].([]any)
+		if len(packages) != 1 || packages[0].(map[string]any)["name"] != "piwork-brain" || packages[0].(map[string]any)["loaded"] != true {
+			t.Fatal("default brain package was not actually loaded", view)
+		}
 	}
 	_, initialView := httpCall(t, base, "/api/v1/works/"+workID+"/configuration", "GET", authorization, nil)
 	fullConfig := initialView["desired"].(map[string]any)
@@ -122,7 +127,7 @@ func TestNativeDefaultWorkCreateAndSession(t *testing.T) {
 	if status, view := httpCall(t, base, "/api/v1/works/"+workID+"/configuration/agents", "PUT", authorization, map[string]any{"agentsMd": "# Saved without Apply"}); status != 200 || view["pendingApply"] != true || view["desired"].(map[string]any)["agentsMd"] != "# Saved without Apply" || view["active"].(map[string]any)["agentsMd"] != "" {
 		t.Fatal("AGENTS.md Save activated early or lost desired state", status, view)
 	}
-	if status, view := httpCall(t, base, "/api/v1/works/"+workID+"/configuration/skills", "PUT", authorization, map[string]any{"skills": []string{}}); status != 200 || view["pendingApply"] != true || len(view["desired"].(map[string]any)["skills"].([]any)) != 0 || len(view["active"].(map[string]any)["skills"].([]any)) != 1 {
+	if status, view := httpCall(t, base, "/api/v1/works/"+workID+"/configuration/skills", "PUT", authorization, map[string]any{"skills": []string{}}); status != 200 || view["pendingApply"] != true || len(view["desired"].(map[string]any)["skills"].([]any)) != 0 || len(view["active"].(map[string]any)["skills"].([]any)) != 0 || len(view["active"].(map[string]any)["packages"].([]any)) != 1 {
 		t.Fatal("Skill Save activated early or lost active context", status, view)
 	}
 	if status, view := httpCall(t, base, "/api/v1/works/"+workID+"/configuration/packages", "PUT", authorization, map[string]any{"packages": []any{}}); status != 200 || view["pendingApply"] != true || len(view["desired"].(map[string]any)["packages"].([]any)) != 0 {

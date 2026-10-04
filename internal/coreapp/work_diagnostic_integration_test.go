@@ -21,6 +21,28 @@ import (
 
 func TestNativeSkillFailuresRemainSpecificAfterRollbackAndCoreRestart(t *testing.T) {
 	a, base, auth, id, ctx := nativeApplyFixture(t)
+	// Skill diagnostics exercise an explicitly installed ordinary Skill. The
+	// default brain is a package and does not populate the independent selection.
+	source := filepath.Join(t.TempDir(), "diagnostic-skill")
+	if err := os.MkdirAll(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "SKILL.md"), []byte("---\nname: diagnostic-skill\ndescription: Exercise named SDK Skill diagnostics.\n---\nDiagnostic instructions.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	operator, err := os.ReadFile(filepath.Join(a.options.DataDirectory, "operator.credential"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, result := packageHTTPCall(t, base, "/control/skills", "POST", "Operator "+strings.TrimSpace(string(operator)), map[string]string{"path": source}); status != 201 {
+		t.Fatal(status, result)
+	}
+	status, created := packageHTTPCall(t, base, "/api/v1/works", "POST", auth, map[string]any{"name": "Skill diagnostics", "skills": []string{"diagnostic-skill"}, "idempotencyKey": "diagnostic-work"})
+	if status != 202 {
+		t.Fatal(status, created)
+	}
+	id = created["workId"].(string)
+	waitWorkOperation(t, ctx, a, created["operationId"].(string))
 	path := "/api/v1/works/" + id
 	state, err := a.Store.Configuration(ctx, id)
 	if err != nil {
@@ -33,7 +55,7 @@ func TestNativeSkillFailuresRemainSpecificAfterRollbackAndCoreRestart(t *testing
 	}
 	var metadata contracts.WorkContextMetadata
 	if json.Unmarshal(raw, &metadata) != nil || len(metadata.Skills) != 1 {
-		t.Fatal("expected deployment Skill", string(raw))
+		t.Fatal("expected explicitly selected diagnostic Skill", string(raw))
 	}
 	skillName := metadata.Skills[0].Name
 	// Success must be an SDK result for the named Skill, never just a Save result.

@@ -27,12 +27,31 @@ import (
 
 func recoveryDesktop(t *testing.T) *nativeDesktop {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	var port int
+	for attempt := 0; attempt < 100; attempt++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidate := listener.Addr().(*net.TCPAddr).Port
+		available := true
+		// Control objects intentionally outlive crashed instances. A free TCP
+		// port need not have an unused control name; never remove another fixture.
+		for _, suffix := range []string{".json", ".sock"} {
+			_, err := os.Lstat(filepath.Join("/tmp", fmt.Sprintf("piwork-desktop-%d", os.Geteuid()), desktopControlName(candidate, suffix)))
+			if !errors.Is(err, os.ErrNotExist) {
+				available = false
+			}
+		}
+		_ = listener.Close()
+		if available {
+			port = candidate
+			break
+		}
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	_ = listener.Close()
+	if port == 0 {
+		t.Fatal("no unused fixture control name")
+	}
 	api, _ := client.New("http://127.0.0.1:1", "")
 	return &nativeDesktop{api: api, store: client.CredentialStore{Path: filepath.Join(t.TempDir(), "credential", "client.json")}, port: port, origin: fmt.Sprintf("http://desktop.localhost:%d", port), sessions: map[string]desktopSession{}, identity: desktopIdentity{coreURL: "http://127.0.0.1:1"}}
 }

@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/sys/unix"
 	"piwork/internal/client"
+	"piwork/internal/contracts"
 	"piwork/internal/workpackage"
 )
 
@@ -583,7 +584,17 @@ func (d *nativeDesktop) importDesktopPackage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if response.StatusCode != 201 && response.StatusCode != 200 {
-		desktopTransferError(w, response.StatusCode, "PACKAGE_UPLOAD_FAILED")
+		// Preserve a known public reason, without forwarding upstream text or
+		// private details. Upload rejection has not submitted an import.
+		var failure struct{ Code string }
+		code := "PACKAGE_UPLOAD_FAILED"
+		if json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&failure) == nil {
+			status, public := contracts.ProjectError(contracts.NewError(failure.Code, ""))
+			if public.Code == failure.Code && status == response.StatusCode {
+				code = public.Code
+			}
+		}
+		desktopTransferError(w, response.StatusCode, code)
 		return
 	}
 	var uploaded struct {

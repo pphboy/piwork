@@ -113,6 +113,7 @@ const actionLabels = {
     'check-browser-access': 'Checking browser access', 'confirm-reset-browser-access': 'Resetting browser access', 'sign-in': 'Signing in', 'sign-out': 'Signing out', 'confirm-switch-core': 'Switching Core', 'check-connection': 'Checking connection',
     'retry-works': 'Loading Works', 'create-work': 'Creating Work', 'start-work': 'Starting Work', 'confirm-stop': 'Stopping Work', 'confirm-delete': 'Deleting Work',
     'retry-work-read': 'Loading Work', 'open-work': 'Loading Work', 'check-work': 'Checking Work', settings: 'Reading settings', 'tab-Services': 'Loading Services', 'tab-Files': 'Reading workspace',
+    'load-models': 'Reading models', 'save-model': 'Saving Session model', 'check-session-model': 'Reading Session model', 'pi-requests': 'Reading Pi requests', 'pi-request-detail': 'Reading Pi request', 'cancel-pi-request': 'Cancelling Pi request', 'retry-pi-request': 'Retrying Pi request', 'next-pi-requests': 'Reading more Pi requests', 'next-pi-evidence': 'Reading more evidence',
     'sessions': 'Reading Sessions', 'select-session': 'Reading Session', 'new-session': 'Creating Session', 'send-message': 'Submitting message', 'cancel-run': 'Requesting cancellation', 'resume-run': 'Reconnecting Run',
     'service-details': 'Reading logs', 'service-action': 'Submitting Service control', 'confirm-service-control': 'Submitting Service control', 'refresh-logs': 'Reading logs',
     'open-app': 'Opening application', 'open-window': 'Opening application', 'retry-service-entry': 'Preparing application', 'check-preview': 'Checking preview',
@@ -144,7 +145,7 @@ function actionIntent(el, action = el.dataset.action || '') {
             return;
         kind = 'service';
     }
-    else if (['new-session', 'send-message', 'cancel-run'].includes(action))
+    else if (['new-session', 'send-message', 'cancel-run', 'save-model', 'cancel-pi-request', 'retry-pi-request'].includes(action))
         kind = 'agent';
     else if (['confirm-import', 'download-work', 'prepare-export'].includes(action))
         kind = 'transfer';
@@ -383,7 +384,17 @@ function agent(w, focus) {
     const active = run && ["accepted", "running", "cancelling"].includes(run.status);
     const busy = active && run.sessionId !== session?.id;
     const draft = view.drafts[draftKey(w, session?.id || "")] || "";
-    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b></span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${btn(icon(focus ? "grid" : "focus", 16), focus ? "return-service" : "focus-chat", "icon-button quiet", `aria-label="${focus ? "Return to Service" : "Focus chat"}"`)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div><div class="session-line"><button data-action="sessions">${esc(session?.title || "No Session yet")}${icon("down", 12)}</button></div><div class="messages" id="messages">${readingSessions ? feedback(`Reading Sessions for ${esc(w.name)}…`) : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : session.messages.filter(m => m.text || m.tool).map((m) => `<div class="message ${m.role}">${m.role === "assistant" && !m.tool ? `<div class="message-author">${icon("spark", 14)} piwork</div>` : ""}<div class="message-text">${esc(m.text)}</div>${m.tool ? `<details class="tool-event"><summary>${icon("terminal", 14)} ${esc(m.tool.name)} <span>${esc(m.tool.status)}</span></summary><pre>${esc(m.tool.content)}</pre></details>` : ""}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${icon("file", 13)} ${esc(m.source)}</button>` : ""}</div>`).join("")}${w.services.some((s) => s.observed === "Ready" && s.ports.length) && focus ? btn(`${icon("grid", 15)} Open service`, "return-service", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${w.resourceErrors?.agent ? feedback(esc(w.resourceErrors.agent), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer"><textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom"><label><input id="include-identity" type="checkbox" ${view.includeIdentity ? "checked" : ""}> Include Service identity</label>${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${active || session?.legacy ? "disabled" : ""}`)}</div></div><div class="composer-caption" id="composer-help">${view.includeIdentity ? "Identity only. No page, cookies, or unsaved inputs." : "Agent uses saved files and reachable APIs when asked."}</div></div></section>`;
+    const modelReady = adapter.modelReady(w.id, session?.id || "");
+    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b></span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${btn(icon(focus ? "grid" : "focus", 16), focus ? "return-service" : "focus-chat", "icon-button quiet", `aria-label="${focus ? "Return to Service" : "Focus chat"}"`)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div><div class="session-line">${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(session?.title || "No Session yet")}${icon("down", 12)}</button></div><div class="messages" id="messages">${readingSessions ? feedback(`Reading Sessions for ${esc(w.name)}…`) : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : session.messages.filter(m => m.text || m.tool).map((m) => `<div class="message ${m.role}">${m.role === "assistant" && !m.tool ? `<div class="message-author">${icon("spark", 14)} piwork</div>` : ""}<div class="message-text">${esc(m.text)}</div>${m.tool ? `<details class="tool-event"><summary>${icon("terminal", 14)} ${esc(m.tool.name)} <span>${esc(m.tool.status)}</span></summary><pre>${esc(m.tool.content)}</pre></details>` : ""}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${icon("file", 13)} ${esc(m.source)}</button>` : ""}</div>`).join("")}${w.services.some((s) => s.observed === "Ready" && s.ports.length) && focus ? btn(`${icon("grid", 15)} Open service`, "return-service", "service-shortcut") : ""}${session?.runs?.length ? `<details class="run-history"><summary>Run history · actual models and sources</summary>${session.runs.map(r => `<p><code>${esc(r.id)}</code> · ${esc(r.actualModel?.label || "Unavailable model")} · ${esc(r.source?.kind === "service" ? `Service: ${r.source.serviceName || "automatic"}` : "Chat")} · ${esc(r.status)}</p>`).join("")}</details>` : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${modelComposer(w, session?.id || "")} ${w.resourceErrors?.agent ? feedback(esc(w.resourceErrors.agent), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(run.actualModel?.label || "Model unavailable")} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer"><textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom"><label><input id="include-identity" type="checkbox" ${view.includeIdentity ? "checked" : ""}> Include Service identity</label>${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${active || session?.legacy || !modelReady ? "disabled" : ""}`)}</div></div><div class="composer-caption" id="composer-help">${view.includeIdentity ? "Identity only. No page, cookies, or unsaved inputs." : "Agent uses saved files and reachable APIs when asked."}</div></div></section>`;
+}
+function modelComposer(w, sessionId) {
+    const catalog = adapter.models.get(w.id), state = adapter.modelSelection(w.id, sessionId), session = w.sessions.find(s => s.id === sessionId);
+    const blocked = !sessionId || !catalog?.confirmed || !catalog.models.length || state.phase === 'saving' || state.phase === 'unknown';
+    const current = session?.modelPreference;
+    const unavailable = current?.availability === 'unavailable';
+    const options = [{ modelRef: null, label: catalog?.defaultModel?.label || 'Work default', provider: '', model: '' }, ...(catalog?.models ?? [])];
+    const missing = state.ref !== null && !options.some(m => m.modelRef === state.ref);
+    return `<div class="model-selection"><label>Model for next message<select id="model-select" aria-label="Model for next message" ${blocked ? 'disabled' : ''}>${missing ? `<option value="${esc(state.ref)}" selected disabled>${esc(current?.label || 'Unavailable model')}</option>` : ''}${options.map(m => `<option value="${esc(m.modelRef || '')}" ${m.modelRef === state.ref ? 'selected' : ''}>${esc(m.label)}${m.modelRef === null ? ' · Work default' : ''}</option>`).join('')}</select></label>${!sessionId ? btn('New session', 'new-session', 'small') : state.phase === 'dirty' ? btn('Save model', 'save-model', 'small') : state.phase === 'unknown' ? btn('Check Session model', 'check-session-model', 'small') : catalog?.error || !catalog?.confirmed ? btn('Check models', 'load-models', 'small') : ''}</div>${catalog?.loading ? feedback('Reading available models…') : catalog?.confirmed && !catalog.models.length ? feedback('No available models. Check the Work runtime model.', 'warning', btn('Check models', 'load-models', 'small')) : ''}${catalog?.error ? feedback(esc(catalog.error), 'warning', btn('Check models', 'load-models', 'small')) : ''}${state.phase === 'saving' ? feedback('Saving model for the next message…') : state.error ? feedback(esc(state.error), 'warning') : unavailable ? feedback('Saved model is unavailable. Choose and save an available model before sending.', 'warning') : ''}`;
 }
 function files(w) {
     const directory = adapter.directories.get(`${w.id}:${view.path}`);
@@ -566,6 +577,25 @@ function modalMarkup() {
             footer = `${cancel()}${btn(view.data.control === "remove" ? "Remove Service" : "Stop Service", "confirm-service-control", "danger-solid")}`;
             break;
         }
+        case "pi-requests": {
+            title = 'Pi requests';
+            const page = target ? adapter.requestPage(target.id, view.data.serviceName || '') : undefined;
+            body = `<label class="field">Service<select id="pi-service-filter"><option value="">All Services and Chat</option>${target?.services.map(s => `<option value="${esc(s.name)}" ${s.name === view.data.serviceName ? 'selected' : ''}>${esc(s.name)}</option>`).join('') || ''}</select></label><p class="muted">Instrumented Services report business events. External Services provide runtime observations. Ordinary facts do not start a Pi Run.</p>${page?.error ? feedback(esc(page.error), 'warning') : ''}${page?.items.map(r => `<article class="capability"><strong>${esc(r.goal)}</strong><p>${esc(r.source.kind === 'service' ? r.source.serviceName : 'Chat')} · ${esc(r.state)} · ${esc(r.disposition)}</p>${btn('Details', 'pi-request-detail', 'small', `data-id="${esc(r.requestId)}"`)}</article>`).join('') || (page?.loading ? 'Reading Pi requests…' : 'No requests in this view.')}`;
+            footer = `${btn('Refresh', 'pi-requests', 'small')}${page?.nextCursor ? btn('More requests', 'next-pi-requests', 'small') : ''}${cancel()}`;
+            break;
+        }
+        case "pi-request-detail": {
+            title = 'Pi request';
+            const detail = target ? adapter.requestDetails.get(`${target.id}:${view.data.requestId}`) : undefined, r = detail?.request;
+            if (!r) {
+                body = 'Reading the original request…';
+                break;
+            }
+            const live = r.disposition === 'live', terminal = ['completed', 'failed', 'cancelled', 'needs_attention'].includes(r.state);
+            body = `<p><code>${esc(r.requestId)}</code></p><h3>${esc(r.goal)}</h3><p>${esc(r.source.kind === 'service' ? `Service: ${r.source.serviceName}` : 'Chat')} · ${esc(r.state)} · ${esc(r.disposition)}</p>${r.waitRef ? `<p>Waiting for ${esc(r.waitRef.kind)} · <code>${esc(r.waitRef.id)}</code> · Deadline ${esc(r.waitRef.deadlineAt)}</p><p class="muted">The waiting goal releases its Run. Chat remains available.</p>` : ''}${r.error ? feedback(esc(r.error.message), 'warning') : ''}${r.result ? `<p>${esc(r.result)}</p>` : ''}${!live ? '<p class="muted">Shared history is read only and does not execute or retry.</p>' : ''}<h3>Evidence</h3>${detail.evidence.items.map((e) => `<article class="capability"><strong>${esc(e.kind)} · ${e.verified ? 'Verified' : 'Observed'}</strong><p>${esc(e.summary)}</p><small>${esc(e.observedAt)} · ${esc(e.objectRef)}</small></article>`).join('') || '<p>No evidence yet.</p>'}${detail.evidence.nextCursor ? btn('More evidence', 'next-pi-evidence', 'small') : ''}<h3>Runs</h3>${r.runIds.map((id) => `<code>${esc(id)}</code>`).join(' · ') || 'No Run admitted.'}`;
+            footer = `${live && !terminal ? btn('Cancel request', 'cancel-pi-request', 'danger') : ''}${live && ['failed', 'cancelled', 'needs_attention'].includes(r.state) ? btn('Retry with new request', 'retry-pi-request', 'small') : ''}${btn('Refresh original request', 'pi-request-detail', 'small', `data-id="${esc(r.requestId)}"`)}${cancel()}`;
+            break;
+        }
         case "file-options":
             title = "Workspace options";
             body = `<div class="menu-list">${btn("Refresh files", "refresh-files")}${btn("Connect with WebDAV", "webdav")}</div>`;
@@ -640,9 +670,10 @@ function modalMarkup() {
             break;
         case "package-detail": {
             const p = adapter.getPackages().find((x) => x.name === view.data.id);
+            const entry = target?.packageEntries?.find(p => p.name === view.data.id);
             title = esc(view.data.id);
-            body = `<pre class="code-editor">${esc(JSON.stringify(target?.packageEntries?.find(p => p.name === view.data.id) ?? p ?? { name: view.data.id }, null, 2))}</pre><p class="muted">Installed, selected, active, and loaded states are reported separately.</p>`;
-            footer = close();
+            body = `${target?.resourceErrors?.packages ? feedback(`Package observation unavailable. Last confirmed details: ${esc(target.resourceErrors.packages)}`, "warning") : ""}${view.data.id === "piwork-brain" ? `<p>Editable source: <code>.pi/packages/piwork-brain/</code></p>${btn("Open brain source", "open-source", "small", 'data-path="/.pi/packages/piwork-brain/brain.md"')}${brainCandidateDetails(entry)}` : `<pre class="code-editor">${esc(JSON.stringify(entry ?? p ?? { name: view.data.id }, null, 2))}</pre>`}<p class="muted">Installed, selected, active, and loaded states are reported separately.</p>`;
+            footer = `${target ? btn("Refresh package", "refresh-package-detail", "small") : ""}${close()}`;
             break;
         }
         case "install-package":
@@ -1167,6 +1198,51 @@ async function handleAction(action, el, record) {
                 root.querySelector("#composer")?.focus();
             }
             break;
+        case "pi-requests":
+            if (currentWork) {
+                const serviceName = view.modal === 'pi-requests' ? view.data.serviceName || '' : '';
+                openModal('pi-requests', { serviceName });
+                await stay(adapter.loadRequests(currentWork.id, serviceName));
+            }
+            break;
+        case "next-pi-requests":
+            if (currentWork)
+                await stay(adapter.loadRequests(currentWork.id, view.data.serviceName || '', true));
+            break;
+        case "pi-request-detail":
+            if (currentWork) {
+                const requestId = el.dataset.id || view.data.requestId;
+                openModal('pi-request-detail', { requestId });
+                await stay(adapter.loadRequest(currentWork.id, requestId));
+            }
+            break;
+        case "next-pi-evidence":
+            if (currentWork)
+                await stay(adapter.loadRequest(currentWork.id, view.data.requestId, true));
+            break;
+        case "cancel-pi-request":
+            if (currentWork)
+                await stay(adapter.cancelRequest(currentWork.id, view.data.requestId));
+            break;
+        case "retry-pi-request":
+            if (currentWork) {
+                const result = await stay(adapter.retryRequest(currentWork.id, view.data.requestId));
+                openModal('pi-request-detail', { requestId: result.requestId });
+                await stay(adapter.loadRequest(currentWork.id, result.requestId));
+            }
+            break;
+        case "load-models":
+            if (currentWork)
+                await stay(adapter.loadModels(currentWork.id));
+            break;
+        case "save-model":
+            if (currentWork && view.session)
+                await stay(adapter.saveModel(currentWork.id, view.session));
+            break;
+        case "check-session-model":
+            if (currentWork && view.session)
+                await stay(adapter.checkSessionModel(currentWork.id, view.session));
+            break;
         case "send-message":
             if (currentWork) {
                 const originalKey = draftKey(currentWork);
@@ -1543,6 +1619,10 @@ async function handleAction(action, el, record) {
         case "package-detail":
             openModal(action, { id: el.dataset.id });
             break;
+        case "refresh-package-detail":
+            if (currentWork)
+                await stay(adapter.loadPackages(currentWork.id));
+            break;
         case "install-package":
             view.installSource = "";
             view.installName = adapter.getPackages()[0]?.name ?? "";
@@ -1666,6 +1746,8 @@ async function handleAction(action, el, record) {
         }
         case "operation":
             openModal("operation", { id: el.dataset.id });
+            if (!adapter.getOperation(el.dataset.id))
+                await stay(adapter.checkOperation(el.dataset.id));
             break;
         case "pause-operation":
             adapter.pauseOperation(el.dataset.id);
@@ -1944,6 +2026,20 @@ root.addEventListener("change", (e) => {
     const value = input.value;
     const checked = input.checked;
     const w = current();
+    if (input.id === 'pi-service-filter' && w) {
+        view.data.serviceName = value;
+        void adapter.loadRequests(w.id, value).catch(error => toast(error.message));
+        render();
+    }
+    if (input.id === 'model-select' && w) {
+        try {
+            adapter.selectModel(w.id, view.session, value || null);
+        }
+        catch (error) {
+            toast(error.message);
+        }
+        render();
+    }
     if (input.dataset.fileSelect) {
         view.selected = checked
             ? [...view.selected, input.dataset.fileSelect]
@@ -2348,7 +2444,22 @@ function reconcileHTML(parent, html) {
     children(parent, template.content);
 }
 function skillState(work, name, field) { const runtime = work.config.runtime?.skills?.find((s) => s.name === name); const value = runtime?.[field]; return value === undefined ? "Not provided" : field === "loaded" ? value ? "Loaded" : "Not loaded" : value ? "Visible to model" : "Not visible to model"; }
-function packageStatus(work, name) { const p = work.packageEntries?.find(p => p.name === name); return p ? `Desired: ${p.desired ? "selected" : "not selected"} · Active: ${p.active ? "selected" : "not selected"} · Runtime: ${p.runtime?.availability ?? "unknown"}` : "Saved selection · Runtime not provided"; }
+function brainBehavior(adoption) {
+    return adoption === "verified" ? "Behavior verified" : adoption === "failed" ? "Behavior checks failed" : adoption === "not-confirmed" ? "Behavior not confirmed" : "Behavior observation unavailable";
+}
+function packageStatus(work, name) { const p = work.packageEntries?.find(p => p.name === name); return p ? `${p.pendingApply ? "Saved · Not applied" : "Saved"} · ${p.runtime?.loaded === true ? "Loaded" : p.runtime?.loaded === false ? "Not loaded" : "Loading unconfirmed"}${p.candidate ? ` · Work files candidate: ${p.candidate.preparation} · ${brainBehavior(p.candidate.adoption)}${p.candidate.apply?.state === "failed" ? " · Apply failed" : ""}` : ""}` : "Saved selection · Runtime not provided"; }
+function brainCandidateDetails(entry) {
+    const candidate = entry?.candidate;
+    if (!candidate)
+        return "<p>No candidate details available.</p>";
+    const baseline = candidate.baseline, verification = candidate.verification, apply = candidate.apply;
+    const selection = (enabled, matches) => typeof enabled !== "boolean" || typeof matches !== "boolean" ? "Baseline observation unavailable" : `${enabled ? "Enabled" : "Disabled"} at acceptance · ${matches ? "Still matches" : "Changed since acceptance"}`;
+    const operation = (id, label) => btn(esc(label), "operation", "inline-link", `data-id="${esc(id)}"`);
+    const applyKnown = apply?.availability === "available" && apply.operationId && apply.state;
+    const applyState = applyKnown ? `${apply.state === "failed" ? "Apply failed" : `Apply ${apply.state}`} · ${operation(apply.operationId, apply.operationId)}` : apply?.availability === "not-applied" ? "No matching Apply" : "Apply observation unavailable";
+    const preparation = candidate.preparation === "succeeded" ? "Published" : ["failed", "superseded", "cleanup-pending"].includes(candidate.preparation) ? candidate.preparation : "Preparing";
+    return `<h3>Candidate from ${esc(candidate.source)}</h3><dl><dt>Active selection at acceptance</dt><dd>${esc(selection(baseline?.activeSelected, baseline?.activeMatchesCurrent))}</dd><dt>Saved selection at acceptance</dt><dd>${esc(selection(baseline?.desiredSelected, baseline?.desiredMatchesCurrent))}</dd><dt>Fixed verification goal</dt><dd>${esc(verification?.goal ?? "Verification observation unavailable")}</dd><dt>Capability</dt><dd>${esc(verification?.toolName ?? "Unavailable")}</dd><dt>Input summary</dt><dd><pre>${esc(verification?.inputSummary ?? "Unavailable")}</pre></dd><dt>Required checks</dt><dd>${Array.isArray(verification?.checkNames) ? verification.checkNames.map((name) => `<div>${esc(name)}</div>`).join("") : "Unavailable"}</dd><dt>Preparation / publication</dt><dd>${esc(preparation)} · ${operation(candidate.operationId, "Preparation operation")}</dd><dt>Candidate saved</dt><dd>${candidate.desired ? "Yes" : "No"}</dd><dt>Candidate active</dt><dd>${candidate.active ? "Yes" : "No"}</dd><dt>Loaded</dt><dd>${entry?.runtime?.availability !== "available" ? "Loading observation unavailable" : entry.runtime.loaded === true ? "Yes" : entry.runtime.loaded === false ? "No" : "Loading unconfirmed"}</dd><dt>Original Apply</dt><dd>${applyState}</dd><dt>SDK behavior</dt><dd>${esc(brainBehavior(candidate.adoption))}</dd></dl>${apply?.error ? feedback(`${esc(apply.error.code)}: ${esc(apply.error.message)}`, "warning") : ""}${btn("Original request", "pi-request-detail", "small", `data-id="${esc(candidate.requestId)}"`)}`;
+}
 // Observe only confirmed Work/Service facts; preserve the current Session, form drafts and application DOM.
 let statusRefreshRunning = false;
 setInterval(() => {

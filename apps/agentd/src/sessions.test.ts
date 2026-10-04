@@ -6,6 +6,7 @@ import test from "node:test";
 import { appendAssistantMessage, appendUserMessage } from "@piwork/pi-adapter";
 import { WorkStore } from "@piwork/work-store";
 import { AgentSessionService } from "./sessions.js";
+import { AgentRunModels } from "./run-models.js";
 
 test("real SDK Session create/list/read/continue survives daemon service replacement", async () => {
   const root = await mkdtemp(join(tmpdir(), "piwork-agentd-session-"));
@@ -87,9 +88,23 @@ test("Session context identity survives reopen and rejects a different Work cont
     assert.deepEqual(replaced.read(created.sessionId).entries.map(({ role, text }) => ({ role, text })), [
       { role: "user", text: "historical message" },
     ]);
-    assert.throws(() => replaced.continue(created.sessionId), /context is unavailable/);
+    assert.throws(() => replaced.continue(created.sessionId), {name: "SessionContextUnavailableError", message: /context is unavailable/});
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Session model preference is persistent, context-neutral and absent in a new Session", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-session-model-")); const workspace = join(root, "workspace"); await mkdir(workspace);
+  const path = join(root, "private", "history.sqlite"); let store = WorkStore.open(path);
+  try {
+    const models = new AgentRunModels({ provider: "piwork-deterministic", id: "fixture-v1", deterministic: true });
+    let sessions = new AgentSessionService("work-a", store, workspace, join(root, "sessions"), "context-a"); const session = sessions.create();
+    const changed = await sessions.setModelPreference(session.sessionId, null, models);
+    assert.equal(changed.contextIdentity, "context-a"); assert.equal(JSON.parse(changed.modelPreferenceJson!).modelRef, null);
+    assert.equal(sessions.create().modelPreferenceJson, undefined);
+    store.close(); store = WorkStore.open(path); sessions = new AgentSessionService("work-a", store, workspace, join(root, "sessions"), "context-a");
+    assert.equal(sessions.list().find((r) => r.sessionId === session.sessionId)?.modelPreferenceJson, changed.modelPreferenceJson);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

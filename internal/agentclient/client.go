@@ -5,12 +5,15 @@ package agentclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/netip"
+	"piwork/internal/contracts"
 	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -87,10 +90,10 @@ func VerifyReadiness(scope internaltls.Scope, contextID string, initializationOn
 }
 
 func VerifyObservation(scope internaltls.Scope, contextID string, response *agentv1.ReadinessResponse) error {
-	if response != nil && (response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1) {
+	if response != nil && (response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4) {
 		return ErrContextIncompatible
 	}
-	if contextID == "" || response == nil || response.GetWorkId() != scope.WorkID || response.GetGeneration() != uint64(scope.Generation) || response.GetInstanceId() != scope.InstanceID || response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetContextIdentity() != contextID {
+	if contextID == "" || response == nil || response.GetWorkId() != scope.WorkID || response.GetGeneration() != uint64(scope.Generation) || response.GetInstanceId() != scope.InstanceID || response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 || response.GetContextIdentity() != contextID {
 		return ErrReadiness
 	}
 	return nil
@@ -116,7 +119,7 @@ func (c *Client) CreateSession(ctx context.Context, key string) (*agentv1.Sessio
 	if err != nil {
 		return nil, err
 	}
-	if response.GetWorkId() != c.scope.WorkID {
+	if response.GetWorkId() != c.scope.WorkID || !validSessionMetadata(response) {
 		return nil, ErrResponse
 	}
 	return response, nil
@@ -128,7 +131,7 @@ func (c *Client) ListSessions(ctx context.Context, size uint32, token string) (*
 		return nil, err
 	}
 	for _, session := range response.GetSessions() {
-		if session.GetWorkId() != c.scope.WorkID {
+		if session.GetWorkId() != c.scope.WorkID || !validSessionMetadata(session) {
 			return nil, ErrResponse
 		}
 	}
@@ -140,18 +143,23 @@ func (c *Client) ReadSession(ctx context.Context, sessionID string) (*agentv1.Se
 	if err != nil {
 		return nil, err
 	}
-	if response.GetSession().GetWorkId() != c.scope.WorkID || response.GetSession().GetSessionId() != sessionID {
+	if response.GetSession().GetWorkId() != c.scope.WorkID || response.GetSession().GetSessionId() != sessionID || !validSessionMetadata(response.GetSession()) {
 		return nil, ErrResponse
+	}
+	for _, run := range response.Runs {
+		if run.WorkId != c.scope.WorkID || run.SessionId != sessionID || !validRunMetadata(run) {
+			return nil, ErrResponse
+		}
 	}
 	return response, nil
 }
 
-func (c *Client) SubmitRun(ctx context.Context, sessionID, key, prompt string) (*agentv1.SubmitRunResponse, error) {
-	response, err := c.rpc.SubmitRun(ctx, &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: sessionID, SubmissionKey: key, Prompt: prompt})
+func (c *Client) SubmitRun(ctx context.Context, sessionID, key, prompt string, modelRef *string) (*agentv1.SubmitRunResponse, error) {
+	response, err := c.rpc.SubmitRun(ctx, &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: sessionID, SubmissionKey: key, Prompt: prompt, ModelRef: modelRef})
 	if err != nil {
 		return nil, err
 	}
-	if response.GetRun().GetWorkId() != c.scope.WorkID || response.GetRun().GetSessionId() != sessionID || response.GetRun().GetSubmissionKey() != key {
+	if response.GetRun().GetWorkId() != c.scope.WorkID || response.GetRun().GetSessionId() != sessionID || response.GetRun().GetSubmissionKey() != key || !validRunMetadata(response.GetRun()) {
 		return nil, ErrResponse
 	}
 	return response, nil
@@ -162,7 +170,7 @@ func (c *Client) GetRun(ctx context.Context, runID string) (*agentv1.Run, error)
 	if err != nil {
 		return nil, err
 	}
-	if response.GetWorkId() != c.scope.WorkID || response.GetRunId() != runID {
+	if response.GetWorkId() != c.scope.WorkID || response.GetRunId() != runID || !validRunMetadata(response) {
 		return nil, ErrResponse
 	}
 	return response, nil
@@ -173,7 +181,7 @@ func (c *Client) CancelRun(ctx context.Context, runID, key string) (*agentv1.Run
 	if err != nil {
 		return nil, err
 	}
-	if response.GetWorkId() != c.scope.WorkID || response.GetRunId() != runID {
+	if response.GetWorkId() != c.scope.WorkID || response.GetRunId() != runID || !validRunMetadata(response) {
 		return nil, ErrResponse
 	}
 	return response, nil
@@ -208,4 +216,59 @@ func (c *Client) WatchRun(ctx context.Context, runID string, after *uint64, onEv
 			return err
 		}
 	}
+}
+
+func (c *Client) ListRunModels(ctx context.Context) (*contracts.RunModelList, error) {
+	response, err := c.rpc.ListRunModels(ctx, &agentv1.AgentContentRequest{WorkId: c.scope.WorkID})
+	if err != nil {
+		return nil, err
+	}
+	value, err := contracts.Decode[contracts.RunModelList](strings.NewReader(response.GetValueJson()), "RunModelListSchema", 1<<20)
+	if err != nil {
+		return nil, ErrResponse
+	}
+	return &value, nil
+}
+func (c *Client) SetSessionModel(ctx context.Context, sessionID string, modelRef *string) (*agentv1.Session, error) {
+	raw, _ := json.Marshal(map[string]any{"modelRef": modelRef})
+	response, err := c.rpc.SetSessionModel(ctx, &agentv1.AgentContentRequest{WorkId: c.scope.WorkID, ObjectId: sessionID, InputJson: string(raw)})
+	if err != nil {
+		return nil, err
+	}
+	if response.GetWorkId() != c.scope.WorkID || response.GetSessionId() != sessionID || !validSessionMetadata(response) {
+		return nil, ErrResponse
+	}
+	return response, nil
+}
+func publicJSON(raw, schema string) bool {
+	if raw == "" {
+		return true
+	}
+	value, err := contracts.ParseJSON(strings.NewReader(raw), 1<<20)
+	return err == nil && contracts.Validate(schema, value) == nil
+}
+func validSessionMetadata(session *agentv1.Session) bool {
+	if session == nil || !publicJSON(session.GetSourceJson(), "AgentRunSourceSchema") {
+		return false
+	}
+	if session.GetModelPreferenceJson() == "" {
+		return true
+	}
+	v, err := contracts.ParseJSON(strings.NewReader(session.GetModelPreferenceJson()), 1<<20)
+	if err != nil {
+		return false
+	}
+	pref, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	availability, exists := pref["availability"]
+	if !exists || availability != "available" && availability != "unavailable" {
+		return false
+	}
+	delete(pref, "availability")
+	return contracts.Validate("RunModelDescriptionSchema", pref) == nil
+}
+func validRunMetadata(run *agentv1.Run) bool {
+	return run != nil && publicJSON(run.GetActualModelJson(), "RunModelDescriptionSchema") && publicJSON(run.GetSourceJson(), "AgentRunSourceSchema")
 }

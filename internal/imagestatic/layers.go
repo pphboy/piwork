@@ -425,7 +425,7 @@ func InspectNativeAgent(ctx context.Context, reader io.ReaderAt, size int64, exp
 	if err != nil {
 		return Capabilities{}, err
 	}
-	if config.Config.Labels["io.piwork.agent.protocol"] != "v2" || config.Config.Labels["io.piwork.package-helper.contract"] != "2" || config.Config.Labels["io.piwork.service-mcp.contract"] != "1" {
+	if config.Config.Labels["io.piwork.agent.protocol"] != "v2" || config.Config.Labels["io.piwork.package-helper.contract"] != "2" || config.Config.Labels["io.piwork.service-mcp.contract"] != "1" || config.Config.Labels["io.piwork.work-history.schema"] != "4" || config.Config.Labels["io.piwork.run-model.contract"] != "1" || config.Config.Labels["io.piwork.work-feedback.contract"] != "1" {
 		return Capabilities{}, ErrIncompatible
 	}
 	state := newLayerState()

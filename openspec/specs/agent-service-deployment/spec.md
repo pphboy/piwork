@@ -10,52 +10,86 @@ Enable the Work agent to turn user-requested persistent applications into Core-m
 
 **Identifier:** ADEP-001
 
-A fresh installation SHALL import the bundled `deploy-work-service` directory into the ordinary Core-managed Skill catalog and select it in the initial default Work configuration. The seed SHALL be atomic and recorded once; restart MUST NOT overwrite operator edits, re-enable a disabled Skill, resurrect a removed Skill, or repopulate intentionally cleared defaults. Work creation with omitted Skill selection SHALL copy the default Skill into Work-owned context and require actual SDK load before ready. Explicit names replace defaults and explicit no-Skills produces no selected Skill. Existing Works SHALL not be silently modified; adoption requires explicit selection and apply. Skill updates SHALL use the managed data path and SHALL NOT require rebuilding the agent image.
+全新安装 SHALL 将随发行提供的 `piwork-brain` 本地 Pi extension package 准备为普通 Core catalog 的默认包，包内包含 `deploy-work-service` Skill；不再为全新默认配置另选同名独立 Skill。首次具备兼容默认 agent 环境时 SHALL 通过现有隔离准备与制品验证完成种子，发布包、初始默认选择及完成标记 SHALL 原子且只执行一次。准备失败不得提供假的已安装默认能力，Core 健康与配置修复入口保持可用。
+
+省略 package 选择的新 Work SHALL 捕获独立脑包并在 ready 前确认实际 SDK 加载。显式 packages=[] 不选择脑包，skills=[] 只清除独立 Skills。重启 MUST NOT 覆盖管理员修改、重新启用已禁用包、复活已移除包或补回被清空默认值。既有 Work 和已有独立部署 Skill SHALL 保持，采用脑包要求显式安装/选择与 Apply；同名资源冲突遵循既有包激活错误并提供移除重复 desired 独立选择的方向，不静默覆盖用户 Skill。包内容更新 SHALL 不要求重建兼容 agent 镜像。
 
 #### Scenario: Load the fresh default deployment Skill
-- **WHEN** a fresh configured installation creates a Work without a Skill override
-- **THEN** the Work owns deploy-work-service and readiness/runtime status confirms SDK loading from its own copied directory
+- **WHEN** 全新配置完成的安装创建一个省略 package 选择的 Work
+- **THEN** Work 拥有 piwork-brain，其包内 deploy-work-service 与默认认知的真实加载得到确认，独立默认 Skills 不包含同名副本
 
 #### Scenario: Respect no-Skills
-- **WHEN** a user creates a Work with --no-skills
-- **THEN** the deployment Skill is absent even if default MCP tools remain configured
+- **WHEN** 用户创建时指定独立 skills=[]，但未清空 packages
+- **THEN** 独立 Skills 为空，脑包内部署 Skill 仍按包选择加载；显式 packages=[] 才不选择默认脑包
 
 #### Scenario: Do not reseed operator changes
-- **WHEN** the operator removes the Skill from defaults and updates, disables or removes its catalog entry, then Core restarts
-- **THEN** the operator choices survive and no existing Work copy changes
+- **WHEN** 管理员移除默认脑包选择并修改、禁用或移除 catalog 项后重启 Core
+- **THEN** 已完成种子不重复执行，管理员选择和既有 Work 副本保留
 
 #### Scenario: Recover interrupted first seeding
-- **WHEN** Core fails before first-run seeding commits
-- **THEN** retry publishes one complete validated managed Skill and one default selection, with no duplicate catalog entry
+- **WHEN** Core 在首次种子发布事务提交前失败
+- **THEN** 恢复准备或明确失败后重试，只能发布一个完整包和默认引用，不创建重复独立 Skill 或默认项
+
+#### Scenario: Adopt the brain in an existing Work
+- **WHEN** 已有 Work 安装脑包且仍显式选择同名独立部署 Skill
+- **THEN** 原运行不变，Apply 以资源冲突失败并指明需要调整 desired 独立选择；只有明确选择及成功 Apply 后才采用脑包
 
 ### Requirement: Guide deployments using persistent code and explicit verification
 
 **Identifier:** ADEP-002
 
-The deployment Skill SHALL instruct the agent to use deployment_context to discover workspace/tool availability and quota, write code under apps/<service-name> and business data under data/<service-name>, use existing runtime images, declare reproducible dependency installation when needed, bind network services to 0.0.0.0, and use the returned Work-private endpoint. It SHALL instruct the agent to reuse a matching existing service through an explicit update, use stable mutation keys for retries, observe durable Operations, read failures/logs, and verify the application from agentd before reporting success. It SHALL distinguish process readiness from application readiness, explain that persistence requires shared storage and startup reproducibility, and SHALL not represent a background process in agentd, Skill loading alone, or an accepted create as successful persistent deployment. It SHALL document stop/disable versus Work stop and prohibit purging shared data as a repair shortcut.
+脑包内部署 Skill 与默认认知 SHALL 指导 Pi 查询 deployment_context 确认 workspace、工具和配额，将代码放在 apps/<service-name>、业务数据放在 data/<service-name>，使用已有运行镜像、固定可复现依赖安装、监听 0.0.0.0 并解析 Work 私网端点。Pi SHALL 显式更新匹配服务、使用稳定 mutation 键和预期定义版本、查询持久 Operation、失败及日志，并从 agentd 验证实际应用后才报告成功。
+
+Pi 开发维护的 Service SHALL 同时完成 WAF-001 至 WAF-009 的状态查询、Action/Job、必要 Event、反馈请求和验证路径；不能把观测及自动反馈留作下一阶段。第三方代码遵循 BRN-002 的外部观察范围。Service 代码修改 SHALL 保留恢复依据，代码/配置恢复与业务数据补偿分开。语言及框架自由，参考示例不成为所有 Service 的前置技术栈。
+
+Skill SHALL 区分进程 readiness 与应用可用、Stop Service 的持久禁用与 Stop Work，并解释共享存储和可复现启动。agentd 内后台进程、Skill 加载或 create 接受不得被当作成功持久部署，修复不得清除共享业务数据。
 
 #### Scenario: User requests persistence
-- **WHEN** the user asks the agent to keep a Python HTTP application running across Work restarts
-- **THEN** the loaded Skill directs code/data placement and MCP deployment, then operation and HTTP verification
+- **WHEN** 用户要求工作站在 Work 重启后持续使用
+- **THEN** Pi 通过 SDK/MCP 完成代码与数据落地、服务部署和业务交互验证，状态与反馈路径一起交付
 
 #### Scenario: Dependencies need installation
-- **WHEN** the application requires a package absent from its existing image
-- **THEN** the deployment defines a pinned reproducible install/start procedure using writable workspace or reports failure; it does not request an image build
+- **WHEN** 应用依赖不在已有镜像中
+- **THEN** 使用 workspace 中固定可复现安装/启动流程或明确失败，不要求运行中的 Pi 构建镜像
 
 #### Scenario: Tools are unavailable
-- **WHEN** the Skill is selected but the MCP server was removed or service_create denied
-- **THEN** the agent explains the missing deployment capability without claiming persistence from a local background process
+- **WHEN** MCP 被移除、部署/业务工具被 deny 或脑包必要能力不可用
+- **THEN** Pi 说明缺失能力及实际限制，不以本地后台进程、未接通事件或推测结果报告完整交付
 
 ### Requirement: Prove deployment with real SDK MCP containers and retained files
 
 **Identifier:** ADEP-003
 
-Required automated product acceptance SHALL execute a deterministic model through the real Pi SDK, consume the loaded deployment Skill and discovered MCP schemas, write a Python HTTP application through SDK tools, and invoke service MCP tools through Core gRPC into a real Docker container using a preexisting Python image. From agentd it SHALL verify an HTTP response and a persisted business-data marker, then stop/start the Work and gracefully restart Core and verify service restoration and marker retention without new model redeployment calls. Tests SHALL verify no image build/commit occurs during deployment and no host port is published. Isolation, self-management rejection, stale credentials, failed deployment diagnostics and default Skill/tool loading SHALL have automated coverage; no live model provider credential is required.
+必需产品验收 SHALL 使用确定性模型、真实 Pi SDK、已加载脑包认知与 Skill、真实 MCP/gRPC 和 Docker 运行一个工作站示例。Pi SHALL 通过 SDK 工具生成/修改代码并调用既有服务工具，验证 HTTP、实际业务 Action、共享持久标记、页面路径和业务事件、Service→Pi 自动请求、异步导出 Job 续接、反馈和证据、下一次执行采用经验、脑包候选 Update/Apply/实际能力验证以及完整环境独立导入。参考示例采用的技术栈仅用于该验收。
+
+测试 SHALL 覆盖 Work stop/start、Core 正常重启、agentd 在副作用附近中断、服务恢复及标记保留，恢复不靠新的模型 redeploy 调用。隔离、来源身份、过期身份、单 Run 门禁、未知结果不重提、部署失败与脑包加载失败恢复 SHALL 自动覆盖。部署期间不得 build/commit 镜像或发布宿主端口；验收使用预备镜像和固定依赖，不需要真实模型提供者凭据。真实浏览器的 Service 交互及现有网关 HTTP/WebSocket 行为必须验证。
+
+副作用中断验收 SHALL 注入“Action 已被接受而 waitRef 尚未登记”的窗口，正式 ready 后通过原 Action/Job 只读核对，分别证明已终态进入原目标验证、仍执行登记原对象等待、无法证明进入 needs_attention，且旧 Run 保持 interrupted、原 prompt 和 mutation 不重放。等待期限等于原请求期限及停机跨过期限 SHALL 同样显示需处理，不把未证实结果宣称为业务失败或回滚。
+
+脑包采用验收 SHALL 在准备时固定一个具体工具、输入和检查项，以真实 SDK 调用及检查证明可辨的新行为；读取 Skill、查看状态或无关工具成功不能替代。SHALL 同时覆盖加载成功而行为检查失败的候选与加载失败候选，分别验证真实 active 状态和原目标需处理、原有加载回退行为。独立导入的两份 Work SHALL 分别准备新的验收项并产生各自 SDK 调用证据，不复用源 Work 的采用证明。
+
+已加载行为失败的验收 SHALL 锁定本次新候选的 live requestId，核对该请求的 needs_attention、关联实际 Run 和失败的 SDK checks/输出依据、仍属于该候选的 active/loaded，以及有效经验未因失败提交。仅找到任意 needs_attention 或 Work ready SHALL NOT 通过此验收；此前加载失败或其他目标的记录不得满足新候选断言。
 
 #### Scenario: Complete the Python HTTP demo
-- **WHEN** the end-to-end acceptance runs against fresh storage and compatible prebuilt images
-- **THEN** actual SDK and MCP calls create one service, agentd receives its expected response, and the data marker survives Work/Core restart
+- **WHEN** 验收在全新存储及兼容预备镜像上运行工作站参考示例
+- **THEN** 真实 SDK/MCP 创建服务并验证业务，用户反馈触发 Pi 自动处理和异步结果验证，数据在 Work/Core 重启后保留
 
 #### Scenario: Separate fixture from implementation shortcuts
-- **WHEN** the deterministic fixture chooses a deployment tool
-- **THEN** the actual MCP transport and gRPC server execute it; a mocked direct call to the service manager cannot satisfy acceptance
+- **WHEN** 确定性模型选择部署或脑包工具并处理反馈
+- **THEN** 实际 SDK 工具、MCP、gRPC 和 Work 内交互执行调用，mock 直接调管理器或直接改数据库不能替代验收
+
+#### Scenario: Share and continue independently
+- **WHEN** 示例 Work 经过 Stop/Export/Download/Import/Start 被复制两份
+- **THEN** 两份均保留业务、脑包、经验和证据，新反馈与带具体验收项的脑包更新分别处理，各自产生实际 SDK 行为证明，源事件及旧 Job 不回放且三份后续数据相互独立
+
+#### Scenario: 中断后核对原操作
+- **WHEN** 真实 agentd 在 Service 接受 Action 后、登记等待前中断
+- **THEN** 正式 ready 后只查询原 Action/Job，已终态自动续接验证、仍执行等待原对象、无法证明则需处理，三种情况均不重放原 prompt 或提交第二个 Action
+
+#### Scenario: 加载通过不替代行为验收
+- **WHEN** 同版本异内容的候选能被真实 SDK 加载，但固定验收项返回失败检查，或只执行无关状态工具
+- **THEN** 候选的真实 loaded 状态保留，原更新目标不能完成并需处理；只有匹配工具和输入且检查通过的新行为证据才允许完成原目标
+
+#### Scenario: 旧失败请求不能满足新候选验收
+- **WHEN** 已存在一个加载失败的 needs_attention 请求，又准备并加载新的坏行为候选
+- **THEN** 测试只在新候选原 requestId 取得失败 SDK 依据及 needs_attention 后通过，同时确认该候选仍 active/loaded 且失败未提交有效经验；旧失败请求不能使断言成立

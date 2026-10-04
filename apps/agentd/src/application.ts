@@ -35,10 +35,18 @@ import {
   type SubmitRunRequest,
   type SubmitRunResponse,
   type WatchRunRequest,
+  type AgentContentRequest,
+  type AgentContentResponse,
+  AgentRequestQuerySchema,
+  AgentEvidenceQuerySchema,
+  SetSessionModelSchema,
+  RetryAgentRequestSchema,
+  publicRunModel,
+  type RunModelSnapshot,
 } from "@piwork/contracts";
-import { WorkStore, type RunEventRecord, type RunRecord, type SessionRecord } from "@piwork/work-store";
+import { FeedbackError, WorkStore, type RunEventRecord, type RunRecord, type SessionRecord } from "@piwork/work-store";
 import { AgentDaemonControl } from "./daemon.js";
-import { initializeChildAgentDirectory, PiSdkRunExecutor } from "./pi-sdk-executor.js";
+import { initializeChildAgentDirectory, initializeDefaultChildAgentModel, PiSdkRunExecutor } from "./pi-sdk-executor.js";
 import { RunManager } from "./runs.js";
 import { AgentSessionService } from "./sessions.js";
 import { loadConfiguredSkills, RequiredSkillError, type ConfiguredSkill } from "./skills.js";
@@ -48,6 +56,16 @@ import { McpBridge, type McpBridgeServer } from "@piwork/pi-adapter";
 import type { McpServer } from "@piwork/contracts";
 import type { PiPackageSelectionEntry } from "@piwork/contracts";
 import { createPackageResourceLoader, type PackageBinding, type LoadedPackageResource } from "./package-resources.js";
+import { Check } from "typebox/value";
+import { AgentRunModels, RunModelError } from "./run-models.js";
+import { WorkPrivateClient } from "./work-private-client.js";
+import { ServiceBindingRegistry, ServiceInteractionClient } from "./service-interaction.js";
+import { ServiceFeedbackServer } from "./service-feedback-server.js";
+import { BRAIN_TOOL_NAMES, initializeBrainSource } from "./brain-resources.js";
+import { BrainFlow } from "./brain-flow.js";
+import { BrainLoop } from "./brain-loop.js";
+import { BrainCandidates } from "./brain-candidates.js";
+import type { RunExecutionContext } from "./runs.js";
 
 export const AGENT_PROTOCOL_VERSION = CONTRACT_VERSION;
 
@@ -57,6 +75,7 @@ export interface AgentRuntimeConfig {
   readonly generation: number;
   readonly instanceId: string;
   readonly listen: string;
+  readonly feedbackListen?: string;
   readonly dataDirectory: string;
   readonly deterministic: boolean;
   readonly contextConfigPath?: string;
@@ -101,7 +120,7 @@ interface CapturedWorkContext {
 
 export interface LoadedWorkContext {
   readonly contextIdentity: string;
-  readonly loaderFactory: () => Promise<ResourceLoader>;
+  readonly loaderFactory: (context?: RunExecutionContext) => Promise<ResourceLoader>;
   readonly resolvedTools: readonly string[];
   readonly packageTools: ReadonlyMap<string, string>;
   readonly packages: readonly LoadedPackageResource[];
@@ -129,6 +148,12 @@ export class AgentApplication {
     private readonly sessions: AgentSessionService,
     private readonly runs: RunManager,
     private readonly mcp: McpBridge,
+    private readonly models: AgentRunModels,
+    private readonly control?: WorkPrivateClient,
+    private readonly bindings?: ServiceBindingRegistry,
+    private readonly feedbackServer?: ServiceFeedbackServer,
+    private readonly brainFlow?: BrainFlow,
+    private readonly brainLoop?: BrainLoop,
   ) {
     const authority = new X509Certificate(readBoundedRegularFile(config.tls.caCertificatePath));
     const commonName = authority.toLegacyObject().subject.CN;
@@ -143,17 +168,23 @@ export class AgentApplication {
     if (config.deterministic && process.env.PIWORK_AGENT_VARIANT !== "acceptance") {
       throw new Error("deterministic model configuration requires the acceptance image variant");
     }
-    if (!config.deterministic) await initializeChildAgentDirectory();
+    if (!config.deterministic) { await initializeChildAgentDirectory(); await initializeDefaultChildAgentModel(config.model); }
     mkdirSync(config.dataDirectory, { recursive: true, mode: 0o700 });
     const store = WorkStore.open(join(config.dataDirectory, "work.sqlite"));
     let mcp: McpBridge | undefined;
-    let loadingStage: "skill-load" | "package-load" | undefined = "skill-load";
+    let control: WorkPrivateClient | undefined;
+    let feedbackServer: ServiceFeedbackServer | undefined;
+    let brainFlow: BrainFlow | undefined;
+    let brainLoop: BrainLoop | undefined;
+    let loadingStage: "skill-load" | "package-load" | undefined;
     try {
       const daemon = new AgentDaemonControl({
         workId: config.workId,
         generation: config.generation,
         instanceId: config.instanceId,
       });
+      control = config.serviceControl ? new WorkPrivateClient(config.serviceControl) : undefined;
+      const models = new AgentRunModels({ ...config.model, deterministic: config.deterministic }, control);
       const workspace = "/var/data/workspace";
       const sessionRoot = join(config.dataDirectory, "sessions");
       mkdirSync(workspace, { recursive: true });
@@ -169,7 +200,7 @@ export class AgentApplication {
         }
       };
       skillDiagnostics("skill-validate", "started");
-      const loaded = await loadValidatedWorkContext(context, workspace, join(config.dataDirectory, "agent"), () => {
+      const loaded = await loadValidatedWorkContext(context, workspace, join(config.dataDirectory, "agent"), store, () => {
         skillDiagnostics("skill-load", "succeeded");
         loadingStage = "package-load";
         emitAgentDiagnostic({ stage: "package-load", outcome: "started", code: "PACKAGE_LOAD_FAILED",
@@ -196,12 +227,20 @@ export class AgentApplication {
       const packageTools = selectPackageTools(loaded.packageTools, loaded.toolPolicy, reserved);
       const resolvedTools = [...loaded.resolvedTools, ...bridgedTools.map((tool) => tool.canonicalName), ...packageTools.map(([canonical]) => canonical)];
       const sdkTools = [...loaded.resolvedTools, ...customTools.map((tool) => tool.name), ...packageTools.map(([, native]) => native)];
-      const runs = new RunManager(store, daemon, new PiSdkRunExecutor(
+      const bindings = new ServiceBindingRegistry(config.workId, control);
+      const interactions = new ServiceInteractionClient(workspace, bindings, store.feedback);
+      const activeBrain = context.packageBindings.find((binding) => binding.name === "piwork-brain" && context.packages.some((item) => item.name === binding.name && item.enabled));
+      const candidates = new BrainCandidates(config.workId, workspace, store, activeBrain ? { digest: activeBrain.artifact.contentDigest,
+        version: activeBrain.artifact.version, contextId: loaded.contextIdentity, root: join("/run/piwork/packages", activeBrain.nameKey) } : undefined, control);
+      let runs: RunManager;
+      brainFlow = new BrainFlow(store, interactions, new Set(resolvedTools), (runId) => { runs.cancel(runId); }, candidates);
+      runs = new RunManager(store, daemon, brainFlow.wrap(new PiSdkRunExecutor(
         sessions,
         join(config.dataDirectory, "agent"),
         { ...config.model, deterministic: config.deterministic },
-        { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools },
-      ));
+        { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools, models, packageTools: new Map(packageTools),
+          onSdkToolResult: (run, result) => candidates.recordSdkResult(run, result, new Map(packageTools)) },
+      )), undefined, models);
       runs.recover();
       daemon.configure({
         modelCredentialStatus: "available",
@@ -213,7 +252,18 @@ export class AgentApplication {
         initializationComplete: true,
         initializationOnly: config.initializationOnly,
       });
-      return new AgentApplication(config, store, daemon, sessions, runs, mcp);
+      if (!config.initializationOnly) {
+        const binding = context.packageBindings.find((item) => item.name === "piwork-brain");
+        if (binding && context.packages.some((item) => item.name === binding.name && item.enabled)) initializeBrainSource({
+          frozenRoot: join("/run/piwork/packages", binding.nameKey), workspace, privateDirectory: config.dataDirectory, binding });
+      }
+      brainLoop = new BrainLoop(config.workId, store, daemon, runs, sessions, bindings, interactions, candidates);
+      if (config.feedbackListen) feedbackServer = new ServiceFeedbackServer(config.workId, config.tls, store, bindings, interactions,
+        (runId) => { runs.cancel(runId); }, (event) => brainLoop?.notify(event), () => {
+          const ready = daemon.readiness();
+          return { available: ready.acceptingRuns && BRAIN_TOOL_NAMES.every((n) => ready.resolvedTools.includes(`package:piwork-brain:${n}`)), initializing: config.initializationOnly === true };
+        });
+      return new AgentApplication(config, store, daemon, sessions, runs, mcp, models, control, bindings, feedbackServer, brainFlow, brainLoop);
     } catch (error) {
       if (error instanceof RequiredSkillError) {
         for (const status of error.statuses) emitAgentDiagnostic({
@@ -232,7 +282,11 @@ export class AgentApplication {
         mcp.close(),
         new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
       ]);
+      await brainLoop?.close();
+      await brainFlow?.close();
       store.close();
+      control?.close();
+      await feedbackServer?.close();
       throw error;
     }
   }
@@ -247,23 +301,31 @@ export class AgentApplication {
       }],
       true,
     );
-    return new Promise<number>((resolve, reject) => this.server.bindAsync(
+    const port = await new Promise<number>((resolve, reject) => this.server.bindAsync(
       this.config.listen,
       credentials,
       (error, port) => error === null ? resolve(port) : reject(error),
     ));
+    if (this.config.feedbackListen) await this.feedbackServer?.start(this.config.feedbackListen);
+    await this.brainFlow?.start();
+    if (!this.config.initializationOnly) this.brainLoop?.start();
+    return port;
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    await this.brainLoop?.close();
+    await this.feedbackServer?.close();
     await this.runs.drain(5_000);
+    await this.brainFlow?.close();
     await Promise.race([
       this.mcp.close(),
       new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
     ]);
     await new Promise<void>((resolve) => this.server.tryShutdown(() => resolve()));
     this.store.close();
+    this.control?.close();
   }
 
   private handlers(): AgentServiceServer {
@@ -278,6 +340,45 @@ export class AgentApplication {
       };
 
     return {
+      refreshServiceInteractionBindings: unary(async (request: AgentContentRequest): Promise<AgentContentResponse> => {
+        this.verifyWork(request.workId); await this.bindings?.refresh(); return { valueJson: JSON.stringify({ available: this.bindings !== undefined }) };
+      }),
+      listRunModels: unary(async (request: AgentContentRequest): Promise<AgentContentResponse> => {
+        this.verifyWork(request.workId); return { valueJson: JSON.stringify(await this.models.list()) };
+      }),
+      setSessionModel: unary(async (request: AgentContentRequest): Promise<Session> => {
+        this.verifyWork(request.workId); this.assertAcceptingRuns();
+        const input = parseContent(request);
+        if (!Check(SetSessionModelSchema, input)) throw Object.assign(new Error("Invalid model preference"), { code: status.INVALID_ARGUMENT });
+        return sessionMessage(await this.sessions.setModelPreference(request.objectId, input.modelRef, this.models));
+      }),
+      listAgentRequests: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId); const input = parseContent(request);
+        if (!Check(AgentRequestQuerySchema, input)) throw Object.assign(new Error("Invalid request query"), { code: status.INVALID_ARGUMENT });
+        return { valueJson: JSON.stringify({ ...this.store.feedback.listRequests(request.workId, input), checkedAt: new Date().toISOString(), availability: "available" }) };
+      }),
+      getAgentRequest: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId); const value = this.store.feedback.getRequest(request.workId, request.objectId);
+        if (!value) throw Object.assign(new Error("Request not found"), { code: status.NOT_FOUND });
+        const query = parseContent(request);
+        if (!Check(AgentEvidenceQuerySchema, query)) throw Object.assign(new Error("Invalid evidence cursor"), { code: status.INVALID_ARGUMENT });
+        return { valueJson: JSON.stringify({ request: value, evidence: this.store.feedback.listEvidence(request.workId, request.objectId, query.limit, query.cursor), checkedAt: new Date().toISOString(), availability: "available" }) };
+      }),
+      cancelAgentRequest: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId); const value = this.store.feedback.cancel(request.workId, request.objectId);
+        if (value.state === "cancelling") for (const id of value.runIds) if (["accepted", "running", "cancelling"].includes(this.runs.get(id)?.state ?? "")) this.runs.cancel(id);
+        return { valueJson: JSON.stringify(this.store.feedback.getRequest(request.workId, request.objectId)) };
+      }),
+      retryAgentRequest: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId); this.assertAcceptingRuns(); const input = parseContent(request);
+        if (!Check(RetryAgentRequestSchema, input)) throw Object.assign(new Error("Invalid retry intent"), { code: status.INVALID_ARGUMENT });
+        const value = this.store.feedback.retry(request.workId, request.objectId, input.submissionKey); this.brainLoop?.wake();
+        return { valueJson: JSON.stringify(value) };
+      }),
+      getAgentEvidence: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId); const value = this.store.feedback.getEvidence(request.workId, request.objectId);
+        if (!value) throw Object.assign(new Error("Evidence not found"), { code: status.NOT_FOUND }); return { valueJson: JSON.stringify(value) };
+      }),
       readiness: unary((request: ReadinessRequest): ReadinessResponse => {
         this.verify(request);
         const value = this.daemon.readiness();
@@ -301,6 +402,9 @@ export class AgentApplication {
           loadedPackages: value.loadedPackages.map((item) => ({ ...item })),
           packageResources: [...value.packageResources],
           packageDiagnostics: [...value.packageDiagnostics],
+          runModelContractVersion: 1,
+          workFeedbackContractVersion: 1,
+          workHistorySchemaVersion: this.store.schemaVersion,
         };
       }),
       prepareConfigurationChange: unary((request: PrepareConfigurationChangeRequest): PrepareConfigurationChangeResponse => {
@@ -328,12 +432,12 @@ export class AgentApplication {
         return {
           session: sessionMessage(record),
           messages: value.entries.map((entry) => ({ entryId: entry.id, role: entry.role, text: entry.text, createdAt: "" })),
+          runs: this.store.listSessionRuns(request.workId,request.sessionId).map(runMessage),
         };
       }),
-      submitRun: unary((request: SubmitRunRequest): SubmitRunResponse => {
+      submitRun: unary(async (request: SubmitRunRequest): Promise<SubmitRunResponse> => {
         this.verifyWork(request.workId);
-        this.assertAcceptingRuns();
-        const result = this.runs.submit(request);
+        const result = await this.runs.submitChat({ ...request, ...(request.modelRef === "" ? { modelRef: null } : {}) });
         return { run: runMessage(result.run), reused: result.reused };
       }),
       getRun: unary((request: GetRunRequest): Run => runMessage(this.requireRun(request.workId, request.runId))),
@@ -481,16 +585,17 @@ function loadWorkContext(config: AgentRuntimeConfig): CapturedWorkContext {
   } catch (error) { throw error; }
 }
 
-async function loadValidatedWorkContext(context: CapturedWorkContext, workspace: string, agentDirectory: string, onSkillsLoaded: () => void, onSkillsValidated: () => void): Promise<LoadedWorkContext> {
+async function loadValidatedWorkContext(context: CapturedWorkContext, workspace: string, agentDirectory: string, store: WorkStore, onSkillsLoaded: () => void, onSkillsValidated: () => void): Promise<LoadedWorkContext> {
   const loaded = await loadConfiguredSkills(context.skillRoot, context.skills, context.agentsMd, onSkillsValidated);
   onSkillsLoaded();
-  const loaderFactory = () => createPackageResourceLoader({ root: "/run/piwork/packages", bindings: context.packageBindings,
-    selection: context.packages, standaloneSkills: loaded.skills, agentsMd: context.agentsMd, workspace, agentDirectory });
+  const loaderFactory = (run?: RunExecutionContext) => createPackageResourceLoader({ root: "/run/piwork/packages", bindings: context.packageBindings,
+    selection: context.packages, standaloneSkills: loaded.skills, agentsMd: context.agentsMd, workspace, agentDirectory,
+    ...(run ? { experience: store.feedback.experienceSnapshot(run.workId, run.adoptedExperienceVersion ?? 0) } : {}) });
   const packageResources = await loaderFactory();
   const tools = new Set(context.resolvedTools);
   return {
     contextIdentity: context.contextIdentity,
-    loaderFactory: async () => (await loaderFactory()).loader,
+    loaderFactory: async (run) => (await loaderFactory(run)).loader,
     resolvedTools: context.resolvedTools,
     packageTools: packageResources.toolNames,
     packages: packageResources.packages,
@@ -568,7 +673,10 @@ function readBoundedRegularFile(path: string): Buffer {
 }
 
 function sessionMessage(value: SessionRecord): Session {
-  return { workId: value.workId, sessionId: value.sessionId, sdkHistoryPath: value.sdkHistoryPath, createdAt: value.createdAt, updatedAt: value.updatedAt };
+  const preference = value.modelPreferenceJson ? JSON.parse(value.modelPreferenceJson) as RunModelSnapshot & { availability?: string } : undefined;
+  return { workId: value.workId, sessionId: value.sessionId, sdkHistoryPath: value.sdkHistoryPath, createdAt: value.createdAt, updatedAt: value.updatedAt,
+    modelPreferenceJson: preference ? JSON.stringify({ ...publicRunModel(preference), availability: preference.availability ?? "available" }) : "",
+    sourceJson: value.sourceJson ?? "" };
 }
 
 function runMessage(value: RunRecord): Run {
@@ -587,6 +695,8 @@ function runMessage(value: RunRecord): Run {
     finalText: value.finalText ?? "", error: value.errorJson === null ? undefined : JSON.parse(value.errorJson),
     acceptedAt: value.acceptedAt, startedAt: value.startedAt ?? "", finishedAt: value.finishedAt ?? "",
     earliestAvailableSequence: BigInt(value.earliestAvailableSequence), latestSequence: BigInt(value.latestSequence),
+    actualModelJson: value.actualModelJson ? JSON.stringify(publicRunModel(JSON.parse(value.actualModelJson) as RunModelSnapshot)) : "",
+    sourceJson: value.sourceJson ?? "", adoptedExperienceVersion: value.adoptedExperienceVersion ?? 0,
   };
 }
 
@@ -605,10 +715,19 @@ function isTerminal(run: RunRecord): boolean {
 }
 
 function grpcError(error: unknown): Error & { code: number } {
+  if (error instanceof RunModelError) return Object.assign(new Error(`${error.modelErrorCode}: ${error.message}`), { code: status.FAILED_PRECONDITION });
+  if (error instanceof FeedbackError) return Object.assign(new Error(`${error.code}: ${error.message}`), { code: error.code === "REQUEST_NOT_FOUND" ? status.NOT_FOUND : error.code === "INVALID_CURSOR" ? status.INVALID_ARGUMENT : status.FAILED_PRECONDITION });
   const item = error as { message?: string; code?: number; name?: string };
   const code = item.code ?? (item.name === "WorkBusyError" ? status.RESOURCE_EXHAUSTED
-    : item.name === "SubmitConflictError" ? status.ALREADY_EXISTS
+    : item.name === "SessionContextUnavailableError" ? status.FAILED_PRECONDITION
+      : item.name === "SessionNotFoundError" ? status.NOT_FOUND
+      : item.name === "SubmitConflictError" ? status.ALREADY_EXISTS
       : item.name === "CursorExpiredError" ? status.OUT_OF_RANGE
       : item.name === "RuntimeIdentityError" ? status.PERMISSION_DENIED : status.INTERNAL);
   return Object.assign(new Error(item.message ?? "agent request failed"), { code });
+}
+
+function parseContent(request: AgentContentRequest): unknown {
+  try { return JSON.parse(request.inputJson || "{}"); }
+  catch { throw Object.assign(new Error("Invalid request content"), { code: status.INVALID_ARGUMENT }); }
 }

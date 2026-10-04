@@ -192,14 +192,16 @@ func (a *Application) runSnapshotImport(parent context.Context, job corestore.Sn
 		volumes = append(volumes, entry)
 	}
 	request := struct {
-		SourceWorkID string   `json:"sourceWorkId"`
-		ContextIDs   []string `json:"contextIds"`
-		TargetWorkID string   `json:"targetWorkId"`
+		Models       []runModelSnapshot `json:"models"`
+		Operations   map[string]string  `json:"operations"`
+		SourceWorkID string             `json:"sourceWorkId"`
+		ContextIDs   []string           `json:"contextIds"`
+		TargetWorkID string             `json:"targetWorkId"`
 		Contexts     []struct {
 			SourceID string `json:"sourceId"`
 			TargetID string `json:"targetId"`
 		} `json:"contexts"`
-	}{SourceWorkID: string(identities.SourceWorkId), ContextIDs: []string{}, TargetWorkID: targets.WorkID, Contexts: []struct {
+	}{Models: []runModelSnapshot{}, Operations: map[string]string{}, SourceWorkID: string(identities.SourceWorkId), ContextIDs: []string{}, TargetWorkID: targets.WorkID, Contexts: []struct {
 		SourceID string `json:"sourceId"`
 		TargetID string `json:"targetId"`
 	}{}}
@@ -210,6 +212,17 @@ func (a *Application) runSnapshotImport(parent context.Context, job corestore.Sn
 			TargetID string `json:"targetId"`
 		}{string(item.SourceId), snapshotTargetID(targets.Contexts, string(item.Key))})
 	}
+	for _, item := range identities.Operations {
+		request.Operations[string(item.SourceId)] = snapshotTargetID(targets.Operations, string(item.Key))
+	}
+	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		var err error
+		request.Models, err = a.snapshotHistoryModels(tx)
+		return err
+	}); err != nil {
+		return err
+	}
+
 	if err := root.AtomicWrite("history-request.json", "history-request.tmp", snapshotRaw(request)); err != nil {
 		return err
 	}

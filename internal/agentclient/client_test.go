@@ -10,7 +10,7 @@ import (
 
 func TestReadinessRequiresCurrentIdentityAndContracts(t *testing.T) {
 	scope := internaltls.Scope{InstallationID: "installation-1", WorkID: "work-1", Generation: 7, InstanceID: "agent-1"}
-	base := &agentv1.ReadinessResponse{WorkId: scope.WorkID, Generation: 7, InstanceId: scope.InstanceID, ProtocolVersion: "v2", ContextContractVersion: 1, PackageContractVersion: 1, ContextIdentity: "context-1", InitializationComplete: true, AcceptingRuns: true}
+	base := &agentv1.ReadinessResponse{WorkId: scope.WorkID, Generation: 7, InstanceId: scope.InstanceID, ProtocolVersion: "v2", ContextContractVersion: 1, PackageContractVersion: 1, RunModelContractVersion: 1, WorkFeedbackContractVersion: 1, WorkHistorySchemaVersion: 4, ContextIdentity: "context-1", InitializationComplete: true, AcceptingRuns: true}
 	if err := VerifyReadiness(scope, "context-1", false, base); err != nil {
 		t.Fatal(err)
 	}
@@ -23,6 +23,9 @@ func TestReadinessRequiresCurrentIdentityAndContracts(t *testing.T) {
 		{"different-instance", func(r *agentv1.ReadinessResponse) { r.InstanceId = "agent-2" }},
 		{"old-protocol", func(r *agentv1.ReadinessResponse) { r.ProtocolVersion = "v1" }},
 		{"old-context-contract", func(r *agentv1.ReadinessResponse) { r.ContextContractVersion = 0 }},
+		{"old-history", func(r *agentv1.ReadinessResponse) { r.WorkHistorySchemaVersion = 3 }},
+		{"no-model-contract", func(r *agentv1.ReadinessResponse) { r.RunModelContractVersion = 0 }},
+		{"no-feedback-contract", func(r *agentv1.ReadinessResponse) { r.WorkFeedbackContractVersion = 0 }},
 		{"old-package-contract", func(r *agentv1.ReadinessResponse) { r.PackageContractVersion = 0 }},
 		{"different-context", func(r *agentv1.ReadinessResponse) { r.ContextIdentity = "context-2" }},
 		{"still-initializing", func(r *agentv1.ReadinessResponse) { r.InitializationComplete = false }},

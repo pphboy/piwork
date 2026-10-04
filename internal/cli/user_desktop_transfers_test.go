@@ -41,6 +41,11 @@ func TestNativeDesktopWorkPackageTransferUsesOriginalSnapshotAndSession(t *testi
 			if !bytes.Equal(body, content) || r.Header.Get("X-Piwork-Sha256") != digest {
 				t.Error("Core received changed package")
 			}
+			if uploads == 1 {
+				w.WriteHeader(400)
+				_, _ = w.Write([]byte(`{"code":"PACKAGE_INVALID","message":"private upstream path /secret","details":{"token":"secret"}}`))
+				return
+			}
 			w.WriteHeader(201)
 			_ = json.NewEncoder(w).Encode(map[string]any{"packageId": "package-1", "digest": digest, "size": len(content)})
 		case "/api/v1/work-imports":
@@ -96,11 +101,14 @@ func TestNativeDesktopWorkPackageTransferUsesOriginalSnapshotAndSession(t *testi
 	if json.Unmarshal(inspect.Body.Bytes(), &inspected) != nil || !inspected.Summary.IntegrityVerified || inspected.Summary.InstallationValidated {
 		t.Fatal("inspect summary", inspect.Body.String())
 	}
+	if rejected := request("POST", "work-imports", "application/json", []byte(`{"transferId":"`+inspected.TransferID+`"}`), "csrf"); rejected.Code != 400 || !strings.Contains(rejected.Body.String(), "PACKAGE_INVALID") || strings.Contains(rejected.Body.String(), "secret") || imports != 0 {
+		t.Fatal("upload rejection lost public reason or submitted import", rejected.Code, rejected.Body.String(), imports)
+	}
 	result := request("POST", "work-imports", "application/json", []byte(`{"transferId":"`+inspected.TransferID+`"}`), "csrf")
 	if result.Code != 202 {
 		t.Fatal("import", result.Code, result.Body.String())
 	}
-	if repeated := request("POST", "work-imports", "application/json", []byte(`{"transferId":"`+inspected.TransferID+`"}`), "csrf"); repeated.Code != 202 || uploads != 1 || imports != 1 {
+	if repeated := request("POST", "work-imports", "application/json", []byte(`{"transferId":"`+inspected.TransferID+`"}`), "csrf"); repeated.Code != 202 || uploads != 2 || imports != 1 {
 		t.Fatal("import resent", repeated.Code, uploads, imports)
 	}
 	prepared := request("POST", "work-snapshots/snapshot-1/downloads", "application/json", nil, "csrf")

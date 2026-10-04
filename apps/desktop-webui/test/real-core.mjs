@@ -338,10 +338,14 @@ try {
   await expect(page.locator('#modal')).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to Works' }).click();
   await page.getByRole('button', { name: 'Import Work', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Import Work', exact: true })).toBeVisible();
   await page.locator('#work-file-input').setInputFiles(exportedPath);
   await page.getByText('Package format and contents verified locally.', { exact: true }).waitFor({ timeout: 180_000 });
   await page.locator('#import-name').fill('Browser Imported Work');
+  const importResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/_desktop/api/work-imports' && response.request().method() === 'POST', { timeout: 180_000 });
   await page.getByRole('button', { name: 'Import Work', exact: true }).last().click();
+  const importAcceptance = await importResponse;
+  assert.equal(importAcceptance.status(), 202, `Import acceptance: ${await importAcceptance.text()}`);
   const imported = await waitFor(async () => (await api(coreUrl, token, 'GET', '/api/v1/works')).data.works?.find(item => item.name === 'Browser Imported Work'), 'imported Work', 180_000);
   assert.notEqual(imported.id, workId); assert.equal(imported.observedState, 'stopped');
   await page.getByRole('button', { name: 'Close dialog' }).click();

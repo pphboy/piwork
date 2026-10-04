@@ -50,3 +50,10 @@ Settings 的 Skills、Pi Packages、AGENTS.md 和完整 JSON 都先保存为 Wor
 真实 Core 的阶段性浏览器验收结果与尚未通过的范围见 [Desktop WebUI 本机验收记录](desktop-webui-acceptance.md)。
 
 本次交付界面的适配层、共享样式、实际测试范围和构建命令见 [两套 WebUI 接入记录](webui-integration.md)。
+
+
+Chat provides **Model for next message** and an explicit **Save model** for the selected Session. The Work default is a null preference. Saving does not change the active Run; Run history shows the actual model and Chat/Service source accepted for each Run. A dirty, unavailable or unconfirmed preference blocks Send while retaining the draft. After a lost PATCH reply, **Check Session model** reads the original Session; the UI does not resend the PATCH or prompt. Different Work/Session and authentication generations remain isolated.
+
+**Pi requests** lists Service/Chat goals with pagination. Details show the original request, Run/evidence IDs, wait reference and deadline; closing details does not cancel. Cancellation applies to the original request, and explicit Retry creates a new stable submission key only for an eligible live terminal request. Historical imported requests remain readonly. Pi Packages shows **Saved**, **Not applied**, **Loaded** and the actual behavior verification result independently; **Apply** remains the separate adoption action. The brain source is editable under `.pi/packages/piwork-brain/` in Files.
+
+The existing brain **Details** view shows the accepted active/saved selection and whether it still matches, the fixed verification goal/capability, a safe input summary, required checks, preparation/publication and the original Apply ID/state. **Original request** and Operation links read those original IDs; **Refresh package** reads current facts and preserves the application iframe. **No matching Apply**, **Apply observation unavailable**, **Apply failed** and **Behavior checks failed** describe separate outcomes. Failed reads keep the last confirmed details with an observation error; a successful refresh clears that error. Internal context identities, artifact digests, credentials and host paths are excluded.

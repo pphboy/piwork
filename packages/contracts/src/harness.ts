@@ -49,3 +49,8 @@ export interface PiPackageArtifactMetadata {
   readonly resourceCounts: Readonly<Record<"extensions" | "skills" | "prompts" | "themes", number>>;
   readonly contentDigest: string;
 }
+
+// Stable leaf identities shared with the native Go wire schemas.
+export const ResourceIdSchema = Type.String({ minLength: 16, maxLength: 128, pattern: "^[a-zA-Z0-9-]+$" });
+export const IdentifierSchema = Type.String({ minLength: 1, maxLength: 128, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$" });
+export const TimestampSchema = Type.String({ minLength: 20, maxLength: 40, pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" });

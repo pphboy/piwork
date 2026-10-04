@@ -44,6 +44,7 @@ type Input struct {
 	Epoch                                                           int64
 	PrepareImageID, TrustedImageID, SourceDirectory, SpoolDirectory string
 	Environment                                                     contracts.PiPackagePreparedEnvironment
+	BrainSourceVolume, ExpectedSourceDigest                         string
 	// Called before creation and after confirmed absence respectively. These
 	// callbacks must commit the job phase and release its resource intent.
 	OnPlanned          func(context.Context, dockerengine.PackageHelperSpec) error
@@ -125,6 +126,10 @@ func Prepare(ctx context.Context, input Input) (result Result, returned error) {
 		if action == "prepare" {
 			spec.SourceDirectory = input.SourceDirectory
 		}
+		if action == "source-capture" {
+			spec.SourceVolume = input.BrainSourceVolume
+			spec.SpoolDirectory = input.SourceDirectory
+		}
 		if action == "capture" {
 			spec.SpoolDirectory = input.SpoolDirectory
 		}
@@ -164,6 +169,25 @@ func Prepare(ctx context.Context, input Input) (result Result, returned error) {
 			live["measure"] = *measureLive
 		}
 	}()
+	if input.BrainSourceVolume != "" {
+		raw, err := execute(ctx, "source-capture", input.TrustedImageID)
+		if err != nil {
+			return result, err
+		}
+		var captured packagehelper.BrainSourceCapture
+		if decodeResult(raw, &captured) != nil || captured.SourceDigest != input.ExpectedSourceDigest {
+			return result, ErrResult
+		}
+		archive, err := pipackage.OpenArchive(ctx, filepath.Join(input.SourceDirectory, "input.zip"))
+		if err != nil {
+			return result, err
+		}
+		digest, err := archive.Digest()
+		archive.Close()
+		if err != nil || digest != input.ExpectedSourceDigest {
+			return result, ErrResult
+		}
+	}
 	if _, err := execute(ctx, "init", input.TrustedImageID); err != nil {
 		return result, err
 	}

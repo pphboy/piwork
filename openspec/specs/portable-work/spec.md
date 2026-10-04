@@ -86,9 +86,11 @@ Work Spec SHALL 是完整快照的清单，而不是要求用户编写的重建�
 
 **Identifier:** PWORK-003
 
-包 SHALL 携带各 context 和已解析服务 revision 的实际固定镜像，去重但不省略镜像层；接收端 SHALL 校验镜像身份和运行平台，不能跟随 mutable tag、更换 agent 镜像、拉取替代镜像或自动升级。未解析的历史服务 revision SHALL 保留 unresolved 状态，不在导出时解析 tag；存在已绑定但丢失的镜像 SHALL 使导出以 SNAPSHOT_IMAGE_MISSING 失败。未解析的当前服务保留其失败/未完成准备事实，不能被宣称可离线启动。v1 SHALL 仅支持 Linux 且 OS/architecture/variant 与目标 Docker 一致、agent protocol 受支持、history schema=3、storage layout=2 的包；不兼容 SHALL 在创建 Work 之前返回 PACKAGE_INCOMPATIBLE。镜像不受信任，校验/导入阶段 MUST NOT 运行包内 ENTRYPOINT、hooks、shell、MCP 或模型请求。
+包 SHALL 携带各 context 和已解析服务 revision 的实际固定镜像，去重但不省略镜像层；接收端 SHALL 校验镜像身份和运行平台，不能跟随 mutable tag、更换 agent 镜像、拉取替代镜像或自动升级。未解析的历史服务 revision SHALL 保留 unresolved 状态，不在导出时解析 tag；存在已绑定但丢失的镜像 SHALL 使导出以 SNAPSHOT_IMAGE_MISSING 失败。未解析的当前服务保留其失败/未完成准备事实，不能被宣称可离线启动。v1 SHALL 仅支持 Linux 且 OS/architecture/variant 与目标 Docker 一致、agent protocol 受支持、history schema=4、storage layout=2 的包；不兼容 SHALL 在创建 Work 之前返回 PACKAGE_INCOMPATIBLE。镜像不受信任，校验/导入阶段 MUST NOT 运行包内 ENTRYPOINT、hooks、shell、MCP 或模型请求。
 
 包 SHALL 携带 Pi package 实际准备好的依赖，不在 export/import 时 npm install、Git checkout、rebuild、执行 lifecycle script 或 extension。piPackageContract、OS/architecture/variant、Node ABI 和 Pi SDK 兼容关系 SHALL 校验；不匹配返回 PACKAGE_INCOMPATIBLE。接收端 package catalog 缺失或存在同名异内容不影响恢复，也不得被覆盖。
+
+本版 SHALL 只处理当前 history schema 4 的完整数据；不支持的历史格式在发布或执行包内代码之前明确拒绝，不执行升级、双读或缺字段补齐。
 
 #### Scenario: Import without the original registry
 - **WHEN** 源固定镜像已打包且目标无法访问原 registry
@@ -109,6 +111,10 @@ Work Spec SHALL 是完整快照的清单，而不是要求用户编写的重建�
 #### Scenario: Reject incompatible native dependencies
 - **WHEN** package preparedEnvironment 与对应固定 agent 环境或目标运行平台不兼容
 - **THEN** 发布 Work 前返回 PACKAGE_INCOMPATIBLE，不重新编译来掩盖不兼容
+
+#### Scenario: 当前历史契约明确不支持
+- **WHEN** 完整包声明的历史版本与本版不一致
+- **THEN** 导入返回 PACKAGE_INCOMPATIBLE，原文件不变，不发布 Work 或启动任何候选
 
 ### Requirement: Instantiate independent identity with automatic platform resolution
 
@@ -161,3 +167,47 @@ Work 的默认网络名称、service 域名、Docker 名称及活动访问连接
 #### Scenario: 保持 V1 包字节契约
 - **WHEN** 使用现有 V1 包及历史 URL 文本完成导出、导入与再次导出
 - **THEN** 包格式无需新增字段，历史文本字节不被改写，目标域名由目标 ID 推导
+
+### Requirement: 保留反馈闭包并隔离导入历史的执行权限
+
+**Identifier:** PWORK-BRAIN-001
+
+完整包 SHALL 在既有 workspace、agent-private、retained context 和 Pi package 制品组件内包含脑包工作区副本与候选、实际包版本/依赖、业务数据库及待发事件、Work 事实与处理进度、全部关联 Run 和证据、有效与失败经验历史、Session 模型偏好和 Run 非秘密实际模型描述。新增受管历史表、关系、版本、字段和空集合 SHALL 完整校验，不得把 managed 数据当作无校验普通文件，也不在 framing 中增加未声明组件。
+
+导入 SHALL 仅映射受管的 Work/context 归属及声明的引用，Service 运行目标通过逻辑名称在新 Work 解析；应用数据库、历史文本、用户代码和字面 URL 保持原字节。所有已导入处理请求、阶段和投递幂等记录 SHALL 标为 historical 且保留原状态，不能恢复为 live 队列；当前实例产生的新请求才可自动执行。Service 待发事件 SHALL 携带生成时归属，导入后的旧 outbox 保留为历史且不得重新发送为新请求或重开旧 Job；正常原 Work 重启仍可发送本 Work 未完成的待发事件。
+
+交互地址与身份 SHALL 在接收者显式 Start 时重新建立。Session 偏好 SHALL 通过非秘密 provider/model/baseUrl 描述唯一匹配目标已启用可用模型，不能以源 catalog ID 或凭据作为权限；没有唯一可用匹配时保留偏好不可用状态并要求明确选择，不能静默换模型。历史实际模型仅为只读证据，不增加运行依赖授权。源码、经验和业务数据的后续更新 SHALL 在各 Work 独立生效。
+
+候选的固定能力验收项和实际 SDK 行为证明 SHALL 随原目标完整保存，并校验工具、输入、必要 checks、Run/请求及候选内容的关系；受管 context 引用按声明映射，验收项中的业务 input 不递归改写。所有候选 SHALL 使用当前 MVP 结构并携带合法验收项；缺失或非法字段不得以 historical 为由接受或补造。completed 记录必须有本版要求的匹配 SDK 证明，未完成记录保持真实状态且不执行。导入不运行验证工具、检查代码或候选准备流程。
+
+#### Scenario: 保留全部反馈内容
+- **WHEN** 带有业务事件、等待请求、失败记录、证据、经验和脑包 pending desired 的停止 Work 导出并导入
+- **THEN** 内容及状态完整保留，active/desired 仍分离，所有旧请求是 historical 且不自动执行，实际加载状态直到 Start 后验证
+
+#### Scenario: 源 outbox 不生成新副作用
+- **WHEN** 接收者 Start 后 Service 读到源 Work 的旧待发请求和未终态 Job
+- **THEN** 按来源及真实状态核对/显示历史，不把旧事件改成新请求或重跑任务；新用户动作生成新归属事件
+
+#### Scenario: 新反馈继续闭环
+- **WHEN** 接收者在导入工作站中产生新的明确反馈
+- **THEN** 新请求使用新 Work 身份独立自动处理并采用保留经验，源 Work 与另一导入副本不受影响
+
+#### Scenario: 偏好模型在目标环境不存在
+- **WHEN** context 所需模型满足既有导入条件但源 Session 的另一个偏好模型没有目标匹配
+- **THEN** 导入仍保留历史和不可用偏好，发送前明确要求选择可用模型或 Work 默认，不授权源凭据或静默替换
+
+#### Scenario: 拒绝伪造反馈关系
+- **WHEN** 历史含额外 trigger/table、跨 Work 运行关联、无依据 completed、非法阶段或悬空证据
+- **THEN** 完整校验拒绝包，不丢弃非法记录后宣布导入成功或运行包携带 SQL
+
+#### Scenario: 拒绝缺少当前验收项的候选
+- **WHEN** 包内候选缺少本版必需的 verificationTarget 或完成记录没有匹配 SDK 证明
+- **THEN** 静态校验拒绝导入，不补齐字段、不丢弃记录、不运行工具生成证明
+
+#### Scenario: 验收项与证明关系被伪造
+- **WHEN** 声明新能力验收项的历史把成功证明关联到其他目标、不同输入、失败 checks 或错误候选内容
+- **THEN** 静态完整校验拒绝，不运行工具来修补或通过删除证据宣称包有效
+
+#### Scenario: 两个副本分别验证新脑包行为
+- **WHEN** 两份同源导入 Work 显式 Start 后各自产生新候选并由用户 Apply
+- **THEN** 各自通过当前身份和固定验收项的实际 SDK 行为 checks 后完成，旧候选历史不执行，源 Work 和另一副本的状态与证据不改变

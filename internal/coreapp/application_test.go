@@ -34,6 +34,9 @@ func appFixture(t *testing.T, options Options) (*Application, string, string) {
 			t.Error(err)
 		}
 	})
+	if options.DependencyCheck != nil {
+		a.prepareBrainForTest = unitBrainPreparer(t)
+	}
 	address, err := a.Listen(ListenAddress{"127.0.0.1", 0})
 	if err != nil {
 		t.Fatal(err)

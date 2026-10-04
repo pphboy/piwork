@@ -27,6 +27,9 @@ for (const variant of ['production', 'acceptance']) {
   assert.deepEqual(image.Config.Entrypoint, ['node', '/workspace/apps/agentd/dist/main.js']);
   assert.equal(image.Config.Labels['io.piwork.agent.variant'], variant);
   assert.equal(image.Config.Labels['io.piwork.package-helper.contract'], '2');
+  assert.equal(image.Config.Labels['io.piwork.work-history.schema'], '4');
+  assert.equal(image.Config.Labels['io.piwork.run-model.contract'], '1');
+  assert.equal(image.Config.Labels['io.piwork.work-feedback.contract'], '1');
   assert.equal(image.Config.Labels['io.piwork.service-mcp.contract'], '1');
   assert.equal(image.Config.User, '10001:10001');
   const listing = docker('run', '--rm', '--network', 'none', '--read-only', '--entrypoint', '/bin/sh',

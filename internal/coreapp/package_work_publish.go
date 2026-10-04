@@ -93,9 +93,31 @@ func (a *Application) publishWorkPackage(ctx context.Context, job corestore.Pack
 		return corestore.ErrStorage
 	}
 	workID := *job.WorkID
+	var candidateSource packageSourceInput
+	if strictMetadata([]byte(job.SourceJSON), &candidateSource) != nil {
+		return corestore.ErrStorage
+	}
+	var submission *contracts.BrainCandidateSubmission
+	if candidateSource.Kind == "brain" {
+		submission = candidateSource.Brain
+		if submission == nil || source.Name != brainPackageName || job.ActorID != "work-agent:"+workID {
+			return corestore.ErrStorage
+		}
+	}
 	a.skillMu.Lock()
 	defer a.skillMu.Unlock()
 	for attempt := 0; attempt < 8; attempt++ {
+		if submission != nil {
+			if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+				work, err := corestore.ReadWork(tx, workID, false)
+				if err != nil {
+					return err
+				}
+				return a.checkBrainBaselineTx(tx, work, *submission)
+			}); err != nil {
+				return err
+			}
+		}
 		state, err := a.Store.Configuration(ctx, workID)
 		if err != nil {
 			return err
@@ -149,15 +171,30 @@ func (a *Application) publishWorkPackage(ctx context.Context, job corestore.Pack
 				if current.DesiredRevision != state.DesiredRevision || current.DesiredContextID == nil || *current.DesiredContextID != *state.DesiredContextID {
 					return corestore.ErrRevisionConflict
 				}
+				createdBy := job.ActorID
+				if submission != nil {
+					if err := a.checkBrainBaselineTx(tx, current, *submission); err != nil {
+						return err
+					}
+					createdBy = current.OwnerUserID
+					var boundary int64
+					if err := tx.QueryRow(`SELECT MAX(rowid) FROM operations`).Scan(&boundary); err != nil {
+						return err
+					}
+					raw, _ := json.Marshal(brainCandidateReceipt{ArtifactDigest: string(source.Metadata.ContentDigest), Version: source.Metadata.Version, ContextID: published.ID, OperationBoundary: boundary})
+					if _, err := tx.Exec(`INSERT INTO control_metadata(key,value_json,updated_at) VALUES(?,?,?)`, brainReceiptKey(job.OperationID), string(raw), now); err != nil {
+						return err
+					}
+				}
 				newRevision := state.DesiredRevision + 1
 				var sourceRevision *int64
 				if revision.Valid {
 					sourceRevision = &revision.Int64
 				}
-				if err := corestore.InsertConfiguration(tx, corestore.ConfigurationRevision{WorkID: workID, Revision: newRevision, ConfigJSON: published.ConfigurationJSON, ResolvedImageDigest: &imageID, RuntimeProfileJSON: &profile, SourceRuntimeRevision: sourceRevision, CreatedByUserID: job.ActorID, CreatedAt: now}); err != nil {
+				if err := corestore.InsertConfiguration(tx, corestore.ConfigurationRevision{WorkID: workID, Revision: newRevision, ConfigJSON: published.ConfigurationJSON, ResolvedImageDigest: &imageID, RuntimeProfileJSON: &profile, SourceRuntimeRevision: sourceRevision, CreatedByUserID: createdBy, CreatedAt: now}); err != nil {
 					return err
 				}
-				if err := corestore.InsertContext(tx, corestore.ContextSnapshot{SnapshotID: published.ID, WorkID: workID, InternalRevision: &newRevision, ConfigurationJSON: published.ConfigurationJSON, ImageIdentity: imageID, CreatedByUserID: job.ActorID, CreatedAt: now}); err != nil {
+				if err := corestore.InsertContext(tx, corestore.ContextSnapshot{SnapshotID: published.ID, WorkID: workID, InternalRevision: &newRevision, ConfigurationJSON: published.ConfigurationJSON, ImageIdentity: imageID, CreatedByUserID: createdBy, CreatedAt: now}); err != nil {
 					return err
 				}
 				metadata, _ := json.Marshal(source.Metadata)

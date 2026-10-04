@@ -54,15 +54,21 @@ Creating or starting a Work SHALL materialize the operation-selected Work-owned 
 - **THEN** runtime 从 Work-owned context 读取原制品，无需 source lookup
 
 ### Requirement: Keep model credentials out of public and persisted conversation data
-Core SHALL resolve the selected model profile and mount the model credential into the Work as a read-only secret available only to the agentd process. Agentd SHALL read it without copying the credential into Work metadata, Session history, Run events, error messages, or diagnostics returned through Core.
+Core SHALL 解析所选模型配置，将凭据以仅 agentd 进程可访问的只读 secret 挂载到 Work。Agentd SHALL 读取该凭据，但不得复制到 Work 元数据、Session 历史、Run 事件、错误信息或经 Core 返回的诊断。
+
+每 Run 的显式模型 SHALL 由当前代次的 Agent 经既有 mTLS 私有通道请求 Go Core 解析；仅该 Agent 获得执行所需凭据。公共模型列表和历史只含安全模型描述；模型失效、端点变化或 SDK 不支持不能静默回退。
 
 #### Scenario: Start agentd with a model credential
-- **WHEN** a configured Work starts with an available model secret
-- **THEN** agentd can initialize the selected model while Core and CLI responses reveal only the non-secret provider and model identifiers
+- **WHEN** 已配置 Work 使用可用模型 secret 启动
+- **THEN** agentd 可以初始化所选模型，Core 与 CLI 响应只显示非秘密 provider 和模型标识
 
 #### Scenario: Model credential is missing or invalid
-- **WHEN** agentd cannot read or use the selected model credential
-- **THEN** readiness or the affected Run fails with a safe model-configuration error that contains no credential value
+- **WHEN** agentd 无法读取或使用所选模型凭据
+- **THEN** readiness 或受影响 Run 以不含凭据值的安全模型配置错误失败
+
+#### Scenario: 接受后的模型条件发生变化
+- **WHEN** 已接受 Run 需要的模型被禁用或其执行描述已不匹配
+- **THEN** 该 Run 安全失败，实际模型快照不被替换，凭据不进入公开输出
 
 ### Requirement: Authenticate and verify Core-to-agent transport
 Agentd SHALL listen only on its Work runtime network and Core SHALL connect using installation-controlled encrypted credentials tied to the Work identifier and runtime generation. Both sides MUST reject a mismatched Work, stale generation, untrusted peer, or direct unauthenticated request; Core MUST route Session and Run calls only after the current generation passes readiness verification.
@@ -172,25 +178,27 @@ Stopping a Work SHALL prevent new Runs, perform bounded drain and cancellation, 
 
 **Identifier:** RUNTIME-CONTEXT-001
 
-Core SHALL verify that daemon readiness identifies the expected Work, runtime generation, instance, supported context contract, captured context, configured Skill names with matching captured identities, and effective tool policy before routing Sessions/Runs or activating a candidate. The report SHALL describe actual completed SDK loading, not echo input descriptors. Verification SHALL apply to creation, start, restart, apply, rollback, and adoption after Core recovery. Missing required handshake fields or unsupported versions SHALL fail with `AGENT_CONTEXT_INCOMPATIBLE`; wrong context or loaded membership SHALL fail with `AGENT_CONTEXT_MISMATCH`. Internal identity fields MUST NOT appear in public configuration or diagnostics.
+Core SHALL 在路由 Session/Run 或激活候选之前核验 daemon readiness：预期 Work、runtime generation、instance、受支持 context contract、captured context、配置的 Skill 名称及捕获身份、有效工具策略。报告 SHALL 说明真实完成的 SDK 加载，不回显输入描述冒充加载。校验 SHALL 覆盖创建、Start、Restart、Apply、回退和 Core 恢复后的接管。必需握手字段缺失或版本不支持 SHALL 返回 `AGENT_CONTEXT_INCOMPATIBLE`；context 或实际加载成员错误 SHALL 返回 `AGENT_CONTEXT_MISMATCH`。内部身份 MUST NOT 出现在公开配置或诊断。
 
 握手 SHALL 必需报告 packageContractVersion=1 及实际加载包的名称、内部制品身份和资源/工具来源；即使 packages=[] 也不能省略契约。Core SHALL 按 PKGA-005 验证 enabled 包集合完全匹配 captured context，并区别独立 Skills 与 package Skills。旧握手缺字段返回 AGENT_CONTEXT_INCOMPATIBLE；包成员/内容/工具错误返回 AGENT_CONTEXT_MISMATCH。
 
+Go Core SHALL 同时验证当前 Run model contract=1、Work feedback contract=1 和 history schema=4；即使没有选择脑包或 models 列表为空也不能省略当前契约。Apply 初始化只能验证资源，不得开启自动请求执行；正式 active 当前代次才开放准入。
+
 #### Scenario: Verify the expected copied Skills
-- **WHEN** the current daemon reports the expected context and exactly the configured successfully loaded Skill identities and tools
-- **THEN** Core can complete readiness for that context and publish its safe runtime Skill status
+- **WHEN** 当前 daemon 报告预期 context，且成功加载的 Skill 身份及工具与配置完全匹配
+- **THEN** Core 可以完成该 context 的 readiness 并发布安全的运行 Skill 状态
 
 #### Scenario: Reject stale or incomplete readiness
-- **WHEN** a daemon claims ready with a different context, another Work identity, stale generation, missing Skill, extra Skill, duplicate Skill, or mismatched captured identity
-- **THEN** Core does not route or activate it and records a stable mismatch diagnostic
+- **WHEN** daemon 声称 ready，但 context、Work、generation、捕获身份不匹配，或 Skill 缺失、额外、重复
+- **THEN** Core 不路由或激活该 daemon，并记录稳定的 mismatch 诊断
 
 #### Scenario: Reject an old agent protocol
-- **WHEN** an agent image omits the context handshake or declares an unsupported contract
-- **THEN** the Operation reports `AGENT_CONTEXT_INCOMPATIBLE` with instructions to deploy a compatible Core/agentd pair, and Work is not ready
+- **WHEN** agent 镜像省略 context 握手或声明不支持的契约
+- **THEN** Operation 返回 `AGENT_CONTEXT_INCOMPATIBLE` 并说明应部署契约匹配的 Core/agentd，Work 不成为 ready
 
 #### Scenario: Re-adopt after Core restart
-- **WHEN** Core finds an existing labeled container after restarting
-- **THEN** it validates the actual mounted context and full current handshake before adopting its loaded Skill status, rather than trusting labels or cached ready state alone
+- **WHEN** Core 重启后发现已有受管标签的容器
+- **THEN** Core 先核验实际挂载 context 与完整当前握手才接管加载状态，不仅凭标签或缓存 ready 放行
 
 #### Scenario: Reject a stale package identity
 - **WHEN** 名称和 version 相同但 agent 实际加载包 bytes 与 captured context 不同
@@ -199,6 +207,10 @@ Core SHALL verify that daemon readiness identifies the expected Work, runtime ge
 #### Scenario: Do not infer support from an empty package list
 - **WHEN** 旧 agent 没有 packageContractVersion 且 Work 没有 package
 - **THEN** 握手仍失败，不能把 protobuf 缺省值当作支持
+
+#### Scenario: 不完整的当前反馈握手
+- **WHEN** 候选或被恢复容器缺少任一当前模型、反馈或历史契约
+- **THEN** Go Core 拒绝 ready 与路由，返回安全不兼容诊断，不通过兼容入口或字段缺省放行
 
 ### Requirement: Keep Skill data independent of the agent image
 
@@ -243,3 +255,27 @@ Importing or updating managed Skills, creating Works with Skills, saving or appl
 #### Scenario: 子代理无法发现其他上下文
 - **WHEN** 包启动的子代理检查自身环境和已挂载资源
 - **THEN** 其中没有 Core 操作员凭据、Core 包来源路径或其他 Work 的上下文
+
+### Requirement: Go 平台提供 Work 内 Service 交互身份
+
+**Identifier:** RUNTIME-FEEDBACK-001
+
+Go 平台 SHALL 为实际运行且属于当前 Work 的 Service 提供专属投递身份、CA 和 Agent 私网入口；身份 SHALL 绑定当前 Service 实例，不授予 Core 控制权限或其他 Service 的回执访问。有效绑定 SHALL 依据实际容器、网络和已应用定义确认，不以 desired 或历史容器替代当前事实。Service 重启更换身份，移除后撤销；仅 Agent Apply 时仍运行的 Service 无需重新部署便能与新 Agent 交互。
+
+Stop/Delete/Apply SHALL 在受理时关闭新的自动执行准入；初始化 Agent 不处理请求。身份与连接配置属于派生平台材料，不进入环境分享的权限闭包；目标 Work 显式 Start 时重新建立。
+
+#### Scenario: Service 与 Agent 双向交互
+- **WHEN** 本版 Work 和 Pi 开发的 Service 就绪
+- **THEN** Service 经专属私网身份持久投递事件并读取自己的原请求，Pi 使用当前绑定查询业务 API
+
+#### Scenario: Service 身份更换与越权
+- **WHEN** Service 重启后旧身份继续调用，或当前身份请求其他 Service 的回执
+- **THEN** 请求被拒绝且不返回跨来源内容，当前合法身份继续可用
+
+#### Scenario: Agent Apply 后继续交互
+- **WHEN** Agent 的候选已正式激活，而 Service 实例保持运行
+- **THEN** Service 能连接新 Agent 并读原请求，不要求重新部署 Service，不重放既有业务 mutation
+
+#### Scenario: Stop 与新执行竞争
+- **WHEN** Stop 已受理而自动循环准备接受 Run
+- **THEN** 新 Run 不被接受，原事件和请求保留，实际清理按 Go 生命周期执行

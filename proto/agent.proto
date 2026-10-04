@@ -3,6 +3,7 @@ syntax = "proto3";
 package piwork.agent.v1;
 
 service AgentService {
+  rpc RefreshServiceInteractionBindings(AgentContentRequest) returns (AgentContentResponse);
   rpc Readiness(ReadinessRequest) returns (ReadinessResponse);
   rpc PrepareConfigurationChange(PrepareConfigurationChangeRequest) returns (PrepareConfigurationChangeResponse);
   rpc Drain(DrainRequest) returns (DrainResponse);
@@ -13,7 +14,21 @@ service AgentService {
   rpc GetRun(GetRunRequest) returns (Run);
   rpc WatchRun(WatchRunRequest) returns (stream RunEvent);
   rpc CancelRun(CancelRunRequest) returns (Run);
+  rpc ListRunModels(AgentContentRequest) returns (AgentContentResponse);
+  rpc SetSessionModel(AgentContentRequest) returns (Session);
+  rpc ListAgentRequests(AgentContentRequest) returns (AgentContentResponse);
+  rpc GetAgentRequest(AgentContentRequest) returns (AgentContentResponse);
+  rpc CancelAgentRequest(AgentContentRequest) returns (AgentContentResponse);
+  rpc RetryAgentRequest(AgentContentRequest) returns (AgentContentResponse);
+  rpc GetAgentEvidence(AgentContentRequest) returns (AgentContentResponse);
 }
+
+message AgentContentRequest {
+  string work_id = 1;
+  string object_id = 2;
+  string input_json = 3;
+}
+message AgentContentResponse { string value_json = 1; }
 
 message ReadinessRequest {
   string work_id = 1;
@@ -38,6 +53,9 @@ message ReadinessResponse {
   repeated LoadedPackage loaded_packages = 14;
   repeated PackageResource package_resources = 15;
   repeated PackageDiagnostic package_diagnostics = 16;
+  uint32 run_model_contract_version = 17;
+  uint32 work_feedback_contract_version = 18;
+  uint32 work_history_schema_version = 19;
 }
 
 message LoadedPackage {
@@ -96,6 +114,8 @@ message Session {
   string sdk_history_path = 3;
   string created_at = 4;
   string updated_at = 5;
+  string model_preference_json = 6;
+  string source_json = 7;
 }
 
 message CreateSessionRequest {
@@ -122,6 +142,7 @@ message ReadSessionRequest {
 message SessionHistory {
   Session session = 1;
   repeated SessionMessage messages = 2;
+ repeated Run runs = 3;
 }
 
 message SessionMessage {
@@ -162,6 +183,9 @@ message Run {
   string finished_at = 11;
   uint64 earliest_available_sequence = 12;
   uint64 latest_sequence = 13;
+  string actual_model_json = 14;
+  string source_json = 15;
+  uint32 adopted_experience_version = 16;
 }
 
 message SubmitRunRequest {
@@ -169,6 +193,8 @@ message SubmitRunRequest {
   string session_id = 2;
   string submission_key = 3;
   string prompt = 4;
+  // Missing: Session preference; present empty: explicit Work default.
+  optional string model_ref = 5;
 }
 
 message SubmitRunResponse {

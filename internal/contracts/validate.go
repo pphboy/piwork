@@ -80,7 +80,16 @@ func Validate(schema string, value any) error {
 			return err
 		}
 	}
-	return check(s, value, "", 0)
+	if err := check(s, value, "", 0); err != nil {
+		return err
+	}
+	switch schema {
+	case "BrainVerificationTargetSchema":
+		return validateBrainTarget(value)
+	case "BrainCandidateSubmissionSchema":
+		return validateBrainTarget(value.(map[string]any)["verificationTarget"])
+	}
+	return nil
 }
 func wireValue(v any) bool {
 	switch v.(type) {
@@ -251,11 +260,15 @@ func check(s *definition, v any, field string, depth int) error {
 	return nil
 }
 
-// The catalog has two JS lookahead patterns. Implement their exact intent
+// Implement the fixed catalog's JS lookahead patterns by their exact intent;
 // explicitly; other catalog patterns compile with RE2. No client regex is run.
 func matches(pattern, text string) bool {
 	if pattern == "" {
 		return true
+	}
+	if pattern == "^package:piwork-brain:(?!brain_feedback$|brain_package_update$)[a-zA-Z][a-zA-Z0-9_-]{0,63}$" {
+		name, found := strings.CutPrefix(text, "package:piwork-brain:")
+		return found && name != "brain_feedback" && name != "brain_package_update" && matches("^[a-zA-Z][a-zA-Z0-9_-]{0,63}$", name)
 	}
 	if pattern == "^(?!package:)[a-zA-Z0-9][a-zA-Z0-9._:-]*$" {
 		return !strings.HasPrefix(text, "package:") && matches("^[a-zA-Z0-9][a-zA-Z0-9._:-]*$", text)

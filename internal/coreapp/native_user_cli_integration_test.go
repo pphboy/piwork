@@ -17,7 +17,7 @@ import (
 )
 
 func TestNativeUserCLIWorkAndConversationThroughGoCore(t *testing.T) {
-	_, base, authorization, workID, _ := nativeApplyFixture(t)
+	a, base, authorization, workID, _ := nativeApplyFixture(t)
 	credential := filepath.Join(t.TempDir(), "credentials", "client.json")
 	t.Setenv("PIWORK_CONFIG_PATH", credential)
 	if err := (userclient.CredentialStore{Path: credential}).Save(userclient.Credential{Version: 1, CoreURL: base,
@@ -117,8 +117,9 @@ func TestNativeUserCLIWorkAndConversationThroughGoCore(t *testing.T) {
 	if raw := call("status"); !strings.Contains(raw, `"status":"ready"`) && !strings.Contains(raw, `"ready":`) {
 		t.Fatal("CLI status did not report the real Core", raw)
 	}
-	if raw := call("skills", "show", "deploy-work-service"); !strings.Contains(raw, "deploy-work-service") {
-		t.Fatal("CLI did not show the native built-in Skill", raw)
+	importCatalogSkillFixture(t, a)
+	if raw := call("skills", "show", "catalog-skill"); !strings.Contains(raw, "catalog-skill") {
+		t.Fatal("CLI did not show the imported independent Skill", raw)
 	}
 	agentsFile := filepath.Join(t.TempDir(), "AGENTS.md")
 	if err := os.WriteFile(agentsFile, []byte("# Native CLI guidance\n"), 0600); err != nil {

@@ -174,8 +174,9 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     assert.equal(await page.getByRole('button',{name:'Pause checking',exact:true}).count(), 0);
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.getByRole('button',{name:'Import Work',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'Import Work',exact:true})).toBeVisible();
     await page.locator('#work-file-input').setInputFiles(workPackagePath);
-    await page.getByText('Package format and contents verified locally.',{exact:true}).waitFor();
+    await page.getByText('Package format and contents verified locally.',{exact:true}).waitFor().catch(async error => { throw new Error(`${error}\nLocal inspection view: ${await page.locator('#modal').innerText()}`); });
     assert.equal(importRequests, 0, 'inspection submitted import without consent');
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.locator('[data-action=account]').click();
@@ -435,6 +436,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     }
     if (request.url?.startsWith("/api/v1/operations/worker-"))
       return response.end(JSON.stringify({ operationId: request.url.split("/").at(-1), state: "succeeded", error: null }));
+    if (request.url === `/api/v1/works/${workId}/models`) return response.end(JSON.stringify({models:[{modelRef:"model-test-0000000001",label:"Test model",provider:"fixture",model:"one"}],defaultModel:{modelRef:null,label:"Work model",provider:"fixture",model:"one"},availability:"available",checkedAt:new Date().toISOString()}));
     if (request.url === `/api/v1/works/${workId}/sessions` && request.method === "GET") {
       sessionFetches++;
       return response.end(JSON.stringify({ sessions }));
@@ -446,9 +448,9 @@ test("browser opens a running Work Service in an iframe and a separate local tab
       return response.end(JSON.stringify({ sessionId: "session-new-1234" }));
     }
     if (request.url === `/api/v1/works/${workId}/sessions/session-12345678`)
-      return response.end(JSON.stringify({ messages: [] }));
+      return response.end(JSON.stringify({session:{workId,sessionId:request.url!.split("/").at(-1),modelPreference:null,source:{kind:"chat"}},messages:[],runs:[]}));
     if (request.url === `/api/v1/works/${workId}/sessions/session-new-1234`)
-      return response.end(JSON.stringify({ messages: [] }));
+      return response.end(JSON.stringify({session:{workId,sessionId:request.url!.split("/").at(-1),modelPreference:null,source:{kind:"chat"}},messages:[],runs:[]}));
     if (request.url === `/api/v1/works/${workId}/runs` && request.method === "POST") {
       runSubmissions++;
       const pieces: Buffer[] = []; for await (const piece of request) pieces.push(piece as Buffer);

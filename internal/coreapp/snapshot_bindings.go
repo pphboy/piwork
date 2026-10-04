@@ -3,12 +3,12 @@ package coreapp
 import (
 	"database/sql"
 	"encoding/json"
-	"net/url"
 	"reflect"
 	"sort"
-	"strings"
 
+	"errors"
 	"piwork/internal/contracts"
+	"piwork/internal/corestore"
 )
 
 type snapshotBoundModel struct {
@@ -21,19 +21,11 @@ func snapshotModelURL(raw *string) (string, error) {
 	if raw == nil {
 		return "", nil
 	}
-	u, err := url.Parse(*raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	endpoint, err := contracts.NormalizeModelEndpoint(raw)
+	if err != nil {
 		return "", contracts.NewError("TARGET_MODEL_UNAVAILABLE", "models")
 	}
-	u.Scheme = strings.ToLower(u.Scheme)
-	u.Host = strings.ToLower(u.Host)
-	if u.Path == "" {
-		u.Path = "/"
-	}
-	if u.Scheme == "http" && u.Port() == "80" || u.Scheme == "https" && u.Port() == "443" {
-		u.Host = u.Hostname()
-	}
-	return u.String(), nil
+	return *endpoint, nil
 }
 
 // Package requirements are logical references, never recipient catalog IDs.
@@ -119,4 +111,41 @@ func (a *Application) resolveSnapshotBindings(tx *sql.Tx, owner string, requirem
 		return nil, contracts.NewError("TARGET_MODEL_UNAVAILABLE", "models")
 	}
 	return result, nil
+}
+
+// Only safe, currently enabled descriptions are given to the isolated history rebuild.
+// Ambiguous identities remain unavailable rather than picking a catalog ID.
+func (a *Application) snapshotHistoryModels(tx *sql.Tx) ([]runModelSnapshot, error) {
+	rows, err := tx.Query("SELECT id FROM catalog_entries WHERE kind='model' AND enabled=1 ORDER BY id LIMIT 257")
+	if err != nil {
+		return nil, err
+	}
+	refs := []string{}
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		refs = append(refs, ref)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(refs) > 256 {
+		return nil, contracts.NewError("MODEL_LIST_UNAVAILABLE", "")
+	}
+	models := []runModelSnapshot{}
+	for _, ref := range refs {
+		model, _, err := a.resolveRunModelEntry(tx, ref, &ref)
+		if errors.Is(err, corestore.ErrStorage) {
+			return nil, err
+		}
+		if err == nil {
+			models = append(models, model)
+		}
+	}
+	return models, nil
 }

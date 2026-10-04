@@ -38,7 +38,7 @@ func TestUploadVerifierChecksNativePackageAndDoesNotExposePrivateContent(t *test
 	}
 	entries, _ := os.ReadDir(spool)
 	for _, entry := range entries {
-		if entry.Name() != "blobs" && entry.Name() != "package.work" {
+		if entry.Name() != "package.work" {
 			t.Fatal("verification scratch leaked", entry.Name())
 		}
 	}
@@ -47,6 +47,25 @@ func TestUploadVerifierChecksNativePackageAndDoesNotExposePrivateContent(t *test
 	verified, err := workpackage.Read(context.Background(), bytes.NewReader(raw), workpackage.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	unchanged, err := os.ReadFile(filepath.Join(spool, "package.work"))
+	if err != nil || !bytes.Equal(raw, unchanged) {
+		t.Fatal("verification changed the archive", err)
+	}
+	// Direct section reads still require integrity of every blob, including
+	// bytes unrelated to the SQLite history being checked.
+	corrupted := bytes.Clone(raw)
+	for _, blob := range verified.Spec.Blobs {
+		if blob.Size > 0 {
+			corrupted[verified.Offsets[string(blob.Digest)]] ^= 1
+			break
+		}
+	}
+	if err := os.WriteFile(filepath.Join(spool, "package.work"), corrupted, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyUploadedPackage(context.Background(), spool); historyCode(err) != "PACKAGE_INVALID" {
+		t.Fatal("corrupt blob was accepted", historyCode(err), err)
 	}
 	verified.Spec.ActiveContext = json.RawMessage(`"` + string(verified.Spec.DesiredContext) + `"`)
 	var active bytes.Buffer
@@ -80,7 +99,7 @@ func TestHistoryRequestStrictnessAndHelperUsageBeforeFilesystemAccess(t *testing
 		t.Fatal(code)
 	}
 }
-func TestVolumeHistoryNativeCodeReadsOriginalTSWALAndMapsNewIdentity(t *testing.T) {
+func TestVolumeHistoryNativeCodeReadsCurrentHistoryAndMapsNewIdentity(t *testing.T) {
 	root := t.TempDir()
 	volume := filepath.Join(root, "private")
 	if err := os.CopyFS(volume, os.DirFS("../workhistory/testdata/valid")); err != nil {
@@ -125,5 +144,31 @@ func TestVolumeHistoryNativeCodeReadsOriginalTSWALAndMapsNewIdentity(t *testing.
 	verified.Close()
 	if code := historyCode(workhistory.ErrUnsupported); code != "SNAPSHOT_HISTORY_UNSUPPORTED" {
 		t.Fatal(code)
+	}
+}
+
+func TestRestoreBindingsAreStrictSafeDescriptionsAndDeclaredOperations(t *testing.T) {
+	spool := t.TempDir()
+	for _, raw := range []string{
+		`{"sourceWorkId":"source-work-00000000001","contextIds":[],"models":[{"modelRef":"model-target-000000001","label":"Target","provider":"fixture","model":"one","credential":"private"}]}`,
+		`{"sourceWorkId":"source-work-00000000001","contextIds":[],"models":[{"modelRef":"model-target-000000001","label":"Target","provider":"fixture","model":"one","baseUrl":"https://user:secret@example.test"}]}`,
+		`{"sourceWorkId":"source-work-00000000001","contextIds":[],"models":{}}`,
+		`{"sourceWorkId":"source-work-00000000001","contextIds":[],"operations":{"operation-source-00001":"../../host"}}`,
+		`{"sourceWorkId":"source-work-00000000001","contextIds":[],"operations":{"operation-source-00001":"operation-target-00001","operation-source-00002":"operation-target-00001"}}`,
+	} {
+		if err := os.WriteFile(filepath.Join(spool, "history-request.json"), []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readRequest(spool); err == nil {
+			t.Fatal("unsafe target bindings accepted", raw)
+		}
+	}
+	raw := `{"sourceWorkId":"source-work-00000000001","contextIds":[],"models":[{"modelRef":"model-target-000000001","label":"Target","provider":"fixture","model":"one","baseUrl":"https://MODELS.example:443/a/../"}],"operations":{"operation-source-00001":"operation-target-00001"}}`
+	if err := os.WriteFile(filepath.Join(spool, "history-request.json"), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	request, err := readRequest(spool)
+	if err != nil || len(request.Models) != 1 || len(request.Operations) != 1 {
+		t.Fatal(request, err)
 	}
 }

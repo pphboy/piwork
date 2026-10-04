@@ -6,6 +6,8 @@ import test from "node:test";
 import { WorkBusyError, WorkStore } from "@piwork/work-store";
 import { AgentDaemonControl } from "./daemon.js";
 import { RunManager, type RunExecutionContext, type RunExecutor } from "./runs.js";
+import type { RunModelResolver } from "./run-models.js";
+import { RunModelError } from "./run-models.js";
 
 const NOW = "2026-09-20T00:00:00.000Z";
 
@@ -39,6 +41,36 @@ test("submission is durable and idempotent with one active slot per Work and par
     executor.resolve(other.run.runId, "answer-b");
     assert.equal((await manager.wait(first.run.runId)).state, "succeeded");
     assert.equal((await manager.wait(other.run.runId)).state, "succeeded");
+  });
+});
+
+test("per-Run selector pins actual model and replay precedes changed Session preferences or model availability", async () => {
+  await withStore(async (store) => {
+    const executor = new ControlledExecutor(); let resolves = 0; let available = true;
+    const models: RunModelResolver = { async list() { throw new Error("unused"); }, async credential() { return "secret"; },
+      async resolve(ref) { resolves++; if (!available) throw new RunModelError("MODEL_UNAVAILABLE", "Unavailable");
+        return { modelRef: ref, provider: "fixture", model: ref ?? "default", label: ref ?? "default" }; } };
+    const daemon = new AgentDaemonControl({ workId: "fixture", generation: 1, instanceId: "instance" });
+    daemon.configure({ modelCredentialStatus: "available", contextIdentity: "context-fixture", loadedSkills: [], resolvedTools: [], initializationComplete: true });
+    const manager = new RunManager(store, daemon, executor, () => new Date(NOW), models);
+    store.setSessionModelPreference("work-a", "session-a", JSON.stringify({ modelRef: "catalog-model-0001" }));
+    const input = { workId: "work-a", sessionId: "session-a", submissionKey: "model-run1", prompt: "hello" };
+    const first = await manager.submitChat(input); await executor.waitUntilRunning(first.run.runId);
+    assert.equal(JSON.parse(first.run.actualModelJson!).model, "catalog-model-0001");
+    store.setSessionModelPreference("work-a", "session-a", JSON.stringify({ modelRef: "catalog-model-0002" })); available = false;
+    assert.equal((await manager.submitChat(input)).run.runId, first.run.runId); assert.equal(resolves, 1);
+    await assert.rejects(manager.submitChat({ ...input, modelRef: null }), /different content/);
+    await assert.rejects(manager.submitChat({ ...input, modelRef: "catalog-model-0002" }), /different content/);
+    assert.equal(JSON.parse(manager.get(first.run.runId)!.actualModelJson!).model, "catalog-model-0001");
+    executor.resolve(first.run.runId, "one"); await manager.wait(first.run.runId); available = true;
+    const next = await manager.submitChat({ ...input, submissionKey: "model-run2" }); await executor.waitUntilRunning(next.run.runId);
+    assert.equal(JSON.parse(next.run.actualModelJson!).model, "catalog-model-0002"); executor.resolve(next.run.runId, "two"); await manager.wait(next.run.runId);
+    const fallback = await manager.submitChat({ ...input, submissionKey: "model-run3", modelRef: null }); await executor.waitUntilRunning(fallback.run.runId);
+    assert.equal(JSON.parse(fallback.run.actualModelJson!).model, "default"); executor.resolve(fallback.run.runId, "default"); await manager.wait(fallback.run.runId);
+    const explicit = await manager.submitChat({ ...input, submissionKey: "model-run4", modelRef: "catalog-model-0001" }); await executor.waitUntilRunning(explicit.run.runId);
+    assert.equal(JSON.parse(explicit.run.actualModelJson!).model, "catalog-model-0001"); executor.resolve(explicit.run.runId, "one"); await manager.wait(explicit.run.runId);
+    daemon.prepareConfigurationChange(); available = false;
+    assert.equal((await manager.submitChat(input)).run.runId, first.run.runId);
   });
 });
 
@@ -187,3 +219,20 @@ async function withStore(run: (store: WorkStore) => Promise<void>) {
   try { await run(store); }
   finally { store.close(); await rm(root, { recursive: true, force: true }); }
 }
+
+test("incompatible or missing Session refuses admission before model resolution and SDK effects", async () => {
+  await withStore(async store => {
+    let resolves = 0, executions = 0;
+    const models: RunModelResolver = { async list() { throw new Error("unused"); }, async credential() { throw new Error("unused"); },
+      async resolve() { resolves++; throw new Error("must not resolve"); } };
+    const daemon = new AgentDaemonControl({workId: "work-a", generation: 1, instanceId: "instance"});
+    daemon.configure({modelCredentialStatus: "available", contextIdentity: "context-current", loadedSkills: [], resolvedTools: [], initializationComplete: true});
+    store.createSession({workId: "work-a", sessionId: "session-old", sdkHistoryPath: "/unused-old.jsonl", contextIdentity: "context-previous", createdAt: NOW, updatedAt: NOW});
+    const manager = new RunManager(store,daemon,{async execute(){ executions++; return {finalText:"must not execute"};}},()=>new Date(NOW),models);
+    const input = {workId:"work-a",sessionId:"session-old",submissionKey:"refuse-old",prompt:"identify current model"};
+    assert.throws(()=>manager.submit(input),{name:"SessionContextUnavailableError"});
+    await assert.rejects(manager.submitChat(input),{name:"SessionContextUnavailableError"});
+    await assert.rejects(manager.submitChat({...input,sessionId:"missing"}),{name:"SessionNotFoundError"});
+    assert.equal(resolves,0); assert.equal(executions,0); assert.equal(store.activeRun("work-a"),undefined);
+  });
+});

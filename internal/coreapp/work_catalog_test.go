@@ -161,6 +161,7 @@ func TestDefaultWorkPatchPersistsSelectionWithoutChangingEarlierConfig(t *testin
 	a, base, operator := appFixture(t, Options{Initialization: Initialization{
 		Administrator: &struct{ Account, Password string }{"admin", "development-fixture-pass"}, Runtime: &input,
 	}, DependencyCheck: func(context.Context, *Application, RuntimeProfile) error { return nil }})
+	importCatalogSkillFixture(t, a)
 	login, err := a.Identity.Login(context.Background(), "admin", "development-fixture-pass", "fixture")
 	if err != nil {
 		t.Fatal(err)
@@ -181,10 +182,10 @@ func TestDefaultWorkPatchPersistsSelectionWithoutChangingEarlierConfig(t *testin
 		t.Fatal("operator patch lost fields", config)
 	}
 	stored, err := a.Store.DefaultWork(context.Background())
-	if err != nil || stored.Revision != previous.Revision+1 || stored.Configuration.AgentsMd != "# Workspace context" || len(previous.Configuration.Skills) != 1 {
+	if err != nil || stored.Revision != previous.Revision+1 || stored.Configuration.AgentsMd != "# Workspace context" || len(previous.Configuration.Skills) != 0 {
 		t.Fatal("default revision or old copy was mutated", err, stored)
 	}
-	status, view = httpCall(t, base, "/api/v1/admin/default-work", "PATCH", "Bearer "+login.Token, map[string]any{"skills": []string{"deploy-work-service"}})
+	status, view = httpCall(t, base, "/api/v1/admin/default-work", "PATCH", "Bearer "+login.Token, map[string]any{"skills": []string{"catalog-skill"}})
 	if status != 200 || view["baseImage"] != newImage || len(view["configuration"].(map[string]any)["skills"].([]any)) != 1 || view["revision"] != nil {
 		t.Fatal("admin patch failed to merge current defaults", status, view)
 	}

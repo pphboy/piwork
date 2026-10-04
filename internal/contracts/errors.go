@@ -24,6 +24,16 @@ type errorDefinition struct {
 }
 
 var publicErrors = map[string]errorDefinition{
+	"REQUEST_RETRY_NOT_ALLOWED":         {409, "Historical or active requests cannot be retried", false},
+	"REQUEST_EXPIRED":                   {409, "Original request deadline passed", false},
+	"REQUEST_CAPACITY_EXCEEDED":         {429, "Work has 100 unfinished Pi requests", true},
+	"SUBMIT_CONFLICT":                   {409, "Submission key has different content", false},
+	"PI_PACKAGE_CANDIDATE_CONFLICT":     {409, "Brain candidate baseline or source changed", false},
+	"PI_PACKAGE_CANDIDATE_CHANGED":      {409, "Brain candidate source changed", false},
+	"MODEL_UNAVAILABLE":                 {409, "Selected model is unavailable; choose an available model", false},
+	"MODEL_NOT_SUPPORTED":               {409, "Selected model is unsupported by this Work's Pi SDK", false},
+	"MODEL_LIST_UNAVAILABLE":            {503, "Available models could not be loaded", true},
+	"RUN_MODEL_SELECTION_UNSUPPORTED":   {409, "This Work has no model selection channel", false},
 	"TARGET_MODEL_UNAVAILABLE":          {400, "A required recipient model credential is unavailable", false},
 	"EXTERNAL_MCP_SECRET_UNAVAILABLE":   {400, "A required external MCP credential is unavailable", false},
 	"PACKAGE_BINDING_INVALID":           {400, "Work package bindings are invalid", false},

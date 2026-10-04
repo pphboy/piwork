@@ -125,7 +125,7 @@ func TestNativePackageQueueModelMergeFreshRetryAndFutureDefaults(t *testing.T) {
 	}
 	status, view = packageHTTPCall(t, base, scopeA+"/configuration", "GET", auth, nil)
 	desired := view["desired"].(map[string]any)
-	if status != 200 || desired["modelRef"] != string(runtimeModelCatalogID(profile.Revision)) || len(desired["packages"].([]any)) != 1 || view["pendingApply"] != true {
+	if status != 200 || desired["modelRef"] != string(runtimeModelCatalogID(profile.Revision)) || len(desired["packages"].([]any)) != 2 || view["pendingApply"] != true {
 		t.Fatal("package publication overwrote latest model", view)
 	}
 	value, _ := a.workLocks.LoadOrStore(workA, &sync.Mutex{})

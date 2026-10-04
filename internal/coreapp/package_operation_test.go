@@ -31,7 +31,8 @@ func TestPackageOperationUsesPublicScopeContract(t *testing.T) {
 	}
 	workID := "work-fixture-0001"
 	operation.WorkID = &workID
-	operation.ResultJSON = &result
+	workResult := strings.Replace(result, `"scope":"core"`, `"scope":"work","pendingApply":true`, 1)
+	operation.ResultJSON = &workResult
 	job.WorkID = &workID
 	job.ScopeKind = "work"
 	view, err = packageOperationProjection(operation, job)
@@ -42,7 +43,7 @@ func TestPackageOperationUsesPublicScopeContract(t *testing.T) {
 	if _, err := contracts.Decode[contracts.PublicOperation](strings.NewReader(string(encoded)), "PublicOperationSchema", 64<<10); err != nil {
 		t.Fatal(err, string(encoded))
 	}
-	if view["result"] != nil {
-		t.Fatal("private package result projected as public Work configuration")
+	if view["result"] == nil || strings.Contains(string(encoded), "private") {
+		t.Fatal("safe package result missing or leaked private fields", string(encoded))
 	}
 }

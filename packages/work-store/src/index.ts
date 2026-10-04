@@ -12,3 +12,4 @@ export {
   type SessionRecord,
 } from "./store.js";
 export * from "./snapshot.js";
+export * from "./feedback.js";

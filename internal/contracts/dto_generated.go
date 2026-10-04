@@ -44,8 +44,13 @@ type AdminDefaultWorkPatch struct {
 }
 
 type AdminDefaultWorkView struct {
-	Configuration json.RawMessage `json:"configuration"`
-	BaseImage     json.RawMessage `json:"baseImage"`
+	Configuration       json.RawMessage `json:"configuration"`
+	BaseImage           json.RawMessage `json:"baseImage"`
+	BrainInitialization Field[struct {
+		State       string            `json:"state"`
+		OperationId Field[ResourceId] `json:"operationId,omitzero"`
+		Code        Field[string]     `json:"code,omitzero"`
+	}] `json:"brainInitialization,omitzero"`
 }
 
 type AdminEmptyAction struct {
@@ -158,6 +163,87 @@ type AdminUsers struct {
 	Users []User `json:"users"`
 }
 
+type AgentEvidenceQuery struct {
+	Limit  Field[int64]  `json:"limit,omitzero"`
+	Cursor Field[string] `json:"cursor,omitzero"`
+}
+
+type AgentEvidence struct {
+	EvidenceId   Identifier        `json:"evidenceId"`
+	RunId        json.RawMessage   `json:"runId"`
+	RequestId    json.RawMessage   `json:"requestId"`
+	ServiceName  Field[string]     `json:"serviceName,omitzero"`
+	Kind         string            `json:"kind"`
+	ObjectRef    string            `json:"objectRef"`
+	ObservedAt   Timestamp         `json:"observedAt"`
+	StateVersion Field[Identifier] `json:"stateVersion,omitzero"`
+	CodeVersion  Field[Identifier] `json:"codeVersion,omitzero"`
+	Summary      string            `json:"summary"`
+	Verified     bool              `json:"verified"`
+}
+
+type AgentRequestDetail struct {
+	Request  AgentRequest `json:"request"`
+	Evidence struct {
+		Items      []AgentEvidence `json:"items"`
+		NextCursor json.RawMessage `json:"nextCursor"`
+	} `json:"evidence"`
+	CheckedAt    Timestamp `json:"checkedAt"`
+	Availability string    `json:"availability"`
+}
+
+type AgentRequestDisposition string
+
+type AgentRequestedPayload struct {
+	Reason       string       `json:"reason"`
+	Goal         string       `json:"goal"`
+	EvidenceRefs []Identifier `json:"evidenceRefs"`
+}
+
+type AgentRequestPage struct {
+	Items        []AgentRequest  `json:"items"`
+	NextCursor   json.RawMessage `json:"nextCursor"`
+	CheckedAt    Timestamp       `json:"checkedAt"`
+	Availability string          `json:"availability"`
+}
+
+type AgentRequestQuery struct {
+	ServiceName Field[string]                  `json:"serviceName,omitzero"`
+	State       Field[AgentRequestState]       `json:"state,omitzero"`
+	Disposition Field[AgentRequestDisposition] `json:"disposition,omitzero"`
+	Limit       Field[int64]                   `json:"limit,omitzero"`
+	Cursor      Field[string]                  `json:"cursor,omitzero"`
+}
+
+type AgentRequest struct {
+	RequestId         Identifier              `json:"requestId"`
+	Source            AgentRunSource          `json:"source"`
+	Goal              string                  `json:"goal"`
+	State             AgentRequestState       `json:"state"`
+	Disposition       AgentRequestDisposition `json:"disposition"`
+	CreatedAt         Timestamp               `json:"createdAt"`
+	UpdatedAt         Timestamp               `json:"updatedAt"`
+	ExpiresAt         Timestamp               `json:"expiresAt"`
+	RetryOf           json.RawMessage         `json:"retryOf"`
+	AutoRunCount      int64                   `json:"autoRunCount"`
+	WaitRef           json.RawMessage         `json:"waitRef"`
+	RunIds            []Identifier            `json:"runIds"`
+	EvidenceIds       []Identifier            `json:"evidenceIds"`
+	EvidenceCount     Field[int64]            `json:"evidenceCount,omitzero"`
+	EvidenceTruncated Field[bool]             `json:"evidenceTruncated,omitzero"`
+	Result            json.RawMessage         `json:"result"`
+	Error             json.RawMessage         `json:"error"`
+}
+
+type AgentRequestState string
+
+type AgentRunSource struct {
+	Kind        string            `json:"kind"`
+	RequestId   Field[Identifier] `json:"requestId,omitzero"`
+	ServiceName Field[string]     `json:"serviceName,omitzero"`
+	Phase       Field[string]     `json:"phase,omitzero"`
+}
+
 type AgentRuntimeConfig struct {
 	Version           float64       `json:"version"`
 	WorkId            string        `json:"workId"`
@@ -195,10 +281,20 @@ type AgentRuntimeConfig struct {
 		ClientCertificatePath string `json:"clientCertificatePath"`
 		ClientPrivateKeyPath  string `json:"clientPrivateKeyPath"`
 	}] `json:"serviceControl,omitzero"`
+	FeedbackListen Field[string] `json:"feedbackListen,omitzero"`
+}
+
+type AgentWaitRef struct {
+	Kind             string        `json:"kind"`
+	ServiceName      Field[string] `json:"serviceName,omitzero"`
+	Id               Identifier    `json:"id"`
+	DeadlineAt       Timestamp     `json:"deadlineAt"`
+	NextPhase        string        `json:"nextPhase"`
+	VerificationGoal string        `json:"verificationGoal"`
 }
 
 type ApiError struct {
-	Code         ErrorCode         `json:"code"`
+	Code         string            `json:"code"`
 	Message      string            `json:"message"`
 	Retryable    bool              `json:"retryable"`
 	OperationId  Field[ResourceId] `json:"operationId,omitzero"`
@@ -236,6 +332,32 @@ type ArtifactReference struct {
 	CatalogId ResourceId    `json:"catalogId"`
 	Digest    Field[Digest] `json:"digest,omitzero"`
 }
+
+type BrainBehaviorChecks []struct {
+	Name    string `json:"name"`
+	Passed  bool   `json:"passed"`
+	Summary string `json:"summary"`
+}
+
+type BrainCandidateSubmission struct {
+	SubmissionKey        string                  `json:"submissionKey"`
+	RequestId            Identifier              `json:"requestId"`
+	VerificationGoal     string                  `json:"verificationGoal"`
+	VerificationTarget   BrainVerificationTarget `json:"verificationTarget"`
+	ExpectedSourceDigest Digest                  `json:"expectedSourceDigest"`
+	ActiveDigest         Digest                  `json:"activeDigest"`
+	DesiredDigest        Digest                  `json:"desiredDigest"`
+	ActiveContextId      Identifier              `json:"activeContextId"`
+}
+
+type BrainVerificationTarget struct {
+	ContractVersion float64                    `json:"contractVersion"`
+	ToolName        string                     `json:"toolName"`
+	Input           map[string]json.RawMessage `json:"input"`
+	CheckNames      []string                   `json:"checkNames"`
+}
+
+type BusinessOperationState string
 
 type CreateUserRequest struct {
 	Account  Identifier      `json:"account"`
@@ -505,6 +627,36 @@ type PiPackageWorkEntry struct {
 	Active       json.RawMessage       `json:"active"`
 	PendingApply bool                  `json:"pendingApply"`
 	Runtime      PiPackageRuntimeState `json:"runtime"`
+	Candidate    Field[struct {
+		Source      string     `json:"source"`
+		OperationId ResourceId `json:"operationId"`
+		RequestId   Identifier `json:"requestId"`
+		Preparation string     `json:"preparation"`
+		Desired     bool       `json:"desired"`
+		Active      bool       `json:"active"`
+		Adoption    string     `json:"adoption"`
+		Baseline    struct {
+			ActiveSelected        bool `json:"activeSelected"`
+			DesiredSelected       bool `json:"desiredSelected"`
+			ActiveMatchesCurrent  bool `json:"activeMatchesCurrent"`
+			DesiredMatchesCurrent bool `json:"desiredMatchesCurrent"`
+		} `json:"baseline"`
+		Verification struct {
+			Goal         string   `json:"goal"`
+			ToolName     string   `json:"toolName"`
+			InputSummary string   `json:"inputSummary"`
+			CheckNames   []string `json:"checkNames"`
+		} `json:"verification"`
+		Apply struct {
+			Availability string                `json:"availability"`
+			OperationId  Field[ResourceId]     `json:"operationId,omitzero"`
+			State        Field[OperationState] `json:"state,omitzero"`
+			Error        Field[struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			}] `json:"error,omitzero"`
+		} `json:"apply"`
+	}] `json:"candidate,omitzero"`
 }
 
 type PiPackageWorkVersion struct {
@@ -669,6 +821,11 @@ type PublicOperation struct {
 	Result        json.RawMessage       `json:"result"`
 	Error         json.RawMessage       `json:"error"`
 	Diagnostics   OperationDiagnostics  `json:"diagnostics"`
+	PackageSource Field[struct {
+		Kind      string     `json:"kind"`
+		Label     string     `json:"label"`
+		RequestId ResourceId `json:"requestId"`
+	}] `json:"packageSource,omitzero"`
 }
 
 type PublicSkill struct {
@@ -706,6 +863,26 @@ type ResourcePolicy struct {
 	MaxServices        int64 `json:"maxServices"`
 	MaxRetainedVolumes int64 `json:"maxRetainedVolumes"`
 }
+
+type RetryAgentRequest struct {
+	SubmissionKey string `json:"submissionKey"`
+}
+
+type RunModelDescription struct {
+	ModelRef json.RawMessage `json:"modelRef"`
+	Label    string          `json:"label"`
+	Provider string          `json:"provider"`
+	Model    string          `json:"model"`
+}
+
+type RunModelList struct {
+	Models       []RunModelDescription `json:"models"`
+	DefaultModel RunModelDescription   `json:"defaultModel"`
+	CheckedAt    Timestamp             `json:"checkedAt"`
+	Availability string                `json:"availability"`
+}
+
+type RunModelSelector = json.RawMessage
 
 type RuntimeSkill struct {
 	Name             SkillName       `json:"name"`
@@ -766,6 +943,43 @@ type ServiceAccess struct {
 	} `json:"ports"`
 }
 
+type ServiceActionResult struct {
+	ActionId             Identifier             `json:"actionId"`
+	ActionName           string                 `json:"actionName"`
+	Input                json.RawMessage        `json:"input"`
+	ExpectedStateVersion json.RawMessage        `json:"expectedStateVersion"`
+	State                BusinessOperationState `json:"state"`
+	StateVersion         Identifier             `json:"stateVersion"`
+	ObservedAt           Timestamp              `json:"observedAt"`
+	Result               Field[json.RawMessage] `json:"result,omitzero"`
+	JobId                Field[json.RawMessage] `json:"jobId,omitzero"`
+	Error                Field[struct {
+		Code    Identifier `json:"code"`
+		Message string     `json:"message"`
+	}] `json:"error,omitzero"`
+}
+
+type ServiceCapabilities struct {
+	ContractVersion    float64                    `json:"contractVersion"`
+	LogicalServiceName string                     `json:"logicalServiceName"`
+	CodeVersion        Identifier                 `json:"codeVersion"`
+	StateVersion       Identifier                 `json:"stateVersion"`
+	Queries            map[string]json.RawMessage `json:"queries"`
+	Actions            map[string]json.RawMessage `json:"actions"`
+	Events             struct {
+		Facts          []string `json:"facts"`
+		RequestReasons []string `json:"requestReasons"`
+	} `json:"events"`
+	Jobs bool `json:"jobs"`
+}
+
+type ServiceConnection struct {
+	ContractVersion float64 `json:"contractVersion"`
+	ServiceName     string  `json:"serviceName"`
+	ApiPortName     string  `json:"apiPortName"`
+	Mode            string  `json:"mode"`
+}
+
 type ServiceDefinitionInput struct {
 	Name             string                            `json:"name"`
 	Image            ServiceImage                      `json:"image"`
@@ -812,8 +1026,41 @@ type ServiceEndpoint struct {
 	Url      Field[string] `json:"url,omitzero"`
 }
 
+type ServiceEvent struct {
+	ContractVersion float64    `json:"contractVersion"`
+	EventId         Identifier `json:"eventId"`
+	Origin          struct {
+		WorkId    ResourceId `json:"workId"`
+		ServiceId ResourceId `json:"serviceId"`
+	} `json:"origin"`
+	ServiceName        string                     `json:"serviceName"`
+	Type               string                     `json:"type"`
+	OccurredAt         Timestamp                  `json:"occurredAt"`
+	StateVersion       Identifier                 `json:"stateVersion"`
+	EntityRef          Field[json.RawMessage]     `json:"entityRef,omitzero"`
+	ActionId           Field[json.RawMessage]     `json:"actionId,omitzero"`
+	JobId              Field[json.RawMessage]     `json:"jobId,omitzero"`
+	CausationRequestId Field[json.RawMessage]     `json:"causationRequestId,omitzero"`
+	Actor              Field[string]              `json:"actor,omitzero"`
+	Payload            map[string]json.RawMessage `json:"payload"`
+}
+
 type ServiceImage struct {
 	Reference string `json:"reference"`
+}
+
+type ServiceJobResult struct {
+	JobId      Identifier             `json:"jobId"`
+	ActionId   Identifier             `json:"actionId"`
+	State      BusinessOperationState `json:"state"`
+	ObservedAt Timestamp              `json:"observedAt"`
+	DeadlineAt Timestamp              `json:"deadlineAt"`
+	Artifacts  []string               `json:"artifacts"`
+	Result     Field[json.RawMessage] `json:"result,omitzero"`
+	Error      Field[struct {
+		Code    Identifier `json:"code"`
+		Message string     `json:"message"`
+	}] `json:"error,omitzero"`
 }
 
 type ServiceMount struct {
@@ -826,6 +1073,22 @@ type ServicePort struct {
 	Name          Identifier `json:"name"`
 	ContainerPort int64      `json:"containerPort"`
 	Protocol      string     `json:"protocol"`
+}
+
+type ServiceQueryResult struct {
+	StateVersion Identifier      `json:"stateVersion"`
+	CodeVersion  Identifier      `json:"codeVersion"`
+	ObservedAt   Timestamp       `json:"observedAt"`
+	Value        json.RawMessage `json:"value"`
+	Checks       Field[[]struct {
+		Name    Identifier `json:"name"`
+		Passed  bool       `json:"passed"`
+		Summary string     `json:"summary"`
+	}] `json:"checks,omitzero"`
+}
+
+type SetSessionModel struct {
+	ModelRef json.RawMessage `json:"modelRef"`
 }
 
 type SetWorkAgentsRequest struct {
@@ -849,6 +1112,13 @@ type SkillPathRequest struct {
 type SkillSelection []SkillName
 
 type SnapshotIdempotencyKey string
+
+type SubmitRunInput struct {
+	SessionId     Identifier             `json:"sessionId"`
+	SubmissionKey string                 `json:"submissionKey"`
+	Prompt        string                 `json:"prompt"`
+	ModelRef      Field[json.RawMessage] `json:"modelRef,omitzero"`
+}
 
 type Timestamp string
 

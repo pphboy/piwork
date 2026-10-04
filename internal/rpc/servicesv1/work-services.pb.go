@@ -57,6 +57,147 @@ func (*Empty) Descriptor() ([]byte, []int) {
 	return file_work_services_proto_rawDescGZIP(), []int{0}
 }
 
+// Authenticated only through the current agentd runtime mTLS identity.
+type WorkPrivateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InputJson     string                 `protobuf:"bytes,1,opt,name=input_json,json=inputJson,proto3" json:"input_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkPrivateRequest) Reset() {
+	*x = WorkPrivateRequest{}
+	mi := &file_work_services_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkPrivateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkPrivateRequest) ProtoMessage() {}
+
+func (x *WorkPrivateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_work_services_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkPrivateRequest.ProtoReflect.Descriptor instead.
+func (*WorkPrivateRequest) Descriptor() ([]byte, []int) {
+	return file_work_services_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *WorkPrivateRequest) GetInputJson() string {
+	if x != nil {
+		return x.InputJson
+	}
+	return ""
+}
+
+type WorkPrivateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ValueJson     string                 `protobuf:"bytes,1,opt,name=value_json,json=valueJson,proto3" json:"value_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkPrivateResponse) Reset() {
+	*x = WorkPrivateResponse{}
+	mi := &file_work_services_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkPrivateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkPrivateResponse) ProtoMessage() {}
+
+func (x *WorkPrivateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_work_services_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkPrivateResponse.ProtoReflect.Descriptor instead.
+func (*WorkPrivateResponse) Descriptor() ([]byte, []int) {
+	return file_work_services_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *WorkPrivateResponse) GetValueJson() string {
+	if x != nil {
+		return x.ValueJson
+	}
+	return ""
+}
+
+type RunModelResolution struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ModelJson     string                 `protobuf:"bytes,1,opt,name=model_json,json=modelJson,proto3" json:"model_json,omitempty"`
+	Credential    string                 `protobuf:"bytes,2,opt,name=credential,proto3" json:"credential,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunModelResolution) Reset() {
+	*x = RunModelResolution{}
+	mi := &file_work_services_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunModelResolution) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunModelResolution) ProtoMessage() {}
+
+func (x *RunModelResolution) ProtoReflect() protoreflect.Message {
+	mi := &file_work_services_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunModelResolution.ProtoReflect.Descriptor instead.
+func (*RunModelResolution) Descriptor() ([]byte, []int) {
+	return file_work_services_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RunModelResolution) GetModelJson() string {
+	if x != nil {
+		return x.ModelJson
+	}
+	return ""
+}
+
+func (x *RunModelResolution) GetCredential() string {
+	if x != nil {
+		return x.Credential
+	}
+	return ""
+}
+
 type ServiceImage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Reference     string                 `protobuf:"bytes,1,opt,name=reference,proto3" json:"reference,omitempty"`
@@ -66,7 +207,7 @@ type ServiceImage struct {
 
 func (x *ServiceImage) Reset() {
 	*x = ServiceImage{}
-	mi := &file_work_services_proto_msgTypes[1]
+	mi := &file_work_services_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -78,7 +219,7 @@ func (x *ServiceImage) String() string {
 func (*ServiceImage) ProtoMessage() {}
 
 func (x *ServiceImage) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[1]
+	mi := &file_work_services_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -91,7 +232,7 @@ func (x *ServiceImage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceImage.ProtoReflect.Descriptor instead.
 func (*ServiceImage) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{1}
+	return file_work_services_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ServiceImage) GetReference() string {
@@ -112,7 +253,7 @@ type ServiceMount struct {
 
 func (x *ServiceMount) Reset() {
 	*x = ServiceMount{}
-	mi := &file_work_services_proto_msgTypes[2]
+	mi := &file_work_services_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -124,7 +265,7 @@ func (x *ServiceMount) String() string {
 func (*ServiceMount) ProtoMessage() {}
 
 func (x *ServiceMount) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[2]
+	mi := &file_work_services_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -137,7 +278,7 @@ func (x *ServiceMount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceMount.ProtoReflect.Descriptor instead.
 func (*ServiceMount) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{2}
+	return file_work_services_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ServiceMount) GetSource() string {
@@ -172,7 +313,7 @@ type ServicePort struct {
 
 func (x *ServicePort) Reset() {
 	*x = ServicePort{}
-	mi := &file_work_services_proto_msgTypes[3]
+	mi := &file_work_services_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -184,7 +325,7 @@ func (x *ServicePort) String() string {
 func (*ServicePort) ProtoMessage() {}
 
 func (x *ServicePort) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[3]
+	mi := &file_work_services_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -197,7 +338,7 @@ func (x *ServicePort) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServicePort.ProtoReflect.Descriptor instead.
 func (*ServicePort) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{3}
+	return file_work_services_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ServicePort) GetName() string {
@@ -235,7 +376,7 @@ type ReadinessProbe struct {
 
 func (x *ReadinessProbe) Reset() {
 	*x = ReadinessProbe{}
-	mi := &file_work_services_proto_msgTypes[4]
+	mi := &file_work_services_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -247,7 +388,7 @@ func (x *ReadinessProbe) String() string {
 func (*ReadinessProbe) ProtoMessage() {}
 
 func (x *ReadinessProbe) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[4]
+	mi := &file_work_services_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -260,7 +401,7 @@ func (x *ReadinessProbe) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadinessProbe.ProtoReflect.Descriptor instead.
 func (*ReadinessProbe) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{4}
+	return file_work_services_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ReadinessProbe) GetKind() string {
@@ -328,7 +469,7 @@ type ServiceDefinition struct {
 
 func (x *ServiceDefinition) Reset() {
 	*x = ServiceDefinition{}
-	mi := &file_work_services_proto_msgTypes[5]
+	mi := &file_work_services_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -340,7 +481,7 @@ func (x *ServiceDefinition) String() string {
 func (*ServiceDefinition) ProtoMessage() {}
 
 func (x *ServiceDefinition) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[5]
+	mi := &file_work_services_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -353,7 +494,7 @@ func (x *ServiceDefinition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceDefinition.ProtoReflect.Descriptor instead.
 func (*ServiceDefinition) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{5}
+	return file_work_services_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ServiceDefinition) GetName() string {
@@ -474,7 +615,7 @@ type ServiceEndpoint struct {
 
 func (x *ServiceEndpoint) Reset() {
 	*x = ServiceEndpoint{}
-	mi := &file_work_services_proto_msgTypes[6]
+	mi := &file_work_services_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -486,7 +627,7 @@ func (x *ServiceEndpoint) String() string {
 func (*ServiceEndpoint) ProtoMessage() {}
 
 func (x *ServiceEndpoint) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[6]
+	mi := &file_work_services_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -499,7 +640,7 @@ func (x *ServiceEndpoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceEndpoint.ProtoReflect.Descriptor instead.
 func (*ServiceEndpoint) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{6}
+	return file_work_services_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ServiceEndpoint) GetName() string {
@@ -548,7 +689,7 @@ type ServiceAccessPort struct {
 
 func (x *ServiceAccessPort) Reset() {
 	*x = ServiceAccessPort{}
-	mi := &file_work_services_proto_msgTypes[7]
+	mi := &file_work_services_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -560,7 +701,7 @@ func (x *ServiceAccessPort) String() string {
 func (*ServiceAccessPort) ProtoMessage() {}
 
 func (x *ServiceAccessPort) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[7]
+	mi := &file_work_services_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -573,7 +714,7 @@ func (x *ServiceAccessPort) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceAccessPort.ProtoReflect.Descriptor instead.
 func (*ServiceAccessPort) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{7}
+	return file_work_services_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ServiceAccessPort) GetName() string {
@@ -610,7 +751,7 @@ type ServiceAccess struct {
 
 func (x *ServiceAccess) Reset() {
 	*x = ServiceAccess{}
-	mi := &file_work_services_proto_msgTypes[8]
+	mi := &file_work_services_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -622,7 +763,7 @@ func (x *ServiceAccess) String() string {
 func (*ServiceAccess) ProtoMessage() {}
 
 func (x *ServiceAccess) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[8]
+	mi := &file_work_services_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -635,7 +776,7 @@ func (x *ServiceAccess) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceAccess.ProtoReflect.Descriptor instead.
 func (*ServiceAccess) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{8}
+	return file_work_services_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ServiceAccess) GetHostname() string {
@@ -686,7 +827,7 @@ type SafeError struct {
 
 func (x *SafeError) Reset() {
 	*x = SafeError{}
-	mi := &file_work_services_proto_msgTypes[9]
+	mi := &file_work_services_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -698,7 +839,7 @@ func (x *SafeError) String() string {
 func (*SafeError) ProtoMessage() {}
 
 func (x *SafeError) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[9]
+	mi := &file_work_services_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -711,7 +852,7 @@ func (x *SafeError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SafeError.ProtoReflect.Descriptor instead.
 func (*SafeError) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{9}
+	return file_work_services_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SafeError) GetCode() string {
@@ -769,7 +910,7 @@ type ServiceView struct {
 
 func (x *ServiceView) Reset() {
 	*x = ServiceView{}
-	mi := &file_work_services_proto_msgTypes[10]
+	mi := &file_work_services_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -781,7 +922,7 @@ func (x *ServiceView) String() string {
 func (*ServiceView) ProtoMessage() {}
 
 func (x *ServiceView) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[10]
+	mi := &file_work_services_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -794,7 +935,7 @@ func (x *ServiceView) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceView.ProtoReflect.Descriptor instead.
 func (*ServiceView) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{10}
+	return file_work_services_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ServiceView) GetWorkId() string {
@@ -897,7 +1038,7 @@ type OperationView struct {
 
 func (x *OperationView) Reset() {
 	*x = OperationView{}
-	mi := &file_work_services_proto_msgTypes[11]
+	mi := &file_work_services_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -909,7 +1050,7 @@ func (x *OperationView) String() string {
 func (*OperationView) ProtoMessage() {}
 
 func (x *OperationView) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[11]
+	mi := &file_work_services_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -922,7 +1063,7 @@ func (x *OperationView) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationView.ProtoReflect.Descriptor instead.
 func (*OperationView) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{11}
+	return file_work_services_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *OperationView) GetOperationId() string {
@@ -994,7 +1135,7 @@ type Acceptance struct {
 
 func (x *Acceptance) Reset() {
 	*x = Acceptance{}
-	mi := &file_work_services_proto_msgTypes[12]
+	mi := &file_work_services_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1006,7 +1147,7 @@ func (x *Acceptance) String() string {
 func (*Acceptance) ProtoMessage() {}
 
 func (x *Acceptance) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[12]
+	mi := &file_work_services_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1019,7 +1160,7 @@ func (x *Acceptance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Acceptance.ProtoReflect.Descriptor instead.
 func (*Acceptance) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{12}
+	return file_work_services_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Acceptance) GetServiceId() string {
@@ -1078,7 +1219,7 @@ type DeploymentContext struct {
 
 func (x *DeploymentContext) Reset() {
 	*x = DeploymentContext{}
-	mi := &file_work_services_proto_msgTypes[13]
+	mi := &file_work_services_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1090,7 +1231,7 @@ func (x *DeploymentContext) String() string {
 func (*DeploymentContext) ProtoMessage() {}
 
 func (x *DeploymentContext) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[13]
+	mi := &file_work_services_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1103,7 +1244,7 @@ func (x *DeploymentContext) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeploymentContext.ProtoReflect.Descriptor instead.
 func (*DeploymentContext) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{13}
+	return file_work_services_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *DeploymentContext) GetWorkId() string {
@@ -1207,7 +1348,7 @@ type CreateServiceRequest struct {
 
 func (x *CreateServiceRequest) Reset() {
 	*x = CreateServiceRequest{}
-	mi := &file_work_services_proto_msgTypes[14]
+	mi := &file_work_services_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1219,7 +1360,7 @@ func (x *CreateServiceRequest) String() string {
 func (*CreateServiceRequest) ProtoMessage() {}
 
 func (x *CreateServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[14]
+	mi := &file_work_services_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1232,7 +1373,7 @@ func (x *CreateServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateServiceRequest.ProtoReflect.Descriptor instead.
 func (*CreateServiceRequest) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{14}
+	return file_work_services_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *CreateServiceRequest) GetDefinition() *ServiceDefinition {
@@ -1258,7 +1399,7 @@ type ListServicesResponse struct {
 
 func (x *ListServicesResponse) Reset() {
 	*x = ListServicesResponse{}
-	mi := &file_work_services_proto_msgTypes[15]
+	mi := &file_work_services_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1270,7 +1411,7 @@ func (x *ListServicesResponse) String() string {
 func (*ListServicesResponse) ProtoMessage() {}
 
 func (x *ListServicesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[15]
+	mi := &file_work_services_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1283,7 +1424,7 @@ func (x *ListServicesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServicesResponse.ProtoReflect.Descriptor instead.
 func (*ListServicesResponse) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{15}
+	return file_work_services_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ListServicesResponse) GetServices() []*ServiceView {
@@ -1302,7 +1443,7 @@ type ServiceIdRequest struct {
 
 func (x *ServiceIdRequest) Reset() {
 	*x = ServiceIdRequest{}
-	mi := &file_work_services_proto_msgTypes[16]
+	mi := &file_work_services_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1314,7 +1455,7 @@ func (x *ServiceIdRequest) String() string {
 func (*ServiceIdRequest) ProtoMessage() {}
 
 func (x *ServiceIdRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[16]
+	mi := &file_work_services_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1327,7 +1468,7 @@ func (x *ServiceIdRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceIdRequest.ProtoReflect.Descriptor instead.
 func (*ServiceIdRequest) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{16}
+	return file_work_services_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ServiceIdRequest) GetServiceId() string {
@@ -1347,7 +1488,7 @@ type MutateServiceRequest struct {
 
 func (x *MutateServiceRequest) Reset() {
 	*x = MutateServiceRequest{}
-	mi := &file_work_services_proto_msgTypes[17]
+	mi := &file_work_services_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1359,7 +1500,7 @@ func (x *MutateServiceRequest) String() string {
 func (*MutateServiceRequest) ProtoMessage() {}
 
 func (x *MutateServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[17]
+	mi := &file_work_services_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1372,7 +1513,7 @@ func (x *MutateServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MutateServiceRequest.ProtoReflect.Descriptor instead.
 func (*MutateServiceRequest) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{17}
+	return file_work_services_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *MutateServiceRequest) GetServiceId() string {
@@ -1401,7 +1542,7 @@ type UpdateServiceRequest struct {
 
 func (x *UpdateServiceRequest) Reset() {
 	*x = UpdateServiceRequest{}
-	mi := &file_work_services_proto_msgTypes[18]
+	mi := &file_work_services_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1413,7 +1554,7 @@ func (x *UpdateServiceRequest) String() string {
 func (*UpdateServiceRequest) ProtoMessage() {}
 
 func (x *UpdateServiceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[18]
+	mi := &file_work_services_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1426,7 +1567,7 @@ func (x *UpdateServiceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateServiceRequest.ProtoReflect.Descriptor instead.
 func (*UpdateServiceRequest) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{18}
+	return file_work_services_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *UpdateServiceRequest) GetServiceId() string {
@@ -1466,7 +1607,7 @@ type OperationIdRequest struct {
 
 func (x *OperationIdRequest) Reset() {
 	*x = OperationIdRequest{}
-	mi := &file_work_services_proto_msgTypes[19]
+	mi := &file_work_services_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1478,7 +1619,7 @@ func (x *OperationIdRequest) String() string {
 func (*OperationIdRequest) ProtoMessage() {}
 
 func (x *OperationIdRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[19]
+	mi := &file_work_services_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1491,7 +1632,7 @@ func (x *OperationIdRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationIdRequest.ProtoReflect.Descriptor instead.
 func (*OperationIdRequest) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{19}
+	return file_work_services_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *OperationIdRequest) GetOperationId() string {
@@ -1511,7 +1652,7 @@ type ReadServiceLogsRequest struct {
 
 func (x *ReadServiceLogsRequest) Reset() {
 	*x = ReadServiceLogsRequest{}
-	mi := &file_work_services_proto_msgTypes[20]
+	mi := &file_work_services_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1523,7 +1664,7 @@ func (x *ReadServiceLogsRequest) String() string {
 func (*ReadServiceLogsRequest) ProtoMessage() {}
 
 func (x *ReadServiceLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[20]
+	mi := &file_work_services_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1536,7 +1677,7 @@ func (x *ReadServiceLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadServiceLogsRequest.ProtoReflect.Descriptor instead.
 func (*ReadServiceLogsRequest) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{20}
+	return file_work_services_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ReadServiceLogsRequest) GetServiceId() string {
@@ -1567,7 +1708,7 @@ type ServiceLogs struct {
 
 func (x *ServiceLogs) Reset() {
 	*x = ServiceLogs{}
-	mi := &file_work_services_proto_msgTypes[21]
+	mi := &file_work_services_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1579,7 +1720,7 @@ func (x *ServiceLogs) String() string {
 func (*ServiceLogs) ProtoMessage() {}
 
 func (x *ServiceLogs) ProtoReflect() protoreflect.Message {
-	mi := &file_work_services_proto_msgTypes[21]
+	mi := &file_work_services_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1592,7 +1733,7 @@ func (x *ServiceLogs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceLogs.ProtoReflect.Descriptor instead.
 func (*ServiceLogs) Descriptor() ([]byte, []int) {
-	return file_work_services_proto_rawDescGZIP(), []int{21}
+	return file_work_services_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ServiceLogs) GetServiceId() string {
@@ -1642,7 +1783,19 @@ var File_work_services_proto protoreflect.FileDescriptor
 const file_work_services_proto_rawDesc = "" +
 	"\n" +
 	"\x13work-services.proto\x12\x17piwork.core.services.v1\"\a\n" +
-	"\x05Empty\",\n" +
+	"\x05Empty\"3\n" +
+	"\x12WorkPrivateRequest\x12\x1d\n" +
+	"\n" +
+	"input_json\x18\x01 \x01(\tR\tinputJson\"4\n" +
+	"\x13WorkPrivateResponse\x12\x1d\n" +
+	"\n" +
+	"value_json\x18\x01 \x01(\tR\tvalueJson\"S\n" +
+	"\x12RunModelResolution\x12\x1d\n" +
+	"\n" +
+	"model_json\x18\x01 \x01(\tR\tmodelJson\x12\x1e\n" +
+	"\n" +
+	"credential\x18\x02 \x01(\tR\n" +
+	"credential\",\n" +
 	"\fServiceImage\x12\x1c\n" +
 	"\treference\x18\x01 \x01(\tR\treference\"[\n" +
 	"\fServiceMount\x12\x16\n" +
@@ -1806,8 +1959,13 @@ const file_work_services_proto_rawDesc = "" +
 	"\ttruncated\x18\x04 \x01(\bR\ttruncated\x12!\n" +
 	"\fcollected_at\x18\x05 \x01(\tR\vcollectedAt\x12=\n" +
 	"\x05error\x18\x06 \x01(\v2\".piwork.core.services.v1.SafeErrorH\x00R\x05error\x88\x01\x01B\b\n" +
-	"\x06_error2\xbf\t\n" +
-	"\fWorkServices\x12b\n" +
+	"\x06_error2\xe3\r\n" +
+	"\fWorkServices\x12]\n" +
+	"\rListRunModels\x12\x1e.piwork.core.services.v1.Empty\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12k\n" +
+	"\x0fResolveRunModel\x12+.piwork.core.services.v1.WorkPrivateRequest\x1a+.piwork.core.services.v1.RunModelResolution\x12m\n" +
+	"\x1dGetServiceInteractionBindings\x12\x1e.piwork.core.services.v1.Empty\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12r\n" +
+	"\x15PrepareBrainCandidate\x12+.piwork.core.services.v1.WorkPrivateRequest\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12s\n" +
+	"\x16GetBrainCandidateState\x12+.piwork.core.services.v1.WorkPrivateRequest\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12b\n" +
 	"\x14GetDeploymentContext\x12\x1e.piwork.core.services.v1.Empty\x1a*.piwork.core.services.v1.DeploymentContext\x12c\n" +
 	"\rCreateService\x12-.piwork.core.services.v1.CreateServiceRequest\x1a#.piwork.core.services.v1.Acceptance\x12]\n" +
 	"\fListServices\x12\x1e.piwork.core.services.v1.Empty\x1a-.piwork.core.services.v1.ListServicesResponse\x12]\n" +
@@ -1834,74 +1992,87 @@ func file_work_services_proto_rawDescGZIP() []byte {
 	return file_work_services_proto_rawDescData
 }
 
-var file_work_services_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_work_services_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_work_services_proto_goTypes = []any{
 	(*Empty)(nil),                  // 0: piwork.core.services.v1.Empty
-	(*ServiceImage)(nil),           // 1: piwork.core.services.v1.ServiceImage
-	(*ServiceMount)(nil),           // 2: piwork.core.services.v1.ServiceMount
-	(*ServicePort)(nil),            // 3: piwork.core.services.v1.ServicePort
-	(*ReadinessProbe)(nil),         // 4: piwork.core.services.v1.ReadinessProbe
-	(*ServiceDefinition)(nil),      // 5: piwork.core.services.v1.ServiceDefinition
-	(*ServiceEndpoint)(nil),        // 6: piwork.core.services.v1.ServiceEndpoint
-	(*ServiceAccessPort)(nil),      // 7: piwork.core.services.v1.ServiceAccessPort
-	(*ServiceAccess)(nil),          // 8: piwork.core.services.v1.ServiceAccess
-	(*SafeError)(nil),              // 9: piwork.core.services.v1.SafeError
-	(*ServiceView)(nil),            // 10: piwork.core.services.v1.ServiceView
-	(*OperationView)(nil),          // 11: piwork.core.services.v1.OperationView
-	(*Acceptance)(nil),             // 12: piwork.core.services.v1.Acceptance
-	(*DeploymentContext)(nil),      // 13: piwork.core.services.v1.DeploymentContext
-	(*CreateServiceRequest)(nil),   // 14: piwork.core.services.v1.CreateServiceRequest
-	(*ListServicesResponse)(nil),   // 15: piwork.core.services.v1.ListServicesResponse
-	(*ServiceIdRequest)(nil),       // 16: piwork.core.services.v1.ServiceIdRequest
-	(*MutateServiceRequest)(nil),   // 17: piwork.core.services.v1.MutateServiceRequest
-	(*UpdateServiceRequest)(nil),   // 18: piwork.core.services.v1.UpdateServiceRequest
-	(*OperationIdRequest)(nil),     // 19: piwork.core.services.v1.OperationIdRequest
-	(*ReadServiceLogsRequest)(nil), // 20: piwork.core.services.v1.ReadServiceLogsRequest
-	(*ServiceLogs)(nil),            // 21: piwork.core.services.v1.ServiceLogs
-	nil,                            // 22: piwork.core.services.v1.ServiceDefinition.EnvironmentEntry
+	(*WorkPrivateRequest)(nil),     // 1: piwork.core.services.v1.WorkPrivateRequest
+	(*WorkPrivateResponse)(nil),    // 2: piwork.core.services.v1.WorkPrivateResponse
+	(*RunModelResolution)(nil),     // 3: piwork.core.services.v1.RunModelResolution
+	(*ServiceImage)(nil),           // 4: piwork.core.services.v1.ServiceImage
+	(*ServiceMount)(nil),           // 5: piwork.core.services.v1.ServiceMount
+	(*ServicePort)(nil),            // 6: piwork.core.services.v1.ServicePort
+	(*ReadinessProbe)(nil),         // 7: piwork.core.services.v1.ReadinessProbe
+	(*ServiceDefinition)(nil),      // 8: piwork.core.services.v1.ServiceDefinition
+	(*ServiceEndpoint)(nil),        // 9: piwork.core.services.v1.ServiceEndpoint
+	(*ServiceAccessPort)(nil),      // 10: piwork.core.services.v1.ServiceAccessPort
+	(*ServiceAccess)(nil),          // 11: piwork.core.services.v1.ServiceAccess
+	(*SafeError)(nil),              // 12: piwork.core.services.v1.SafeError
+	(*ServiceView)(nil),            // 13: piwork.core.services.v1.ServiceView
+	(*OperationView)(nil),          // 14: piwork.core.services.v1.OperationView
+	(*Acceptance)(nil),             // 15: piwork.core.services.v1.Acceptance
+	(*DeploymentContext)(nil),      // 16: piwork.core.services.v1.DeploymentContext
+	(*CreateServiceRequest)(nil),   // 17: piwork.core.services.v1.CreateServiceRequest
+	(*ListServicesResponse)(nil),   // 18: piwork.core.services.v1.ListServicesResponse
+	(*ServiceIdRequest)(nil),       // 19: piwork.core.services.v1.ServiceIdRequest
+	(*MutateServiceRequest)(nil),   // 20: piwork.core.services.v1.MutateServiceRequest
+	(*UpdateServiceRequest)(nil),   // 21: piwork.core.services.v1.UpdateServiceRequest
+	(*OperationIdRequest)(nil),     // 22: piwork.core.services.v1.OperationIdRequest
+	(*ReadServiceLogsRequest)(nil), // 23: piwork.core.services.v1.ReadServiceLogsRequest
+	(*ServiceLogs)(nil),            // 24: piwork.core.services.v1.ServiceLogs
+	nil,                            // 25: piwork.core.services.v1.ServiceDefinition.EnvironmentEntry
 }
 var file_work_services_proto_depIdxs = []int32{
-	1,  // 0: piwork.core.services.v1.ServiceDefinition.image:type_name -> piwork.core.services.v1.ServiceImage
-	22, // 1: piwork.core.services.v1.ServiceDefinition.environment:type_name -> piwork.core.services.v1.ServiceDefinition.EnvironmentEntry
-	2,  // 2: piwork.core.services.v1.ServiceDefinition.mounts:type_name -> piwork.core.services.v1.ServiceMount
-	3,  // 3: piwork.core.services.v1.ServiceDefinition.ports:type_name -> piwork.core.services.v1.ServicePort
-	4,  // 4: piwork.core.services.v1.ServiceDefinition.readiness:type_name -> piwork.core.services.v1.ReadinessProbe
-	7,  // 5: piwork.core.services.v1.ServiceAccess.ports:type_name -> piwork.core.services.v1.ServiceAccessPort
-	5,  // 6: piwork.core.services.v1.ServiceView.definition:type_name -> piwork.core.services.v1.ServiceDefinition
-	6,  // 7: piwork.core.services.v1.ServiceView.endpoints:type_name -> piwork.core.services.v1.ServiceEndpoint
-	9,  // 8: piwork.core.services.v1.ServiceView.last_error:type_name -> piwork.core.services.v1.SafeError
-	8,  // 9: piwork.core.services.v1.ServiceView.access:type_name -> piwork.core.services.v1.ServiceAccess
-	9,  // 10: piwork.core.services.v1.OperationView.error:type_name -> piwork.core.services.v1.SafeError
-	5,  // 11: piwork.core.services.v1.CreateServiceRequest.definition:type_name -> piwork.core.services.v1.ServiceDefinition
-	10, // 12: piwork.core.services.v1.ListServicesResponse.services:type_name -> piwork.core.services.v1.ServiceView
-	5,  // 13: piwork.core.services.v1.UpdateServiceRequest.definition:type_name -> piwork.core.services.v1.ServiceDefinition
-	9,  // 14: piwork.core.services.v1.ServiceLogs.error:type_name -> piwork.core.services.v1.SafeError
-	0,  // 15: piwork.core.services.v1.WorkServices.GetDeploymentContext:input_type -> piwork.core.services.v1.Empty
-	14, // 16: piwork.core.services.v1.WorkServices.CreateService:input_type -> piwork.core.services.v1.CreateServiceRequest
-	0,  // 17: piwork.core.services.v1.WorkServices.ListServices:input_type -> piwork.core.services.v1.Empty
-	16, // 18: piwork.core.services.v1.WorkServices.GetService:input_type -> piwork.core.services.v1.ServiceIdRequest
-	18, // 19: piwork.core.services.v1.WorkServices.UpdateService:input_type -> piwork.core.services.v1.UpdateServiceRequest
-	17, // 20: piwork.core.services.v1.WorkServices.StartService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	17, // 21: piwork.core.services.v1.WorkServices.StopService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	17, // 22: piwork.core.services.v1.WorkServices.RestartService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	17, // 23: piwork.core.services.v1.WorkServices.RemoveService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	17, // 24: piwork.core.services.v1.WorkServices.RetryService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	19, // 25: piwork.core.services.v1.WorkServices.GetOperation:input_type -> piwork.core.services.v1.OperationIdRequest
-	20, // 26: piwork.core.services.v1.WorkServices.ReadServiceLogs:input_type -> piwork.core.services.v1.ReadServiceLogsRequest
-	13, // 27: piwork.core.services.v1.WorkServices.GetDeploymentContext:output_type -> piwork.core.services.v1.DeploymentContext
-	12, // 28: piwork.core.services.v1.WorkServices.CreateService:output_type -> piwork.core.services.v1.Acceptance
-	15, // 29: piwork.core.services.v1.WorkServices.ListServices:output_type -> piwork.core.services.v1.ListServicesResponse
-	10, // 30: piwork.core.services.v1.WorkServices.GetService:output_type -> piwork.core.services.v1.ServiceView
-	12, // 31: piwork.core.services.v1.WorkServices.UpdateService:output_type -> piwork.core.services.v1.Acceptance
-	12, // 32: piwork.core.services.v1.WorkServices.StartService:output_type -> piwork.core.services.v1.Acceptance
-	12, // 33: piwork.core.services.v1.WorkServices.StopService:output_type -> piwork.core.services.v1.Acceptance
-	12, // 34: piwork.core.services.v1.WorkServices.RestartService:output_type -> piwork.core.services.v1.Acceptance
-	12, // 35: piwork.core.services.v1.WorkServices.RemoveService:output_type -> piwork.core.services.v1.Acceptance
-	12, // 36: piwork.core.services.v1.WorkServices.RetryService:output_type -> piwork.core.services.v1.Acceptance
-	11, // 37: piwork.core.services.v1.WorkServices.GetOperation:output_type -> piwork.core.services.v1.OperationView
-	21, // 38: piwork.core.services.v1.WorkServices.ReadServiceLogs:output_type -> piwork.core.services.v1.ServiceLogs
-	27, // [27:39] is the sub-list for method output_type
-	15, // [15:27] is the sub-list for method input_type
+	4,  // 0: piwork.core.services.v1.ServiceDefinition.image:type_name -> piwork.core.services.v1.ServiceImage
+	25, // 1: piwork.core.services.v1.ServiceDefinition.environment:type_name -> piwork.core.services.v1.ServiceDefinition.EnvironmentEntry
+	5,  // 2: piwork.core.services.v1.ServiceDefinition.mounts:type_name -> piwork.core.services.v1.ServiceMount
+	6,  // 3: piwork.core.services.v1.ServiceDefinition.ports:type_name -> piwork.core.services.v1.ServicePort
+	7,  // 4: piwork.core.services.v1.ServiceDefinition.readiness:type_name -> piwork.core.services.v1.ReadinessProbe
+	10, // 5: piwork.core.services.v1.ServiceAccess.ports:type_name -> piwork.core.services.v1.ServiceAccessPort
+	8,  // 6: piwork.core.services.v1.ServiceView.definition:type_name -> piwork.core.services.v1.ServiceDefinition
+	9,  // 7: piwork.core.services.v1.ServiceView.endpoints:type_name -> piwork.core.services.v1.ServiceEndpoint
+	12, // 8: piwork.core.services.v1.ServiceView.last_error:type_name -> piwork.core.services.v1.SafeError
+	11, // 9: piwork.core.services.v1.ServiceView.access:type_name -> piwork.core.services.v1.ServiceAccess
+	12, // 10: piwork.core.services.v1.OperationView.error:type_name -> piwork.core.services.v1.SafeError
+	8,  // 11: piwork.core.services.v1.CreateServiceRequest.definition:type_name -> piwork.core.services.v1.ServiceDefinition
+	13, // 12: piwork.core.services.v1.ListServicesResponse.services:type_name -> piwork.core.services.v1.ServiceView
+	8,  // 13: piwork.core.services.v1.UpdateServiceRequest.definition:type_name -> piwork.core.services.v1.ServiceDefinition
+	12, // 14: piwork.core.services.v1.ServiceLogs.error:type_name -> piwork.core.services.v1.SafeError
+	0,  // 15: piwork.core.services.v1.WorkServices.ListRunModels:input_type -> piwork.core.services.v1.Empty
+	1,  // 16: piwork.core.services.v1.WorkServices.ResolveRunModel:input_type -> piwork.core.services.v1.WorkPrivateRequest
+	0,  // 17: piwork.core.services.v1.WorkServices.GetServiceInteractionBindings:input_type -> piwork.core.services.v1.Empty
+	1,  // 18: piwork.core.services.v1.WorkServices.PrepareBrainCandidate:input_type -> piwork.core.services.v1.WorkPrivateRequest
+	1,  // 19: piwork.core.services.v1.WorkServices.GetBrainCandidateState:input_type -> piwork.core.services.v1.WorkPrivateRequest
+	0,  // 20: piwork.core.services.v1.WorkServices.GetDeploymentContext:input_type -> piwork.core.services.v1.Empty
+	17, // 21: piwork.core.services.v1.WorkServices.CreateService:input_type -> piwork.core.services.v1.CreateServiceRequest
+	0,  // 22: piwork.core.services.v1.WorkServices.ListServices:input_type -> piwork.core.services.v1.Empty
+	19, // 23: piwork.core.services.v1.WorkServices.GetService:input_type -> piwork.core.services.v1.ServiceIdRequest
+	21, // 24: piwork.core.services.v1.WorkServices.UpdateService:input_type -> piwork.core.services.v1.UpdateServiceRequest
+	20, // 25: piwork.core.services.v1.WorkServices.StartService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	20, // 26: piwork.core.services.v1.WorkServices.StopService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	20, // 27: piwork.core.services.v1.WorkServices.RestartService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	20, // 28: piwork.core.services.v1.WorkServices.RemoveService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	20, // 29: piwork.core.services.v1.WorkServices.RetryService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	22, // 30: piwork.core.services.v1.WorkServices.GetOperation:input_type -> piwork.core.services.v1.OperationIdRequest
+	23, // 31: piwork.core.services.v1.WorkServices.ReadServiceLogs:input_type -> piwork.core.services.v1.ReadServiceLogsRequest
+	2,  // 32: piwork.core.services.v1.WorkServices.ListRunModels:output_type -> piwork.core.services.v1.WorkPrivateResponse
+	3,  // 33: piwork.core.services.v1.WorkServices.ResolveRunModel:output_type -> piwork.core.services.v1.RunModelResolution
+	2,  // 34: piwork.core.services.v1.WorkServices.GetServiceInteractionBindings:output_type -> piwork.core.services.v1.WorkPrivateResponse
+	2,  // 35: piwork.core.services.v1.WorkServices.PrepareBrainCandidate:output_type -> piwork.core.services.v1.WorkPrivateResponse
+	2,  // 36: piwork.core.services.v1.WorkServices.GetBrainCandidateState:output_type -> piwork.core.services.v1.WorkPrivateResponse
+	16, // 37: piwork.core.services.v1.WorkServices.GetDeploymentContext:output_type -> piwork.core.services.v1.DeploymentContext
+	15, // 38: piwork.core.services.v1.WorkServices.CreateService:output_type -> piwork.core.services.v1.Acceptance
+	18, // 39: piwork.core.services.v1.WorkServices.ListServices:output_type -> piwork.core.services.v1.ListServicesResponse
+	13, // 40: piwork.core.services.v1.WorkServices.GetService:output_type -> piwork.core.services.v1.ServiceView
+	15, // 41: piwork.core.services.v1.WorkServices.UpdateService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 42: piwork.core.services.v1.WorkServices.StartService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 43: piwork.core.services.v1.WorkServices.StopService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 44: piwork.core.services.v1.WorkServices.RestartService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 45: piwork.core.services.v1.WorkServices.RemoveService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 46: piwork.core.services.v1.WorkServices.RetryService:output_type -> piwork.core.services.v1.Acceptance
+	14, // 47: piwork.core.services.v1.WorkServices.GetOperation:output_type -> piwork.core.services.v1.OperationView
+	24, // 48: piwork.core.services.v1.WorkServices.ReadServiceLogs:output_type -> piwork.core.services.v1.ServiceLogs
+	32, // [32:49] is the sub-list for method output_type
+	15, // [15:32] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name
@@ -1912,18 +2083,18 @@ func file_work_services_proto_init() {
 	if File_work_services_proto != nil {
 		return
 	}
-	file_work_services_proto_msgTypes[5].OneofWrappers = []any{}
 	file_work_services_proto_msgTypes[8].OneofWrappers = []any{}
-	file_work_services_proto_msgTypes[10].OneofWrappers = []any{}
 	file_work_services_proto_msgTypes[11].OneofWrappers = []any{}
-	file_work_services_proto_msgTypes[21].OneofWrappers = []any{}
+	file_work_services_proto_msgTypes[13].OneofWrappers = []any{}
+	file_work_services_proto_msgTypes[14].OneofWrappers = []any{}
+	file_work_services_proto_msgTypes[24].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_work_services_proto_rawDesc), len(file_work_services_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

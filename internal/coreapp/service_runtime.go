@@ -240,6 +240,9 @@ func (a *Application) stopServiceRuntime(ctx context.Context, workID, serviceID 
 		}
 	}
 	return a.Store.Write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec("DELETE FROM control_metadata WHERE key=?", serviceInteractionKey(workID, serviceID)); err != nil {
+			return err
+		}
 		if err := corestore.ConfirmQuotaOccupation(tx, workID, "service", serviceID, 0, 0, true); err != nil {
 			return err
 		}
@@ -323,6 +326,29 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 			return err
 		}
 	}
+	if view != nil {
+		var hasIdentity bool
+		if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+			v, err := readInteractionIdentity(tx, target.WorkID, target.ServiceID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			// The identity is persisted before Docker creation. A crash can leave
+			// its container ID unbound even though the exact intended container
+			// exists. EnsureContainer below verifies the complete immutable spec
+			// before binding that same instance; no second creation is needed.
+			hasIdentity = err == nil && v.Revision == target.Revision && v.ServiceName == definition.Name && (v.ContainerID == view.ID || v.ContainerID == "")
+			return err
+		}); err != nil {
+			return err
+		}
+		if !hasIdentity {
+			if err := a.stopServiceRuntime(ctx, target.WorkID, target.ServiceID, true); err != nil {
+				return err
+			}
+			view = nil
+		}
+	}
 	if view != nil && view.Config.Labels[serviceRevisionLabel] != strconv.FormatInt(target.Revision, 10) {
 		if err := a.stopServiceRuntime(ctx, target.WorkID, target.ServiceID, true); err != nil {
 			return err
@@ -375,7 +401,13 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 	}); err != nil {
 		return err
 	}
-	mounts := []dockerengine.ContainerMount{{Type: "tmpfs", Target: "/tmp"}}
+	interaction, interactionConfig, interactionCA, err := a.prepareServiceInteraction(ctx, target, definition.Name)
+	if err != nil {
+		return err
+	}
+	mounts := []dockerengine.ContainerMount{{Type: "tmpfs", Target: "/tmp"},
+		{Type: "bind", Source: interactionConfig, Target: "/etc/piwork/interaction/config.json", ReadOnly: true},
+		{Type: "bind", Source: interactionCA, Target: "/etc/piwork/interaction/installation-ca.crt", ReadOnly: true}}
 	for _, item := range definition.Mounts {
 		var volume string
 		if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
@@ -420,6 +452,9 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 		if errors.Is(err, corestore.ErrNotFound) {
 			binding = corestore.ServiceRuntimeBinding{WorkID: target.WorkID, ServiceID: target.ServiceID, Revision: target.Revision}
 		} else if err != nil {
+			return err
+		}
+		if err := a.bindServiceInteractionTx(tx, target, interaction, ensured.ID); err != nil {
 			return err
 		}
 		binding.Revision = target.Revision
