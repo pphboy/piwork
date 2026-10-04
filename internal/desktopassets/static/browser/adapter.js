@@ -1,5 +1,7 @@
 import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
+import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
+import { MetadataReads, ObservationDeferred, ObservationStopped } from './observation.js';
 export function fileVersion(value) {
     const time = value ? Date.parse(value) : NaN;
     return Number.isFinite(time) ? new Date(time).toUTCString() : '';
@@ -20,40 +22,81 @@ const errorText = (error) => error instanceof Error ? error.message : String(err
 const stateLabel = (value) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
 export class DesktopAdapter {
     state = { works: [], operations: [], snapshots: [], scenario: 'loading', signedIn: false,
+        browserAccess: 'checking', browserAccessReason: '', browserAccessChecked: '', cleanupRequired: false,
         core: { address: '', name: 'Core', account: '', role: '', proxyPort: '', username: '' }, transfers: [], lastChecked: '' };
     status = {};
     inspection = null;
     inspectionTransfer = '';
     transferProgress = null;
+    downloads = new Map();
+    downloadRequests = new Map();
+    downloadObservers = new Map();
+    uploadProgress = new Map();
+    transfersByWork = new Map();
     inspectionContext = null;
     cleanupPending = new Map();
     inspectionNonce = 0;
     inspectionSelection = 0;
     catalog = { skills: { loading: false, error: '', confirmed: false, checkedAt: '' }, packages: { loading: false, error: '', confirmed: false, checkedAt: '' } };
     logs = new Map();
+    directories = new Map();
     uploadIntents = new Map();
     csrf = '';
     generation = -1;
     epoch = 0;
+    get identityEpoch() { return this.epoch; }
+    reads = new Map();
     listeners = new Set();
     skills = [];
     packages = [];
     entries = new Map();
     entryPromises = new Map();
+    entryErrors = new Map();
+    entryChecks = new Map();
     pausedOperations = new Set();
     streams = new Map();
     reconnects = new Map();
     historyObservers = new Map();
     reconnectAttempts = new Map();
     pollTimer;
+    metadata = new MetadataReads();
+    mutationSequence = 0;
+    workMutations = new Map();
+    workReads = new Map();
+    statusSequence = 0;
+    deletedWorks = new Set();
+    workSync = new Map();
+    pollTargets = new Map();
+    terminalEvidence = new Map();
+    observationVisible = true;
+    visibleWorkId = '';
+    capabilityReads = new Map();
     sessionTimer;
+    authCheck;
+    authSequence = 0;
     subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
     emit() { for (const listener of this.listeners)
         listener(); }
     getWork(id) { return this.state.works.find(work => work.id === id); }
+    coordinationOperations() {
+        const visible = new Set(this.state.operations.map(op => op.id));
+        return [...this.state.operations, ...[...this.terminalEvidence.values()].map(e => e.operation).filter(op => !visible.has(op.id))];
+    }
+    getOperation(id) { return this.state.operations.find(op => op.id === id) ?? this.terminalEvidence.get(id)?.operation; }
+    project(work) { return projectWork(work, this.coordinationOperations()); }
+    retainTerminal(operation) {
+        if (!operation.action || !operation.workId || !terminalOperation(operation.state))
+            return;
+        const intent = this.getWork(operation.workId)?.lifecycleIntent;
+        const previous = this.terminalEvidence.get(operation.id);
+        this.terminalEvidence.set(operation.id, { operation: { ...operation }, generation: previous?.generation ?? (intent?.operationId === operation.id ? intent.sequence : this.workMutations.get(operation.workId) || 0) });
+    }
     getSkills() { const copies = this.state.works.flatMap(work => work.config.skills).filter((name, i, all) => all.indexOf(name) === i && !this.skills.some(s => s.id === name)); return [...this.skills, ...copies.map(name => ({ id: name, name, description: 'Saved Work copy; unavailable in current Core catalog', version: null, loaded: null, modelVisible: null }))]; }
     getPackages() { return this.packages; }
     getSnapshot(id) { return this.state.snapshots.find(snapshot => snapshot.id === id); }
+    worksLoading = false;
+    worksChecked = '';
+    worksError = '';
     clearIdentity(preserveInspection = false) {
         const inspection = preserveInspection ? { context: this.inspectionContext, summary: this.inspection, transfer: this.inspectionTransfer, progress: this.transferProgress } : null;
         if (!preserveInspection) {
@@ -65,16 +108,36 @@ export class DesktopAdapter {
             this.cleanupPending.clear();
         }
         this.epoch++;
+        this.worksLoading = false;
+        this.worksChecked = '';
         this.state.works = [];
         this.state.operations = [];
         this.state.snapshots = [];
         this.state.transfers = [];
+        this.terminalEvidence.clear();
+        this.metadata.clear();
+        this.pollTargets.clear();
+        this.workMutations.clear();
+        this.workReads.clear();
+        this.deletedWorks.clear();
+        this.workSync.clear();
+        this.capabilityReads.clear();
+        this.worksError = '';
+        this.stopDownloadObservers();
+        this.downloads.clear();
+        this.downloadRequests.clear();
+        this.uploadProgress.clear();
+        this.transfersByWork.clear();
+        this.directories.clear();
         for (const status of Object.values(this.catalog))
             Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });
         this.uploadIntents.clear();
         this.skills = [];
         this.packages = [];
         this.entries.clear();
+        this.entryErrors.clear();
+        this.entryPromises.clear();
+        this.entryChecks.clear();
         this.logs.clear();
         this.inspection = null;
         this.inspectionTransfer = '';
@@ -95,12 +158,74 @@ export class DesktopAdapter {
         this.reconnects.clear();
         this.reconnectAttempts.clear();
         clearTimeout(this.pollTimer);
+        this.pollTimer = undefined;
+        this.pausedOperations.clear();
     }
-    async request(path, method = 'GET', body, signal) {
-        const epoch = this.epoch;
+    request(path, method = 'GET', body, signal) {
+        if (method !== 'GET' || signal)
+            return this.requestOnce(path, method, body, signal);
+        const key = `${this.epoch}:${path === 'session' ? `${this.authSequence}:` : ''}${path}`;
+        const old = this.reads.get(key);
+        if (old)
+            return old;
+        const pending = this.requestOnce(path, method, body).finally(() => { if (this.reads.get(key) === pending)
+            this.reads.delete(key); });
+        this.reads.set(key, pending);
+        return pending;
+    }
+    metadataKey(path) {
+        const match = /^works\/([^/]+)$/.exec(path);
+        return `${this.epoch}:${match ? this.workMutations.get(decodeURIComponent(match[1])) || 0 : path === 'works' ? this.mutationSequence : 0}:${path}`;
+    }
+    readMetadata(path, explicit = false) {
+        return this.metadata.read(this.metadataKey(path), async (signal) => {
+            const sequence = ++this.statusSequence;
+            const value = await this.request(path, 'GET', undefined, signal);
+            return { value, sequence };
+        }, explicit);
+    }
+    requireWorkSync(id) {
+        if (id)
+            this.workSync.set(id, { generation: this.workMutations.get(id) || 0, after: this.statusSequence, work: true, list: true });
+    }
+    associateOperations(work) {
+        const related = this.coordinationOperations().filter(op => op.workId === work.id && op.action);
+        const outstanding = related.filter(op => !terminalOperation(op.state));
+        work.operationId = work.lifecycleIntent?.operationId ?? (outstanding.length === 1 ? outstanding[0].id : related.length === 1 ? related[0].id : undefined);
+    }
+    mergeWork(raw, sequence, mutation) {
+        if (!raw || typeof raw.id !== 'string' || typeof raw.observedState !== 'string' || !['running', 'stopped', 'deleted'].includes(raw.desiredState))
+            throw new DesktopError('INVALID_RESPONSE', 'The Work status response is incomplete.');
+        const old = this.getWork(raw.id);
+        if (mutation !== (this.workMutations.get(raw.id) || 0) || sequence < (this.workReads.get(raw.id) || 0))
+            return old;
+        if (old?.controlVersion !== undefined && raw.controlVersion !== undefined && raw.controlVersion < old.controlVersion)
+            return old;
+        this.workReads.set(raw.id, sequence);
+        if (raw.observedState === 'deleted') {
+            this.deletedWorks.add(raw.id);
+            this.state.works = this.state.works.filter(work => work.id !== raw.id);
+            return;
+        }
+        if (this.deletedWorks.has(raw.id))
+            return;
+        const mapped = this.mapWork(raw, old);
+        const work = old ? Object.assign(old, mapped) : mapped;
+        if (!old)
+            this.state.works.push(work);
+        // A newer confirmed server target can come from a different client.
+        const intent = work.lifecycleIntent;
+        if (intent && intent.baseVersion !== undefined && raw.controlVersion > intent.baseVersion &&
+            raw.desiredState !== (['stop', 'delete'].includes(intent.action) ? intent.action === 'delete' ? 'deleted' : 'stopped' : 'running'))
+            delete work.lifecycleIntent;
+        this.associateOperations(work);
+        return work;
+    }
+    async requestOnce(path, method = 'GET', body, signal, headers = {}) {
+        const epoch = this.epoch, authSequence = this.authSequence;
         let response;
         try {
-            response = await fetch(`/_desktop/api/${path}`, { method, credentials: 'same-origin', signal, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-Piwork-Csrf': this.csrf }, ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }) });
+            response = await fetch(`/_desktop/api/${path}`, { method, credentials: 'same-origin', signal, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-Piwork-Csrf': this.csrf, ...headers }, ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }) });
         }
         catch {
             throw new DesktopError(method === 'GET' ? 'CORE_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'The local connection is unavailable. Check the CLI and Core.' : 'The response was lost. Check known operations before submitting again.');
@@ -112,25 +237,28 @@ export class DesktopAdapter {
             throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while reading the response.');
         if (!response.ok) {
             const code = value?.code ?? `HTTP_${response.status}`;
-            if (['LOCAL_AUTH_REQUIRED', 'LOCAL_CSRF_OR_AUTH_REQUIRED'].includes(code)) {
-                this.clearIdentity();
-                this.state.signedIn = false;
-                this.state.scenario = 'ticket-expired';
-                this.emit();
+            if (path !== 'session' && code === 'LOCAL_AUTH_REQUIRED')
+                this.requireBrowserAccess('Browser access ended. Use the latest reopen command.');
+            else if (path !== 'session' && code === 'LOCAL_CSRF_OR_AUTH_REQUIRED') {
+                await this.checkBrowserAccess().catch(() => undefined);
+                throw new DesktopError(code, this.state.browserAccess === 'authorized' ? 'Browser access checked. The original action was rejected locally; submit it explicitly again if needed.' : 'Browser access ended. Reopen Desktop from the same system user’s terminal.', response.status);
             }
-            else if (response.status === 401 && path !== 'login') {
-                const session = await fetch('/_desktop/api/session', { credentials: 'same-origin' }).then(r => r.json()).catch(() => null);
-                if (epoch !== this.epoch)
-                    throw new DesktopError('CONNECTION_CHANGED', 'The identity changed during authentication readback.');
-                if (session?.state === 'offline') {
-                    this.state.scenario = 'core-offline';
-                    this.emit();
+            else if (response.status === 401 && path !== 'login' && path !== 'session') {
+                if (authSequence !== this.authSequence)
+                    throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this response.');
+                const pending = this.checkBrowserAccess(), sequence = this.authSequence;
+                const session = await pending;
+                if (sequence !== this.authSequence)
+                    throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this readback.');
+                if (session.state === 'offline')
                     throw new DesktopError('CORE_UNAVAILABLE', 'Core is unreachable. Last confirmed data is preserved.');
+                if (session.state === 'signed-out') {
+                    if (epoch === this.epoch)
+                        this.clearIdentity();
+                    this.state.signedIn = false;
+                    this.state.scenario = 'auth-expired';
+                    this.emit();
                 }
-                this.clearIdentity();
-                this.state.signedIn = false;
-                this.state.scenario = 'auth-expired';
-                this.emit();
             }
             throw new DesktopError(code, value?.message ?? `Request failed (${response.status}).`, response.status);
         }
@@ -141,13 +269,17 @@ export class DesktopAdapter {
     acceptSession(value) {
         const changed = this.generation !== value.generation;
         const previouslySignedIn = this.state.signedIn;
-        if (this.generation !== -1 && this.generation !== value.generation) {
+        if (this.csrf && this.csrf !== value.csrf || this.generation !== -1 && this.generation !== value.generation) {
             const context = this.inspectionContext;
             const preserve = !!context && context.anonymous && context.ready && context.importState === 'unsubmitted' && !this.state.signedIn && ['authenticated', 'signed-out'].includes(value.state) && context.core === value.coreUrl && context.localSession === value.csrf;
             this.clearIdentity(preserve);
             if (preserve && value.state === 'authenticated')
                 context.anonymous = false;
         }
+        this.state.browserAccess = 'authorized';
+        this.state.browserAccessReason = '';
+        this.state.browserAccessChecked = new Date().toISOString();
+        this.state.cleanupRequired = value.cleanupRequired === true;
         this.generation = value.generation;
         this.csrf = value.csrf ?? this.csrf;
         this.state.core.address = value.coreUrl ?? '';
@@ -162,53 +294,182 @@ export class DesktopAdapter {
             this.state.scenario = 'normal';
         this.state.lastChecked = value.lastConfirmedAt ?? this.state.lastChecked;
     }
+    requireBrowserAccess(reason) {
+        if (this.state.browserAccess !== 'required')
+            this.clearIdentity();
+        this.csrf = '';
+        this.generation = -1;
+        this.state.signedIn = false;
+        this.state.core.account = '';
+        this.state.core.role = '';
+        this.status = {};
+        this.state.browserAccess = 'required';
+        this.state.browserAccessReason = reason;
+        this.state.scenario = 'ticket-expired';
+        clearTimeout(this.sessionTimer);
+        this.emit();
+    }
+    unavailableBrowserAccess() {
+        this.state.browserAccess = 'unavailable';
+        this.state.browserAccessReason = 'The local CLI could not be reached or its response could not be verified. Check browser access before continuing.';
+        this.emit();
+    }
+    finishAccessCheck(sequence) {
+        if (sequence === this.authSequence && this.state.browserAccess === 'checking')
+            this.unavailableBrowserAccess();
+    }
+    sessionRead() {
+        return this.request('session').then(value => {
+            if (!['signed-out', 'authenticated', 'offline'].includes(value.state) || typeof value.csrf !== 'string' || !value.csrf || !Number.isInteger(value.generation) || typeof value.coreUrl !== 'string')
+                throw new DesktopError('INVALID_RESPONSE', 'The local session response could not be verified.');
+            return value;
+        });
+    }
+    async checkBrowserAccess() {
+        if (this.authCheck?.epoch === this.epoch && this.authCheck.sequence === this.authSequence)
+            return this.authCheck.pending;
+        const epoch = this.epoch, sequence = ++this.authSequence;
+        let pending;
+        pending = (async () => {
+            try {
+                const value = await this.sessionRead();
+                if (epoch !== this.epoch || sequence !== this.authSequence)
+                    throw new DesktopError('CONNECTION_CHANGED', 'An older access check was discarded.');
+                this.acceptSession(value);
+                this.scheduleSessionCheck();
+                this.emit();
+                return value;
+            }
+            catch (error) {
+                if (epoch === this.epoch && sequence === this.authSequence) {
+                    if (error instanceof DesktopError && error.code === 'LOCAL_AUTH_REQUIRED')
+                        this.requireBrowserAccess('This browser is not authorized to connect to the local CLI. Use the latest launch address.');
+                    else if (!(error instanceof DesktopError && error.code === 'CONNECTION_CHANGED'))
+                        this.unavailableBrowserAccess();
+                }
+                throw error;
+            }
+            finally {
+                this.finishAccessCheck(sequence);
+                if (this.authCheck?.pending === pending)
+                    this.authCheck = undefined;
+            }
+        })();
+        this.authCheck = { epoch, sequence, pending };
+        return pending;
+    }
     async initialize() {
         const ticket = new URLSearchParams(location.hash.slice(1)).get('ticket');
-        if (ticket) {
-            // Consume the fragment once; neither credentials nor tickets enter navigation links.
+        if (ticket)
             history.replaceState(null, '', location.pathname + location.search);
-            await this.request('bootstrap', 'POST', { ticket });
-        }
-        this.acceptSession(await this.request('session'));
-        if (this.state.signedIn)
-            await this.checkConnection();
-        this.scheduleSessionCheck();
+        this.state.browserAccess = 'checking';
         this.emit();
+        const epoch = this.epoch, sequence = ++this.authSequence;
+        let value;
+        try {
+            try {
+                value = await this.sessionRead();
+            }
+            catch (error) {
+                if (epoch !== this.epoch || sequence !== this.authSequence)
+                    return;
+                if (!(error instanceof DesktopError && error.code === 'LOCAL_AUTH_REQUIRED')) {
+                    this.unavailableBrowserAccess();
+                    return;
+                }
+                if (!ticket) {
+                    this.requireBrowserAccess('This browser is not authorized to connect to the local CLI.');
+                    return;
+                }
+                let redeemed = false, denied = '';
+                try {
+                    await this.request('bootstrap', 'POST', { ticket });
+                    redeemed = true;
+                }
+                catch (exchange) {
+                    if (exchange instanceof DesktopError && exchange.code === 'CONNECTION_CHANGED')
+                        return;
+                    if (exchange instanceof DesktopError && ['LOCAL_BOOTSTRAP_DENIED', 'LOCAL_SESSION_CAPACITY', 'LOCAL_SESSION_UNAVAILABLE'].includes(exchange.code))
+                        denied = exchange.code;
+                }
+                // Never repeat a one-use exchange, including a lost response. Verify Cookie.
+                try {
+                    value = await this.sessionRead();
+                }
+                catch (verification) {
+                    if (epoch !== this.epoch || sequence !== this.authSequence)
+                        return;
+                    if (verification instanceof DesktopError && verification.code === 'LOCAL_AUTH_REQUIRED') {
+                        const reason = denied === 'LOCAL_SESSION_CAPACITY' ? 'The Desktop has reached 128 active browser sessions. In an authorized window, confirm Reset browser access, then reopen.' : redeemed ? 'The launch address was accepted, but this browser did not retain its Cookie. Allow local site Cookies, then request a new launch address.' : 'The launch address is expired, already used, or its exchange could not be confirmed. Use the most recent reopen output.';
+                        this.requireBrowserAccess(reason);
+                    }
+                    else
+                        this.unavailableBrowserAccess();
+                    return;
+                }
+            }
+            if (epoch !== this.epoch || sequence !== this.authSequence)
+                return;
+            this.acceptSession(value);
+            this.scheduleSessionCheck();
+            this.emit();
+            if (this.state.signedIn)
+                await this.checkConnection();
+        }
+        finally {
+            this.finishAccessCheck(sequence);
+        }
     }
     scheduleSessionCheck() {
         clearTimeout(this.sessionTimer);
+        if (this.state.browserAccess !== 'authorized')
+            return;
         this.sessionTimer = setTimeout(async () => {
             try {
                 const before = this.generation;
-                const value = await this.request('session');
-                if (value.state === 'signed-out' && this.state.signedIn)
-                    this.clearIdentity();
-                this.acceptSession(value);
+                await this.checkBrowserAccess();
                 if (before !== this.generation && this.state.signedIn)
                     await this.checkConnection();
-                this.emit();
             }
-            catch (error) {
-                if (!(error instanceof DesktopError && error.code.startsWith('LOCAL_'))) {
-                    this.state.scenario = 'core-offline';
-                    this.emit();
-                }
-            }
+            catch { /* Local recovery is shown by the explicit session check. */ }
             this.scheduleSessionCheck();
         }, 15000);
     }
+    reopenCommand() { return `piwork-cli desktop open --port ${this.localPort()} --no-open`; }
+    logoutCommand() { return `piwork-cli desktop logout --port ${this.localPort()}`; }
+    startCommand() { return `piwork-cli desktop --port ${this.localPort()} --no-open`; }
+    localPort() { const port = Number(location.port || 17891); return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 17891; }
+    async resetBrowserAccess() {
+        this.authSequence++;
+        try {
+            const result = await this.request('browser-access/reset', 'POST');
+            if (result.browserAccessCleared !== true || result.coreSessionRetained !== true)
+                throw new DesktopError('RESULT_UNKNOWN', 'Reset could not be confirmed. Check browser access.');
+            this.requireBrowserAccess('Browser access was reset for all windows of this Desktop. The saved Core login and running Works are retained. Reopen from the terminal.');
+        }
+        catch (error) {
+            await this.checkBrowserAccess().catch(() => undefined);
+            throw error;
+        }
+    }
     async signIn(core, account, password) {
+        this.authSequence++;
         if (core !== this.state.core.address)
             this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core }));
         this.acceptSession(await this.request('login', 'POST', { account, password }));
-        await this.checkConnection();
+        this.state.scenario = 'loading';
         this.emit();
+        const epoch = this.epoch;
+        void this.checkConnection().catch(error => { if (epoch === this.epoch && this.state.signedIn) {
+            this.state.scenario = 'list-error';
+            this.emit();
+        } });
     }
-    async switchCore(core) { this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core })); if (this.state.signedIn)
+    async switchCore(core) { this.authSequence++; this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core })); if (this.state.signedIn)
         await this.checkConnection(); this.emit(); }
-    async signOut() { const value = await this.request('logout', 'POST'); this.clearIdentity(); this.acceptSession(value.view); this.emit(); return value.remoteRevocationConfirmed === true; }
+    async signOut() { this.authSequence++; const value = await this.request('logout', 'POST'); this.clearIdentity(); this.acceptSession(value.view); this.emit(); return value; }
     async checkConnection() {
-        this.acceptSession(await this.request('session'));
+        await this.checkBrowserAccess();
         this.status = await this.request('status');
         this.state.lastChecked = this.status.checkedAt ?? '';
         this.state.scenario = !this.status.health?.available ? 'core-offline' : !this.status.readiness?.available || this.status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
@@ -219,16 +480,36 @@ export class DesktopAdapter {
         }
         this.emit();
     }
-    async listWorks() {
+    async listWorks(explicit = true) {
+        const epoch = this.epoch, mutations = new Map(this.workMutations);
+        this.worksLoading = true;
+        this.emit();
         try {
-            const value = await this.request('works');
-            const old = new Map(this.state.works.map(work => [work.id, work]));
+            const { value, sequence } = await this.readMetadata('works', explicit);
+            if (epoch !== this.epoch)
+                throw new ObservationStopped('The identity changed.');
             if (!Array.isArray(value.works))
                 throw new DesktopError('INVALID_RESPONSE', 'The Work list response is incomplete. Retry loading the list.');
-            this.state.works = value.works.map((raw) => { const existing = old.get(raw.id); const mapped = this.mapWork(raw, existing); if (existing) {
-                Object.assign(existing, mapped);
-                return existing;
-            } return mapped; });
+            const ids = new Set(value.works.map((raw) => raw.id));
+            for (const raw of value.works)
+                this.mergeWork(raw, sequence, mutations.get(raw.id) || 0);
+            this.state.works = this.state.works.filter(work => ids.has(work.id) ||
+                (mutations.get(work.id) || 0) !== (this.workMutations.get(work.id) || 0) || sequence < (this.workReads.get(work.id) || 0));
+            for (const [id, sync] of this.workSync) {
+                if (sync.generation !== (mutations.get(id) || 0) || sequence <= sync.after)
+                    continue;
+                sync.list = false;
+                const raw = value.works.find((item) => item.id === id), work = this.getWork(id);
+                if (ids.has(id) && work?.checkedAt && sequence >= (this.workReads.get(id) || 0) && (typeof raw?.controlVersion !== 'number' || raw.controlVersion >= (work.controlVersion || 0)))
+                    sync.work = false;
+                if (!ids.has(id) && this.coordinationOperations().some(op => op.workId === id && op.action === 'delete' && op.state === 'succeeded')) {
+                    sync.work = false;
+                    this.deletedWorks.add(id);
+                }
+            }
+            this.finishWorkSync();
+            this.worksError = '';
+            this.worksChecked = new Date().toISOString();
             if (['loading', 'empty', 'list-error'].includes(this.state.scenario))
                 this.state.scenario = 'normal';
             if (!this.state.works.length && this.state.scenario === 'normal')
@@ -236,16 +517,25 @@ export class DesktopAdapter {
             this.emit();
         }
         catch (error) {
-            if (this.state.signedIn) {
-                this.state.scenario = error instanceof DesktopError && error.code === 'CORE_UNAVAILABLE' ? 'core-offline' : 'list-error';
+            if (epoch === this.epoch && this.state.signedIn && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
+                this.worksError = errorText(error);
+                if (!this.worksChecked)
+                    this.state.scenario = 'list-error';
                 this.emit();
             }
             throw error;
         }
+        finally {
+            if (epoch === this.epoch) {
+                this.worksLoading = false;
+                this.emit();
+            }
+        }
     }
     mapWork(raw, old) {
         return { ...(old ?? { network: '', services: [], files: [], sessions: [], config: blankConfig() }),
-            id: raw.id, name: raw.name, description: raw.id, desired: raw.desiredState, status: stateLabel(raw.observedState), updated: raw.updatedAt ?? '', color: 'blue', icon: 'grid',
+            id: raw.id, name: raw.name, description: raw.id, desired: raw.desiredState, observed: raw.observedState, status: workState(raw.observedState),
+            error: typeof raw.lastError === 'string' ? raw.lastError : raw.lastError?.message, controlVersion: raw.controlVersion, checkedAt: new Date().toISOString(), statusError: undefined, updated: raw.updatedAt ?? '', color: 'blue', icon: 'grid',
             config: { ...(old?.config ?? blankConfig()), revision: raw.desiredRevision ?? 0, activeRevision: raw.activeRevision ?? 0 } };
     }
     async checkCatalog() {
@@ -280,26 +570,47 @@ export class DesktopAdapter {
         }));
         return !this.catalog.skills.error && !this.catalog.packages.error;
     }
-    async refreshWorkStatus(id) {
-        const work = this.getWork(id);
-        if (!work)
-            return;
-        const raw = await this.request(`works/${part(id)}`);
-        const mapped = this.mapWork(raw, work);
-        Object.assign(work, mapped);
-        await this.loadServices(id).catch(error => { (work.resourceErrors ??= {}).services = errorText(error); });
-        this.emit();
+    async refreshWorkStatus(id, explicit = true) {
+        const epoch = this.epoch, mutation = this.workMutations.get(id) || 0, sequence = ++this.statusSequence;
+        try {
+            const { value: raw, sequence: readSequence } = await this.readMetadata(`works/${part(id)}`, explicit);
+            const sequence = readSequence;
+            if (epoch !== this.epoch)
+                throw new ObservationStopped('The identity changed.');
+            if (raw.id !== id)
+                throw new DesktopError('INVALID_RESPONSE', 'The Work status response does not match the original Work.');
+            const previous = this.getWork(id), wasUsable = previous && this.project(previous).usable;
+            const work = this.mergeWork(raw, sequence, mutation);
+            const sync = this.workSync.get(id);
+            if (sync && sequence > sync.after && sync.generation === mutation && mutation === (this.workMutations.get(id) || 0) && sequence >= (this.workReads.get(id) || 0) && (typeof raw.controlVersion !== 'number' || raw.controlVersion >= (work?.controlVersion || 0)))
+                sync.work = false;
+            this.finishWorkSync();
+            this.emit();
+            if (work && !wasUsable && this.project(work).usable && this.visibleWorkId === id)
+                void this.refreshCapabilities(id);
+            return work;
+        }
+        catch (error) {
+            if (epoch === this.epoch && sequence >= (this.workReads.get(id) || 0) && mutation === (this.workMutations.get(id) || 0) && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
+                const work = this.getWork(id);
+                if (work)
+                    work.statusError = errorText(error);
+                if (error instanceof DesktopError && error.httpStatus === 404 && this.coordinationOperations().some(op => op.workId === id && op.action === 'delete' && op.state === 'succeeded')) {
+                    this.deletedWorks.add(id);
+                    this.state.works = this.state.works.filter(w => w.id !== id);
+                    const sync = this.workSync.get(id);
+                    if (sync)
+                        sync.work = false;
+                }
+                this.emit();
+            }
+            throw error;
+        }
     }
     async loadWork(id) {
-        const raw = await this.request(`works/${part(id)}`);
-        let work = this.getWork(id);
-        const mapped = this.mapWork(raw, work);
-        if (work)
-            Object.assign(work, mapped);
-        else {
-            work = mapped;
-            this.state.works.push(work);
-        }
+        const work = await this.refreshWorkStatus(id);
+        if (!work)
+            throw new DesktopError('NOT_FOUND', 'The Work is no longer available.', 404);
         work.resourceErrors = {};
         const tasks = [['services', () => this.loadServices(id)], ['configuration', () => this.loadConfiguration(id)], ['packages', () => this.loadPackages(id)]];
         for (const [name, action] of tasks) {
@@ -323,35 +634,92 @@ export class DesktopAdapter {
     }
     async loadServices(id) {
         const work = this.getWork(id);
-        const value = await this.request(`works/${part(id)}/services`);
-        work.services = (value.services ?? []).map((raw) => ({ id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState), ports: (raw.access?.ports ?? []).filter((p) => /^https?:/.test(p.url ?? '')).sort((a, b) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p) => p.port), error: typeof raw.lastError === 'string' ? raw.lastError : raw.lastError?.message }));
-        if (work.resourceErrors)
-            delete work.resourceErrors.services;
-        const domain = work.services.find(service => service.domain)?.domain;
-        work.network = domain ? domain.split('.').slice(1, -1).join('.') : '';
+        (work.resourceLoading ??= {}).services = true;
         this.emit();
+        try {
+            const value = await this.request(`works/${part(id)}/services`);
+            if (!Array.isArray(value.services))
+                throw new DesktopError('INVALID_RESPONSE', 'Service listing is incomplete.');
+            (work.resourceChecked ??= {}).services = new Date().toISOString();
+            work.services = value.services.map((raw) => ({ id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState), ports: (raw.access?.ports ?? []).filter((p) => /^https?:/.test(p.url ?? '')).sort((a, b) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p) => p.port), error: typeof raw.lastError === 'string' ? raw.lastError : raw.lastError?.message }));
+            if (work.resourceErrors)
+                delete work.resourceErrors.services;
+            const domain = work.services.find(service => service.domain)?.domain;
+            work.network = domain ? domain.split('.').slice(1, -1).join('.') : '';
+            this.emit();
+        }
+        catch (error) {
+            (work.resourceErrors ??= {}).services = errorText(error);
+            throw error;
+        }
+        finally {
+            work.resourceLoading.services = false;
+            this.emit();
+        }
     }
     async loadConfiguration(id) {
         const work = this.getWork(id);
-        const value = await this.request(`works/${part(id)}/configuration`);
-        const raw = value.desired;
-        work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: JSON.stringify(raw, null, 2), pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false };
-        if (work.resourceErrors)
-            delete work.resourceErrors.configuration;
+        (work.resourceLoading ??= {}).configuration = true;
         this.emit();
-        return work.config;
+        try {
+            const value = await this.request(`works/${part(id)}/configuration`);
+            const raw = value.desired;
+            work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: JSON.stringify(raw, null, 2), pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false };
+            (work.resourceChecked ??= {}).configuration = new Date().toISOString();
+            if (work.resourceErrors)
+                delete work.resourceErrors.configuration;
+            this.emit();
+            return work.config;
+        }
+        catch (error) {
+            (work.resourceErrors ??= {}).configuration = errorText(error);
+            throw error;
+        }
+        finally {
+            work.resourceLoading.configuration = false;
+            this.emit();
+        }
     }
-    async loadPackages(id) { const work = this.getWork(id); const value = await this.request(`works/${part(id)}/packages`); work.packageEntries = value.packages ?? []; }
+    async loadPackages(id) { const work = this.getWork(id); (work.resourceLoading ??= {}).packages = true; this.emit(); try {
+        const value = await this.request(`works/${part(id)}/packages`);
+        if (!Array.isArray(value.packages))
+            throw new DesktopError('INVALID_RESPONSE', 'Package listing is incomplete.');
+        (work.resourceChecked ??= {}).packages = new Date().toISOString();
+        work.packageEntries = value.packages;
+    }
+    catch (error) {
+        (work.resourceErrors ??= {}).packages = errorText(error);
+        throw error;
+    }
+    finally {
+        work.resourceLoading.packages = false;
+        this.emit();
+    } }
     async loadSessions(id) {
         const work = this.getWork(id);
-        const value = await this.request(`works/${part(id)}/sessions`);
-        const existing = new Map(work.sessions.map(session => [session.id, session]));
-        work.sessions = (value.sessions ?? []).map((raw) => ({ id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: existing.get(raw.sessionId)?.messages ?? [] }));
-        if (work.sessions[0] && !this.streams.has(id))
-            await this.loadSession(id, work.sessions[0].id);
-        if (work.resourceErrors)
-            delete work.resourceErrors.agent;
+        (work.resourceLoading ??= {}).agent = true;
         this.emit();
+        try {
+            const value = await this.request(`works/${part(id)}/sessions`);
+            if (!Array.isArray(value.sessions))
+                throw new DesktopError('INVALID_RESPONSE', 'Session listing is incomplete.');
+            (work.resourceChecked ??= {}).agent = new Date().toISOString();
+            const existing = new Map(work.sessions.map(session => [session.id, session]));
+            work.sessions = value.sessions.map((raw) => ({ id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: existing.get(raw.sessionId)?.messages ?? [] }));
+            if (work.sessions[0] && !this.streams.has(id))
+                await this.loadSession(id, work.sessions[0].id);
+            if (work.resourceErrors)
+                delete work.resourceErrors.agent;
+            this.emit();
+        }
+        catch (error) {
+            (work.resourceErrors ??= {}).agent = errorText(error);
+            throw error;
+        }
+        finally {
+            work.resourceLoading.agent = false;
+            this.emit();
+        }
     }
     async loadSession(id, sessionId) {
         const work = this.getWork(id);
@@ -364,19 +732,34 @@ export class DesktopAdapter {
         this.emit();
     }
     serviceEntryUrl(workId, serviceId, port) { return this.entries.get(`${workId}:${serviceId}:${port}`)?.entryUrl ?? null; }
+    serviceEntryError(workId, serviceId, port) { return this.entryErrors.get(`${workId}:${serviceId}:${port}`) || ''; }
+    servicePreviewUnconfirmed(workId, serviceId, port) { const entry = this.entries.get(`${workId}:${serviceId}:${port}`); return entry?.checked && entry.embed === 'unknown'; }
     async ensureServiceEntry(workId, serviceId, port) {
         const key = `${workId}:${serviceId}:${port}`;
         if (this.entries.has(key))
             return;
+        const epoch = this.epoch;
         let pending = this.entryPromises.get(key);
         if (!pending) {
+            this.entryErrors.delete(key);
             pending = (async () => {
                 try {
                     const value = await this.request('service-entries', 'POST', { workId, serviceId, port });
                     this.entries.set(key, value);
+                    void this.serviceFrameLoaded(workId, serviceId, port).catch(error => { if (epoch === this.epoch && this.entries.get(key) === value) {
+                        value.checked = true;
+                        value.checkError = errorText(error);
+                        this.emit();
+                    } });
+                }
+                catch (error) {
+                    if (epoch === this.epoch)
+                        this.entryErrors.set(key, errorText(error));
+                    throw error;
                 }
                 finally {
-                    this.entryPromises.delete(key);
+                    if (this.entryPromises.get(key) === pending)
+                        this.entryPromises.delete(key);
                     this.emit();
                 }
             })();
@@ -384,7 +767,17 @@ export class DesktopAdapter {
         }
         await pending;
     }
-    async serviceFrameLoaded(workId, serviceId, port) {
+    serviceFrameLoaded(workId, serviceId, port) {
+        const key = `${workId}:${serviceId}:${port}`;
+        const old = this.entryChecks.get(key);
+        if (old)
+            return old;
+        const pending = this.probeServiceFrame(workId, serviceId, port).finally(() => { if (this.entryChecks.get(key) === pending)
+            this.entryChecks.delete(key); });
+        this.entryChecks.set(key, pending);
+        return pending;
+    }
+    async probeServiceFrame(workId, serviceId, port) {
         const key = `${workId}:${serviceId}:${port}`;
         const entry = this.entries.get(key);
         if (!entry)
@@ -396,19 +789,37 @@ export class DesktopAdapter {
             entry.embed = value.embed === 'blocked' ? 'denied' : value.embed;
             entry.entryUrl = entry.origin + '/';
             this.emit();
-            if (value.embed !== 'unknown')
+            if (value.embed !== 'unknown') {
+                entry.checked = true;
+                this.emit();
                 return;
+            }
             await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        if (epoch === this.epoch && this.entries.get(key) === entry) {
+            entry.checked = true;
+            this.emit();
         }
     }
     serviceEmbed(workId, serviceId, port) { return this.entries.get(`${workId}:${serviceId}:${port}`)?.embed; }
+    servicePreviewError(workId, serviceId, port) { return this.entries.get(`${workId}:${serviceId}:${port}`)?.checkError || ''; }
     async directServiceURL(workId, serviceId, port) { return (await this.request('service-entries', 'POST', { workId, serviceId, port })).entryUrl; }
     localLink(workId, serviceId, port) { return `${location.origin}/works/${part(workId)}/services/${part(serviceId)}?port=${port}`; }
     async readLogs(workId, serviceId) { const value = await this.request(`works/${part(workId)}/services/${part(serviceId)}/logs?tailLines=100`); this.logs.set(serviceId, value); this.emit(); }
     accepted(value, workId, kind) {
         if (!value.operationId)
             throw new DesktopError('INVALID_RESPONSE', 'The acceptance response has no Operation ID. Check known operations.');
-        const operation = { id: value.operationId, workId: value.workId ?? workId, kind, state: 'accepted', phase: 'Accepted', created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId };
+        const operation = { id: value.operationId, workId: value.workId ?? workId, kind, action: lifecycleAction(kind), state: 'accepted', phase: 'Accepted', created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId, localRecordSaved: value.localRecordSaved };
+        if (operation.action && operation.workId) {
+            const sequence = ++this.mutationSequence;
+            this.workMutations.set(operation.workId, sequence);
+            const work = this.getWork(operation.workId);
+            if (work) {
+                work.lifecycleIntent = { action: operation.action, operationId: operation.id, sequence, baseVersion: work.controlVersion };
+                work.operationId = operation.id;
+            }
+            this.requireWorkSync(operation.workId);
+        }
         this.state.operations.unshift(operation);
         if (operation.snapshotId)
             this.state.snapshots.unshift({ id: operation.snapshotId, operationId: operation.id, workId, status: 'preparing', filename: `${workId}.work`, size: '' });
@@ -430,61 +841,196 @@ export class DesktopAdapter {
             payload.configuration = JSON.parse(config.advanced);
         return this.accepted(await this.request('works', 'POST', payload), '', 'Create Work');
     }
-    async lifecycle(id, action) { const operation = this.accepted(await this.request(`works/${part(id)}/${action}`, 'POST'), id, `${action[0].toUpperCase()}${action.slice(1)} Work`); if (action !== 'delete')
-        await this.loadWork(id).catch(() => undefined); return operation; }
+    async lifecycle(id, action) { return this.accepted(await this.request(`works/${part(id)}/${action}`, 'POST'), id, `${action[0].toUpperCase()}${action.slice(1)} Work`); }
     async operateService(id, serviceId, action) { return this.accepted(await this.request(`works/${part(id)}/services/${part(serviceId)}/${action}`, 'POST'), id, `${action} Service`); }
-    async checkOperation(id) {
-        const value = await this.request(`operations/${part(id)}`);
-        let operation = this.state.operations.find(o => o.id === id);
-        if (!operation)
-            operation = this.accepted({ operationId: id, workId: value.workId }, value.workId ?? '', value.type ?? value.kind ?? 'Operation');
-        Object.assign(operation, { workId: value.workId ?? operation.workId, state: value.state, phase: value.packagePhase ?? value.state, created: value.createdAt ?? '', updated: value.updatedAt ?? '', error: value.error?.message ?? (typeof value.error === 'string' ? value.error : undefined), snapshotId: value.result?.snapshotId ?? operation.snapshotId });
+    async checkOperation(id, explicit = true) {
+        let operation = this.getOperation(id);
+        let value;
+        try {
+            value = (await this.readMetadata(`operations/${part(id)}`, explicit)).value;
+        }
+        catch (error) {
+            if (operation && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
+                operation.observationError = errorText(error);
+                this.emit();
+            }
+            throw error;
+        }
+        if (value.operationId !== id && value.operationId !== undefined)
+            throw new DesktopError('INVALID_RESPONSE', 'The Operation response does not match the original ID.');
+        if (operation?.workId && value.workId && operation.workId !== value.workId)
+            throw new DesktopError('INVALID_RESPONSE', 'The Operation belongs to another Work.');
+        if (!operation) {
+            operation = { id, workId: value.workId || '', kind: value.kind || value.type || 'Operation', state: 'unknown', phase: '', created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}` };
+            this.state.operations.push(operation);
+        }
+        const previousState = operation.state;
+        operation.checkedWorkId = value.operationId === id && typeof value.workId === 'string' ? value.workId : undefined;
+        Object.assign(operation, { workId: value.workId ?? operation.workId, state: value.state, phase: value.packagePhase ?? value.state, created: value.createdAt ?? '', updated: value.updatedAt ?? '', error: value.error?.message ?? (typeof value.error === 'string' ? value.error : undefined), snapshotId: value.result?.snapshotId ?? operation.snapshotId, observationError: undefined });
+        operation.action = lifecycleAction(value.kind || value.type || operation.kind);
+        this.retainTerminal(operation);
+        if (operation.workId && (previousState !== operation.state || explicit))
+            this.requireWorkSync(operation.workId);
+        const work = this.getWork(operation.workId);
+        if (work)
+            this.associateOperations(work);
         if (operation.snapshotId)
             await this.fetchSnapshot(operation.snapshotId).catch(() => undefined);
         this.emit();
+        this.scheduleOperationPoll();
         return operation;
     }
-    async recoverOperations() { const value = await this.request('known-operations'); for (const record of value.operations ?? []) {
-        if (!this.state.operations.some(o => o.id === record.operationId)) {
-            this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', kind: record.type, state: 'unknown', phase: 'Check original operation', created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
+    async recoverOperations() {
+        const value = await this.request('known-operations');
+        for (const record of value.operations ?? [])
+            if (!this.state.operations.some(o => o.id === record.operationId)) {
+                this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', kind: record.type, action: lifecycleAction(record.type), state: 'unknown', phase: 'Check original operation', created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
+            }
+        for (const work of this.state.works)
+            this.associateOperations(work);
+        this.scheduleOperationPoll();
+        this.emit();
+    }
+    finishWorkSync() {
+        for (const [id, sync] of this.workSync)
+            if (!sync.work && !sync.list) {
+                this.workSync.delete(id);
+                const work = this.getWork(id), intent = work?.lifecycleIntent;
+                const evidence = intent && this.terminalEvidence.get(intent.operationId);
+                if (intent && evidence?.generation === intent.sequence && evidence.operation.workId === id && terminalOperation(evidence.operation.state))
+                    delete work.lifecycleIntent;
+            }
+        for (const [id, evidence] of this.terminalEvidence) {
+            const work = this.getWork(evidence.operation.workId);
+            if (!this.workSync.has(evidence.operation.workId) && work?.lifecycleIntent?.operationId !== id)
+                this.terminalEvidence.delete(id);
         }
-    } this.scheduleOperationPoll(); }
+        for (const work of this.state.works)
+            this.associateOperations(work);
+    }
+    observationTargets() {
+        const active = this.state.operations.filter(op => !terminalOperation(op.state) && !this.pausedOperations.has(op.id));
+        const workIds = new Set([...this.workSync].filter(([, sync]) => sync.work).map(([id]) => id));
+        for (const op of active)
+            if (op.workId)
+                workIds.add(op.workId);
+        return [
+            ...active.map(op => ({ path: `operations/${part(op.id)}`, read: () => this.checkOperation(op.id, false) })),
+            ...[...workIds].map(id => ({ path: `works/${part(id)}`, read: () => this.refreshWorkStatus(id, false) })),
+            ...([...this.workSync.values()].some(sync => sync.list) ? [{ path: 'works', read: () => this.listWorks(false) }] : []),
+        ];
+    }
     scheduleOperationPoll() {
         clearTimeout(this.pollTimer);
-        this.pollTimer = setTimeout(async () => {
-            if (!this.state.signedIn)
-                return;
-            let changed = false;
-            for (const operation of [...this.state.operations]) {
-                if (!['succeeded', 'failed', 'superseded'].includes(operation.state) && !this.pausedOperations.has(operation.id)) {
-                    try {
-                        await this.checkOperation(operation.id);
-                        changed ||= ['succeeded', 'failed', 'superseded'].includes(operation.state);
-                    }
-                    catch (error) {
-                        operation.error = errorText(error);
-                        if (error instanceof DesktopError && ['NOT_FOUND', 'OPERATION_NOT_FOUND', 'AUTH_REQUIRED'].includes(error.code))
-                            this.pausedOperations.add(operation.id);
-                    }
-                }
+        this.pollTimer = undefined;
+        if (!this.observationVisible || !this.state.signedIn)
+            return;
+        const now = Date.now(), keys = new Set(), deadlines = [];
+        for (const target of this.observationTargets()) {
+            const key = this.metadataKey(target.path);
+            keys.add(key);
+            let record = this.pollTargets.get(key);
+            if (!record) {
+                record = { pending: false, nextAt: now + 2000 };
+                this.pollTargets.set(key, record);
             }
-            if (changed) {
-                await this.listWorks().catch(() => undefined);
-                for (const work of this.state.works)
-                    if (this.state.operations.some(o => o.workId === work.id && ['succeeded', 'failed'].includes(o.state)))
-                        await this.loadWork(work.id).catch(() => undefined);
+            if (record.pending || this.metadata.paused(key))
+                continue;
+            deadlines.push(Math.max(record.nextAt, this.metadata.states.get(key)?.nextAt || 0));
+        }
+        for (const [key, record] of this.pollTargets)
+            if (!keys.has(key) && !record.pending)
+                this.pollTargets.delete(key);
+        if (!deadlines.length)
+            return;
+        const epoch = this.epoch;
+        this.pollTimer = setTimeout(() => { this.pollTimer = undefined; if (epoch === this.epoch)
+            void this.pollOperations(false); }, Math.max(1, Math.min(...deadlines) - now));
+    }
+    async pollOperations(immediate = true) {
+        if (!this.observationVisible || !this.state.signedIn)
+            return;
+        const epoch = this.epoch, pending = [];
+        for (const target of this.observationTargets()) {
+            const key = this.metadataKey(target.path);
+            let record = this.pollTargets.get(key);
+            if (!record) {
+                record = { pending: false, nextAt: Date.now() };
+                this.pollTargets.set(key, record);
             }
-            this.emit();
-            if (this.state.operations.some(o => !['succeeded', 'failed', 'superseded'].includes(o.state) && !this.pausedOperations.has(o.id)))
+            if (record.pending || !this.metadata.canRead(key) || !immediate && record.nextAt > Date.now())
+                continue;
+            record.pending = true;
+            const owned = record;
+            const task = target.read().finally(() => {
+                if (epoch !== this.epoch || this.pollTargets.get(key) !== owned)
+                    return;
+                owned.pending = false;
+                const readState = this.metadata.states.get(key);
+                owned.nextAt = readState?.failures ? readState.nextAt : Date.now() + 2000;
+                this.finishWorkSync();
+                this.emit();
                 this.scheduleOperationPoll();
-        }, 2000);
+            });
+            pending.push(task);
+        }
+        // Completion of each object schedules its own next read, even while other objects hang.
+        this.scheduleOperationPoll();
+        await Promise.allSettled(pending);
+    }
+    observePage(workId, visible) {
+        const entering = this.visibleWorkId !== workId || !this.observationVisible && visible;
+        this.visibleWorkId = workId;
+        if (visible !== this.observationVisible) {
+            this.observationVisible = visible;
+            if (!visible) {
+                clearTimeout(this.pollTimer);
+                this.pollTimer = undefined;
+                this.metadata.cancel();
+            }
+        }
+        if (visible && entering) {
+            this.metadata.rearm();
+            this.scheduleOperationPoll();
+        }
+    }
+    async refreshVisibleWork(id) {
+        const work = await this.refreshWorkStatus(id, false);
+        if (work && this.project(work).usable)
+            await this.loadServices(id);
+    }
+    refreshCapabilities(id) {
+        const old = this.capabilityReads.get(id);
+        if (old)
+            return old;
+        const work = this.getWork(id);
+        if (!work || !this.project(work).usable)
+            return Promise.resolve();
+        const pending = (async () => {
+            await Promise.allSettled([this.loadServices(id), this.loadSessions(id), this.loadConfiguration(id), this.loadPackages(id)]);
+        })().finally(() => { if (this.capabilityReads.get(id) === pending)
+            this.capabilityReads.delete(id); });
+        this.capabilityReads.set(id, pending);
+        return pending;
     }
     operationPaused(id) { return this.pausedOperations.has(id); }
     pauseOperation(id) { this.pausedOperations.add(id); }
     resumeOperation(id) { this.pausedOperations.delete(id); this.scheduleOperationPoll(); }
-    async clearOperations() { for (const operation of this.state.operations.filter(o => ['succeeded', 'failed', 'superseded'].includes(o.state)))
-        await this.request(`known-operations/${part(operation.id)}`, 'DELETE'); this.state.operations = this.state.operations.filter(o => !['succeeded', 'failed', 'superseded'].includes(o.state)); this.emit(); }
-    async newSession(id) { const value = await this.request(`works/${part(id)}/sessions`, 'POST'); const sessionId = value.sessionId ?? value.session?.sessionId; this.getWork(id).sessions.unshift({ id: sessionId, title: `Session ${sessionId}`, messages: [] }); this.emit(); return sessionId; }
+    async clearOperations() {
+        const epoch = this.epoch;
+        const selected = this.state.operations.filter(op => terminalOperation(op.state));
+        for (const operation of selected) {
+            this.retainTerminal(operation);
+            await this.request(`known-operations/${part(operation.id)}`, 'DELETE');
+            if (epoch !== this.epoch)
+                return;
+            this.state.operations = this.state.operations.filter(op => op.id !== operation.id);
+        }
+        this.finishWorkSync();
+        this.emit();
+    }
+    async newSession(id) { const value = await this.request(`works/${part(id)}/sessions`, 'POST'); const sessionId = value.sessionId ?? value.session?.sessionId; if (typeof sessionId !== 'string' || !sessionId)
+        throw new DesktopError('INVALID_RESPONSE', 'Session acceptance has no ID. Read Sessions before creating again.'); this.getWork(id).sessions.unshift({ id: sessionId, title: `Session ${sessionId}`, messages: [] }); this.emit(); return sessionId; }
     async send(id, sessionId, text, includeIdentity) {
         if (!text.trim())
             throw new Error('Write a message first.');
@@ -499,11 +1045,17 @@ export class DesktopAdapter {
         return raw.runId;
     }
     selectedService = '';
-    async cancelRun(id) { const work = this.getWork(id); if (work.run) {
-        await this.request(`works/${part(id)}/runs/${part(work.run.id)}/cancel`, 'POST');
-        const value = await this.request(`works/${part(id)}/runs/${part(work.run.id)}`);
-        work.run.status = runStates[(value.run ?? value).state] ?? 'interrupted';
+    async cancelRun(id) { const work = this.getWork(id); const run = work.run; if (run && !run.cancellationRequested) {
+        await this.request(`works/${part(id)}/runs/${part(run.id)}/cancel`, 'POST');
+        run.cancellationRequested = true;
         this.emit();
+        void this.request(`works/${part(id)}/runs/${part(run.id)}`).then(value => { if (work.run === run) {
+            run.status = runStates[(value.run ?? value).state] ?? 'interrupted';
+            this.emit();
+        } }).catch(error => { if (work.run === run) {
+            run.error = `Cancellation requested; status not confirmed: ${errorText(error)}`;
+            this.emit();
+        } });
     } }
     stopRunObservers() {
         for (const controller of this.streams.values())
@@ -565,7 +1117,16 @@ export class DesktopAdapter {
     historyMessages(messages) {
         return messages.filter(message => ['user', 'assistant', 'toolResult'].includes(message.role)).map(message => message.role === 'toolResult' ? ({ role: 'assistant', text: '', tool: { name: 'Tool result', status: 'Saved result', content: message.text ?? '' } }) : ({ role: message.role, text: message.text ?? '' }));
     }
-    async resumeRun(id) {
+    resumeRunConnection(id) {
+        return new Promise((resolve, reject) => {
+            let connected = false;
+            void this.resumeRun(id, () => { connected = true; resolve(); }).then(() => {
+                if (!connected)
+                    reject(new Error(this.getWork(id)?.run?.error || 'Run connection was not confirmed. Read the original Run.'));
+            }, reject);
+        });
+    }
+    async resumeRun(id, connected) {
         const work = this.getWork(id);
         const run = work.run;
         if (!run)
@@ -584,6 +1145,8 @@ export class DesktopAdapter {
             const observer = { controller, run, epoch, failures: 0 };
             this.historyObservers.set(id, observer);
             await this.recoverRunHistory(id, observer);
+            if (!observer.failures)
+                connected?.();
             return;
         }
         try {
@@ -596,10 +1159,13 @@ export class DesktopAdapter {
                     const observer = { controller, run, epoch, failures: 0 };
                     this.historyObservers.set(id, observer);
                     await this.recoverRunHistory(id, observer);
+                    if (!observer.failures)
+                        connected?.();
                     return;
                 }
                 throw new Error(`Run stream failed (${response.status}).`);
             }
+            connected?.();
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
@@ -695,6 +1261,10 @@ export class DesktopAdapter {
     async loadDirectory(id, path = '/') {
         const epoch = this.epoch;
         const work = this.getWork(id);
+        const key = `${id}:${path}`, state = this.directories.get(key) || { loading: false, checkedAt: '', error: '' };
+        this.directories.set(key, state);
+        state.loading = true;
+        this.emit();
         try {
             const base = this.fileURL(id, path).replace(/\/?$/, '/');
             const response = await fetch(base, { method: 'PROPFIND', credentials: 'same-origin', headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
@@ -702,7 +1272,12 @@ export class DesktopAdapter {
                 throw new Error(`Workspace cannot be read (${response.status}).`);
             if (epoch !== this.epoch)
                 throw new Error('The connection changed; the file listing was discarded.');
-            const entries = parseEntries(await response.text(), base);
+            const text = await response.text();
+            if (epoch !== this.epoch)
+                throw new Error('The identity changed while reading directory metadata.');
+            const entries = parseEntries(text, base);
+            state.checkedAt = new Date().toISOString();
+            state.error = '';
             const children = entries.filter(e => e.name !== '/').map(e => ({ path: (path === '/' ? '' : path) + '/' + e.name, name: e.name, kind: e.directory ? 'directory' : e.kind === 'file' ? 'file' : 'special', size: e.size ?? 0, modified: e.modified ?? '' }));
             for (const child of children) {
                 const old = work.files.find(f => f.path === child.path);
@@ -719,9 +1294,15 @@ export class DesktopAdapter {
         catch (error) {
             if (epoch === this.epoch) {
                 (work.resourceErrors ??= {}).files = errorText(error);
+                state.error = errorText(error);
                 this.emit();
             }
             throw error;
+        }
+        finally {
+            state.loading = false;
+            if (epoch === this.epoch)
+                this.emit();
         }
     }
     async readFile(id, path) {
@@ -786,13 +1367,47 @@ export class DesktopAdapter {
         this.emit();
         return { ...file };
     }
+    async uploadResponse(url, method, body, headers, progress) {
+        const epoch = this.epoch;
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open(method, url);
+            xhr.withCredentials = true;
+            for (const [key, value] of Object.entries(headers))
+                xhr.setRequestHeader(key, value);
+            xhr.upload.onprogress = event => progress(event.loaded, event.lengthComputable ? event.total : undefined);
+            xhr.upload.onload = () => { if (epoch === this.epoch)
+                progress(0, undefined, true); };
+            xhr.onload = () => {
+                if (epoch !== this.epoch) {
+                    reject(new DesktopError('CONNECTION_CHANGED', 'The identity changed during upload.'));
+                    return;
+                }
+                const resultHeaders = new Headers();
+                for (const line of xhr.getAllResponseHeaders().trim().split(/[\r\n]+/)) {
+                    const at = line.indexOf(':');
+                    if (at > 0)
+                        resultHeaders.append(line.slice(0, at), line.slice(at + 1).trim());
+                }
+                resolve(new Response(xhr.status === 204 || xhr.status === 205 ? null : xhr.responseText, { status: xhr.status, headers: resultHeaders }));
+            };
+            xhr.onerror = () => reject(new DesktopError('RESULT_UNKNOWN', 'Upload response lost. Check the original target before submitting again.'));
+            xhr.onabort = xhr.onerror;
+            xhr.send(body);
+        });
+    }
     async writeFile(id, path, method, body, headers = {}) {
         if (path === '/' && method !== 'MKCOL')
             throw new Error('The workspace root cannot be mutated.');
         const epoch = this.epoch;
         let response;
         try {
-            response = await fetch(this.fileURL(id, path), { method, credentials: 'same-origin', headers: { ...headers, 'X-Piwork-Csrf': this.csrf }, body });
+            response = body instanceof File
+                ? await this.uploadResponse(this.fileURL(id, path), method, body, { ...headers, 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => { const progress = this.uploadProgress.get(id); if (epoch === this.epoch && progress) {
+                    Object.assign(progress, sentAll ? { phase: 'Waiting for confirmation' } : { phase: 'Uploading', transferred: sent, total });
+                    this.emit();
+                } })
+                : await fetch(this.fileURL(id, path), { method, credentials: 'same-origin', headers: { ...headers, 'X-Piwork-Csrf': this.csrf }, body });
         }
         catch {
             return [{ path, status: 'unknown', message: 'Response lost. Refresh source and destination before trying again.' }];
@@ -815,7 +1430,7 @@ export class DesktopAdapter {
         }
         return [{ path, status: 'succeeded', message: 'Confirmed', modified: fileVersion(response.headers.get('Last-Modified')) }];
     }
-    async saveFile(id, path, content, baseline, unprotectedConsent = false) {
+    async saveFile(id, path, content, baseline, unprotectedConsent = false, confirmed) {
         if (new TextEncoder().encode(content).length > 1_048_576)
             throw new Error('Text exceeds the 1 MiB editor limit.');
         const modified = fileVersion(baseline);
@@ -824,7 +1439,9 @@ export class DesktopAdapter {
         const results = await this.writeFile(id, path, 'PUT', content, { 'Content-Type': 'text/plain; charset=utf-8', ...(modified ? { 'If-Unmodified-Since': modified } : {}) });
         const result = results[0];
         this.state.transfers = results;
+        this.transfersByWork.set(id, results);
         if (result.status === 'succeeded') {
+            confirmed?.(result);
             const file = this.getWork(id).files.find(f => f.path === path);
             if (file) {
                 file.content = content;
@@ -864,6 +1481,7 @@ export class DesktopAdapter {
                 results.push(...await this.writeFile(id, path, action === 'delete' ? 'DELETE' : action.toUpperCase(), undefined, headers));
             }
         this.state.transfers = results;
+        this.transfersByWork.set(id, results);
         this.emit();
         return results;
     }
@@ -875,6 +1493,8 @@ export class DesktopAdapter {
                 throw new Error('Invalid upload file name.');
             const path = (directory === '/' ? '' : directory) + '/' + file.name;
             const key = `${id}:${path}`;
+            this.uploadProgress.set(id, { workId: id, path, phase: 'Checking target', index: files.indexOf(file) + 1, count: files.length });
+            this.emit();
             let existing;
             try {
                 existing = await fetch(this.fileURL(id, path), { method: 'HEAD', credentials: 'same-origin' });
@@ -906,12 +1526,13 @@ export class DesktopAdapter {
             // the version changed, ask for consent again; never retry a PUT here.
         }
         this.state.transfers = results;
-        await this.loadDirectory(id, directory).catch(() => undefined);
+        this.transfersByWork.set(id, results);
+        this.uploadProgress.delete(id);
         this.emit();
         return results;
     }
-    async saveConfiguration(id, config) { const raw = synchronizeConfiguration(config); await this.request(`works/${part(id)}/configuration`, 'PUT', { configuration: raw }); await this.loadConfiguration(id); }
-    async replaceSkill(id, name) { const work = this.getWork(id); await this.request(`works/${part(id)}/configuration/skills`, 'PUT', { skills: Array.from(new Set([...work.config.skills, name])) }); await this.loadConfiguration(id); }
+    async saveConfiguration(id, config) { const raw = synchronizeConfiguration(config); await this.request(`works/${part(id)}/configuration`, 'PUT', { configuration: raw }); this.getWork(id).config = structuredClone(config); this.emit(); }
+    async replaceSkill(id, name) { const work = this.getWork(id); const skills = Array.from(new Set([...work.config.skills, name])); await this.request(`works/${part(id)}/configuration/skills`, 'PUT', { skills }); work.config = { ...work.config, skills }; this.emit(); }
     async applyConfiguration(id) { return this.accepted(await this.request(`works/${part(id)}/configuration/apply`, 'POST'), id, 'Apply configuration'); }
     async installPackage(id, name, sourceLabel, files, updateTarget) {
         const kind = sourceLabel.split(': ')[0];
@@ -928,11 +1549,19 @@ export class DesktopAdapter {
             form.set('kind', kind === 'ZIP' ? 'zip' : 'local');
             for (const file of files)
                 form.append(kind === 'ZIP' ? 'zip' : 'files', file, file.webkitRelativePath || file.name);
-            const response = await fetch(`/_desktop/api/works/${part(id)}/package-uploads`, { method: 'POST', credentials: 'same-origin', headers: { 'X-Piwork-Csrf': this.csrf }, body: form });
+            const epoch = this.epoch;
+            this.uploadProgress.set(id, { workId: id, path: name, phase: 'Uploading package' });
+            this.emit();
+            const response = await this.uploadResponse(`/_desktop/api/works/${part(id)}/package-uploads`, 'POST', form, { 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => { const progress = this.uploadProgress.get(id); if (epoch === this.epoch && progress) {
+                Object.assign(progress, sentAll ? { phase: 'Validating and forwarding' } : { phase: 'Uploading package', transferred: sent, total });
+                this.emit();
+            } });
             const value = await response.json();
             if (!response.ok)
                 throw new Error(value.message ?? 'Package upload failed.');
             source = { kind: 'upload', uploadId: value.uploadId };
+            this.uploadProgress.delete(id);
+            this.emit();
         }
         return this.accepted(await this.request(`works/${part(id)}/packages${updateTarget ? `/${part(updateTarget)}/update` : ''}`, 'POST', { source }), id, updateTarget ? 'Update Pi Package' : 'Install Pi Package');
     }
@@ -1121,14 +1750,111 @@ export class DesktopAdapter {
         this.emit();
         return snapshot;
     }
-    async downloadSnapshot(id) { const value = await this.request(`work-snapshots/${part(id)}/downloads`, 'POST'); let progress = value; this.transferProgress = progress; this.emit(); while (!progress.ready && progress.phase !== 'ready') {
-        if (['failed', 'cancelled', 'unknown'].includes(progress.phase))
-            throw new Error(progress.error?.message ?? 'Snapshot download failed.');
-        await new Promise(resolve => setTimeout(resolve, 500));
-        progress = await this.request(`downloads/${part(value.transferId)}`);
-        this.transferProgress = progress;
+    stopDownloadObservers() { for (const observer of this.downloadObservers.values())
+        observer.active = false; this.downloadObservers.clear(); }
+    async checkDownload(snapshotID) {
+        const job = this.downloads.get(snapshotID);
+        if (!job)
+            throw new Error('No original transfer is known for this snapshot.');
+        try {
+            const value = await this.request(`downloads/${part(job.transferId)}`);
+            if (this.downloads.get(snapshotID) !== job)
+                return;
+            if (!job.ready)
+                Object.assign(job, value, { seen: true, checkedAt: new Date().toISOString(), observationError: '' });
+            else {
+                job.checkedAt = new Date().toISOString();
+                job.observationError = '';
+            }
+            // A successful read resumes observation of the original transfer after a lost POST.
+            job.error = '';
+            this.emit();
+            return job;
+        }
+        catch (error) {
+            if (this.downloads.get(snapshotID) !== job)
+                throw error;
+            if (error instanceof DesktopError && error.httpStatus === 404 && job.pending && !job.seen)
+                return job;
+            job.observationError = errorText(error);
+            this.emit();
+            throw error;
+        }
+    }
+    observeDownload(snapshotID) {
+        if (this.downloadObservers.has(snapshotID))
+            return;
+        const job = this.downloads.get(snapshotID);
+        if (!job || job.ready)
+            return;
+        const observer = { active: true };
+        this.downloadObservers.set(snapshotID, observer);
+        void (async () => {
+            try {
+                while (observer.active && this.downloads.get(snapshotID) === job && !job.ready && !job.error) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    if (!observer.active)
+                        break;
+                    try {
+                        await this.checkDownload(snapshotID);
+                    }
+                    catch {
+                        break;
+                    }
+                }
+            }
+            finally {
+                if (this.downloadObservers.get(snapshotID) === observer)
+                    this.downloadObservers.delete(snapshotID);
+            }
+        })();
+    }
+    downloadSnapshot(id) {
+        const old = this.downloads.get(id), known = this.downloadRequests.get(id);
+        if (old?.ready)
+            return Promise.resolve(`/_desktop/api/downloads/${part(old.transferId)}/content`);
+        if (known) {
+            this.observeDownload(id);
+            return known;
+        }
+        if (old)
+            return Promise.reject(new Error('An original transfer is already known. Check transfer before preparing again.'));
+        const epoch = this.epoch;
+        const job = { transferId: crypto.randomUUID(), snapshotId: id, phase: 'Preparing', pending: true, seen: false, transferred: 0 };
+        this.downloads.set(id, job);
         this.emit();
-    } return `/_desktop/api/downloads/${part(value.transferId)}/content`; }
+        this.observeDownload(id);
+        let pending;
+        pending = (async () => {
+            try {
+                const value = await this.requestOnce(`work-snapshots/${part(id)}/downloads`, 'POST', {}, undefined, { 'X-Piwork-Transfer-Id': job.transferId });
+                if (epoch !== this.epoch)
+                    throw new DesktopError('CONNECTION_CHANGED', 'The identity changed. Original transfer access ended.');
+                if (value.transferId !== job.transferId || !value.ready)
+                    throw new DesktopError('RESULT_UNKNOWN', 'Download confirmation was incomplete. Check the original transfer.');
+                Object.assign(job, value, { phase: 'ready', checkedAt: new Date().toISOString(), observationError: '' });
+                return `/_desktop/api/downloads/${part(job.transferId)}/content`;
+            }
+            catch (error) {
+                const failure = error instanceof DesktopError ? error : new DesktopError('RESULT_UNKNOWN', 'Download response lost. Check the original transfer.');
+                if (epoch === this.epoch && !job.ready) {
+                    job.error = errorText(failure);
+                    job.phase = 'Not confirmed';
+                }
+                throw failure;
+            }
+            finally {
+                if (epoch === this.epoch) {
+                    job.pending = false;
+                    this.emit();
+                }
+                if (this.downloadRequests.get(id) === pending)
+                    this.downloadRequests.delete(id);
+            }
+        })();
+        this.downloadRequests.set(id, pending);
+        return pending;
+    }
 }
 export const adapter = new DesktopAdapter();
 //# sourceMappingURL=adapter.js.map

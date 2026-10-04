@@ -148,11 +148,30 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 		desktopError(w, 403, "SERVICE_UPGRADE_DENIED")
 		return
 	}
+	d.mu.Lock()
+	session, exists := d.sessions[entry.sessionID]
+	session.id = entry.sessionID
+	d.mu.Unlock()
+	if !exists {
+		desktopError(w, 401, "LOCAL_SERVICE_AUTH_REQUIRED")
+		return
+	}
+	guarded, request, finish, allowed := d.guardContent(w, r, session)
+	if !allowed {
+		return
+	}
+	defer finish()
+	w, r = guarded, request
 	if d.view(r.Context(), "")["state"] != "authenticated" || !d.serviceLive(entry) {
 		desktopError(w, 401, "AUTH_REQUIRED")
 		return
 	}
 	d.mu.Lock()
+	if d.identity.credential == nil || !d.identity.checked {
+		d.mu.Unlock()
+		desktopError(w, 401, "AUTH_REQUIRED")
+		return
+	}
 	coreURL, token, generation := d.identity.coreURL, d.identity.credential.Token, d.identity.generation
 	d.mu.Unlock()
 	api, err := client.New(coreURL, token)
@@ -240,7 +259,7 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 				response.ContentLength = -1
 				return nil
 			}
-			if generation != entry.generation {
+			if generation != entry.generation || !d.serviceLive(entry) {
 				return errors.New("Desktop connection changed")
 			}
 			if r.URL.Path == "/" && strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/html") {

@@ -1,4 +1,5 @@
 import { packagePhaseView, packageSteps } from './package-phase.js';
+import { ActionState, renderActionStates } from './action-state.js';
 import { adapter, ConsoleError, inspectSkillFiles, inspectPackageFiles, } from "./adapter.js";
 import { esc, icon, Button, NavLink, StatusLabel, Feedback, PageHeader, Section, Field, Input, DataTable, date, bytes, Disclosure, Copy, Empty, UploadProgress, } from "./components.js";
 const app = document.querySelector("#app");
@@ -18,6 +19,109 @@ let defaultConflicts = [];
 let setupJourney = null;
 let runtimeEditing = false, defaultEditSection = null, defaultLastSaved = false, overviewDataConfirmed = false, rememberedOperation = null, lastCreatedUser = null, referenceReturn = null;
 let pendingNavigation = null, modalError = "", currentModalTitle = "", submissionPending = false;
+let preflightPending = false, selectionVersion = 0, signingIn = false;
+const actions = new ActionState(() => renderConsoleActions());
+let actionIdentity = adapter.identityEpoch;
+const manualLabels = { 'save-defaults': 'Saving defaults', refresh: 'Reading current page', 'verify-runtime': 'Verifying runtime', 'refresh-status': 'Checking status', 'refresh-operation': 'Checking Operation', 'resume-observation': 'Resuming observation', readback: 'Reading configuration', 'sign-out': 'Signing out', 'retry-connection': 'Checking connection' };
+function consoleIntent(button) {
+    const name = button.dataset.action || '', label = manualLabels[name];
+    if (!label || name === 'refresh' && dirty)
+        return;
+    if (name === 'save-defaults')
+        return { key: 'save-defaults', kind: 'configuration', resource: 'defaults', label, target: 'Default Work', anchor: '[data-action="save-defaults"]', view: path };
+    return { key: `manual:${path}:${name}`, kind: name === 'sign-out' ? 'identity' : 'read', label, target: path.startsWith('/operations/') ? routeId() : name === 'sign-out' ? adapter.account : path === '/runtime' ? 'Runtime' : path === '/default-work' ? 'Default Work' : 'Core', anchor: `[data-action="${name}"]`, view: path };
+}
+function renderConsoleActions() {
+    if (actionIdentity !== adapter.identityEpoch) {
+        actionIdentity = adapter.identityEpoch;
+        actions.clear();
+        return;
+    }
+    renderActionStates(document.body, actions, path, consoleIntent);
+}
+class ConsoleViewChanged extends Error {
+}
+function currentView(includeDialog = true, allowIdentityChange = false) {
+    const originalPath = path, originalLoad = loadId, originalDialog = dialog, identity = adapter.identityEpoch;
+    return () => originalPath === path && originalLoad === loadId && (!includeDialog || originalDialog === dialog) && (allowIdentityChange || identity === adapter.identityEpoch);
+}
+async function awaitCurrent(promise, allowIdentityChange = false) {
+    const valid = currentView(true, allowIdentityChange);
+    try {
+        const value = await promise;
+        if (!valid())
+            throw new ConsoleViewChanged();
+        return value;
+    }
+    catch (error) {
+        if (error instanceof ConsoleError && error.code === 'SESSION_EXPIRED')
+            throw error;
+        if (!valid())
+            throw new ConsoleViewChanged();
+        throw error;
+    }
+}
+async function tracked(intent, perform) {
+    const previous = actions.records.get(intent.key);
+    if (previous?.blocked && /Resume this submission/.test(document.querySelector('#dialog-submit')?.textContent || ''))
+        previous.blocked = false;
+    const conflict = actions.conflict(intent);
+    if (conflict) {
+        showToast(`${conflict.target}: waiting for confirmation.`);
+        return;
+    }
+    const record = actions.begin(intent);
+    try {
+        await perform(record);
+        actions.finish(record);
+    }
+    catch (error) {
+        if (error instanceof ConsoleViewChanged) {
+            actions.finish(record);
+            return;
+        }
+        const explained = feedback.includes(err(error)) || statusError === err(error);
+        actions.fail(record, error);
+        if (record.view === path && actions.current(record)) {
+            if (!isSessionError(error) && !explained)
+                showError(error);
+        }
+    }
+}
+function confirmedMutation(message) {
+    const record = [...actions.records.values()].find(record => record.pending && record.kind !== 'read' && record.view === path);
+    if (record)
+        actions.confirm(record, message);
+    return record;
+}
+async function refreshConfirmed(message, read, destination = path) {
+    if (destination !== path)
+        return;
+    const record = confirmedMutation(message) || [...actions.records.values()].find(record => record.result === message);
+    feedback = Feedback(message, 'success');
+    renderPage();
+    if (record) {
+        await actions.refresh(record, read);
+        if (destination === path && actions.current(record)) {
+            if (record.refresh === 'failed')
+                feedback = Feedback(`${message} Current list/status not confirmed: ${esc(record.refreshError)}`, 'warning', Button('Retry refresh', 'readback', 'secondary'));
+            renderPage();
+        }
+    }
+    else {
+        try {
+            await read();
+            if (destination === path)
+                renderPage();
+        }
+        catch (error) {
+            if (destination === path && !isSessionError(error)) {
+                feedback = Feedback(`${message} Current list/status not confirmed: ${err(error)}`, 'warning', Button('Retry refresh', 'readback', 'secondary'));
+                renderPage();
+            }
+        }
+    }
+}
 function shell(body) {
     const login = path === "/login", workSetup = ["/default-work", "/skills", "/packages"].some((p) => path === p || path.startsWith(p + "/"));
     const nav = [
@@ -95,6 +199,9 @@ function recoveryActions(e) {
     return "";
 }
 function showError(e) {
+    for (const record of actions.records.values())
+        if (record.pending && record.view === path)
+            actions.fail(record, e);
     if (isSessionError(e))
         return;
     feedback = Feedback(err(e), "error", recoveryActions(e));
@@ -117,6 +224,7 @@ function navigate(next, force = false) {
         feedback = "";
         statusError = "";
         readbackRequired = false;
+        saving = false;
         operation = null;
         upload = null;
         packageIntent = null;
@@ -231,39 +339,46 @@ async function loadPage() {
         renderPage();
         return;
     }
+    const originalPath = path, identity = adapter.identityEpoch;
+    const read = async (pending) => {
+        const value = await pending;
+        if (ticket !== loadId || originalPath !== path || identity !== adapter.identityEpoch)
+            throw new ConsoleViewChanged();
+        return value;
+    };
     shell(`<div class="page-header"><div><h1>${esc(modules.find(([, p]) => p === path)?.[0] || "Details")}</h1><p>Loading current Core data…</p></div></div><div class="skeleton"><span><span class="spinner"></span> Reading Core data</span></div>`);
     try {
         if (path === "/") {
             try {
-                health = await adapter.health();
+                health = await read(adapter.health());
                 statusError = "";
             }
             catch (e) {
-                if (isSessionError(e))
+                if (e instanceof ConsoleViewChanged || isSessionError(e))
                     return;
                 statusError = err(e);
                 health = adapter.lastHealth;
             }
             if (!statusError) {
-                [runtime, defaults, users] = await Promise.all([
+                [runtime, defaults, users] = await read(Promise.all([
                     adapter.runtime(),
                     adapter.defaults(),
                     adapter.users(),
-                ]);
+                ]));
                 overviewDataConfirmed = true;
             }
         }
         else if (path === "/users")
-            users = await adapter.users();
+            users = await read(adapter.users());
         else if (path === "/runtime") {
-            runtime = await adapter.runtime();
+            runtime = await read(adapter.runtime());
             runtimeEditing = !runtime;
             try {
-                health = await adapter.health();
+                health = await read(adapter.health());
                 statusError = "";
             }
             catch (e) {
-                if (isSessionError(e))
+                if (e instanceof ConsoleViewChanged || isSessionError(e))
                     return;
                 statusError = err(e);
             }
@@ -277,11 +392,11 @@ async function loadPage() {
                 : { agentImage: "", provider: "", modelId: "", baseUrl: "" };
         }
         else if (path === "/default-work") {
-            [defaults, skills, packages] = await Promise.all([
+            [defaults, skills, packages] = await read(Promise.all([
                 adapter.defaults(),
                 adapter.skills(),
                 adapter.packages(),
-            ]);
+            ]));
             defaultDraft = defaults ? structuredClone(defaults) : null;
             defaultConflicts = [];
             defaultEditSection = null;
@@ -315,23 +430,23 @@ async function loadPage() {
             }
         }
         else if (path.startsWith("/skills")) {
-            [skills, defaults] = await Promise.all([
+            [skills, defaults] = await read(Promise.all([
                 adapter.skills(),
                 adapter.defaults(),
-            ]);
+            ]));
         }
         else if (path.startsWith("/packages")) {
-            [packages, defaults] = await Promise.all([
+            [packages, defaults] = await read(Promise.all([
                 adapter.packages(),
                 adapter.defaults(),
-            ]);
+            ]));
             if (path.startsWith("/packages/")) {
-                const detail = await adapter.packageDetails(routeId());
+                const detail = await read(adapter.packageDetails(routeId()));
                 packages = [...packages.filter(p => p.name !== detail.name), detail];
             }
         }
         else if (path.startsWith("/operations/")) {
-            operation = await adapter.operation(routeId());
+            operation = await read(adapter.operation(routeId()));
             rememberedOperation = structuredClone(operation);
         }
         if (ticket !== loadId)
@@ -377,6 +492,7 @@ function renderPage() {
             PageHeader("Page not found", "This console page is unavailable.") +
                 NavLink("Back to Status", "/", "btn secondary");
     shell(body);
+    renderConsoleActions();
 }
 function loginPage() {
     const unavailable = adapter.availability?.reachable === false;
@@ -808,6 +924,10 @@ function openDialog(title, description, body, submitLabel, action, kind = "prima
 function closeDialog(force = false) {
     if (submissionPending && !force)
         return;
+    selectionVersion++;
+    preflightPending = false;
+    if (force)
+        submissionPending = false;
     const origin = dialogOrigin;
     const query = dialogOriginQuery;
     dialog?.close();
@@ -828,10 +948,13 @@ function closeDialog(force = false) {
             document.querySelector(query)?.focus();
     }
 }
-function dialogFeedback(message, tone = "error", actions = "") {
+function dialogFeedback(message, tone = "error", buttons = "") {
+    for (const record of actions.records.values())
+        if (record.pending && record.anchor === "#dialog-submit" && record.view === path)
+            actions.fail(record, new Error(message));
     const el = document.querySelector("#dialog-feedback");
     if (el) {
-        el.innerHTML = Feedback(message, tone, actions);
+        el.innerHTML = Feedback(message, tone, buttons);
         el.scrollIntoView({ block: "nearest" });
     }
 }
@@ -854,19 +977,21 @@ function createUserDialog() {
         }
         dialogBusy(true, "Creating…");
         try {
-            const u = await adapter.createUser({
+            const u = await awaitCurrent(adapter.createUser({
                 account: String(form.get("new-account")),
                 password,
                 role: String(form.get("new-role")),
-            });
+            }));
             dialogBusy(false);
             closeDialog(true);
-            users = await adapter.users();
             lastCreatedUser = u;
             feedback = Feedback(`Account ${u.account} created. ${u.role === "Administrator" ? "This administrator can sign in to this console." : "Use PiWork Desktop or the user CLI to sign in."}`, "success");
             renderPage();
+            void refreshConfirmed(`Account ${u.account} created. ${u.role === "Administrator" ? "This administrator can sign in to this console." : "Use PiWork Desktop or the user CLI to sign in."}`, async () => { users = await awaitCurrent(adapter.users()); });
         }
         catch (e) {
+            if (e instanceof ConsoleViewChanged)
+                return;
             dialogBusy(false);
             clearModalPasswords();
             if (isSessionError(e))
@@ -925,7 +1050,7 @@ function userActionDialog(id, action) {
         }
         dialogBusy(true);
         try {
-            const result = await adapter.userAction(id, action, String(form.get("reset-password") || ""));
+            const result = await awaitCurrent(adapter.userAction(id, action, String(form.get("reset-password") || "")), true);
             dialogBusy(false);
             closeDialog(true);
             if (result.selfRevoked) {
@@ -936,11 +1061,13 @@ function userActionDialog(id, action) {
                 renderPage();
                 return;
             }
-            users = await adapter.users();
             feedback = Feedback(`${u.account}: ${action === "reset" ? "password reset" : action === "disable" ? "account disabled" : "account enabled"}. ${impact}`, "success");
             renderPage();
+            void refreshConfirmed(`${u.account}: ${action === "reset" ? "password reset" : action === "disable" ? "account disabled" : "account enabled"}. ${impact}`, async () => { users = await awaitCurrent(adapter.users(), true); });
         }
         catch (e) {
+            if (e instanceof ConsoleViewChanged)
+                return;
             dialogBusy(false);
             clearModalPasswords();
             if (isSessionError(e))
@@ -948,7 +1075,9 @@ function userActionDialog(id, action) {
             dialogFeedback(err(e), "error", e instanceof ConsoleError && e.code === "USER_NOT_FOUND"
                 ? Button("Refresh Users", "close-refresh", "secondary")
                 : "");
-            document.querySelector("#dialog-submit").textContent = title;
+            const submit = document.querySelector("#dialog-submit");
+            if (submit)
+                submit.textContent = title;
         }
     }, action === "enable" ? "primary" : "danger");
 }
@@ -962,23 +1091,26 @@ function catalogActionDialog(kind, name, action) {
         }
         dialogBusy(true);
         try {
-            await adapter.catalogAction(kind, name, action);
+            await awaitCurrent(adapter.catalogAction(kind, name, action));
             if (referenceReturn?.name === name && referenceReturn.kind === kind)
                 referenceReturn = null;
             dialogBusy(false);
             closeDialog(true);
             feedback = Feedback(`${name} ${action === "remove" ? "removed" : action === "disable" ? "disabled" : "enabled"}. Existing Work copies are unchanged.`, "success");
+            confirmedMutation(`${name} ${action === "remove" ? "removed" : action === "disable" ? "disabled" : "enabled"}. Existing Work copies are unchanged.`);
             if (action === "remove") {
                 path = "/" + kind;
                 history.pushState({ path }, "", path);
             }
-            if (kind === "skills")
-                skills = await adapter.skills();
-            else
-                packages = await adapter.packages();
             renderPage();
+            void refreshConfirmed(`${name} ${action === "remove" ? "removed" : action === "disable" ? "disabled" : "enabled"}. Existing Work copies are unchanged.`, async () => { if (kind === "skills")
+                skills = await awaitCurrent(adapter.skills());
+            else
+                packages = await awaitCurrent(adapter.packages()); });
         }
         catch (e) {
+            if (e instanceof ConsoleViewChanged)
+                return;
             dialogBusy(false);
             if (isSessionError(e))
                 return;
@@ -989,8 +1121,10 @@ function catalogActionDialog(kind, name, action) {
                 : e instanceof ConsoleError && e.code === "PACKAGE_BUSY"
                     ? NavLink("Find Operation", "/operations", "btn secondary")
                     : "");
-            document.querySelector("#dialog-submit").textContent =
-                `${action === "enable" ? "Enable" : action === "disable" ? "Disable" : "Remove"} ${noun}`;
+            const submit = document.querySelector("#dialog-submit");
+            if (submit)
+                submit.textContent =
+                    `${action === "enable" ? "Enable" : action === "disable" ? "Disable" : "Remove"} ${noun}`;
         }
     }, danger ? "danger" : "primary");
 }
@@ -1045,27 +1179,29 @@ async function submitSkill() {
     dialogBusy(true, "Uploading…");
     const selection = upload;
     try {
-        const s = await adapter.uploadSkill(selection, uploadTarget, (sent, total) => {
+        const s = await awaitCurrent(adapter.uploadSkill(selection, uploadTarget, (sent, total) => {
             const el = document.querySelector("#upload-stage");
             if (el)
                 el.innerHTML =
                     sent === total
                         ? UploadProgress("Validating with Core", 0, 0)
                         : UploadProgress("Uploading", sent, total);
-        });
+        }));
         dialogBusy(false);
         closeDialog(true);
         upload = null;
         dialogDirty = false;
         dirty = false;
+        confirmedMutation(`Skill ${s.name} confirmed by Core. Existing Work copies are unchanged.`);
         path = "/skills/" + encodeURIComponent(s.name);
         history.pushState({ path }, "", path);
-        skills = await adapter.skills();
-        defaults = await adapter.defaults();
         feedback = Feedback(`Skill ${s.name} confirmed by Core. Existing Work copies are unchanged.`, "success");
         renderPage();
+        void refreshConfirmed(`Skill ${s.name} confirmed by Core. Existing Work copies are unchanged.`, async () => { skills = await awaitCurrent(adapter.skills()); defaults = await awaitCurrent(adapter.defaults()); });
     }
     catch (e) {
+        if (e instanceof ConsoleViewChanged)
+            return;
         dialogBusy(false);
         if (isSessionError(e))
             return;
@@ -1074,7 +1210,9 @@ async function submitSkill() {
         dialogFeedback(err(e), unknown ? "warning" : "error", unknown
             ? Button("Read current Skill", "check-skill", "secondary", `data-name="${esc(selection.name)}"`)
             : "");
-        document.querySelector("#dialog-submit").textContent = "Upload Skill";
+        const submit = document.querySelector("#dialog-submit");
+        if (submit)
+            submit.textContent = "Upload Skill";
         if (unknown)
             document.querySelector("#dialog-submit").disabled =
                 true;
@@ -1127,14 +1265,14 @@ async function submitPackage(form) {
         ?.querySelectorAll("input")
         .forEach((i) => (i.disabled = true));
     try {
-        const op = await adapter.submitPackage(packageIntent, (sent, total) => {
+        const op = await awaitCurrent(adapter.submitPackage(packageIntent, (sent, total) => {
             const el = document.querySelector("#upload-stage");
             if (el)
                 el.innerHTML =
                     sent === total
                         ? UploadProgress("Verifying and transmitting", 0, 0)
                         : UploadProgress("Uploading", sent, total);
-        }, upload?.bytes || 0, upload ?? undefined);
+        }, upload?.bytes || 0, upload ?? undefined));
         dialogBusy(false);
         closeDialog(true);
         upload = null;
@@ -1151,6 +1289,8 @@ async function submitPackage(form) {
         scheduleOperation();
     }
     catch (e) {
+        if (e instanceof ConsoleViewChanged)
+            return;
         dialogBusy(false);
         if (isSessionError(e))
             return;
@@ -1172,8 +1312,12 @@ async function submitPackage(form) {
     }
 }
 async function refreshHealth(showNotice = true) {
+    const origin = path;
     try {
-        health = await adapter.health();
+        const fresh = await adapter.health();
+        if (origin !== path)
+            return;
+        health = fresh;
         statusError = "";
         if (showNotice)
             feedback = Feedback("Core status refreshed.", "success");
@@ -1183,9 +1327,13 @@ async function refreshHealth(showNotice = true) {
     catch (e) {
         if (isSessionError(e))
             return;
+        if (origin !== path)
+            return;
         statusError = err(e);
         if (path === "/" || path === "/runtime")
             renderPage();
+        if (showNotice)
+            throw e;
     }
 }
 function scheduleOperation() {
@@ -1199,7 +1347,7 @@ function scheduleOperation() {
             scheduleOperation();
     }, 2000);
 }
-async function refreshOperation() {
+async function refreshOperation(manual = false) {
     const id = routeId();
     try {
         const op = await adapter.operation(id);
@@ -1218,6 +1366,8 @@ async function refreshOperation() {
         clearTimeout(pollTimer);
         feedback = Feedback("Observation interrupted. " + err(e), "warning", Button("Resume observation", "resume-observation", "secondary"));
         renderPage();
+        if (manual)
+            throw e;
     }
 }
 function changedDefaults() {
@@ -1235,7 +1385,7 @@ function updateDirty() {
             review.disabled = !dirty;
         const save = document.querySelector("[data-action=save-defaults]");
         if (save)
-            save.disabled = !dirty || readbackRequired || defaultConflicts.length > 0;
+            save.disabled = saving || !dirty || readbackRequired || defaultConflicts.length > 0;
         const discard = document.querySelector("[data-action=discard-defaults]");
         if (discard)
             discard.disabled = !dirty;
@@ -1252,7 +1402,7 @@ function updateDirty() {
     if (form) {
         const save = form.querySelector("button[type=submit]");
         if (save)
-            save.disabled = !dirty || readbackRequired;
+            save.disabled = saving || !dirty || readbackRequired;
         const discard = form.querySelector('[data-action="discard-defaults"]');
         if (discard)
             discard.disabled = !dirty;
@@ -1270,25 +1420,27 @@ async function readback() {
     if (path === "/runtime") {
         const draft = { ...runtimeDraft };
         try {
-            runtime = await adapter.runtime();
+            runtime = await awaitCurrent(adapter.runtime());
+            actions.reviewed(undefined, ['configuration'], path);
             readbackRequired = false;
             const matches = runtime &&
                 Object.entries(draft).every(([k, v]) => runtime[k] === v);
             feedback = Feedback(matches
                 ? "Current runtime matches the submitted non-sensitive fields. Credential availability is shown separately."
                 : "Current runtime differs from the draft. Review the current values before deciding to save again.", matches ? "success" : "warning");
-            runtimeDraft = draft;
             renderPage();
         }
         catch (e) {
+            if (e instanceof ConsoleViewChanged)
+                return;
             showError(e);
         }
     }
     else if (path === "/default-work") {
         const draft = defaultDraft ? structuredClone(defaultDraft) : null;
         try {
-            defaults = await adapter.defaults();
-            defaultDraft = draft;
+            defaults = await awaitCurrent(adapter.defaults());
+            actions.reviewed(undefined, ['configuration'], path);
             readbackRequired = false;
             dirty = changedDefaults();
             feedback = Feedback(dirty
@@ -1297,12 +1449,14 @@ async function readback() {
             renderPage();
         }
         catch (e) {
+            if (e instanceof ConsoleViewChanged)
+                return;
             showError(e);
         }
     }
     else {
         dirty = false;
-        void loadPage();
+        await loadPage();
     }
 }
 async function saveRuntime(form) {
@@ -1313,6 +1467,7 @@ async function saveRuntime(form) {
         baseUrl: String(form.get("baseUrl")).trim(),
     };
     runtimeDraft = input;
+    const submittedVersion = JSON.stringify(input), valid = currentView();
     for (const id of ["agentImage", "provider", "modelId"])
         if (!input[id]) {
             setFieldError(id, "This field is required.");
@@ -1323,41 +1478,51 @@ async function saveRuntime(form) {
         setFieldError("apiKey", "Enter the complete API Key for this save.");
         return;
     }
+    const submittedKeyField = document.querySelector('#apiKey');
     saving = true;
     const button = document.querySelector("#runtime-form button[type=submit]");
     button.disabled = true;
     button.textContent = "Saving…";
     try {
-        runtime = await adapter.saveRuntime(input, key);
-        const keyField = document.querySelector("#apiKey");
-        if (keyField)
-            keyField.value = "";
-        dirty = false;
-        runtimeEditing = false;
+        runtime = await awaitCurrent(adapter.saveRuntime(input, key));
+        if (submittedKeyField)
+            submittedKeyField.value = '';
+        dirty = JSON.stringify(runtimeDraft) !== submittedVersion;
+        runtimeEditing = dirty;
         readbackRequired = false;
+        confirmedMutation('Runtime saved');
+        feedback = Feedback('Runtime saved. Verifying readiness.', 'success');
+        renderPage();
         try {
-            health = await adapter.health();
+            health = await awaitCurrent(adapter.health());
             statusError = "";
             feedback = Feedback(health.ready
                 ? "Runtime saved. Core is ready."
                 : "Runtime saved. Core is not ready yet. " + health.reason, health.ready ? "success" : "warning", NavLink("View Core status", "/", "btn secondary"));
         }
-        catch {
+        catch (error) {
+            if (error instanceof ConsoleViewChanged)
+                return;
             statusError = "Current readiness could not be confirmed after saving.";
             feedback = Feedback("Runtime saved. Current readiness could not be confirmed.", "warning", NavLink("Refresh status", "/", "btn secondary"));
         }
     }
     catch (e) {
+        if (e instanceof ConsoleViewChanged)
+            return;
         if (isSessionError(e))
             return;
+        for (const record of actions.records.values())
+            if (record.pending && record.kind === 'configuration' && record.view === path)
+                actions.fail(record, e);
         readbackRequired = e instanceof ConsoleError && e.code === "RESULT_UNKNOWN";
         feedback = Feedback(err(e), readbackRequired ? "warning" : "error", readbackRequired ? Button("Read current runtime", "readback") : "");
     }
     finally {
-        saving = false;
-        const field = document.querySelector("#apiKey");
-        if (field)
-            field.value = "";
+        if (valid())
+            saving = false;
+        if (submittedKeyField)
+            submittedKeyField.value = '';
     }
     renderPage();
 }
@@ -1368,7 +1533,7 @@ async function saveDefaults() {
         readbackRequired ||
         defaultConflicts.length > 0)
         return;
-    const d = defaultDraft;
+    const d = structuredClone(defaultDraft), submittedVersion = JSON.stringify(defaultDraft), valid = currentView();
     if (!d.agentImage.trim()) {
         defaultEditSection = "agentImage";
         renderPage();
@@ -1389,26 +1554,36 @@ async function saveDefaults() {
     saving = true;
     renderPage();
     try {
-        defaults = await adapter.saveDefaults(patch);
-        defaultDraft = structuredClone(defaults);
-        defaultEditSection = null;
+        defaults = await awaitCurrent(adapter.saveDefaults(patch));
+        if (JSON.stringify(defaultDraft) === submittedVersion) {
+            defaultDraft = structuredClone(defaults);
+            defaultEditSection = null;
+        }
+        confirmedMutation('Defaults saved. Only future Work is affected.');
         defaultLastSaved = true;
-        dirty = false;
+        dirty = changedDefaults();
         readbackRequired = false;
         feedback = Feedback("Defaults saved. Only future Work is affected.", "success");
     }
     catch (e) {
+        if (e instanceof ConsoleViewChanged)
+            return;
         if (isSessionError(e))
             return;
+        for (const record of actions.records.values())
+            if (record.pending && record.kind === 'configuration' && record.view === path)
+                actions.fail(record, e);
         readbackRequired = e instanceof ConsoleError && e.code === "RESULT_UNKNOWN";
         feedback = Feedback(err(e), readbackRequired ? "warning" : "error", readbackRequired ? Button("Read current defaults", "readback") : "");
     }
     finally {
-        saving = false;
+        if (valid())
+            saving = false;
     }
-    renderPage();
+    if (valid())
+        renderPage();
 }
-async function importAgents(file) {
+async function importAgents(file, stillCurrent = () => true) {
     if (!defaultDraft)
         return;
     if (file.size > 262144) {
@@ -1425,7 +1600,11 @@ async function importAgents(file) {
         renderPage();
         return;
     }
+    if (!stillCurrent())
+        return;
     const apply = () => {
+        if (!stillCurrent() || !defaultDraft)
+            return;
         defaultDraft.agentsMd = text;
         dirty = changedDefaults();
         feedback = Feedback("File imported into the draft. Save defaults to persist it.", "info");
@@ -1497,26 +1676,45 @@ document.addEventListener("change", async (event) => {
         dirty = changedDefaults();
         renderPage();
     }
-    if (el.id === "agents-file" && el.files?.[0])
-        await importAgents(el.files[0]);
-    if (el.id === "upload-files" && el.files?.length) {
-        const previous = upload;
+    if ((el.id === 'agents-file' || el.id === 'upload-files') && el.files?.length) {
+        const version = ++selectionVersion, previous = upload, previousDialog = dialog, previousPath = path;
+        const type = uploadType, kind = uploadKind, target = uploadTarget, files = [...el.files];
+        preflightPending = true;
+        const submit = document.querySelector('#dialog-submit');
+        if (submit)
+            submit.disabled = true;
+        const record = actions.begin({ key: `preflight:${version}`, kind: 'read', label: 'Checking selected files', target: files[0].name,
+            anchor: el.id === 'upload-files' ? '#dialog-feedback' : '#defaults-form', view: path });
         try {
-            upload =
-                uploadType === "skill"
-                    ? await inspectSkillFiles([...el.files], uploadTarget)
-                    : await inspectPackageFiles([...el.files], uploadKind);
-            if (uploadTarget &&
-                uploadType === "package" &&
-                (uploadKind === "Local directory" || uploadKind === "ZIP") &&
-                upload.name !== uploadTarget)
-                throw new ConsoleError("NAME_MISMATCH", "package.json.name must match " + uploadTarget + ".");
-            uploadChooser(uploadType, uploadTarget, true);
-            dialogDirty = true;
+            if (el.id === 'agents-file')
+                await importAgents(files[0], () => version === selectionVersion && previousPath === path);
+            else {
+                const selection = type === 'skill' ? await inspectSkillFiles(files, target) : await inspectPackageFiles(files, kind);
+                if (version !== selectionVersion || previousDialog !== dialog || previousPath !== path)
+                    return;
+                if (target && type === 'package' && (kind === 'Local directory' || kind === 'ZIP') && selection.name !== target)
+                    throw new ConsoleError('NAME_MISMATCH', 'package.json.name must match ' + target + '.');
+                upload = selection;
+                uploadChooser(type, target, true);
+                dialogDirty = true;
+            }
+            actions.finish(record);
         }
-        catch (e) {
+        catch (error) {
+            if (version !== selectionVersion || previousPath !== path || previousDialog !== dialog)
+                return;
             upload = previous;
-            dialogFeedback(err(e));
+            actions.fail(record, error);
+            dialogFeedback(err(error));
+        }
+        finally {
+            if (version === selectionVersion) {
+                preflightPending = false;
+                if (submit?.isConnected)
+                    submit.disabled = false;
+            }
+            actions.records.delete(record.key);
+            renderConsoleActions();
         }
     }
 });
@@ -1524,11 +1722,17 @@ document.addEventListener("submit", async (event) => {
     const form = event.target;
     event.preventDefault();
     if (form.id === "dialog-form") {
-        if (!submissionPending)
-            await dialogAction?.(new FormData(form));
+        if (!submissionPending && !preflightPending) {
+            const submit = dialogAction, data = new FormData(form);
+            await tracked({ key: `dialog:${path}:${currentModalTitle}`, kind: 'configuration', resource: currentModalTitle, label: 'Submitting', target: `${currentModalTitle} · ${routeId() || String(data.get('new-account') || upload?.name || packageSourceDraft || 'Core')}`, anchor: '#dialog-submit', view: path }, async () => { await submit?.(data); });
+        }
         return;
     }
     if (form.id === "login-form") {
+        if (signingIn)
+            return;
+        signingIn = true;
+        const record = actions.begin({ key: "login", kind: "identity", label: "Signing in", target: "Administrator sign in", anchor: "#login-form", view: path });
         loginAccount = String(new FormData(form).get("account") || "");
         const password = form.querySelector("#password").value;
         const button = form.querySelector("button[type=submit]");
@@ -1544,6 +1748,8 @@ document.addEventListener("submit", async (event) => {
             navigate("/", true);
         }
         catch (e) {
+            if (record)
+                actions.fail(record, e);
             if (e instanceof ConsoleError && e.code === "RATE_LIMITED")
                 rateUntil = Date.now() + e.retryAfterMs;
             form.querySelector("#password").value = "";
@@ -1574,12 +1780,15 @@ document.addEventListener("submit", async (event) => {
                 }, 1000);
             }
         }
+        signingIn = false;
+        if (record)
+            actions.finish(record);
         return;
     }
     if (form.id === "runtime-form")
-        await saveRuntime(new FormData(form));
+        await tracked({ key: 'save-runtime', kind: 'configuration', resource: 'runtime', label: 'Saving', target: 'Runtime', anchor: '#runtime-form', view: path }, async () => { await saveRuntime(new FormData(form)); });
     if (form.id === "defaults-form")
-        await saveDefaults();
+        await tracked({ key: 'save-defaults', kind: 'configuration', resource: 'defaults', label: 'Saving', target: 'Default Work', anchor: '#defaults-form', view: path }, async () => { await saveDefaults(); });
     if (form.id === "operation-find") {
         const id = String(new FormData(form).get("operation-id") || "").trim();
         if (id)
@@ -1604,6 +1813,13 @@ document.addEventListener("click", async (event) => {
     const button = element.closest("[data-action]");
     if (!button || button.disabled)
         return;
+    const intent = consoleIntent(button);
+    if (intent)
+        await tracked(intent, async () => { await handleConsoleAction(button); });
+    else
+        await handleConsoleAction(button);
+});
+async function handleConsoleAction(button) {
     const action = button.dataset.action;
     const name = button.dataset.name || "";
     if (action === "review-default-conflicts") {
@@ -1701,15 +1917,15 @@ document.addEventListener("click", async (event) => {
         if (dirty)
             confirmDiscard(() => {
                 dirty = false;
-                void loadPage();
+                void tracked({ key: `manual:${path}:refresh`, kind: "read", label: "Reading current page", target: path, view: path }, async () => { await loadPage(); });
             });
         else
-            void loadPage();
+            await loadPage();
     }
     else if (action === "refresh-status")
         await refreshHealth();
     else if (action === "refresh-operation" || action === "resume-observation") {
-        await refreshOperation();
+        await refreshOperation(true);
     }
     else if (action === "sign-out") {
         const signOut = async () => {
@@ -1856,10 +2072,11 @@ document.addEventListener("click", async (event) => {
             uploadChooser("package", op.target, true);
         }
     }
-});
+}
 history.replaceState({ path }, "", path);
 void adapter.initialize().then(async () => { await adapter.connection().catch(() => undefined); await loadPage(); }).catch(async () => { path = "/login"; history.replaceState({ path }, "", path); try {
     await adapter.initialize();
 }
 catch { /* availability shown by login */ } await loadPage(); });
+window.addEventListener('pagehide', () => { actions.clear(); clearPolling(); selectionVersion++; preflightPending = false; });
 //# sourceMappingURL=app.js.map

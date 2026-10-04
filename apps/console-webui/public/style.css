@@ -2863,3 +2863,5 @@ dialog::backdrop {
 [data-layout="layout-role-6"] { margin-top:7px; }
 [data-layout="layout-role-7"] { margin-top:9px; }
 [data-layout="layout-role-8"] { padding-top:0; }
+
+.action-status { overflow-wrap: anywhere; min-width: 0; }

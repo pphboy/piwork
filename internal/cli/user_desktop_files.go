@@ -55,7 +55,8 @@ func (d *nativeDesktop) serveFiles(w http.ResponseWriter, r *http.Request) {
 		fail("FILE_REQUEST_DENIED")
 		return
 	}
-	if _, ok := d.authorize(r, mutation); !ok {
+	session, ok := d.authorize(r, mutation)
+	if !ok {
 		if mutation {
 			fail("LOCAL_CSRF_OR_AUTH_REQUIRED")
 		} else {
@@ -63,6 +64,12 @@ func (d *nativeDesktop) serveFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	guarded, request, finish, ok := d.guardContent(w, r, session)
+	if !ok {
+		return
+	}
+	defer finish()
+	w, r = guarded, request
 	if r.URL.RawQuery != "" {
 		fail("FILE_PATH_INVALID")
 		return
@@ -104,6 +111,11 @@ func (d *nativeDesktop) serveFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.mu.Lock()
+	if d.identity.credential == nil || !d.identity.checked {
+		d.mu.Unlock()
+		fail("AUTH_REQUIRED")
+		return
+	}
 	coreURL, token, generation := d.identity.coreURL, d.identity.credential.Token, d.identity.generation
 	d.mu.Unlock()
 	api, err := client.New(coreURL, token)

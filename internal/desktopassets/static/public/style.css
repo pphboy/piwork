@@ -2157,50 +2157,10 @@ dd > .button {
   text-align: left;
   overflow-wrap: anywhere;
 }
-.phase-track {
-  display: flex;
-  justify-content: space-between;
-  position: relative;
-  margin-bottom: 24px;
-  padding: 5px 0;
-}
-.phase-track::before {
-  content: "";
-  position: absolute;
-  left: 8%;
-  right: 8%;
-  height: 1px;
-  background: var(--border);
-  top: 18px;
-}
-.phase-track > div {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  font-size: 10px;
-  color: var(--muted);
-  z-index: 1;
-  min-width: 70px;
-}
-.phase-track span {
-  display: grid;
-  place-items: center;
-  background: var(--surface-subtle);
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  height: 28px;
-  width: 28px;
-  color: var(--muted);
-}
-.phase-track .done {
-  color: var(--positive);
-}
-.phase-track .done span {
-  background: var(--positive-soft);
-  border-color: #bedbcc;
-  color: var(--positive);
-}
+/* One real phase, rather than a simulated sequence of steps. */
+.phase-track { margin-bottom: 16px; padding: 5px 0; }
+.phase-track > div { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.phase-track span { display: inline-flex; flex: 0 0 auto; color: var(--accent); }
 .auth-main {
   max-width: 420px;
   margin: 70px auto;
@@ -3224,3 +3184,14 @@ dd > .button {
 .file-reread { margin: 16px 0; padding: 16px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; }
 .file-reread h3 { margin: 0 0 12px; font-size: 14px; }
 .file-reread pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Local request feedback must wrap without changing the application container. */
+.action-status { overflow-wrap: anywhere; min-width: 0; }
+.work-row > .action-status { grid-column: 1 / -1; }
+.feedback progress { display: block; width: 100%; max-width: 24rem; margin-top: .5rem; }
+/* Local access recovery uses the existing authentication layout and typography. */
+.recovery-command { margin: 24px 0; text-align: left; }
+.recovery-command code, .browser-access p code { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 1.7; }
+.recovery-command .button { margin-top: 12px; }
+
+.operation-work-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; overflow-wrap: anywhere; }

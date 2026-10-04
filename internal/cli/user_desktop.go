@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -65,21 +66,27 @@ func parseUserDesktopOptions(args []string) (desktopOptions, error) {
 }
 
 type nativeDesktop struct {
-	api            *client.Client
-	store          client.CredentialStore
-	port           int
-	origin         string
-	ticket         string
-	ticketEnd      time.Time
-	used           bool
-	mu             sync.Mutex
-	sessions       map[string]desktopSession
-	fileWrites     map[string]bool
-	serviceEntries map[string]*desktopServiceEntry
-	serviceGrants  map[string]string
-	serviceConns   map[string]int
-	transfers      *desktopTransfers
-	identity       desktopIdentity
+	api             *client.Client
+	store           client.CredentialStore
+	port            int
+	origin          string
+	ticket          string
+	ticketEnd       time.Time
+	used            bool
+	mu              sync.Mutex
+	sessions        map[string]desktopSession
+	fileWrites      map[string]bool
+	serviceEntries  map[string]*desktopServiceEntry
+	serviceGrants   map[string]string
+	serviceConns    map[string]int
+	transfers       *desktopTransfers
+	identity        desktopIdentity
+	pendingCleanup  *desktopCleanup
+	logoutMu        sync.Mutex
+	logoutFlight    *desktopLogoutFlight
+	secret          func() (string, error)
+	localGeneration int
+	activeAccess    map[*desktopAccess]bool
 }
 
 type desktopSession struct {
@@ -112,31 +119,38 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 			return 5
 		}
 	}
-	ticket, err := desktopSecret()
-	if err != nil {
-		fmt.Fprintln(stderr, "Unable to create Desktop session")
-		return 5
-	}
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(options.port)))
 	if err != nil {
 		fmt.Fprintln(stderr, "Desktop port is already in use or unavailable")
 		return 6
 	}
 	origin := fmt.Sprintf("http://desktop.localhost:%d", options.port)
-	d := &nativeDesktop{api: api, store: store, port: options.port, origin: origin, ticket: ticket,
-		ticketEnd: time.Now().Add(5 * time.Minute), sessions: make(map[string]desktopSession), fileWrites: make(map[string]bool),
+	d := &nativeDesktop{api: api, store: store, port: options.port, origin: origin,
+		sessions: make(map[string]desktopSession), fileWrites: make(map[string]bool),
 		serviceEntries: make(map[string]*desktopServiceEntry), serviceGrants: make(map[string]string), serviceConns: make(map[string]int),
 		identity: desktopIdentity{coreURL: api.Base.Scheme + "://" + api.Base.Host}}
 	if saved != nil && sameCoreOrigin(saved.CoreURL, api.Base.String()) {
 		d.identity.credential = saved
 	}
+	launchURL, err := d.issueTicket()
+	if err != nil {
+		_ = listener.Close()
+		fmt.Fprintln(stderr, "Unable to create Desktop session")
+		return 5
+	}
+	control, err := startDesktopControl(d)
+	if err != nil {
+		_ = listener.Close()
+		fmt.Fprintln(stderr, err)
+		return 5
+	}
+	defer control.close()
 	server := &http.Server{Handler: d, ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 32 << 10}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
-	launchURL := origin + "/#ticket=" + ticket
 	fmt.Fprintf(stdout, "Piwork Desktop: %s\n", launchURL)
 	if options.open {
 		go openDesktopBrowser(launchURL, stderr)
@@ -166,6 +180,9 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 }
 
 func openDesktopBrowser(address string, stderr io.Writer) {
+	openDesktopBrowserContext(context.Background(), address, stderr)
+}
+func openDesktopBrowserContext(ctx context.Context, address string, stderr io.Writer) {
 	command, args := "xdg-open", []string{address}
 	switch runtime.GOOS {
 	case "darwin":
@@ -173,13 +190,16 @@ func openDesktopBrowser(address string, stderr io.Writer) {
 	case "windows":
 		command, args = "rundll32.exe", []string{"url.dll,FileProtocolHandler", address}
 	}
-	process := exec.Command(command, args...)
+	process := exec.CommandContext(ctx, command, args...)
 	process.Stdout, process.Stderr = io.Discard, io.Discard
 	if err := process.Start(); err != nil {
 		fmt.Fprintf(stderr, "Could not open a browser. Open %s manually.\n", address)
 		return
 	}
 	if err := process.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		fmt.Fprintf(stderr, "Could not open a browser. Open %s manually.\n", address)
 	}
 }

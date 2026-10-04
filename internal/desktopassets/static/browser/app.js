@@ -1,5 +1,6 @@
 import { editAdvanced, synchronizeConfiguration } from './configuration.js';
-import { adapter, fileVersion } from "./adapter.js";
+import { ActionState, renderActionStates } from './action-state.js';
+import { adapter, DesktopError, fileVersion } from "./adapter.js";
 const root = document.querySelector("#app");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const icon = (name, size = 18) => {
@@ -95,12 +96,112 @@ let view = {
     operationQuery: "",
     snapshotQuery: "",
     coreAddress: adapter.state.core.address,
+    authAccount: '',
     logTime: "",
+    serviceOpenError: '',
     logsExpanded: false,
     scrollPinned: true,
 };
 let importSignInSuspended = false;
-let actionPending = false;
+const actions = new ActionState(() => render());
+class ViewChanged extends Error {
+}
+let sessionChoice = 0, selectionRequest = 0, modalChoice = 0;
+const fileSelections = new Map();
+const viewKey = () => `${location.hash}:${view.modal}:${modalChoice}:${view.tab}:${view.path}:${view.service}:${view.port}:${sessionChoice}`;
+const actionLabels = {
+    'check-browser-access': 'Checking browser access', 'confirm-reset-browser-access': 'Resetting browser access', 'sign-in': 'Signing in', 'sign-out': 'Signing out', 'confirm-switch-core': 'Switching Core', 'check-connection': 'Checking connection',
+    'retry-works': 'Loading Works', 'create-work': 'Creating Work', 'start-work': 'Starting Work', 'confirm-stop': 'Stopping Work', 'confirm-delete': 'Deleting Work',
+    'retry-work-read': 'Loading Work', 'open-work': 'Loading Work', 'check-work': 'Checking Work', settings: 'Reading settings', 'tab-Services': 'Loading Services', 'tab-Files': 'Reading workspace',
+    'sessions': 'Reading Sessions', 'select-session': 'Reading Session', 'new-session': 'Creating Session', 'send-message': 'Submitting message', 'cancel-run': 'Requesting cancellation', 'resume-run': 'Reconnecting Run',
+    'service-details': 'Reading logs', 'service-action': 'Submitting Service control', 'confirm-service-control': 'Submitting Service control', 'refresh-logs': 'Reading logs',
+    'open-app': 'Opening application', 'open-window': 'Opening application', 'retry-service-entry': 'Preparing application', 'check-preview': 'Checking preview',
+    'refresh-files': 'Reading workspace', 'file-path': 'Reading directory', 'open-file': 'Reading file', 'open-source': 'Reading file', 'save-file': 'Saving file', 'dirty-save': 'Saving file',
+    'confirm-upload-overwrite': 'Uploading files', 'confirm-folder': 'Creating folder', 'confirm-transfer': 'Transferring files', 'confirm-file-delete': 'Deleting files',
+    'save-config': 'Saving settings', 'dirty-config-save': 'Saving settings', 'refresh-config': 'Reading settings', 'apply-config': 'Submitting Apply', 'confirm-core-skills': 'Copying Skill', 'check-catalog': 'Reading catalog',
+    'confirm-install': 'Submitting package', 'confirm-remove-package': 'Removing package', 'confirm-import': 'Submitting import', 'prepare-export': 'Preparing Export',
+    'download-work': 'Preparing download', 'check-download': 'Checking transfer', 'check-operation': 'Checking Operation', 'lookup-operation': 'Reading Operation', 'lookup-snapshot': 'Reading snapshot',
+    'operations': 'Reading known Operations', 'clear-operations': 'Clearing completed records', 'resume-operation': 'Resuming observation', 'check-inspection-import': 'Checking transfer', 'retry-inspection-cleanup': 'Releasing local transfer',
+};
+function actionIntent(el, action = el.dataset.action || '') {
+    let label = actionLabels[action];
+    if (!label)
+        return;
+    if (['service-action', 'confirm-service-control'].includes(action))
+        label = `${el.dataset.control || view.data.control || "Control"} Service`;
+    const w = targetWork(el);
+    let kind = 'read';
+    if (['sign-in', 'sign-out', 'confirm-switch-core', 'confirm-reset-browser-access'].includes(action))
+        kind = 'identity';
+    else if (['create-work', 'start-work', 'confirm-stop', 'confirm-delete'].includes(action))
+        kind = 'lifecycle';
+    else if (['save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'upload-input'].includes(action))
+        kind = 'files';
+    else if (['save-config', 'dirty-config-save', 'apply-config', 'confirm-core-skills', 'confirm-install', 'confirm-remove-package'].includes(action))
+        kind = 'configuration';
+    else if (action === 'service-action' || action === 'confirm-service-control') {
+        if (action === 'service-action' && ['stop', 'remove'].includes(el.dataset.control || ''))
+            return;
+        kind = 'service';
+    }
+    else if (['new-session', 'send-message', 'cancel-run'].includes(action))
+        kind = 'agent';
+    else if (['confirm-import', 'download-work', 'prepare-export'].includes(action))
+        kind = 'transfer';
+    const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview'].includes(action);
+    const serviceId = el.dataset.id || view.data.serviceId || view.service;
+    const resource = action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' ? w?.id : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+    const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
+    return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || 'New Work' : `${w?.name || adapter.state.core.address || 'Local CLI'}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
+        anchor: focusKey(el), view: location.hash };
+}
+async function dispatchAction(el, perform = record => handleAction(el.dataset.action, el, record), intent = actionIntent(el)) {
+    if (!intent) {
+        await perform();
+        return;
+    }
+    const conflict = actions.conflict(intent);
+    if (conflict) {
+        toast(`${conflict.target} · ${conflict.phase}. Wait for confirmation.`);
+        return;
+    }
+    const record = actions.begin(intent);
+    try {
+        await perform(record);
+        actions.finish(record);
+        if (['refresh-files'].includes(el.dataset.action || ''))
+            actions.reviewed(record.work, ['files']);
+        if (['refresh-config'].includes(el.dataset.action || ''))
+            actions.reviewed(record.work, ['configuration']);
+    }
+    catch (error) {
+        if (!(error instanceof ViewChanged))
+            actions.fail(record, error);
+        else
+            actions.finish(record);
+        throw error;
+    }
+    finally {
+        if (record.work && ['files', 'configuration'].includes(record.kind))
+            adapter.uploadProgress.delete(record.work);
+    }
+}
+function progressText(progress) {
+    const total = typeof progress.total === 'number' && Number.isFinite(progress.total) && progress.total > 0 ? progress.total : undefined;
+    return `${esc(progress.phase)}${progress.transferred !== undefined ? ` · ${esc(progress.transferred)}${total ? ` / ${total}` : ''} bytes` : ''}${total ? `<progress value="${Math.min(progress.transferred || 0, total)}" max="${total}" aria-label="Transfer bytes"></progress>` : ''}`;
+}
+function uploadProgressMarkup() {
+    const work = current(), progress = work && adapter.uploadProgress.get(work.id);
+    if (!progress)
+        return '';
+    return feedback(`${esc(progress.path)}${progress.count ? ` · File ${progress.index} of ${progress.count}` : ''} · ${progressText(progress)}`);
+}
+function downloadProgressMarkup(snapshotID) {
+    const job = adapter.downloads.get(snapshotID);
+    if (!job)
+        return '';
+    return feedback(`Transfer <code>${esc(job.transferId)}</code> · ${progressText(job)}${job.checkedAt ? ` · Checked ${esc(job.checkedAt)}` : ''}${job.error ? ` · ${esc(job.error)}` : ''}${job.observationError ? ` · Observation interrupted: ${esc(job.observationError)}` : ''}`, job.error || job.observationError ? 'warning' : 'info', btn('Check transfer', 'check-download', 'small', `data-id="${esc(snapshotID)}"`));
+}
 let toastTimer;
 let lastFocus = null;
 let pendingNav = null;
@@ -125,7 +226,7 @@ function toast(message) {
     toastTimer = setTimeout(() => {
         view.toast = "";
         render();
-    }, 4500);
+    }, 3000);
 }
 function navigate(hash) {
     const go = () => {
@@ -158,7 +259,10 @@ function draftKey(w, session = view.session) {
 }
 async function openWork(w) {
     await guard(async () => {
+        const key = viewKey();
         await adapter.loadWork(w.id);
+        if (key !== viewKey())
+            throw new ViewChanged();
         rememberWork();
         const previous = workSelections.get(w.id);
         const service = w.services.find((s) => s.id === previous?.service &&
@@ -181,10 +285,12 @@ async function openWork(w) {
         view.path = "/";
         view.selected = [];
         location.hash = `/work/${w.id}`;
+        lastRoute = location.hash;
         render();
     });
 }
 function openModal(name, data = {}) {
+    modalChoice++;
     lastFocus = document.activeElement;
     view.modal = name;
     view.data = data;
@@ -196,6 +302,9 @@ function openModal(name, data = {}) {
     render();
 }
 function closeModal() {
+    modalChoice++;
+    if (view.modal === 'export')
+        adapter.stopDownloadObservers();
     if (view.modal === "import")
         void adapter.abandonInspection();
     view.modal = "";
@@ -203,12 +312,14 @@ function closeModal() {
     render();
     lastFocus?.focus();
 }
-const phase = (op) => `<div class="phase-track">${["accepted", "preparing", "succeeded"].map((x, i) => `<div class="${op.state === x || op.state === "succeeded" ? "done" : ""}"><span>${op.state === "succeeded" ? icon("check", 14) : i + 1}</span>${["Accepted", "Preparing", "Completed"][i]}</div>`).join("")}</div>`;
+const phase = (op) => `<div class="phase-track" role="status"><div><span>${op.state === "succeeded" ? icon("check", 14) : icon("clock", 14)}</span>Current phase: ${esc(op.phase || op.state)}</div></div>`;
 function scenarioBar() { return ""; }
 function brand() {
     return `<a href="#/works" class="brand" aria-label="piwork Works"><span class="brand-mark">p<span>i</span></span><b>piwork</b><span class="brand-product">Desktop</span></a>`;
 }
 function topbar() {
+    if (adapter.state.browserAccess !== "authorized")
+        return `<header class="topbar">${brand()}</header>`;
     return `<header class="topbar">${brand()}<div class="topbar-right">${btn(`${icon("clock")} <span>Known operations</span>`, "operations", "quiet")}${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span><span>${esc(adapter.state.core.account || "Account")}</span>${icon("down", 14)}`, "account", "account-button quiet")}</div></header>`;
 }
 function connection() {
@@ -216,44 +327,55 @@ function connection() {
     return `<button class="connection" data-action="connection"><i class="${["core-offline", "env-not-ready"].includes(s) ? "warn" : ""}"></i>${esc(adapter.state.core.name)}<span>·</span>${s === "core-offline" ? "Unreachable" : s === "env-not-ready" ? "Runtime not ready" : "Connected"}${icon("down", 12)}</button>`;
 }
 function signIn() {
-    const expired = adapter.state.scenario === "ticket-expired";
-    return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock", 26)}</div><h1>${expired ? "Open a fresh launch address" : "Connect to your Core"}</h1><p class="muted">${expired ? "Restart Desktop from the CLI and open its fresh launch address." : "Sign in with your Core account. Credentials stay with the local CLI."}</p>${view.toast ? feedback(esc(view.toast), "warning") : ""}${expired ? "<code>piwork-cli desktop</code>" : `<label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label><label class="field">Account<input id="auth-account" autocomplete="username"></label><label class="field">Password<input id="auth-password" type="password" autocomplete="current-password"></label>${btn("Sign in", "sign-in", "primary full")}`}<div class="auth-divider">Inspect a Work package locally before signing in</div>${expired ? "" : btn(`${icon("upload", 16)} Inspect a .work package`, "import", "quiet")}</main>`;
+    const access = adapter.state.browserAccess;
+    if (access !== 'authorized') {
+        const checking = access === 'checking', unavailable = access === 'unavailable';
+        return `${topbar()}<main class="auth-main browser-access"><div class="auth-symbol">${icon("lock", 26)}</div><h1>${checking ? 'Checking browser access' : unavailable ? 'Desktop connection unavailable' : 'Browser access required'}</h1><p class="muted" role="status" aria-live="polite">${checking ? 'Checking whether this browser is authorized to connect to the local CLI…' : esc(adapter.state.browserAccessReason)}</p>${checking ? '' : `${btn('Check browser access', 'check-browser-access', 'primary full')}<div class="recovery-command"><p>From a terminal as the same system user:</p><code>${esc(adapter.reopenCommand())}</code>${btn('Copy reopen command', 'copy-reopen-command', 'quiet full')}</div><p class="muted">If the instance is not running, start it with <code>${esc(adapter.startCommand())}</code>. Reopening a running instance keeps its Core, Works and browser sessions.</p><div class="recovery-command"><p>To clear this Desktop’s saved Core login without browser access:</p><code>${esc(adapter.logoutCommand())}</code>${btn('Copy logout command', 'copy-logout-command', 'quiet full')}</div>`}</main>`;
+    }
+    return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock", 26)}</div><h1>Connect to your Core</h1><p class="muted">Sign in with your Core account. Credentials stay with the local CLI.</p>${adapter.state.cleanupRequired ? feedback(`Local identity is cleared, but saved credential cleanup is incomplete. Run <code>${esc(adapter.logoutCommand())}</code> before signing in or switching Core.`, 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}<label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label><label class="field">Account<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">Password<input id="auth-password" type="password" autocomplete="current-password"></label>${btn("Sign in", "sign-in", "primary full")}<div class="auth-divider">Inspect a Work package locally before signing in</div>${btn(`${icon("upload", 16)} Inspect a .work package`, "import", "quiet")}</main>`;
 }
 function works() {
     const s = adapter.state.scenario;
     const all = adapter.state.works.filter((w) => w.name.toLowerCase().includes(view.search.toLowerCase()));
-    return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${btn(`${icon("upload")} Import Work`, "import")}${btn(`${icon("plus")} New Work`, "new-work", "primary")}</div></div><div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${s === "loading" ? `<div class="loading-list">${[1, 2, 3].map(() => '<div class="skeleton"></div>').join("")}<p>Loading your Works…</p>${btn("Check connection", "check-connection")}</div>` : s === "list-error" ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "check-connection", "primary")) : s === "empty" ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><button class="work-name" data-action="open-work" data-id="${w.id}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></button><div class="work-status">${badge(w.status)}${w.status === "Degraded" ? "<small>A capability needs attention</small>" : w.status === "Failed" ? `<small>${w.desired === "running" ? "Start failed" : "Stop not confirmed"}</small>` : w.status === "Unknown" ? `<small>Last confirmed ${esc(w.updated || "Not provided")}</small>` : ""}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${adapter.state.works.length} Works <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div>${btn("Create a Work", "new-work", "quiet")}</div></main>`;
+    return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${btn(`${icon("upload")} Import Work`, "import")}${btn(`${icon("plus")} New Work`, "new-work", "primary")}</div></div>${adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(s === "loading" || adapter.worksLoading && !adapter.worksChecked) ? `<div class="loading-list">${[1, 2, 3].map(() => '<div class="skeleton"></div>').join("")}<p>Loading your Works…</p>${btn("Check connection", "check-connection")}</div>` : s === "list-error" ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "retry-works", "primary")) : s === "empty" ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><button class="work-name" data-action="open-work" data-id="${w.id}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></button><div class="work-status">${workStatus(w)}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${adapter.state.works.length} Works <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div>${btn("Create a Work", "new-work", "quiet")}</div></main>`;
 }
 function quickAction(w) {
-    if (["Starting", "Stopping", "Unknown"].includes(w.status) ||
-        (w.desired === "stopped" && w.status === "Failed"))
-        return btn(`${icon("refresh", 15)} Check status`, "check-work", "quiet small", `data-id="${w.id}"`);
-    if (w.status === "Stopped")
-        return btn(`${icon("play", 15)} Start Work`, "start-work", "quiet small", `data-id="${w.id}"`);
-    if (w.status === "Failed")
-        return btn(`${icon("refresh", 15)} Retry Work`, "start-work", "quiet small", `data-id="${w.id}"`);
-    return btn(`${icon("stop", 15)} Stop Work`, "stop-work", "quiet small", `data-id="${w.id}"`);
+    const action = adapter.project(w).action;
+    const label = { start: 'Start Work', stop: 'Stop Work', retry: 'Retry Work', check: 'Check status' }[action];
+    return btn(`${icon(action === 'start' ? 'play' : action === 'stop' ? 'stop' : 'refresh', 15)} ${label}`, action === 'check' ? 'check-work' : action === 'stop' ? 'stop-work' : 'start-work', 'quiet small', `data-id="${esc(w.id)}"`);
+}
+function workStatus(w) {
+    const state = adapter.project(w);
+    return `${badge(state.label)}${state.explanation ? `<small>${esc(state.explanation)}</small>` : w.status === 'Degraded' ? '<small>A capability needs attention</small>' : ''}`;
 }
 function workHeader(w, standalone = false) {
-    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), standalone ? "back-work" : "back-works", "icon-button quiet", `aria-label="${standalone ? "Back to Work" : "Back to Works"}"`)}<span class="header-divider"></span><span class="work-icon small ${w.color}">${icon(w.icon, 19)}</span><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(w.status)}</div><div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="Work options"`)}</div></header>`;
+    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), standalone ? "back-work" : "back-works", "icon-button quiet", `aria-label="${standalone ? "Back to Work" : "Back to Works"}"`)}<span class="header-divider"></span><span class="work-icon small ${w.color}">${icon(w.icon, 19)}</span><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}</div><div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="Work options"`)}</div></header>`;
 }
 function workPage(w) {
     const settings = route()[2] === "settings";
-    return `${workHeader(w)}<nav class="work-tabs" aria-label="Work areas"><div>${["Services", "Files", "Chat"].map((t) => btn(`${icon(t === "Services" ? "grid" : t === "Files" ? "folder" : "chat", 17)} ${t}`, `tab-${t}`, !settings && view.tab === t ? "tab active" : "tab")).join("")}</div>${btn(`${icon("settings", 17)} Settings`, "settings", settings ? "tab active" : "tab")}</nav>${w.status === "Degraded" ? `<div class="work-notice">${icon("info", 15)} Some capabilities need attention. Available Services remain usable. ${btn("View details", "manage-services", "text-button")}</div>` : ""}${settings ? settingsPage(w) : ["Stopped", "Starting", "Stopping", "Unknown", "Failed"].includes(w.status) ? workState(w) : view.tab === "Chat" ? `<div class="focus-chat">${agent(w, true)}</div>` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""}"><section class="main-panel">${view.tab === "Files" ? files(w) : services(w)}</section><aside class="agent-side">${agent(w, false)}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
+    return `${workHeader(w)}<nav class="work-tabs" aria-label="Work areas"><div>${["Services", "Files", "Chat"].map((t) => btn(`${icon(t === "Services" ? "grid" : t === "Files" ? "folder" : "chat", 17)} ${t}`, `tab-${t}`, !settings && view.tab === t ? "tab active" : "tab")).join("")}</div>${btn(`${icon("settings", 17)} Settings`, "settings", settings ? "tab active" : "tab")}</nav>${w.status === "Degraded" ? `<div class="work-notice">${icon("info", 15)} Some capabilities need attention. Available Services remain usable. ${btn("View details", "manage-services", "text-button")}</div>` : ""}${settings ? settingsPage(w) : !adapter.project(w).usable ? workState(w) : view.tab === "Chat" ? `<div class="focus-chat">${agent(w, true)}</div>` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""}"><section class="main-panel">${view.tab === "Files" ? files(w) : services(w)}</section><aside class="agent-side">${agent(w, false)}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
 }
 function workState(w) {
-    return `<main class="work-state">${empty(w.status === "Stopped" ? "stop" : w.status === "Failed" ? "info" : "clock", w.status === "Stopped" ? "This Work is stopped" : w.status === "Unknown" ? "Work status is unknown" : w.status === "Starting" ? "Starting your Work" : w.status === "Stopping" ? "Stopping your Work" : "This Work needs attention", w.status === "Stopped" ? "Your workspace data is preserved. Start the Work to use its Services, files, and Agent." : esc(w.error || `The ${w.status.toLowerCase()} phase has not reached a confirmed result. Check the original Operation.`), `<div class="actions">${quickAction(w)}${btn("Settings", "settings")}${w.status === "Stopped" ? btn(`${icon("download")} Export Work`, "export", "", `data-id="${w.id}"`) : btn("Operation details", "check-work", "", `data-id="${w.id}"`)}</div>`)}<p class="state-footnote">Desired: ${esc(w.desired)} · Observed: ${esc(w.status)} · Last checked ${esc(adapter.state.lastChecked)}</p></main>`;
+    const state = adapter.project(w);
+    const stopped = state.action === 'start';
+    const title = stopped ? 'This Work is stopped' : { Preparing: 'Preparing your Work', Starting: 'Starting your Work', Stopping: 'Stopping your Work', Unknown: 'Work status is unknown' }[state.label] || state.label;
+    const details = state.operationIds.length ? btn('Operation details', 'work-operations', '', `data-id="${esc(w.id)}"`) : '';
+    return `<main class="work-state">${empty(stopped ? 'stop' : w.status === 'Failed' ? 'info' : 'clock', title, stopped ? 'Your workspace data is preserved. Start the Work to use its Services, files, and Agent.' : esc(state.explanation || w.error || 'Waiting for the original operation to reach a confirmed result.'), `<div class="actions">${quickAction(w)}${btn('Settings', 'settings')}${details}${state.exportable ? btn(`${icon('download')} Export Work`, 'export', '', `data-id="${esc(w.id)}"`) : ''}</div>`)}
+    <details class="state-footnote"><summary>State details</summary><p>Target: ${esc(w.desired)} · Last confirmed: ${esc(w.status)} · Checked ${esc(w.checkedAt || 'Not confirmed')}</p></details></main>`;
 }
 function services(w) {
+    if (!w.resourceChecked?.services && !w.resourceErrors?.services)
+        return feedback(`Loading Services for ${esc(w.name)}…`);
     const s = activeService(w);
     if (w.resourceErrors?.services)
         return feedback(esc(w.resourceErrors.services), "warning", btn("Check connection", "check-connection"));
     if (!s || !s.ports.length)
-        return empty("grid", "No Web Service is ready", "Ask the Agent to build a tool. Service definitions are created by the Agent workflow.", btn("Focus chat", "tab-Chat", "primary"));
+        return empty("grid", "No Web Service is ready", "Ask the Agent to build a tool. Service definitions are created by the Agent workflow.", btn("Focus chat", "tab-Chat", "primary") + (w.services.length ? btn("Manage services", "manage-services") : ""));
     const list = w.services.filter((x) => x.ports.length && x.observed !== "Removed");
-    return `<div class="service-toolbar"><div class="service-selector"><span class="app-indicator">${icon("grid", 16)}</span><select id="service-select" aria-label="Service">${list.map((x) => `<option value="${x.id}" ${x.id === s.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select><select id="port-select" aria-label="Declared Web port">${s.ports.map((p) => `<option ${p === view.port ? "selected" : ""}>${p}</option>`).join("")}</select></div><div class="service-identity">${badge(s.observed)}<span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div><div class="actions">${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : s.observed !== "Ready" ? empty("grid", `${esc(s.name)} is ${s.observed.toLowerCase()}`, esc(s.error || "This Service is disabled. Starting the Work does not re-enable it."), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : empty("grid", "Opening application", "Preparing a private browser entry for this Service.")}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection</span><span>Shared workspace ${icon("folder", 13)}</span></div>`;
+    return `<div class="service-toolbar"><div class="service-selector"><span class="app-indicator">${icon("grid", 16)}</span><select id="service-select" aria-label="Service">${list.map((x) => `<option value="${x.id}" ${x.id === s.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select><select id="port-select" aria-label="Declared Web port">${s.ports.map((p) => `<option ${p === view.port ? "selected" : ""}>${p}</option>`).join("")}</select></div><div class="service-identity">${badge(s.observed)}<span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div><div class="actions">${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn("Copy local link", "copy-local", "small")) : ""}${adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : s.observed !== "Ready" ? empty("grid", `${esc(s.name)} is ${s.observed.toLowerCase()}`, esc(s.error || "This Service is disabled. Starting the Work does not re-enable it."), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : empty("grid", "Opening application", `Preparing ${esc(s.name)} · port ${view.port}`)}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection</span><span>Shared workspace ${icon("folder", 13)}</span></div>`;
 }
 function agent(w, focus) {
+    const readingSessions = !w.resourceChecked?.agent && !w.resourceErrors?.agent;
     const session = w.sessions.find((s) => s.id === view.session) || w.sessions[0];
     if (session)
         view.session = session.id;
@@ -261,9 +383,12 @@ function agent(w, focus) {
     const active = run && ["accepted", "running", "cancelling"].includes(run.status);
     const busy = active && run.sessionId !== session?.id;
     const draft = view.drafts[draftKey(w, session?.id || "")] || "";
-    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b></span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${btn(icon(focus ? "grid" : "focus", 16), focus ? "return-service" : "focus-chat", "icon-button quiet", `aria-label="${focus ? "Return to Service" : "Focus chat"}"`)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div><div class="session-line"><button data-action="sessions">${esc(session?.title || "No Session yet")}${icon("down", 12)}</button></div><div class="messages" id="messages">${!session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : session.messages.filter(m => m.text || m.tool).map((m) => `<div class="message ${m.role}">${m.role === "assistant" && !m.tool ? `<div class="message-author">${icon("spark", 14)} piwork</div>` : ""}<div class="message-text">${esc(m.text)}</div>${m.tool ? `<details class="tool-event"><summary>${icon("terminal", 14)} ${esc(m.tool.name)} <span>${esc(m.tool.status)}</span></summary><pre>${esc(m.tool.content)}</pre></details>` : ""}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${icon("file", 13)} ${esc(m.source)}</button>` : ""}</div>`).join("")}${w.services.some((s) => s.observed === "Ready" && s.ports.length) && focus ? btn(`${icon("grid", 15)} Open service`, "return-service", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${w.resourceErrors?.agent ? feedback(esc(w.resourceErrors.agent), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} ${icon("chevron", 12)}</button>${active ? btn(run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer"><textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom"><label><input id="include-identity" type="checkbox" ${view.includeIdentity ? "checked" : ""}> Include Service identity</label>${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${active || session?.legacy ? "disabled" : ""}`)}</div></div><div class="composer-caption" id="composer-help">${view.includeIdentity ? "Identity only. No page, cookies, or unsaved inputs." : "Agent uses saved files and reachable APIs when asked."}</div></div></section>`;
+    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b></span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${btn(icon(focus ? "grid" : "focus", 16), focus ? "return-service" : "focus-chat", "icon-button quiet", `aria-label="${focus ? "Return to Service" : "Focus chat"}"`)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div><div class="session-line"><button data-action="sessions">${esc(session?.title || "No Session yet")}${icon("down", 12)}</button></div><div class="messages" id="messages">${readingSessions ? feedback(`Reading Sessions for ${esc(w.name)}…`) : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : session.messages.filter(m => m.text || m.tool).map((m) => `<div class="message ${m.role}">${m.role === "assistant" && !m.tool ? `<div class="message-author">${icon("spark", 14)} piwork</div>` : ""}<div class="message-text">${esc(m.text)}</div>${m.tool ? `<details class="tool-event"><summary>${icon("terminal", 14)} ${esc(m.tool.name)} <span>${esc(m.tool.status)}</span></summary><pre>${esc(m.tool.content)}</pre></details>` : ""}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${icon("file", 13)} ${esc(m.source)}</button>` : ""}</div>`).join("")}${w.services.some((s) => s.observed === "Ready" && s.ports.length) && focus ? btn(`${icon("grid", 15)} Open service`, "return-service", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${w.resourceErrors?.agent ? feedback(esc(w.resourceErrors.agent), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer"><textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom"><label><input id="include-identity" type="checkbox" ${view.includeIdentity ? "checked" : ""}> Include Service identity</label>${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${active || session?.legacy ? "disabled" : ""}`)}</div></div><div class="composer-caption" id="composer-help">${view.includeIdentity ? "Identity only. No page, cookies, or unsaved inputs." : "Agent uses saved files and reachable APIs when asked."}</div></div></section>`;
 }
 function files(w) {
+    const directory = adapter.directories.get(`${w.id}:${view.path}`);
+    if (directory?.loading && !directory.checkedAt)
+        return feedback(`Reading workspace ${esc(view.path)}…`);
     if (w.resourceErrors?.files)
         return feedback(esc(w.resourceErrors.files), "warning", btn("Refresh files", "refresh-files"));
     if (adapter.state.scenario === "files-failed")
@@ -273,7 +398,7 @@ function files(w) {
         const parent = x.path.slice(0, x.path.lastIndexOf("/")) || "/";
         return parent === view.path;
     });
-    return `<div class="files-toolbar"><div class="breadcrumbs"><button data-action="file-path" data-path="/">${icon("folder", 16)} Workspace</button>${view.path
+    return `${uploadProgressMarkup()}<div class="files-toolbar"><div class="breadcrumbs"><button data-action="file-path" data-path="/">${icon("folder", 16)} Workspace</button>${view.path
         .split("/")
         .filter(Boolean)
         .map((p, i, a) => `${icon("chevron", 12)}<button data-action="file-path" data-path="/${esc(a.slice(0, i + 1).join("/"))}">${esc(p)}</button>`)
@@ -286,8 +411,9 @@ const size = (n) => n >= 1048576
         ? `${(n / 1024).toFixed(1)} KB`
         : `${n} B`;
 function transferResults() {
-    return adapter.state.transfers.length
-        ? `<section class="transfer-results"><h3>Transfer results <span>${adapter.state.transfers.some((r) => r.status !== "succeeded") ? "Some paths need attention" : ""}</span></h3>${adapter.state.transfers.map((r) => `<div class="transfer-row">${icon(r.status === "succeeded" ? "check" : "info", 14)}<code>${esc(r.path)}</code><span>${esc(r.message)}</span></div>`).join("")}${adapter.state.transfers.some((r) => r.status === "unknown") ? btn("Refresh to verify target", "refresh-files", "small") : ""}</section>`
+    const results = current() ? adapter.transfersByWork.get(current().id) || [] : [];
+    return results.length
+        ? `<section class="transfer-results"><h3>Transfer results <span>${results.some((r) => r.status !== "succeeded") ? "Some paths need attention" : ""}</span></h3>${results.map((r) => `<div class="transfer-row">${icon(r.status === "succeeded" ? "check" : "info", 14)}<code>${esc(r.path)}</code><span>${esc(r.message)}</span></div>`).join("")}${results.some((r) => r.status === "unknown") ? btn("Refresh to verify target", "refresh-files", "small") : ""}</section>`
         : "";
 }
 function textEditor(f) {
@@ -295,12 +421,13 @@ function textEditor(f) {
     return `<div class="editor-toolbar">${btn(`${icon("arrow", 16)} Back to files`, "close-file", "quiet small")}<strong>${esc(f.name)}</strong>${badge(dirty() ? "Unsaved" : "Saved")}</div>${editable ? `${!view.fileBaseline ? feedback("No modification time is available. Concurrent changes cannot be protected.", "warning", btn("Allow unprotected overwrite", "allow-unprotected-file", "small")) : ""}${view.fileWriteUncertain ? feedback("The previous write needs review. Reread the target before saving again.", "warning", btn("Reread saved version", "refresh-files", "small")) : ""}${view.fileReread ? `<section class="file-reread"><h3>Current saved version · read only</h3><pre>${esc(view.fileReread.content ?? "This target is no longer editable text.")}</pre>${btn("Overwrite this reread version", "use-reread-version", "small", view.fileReread.kind === "text" ? "" : "disabled")}</section>` : ""}<textarea id="file-editor" class="file-editor" spellcheck="false" aria-label="Edit ${esc(f.name)}">${esc(view.fileDraft)}</textarea><div class="editor-footer"><span>UTF-8 · ${size(new TextEncoder().encode(view.fileDraft).length)} / 1 MiB limit · Version checks have second precision</span><div class="actions">${btn("Discard", "discard-file", "quiet", dirty() ? "" : "disabled")}${btn("Save file", "save-file", "primary", dirty() ? "" : "disabled")}</div></div>` : empty(f.kind === "special" ? "terminal" : "file", f.kind === "special" ? "This is a special filesystem item" : f.kind === "binary" ? "Download to open this binary file" : f.kind === "file" ? "Open this file to inspect its contents" : "This file exceeds the editing limit", f.kind === "special" ? "Special items cannot be treated as ordinary editable files." : "The in-browser editor supports UTF-8 text up to 1 MiB.", f.kind === "special" ? "" : btn(`${icon("download")} Download file`, "download-file", "primary", `data-path="${esc(f.path)}"`))}`;
 }
 function settingsPage(w) {
-    if (w.resourceErrors?.configuration)
-        return feedback(esc(w.resourceErrors.configuration), "warning", btn("Refresh configuration", "refresh-config", "primary"));
+    const configurationError = w.resourceErrors?.configuration;
+    if (configurationError && !view.config && !w.resourceChecked?.configuration)
+        return feedback(esc(configurationError), "warning", btn("Refresh configuration", "refresh-config", "primary"));
     if (!view.config)
         view.config = structuredClone(w.config);
     const c = view.config, pending = w.config.pendingApply === true;
-    return `<main class="settings-page"><div class="settings-heading"><div><h1>Work settings</h1><p>Shape what this Work can do.</p></div>${btn(`${icon("arrow", 16)} Back to Work`, "back-work", "quiet")}</div><div class="configuration-state"><div><strong>${view.configDirty ? "Unsaved changes" : pending ? "Saved changes" : "Configuration in use"}</strong><span>${view.configDirty ? "Save your draft before applying it." : pending ? "Not applied · Your running configuration is unchanged." : "Saved and active configuration are aligned"}</span></div><div class="actions">${btn(`${icon("refresh", 15)} Refresh status`, "refresh-config", "quiet small")}${view.configDirty ? btn("Save changes", "save-config", "") : btn("Apply changes", "apply-config", pending ? "primary" : "", pending ? "" : "disabled")}</div></div><nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((t) => btn(t, "settings-section", view.settingsTab === t ? "tab active" : "tab", `data-tab="${t}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>Instructions for your Agent</h2><p>AGENTS.md is included with this Work’s capability configuration.</p></div>${btn(`${icon("upload", 15)} Import file`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? "Previous active configuration" : "Configuration in use"}</span><span>Saved configuration</span></div><label class="field">Desired AGENTS.md<textarea id="agents-editor" class="code-editor" rows="13">${esc(c.agents)}</textarea></label><details class="details-box"><summary>Current active content</summary><pre>${esc(w.config.active?.agentsMd ?? "No active configuration is reported")}</pre></details>` : `<div class="section-heading"><div><h2>Advanced configuration</h2><p>Public runtime configuration. Platform secrets are never displayed.</p></div>${btn(`${icon("upload", 15)} Import JSON`, "import-json", "small")}</div><label class="field">Configuration JSON<textarea id="advanced-editor" aria-label="Configuration JSON" class="code-editor" rows="17" spellcheck="false">${esc(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">Includes the image, model reference, MCP, resources, and tool policy. Validate against the current Core contract before production use.</p>`}</div>${view.configDirty ? `<div class="settings-savebar"><span>You have unsaved changes</span><div class="actions">${btn("Discard changes", "discard-config")}${btn("Save changes", "save-config", "primary")}</div></div>` : ""}</main>`;
+    return `<main class="settings-page">${configurationError ? feedback(`${esc(configurationError)} Last confirmed configuration and your draft are preserved.`, "warning") : ""}<div class="settings-heading"><div><h1>Work settings</h1><p>Shape what this Work can do.</p></div>${btn(`${icon("arrow", 16)} Back to Work`, "back-work", "quiet")}</div><div class="configuration-state"><div><strong>${view.configDirty ? "Unsaved changes" : pending ? "Saved changes" : "Configuration in use"}</strong><span>${view.configDirty ? "Save your draft before applying it." : pending ? "Not applied · Your running configuration is unchanged." : "Saved and active configuration are aligned"}</span></div><div class="actions">${btn(`${icon("refresh", 15)} Refresh status`, "refresh-config", "quiet small")}${view.configDirty ? btn("Save changes", "save-config", "") : btn("Apply changes", "apply-config", pending ? "primary" : "", pending && adapter.project(w).usable ? "" : 'disabled title="Start or check this Work before applying saved settings"')}</div></div><nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((t) => btn(t, "settings-section", view.settingsTab === t ? "tab active" : "tab", `data-tab="${t}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>Instructions for your Agent</h2><p>AGENTS.md is included with this Work’s capability configuration.</p></div>${btn(`${icon("upload", 15)} Import file`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? "Previous active configuration" : "Configuration in use"}</span><span>Saved configuration</span></div><label class="field">Desired AGENTS.md<textarea id="agents-editor" class="code-editor" rows="13">${esc(c.agents)}</textarea></label><details class="details-box"><summary>Current active content</summary><pre>${esc(w.config.active?.agentsMd ?? "No active configuration is reported")}</pre></details>` : `<div class="section-heading"><div><h2>Advanced configuration</h2><p>Public runtime configuration. Platform secrets are never displayed.</p></div>${btn(`${icon("upload", 15)} Import JSON`, "import-json", "small")}</div><label class="field">Configuration JSON<textarea id="advanced-editor" aria-label="Configuration JSON" class="code-editor" rows="17" spellcheck="false">${esc(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">Includes the image, model reference, MCP, resources, and tool policy. Validate against the current Core contract before production use.</p>`}</div>${view.configDirty ? `<div class="settings-savebar"><span>You have unsaved changes</span><div class="actions">${btn("Discard changes", "discard-config")}${btn("Save changes", "save-config", "primary")}</div></div>` : ""}</main>`;
 }
 function catalogFeedback(name) {
     const status = adapter.catalog[name];
@@ -328,7 +455,12 @@ function modalMarkup() {
         case "account":
             title = "Your account";
             body = `<div class="identity-block"><span class="avatar large">${esc(adapter.state.core.account.slice(0, 1).toUpperCase())}</span><div><strong>${esc(adapter.state.core.account)}</strong><p>${esc(adapter.state.core.account)}</p></div></div><dl><dt>Role</dt><dd>${esc(adapter.state.core.role)}</dd><dt>Core</dt><dd>${esc(adapter.state.core.address)}</dd></dl><p class="muted">Desktop only shows the Works owned by this account.</p>`;
-            footer = `${btn("Switch Core", "switch-core")}${btn("Sign out", "sign-out", "danger")}`;
+            footer = `${btn("Reset browser access", "reset-browser-access")}${btn("Switch Core", "switch-core")}${btn("Sign out", "sign-out", "danger")}`;
+            break;
+        case "reset-browser-access":
+            title = "Reset browser access?";
+            body = `<p>This ends browser access in <strong>all windows of this Desktop</strong>, including Service previews, file transfers and live observation.</p><p>The saved Core login is retained. Works, Services and already accepted Runs or Operations continue. File changes already sent may have been committed.</p><p class="muted">Use <code>${esc(adapter.reopenCommand())}</code> to authorize a browser again.</p>`;
+            footer = `${cancel()}${btn('Reset browser access', 'confirm-reset-browser-access', 'danger')}`;
             break;
         case "connection":
             title = "Core connection";
@@ -349,7 +481,7 @@ function modalMarkup() {
                 break;
             title = "Work information";
             body = `<dl><dt>Name</dt><dd>${esc(target.name)}</dd><dt>Status</dt><dd>${badge(target.status)}</dd><dt>Desired state</dt><dd>${target.desired}</dd><dt>Work ID</dt><dd><code>${target.id}</code>${btn(icon("copy", 15), "copy", "icon-button quiet", `data-copy="${target.id}" aria-label="Copy full Work ID"`)}</dd><dt>Network identity</dt><dd><code>${esc(target.network || "Not provided")}</code>${btn(icon("copy", 15), "copy", "icon-button quiet", `data-copy="${target.network}" aria-label="Copy network identity"`)}</dd><dt>Owner</dt><dd>${esc(adapter.state.core.account)}</dd></dl>`;
-            footer = close();
+            footer = `${close()}${[...actions.records.values()].some(record => record.blocked && record.kind === 'lifecycle' && record.work === target.id) ? btn('Check original Work', 'check-work', '', `data-id="${esc(target.id)}"`) : ''}`;
             break;
         case "new-work":
             title = "New Work";
@@ -404,7 +536,7 @@ function modalMarkup() {
             body = target?.run
                 ? `<dl><dt>Run ID</dt><dd><code>${esc(target.run.id)}</code></dd><dt>Status</dt><dd>${badge(target.run.status)}</dd><dt>Session</dt><dd>${esc(target.sessions.find((s) => s.id === target.run?.sessionId)?.title || target.run.sessionId)}</dd><dt>Event cursor</dt><dd>${target.run.cursor}</dd><dt>Submitted</dt><dd>${target.run.created}</dd></dl>${target.run.error ? feedback(esc(target.run.error), "warning") : ""}<p class="muted">One active Run per Work. Closing details or switching Sessions does not cancel execution.</p>`
                 : "<p>No Run has been submitted in this Work.</p>";
-            footer = `${close()}${target?.run?.status === "interrupted" ? btn("Resume original Run", "resume-run", "primary") : target?.run && ["accepted", "running", "cancelling"].includes(target.run.status) ? btn(target.run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "danger", target.run.status === "cancelling" ? "disabled" : "") : ""}`;
+            footer = `${close()}${target?.run?.status === "interrupted" ? btn("Resume original Run", "resume-run", "primary") : target?.run && ["accepted", "running", "cancelling"].includes(target.run.status) ? btn(target.run.cancellationRequested ? "Cancellation requested" : target.run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "danger", target.run.cancellationRequested || target.run.status === "cancelling" ? "disabled" : "") : ""}`;
             break;
         case "service-menu":
             title = "Service options";
@@ -515,7 +647,7 @@ function modalMarkup() {
         }
         case "install-package":
             title = view.data.update ? "Update package source" : "Install Pi Package";
-            body = `<p>Choose the package source explicitly. Installing does not mean the model has loaded it.</p><label class="field">Source type<select id="install-type">${["Core", "npm", "Git", "Local directory", "ZIP"].map((t) => `<option ${view.installType === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>${view.installType === "Core"
+            body = `${uploadProgressMarkup()}<p>Choose the package source explicitly. Installing does not mean the model has loaded it.</p><label class="field">Source type<select id="install-type">${["Core", "npm", "Git", "Local directory", "ZIP"].map((t) => `<option ${view.installType === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>${view.installType === "Core"
                 ? `<label class="field">Current Core copy<select id="install-name">${adapter
                     .getPackages()
                     .map((p) => `<option ${view.installName === p.name ? "selected" : ""}>${esc(p.name)}</option>`)
@@ -531,8 +663,8 @@ function modalMarkup() {
             const op = snap
                 ? adapter.state.operations.find((o) => o.id === snap.operationId)
                 : undefined;
-            body = `<p>Create a full <code>.work</code> package, including the format-defined persistent workspace data.</p>${(target?.status !== "Stopped" || target?.desired !== "stopped") ? feedback("Stop this Work explicitly, then return here to prepare the package. Export never stops a Work automatically.", "warning") : `${feedback("Work is confirmed stopped. Preparing a package will not start it.", "success")}`}${snap ? `<div class="export-snapshot"><h3>Original snapshot</h3><dl><dt>Snapshot ID</dt><dd><code>${snap.id}</code></dd><dt>Operation</dt><dd><button class="inline-link" data-action="operation" data-id="${snap.operationId}">${snap.operationId}</button></dd><dt>Status</dt><dd>${badge(op?.state === "failed" ? "Failed" : snap.status)}</dd></dl>${snap.status === "expired" ? feedback("This snapshot expired. Check the original snapshot ID. Prepare another package explicitly when ready.", "warning") : ""}${op?.error ? feedback(esc(op.error), "warning") : ""}${snap.status === "verified" ? '<p class="muted">Snapshot is verified. Download validates and saves the actual .work archive.</p>' : ""}</div>` : ""}`;
-            footer = `${close()}${(target?.status !== "Stopped" || target?.desired !== "stopped") ? btn("Stop Work first", "stop-work", "danger", `data-id="${target?.id}"`) : snap?.status === "verified" ? btn(`${icon("download")} Download .work`, "download-work", "primary", `data-id="${snap.id}"`) : btn("Prepare .work package", "prepare-export", "primary", `data-id="${target?.id}" ${snap && ["preparing", "validating"].includes(snap.status) && op?.state !== "failed" ? "disabled" : ""}`)}`;
+            body = `${snap ? downloadProgressMarkup(snap.id) : ""}<p>Create a full <code>.work</code> package, including the format-defined persistent workspace data.</p>${(!target || !adapter.project(target).exportable) ? feedback("Stop this Work explicitly, then return here to prepare the package. Export never stops a Work automatically.", "warning") : `${feedback("Work is confirmed stopped. Preparing a package will not start it.", "success")}`}${snap ? `<div class="export-snapshot"><h3>Original snapshot</h3><dl><dt>Snapshot ID</dt><dd><code>${snap.id}</code></dd><dt>Operation</dt><dd><button class="inline-link" data-action="operation" data-id="${snap.operationId}">${snap.operationId}</button></dd><dt>Status</dt><dd>${badge(op?.state === "failed" ? "Failed" : snap.status)}</dd></dl>${snap.status === "expired" ? feedback("This snapshot expired. Check the original snapshot ID. Prepare another package explicitly when ready.", "warning") : ""}${op?.error ? feedback(esc(op.error), "warning") : ""}${snap.status === "verified" ? '<p class="muted">Snapshot is verified. Download validates and saves the actual .work archive.</p>' : ""}</div>` : ""}`;
+            footer = `${close()}${(!target || !adapter.project(target).exportable) ? btn("Stop Work first", "stop-work", "danger", `data-id="${target?.id}"`) : snap?.status === "verified" ? btn(`${icon("download")} Download .work`, "download-work", "primary", `data-id="${snap.id}"`) : btn("Prepare .work package", "prepare-export", "primary", `data-id="${target?.id}" ${snap && ["preparing", "validating"].includes(snap.status) && op?.state !== "failed" ? "disabled" : ""}`)}`;
             break;
         }
         case "import":
@@ -542,18 +674,18 @@ function modalMarkup() {
             footer = `${cancel()}${adapter.inspection && adapter.inspectionContext?.importState === "unsubmitted" ? btn(adapter.state.signedIn ? "Import Work" : "Sign in to import", adapter.state.signedIn ? "confirm-import" : "import-sign-in", "primary") : ""}`;
             break;
         case "operations": {
-            title = "Known operations";
+            title = view.data.workId ? "Related operations" : "Known operations";
             const scope = `${adapter.state.core.address} · ${adapter.state.core.account}`;
-            const operations = adapter.state.operations.filter((o) => o.scope === scope);
+            const operations = adapter.state.operations.filter((o) => o.scope === scope && (!view.data.workId || o.workId === view.data.workId));
             body = `<p>Records known by this local CLI, for the current Core and account. This is not a global server history.</p><label class="field">Find an Operation by ID<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn("Check status", "lookup-operation")}</div></label><label class="field">Find an original snapshot ID<div class="input-action"><input id="snapshot-query" value="${esc(view.snapshotQuery)}" placeholder="snapshot-…">${btn("Find snapshot", "lookup-snapshot")}</div></label><div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${op.id}"><span>${icon("clock", 17)}<span><strong>${esc(op.kind)}</strong><small>${op.id} · ${op.updated}</small></span></span>${badge(op.state)}</button>`).join("") : '<p class="muted">No operations are known in this Desktop session.</p>'}</div><p class="muted">Records contain IDs and status only. The CLI stores minimal Operation IDs for the current Core and account. Clearing completed records does not cancel server work.</p>`;
             footer = `${btn("Clear local records", "clear-operations", "quiet", operations.length ? "" : "disabled")}${close()}`;
             break;
         }
         case "operation": {
-            const op = adapter.state.operations.find((o) => o.id === view.data.id);
+            const op = adapter.getOperation(view.data.id);
             title = op ? esc(op.kind) : "Operation not found";
             body = op
-                ? `${phase(op)}${feedback(`${esc(op.phase)}. ${op.state === "accepted" || op.state === "preparing" ? "Accepted does not mean completed. Closing this dialog will not cancel it." : op.state === "unknown" ? "Check this original Operation; do not repeat the request." : op.state === "succeeded" ? "The original Operation reached a confirmed result." : ""}`, op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>Operation ID</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="Copy Operation ID"`)}</dd><dt>Work ID</dt><dd><code>${op.workId}</code></dd><dt>State</dt><dd>${badge(op.state)}</dd><dt>Last confirmed</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>Snapshot ID</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}`
+                ? `${phase(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">Work: ${workStatus(adapter.getWork(op.workId))}${quickAction(adapter.getWork(op.workId))}</div>` : ""}${feedback(`${esc(op.phase)}. ${op.state === "accepted" || op.state === "preparing" ? "Accepted does not mean completed. Closing this dialog will not cancel it." : op.state === "unknown" ? "Check this original Operation; do not repeat the request." : op.state === "succeeded" ? "The original Operation reached a confirmed result." : ""}`, op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>Operation ID</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="Copy Operation ID"`)}</dd><dt>Work ID</dt><dd><code>${op.workId}</code></dd><dt>State</dt><dd>${badge(op.state)}</dd><dt>Last confirmed</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>Snapshot ID</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}${op.observationError ? feedback(`Observation interrupted. ${esc(op.observationError)}`, "warning") : ""}${op.localRecordSaved === false ? feedback("Accepted, but the local record could not be saved. Copy the Operation ID; automatic recovery after reload is not guaranteed.", "warning") : ""}`
                 : "<p>This Operation is not known for the current Core and user. Verify the ID or check the original Work.</p>";
             footer = `${close()}${op ? btn("Check status", "check-operation", "", `data-id="${op.id}"`) : ""}${op && !["succeeded", "failed", "superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? "Resume checking" : "Pause checking", adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${op.id}"`) : ""}${op?.state === "succeeded" && op.kind === "Import Work" ? `${btn("Open Work", "open-work", "primary", `data-id="${op.workId}"`)}${btn("Start Work", "start-work", "", `data-id="${op.workId}"`)}` : op?.state === "succeeded" && op.kind === "Create Work" ? btn("Open Work", "open-work", "primary", `data-id="${op.workId}"`) : op?.snapshotId ? btn("View package", "export", "primary", `data-id="${op.workId}"`) : ""}`;
             break;
@@ -562,7 +694,7 @@ function modalMarkup() {
     return `<dialog id="modal" aria-labelledby="modal-title" class="modal ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head"><h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", 'aria-label="Close dialog"')}</div><div class="modal-body">${view.modalError ? feedback(esc(view.modalError), "warning") : ""}${body}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
 function serviceDetails(s, w) {
-    return `<dl><dt>Domain</dt><dd><code>${esc(s.domain)}</code></dd><dt>Declared Web ports</dt><dd>${s.ports.length ? s.ports.join(", ") : "No Web ports declared"}</dd><dt>Enabled</dt><dd>${s.enabled ? "Yes" : "No · persists across Work restarts"}</dd><dt>Observed</dt><dd>${badge(s.observed)}</dd>${s.operationId ? `<dt>Operation</dt><dd><button class="inline-link" data-action="operation" data-id="${s.operationId}">${s.operationId}</button></dd>` : ""}</dl>${s.error ? feedback(esc(s.error), "warning") : ""}<div class="service-controls">${btn("Start", "service-action", "small", `data-control="start" data-id="${s.id}" ${w.status === "Stopped" || s.observed === "Ready" ? "disabled" : ""}`)}${btn("Stop", "service-action", "small", `data-control="stop" data-id="${s.id}" ${w.status === "Stopped" || !s.enabled ? "disabled" : ""}`)}${btn("Restart", "service-action", "small", `data-control="restart" data-id="${s.id}" ${!s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn("Retry", "service-action", "small", `data-control="retry" data-id="${s.id}" ${!s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}${btn("Remove", "service-action", "small danger", `data-control="remove" data-id="${s.id}"`)}</div><div class="logs-heading"><h3>Log snapshot</h3>${btn(`${icon("refresh", 14)} Refresh logs`, "refresh-logs", "small")}</div><pre class="logs">${esc(adapter.logs.get(s.id)?.text ?? adapter.logs.get(s.id)?.reason ?? "Logs have not been retrieved.")}</pre><p class="muted small-text">${esc(adapter.logs.get(s.id)?.status ?? "Not retrieved")} · Collected ${esc(adapter.logs.get(s.id)?.collectedAt ?? "Not provided")} · ${adapter.logs.get(s.id)?.truncated ? "Output truncated" : "Bounded snapshot"}. This is not a live stream.</p>`;
+    return `<dl><dt>Domain</dt><dd><code>${esc(s.domain)}</code></dd><dt>Declared Web ports</dt><dd>${s.ports.length ? s.ports.join(", ") : "No Web ports declared"}</dd><dt>Enabled</dt><dd>${s.enabled ? "Yes" : "No · persists across Work restarts"}</dd><dt>Observed</dt><dd>${badge(s.observed)}</dd>${s.operationId ? `<dt>Operation</dt><dd><button class="inline-link" data-action="operation" data-id="${s.operationId}">${s.operationId}</button></dd>` : ""}</dl>${s.error ? feedback(esc(s.error), "warning") : ""}<div class="service-controls">${btn("Start", "service-action", "small", `data-control="start" data-id="${s.id}" ${!adapter.project(w).usable || s.observed === "Ready" ? "disabled" : ""}`)}${btn("Stop", "service-action", "small", `data-control="stop" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled ? "disabled" : ""}`)}${btn("Restart", "service-action", "small", `data-control="restart" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn("Retry", "service-action", "small", `data-control="retry" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}${btn("Remove", "service-action", "small danger", `data-control="remove" data-id="${s.id}" ${!adapter.project(w).usable ? "disabled" : ""}`)}</div><div class="logs-heading"><h3>Log snapshot</h3>${btn(`${icon("refresh", 14)} Refresh logs`, "refresh-logs", "small")}</div><pre class="logs">${esc(adapter.logs.get(s.id)?.text ?? adapter.logs.get(s.id)?.reason ?? "Logs have not been retrieved.")}</pre><p class="muted small-text">${esc(adapter.logs.get(s.id)?.status ?? "Not retrieved")} · Collected ${esc(adapter.logs.get(s.id)?.collectedAt ?? "Not provided")} · ${adapter.logs.get(s.id)?.truncated ? "Output truncated" : "Bounded snapshot"}. This is not a live stream.</p>`;
 }
 let focusReturn = "";
 function focusKey(el) {
@@ -590,17 +722,45 @@ async function guard(next) {
 function runAndShow(op) {
     openModal("operation", { id: op.id });
 }
+function reviewOperation(op, check) {
+    if (!check || !actions.current(check) || !op.checkedWorkId || op.state === 'unknown')
+        return;
+    for (const original of actions.records.values()) {
+        if (original.blocked && original.work === op.checkedWorkId && original.businessId === op.id)
+            actions.review(original);
+    }
+}
 function targetWork(el) {
     return (adapter.getWork(el.dataset.id || view.data.workId || view.data.id || route()[1]) || current());
 }
-async function saveFile() {
+async function saveFile(record) {
     const w = current();
     if (!w)
         return false;
     if (view.fileWriteUncertain)
         throw new Error("Reread the saved version and explicitly approve its baseline before retrying.");
     const content = view.fileDraft;
-    const result = await adapter.saveFile(w.id, view.file, content, view.fileBaseline, view.fileUnprotected);
+    const path = view.file, key = location.hash;
+    const result = await adapter.saveFile(w.id, path, content, view.fileBaseline, view.fileUnprotected, confirmed => {
+        if (record) {
+            actions.confirm(record, 'Saved');
+            if (!confirmed.modified) {
+                record.refresh = 'refreshing';
+                render();
+            }
+        }
+        if (key === location.hash && view.file === path) {
+            view.fileOriginal = content;
+            view.fileBaseline = confirmed.modified || '';
+            toast('File saved. Confirming the saved version.');
+        }
+    });
+    if (record) {
+        record.refresh = result.message === 'Confirmed' ? '' : 'failed';
+        record.refreshError = result.message;
+    }
+    if (key !== location.hash || path !== view.file)
+        throw new ViewChanged();
     if (result.status === "succeeded") {
         view.fileOriginal = content;
         view.fileBaseline = result.modified ?? "";
@@ -614,15 +774,24 @@ async function saveFile() {
     toast(result.message);
     return false;
 }
-async function saveConfig() {
+async function saveConfig(record) {
     const w = current();
     if (!w || !view.config)
         return false;
     if (!validateConfigDraft())
         return false;
-    await adapter.saveConfiguration(w.id, view.config);
-    view.config = structuredClone(w.config);
-    view.configDirty = false;
+    const submitted = structuredClone(view.config), version = JSON.stringify(view.config), key = location.hash;
+    await adapter.saveConfiguration(w.id, submitted);
+    if (record) {
+        actions.confirm(record, 'Settings saved');
+        void actions.refresh(record, () => adapter.loadConfiguration(w.id));
+    }
+    if (key !== location.hash)
+        throw new ViewChanged();
+    if (JSON.stringify(view.config) === version) {
+        view.config = structuredClone(submitted);
+        view.configDirty = false;
+    }
     toast("Changes saved. Apply changes to use them.");
     return true;
 }
@@ -651,10 +820,36 @@ function downloadBlob(name, contents, type = "text/plain") {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast("Download started. Check your browser to confirm the file was saved.");
 }
-async function handleAction(action, el) {
+async function handleAction(action, el, record) {
+    const ownedView = () => record?.kind === 'identity' ? location.hash : record && ['lifecycle', 'transfer'].includes(record.kind) ? `${location.hash}:${modalChoice}` : viewKey();
+    const stay = async (pending) => { const key = ownedView(), modal = view.modal; const value = await pending; if (key !== ownedView() || record?.kind === 'identity' && !!view.modal && view.modal !== modal)
+        throw new ViewChanged(); return value; };
+    const show = (op) => { if (record) {
+        record.businessId = op.id;
+        actions.confirm(record, `Accepted · ${op.id}`);
+        if (op.workId)
+            void actions.refresh(record, () => op.kind === 'Delete Work' ? adapter.listWorks() : adapter.loadWork(op.workId));
+    } runAndShow(op); };
+    const filesConfirmed = (results) => {
+        const succeeded = results.filter(result => result.status === 'succeeded').length;
+        if (record) {
+            actions.confirm(record, `${succeeded} paths confirmed; ${results.length - succeeded} need review`);
+            record.blocked = results.some(result => result.status === 'unknown');
+            if (currentWork)
+                void actions.refresh(record, () => adapter.loadDirectory(currentWork.id, view.path));
+        }
+        if (results.some(result => result.status !== 'succeeded')) {
+            view.modalError = 'Some paths were not confirmed. Review per-path results before submitting again.';
+            render();
+            return false;
+        }
+        return true;
+    };
     const w = targetWork(el);
     const currentWork = current();
     const s = currentWork ? activeService(currentWork) : undefined;
+    if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete'].includes(action))
+        throw new Error('This Work is not ready for new runtime or file changes. Check its current state.');
     switch (action) {
         case "close-modal": {
             const key = focusReturn;
@@ -684,7 +879,7 @@ async function handleAction(action, el) {
         case "open-work":
             if (w) {
                 closeModal();
-                await openWork(w);
+                await stay(openWork(w));
             }
             break;
         case "clear-search":
@@ -692,7 +887,7 @@ async function handleAction(action, el) {
             render();
             break;
         case "operations":
-            await adapter.recoverOperations();
+            await stay(adapter.recoverOperations());
             openModal("operations");
             break;
         case "account":
@@ -700,7 +895,6 @@ async function handleAction(action, el) {
         case "new-work":
         case "import":
         case "agent-menu":
-        case "sessions":
         case "run-details":
         case "manage-services":
         case "file-options":
@@ -715,13 +909,45 @@ async function handleAction(action, el) {
         case "export":
             openModal(action, { id: w?.id || "" });
             break;
+        case 'sessions':
+            if (currentWork)
+                await stay(adapter.loadSessions(currentWork.id));
+            openModal('sessions', { id: w?.id || '' });
+            break;
         case "switch-core":
             openModal("switch-core");
+            break;
+        case "check-browser-access":
+            await stay(adapter.checkBrowserAccess());
+            toast("Browser access checked.");
+            if (adapter.state.signedIn)
+                await stay(adapter.checkConnection());
+            break;
+        case "copy-reopen-command":
+            await copy(adapter.reopenCommand());
+            break;
+        case "copy-logout-command":
+            await copy(adapter.logoutCommand());
+            break;
+        case "reset-browser-access":
+            openModal("reset-browser-access");
+            break;
+        case "confirm-reset-browser-access":
+            await adapter.resetBrowserAccess();
+            view.modal = "";
+            render();
             break;
         case "sign-in": {
             const account = root.querySelector("#auth-account")?.value ?? "";
             const password = root.querySelector("#auth-password")?.value ?? "";
-            await adapter.signIn(view.coreAddress || adapter.state.core.address, account, password);
+            try {
+                await stay(adapter.signIn(view.coreAddress || adapter.state.core.address, account, password));
+            }
+            finally {
+                const input = root.querySelector('#auth-password');
+                if (input)
+                    input.value = '';
+            }
             if (importSignInSuspended && adapter.inspection) {
                 importSignInSuspended = false;
                 openModal("import");
@@ -740,54 +966,88 @@ async function handleAction(action, el) {
             toast("Sign in to continue importing the inspected package.");
             break;
         case "sign-out": {
-            const confirmed = await adapter.signOut();
+            const result = await stay(adapter.signOut());
             view.drafts = {};
             view.config = null;
             view.configDirty = false;
             view.file = "";
             closeModal();
-            toast(confirmed ? "Signed out." : "Local access ended. Remote revocation could not be confirmed.");
+            toast(result.credentialCleared === false ? `Local identity cleared; saved credential cleanup is incomplete. Run ${adapter.logoutCommand()}.` : result.remoteRevocationConfirmed ? "Signed out. Browser access is retained." : "Local identity and saved credential cleared. Remote revocation could not be confirmed.");
             break;
         }
         case "reconnect":
             toast("Start piwork-cli desktop and open the fresh launch address.");
             break;
         case "confirm-switch-core":
-            await adapter.switchCore(view.coreAddress);
+            await stay(adapter.switchCore(view.coreAddress));
             view.drafts = {};
             view.config = null;
             view.configDirty = false;
             closeModal();
             break;
+        case "retry-works":
+            await stay(adapter.listWorks());
+            break;
         case "check-connection":
-            await adapter.checkConnection();
+            await stay(adapter.checkConnection());
             toast("Connection checked.");
             break;
         case "start-work":
             if (w)
-                runAndShow(await adapter.lifecycle(w.id, w.status === "Failed" ? "retry" : "start"));
+                show(await stay(adapter.lifecycle(w.id, w.status === "Failed" ? "retry" : "start")));
             break;
         case "confirm-stop":
             if (w)
-                runAndShow(await adapter.lifecycle(w.id, "stop"));
+                show(await stay(adapter.lifecycle(w.id, "stop")));
             break;
         case "confirm-delete":
             if (w) {
-                const op = await adapter.lifecycle(w.id, "delete");
-                await adapter.listWorks().catch(() => undefined);
+                const op = await stay(adapter.lifecycle(w.id, "delete"));
+                // Acceptance is displayed before any associated list refresh.
                 history.replaceState(null, "", location.pathname + location.search + "#/works");
                 lastRoute = location.hash;
-                runAndShow(op);
+                show(op);
             }
             break;
-        case "check-work":
-            if (w?.operationId)
-                openModal("operation", { id: w.operationId });
+        case "retry-work-read":
+            await loadRoute();
+            break;
+        case 'work-operations': {
+            if (!w)
+                break;
+            const ids = adapter.project(w).operationIds;
+            if (ids.length === 1)
+                openModal('operation', { id: ids[0] });
+            else
+                openModal('operations', { workId: w.id });
+            break;
+        }
+        case "check-work": {
+            if (!w)
+                break;
+            const originals = [...actions.records.values()].filter(original => original.blocked && original.kind === 'lifecycle' && original.work === w.id && original.resource === w.id);
+            const ids = adapter.project(w).operationIds;
+            const op = ids.length === 1 ? await stay(adapter.checkOperation(ids[0])) : undefined;
+            const checked = await stay(adapter.refreshWorkStatus(w.id));
+            if (record && actions.current(record) && checked?.id === w.id) {
+                for (const original of originals) {
+                    const started = original.action === 'start-work' && checked.desired === 'running' && ['Ready', 'Degraded'].includes(checked.status);
+                    const stopped = original.action === 'confirm-stop' && checked.desired === 'stopped' && checked.status === 'Stopped';
+                    if (started || stopped)
+                        actions.review(original);
+                }
+            }
+            if (op) {
+                reviewOperation(op, record);
+                openModal('operation', { id: op.id });
+            }
             else {
-                await adapter.checkConnection();
-                toast("Work status checked.");
+                if (ids.length > 1)
+                    openModal('operations', { workId: w.id });
+                toast('Work status checked.');
             }
             break;
+        }
         case "toggle-create-advanced":
             view.createAdvanced = !view.createAdvanced;
             render();
@@ -825,14 +1085,14 @@ async function handleAction(action, el) {
                         }));
             if (view.createAgents)
                 config.agents = view.createAgents;
-            const op = await adapter.createWork(view.createName.trim(), config, view.createImage);
-            runAndShow(op);
+            const op = await stay(adapter.createWork(view.createName.trim(), config, view.createImage));
+            show(op);
             break;
         }
         case "settings":
             if (w) {
                 await guard(async () => {
-                    await adapter.loadConfiguration(w.id);
+                    await stay(adapter.loadConfiguration(w.id));
                     view.config = structuredClone(w.config);
                     view.configDirty = false;
                     view.modal = "";
@@ -847,17 +1107,17 @@ async function handleAction(action, el) {
             await guard(async () => {
                 view.tab = action.slice(4);
                 if (action === "tab-Services" && currentWork) {
-                    await adapter.loadServices(currentWork.id);
+                    await stay(adapter.loadServices(currentWork.id));
                     const service = activeService(currentWork);
                     if (service) {
                         view.service = service.id;
                         view.port = service.ports.includes(view.port) ? view.port : service.ports[0] || 0;
                         if (view.port && service.observed === "Ready")
-                            await adapter.ensureServiceEntry(currentWork.id, service.id, view.port);
+                            await stay(adapter.ensureServiceEntry(currentWork.id, service.id, view.port));
                     }
                 }
                 if (action === "tab-Files" && currentWork)
-                    await adapter.loadDirectory(currentWork.id, view.path);
+                    await stay(adapter.loadDirectory(currentWork.id, view.path));
                 view.tab = action.slice(4);
                 view.modal = "";
                 view.file = "";
@@ -879,14 +1139,17 @@ async function handleAction(action, el) {
             render();
             break;
         case "select-session":
+            sessionChoice++;
             view.session = el.dataset.id;
             if (currentWork)
-                await adapter.loadSession(currentWork.id, view.session);
+                await stay(adapter.loadSession(currentWork.id, view.session));
             closeModal();
             break;
         case "new-session":
             if (currentWork) {
-                view.session = await adapter.newSession(currentWork.id);
+                view.session = await stay(adapter.newSession(currentWork.id));
+                if (record)
+                    actions.confirm(record, `Session created · ${view.session}`);
                 closeModal();
                 render();
             }
@@ -895,7 +1158,7 @@ async function handleAction(action, el) {
         case "suggest-files":
             if (currentWork) {
                 if (!view.session)
-                    view.session = await adapter.newSession(currentWork.id);
+                    view.session = await stay(adapter.newSession(currentWork.id));
                 view.drafts[draftKey(currentWork)] =
                     action === "suggest-message"
                         ? "Build a simple notes app and save its data in the shared workspace."
@@ -909,22 +1172,32 @@ async function handleAction(action, el) {
                 const originalKey = draftKey(currentWork);
                 const text = view.drafts[originalKey] || "";
                 if (!view.session)
-                    view.session = await adapter.newSession(currentWork.id);
+                    view.session = await stay(adapter.newSession(currentWork.id));
                 adapter.selectedService = view.service;
-                await adapter.send(currentWork.id, view.session, text, view.includeIdentity);
-                view.drafts[draftKey(currentWork)] = "";
-                view.drafts[originalKey] = "";
+                await stay(adapter.send(currentWork.id, view.session, text, view.includeIdentity));
+                if (record)
+                    actions.confirm(record, `Accepted · ${currentWork.run?.id || "Run"}`);
+                if (view.drafts[draftKey(currentWork)] === text)
+                    view.drafts[draftKey(currentWork)] = "";
+                if (view.drafts[originalKey] === text)
+                    view.drafts[originalKey] = "";
                 view.scrollPinned = true;
                 render();
             }
             break;
         case "cancel-run":
-            if (currentWork)
-                await adapter.cancelRun(currentWork.id);
+            if (currentWork) {
+                await stay(adapter.cancelRun(currentWork.id));
+                if (record)
+                    actions.confirm(record, `Cancellation requested · ${currentWork.run?.id || "Run"}`);
+            }
             break;
         case "resume-run":
-            if (currentWork)
-                void adapter.resumeRun(currentWork.id);
+            if (currentWork) {
+                await stay(adapter.resumeRunConnection(currentWork.id));
+                if (record)
+                    actions.confirm(record, `Reconnected · ${currentWork.run?.id || "Run"}`);
+            }
             break;
         case "active-run":
             if (currentWork?.run) {
@@ -940,7 +1213,7 @@ async function handleAction(action, el) {
             if (currentWork) {
                 await guard(async () => {
                     view.tab = "Files";
-                    await openFile(currentWork, el.dataset.path);
+                    await stay(openFile(currentWork, el.dataset.path));
                     render();
                 });
             }
@@ -961,13 +1234,17 @@ async function handleAction(action, el) {
         case "open-app":
         case "open-window":
             if (currentWork && s) {
+                const opened = window.open('about:blank', '_blank', action === 'open-window' ? 'width=1120,height=820' : undefined);
+                if (!opened) {
+                    view.serviceOpenError = 'The browser blocked this window. Allow popups or copy the protected local link.';
+                    render();
+                    throw new Error(view.serviceOpenError);
+                }
+                opened.opener = null;
+                view.serviceOpenError = '';
                 if (adapter.serviceEmbed(currentWork.id, s.id, view.port) === "denied") {
-                    const opened = window.open("about:blank", "_blank");
-                    if (!opened)
-                        throw new Error("Allow this browser to open the application tab, then try again.");
-                    opened.opener = null;
                     try {
-                        opened.location.href = await adapter.directServiceURL(currentWork.id, s.id, view.port);
+                        opened.location.href = await stay(adapter.directServiceURL(currentWork.id, s.id, view.port));
                     }
                     catch (error) {
                         opened.close();
@@ -976,15 +1253,21 @@ async function handleAction(action, el) {
                     closeModal();
                     break;
                 }
-                window.open(adapter.localLink(currentWork.id, s.id, view.port), "_blank", action === "open-window"
-                    ? "noopener,noreferrer,width=1120,height=820"
-                    : "noopener,noreferrer");
+                opened.location.href = adapter.localLink(currentWork.id, s.id, view.port);
                 closeModal();
             }
             break;
+        case 'retry-service-entry':
+            if (currentWork && s)
+                await stay(adapter.ensureServiceEntry(currentWork.id, s.id, view.port));
+            break;
+        case 'check-preview':
+            if (currentWork && s)
+                await stay(adapter.serviceFrameLoaded(currentWork.id, s.id, view.port));
+            break;
         case "service-details":
             if (currentWork)
-                await adapter.readLogs(currentWork.id, el.dataset.id);
+                await stay(adapter.readLogs(currentWork.id, el.dataset.id));
             openModal("service-details", { serviceId: el.dataset.id });
             break;
         case "service-action": {
@@ -992,23 +1275,23 @@ async function handleAction(action, el) {
             if (control === "stop" || control === "remove")
                 openModal("service-control", { serviceId: el.dataset.id, control });
             else if (currentWork)
-                runAndShow(await adapter.operateService(currentWork.id, el.dataset.id, control));
+                show(await stay(adapter.operateService(currentWork.id, el.dataset.id, control)));
             break;
         }
         case "confirm-service-control":
             if (currentWork)
-                runAndShow(await adapter.operateService(currentWork.id, view.data.serviceId, view.data.control));
+                show(await stay(adapter.operateService(currentWork.id, view.data.serviceId, view.data.control)));
             break;
         case "refresh-logs":
             if (currentWork)
-                await adapter.readLogs(currentWork.id, view.data.serviceId);
+                await stay(adapter.readLogs(currentWork.id, view.data.serviceId));
             render();
             break;
         case "refresh-files":
             if (currentWork) {
-                await adapter.loadDirectory(currentWork.id, view.path);
+                await stay(adapter.loadDirectory(currentWork.id, view.path));
                 if (view.file)
-                    await adapter.readFile(currentWork.id, view.file);
+                    await stay(adapter.readFile(currentWork.id, view.file));
             }
             if (view.file && currentWork) {
                 const fresh = currentWork.files.find((f) => f.path === view.file);
@@ -1029,7 +1312,7 @@ async function handleAction(action, el) {
         case "file-path":
             await guard(async () => {
                 if (currentWork)
-                    await adapter.loadDirectory(currentWork.id, el.dataset.path);
+                    await stay(adapter.loadDirectory(currentWork.id, el.dataset.path));
                 view.path = el.dataset.path;
                 view.file = "";
                 view.selected = [];
@@ -1041,7 +1324,7 @@ async function handleAction(action, el) {
                 const path = el.dataset.path || view.data.path;
                 await guard(async () => {
                     view.modal = "";
-                    await openFile(currentWork, path);
+                    await stay(openFile(currentWork, path));
                     render();
                 });
             }
@@ -1071,7 +1354,7 @@ async function handleAction(action, el) {
             }
             break;
         case "save-file":
-            await saveFile();
+            await stay(saveFile(record));
             break;
         case "dirty-discard":
             view.fileDraft = view.fileOriginal;
@@ -1081,7 +1364,7 @@ async function handleAction(action, el) {
             render();
             break;
         case "dirty-save":
-            if (await saveFile()) {
+            if (await stay(saveFile(record))) {
                 view.modal = "";
                 await pendingNav?.();
                 pendingNav = null;
@@ -1100,7 +1383,8 @@ async function handleAction(action, el) {
             break;
         case "confirm-upload-overwrite":
             if (currentWork) {
-                const results = await adapter.upload(currentWork.id, view.path, pendingUploadFiles, true);
+                const results = await stay(adapter.upload(currentWork.id, view.path, pendingUploadFiles, true));
+                filesConfirmed(results);
                 pendingUploadFiles = pendingUploadFiles.filter(file => results.some(r => r.path.endsWith("/" + file.name) && r.status !== "succeeded"));
                 if (!pendingUploadFiles.length)
                     closeModal();
@@ -1113,9 +1397,9 @@ async function handleAction(action, el) {
         case "confirm-folder":
             if (currentWork) {
                 const name = validateName(view.formName);
-                await adapter.transfer(currentWork.id, "mkdir", ["new-folder"], joinPath(view.path, name));
-                await adapter.loadDirectory(currentWork.id, view.path);
-                closeModal();
+                const results = await stay(adapter.transfer(currentWork.id, "mkdir", ["new-folder"], joinPath(view.path, name)));
+                if (filesConfirmed(results))
+                    closeModal();
             }
             break;
         case "file-rename":
@@ -1145,12 +1429,13 @@ async function handleAction(action, el) {
                 }
                 const all = [];
                 for (let i = 0; i < paths.length; i++)
-                    all.push(...await adapter.transfer(currentWork.id, view.data.transfer === "copy" ? "copy" : "move", [paths[i]], destinations[i], view.formOverwrite));
-                await adapter.loadDirectory(currentWork.id, view.path);
+                    all.push(...await stay(adapter.transfer(currentWork.id, view.data.transfer === "copy" ? "copy" : "move", [paths[i]], destinations[i], view.formOverwrite)));
                 adapter.state.transfers = all;
-                await adapter.loadDirectory(currentWork.id, view.path);
-                view.selected = [];
-                closeModal();
+                adapter.transfersByWork.set(currentWork.id, all);
+                if (filesConfirmed(all)) {
+                    view.selected = [];
+                    closeModal();
+                }
             }
             break;
         case "file-delete": {
@@ -1162,10 +1447,11 @@ async function handleAction(action, el) {
         }
         case "confirm-file-delete":
             if (currentWork) {
-                await adapter.transfer(currentWork.id, "delete", decodePaths(view.data.paths));
-                await adapter.loadDirectory(currentWork.id, view.path);
-                view.selected = [];
-                closeModal();
+                const results = await stay(adapter.transfer(currentWork.id, "delete", decodePaths(view.data.paths)));
+                if (filesConfirmed(results)) {
+                    view.selected = [];
+                    closeModal();
+                }
             }
             break;
         case "upload":
@@ -1183,7 +1469,7 @@ async function handleAction(action, el) {
             render();
             break;
         case "save-config":
-            await saveConfig();
+            await stay(saveConfig(record));
             break;
         case "discard-config":
             if (currentWork) {
@@ -1201,7 +1487,7 @@ async function handleAction(action, el) {
             render();
             break;
         case "dirty-config-save":
-            if (await saveConfig()) {
+            if (await stay(saveConfig(record))) {
                 view.modal = "";
                 await pendingNav?.();
                 pendingNav = null;
@@ -1210,11 +1496,11 @@ async function handleAction(action, el) {
             break;
         case "apply-config":
             if (currentWork)
-                runAndShow(await adapter.applyConfiguration(currentWork.id));
+                show(await stay(adapter.applyConfiguration(currentWork.id)));
             break;
         case "refresh-config":
             if (currentWork) {
-                await adapter.loadConfiguration(currentWork.id);
+                await stay(adapter.loadConfiguration(currentWork.id));
                 if (!view.configDirty)
                     view.config = structuredClone(currentWork.config);
                 toast("Configuration status refreshed. Review In use, Loaded, and Visible to model separately.");
@@ -1235,15 +1521,22 @@ async function handleAction(action, el) {
             break;
         case "confirm-core-skills":
             if (currentWork) {
-                await adapter.replaceSkill(currentWork.id, view.data.id);
-                view.config = structuredClone(currentWork.config);
-                view.configDirty = false;
+                const draft = JSON.stringify(view.config);
+                await stay(adapter.replaceSkill(currentWork.id, view.data.id));
+                if (JSON.stringify(view.config) === draft) {
+                    view.config = structuredClone(currentWork.config);
+                    view.configDirty = false;
+                }
+                if (record) {
+                    actions.confirm(record, 'Skill copy saved');
+                    void actions.refresh(record, () => adapter.loadConfiguration(currentWork.id));
+                }
                 closeModal();
                 toast("Current Core copies saved. Apply changes to load them.");
             }
             break;
         case "check-catalog":
-            const available = await adapter.checkCatalog();
+            const available = await stay(adapter.checkCatalog());
             toast(available ? "Core catalogs confirmed. Existing selections preserved." : `Catalog check incomplete: ${[adapter.catalog.skills.error, adapter.catalog.packages.error].filter(Boolean).join(" ")}`);
             break;
         case "skill-detail":
@@ -1278,7 +1571,7 @@ async function handleAction(action, el) {
             break;
         case "confirm-remove-package":
             if (currentWork) {
-                runAndShow(await adapter.removePackage(currentWork.id, view.data.id));
+                show(await stay(adapter.removePackage(currentWork.id, view.data.id)));
                 view.config = null;
             }
             break;
@@ -1321,7 +1614,7 @@ async function handleAction(action, el) {
                     throw Error("Choose or enter a package source.");
                 const name = view.data.updateTarget ||
                     (view.installType === "Core" ? view.installName : view.installSource);
-                runAndShow(await adapter.installPackage(currentWork.id, name, `${view.installType}: ${view.installType === "Core" ? "current Core copy" : view.installSource}`, packageFiles, view.data.updateTarget));
+                show(await stay(adapter.installPackage(currentWork.id, name, `${view.installType}: ${view.installType === "Core" ? "current Core copy" : view.installSource}`, packageFiles, view.data.updateTarget)));
                 view.config = null;
             }
             break;
@@ -1340,21 +1633,37 @@ async function handleAction(action, el) {
             root.querySelector("#work-file-input")?.click();
             break;
         case "check-inspection-import":
-            await adapter.checkInspectionImport();
+            await stay(adapter.checkInspectionImport());
             break;
         case "retry-inspection-cleanup":
-            await adapter.cleanupInspection(el.dataset.id);
+            await stay(adapter.cleanupInspection(el.dataset.id));
             break;
         case "confirm-import":
-            runAndShow(await adapter.importWork(view.importName.trim()));
+            show(await stay(adapter.importWork(view.importName.trim())));
             break;
         case "prepare-export":
             if (w)
-                runAndShow(await adapter.prepareExport(w.id));
+                show(await stay(adapter.prepareExport(w.id)));
             break;
-        case "download-work":
-            downloadURL(await adapter.downloadSnapshot(el.dataset.id));
+        case "download-work": {
+            const pending = adapter.downloadSnapshot(el.dataset.id);
+            if (record)
+                record.businessId = adapter.downloads.get(el.dataset.id)?.transferId;
+            downloadURL(await stay(pending));
             break;
+        }
+        case 'check-download': {
+            const id = el.dataset.id;
+            await stay(adapter.checkDownload(id));
+            const job = adapter.downloads.get(id);
+            if (record && actions.current(record) && job?.ready)
+                for (const original of actions.records.values()) {
+                    if (original.kind === 'transfer' && original.work === record.work && original.action === 'download-work' && original.resource === id && original.businessId === job.transferId)
+                        actions.review(original);
+                }
+            adapter.observeDownload(id);
+            break;
+        }
         case "operation":
             openModal("operation", { id: el.dataset.id });
             break;
@@ -1363,22 +1672,25 @@ async function handleAction(action, el) {
             render();
             break;
         case "resume-operation":
+            await stay(adapter.checkOperation(el.dataset.id));
             adapter.resumeOperation(el.dataset.id);
             render();
             break;
         case "check-operation":
-            await adapter.checkOperation(el.dataset.id);
+            reviewOperation(await stay(adapter.checkOperation(el.dataset.id)), record);
             break;
         case "lookup-operation": {
-            const op = await adapter.checkOperation(view.operationQuery.trim());
-            if (op)
+            const op = await stay(adapter.checkOperation(view.operationQuery.trim()));
+            if (op) {
+                reviewOperation(op, record);
                 openModal("operation", { id: op.id });
+            }
             else
                 throw Error("Operation not found for this Core and user. Verify the original ID.");
             break;
         }
         case "lookup-snapshot": {
-            const snap = await adapter.fetchSnapshot(view.snapshotQuery.trim());
+            const snap = await stay(adapter.fetchSnapshot(view.snapshotQuery.trim()));
             if (snap)
                 openModal("export", { id: snap.workId });
             else
@@ -1386,7 +1698,7 @@ async function handleAction(action, el) {
             break;
         }
         case "clear-operations":
-            await adapter.clearOperations();
+            await stay(adapter.clearOperations());
             break;
     }
 }
@@ -1400,7 +1712,10 @@ function validateName(name) {
     return result;
 }
 async function openFile(w, path) {
+    const key = viewKey();
     await adapter.readFile(w.id, path);
+    if (key !== viewKey())
+        throw new ViewChanged();
     const f = w.files.find((f) => f.path === path);
     if (!f) {
         toast("This file is not available in the workspace.");
@@ -1433,11 +1748,13 @@ async function copy(text) {
     }
 }
 function render() {
+    adapter.observePage(route()[1] || '', document.visibilityState === 'visible');
     if (view.config && !view.config.advancedDirty)
         synchronizeConfiguration(view.config);
     const active = document.activeElement;
     const activeKey = focusKey(active);
     const selection = active && "selectionStart" in active ? active.selectionStart : null;
+    const selectionEnd = active && 'selectionEnd' in active ? active.selectionEnd : selection;
     const messages = root.querySelector("#messages");
     const scroll = messages?.scrollTop || 0;
     const modalScroll = root.querySelector(".modal-body")?.scrollTop || 0;
@@ -1446,14 +1763,14 @@ function render() {
     if (adapter.state.scenario === "cli-closed")
         html = `${topbar()}<main class="auth-main">${empty("terminal", "Desktop’s local connection has closed", "Start piwork-cli desktop again, then open its new launch address. A browser-only retry cannot restart the CLI.", "")}</main>`;
     else if (!adapter.state.signedIn ||
-        adapter.state.scenario === "ticket-expired")
+        adapter.state.browserAccess !== "authorized")
         html = signIn();
     else if (r[0] === "app") {
         const w = adapter.getWork(r[1]);
         if (w) {
             view.service = r[2];
             view.port = Number(r[3]) || 3000;
-            html = `${workHeader(w, true)}<div class="standalone-label">Independent application window · Closing this tab does not stop the Service</div><main class="standalone-app">${w.status === "Stopped" ? workState(w) : services(w)}</main>`;
+            html = `${workHeader(w, true)}<div class="standalone-label">Independent application window · Closing this tab does not stop the Service</div><main class="standalone-app">${!adapter.project(w).usable ? workState(w) : services(w)}</main>`;
         }
         else
             html = works();
@@ -1462,19 +1779,19 @@ function render() {
         const w = adapter.getWork(r[1]);
         html = w
             ? workPage(w)
-            : `${topbar()}${empty("grid", "Work not found", "Return to your Works to choose an available Work.", btn("Back to Works", "back-works", "primary"))}`;
+            : [...actions.records.values()].some(record => record.work === r[1] && record.pending) ? `${topbar()}<main>${empty('grid', 'Loading Work', esc(r[1]), btn('Back to Works', 'back-works'))}</main>` : `${topbar()}${empty("grid", workReadErrors.get(r[1])?.missing ? "Work not found" : "Work unavailable", esc(workReadErrors.get(r[1])?.message || "Read this Work again to confirm its current availability."), btn("Retry", "retry-work-read", "primary") + btn("Back to Works", "back-works"))}`;
     }
     else
         html = works();
-    reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("check", 17)}${esc(view.toast)}</div>${view.modal ? modalMarkup() : ""}<input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
+    // Ephemeral status nodes must not displace existing iframe ancestors during reconciliation.
+    root.querySelectorAll('[data-action-status]').forEach(node => node.remove());
+    reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal && adapter.state.browserAccess === "authorized" ? modalMarkup() : ""}<input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
     for (const frame of root.querySelectorAll('iframe[data-service-key]'))
         if (!frame.dataset.observed) {
             frame.dataset.observed = 'true';
             frame.addEventListener('load', () => { const [workId, serviceId, port] = frame.dataset.serviceKey.split(':'); void adapter.serviceFrameLoaded(workId, serviceId, Number(port)).catch(error => toast(error.message)); });
         }
-    if (actionPending)
-        for (const button of root.querySelectorAll("button[data-action]"))
-            button.disabled = true;
+    renderActionStates(root, actions, location.hash, el => actionIntent(el), record => !record.resource?.startsWith('service:') || record.resource === `service:${view.data.serviceId || (current() ? activeService(current())?.id : view.service)}${record.kind === 'service' ? '' : `:${view.port}`}`);
     const dialog = root.querySelector("#modal");
     if (dialog) {
         if (!dialog.open)
@@ -1495,13 +1812,13 @@ function render() {
     }
     if (activeKey) {
         const replacement = root.querySelector(activeKey);
-        if (replacement && (!dialog || dialog.contains(replacement))) {
+        if (replacement && replacement !== active && (!dialog || dialog.contains(replacement))) {
             replacement.focus({ preventScroll: true });
             if (selection !== null &&
                 replacement.setSelectionRange &&
                 replacement.type !== "checkbox")
                 try {
-                    replacement.setSelectionRange(selection, selection);
+                    replacement.setSelectionRange(selection, selectionEnd ?? selection);
                 }
                 catch { }
         }
@@ -1532,21 +1849,21 @@ function render() {
 }
 root.addEventListener("click", (e) => {
     const el = e.target.closest("[data-action]");
-    if (!el || el.hasAttribute("disabled") || actionPending)
+    if (!el || el.hasAttribute("disabled"))
         return;
-    actionPending = true;
-    for (const button of root.querySelectorAll("button[data-action]"))
-        button.disabled = true;
     if (!view.modal)
         focusReturn = focusKey(el);
-    void handleAction(el.dataset.action, el).catch((error) => {
+    const origin = viewKey();
+    void dispatchAction(el).catch((error) => {
+        if (error instanceof ViewChanged || origin !== viewKey())
+            return;
         if (view.modal) {
             view.modalError = error instanceof Error ? error.message : String(error);
             render();
         }
         else
             toast(error instanceof Error ? error.message : String(error));
-    }).finally(() => { actionPending = false; el.removeAttribute("disabled"); render(); });
+    }).finally(() => { render(); });
 });
 root.addEventListener("input", (e) => {
     const input = e.target;
@@ -1558,6 +1875,9 @@ root.addEventListener("input", (e) => {
             break;
         case "auth-core":
             view.coreAddress = value;
+            break;
+        case 'auth-account':
+            view.authAccount = value;
             break;
         case "create-name":
             view.createName = value;
@@ -1655,6 +1975,7 @@ root.addEventListener("change", (e) => {
             render();
             break;
         case "service-select":
+            view.serviceOpenError = "";
             view.service = value;
             view.port = w?.services.find((s) => s.id === value)?.ports[0] || 3000;
             if (w && view.port)
@@ -1662,6 +1983,7 @@ root.addEventListener("change", (e) => {
             render();
             break;
         case "port-select":
+            view.serviceOpenError = "";
             view.port = Number(value);
             if (w && view.port)
                 void adapter.ensureServiceEntry(w.id, view.service, view.port).catch(error => toast(error.message));
@@ -1696,19 +2018,36 @@ root.addEventListener("change", (e) => {
             break;
         }
     }
-    if (input instanceof HTMLInputElement && input.type === "file")
-        void handleFiles(input).catch((err) => {
+    if (input instanceof HTMLInputElement && input.type === "file") {
+        const selection = ++selectionRequest;
+        fileSelections.set(input.id, selection);
+        const intent = { key: `file-input:${w?.id || 'local'}:${input.id}${input.id === 'upload-input' ? '' : ':' + selection}`, kind: input.id === 'upload-input' ? 'files' : 'read', work: w?.id, resource: input.id,
+            label: input.id === 'upload-input' ? 'Checking upload targets' : 'Reading selected file', target: `${w?.name || 'Local CLI'} · ${input.files?.[0]?.name || 'Selected files'}`, view: location.hash };
+        const origin = viewKey();
+        void dispatchAction(input, record => handleFiles(input, record), intent).catch((err) => {
+            if (err instanceof ViewChanged || origin !== viewKey())
+                return;
             view.modalError = String(err.message || err);
             toast(view.modalError);
         });
+    }
 });
-async function handleFiles(input) {
+async function handleFiles(input, record) {
+    const key = viewKey(), selection = fileSelections.get(input.id), epoch = adapter.identityEpoch;
+    const valid = () => key === viewKey() && selection === fileSelections.get(input.id) && epoch === adapter.identityEpoch;
     const files = Array.from(input.files || []);
     if (!files.length)
         return;
     const w = current();
     if (input.id === "upload-input" && w) {
-        const results = await adapter.upload(w.id, view.path, files);
+        const directory = view.path;
+        const results = await adapter.upload(w.id, directory, files);
+        if (record) {
+            actions.confirm(record, `${results.filter(result => result.status === 'succeeded').length} files confirmed; review per-path results`);
+            void actions.refresh(record, () => adapter.loadDirectory(w.id, directory));
+        }
+        if (!valid())
+            throw new ViewChanged();
         pendingUploadFiles = files.filter(file => results.some(result => result.path.endsWith("/" + file.name) && result.status !== "succeeded"));
         if (pendingUploadFiles.length)
             openModal("upload-overwrite");
@@ -1742,8 +2081,12 @@ async function handleFiles(input) {
             text = new TextDecoder("utf-8", { fatal: true }).decode(await files[0].arrayBuffer());
         }
         catch {
+            if (!valid())
+                throw new ViewChanged();
             throw Error("This configuration file is not valid UTF-8. Your existing draft is preserved.");
         }
+        if (!valid())
+            throw new ViewChanged();
         if (input.id === "create-agents-input")
             view.createAgents = text;
         else if (view.config) {
@@ -1798,6 +2141,12 @@ root.addEventListener("keydown", (e) => {
     }
 });
 window.addEventListener("hashchange", () => {
+    if (new URLSearchParams(location.hash.slice(1)).has('ticket')) {
+        // A reopen link can navigate an existing tab without a document reload.
+        // Use the same Cookie-first initialization and remove the ticket at once.
+        void adapter.initialize().then(() => loadRoute()).catch(error => toast(error.message));
+        return;
+    }
     if ((dirty() || view.configDirty) && location.hash !== lastRoute) {
         const destination = location.hash;
         history.replaceState(null, "", lastRoute || "#/works");
@@ -1809,19 +2158,70 @@ window.addEventListener("hashchange", () => {
         });
         return;
     }
+    const changed = lastRoute !== location.hash;
     lastRoute = location.hash;
-    view.modal = "";
+    if (changed) {
+        view.modal = "";
+        modalChoice++;
+    }
     void loadRoute().catch(error => toast(error.message));
     render();
 });
-window.addEventListener("pagehide", () => { adapter.stopRunObservers(); adapter.abandonInspectionOnUnload(); });
+window.addEventListener("pagehide", () => { actions.clear(); adapter.stopDownloadObservers(); adapter.stopRunObservers(); adapter.abandonInspectionOnUnload(); });
 window.addEventListener("beforeunload", (e) => {
     if (dirty() || view.configDirty) {
         e.preventDefault();
         e.returnValue = "";
     }
 });
-adapter.subscribe(render);
+let lastIdentity = adapter.identityEpoch;
+const runtimeAvailability = new Map();
+async function restoreRuntimePanel(work) {
+    const epoch = adapter.identityEpoch, origin = location.hash, tab = view.tab, path = view.path;
+    await adapter.refreshCapabilities(work.id);
+    if (epoch !== adapter.identityEpoch || origin !== location.hash || tab !== view.tab)
+        return;
+    const service = activeService(work);
+    if (service) {
+        view.service = service.id;
+        view.port = service.ports.includes(view.port) ? view.port : service.ports[0] || 0;
+        if (service.observed === 'Ready' && view.port && (tab === 'Services' || route()[0] === 'app'))
+            await adapter.ensureServiceEntry(work.id, service.id, view.port).catch(() => undefined);
+    }
+    if (tab === 'Files' && path === view.path)
+        await adapter.loadDirectory(work.id, path).catch(() => undefined);
+    if (epoch === adapter.identityEpoch && origin === location.hash)
+        render();
+}
+adapter.subscribe(() => {
+    if (lastIdentity !== adapter.identityEpoch) {
+        lastIdentity = adapter.identityEpoch;
+        actions.clear();
+        workReadErrors.clear();
+        view.serviceOpenError = "";
+        view.file = "";
+        view.fileDraft = "";
+        view.fileOriginal = "";
+        view.fileBaseline = "";
+        view.fileReread = null;
+        view.config = null;
+        view.configDirty = false;
+        view.drafts = {};
+        fileSelections.clear();
+        runtimeAvailability.clear();
+        if (!(view.modal === "import" && adapter.inspection)) {
+            view.modal = "";
+            view.modalError = "";
+        }
+    }
+    const work = current();
+    const restore = work && runtimeAvailability.get(work.id) === false && adapter.project(work).usable;
+    for (const item of adapter.state.works)
+        runtimeAvailability.set(item.id, adapter.project(item).usable);
+    if (restore && work)
+        queueMicrotask(() => { void restoreRuntimePanel(work).catch(() => undefined); });
+    render();
+});
 lastRoute = location.hash;
 render();
 void adapter.initialize().then(async () => { view.coreAddress = adapter.state.core.address; await loadRoute(); }).catch(error => toast(error.message));
@@ -1829,6 +2229,7 @@ let packageFiles = [];
 let pendingUploadFiles = [];
 function downloadURL(url) { const link = document.createElement('a'); link.href = url; link.download = ''; link.click(); toast('Download started. Check your browser to confirm it was saved.'); }
 let routeLoad = 0;
+const workReadErrors = new Map();
 async function loadRoute() {
     if (!adapter.state.signedIn)
         return;
@@ -1838,23 +2239,46 @@ async function loadRoute() {
         render();
         return;
     }
-    const work = await adapter.loadWork(r[1]);
-    if (version !== routeLoad)
-        return;
-    const previous = workSelections.get(work.id);
-    const service = work.services.find(s => s.id === (r[0] === 'app' ? r[2] : previous?.service ?? view.service)) ?? work.services.find(s => s.enabled && s.observed === 'Ready' && s.ports.length);
-    view.service = service?.id ?? '';
-    view.port = service?.ports.includes(Number(r[3]) || previous?.port || view.port) ? Number(r[3]) || previous?.port || view.port : service?.ports[0] ?? 0;
-    view.session = work.sessions.find(s => s.id === (previous?.session ?? view.session))?.id ?? work.sessions[0]?.id ?? '';
-    if (view.session)
-        await adapter.loadSession(work.id, view.session);
-    if (r[2] === 'settings')
-        view.config = structuredClone(work.config);
-    else if (r[0] !== 'app')
-        view.tab = service ? 'Services' : 'Chat';
-    if (service?.observed === 'Ready' && view.port)
-        await adapter.ensureServiceEntry(work.id, service.id, view.port).catch(error => toast(error.message));
-    render();
+    const record = actions.begin({ key: `route:${r[1]}:${version}`, kind: 'read', work: r[1], label: 'Loading Work', target: r[1], view: location.hash });
+    try {
+        const origin = location.hash, epoch = adapter.identityEpoch;
+        const valid = () => version === routeLoad && origin === location.hash && epoch === adapter.identityEpoch;
+        const work = await adapter.loadWork(r[1]);
+        if (!valid())
+            return;
+        workReadErrors.delete(r[1]);
+        const previous = workSelections.get(work.id);
+        const service = work.services.find(s => s.id === (r[0] === 'app' ? r[2] : previous?.service ?? view.service)) ?? work.services.find(s => s.enabled && s.observed === 'Ready' && s.ports.length);
+        view.service = service?.id ?? '';
+        view.port = service?.ports.includes(Number(r[3]) || previous?.port || view.port) ? Number(r[3]) || previous?.port || view.port : service?.ports[0] ?? 0;
+        view.session = work.sessions.find(s => s.id === (previous?.session ?? view.session))?.id ?? work.sessions[0]?.id ?? '';
+        if (view.session)
+            await adapter.loadSession(work.id, view.session);
+        if (!valid())
+            return;
+        if (r[2] === 'settings' && !view.configDirty)
+            view.config = structuredClone(work.config);
+        else if (r[0] !== 'app')
+            view.tab = service ? 'Services' : 'Chat';
+        if (service?.observed === 'Ready' && view.port)
+            await adapter.ensureServiceEntry(work.id, service.id, view.port).catch(error => { if (valid())
+                toast(error.message); });
+        if (valid())
+            render();
+    }
+    catch (error) {
+        if (record && actions.current(record)) {
+            actions.fail(record, error);
+            workReadErrors.set(r[1], { message: error instanceof Error ? error.message : String(error), missing: error instanceof DesktopError && error.httpStatus === 404 });
+        }
+    }
+    finally {
+        if (record) {
+            actions.finish(record);
+            actions.records.delete(record.key);
+            render();
+        }
+    }
 }
 window.addEventListener('popstate', () => { void loadRoute().catch(error => toast(error.message)); });
 /** Update existing nodes in place. In particular, never detach an unchanged Service iframe or its ancestors. */
@@ -1932,6 +2356,8 @@ setInterval(() => {
     if (!work || !adapter.state.signedIn || document.visibilityState !== 'visible' || statusRefreshRunning)
         return;
     statusRefreshRunning = true;
-    void adapter.refreshWorkStatus(work.id).catch(() => undefined).finally(() => { statusRefreshRunning = false; });
+    void adapter.refreshVisibleWork(work.id).catch(() => undefined).finally(() => { statusRefreshRunning = false; });
 }, 5000);
+document.addEventListener('visibilitychange', () => { adapter.observePage(route()[1] || '', document.visibilityState === 'visible'); });
+window.addEventListener('pagehide', () => { adapter.observePage('', false); });
 //# sourceMappingURL=app.js.map

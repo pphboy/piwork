@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 const nativeCli = process.env.PIWORK_TEST_NATIVE_CLI || fileURLToPath(new URL("../../../../dist/go/piwork-cli", import.meta.url));
 const workPackagePath = fileURLToPath(new URL("../../../../internal/workpackage/testdata/golden-native-pi-package.work", import.meta.url));
 const WORK_PACKAGE_MIME = "application/vnd.piwork.work-package";
@@ -162,7 +162,7 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     assert.equal(corePaths.filter(path => path === '/api/v1/operations/operation-browser-create-1234').length, before);
     await page.getByRole('button',{name:'Close dialog'}).click();
     await create('Missing Operation');
-    await page.getByText('OPERATION_NOT_FOUND',{exact:true}).waitFor();
+    await expect(page.locator('#modal')).toContainText('Observation interrupted. OPERATION_NOT_FOUND');
     await page.waitForTimeout(2400); assert.equal(missingOperationReads, 1, '404 operation was automatically polled again');
     await page.getByRole('button',{name:'Close dialog'}).click();
     await create('No ID Work');
@@ -288,6 +288,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.goto(launchUrl);
     await page.getByRole('heading',{name:'Works',exact:true}).waitFor();
     await page.locator('[data-action=open-work]').filter({hasText:'Lifecycle Work'}).click();
+    await page.getByRole('heading', {name: 'Lifecycle Work', exact: true}).waitFor();
     await page.getByRole('button',{name:'Start Work',exact:true}).first().click();
     await page.getByText('pending',{exact:true}).waitFor();
     await page.getByRole('button',{name:'Close dialog'}).click();
@@ -731,8 +732,13 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('notes');
     assert.equal(await page.getByRole('combobox',{name:'Declared Web port'}).inputValue(), '80');
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();
+    await page.locator('[data-action-status]').filter({hasText:'Loading Work'}).waitFor({state:'detached'});
+    await page.frameLocator('iframe').locator('body[data-ready="yes"]').waitFor();
+    await page.frameLocator('iframe').locator('body').evaluate(() => { document.body.dataset.feedbackFrame = 'same'; });
     await page.frameLocator('iframe').getByRole('button',{name:'Sign in app'}).click();
     await page.frameLocator('iframe').getByText('App signed in').waitFor();
+    assert.equal(await page.frameLocator('iframe').locator('body').getAttribute('data-feedback-frame'), 'same', 'Feedback must preserve the live application document');
+    await capture('service-signed-in');
     assert(upstream.every(value => value === ''), 'Service received platform Authorization');
     await page.frameLocator('iframe').locator('body').evaluate(() => localStorage.setItem('service-state','notes'));
     const liveProtocols = await page.frameLocator("iframe").locator("body").evaluate(async () => {
@@ -766,6 +772,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await page.getByRole('heading',{name:'This app opens in its own tab'}).waitFor();
     const opening = context.waitForEvent('page'); await page.getByRole('button',{name:'Open application tab',exact:true}).click();
     const separate = await opening; await separate.getByRole('heading',{name:'Blocked app'}).waitFor();
+    await capture('service-embedding-denied');
     assert.match(new URL(separate.url()).hostname, /^s-[a-f0-9]+\.desktop\.localhost$/); await separate.close();
     await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('notes');
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();

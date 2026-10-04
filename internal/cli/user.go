@@ -47,6 +47,8 @@ const userUsage = `usage: piwork-cli [--core <url>] [--json] <command>
   chat <workId> [--session <sessionId>] [--message <text>]
   proxy [--port <1..65535>]
   desktop [--port <1..65535>] [--no-open]
+  desktop open [--port <1..65535>] [--no-open]
+  desktop logout [--port <1..65535>]
 `
 
 type userCommand struct {
@@ -109,6 +111,13 @@ func runUser(args []string, stdout, stderr io.Writer) int {
 	if (command.args[0] == "proxy" || command.args[0] == "desktop") && command.json {
 		fmt.Fprintf(stderr, "%s is an interactive command; --json is unavailable\n", command.args[0])
 		return 2
+	}
+	if command.args[0] == "desktop" && len(command.args) > 1 && (command.args[1] == "open" || command.args[1] == "logout") {
+		if command.core != "" {
+			fmt.Fprintln(stderr, "desktop open/logout select an existing local instance; --core is unavailable")
+			return 2
+		}
+		return runDesktopControl(command.args[1:], stdout, stderr)
 	}
 	if len(command.args) == 4 && command.args[0] == "work" && command.args[1] == "package" && command.args[2] == "inspect" {
 		f, err := os.Open(command.args[3])
@@ -449,6 +458,10 @@ func validateUserCommand(args []string) error {
 		_, err := parseUserProxyPort(args[1:])
 		return err
 	case "desktop":
+		if len(args) > 1 && (args[1] == "open" || args[1] == "logout") {
+			_, err := parseDesktopControlOptions(args[1:])
+			return err
+		}
 		_, err := parseUserDesktopOptions(args[1:])
 		return err
 	}

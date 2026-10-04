@@ -43,6 +43,11 @@ func (d *nativeDesktop) serveRunEvents(w http.ResponseWriter, r *http.Request) b
 		return true
 	}
 	d.mu.Lock()
+	if d.identity.credential == nil || !d.identity.checked {
+		d.mu.Unlock()
+		desktopError(w, 401, "AUTH_REQUIRED")
+		return true
+	}
 	coreURL, token, generation := d.identity.coreURL, d.identity.credential.Token, d.identity.generation
 	d.mu.Unlock()
 	api, err := client.New(coreURL, token)

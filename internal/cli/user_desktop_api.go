@@ -76,6 +76,7 @@ func (d *nativeDesktop) authorize(r *http.Request, mutation bool) (desktopSessio
 	}
 	d.mu.Lock()
 	session, ok := d.sessions[value]
+	session.id = value
 	if ok && !time.Now().Before(session.end) {
 		delete(d.sessions, value)
 		ok = false
@@ -137,14 +138,20 @@ func (d *nativeDesktop) bootstrap(w http.ResponseWriter, r *http.Request) {
 		desktopError(w, 403, "LOCAL_BOOTSTRAP_DENIED")
 		return
 	}
-	d.used = true
-	sessionID, errID := desktopSecret()
-	csrf, errCSRF := desktopSecret()
+	d.pruneSessionsLocked()
+	if len(d.sessions) >= 128 {
+		d.mu.Unlock()
+		desktopError(w, 503, "LOCAL_SESSION_CAPACITY")
+		return
+	}
+	sessionID, errID := d.newSecret()
+	csrf, errCSRF := d.newSecret()
 	if errID != nil || errCSRF != nil {
 		d.mu.Unlock()
 		desktopError(w, 503, "LOCAL_SESSION_UNAVAILABLE")
 		return
 	}
+	d.used = true
 	d.sessions[sessionID] = desktopSession{id: sessionID, csrf: csrf, end: time.Now().Add(12 * time.Hour)}
 	d.mu.Unlock()
 	w.Header().Set("Set-Cookie", fmt.Sprintf("%s=%s; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200", d.cookieName(), sessionID))
@@ -152,6 +159,7 @@ func (d *nativeDesktop) bootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *nativeDesktop) revokeLocked() {
+	d.cancelPlatformAccessLocked()
 	if d.transfers != nil {
 		d.transfers.revoke(d.identity.credential != nil)
 	}
@@ -174,16 +182,23 @@ func (d *nativeDesktop) revokeToken(coreURL, token string) {
 		return
 	}
 	d.revokeLocked()
-	_ = d.store.ClearSession(coreURL, token)
+	d.rememberCleanupLocked(coreURL, token)
 }
 
-func (d *nativeDesktop) verifyLocked(ctx context.Context) {
-	record := d.identity.credential
+func (d *nativeDesktop) verifyIdentity(ctx context.Context) {
+	d.mu.Lock()
+	record, coreURL, generation := d.identity.credential, d.identity.coreURL, d.identity.generation
+	d.mu.Unlock()
 	if record == nil {
 		return
 	}
-	api, err := client.New(d.identity.coreURL, record.Token)
+	api, err := client.New(coreURL, record.Token)
 	if err != nil {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if generation != d.identity.generation || d.identity.credential != record {
+			return
+		}
 		d.identity.checked = false
 		d.identity.offline = true
 		d.identity.errorCode = "CORE_UNAVAILABLE"
@@ -196,11 +211,16 @@ func (d *nativeDesktop) verifyLocked(ctx context.Context) {
 	if err == nil && me.ID != record.User.ID {
 		err = &client.APIError{Status: 401, Code: "IDENTITY_CHANGED", Text: "Core identity changed"}
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if generation != d.identity.generation || d.identity.credential != record {
+		return
+	}
 	if err != nil {
 		var apiErr *client.APIError
 		if errors.As(err, &apiErr) && (apiErr.Status == 401 || apiErr.Status == 403) {
 			d.revokeLocked()
-			_ = d.store.ClearSession(record.CoreURL, record.Token)
+			d.rememberCleanupLocked(record.CoreURL, record.Token)
 			return
 		}
 		d.identity.checked = false
@@ -216,10 +236,17 @@ func (d *nativeDesktop) verifyLocked(ctx context.Context) {
 	d.identity.lastConfirmed = time.Now().UTC().Format(time.RFC3339Nano)
 }
 
+// Retained for callers already holding mu; network verification releases it.
+func (d *nativeDesktop) verifyLocked(ctx context.Context) {
+	d.mu.Unlock()
+	d.verifyIdentity(ctx)
+	d.mu.Lock()
+}
+
 func (d *nativeDesktop) view(ctx context.Context, csrf string) map[string]any {
+	d.verifyIdentity(ctx)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.verifyLocked(ctx)
 	state := "signed-out"
 	if d.identity.offline {
 		state = "offline"
@@ -227,6 +254,9 @@ func (d *nativeDesktop) view(ctx context.Context, csrf string) map[string]any {
 		state = "authenticated"
 	}
 	value := map[string]any{"coreUrl": d.identity.coreURL, "state": state, "generation": d.identity.generation, "csrf": csrf}
+	if d.pendingCleanup != nil {
+		value["cleanupRequired"] = true
+	}
 	if state == "authenticated" {
 		value["user"] = d.identity.credential.User
 		value["expiresAt"] = d.identity.credential.ExpiresAt
@@ -261,6 +291,14 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if path == "/_desktop/api/session" || path == "/_desktop/api/login" || path == "/_desktop/api/logout" || path == "/_desktop/api/connection" || path == "/_desktop/api/status" {
+		guarded, request, finish, allowed := d.guardAccess(w, r, session, false)
+		if !allowed {
+			return
+		}
+		defer finish()
+		w, r = guarded, request
+	}
 	switch {
 	case path == "/_desktop/api/session" && r.Method == http.MethodGet:
 		desktopJSON(w, 200, d.view(r.Context(), session.csrf))
@@ -272,7 +310,15 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		d.switchCore(w, r, session.csrf)
 	case path == "/_desktop/api/status" && r.Method == http.MethodGet:
 		d.status(w, r)
+	case path == "/_desktop/api/browser-access/reset":
+		d.resetBrowserAccess(w, r)
 	default:
+		guarded, request, finish, ok := d.guardContent(w, r, session)
+		if !ok {
+			return
+		}
+		defer finish()
+		w, r = guarded, request
 		if d.serveTransfer(w, r, session) {
 			return
 		}
@@ -303,6 +349,11 @@ func (d *nativeDesktop) login(w http.ResponseWriter, r *http.Request, csrf strin
 		return
 	}
 	d.mu.Lock()
+	if d.pendingCleanup != nil {
+		d.mu.Unlock()
+		desktopError(w, 409, "CREDENTIAL_CLEANUP_REQUIRED")
+		return
+	}
 	d.revokeLocked()
 	coreURL, generation := d.identity.coreURL, d.identity.generation
 	d.mu.Unlock()
@@ -322,7 +373,7 @@ func (d *nativeDesktop) login(w http.ResponseWriter, r *http.Request, csrf strin
 		return
 	}
 	d.mu.Lock()
-	if generation != d.identity.generation {
+	if generation != d.identity.generation || r.Context().Err() != nil {
 		d.mu.Unlock()
 		if revoke, err := client.New(coreURL, record.Token); err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -353,20 +404,10 @@ func (d *nativeDesktop) login(w http.ResponseWriter, r *http.Request, csrf strin
 }
 
 func (d *nativeDesktop) logout(w http.ResponseWriter, r *http.Request, csrf string) {
-	d.mu.Lock()
-	record, coreURL := d.identity.credential, d.identity.coreURL
-	d.revokeLocked()
-	d.mu.Unlock()
-	confirmed := record == nil
-	if record != nil {
-		if api, err := client.New(coreURL, record.Token); err == nil {
-			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-			confirmed = api.Request(ctx, http.MethodPost, "/api/v1/logout", nil, nil) == nil
-			cancel()
-		}
-		_ = d.store.ClearSession(record.CoreURL, record.Token)
-	}
-	desktopJSON(w, 200, map[string]any{"remoteRevocationConfirmed": confirmed, "view": d.view(r.Context(), csrf)})
+	result := d.logoutIdentity()
+	result.View["csrf"] = csrf
+	result.View["cleanupRequired"] = !result.CredentialCleared
+	desktopJSON(w, 200, result)
 }
 
 func (d *nativeDesktop) switchCore(w http.ResponseWriter, r *http.Request, csrf string) {
@@ -386,6 +427,11 @@ func (d *nativeDesktop) switchCore(w http.ResponseWriter, r *http.Request, csrf 
 		return
 	}
 	d.mu.Lock()
+	if d.pendingCleanup != nil {
+		d.mu.Unlock()
+		desktopError(w, 409, "CREDENTIAL_CLEANUP_REQUIRED")
+		return
+	}
 	if d.transfers != nil {
 		d.transfers.revoke(true)
 	}

@@ -1,5 +1,7 @@
 /** Browser view models mapped from the existing Go Desktop API. */
 export type WorkStatus =
+  | "Preparing"
+  | "Deleted"
   | "Ready"
   | "Stopped"
   | "Degraded"
@@ -52,6 +54,7 @@ export interface Session {
   legacy?: boolean;
 }
 export interface Run {
+  cancellationRequested?: boolean;
   id: string;
   sessionId: string;
   status: RunStatus;
@@ -76,12 +79,19 @@ export interface Configuration {
   modelVisible: boolean;
 }
 export interface Work {
+  resourceLoading?: Record<string, boolean>;
+  resourceChecked?: Record<string, string>;
   id: string;
   network: string;
   name: string;
   description: string;
   status: WorkStatus;
-  desired: "running" | "stopped";
+  desired: "running" | "stopped" | "deleted";
+  observed?: string;
+  controlVersion?: number;
+  checkedAt?: string;
+  statusError?: string;
+  lifecycleIntent?: { action: LifecycleAction; operationId: string; sequence: number; baseVersion?: number };
   updated: string;
   color: string;
   icon: string;
@@ -96,11 +106,16 @@ export interface Work {
   resourceErrors?: Record<string, string>;
 }
 export interface Operation {
+  action?: LifecycleAction;
+  observationError?: string;
+  localRecordSaved?: boolean;
   id: string;
   workId: string;
+  checkedWorkId?: string;
   kind: string;
   state:
     | "accepted"
+    | "pending"
     | "preparing"
     | "running"
     | "succeeded"
@@ -114,6 +129,8 @@ export interface Operation {
   snapshotId?: string;
   scope: string;
 }
+
+export type LifecycleAction = 'create' | 'start' | 'stop' | 'retry' | 'delete';
 export interface Snapshot {
   id: string;
   workId: string;

@@ -81,9 +81,16 @@ export class ConsoleAdapter {
   store: Store = { users: [], skills: [], packages: [], runtime: null, defaults: null, operations: [] };
   private csrf = "";
   private epoch = 0;
+  get identityEpoch() { return this.epoch; }
+  private reads = new Map<string, Promise<Data>>();
   private intents = new Map<string, { source: Data; intent: PackageIntent }>();
 
-  private async request(path: string, method = "GET", body?: unknown, login = false): Promise<Data> {
+  private request(path: string, method = "GET", body?: unknown, login = false): Promise<Data> {
+    if (method !== 'GET') return this.requestOnce(path, method, body, login);
+    const key = `${this.epoch}:${path}`, old = this.reads.get(key); if (old) return old;
+    const pending = this.requestOnce(path, method, body, login).finally(() => { if (this.reads.get(key) === pending) this.reads.delete(key); }); this.reads.set(key, pending); return pending;
+  }
+  private async requestOnce(path: string, method = "GET", body?: unknown, login = false): Promise<Data> {
     const epoch = this.epoch;
     let response: Response;
     try {
@@ -97,6 +104,7 @@ export class ConsoleAdapter {
     if (epoch !== this.epoch) throw new ConsoleError("SESSION_CHANGED", "The account changed. The old response was discarded.");
     if (response.status === 204) return {};
     const value = await response.json().catch(() => null) as Data | null;
+    if (epoch !== this.epoch) throw new ConsoleError('SESSION_CHANGED', 'The account changed while reading the response.');
     if (!value || typeof value !== "object") throw new ConsoleError(method === "GET" ? "INVALID_RESPONSE" : "RESULT_UNKNOWN", "The server returned an invalid response. Read current data before submitting again.");
     if (!response.ok) {
       const error = errorFrom(value, response.status, method !== "GET", login);
@@ -190,7 +198,8 @@ export class ConsoleAdapter {
     const body = new FormData(); body.append("directoryName", selection.name);
     for (const file of selection.files) body.append("files", file, encodeURIComponent(file.webkitRelativePath.split("/").slice(1).join("/")));
     const value = await this.upload(`admin/skills${target ? `/${encodeURIComponent(target)}` : ""}`, body, target ? "PUT" : "POST", progress);
-    await this.skills(); return this.store.skills.find(s => s.name === value.name)!;
+    if (typeof value.name !== 'string') throw new ConsoleError('RESULT_UNKNOWN', 'Skill confirmation is incomplete. Read the current Skill before uploading again.');
+    return { name: value.name as string };
   }
   async submitPackage(intent: PackageIntent, progress?: (sent: number, total: number) => void, _bytes = 0, selection?: UploadSelection) {
     let saved = this.intents.get(intent.key);

@@ -197,6 +197,9 @@ func TestNativeConsoleBrowserAndAdministratorSession(t *testing.T) {
 	if module := call("GET", "/browser/package-phase.js", "", "", "", ""); module.Code != 200 || !strings.Contains(module.Body.String(), "Unrecognized phase") {
 		t.Fatal("embedded package phase module failed", module.Code)
 	}
+	if module := call("GET", "/browser/action-state.js", "", "", "", ""); module.Code != 200 || !strings.Contains(module.Body.String(), "renderActionStates") {
+		t.Fatal("embedded action state module failed", module.Code)
+	}
 	for _, path := range []string{"/login", "/users", "/runtime", "/default-work", "/skills", "/skills/example", "/packages", "/packages/example", "/packages/%40example%2Ftools", "/operations", "/operations/operation-1"} {
 		if page := call("GET", path, "", "", "", ""); page.Code != 200 {
 			t.Fatal("Console page is missing", path, page.Code)
