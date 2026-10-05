@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +20,7 @@ import (
 
 	"piwork/internal/client"
 	"piwork/internal/desktopassets"
+	"piwork/internal/localweb"
 )
 
 const desktopDefaultPort = 17891
@@ -66,27 +65,28 @@ func parseUserDesktopOptions(args []string) (desktopOptions, error) {
 }
 
 type nativeDesktop struct {
-	api             *client.Client
-	store           client.CredentialStore
-	port            int
-	origin          string
-	ticket          string
-	ticketEnd       time.Time
-	used            bool
-	mu              sync.Mutex
-	sessions        map[string]desktopSession
-	fileWrites      map[string]bool
-	serviceEntries  map[string]*desktopServiceEntry
-	serviceGrants   map[string]string
-	serviceConns    map[string]int
-	transfers       *desktopTransfers
-	identity        desktopIdentity
-	pendingCleanup  *desktopCleanup
-	logoutMu        sync.Mutex
-	logoutFlight    *desktopLogoutFlight
-	secret          func() (string, error)
-	localGeneration int
-	activeAccess    map[*desktopAccess]bool
+	api                *client.Client
+	store              client.CredentialStore
+	port               int
+	origin             string
+	ticket             string
+	ticketEnd          time.Time
+	used               bool
+	mu                 sync.Mutex
+	sessions           map[string]desktopSession
+	fileWrites         map[string]bool
+	serviceEntries     map[string]*desktopServiceEntry
+	serviceGrants      map[string]string
+	serviceConns       map[string]int
+	transfers          *desktopTransfers
+	identity           desktopIdentity
+	pendingCleanup     *desktopCleanup
+	logoutMu           sync.Mutex
+	logoutFlight       *desktopLogoutFlight
+	secret             func() (string, error)
+	localGeneration    int
+	activeAccess       map[*desktopAccess]bool
+	preferencesStorage desktopPreferencesStorage
 }
 
 type desktopSession struct {
@@ -96,21 +96,13 @@ type desktopSession struct {
 }
 
 func desktopSecret() (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(raw), nil
+	return localweb.Secret()
 }
 
 func runUserDesktop(api *client.Client, store client.CredentialStore, saved *client.Credential, args []string, stdout, stderr io.Writer) int {
 	options, err := parseUserDesktopOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return 2
-	}
-	if api.Base.Scheme == "http" && !isLocalCoreHost(api.Base.Hostname()) {
-		fmt.Fprintln(stderr, "remote Core connections require HTTPS")
 		return 2
 	}
 	for _, path := range []string{"static/public/index.html", "static/public/style.css", "static/browser/app.js", "static/browser/files.js"} {

@@ -88,6 +88,104 @@ export class DesktopAdapter {
     sessionTimer;
     authCheck;
     authSequence = 0;
+    preferences = { phase: 'idle', confirmed: false, coreUrl: null, error: '', notice: '', waiting: false };
+    preferenceSequence = 0;
+    preferenceNotice;
+    async preferenceRequest(method, coreUrl) {
+        const csrf = this.csrf;
+        let response;
+        try {
+            response = await fetch('/_desktop/api/preferences', { method, credentials: 'same-origin',
+                headers: method === 'GET' ? {} : { 'X-Piwork-Csrf': csrf, ...(method === 'PUT' ? { 'Content-Type': 'application/json' } : {}) },
+                ...(method === 'PUT' ? { body: JSON.stringify({ coreUrl }) } : {}) });
+        }
+        catch {
+            throw new DesktopError(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'Default Core could not be read. Check browser access and try reading again.' : 'The response was lost. Read the saved default before making another change.');
+        }
+        const value = await response.json().catch(() => null);
+        if (csrf !== this.csrf)
+            throw new DesktopError(method === 'GET' ? 'LOCAL_AUTH_REQUIRED' : 'RESULT_UNKNOWN', 'Browser access changed. Reopen Desktop and read the saved default.');
+        if (!response.ok) {
+            const code = value?.code || (method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN');
+            if (['LOCAL_AUTH_REQUIRED', 'LOCAL_CSRF_OR_AUTH_REQUIRED'].includes(code))
+                await this.checkBrowserAccess().catch(() => undefined);
+            const message = { INVALID_DESKTOP_PREFERENCES: 'Enter an HTTP(S) Core origin without credentials, a path, query, or fragment.', DESKTOP_PREFERENCES_BUSY: 'Another instance is saving the default. Wait, read it again, then retry.', DESKTOP_PREFERENCES_UNAVAILABLE: 'The saved default is corrupt or storage is unsafe or unavailable. Restore automatic selection for a corrupt record; check the storage location for permission errors.', DESKTOP_PREFERENCES_OUTCOME_UNKNOWN: 'The change was committed but could not be confirmed. Read the saved default before making another change.' }[code] || 'Default Core could not be confirmed. Check browser access and read again.';
+            throw new DesktopError(code, message, response.status);
+        }
+        if (!value || Object.keys(value).length !== 1 || !('coreUrl' in value) || value.coreUrl !== null && typeof value.coreUrl !== 'string')
+            throw new DesktopError(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', 'The response could not be verified. Read the saved default again.');
+        return value.coreUrl;
+    }
+    async loadPreferences() {
+        if (['saving', 'clearing'].includes(this.preferences.phase))
+            return;
+        const sequence = ++this.preferenceSequence, unconfirmed = this.preferences.phase === 'unconfirmed';
+        if (!unconfirmed)
+            this.preferences.phase = 'loading';
+        this.preferences.error = '';
+        this.emit();
+        try {
+            const coreUrl = await this.preferenceRequest('GET');
+            if (sequence !== this.preferenceSequence)
+                return;
+            Object.assign(this.preferences, { coreUrl, confirmed: true, phase: 'idle', error: '', waiting: false });
+        }
+        catch (error) {
+            if (sequence !== this.preferenceSequence)
+                return;
+            this.preferences.phase = unconfirmed ? 'unconfirmed' : 'idle';
+            this.preferences.error = errorText(error);
+        }
+        finally {
+            if (sequence === this.preferenceSequence)
+                this.emit();
+        }
+    }
+    async savePreferences(coreUrl) {
+        if (['saving', 'clearing', 'unconfirmed'].includes(this.preferences.phase))
+            return;
+        if (coreUrl !== null) {
+            try {
+                const url = new URL(coreUrl);
+                if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash)
+                    throw new Error();
+            }
+            catch {
+                this.preferences.error = 'Enter an HTTP(S) Core origin without credentials, a path, query, or fragment.';
+                this.emit();
+                return;
+            }
+        }
+        const sequence = ++this.preferenceSequence;
+        clearTimeout(this.preferenceNotice);
+        Object.assign(this.preferences, { phase: coreUrl === null ? 'clearing' : 'saving', error: '', notice: '', waiting: false });
+        this.emit();
+        const slow = setTimeout(() => { if (sequence === this.preferenceSequence && ['saving', 'clearing'].includes(this.preferences.phase)) {
+            this.preferences.waiting = true;
+            this.emit();
+        } }, 10000);
+        try {
+            const saved = await this.preferenceRequest(coreUrl === null ? 'DELETE' : 'PUT', coreUrl ?? undefined);
+            if (sequence !== this.preferenceSequence)
+                return;
+            Object.assign(this.preferences, { phase: 'idle', confirmed: true, coreUrl: saved, notice: saved === null ? 'Automatic selection restored for next launch.' : 'Default Core saved for next launch.', waiting: false });
+            this.preferenceNotice = setTimeout(() => { if (sequence === this.preferenceSequence) {
+                this.preferences.notice = '';
+                this.emit();
+            } }, 3000);
+        }
+        catch (error) {
+            if (sequence !== this.preferenceSequence)
+                return;
+            const unknown = error instanceof DesktopError && ['RESULT_UNKNOWN', 'DESKTOP_PREFERENCES_OUTCOME_UNKNOWN'].includes(error.code);
+            Object.assign(this.preferences, { phase: unknown ? 'unconfirmed' : 'idle', error: errorText(error), waiting: false });
+        }
+        finally {
+            clearTimeout(slow);
+            if (sequence === this.preferenceSequence)
+                this.emit();
+        }
+    }
     subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
     emit() { for (const listener of this.listeners)
         listener(); }

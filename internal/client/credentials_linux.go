@@ -17,6 +17,13 @@ import (
 
 var errCredentialStorage = errors.New("credential storage requires a private user-owned directory and a regular user-owned 0600 file without symbolic links")
 
+func defaultCredentialPath() (string, error) {
+	if base := os.Getenv("HOME"); base != "" {
+		return filepath.Abs(filepath.Join(base, ".config", "piwork", "client.json"))
+	}
+	return "", errors.New("HOME, XDG_CONFIG_HOME, or PIWORK_CONFIG_PATH is required for credential storage")
+}
+
 // A credential directory is pinned once; none of the operations reopen the
 // caller's pathname after checking it. Public ancestors such as /tmp are
 // allowed, but no ancestor is followed through a symbolic link.

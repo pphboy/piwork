@@ -1,4 +1,5 @@
-package cli
+// Package consoleapp implements the Linux operator browser console.
+package consoleapp
 
 import (
 	"crypto/tls"
@@ -24,6 +25,7 @@ import (
 	"piwork/internal/buildinfo"
 	"piwork/internal/client"
 	"piwork/internal/consoleassets"
+	"piwork/internal/localweb"
 )
 
 const consoleHelp = "usage: piwork-console serve --public-origin <https-origin> --tls-cert <file> --tls-key <file>\n  [--core <loopback-url>] [--listen <host:port>] [--data-dir <directory>]\n"
@@ -83,7 +85,7 @@ func parseConsoleOptions(args []string) (consoleOptions, error) {
 		options.coreURL = "http://127.0.0.1:7171"
 	}
 	core, err := client.ParseCoreURL(options.coreURL)
-	if err != nil || !isLocalCoreHost(core.Hostname()) {
+	if err != nil || !localweb.IsLocalCoreHost(core.Hostname()) {
 		return options, errors.New("Core URL must be a plain loopback origin")
 	}
 	options.coreURL = core.Scheme + "://" + core.Host
@@ -142,7 +144,8 @@ func consoleDataLock(directory string) (func(), error) {
 	return func() { _ = os.RemoveAll(staging); _ = unix.Flock(fd, unix.LOCK_UN); _ = unix.Close(fd) }, nil
 }
 
-func runConsole(args []string, stdout, stderr io.Writer) int {
+// Entry runs piwork-console without depending on the user CLI.
+func Entry(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
 		if err := json.NewEncoder(stdout).Encode(buildinfo.Read("piwork-console")); err != nil {
 			return 1
@@ -211,15 +214,15 @@ func consoleShellRoute(escapedPath string) bool {
 	if len(parts) != 3 || parts[0] != "" {
 		return false
 	}
-	pattern := desktopIDPattern
+	pattern := localweb.IDPattern
 	switch parts[1] {
 	case "skills", "packages":
-		pattern = desktopNamePattern
+		pattern = localweb.NamePattern
 	case "operations":
 	default:
 		return false
 	}
-	_, valid := desktopResourcePart(parts[2], pattern)
+	_, valid := localweb.ResourcePart(parts[2], pattern)
 	return valid
 }
 
@@ -253,7 +256,7 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.URL.Path == "/style.css":
 		path, contentType = "static/public/style.css", "text/css; charset=utf-8"
-	case strings.HasPrefix(r.URL.Path, "/browser/") && nativeBrowserAsset.MatchString(strings.TrimPrefix(r.URL.Path, "/browser/")):
+	case strings.HasPrefix(r.URL.Path, "/browser/") && localweb.BrowserAsset.MatchString(strings.TrimPrefix(r.URL.Path, "/browser/")):
 		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/browser/"), "text/javascript; charset=utf-8"
 	default:
 		if strings.Contains("|/|/login|/users|/runtime|/default-work|/skills|/packages|/operations|", "|"+r.URL.Path+"|") || consoleShellRoute(r.URL.EscapedPath()) {

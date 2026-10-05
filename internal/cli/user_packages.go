@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"piwork/internal/client"
-	"piwork/internal/pipackage"
 )
 
 type packageCommand struct {
@@ -50,7 +49,7 @@ func parseUserPackages(args []string) (packageCommand, error) {
 			cmd.fromCore = args[3]
 			args = args[4:]
 		} else {
-			if _, err := pipackage.ParseSource(args[2]); err != nil {
+			if _, err := client.ParsePackageSource(args[2]); err != nil {
 				return cmd, invalid
 			}
 			cmd.source = args[2]
@@ -71,7 +70,7 @@ func parseUserPackages(args []string) (packageCommand, error) {
 			if len(args) < 5 {
 				return cmd, invalid
 			}
-			if _, err := pipackage.ParseSource(args[4]); err != nil {
+			if _, err := client.ParsePackageSource(args[4]); err != nil {
 				return cmd, invalid
 			}
 			cmd.source = args[4]

@@ -1,4 +1,4 @@
-package cli
+package consoleapp
 
 import (
 	"encoding/json"

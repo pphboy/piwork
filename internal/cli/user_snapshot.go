@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"piwork/internal/client"
+	"piwork/internal/clientfs"
 	"piwork/internal/workpackage"
 )
 
@@ -163,64 +163,56 @@ func runUserSnapshotWithin(ctx context.Context, api *client.Client, args []strin
 		"path": path, "digest": *metadata.Digest, "size": *metadata.Size}, nil
 }
 
-func openSnapshotDirectory(output string) (int, string, string, error) {
+func openSnapshotDirectory(output string) (*clientfs.Directory, string, string, error) {
+	if !clientfs.ValidFileName(filepath.Base(output)) {
+		return nil, "", "", errors.New("unsafe output filename")
+	}
 	target, err := filepath.Abs(output)
 	if err != nil {
-		return -1, "", "", err
+		return nil, "", "", err
 	}
-	parent := filepath.Dir(target)
-	partPath := string(filepath.Separator)
-	for _, part := range strings.Split(strings.TrimPrefix(parent, partPath), partPath) {
-		if part == "" {
-			continue
-		}
-		partPath = filepath.Join(partPath, part)
-		info, err := os.Lstat(partPath)
-		if err != nil || !info.IsDir() {
-			return -1, "", "", errors.New("output parent must be a real directory without symlinks")
-		}
-	}
-	fd, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	directory, err := clientfs.OpenDirectory(filepath.Dir(output))
 	if err != nil {
-		return -1, "", "", err
+		return nil, "", "", errors.New("output parent must be a real directory without links")
 	}
 	name := filepath.Base(target)
-	var stat unix.Stat_t
-	if err := unix.Fstatat(fd, name, &stat, unix.AT_SYMLINK_NOFOLLOW); err == nil {
-		unix.Close(fd)
-		return -1, "", "", errors.New("output already exists")
-	} else if !errors.Is(err, unix.ENOENT) {
-		unix.Close(fd)
-		return -1, "", "", err
+	file, err := directory.OpenRegular(name)
+	if err == nil {
+		file.Close()
+		directory.Close()
+		return nil, "", "", errors.New("output already exists")
 	}
-	return fd, name, target, nil
+	if !errors.Is(err, os.ErrNotExist) {
+		directory.Close()
+		return nil, "", "", err
+	}
+	return directory, name, target, nil
 }
 
 func checkSnapshotDestination(output string) error {
-	fd, _, _, err := openSnapshotDirectory(output)
+	directory, _, _, err := openSnapshotDirectory(output)
 	if err == nil {
-		unix.Close(fd)
+		directory.Close()
 	}
 	return err
 }
 
 func saveSnapshotDownload(ctx context.Context, api *client.Client, snapshotID, output, digest string, size int64) (string, error) {
-	fd, name, target, err := openSnapshotDirectory(output)
+	directory, name, target, err := openSnapshotDirectory(output)
 	if err != nil {
 		return "", err
 	}
-	defer unix.Close(fd)
+	defer directory.Close()
 	key, err := randomKey()
 	if err != nil {
 		return "", err
 	}
 	temporary := ".piwork-" + key + ".tmp"
-	fileFD, err := unix.Openat(fd, temporary, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	file, err := directory.CreatePrivateExclusive(temporary)
 	if err != nil {
 		return "", err
 	}
-	file := os.NewFile(uintptr(fileFD), temporary)
-	defer func() { file.Close(); _ = unix.Unlinkat(fd, temporary, 0) }()
+	defer func() { file.Close(); _ = directory.Remove(temporary) }()
 	headers := make(http.Header)
 	headers.Set("Accept", workPackageMIME)
 	response, err := api.Binary(ctx, "GET", "/api/v1/work-snapshots/"+url.PathEscape(snapshotID)+"/content", headers, nil, 0)
@@ -247,13 +239,10 @@ func saveSnapshotDownload(ctx context.Context, api *client.Client, snapshotID, o
 	if err != nil || inspection.Digest != digest || inspection.Size != size {
 		return "", errors.New("downloaded Work package verification failed")
 	}
-	if err := unix.Linkat(fd, temporary, fd, name, 0); err != nil {
+	if err := file.Close(); err != nil {
 		return "", err
 	}
-	if err := unix.Unlinkat(fd, temporary, 0); err != nil {
-		return "", err
-	}
-	if err := unix.Fsync(fd); err != nil {
+	if err := directory.PublishNoReplace(ctx, temporary, name); err != nil {
 		return "", err
 	}
 	return target, nil
@@ -268,22 +257,38 @@ func importUserSnapshot(ctx context.Context, api *client.Client, command snapsho
 	if err != nil {
 		return nil, err
 	}
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	directory, err := clientfs.OpenDirectory(filepath.Dir(command.id))
 	if err != nil {
 		return nil, errors.New("unable to open Work package")
 	}
-	file := os.NewFile(uintptr(fd), "work-package")
+	defer directory.Close()
+	file, err := directory.OpenRegular(filepath.Base(path))
+	if err != nil {
+		return nil, errors.New("unable to open Work package")
+	}
 	defer file.Close()
-	var before unix.Stat_t
-	if err := unix.Fstat(fd, &before); err != nil || before.Mode&unix.S_IFMT != unix.S_IFREG {
+	before, err := clientfs.Identity(file)
+	if err != nil {
 		return nil, errors.New("input must be a regular file")
+	}
+	stable := func() bool {
+		after, err := clientfs.Identity(file)
+		if err != nil || after != before {
+			return false
+		}
+		current, err := directory.OpenRegular(filepath.Base(path))
+		if err != nil {
+			return false
+		}
+		defer current.Close()
+		identity, err := clientfs.Identity(current)
+		return err == nil && identity == before
 	}
 	inspection, err := workpackage.Inspect(ctx, file, before.Size)
 	if err != nil {
 		return nil, err
 	}
-	var after unix.Stat_t
-	if err := unix.Fstat(fd, &after); err != nil || !sameInputFile(before, after) {
+	if !stable() {
 		return nil, errors.New("input package changed during validation")
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
@@ -314,7 +319,7 @@ func importUserSnapshot(ctx context.Context, api *client.Client, command snapsho
 	if json.Unmarshal(raw, &uploaded) != nil || uploaded.PackageID == "" || uploaded.Digest != inspection.Digest || uploaded.Size != before.Size {
 		return nil, errors.New("Core package identity changed")
 	}
-	if err := unix.Fstat(fd, &after); err != nil || !sameInputFile(before, after) {
+	if !stable() {
 		return nil, errors.New("input package changed during upload")
 	}
 	key := command.key
@@ -340,8 +345,4 @@ func importUserSnapshot(ctx context.Context, api *client.Client, command snapsho
 		value["name"] = accepted["name"]
 	}
 	return result, err
-}
-
-func sameInputFile(a, b unix.Stat_t) bool {
-	return a.Dev == b.Dev && a.Ino == b.Ino && a.Size == b.Size && a.Mtim == b.Mtim && a.Ctim == b.Ctim
 }

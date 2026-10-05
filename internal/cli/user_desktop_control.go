@@ -13,10 +13,11 @@ import (
 
 	"piwork/internal/client"
 	"piwork/internal/contracts"
+	"piwork/internal/localweb"
 )
 
-var desktopIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,127}$`)
-var desktopNamePattern = regexp.MustCompile(`^(?:@[a-z0-9][a-z0-9._-]*/)?[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+var desktopIDPattern = localweb.IDPattern
+var desktopNamePattern = localweb.NamePattern
 
 type desktopControl struct {
 	method string
@@ -26,8 +27,7 @@ type desktopControl struct {
 }
 
 func desktopResourcePart(raw string, pattern *regexp.Regexp) (string, bool) {
-	value, err := url.PathUnescape(raw)
-	return value, err == nil && pattern.MatchString(value) && !strings.ContainsAny(value, "\\\x00")
+	return localweb.ResourcePart(raw, pattern)
 }
 
 func desktopControlInput(r *http.Request, allowed ...string) (map[string]json.RawMessage, error) {

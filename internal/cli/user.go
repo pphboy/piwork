@@ -23,7 +23,13 @@ import (
 	"piwork/internal/workpackage"
 )
 
-const userUsage = `usage: piwork-cli [--core <url>] [--json] <command>
+const userUsage = `usage: piwork-cli [--core <url>] [--json] [command]
+  No command starts Desktop. Use --help or help for this command list.
+  Empty --json prints help without starting Desktop.
+  Desktop Core: --core > PIWORK_CORE_URL > saved Desktop default > credential > loopback.
+  Business Core: --core > PIWORK_CORE_URL > credential > loopback.
+  A saved Desktop default applies to the next launch; --core overrides this launch only.
+
   status
   login --account <name> [--password-stdin]
   whoami
@@ -61,13 +67,15 @@ type streamedOutput struct{}
 
 func parseUser(args []string) (userCommand, error) {
 	var command userCommand
+	seenCore := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--core":
-			if command.core != "" || i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+			if seenCore || i+1 >= len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "--") {
 				return command, errors.New("--core requires one URL")
 			}
 			i++
+			seenCore = true
 			command.core = args[i]
 		case "--json":
 			if command.json {
@@ -83,10 +91,17 @@ func parseUser(args []string) (userCommand, error) {
 }
 
 func runUser(args []string, stdout, stderr io.Writer) int {
+	return runUserWithDesktop(args, stdout, stderr, runUserDesktop)
+}
+
+func runUserWithDesktop(args []string, stdout, stderr io.Writer, launch func(*client.Client, client.CredentialStore, *client.Credential, []string, io.Writer, io.Writer) int) int {
 	command, err := parseUser(args)
 	if err != nil {
 		fmt.Fprintln(stderr, client.SafeErrorMessage(err.Error()))
 		return 2
+	}
+	if len(command.args) == 0 && !command.json {
+		command.args = []string{"desktop"}
 	}
 	if len(command.args) == 0 || command.args[0] == "help" || command.args[0] == "--help" || command.args[0] == "-h" {
 		fmt.Fprint(stdout, userUsage)
@@ -157,8 +172,14 @@ func runUser(args []string, stdout, stderr io.Writer) int {
 		saved = credential.CoreURL
 	}
 	coreURL, err := client.ResolveCoreURL(command.core, saved)
+	if command.args[0] == "desktop" {
+		coreURL, err = client.ResolveDesktopCoreURL(command.core, saved, client.DesktopPreferencesStore{CredentialPath: path})
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
+		if errors.Is(err, client.ErrDesktopPreferencesUnavailable) {
+			return 1
+		}
 		return 2
 	}
 	token := ""
@@ -178,7 +199,7 @@ func runUser(args []string, stdout, stderr io.Writer) int {
 		return runUserProxy(api, command.args[1:], command.json, stdout, stderr)
 	}
 	if command.args[0] == "desktop" {
-		return runUserDesktop(api, store, credential, command.args[1:], stdout, stderr)
+		return launch(api, store, credential, command.args[1:], stdout, stderr)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

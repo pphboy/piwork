@@ -1,0 +1,29 @@
+{
+  "scenarios": [
+    {
+      "id": "standalone-runtime",
+      "status": "pass",
+      "commands": [
+        "candidate --json --version; candidate --help; candidate --json; candidate desktop --no-open; candidate desktop open; native console interrupt"
+      ],
+      "diagnostic": "native linux/amd64, non-source cwd, PATH excludes development tools; embedded app.js sha256=e4a18292ac33e074408fab5bf779a270d3c4b6b7360fc5ea46f427cb8eb237d4; adapter.js sha256=9b1eb1c1ddeffd65a1e9db07bd0a2370d50edcd5240581a1eb463ce70ad198d6"
+    },
+    {
+      "id": "http-core-connection",
+      "status": "pass",
+      "commands": [
+        "candidate --core <HTTP origin> --json status",
+        "candidate [--core <HTTP origin>] desktop --port <independent port> --no-open; authorize; status; preferences save/read; desktop open; interrupt; restart without --core; clear"
+      ],
+      "diagnostic": "native linux/amd64; sha256=973e0e28d564ecd1ace16f1068dfe11300967fb9181771fee27a5ef769c0fa79; deployed Core=http://127.0.0.1:7171; fresh private configuration, non-source cwd, no developer-tool PATH; healthy/ready, anonymous status, origin and identity, persisted HTTP default, recovery and exit 130"
+    },
+    {
+      "id": "http-default-root",
+      "status": "unverified",
+      "commands": [
+        "candidate --core <HTTP origin>; candidate"
+      ],
+      "diagnostic": "default port 17891 unavailable: listen tcp 127.0.0.1:17891: bind: address already in use; preserved existing resources, tested the same default Core resolver through desktop on an independent port"
+    }
+  ]
+}

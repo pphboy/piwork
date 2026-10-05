@@ -24,15 +24,12 @@ type Credential struct {
 
 func CredentialPath() (string, error) {
 	if path := os.Getenv("PIWORK_CONFIG_PATH"); path != "" {
-		return path, nil
+		return filepath.Abs(path)
 	}
 	if base := os.Getenv("XDG_CONFIG_HOME"); base != "" {
-		return filepath.Join(base, "piwork", "client.json"), nil
+		return filepath.Abs(filepath.Join(base, "piwork", "client.json"))
 	}
-	if base := os.Getenv("HOME"); base != "" {
-		return filepath.Join(base, ".config", "piwork", "client.json"), nil
-	}
-	return "", errors.New("HOME, XDG_CONFIG_HOME, or PIWORK_CONFIG_PATH is required for credential storage")
+	return defaultCredentialPath()
 }
 
 type CredentialStore struct{ Path string }

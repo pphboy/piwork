@@ -44,9 +44,6 @@ func TestNativeDesktopOperationRecordsAreDurableAndScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil || info.Mode().Perm()&0077 != 0 {
-			t.Fatal("operation record permissions are unsafe", entry.Name(), err)
-		}
+		assertPrivateFixtureFile(t, filepath.Join(root, "desktop-operations-go", entry.Name()))
 	}
 }

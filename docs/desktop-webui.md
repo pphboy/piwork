@@ -9,7 +9,7 @@ piwork-cli desktop --port 18001 --no-open
 piwork-cli --core https://core.example.com desktop
 ```
 
-默认监听 `127.0.0.1:17891`，默认尝试打开浏览器。`--no-open` 只输出手动打开地址。远程 Core 必须用 HTTPS；本机 loopback Core 可用 HTTP。若端口被占用，可显式指定另一端口；命令不会自动换端口。`piwork-cli desktop --help` 不读取登录凭证，也不连接 Core。
+默认监听 `127.0.0.1:17891`，默认尝试打开浏览器。`--no-open` 只输出手动打开地址。Core 可使用合法 HTTP 或 HTTPS origin，包括远程 IP/域名；HTTP 明文传输，HTTPS 保持证书校验。若端口被占用，可显式指定另一端口；命令不会自动换端口。`piwork-cli desktop --help` 不读取登录凭证，也不连接 Core。
 
 CLI 必须保持运行，本地 WebUI 和 Service 浏览器链接才可用。`Copy local link` 是这台机器的浏览器入口，不是可发给其他电脑的公网地址；`Copy domain` 是 Core 映射的 `.work` 服务身份，直接使用它仍需现有 `piwork-cli proxy`。桌面界面不需要启动 proxy。外部 WebDAV 客户端仍按 [Work 文件访问](work-files.md) 使用 proxy 和该进程终端显示的临时 Basic 密码。
 

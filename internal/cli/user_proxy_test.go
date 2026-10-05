@@ -24,7 +24,7 @@ const testProxyWorkID = "work-a1b2c3d4-5678"
 
 func testUserProxy(t *testing.T, core http.HandlerFunc) *userProxy {
 	t.Helper()
-	upstream := httptest.NewServer(core)
+	upstream := nonLoopbackCore(t, core)
 	t.Cleanup(upstream.Close)
 	api, err := client.New(upstream.URL, "core-secret")
 	if err != nil {

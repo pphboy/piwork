@@ -13,24 +13,24 @@ import (
 	"path/filepath"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"piwork/internal/client"
+	"piwork/internal/clientfs"
 	"piwork/internal/pipackage"
 )
 
 func resolveUserPackageSource(ctx context.Context, api *client.Client, workID, argument string) (map[string]any, error) {
-	parsed, err := pipackage.ParseSource(argument)
+	parsed, err := client.ParsePackageSource(argument)
 	if err != nil {
 		return nil, err
 	}
 	if parsed.Kind == "npm" || parsed.Kind == "git" {
 		return map[string]any{"kind": parsed.Kind, "spec": parsed.Spec}, nil
 	}
-	scratch, err := os.MkdirTemp("", "piwork-pi-package-")
+	scratchRoot, scratch, cleanup, err := clientfs.TempDirectory(os.TempDir(), "piwork-pi-package-")
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(scratch)
+	defer cleanup()
 	staged := filepath.Join(scratch, "source.zip")
 	var digest string
 	var size int64
@@ -46,12 +46,20 @@ func resolveUserPackageSource(ctx context.Context, api *client.Client, workID, a
 		}
 		digest, size = packed.Digest, packed.Bytes
 	} else {
-		fd, err := unix.Open(parsed.Path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+		parent, err := clientfs.OpenDirectory(filepath.Dir(parsed.Path))
 		if err != nil {
 			return nil, pipackage.ErrSource
 		}
-		input := os.NewFile(uintptr(fd), "package-source")
+		defer parent.Close()
+		input, err := parent.OpenRegular(filepath.Base(parsed.Path))
+		if err != nil {
+			return nil, pipackage.ErrSource
+		}
 		defer input.Close()
+		before, err := clientfs.Identity(input)
+		if err != nil {
+			return nil, pipackage.ErrSource
+		}
 		info, err := input.Stat()
 		if err != nil || !info.Mode().IsRegular() {
 			return nil, pipackage.ErrSource
@@ -59,7 +67,7 @@ func resolveUserPackageSource(ctx context.Context, api *client.Client, workID, a
 		if info.Size() > pipackage.CompressedBytes {
 			return nil, pipackage.ErrLimit
 		}
-		output, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		output, err := scratchRoot.CreateExclusive("source.zip")
 		if err != nil {
 			return nil, err
 		}
@@ -73,6 +81,19 @@ func resolveUserPackageSource(ctx context.Context, api *client.Client, workID, a
 		if n > pipackage.CompressedBytes {
 			return nil, pipackage.ErrLimit
 		}
+		after, err := clientfs.Identity(input)
+		if err != nil || before != after || n != before.Size {
+			return nil, pipackage.ErrUnsafe
+		}
+		current, err := parent.OpenRegular(filepath.Base(parsed.Path))
+		if err != nil {
+			return nil, pipackage.ErrUnsafe
+		}
+		currentIdentity, identityErr := clientfs.Identity(current)
+		current.Close()
+		if identityErr != nil || currentIdentity != before {
+			return nil, pipackage.ErrUnsafe
+		}
 		size, digest = n, hex.EncodeToString(hash.Sum(nil))
 		archive, err := pipackage.OpenArchive(ctx, staged)
 		if err != nil {
@@ -83,7 +104,7 @@ func resolveUserPackageSource(ctx context.Context, api *client.Client, workID, a
 	if size <= 0 || digest == "" {
 		return nil, pipackage.ErrSource
 	}
-	file, err := os.Open(staged)
+	file, err := scratchRoot.OpenRegular("source.zip")
 	if err != nil {
 		return nil, err
 	}

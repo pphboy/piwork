@@ -2,6 +2,12 @@
 
 `piwork-cli` 是用户端的 Go 程序。Core 地址可用 `--core` 指定；登录后凭证只用于该 Core。`--json` 使单次命令在 stdout 输出一个 JSON 值，进度和诊断写入 stderr。`piwork-serve` 的 operator 命令不在这里执行。
 
+Windows 使用 `piwork-cli.exe`，Linux 使用 `piwork-cli`；可从任意工作目录启动。无子命令默认打开 Desktop，查看帮助改用 `--help` 或 `help`；空 `--json` 仍只显示帮助。既有业务命令、显式 `desktop [--port ...] [--no-open]` 和退出码保持。该行为不要求双击启动。
+
+业务地址优先级为 `--core` → `PIWORK_CORE_URL` → 凭证 Core → `http://127.0.0.1:7171`。Desktop 在环境与凭证之间额外读取独立默认 Core；界面保存/清除只影响下次启动，不切换当前连接，logout 不删除偏好。参数与环境覆盖本次启动，不改写偏好。损坏偏好不会静默回退，可用显式 `--core` 打开 Desktop 后选择清除默认配置；不安全权限或链接必须修复存储位置。完整路径与恢复步骤见 [CLI 平台交付](cli-platforms.md)。
+
+所有客户端入口都接受合法 HTTP/HTTPS Core origin，包括远程 IP 和域名，无需额外许可开关。HTTP 明文传输，HTTPS 保持证书校验；协议也是凭证绑定的一部分，同 host/port 的 HTTP 与 HTTPS 不共享 token。Desktop 保存 HTTP 默认值同样只影响下次启动，业务 CLI 可通过 `--core http://core.example:7171` 或 `PIWORK_CORE_URL` 选择它。
+
 下例中的 `<workId>`、`<operationId>`、`<serviceId>` 和文件路径均取自实际命令结果。
 
 ## 登录与 Work

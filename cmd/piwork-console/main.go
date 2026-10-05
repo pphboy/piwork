@@ -2,7 +2,7 @@ package main
 
 import (
 	"os"
-	"piwork/internal/cli"
+	"piwork/internal/consoleapp"
 )
 
-func main() { os.Exit(cli.Entry("piwork-console", os.Args[1:], os.Stdout, os.Stderr)) }
+func main() { os.Exit(consoleapp.Entry(os.Args[1:], os.Stdout, os.Stderr)) }

@@ -1,0 +1,20 @@
+{
+  "originalPid": 5052,
+  "restoredPid": 265662,
+  "originalBinarySHA256": "382e9c797077098fe114d7328eb966acfa81a4b4d818b3832adcdfa0484f68fb",
+  "restoredBinary": "/tmp/piwork-desktop-restore-2mzmu9q3/piwork-cli",
+  "cwd": "/home/p/Projects/piwork",
+  "args": [
+    "--core",
+    "http://127.0.0.1:7171",
+    "desktop",
+    "--no-open"
+  ],
+  "privateLog": "/tmp/piwork-desktop-restore-2mzmu9q3/desktop.log",
+  "environmentSource": "original login shell PID 5008; no PIWORK or XDG_CONFIG_HOME overrides there",
+  "listener": "127.0.0.1:17891",
+  "running": true,
+  "launchMode": "background with private log; previous browser session must reopen",
+  "localRecoveryVerified": true,
+  "coreProcessPreserved": 5034
+}

@@ -336,6 +336,11 @@ function topbar() {
   if (adapter.state.browserAccess !== "authorized") return `<header class="topbar">${brand()}</header>`;
   return `<header class="topbar">${brand()}<div class="topbar-right">${btn(`${icon("clock")} <span>Known operations</span>`, "operations", "quiet")}${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span><span>${esc(adapter.state.core.account || "Account")}</span>${icon("down", 14)}`, "account", "account-button quiet")}</div></header>`;
 }
+function defaultCorePreferences() {
+  const p = adapter.preferences, blocked = ['saving','clearing','unconfirmed'].includes(p.phase);
+  const pending = p.phase === 'saving' ? 'Saving default…' : p.phase === 'clearing' ? 'Restoring automatic selection…' : p.phase === 'loading' ? 'Reading saved default…' : p.phase === 'unconfirmed' ? 'Change not yet confirmed. Read the saved default to continue.' : '';
+  return `<section class="default-core-preferences" aria-label="Default Core"><p class="muted">Current connection: <code>${esc(adapter.state.core.address)}</code></p><p>Saved default: <strong>${esc(p.confirmed ? p.coreUrl || 'Not set · automatic selection' : 'Not yet read')}</strong></p><p class="muted">Saving affects future launches. Parameters and environment can override it. Use Sign in or Connect to change the current connection.</p><div>${btn('Save as default','save-default-core','quiet small',blocked ? 'disabled' : '')}${btn('Restore automatic selection','clear-default-core','quiet small',blocked ? 'disabled' : '')}${btn('Read saved default','read-default-core','quiet small',['saving','clearing','loading'].includes(p.phase) ? 'disabled' : '')}</div>${pending ? `<p role="status" aria-live="polite">${esc(pending)}${p.waiting ? ' Still waiting for confirmation; other actions remain available.' : ''}</p>` : ''}${p.error ? feedback(esc(p.error),'warning') : ''}${p.notice ? `<p role="status" aria-live="polite">${esc(p.notice)}</p>` : ''}</section>`;
+}
 function connection() {
   const s = adapter.state.scenario;
   return `<button class="connection" data-action="connection"><i class="${["core-offline", "env-not-ready"].includes(s) ? "warn" : ""}"></i>${esc(adapter.state.core.name)}<span>·</span>${s === "core-offline" ? "Unreachable" : s === "env-not-ready" ? "Runtime not ready" : "Connected"}${icon("down", 12)}</button>`;
@@ -346,7 +351,7 @@ function signIn() {
     const checking = access === 'checking', unavailable = access === 'unavailable';
     return `${topbar()}<main class="auth-main browser-access"><div class="auth-symbol">${icon("lock",26)}</div><h1>${checking ? 'Opening workspace…' : unavailable ? 'Desktop connection unavailable' : 'Browser access required'}</h1><p class="muted" role="status" aria-live="polite">${checking ? 'Connecting to your local Desktop…' : esc(adapter.state.browserAccessReason)}</p>${checking ? '' : `${btn('Check browser access','check-browser-access','primary full')}<div class="recovery-command"><p>From a terminal as the same system user:</p><code>${esc(adapter.reopenCommand())}</code>${btn('Copy reopen command','copy-reopen-command','quiet full')}</div><p class="muted">If the instance is not running, start it with <code>${esc(adapter.startCommand())}</code>. Reopening a running instance keeps its Core, Works and browser sessions.</p><div class="recovery-command"><p>To clear this Desktop’s saved Core login without browser access:</p><code>${esc(adapter.logoutCommand())}</code>${btn('Copy logout command','copy-logout-command','quiet full')}</div>`}</main>`;
   }
-  return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock",26)}</div><h1>Connect to your Core</h1><p class="muted">Sign in with your Core account. Credentials stay with the local CLI.</p>${adapter.state.cleanupRequired ? feedback(`Local identity is cleared, but saved credential cleanup is incomplete. Run <code>${esc(adapter.logoutCommand())}</code> before signing in or switching Core.`, 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}<label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label><label class="field">Account<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">Password<input id="auth-password" type="password" autocomplete="current-password"></label>${btn("Sign in", "sign-in", "primary full")}<div class="auth-divider">Inspect a Work package locally before signing in</div>${btn(`${icon("upload",16)} Inspect a .work package`, "import", "quiet")}</main>`;
+  return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock",26)}</div><h1>Connect to your Core</h1><p class="muted">Sign in with your Core account. Credentials stay with the local CLI.</p>${adapter.state.cleanupRequired ? feedback(`Local identity is cleared, but saved credential cleanup is incomplete. Run <code>${esc(adapter.logoutCommand())}</code> before signing in or switching Core.`, 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}<label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label>${defaultCorePreferences()}<label class="field">Account<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">Password<input id="auth-password" type="password" autocomplete="current-password"></label>${btn("Sign in", "sign-in", "primary full")}<div class="auth-divider">Inspect a Work package locally before signing in</div>${btn(`${icon("upload",16)} Inspect a .work package`, "import", "quiet")}</main>`;
 }
 function works() {
   const s = adapter.state.scenario;
@@ -655,7 +660,7 @@ function modalMarkup() {
       break;
     case "switch-core":
       title = "Switch Core";
-      body = `<p>Choose a Core and continue with its own account. Known operations remain isolated by Core and user.</p><label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress)}"></label><p class="muted">Switching Core clears the current view and verifies any stored account for the new Core.</p>`;
+      body = `<p>Choose a Core and continue with its own account. Known operations remain isolated by Core and user.</p><label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress)}"></label><p class="muted">Switching Core clears the current view and verifies any stored account for the new Core.</p>${defaultCorePreferences()}`;
       footer = `${cancel()}${btn("Connect to Core", "confirm-switch-core", "primary")}`;
       break;
     case "work-menu":
@@ -1023,6 +1028,9 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
   const s = currentWork ? activeService(currentWork) : undefined;
   if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete'].includes(action)) throw new Error('This Work is not ready for new runtime or file changes. Check its current state.');
   switch (action) {
+    case 'save-default-core': await adapter.savePreferences(view.coreAddress || adapter.state.core.address); break;
+    case 'clear-default-core': await adapter.savePreferences(null); break;
+    case 'read-default-core': await adapter.loadPreferences(); break;
     case 'open-chat-models':openChatPicker('model');break;
     case 'open-chat-thinking':openChatPicker('thinking');break;
     case 'chat-input-options':openModal('chat-input-options');break;
@@ -1101,6 +1109,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case 'sessions':
       openModal('sessions', {id:w?.id || ''});if(currentWork)await stay(adapter.loadSessions(currentWork.id)); break;
     case "switch-core":
+      void adapter.loadPreferences();
       openModal("switch-core");
       break;
     case "check-browser-access": await stay(adapter.checkBrowserAccess()); toast("Browser access checked."); if (adapter.state.signedIn) await stay(adapter.checkConnection()); break;
@@ -2289,7 +2298,7 @@ adapter.subscribe(() => { if (lastIdentity !== adapter.identityEpoch) { lastIden
   confirmPendingChatCommand();render(); });
 lastRoute = location.hash;
 render();
-void adapter.initialize().then(async () => { view.coreAddress = adapter.state.core.address; await loadRoute(); }).catch(error => toast(error.message));
+void adapter.initialize().then(async () => { view.coreAddress = adapter.state.core.address; if (adapter.state.browserAccess === 'authorized') void adapter.loadPreferences(); await loadRoute(); }).catch(error => toast(error.message));
 
 let packageFiles: File[] = [];
 let pendingUploadFiles: File[] = [];

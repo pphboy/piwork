@@ -15,30 +15,28 @@ func fixtureCredential(url string) Credential {
 		User: Identity{ID: "user-1", Account: "owner", Role: "user"}}
 }
 
-func TestCredentialStoreRejectsSymlinkAndPreservesRecord(t *testing.T) {
+func TestCredentialStoreRejectsLinksAndPreservesRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config", "client.json")
 	store := CredentialStore{Path: path}
 	first := fixtureCredential("http://127.0.0.1:7171/")
 	if err := store.Save(first); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatal("credential permissions", err)
-	}
+	assertCredentialPrivate(t, path)
 	loaded, err := store.Load()
 	if err != nil || *loaded != first {
 		t.Fatal("credential round trip", err)
 	}
 	link := filepath.Join(t.TempDir(), "linked.json")
-	if err := os.Symlink(path, link); err != nil {
-		t.Fatal(err)
-	}
+	makeCredentialLink(t, path, link)
 	if _, err := (CredentialStore{Path: link}).Load(); err == nil {
-		t.Fatal("symlink credential was read")
+		t.Fatal("linked credential was read")
 	}
 	if err := (CredentialStore{Path: link}).Save(first); err == nil {
-		t.Fatal("symlink credential was overwritten")
+		t.Fatal("linked credential was overwritten")
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
 	}
 	loaded, err = store.Load()
 	if err != nil || *loaded != first {

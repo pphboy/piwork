@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
@@ -47,11 +47,13 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, expireIm
     }
     else { response.writeHead(404); response.end('{}'); }
   });
-  await new Promise<void>(done => core.listen(0, '127.0.0.1', done)); const addr = core.address(); assert(addr && typeof addr !== 'string');
-  const coreUrl = `http://127.0.0.1:${addr.port}`;
+  const coreHost = Object.values(networkInterfaces()).flat().find(address => address?.family === 'IPv4' && !address.internal)?.address;
+  assert(coreHost, 'native HTTP fixture requires a non-loopback interface');
+  await new Promise<void>(done => core.listen(0, coreHost, done)); const addr = core.address(); assert(addr && typeof addr !== 'string');
+  const coreUrl = `http://${coreHost}:${addr.port}`;
   const portPicker = createServer(); await new Promise<void>(done => portPicker.listen(0, '127.0.0.1', done)); const local = portPicker.address(); assert(local && typeof local !== 'string'); const port = local.port; await new Promise<void>(done => portPicker.close(() => done()));
   const directory = await mkdtemp(join(tmpdir(), 'piwork-native-auth-'));
-  const env = { ...process.env, PIWORK_CONFIG_PATH: join(directory, 'client.json'), PATH: '/nonexistent' };
+  const env = { ...process.env, PIWORK_CONFIG_PATH: join(directory, 'credentials', 'client.json'), PATH: '/nonexistent' };
   let child: ChildProcess;
   const start = async () => {
     child = spawn(binary, ['--core', coreUrl, 'desktop', '--port', String(port), '--no-open'], { env });
@@ -166,4 +168,39 @@ test('native auth: an actually five-minute-old unused ticket cannot authorize a 
   await f.page.goto(f.launch); await expect(f.page.getByRole('heading', { name: 'Browser access required' })).toBeVisible();
   assert.equal(f.calls.filter(call => call.includes('/api/v1/me') || call.includes('/api/v1/login')).length, 0);
   await f.page.goto(f.reopen()); await expect(f.page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
+});
+
+
+test('native HTTP: offline default save/read/clear, connection switch and local guards use the real Desktop API', async t => {
+  const f=await fixture(t); await f.page.goto(f.launch);
+  await expect(f.page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();
+  const packageBytes=await readFile(packagePath);
+  const inspected=await f.page.evaluate(async bytes=>{
+    const {adapter}=await import('/desktop/browser/'+'adapter.js');
+    return adapter.inspectWork(new File([new Uint8Array(bytes)],'native.work'));
+  },Array.from(packageBytes));
+  const before=f.calls.length;
+  await f.page.locator('#auth-core').fill('http://192.0.2.1:7171');
+  await f.page.locator('[data-action="save-default-core"]').last().click();
+  await expect(f.page.locator('.default-core-preferences')).toContainText('http://192.0.2.1:7171');
+  await f.page.evaluate(async()=>{const {adapter}=await import('/desktop/browser/'+'adapter.js');await adapter.loadPreferences();});
+  assert.equal(f.calls.length,before,'offline preferences contacted Core');
+  assert.equal(await f.page.evaluate(async()=>{const {adapter}=await import('/desktop/browser/'+'adapter.js');return adapter.inspectionTransfer;}),inspected,'saving changed anonymous Inspect');
+  assert.equal(await f.page.evaluate(async()=>{const {adapter}=await import('/desktop/browser/'+'adapter.js');return adapter.state.core.address;}),f.coreUrl);
+  await f.page.locator('[data-action="clear-default-core"]').last().click();
+  await expect(f.page.locator('.default-core-preferences')).toContainText('Not set');
+  await f.page.evaluate(async core=>{const {adapter}=await import('/desktop/browser/'+'adapter.js');await adapter.switchCore(core);},f.coreUrl);
+  await f.page.locator('#auth-core').fill(f.coreUrl);
+  await f.login();
+  const guardResults=await f.page.evaluate(async()=>{
+    return Promise.all([
+      fetch('/_desktop/api/preferences',{method:'PUT',headers:{'Content-Type':'application/json','X-Piwork-Csrf':'wrong'},body:JSON.stringify({coreUrl:'http://remote.example'})}).then(r=>r.status),
+      fetch('/_desktop/api/connection',{method:'PUT',headers:{'Content-Type':'application/json','X-Piwork-Csrf':'wrong'},body:JSON.stringify({coreUrl:'http://remote.example'})}).then(r=>r.status)
+    ]);
+  });
+  assert.deepEqual(guardResults,[403,403]);
+  const anonymous=await f.browser.newContext();t.after(()=>anonymous.close());
+  const tab=await anonymous.newPage();
+  await tab.goto(`http://desktop.localhost:${f.port}/`);
+  assert.equal(await tab.evaluate(async()=> (await fetch('/_desktop/api/preferences')).status),401);
 });

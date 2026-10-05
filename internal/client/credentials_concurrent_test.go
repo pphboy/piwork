@@ -1,10 +1,9 @@
-//go:build linux
-
 package client
 
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -42,9 +41,7 @@ func TestCredentialConditionalClearPreservesNewSessions(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "unsafe":
-				if err := os.Chmod(store.Path, 0644); err != nil {
-					t.Fatal(err)
-				}
+				makeCredentialUnsafe(t, store.Path)
 			}
 			before, _ := os.ReadFile(store.Path)
 			err := store.ClearSession("http://127.0.0.1:7171", old.Token)
@@ -100,7 +97,13 @@ func TestCredentialMutationLockProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(store.Path)
-	helper := exec.Command(os.Args[0], "-test.run=^TestCredentialMutationLockProcesses$")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helperCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	helper := exec.CommandContext(helperCtx, executable, "-test.run=^TestCredentialMutationLockProcesses$")
 	helper.Env = append(os.Environ(), "PIWORK_TEST_CREDENTIAL_LOCK_HELPER="+store.Path)
 	input, err := helper.StdinPipe()
 	if err != nil {
@@ -159,5 +162,32 @@ func TestCredentialMutationLockProcesses(t *testing.T) {
 	}
 	if saved, err := store.Load(); err != nil || saved == nil || *saved != newer {
 		t.Fatal("late old-session cleanup removed new record", err)
+	}
+}
+
+func TestCredentialReuseAcrossProcesses(t *testing.T) {
+	if path := os.Getenv("PIWORK_TEST_CREDENTIAL_REUSE_HELPER"); path != "" {
+		loaded, err := (CredentialStore{Path: path}).Load()
+		want := fixtureCredential("https://core.example/")
+		if err != nil || loaded == nil || *loaded != want {
+			t.Fatal("new process could not reuse saved credential", err)
+		}
+		return
+	}
+	store := CredentialStore{Path: filepath.Join(t.TempDir(), "配置 空格", "client.json")}
+	if err := store.Save(fixtureCredential("https://core.example/")); err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	helper := exec.CommandContext(ctx, executable, "-test.run=^TestCredentialReuseAcrossProcesses$")
+	helper.Env = append(os.Environ(), "PIWORK_TEST_CREDENTIAL_REUSE_HELPER="+store.Path)
+	helper.Dir = t.TempDir()
+	if output, err := helper.CombinedOutput(); err != nil {
+		t.Fatalf("credential reuse helper: %v %s", err, output)
 	}
 }

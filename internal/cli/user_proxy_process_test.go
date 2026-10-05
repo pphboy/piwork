@@ -7,14 +7,12 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -35,7 +33,7 @@ func TestNativeProxyHelperProcess(t *testing.T) {
 
 func TestNativeProxyProcessLifecycleAndFixedPort(t *testing.T) {
 	var workStops atomic.Int32
-	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	core := nonLoopbackCore(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/stop") {
 			workStops.Add(1)
 		}
@@ -62,7 +60,7 @@ func TestNativeProxyProcessLifecycleAndFixedPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	busyPort := occupied.Addr().(*net.TCPAddr).Port
-	command := exec.Command(os.Args[0], "-test.run=^TestNativeProxyHelperProcess$")
+	command := nativeTestCommand(t, "-test.run=^TestNativeProxyHelperProcess$")
 	command.Env = append(os.Environ(), "PIWORK_TEST_PROXY_CHILD=1", "PIWORK_TEST_PROXY_CORE="+core.URL, "PIWORK_TEST_PROXY_PORT="+strconv.Itoa(busyPort))
 	output, err := command.CombinedOutput()
 	if errorCode(err) != 6 || len(output) == 0 || strings.Contains(string(output), "WebDAV password:") {
@@ -75,7 +73,7 @@ func TestNativeProxyProcessLifecycleAndFixedPort(t *testing.T) {
 	}
 	port := free.Addr().(*net.TCPAddr).Port
 	_ = free.Close()
-	command = exec.Command(os.Args[0], "-test.run=^TestNativeProxyHelperProcess$")
+	command = nativeTestCommand(t, "-test.run=^TestNativeProxyHelperProcess$")
 	command.Env = append(os.Environ(), "PIWORK_TEST_PROXY_CHILD=1", "PIWORK_TEST_PROXY_CORE="+core.URL, "PIWORK_TEST_PROXY_PORT="+strconv.Itoa(port))
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -164,7 +162,7 @@ func TestNativeProxyProcessLifecycleAndFixedPort(t *testing.T) {
 	tailDiagnostic := make(chan []byte, 1)
 	go func() { raw, _ := io.ReadAll(stdout); tailOutput <- raw }()
 	go func() { raw, _ := io.ReadAll(stderr); tailDiagnostic <- raw }()
-	if err := command.Process.Signal(syscall.SIGINT); err != nil {
+	if err := interruptTestProcess(command); err != nil {
 		t.Fatal(err)
 	}
 	finished := make(chan error, 1)
@@ -187,7 +185,7 @@ func TestNativeProxyProcessLifecycleAndFixedPort(t *testing.T) {
 		_ = connection.Close()
 		t.Fatal("proxy listener retained after SIGINT")
 	}
-	second := exec.Command(os.Args[0], "-test.run=^TestNativeProxyHelperProcess$")
+	second := nativeTestCommand(t, "-test.run=^TestNativeProxyHelperProcess$")
 	second.Env = append(os.Environ(), "PIWORK_TEST_PROXY_CHILD=1", "PIWORK_TEST_PROXY_CORE="+core.URL, "PIWORK_TEST_PROXY_PORT="+strconv.Itoa(port))
 	secondOut, err := second.StdoutPipe()
 	if err != nil {
@@ -241,7 +239,7 @@ func TestNativeProxyProcessLifecycleAndFixedPort(t *testing.T) {
 	if response.StatusCode != 401 {
 		t.Fatal("restarted proxy accepted the old local password", response.StatusCode)
 	}
-	if err := second.Process.Signal(syscall.SIGINT); err != nil {
+	if err := interruptTestProcess(second); err != nil {
 		t.Fatal(err)
 	}
 	if err := second.Wait(); errorCode(err) != 130 {
