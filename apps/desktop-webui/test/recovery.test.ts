@@ -11,7 +11,7 @@ const server = createServer(async (request, response) => {
   try { response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html'); response.end(await readFile(new URL(path, import.meta.url))); }
   catch { response.writeHead(404); response.end(); }
 });
-before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, channel: 'chromium' }); });
+before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, ...(process.env.PIWORK_TEST_BROWSER_BIN?{executablePath:process.env.PIWORK_TEST_BROWSER_BIN}:{channel:'chromium'}) }); });
 after(async () => { await browser.close(); await new Promise<void>(done => server.close(() => done())); });
 
 type RequestRecord = { bytes?: Buffer | null; path: string; method: string; headers: Record<string, string>; body: string };
@@ -56,7 +56,15 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
   return { page, requests };
 }
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
-const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]`).first();
+const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]:visible`).first();
+async function chooseThinking(page: Page, level: string) {
+  await page.locator('#thinking-select').click();
+  await page.locator(`#modal [data-action=choose-chat-setting][data-kind=thinking][data-option-value="${level}"]`).click();
+}
+async function chooseModel(page: Page, ref: string) {
+  await page.locator('#model-select').click();
+  await page.locator(`#modal [data-action=choose-chat-setting][data-kind=model][data-option-value="${ref}"]`).click();
+}
 function listing(body: string, modified: string) { return `<d:multistatus xmlns:d="DAV:"><d:response><d:href>/_desktop/files/works/work-1/files/note.txt</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>${Buffer.byteLength(body)}</d:getcontentlength><d:getlastmodified>${modified}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`; }
 
 test('R1 editor binds the original version; dirty refresh and 412 readback never write or discard draft', async t => {
@@ -278,8 +286,8 @@ test('Brain model save lost reply blocks sending and reads the original Session 
     if(r.path.endsWith('/sessions/session-1'))return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:saved?preference:null,source:{kind:'chat'}},messages:[],runs:[]}};
   });
   await button(page,'tab-Chat').click();await page.locator('#composer').fill('keep my message');
-  await page.locator('#model-select').selectOption('model-test-0000000001');await expect(button(page,'send-message')).toBeDisabled();
-  await button(page,'save-model').click();await expect(button(page,'check-session-model')).toBeVisible();await expect(button(page,'send-message')).toBeDisabled();
+  await chooseModel(page,'model-test-0000000001');await expect(button(page,'send-message')).toBeDisabled();
+  await expect(button(page,'check-session-model')).toBeVisible();await expect(button(page,'send-message')).toBeDisabled();
   assert.equal(requests.filter(r=>r.method==='PATCH').length,1);assert.equal(requests.filter(r=>r.path.endsWith('/runs')).length,0);
   await button(page,'check-session-model').click();await expect(button(page,'send-message')).toBeEnabled();await expect(page.locator('#composer')).toHaveValue('keep my message');
   assert.equal(requests.filter(r=>r.method==='PATCH').length,1);assert.equal(await api(page,"return adapter.getWork('work-1').sessions[0].modelPreference.modelRef"),preference.modelRef);
@@ -304,7 +312,7 @@ test('Brain rejected preference preserves confirmed value and message; foreign S
  const {page,requests}=await fixture(t,r=>{
   if(r.path.endsWith('/sessions/session-1/model'))return foreign?{json:{workId:'work-foreign',sessionId:'session-1',modelPreference:null}}:{status:409,json:{code:'MODEL_UNAVAILABLE',message:'Model was disabled'}};
  });
- await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft survives');await page.locator('#model-select').selectOption('model-test-0000000001');await button(page,'save-model').click();
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft survives');await chooseModel(page,'model-test-0000000001');await expect(button(page,'save-model')).toBeVisible();
  assert.equal(await api(page,"return adapter.getWork('work-1').sessions[0].modelPreference"),null);await expect(page.locator('#composer')).toHaveValue('draft survives');await expect(button(page,'send-message')).toBeDisabled();
  foreign=true;await button(page,'save-model').click();await expect(button(page,'check-session-model')).toBeVisible();assert.equal(requests.filter(r=>r.method==='PATCH').length,2);
 });
@@ -384,4 +392,422 @@ test('opening and refreshing the existing candidate detail action preserves the 
  await page.evaluate(()=>{const action=document.createElement('button');action.dataset.action='package-detail';action.dataset.id='piwork-brain';document.querySelector('#app')!.append(action);action.click();});
  await expect(page.locator('#modal')).toContainText('Verify the personal review export');await button(page,'refresh-package-detail').click();await button(page,'close-modal').click();
  assert.equal(await frame.locator('body').getAttribute('data-kept'),'same-document');assert.equal(requests.filter(r=>r.path==='/_desktop/frame-app/').length,loads);assert.equal(requests.filter(r=>['POST','PUT','PATCH','DELETE'].includes(r.method)).length,writes);
+});
+
+const chatModel={modelRef:null,label:'Default chat model',provider:'fixture',model:'one',thinkingLevels:['off','low','high'],defaultThinkingLevel:'off'};
+const chatModels=()=>({contractVersion:1,models:[],defaultModel:chatModel,availability:'available',checkedAt:new Date().toISOString()});
+const chatOptions=(thinkingLevel='off')=>({sessionId:'session-1',modelRef:null,model:{modelRef:null,label:chatModel.label,provider:'fixture',model:'one'},thinkingLevel,availability:'available',checkedAt:new Date().toISOString()});
+
+test('UX composer serializes complete pairs, retains latest revision, and defaults work with an empty catalog',async t=>{
+ let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());let active=0,max=0;const pairs:any[]=[];
+ const {page}=await fixture(t,async r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+  if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+  if(r.path.endsWith('/chat-options') && r.method==='PATCH'){const pair=JSON.parse(r.body);pairs.push(pair);max=Math.max(max,++active);if(pairs.length===1)await gate;active--;return{json:chatOptions(pair.thinkingLevel)};}
+ });
+ await button(page,'tab-Chat').click();await expect(page.locator('#thinking-select')).toBeEnabled();await expect(button(page,'send-message')).toBeEnabled();
+ await page.locator('#composer').fill('draft survives');await chooseThinking(page,'low');await chooseThinking(page,'high');
+ await expect(button(page,'send-message')).toBeDisabled();assert.equal(pairs.length,1);release();await expect(button(page,'send-message')).toBeEnabled();
+ assert.deepEqual(pairs,[{modelRef:null,thinkingLevel:'low'},{modelRef:null,thinkingLevel:'high'}]);assert.equal(max,1);await expect(page.locator('#composer')).toHaveValue('draft survives');assert.equal(await button(page,'save-model').count(),0);
+});
+
+test('UX unknown options only read original pair and never resend PATCH',async t=>{
+ let saved='off';const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+  if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){saved=JSON.parse(r.body).thinkingLevel;return{abort:true};}return{json:chatOptions(saved)};}
+ });
+ await button(page,'tab-Chat').click();await expect(page.locator('#thinking-select')).toBeEnabled();await page.locator('#composer').fill('keep draft');await chooseThinking(page,'high');await expect(button(page,'check-session-model')).toBeVisible();await expect(button(page,'send-message')).toBeDisabled();
+ await button(page,'check-session-model').click();await expect(button(page,'send-message')).toBeEnabled();assert.equal(requests.filter(r=>r.method==='PATCH').length,1);await expect(page.locator('#thinking-select')).toHaveAttribute('value','high');await expect(page.locator('#composer')).toHaveValue('keep draft');
+});
+
+test('UX slash menu fills on Enter, executes on next submit, preserves arguments and excludes Service identity',async t=>{
+ const commands=[{kind:'prompt',command:'/review',name:'review',description:'Review supplied files',sourceName:'Work prompts'}];
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands,checkedAt:new Date().toISOString()}};
+  if(r.path==='works/work-1/runs' && r.method==='POST')return{json:{run:{runId:'run-command',sessionId:'session-1',state:1}}};if(r.path.endsWith('/events'))return{abort:true};
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('/rev');await expect(page.locator('[role=option]').filter({hasText:'/review'})).toBeVisible();await page.locator('#composer').press('Enter');await expect(page.locator('#composer')).toHaveValue('/review ');assert.equal(requests.filter(r=>r.method==='POST').length,0);
+ await page.locator('#composer').fill('/review "first argument"\tsecond');await button(page,'chat-input-options').click();await page.locator('#include-identity').check();await button(page,'close-modal').click();await page.locator('#composer').press('Enter');await expect.poll(()=>requests.filter(r=>r.path==='works/work-1/runs').length).toBe(1);
+ const body=JSON.parse(requests.find(r=>r.path==='works/work-1/runs')!.body);assert.equal(body.inputMode,'command');assert.equal(body.prompt,'/review "first argument"\tsecond');assert.ok(body.submissionKey);assert.ok(!body.prompt.includes('Selected Service'));
+});
+
+test('UX web commands open controls without a Run, reject arguments and allow literal slash',async t=>{
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[],checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/runs') && r.method==='POST')return{json:{run:{runId:'run-literal',sessionId:'session-1',state:1}}};if(r.path.endsWith('/events'))return{abort:true};
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('/model');await page.locator('#composer').press('Escape');await button(page,'send-message').click();await expect(page.getByRole('heading',{name:'Model',exact:true})).toBeVisible();assert.equal(requests.filter(r=>r.method==='POST').length,0);await expect(page.locator('#composer')).toHaveValue('/model');await page.keyboard.press('Escape');await expect(page.locator('#model-select')).toBeFocused();
+ await page.locator('#composer').fill('/new extra');await button(page,'send-message').click();await expect(page.locator('#composer')).toHaveValue('/new extra');assert.equal(requests.filter(r=>r.method==='POST').length,0);
+ await page.locator('#composer').fill('/arbitrary extension');await button(page,'toggle-slash-mode').click();await button(page,'send-message').click();const body=JSON.parse(requests.find(r=>r.path.endsWith('/runs') && r.method==='POST')!.body);assert.equal(body.inputMode,'text');assert.equal(body.prompt,'/arbitrary extension');
+});
+
+test('UX lost creation uses its original key; not-found stays unknown and recovery never submits a Run',async t=>{
+ let found=false,key='';const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+  if(r.path.endsWith('/sessions')){if(r.method==='POST'){key=JSON.parse(r.body).idempotencyKey;return{abort:true};}return{json:{sessions:[]}};}
+  if(r.path.includes('/sessions/submissions/'))return{json:found?{kind:'session',key,status:'accepted',session:{workId:'work-1',sessionId:'session-recovered',modelPreference:null,thinkingLevel:'off'}}:{kind:'session',key,status:'not-found'}};
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await chooseThinking(page,'high');await page.locator('#composer').fill('original draft');await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await button(page,'check-chat-submission').click();await expect(button(page,'send-message')).toBeDisabled();found=true;await button(page,'check-chat-submission').click();await expect.poll(()=>api(page,"return adapter.getWork('work-1').sessions.length")).toBe(1);
+ await expect(page.locator('#thinking-select')).toHaveAttribute('value','high');await expect(page.locator('#composer')).toHaveValue('original draft');await expect(button(page,'send-message')).toBeDisabled();await expect(button(page,'save-model')).toBeVisible();assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
+ assert.equal(requests.filter(r=>r.method==='POST').length,1);assert.ok(key);assert.equal(requests.filter(r=>r.path.endsWith('/runs')).length,0);assert.equal(await api(page,"return adapter.getWork('work-1').sessions[0].id"),'session-recovered');
+});
+
+test('UX Focus changes preserve Service document, Chat node, draft and expanded Activity at 360px',async t=>{
+ const {page}=await fixture(t,r=>{
+  if(r.path.endsWith('/services'))return{json:{services:[{serviceId:'service-a',name:'Tool A',enabled:true,observedState:'ready',access:{hostname:'a.w-one.work',ports:[{port:80,url:'http://a.w-one.work',name:'web'}]}}]}};
+  if(r.path==='service-entries')return{json:{entryId:'entry-a',origin:'http://service.test',entryUrl:'about:blank',embed:'allowed'}};if(r.path==='service-entries/entry-a')return{json:{embed:'allowed'}};
+ });
+ await button(page,'tab-Services').click();await expect(page.locator('iframe')).toBeVisible();await page.locator('#composer').fill('unsaved draft');
+ await api(page,"adapter.getWork('work-1').sessions[0].messages=[{id:'call-one',runId:'run-one',role:'assistant',text:'',tool:{id:'call-one',name:'read',status:'Completed',content:'result'}}];adapter.subscribe(()=>{});await adapter.loadModels('work-1');");
+ await page.locator('.activity summary').first().click();await page.evaluate(()=>{(window as any).originalFrame=document.querySelector('iframe');(window as any).originalComposer=document.querySelector('#composer');(document.querySelector('iframe')!.contentDocument!.body as HTMLElement).dataset.unsaved='same';});
+ await button(page,'service-focus').click();await button(page,'focus-toggle-chat').click();await expect(page.locator('#composer')).toBeHidden();await button(page,'focus-toggle-chat').click();await expect(page.locator('#composer')).toHaveValue('unsaved draft');assert.equal(await page.locator('.activity').evaluate((node:HTMLDetailsElement)=>node.open),true);
+ await page.setViewportSize({width:360,height:800});await expect(button(page,'exit-service-focus')).toBeVisible();assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).originalFrame),true);assert.equal(await page.evaluate(()=>document.querySelector('#composer')===(window as any).originalComposer),true);assert.equal(await page.locator('iframe').evaluate((node:HTMLIFrameElement)=>node.contentDocument!.body.dataset.unsaved),'same');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await page.evaluate(()=>{Object.defineProperty(document.querySelector('#app'),'requestFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))});});await button(page,'service-fullscreen').click();await expect(page.locator('.service-toolbar')).toContainText('Focus remains available');await button(page,'exit-service-focus').click();await expect(button(page,'service-focus')).toBeVisible();
+});
+
+test('UX full screen is independent from Focus and browser exit keeps the original frame',async t=>{
+ const {page}=await fixture(t,r=>{
+  if(r.path.endsWith('/services'))return{json:{services:[{serviceId:'service-a',name:'Tool A',enabled:true,observedState:'ready',access:{hostname:'a.w-one.work',ports:[{port:80,url:'http://a.w-one.work',name:'web'}]}}]}};
+  if(r.path==='service-entries')return{json:{entryId:'entry-a',origin:'http://service.test',entryUrl:'about:blank',embed:'allowed'}};if(r.path==='service-entries/entry-a')return{json:{embed:'allowed'}};
+ });
+ await button(page,'tab-Services').click();await expect(page.locator('iframe')).toBeVisible();await page.evaluate(()=>{(window as any).focusFrame=document.querySelector('iframe')});await button(page,'service-focus').click();assert.equal(await page.evaluate(()=>!!document.fullscreenElement),false);await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
+ await page.evaluate(()=>document.exitFullscreen());await expect(button(page,'exit-service-focus')).toBeVisible();assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).focusFrame),true);await button(page,'service-fullscreen').click();await button(page,'exit-service-focus').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(false);await expect(button(page,'service-focus')).toBeVisible();
+});
+
+function focusFixture(r: RequestRecord): Reply | undefined {
+  if (r.path.endsWith('/services')) return { json: { services: ['a','b'].map(id => ({ serviceId:`service-${id}`,name:`Tool ${id.toUpperCase()}`,enabled:true,observedState:'ready',access:{hostname:`${id}.work.test`,ports:[{port:80,url:`http://${id}.work.test`,name:'web'}]} })) } };
+  if (r.path === 'service-entries') return { json: {entryId:'entry-focus',origin:base,entryUrl:base+'/_desktop/focus-app/',embed:'allowed'} };
+  if (r.path === 'service-entries/entry-focus') return { json: { embed:'allowed' } };
+  if (r.path === '/_desktop/focus-app/') return { body:'<html><body><input aria-label="Application draft"><p>Original application</p></body></html>',headers:{'Content-Type':'text/html'} };
+}
+
+test('UX revision late Work defaults retain a chosen Service and focused Files draft', async t => {
+  let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());
+  const {page}=await fixture(t,async r=>{
+    if(r.path.endsWith('/configuration'))await gate;
+    if(r.path.startsWith('/_desktop/files/'))return r.method==='PROPFIND'?{status:207,body:listing('original file',mtime1),headers:{'Content-Type':'application/xml'}}:{body:'original file',headers:{'Last-Modified':mtime1}};
+    return focusFixture(r);
+  });
+  await page.locator('#service-select').selectOption('service-b');
+  await button(page,'tab-Files').click();await button(page,'open-file').click();await page.locator('#file-editor').fill('edit made before Work finished opening');
+  await button(page,'focus-chat').click();release();await expect(page.locator('#model-select')).toBeEnabled();await page.waitForLoadState('networkidle');
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');await button(page,'restore-layout').click();
+  await expect(button(page,'tab-Files')).toHaveClass(/active/);await expect(page.locator('#file-editor')).toHaveValue('edit made before Work finished opening');
+  await page.locator('#file-editor').fill('original file');await button(page,'tab-Services').click();await expect(page.locator('#service-select')).toHaveValue('service-b');
+});
+
+test('UX revision Focus chat restores its prior layout or directly exits without reloading any ancestor', async t => {
+  const {page,requests} = await fixture(t, focusFixture);
+  await expect(page.locator('iframe')).toBeVisible();
+  await page.frameLocator('iframe').getByLabel('Application draft').fill('unsaved application');
+  await page.locator('#composer').fill('unsaved chat');
+  const messages = Array.from({length:35},(_,i)=>({id:`focus-prose-${i}`,role:'assistant',text:`Paragraph ${i} ${'Saved conversation. '.repeat(18)}`}));
+  messages.splice(10,0,{id:'focus-activity',runId:'focus-run',role:'assistant',text:'',tool:{id:'focus-tool',name:'read',status:'Completed',content:'saved tool result'}} as any);
+  await api(page,`adapter.getWork('work-1').sessions[0].messages=${JSON.stringify(messages)};await adapter.loadModels('work-1');`);
+  await page.locator('.activity summary').first().click();
+  await page.locator('#messages').evaluate(node=>{node.scrollTop=node.scrollHeight/2;node.dispatchEvent(new Event('scroll'));});
+  await page.waitForTimeout(30);
+  await page.evaluate(()=>{
+    const frame=document.querySelector('iframe')!; const ancestors:Node[]=[];
+    for(let node:Node|null=frame;node;node=node.parentNode) ancestors.push(node);
+    (window as any).focusOriginal={frame,ancestors,composer:document.querySelector('#composer'),messages:document.querySelector('#messages'),loads:0};
+    frame.addEventListener('load',()=>{(window as any).focusOriginal.loads++;});
+  });
+  const anchor = await page.locator('#messages').evaluate(node=>{const top=node.getBoundingClientRect().top;const first=[...node.querySelectorAll<HTMLElement>('[data-message-key]')].find(item=>item.getBoundingClientRect().bottom>top)!;return{key:first.dataset.messageKey,offset:first.getBoundingClientRect().top-top};});
+  const entries=requests.filter(r=>r.path==='service-entries').length, mutations=requests.filter(r=>['POST','PATCH','PUT','DELETE'].includes(r.method)).length;
+  const assertKept=async()=>{
+    assert.equal(await page.evaluate(()=>{const saved=(window as any).focusOriginal;let node:Node|null=document.querySelector('iframe');return saved.ancestors.every((ancestor:Node)=>{const same=node===ancestor;node=node?.parentNode ?? null;return same;}) && document.querySelector('#composer')===saved.composer && document.querySelector('#messages')===saved.messages && saved.loads===0;}),true);
+    await expect(page.frameLocator('iframe').getByLabel('Application draft')).toHaveValue('unsaved application');
+    await expect(page.locator('#composer')).toHaveValue('unsaved chat');
+    assert.equal(await page.locator('.activity').evaluate((node:HTMLDetailsElement)=>node.open),true);
+    assert.equal(requests.filter(r=>r.path==='service-entries').length,entries);
+    assert.equal(requests.filter(r=>['POST','PATCH','PUT','DELETE'].includes(r.method)).length,mutations);
+  };
+  await button(page,'service-focus').click(); await button(page,'focus-chat').click();
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
+  await expect(page.getByRole('button',{name:'Restore layout',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Exit focus',exact:true})).toBeVisible();
+  await expect(page.locator('iframe')).toBeHidden();
+  await assertKept();
+  await button(page,'agent-menu').click(); await page.getByRole('button',{name:'Focus chat',exact:true}).click();
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await button(page,'restore-layout').click(); await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');
+  await assertKept();
+  const offset=await page.locator('#messages').evaluate((node,key)=>{const item=[...node.querySelectorAll<HTMLElement>('[data-message-key]')].find(item=>item.dataset.messageKey===key)!;return item.getBoundingClientRect().top-node.getBoundingClientRect().top;},anchor.key);
+  assert.ok(Math.abs(offset-anchor.offset)<2,`Layout moved reading anchor ${offset-anchor.offset}px`);
+  await button(page,'exit-service-focus').click(); await expect(page.locator('.work-tabs')).toBeVisible(); await assertKept();
+  await button(page,'service-focus').click(); await button(page,'focus-chat').click(); await button(page,'exit-service-focus').click();
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace'); await expect(page.locator('.work-tabs')).toBeVisible(); await assertKept();
+  await button(page,'service-focus').click(); await button(page,'focus-toggle-chat').click();
+  await button(page,'service-menu').click(); await page.getByRole('button',{name:'Focus chat',exact:true}).click();
+  await button(page,'restore-layout').click(); await expect(page.locator('#app')).toHaveAttribute('data-layout','service-only'); await expect(page.locator('#composer')).toBeHidden();
+  await button(page,'exit-service-focus').click(); await assertKept();
+});
+
+test('UX revision Files and ordinary Chat remain distinct from Focus chat and preserve explicit selections', async t => {
+  const {page}=await fixture(t,r=>{
+    if(r.path.startsWith('/_desktop/files/')) return r.method==='PROPFIND'?{status:207,body:listing('original file',mtime1),headers:{'Content-Type':'application/xml'}}:{body:'original file',headers:{'Last-Modified':mtime1}};
+    if(r.path.endsWith('/sessions')) return{json:{sessions:[{sessionId:'session-1'},{sessionId:'session-2'}]}};
+    if(r.path.endsWith('/sessions/session-2')) return{json:{session:{sessionId:'session-2',workId:'work-1',modelPreference:null,source:{kind:'chat'}},messages:[{role:'user',text:'Other saved conversation'}],runs:[]}};
+    return focusFixture(r);
+  });
+  await button(page,'tab-Files').click();await button(page,'open-file').click();await page.locator('#file-editor').fill('unsaved file edit');
+  await page.evaluate(()=>{(window as any).originalFileEditor=document.querySelector('#file-editor');});
+  await button(page,'focus-chat').click();await expect(page.locator('#file-editor')).toBeHidden();
+  await button(page,'restore-layout').click();await expect(page.locator('#file-editor')).toHaveValue('unsaved file edit');
+  assert.equal(await page.evaluate(()=>document.querySelector('#file-editor')===(window as any).originalFileEditor),true);
+  await page.locator('#file-editor').fill('original file');await button(page,'tab-Chat').click();await expect(page.locator('.work-tabs')).toBeVisible();
+  await button(page,'focus-chat').click();await button(page,'restore-layout').click();await expect(button(page,'tab-Chat')).toHaveClass(/active/);await expect(page.locator('.work-tabs')).toBeVisible();
+  await button(page,'tab-Services').click();await button(page,'service-focus').click();await page.locator('#service-select').selectOption('service-b');
+  await button(page,'sessions').click();await page.locator('[data-action=select-session][data-id=session-2]').click();
+  await button(page,'focus-chat').click();await button(page,'exit-service-focus').click();
+  await expect(page.locator('#service-select')).toHaveValue('service-b');
+  assert.equal(await api(page,"return adapter.getWork('work-1').sessions.find(s=>s.id==='session-2').messages[0].text"),'Other saved conversation');
+  await expect(page.locator('.session-line')).toContainText('Session 2');
+});
+
+test('UX revision Focus icons use their toolbar roles and Escape closes exactly one level', async t => {
+  const {page,requests}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+    return focusFixture(r);
+  });
+  await expect(page.locator('#model-select')).toBeEnabled();
+  const shape=async(action:string)=>button(page,action).evaluate(node=>{const box=node.getBoundingClientRect(),css=getComputedStyle(node);return{width:box.width,height:box.height,borderRadius:css.borderRadius,padding:css.padding};});
+  assert.deepEqual(await shape('service-focus'),await shape('service-menu'));
+  assert.deepEqual(await shape('service-focus'),await shape('open-app'));
+  await expect(button(page,'service-focus')).toHaveClass(/icon-button quiet/);
+  await expect(button(page,'service-focus')).toHaveAttribute('title','Focus');
+  await expect(button(page,'service-focus')).toHaveAttribute('aria-label','Focus');
+  await button(page,'service-focus').focus();await page.keyboard.press('Enter');
+  await expect(button(page,'focus-toggle-chat')).toHaveAttribute('aria-pressed','true');
+  await button(page,'focus-chat').click();
+  for(const action of ['restore-layout','exit-service-focus','service-fullscreen']) {
+    assert.deepEqual(await shape(action),await shape('agent-menu'));
+    await expect(button(page,action)).toHaveClass(/icon-button quiet/);
+    await expect(button(page,action).locator('svg')).toHaveCount(1);
+    assert.equal(await button(page,action).getAttribute('title'),await button(page,action).getAttribute('aria-label'));
+  }
+  await page.locator('#thinking-select').click();await page.keyboard.press('Escape');
+  await expect(page.locator('#thinking-select')).toBeFocused();await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
+  assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
+  await page.locator('#composer').fill('/mo');await expect(page.locator('.command-palette')).toBeVisible();await page.locator('#composer').press('Escape');
+  await expect(page.locator('.command-palette')).toHaveCount(0);await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
+  await page.keyboard.press('Escape');await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');
+  await page.setViewportSize({width:360,height:800});await page.keyboard.press('Escape');
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','service-only');await expect(page.locator('#composer')).toBeHidden();
+  await page.keyboard.press('Escape');await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace');
+  await expect(button(page,'service-focus')).toBeFocused();
+});
+
+test('UX revision fullscreen failures keep Chat exits and browser exit preserves the Focus layout', async t => {
+  const {page}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+    return focusFixture(r);
+  });
+  await button(page,'service-focus').click();await button(page,'focus-chat').click();
+  await page.evaluate(()=>{const root=document.querySelector('#app')!;(window as any).nativeFullscreen=root.requestFullscreen;Object.defineProperty(root,'requestFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))});});
+  await button(page,'service-fullscreen').click();await expect(page.locator('.agent-panel')).toContainText('Focus remains available');
+  await expect(button(page,'restore-layout')).toBeVisible();await expect(button(page,'exit-service-focus')).toBeVisible();
+  await page.evaluate(()=>{Object.defineProperty(document.querySelector('#app'),'requestFullscreen',{configurable:true,value:(window as any).nativeFullscreen});});
+  await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
+  await page.locator('#model-select').click();await page.keyboard.press('Escape');
+  await expect(page.locator('#modal')).toHaveCount(0);await expect(page.locator('#model-select')).toBeFocused();
+  assert.equal(await page.evaluate(()=>!!document.fullscreenElement),true);await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
+  await page.evaluate(()=>document.exitFullscreen());await expect(button(page,'service-fullscreen')).toHaveAttribute('aria-pressed','false');
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
+  await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
+  await page.evaluate(()=>{(window as any).nativeExit=document.exitFullscreen;Object.defineProperty(document,'exitFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))});});
+  await button(page,'exit-service-focus').click();await expect(page.locator('.agent-panel')).toContainText('Full screen could not be closed');
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');assert.equal(await page.evaluate(()=>!!document.fullscreenElement),true);
+  await page.evaluate(()=>{Object.defineProperty(document,'exitFullscreen',{configurable:true,value:(window as any).nativeExit});});
+  await button(page,'exit-service-focus').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(false);
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace');
+});
+
+test('UX revision cross-origin keys and lost preview or Work qualification always retain an exit', async t => {
+  let stopped=false,denied=false;
+  const {page}=await fixture(t,r=>{
+    if(r.path==='works/work-1' && stopped)return{json:{id:'work-1',name:'Recovery Work',observedState:'stopped',desiredState:'stopped'}};
+    if(r.path==='service-entries')return{json:{entryId:'entry-focus',origin:'http://frame.work.test',entryUrl:'http://frame.work.test/',embed:'allowed'}};
+    if(r.path==='service-entries/entry-focus')return{json:{embed:denied?'denied':'allowed'}};
+    return focusFixture(r);
+  });
+  await page.route('http://frame.work.test/**',route=>route.fulfill({contentType:'text/html',body:'<input aria-label="Cross origin draft">'}));
+  // Explicitly reload the fixture document after installing its cross-origin route.
+  await page.locator('iframe').evaluate((frame:HTMLIFrameElement)=>frame.src='http://frame.work.test/');
+  await page.frameLocator('iframe').getByLabel('Cross origin draft').fill('retained across layout');
+  await button(page,'service-focus').click();await page.frameLocator('iframe').getByLabel('Cross origin draft').press('Escape');
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');await expect(button(page,'exit-service-focus')).toBeVisible();
+  denied=true;await api(page,"await adapter.serviceFrameLoaded('work-1','service-a',80);");
+  await expect(page.locator('iframe')).toHaveCount(0);await expect(button(page,'exit-service-focus')).toBeVisible();
+  await button(page,'focus-chat').click();stopped=true;await api(page,"await adapter.refreshWorkStatus('work-1');");
+  await expect(page.locator('.focus-unavailable')).toBeVisible();await expect(button(page,'exit-service-focus')).toBeVisible();
+  await button(page,'exit-service-focus').click();await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace');
+  await expect(page.locator('.work-tabs')).toBeVisible();
+});
+
+test('UX revision standalone Service Focus never reads Chat settings or creates a conversation', async t => {
+  let stopped=false;
+  const {page,requests}=await fixture(t,r=>{
+    if(r.path==='works/work-1' && stopped)return{json:{id:'work-1',name:'Recovery Work',observedState:'stopped',desiredState:'stopped'}};
+    return focusFixture(r);
+  });
+  await expect(page.locator('iframe')).toBeVisible();const before=requests.length;
+  await page.goto(base+'/#/app/work-1/service-a/80');await expect(page.locator('.standalone-app')).toBeVisible();
+  await button(page,'service-focus').click();await expect(page.locator('#app')).toHaveAttribute('data-layout','service-only');
+  assert.equal(await page.locator('#composer').count(),0);assert.equal(await button(page,'focus-toggle-chat').count(),0);
+  await button(page,'exit-service-focus').click();await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace');
+  stopped=true;await api(page,"await adapter.refreshVisibleWork('work-1');");stopped=false;await api(page,"await adapter.refreshVisibleWork('work-1');");
+  await expect(page.locator('iframe')).toBeVisible();
+  assert.equal(requests.slice(before).filter(r=>/\/(sessions|runs|models|chat-models|chat-capabilities|commands)(\/|$)/.test(r.path)).length,0);
+  await page.getByRole('button',{name:'Back to Work',exact:true}).click();await expect(page.locator('.work-tabs')).toBeVisible();
+});
+
+test('UX revision composer geometry aligns all controls and long model names remain usable at 360px', async t => {
+  const label='DeepSeek Flash with a deliberately long model name for a narrow composer';
+  const {page}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-models'))return{json:{...chatModels(),defaultModel:{...chatModel,label,thinkingLevels:['off','low','high','max']}}};
+  });
+  await button(page,'tab-Chat').click();await expect(page.locator('#thinking-select')).toBeEnabled();
+  const boxes=await page.locator('#model-select,#thinking-select,[data-action=send-message],[data-action=chat-input-options]').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return{top:r.top,height:r.height,center:r.top+r.height/2};}));
+  assert.equal(boxes.length,4);for(const rect of boxes) {assert.equal(rect.height,boxes[0]!.height);assert.ok(Math.abs(rect.center-boxes[0]!.center)<1);}
+  await expect(page.locator('#model-select')).toHaveAttribute('title',label+' · Work default');
+  await page.setViewportSize({width:360,height:800});await page.locator('#model-select').click();
+  await expect(page.locator('#modal [role=menuitemradio]')).toHaveText(label+'Work default');
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  assert.ok(await page.locator('#modal [role=menuitemradio]').evaluate(node=>node.scrollWidth<=node.clientWidth));
+  await page.keyboard.press('Escape');await expect(button(page,'send-message')).toBeVisible();
+  await api(page,"const state=adapter.modelSelection('work-1','session-1');state.phase='unknown';state.error='Chat settings could not be confirmed. Your draft is kept.';await adapter.loadModels('work-1');");
+  await expect(button(page,'check-session-model')).toBeVisible();await expect(page.locator('.options-status')).toContainText('could not be confirmed');
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  const send=await button(page,'send-message').boundingBox(),retry=await button(page,'check-session-model').boundingBox();
+  assert(send && retry && send.x>=0 && send.x+send.width<=360 && retry.x>=0 && retry.x+retry.width<=360);
+});
+
+test('UX revision slash Thinking opens the actual SDK choices and consumes only confirmed selections', async t => {
+  let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());let saved='off';
+  const {page,requests}=await fixture(t,async r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-models'))return{json:{...chatModels(),defaultModel:{...chatModel,thinkingLevels:['off','low','high','max']}}};
+    if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[],checkedAt:new Date().toISOString()}};
+    if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){saved=JSON.parse(r.body).thinkingLevel;await gate;}return{json:chatOptions(saved)};}
+    return focusFixture(r);
+  });
+  await expect(page.locator('#thinking-select')).toBeEnabled();await button(page,'service-focus').click();await button(page,'focus-chat').click();
+  await api(page,"adapter.getWork('work-1').run={id:'current-run',sessionId:'session-1',status:'running',actualModel:{label:'Previous model',model:'one'},thinkingLevel:'off'};await adapter.loadModels('work-1');");
+  const actual=await api(page,"return JSON.stringify(adapter.getWork('work-1').run);");
+  await page.locator('#thinking-select').click();const direct=await page.locator('#modal [role=menuitemradio]').allTextContents();await page.keyboard.press('Escape');
+  await page.locator('#composer').fill('/thinking');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
+  assert.deepEqual(await page.locator('#modal [role=menuitemradio]').allTextContents(),direct);assert.deepEqual(direct,['Off','Low','High','Max']);
+  assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
+  await page.keyboard.press('End');await expect(page.locator('#modal [data-option-value=max]')).toBeFocused();
+  await page.locator('#modal [data-option-value=max]').evaluate(node=>{node.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true}));});
+  assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
+  await page.keyboard.press('Enter');await expect(page.locator('.options-status')).toContainText('Saving');
+  await expect(page.locator('#composer')).toHaveValue('/thinking');release();await expect(page.locator('#composer')).toHaveValue('');
+  await expect(page.locator('#thinking-select')).toHaveAttribute('value','max');
+  assert.equal(await api(page,"return JSON.stringify(adapter.getWork('work-1').run);"),actual);
+  assert.equal(requests.filter(r=>r.path.endsWith('/runs') && r.method==='POST').length,0);
+  await page.locator('#composer').fill('/model');await page.locator('#composer').press('Escape');await button(page,'send-message').click();await page.keyboard.press('Escape');
+  await expect(page.locator('#composer')).toHaveValue('/model');assert.equal(requests.filter(r=>r.method==='PATCH').length,1);await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
+});
+
+test('UX revision truly nonreasoning and unavailable capabilities show distinct reasons without fabricated levels', async t => {
+  let mode='plain';
+  const {page,requests}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-models'))return mode==='plain'?{json:{...chatModels(),defaultModel:{...chatModel,thinkingLevels:['off']}}}:{status:503,json:{code:'MODEL_NOT_SUPPORTED',message:'Thinking capabilities could not be confirmed'}};
+  });
+  await button(page,'tab-Chat').click();await expect(page.locator('#thinking-select')).toBeDisabled();await expect(page.locator('#thinking-select')).toContainText('Off');
+  await expect(page.locator('.options-status')).toContainText('Thinking is not supported by this model');await expect(button(page,'send-message')).toBeEnabled();
+  mode='unknown';await api(page,"await adapter.loadModels('work-1').catch(()=>undefined);");await expect(page.locator('.options-status')).toContainText('could not be confirmed');
+  await expect(button(page,'send-message')).toBeDisabled();await expect(page.locator('#thinking-select')).toBeDisabled();
+  assert.equal(await page.locator('#modal [role=menuitemradio]').count(),0);assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
+});
+
+test('UX revision lost slash settings preserve edited drafts and recover with one readonly check', async t => {
+  let saved='off';
+  const {page,requests}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+    if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[],checkedAt:new Date().toISOString()}};
+    if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){saved=JSON.parse(r.body).thinkingLevel;return{abort:true};}return{json:chatOptions(saved)};}
+  });
+  await button(page,'tab-Chat').click();await expect(page.locator('#thinking-select')).toBeEnabled();
+  await page.locator('#composer').fill('/thinking');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
+  await page.locator('#modal [data-option-value=high]').click();await expect(button(page,'check-session-model')).toBeVisible();
+  await expect(page.locator('#composer')).toHaveValue('/thinking');await page.locator('#composer').fill('a revised draft made during recovery');
+  const reads=requests.filter(r=>r.path.endsWith('/chat-options') && r.method==='GET').length;
+  await button(page,'check-session-model').click();await expect(button(page,'send-message')).toBeEnabled();
+  await expect(page.locator('#composer')).toHaveValue('a revised draft made during recovery');await expect(page.locator('#thinking-select')).toHaveAttribute('value','high');
+  assert.equal(requests.filter(r=>r.path.endsWith('/chat-options') && r.method==='GET').length,reads+1);
+  assert.equal(requests.filter(r=>r.method==='PATCH').length,1);assert.equal(requests.filter(r=>r.path.endsWith('/runs') && r.method==='POST').length,0);
+});
+
+test('UX revision Activity failures remain visible and secondary Service identity preserves its command boundary', async t => {
+  const {page}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+    if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[{kind:'prompt',command:'/review',name:'review',description:'Review supplied files',sourceName:'Work prompts'}],checkedAt:new Date().toISOString()}};
+    return focusFixture(r);
+  });
+  await expect(page.locator('#thinking-select')).toBeEnabled();
+  await expect.poll(()=>api(page,"return adapter.getWork('work-1').sessions.find(s=>s.id==='session-1')?.checkedAt || ''; ")).not.toBe('');
+  await page.waitForLoadState('networkidle');
+  await api(page,"const w=adapter.getWork('work-1');w.sessions[0].messages=[{id:'failed-tool',runId:'technical-run-id',role:'assistant',text:'',tool:{id:'technical-tool-id',name:'read',status:'Failed',content:'File could not be read. Choose another file.'}}];w.sessions[0].runs=[{id:'technical-run-id',status:'failed',thinkingLevel:'off',actualModel:{label:'Runtime model revision 123',model:'deepseek-flash'}}];await adapter.loadModels('work-1');");
+  await expect(page.locator('.activity > summary')).toContainText('1 failed');await expect(page.locator('.activity > summary')).toContainText('File could not be read');
+  await expect(page.locator('.tool-event pre')).toBeHidden();assert.equal(await page.locator('.activity').evaluate((node:HTMLDetailsElement)=>node.open),false);
+  const visible=await page.locator('#messages').innerText();assert.ok(!visible.includes('technical-run-id') && !visible.includes('Runtime revision'));
+  await button(page,'chat-input-options').click();await page.locator('#include-identity').check();await button(page,'close-modal').click();
+  await expect(button(page,'chat-input-options')).toHaveAttribute('aria-pressed','true');assert.equal(await page.locator('#include-identity').count(),0);
+  await page.locator('#composer').fill('/rev');await expect(page.locator('.command-palette')).toHaveClass(/menu-list/);await page.locator('#composer').press('Tab');
+  await page.locator('#composer').fill('/review "unchanged argument"');await page.locator('#composer').press('Escape');
+  await expect(page.locator('.composer-caption')).toContainText('Service identity is not added');await button(page,'chat-input-options').click();
+  await expect(page.locator('#include-identity')).toBeChecked();await expect(page.locator('#modal')).toContainText('Only command arguments are sent');await button(page,'close-modal').click();
+  await page.locator('#composer').fill('ordinary text');await expect(button(page,'chat-input-options')).toHaveAttribute('aria-pressed','true');
+  await page.locator('.run-history summary').click();await expect(page.locator('.run-history')).toContainText('technical-run-id');
+});
+
+test('UX commands preserve existing parameters and IME/Shift Enter do not execute',async t=>{
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[{kind:'prompt',command:'/review',name:'review',description:'Review',sourceName:'Work prompts'}],checkedAt:new Date().toISOString()}};
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('/rev keep\tthese arguments');await page.locator('#composer').evaluate((input:HTMLTextAreaElement)=>{input.setSelectionRange(4,4);input.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowLeft',bubbles:true}));});await expect(page.locator('[role=option]').filter({hasText:'/review'})).toBeVisible();await page.locator('#composer').press('Tab');await expect(page.locator('#composer')).toHaveValue('/review keep\tthese arguments');
+ await page.locator('#composer').evaluate(input=>{input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}));input.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));});await page.locator('#composer').press('Shift+Enter');assert.equal(requests.filter(r=>r.method==='POST').length,0);
+});
+
+test('UX Activity and reading anchor survive a history refresh with new preceding messages',async t=>{
+ const {page}=await fixture(t,()=>undefined);await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();
+ const messages=Array.from({length:50},(_,i)=>({id:`prose-${i}`,runId:'run-history',role:'assistant',text:`Paragraph ${i}: ${'Saved conversation text. '.repeat(12)}`}));
+ messages.splice(20,0,{id:'activity-anchor',runId:'run-history',role:'assistant',text:'',tool:{id:'tool-anchor',name:'read',status:'Completed',content:'<img src=x onerror="window.uxInjected=true">\n[Preview limited to 64 KiB]'}} as any);
+ await api(page,`adapter.getWork('work-1').sessions[0].messages=${JSON.stringify(messages)};await adapter.loadModels('work-1');`);
+ await page.locator('.activity > summary').click();await page.locator('.tool-event > summary').click();await expect(page.locator('.tool-event pre')).toContainText('[Preview limited to 64 KiB]');assert.equal(await page.evaluate(()=>(window as any).uxInjected),undefined);
+ await page.locator('#messages').evaluate(node=>{node.scrollTop=node.scrollHeight/2;node.dispatchEvent(new Event('scroll'));});await page.waitForTimeout(50);
+ const anchor=await page.locator('#messages').evaluate(node=>{const top=node.getBoundingClientRect().top;const first=[...node.querySelectorAll<HTMLElement>('[data-message-key]')].find(item=>item.getBoundingClientRect().bottom>top)!;return{key:first.dataset.messageKey,offset:first.getBoundingClientRect().top-top};});
+ await api(page,"adapter.getWork('work-1').sessions[0].messages.unshift({id:'earlier-prose',runId:'run-earlier',role:'assistant',text:'Newly recovered preceding paragraph. '.repeat(15)});await adapter.loadModels('work-1');");
+ const offset=await page.locator('#messages').evaluate((node,key)=>{const item=[...node.querySelectorAll<HTMLElement>('[data-message-key]')].find(item=>item.dataset.messageKey===key)!;return item.getBoundingClientRect().top-node.getBoundingClientRect().top;},anchor.key);
+ assert.ok(Math.abs(offset-anchor.offset)<2,`Reading anchor moved ${offset-anchor.offset}px`);assert.equal(await page.locator('.activity').evaluate((node:HTMLDetailsElement)=>node.open),true);assert.equal(await page.locator('.tool-event').evaluate((node:HTMLDetailsElement)=>node.open),true);
+});
+
+test('UX runtime recovery rereads optional capabilities and replaces a stale command directory',async t=>{
+ let ready=false;const {page}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return ready?{json:{contractVersion:1}}:{status:409,json:{code:'WORK_UNAVAILABLE'}};
+  if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+  if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[{kind:'skill',command:'/skill:restored',name:'restored',description:'Restored Skill',sourceName:'Work skills'}],checkedAt:new Date().toISOString()}};
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();assert.equal(await api(page,"return adapter.chatCapabilities.get('work-1')"),0);
+ ready=true;await api(page,"await adapter.loadModels('work-1');");await expect(page.locator('#thinking-select')).toBeEnabled();await page.locator('#composer').fill('/skill:res');await expect(page.locator('[role=option]').filter({hasText:'/skill:restored'})).toBeVisible();
+});
+
+test('UX incompatible Session settings stay unavailable while web navigation remains reachable',async t=>{
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+  if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+  if(r.path.endsWith('/chat-options'))return{json:{...chatOptions(),availability:'unavailable'}};
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeDisabled();await expect(page.locator('.options-status')).toContainText('Saved settings unavailable');await page.locator('#composer').fill('keep my earlier draft');await api(page,"await adapter.loadSession('work-1','session-1');");await expect(page.locator('#composer')).toHaveValue('keep my earlier draft');
+ await page.locator('#composer').fill('/resume');await page.locator('#composer').press('Escape');await expect(button(page,'send-message')).toBeEnabled();assert.equal(requests.filter(r=>['POST','PATCH'].includes(r.method)).length,0);
 });

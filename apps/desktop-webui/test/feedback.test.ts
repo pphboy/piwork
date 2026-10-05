@@ -363,12 +363,12 @@ for(const entry of ['login','logout','switch'] as const)test(`D01 ${entry} first
 for(const method of ['mouse','keyboard'] as const)test(`D07 Send ${method} confirms original Run, retains newer draft, duplicate submission is blocked`,async t=>{
   const gate=deferred(),events=deferred();t.after(async()=>{gate.resolve();events.resolve();});
   const {page,requests}=await fixture(t,async r=>{
-    if(r.path==='works/work-1/runs'&&r.method==='POST'){await gate.promise;return{json:{run:{runId:'run-original',state:1}}};}
+    if(r.path==='works/work-1/runs'&&r.method==='POST'){await gate.promise;return{json:{run:{runId:'run-original',sessionId:'session-1',state:1}}};}
     if(r.path.endsWith('/events')){await events.promise;return{status:503};}
   });
   await page.locator('#composer').fill('submitted prompt');if(method==='mouse')await button(page,'send-message').click();else await page.locator('#composer').press('Enter');
   await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('Submitting message');await page.locator('#composer').fill('newer draft');await page.locator('#composer').press('Enter');assert.equal(requests.filter(r=>r.method==='POST').length,1);
-  gate.resolve();await expect(page.locator('[data-action-status]').filter({hasText:'run-original'})).toBeVisible();await expect(page.locator('#composer')).toHaveValue('newer draft');events.resolve();
+  gate.resolve();const accepted=page.locator('[data-action-status]').filter({hasText:'run-original'});await expect(accepted).toBeVisible();await expect(accepted).toContainText('Message accepted');await expect(accepted.locator('code')).toBeHidden();await accepted.locator('summary').click();await expect(accepted.locator('code')).toBeVisible();await expect(page.locator('#composer')).toHaveValue('newer draft');events.resolve();
 });
 
 for(const action of ['cancel','resume'] as const)test(`D07 ${action} original Run has visible request and never resends the prompt`,async t=>{
@@ -380,7 +380,7 @@ for(const action of ['cancel','resume'] as const)test(`D07 ${action} original Ru
   });
   await api(page,`adapter.getWork('work-1').run={id:'run-original',sessionId:'session-1',status:'${action==='cancel'?'running':'interrupted'}',cursor:3,created:'',error:'Check the original Run'};`);await button(page,'agent-menu').click();await button(page,'close-modal').click();
   await button(page,action==='cancel'?'cancel-run':'resume-run').click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText(action==='cancel'?'Requesting cancellation':'Reconnecting Run');gate.resolve();
-  await expect(page.locator('[data-action-status]').filter({hasText:action==='cancel'?'Cancellation requested':'Reconnected'})).toBeVisible();assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,0);
+  if(action==='cancel')await expect(button(page,'cancel-run')).toHaveText('Cancellation requested');else await expect(page.locator('[data-action-status]').filter({hasText:'Reconnected'})).toBeVisible();assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,0);
   if(action==='cancel'){await expect(button(page,'cancel-run')).toBeDisabled();assert.equal(await api(page,"return adapter.getWork('work-1').run.status"),'running');}
 });
 

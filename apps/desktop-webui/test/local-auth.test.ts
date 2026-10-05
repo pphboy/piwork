@@ -36,7 +36,7 @@ const button = (page: Page, action: string) => page.locator(`[data-action="${act
 test('local auth: checking is visible and valid Cookie discards an old ticket without bootstrap', async t => {
   const gate = pending(); t.after(async () => gate.resolve());
   const { page, records } = await fixture(t, async r => { if (r.path === 'session') { await gate.promise; return { json: signedIn() }; } }, 'used-or-expired');
-  await expect(page.getByRole('heading', { name: 'Checking browser access' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Opening workspace…' })).toBeVisible();
   assert.equal(await page.locator('[data-action="account"]').count(), 0);
   assert.equal(new URL(page.url()).hash, ''); gate.resolve();
   await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();

@@ -144,6 +144,8 @@ export class ActionState {
 /** Safe DOM text and local status regions, without replacing input/iframe nodes. */
 export function renderActionStates(root, actions, view, intentFor, visibleRecord = () => true) {
     root.querySelectorAll('[data-action-status]').forEach(node => node.remove());
+    const shown = (node) => !!node && !!node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
+    const regions = [...root.querySelectorAll('main, .main-panel, .agent-panel')];
     for (const button of root.querySelectorAll('button[data-action]')) {
         if (button.dataset.actionLocked) {
             button.disabled = button.dataset.actionBaseDisabled === 'true';
@@ -162,20 +164,22 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
         }
     }
     for (const record of actions.records.values()) {
+        if (record.key.startsWith('route:') && !record.error)
+            continue;
         if (!actions.visible(record) || record.view && record.view !== view || !visibleRecord(record))
             continue;
         if (!record.pending && record.error && root.textContent?.includes(record.error) && !record.blocked && record.refresh !== 'failed')
             continue;
         if (!record.pending && record.result && root.textContent?.includes(record.result) && !record.error && !record.blocked && record.refresh === '')
             continue;
-        const anchor = record.anchor ? root.querySelector(record.anchor) : null;
-        const region = anchor?.closest('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ??
-            root.querySelector('main, .main-panel, .agent-panel') ?? root;
+        const anchor = record.anchor ? [...root.querySelectorAll(record.anchor)].find(shown) : null;
+        const anchored = anchor?.closest('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ?? null;
+        const region = shown(anchored) ? anchored : regions.find(shown) ?? root;
         if (!region)
             continue;
         const node = document.createElement('div');
         node.dataset.actionStatus = record.key;
-        node.className = `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
+        node.className = record.kind === 'read' && !record.error && record.refresh !== 'failed' ? 'local-read-status' : `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
         node.setAttribute('role', 'status');
         node.setAttribute('aria-live', 'polite');
         node.setAttribute('aria-busy', String(record.pending || record.refresh === 'refreshing'));
@@ -189,6 +193,14 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
             visible.phase = 'Confirmed';
         }
         node.textContent = actions.message(visible);
+        if (record.businessId && ['new-session', 'send-message', 'cancel-run', 'resume-run'].includes(record.action || '')) {
+            const details = document.createElement('details'), summary = document.createElement('summary'), identity = document.createElement('code');
+            details.className = 'action-details';
+            summary.textContent = record.action === 'new-session' ? 'Session details' : 'Run details';
+            identity.textContent = record.businessId;
+            details.append(summary, identity);
+            node.append(details);
+        }
         // Status changes must not move the top of an interactive application frame.
         if (region.querySelector('iframe'))
             region.append(node);

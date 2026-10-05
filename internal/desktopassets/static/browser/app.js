@@ -1,3 +1,4 @@
+import { activityGroups } from './chat-projection.js';
 import { editAdvanced, synchronizeConfiguration } from './configuration.js';
 import { ActionState, renderActionStates } from './action-state.js';
 import { adapter, DesktopError, fileVersion } from "./adapter.js";
@@ -101,12 +102,23 @@ let view = {
     serviceOpenError: '',
     logsExpanded: false,
     scrollPinned: true,
+    layout: 'workspace',
+    literalSlash: false,
+    commandIndex: 0,
+    commandDismissed: '',
+    commandRevision: '',
+    commandCaret: 0,
+    fullscreenError: '',
 };
+const expandedActivity = new Map();
+let workspaceReturn, chatReturn;
+const chatReading = new Map();
+let pendingWebCommand;
 let importSignInSuspended = false;
 const actions = new ActionState(() => render());
 class ViewChanged extends Error {
 }
-let sessionChoice = 0, selectionRequest = 0, modalChoice = 0;
+let sessionChoice = 0, areaChoice = 0, serviceChoice = 0, selectionRequest = 0, modalChoice = 0;
 const fileSelections = new Map();
 const viewKey = () => `${location.hash}:${view.modal}:${modalChoice}:${view.tab}:${view.path}:${view.service}:${view.port}:${sessionChoice}`;
 const actionLabels = {
@@ -151,9 +163,10 @@ function actionIntent(el, action = el.dataset.action || '') {
         kind = 'transfer';
     const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview'].includes(action);
     const serviceId = el.dataset.id || view.data.serviceId || view.service;
-    const resource = action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' ? w?.id : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+    const resource = action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
     const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
-    return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || 'New Work' : `${w?.name || adapter.state.core.address || 'Local CLI'}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
+    const chatAction = ['new-session', 'send-message', 'cancel-run', 'resume-run', 'check-session-model', 'save-model'].includes(action);
+    return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || 'New Work' : chatAction ? w?.name || 'Chat' : `${w?.name || adapter.state.core.address || 'Local CLI'}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
         anchor: focusKey(el), view: location.hash };
 }
 async function dispatchAction(el, perform = record => handleAction(el.dataset.action, el, record), intent = actionIntent(el)) {
@@ -258,8 +271,16 @@ function rememberWork() {
 function draftKey(w, session = view.session) {
     return `${w.id}:${session || "new"}`;
 }
-async function openWork(w) {
+async function openWork(w, record) {
     await guard(async () => {
+        rememberWork();
+        location.hash = `/work/${w.id}`;
+        lastRoute = location.hash;
+        view.tab = 'Services';
+        view.modal = '';
+        if (record)
+            record.view = location.hash;
+        render();
         const key = viewKey();
         await adapter.loadWork(w.id);
         if (key !== viewKey())
@@ -304,6 +325,8 @@ function openModal(name, data = {}) {
 }
 function closeModal() {
     modalChoice++;
+    if (['chat-models', 'chat-thinking'].includes(view.modal) && pendingWebCommand && ['model', 'thinking'].includes(pendingWebCommand.kind) && !pendingWebCommand.pair)
+        pendingWebCommand = undefined;
     if (view.modal === 'export')
         adapter.stopDownloadObservers();
     if (view.modal === "import")
@@ -331,7 +354,7 @@ function signIn() {
     const access = adapter.state.browserAccess;
     if (access !== 'authorized') {
         const checking = access === 'checking', unavailable = access === 'unavailable';
-        return `${topbar()}<main class="auth-main browser-access"><div class="auth-symbol">${icon("lock", 26)}</div><h1>${checking ? 'Checking browser access' : unavailable ? 'Desktop connection unavailable' : 'Browser access required'}</h1><p class="muted" role="status" aria-live="polite">${checking ? 'Checking whether this browser is authorized to connect to the local CLI…' : esc(adapter.state.browserAccessReason)}</p>${checking ? '' : `${btn('Check browser access', 'check-browser-access', 'primary full')}<div class="recovery-command"><p>From a terminal as the same system user:</p><code>${esc(adapter.reopenCommand())}</code>${btn('Copy reopen command', 'copy-reopen-command', 'quiet full')}</div><p class="muted">If the instance is not running, start it with <code>${esc(adapter.startCommand())}</code>. Reopening a running instance keeps its Core, Works and browser sessions.</p><div class="recovery-command"><p>To clear this Desktop’s saved Core login without browser access:</p><code>${esc(adapter.logoutCommand())}</code>${btn('Copy logout command', 'copy-logout-command', 'quiet full')}</div>`}</main>`;
+        return `${topbar()}<main class="auth-main browser-access"><div class="auth-symbol">${icon("lock", 26)}</div><h1>${checking ? 'Opening workspace…' : unavailable ? 'Desktop connection unavailable' : 'Browser access required'}</h1><p class="muted" role="status" aria-live="polite">${checking ? 'Connecting to your local Desktop…' : esc(adapter.state.browserAccessReason)}</p>${checking ? '' : `${btn('Check browser access', 'check-browser-access', 'primary full')}<div class="recovery-command"><p>From a terminal as the same system user:</p><code>${esc(adapter.reopenCommand())}</code>${btn('Copy reopen command', 'copy-reopen-command', 'quiet full')}</div><p class="muted">If the instance is not running, start it with <code>${esc(adapter.startCommand())}</code>. Reopening a running instance keeps its Core, Works and browser sessions.</p><div class="recovery-command"><p>To clear this Desktop’s saved Core login without browser access:</p><code>${esc(adapter.logoutCommand())}</code>${btn('Copy logout command', 'copy-logout-command', 'quiet full')}</div>`}</main>`;
     }
     return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock", 26)}</div><h1>Connect to your Core</h1><p class="muted">Sign in with your Core account. Credentials stay with the local CLI.</p>${adapter.state.cleanupRequired ? feedback(`Local identity is cleared, but saved credential cleanup is incomplete. Run <code>${esc(adapter.logoutCommand())}</code> before signing in or switching Core.`, 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}<label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label><label class="field">Account<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">Password<input id="auth-password" type="password" autocomplete="current-password"></label>${btn("Sign in", "sign-in", "primary full")}<div class="auth-divider">Inspect a Work package locally before signing in</div>${btn(`${icon("upload", 16)} Inspect a .work package`, "import", "quiet")}</main>`;
 }
@@ -354,7 +377,7 @@ function workHeader(w, standalone = false) {
 }
 function workPage(w) {
     const settings = route()[2] === "settings";
-    return `${workHeader(w)}<nav class="work-tabs" aria-label="Work areas"><div>${["Services", "Files", "Chat"].map((t) => btn(`${icon(t === "Services" ? "grid" : t === "Files" ? "folder" : "chat", 17)} ${t}`, `tab-${t}`, !settings && view.tab === t ? "tab active" : "tab")).join("")}</div>${btn(`${icon("settings", 17)} Settings`, "settings", settings ? "tab active" : "tab")}</nav>${w.status === "Degraded" ? `<div class="work-notice">${icon("info", 15)} Some capabilities need attention. Available Services remain usable. ${btn("View details", "manage-services", "text-button")}</div>` : ""}${settings ? settingsPage(w) : !adapter.project(w).usable ? workState(w) : view.tab === "Chat" ? `<div class="focus-chat">${agent(w, true)}</div>` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""}"><section class="main-panel">${view.tab === "Files" ? files(w) : services(w)}</section><aside class="agent-side">${agent(w, false)}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
+    return `${workHeader(w)}<nav class="work-tabs" aria-label="Work areas"><div>${["Services", "Files", "Chat"].map((t) => btn(`${icon(t === "Services" ? "grid" : t === "Files" ? "folder" : "chat", 17)} ${t}`, `tab-${t}`, !settings && view.tab === t ? "tab active" : "tab")).join("")}</div>${btn(`${icon("settings", 17)} Settings`, "settings", settings ? "tab active" : "tab")}</nav>${w.status === "Degraded" ? `<div class="work-notice">${icon("info", 15)} Some capabilities need attention. Available Services remain usable. ${btn("View details", "manage-services", "text-button")}</div>` : ""}${settings ? settingsPage(w) : !adapter.project(w).usable ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${view.layout === "service-only" ? "chat-hidden" : ""}"><section class="main-panel">${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><aside class="agent-side">${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
 }
 function workState(w) {
     const state = adapter.project(w);
@@ -366,40 +389,215 @@ function workState(w) {
 }
 function services(w) {
     if (!w.resourceChecked?.services && !w.resourceErrors?.services)
-        return feedback(`Loading Services for ${esc(w.name)}…`);
+        return `<div class="local-loading" role="status" aria-busy="true">Loading Services…</div>`;
     const s = activeService(w);
-    if (w.resourceErrors?.services)
+    if (w.resourceErrors?.services && !w.resourceChecked?.services)
         return feedback(esc(w.resourceErrors.services), "warning", btn("Check connection", "check-connection"));
     if (!s || !s.ports.length)
         return empty("grid", "No Web Service is ready", "Ask the Agent to build a tool. Service definitions are created by the Agent workflow.", btn("Focus chat", "tab-Chat", "primary") + (w.services.length ? btn("Manage services", "manage-services") : ""));
     const list = w.services.filter((x) => x.ports.length && x.observed !== "Removed");
-    return `<div class="service-toolbar"><div class="service-selector"><span class="app-indicator">${icon("grid", 16)}</span><select id="service-select" aria-label="Service">${list.map((x) => `<option value="${x.id}" ${x.id === s.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select><select id="port-select" aria-label="Declared Web port">${s.ports.map((p) => `<option ${p === view.port ? "selected" : ""}>${p}</option>`).join("")}</select></div><div class="service-identity">${badge(s.observed)}<span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div><div class="actions">${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn("Copy local link", "copy-local", "small")) : ""}${adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : s.observed !== "Ready" ? empty("grid", `${esc(s.name)} is ${s.observed.toLowerCase()}`, esc(s.error || "This Service is disabled. Starting the Work does not re-enable it."), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : empty("grid", "Opening application", `Preparing ${esc(s.name)} · port ${view.port}`)}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection</span><span>Shared workspace ${icon("folder", 13)}</span></div>`;
+    return `${w.resourceErrors?.services ? feedback(esc(w.resourceErrors.services), "warning", btn("Check connection", "check-connection", "small")) : ""}<div class="service-toolbar"><div class="service-selector"><span class="app-indicator">${icon("grid", 16)}</span><select id="service-select" aria-label="Service">${list.map((x) => `<option value="${x.id}" ${x.id === s.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select><select id="port-select" aria-label="Declared Web port">${s.ports.map((p) => `<option ${p === view.port ? "selected" : ""}>${p}</option>`).join("")}</select></div><div class="service-identity">${badge(s.observed)}<span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div><div class="actions focus-actions">${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn("Copy local link", "copy-local", "small")) : ""}${adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : s.observed !== "Ready" ? empty("grid", `${esc(s.name)} is ${s.observed.toLowerCase()}`, esc(s.error || "This Service is disabled. Starting the Work does not re-enable it."), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : empty("grid", "Opening application", `Preparing ${esc(s.name)} · port ${view.port}`)}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection ${w.resourceChecked?.services ? ` · Retrieved ${esc(new Date(w.resourceChecked.services).toLocaleTimeString())}` : ""}</span><span>Shared workspace ${icon("folder", 13)}</span></div>`;
 }
 function agent(w, focus) {
     const readingSessions = !w.resourceChecked?.agent && !w.resourceErrors?.agent;
     const session = w.sessions.find((s) => s.id === view.session) || w.sessions[0];
-    if (session)
+    if (session) {
+        if (!view.session && view.drafts[draftKey(w, "")] && !view.drafts[draftKey(w, session.id)])
+            view.drafts[draftKey(w, session.id)] = view.drafts[draftKey(w, "")];
         view.session = session.id;
+    }
     const run = w.run;
     const active = run && ["accepted", "running", "cancelling"].includes(run.status);
     const busy = active && run.sessionId !== session?.id;
     const draft = view.drafts[draftKey(w, session?.id || "")] || "";
+    adapter.activateChat(w.id, session?.id || "");
     const modelReady = adapter.modelReady(w.id, session?.id || "");
-    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b></span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${btn(icon(focus ? "grid" : "focus", 16), focus ? "return-service" : "focus-chat", "icon-button quiet", `aria-label="${focus ? "Return to Service" : "Focus chat"}"`)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div><div class="session-line">${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(session?.title || "No Session yet")}${icon("down", 12)}</button></div><div class="messages" id="messages">${readingSessions ? feedback(`Reading Sessions for ${esc(w.name)}…`) : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : session.messages.filter(m => m.text || m.tool).map((m) => `<div class="message ${m.role}">${m.role === "assistant" && !m.tool ? `<div class="message-author">${icon("spark", 14)} piwork</div>` : ""}<div class="message-text">${esc(m.text)}</div>${m.tool ? `<details class="tool-event"><summary>${icon("terminal", 14)} ${esc(m.tool.name)} <span>${esc(m.tool.status)}</span></summary><pre>${esc(m.tool.content)}</pre></details>` : ""}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${icon("file", 13)} ${esc(m.source)}</button>` : ""}</div>`).join("")}${w.services.some((s) => s.observed === "Ready" && s.ports.length) && focus ? btn(`${icon("grid", 15)} Open service`, "return-service", "service-shortcut") : ""}${session?.runs?.length ? `<details class="run-history"><summary>Run history · actual models and sources</summary>${session.runs.map(r => `<p><code>${esc(r.id)}</code> · ${esc(r.actualModel?.label || "Unavailable model")} · ${esc(r.source?.kind === "service" ? `Service: ${r.source.serviceName || "automatic"}` : "Chat")} · ${esc(r.status)}</p>`).join("")}</details>` : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${modelComposer(w, session?.id || "")} ${w.resourceErrors?.agent ? feedback(esc(w.resourceErrors.agent), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(run.actualModel?.label || "Model unavailable")} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer"><textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom"><label><input id="include-identity" type="checkbox" ${view.includeIdentity ? "checked" : ""}> Include Service identity</label>${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${active || session?.legacy || !modelReady ? "disabled" : ""}`)}</div></div><div class="composer-caption" id="composer-help">${view.includeIdentity ? "Identity only. No page, cookies, or unsaved inputs." : "Agent uses saved files and reachable APIs when asked."}</div></div></section>`;
+    const webDraft = !view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
+    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout === "chat-only" && view.fullscreenError ? feedback(esc(view.fullscreenError), "warning") : ""}<div class="session-line">${session?.loading && session.checkedAt ? `<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>` : ""}${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(sessionDisplayName(w, session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w, session?.id || ""))}">${session?.error ? feedback(esc(session.error), "warning") : ""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w, session.id, session.messages)}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}${session?.runs?.length ? `<details class="run-history"><summary>Run history · actual models and sources</summary>${session.runs.map(r => `<p><code>${esc(r.id)}</code> · ${esc(modelDisplayName(r.actualModel))} · ${esc(r.source?.kind === "service" ? `Service: ${r.source.serviceName || "automatic"}` : "Chat")} · Thinking ${esc(r.thinkingLevel || "off")} · ${esc(r.status)}</p>`).join("")}</details>` : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${w.resourceErrors?.agent ? feedback(esc(w.resourceErrors.agent), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(modelDisplayName(run.actualModel))} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer"><textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w, session?.id || "")}${btn(icon("settings", 16), "chat-input-options", "icon-button quiet chat-input-options", `title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${commandPalette(w, draft)}${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${!webDraft && (active || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div></div>${modelFeedback(w, session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/") ? btn(view.literalSlash ? "Command mode" : "Send as text", "toggle-slash-mode", "text-button", `aria-pressed="${view.literalSlash}"`) : ""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
 }
 function modelComposer(w, sessionId) {
     const catalog = adapter.models.get(w.id), state = adapter.modelSelection(w.id, sessionId), session = w.sessions.find(s => s.id === sessionId);
-    const blocked = !sessionId || !catalog?.confirmed || !catalog.models.length || state.phase === 'saving' || state.phase === 'unknown';
-    const current = session?.modelPreference;
-    const unavailable = current?.availability === 'unavailable';
-    const options = [{ modelRef: null, label: catalog?.defaultModel?.label || 'Work default', provider: '', model: '' }, ...(catalog?.models ?? [])];
-    const missing = state.ref !== null && !options.some(m => m.modelRef === state.ref);
-    return `<div class="model-selection"><label>Model for next message<select id="model-select" aria-label="Model for next message" ${blocked ? 'disabled' : ''}>${missing ? `<option value="${esc(state.ref)}" selected disabled>${esc(current?.label || 'Unavailable model')}</option>` : ''}${options.map(m => `<option value="${esc(m.modelRef || '')}" ${m.modelRef === state.ref ? 'selected' : ''}>${esc(m.label)}${m.modelRef === null ? ' · Work default' : ''}</option>`).join('')}</select></label>${!sessionId ? btn('New session', 'new-session', 'small') : state.phase === 'dirty' ? btn('Save model', 'save-model', 'small') : state.phase === 'unknown' ? btn('Check Session model', 'check-session-model', 'small') : catalog?.error || !catalog?.confirmed ? btn('Check models', 'load-models', 'small') : ''}</div>${catalog?.loading ? feedback('Reading available models…') : catalog?.confirmed && !catalog.models.length ? feedback('No available models. Check the Work runtime model.', 'warning', btn('Check models', 'load-models', 'small')) : ''}${catalog?.error ? feedback(esc(catalog.error), 'warning', btn('Check models', 'load-models', 'small')) : ''}${state.phase === 'saving' ? feedback('Saving model for the next message…') : state.error ? feedback(esc(state.error), 'warning') : unavailable ? feedback('Saved model is unavailable. Choose and save an available model before sending.', 'warning') : ''}`;
+    const model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+    const disabled = state.phase === 'unknown' || !catalog?.confirmed || !!catalog?.error;
+    const levels = model?.thinkingLevels;
+    const canThink = adapter.chatCapabilities.get(w.id) === 1 && !!levels?.length;
+    const thinkingDisabled = disabled || !canThink || levels?.length === 1 && levels[0] === state.thinking;
+    const name = model ? modelDisplayName(model) : state.ref === null ? 'Work default' : modelDisplayName(session?.modelPreference);
+    return `<div class="chat-options">${btn(`<small>Model</small><span>${esc(name)}</span>${icon('down', 12)}`, 'open-chat-models', 'quiet chat-picker', `id="model-select" value="${esc(state.ref || '')}" title="${esc(name)}${state.ref === null ? ' · Work default' : ''}" aria-label="Model for next message" aria-haspopup="dialog" ${disabled ? 'disabled' : ''}`)}${btn(`<small>Thinking</small><span>${esc(canThink ? thinkingName(state.thinking) : 'Unavailable')}</span>${icon('down', 12)}`, 'open-chat-thinking', 'quiet chat-picker', `id="thinking-select" value="${esc(state.thinking)}" aria-label="Thinking for next message" aria-haspopup="dialog" ${thinkingDisabled ? 'disabled' : ''}`)}</div>`;
+}
+function sessionDisplayName(w, session) {
+    if (!session)
+        return 'No Session yet';
+    return session.title === `Session ${session.id}` ? `Session ${w.sessions.indexOf(session) + 1}` : session.title;
+}
+function modelDisplayName(model) {
+    if (!model)
+        return 'Unavailable model';
+    return /^Runtime(?: model)? revision\b/i.test(model.label || '') ? model.model || 'Work model' : model.label || model.model || 'Work model';
+}
+function thinkingName(level) { return level ? level[0].toUpperCase() + level.slice(1) : 'Unavailable'; }
+function modelFeedback(w, sessionId) {
+    const catalog = adapter.models.get(w.id), state = adapter.modelSelection(w.id, sessionId), session = w.sessions.find(s => s.id === sessionId);
+    const model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+    const status = state.phase === 'saving' ? 'Saving…' : state.error || (session?.modelPreference?.availability === 'unavailable' ? 'Saved settings unavailable' : catalog?.loading ? 'Loading models…' : catalog?.error || (adapter.chatCapabilities.get(w.id) === 0 ? 'Thinking unavailable in this Work' : catalog?.confirmed && !model?.thinkingLevels?.length ? 'Thinking capabilities are unconfirmed' : model?.thinkingLevels?.length === 1 && model.thinkingLevels[0] === 'off' ? 'Thinking is not supported by this model' : !sessionId ? 'For new session' : ''));
+    return `<div class="options-status" role="status">${esc(status)}${state.phase === 'unknown' ? btn('Check chat settings', 'check-session-model', 'text-button') : catalog?.error || !catalog?.confirmed ? btn('Retry models', 'load-models', 'text-button') : state.phase === 'dirty' && sessionId ? btn('Retry settings', 'save-model', 'text-button') : ''}</div>`;
+}
+function openChatPicker(kind) {
+    const work = current();
+    if (!work)
+        return;
+    const trigger = root.querySelector(kind === 'model' ? '#model-select' : '#thinking-select');
+    if (!trigger || trigger.disabled)
+        throw new Error('Chat settings are unavailable. Check their status before choosing.');
+    view.commandDismissed = view.drafts[draftKey(work)] || '';
+    trigger.focus({ preventScroll: true });
+    focusReturn = focusKey(trigger);
+    openModal(kind === 'model' ? 'chat-models' : 'chat-thinking', { workId: work.id, sessionId: view.session });
+    root.querySelector('#modal [aria-checked=true],#modal [role=menuitemradio]')?.focus();
+}
+function confirmPendingChatCommand() {
+    const command = pendingWebCommand;
+    if (!command?.pair || !command.workId || !['model', 'thinking'].includes(command.kind))
+        return;
+    const state = adapter.modelSelection(command.workId, command.sessionId || '');
+    if ((state.phase === 'clean' || !command.sessionId && state.phase === 'dirty') && state.ref === command.pair.ref && state.thinking === command.pair.thinking)
+        consumeWebSelection(command.kind);
+}
+function submissionMarkup(w) {
+    const intent = adapter.chatSubmissions.get(w.id);
+    return intent ? feedback(`${esc(intent.error || 'Waiting for acceptance…')}<details class="chat-submission-details"><summary>Submission details</summary><p>Original ${esc(intent.kind)} key <code>${esc(intent.key)}</code></p></details>`, 'warning', btn('Check original submission', 'check-chat-submission', 'small')) : '';
+}
+function layoutButton(symbol, label, action, extra = '') {
+    return btn(icon(symbol, 16), action, 'icon-button quiet', `title="${esc(label)}" aria-label="${esc(label)}" ${extra}`);
+}
+function focusControls(w, showError = true) {
+    const standalone = route()[0] === 'app', focused = view.layout !== 'workspace', chat = view.layout === 'chat-only';
+    const service = activeService(w);
+    const available = !!service && service.observed === 'Ready' && !!adapter.serviceEntryUrl(w.id, service.id, view.port) && adapter.serviceEmbed(w.id, service.id, view.port) !== 'denied';
+    return focused ? `${chat ? layoutButton('arrow', 'Restore layout', 'restore-layout') : !standalone ? layoutButton('chat', view.layout === 'service-chat' ? 'Hide chat' : 'Show chat', 'focus-toggle-chat', `aria-pressed="${view.layout === 'service-chat'}"`) : ''}${layoutButton('close', 'Exit focus', 'exit-service-focus')}${layoutButton('focus', document.fullscreenElement === root ? 'Exit full screen' : 'Full screen', 'service-fullscreen', `aria-pressed="${document.fullscreenElement === root}"`)}${view.layout === 'service-only' && w.run ? `<small class="focus-run-status">Run ${esc(w.run.status)}${w.run.error ? ' · needs attention' : ''}</small>` : ''}${showError && view.fullscreenError ? `<small class="fullscreen-error" role="status">${esc(view.fullscreenError)}</small>` : ''}` : layoutButton('focus', 'Focus', 'service-focus', `aria-pressed="false" ${available ? '' : 'disabled'}`);
+}
+function agentLayoutControls(w) {
+    if (view.layout === 'chat-only')
+        return focusControls(w, false);
+    return `${view.layout === 'service-chat' && innerWidth < 900 ? layoutButton('chat', 'Hide chat', 'focus-toggle-chat', 'aria-pressed="true"') : ''}${layoutButton('focus', 'Focus chat', 'focus-chat', 'aria-pressed="false"')}`;
+}
+function captureLayoutReturn(anchor) {
+    return { workId: current()?.id || '', tab: view.tab, layout: view.layout === 'chat-only' ? 'workspace' : view.layout, anchor, selector: focusKey(anchor) };
+}
+function resetWorkspaceFocus() {
+    view.layout = 'workspace';
+    workspaceReturn = undefined;
+    chatReturn = undefined;
+    view.fullscreenError = '';
+}
+function restoreLayoutFocus(target) {
+    const candidate = target?.anchor?.isConnected ? target.anchor : target?.selector ? root.querySelector(target.selector) : null;
+    const visible = (node) => node && !!node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
+    if (visible(candidate))
+        candidate.focus({ preventScroll: true });
+    else
+        [...root.querySelectorAll('[data-action=restore-layout],[data-action=exit-service-focus],[data-action=focus-chat],[data-action=service-focus],[data-action^=tab-]')].find(visible)?.focus({ preventScroll: true });
+}
+function enterWorkspaceFocus(mode, anchor) {
+    if (view.layout === mode) {
+        closeModal();
+        return;
+    }
+    areaChoice++;
+    if (!workspaceReturn)
+        workspaceReturn = captureLayoutReturn(anchor);
+    if (mode === 'chat-only' && view.layout !== 'chat-only')
+        chatReturn = captureLayoutReturn(anchor);
+    view.layout = mode;
+    closeModal();
+    render();
+    restoreLayoutFocus();
+}
+function restoreChatLayout() {
+    if (view.layout !== 'chat-only')
+        return;
+    const target = chatReturn;
+    view.layout = target?.layout || 'workspace';
+    chatReturn = undefined;
+    if (view.layout === 'workspace') {
+        workspaceReturn = undefined;
+        view.fullscreenError = '';
+    }
+    render();
+    restoreLayoutFocus(target);
+}
+async function exitWorkspaceFocus() {
+    if (document.fullscreenElement === root) {
+        try {
+            await document.exitFullscreen();
+            if (document.fullscreenElement === root)
+                throw new Error();
+        }
+        catch {
+            view.fullscreenError = 'Full screen could not be closed. Exit full screen and try again.';
+            render();
+            return false;
+        }
+    }
+    const target = workspaceReturn;
+    if (target)
+        view.tab = target.tab;
+    resetWorkspaceFocus();
+    render();
+    restoreLayoutFocus(target);
+    return true;
+}
+function messageMarkup(w, sessionId, messages) {
+    return activityGroups(messages).map(group => {
+        const key = `${adapter.identityEpoch}:${w.id}:${sessionId}:${group.key}`;
+        if (group.activity) {
+            const running = group.messages.some(m => m.tool?.status === 'Running'), failures = group.messages.filter(m => m.tool?.status === 'Failed'), unknown = group.messages.some(m => m.tool?.status?.includes('confirmed'));
+            return `<details class="activity" data-message-key="${esc(key)}" data-activity-key="${esc(key)}" ${expandedActivity.get(key) ? 'open' : ''}><summary>${icon('terminal', 14)} Activity · ${group.messages.length} ${group.messages.length === 1 ? 'tool' : 'tools'} · ${failures.length ? 'Needs attention' : running ? 'Running' : unknown ? 'Result not confirmed' : 'Completed'}${failures.length ? ` · ${failures.length} failed<small class="activity-error">${esc(failures[0]?.tool?.content?.slice(0, 160) || 'A tool failed. Open Activity to review the result.')}</small>` : ''}</summary>${group.messages.map(m => `<details class="tool-event" data-message-key="${esc(`${key}:${m.tool?.id || m.id}`)}" data-activity-key="${esc(`${key}:${m.tool?.id || m.id}`)}" ${expandedActivity.get(`${key}:${m.tool?.id || m.id}`) ? "open" : ""}><summary>${esc(m.tool?.name)} · ${esc(m.tool?.status)}</summary><pre>${esc(m.tool?.content)}</pre></details>`).join('')}</details>`;
+        }
+        return group.messages.map(m => `<div class="message ${m.role}" data-message-key="${esc(key)}">${m.role === 'assistant' ? `<div class="message-author">${icon('spark', 14)} piwork</div>` : ''}<div class="message-text">${esc(m.text)}</div>${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${icon('file', 13)} ${esc(m.source)}</button>` : ''}</div>`).join('');
+    }).join('');
+}
+const webCommands = ['new', 'resume', 'model', 'thinking', 'settings'];
+function paletteToken(draft) { const match = /^(\s*)\/([^\s]*)/.exec(draft); return match && view.commandCaret >= match[1].length + 1 && view.commandCaret <= match[0].length ? match[2] : undefined; }
+function commandChoices(w, draft) {
+    if (view.literalSlash || view.commandDismissed === draft || paletteToken(draft) === undefined)
+        return [];
+    const query = paletteToken(draft).toLowerCase();
+    const directory = adapter.commands.get(w.id);
+    return [...webCommands.map(name => ({ command: `/${name}`, kind: 'web', description: { new: 'Start a new Session', resume: 'Choose a saved Session', model: 'Choose a model', thinking: 'Choose a Thinking level', settings: 'Open Work settings' }[name] || '', sourceName: 'Desktop' })), ...(directory?.confirmed && !directory.error ? directory.items : [])].filter(command => command.command.slice(1).toLowerCase().includes(query)).slice(0, 30);
+}
+function commandPalette(w, draft) {
+    const items = commandChoices(w, draft);
+    if (view.literalSlash || view.commandDismissed === draft || paletteToken(draft) === undefined)
+        return '';
+    if (!adapter.commands.has(w.id) && adapter.chatCapabilities.has(w.id))
+        queueMicrotask(() => { if (!adapter.commands.has(w.id))
+            void adapter.loadCommands(w.id); });
+    view.commandIndex = Math.min(view.commandIndex, Math.max(0, items.length - 1));
+    const directory = adapter.commands.get(w.id);
+    return `<div class="command-palette menu-list" role="listbox" aria-label="Slash commands">${items.map((command, index) => `${index === 0 || items[index - 1]?.kind !== command.kind ? `<small>${esc(command.kind === 'web' ? 'Workspace' : command.kind === 'skill' ? 'Skills' : 'Prompt templates')}</small>` : ''}<button class="button" data-action="choose-command" data-command="${esc(command.command)}" role="option" aria-selected="${index === view.commandIndex}"><strong>${esc(command.command)}</strong><span>${esc(command.description)}</span><small>${esc(command.sourceName)}</small></button>`).join('')}${directory?.loading ? '<p>Loading resource commands…</p>' : directory?.error ? `<p role="status">${esc(directory.error)} ${btn('Retry', 'load-commands', 'text-button')}</p>` : directory?.confirmed && !directory.items.length ? '<p>No resource commands in this Work.</p>' : ''}${!items.length ? '<p>No matching commands. Choose another command or send as text.</p>' : ''}</div>`;
+}
+function fillCommand(command) {
+    const work = current();
+    if (!work)
+        return;
+    const key = draftKey(work), draft = view.drafts[key] || '';
+    view.drafts[key] = draft.replace(/^(\s*)\/[^\s]*/, `$1${command}`) + (/\s/.test(draft.trimStart()) ? '' : ' ');
+    view.commandIndex = 0;
+    render();
+    const input = root.querySelector('#composer');
+    if (input) {
+        input.value = view.drafts[key];
+        input.focus();
+        const position = (/^\s*\/[^\s]*/.exec(input.value)?.[0].length ?? input.value.length) + 1;
+        view.commandCaret = Math.min(position, input.value.length);
+        input.setSelectionRange(view.commandCaret, view.commandCaret);
+    }
 }
 function files(w) {
     const directory = adapter.directories.get(`${w.id}:${view.path}`);
     if (directory?.loading && !directory.checkedAt)
-        return feedback(`Reading workspace ${esc(view.path)}…`);
+        return `<div class="local-loading" role="status" aria-busy="true">Loading workspace ${esc(view.path)}…</div>`;
     if (w.resourceErrors?.files)
         return feedback(esc(w.resourceErrors.files), "warning", btn("Refresh files", "refresh-files"));
     if (adapter.state.scenario === "files-failed")
@@ -463,6 +661,24 @@ function modalMarkup() {
     const cancel = () => btn("Cancel", "close-modal");
     const close = () => btn("Close", "close-modal");
     switch (view.modal) {
+        case 'chat-models':
+        case 'chat-thinking': {
+            if (!target)
+                break;
+            const catalog = adapter.models.get(target.id), state = adapter.modelSelection(target.id, view.data.sessionId || '');
+            const thinking = view.modal === 'chat-thinking', model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+            title = thinking ? 'Thinking' : 'Model';
+            const options = thinking ? (model?.thinkingLevels || []).map(level => ({ value: level, name: thinkingName(level), note: '', selected: level === state.thinking })) :
+                [...(catalog?.defaultModel ? [catalog.defaultModel] : []), ...(catalog?.models || []).filter(m => m.modelRef !== null)].map(m => ({ value: m.modelRef || '', name: modelDisplayName(m), note: m.modelRef === null ? 'Work default' : '', selected: m.modelRef === state.ref }));
+            body = `<p class="muted">For your next message${view.data.sessionId ? '' : ' in a new Session'}.</p><div class="menu-list chat-picker-menu" role="menu" aria-label="${thinking ? 'Thinking levels' : 'Models'}">${options.map(option => btn(`<span>${esc(option.name)}</span>${option.note ? `<small>${esc(option.note)}</small>` : ''}${option.selected ? icon('check', 16) : ''}`, 'choose-chat-setting', '', `role="menuitemradio" aria-checked="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${thinking ? 'thinking' : 'model'}"`)).join('')}</div>${state.error ? feedback(esc(state.error), 'warning') : ''}`;
+            footer = cancel();
+            break;
+        }
+        case 'chat-input-options':
+            title = 'Input options';
+            body = `<label class="check-row"><input id="include-identity" type="checkbox" ${view.includeIdentity ? 'checked' : ''}> Include Service identity</label>${current() && (view.drafts[draftKey(current())] || '').trimStart().startsWith('/') && !view.literalSlash ? '<p class="muted">Service identity is not added to commands. Only command arguments are sent.</p>' : ''}<p class="muted">Adds the selected Service name and port to ordinary messages.</p><details><summary>What is included?</summary><p>Identity only. No page content, cookies, or unsaved application inputs.</p></details>`;
+            footer = close();
+            break;
         case "account":
             title = "Your account";
             body = `<div class="identity-block"><span class="avatar large">${esc(adapter.state.core.account.slice(0, 1).toUpperCase())}</span><div><strong>${esc(adapter.state.core.account)}</strong><p>${esc(adapter.state.core.account)}</p></div></div><dl><dt>Role</dt><dd>${esc(adapter.state.core.role)}</dd><dt>Core</dt><dd>${esc(adapter.state.core.address)}</dd></dl><p class="muted">Desktop only shows the Works owned by this account.</p>`;
@@ -535,7 +751,7 @@ function modalMarkup() {
             break;
         case "sessions":
             title = "Sessions";
-            body = `<p>Conversations within ${esc(target?.name)}. Switching Sessions does not stop an active Run.</p><div class="session-list">${target?.sessions.map((s) => `<button data-action="select-session" data-id="${s.id}" class="${s.id === view.session ? "selected" : ""}"><span>${icon("chat", 17)}${esc(s.title)}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : s.id === view.session ? icon("check", 16) : ""}</button>`).join("") || "<p>No Sessions yet.</p>"}</div>`;
+            body = `<p>Conversations within ${esc(target?.name)}. Switching Sessions does not stop an active Run.</p><div class="session-list">${target?.sessions.map((s) => `<button data-action="select-session" data-id="${s.id}" class="${s.id === view.session ? "selected" : ""}"><span>${icon("chat", 17)}${esc(sessionDisplayName(target, s))}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : s.id === view.session ? icon("check", 16) : ""}</button>`).join("") || "<p>No Sessions yet.</p>"}</div>`;
             footer = `${close()}${btn(`${icon("plus")} New session`, "new-session", "primary")}`;
             break;
         case "agent-menu":
@@ -735,7 +951,7 @@ function focusKey(el) {
         return "#" + CSS.escape(el.id);
     const action = el.dataset.action;
     if (action)
-        return `[data-action="${CSS.escape(action)}"]${el.dataset.id ? `[data-id="${CSS.escape(el.dataset.id)}"]` : ""}${el.dataset.path ? `[data-path="${CSS.escape(el.dataset.path)}"]` : ""}`;
+        return `[data-action="${CSS.escape(action)}"]${el.dataset.id ? `[data-id="${CSS.escape(el.dataset.id)}"]` : ""}${el.dataset.path ? `[data-path="${CSS.escape(el.dataset.path)}"]` : ""}${el.dataset.optionValue !== undefined ? `[data-option-value="${CSS.escape(el.dataset.optionValue)}"]` : ''}`;
     return "";
 }
 async function guard(next) {
@@ -882,6 +1098,93 @@ async function handleAction(action, el, record) {
     if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete'].includes(action))
         throw new Error('This Work is not ready for new runtime or file changes. Check its current state.');
     switch (action) {
+        case 'open-chat-models':
+            openChatPicker('model');
+            break;
+        case 'open-chat-thinking':
+            openChatPicker('thinking');
+            break;
+        case 'chat-input-options':
+            openModal('chat-input-options');
+            break;
+        case 'choose-chat-setting': {
+            if (!currentWork || view.data.workId !== currentWork.id || view.data.sessionId !== view.session)
+                break;
+            const kind = el.dataset.kind;
+            if (kind === 'model')
+                adapter.selectModel(currentWork.id, view.session, el.dataset.optionValue || null);
+            else
+                adapter.selectThinking(currentWork.id, view.session, el.dataset.optionValue);
+            if (pendingWebCommand && pendingWebCommand.kind === kind) {
+                const state = adapter.modelSelection(currentWork.id, view.session);
+                Object.assign(pendingWebCommand, { workId: currentWork.id, sessionId: view.session, pair: { ref: state.ref, thinking: state.thinking } });
+            }
+            closeModal();
+            confirmPendingChatCommand();
+            break;
+        }
+        case 'service-focus':
+            enterWorkspaceFocus(route()[0] === 'app' ? 'service-only' : 'service-chat', el);
+            break;
+        case 'focus-toggle-chat':
+            if (view.layout === 'service-chat' || view.layout === 'service-only') {
+                view.layout = view.layout === 'service-chat' ? 'service-only' : 'service-chat';
+                render();
+                if (view.layout === 'service-chat')
+                    root.querySelector('#composer')?.focus();
+                else
+                    restoreLayoutFocus();
+            }
+            break;
+        case 'restore-layout':
+            restoreChatLayout();
+            break;
+        case 'exit-service-focus':
+            await exitWorkspaceFocus();
+            break;
+        case 'service-fullscreen':
+            try {
+                if (document.fullscreenElement === root)
+                    await document.exitFullscreen();
+                else if (root.requestFullscreen)
+                    await root.requestFullscreen();
+                else
+                    throw new Error();
+                view.fullscreenError = '';
+            }
+            catch {
+                view.fullscreenError = document.fullscreenElement === root ? 'Full screen could not be closed. Try again.' : 'Full screen could not be opened. Focus remains available.';
+            }
+            render();
+            break;
+        case 'choose-command':
+            fillCommand(el.dataset.command);
+            break;
+        case 'load-commands':
+            if (currentWork)
+                await adapter.loadCommands(currentWork.id);
+            break;
+        case 'toggle-slash-mode':
+            view.literalSlash = !view.literalSlash;
+            render();
+            break;
+        case 'check-chat-submission':
+            if (currentWork) {
+                const result = await stay(adapter.recoverChatSubmission(currentWork.id));
+                if (result) {
+                    if (result.kind === 'session') {
+                        const original = view.drafts[draftKey(currentWork)] || '';
+                        view.session = result.session.sessionId;
+                        if (original && !view.drafts[draftKey(currentWork)])
+                            view.drafts[draftKey(currentWork)] = original;
+                    }
+                    for (const old of actions.records.values())
+                        if (old.blocked && old.work === currentWork.id && old.kind === 'agent' && (result.kind === 'session' ? old.action === 'new-session' || old.action === 'send-message' : old.action === 'send-message'))
+                            actions.review(old);
+                }
+                render();
+            }
+            break;
         case "close-modal": {
             const key = focusReturn;
             closeModal();
@@ -910,7 +1213,7 @@ async function handleAction(action, el, record) {
         case "open-work":
             if (w) {
                 closeModal();
-                await stay(openWork(w));
+                await stay(openWork(w, record));
             }
             break;
         case "clear-search":
@@ -941,9 +1244,9 @@ async function handleAction(action, el, record) {
             openModal(action, { id: w?.id || "" });
             break;
         case 'sessions':
+            openModal('sessions', { id: w?.id || '' });
             if (currentWork)
                 await stay(adapter.loadSessions(currentWork.id));
-            openModal('sessions', { id: w?.id || '' });
             break;
         case "switch-core":
             openModal("switch-core");
@@ -1121,11 +1424,18 @@ async function handleAction(action, el, record) {
             break;
         }
         case "settings":
+            if (!await exitWorkspaceFocus())
+                break;
             if (w) {
                 await guard(async () => {
+                    location.hash = `/work/${w.id}/settings`;
+                    if (record)
+                        record.view = location.hash;
+                    render();
                     await stay(adapter.loadConfiguration(w.id));
                     view.config = structuredClone(w.config);
                     view.configDirty = false;
+                    consumeWebSelection("settings");
                     view.modal = "";
                     location.hash = `/work/${w.id}/settings`;
                     render();
@@ -1135,8 +1445,14 @@ async function handleAction(action, el, record) {
         case "tab-Services":
         case "tab-Files":
         case "tab-Chat":
+            if (!await exitWorkspaceFocus())
+                break;
             await guard(async () => {
+                areaChoice++;
                 view.tab = action.slice(4);
+                view.modal = "";
+                view.file = "";
+                render();
                 if (action === "tab-Services" && currentWork) {
                     await stay(adapter.loadServices(currentWork.id));
                     const service = activeService(currentWork);
@@ -1158,12 +1474,7 @@ async function handleAction(action, el, record) {
             });
             break;
         case "focus-chat":
-        case "return-service":
-            await guard(() => {
-                view.tab = action === "focus-chat" ? "Chat" : "Services";
-                view.modal = "";
-                render();
-            });
+            enterWorkspaceFocus('chat-only', el);
             break;
         case "toggle-agent":
             view.agentOpen = !view.agentOpen;
@@ -1172,15 +1483,21 @@ async function handleAction(action, el, record) {
         case "select-session":
             sessionChoice++;
             view.session = el.dataset.id;
+            consumeWebSelection('resume');
+            closeModal();
+            render();
             if (currentWork)
                 await stay(adapter.loadSession(currentWork.id, view.session));
             closeModal();
             break;
         case "new-session":
             if (currentWork) {
+                sessionChoice++;
                 view.session = await stay(adapter.newSession(currentWork.id));
-                if (record)
-                    actions.confirm(record, `Session created · ${view.session}`);
+                if (record) {
+                    record.businessId = view.session;
+                    actions.confirm(record, 'Session created');
+                }
                 closeModal();
                 render();
             }
@@ -1247,32 +1564,80 @@ async function handleAction(action, el, record) {
             if (currentWork) {
                 const originalKey = draftKey(currentWork);
                 const text = view.drafts[originalKey] || "";
-                if (!view.session)
+                if (text.trimStart().startsWith('/') && !view.literalSlash) {
+                    const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+                    const name = match?.[1] || '';
+                    if (webCommands.includes(name)) {
+                        if (match?.[2]?.trim())
+                            throw new Error('This workspace command does not accept arguments. Your draft is kept.');
+                        if (name === 'new') {
+                            view.session = await stay(adapter.newSession(currentWork.id));
+                        }
+                        else if (name === 'resume') {
+                            pendingWebCommand = { key: originalKey, text, kind: 'resume' };
+                            openModal('sessions');
+                            await stay(adapter.loadSessions(currentWork.id));
+                            return;
+                        }
+                        else if (name === 'model' || name === 'thinking') {
+                            pendingWebCommand = { key: originalKey, text, kind: name };
+                            openChatPicker(name);
+                            return;
+                        }
+                        else if (name === 'settings') {
+                            pendingWebCommand = { key: originalKey, text, kind: name };
+                            await handleAction('settings', el);
+                            return;
+                        }
+                        if (view.drafts[originalKey] === text)
+                            view.drafts[originalKey] = '';
+                        render();
+                        return;
+                    }
+                    if (adapter.chatCapabilities.get(currentWork.id) !== 1)
+                        throw new Error('Resource commands are unavailable in this Work. Choose Send as text to send a literal slash.');
+                    const directory = adapter.commands.get(currentWork.id);
+                    if (!directory?.confirmed || directory.error || !directory.items.some(command => command.command === `/${name}`))
+                        throw new Error('Unknown resource command. Choose an available command or Send as text.');
+                }
+                if (!view.session) {
                     view.session = await stay(adapter.newSession(currentWork.id));
+                    render();
+                    await stay(adapter.saveModel(currentWork.id, view.session));
+                }
                 adapter.selectedService = view.service;
-                await stay(adapter.send(currentWork.id, view.session, text, view.includeIdentity));
-                if (record)
-                    actions.confirm(record, `Accepted · ${currentWork.run?.id || "Run"}`);
+                await stay(adapter.send(currentWork.id, view.session, text, view.includeIdentity, text.trimStart().startsWith("/") && !view.literalSlash ? "command" : adapter.chatCapabilities.get(currentWork.id) === 1 ? "text" : undefined));
+                if (record) {
+                    record.businessId = currentWork.run?.id;
+                    actions.confirm(record, 'Message accepted');
+                }
                 if (view.drafts[draftKey(currentWork)] === text)
                     view.drafts[draftKey(currentWork)] = "";
                 if (view.drafts[originalKey] === text)
                     view.drafts[originalKey] = "";
                 view.scrollPinned = true;
                 render();
+                const composer = root.querySelector("#composer");
+                if (composer && composer.value === text)
+                    composer.value = view.drafts[draftKey(currentWork)] || "";
             }
             break;
         case "cancel-run":
             if (currentWork) {
                 await stay(adapter.cancelRun(currentWork.id));
-                if (record)
-                    actions.confirm(record, `Cancellation requested · ${currentWork.run?.id || "Run"}`);
+                if (record) {
+                    record.businessId = currentWork.run?.id;
+                    actions.confirm(record, 'Cancellation requested');
+                }
             }
             break;
         case "resume-run":
             if (currentWork) {
                 await stay(adapter.resumeRunConnection(currentWork.id));
-                if (record)
-                    actions.confirm(record, `Reconnected · ${currentWork.run?.id || "Run"}`);
+                if (record) {
+                    record.businessId = currentWork.run?.id;
+                    actions.confirm(record, 'Reconnected');
+                }
             }
             break;
         case "active-run":
@@ -1288,6 +1653,7 @@ async function handleAction(action, el, record) {
         case "open-source":
             if (currentWork) {
                 await guard(async () => {
+                    areaChoice++;
                     view.tab = "Files";
                     await stay(openFile(currentWork, el.dataset.path));
                     render();
@@ -1830,7 +2196,7 @@ async function copy(text) {
     }
 }
 function render() {
-    adapter.observePage(route()[1] || '', document.visibilityState === 'visible');
+    adapter.observePage(route()[1] || '', document.visibilityState === 'visible', route()[0] !== 'app');
     if (view.config && !view.config.advancedDirty)
         synchronizeConfiguration(view.config);
     const active = document.activeElement;
@@ -1839,8 +2205,17 @@ function render() {
     const selectionEnd = active && 'selectionEnd' in active ? active.selectionEnd : selection;
     const messages = root.querySelector("#messages");
     const scroll = messages?.scrollTop || 0;
+    const firstVisible = messages && !view.scrollPinned ? [...messages.querySelectorAll('[data-message-key]')].find(node => node.getBoundingClientRect().bottom > messages.getBoundingClientRect().top) : undefined;
+    const readingAnchor = firstVisible ? { key: firstVisible.dataset.messageKey, offset: firstVisible.getBoundingClientRect().top - messages.getBoundingClientRect().top } : undefined;
+    if (messages?.clientHeight && messages.dataset.readingKey)
+        chatReading.set(messages.dataset.readingKey, { scroll, pinned: view.scrollPinned, anchor: readingAnchor });
     const modalScroll = root.querySelector(".modal-body")?.scrollTop || 0;
     const r = route();
+    if (workspaceReturn && (workspaceReturn.workId !== r[1] || !['work', 'app'].includes(r[0])))
+        resetWorkspaceFocus();
+    root.dataset.layout = view.layout;
+    root.classList.toggle('service-focused', view.layout !== 'workspace');
+    root.classList.toggle('chat-focused', view.layout === 'chat-only');
     let html = "";
     if (adapter.state.scenario === "cli-closed")
         html = `${topbar()}<main class="auth-main">${empty("terminal", "Desktop’s local connection has closed", "Start piwork-cli desktop again, then open its new launch address. A browser-only retry cannot restart the CLI.", "")}</main>`;
@@ -1852,7 +2227,7 @@ function render() {
         if (w) {
             view.service = r[2];
             view.port = Number(r[3]) || 3000;
-            html = `${workHeader(w, true)}<div class="standalone-label">Independent application window · Closing this tab does not stop the Service</div><main class="standalone-app">${!adapter.project(w).usable ? workState(w) : services(w)}</main>`;
+            html = `${workHeader(w, true)}<div class="standalone-label">Independent application window · Closing this tab does not stop the Service</div><main class="standalone-app">${!adapter.project(w).usable ? `${view.layout !== 'workspace' ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ''}${workState(w)}` : services(w)}</main>`;
         }
         else
             html = works();
@@ -1907,10 +2282,22 @@ function render() {
     }
     const next = root.querySelector("#messages");
     if (next) {
-        next.scrollTop = view.scrollPinned ? next.scrollHeight : scroll;
+        const position = chatReading.get(next.dataset.readingKey || '');
+        if (next.clientHeight) {
+            view.scrollPinned = position?.pinned ?? view.scrollPinned;
+            next.scrollTop = view.scrollPinned ? next.scrollHeight : position?.scroll ?? scroll;
+            const reading = position?.anchor ?? readingAnchor;
+            if (reading && !view.scrollPinned) {
+                const anchor = [...next.querySelectorAll('[data-message-key]')].find(node => node.dataset.messageKey === reading.key);
+                if (anchor)
+                    next.scrollTop += anchor.getBoundingClientRect().top - next.getBoundingClientRect().top - reading.offset;
+            }
+        }
         if (!next.dataset.scrollBound) {
             next.dataset.scrollBound = "true";
             next.addEventListener("scroll", () => {
+                if (!next.clientHeight)
+                    return;
                 const pinned = next.scrollHeight - next.scrollTop - next.clientHeight < 70;
                 if (pinned !== view.scrollPinned) {
                     view.scrollPinned = pinned;
@@ -1975,8 +2362,12 @@ root.addEventListener("input", (e) => {
             break;
         case "composer": {
             const work = current();
-            if (work)
+            if (work) {
                 view.drafts[draftKey(work)] = value;
+                view.commandCaret = input.selectionStart ?? value.length;
+                view.commandIndex = 0;
+                render();
+            }
             break;
         }
         case "note-title":
@@ -2031,15 +2422,6 @@ root.addEventListener("change", (e) => {
         void adapter.loadRequests(w.id, value).catch(error => toast(error.message));
         render();
     }
-    if (input.id === 'model-select' && w) {
-        try {
-            adapter.selectModel(w.id, view.session, value || null);
-        }
-        catch (error) {
-            toast(error.message);
-        }
-        render();
-    }
     if (input.dataset.fileSelect) {
         view.selected = checked
             ? [...view.selected, input.dataset.fileSelect]
@@ -2071,6 +2453,7 @@ root.addEventListener("change", (e) => {
             render();
             break;
         case "service-select":
+            serviceChoice++;
             view.serviceOpenError = "";
             view.service = value;
             view.port = w?.services.find((s) => s.id === value)?.ports[0] || 3000;
@@ -2079,6 +2462,7 @@ root.addEventListener("change", (e) => {
             render();
             break;
         case "port-select":
+            serviceChoice++;
             view.serviceOpenError = "";
             view.port = Number(value);
             if (w && view.port)
@@ -2207,6 +2591,77 @@ root.addEventListener("compositionend", () => {
 });
 root.addEventListener("keydown", (e) => {
     const dialog = root.querySelector("#modal");
+    if (e.isComposing || composition) {
+        if (e.key === 'Enter')
+            e.preventDefault();
+        return;
+    }
+    if (dialog?.open && e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        const key = focusReturn;
+        closeModal();
+        if (key)
+            root.querySelector(key)?.focus();
+        return;
+    }
+    if (dialog?.open && ['chat-models', 'chat-thinking'].includes(view.modal) && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+        const options = [...dialog.querySelectorAll('[role=menuitemradio]:not([disabled])')];
+        if (options.length) {
+            e.preventDefault();
+            const index = options.indexOf(document.activeElement);
+            options[e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus();
+        }
+        return;
+    }
+    const work = current(), draft = work ? view.drafts[draftKey(work)] || '' : '';
+    const choices = work ? commandChoices(work, draft) : [];
+    if (!dialog?.open && e.target.id === 'composer' && !e.isComposing && !composition && choices.length) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            view.commandIndex = (view.commandIndex + (e.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
+            render();
+            return;
+        }
+        if ((e.key === 'Enter' && !e.shiftKey) || (e.key === 'Tab' && !e.shiftKey)) {
+            e.preventDefault();
+            fillCommand(choices[view.commandIndex].command);
+            return;
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            view.commandDismissed = draft;
+            render();
+            return;
+        }
+    }
+    if (!dialog?.open && e.key === 'Escape' && !e.isComposing && !composition) {
+        if (root.querySelector('.command-palette')) {
+            e.preventDefault();
+            view.commandDismissed = draft;
+            render();
+            return;
+        }
+        if (document.fullscreenElement)
+            return;
+        if (view.layout === 'chat-only') {
+            e.preventDefault();
+            restoreChatLayout();
+            return;
+        }
+        if (view.layout === 'service-chat' && innerWidth < 900) {
+            e.preventDefault();
+            view.layout = 'service-only';
+            render();
+            restoreLayoutFocus();
+            return;
+        }
+        if (view.layout !== 'workspace') {
+            e.preventDefault();
+            void exitWorkspaceFocus();
+            return;
+        }
+    }
     if (e.key === "Tab" && dialog?.open) {
         const focusable = Array.from(dialog.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],summary,[tabindex]:not([tabindex="-1"])')).filter((node) => node.offsetParent !== null && !node.hidden);
         const first = focusable[0], last = focusable.at(-1);
@@ -2303,6 +2758,10 @@ adapter.subscribe(() => {
         view.config = null;
         view.configDirty = false;
         view.drafts = {};
+        resetWorkspaceFocus();
+        chatReading.clear();
+        expandedActivity.clear();
+        pendingWebCommand = undefined;
         fileSelections.clear();
         runtimeAvailability.clear();
         if (!(view.modal === "import" && adapter.inspection)) {
@@ -2316,6 +2775,7 @@ adapter.subscribe(() => {
         runtimeAvailability.set(item.id, adapter.project(item).usable);
     if (restore && work)
         queueMicrotask(() => { void restoreRuntimePanel(work).catch(() => undefined); });
+    confirmPendingChatCommand();
     render();
 });
 lastRoute = location.hash;
@@ -2331,6 +2791,9 @@ async function loadRoute() {
         return;
     const version = ++routeLoad;
     const r = route();
+    if (!['work', 'app'].includes(r[0]) || r[2] === 'settings' || workspaceReturn && workspaceReturn.workId !== r[1]) {
+        await exitWorkspaceFocus();
+    }
     if (!['work', 'app'].includes(r[0]) || !r[1]) {
         render();
         return;
@@ -2338,26 +2801,31 @@ async function loadRoute() {
     const record = actions.begin({ key: `route:${r[1]}:${version}`, kind: 'read', work: r[1], label: 'Loading Work', target: r[1], view: location.hash });
     try {
         const origin = location.hash, epoch = adapter.identityEpoch;
+        const choices = { area: areaChoice, service: serviceChoice, session: sessionChoice };
         const valid = () => version === routeLoad && origin === location.hash && epoch === adapter.identityEpoch;
-        const work = await adapter.loadWork(r[1]);
+        const work = await adapter.loadWork(r[1], r[0] !== 'app');
         if (!valid())
             return;
         workReadErrors.delete(r[1]);
         const previous = workSelections.get(work.id);
-        const service = work.services.find(s => s.id === (r[0] === 'app' ? r[2] : previous?.service ?? view.service)) ?? work.services.find(s => s.enabled && s.observed === 'Ready' && s.ports.length);
+        const serviceId = r[0] === 'app' ? r[2] : choices.service === serviceChoice ? previous?.service ?? view.service : view.service;
+        const port = r[0] === 'app' ? Number(r[3]) : choices.service === serviceChoice ? previous?.port || view.port : view.port;
+        const service = work.services.find(s => s.id === serviceId) ?? work.services.find(s => s.enabled && s.observed === 'Ready' && s.ports.length);
         view.service = service?.id ?? '';
-        view.port = service?.ports.includes(Number(r[3]) || previous?.port || view.port) ? Number(r[3]) || previous?.port || view.port : service?.ports[0] ?? 0;
-        view.session = work.sessions.find(s => s.id === (previous?.session ?? view.session))?.id ?? work.sessions[0]?.id ?? '';
-        if (view.session)
+        view.port = service?.ports.includes(port) ? port : service?.ports[0] ?? 0;
+        const sessionId = choices.session === sessionChoice ? previous?.session ?? view.session : view.session;
+        view.session = work.sessions.find(s => s.id === sessionId)?.id ?? work.sessions[0]?.id ?? '';
+        if (view.session && r[0] !== 'app')
             await adapter.loadSession(work.id, view.session);
         if (!valid())
             return;
         if (r[2] === 'settings' && !view.configDirty)
             view.config = structuredClone(work.config);
-        else if (r[0] !== 'app')
+        else if (r[0] !== 'app' && choices.area === areaChoice)
             view.tab = service ? 'Services' : 'Chat';
-        if (service?.observed === 'Ready' && view.port)
-            await adapter.ensureServiceEntry(work.id, service.id, view.port).catch(error => { if (valid())
+        const selectedService = activeService(work);
+        if (selectedService?.observed === 'Ready' && view.port)
+            await adapter.ensureServiceEntry(work.id, selectedService.id, view.port).catch(error => { if (valid())
                 toast(error.message); });
         if (valid())
             render();
@@ -2381,13 +2849,13 @@ window.addEventListener('popstate', () => { void loadRoute().catch(error => toas
 function reconcileHTML(parent, html) {
     const template = document.createElement('template');
     template.innerHTML = html;
-    const key = (node) => node instanceof Element ? node.getAttribute('data-service-key') ? `frame:${node.getAttribute('data-service-key')}` : node.id ? `id:${node.id}` : `${node.tagName}:${node.getAttribute('class')?.split(' ')[0] ?? ''}` : node.nodeType === Node.TEXT_NODE ? '#text' : '#other';
+    const key = (node) => node instanceof Element ? node.getAttribute('data-message-key') ? `message:${node.getAttribute('data-message-key')}` : node.getAttribute('data-service-key') ? `frame:${node.getAttribute('data-service-key')}` : node.id ? `id:${node.id}` : `${node.tagName}:${node.getAttribute('class')?.split(' ')[0] ?? ''}` : node.nodeType === Node.TEXT_NODE ? '#text' : '#other';
     const patch = (target, incoming) => {
         if (target instanceof Element && incoming instanceof Element) {
             if (target instanceof HTMLIFrameElement)
                 return;
             for (const attr of Array.from(target.attributes))
-                if (!incoming.hasAttribute(attr.name) && !(target instanceof HTMLDialogElement && attr.name === 'open') && attr.name !== 'data-observed' && attr.name !== 'data-bound' && attr.name !== 'data-scroll-bound')
+                if (!incoming.hasAttribute(attr.name) && !((target instanceof HTMLDialogElement || target instanceof HTMLDetailsElement) && attr.name === 'open') && attr.name !== 'data-observed' && attr.name !== 'data-bound' && attr.name !== 'data-scroll-bound')
                     target.removeAttribute(attr.name);
             for (const attr of Array.from(incoming.attributes))
                 if (target.getAttribute(attr.name) !== attr.value)
@@ -2469,6 +2937,23 @@ setInterval(() => {
     statusRefreshRunning = true;
     void adapter.refreshVisibleWork(work.id).catch(() => undefined).finally(() => { statusRefreshRunning = false; });
 }, 5000);
-document.addEventListener('visibilitychange', () => { adapter.observePage(route()[1] || '', document.visibilityState === 'visible'); });
+document.addEventListener('visibilitychange', () => { adapter.observePage(route()[1] || '', document.visibilityState === 'visible', route()[0] !== 'app'); });
 window.addEventListener('pagehide', () => { adapter.observePage('', false); });
+function consumeWebSelection(kind) { if (pendingWebCommand?.kind === kind) {
+    if (view.drafts[pendingWebCommand.key] === pendingWebCommand.text)
+        view.drafts[pendingWebCommand.key] = '';
+    pendingWebCommand = undefined;
+} }
+root.addEventListener('toggle', event => { const target = event.target; if (target instanceof HTMLDetailsElement && target.dataset.activityKey)
+    expandedActivity.set(target.dataset.activityKey, target.open); }, true);
+document.addEventListener('fullscreenchange', () => render());
+function composerCaret(event) { const input = event.target; if (input instanceof HTMLTextAreaElement && input.id === 'composer' && !composition) {
+    const position = input.selectionStart ?? 0;
+    if (position !== view.commandCaret) {
+        view.commandCaret = position;
+        render();
+    }
+} }
+root.addEventListener('click', composerCaret);
+root.addEventListener('keyup', composerCaret);
 //# sourceMappingURL=app.js.map

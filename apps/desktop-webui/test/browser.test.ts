@@ -461,7 +461,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
       }
       runAnswer = `Notes analyzed. Source: workspace /note.txt (${workspaceText}); Notes Service API /api/data (${serviceRecord}).`;
       response.writeHead(202, { "content-type": "application/json" });
-      return response.end(JSON.stringify({ run: { runId: submittedPrompt === "Expired cursor" ? "run-expired"
+      return response.end(JSON.stringify({ run: { sessionId: "session-12345678", state:1, runId: submittedPrompt === "Expired cursor" ? "run-expired"
         : submittedPrompt === "Read inaccessible /private" ? "run-unreachable" : "run-12345678" }, reused: false }));
     }
     if (request.url === `/api/v1/works/${workId}/runs/run-unreachable/events?after=0`) {

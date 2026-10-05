@@ -42,13 +42,19 @@ export interface WorkspaceFile {
   content?: string;
 }
 export interface Message {
+  id?: string;
+  runId?: string;
   role: "user" | "assistant";
   text: string;
   source?: string;
-  tool?: { name: string; status: string; content: string };
+  tool?: { id?: string; name: string; status: string; content: string; isError?: boolean };
 }
-export interface RunModel { modelRef: string | null; label: string; provider: string; model: string }
+export interface RunModel { modelRef: string | null; label: string; provider: string; model: string; thinkingLevels?: string[]; defaultThinkingLevel?: string }
 export interface Session {
+  thinkingLevel?: string;
+  loading?: boolean;
+  checkedAt?: string;
+  error?: string;
   id: string;
   title: string;
   messages: Message[];
@@ -58,6 +64,7 @@ export interface Session {
   runs?: Run[];
 }
 export interface Run {
+  thinkingLevel?: string;
   actualModel?: RunModel | null;
   source?: Session["source"];
   adoptedExperienceVersion?: number;

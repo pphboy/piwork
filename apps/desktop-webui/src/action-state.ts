@@ -97,27 +97,35 @@ export class ActionState {
 /** Safe DOM text and local status regions, without replacing input/iframe nodes. */
 export function renderActionStates(root: HTMLElement, actions: ActionState, view: string, intentFor: (element: HTMLElement) => ActionIntent | undefined, visibleRecord: (record: ActionRecord) => boolean = () => true) {
   root.querySelectorAll('[data-action-status]').forEach(node => node.remove());
+  const shown = (node: HTMLElement | null): node is HTMLElement => !!node && !!node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
+  const regions = [...root.querySelectorAll<HTMLElement>('main, .main-panel, .agent-panel')];
   for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
     if (button.dataset.actionLocked) { button.disabled = button.dataset.actionBaseDisabled === 'true'; delete button.dataset.actionLocked; delete button.dataset.actionBaseDisabled; button.removeAttribute('aria-busy'); }
     const intent = intentFor(button); if (!intent) continue;
     if (actions.conflict(intent)) { button.dataset.actionBaseDisabled = String(button.disabled); button.dataset.actionLocked = 'true'; button.disabled = true; button.setAttribute('aria-busy', 'true'); }
   }
   for (const record of actions.records.values()) {
+    if(record.key.startsWith('route:') && !record.error)continue;
     if (!actions.visible(record) || record.view && record.view !== view || !visibleRecord(record)) continue;
     if (!record.pending && record.error && root.textContent?.includes(record.error) && !record.blocked && record.refresh !== 'failed') continue;
     if (!record.pending && record.result && root.textContent?.includes(record.result) && !record.error && !record.blocked && record.refresh === '') continue;
-    const anchor = record.anchor ? root.querySelector<HTMLElement>(record.anchor) : null;
-    const region = anchor?.closest<HTMLElement>('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ??
-      root.querySelector<HTMLElement>('main, .main-panel, .agent-panel') ?? root;
+    const anchor = record.anchor ? [...root.querySelectorAll<HTMLElement>(record.anchor)].find(shown) : null;
+    const anchored = anchor?.closest<HTMLElement>('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ?? null;
+    const region = shown(anchored) ? anchored : regions.find(shown) ?? root;
     if (!region) continue;
     const node = document.createElement('div'); node.dataset.actionStatus = record.key;
-    node.className = `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
+    node.className = record.kind==='read' && !record.error && record.refresh!=='failed' ? 'local-read-status' : `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
     node.setAttribute('role', 'status'); node.setAttribute('aria-live', 'polite'); node.setAttribute('aria-busy', String(record.pending || record.refresh === 'refreshing'));
     const visible = { ...record };
     if (record.error && root.textContent?.includes(record.error)) visible.error = undefined;
     if (record.refreshError && root.textContent?.includes(record.refreshError)) visible.refreshError = undefined;
     if (record.result && root.textContent?.includes(record.result)) { visible.result = undefined; visible.phase = 'Confirmed'; }
     node.textContent = actions.message(visible);
+    if (record.businessId && ['new-session','send-message','cancel-run','resume-run'].includes(record.action || '')) {
+      const details = document.createElement('details'), summary = document.createElement('summary'), identity = document.createElement('code');
+      details.className='action-details'; summary.textContent=record.action==='new-session'?'Session details':'Run details'; identity.textContent=record.businessId;
+      details.append(summary,identity); node.append(details);
+    }
     // Status changes must not move the top of an interactive application frame.
     if (region.querySelector('iframe')) region.append(node); else region.prepend(node);
   }

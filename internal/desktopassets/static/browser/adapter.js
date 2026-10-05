@@ -1,3 +1,4 @@
+import { historyMessages, resultText, upsertTool } from './chat-projection.js';
 import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
@@ -29,6 +30,13 @@ export class DesktopAdapter {
     requestRetries = new Map();
     models = new Map();
     modelSelections = new Map();
+    chatCapabilities = new Map();
+    commands = new Map();
+    chatSubmissions = new Map();
+    pairSaves = new Map();
+    chatSelection = '';
+    sessionVersions = new Map();
+    activateChat(id, sessionId) { this.chatSelection = `${id}:${sessionId}`; }
     status = {};
     inspection = null;
     inspectionTransfer = '';
@@ -75,6 +83,7 @@ export class DesktopAdapter {
     terminalEvidence = new Map();
     observationVisible = true;
     visibleWorkId = '';
+    visibleChat = true;
     capabilityReads = new Map();
     sessionTimer;
     authCheck;
@@ -136,6 +145,11 @@ export class DesktopAdapter {
         this.directories.clear();
         this.models.clear();
         this.modelSelections.clear();
+        this.chatCapabilities.clear();
+        this.sessionVersions.clear();
+        this.commands.clear();
+        this.chatSubmissions.clear();
+        this.pairSaves.clear();
         this.requests.clear();
         this.requestDetails.clear();
         this.requestRetries.clear();
@@ -617,7 +631,7 @@ export class DesktopAdapter {
             throw error;
         }
     }
-    async loadWork(id) {
+    async loadWork(id, includeChat = true) {
         const work = await this.refreshWorkStatus(id);
         if (!work)
             throw new DesktopError('NOT_FOUND', 'The Work is no longer available.', 404);
@@ -631,7 +645,7 @@ export class DesktopAdapter {
                 work.resourceErrors[name] = errorText(error);
             }
         }
-        if (['Ready', 'Degraded'].includes(work.status)) {
+        if (includeChat && ['Ready', 'Degraded'].includes(work.status)) {
             try {
                 await Promise.all([this.loadSessions(id), this.loadModels(id)]);
             }
@@ -774,20 +788,20 @@ export class DesktopAdapter {
         this.emit();
         return value;
     }
-    runRecord(raw, sessionId) { return { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, created: raw.acceptedAt ?? '', actualModel: raw.actualModel ?? null, source: raw.source, adoptedExperienceVersion: raw.adoptedExperienceVersion }; }
+    runRecord(raw, sessionId) { return { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, created: raw.acceptedAt ?? '', actualModel: raw.actualModel ?? null, thinkingLevel: raw.thinkingLevel ?? "off", source: raw.source, adoptedExperienceVersion: raw.adoptedExperienceVersion }; }
     modelSelection(id, sessionId) {
         const key = `${id}:${sessionId}`;
         let state = this.modelSelections.get(key);
         if (!state) {
             const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
-            state = { phase: 'clean', ref: session?.modelPreference?.modelRef ?? null, error: '', revision: 0 };
+            state = { phase: 'clean', ref: session?.modelPreference?.modelRef ?? null, thinking: session?.thinkingLevel ?? 'off', error: '', revision: 0 };
             this.modelSelections.set(key, state);
         }
         return state;
     }
     modelReady(id, sessionId) {
         const catalog = this.models.get(id), session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
-        return !!catalog?.confirmed && !catalog.error && !catalog.loading && catalog.models.length > 0 && this.modelSelection(id, sessionId).phase === 'clean'
+        return !!catalog?.confirmed && !catalog.error && !!catalog.defaultModel && !this.chatSubmissions.has(id) && (this.modelSelection(id, sessionId).phase === 'clean' || !sessionId && this.modelSelection(id, sessionId).phase === 'dirty')
             && (!session?.modelPreference || session.modelPreference.availability === 'available');
     }
     async loadModels(id) {
@@ -796,12 +810,31 @@ export class DesktopAdapter {
         this.models.set(id, state);
         this.emit();
         try {
-            const value = await this.request(`works/${part(id)}/models`);
+            try {
+                const capabilities = await this.request(`works/${part(id)}/chat-capabilities`);
+                if (epoch !== this.epoch)
+                    return;
+                this.chatCapabilities.set(id, capabilities.contractVersion === 1 ? 1 : 0);
+            }
+            catch (error) {
+                if (error.code === 'CONNECTION_CHANGED')
+                    throw error;
+                if (epoch !== this.epoch)
+                    return;
+                this.chatCapabilities.set(id, 0);
+            }
+            const value = await this.request(`works/${part(id)}/${this.chatCapabilities.get(id) === 1 ? 'chat-models' : 'models'}`);
+            if (value.availability === 'unavailable')
+                throw new DesktopError('MODEL_LIST_UNAVAILABLE', 'Available models could not be confirmed.');
             if (!Array.isArray(value.models) || !value.defaultModel)
                 throw new DesktopError('INVALID_RESPONSE', 'Model list is incomplete.');
             if (epoch !== this.epoch)
                 return;
             Object.assign(state, { confirmed: true, models: value.models, defaultModel: value.defaultModel, checkedAt: value.checkedAt, error: '' });
+            await this.loadCommands(id);
+            const selected = this.chatSelection?.startsWith(`${id}:`) ? this.chatSelection.slice(id.length + 1) : '';
+            if (selected)
+                await this.readSessionOptions(id, selected);
         }
         catch (error) {
             if (epoch === this.epoch)
@@ -815,67 +848,176 @@ export class DesktopAdapter {
             }
         }
     }
-    selectModel(id, sessionId, ref) { const state = this.modelSelection(id, sessionId); if (state.phase === 'saving' || state.phase === 'unknown')
-        throw new DesktopError('MODEL_NOT_CONFIRMED', 'Check the original Session model first.'); state.ref = ref; state.phase = 'dirty'; state.error = ''; state.revision++; this.emit(); }
-    confirmSessionModel(id, session, raw) {
+    selectModel(id, sessionId, ref) {
+        const state = this.modelSelection(id, sessionId);
+        if (state.phase === 'unknown')
+            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Check the original Session model first.');
+        state.ref = ref;
+        const catalog = this.models.get(id), model = ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === ref);
+        if (model?.thinkingLevels && !model.thinkingLevels.includes(state.thinking)) {
+            state.thinking = model.defaultThinkingLevel ?? 'off';
+            state.error = 'Thinking adjusted to a supported level for this model.';
+        }
+        else
+            state.error = '';
+        if (state.phase !== 'saving')
+            state.phase = 'dirty';
+        state.revision++;
+        this.emit();
+        if (sessionId)
+            void this.saveModel(id, sessionId).catch(() => undefined);
+    }
+    selectThinking(id, sessionId, thinking) {
+        const state = this.modelSelection(id, sessionId);
+        if (state.phase === 'unknown')
+            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Check the original settings first.');
+        const catalog = this.models.get(id), model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+        if (this.chatCapabilities.get(id) !== 1 || !model?.thinkingLevels?.includes(thinking))
+            throw new DesktopError('THINKING_LEVEL_UNSUPPORTED', 'Choose a supported Thinking level.');
+        state.thinking = thinking;
+        if (state.phase !== 'saving')
+            state.phase = 'dirty';
+        state.error = '';
+        state.revision++;
+        this.emit();
+        if (sessionId)
+            void this.saveModel(id, sessionId).catch(() => undefined);
+    }
+    confirmSessionModel(id, session, raw, version = this.sessionVersions.get(id) || 0) {
+        if (version !== (this.sessionVersions.get(id) || 0))
+            return;
         if (!raw || raw.sessionId !== session.id || raw.workId !== id)
             throw new DesktopError('INVALID_RESPONSE', 'Session model response belongs to another object.');
         session.modelPreference = raw.modelPreference ?? null;
+        session.thinkingLevel = raw.thinkingLevel ?? 'off';
         session.source = raw.source;
         const state = this.modelSelections.get(`${id}:${session.id}`);
-        if (state && (state.phase === 'unknown' || state.phase === 'clean')) {
+        if (state && (state.phase === 'clean')) {
             state.ref = session.modelPreference?.modelRef ?? null;
+            state.thinking = session.thinkingLevel ?? 'off';
             state.phase = 'clean';
             state.error = '';
         }
     }
-    async saveModel(id, sessionId) {
-        const state = this.modelSelection(id, sessionId), session = this.getWork(id)?.sessions.find(s => s.id === sessionId), epoch = this.epoch;
-        if (!session || state.phase !== 'dirty')
-            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Choose a model before saving.');
-        const catalog = this.models.get(id);
-        if (!catalog?.confirmed || !catalog.models.length || state.ref !== null && !catalog.models.some(m => m.modelRef === state.ref))
-            throw new DesktopError('MODEL_UNAVAILABLE', 'Choose an available model.');
-        const revision = state.revision, ref = state.ref;
-        state.phase = 'saving';
-        state.error = '';
-        this.emit();
+    async readSessionOptions(id, sessionId) {
+        if (this.chatCapabilities.get(id) !== 1)
+            return;
+        const epoch = this.epoch, version = this.sessionVersions.get(id) || 0;
         try {
-            const raw = await this.request(`works/${part(id)}/sessions/${part(sessionId)}/model`, 'PATCH', { modelRef: ref });
+            const raw = await this.request(`works/${part(id)}/sessions/${part(sessionId)}/chat-options`);
+            if (epoch !== this.epoch || version !== (this.sessionVersions.get(id) || 0) || raw.sessionId !== sessionId)
+                return;
+            const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+            if (!session)
+                return;
+            this.confirmSessionModel(id, session, { sessionId, workId: id, modelPreference: { ...raw.model, availability: raw.availability }, thinkingLevel: raw.thinkingLevel, source: session.source }, version);
+        }
+        catch { /* The original Session snapshot and any unknown mutation remain authoritative until explicit readback. */ }
+    }
+    async saveModel(id, sessionId) {
+        const key = `${id}:${sessionId}`, pending = this.pairSaves.get(key);
+        if (pending)
+            return pending;
+        const state = this.modelSelection(id, sessionId), epoch = this.epoch;
+        if (state.phase !== 'dirty')
+            return;
+        const catalog = this.models.get(id), model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+        if (!catalog?.confirmed || !model)
+            throw new DesktopError('MODEL_UNAVAILABLE', 'Choose an available model.');
+        const revision = state.revision, ref = state.ref, thinking = state.thinking;
+        state.phase = 'saving';
+        this.emit();
+        let save;
+        save = (async () => {
+            try {
+                const modern = this.chatCapabilities.get(id) === 1;
+                const raw = await this.request(`works/${part(id)}/sessions/${part(sessionId)}/${modern ? 'chat-options' : 'model'}`, 'PATCH', modern ? { modelRef: ref, thinkingLevel: thinking } : { modelRef: ref });
+                if (epoch !== this.epoch)
+                    return;
+                if (raw.sessionId !== sessionId || modern && (raw.modelRef !== ref || raw.thinkingLevel !== thinking) || !modern && raw.workId !== id)
+                    throw new DesktopError('INVALID_RESPONSE', 'The original Session settings could not be confirmed.');
+                const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+                if (session) {
+                    session.modelPreference = modern ? { ...raw.model, availability: raw.availability } : raw.modelPreference ?? null;
+                    session.thinkingLevel = modern ? raw.thinkingLevel : 'off';
+                }
+                this.sessionVersions.set(id, (this.sessionVersions.get(id) || 0) + 1);
+                state.confirmedRevision = revision;
+                state.phase = state.revision === revision ? 'clean' : 'dirty';
+            }
+            catch (error) {
+                if (epoch === this.epoch) {
+                    const code = error.code;
+                    state.phase = ['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'CORE_UNAVAILABLE', 'REQUEST_TIMEOUT', 'RUNTIME_UNAVAILABLE', 'CONNECTION_CHANGED'].includes(code) ? 'unknown' : 'dirty';
+                    state.error = state.phase === 'unknown' ? 'Settings are unconfirmed. Check original settings before sending. No change will be resent.' : errorText(error);
+                }
+                throw error;
+            }
+            finally {
+                if (this.pairSaves.get(key) === save)
+                    this.pairSaves.delete(key);
+                if (epoch === this.epoch) {
+                    this.emit();
+                    if (state.phase === 'dirty' && state.confirmedRevision === revision && this.chatSelection === key)
+                        void this.saveModel(id, sessionId).catch(() => undefined);
+                }
+            }
+        })();
+        this.pairSaves.set(key, save);
+        return save;
+    }
+    async checkSessionModel(id, sessionId) {
+        if (this.pairSaves.has(`${id}:${sessionId}`))
+            return;
+        const epoch = this.epoch, state = this.modelSelection(id, sessionId);
+        if (this.chatCapabilities.get(id) === 1) {
+            const raw = await this.request(`works/${part(id)}/sessions/${part(sessionId)}/chat-options`);
+            if (epoch !== this.epoch || raw.sessionId !== sessionId)
+                return;
+            state.ref = raw.modelRef;
+            state.thinking = raw.thinkingLevel;
+            state.phase = 'clean';
+            state.error = '';
+            const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+            if (session) {
+                session.modelPreference = { ...raw.model, availability: raw.availability };
+                session.thinkingLevel = raw.thinkingLevel;
+            }
+        }
+        else {
+            const raw = await this.request(`works/${part(id)}/sessions/${part(sessionId)}`);
             if (epoch !== this.epoch)
                 return;
-            const currentSession = this.getWork(id)?.sessions.find(s => s.id === sessionId);
-            if (!currentSession)
-                return;
-            if (raw.workId !== id || raw.sessionId !== sessionId)
-                throw new DesktopError('INVALID_RESPONSE', 'Model save could not be confirmed for the original Session.');
-            currentSession.modelPreference = raw.modelPreference ?? null;
-            if (state.revision === revision) {
-                state.phase = 'clean';
-                state.ref = currentSession.modelPreference?.modelRef ?? null;
-                state.error = '';
-            }
+            state.phase = 'clean';
+            const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+            if (session)
+                this.confirmSessionModel(id, session, raw.session);
+        }
+        this.emit();
+    }
+    async loadCommands(id) {
+        const state = { loading: true, confirmed: false, error: '', items: [], ...this.commands.get(id) };
+        state.loading = true;
+        this.commands.set(id, state);
+        this.emit();
+        try {
+            if (this.chatCapabilities.get(id) !== 1)
+                throw new DesktopError('CHAT_OPTIONS_UNSUPPORTED', 'Resource commands and Thinking require a Work with chat controls.');
+            const value = await this.request(`works/${part(id)}/commands`);
+            if (value.contractVersion !== 1 || !Array.isArray(value.commands))
+                throw new DesktopError('INVALID_RESPONSE', 'The command directory is incomplete.');
+            Object.assign(state, { items: value.commands, confirmed: true, error: '', checkedAt: value.checkedAt });
         }
         catch (error) {
-            if (epoch === this.epoch) {
-                const code = error.code;
-                state.phase = ['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'CORE_UNAVAILABLE', 'REQUEST_TIMEOUT', 'RUNTIME_UNAVAILABLE'].includes(code) ? 'unknown' : 'dirty';
-                state.error = state.phase === 'unknown' ? 'Model save is unconfirmed. Read this Session before sending; the change will not be resent.' : errorText(error);
-            }
-            throw error;
+            state.error = errorText(error);
         }
         finally {
-            if (epoch === this.epoch)
-                this.emit();
+            state.loading = false;
+            this.emit();
         }
     }
-    async checkSessionModel(id, sessionId) { const epoch = this.epoch; const raw = await this.request(`works/${part(id)}/sessions/${part(sessionId)}`); if (epoch !== this.epoch)
-        return; const session = this.getWork(id)?.sessions.find(s => s.id === sessionId); if (session) {
-        this.confirmSessionModel(id, session, raw.session);
-        this.emit();
-    } }
     async loadSessions(id) {
-        const work = this.getWork(id);
+        const work = this.getWork(id), version = this.sessionVersions.get(id) || 0;
         (work.resourceLoading ??= {}).agent = true;
         this.emit();
         try {
@@ -884,7 +1026,17 @@ export class DesktopAdapter {
                 throw new DesktopError('INVALID_RESPONSE', 'Session listing is incomplete.');
             (work.resourceChecked ??= {}).agent = new Date().toISOString();
             const existing = new Map(work.sessions.map(session => [session.id, session]));
-            work.sessions = value.sessions.map((raw) => ({ id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: existing.get(raw.sessionId)?.messages ?? [], modelPreference: raw.modelPreference ?? null, source: raw.source, runs: existing.get(raw.sessionId)?.runs ?? [] }));
+            work.sessions = value.sessions.map((raw) => ({ id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: existing.get(raw.sessionId)?.messages ?? [], modelPreference: raw.modelPreference ?? null, thinkingLevel: raw.thinkingLevel ?? 'off', source: raw.source, runs: existing.get(raw.sessionId)?.runs ?? [] }));
+            if (version !== (this.sessionVersions.get(id) || 0))
+                for (const previous of existing.values()) {
+                    const current = work.sessions.find(s => s.id === previous.id);
+                    if (!current)
+                        work.sessions.push(previous);
+                    else {
+                        current.modelPreference = previous.modelPreference;
+                        current.thinkingLevel = previous.thinkingLevel;
+                    }
+                }
             if (work.sessions[0] && !this.streams.has(id))
                 await this.loadSession(id, work.sessions[0].id);
             if (work.resourceErrors)
@@ -904,14 +1056,38 @@ export class DesktopAdapter {
         const work = this.getWork(id);
         if (work?.run?.sessionId === sessionId && ['accepted', 'running', 'cancelling'].includes(work.run.status) && this.streams.has(id))
             return;
-        const value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}`);
+        const version = this.sessionVersions.get(id) || 0;
+        const target = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+        if (target) {
+            target.loading = true;
+            target.error = '';
+            this.emit();
+        }
+        let value;
+        try {
+            value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}`);
+        }
+        catch (error) {
+            if (target)
+                target.error = errorText(error);
+            throw error;
+        }
+        finally {
+            if (target) {
+                target.loading = false;
+                this.emit();
+            }
+        }
         const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
         if (session) {
-            this.confirmSessionModel(id, session, value.session);
+            this.confirmSessionModel(id, session, value.session, version);
             session.runs = (value.runs ?? []).map((run) => this.runRecord(run, sessionId));
         }
-        if (session)
-            session.messages = (value.messages ?? []).filter((message) => ['user', 'assistant', 'toolResult'].includes(message.role)).map((message) => message.role === 'toolResult' ? ({ role: 'assistant', text: '', tool: { name: 'Tool result', status: 'Saved result', content: message.text ?? '' } }) : ({ role: message.role, text: message.text ?? '' }));
+        if (session) {
+            session.messages = historyMessages(value.messages ?? [], session.messages);
+            session.checkedAt = new Date().toISOString();
+            await this.readSessionOptions(id, sessionId);
+        }
         this.emit();
     }
     serviceEntryUrl(workId, serviceId, port) { return this.entries.get(`${workId}:${serviceId}:${port}`)?.entryUrl ?? null; }
@@ -1161,9 +1337,10 @@ export class DesktopAdapter {
         this.scheduleOperationPoll();
         await Promise.allSettled(pending);
     }
-    observePage(workId, visible) {
+    observePage(workId, visible, includeChat = true) {
         const entering = this.visibleWorkId !== workId || !this.observationVisible && visible;
         this.visibleWorkId = workId;
+        this.visibleChat = includeChat;
         if (visible !== this.observationVisible) {
             this.observationVisible = visible;
             if (!visible) {
@@ -1190,7 +1367,7 @@ export class DesktopAdapter {
         if (!work || !this.project(work).usable)
             return Promise.resolve();
         const pending = (async () => {
-            await Promise.allSettled([this.loadServices(id), this.loadSessions(id), this.loadModels(id), this.loadConfiguration(id), this.loadPackages(id)]);
+            await Promise.allSettled([this.loadServices(id), this.loadConfiguration(id), this.loadPackages(id), ...(this.visibleWorkId === id && !this.visibleChat ? [] : [this.loadSessions(id), this.loadModels(id)])]);
         })().finally(() => { if (this.capabilityReads.get(id) === pending)
             this.capabilityReads.delete(id); });
         this.capabilityReads.set(id, pending);
@@ -1212,23 +1389,111 @@ export class DesktopAdapter {
         this.finishWorkSync();
         this.emit();
     }
-    async newSession(id) { const value = await this.request(`works/${part(id)}/sessions`, 'POST'); const sessionId = value.sessionId ?? value.session?.sessionId; if (typeof sessionId !== 'string' || !sessionId)
-        throw new DesktopError('INVALID_RESPONSE', 'Session acceptance has no ID. Read Sessions before creating again.'); this.getWork(id).sessions.unshift({ id: sessionId, title: `Session ${sessionId}`, messages: [], modelPreference: value.modelPreference ?? null, source: value.source, runs: [] }); this.emit(); return sessionId; }
-    async send(id, sessionId, text, includeIdentity) {
+    acceptChatSession(id, value) {
+        const sessionId = value.sessionId ?? value.session?.sessionId;
+        if (typeof sessionId !== 'string' || !sessionId)
+            throw new DesktopError('INVALID_RESPONSE', 'Session acceptance has no ID. Check the original submission.');
+        this.sessionVersions.set(id, (this.sessionVersions.get(id) || 0) + 1);
+        const work = this.getWork(id);
+        if (!work.sessions.some(s => s.id === sessionId))
+            work.sessions.unshift({ id: sessionId, title: `Session ${sessionId}`, messages: [], modelPreference: value.modelPreference ?? null, thinkingLevel: value.thinkingLevel ?? 'off', source: value.source, runs: [] });
+        this.emit();
+        return sessionId;
+    }
+    async newSession(id) {
+        if (this.chatSubmissions.has(id))
+            throw new DesktopError('RESULT_UNKNOWN', 'Check the original chat submission first.');
+        const draft = { ...this.modelSelection(id, '') }, intent = { kind: 'session', key: crypto.randomUUID(), error: '', pair: { ref: draft.ref, thinking: draft.thinking, revision: draft.revision } };
+        this.chatSubmissions.set(id, intent);
+        this.emit();
+        try {
+            const value = await this.request(`works/${part(id)}/sessions`, 'POST', { idempotencyKey: intent.key });
+            const sessionId = this.acceptChatSession(id, value);
+            this.chatSubmissions.delete(id);
+            const state = this.modelSelection(id, sessionId);
+            if (draft.revision) {
+                Object.assign(state, { ref: draft.ref, thinking: draft.thinking, phase: 'dirty', revision: draft.revision });
+                void this.saveModel(id, sessionId).catch(() => undefined);
+            }
+            return sessionId;
+        }
+        catch (error) {
+            const code = error.code;
+            if (!['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'RUNTIME_UNAVAILABLE', 'CORE_UNAVAILABLE', 'REQUEST_TIMEOUT'].includes(code))
+                this.chatSubmissions.delete(id);
+            intent.error = errorText(error);
+            throw error;
+        }
+        finally {
+            this.emit();
+        }
+    }
+    async recoverChatSubmission(id) {
+        const intent = this.chatSubmissions.get(id);
+        if (!intent)
+            return;
+        const value = await this.request(`works/${part(id)}/${intent.kind === 'session' ? 'sessions' : 'runs'}/submissions/${part(intent.key)}`);
+        if (this.chatSubmissions.get(id) !== intent)
+            return;
+        if (value.kind !== intent.kind || value.key !== intent.key)
+            throw new DesktopError('INVALID_RESPONSE', 'The original submission could not be confirmed.');
+        if (value.status !== 'accepted') {
+            intent.error = 'Original submission not found yet. It may still be in flight. Check again; do not resubmit.';
+            this.emit();
+            return;
+        }
+        if (intent.kind === 'session') {
+            if (value.session?.workId !== id)
+                throw new DesktopError('INVALID_RESPONSE', 'The original Session ownership could not be confirmed.');
+            const sessionId = this.acceptChatSession(id, value.session);
+            if (intent.pair?.revision)
+                Object.assign(this.modelSelection(id, sessionId), { ...intent.pair, phase: 'dirty', error: 'Your selected settings are kept. Confirm them before sending.' });
+        }
+        else {
+            if (value.run?.workId !== id || value.run?.sessionId !== intent.sessionId || value.run?.submissionKey !== intent.key)
+                throw new DesktopError('INVALID_RESPONSE', 'The original Run identity could not be confirmed.');
+            const work = this.getWork(id);
+            work.run = this.runRecord(value.run, value.run.sessionId);
+            await this.loadSession(id, value.run.sessionId);
+            void this.resumeRun(id);
+        }
+        this.chatSubmissions.delete(id);
+        this.emit();
+        return value;
+    }
+    async send(id, sessionId, text, includeIdentity, inputMode) {
         if (!text.trim())
             throw new Error('Write a message first.');
         const work = this.getWork(id);
         if (!this.modelReady(id, sessionId))
-            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Confirm an available Session model before sending.');
-        const prompt = includeIdentity ? `${text}\n\nSelected Service: ${work.services.find(s => s.id === this.selectedService)?.domain ?? ''}` : text;
-        const value = await this.request(`works/${part(id)}/runs`, 'POST', { sessionId, prompt });
-        const raw = value.run;
-        work.run = this.runRecord(raw, sessionId);
-        (work.sessions.find(s => s.id === sessionId).runs ??= []).push(work.run);
-        work.sessions.find(s => s.id === sessionId).messages.push({ role: 'user', text }, { role: 'assistant', text: '' });
+            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Confirm the Session model and Thinking settings before sending.');
+        const prompt = includeIdentity && inputMode !== 'command' ? `${text}\n\nSelected Service: ${work.services.find(s => s.id === this.selectedService)?.domain ?? ''}` : text;
+        const intent = { kind: 'run', key: crypto.randomUUID(), sessionId, error: '' };
+        this.chatSubmissions.set(id, intent);
         this.emit();
-        void this.resumeRun(id);
-        return raw.runId;
+        try {
+            const value = await this.request(`works/${part(id)}/runs`, 'POST', { sessionId, prompt, submissionKey: intent.key, ...(inputMode ? { inputMode } : {}) });
+            const raw = value.run;
+            if (!raw?.runId || raw.sessionId !== sessionId)
+                throw new DesktopError('INVALID_RESPONSE', 'Run acceptance has no original ID.');
+            work.run = this.runRecord(raw, sessionId);
+            (work.sessions.find(s => s.id === sessionId).runs ??= []).push(work.run);
+            work.sessions.find(s => s.id === sessionId).messages.push({ id: `${raw.runId}-user`, runId: raw.runId, role: 'user', text });
+            this.chatSubmissions.delete(id);
+            this.emit();
+            void this.resumeRun(id);
+            return raw.runId;
+        }
+        catch (error) {
+            const code = error.code;
+            if (!['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'RUNTIME_UNAVAILABLE', 'CORE_UNAVAILABLE', 'REQUEST_TIMEOUT'].includes(code))
+                this.chatSubmissions.delete(id);
+            intent.error = errorText(error);
+            throw error;
+        }
+        finally {
+            this.emit();
+        }
     }
     selectedService = '';
     async cancelRun(id) { const work = this.getWork(id); const run = work.run; if (run && !run.cancellationRequested) {
@@ -1274,7 +1539,7 @@ export class DesktopAdapter {
                 throw new Error('Saved session history is incomplete.');
             const session = this.getWork(id)?.sessions.find(s => s.id === run.sessionId);
             if (session) {
-                session.messages = this.historyMessages(history.messages);
+                session.messages = historyMessages(history.messages, session.messages);
                 if (!['accepted', 'running', 'cancelling'].includes(run.status) && raw.finalText && !session.messages.some(m => m.role === 'assistant' && !m.tool && m.text === raw.finalText))
                     session.messages.push({ role: 'assistant', text: raw.finalText });
             }
@@ -1299,9 +1564,6 @@ export class DesktopAdapter {
                 void this.recoverRunHistory(id, observer); }, delay));
         else
             this.historyObservers.delete(id);
-    }
-    historyMessages(messages) {
-        return messages.filter(message => ['user', 'assistant', 'toolResult'].includes(message.role)).map(message => message.role === 'toolResult' ? ({ role: 'assistant', text: '', tool: { name: 'Tool result', status: 'Saved result', content: message.text ?? '' } }) : ({ role: message.role, text: message.text ?? '' }));
     }
     resumeRunConnection(id) {
         return new Promise((resolve, reject) => {
@@ -1370,25 +1632,20 @@ export class DesktopAdapter {
                 if (kind?.$case === 'text') {
                     let message = session.messages.at(-1);
                     if (!message || message.role !== 'assistant' || message.tool) {
-                        message = { role: 'assistant', text: '' };
+                        message = { id: `${run.id}-text-${sequence}`, runId: run.id, role: 'assistant', text: '' };
                         session.messages.push(message);
                     }
                     message.text += kind.text.delta ?? '';
                 }
                 else if (kind?.$case === 'tool') {
                     const tool = kind.tool;
-                    session.messages.push({ role: 'assistant', text: '', tool: { name: tool.toolName, status: tool.phase, content: tool.isError ? 'The tool reported an error.' : 'Tool execution event. Open session history for saved results.' } });
+                    upsertTool(session.messages, { id: `${run.id}-tool-${tool.toolCallId}`, runId: run.id, role: 'assistant', text: '', tool: { id: tool.toolCallId, name: tool.toolName, status: tool.phase === 'tool-end' ? (tool.isError ? 'Failed' : 'Completed') : 'Running', isError: tool.isError, content: resultText(tool.result) } });
                 }
                 else if (kind?.$case === 'state') {
                     run.status = runStates[kind.state.state] ?? 'interrupted';
                     run.error = kind.state.error?.message;
-                    if (kind.state.finalText) {
-                        const message = session.messages.at(-1);
-                        if (message?.role === 'assistant' && !message.tool)
-                            message.text = kind.state.finalText;
-                        else
-                            session.messages.push({ role: 'assistant', text: kind.state.finalText });
-                    }
+                    if (kind.state.finalText && !session.messages.some(m => m.runId === run.id && m.role === 'assistant' && !!m.text))
+                        session.messages.push({ id: `${run.id}-final`, runId: run.id, role: 'assistant', text: kind.state.finalText });
                 }
                 this.emit();
             };

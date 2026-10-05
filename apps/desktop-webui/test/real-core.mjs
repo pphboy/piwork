@@ -111,6 +111,12 @@ try {
   assert.equal(login.status, 200, JSON.stringify(login.data));
   const token = login.data.token;
   assert.equal(typeof token, 'string');
+  const skillForm = new FormData();
+  skillForm.set('directoryName', 'workspace-review');
+  skillForm.append('files', new Blob(['---\nname: workspace-review\ndescription: Review this Work using its supporting note\n---\nsupport: note.md\nRead the supporting note before replying.\n']), 'SKILL.md');
+  skillForm.append('files', new Blob(['Workspace UX integration supporting note\n']), 'note.md');
+  const skillUpload = await fetch(coreUrl + '/api/v1/admin/skills', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: skillForm });
+  assert.equal(skillUpload.status, 201, await skillUpload.text());
 
   desktop = spawn(cliBinary, ['--core', coreUrl, 'desktop', '--port', String(desktopPort), '--no-open'],
     { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent',
@@ -134,6 +140,9 @@ try {
   let mainReloads = 0; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame() && !new URL(request.url()).pathname.startsWith('/_desktop/')) mainReloads++; });
   await page.getByRole('button', { name: 'New Work', exact: true }).first().click();
   await page.locator('#create-name').fill('Real Browser Work');
+  await page.locator('[data-action=toggle-create-advanced]').click();
+  await page.locator('#create-skill-mode').selectOption('choose');
+  await page.getByLabel('workspace-review', { exact: true }).check();
   await page.getByRole('button', { name: 'Create Work', exact: true }).click();
   const work = await waitFor(async () => (await api(coreUrl, token, 'GET', '/api/v1/works')).data.works?.find(item => item.name === 'Real Browser Work'), 'created Work');
   const workId = work.id;
@@ -163,10 +172,74 @@ try {
   assert.equal(sentinelWrite.status, 201);
   const frame = page.frameLocator('iframe');
   await frame.getByLabel('Service draft').fill('do not lose this');
-  await page.locator('#composer').fill('Say hello');
+  const commands = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/commands`);
+  assert.equal(commands.status, 200, JSON.stringify(commands.data));
+  assert(commands.data.commands.some(command => command.command === '/skill:workspace-review'));
+  await page.locator('#composer').fill('/model');
+  await page.locator('#composer').press('Escape');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Model', exact: true })).toBeVisible();
+  await expect(page.locator('#composer')).toHaveValue('/model');
+  await page.locator('#modal [data-action=choose-chat-setting][data-option-value=""]').click();
+  await expect(page.locator('#composer')).toHaveValue('');
+  await page.locator('#composer').fill('/skill:workspace-review "preserved argument"');
+  await page.locator('#composer').press('Escape');
+  const runAcceptance = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${workId}/runs`) && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const accepted = await runAcceptance;
+  assert.equal(accepted.status(), 202, await accepted.text());
+  assert.equal(accepted.request().postDataJSON().inputMode, 'command');
+  assert.equal(accepted.request().postDataJSON().prompt, '/skill:workspace-review "preserved argument"');
   await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  const acceptedRun = (await accepted.json()).run;
+  let originalSessionId = acceptedRun.sessionId;
+  const options = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/sessions/${originalSessionId}/chat-options`);
+  assert.equal(options.status, 200); assert.equal(options.data.thinkingLevel, 'off');
+  const savedPair = await api(coreUrl, token, 'PATCH', `/api/v1/works/${workId}/sessions/${originalSessionId}/chat-options`, { modelRef: null, thinkingLevel: 'off' });
+  assert.equal(savedPair.status, 200); assert.equal(savedPair.data.thinkingLevel, 'off');
   assert.match(await page.locator('#messages').innerText(), /skill-read:/);
+  await expect(page.locator('.activity')).toHaveCount(1);
+  await expect(page.locator('.activity > summary')).toContainText('2 tools');
+  await page.locator('.activity > summary').click();
+  const activityKey = await page.locator('.activity').getAttribute('data-activity-key');
+  await page.locator('#composer').fill('Focus draft stays here');
+  const configurationBeforeFocus = (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/configuration`)).data;
+  const historyBeforeFocus = (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/sessions/${originalSessionId}`)).data;
+  let focusMutations = 0;
+  const countFocusMutation = request => { if (new URL(request.url()).pathname.startsWith('/_desktop/api/') && ['POST','PUT','PATCH','DELETE'].includes(request.method())) focusMutations++; };
+  page.on('request', countFocusMutation);
+  await page.evaluate(() => {
+    window.uxFrame = document.querySelector('iframe'); window.uxComposer = document.querySelector('#composer');
+    window.uxAncestors = []; for (let node = window.uxFrame; node; node = node.parentNode) window.uxAncestors.push(node);
+    window.uxFrameLoads = 0; window.uxFrame.addEventListener('load', () => window.uxFrameLoads++);
+  });
+  await page.locator('[data-action=service-focus]').click();
+  await page.locator('[data-action=focus-chat]:visible').click();
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
+  await expect(page.getByRole('button',{name:'Restore layout',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Exit focus',exact:true})).toBeVisible();
+  await page.screenshot({path:join(screenshotDir,'02-focused-chat.png'),fullPage:true});
+  await page.locator('[data-action=restore-layout]:visible').click();
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');
+  await page.locator('[data-action=focus-toggle-chat]').click();
+  await page.locator('[data-action=focus-toggle-chat]').click();
+  await page.locator('[data-action=service-fullscreen]').click();
+  await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
+  await page.evaluate(() => document.exitFullscreen());
+  await page.locator('[data-action=exit-service-focus]').click();
+  await page.locator('[data-action=service-focus]').click();await page.locator('[data-action=focus-chat]:visible').click();
+  await page.locator('[data-action=exit-service-focus]:visible').click();
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace');
+  page.off('request',countFocusMutation);assert.equal(focusMutations,0,'layout navigation wrote business state');
+  assert(await page.evaluate(() => { let node = document.querySelector('iframe'); return window.uxAncestors.every(ancestor => {const same = ancestor === node; node = node?.parentNode; return same;}) && window.uxFrameLoads === 0; }),'Focus reloaded or moved an iframe ancestor');
+  const configurationAfterFocus = (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/configuration`)).data;
+  assert.deepEqual(configurationAfterFocus.desired,configurationBeforeFocus.desired);assert.deepEqual(configurationAfterFocus.active,configurationBeforeFocus.active);
+  const historyAfterFocus = (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/sessions/${originalSessionId}`)).data;
+  assert.deepEqual(historyAfterFocus.session,historyBeforeFocus.session);assert.deepEqual(historyAfterFocus.messages,historyBeforeFocus.messages);assert.deepEqual(historyAfterFocus.runs,historyBeforeFocus.runs);
+  assert(await page.evaluate(() => window.uxFrame === document.querySelector('iframe') && window.uxComposer === document.querySelector('#composer')));
+  assert.equal(await page.locator('#composer').inputValue(), 'Focus draft stays here');
+  assert.equal(await page.locator('.activity').getAttribute('data-activity-key'), activityKey);
+  assert.equal(await page.locator('.activity').evaluate(node => node.open), true);
   assert.equal(await frame.getByLabel('Service draft').inputValue(), 'do not lose this', 'chat rerender reloaded the Service iframe');
   await page.getByRole('button', { name: 'Service options', exact: true }).click();
   await page.getByRole('button', { name: 'Close dialog' }).click();
@@ -223,6 +296,21 @@ try {
   console.log('Real Desktop: configuration applied');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await page.getByRole('button', { name: 'Back to Work', exact: true }).click();
+  // Apply creates a different active context. Keep the earlier Session as history,
+  // then explicitly create the Session whose current context will be exported and continued.
+  const priorOptions = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/sessions/${originalSessionId}/chat-options`);
+  assert.equal(priorOptions.data.availability, 'unavailable');
+  await page.locator('#composer').fill('/new');await page.locator('#composer').press('Escape');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.locator('#composer')).toHaveValue('');
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+  const currentAcceptance = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${workId}/runs`) && response.request().method() === 'POST');
+  await page.locator('#composer').fill('/skill:workspace-review "current context"');await page.locator('#composer').press('Escape');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const currentResponse = await currentAcceptance;
+  assert.equal(currentResponse.status(), 202, await currentResponse.text());
+  originalSessionId = (await currentResponse.json()).run.sessionId;
+  await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY === '1') {
     const localOrigin = new URL(launchUrl).origin;
     const readAdapter = (code) => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
@@ -330,6 +418,7 @@ try {
   await page.getByRole('button', { name: 'View package', exact: true }).click();
   console.log('Real Desktop: snapshot prepared');
   const downloadEvent = page.waitForEvent('download', { timeout: 180_000 });
+  void downloadEvent.catch(() => undefined); // Keep early rejection handled until the click/wait joins it, so fixture cleanup always runs.
   await page.getByRole('button', { name: 'Download .work', exact: true }).waitFor({timeout:180_000});
   await page.getByRole('button', { name: 'Download .work', exact: true }).click();
   const download = await downloadEvent; const exportedPath = join(root, 'browser-export.work'); await download.saveAs(exportedPath); assert.equal(await download.failure(), null);
@@ -362,6 +451,22 @@ try {
   await page.getByRole('button', { name: 'Services', exact: true }).click();
   await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
   await waitFor(async () => (await page.locator('#messages').innerText()).includes('skill-read:'), 'restored session history');
+  const importedOptions = await api(coreUrl, token, 'GET', `/api/v1/works/${imported.id}/sessions/${originalSessionId}/chat-options`);
+  assert.equal(importedOptions.status, 200, JSON.stringify(importedOptions.data));
+  assert.equal(importedOptions.data.thinkingLevel, 'off');
+  assert.equal(importedOptions.data.availability, 'available', JSON.stringify(importedOptions.data));
+  await page.locator('[data-action=sessions]').first().click();
+  await page.locator(`[data-action=select-session][data-id="${originalSessionId}"]`).click();
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+  await page.locator('#composer').fill('/skill:workspace-review "after import"');
+  await page.locator('#composer').press('Escape');
+  const continuedAcceptance = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${imported.id}/runs`) && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const continuedResponse = await continuedAcceptance;
+  assert.equal(continuedResponse.status(), 202, await continuedResponse.text());
+  await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  await expect(page.locator('.activity')).toHaveCount(2);
+  console.log(JSON.stringify({ result: 'workspace UX: active Skill directory, complete settings pair, command parameters, ordered tool history, stable Focus/fullscreen, exported/imported Thinking and continued original Session', browserVersion: browser.version(), originalSessionId }));
   await page.screenshot({ path: join(screenshotDir, '04-restored-work.png'), fullPage: true });
   for (const width of [1440,1024,390]) { await page.setViewportSize({ width, height: 900 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `horizontal overflow at ${width}px`); await page.screenshot({ path: join(screenshotDir, `05-responsive-${width}.png`), fullPage: true }); }
   await page.getByRole('button', { name: 'Work options' }).click(); await page.getByRole('button', { name: 'Delete Work', exact: true }).click(); await page.locator('#delete-confirm').check(); await page.getByRole('button', { name: 'Delete Work', exact: true }).last().click();
