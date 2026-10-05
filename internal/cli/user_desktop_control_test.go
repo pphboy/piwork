@@ -75,6 +75,13 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		{"GET", "/_desktop/api/works/work-1/packages/%40example%2Ftools", "", "/api/v1/works/work-1/packages/%40example%2Ftools"},
 		{"PUT", "/_desktop/api/works/work-1/configuration/agents", `{"agentsMd":"# Agent"}`, "/api/v1/works/work-1/configuration/agents"},
 		{"GET", "/_desktop/api/works/work-1/models", "", "/api/v1/works/work-1/models"},
+		{"GET", "/_desktop/api/works/work-1/chat-capabilities", "", "/api/v1/works/work-1/chat-capabilities"},
+		{"GET", "/_desktop/api/works/work-1/chat-models", "", "/api/v1/works/work-1/chat-models"},
+		{"GET", "/_desktop/api/works/work-1/commands", "", "/api/v1/works/work-1/commands"},
+		{"GET", "/_desktop/api/works/work-1/sessions/session-1/chat-options", "", "/api/v1/works/work-1/sessions/session-1/chat-options"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"high"}`, "/api/v1/works/work-1/sessions/session-1/chat-options"},
+		{"GET", "/_desktop/api/works/work-1/sessions/submissions/original-key", "", "/api/v1/works/work-1/sessions/submissions/original-key"},
+		{"GET", "/_desktop/api/works/work-1/runs/submissions/original-key", "", "/api/v1/works/work-1/runs/submissions/original-key"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null}`, "/api/v1/works/work-1/sessions/session-1/model"},
 		{"GET", "/_desktop/api/works/work-1/agent-requests?serviceName=todo&limit=5", "", "/api/v1/works/work-1/agent-requests?limit=5&serviceName=todo"},
 		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1?cursor=page-1", "", "/api/v1/works/work-1/agent-requests/request-1?cursor=page-1"},
@@ -112,6 +119,10 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 	mu.Unlock()
 	for _, item := range []struct{ method, path, payload, csrf string }{
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null,"credential":"not-allowed"}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"invalid"}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"off","credential":"private"}`, "csrf"},
+		{"POST", "/_desktop/api/works/work-1/runs", `{"sessionId":"session-1","prompt":"hello","inputMode":"extension"}`, "csrf"},
+		{"POST", "/_desktop/api/works/work-1/sessions", `{"idempotencyKey":"../invalid"}`, "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null}`, "wrong"},
 		{"GET", "/_desktop/api/works/work-1/agent-requests?limit=101", "", ""},
 		{"GET", "/_desktop/api/works/work-1/agent-requests?limit=1&limit=2", "", ""},
@@ -134,5 +145,26 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 	mu.Unlock()
 	if after != before {
 		t.Fatalf("invalid Desktop request reached Core: %d -> %d", before, after)
+	}
+}
+
+func TestDesktopChatOriginalKeysAndInputMode(t *testing.T) {
+	for _, kind := range []string{"sessions", "runs"} {
+		body := `{"idempotencyKey":"original.key:1"}`
+		if kind == "runs" {
+			body = `{"sessionId":"session-1","prompt":"/skill:sample parameters","submissionKey":"original.key:1","inputMode":"command"}`
+		}
+		r := httptest.NewRequest("POST", "http://desktop.localhost/_desktop/api/works/work-1/"+kind, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		plan, handled, err := planDesktopControl(r)
+		if err != nil || !handled {
+			t.Fatal(plan, err)
+		}
+		raw, _ := json.Marshal(plan.input)
+		var value map[string]any
+		json.Unmarshal(raw, &value)
+		if kind == "sessions" && value["idempotencyKey"] != "original.key:1" || kind == "runs" && (value["submissionKey"] != "original.key:1" || value["inputMode"] != "command") {
+			t.Fatal("original key changed", value)
+		}
 	}
 }

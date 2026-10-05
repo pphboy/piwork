@@ -335,3 +335,32 @@ func TestNativeCandidateProofRequiresActualSDKInputAndChecks(t *testing.T) {
 		})
 	}
 }
+
+func TestCurrentHistoryChatMetadataValidatesWithoutSchemaChange(t *testing.T) {
+	for _, level := range []string{`"off"`, `"high"`, `"max"`, `null`, `3`, `"invalid"`} {
+		t.Run(level, func(t *testing.T) {
+			private, scope := brainFixture(t)
+			db, err := database(filepath.Join(private, files[0]), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			model := `{"modelRef":null,"label":"Default","provider":"fixture","model":"local","thinkingLevel":` + level + `}`
+			if _, err = db.Exec(`UPDATE runs SET actual_model_json=?,model_selector_json='{"kind":"session-preference","inputMode":"command"}'`, model); err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			before := fingerprint(t, private)
+			snapshot, err := Open(context.Background(), private, scope)
+			if snapshot != nil {
+				snapshot.Close()
+			}
+			valid := level == `"off"` || level == `"high"` || level == `"max"`
+			if valid && err != nil || !valid && err != ErrInvalid {
+				t.Fatal("chat metadata validation", err)
+			}
+			if !reflect.DeepEqual(before, fingerprint(t, private)) {
+				t.Fatal("source changed")
+			}
+		})
+	}
+}

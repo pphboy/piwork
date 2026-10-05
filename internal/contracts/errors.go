@@ -24,6 +24,11 @@ type errorDefinition struct {
 }
 
 var publicErrors = map[string]errorDefinition{
+	"CHAT_OPTIONS_UNSUPPORTED":          {501, "This Work does not support the chat controls contract", false},
+	"THINKING_LEVEL_UNSUPPORTED":        {409, "Choose a Thinking level supported by this model", false},
+	"SLASH_COMMAND_UNKNOWN":             {400, "Choose an available resource command or send as text", false},
+	"SLASH_COMMAND_UNSUPPORTED":         {501, "This command is only available through Desktop controls", false},
+	"SLASH_COMMAND_UNAVAILABLE":         {409, "The accepted resource command is unavailable", false},
 	"REQUEST_RETRY_NOT_ALLOWED":         {409, "Historical or active requests cannot be retried", false},
 	"REQUEST_EXPIRED":                   {409, "Original request deadline passed", false},
 	"REQUEST_CAPACITY_EXCEEDED":         {429, "Work has 100 unfinished Pi requests", true},

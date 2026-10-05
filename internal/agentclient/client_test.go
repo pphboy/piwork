@@ -14,6 +14,13 @@ func TestReadinessRequiresCurrentIdentityAndContracts(t *testing.T) {
 	if err := VerifyReadiness(scope, "context-1", false, base); err != nil {
 		t.Fatal(err)
 	}
+	for _, version := range []uint32{0, 1, 2} {
+		value := *base
+		value.ChatControlsContractVersion = version
+		if err := VerifyReadiness(scope, "context-1", false, &value); err != nil {
+			t.Fatal("optional chat controls changed mandatory readiness", err)
+		}
+	}
 	tests := []struct {
 		name   string
 		change func(*agentv1.ReadinessResponse)

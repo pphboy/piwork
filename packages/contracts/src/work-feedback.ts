@@ -33,6 +33,7 @@ export const SubmitRunInputSchema = Type.Object({
   submissionKey: Type.String({ minLength: 1, maxLength: 256 }),
   prompt: Type.String({ minLength: 1 }),
   modelRef: Type.Optional(Type.Union([ResourceIdSchema, Type.Null()])),
+  inputMode: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("command")])),
 }, strict);
 export const SetSessionModelSchema = Type.Object({
   modelRef: Type.Union([ResourceIdSchema, Type.Null()]),
@@ -198,7 +199,10 @@ export interface BrainCandidateState {
 
 export type RunModelDescription = Type.Static<typeof RunModelDescriptionSchema>;
 /** Private, non-secret descriptor. Endpoint is omitted from public projections. */
-export interface RunModelSnapshot extends RunModelDescription { readonly baseUrl?: string }
+export interface RunModelSnapshot extends RunModelDescription {
+  readonly baseUrl?: string;
+  readonly thinkingLevel?: import("./chat-controls.js").ThinkingLevel;
+}
 /** Work-private runtime authority. Never serialize this type in public DTOs. */
 export interface ServiceInteractionBinding {
   readonly workId: string; readonly serviceId: string; readonly serviceName: string;

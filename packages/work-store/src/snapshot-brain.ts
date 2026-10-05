@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { Check } from "typebox/value";
 import { AgentRunSourceSchema, AgentWaitRefSchema, BrainCandidateSubmissionSchema, isBrainVerificationTarget, BRAIN_LIMITS,
-  RunModelDescriptionSchema, RunModelSelectorSchema, ServiceEventSchema } from "@piwork/contracts";
+  RunModelDescriptionSchema, RunSubmissionSelectorSchema, ThinkingLevelSchema, ServiceEventSchema } from "@piwork/contracts";
 import { canonicalJson, contentDigest, FeedbackStore, validBrainAdoption } from "./feedback.js";
 
 type Row = Record<string, SQLInputValue>;
@@ -13,8 +13,9 @@ const optional = (value: SQLInputValue | undefined, check: (v: unknown) => boole
 };
 function model(value: unknown): boolean {
   if (!object(value)) return false;
-  const { baseUrl, availability, ...description } = value;
+  const { baseUrl, availability, thinkingLevel, ...description } = value;
   if (!Check(RunModelDescriptionSchema, description)) return false;
+  if (thinkingLevel !== undefined && !Check(ThinkingLevelSchema, thinkingLevel)) return false;
   if (availability !== undefined && !["available", "unavailable"].includes(String(availability))) return false;
   if (baseUrl !== undefined) {
     if (typeof baseUrl !== "string") return false;
@@ -58,7 +59,7 @@ export function validateBrainHistory(database: DatabaseSync, workId: string, con
     optional(r.source_json, (v) => Check(AgentRunSourceSchema, v));
   }
   for (const r of database.prepare("SELECT * FROM runs").iterate() as Iterable<Row>) {
-    optional(r.model_selector_json, (v) => Check(RunModelSelectorSchema, v));
+    optional(r.model_selector_json, (v) => Check(RunSubmissionSelectorSchema, v));
     optional(r.actual_model_json, model);
     optional(r.source_json, (v) => Check(AgentRunSourceSchema, v));
     const version = Number(r.adopted_experience_version);

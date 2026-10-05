@@ -3,11 +3,12 @@ import { lstatSync, readFileSync } from "node:fs";
 import { chmod, lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { createDeterministicRuntime, mapSdkEvent } from "@piwork/pi-adapter";
+import { createDeterministicRuntime, getSupportedThinkingLevels, mapSdkEvent } from "@piwork/pi-adapter";
 import type { RunExecutionContext, RunExecutor } from "./runs.js";
 import type { AgentSessionService } from "./sessions.js";
-import { isBrainVerificationTarget, type RunModelSnapshot } from "@piwork/contracts";
+import { isBrainVerificationTarget, type RunModelSnapshot, type SlashCommand, type ThinkingLevel } from "@piwork/contracts";
 import type { RunModelResolver } from "./run-models.js";
+import { parseResourceCommand, requireResourceCommand, validateLoadedResourceCommand } from "./resource-commands.js";
 
 const CHILD_AGENT_DIRECTORY = "/tmp/piwork-child-agent";
 
@@ -23,7 +24,7 @@ export class PiSdkRunExecutor implements RunExecutor {
       readonly deterministic: boolean;
     },
     private readonly context: { readonly resourceLoaderFactory: (context?: RunExecutionContext) => Promise<ResourceLoader>; readonly resolvedTools: readonly string[]; readonly customTools?: readonly ToolDefinition[]; readonly models?: RunModelResolver;
-      readonly packageTools?: ReadonlyMap<string, string>;
+      readonly packageTools?: ReadonlyMap<string, string>; readonly commands?: readonly SlashCommand[];
       readonly onSdkToolResult?: (context: RunExecutionContext, result: { toolName: string; toolCallId: string; args: unknown; isError: boolean; result: unknown }) => void },
   ) {}
 
@@ -52,7 +53,7 @@ export class PiSdkRunExecutor implements RunExecutor {
       agentDir: this.agentDirectory,
       modelRuntime: runtime,
       model,
-      thinkingLevel: "off",
+      thinkingLevel: context.actualModel?.thinkingLevel ?? "off",
       sessionManager,
       tools: [...this.context.resolvedTools],
       customTools: [...(this.context.customTools ?? [])],
@@ -97,13 +98,44 @@ export class PiSdkRunExecutor implements RunExecutor {
       emitRunPhase(context, "extensions-bound");
       if (initializationErrors > 0) failExtensionEvent("initialization");
       context.signal.throwIfAborted();
+      const assertAcceptedOptions = () => {
+        if (context.actualModel && (session.model?.id !== context.actualModel.model || session.model.provider !== context.actualModel.provider || session.model.baseUrl !== model.baseUrl || session.thinkingLevel !== (context.actualModel.thinkingLevel ?? "off"))) throw new Error("accepted model and Thinking settings could not be applied");
+      };
+      assertAcceptedOptions();
+      if (isDeepSeekAnthropicEndpoint(model) && runtime.getModel("deepseek", model.id)) {
+        const transform = session.agent.onPayload;
+        session.agent.onPayload = async (payload, requestModel) => {
+          assertAcceptedOptions();
+          if (requestModel.provider !== model.provider || requestModel.id !== model.id || requestModel.baseUrl !== model.baseUrl) throw new Error("accepted model could not be applied to the request");
+          const transformed = await transform?.(payload, requestModel);
+          return deepSeekThinkingPayload(transformed === undefined ? payload : transformed, model, context.actualModel?.thinkingLevel ?? "off");
+        };
+      }
+      let prompt = context.prompt;
+      if (context.inputMode === "command") {
+        const command = requireResourceCommand(this.context.commands ?? [], prompt);
+        validateLoadedResourceCommand(resourceLoader, command);
+        const parsed = parseResourceCommand(prompt);
+        if (session.extensionRunner.getCommand(parsed.token)) throw new Error("resource command conflicts with an extension command");
+        prompt = parsed.text;
+        const emitInput = session.extensionRunner.emitInput.bind(session.extensionRunner);
+        session.extensionRunner.emitInput = async (...args) => {
+          const result = await emitInput(...args);
+          if (result.action === "handled" || (result.action === "transform" && (result.text !== prompt || result.images?.length))) throw new Error("resource command was changed by an input handler");
+          return result;
+        };
+      }
+      const previousMessages = new Set(session.messages);
+      sessionManager.appendCustomEntry("piwork-run", { runId: context.runId });
       phase = "run";
       emitRunPhase(context, "prompt-started");
-      await session.prompt(context.prompt);
+      await session.prompt(prompt, { expandPromptTemplates: context.inputMode !== "text", preflightResult: success => {
+        if (success) { if (runErrors > 0) failExtensionEvent("run"); assertAcceptedOptions(); }
+      } });
       emitRunPhase(context, "prompt-finished");
       if (runErrors > 0) failExtensionEvent("run");
-      const assistant = session.messages.findLast((message) => message.role === "assistant");
-      if (assistant === undefined) throw new Error("model execution produced no assistant result");
+      const assistant = session.messages.findLast((message) => message.role === "assistant" && !previousMessages.has(message));
+      if (assistant === undefined || assistant.role !== "assistant") throw new Error("model execution produced no assistant result");
       if (assistant.stopReason === "error") throw new Error("model execution ended with a provider error");
       if (assistant.stopReason === "aborted" && !context.signal.aborted) {
         throw new Error("model execution ended unexpectedly");
@@ -181,6 +213,11 @@ export async function writeChildAgentModelFiles(
   const definition = {
     id: model.id, name: model.name, reasoning: model.reasoning, input: model.input,
     cost: model.cost, contextWindow: model.contextWindow, maxTokens: model.maxTokens,
+    ...(model.thinkingLevelMap ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
+    ...(model.compat ? { compat: model.compat } : {}),
+    ...(model.promptCache ? { promptCache: model.promptCache } : {}),
+    ...(model.samplingParams ? { samplingParams: model.samplingParams } : {}),
+    ...(model.headers ? { headers: model.headers } : {}),
   };
   const models = { providers: { [model.provider]: { baseUrl: model.baseUrl, api: model.api, models: [definition] } } };
   const auth = { [model.provider]: { type: "api_key", key: credential } };
@@ -204,14 +241,18 @@ function emitRunPhase(context: Pick<RunExecutionContext, "workId" | "sessionId" 
 export function resolveProductionModel(
   runtime: ModelRuntime,
   config: { readonly provider: string; readonly id: string; readonly baseUrl?: string },
+  requireThinkingCapabilities = false,
 ) {
   const existing = runtime.getModel(config.provider, config.id);
+  const compatible = existing === undefined && isDeepSeekAnthropicEndpoint(config)
+    ? runtime.getModel("deepseek", config.id) : undefined;
+  if (requireThinkingCapabilities && !existing && !compatible) throw new Error("model Thinking capabilities are unconfirmed");
   if (config.baseUrl !== undefined) {
     if (existing === undefined && config.provider === "anthropic") {
       runtime.registerProvider(config.provider, {
         baseUrl: config.baseUrl,
         api: "anthropic-messages",
-        models: [{
+        models: [compatible ? { ...compatible, api: "anthropic-messages", baseUrl: config.baseUrl } : {
           id: config.id,
           name: config.id,
           reasoning: false,
@@ -228,4 +269,33 @@ export function resolveProductionModel(
   const model = runtime.getModel(config.provider, config.id);
   if (model === undefined) throw new Error("configured model is not available");
   return model;
+}
+
+/** Only the configured official endpoint can inherit DeepSeek's SDK definition. */
+function isDeepSeekAnthropicEndpoint(config: { readonly provider: string; readonly baseUrl?: string }): boolean {
+  if (config.provider !== "anthropic" || !config.baseUrl) return false;
+  try {
+    const url = new URL(config.baseUrl);
+    return url.protocol === "https:" && url.host === "api.deepseek.com" && url.pathname.replace(/\/$/, "") === "/anthropic"
+      && !url.username && !url.password && !url.search && !url.hash;
+  } catch { return false; }
+}
+
+function deepSeekThinkingPayload(payload: unknown, model: ReturnType<typeof resolveProductionModel>, level: ThinkingLevel): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || !getSupportedThinkingLevels(model).includes(level)) throw new Error("accepted Thinking settings could not be applied to the request");
+  const result = { ...payload } as Record<string, unknown>;
+  if (result.model !== model.id) throw new Error("accepted model could not be applied to the request");
+  const output = result.output_config && typeof result.output_config === "object" && !Array.isArray(result.output_config)
+    ? { ...result.output_config } as Record<string, unknown> : {};
+  delete output.effort;
+  // Compatible Messages accepts SDK effort values, rather than Claude budgets.
+  result.thinking = { type: level === "off" ? "disabled" : "enabled" };
+  if (level !== "off") {
+    const effort = model.thinkingLevelMap?.[level];
+    if (typeof effort !== "string") throw new Error("model Thinking mapping is unconfirmed");
+    output.effort = effort;
+  }
+  if (Object.keys(output).length) result.output_config = output;
+  else delete result.output_config;
+  return result;
 }

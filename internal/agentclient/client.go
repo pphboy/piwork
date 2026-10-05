@@ -99,6 +99,18 @@ func VerifyObservation(scope internaltls.Scope, contextID string, response *agen
 	return nil
 }
 
+// Chat controls are negotiated after the unchanged mandatory runtime handshake.
+func (c *Client) ChatControlsVersion(ctx context.Context, contextID string) (uint32, error) {
+	response, err := c.Readiness(ctx, contextID, false)
+	if err != nil {
+		return 0, err
+	}
+	if response.GetChatControlsContractVersion() == 1 {
+		return 1, nil
+	}
+	return 0, nil
+}
+
 func (c *Client) PrepareConfigurationChange(ctx context.Context) (*agentv1.PrepareConfigurationChangeResponse, error) {
 	return c.rpc.PrepareConfigurationChange(ctx, &agentv1.PrepareConfigurationChangeRequest{WorkId: c.scope.WorkID, Generation: uint64(c.scope.Generation), InstanceId: c.scope.InstanceID})
 }
@@ -151,11 +163,47 @@ func (c *Client) ReadSession(ctx context.Context, sessionID string) (*agentv1.Se
 			return nil, ErrResponse
 		}
 	}
+	for _, message := range response.Messages {
+		if message.GetRunId() != "" {
+			found := false
+			for _, run := range response.Runs {
+				if run.RunId == message.RunId {
+					found = true
+				}
+			}
+			if !found {
+				return nil, ErrResponse
+			}
+		}
+		for _, block := range message.Blocks {
+			value := map[string]any{"blockId": block.BlockId, "type": block.Type}
+			if block.Type == "text" {
+				value["text"] = block.Text
+			} else {
+				value["toolCallId"] = block.ToolCallId
+				value["toolName"] = block.ToolName
+				if block.Type == "tool-result" {
+					result, e := contracts.ParseJSON(strings.NewReader(block.ResultPreviewJson), 1<<20)
+					if e != nil {
+						return nil, ErrResponse
+					}
+					value["result"] = result
+				}
+			}
+			if contracts.Validate("SessionContentBlockSchema", value) != nil {
+				return nil, ErrResponse
+			}
+		}
+	}
 	return response, nil
 }
 
-func (c *Client) SubmitRun(ctx context.Context, sessionID, key, prompt string, modelRef *string) (*agentv1.SubmitRunResponse, error) {
-	response, err := c.rpc.SubmitRun(ctx, &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: sessionID, SubmissionKey: key, Prompt: prompt, ModelRef: modelRef})
+func (c *Client) SubmitRun(ctx context.Context, sessionID, key, prompt string, modelRef *string, modes ...string) (*agentv1.SubmitRunResponse, error) {
+	var mode *string
+	if len(modes) > 0 {
+		mode = &modes[0]
+	}
+	response, err := c.rpc.SubmitRun(ctx, &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: sessionID, SubmissionKey: key, Prompt: prompt, ModelRef: modelRef, InputMode: mode})
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +260,9 @@ func (c *Client) WatchRun(ctx context.Context, runID string, after *uint64, onEv
 			return ErrResponse
 		}
 		cursor = event.GetSequence()
+		if tool := event.GetTool(); tool != nil && !publicJSON(tool.GetResultPreviewJson(), "ToolResultPreviewSchema") {
+			return ErrResponse
+		}
 		if err := onEvent(event); err != nil {
 			return err
 		}
@@ -248,6 +299,9 @@ func publicJSON(raw, schema string) bool {
 	return err == nil && contracts.Validate(schema, value) == nil
 }
 func validSessionMetadata(session *agentv1.Session) bool {
+	if session != nil && session.ThinkingLevel != "" && contracts.Validate("ThinkingLevelSchema", session.ThinkingLevel) != nil {
+		return false
+	}
 	if session == nil || !publicJSON(session.GetSourceJson(), "AgentRunSourceSchema") {
 		return false
 	}
@@ -270,5 +324,8 @@ func validSessionMetadata(session *agentv1.Session) bool {
 	return contracts.Validate("RunModelDescriptionSchema", pref) == nil
 }
 func validRunMetadata(run *agentv1.Run) bool {
+	if run != nil && run.ThinkingLevel != "" && contracts.Validate("ThinkingLevelSchema", run.ThinkingLevel) != nil {
+		return false
+	}
 	return run != nil && publicJSON(run.GetActualModelJson(), "RunModelDescriptionSchema") && publicJSON(run.GetSourceJson(), "AgentRunSourceSchema")
 }

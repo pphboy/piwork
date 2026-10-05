@@ -160,3 +160,17 @@ test("duplicate extension command names across packages fail before a Run", asyn
       workspace, agentDirectory }), /duplicate package command shared/);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+test('active cached command directory excludes reserved web names, extension conflicts and disabled packages',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'piwork-command-directory-'));try {
+  const root=join(home,'packages'),name='@example/commands',key=packageNameKey(name),packageRoot=join(root,key);mkdirSync(join(packageRoot,'prompts'),{recursive:true});mkdirSync(join(packageRoot,'extensions'));
+  writeFileSync(join(packageRoot,'package.json'),JSON.stringify({name,version:'1.0.0',pi:{prompts:['prompts'],extensions:['extensions/command.js']}}));
+  for(const command of ['review','settings','collision'])writeFileSync(join(packageRoot,'prompts',`${command}.md`),`---\ndescription: Safe ${command}\n---\n${command} $ARGUMENTS`);
+  writeFileSync(join(packageRoot,'extensions','command.js'),'export default function(pi){pi.registerCommand("collision",{description:"Extension",handler:async()=>{}});}');
+  const metadata=(await validatePiPackageArtifact({root:packageRoot,sourceKind:'local',resolvedSource:'fixture',preparedEnvironment:{os:'linux',architecture:process.arch==='x64'?'amd64':process.arch,variant:null,nodeAbi:process.versions.modules,piSdkVersion:'0.86.1'}})).metadata;
+  const workspace=join(home,'workspace'),agentDirectory=join(home,'agent');mkdirSync(workspace);mkdirSync(agentDirectory);
+  const input={root,bindings:[{name,nameKey:key,artifact:metadata}],standaloneSkills:[],agentsMd:'# Agent',workspace,agentDirectory};
+  const active=await createPackageResourceLoader({...input,selection:[{name,enabled:true}]});assert.deepEqual(active.commands.map(c=>c.command),['/review']);assert.equal(active.commands[0]?.sourceName,name);assert.ok(!JSON.stringify(active.commands).includes(home));
+  const disabled=await createPackageResourceLoader({...input,selection:[{name,enabled:false}]});assert.deepEqual(disabled.commands,[]);await assert.rejects(active.loader.reload(),/cannot be reloaded/);
+ }finally{rmSync(home,{recursive:true,force:true});}
+});

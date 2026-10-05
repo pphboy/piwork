@@ -16,6 +16,11 @@ service AgentService {
   rpc CancelRun(CancelRunRequest) returns (Run);
   rpc ListRunModels(AgentContentRequest) returns (AgentContentResponse);
   rpc SetSessionModel(AgentContentRequest) returns (Session);
+  rpc ListChatModels(AgentContentRequest) returns (AgentContentResponse);
+  rpc ListSlashCommands(AgentContentRequest) returns (AgentContentResponse);
+  rpc GetSessionChatOptions(AgentContentRequest) returns (AgentContentResponse);
+  rpc SetSessionChatOptions(AgentContentRequest) returns (AgentContentResponse);
+  rpc LookupChatSubmission(AgentContentRequest) returns (AgentContentResponse);
   rpc ListAgentRequests(AgentContentRequest) returns (AgentContentResponse);
   rpc GetAgentRequest(AgentContentRequest) returns (AgentContentResponse);
   rpc CancelAgentRequest(AgentContentRequest) returns (AgentContentResponse);
@@ -56,6 +61,7 @@ message ReadinessResponse {
   uint32 run_model_contract_version = 17;
   uint32 work_feedback_contract_version = 18;
   uint32 work_history_schema_version = 19;
+  uint32 chat_controls_contract_version = 20;
 }
 
 message LoadedPackage {
@@ -116,6 +122,7 @@ message Session {
   string updated_at = 5;
   string model_preference_json = 6;
   string source_json = 7;
+  string thinking_level = 8;
 }
 
 message CreateSessionRequest {
@@ -150,6 +157,17 @@ message SessionMessage {
   string role = 2;
   string text = 3;
   string created_at = 4;
+  repeated SessionContentBlock blocks = 5;
+  string run_id = 6;
+}
+
+message SessionContentBlock {
+  string block_id = 1;
+  string type = 2;
+  string text = 3;
+  string tool_call_id = 4;
+  string tool_name = 5;
+  string result_preview_json = 6;
 }
 
 enum RunState {
@@ -186,6 +204,7 @@ message Run {
   string actual_model_json = 14;
   string source_json = 15;
   uint32 adopted_experience_version = 16;
+  string thinking_level = 17;
 }
 
 message SubmitRunRequest {
@@ -195,6 +214,7 @@ message SubmitRunRequest {
   string prompt = 4;
   // Missing: Session preference; present empty: explicit Work default.
   optional string model_ref = 5;
+  optional string input_mode = 6;
 }
 
 message SubmitRunResponse {
@@ -229,6 +249,7 @@ message ToolEvent {
   string tool_call_id = 3;
   string phase = 4;
   bool is_error = 5;
+  string result_preview_json = 6;
 }
 
 message StateEvent {

@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AgentRunModels, RunModelError } from "./run-models.js";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@piwork/pi-adapter";
 
 test("model discovery filters with the actual SDK and never exposes endpoint or credential", async () => {
   const selected = { modelRef: "catalog-model-0001", label: "Claude", provider: "anthropic", model: "custom-claude", baseUrl: "https://fixture.example.test/anthropic" };
@@ -55,4 +57,38 @@ test("an available empty selection list differs from failure and Work default re
   available = false;
   await assert.rejects(models.resolve(null), RunModelError);
   await assert.rejects(models.credential(model), (error: unknown) => error instanceof RunModelError && !error.message.includes("private-token"));
+});
+
+test('chat capabilities use actual SDK levels and preserve an available default-only catalog',async()=>{
+ const models=new AgentRunModels({provider:'piwork-deterministic',id:'fixture-v1',deterministic:true});
+ const value=await models.chatList();assert.equal(value.contractVersion,1);assert.deepEqual(value.models,[]);assert.deepEqual(value.defaultModel.thinkingLevels,['off']);
+ assert.equal(value.defaultModel.defaultThinkingLevel,'off');
+ const plain=await models.thinking({modelRef:null,label:'plain',provider:'openai',model:'gpt-4.1-mini'});assert.deepEqual(plain.thinkingLevels,['off']);
+ const reasoning=await models.thinking({modelRef:null,label:'reasoning',provider:'anthropic',model:'claude-sonnet-4-5'});assert.ok(reasoning.thinkingLevels.includes('high'));assert.ok(reasoning.thinkingLevels.includes(reasoning.defaultThinkingLevel));
+ await assert.rejects(models.thinking({modelRef:null,label:'invalid',provider:'unknown',model:'unknown'}),error=>error instanceof RunModelError && !error.message.includes('/'));
+});
+
+test("chat catalog intersects Core authorization with fixed SDK capability evidence", async () => {
+  const known = { modelRef: null, label: "Work model", provider: "anthropic", model: "deepseek-flash", baseUrl: "https://api.deepseek.com/anthropic" };
+  const custom = { ...known, modelRef: "catalog-custom", model: "custom-unknown" };
+  let candidates = [custom, { ...known, modelRef: "catalog-known" }];
+  const models = new AgentRunModels({ provider: known.provider, id: known.model, baseUrl: known.baseUrl, deterministic: false }, {
+    async models() { return { models: candidates, defaultModel: known, checkedAt: "2026-10-05T00:00:00Z" }; },
+    async resolveModel(ref) { return { model: ref ? candidates.find(m => m.modelRef === ref)! : known, credential: "private-fixture-key" }; },
+  });
+  const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
+  const native = runtime.getModel("deepseek", known.model)!;
+  const list = await models.chatList();
+  assert.deepEqual(list.defaultModel.thinkingLevels, getSupportedThinkingLevels(native));
+  assert.equal(list.defaultModel.defaultThinkingLevel, clampThinkingLevel(native, "off"));
+  assert.deepEqual(list.models.map(m => m.modelRef), ["catalog-known"]);
+  assert.doesNotMatch(JSON.stringify(list), /baseUrl|thinkingLevelMap|credential|private-fixture-key/);
+  await assert.rejects(models.thinking(custom), error => error instanceof RunModelError && error.modelErrorCode === "MODEL_NOT_SUPPORTED" && /cannot confirm/.test(error.message));
+  assert.equal((await models.list()).models.length, 2, "the old model-only catalog remains compatible");
+  known.label = "Runtime model revision 2";
+  assert.equal((await models.chatList()).defaultModel.label, native.name, "the composer uses the SDK display name for infrastructure labels");
+  assert.equal((await models.resolve(null)).label, known.label, "the accepted model descriptor remains unchanged");
+  candidates = [];
+  assert.deepEqual((await models.chatList()).models, []);
+  assert.deepEqual((await models.chatList()).defaultModel.thinkingLevels, getSupportedThinkingLevels(native));
 });

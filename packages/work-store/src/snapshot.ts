@@ -246,5 +246,5 @@ function rebindPreference(encoded: string, models: readonly RunModelSnapshot[]):
   if (preference.modelRef === null) return JSON.stringify({ ...preference, availability: "available" });
   const matches = models.filter((candidate) => candidate.provider === preference.provider && candidate.model === preference.model
     && normalizeModelBaseUrl(candidate.baseUrl) === normalizeModelBaseUrl(preference.baseUrl));
-  return JSON.stringify(matches.length === 1 ? { ...matches[0], availability: "available" } : { ...preference, availability: "unavailable" });
+  return JSON.stringify(matches.length === 1 ? { ...matches[0], ...(preference.thinkingLevel === undefined ? {} : { thinkingLevel: preference.thinkingLevel }), availability: "available" } : { ...preference, availability: "unavailable" });
 }

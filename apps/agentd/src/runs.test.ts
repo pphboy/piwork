@@ -236,3 +236,17 @@ test("incompatible or missing Session refuses admission before model resolution 
     assert.equal(resolves,0); assert.equal(executions,0); assert.equal(store.activeRun("work-a"),undefined);
   });
 });
+
+test('input mode participates in accepted digest; replay skips changed command directory and Thinking capabilities',async()=>{
+ await withStore(async store=>{
+  let validations=0,executions=0,available=true;
+  const models:RunModelResolver={async list(){throw new Error('unused');},async credential(){return 'secret';},async resolve(ref){if(!available)throw new Error('changed');return{modelRef:ref,label:'Fixture',provider:'fixture',model:'one'};},async thinking(){return{thinkingLevels:['off','high'],defaultThinkingLevel:'off'};}};
+  const daemon=new AgentDaemonControl({workId:'work-a',generation:1,instanceId:'instance'});daemon.configure({modelCredentialStatus:'available',contextIdentity:'context-a',loadedSkills:[],resolvedTools:[],initializationComplete:true});
+  const manager=new RunManager(store,daemon,{async execute(context){executions++;assert.equal(context.inputMode,'command');assert.equal(context.actualModel?.thinkingLevel,'high');return{finalText:'done'};}},()=>new Date(NOW),models,()=>{validations++;if(!available)throw new Error('directory changed');});
+  store.setSessionModelPreference('work-a','session-a',JSON.stringify({modelRef:null,thinkingLevel:'high'}));
+  const input={workId:'work-a',sessionId:'session-a',submissionKey:'mode-key',prompt:'/template\targument',inputMode:'command' as const};const accepted=await manager.submitChat(input);await manager.wait(accepted.run.runId);available=false;
+  assert.equal((await manager.submitChat(input)).run.runId,accepted.run.runId);assert.equal(validations,1);assert.equal(executions,1);
+  await assert.rejects(manager.submitChat({...input,inputMode:'text'}),/different content/);await assert.rejects(manager.submitChat({...input,inputMode:undefined}),/different content/);
+  assert.equal(store.findRunSubmission('work-a','mode-key')?.runId,accepted.run.runId);assert.equal(store.findRunSubmission('work-b','mode-key'),undefined);
+ });
+});

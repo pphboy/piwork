@@ -128,6 +128,7 @@ export interface ReadinessResponse {
   runModelContractVersion: number;
   workFeedbackContractVersion: number;
   workHistorySchemaVersion: number;
+  chatControlsContractVersion: number;
 }
 
 export interface LoadedPackage {
@@ -190,6 +191,7 @@ export interface Session {
   updatedAt: string;
   modelPreferenceJson: string;
   sourceJson: string;
+  thinkingLevel: string;
 }
 
 export interface CreateSessionRequest {
@@ -224,6 +226,17 @@ export interface SessionMessage {
   role: string;
   text: string;
   createdAt: string;
+  blocks: SessionContentBlock[];
+  runId: string;
+}
+
+export interface SessionContentBlock {
+  blockId: string;
+  type: string;
+  text: string;
+  toolCallId: string;
+  toolName: string;
+  resultPreviewJson: string;
 }
 
 export interface RunError {
@@ -249,6 +262,7 @@ export interface Run {
   actualModelJson: string;
   sourceJson: string;
   adoptedExperienceVersion: number;
+  thinkingLevel: string;
 }
 
 export interface SubmitRunRequest {
@@ -258,6 +272,7 @@ export interface SubmitRunRequest {
   prompt: string;
   /** Missing: Session preference; present empty: explicit Work default. */
   modelRef?: string | undefined;
+  inputMode?: string | undefined;
 }
 
 export interface SubmitRunResponse {
@@ -292,6 +307,7 @@ export interface ToolEvent {
   toolCallId: string;
   phase: string;
   isError: boolean;
+  resultPreviewJson: string;
 }
 
 export interface StateEvent {
@@ -634,6 +650,7 @@ function createBaseReadinessResponse(): ReadinessResponse {
     runModelContractVersion: 0,
     workFeedbackContractVersion: 0,
     workHistorySchemaVersion: 0,
+    chatControlsContractVersion: 0,
   };
 }
 
@@ -698,6 +715,9 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     }
     if (message.workHistorySchemaVersion !== 0) {
       writer.uint32(152).uint32(message.workHistorySchemaVersion);
+    }
+    if (message.chatControlsContractVersion !== 0) {
+      writer.uint32(160).uint32(message.chatControlsContractVersion);
     }
     return writer;
   },
@@ -867,6 +887,14 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
             message.workHistorySchemaVersion = reader.uint32();
             continue;
           }
+          case 20: {
+            if (tag !== 160) {
+              break;
+            }
+
+            message.chatControlsContractVersion = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -968,6 +996,11 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
         : isSet(object.work_history_schema_version)
         ? globalThis.Number(object.work_history_schema_version)
         : 0,
+      chatControlsContractVersion: isSet(object.chatControlsContractVersion)
+        ? globalThis.Number(object.chatControlsContractVersion)
+        : isSet(object.chat_controls_contract_version)
+        ? globalThis.Number(object.chat_controls_contract_version)
+        : 0,
     };
   },
 
@@ -1030,6 +1063,9 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     if (message.workHistorySchemaVersion !== 0) {
       obj.workHistorySchemaVersion = Math.round(message.workHistorySchemaVersion);
     }
+    if (message.chatControlsContractVersion !== 0) {
+      obj.chatControlsContractVersion = Math.round(message.chatControlsContractVersion);
+    }
     return obj;
   },
 
@@ -1059,6 +1095,7 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     message.runModelContractVersion = object.runModelContractVersion ?? 0;
     message.workFeedbackContractVersion = object.workFeedbackContractVersion ?? 0;
     message.workHistorySchemaVersion = object.workHistorySchemaVersion ?? 0;
+    message.chatControlsContractVersion = object.chatControlsContractVersion ?? 0;
     return message;
   },
 };
@@ -1996,6 +2033,7 @@ function createBaseSession(): Session {
     updatedAt: "",
     modelPreferenceJson: "",
     sourceJson: "",
+    thinkingLevel: "",
   };
 }
 
@@ -2021,6 +2059,9 @@ export const Session: MessageFns<Session> = {
     }
     if (message.sourceJson !== "") {
       writer.uint32(58).string(message.sourceJson);
+    }
+    if (message.thinkingLevel !== "") {
+      writer.uint32(66).string(message.thinkingLevel);
     }
     return writer;
   },
@@ -2094,6 +2135,14 @@ export const Session: MessageFns<Session> = {
             message.sourceJson = reader.string();
             continue;
           }
+          case 8: {
+            if (tag !== 66) {
+              break;
+            }
+
+            message.thinkingLevel = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2143,6 +2192,11 @@ export const Session: MessageFns<Session> = {
         : isSet(object.source_json)
         ? globalThis.String(object.source_json)
         : "",
+      thinkingLevel: isSet(object.thinkingLevel)
+        ? globalThis.String(object.thinkingLevel)
+        : isSet(object.thinking_level)
+        ? globalThis.String(object.thinking_level)
+        : "",
     };
   },
 
@@ -2169,6 +2223,9 @@ export const Session: MessageFns<Session> = {
     if (message.sourceJson !== "") {
       obj.sourceJson = message.sourceJson;
     }
+    if (message.thinkingLevel !== "") {
+      obj.thinkingLevel = message.thinkingLevel;
+    }
     return obj;
   },
 
@@ -2184,6 +2241,7 @@ export const Session: MessageFns<Session> = {
     message.updatedAt = object.updatedAt ?? "";
     message.modelPreferenceJson = object.modelPreferenceJson ?? "";
     message.sourceJson = object.sourceJson ?? "";
+    message.thinkingLevel = object.thinkingLevel ?? "";
     return message;
   },
 };
@@ -2682,7 +2740,7 @@ export const SessionHistory: MessageFns<SessionHistory> = {
 };
 
 function createBaseSessionMessage(): SessionMessage {
-  return { entryId: "", role: "", text: "", createdAt: "" };
+  return { entryId: "", role: "", text: "", createdAt: "", blocks: [], runId: "" };
 }
 
 export const SessionMessage: MessageFns<SessionMessage> = {
@@ -2698,6 +2756,12 @@ export const SessionMessage: MessageFns<SessionMessage> = {
     }
     if (message.createdAt !== "") {
       writer.uint32(34).string(message.createdAt);
+    }
+    for (const v of message.blocks) {
+      SessionContentBlock.encode(v!, writer.uint32(42).fork()).join();
+    }
+    if (message.runId !== "") {
+      writer.uint32(50).string(message.runId);
     }
     return writer;
   },
@@ -2747,6 +2811,22 @@ export const SessionMessage: MessageFns<SessionMessage> = {
             message.createdAt = reader.string();
             continue;
           }
+          case 5: {
+            if (tag !== 42) {
+              break;
+            }
+
+            message.blocks.push(SessionContentBlock.decode(reader, reader.uint32()));
+            continue;
+          }
+          case 6: {
+            if (tag !== 50) {
+              break;
+            }
+
+            message.runId = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2773,6 +2853,14 @@ export const SessionMessage: MessageFns<SessionMessage> = {
         : isSet(object.created_at)
         ? globalThis.String(object.created_at)
         : "",
+      blocks: globalThis.Array.isArray(object?.blocks)
+        ? object.blocks.map((e: any) => SessionContentBlock.fromJSON(e))
+        : [],
+      runId: isSet(object.runId)
+        ? globalThis.String(object.runId)
+        : isSet(object.run_id)
+        ? globalThis.String(object.run_id)
+        : "",
     };
   },
 
@@ -2790,6 +2878,12 @@ export const SessionMessage: MessageFns<SessionMessage> = {
     if (message.createdAt !== "") {
       obj.createdAt = message.createdAt;
     }
+    if (message.blocks?.length) {
+      obj.blocks = message.blocks.map((e) => SessionContentBlock.toJSON(e));
+    }
+    if (message.runId !== "") {
+      obj.runId = message.runId;
+    }
     return obj;
   },
 
@@ -2802,6 +2896,173 @@ export const SessionMessage: MessageFns<SessionMessage> = {
     message.role = object.role ?? "";
     message.text = object.text ?? "";
     message.createdAt = object.createdAt ?? "";
+    message.blocks = object.blocks?.map((e) => SessionContentBlock.fromPartial(e)) || [];
+    message.runId = object.runId ?? "";
+    return message;
+  },
+};
+
+function createBaseSessionContentBlock(): SessionContentBlock {
+  return { blockId: "", type: "", text: "", toolCallId: "", toolName: "", resultPreviewJson: "" };
+}
+
+export const SessionContentBlock: MessageFns<SessionContentBlock> = {
+  encode(message: SessionContentBlock, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.blockId !== "") {
+      writer.uint32(10).string(message.blockId);
+    }
+    if (message.type !== "") {
+      writer.uint32(18).string(message.type);
+    }
+    if (message.text !== "") {
+      writer.uint32(26).string(message.text);
+    }
+    if (message.toolCallId !== "") {
+      writer.uint32(34).string(message.toolCallId);
+    }
+    if (message.toolName !== "") {
+      writer.uint32(42).string(message.toolName);
+    }
+    if (message.resultPreviewJson !== "") {
+      writer.uint32(50).string(message.resultPreviewJson);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): SessionContentBlock {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseSessionContentBlock();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.blockId = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.type = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.text = reader.string();
+            continue;
+          }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.toolCallId = reader.string();
+            continue;
+          }
+          case 5: {
+            if (tag !== 42) {
+              break;
+            }
+
+            message.toolName = reader.string();
+            continue;
+          }
+          case 6: {
+            if (tag !== 50) {
+              break;
+            }
+
+            message.resultPreviewJson = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): SessionContentBlock {
+    return {
+      blockId: isSet(object.blockId)
+        ? globalThis.String(object.blockId)
+        : isSet(object.block_id)
+        ? globalThis.String(object.block_id)
+        : "",
+      type: isSet(object.type) ? globalThis.String(object.type) : "",
+      text: isSet(object.text) ? globalThis.String(object.text) : "",
+      toolCallId: isSet(object.toolCallId)
+        ? globalThis.String(object.toolCallId)
+        : isSet(object.tool_call_id)
+        ? globalThis.String(object.tool_call_id)
+        : "",
+      toolName: isSet(object.toolName)
+        ? globalThis.String(object.toolName)
+        : isSet(object.tool_name)
+        ? globalThis.String(object.tool_name)
+        : "",
+      resultPreviewJson: isSet(object.resultPreviewJson)
+        ? globalThis.String(object.resultPreviewJson)
+        : isSet(object.result_preview_json)
+        ? globalThis.String(object.result_preview_json)
+        : "",
+    };
+  },
+
+  toJSON(message: SessionContentBlock): unknown {
+    const obj: any = {};
+    if (message.blockId !== "") {
+      obj.blockId = message.blockId;
+    }
+    if (message.type !== "") {
+      obj.type = message.type;
+    }
+    if (message.text !== "") {
+      obj.text = message.text;
+    }
+    if (message.toolCallId !== "") {
+      obj.toolCallId = message.toolCallId;
+    }
+    if (message.toolName !== "") {
+      obj.toolName = message.toolName;
+    }
+    if (message.resultPreviewJson !== "") {
+      obj.resultPreviewJson = message.resultPreviewJson;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<SessionContentBlock>): SessionContentBlock {
+    return SessionContentBlock.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<SessionContentBlock>): SessionContentBlock {
+    const message = createBaseSessionContentBlock();
+    message.blockId = object.blockId ?? "";
+    message.type = object.type ?? "";
+    message.text = object.text ?? "";
+    message.toolCallId = object.toolCallId ?? "";
+    message.toolName = object.toolName ?? "";
+    message.resultPreviewJson = object.resultPreviewJson ?? "";
     return message;
   },
 };
@@ -2925,6 +3186,7 @@ function createBaseRun(): Run {
     actualModelJson: "",
     sourceJson: "",
     adoptedExperienceVersion: 0,
+    thinkingLevel: "",
   };
 }
 
@@ -2985,6 +3247,9 @@ export const Run: MessageFns<Run> = {
     }
     if (message.adoptedExperienceVersion !== 0) {
       writer.uint32(128).uint32(message.adoptedExperienceVersion);
+    }
+    if (message.thinkingLevel !== "") {
+      writer.uint32(138).string(message.thinkingLevel);
     }
     return writer;
   },
@@ -3130,6 +3395,14 @@ export const Run: MessageFns<Run> = {
             message.adoptedExperienceVersion = reader.uint32();
             continue;
           }
+          case 17: {
+            if (tag !== 138) {
+              break;
+            }
+
+            message.thinkingLevel = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -3216,6 +3489,11 @@ export const Run: MessageFns<Run> = {
         : isSet(object.adopted_experience_version)
         ? globalThis.Number(object.adopted_experience_version)
         : 0,
+      thinkingLevel: isSet(object.thinkingLevel)
+        ? globalThis.String(object.thinkingLevel)
+        : isSet(object.thinking_level)
+        ? globalThis.String(object.thinking_level)
+        : "",
     };
   },
 
@@ -3269,6 +3547,9 @@ export const Run: MessageFns<Run> = {
     if (message.adoptedExperienceVersion !== 0) {
       obj.adoptedExperienceVersion = Math.round(message.adoptedExperienceVersion);
     }
+    if (message.thinkingLevel !== "") {
+      obj.thinkingLevel = message.thinkingLevel;
+    }
     return obj;
   },
 
@@ -3300,12 +3581,13 @@ export const Run: MessageFns<Run> = {
     message.actualModelJson = object.actualModelJson ?? "";
     message.sourceJson = object.sourceJson ?? "";
     message.adoptedExperienceVersion = object.adoptedExperienceVersion ?? 0;
+    message.thinkingLevel = object.thinkingLevel ?? "";
     return message;
   },
 };
 
 function createBaseSubmitRunRequest(): SubmitRunRequest {
-  return { workId: "", sessionId: "", submissionKey: "", prompt: "", modelRef: undefined };
+  return { workId: "", sessionId: "", submissionKey: "", prompt: "", modelRef: undefined, inputMode: undefined };
 }
 
 export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
@@ -3324,6 +3606,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     }
     if (message.modelRef !== undefined) {
       writer.uint32(42).string(message.modelRef);
+    }
+    if (message.inputMode !== undefined) {
+      writer.uint32(50).string(message.inputMode);
     }
     return writer;
   },
@@ -3381,6 +3666,14 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
             message.modelRef = reader.string();
             continue;
           }
+          case 6: {
+            if (tag !== 50) {
+              break;
+            }
+
+            message.inputMode = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -3416,6 +3709,11 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
         : isSet(object.model_ref)
         ? globalThis.String(object.model_ref)
         : undefined,
+      inputMode: isSet(object.inputMode)
+        ? globalThis.String(object.inputMode)
+        : isSet(object.input_mode)
+        ? globalThis.String(object.input_mode)
+        : undefined,
     };
   },
 
@@ -3436,6 +3734,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     if (message.modelRef !== undefined) {
       obj.modelRef = message.modelRef;
     }
+    if (message.inputMode !== undefined) {
+      obj.inputMode = message.inputMode;
+    }
     return obj;
   },
 
@@ -3449,6 +3750,7 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     message.submissionKey = object.submissionKey ?? "";
     message.prompt = object.prompt ?? "";
     message.modelRef = object.modelRef ?? undefined;
+    message.inputMode = object.inputMode ?? undefined;
     return message;
   },
 };
@@ -3930,7 +4232,7 @@ export const TextEvent: MessageFns<TextEvent> = {
 };
 
 function createBaseToolEvent(): ToolEvent {
-  return { serverId: "", toolName: "", toolCallId: "", phase: "", isError: false };
+  return { serverId: "", toolName: "", toolCallId: "", phase: "", isError: false, resultPreviewJson: "" };
 }
 
 export const ToolEvent: MessageFns<ToolEvent> = {
@@ -3949,6 +4251,9 @@ export const ToolEvent: MessageFns<ToolEvent> = {
     }
     if (message.isError !== false) {
       writer.uint32(40).bool(message.isError);
+    }
+    if (message.resultPreviewJson !== "") {
+      writer.uint32(50).string(message.resultPreviewJson);
     }
     return writer;
   },
@@ -4006,6 +4311,14 @@ export const ToolEvent: MessageFns<ToolEvent> = {
             message.isError = reader.bool();
             continue;
           }
+          case 6: {
+            if (tag !== 50) {
+              break;
+            }
+
+            message.resultPreviewJson = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -4041,6 +4354,11 @@ export const ToolEvent: MessageFns<ToolEvent> = {
         : isSet(object.is_error)
         ? globalThis.Boolean(object.is_error)
         : false,
+      resultPreviewJson: isSet(object.resultPreviewJson)
+        ? globalThis.String(object.resultPreviewJson)
+        : isSet(object.result_preview_json)
+        ? globalThis.String(object.result_preview_json)
+        : "",
     };
   },
 
@@ -4061,6 +4379,9 @@ export const ToolEvent: MessageFns<ToolEvent> = {
     if (message.isError !== false) {
       obj.isError = message.isError;
     }
+    if (message.resultPreviewJson !== "") {
+      obj.resultPreviewJson = message.resultPreviewJson;
+    }
     return obj;
   },
 
@@ -4074,6 +4395,7 @@ export const ToolEvent: MessageFns<ToolEvent> = {
     message.toolCallId = object.toolCallId ?? "";
     message.phase = object.phase ?? "";
     message.isError = object.isError ?? false;
+    message.resultPreviewJson = object.resultPreviewJson ?? "";
     return message;
   },
 };
@@ -4532,6 +4854,56 @@ export const AgentServiceService = {
     responseSerialize: (value: Session): Buffer => Buffer.from(Session.encode(value).finish()),
     responseDeserialize: (value: Buffer): Session => Session.decode(value),
   },
+  listChatModels: {
+    path: "/piwork.agent.v1.AgentService/ListChatModels" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  listSlashCommands: {
+    path: "/piwork.agent.v1.AgentService/ListSlashCommands" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  getSessionChatOptions: {
+    path: "/piwork.agent.v1.AgentService/GetSessionChatOptions" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  setSessionChatOptions: {
+    path: "/piwork.agent.v1.AgentService/SetSessionChatOptions" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  lookupChatSubmission: {
+    path: "/piwork.agent.v1.AgentService/LookupChatSubmission" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
   listAgentRequests: {
     path: "/piwork.agent.v1.AgentService/ListAgentRequests" as const,
     requestStream: false as const,
@@ -4598,6 +4970,11 @@ export interface AgentServiceServer extends UntypedServiceImplementation {
   cancelRun: handleUnaryCall<CancelRunRequest, Run>;
   listRunModels: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   setSessionModel: handleUnaryCall<AgentContentRequest, Session>;
+  listChatModels: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  listSlashCommands: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  getSessionChatOptions: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  setSessionChatOptions: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  lookupChatSubmission: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   listAgentRequests: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   getAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   cancelAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
@@ -4785,6 +5162,81 @@ export interface AgentServiceClient extends Client {
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: Session) => void,
+  ): ClientUnaryCall;
+  listChatModels(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  listChatModels(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  listChatModels(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  listSlashCommands(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  listSlashCommands(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  listSlashCommands(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionChatOptions(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionChatOptions(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionChatOptions(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  setSessionChatOptions(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  setSessionChatOptions(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  setSessionChatOptions(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  lookupChatSubmission(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  lookupChatSubmission(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  lookupChatSubmission(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
   ): ClientUnaryCall;
   listAgentRequests(
     request: AgentContentRequest,

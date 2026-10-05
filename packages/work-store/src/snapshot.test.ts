@@ -308,3 +308,15 @@ test("SDK tool start must persist the exact fixed verification input", () => {
   } finally { f.close(); }
  }
 });
+
+test('schema 4 optional Thinking and input mode survive cold validation and rebinding',()=>{
+ const f=fixture();try{
+  const model={modelRef:'model-source-12345678',label:'Original',provider:'fixture',model:'one',thinkingLevel:'high'};
+  f.store.setSessionModelPreference(SOURCE,'session-local',JSON.stringify({...model,availability:'available'}));
+  edit(f.volume,`UPDATE runs SET actual_model_json='${JSON.stringify(model)}',model_selector_json='{"kind":"session-preference","inputMode":"text"}'`);
+  const snapshot=WorkHistorySnapshot.open(f.volume,f.scope)!;const target=join(f.root,'imported');cpSync(f.volume,target,{recursive:true});
+  try{snapshot.rebuild(target,'work-target-1234567890',new Map([[CONTEXT,'context-target']]),[{...model,modelRef:'model-target-12345678',thinkingLevel:undefined}]);}finally{snapshot.close();}
+  const imported=WorkStore.open(join(target,'work.sqlite'));try{assert.equal(JSON.parse(imported.getSession('work-target-1234567890','session-local')!.modelPreferenceJson!).thinkingLevel,'high');assert.equal(JSON.parse(imported.getRun(f.runId)!.actualModelJson!).thinkingLevel,'high');assert.equal(JSON.parse(imported.getRun(f.runId)!.modelSelectorJson!).inputMode,'text');}finally{imported.close();}
+  for(const invalid of ['"impossible"','null','3']){edit(f.volume,`UPDATE runs SET actual_model_json='{"modelRef":null,"label":"Default","provider":"fixture","model":"one","thinkingLevel":${invalid}}'`);assert.throws(()=>WorkHistorySnapshot.open(f.volume,f.scope),WorkHistoryValidationError);}
+ }finally{f.close();}
+});

@@ -138,6 +138,24 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 	if status != 201 || session["sessionId"] == nil {
 		t.Fatal("Core Session HTTP route failed", status, session)
 	}
+	if status, capabilities := httpCall(t, base, path+"/chat-capabilities", "GET", authorization, nil); status != 200 || capabilities["contractVersion"] != float64(1) {
+		t.Fatal("optional chat capabilities", status, capabilities)
+	}
+	if status, models := httpCall(t, base, path+"/chat-models", "GET", authorization, nil); status != 200 || models["defaultModel"].(map[string]any)["defaultThinkingLevel"] != "off" {
+		t.Fatal("chat models", status, models)
+	}
+	if status, commands := httpCall(t, base, path+"/commands", "GET", authorization, nil); status != 200 || commands["commands"] == nil {
+		t.Fatal("command catalog", status, commands)
+	}
+	if status, options := httpCall(t, base, path+"/sessions/"+session["sessionId"].(string)+"/chat-options", "PATCH", authorization, map[string]any{"modelRef": nil, "thinkingLevel": "off"}); status != 200 || options["thinkingLevel"] != "off" {
+		t.Fatal("complete options", status, options)
+	}
+	if status, lookup := httpCall(t, base, path+"/sessions/submissions/http-session-1", "GET", authorization, nil); status != 200 || lookup["session"].(map[string]any)["sessionId"] != session["sessionId"] {
+		t.Fatal("original Session key", status, lookup)
+	}
+	if status, lookup := httpCall(t, base, path+"/runs/submissions/not-yet-found", "GET", authorization, nil); status != 200 || lookup["status"] != "not-found" {
+		t.Fatal("lookup created a Run", status, lookup)
+	}
 	if repeatedStatus, repeated := httpCall(t, base, path+"/sessions", "POST", authorization, map[string]any{"idempotencyKey": "http-session-1"}); repeatedStatus != 201 || repeated["sessionId"] != session["sessionId"] {
 		t.Fatal("Session idempotency created a duplicate", repeatedStatus, repeated)
 	}

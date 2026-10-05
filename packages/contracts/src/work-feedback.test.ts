@@ -33,6 +33,7 @@ test("missing readiness fields cannot advertise brain or model support", () => {
   assert.equal(value.runModelContractVersion, 0);
   assert.equal(value.workFeedbackContractVersion, 0);
   assert.equal(value.workHistorySchemaVersion, 0);
+  assert.equal(value.chatControlsContractVersion, 0);
 });
 
 test("feedback contract rejects unknown state, unsafe connections, invalid scopes and unsupported fields", () => {

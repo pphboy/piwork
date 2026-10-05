@@ -32,6 +32,11 @@ const (
 	AgentService_CancelRun_FullMethodName                         = "/piwork.agent.v1.AgentService/CancelRun"
 	AgentService_ListRunModels_FullMethodName                     = "/piwork.agent.v1.AgentService/ListRunModels"
 	AgentService_SetSessionModel_FullMethodName                   = "/piwork.agent.v1.AgentService/SetSessionModel"
+	AgentService_ListChatModels_FullMethodName                    = "/piwork.agent.v1.AgentService/ListChatModels"
+	AgentService_ListSlashCommands_FullMethodName                 = "/piwork.agent.v1.AgentService/ListSlashCommands"
+	AgentService_GetSessionChatOptions_FullMethodName             = "/piwork.agent.v1.AgentService/GetSessionChatOptions"
+	AgentService_SetSessionChatOptions_FullMethodName             = "/piwork.agent.v1.AgentService/SetSessionChatOptions"
+	AgentService_LookupChatSubmission_FullMethodName              = "/piwork.agent.v1.AgentService/LookupChatSubmission"
 	AgentService_ListAgentRequests_FullMethodName                 = "/piwork.agent.v1.AgentService/ListAgentRequests"
 	AgentService_GetAgentRequest_FullMethodName                   = "/piwork.agent.v1.AgentService/GetAgentRequest"
 	AgentService_CancelAgentRequest_FullMethodName                = "/piwork.agent.v1.AgentService/CancelAgentRequest"
@@ -56,6 +61,11 @@ type AgentServiceClient interface {
 	CancelRun(ctx context.Context, in *CancelRunRequest, opts ...grpc.CallOption) (*Run, error)
 	ListRunModels(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	SetSessionModel(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*Session, error)
+	ListChatModels(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	ListSlashCommands(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	GetSessionChatOptions(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	SetSessionChatOptions(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	LookupChatSubmission(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	ListAgentRequests(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	GetAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	CancelAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
@@ -210,6 +220,56 @@ func (c *agentServiceClient) SetSessionModel(ctx context.Context, in *AgentConte
 	return out, nil
 }
 
+func (c *agentServiceClient) ListChatModels(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_ListChatModels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) ListSlashCommands(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_ListSlashCommands_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) GetSessionChatOptions(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_GetSessionChatOptions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) SetSessionChatOptions(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_SetSessionChatOptions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) LookupChatSubmission(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_LookupChatSubmission_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentServiceClient) ListAgentRequests(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AgentContentResponse)
@@ -277,6 +337,11 @@ type AgentServiceServer interface {
 	CancelRun(context.Context, *CancelRunRequest) (*Run, error)
 	ListRunModels(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	SetSessionModel(context.Context, *AgentContentRequest) (*Session, error)
+	ListChatModels(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	ListSlashCommands(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	GetSessionChatOptions(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	SetSessionChatOptions(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	LookupChatSubmission(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	ListAgentRequests(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	GetAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	CancelAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
@@ -330,6 +395,21 @@ func (UnimplementedAgentServiceServer) ListRunModels(context.Context, *AgentCont
 }
 func (UnimplementedAgentServiceServer) SetSessionModel(context.Context, *AgentContentRequest) (*Session, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetSessionModel not implemented")
+}
+func (UnimplementedAgentServiceServer) ListChatModels(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListChatModels not implemented")
+}
+func (UnimplementedAgentServiceServer) ListSlashCommands(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListSlashCommands not implemented")
+}
+func (UnimplementedAgentServiceServer) GetSessionChatOptions(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetSessionChatOptions not implemented")
+}
+func (UnimplementedAgentServiceServer) SetSessionChatOptions(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetSessionChatOptions not implemented")
+}
+func (UnimplementedAgentServiceServer) LookupChatSubmission(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LookupChatSubmission not implemented")
 }
 func (UnimplementedAgentServiceServer) ListAgentRequests(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListAgentRequests not implemented")
@@ -594,6 +674,96 @@ func _AgentService_SetSessionModel_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_ListChatModels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).ListChatModels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_ListChatModels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).ListChatModels(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_ListSlashCommands_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).ListSlashCommands(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_ListSlashCommands_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).ListSlashCommands(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_GetSessionChatOptions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetSessionChatOptions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetSessionChatOptions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetSessionChatOptions(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_SetSessionChatOptions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).SetSessionChatOptions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_SetSessionChatOptions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).SetSessionChatOptions(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_LookupChatSubmission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).LookupChatSubmission(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_LookupChatSubmission_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).LookupChatSubmission(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AgentService_ListAgentRequests_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AgentContentRequest)
 	if err := dec(in); err != nil {
@@ -738,6 +908,26 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetSessionModel",
 			Handler:    _AgentService_SetSessionModel_Handler,
+		},
+		{
+			MethodName: "ListChatModels",
+			Handler:    _AgentService_ListChatModels_Handler,
+		},
+		{
+			MethodName: "ListSlashCommands",
+			Handler:    _AgentService_ListSlashCommands_Handler,
+		},
+		{
+			MethodName: "GetSessionChatOptions",
+			Handler:    _AgentService_GetSessionChatOptions_Handler,
+		},
+		{
+			MethodName: "SetSessionChatOptions",
+			Handler:    _AgentService_SetSessionChatOptions_Handler,
+		},
+		{
+			MethodName: "LookupChatSubmission",
+			Handler:    _AgentService_LookupChatSubmission_Handler,
 		},
 		{
 			MethodName: "ListAgentRequests",

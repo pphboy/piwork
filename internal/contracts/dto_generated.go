@@ -359,6 +359,67 @@ type BrainVerificationTarget struct {
 
 type BusinessOperationState string
 
+type ChatCapabilities struct {
+	ContractVersion float64 `json:"contractVersion"`
+}
+
+type ChatInputMode string
+
+type ChatModelList struct {
+	ContractVersion float64     `json:"contractVersion"`
+	Models          []ChatModel `json:"models"`
+	DefaultModel    ChatModel   `json:"defaultModel"`
+	CheckedAt       Timestamp   `json:"checkedAt"`
+	Availability    string      `json:"availability"`
+}
+
+type ChatModel struct {
+	ModelRef             json.RawMessage `json:"modelRef"`
+	Label                string          `json:"label"`
+	Provider             string          `json:"provider"`
+	Model                string          `json:"model"`
+	ThinkingLevels       []ThinkingLevel `json:"thinkingLevels"`
+	DefaultThinkingLevel ThinkingLevel   `json:"defaultThinkingLevel"`
+}
+
+type ChatRunView struct {
+	WorkId                    Identifier      `json:"workId"`
+	SessionId                 Identifier      `json:"sessionId"`
+	RunId                     Identifier      `json:"runId"`
+	SubmissionKey             string          `json:"submissionKey"`
+	State                     int64           `json:"state"`
+	PromptDigest              string          `json:"promptDigest"`
+	FinalText                 string          `json:"finalText"`
+	AcceptedAt                Timestamp       `json:"acceptedAt"`
+	StartedAt                 string          `json:"startedAt"`
+	FinishedAt                string          `json:"finishedAt"`
+	EarliestAvailableSequence string          `json:"earliestAvailableSequence"`
+	LatestSequence            string          `json:"latestSequence"`
+	ActualModel               json.RawMessage `json:"actualModel"`
+	ThinkingLevel             ThinkingLevel   `json:"thinkingLevel"`
+	Source                    AgentRunSource  `json:"source"`
+	AdoptedExperienceVersion  int64           `json:"adoptedExperienceVersion"`
+	Error                     Field[struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		Retryable bool   `json:"retryable"`
+	}] `json:"error,omitzero"`
+}
+
+type ChatSessionView struct {
+	WorkId          Identifier      `json:"workId"`
+	SessionId       Identifier      `json:"sessionId"`
+	CreatedAt       Timestamp       `json:"createdAt"`
+	UpdatedAt       Timestamp       `json:"updatedAt"`
+	ModelPreference json.RawMessage `json:"modelPreference"`
+	ThinkingLevel   ThinkingLevel   `json:"thinkingLevel"`
+	Source          AgentRunSource  `json:"source"`
+}
+
+type ChatSubmissionKey string
+
+type ChatSubmissionLookup = json.RawMessage
+
 type CreateUserRequest struct {
 	Account  Identifier      `json:"account"`
 	Password string          `json:"password"`
@@ -479,6 +540,11 @@ type ImportWorkRequest struct {
 	PackageId      ResourceId             `json:"packageId"`
 	Name           Field[string]          `json:"name,omitzero"`
 	IdempotencyKey SnapshotIdempotencyKey `json:"idempotencyKey"`
+}
+
+type LookupChatSubmission struct {
+	Kind string            `json:"kind"`
+	Key  ChatSubmissionKey `json:"key"`
 }
 
 type ManagedSkill struct {
@@ -884,6 +950,8 @@ type RunModelList struct {
 
 type RunModelSelector = json.RawMessage
 
+type RunSubmissionSelector = json.RawMessage
+
 type RuntimeSkill struct {
 	Name             SkillName       `json:"name"`
 	Loaded           bool            `json:"loaded"`
@@ -1087,6 +1155,22 @@ type ServiceQueryResult struct {
 	}] `json:"checks,omitzero"`
 }
 
+type SessionChatOptions struct {
+	SessionId     Identifier          `json:"sessionId"`
+	ModelRef      json.RawMessage     `json:"modelRef"`
+	ThinkingLevel ThinkingLevel       `json:"thinkingLevel"`
+	Model         RunModelDescription `json:"model"`
+	Availability  string              `json:"availability"`
+	CheckedAt     Timestamp           `json:"checkedAt"`
+}
+
+type SessionContentBlock = json.RawMessage
+
+type SetSessionChatOptions struct {
+	ModelRef      json.RawMessage `json:"modelRef"`
+	ThinkingLevel ThinkingLevel   `json:"thinkingLevel"`
+}
+
 type SetSessionModel struct {
 	ModelRef json.RawMessage `json:"modelRef"`
 }
@@ -1111,6 +1195,20 @@ type SkillPathRequest struct {
 
 type SkillSelection []SkillName
 
+type SlashCommandList struct {
+	ContractVersion float64        `json:"contractVersion"`
+	Commands        []SlashCommand `json:"commands"`
+	CheckedAt       Timestamp      `json:"checkedAt"`
+}
+
+type SlashCommand struct {
+	Kind        string `json:"kind"`
+	Command     string `json:"command"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	SourceName  string `json:"sourceName"`
+}
+
 type SnapshotIdempotencyKey string
 
 type SubmitRunInput struct {
@@ -1118,7 +1216,10 @@ type SubmitRunInput struct {
 	SubmissionKey string                 `json:"submissionKey"`
 	Prompt        string                 `json:"prompt"`
 	ModelRef      Field[json.RawMessage] `json:"modelRef,omitzero"`
+	InputMode     Field[ChatInputMode]   `json:"inputMode,omitzero"`
 }
+
+type ThinkingLevel string
 
 type Timestamp string
 
@@ -1126,6 +1227,8 @@ type ToolPolicy struct {
 	Allowed []WorkToolPolicyKey `json:"allowed"`
 	Denied  []WorkToolPolicyKey `json:"denied"`
 }
+
+type ToolResultPreview = json.RawMessage
 
 type UploadedWorkPackage struct {
 	PackageId           ResourceId              `json:"packageId"`

@@ -108,3 +108,37 @@ test("Session model preference is persistent, context-neutral and absent in a ne
     assert.equal(sessions.list().find((r) => r.sessionId === session.sessionId)?.modelPreferenceJson, changed.modelPreferenceJson);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test("legacy custom model selection does not claim a confirmed Off capability", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-session-custom-"));
+  const workspace = join(root, "workspace"); await mkdir(workspace);
+  const store = WorkStore.open(join(root, "work.sqlite"));
+  try {
+    const model = { modelRef: null, label: "Custom", provider: "anthropic", model: "unconfirmed-custom", baseUrl: "https://custom.example.test/anthropic" };
+    const models = new AgentRunModels({ provider: model.provider, id: model.model, baseUrl: model.baseUrl, deterministic: false }, {
+      async models() { return { models: [], defaultModel: model, checkedAt: "2026-10-05T00:00:00Z" }; },
+      async resolveModel() { return { model, credential: "fixture-private-key" }; },
+    });
+    const sessions = new AgentSessionService("work-custom", store, workspace, join(root, "sessions"), "context-custom");
+    const session = sessions.create();
+    const saved = await sessions.setModelPreference(session.sessionId, null, models);
+    assert.equal(JSON.parse(saved.modelPreferenceJson!).thinkingLevel, undefined);
+    assert.equal((await sessions.chatOptions(session.sessionId, models)).availability, "unavailable");
+    await assert.rejects(sessions.setChatOptions(session.sessionId, { modelRef: null, thinkingLevel: "off" }, models), /cannot confirm/);
+    assert.equal(store.getSession("work-custom", session.sessionId)?.modelPreferenceJson, saved.modelPreferenceJson);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('complete chat options are atomic; legacy model PATCH retains Thinking and rejects an incompatible model',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'piwork-options-'));await mkdir(join(root,'workspace'));const store=WorkStore.open(join(root,'work.sqlite'));
+ try {
+  const sessions=new AgentSessionService('work-1',store,join(root,'workspace'),join(root,'sessions'),'context-a');const first=sessions.create('key');
+  const models:import('./run-models.js').RunModelResolver={async list(){throw new Error('unused');},async credential(){return 'secret';},async resolve(ref){return{modelRef:ref,label:ref || 'Default',provider:'fixture',model:ref || 'default'};},async thinking(model){return{thinkingLevels:model.modelRef==='model-high'?['off','high']:['off'],defaultThinkingLevel:'off'};}};
+  assert.equal((await sessions.chatOptions(first.sessionId,models)).thinkingLevel,'off');
+  await sessions.setChatOptions(first.sessionId,{modelRef:'model-high',thinkingLevel:'high'},models);const original=store.getSession('work-1',first.sessionId)?.modelPreferenceJson;
+  await assert.rejects(sessions.setModelPreference(first.sessionId,null,models),/Thinking/);assert.equal(store.getSession('work-1',first.sessionId)?.modelPreferenceJson,original);
+  const current=await sessions.chatOptions(first.sessionId,models);assert.equal(current.modelRef,'model-high');assert.equal(current.thinkingLevel,'high');assert.doesNotMatch(JSON.stringify(current),/secret|baseUrl|sdkHistoryPath/);
+  const other=new AgentSessionService('work-1',store,join(root,'workspace'),join(root,'sessions'),'context-b');await assert.rejects(other.setChatOptions(first.sessionId,{modelRef:null,thinkingLevel:'off'},models),/context is unavailable/);assert.equal((await other.chatOptions(first.sessionId,models)).availability,'unavailable');
+  assert.equal(store.findSessionSubmission('work-1','key')?.sessionId,first.sessionId);assert.equal(store.findSessionSubmission('other-work','key'),undefined);
+ }finally{store.close();await rm(root,{recursive:true,force:true});}
+});

@@ -24,7 +24,7 @@ import (
 
 func conversationPath(r *http.Request) (workID, resource, item, action string, matched bool) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/")
-	if len(parts) < 5 || len(parts) > 7 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" && parts[4] != "models" && parts[4] != "agent-requests" && parts[4] != "evidence" {
+	if len(parts) < 5 || len(parts) > 7 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" && parts[4] != "models" && parts[4] != "agent-requests" && parts[4] != "evidence" && parts[4] != "chat-capabilities" && parts[4] != "chat-models" && parts[4] != "commands" {
 		return "", "", "", "", false
 	}
 	for i := 3; i < len(parts); i++ {
@@ -49,7 +49,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	if !matched {
 		return false, nil
 	}
-	valid := feedbackRoute(r.Method, resource, item, action) || resource == "models" && item == "" && action == "" && r.Method == "GET" || resource == "sessions" && item != "" && action == "model" && r.Method == "PATCH" || action == "" && (resource == "sessions" && (r.Method == "GET" || r.Method == "POST" && item == "") || resource == "runs" && (r.Method == "POST" && item == "" || r.Method == "GET" && item != "")) || resource == "runs" && item != "" && r.Method == "POST" && action == "cancel" || resource == "runs" && item != "" && r.Method == "GET" && action == "events"
+	valid := chatControlRoute(r.Method, resource, item, action) || feedbackRoute(r.Method, resource, item, action) || resource == "models" && item == "" && action == "" && r.Method == "GET" || resource == "sessions" && item != "" && action == "model" && r.Method == "PATCH" || action == "" && (resource == "sessions" && (r.Method == "GET" || r.Method == "POST" && item == "") || resource == "runs" && (r.Method == "POST" && item == "" || r.Method == "GET" && item != "")) || resource == "runs" && item != "" && r.Method == "POST" && action == "cancel" || resource == "runs" && item != "" && r.Method == "GET" && action == "events"
 	if !valid {
 		return false, nil
 	}
@@ -85,6 +85,56 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	r = r.WithContext(routeRequest)
 	if resource == "agent-requests" || resource == "evidence" {
 		return a.feedbackHTTP(w, r, agent, workID, resource, item, action)
+	}
+	if chatControlRoute(r.Method, resource, item, action) {
+		if r.URL.RawQuery != "" {
+			return true, contracts.NewError("INVALID_REQUEST", "")
+		}
+		version, err := agent.ChatControlsVersion(r.Context(), *work.ActiveContextID)
+		if err != nil {
+			return true, conversationError(err)
+		}
+		if resource == "chat-capabilities" {
+			send(w, 200, map[string]any{"contractVersion": version})
+			return true, nil
+		}
+		if version != 1 {
+			return true, contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
+		}
+		var result any
+		switch {
+		case resource == "chat-models":
+			result, err = agent.ListChatModels(r.Context())
+		case resource == "commands":
+			result, err = agent.ListSlashCommands(r.Context())
+		case item == "submissions":
+			if contracts.Validate("ChatSubmissionKeySchema", action) != nil {
+				return true, contracts.NewError("INVALID_REQUEST", "")
+			}
+			kind := "run"
+			if resource == "sessions" {
+				kind = "session"
+			}
+			result, err = agent.LookupChatSubmission(r.Context(), kind, action)
+		case r.Method == "GET":
+			result, err = agent.GetSessionChatOptions(r.Context(), item)
+		default:
+			input, readErr := readControlJSON[contracts.SetSessionChatOptions](r, "SetSessionChatOptionsSchema", false)
+			if readErr != nil {
+				return true, readErr
+			}
+			release, lockErr := a.Store.BeginTransientMutation(r.Context(), workID)
+			if lockErr != nil {
+				return true, conversationError(lockErr)
+			}
+			defer release()
+			result, err = agent.SetSessionChatOptions(r.Context(), item, input)
+		}
+		if err != nil {
+			return true, conversationError(err)
+		}
+		send(w, 200, result)
+		return true, nil
 	}
 	if resource == "models" {
 		result, err := agent.ListRunModels(r.Context())
@@ -153,7 +203,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			}
 			messages := make([]any, 0, len(history.GetMessages()))
 			for _, message := range history.GetMessages() {
-				messages = append(messages, map[string]any{"entryId": message.GetEntryId(), "role": message.GetRole(), "text": message.GetText(), "createdAt": message.GetCreatedAt()})
+				messages = append(messages, map[string]any{"entryId": message.GetEntryId(), "role": message.GetRole(), "text": message.GetText(), "createdAt": message.GetCreatedAt(), "runId": message.GetRunId(), "blocks": sessionBlocksView(message)})
 			}
 			runs := make([]any, 0, len(history.GetRuns()))
 			for _, run := range history.GetRuns() {
@@ -194,7 +244,18 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			return true, conversationError(err)
 		}
 		defer release()
-		result, err := agent.SubmitRun(r.Context(), string(input.SessionId), input.SubmissionKey, input.Prompt, modelRef)
+		var modes []string
+		if input.InputMode.Present {
+			version, e := agent.ChatControlsVersion(r.Context(), *work.ActiveContextID)
+			if e != nil {
+				return true, conversationError(e)
+			}
+			if version != 1 {
+				return true, contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
+			}
+			modes = append(modes, string(input.InputMode.Value))
+		}
+		result, err := agent.SubmitRun(r.Context(), string(input.SessionId), input.SubmissionKey, input.Prompt, modelRef, modes...)
 		if err != nil {
 			return true, conversationError(err)
 		}
@@ -245,13 +306,15 @@ func conversationError(err error) error {
 		return contracts.NewError("WORK_UNAVAILABLE", "")
 	}
 	if state, ok := status.FromError(err); ok {
-		for _, code := range []string{"MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
+		for _, code := range []string{"CHAT_OPTIONS_UNSUPPORTED", "THINKING_LEVEL_UNSUPPORTED", "SLASH_COMMAND_UNKNOWN", "SLASH_COMMAND_UNSUPPORTED", "SLASH_COMMAND_UNAVAILABLE", "MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
 			if strings.HasPrefix(state.Message(), code+":") {
 				return contracts.NewError(code, "")
 			}
 		}
 	}
 	switch status.Code(err) {
+	case codes.Unimplemented:
+		return contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
 	case codes.InvalidArgument:
 		return contracts.NewError("INVALID_REQUEST", "")
 	case codes.FailedPrecondition:
@@ -277,7 +340,7 @@ func sessionView(session *agentv1.Session) any {
 	if session == nil {
 		return nil
 	}
-	view := map[string]any{"workId": session.GetWorkId(), "sessionId": session.GetSessionId(), "sdkHistoryPath": session.GetSdkHistoryPath(), "createdAt": session.GetCreatedAt(), "updatedAt": session.GetUpdatedAt()}
+	view := map[string]any{"thinkingLevel": thinkingView(session.GetThinkingLevel()), "workId": session.GetWorkId(), "sessionId": session.GetSessionId(), "sdkHistoryPath": session.GetSdkHistoryPath(), "createdAt": session.GetCreatedAt(), "updatedAt": session.GetUpdatedAt()}
 	if session.GetModelPreferenceJson() != "" {
 		view["modelPreference"] = decodePublicProjection(session.GetModelPreferenceJson())
 	} else {
@@ -295,7 +358,7 @@ func runView(run *agentv1.Run) any {
 	if run == nil {
 		return nil
 	}
-	view := map[string]any{"workId": run.GetWorkId(), "sessionId": run.GetSessionId(), "runId": run.GetRunId(), "submissionKey": run.GetSubmissionKey(), "state": int32(run.GetState()), "promptDigest": run.GetPromptDigest(), "finalText": run.GetFinalText(), "acceptedAt": run.GetAcceptedAt(), "startedAt": run.GetStartedAt(), "finishedAt": run.GetFinishedAt(), "earliestAvailableSequence": strconv.FormatUint(run.GetEarliestAvailableSequence(), 10), "latestSequence": strconv.FormatUint(run.GetLatestSequence(), 10)}
+	view := map[string]any{"thinkingLevel": thinkingView(run.GetThinkingLevel()), "workId": run.GetWorkId(), "sessionId": run.GetSessionId(), "runId": run.GetRunId(), "submissionKey": run.GetSubmissionKey(), "state": int32(run.GetState()), "promptDigest": run.GetPromptDigest(), "finalText": run.GetFinalText(), "acceptedAt": run.GetAcceptedAt(), "startedAt": run.GetStartedAt(), "finishedAt": run.GetFinishedAt(), "earliestAvailableSequence": strconv.FormatUint(run.GetEarliestAvailableSequence(), 10), "latestSequence": strconv.FormatUint(run.GetLatestSequence(), 10)}
 	if run.GetActualModelJson() != "" {
 		view["actualModel"] = decodePublicProjection(run.GetActualModelJson())
 	} else {
@@ -318,7 +381,7 @@ func runEventView(event *agentv1.RunEvent) any {
 	if value := event.GetText(); value != nil {
 		view["kind"] = map[string]any{"$case": "text", "text": map[string]any{"delta": value.GetDelta()}}
 	} else if value := event.GetTool(); value != nil {
-		view["kind"] = map[string]any{"$case": "tool", "tool": map[string]any{"serverId": value.GetServerId(), "toolName": value.GetToolName(), "toolCallId": value.GetToolCallId(), "phase": value.GetPhase(), "isError": value.GetIsError()}}
+		view["kind"] = map[string]any{"$case": "tool", "tool": map[string]any{"serverId": value.GetServerId(), "toolName": value.GetToolName(), "toolCallId": value.GetToolCallId(), "phase": value.GetPhase(), "isError": value.GetIsError(), "result": decodePublicProjection(value.GetResultPreviewJson())}}
 	} else if value := event.GetState(); value != nil {
 		state := map[string]any{"state": int32(value.GetState()), "finalText": value.GetFinalText()}
 		if failure := value.GetError(); failure != nil {
@@ -335,4 +398,31 @@ func decodePublicProjection(raw string) any {
 		return nil
 	}
 	return value
+}
+
+func chatControlRoute(method, resource, item, action string) bool {
+	return method == "GET" && item == "" && action == "" && (resource == "chat-capabilities" || resource == "chat-models" || resource == "commands") || (resource == "sessions" || resource == "runs") && item == "submissions" && action != "" && method == "GET" || resource == "sessions" && item != "" && action == "chat-options" && (method == "GET" || method == "PATCH")
+}
+func thinkingView(level string) string {
+	if level == "" {
+		return "off"
+	}
+	return level
+}
+func sessionBlocksView(message *agentv1.SessionMessage) []any {
+	blocks := make([]any, 0, len(message.GetBlocks()))
+	for _, block := range message.GetBlocks() {
+		value := map[string]any{"blockId": block.GetBlockId(), "type": block.GetType()}
+		if block.GetType() == "text" {
+			value["text"] = block.GetText()
+		} else {
+			value["toolCallId"] = block.GetToolCallId()
+			value["toolName"] = block.GetToolName()
+			if block.GetType() == "tool-result" {
+				value["result"] = decodePublicProjection(block.GetResultPreviewJson())
+			}
+		}
+		blocks = append(blocks, value)
+	}
+	return blocks
 }

@@ -174,7 +174,7 @@ func validateBrainHistory(ctx context.Context, db *sql.DB, scope Scope) error {
 		}
 	}
 	for _, r := range graph["runs"] {
-		for key, schema := range map[string]string{"model_selector_json": "RunModelSelectorSchema", "source_json": "AgentRunSourceSchema"} {
+		for key, schema := range map[string]string{"model_selector_json": "RunSubmissionSelectorSchema", "source_json": "AgentRunSourceSchema"} {
 			if v := field("runs", r, key); v != nil && contracts.Validate(schema, v) != nil {
 				return ErrInvalid
 			}
@@ -433,11 +433,14 @@ func validHistoryModel(value any) bool {
 	}
 	description := map[string]any{}
 	for key, v := range model {
-		if key != "baseUrl" && key != "availability" {
+		if key != "baseUrl" && key != "availability" && key != "thinkingLevel" {
 			description[key] = v
 		}
 	}
 	if contracts.Validate("RunModelDescriptionSchema", description) != nil {
+		return false
+	}
+	if level, exists := model["thinkingLevel"]; exists && contracts.Validate("ThinkingLevelSchema", level) != nil {
 		return false
 	}
 	if v, exists := model["availability"]; exists && !oneOf(v, "available", "unavailable") {

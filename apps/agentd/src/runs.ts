@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { WorkStore, type AcceptedRun, type RunEventRecord, type RunRecord } from "@piwork/work-store";
 import { AgentDaemonControl } from "./daemon.js";
-import { type AgentRunSource, type RunModelSelector, type RunModelSnapshot } from "@piwork/contracts";
+import { type AgentRunSource, type RunSubmissionSelector, type RunModelSnapshot, type ChatInputMode, type ThinkingLevel } from "@piwork/contracts";
 import { canonicalJson, type RequestPhase } from "@piwork/work-store";
 import { BRAIN_LIMITS } from "@piwork/contracts";
 import { RunModelError, type RunModelResolver } from "./run-models.js";
@@ -14,6 +14,7 @@ export interface RunExecutionContext {
   readonly contextIdentity?: string | null;
   readonly signal: AbortSignal;
   readonly actualModel?: RunModelSnapshot;
+  readonly inputMode?: ChatInputMode;
   readonly source?: AgentRunSource;
   readonly adoptedExperienceVersion?: number;
   emit(eventType: string, payload: unknown): void;
@@ -38,6 +39,7 @@ export class RunManager {
     private readonly executor: RunExecutor,
     private readonly now: () => Date = () => new Date(),
     private readonly models?: RunModelResolver,
+    private readonly validateCommand?: (prompt: string) => void,
   ) {}
 
   recover(): RunRecord[] {
@@ -53,7 +55,7 @@ export class RunManager {
     readonly sessionId: string;
     readonly submissionKey: string;
     readonly prompt: string;
-    readonly selector?: RunModelSelector;
+    readonly selector?: RunSubmissionSelector;
     readonly actualModel?: RunModelSnapshot;
     readonly agentRequest?: { readonly requestId: string; readonly phase: RequestPhase };
   }): AcceptedRun {
@@ -84,36 +86,51 @@ export class RunManager {
   }
 
   async submitChat(input: { readonly workId: string; readonly sessionId: string; readonly submissionKey: string;
-    readonly prompt: string; readonly modelRef?: string | null }): Promise<AcceptedRun> {
-    const selector = modelSelector(input.modelRef);
+    readonly prompt: string; readonly modelRef?: string | null; readonly inputMode?: ChatInputMode }): Promise<AcceptedRun> {
+    const selector: RunSubmissionSelector = { ...modelSelector(input.modelRef), ...(input.inputMode === undefined ? {} : { inputMode: input.inputMode }) };
     const replay = this.store.findRunReplay(input.workId, input.submissionKey, submissionDigest(input.sessionId, input.prompt, selector));
     if (replay) return { run: replay, reused: true };
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
     const session = this.store.getSession(input.workId, input.sessionId);
     if (!session) throw Object.assign(new Error("Session not found"), {name: "SessionNotFoundError"});
     if (session.contextIdentity && session.contextIdentity !== this.daemon.readiness().contextIdentity) throw Object.assign(new Error("Session context is unavailable"), {name: "SessionContextUnavailableError"});
+    if (input.inputMode === "command") {
+      if (!this.validateCommand) throw new RunModelError("SLASH_COMMAND_UNSUPPORTED", "This Work cannot execute resource commands.");
+      this.validateCommand(input.prompt);
+    }
     if (!this.models) {
       if (selector.kind !== "session-preference") throw new RunModelError("RUN_MODEL_SELECTION_UNSUPPORTED", "This Work does not support model selection.");
       return this.submit({ ...input, selector });
     }
     let reference: string | null = selector.kind === "model" ? selector.modelRef : null;
-    if (selector.kind === "session-preference" && session.modelPreferenceJson) {
-      const preference = JSON.parse(session.modelPreferenceJson) as { modelRef: string | null; availability?: string };
+    const preference = session.modelPreferenceJson ? JSON.parse(session.modelPreferenceJson) as RunModelSnapshot & { availability?: string } : undefined;
+    if (selector.kind === "session-preference" && preference) {
       if (preference.availability === "unavailable") throw new RunModelError("MODEL_UNAVAILABLE", "Session model preference is unavailable. Choose a model.");
       reference = preference.modelRef;
     }
     const actualModel = await this.models.resolve(reference);
-    return this.submit({ ...input, selector, actualModel });
+    const thinkingLevel = preference?.thinkingLevel ?? "off";
+    let levels: readonly string[] = ["off"];
+    try { if (this.models.thinking) levels = (await this.models.thinking(actualModel)).thinkingLevels; }
+    catch (error) {
+      // Requests predating chat settings keep their legacy custom-model behavior.
+      if (input.inputMode !== undefined || preference?.thinkingLevel !== undefined || !(error instanceof RunModelError) || error.modelErrorCode !== "MODEL_NOT_SUPPORTED") throw error;
+    }
+    if (!levels.includes(thinkingLevel)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Confirm a Thinking level supported by the selected model before sending.");
+    return this.submit({ ...input, selector, actualModel: { ...actualModel, thinkingLevel } });
   }
 
   async submitAutomatic(input: { readonly workId: string; readonly sessionId: string; readonly submissionKey: string;
     readonly prompt: string; readonly requestId: string; readonly phase: RequestPhase }): Promise<AcceptedRun> {
-    const selector: RunModelSelector = { kind: "work-default" };
+    const selector: RunSubmissionSelector = { kind: "work-default" };
     const replay = this.store.findRunReplay(input.workId, input.submissionKey, submissionDigest(input.sessionId, input.prompt, selector));
     if (replay) return { run: replay, reused: true };
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
-    const actualModel = await this.models?.resolve(null);
-    return this.submit({ ...input, selector, ...(actualModel ? { actualModel } : {}), agentRequest: { requestId: input.requestId, phase: input.phase } });
+    const model = await this.models?.resolve(null);
+    let thinkingLevel: ThinkingLevel = "off";
+    try { if (model && this.models?.thinking) thinkingLevel = (await this.models.thinking(model)).defaultThinkingLevel; }
+    catch (error) { if (!(error instanceof RunModelError) || error.modelErrorCode !== "MODEL_NOT_SUPPORTED") throw error; }
+    return this.submit({ ...input, selector, ...(model ? { actualModel: { ...model, thinkingLevel } } : {}), agentRequest: { requestId: input.requestId, phase: input.phase } });
   }
 
   get(runId: string): RunRecord | undefined {
@@ -179,6 +196,7 @@ export class RunManager {
           contextIdentity: run.contextIdentity ?? null,
           signal: controller.signal,
           ...(run.actualModelJson ? { actualModel: JSON.parse(run.actualModelJson) as RunModelSnapshot } : {}),
+          ...(run.modelSelectorJson && JSON.parse(run.modelSelectorJson).inputMode ? { inputMode: JSON.parse(run.modelSelectorJson).inputMode as ChatInputMode } : {}),
           ...(run.sourceJson ? { source: JSON.parse(run.sourceJson) as AgentRunSource } : {}),
           adoptedExperienceVersion: run.adoptedExperienceVersion ?? 0,
           emit: (eventType, payload) => {
@@ -217,10 +235,10 @@ export class RunManager {
   }
 }
 
-export function modelSelector(reference: string | null | undefined): RunModelSelector {
+export function modelSelector(reference: string | null | undefined): RunSubmissionSelector {
   return reference === undefined ? { kind: "session-preference" } : reference === null || reference === "" ? { kind: "work-default" } : { kind: "model", modelRef: reference };
 }
-function submissionDigest(sessionId: string, prompt: string, selector: RunModelSelector): string {
+function submissionDigest(sessionId: string, prompt: string, selector: RunSubmissionSelector): string {
   return digest(canonicalJson({ sessionId, prompt, selector }));
 }
 

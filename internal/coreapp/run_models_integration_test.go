@@ -13,6 +13,16 @@ import (
 func TestNativeChatModelSelectionRunsThroughGoAndRealSDK(t *testing.T) {
 	a, base, auth, id, ctx := nativeApplyFixture(t)
 	path := "/api/v1/works/" + id
+	if status, capabilities := packageHTTPCall(t, base, path+"/chat-capabilities", "GET", auth, nil); status != 200 || capabilities["contractVersion"] != float64(0) && capabilities["contractVersion"] != float64(1) {
+		t.Fatal("optional chat contract changed original runtime admission", status, capabilities)
+	} else if capabilities["contractVersion"] == float64(0) {
+		for _, endpoint := range []string{"chat-models", "commands", "sessions/submissions/old-agent-readonly"} {
+			if status, result := packageHTTPCall(t, base, path+"/"+endpoint, "GET", auth, nil); status != 501 || result["code"] != "CHAT_OPTIONS_UNSUPPORTED" {
+				t.Fatal("older Agent must reject only optional chat controls", endpoint, status, result)
+			}
+		}
+		t.Log("older Agent: optional controls return 501; original model/Session/Run flow remains admitted")
+	}
 	if _, err := a.Settings.ConfigureRuntime(RuntimeInput{AgentImage: a.options.Initialization.Runtime.AgentImage, Provider: "piwork-deterministic", Model: "fixture-v2", Credential: "private-second-model-key"}); err != nil {
 		t.Fatal(err)
 	}

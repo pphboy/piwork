@@ -269,6 +269,23 @@ export class WorkStore {
     return this.readRun(prior.run_id);
   }
 
+  findRunSubmission(workId: string, submissionKey: string): RunRecord | undefined {
+    this.assertOpen();
+    const row = this.database.prepare("SELECT run_id FROM submit_idempotency WHERE work_id=? AND submission_key=?").get(workId, submissionKey) as { run_id: string } | undefined;
+    return row ? this.getRunForWork(workId, row.run_id) : undefined;
+  }
+
+  findSessionSubmission(workId: string, idempotencyKey: string): SessionRecord | undefined {
+    this.assertOpen();
+    const row = this.database.prepare("SELECT session_id FROM session_idempotency WHERE work_id=? AND idempotency_key=?").get(workId, idempotencyKey) as { session_id: string } | undefined;
+    return row ? this.getSession(workId, row.session_id) : undefined;
+  }
+
+  private getRunForWork(workId: string, runId: string): RunRecord | undefined {
+    const value = this.readRun(runId);
+    return value?.workId === workId ? value : undefined;
+  }
+
   setSessionModelPreference(workId: string, sessionId: string, value: string | null, now = new Date().toISOString()): SessionRecord {
     this.assertOpen();
     const result = this.database.prepare("UPDATE sessions SET model_preference_json=?, updated_at=? WHERE work_id=? AND session_id=?").run(value, now, workId, sessionId);

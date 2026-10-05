@@ -40,6 +40,11 @@ import {
   AgentRequestQuerySchema,
   AgentEvidenceQuerySchema,
   SetSessionModelSchema,
+  CHAT_CONTROLS_CONTRACT_VERSION,
+  ChatInputModeSchema,
+  LookupChatSubmissionSchema,
+  SetSessionChatOptionsSchema,
+  type SlashCommand,
   RetryAgentRequestSchema,
   publicRunModel,
   type RunModelSnapshot,
@@ -66,6 +71,7 @@ import { BrainFlow } from "./brain-flow.js";
 import { BrainLoop } from "./brain-loop.js";
 import { BrainCandidates } from "./brain-candidates.js";
 import type { RunExecutionContext } from "./runs.js";
+import { requireResourceCommand } from "./resource-commands.js";
 
 export const AGENT_PROTOCOL_VERSION = CONTRACT_VERSION;
 
@@ -119,6 +125,7 @@ interface CapturedWorkContext {
 }
 
 export interface LoadedWorkContext {
+  readonly commands: readonly SlashCommand[];
   readonly contextIdentity: string;
   readonly loaderFactory: (context?: RunExecutionContext) => Promise<ResourceLoader>;
   readonly resolvedTools: readonly string[];
@@ -149,6 +156,7 @@ export class AgentApplication {
     private readonly runs: RunManager,
     private readonly mcp: McpBridge,
     private readonly models: AgentRunModels,
+    private readonly commands: readonly SlashCommand[],
     private readonly control?: WorkPrivateClient,
     private readonly bindings?: ServiceBindingRegistry,
     private readonly feedbackServer?: ServiceFeedbackServer,
@@ -238,9 +246,9 @@ export class AgentApplication {
         sessions,
         join(config.dataDirectory, "agent"),
         { ...config.model, deterministic: config.deterministic },
-        { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools, models, packageTools: new Map(packageTools),
+        { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools, models, commands: loaded.commands, packageTools: new Map(packageTools),
           onSdkToolResult: (run, result) => candidates.recordSdkResult(run, result, new Map(packageTools)) },
-      )), undefined, models);
+      )), undefined, models, prompt => { requireResourceCommand(loaded.commands, prompt); });
       runs.recover();
       daemon.configure({
         modelCredentialStatus: "available",
@@ -263,7 +271,7 @@ export class AgentApplication {
           const ready = daemon.readiness();
           return { available: ready.acceptingRuns && BRAIN_TOOL_NAMES.every((n) => ready.resolvedTools.includes(`package:piwork-brain:${n}`)), initializing: config.initializationOnly === true };
         });
-      return new AgentApplication(config, store, daemon, sessions, runs, mcp, models, control, bindings, feedbackServer, brainFlow, brainLoop);
+      return new AgentApplication(config, store, daemon, sessions, runs, mcp, models, loaded.commands, control, bindings, feedbackServer, brainFlow, brainLoop);
     } catch (error) {
       if (error instanceof RequiredSkillError) {
         for (const status of error.statuses) emitAgentDiagnostic({
@@ -346,6 +354,37 @@ export class AgentApplication {
       listRunModels: unary(async (request: AgentContentRequest): Promise<AgentContentResponse> => {
         this.verifyWork(request.workId); return { valueJson: JSON.stringify(await this.models.list()) };
       }),
+      listChatModels: unary(async (request: AgentContentRequest): Promise<AgentContentResponse> => {
+        this.verifyWork(request.workId); return { valueJson: JSON.stringify(await this.models.chatList()) };
+      }),
+      listSlashCommands: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId);
+        return { valueJson: JSON.stringify({ contractVersion: 1, commands: this.commands, checkedAt: new Date().toISOString() }) };
+      }),
+      getSessionChatOptions: unary(async (request: AgentContentRequest): Promise<AgentContentResponse> => {
+        this.verifyWork(request.workId);
+        return { valueJson: JSON.stringify(await this.sessions.chatOptions(request.objectId, this.models)) };
+      }),
+      setSessionChatOptions: unary(async (request: AgentContentRequest): Promise<AgentContentResponse> => {
+        this.verifyWork(request.workId); this.assertAcceptingRuns();
+        const input = parseContent(request);
+        if (!Check(SetSessionChatOptionsSchema, input)) throw Object.assign(new Error("Invalid chat settings"), { code: status.INVALID_ARGUMENT });
+        const saved = await this.sessions.setChatOptions(request.objectId, input, this.models);
+        const model = JSON.parse(saved.modelPreferenceJson!) as RunModelSnapshot;
+        return { valueJson: JSON.stringify({ sessionId: saved.sessionId, modelRef: model.modelRef, model: publicRunModel(model),
+          thinkingLevel: model.thinkingLevel ?? "off", availability: "available", checkedAt: saved.updatedAt }) };
+      }),
+      lookupChatSubmission: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId);
+        const input = parseContent(request);
+        if (!Check(LookupChatSubmissionSchema, input)) throw Object.assign(new Error("Invalid submission query"), { code: status.INVALID_ARGUMENT });
+        const value = input.kind === "session" ? this.store.findSessionSubmission(request.workId, input.key) : this.store.findRunSubmission(request.workId, input.key);
+        const result = value ? input.kind === "session"
+          ? { ...input, status: "accepted", session: publicSessionLookup(value as SessionRecord) }
+          : { ...input, status: "accepted", run: publicRunLookup(value as RunRecord) }
+          : { ...input, status: "not-found" };
+        return { valueJson: JSON.stringify(result) };
+      }),
       setSessionModel: unary(async (request: AgentContentRequest): Promise<Session> => {
         this.verifyWork(request.workId); this.assertAcceptingRuns();
         const input = parseContent(request);
@@ -405,6 +444,7 @@ export class AgentApplication {
           runModelContractVersion: 1,
           workFeedbackContractVersion: 1,
           workHistorySchemaVersion: this.store.schemaVersion,
+          chatControlsContractVersion: CHAT_CONTROLS_CONTRACT_VERSION,
         };
       }),
       prepareConfigurationChange: unary((request: PrepareConfigurationChangeRequest): PrepareConfigurationChangeResponse => {
@@ -429,15 +469,34 @@ export class AgentApplication {
         this.verifyWork(request.workId);
         const value = this.sessions.read(request.sessionId);
         const record = this.sessions.list().find((item) => item.sessionId === request.sessionId)!;
+        const runs = this.store.listSessionRuns(request.workId, request.sessionId);
+        const owners = new Map<string, Set<string>>();
+        for (const run of runs) for (const event of this.store.readEvents(run.runId, Math.max(0,run.earliestAvailableSequence-1))) {
+          if (event.eventType !== "tool-start" && event.eventType !== "tool-end") continue;
+          const call = (JSON.parse(event.payloadJson) as { toolCallId?: string }).toolCallId;
+          if (call) { const ids = owners.get(call) ?? new Set<string>(); ids.add(run.runId); owners.set(call, ids); }
+        }
         return {
           session: sessionMessage(record),
-          messages: value.entries.map((entry) => ({ entryId: entry.id, role: entry.role, text: entry.text, createdAt: "" })),
-          runs: this.store.listSessionRuns(request.workId,request.sessionId).map(runMessage),
+          messages: value.entries.map((entry) => {
+            let runId = entry.runId !== undefined ? runs.find(run => run.runId === entry.runId)?.runId ?? "" : "";
+            if (entry.runId === undefined) {
+              const calls = entry.blocks.flatMap(block => block.type === "text" ? [] : [block.toolCallId]);
+              const matches = calls.map(call => owners.get(call));
+              if (matches.length && matches.every(match => match?.size === 1)) {
+                const ids = new Set(matches.flatMap(match => [...match!]));
+                if (ids.size === 1) runId = [...ids][0]!;
+              }
+            }
+            return { entryId: entry.id, role: entry.role, text: entry.text, createdAt: "", runId, blocks: entry.blocks.map(block => ({ blockId: block.blockId, type: block.type, text: block.type === "text" ? block.text : "", toolCallId: block.type === "text" ? "" : block.toolCallId, toolName: block.type === "text" ? "" : block.toolName, resultPreviewJson: block.type === "tool-result" ? JSON.stringify(block.result) : "" })) };
+          }),
+          runs: runs.map(runMessage),
         };
       }),
       submitRun: unary(async (request: SubmitRunRequest): Promise<SubmitRunResponse> => {
         this.verifyWork(request.workId);
-        const result = await this.runs.submitChat({ ...request, ...(request.modelRef === "" ? { modelRef: null } : {}) });
+        if (request.inputMode !== undefined && !Check(ChatInputModeSchema, request.inputMode)) throw Object.assign(new Error("Invalid input mode"), { code: status.INVALID_ARGUMENT });
+        const result = await this.runs.submitChat({ ...request, inputMode: request.inputMode as "text" | "command" | undefined, ...(request.modelRef === "" ? { modelRef: null } : {}) });
         return { run: runMessage(result.run), reused: result.reused };
       }),
       getRun: unary((request: GetRunRequest): Run => runMessage(this.requireRun(request.workId, request.runId))),
@@ -594,6 +653,7 @@ async function loadValidatedWorkContext(context: CapturedWorkContext, workspace:
   const packageResources = await loaderFactory();
   const tools = new Set(context.resolvedTools);
   return {
+    commands: packageResources.commands,
     contextIdentity: context.contextIdentity,
     loaderFactory: async (run) => (await loaderFactory(run)).loader,
     resolvedTools: context.resolvedTools,
@@ -676,7 +736,7 @@ function sessionMessage(value: SessionRecord): Session {
   const preference = value.modelPreferenceJson ? JSON.parse(value.modelPreferenceJson) as RunModelSnapshot & { availability?: string } : undefined;
   return { workId: value.workId, sessionId: value.sessionId, sdkHistoryPath: value.sdkHistoryPath, createdAt: value.createdAt, updatedAt: value.updatedAt,
     modelPreferenceJson: preference ? JSON.stringify({ ...publicRunModel(preference), availability: preference.availability ?? "available" }) : "",
-    sourceJson: value.sourceJson ?? "" };
+    sourceJson: value.sourceJson ?? "", thinkingLevel: preference?.thinkingLevel ?? "off" };
 }
 
 function runMessage(value: RunRecord): Run {
@@ -697,7 +757,25 @@ function runMessage(value: RunRecord): Run {
     earliestAvailableSequence: BigInt(value.earliestAvailableSequence), latestSequence: BigInt(value.latestSequence),
     actualModelJson: value.actualModelJson ? JSON.stringify(publicRunModel(JSON.parse(value.actualModelJson) as RunModelSnapshot)) : "",
     sourceJson: value.sourceJson ?? "", adoptedExperienceVersion: value.adoptedExperienceVersion ?? 0,
+    thinkingLevel: value.actualModelJson ? (JSON.parse(value.actualModelJson) as RunModelSnapshot).thinkingLevel ?? "off" : "off",
   };
+}
+
+function publicSessionLookup(value: SessionRecord) {
+  const session = sessionMessage(value);
+  return { workId: session.workId, sessionId: session.sessionId, createdAt: session.createdAt, updatedAt: session.updatedAt,
+    modelPreference: session.modelPreferenceJson ? JSON.parse(session.modelPreferenceJson) : null, thinkingLevel: session.thinkingLevel,
+    source: session.sourceJson ? JSON.parse(session.sourceJson) : { kind: "chat" } };
+}
+
+function publicRunLookup(value: RunRecord) {
+  const run = runMessage(value);
+  return { workId: run.workId, sessionId: run.sessionId, runId: run.runId, submissionKey: run.submissionKey, state: run.state,
+    promptDigest: run.promptDigest, finalText: run.finalText, acceptedAt: run.acceptedAt, startedAt: run.startedAt, finishedAt: run.finishedAt,
+    earliestAvailableSequence: String(run.earliestAvailableSequence), latestSequence: String(run.latestSequence),
+    actualModel: run.actualModelJson ? JSON.parse(run.actualModelJson) : null, thinkingLevel: run.thinkingLevel,
+    source: run.sourceJson ? JSON.parse(run.sourceJson) : { kind: "chat" }, adoptedExperienceVersion: run.adoptedExperienceVersion,
+    ...(run.error ? { error: run.error } : {}) };
 }
 
 function eventMessage(value: RunEventRecord, run: RunRecord): RunEvent {
@@ -705,7 +783,7 @@ function eventMessage(value: RunEventRecord, run: RunRecord): RunEvent {
   const kind = value.eventType === "text"
     ? { $case: "text" as const, text: { delta: String(payload.delta ?? "") } }
     : value.eventType.startsWith("tool")
-      ? { $case: "tool" as const, tool: { serverId: "", toolName: String(payload.toolName ?? ""), toolCallId: String(payload.toolCallId ?? ""), phase: value.eventType, isError: Boolean(payload.isError) } }
+      ? { $case: "tool" as const, tool: { serverId: "", toolName: String(payload.toolName ?? ""), toolCallId: String(payload.toolCallId ?? ""), phase: value.eventType, isError: Boolean(payload.isError), resultPreviewJson: payload.result ? JSON.stringify(payload.result) : "" } }
       : { $case: "state" as const, state: { state: runMessage(run).state, finalText: run.finalText ?? "", error: run.errorJson === null ? undefined : JSON.parse(run.errorJson) } };
   return { workId: run.workId, sessionId: run.sessionId, runId: run.runId, sequence: BigInt(value.sequence), createdAt: value.createdAt, kind };
 }

@@ -225,9 +225,13 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 				if pref["modelRef"] == nil {
 					pref["availability"] = "available"
 				} else if len(matches) == 1 {
+					thinking, hasThinking := pref["thinkingLevel"]
 					pref = map[string]any{}
 					for key, value := range matches[0] {
 						pref[key] = value
+					}
+					if hasThinking {
+						pref["thinkingLevel"] = thinking
 					}
 					pref["availability"] = "available"
 				} else {

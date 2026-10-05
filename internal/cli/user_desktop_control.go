@@ -424,8 +424,8 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 		}
 		return desktopControl{}, false, nil
 	}
-	if parts[2] == "models" && len(parts) == 3 && method == http.MethodGet {
-		return create(method, base+"/models", nil, 200)
+	if (parts[2] == "models" || parts[2] == "chat-capabilities" || parts[2] == "chat-models" || parts[2] == "commands") && len(parts) == 3 && method == http.MethodGet {
+		return create(method, base+"/"+parts[2], nil, 200)
 	}
 	if parts[2] == "agent-requests" || parts[2] == "evidence" {
 		resource := parts[2]
@@ -490,8 +490,34 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 		}
 		return desktopControl{}, false, nil
 	}
+	if (parts[2] == "sessions" || parts[2] == "runs") && len(parts) == 5 && parts[3] == "submissions" && method == http.MethodGet {
+		key, err := url.PathUnescape(parts[4])
+		if err != nil || contracts.Validate("ChatSubmissionKeySchema", key) != nil {
+			return desktopControl{}, true, errors.New("INVALID_INPUT")
+		}
+		return create(method, base+"/"+parts[2]+"/submissions/"+url.PathEscape(key), nil, 200)
+	}
 	if parts[2] == "sessions" {
 		path := base + "/sessions"
+		if len(parts) == 5 && parts[4] == "chat-options" && (method == http.MethodGet || method == http.MethodPatch) {
+			sessionID, err := identifier(parts[3])
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			if method == http.MethodGet {
+				return create(method, path+"/"+sessionID+"/chat-options", nil, 200)
+			}
+			input, err := desktopControlInput(r, "modelRef", "thinkingLevel")
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			raw, _ := json.Marshal(input)
+			value, err := contracts.ParseJSON(strings.NewReader(string(raw)), 4096)
+			if err != nil || contracts.Validate("SetSessionChatOptionsSchema", value) != nil {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			return create(method, path+"/"+sessionID+"/chat-options", input, 200)
+		}
 		if len(parts) == 5 && parts[4] == "model" && method == http.MethodPatch {
 			sessionID, err := identifier(parts[3])
 			if err != nil {
@@ -512,7 +538,11 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			return create(method, path, nil, 200)
 		}
 		if len(parts) == 3 && method == http.MethodPost {
-			key, err := mutationKey()
+			input, err := desktopControlInput(r, "idempotencyKey")
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			key, err := desktopOriginalKey(input, "idempotencyKey")
 			if err != nil {
 				return desktopControl{}, true, err
 			}
@@ -530,7 +560,7 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 	if parts[2] == "runs" {
 		path := base + "/runs"
 		if len(parts) == 3 && method == http.MethodPost {
-			input, err := desktopControlInput(r, "sessionId", "prompt", "modelRef")
+			input, err := desktopControlInput(r, "sessionId", "prompt", "modelRef", "submissionKey", "inputMode")
 			if err != nil {
 				return desktopControl{}, true, err
 			}
@@ -547,7 +577,13 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			if _, valid := desktopFieldString(input, "prompt", 65536); !valid {
 				return desktopControl{}, true, errors.New("INVALID_INPUT")
 			}
-			key, err := mutationKey()
+			if mode, exists := input["inputMode"]; exists {
+				var value any
+				if json.Unmarshal(mode, &value) != nil || contracts.Validate("ChatInputModeSchema", value) != nil {
+					return desktopControl{}, true, errors.New("INVALID_INPUT")
+				}
+			}
+			key, err := desktopOriginalKey(input, "submissionKey")
 			if err != nil {
 				return desktopControl{}, true, err
 			}
@@ -581,4 +617,15 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 		return create(method, base+"/exports", map[string]string{"idempotencyKey": key}, 202)
 	}
 	return desktopControl{}, false, nil
+}
+
+func desktopOriginalKey(input map[string]json.RawMessage, name string) (string, error) {
+	if _, exists := input[name]; !exists {
+		return desktopRandomKey()
+	}
+	key, okay := desktopFieldString(input, name, 256)
+	if !okay || contracts.Validate("ChatSubmissionKeySchema", key) != nil {
+		return "", errors.New("INVALID_INPUT")
+	}
+	return key, nil
 }

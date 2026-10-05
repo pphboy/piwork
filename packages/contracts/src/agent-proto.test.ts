@@ -23,8 +23,10 @@ test("session and run messages survive binary serialization", () => {
     updatedAt: "2026-09-20T00:01:00Z",
     modelPreferenceJson: "",
     sourceJson: "",
+    thinkingLevel: "high",
   });
   assert.equal(session.sessionId, "session-0199e6d8abcd");
+  assert.equal(session.thinkingLevel, "high");
 
   const run = roundTrip(Run, {
     workId: session.workId,
@@ -43,6 +45,7 @@ test("session and run messages survive binary serialization", () => {
     actualModelJson: "",
     sourceJson: "",
     adoptedExperienceVersion: 0,
+    thinkingLevel: "off",
   });
   assert.equal(run.state, RunState.RUN_STATE_INTERRUPTED);
   assert.equal(run.earliestAvailableSequence, 41n);
@@ -100,6 +103,11 @@ test("generated grpc-js service exposes the durable Agent API", () => {
     "cancelRun",
     "listRunModels",
     "setSessionModel",
+    "listChatModels",
+    "listSlashCommands",
+    "getSessionChatOptions",
+    "setSessionChatOptions",
+    "lookupChatSubmission",
     "listAgentRequests",
     "getAgentRequest",
     "cancelAgentRequest",
@@ -116,7 +124,7 @@ test("readiness and configuration-gate messages preserve the context handshake",
     acceptingRuns: false, draining: false, contextContractVersion: 0, contextIdentity: "",
     initializationComplete: false, loadedSkills: [], resolvedTools: [], activeRunCount: 0,
     packageContractVersion: 0, loadedPackages: [], packageResources: [], packageDiagnostics: [],
-    runModelContractVersion: 0, workFeedbackContractVersion: 0, workHistorySchemaVersion: 0,
+    runModelContractVersion: 0, workFeedbackContractVersion: 0, workHistorySchemaVersion: 0, chatControlsContractVersion: 0,
   });
   assert.equal(absent.contextContractVersion, 0);
   assert.deepEqual(absent.loadedSkills, []);

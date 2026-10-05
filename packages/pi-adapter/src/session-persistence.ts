@@ -1,5 +1,11 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { writeFileSync } from "node:fs";
+import { toolResultPreview, type ToolResultPreview } from "./tool-preview.js";
+
+export type PersistentContentBlock =
+  | { blockId: string; type: "text"; text: string }
+  | { blockId: string; type: "tool-call"; toolCallId: string; toolName: string }
+  | { blockId: string; type: "tool-result"; toolCallId: string; toolName: string; result: ToolResultPreview };
 
 export interface PersistentSessionOptions {
   readonly cwd: string;
@@ -11,6 +17,8 @@ export interface PersistentSessionEntry {
   readonly id: string;
   readonly role: string;
   readonly text: string;
+  readonly blocks: readonly PersistentContentBlock[];
+  readonly runId?: string;
 }
 
 export interface PersistentSession {
@@ -79,19 +87,45 @@ export function readPersistentSession(session: SessionManager): PersistentSessio
     throw new Error("persistent session has no history path");
   }
 
+  const entries = session.getEntries(), byId = new Map(entries.map(entry => [entry.id, entry]));
+  const runFor = (parentId: string | null): string | undefined => {
+    const seen = new Set<string>();
+    while (parentId && !seen.has(parentId)) {
+      seen.add(parentId);
+      const parent = byId.get(parentId);
+      if (!parent) break;
+      if (parent.type === "custom" && parent.customType === "piwork-run") {
+        const data = parent.data as { runId?: unknown } | undefined;
+        return typeof data?.runId === "string" ? data.runId : "";
+      }
+      parentId = parent.parentId;
+    }
+    return undefined;
+  };
   return {
     sessionId: session.getSessionId(),
     historyPath,
-    entries: session.getEntries().flatMap((entry): PersistentSessionEntry[] => {
+    entries: entries.flatMap((entry): PersistentSessionEntry[] => {
       if (entry.type !== "message") return [];
       const role = entry.message.role;
       const content = "content" in entry.message ? entry.message.content : undefined;
+      const safeText = (text: string) => role === "user" ? text.replace(/(<skill name="[^"]*") location="[^"]*"(>)/g, "$1$2").replace(/^References are relative to .+\n/gm, "") : text;
+      const blocks: PersistentContentBlock[] = [];
+      if (role === "toolResult") {
+        const message = entry.message as { toolCallId: string; toolName: string; isError: boolean };
+        blocks.push({ blockId: `${entry.id}-0`, type: "tool-result", toolCallId: message.toolCallId, toolName: message.toolName, result: toolResultPreview(entry.message, message.isError) });
+      } else if (typeof content === "string") blocks.push({ blockId: `${entry.id}-0`, type: "text", text: safeText(content) });
+      else if (Array.isArray(content)) content.forEach((part, index) => {
+        if (part.type === "text") blocks.push({ blockId: `${entry.id}-${index}`, type: "text", text: safeText(part.text) });
+        else if (part.type === "toolCall") blocks.push({ blockId: `${entry.id}-${index}`, type: "tool-call", toolCallId: part.id, toolName: part.name });
+      });
       const text = typeof content === "string"
         ? content
         : Array.isArray(content)
           ? content.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
           : "";
-      return [{ id: entry.id, role, text }];
+      const runId = runFor(entry.parentId);
+      return [{ id: entry.id, role, text: role === "toolResult" ? blocks.flatMap(block => block.type === "tool-result" && block.result.kind === "text" ? [block.result.text] : []).join("") : safeText(text), blocks, ...(runId === undefined ? {} : { runId }) }];
     }),
   };
 }

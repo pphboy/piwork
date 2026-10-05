@@ -299,6 +299,54 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "ChatCapabilitiesSchema":
+				value, err := Decode[ChatCapabilities](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatInputModeSchema":
+				value, err := Decode[ChatInputMode](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatModelListSchema":
+				value, err := Decode[ChatModelList](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatModelSchema":
+				value, err := Decode[ChatModel](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatRunViewSchema":
+				value, err := Decode[ChatRunView](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatSessionViewSchema":
+				value, err := Decode[ChatSessionView](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatSubmissionKeySchema":
+				value, err := Decode[ChatSubmissionKey](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatSubmissionLookupSchema":
+				value, err := Decode[ChatSubmissionLookup](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "CreateUserRequestSchema":
 				value, err := Decode[CreateUserRequest](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -403,6 +451,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "ImportWorkRequestSchema":
 				value, err := Decode[ImportWorkRequest](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "LookupChatSubmissionSchema":
+				value, err := Decode[LookupChatSubmission](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -677,6 +731,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "RunSubmissionSelectorSchema":
+				value, err := Decode[RunSubmissionSelector](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "RuntimeSkillSchema":
 				value, err := Decode[RuntimeSkill](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -785,6 +845,24 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "SessionChatOptionsSchema":
+				value, err := Decode[SessionChatOptions](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SessionContentBlockSchema":
+				value, err := Decode[SessionContentBlock](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SetSessionChatOptionsSchema":
+				value, err := Decode[SetSessionChatOptions](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "SetSessionModelSchema":
 				value, err := Decode[SetSessionModel](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -827,6 +905,18 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "SlashCommandListSchema":
+				value, err := Decode[SlashCommandList](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SlashCommandSchema":
+				value, err := Decode[SlashCommand](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "SnapshotIdempotencyKeySchema":
 				value, err := Decode[SnapshotIdempotencyKey](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -839,6 +929,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "ThinkingLevelSchema":
+				value, err := Decode[ThinkingLevel](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "TimestampSchema":
 				value, err := Decode[Timestamp](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -847,6 +943,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "ToolPolicySchema":
 				value, err := Decode[ToolPolicy](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ToolResultPreviewSchema":
+				value, err := Decode[ToolResultPreview](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}
