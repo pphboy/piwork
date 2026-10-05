@@ -1,4 +1,4 @@
-package cli
+package consoleapp
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"piwork/internal/client"
+	"piwork/internal/localweb"
 )
 
 type consoleSession struct {
@@ -168,8 +169,8 @@ func (c *nativeConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 			consoleFailure(w, 429, "CONSOLE_CHALLENGE_CAPACITY")
 			return
 		}
-		id, errID := desktopSecret()
-		csrf, errCSRF := desktopSecret()
+		id, errID := localweb.Secret()
+		csrf, errCSRF := localweb.Secret()
 		if errID != nil || errCSRF != nil {
 			c.mu.Unlock()
 			consoleFailure(w, 503, "CONSOLE_SESSION_UNAVAILABLE")
@@ -253,7 +254,7 @@ func (c *nativeConsole) login(w http.ResponseWriter, r *http.Request) {
 		consoleFailure(w, 403, "CSRF_INVALID")
 		return
 	}
-	input, err := readDesktopObject(r, 1<<20)
+	input, err := localweb.ReadObject(r, 1<<20)
 	if err != nil {
 		consoleFailure(w, 400, "INVALID_REQUEST")
 		return
@@ -324,8 +325,8 @@ func (c *nativeConsole) login(w http.ResponseWriter, r *http.Request) {
 		consoleFailure(w, 502, "CORE_INVALID_RESPONSE")
 		return
 	}
-	sessionID, errID := desktopSecret()
-	csrf, errCSRF := desktopSecret()
+	sessionID, errID := localweb.Secret()
+	csrf, errCSRF := localweb.Secret()
 	if errID != nil || errCSRF != nil {
 		consoleFailure(w, 503, "CONSOLE_SESSION_UNAVAILABLE")
 		return
@@ -357,9 +358,9 @@ func consoleAllowedAdmin(method, path string) bool {
 		if err != nil {
 			return false
 		}
-		pattern := desktopIDPattern
+		pattern := localweb.IDPattern
 		if parts[0] == "skills" || parts[0] == "packages" {
-			pattern = desktopNamePattern
+			pattern = localweb.NamePattern
 		}
 		if !pattern.MatchString(name) {
 			return false

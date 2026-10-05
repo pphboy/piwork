@@ -85,7 +85,10 @@ test('R1 editor binds the original version; dirty refresh and 412 readback never
   await expect(page.locator('#file-editor')).toHaveValue('my draft');
   const count = puts().length; await button(page, 'refresh-files').click(); assert.equal(puts().length, count);
   await button(page, 'use-reread-version').click(); await button(page, 'save-file').click(); assert.equal(puts()[1]?.headers['if-unmodified-since'], mtime2); assert.equal(body, 'my draft');
+  await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveCount(0);
   await page.locator('#file-editor').fill('second draft'); await button(page, 'save-file').click(); assert.equal(puts()[2]?.headers['if-unmodified-since'], mtime3); await expect(page.locator('#file-editor')).toHaveValue('second draft');
+  // A recorded PUT is acceptance, not completion of its confirming GET.
+  await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveCount(0);
   await page.locator('#file-editor').fill('keep editable draft'); body='\0binary'; modified='Sat, 03 Oct 2026 01:00:06 GMT'; await button(page, 'refresh-files').click(); await expect(page.locator('#file-editor')).toHaveValue('keep editable draft'); await expect(button(page, 'use-reread-version')).toBeDisabled();
 });
 

@@ -1,20 +1,18 @@
 package cli
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
+	"context"
+	"piwork/internal/clientfs"
 )
 
 type desktopKnownOperation struct {
@@ -30,51 +28,30 @@ type desktopKnownOperation struct {
 
 type desktopOperationRecords struct{ credentialPath string }
 
-func (s desktopOperationRecords) directory() (string, error) {
-	if s.credentialPath == "" {
-		return "", errors.New("credential path is missing")
-	}
-	directory := filepath.Join(filepath.Dir(s.credentialPath), "desktop-operations-go")
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return "", err
-	}
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return "", errors.New("Desktop operation directory is unsafe")
-	}
-	return directory, nil
-}
-
 func (s desktopOperationRecords) withState(coreURL, userID string, update bool, action func(*[]desktopKnownOperation) error) error {
 	if userID == "" || coreURL == "" {
 		return errors.New("operation identity is missing")
 	}
-	directory, err := s.directory()
+	if s.credentialPath == "" {
+		return errors.New("credential path is missing")
+	}
+	directory, err := clientfs.OpenPrivateDirectory(filepath.Join(filepath.Dir(s.credentialPath), "desktop-operations-go"), true)
 	if err != nil {
 		return err
 	}
-	fd, err := unix.Open(filepath.Join(directory, ".lock"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	defer directory.Close()
+	// Retain the original Linux .lock inode and blocking serialization.
+	lock, err := directory.Lock(context.Background(), ".lock")
 	if err != nil {
 		return err
 	}
-	defer unix.Close(fd)
-	if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
-		return err
-	}
-	defer unix.Flock(fd, unix.LOCK_UN)
+	defer lock.Close()
 	key := sha256.Sum256([]byte(coreURL + "\x00" + userID))
-	path := filepath.Join(directory, hex.EncodeToString(key[:])+".json")
+	name := hex.EncodeToString(key[:]) + ".json"
 	items := []desktopKnownOperation{}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	raw, err := directory.ReadFile(name, 8<<20)
 	if err == nil {
-		info, statErr := file.Stat()
-		if statErr != nil || !info.Mode().IsRegular() || info.Size() > 8<<20 {
-			file.Close()
-			return errors.New("Desktop operation record is unsafe")
-		}
-		raw, readErr := io.ReadAll(io.LimitReader(file, (8<<20)+1))
-		file.Close()
-		if readErr != nil || len(raw) > 8<<20 || json.Unmarshal(raw, &items) != nil {
+		if json.Unmarshal(raw, &items) != nil {
 			return errors.New("Desktop operation record is invalid")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -83,40 +60,11 @@ func (s desktopOperationRecords) withState(coreURL, userID string, update bool, 
 	if err := action(&items); err != nil || !update {
 		return err
 	}
-	raw, err := json.Marshal(items)
+	raw, err = json.Marshal(items)
 	if err != nil || len(raw) > 8<<20 {
 		return errors.New("Desktop operation record is too large")
 	}
-	var nonce [12]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
-	}
-	temporary := filepath.Join(directory, ".tmp-"+hex.EncodeToString(nonce[:]))
-	output, err := os.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(temporary)
-	if _, err = output.Write(raw); err == nil {
-		err = output.Sync()
-	}
-	closeErr := output.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		return err
-	}
-	parent, err := os.Open(directory)
-	if err != nil {
-		return err
-	}
-	err = parent.Sync()
-	parent.Close()
-	return err
+	return directory.AtomicWrite(context.Background(), name, raw)
 }
 
 func (s desktopOperationRecords) accept(coreURL, userID, kind string, result json.RawMessage) error {

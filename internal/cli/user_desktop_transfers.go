@@ -16,11 +16,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"piwork/internal/client"
+	"piwork/internal/clientfs"
 	"piwork/internal/contracts"
 	"piwork/internal/workpackage"
 )
@@ -43,6 +42,8 @@ type desktopTransfer struct {
 	generation                 int
 	userID, workID, snapshotID string
 	info                       os.FileInfo
+	identity                   clientfs.FileIdentity
+	root                       *clientfs.Directory
 	importing, attempted       bool
 	accepted                   json.RawMessage
 	cancel                     context.CancelFunc
@@ -50,52 +51,56 @@ type desktopTransfer struct {
 }
 
 type desktopTransfers struct {
-	mu        sync.Mutex
-	directory string
-	jobs      map[string]*desktopTransfer
-	busy      int
-	pending   int64
-	reserved  int64
-	closed    bool
-	epoch     int
-	stop      chan struct{}
+	mu           sync.Mutex
+	directory    string
+	root, parent *clientfs.Directory
+	instance     string
+	jobs         map[string]*desktopTransfer
+	busy         int
+	pending      int64
+	reserved     int64
+	closed       bool
+	epoch        int
+	stop         chan struct{}
 }
 
 func newDesktopTransfers(credentialPath string) (*desktopTransfers, error) {
-	parent := filepath.Join(filepath.Dir(credentialPath), "desktop-transfers-go")
-	if err := os.MkdirAll(parent, 0700); err != nil {
+	path := filepath.Join(filepath.Dir(credentialPath), "desktop-transfers-go")
+	parent, err := clientfs.OpenPrivateDirectory(path, true)
+	if err != nil {
 		return nil, err
 	}
-	info, err := os.Lstat(parent)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("unsafe Desktop transfer directory")
-	}
-	resolved, err := filepath.EvalSymlinks(parent)
-	if err != nil || resolved != parent {
-		return nil, errors.New("unsafe Desktop transfer directory")
-	}
-	if err := os.Chmod(parent, 0700); err != nil {
+	items, err := parent.Entries()
+	if err != nil {
+		parent.Close()
 		return nil, err
 	}
-	for _, entry := range mustReadDir(parent) {
+	for _, entry := range items {
 		var pid int
 		if _, err := fmt.Sscanf(entry.Name(), "instance-%d-", &pid); err != nil || pid <= 0 || pid == os.Getpid() || !entry.IsDir() {
 			continue
 		}
-		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
-			_ = os.RemoveAll(filepath.Join(parent, entry.Name()))
+		alive, err := clientfs.ProcessAlive(pid)
+		if err == nil && !alive {
+			if err := parent.RemoveTree(entry.Name()); err != nil {
+				parent.Close()
+				return nil, err
+			}
 		}
 	}
-	dir, err := os.MkdirTemp(parent, fmt.Sprintf("instance-%d-", os.Getpid()))
+	root, instance, err := parent.CreateTempDirectory(fmt.Sprintf("instance-%d-", os.Getpid()))
 	if err != nil {
+		parent.Close()
 		return nil, err
 	}
-	t := &desktopTransfers{directory: dir, jobs: map[string]*desktopTransfer{}, stop: make(chan struct{})}
+	t := &desktopTransfers{directory: filepath.Join(path, instance), root: root, parent: parent, instance: instance, jobs: map[string]*desktopTransfer{}, stop: make(chan struct{})}
 	go t.sweep()
 	return t, nil
 }
 
-func mustReadDir(path string) []os.DirEntry { entries, _ := os.ReadDir(path); return entries }
+func (t *desktopTransfers) removeJob(job *desktopTransfer) {
+	_ = t.root.Remove(filepath.Base(job.path))
+}
 
 func (t *desktopTransfers) expireLocked() {
 	for id, job := range t.jobs {
@@ -107,7 +112,7 @@ func (t *desktopTransfers) expireLocked() {
 		} else if job.size > 0 {
 			t.pending -= job.size
 		}
-		_ = os.Remove(job.path)
+		t.removeJob(job)
 		delete(t.jobs, id)
 	}
 }
@@ -141,7 +146,9 @@ func (t *desktopTransfers) clear() {
 		}
 	}
 	t.mu.Unlock()
-	_ = os.RemoveAll(t.directory)
+	_ = t.parent.RemoveTree(t.instance)
+	_ = t.root.Close()
+	_ = t.parent.Close()
 }
 
 func (t *desktopTransfers) revoke(hadCredential bool) {
@@ -158,7 +165,7 @@ func (t *desktopTransfers) revoke(hadCredential bool) {
 			job.cancel()
 		}
 		if job.path != "" {
-			_ = os.Remove(job.path)
+			t.removeJob(job)
 		}
 		if job.cancel == nil && job.size > 0 {
 			t.pending -= job.size
@@ -224,12 +231,13 @@ func (t *desktopTransfers) claim(id, kind, sessionID string, expected *int64, ge
 	if t.pending+t.reserved+reservation > desktopTransferStorage {
 		return nil, 507, "TRANSFER_STORAGE_FULL"
 	}
-	var stats unix.Statfs_t
-	if unix.Statfs(t.directory, &stats) != nil || int64(stats.Bavail)*int64(stats.Bsize) < desktopTransferReserve+reservation {
+	enough, err := t.root.HasSpace(reservation, desktopTransferReserve)
+	if err != nil || !enough {
 		return nil, 507, "TRANSFER_STORAGE_FULL"
 	}
 	job := &desktopTransfer{id: id, kind: kind, sessionID: sessionID, created: time.Now(), phase: "receiving", generation: generation, userID: userID, total: expected, cancel: cancel, epoch: t.epoch, reservation: reservation}
 	job.path = filepath.Join(t.directory, id)
+	job.root = t.root
 	if kind == "download" {
 		job.phase = "downloading"
 	}
@@ -254,7 +262,7 @@ func (t *desktopTransfers) finish(job *desktopTransfer, success bool) {
 	job.cancel = nil
 	if t.jobs[job.id] != job || job.epoch != t.epoch || t.closed {
 		if job.path != "" {
-			_ = os.Remove(job.path)
+			t.removeJob(job)
 		}
 		return
 	}
@@ -264,7 +272,7 @@ func (t *desktopTransfers) finish(job *desktopTransfer, success bool) {
 	} else {
 		delete(t.jobs, job.id)
 		if job.path != "" {
-			_ = os.Remove(job.path)
+			t.removeJob(job)
 		}
 	}
 }
@@ -393,7 +401,7 @@ func (d *nativeDesktop) receiveDesktopPackage(w http.ResponseWriter, r *http.Req
 	}
 	success := false
 	defer func() { t.finish(job, success) }()
-	file, err := os.OpenFile(job.path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+	file, err := t.root.CreateExclusive(job.id)
 	if err != nil {
 		desktopTransferError(w, 507, "TRANSFER_STORAGE_FULL")
 		return
@@ -418,8 +426,19 @@ func (d *nativeDesktop) receiveDesktopPackage(w http.ResponseWriter, r *http.Req
 		desktopTransferError(w, 400, "PACKAGE_INVALID")
 		return
 	}
+	if err := file.Close(); err != nil {
+		desktopTransferError(w, 507, "TRANSFER_STORAGE_FULL")
+		return
+	}
+	file, err = t.root.OpenRegular(job.id)
+	if err != nil {
+		desktopTransferError(w, 409, "PACKAGE_CHANGED")
+		return
+	}
+	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	identity, identityErr := clientfs.Identity(file)
+	if err != nil || identityErr != nil || !info.Mode().IsRegular() {
 		desktopTransferError(w, 409, "PACKAGE_CHANGED")
 		return
 	}
@@ -428,6 +447,7 @@ func (d *nativeDesktop) receiveDesktopPackage(w http.ResponseWriter, r *http.Req
 	job.digest = digest
 	job.summary = inspection
 	job.info = info
+	job.identity = identity
 	t.mu.Unlock()
 	success = true
 	desktopJSON(w, 200, map[string]any{"transferId": id, "summary": inspection})
@@ -450,7 +470,7 @@ func (d *nativeDesktop) desktopTransferStatus(w http.ResponseWriter, r *http.Req
 		} else {
 			delete(t.jobs, id)
 			t.pending -= job.size
-			_ = os.Remove(job.path)
+			t.removeJob(job)
 		}
 		t.mu.Unlock()
 		desktopJSON(w, 200, map[string]bool{"removed": true})
@@ -484,12 +504,13 @@ func (d *nativeDesktop) desktopTransferOwner(r *http.Request, job *desktopTransf
 }
 
 func desktopTransferFile(job *desktopTransfer) (*os.File, error) {
-	file, err := os.OpenFile(job.path, os.O_RDONLY|unix.O_NOFOLLOW, 0)
+	file, err := job.root.OpenRegular(filepath.Base(job.path))
 	if err != nil {
 		return nil, err
 	}
 	info, err := file.Stat()
-	if err != nil || !sameDesktopFile(job.info, info) {
+	identity, identityErr := clientfs.Identity(file)
+	if err != nil || identityErr != nil || identity != job.identity || !sameDesktopFile(job.info, info) {
 		file.Close()
 		return nil, errors.New("PACKAGE_CHANGED")
 	}
@@ -607,7 +628,8 @@ func (d *nativeDesktop) importDesktopPackage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	after, _ := file.Stat()
-	if !sameDesktopFile(job.info, after) {
+	afterIdentity, identityErr := clientfs.Identity(file)
+	if identityErr != nil || afterIdentity != job.identity || !sameDesktopFile(job.info, after) {
 		desktopTransferError(w, 409, "PACKAGE_CHANGED")
 		return
 	}
@@ -698,7 +720,7 @@ func (d *nativeDesktop) prepareDesktopDownload(w http.ResponseWriter, r *http.Re
 	}
 	success := false
 	defer func() { t.finish(job, success) }()
-	file, err := os.OpenFile(job.path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+	file, err := t.root.CreateExclusive(job.id)
 	if err != nil {
 		desktopTransferError(w, 507, "TRANSFER_STORAGE_FULL")
 		return
@@ -739,8 +761,19 @@ func (d *nativeDesktop) prepareDesktopDownload(w http.ResponseWriter, r *http.Re
 		desktopTransferError(w, 502, "SNAPSHOT_MISMATCH")
 		return
 	}
+	if err := file.Close(); err != nil {
+		desktopTransferError(w, 507, "TRANSFER_STORAGE_FULL")
+		return
+	}
+	file, err = t.root.OpenRegular(job.id)
+	if err != nil {
+		desktopTransferError(w, 409, "PACKAGE_CHANGED")
+		return
+	}
+	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	identity, identityErr := clientfs.Identity(file)
+	if err != nil || identityErr != nil || !info.Mode().IsRegular() {
 		desktopTransferError(w, 502, "SNAPSHOT_MISMATCH")
 		return
 	}
@@ -756,6 +789,7 @@ func (d *nativeDesktop) prepareDesktopDownload(w http.ResponseWriter, r *http.Re
 	job.digest = digest
 	job.summary = inspection
 	job.info = info
+	job.identity = identity
 	job.snapshotID = snapshotID
 	job.workID = metadata.WorkID
 	t.mu.Unlock()

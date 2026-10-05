@@ -12,7 +12,7 @@ piwork 是单机 Work 运行环境。Go Core 管理用户、Work 生命周期、
 | `piwork-service-mcp`、`piwork-package-helper` | Agent 调用的原生辅助程序 | Agent 镜像内 |
 | `piwork-file-helper`、`piwork-snapshot-helper` | Workspace 文件与快照辅助程序 | 独立 helper 镜像内 |
 
-三个宿主程序是关闭 CGo 的 Go ELF，运行时不调用 Node、npm、Python、Go、Docker CLI 或 OpenSSL。Core 使用本机 Docker Engine Unix socket。镜像内的 Pi SDK harness 仍需要 Node；用户 Service 和 Pi 包可以使用各自的语言。
+三个宿主程序关闭 CGo，运行时不调用 Node、npm、Python、Go、Docker CLI 或 OpenSSL。用户 CLI 面向 Windows 与 Linux，Windows 交付 `.exe`，Linux 交付可执行文件；Core 和 Console 沿用 Linux 部署。Core 使用本机 Docker Engine Unix socket。镜像内的 Pi SDK harness 仍需要 Node；用户 Service 和 Pi 包可以使用各自的语言。
 
 构建机需要 Go 1.25.5、Node 24/npm 和 Docker Engine。全量构建及测试入口：
 
@@ -26,6 +26,8 @@ make release
 ```
 
 `make build` 编译保留的 harness、Desktop/Console 浏览器资源和七个 Go 程序，输出在 `dist/go/`。`make release` 另外构建原生 Agent/helper 镜像，并把三个宿主入口、版本与协议摘要、镜像清单和 SHA256SUMS 打进 `dist/release/`。测试范围与未完成 gate 见 [测试说明](docs/testing.md) 和 [迁移验收记录](docs/go-migration-acceptance.md)。
+
+只构建客户端可运行 `npm run build:cli`（或 `make build-cli`）；它只构建 Desktop 资源和 `cmd/piwork-cli`，输出到 `dist/cli/<目标>/`。目标配置、原生验收和独立打包见 [CLI 平台交付](docs/cli-platforms.md)。用户运行产物不需要构建工具或本机容器。
 
 ## 启动 Core
 
@@ -67,7 +69,9 @@ printf '%s\n' "$PIWORK_USER_PASSWORD" | ./dist/go/piwork-cli --core "$PIWORK_COR
 ./dist/go/piwork-cli --core "$PIWORK_CORE_URL" desktop
 ```
 
-Desktop 默认在 `127.0.0.1:17891` 打开浏览器。一个 Work 面板包含对话、Service 预览与独立窗口、文件、配置、生命周期和导入导出；浏览器无需配置 `.work` 代理。打开器不可用时使用 `desktop --no-open` 显示的本地地址。详情见 [Desktop](docs/desktop-webui.md)。
+不带子命令的 `piwork-cli` 现在默认启动 Desktop；原来显示帮助的调用应改用 `piwork-cli --help` 或 `piwork-cli help`。原业务命令和显式 `desktop` 入口保留。Desktop 默认在 `127.0.0.1:17891` 打开浏览器。一个 Work 面板包含对话、Service 预览与独立窗口、文件、配置、生命周期和导入导出；浏览器无需配置 `.work` 代理。打开器不可用时使用 `desktop --no-open` 显示的本地地址。详情见 [Desktop](docs/desktop-webui.md)。
+
+Desktop 地址依次取 `--core`、`PIWORK_CORE_URL`、独立保存的 Desktop 默认 Core、登录凭证地址、loopback。登录/切换连接界面可保存或清除默认 Core，只影响后续启动，当前连接保持。业务 CLI 仍依次取参数、环境、凭证、loopback，不读取 Desktop 偏好；参数仅覆盖本次调用。
 
 命令行的身份、Work、配置、Pi Package、对话与迁移流程见 [Go 用户 CLI](docs/user-cli.md)。
 

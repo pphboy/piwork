@@ -201,14 +201,10 @@ func TestNativeDesktopRejectsUnsafeSharedCredentialStorage(t *testing.T) {
 			}
 			before, _ := os.ReadFile(path)
 			if kind == "public-parent" {
-				if err := os.Chmod(filepath.Dir(path), 0777); err != nil {
-					t.Fatal(err)
-				}
+				makePublicFixtureDirectory(t, filepath.Dir(path))
 			} else {
 				link := filepath.Join(t.TempDir(), "linked")
-				if err := os.Symlink(filepath.Dir(path), link); err != nil {
-					t.Fatal(err)
-				}
+				makeLinkedFixtureDirectory(t, filepath.Dir(path), link)
 				store.Path = filepath.Join(link, "client.json")
 			}
 			d := &nativeDesktop{store: store, identity: desktopIdentity{coreURL: core.URL}}

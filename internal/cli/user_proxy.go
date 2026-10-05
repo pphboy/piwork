@@ -103,10 +103,6 @@ func runUserProxy(api *client.Client, args []string, jsonMode bool, stdout, stde
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	if api.Base.Scheme == "http" && !isLocalCoreHost(api.Base.Hostname()) {
-		fmt.Fprintln(stderr, "remote Core connections require HTTPS")
-		return 2
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	var capability struct {
@@ -182,10 +178,6 @@ func runUserProxy(api *client.Client, args []string, jsonMode bool, stdout, stde
 		return int(code)
 	}
 	return 130
-}
-
-func isLocalCoreHost(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func (p *userProxy) sessionLost() {

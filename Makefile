@@ -12,6 +12,7 @@ help:
 	@echo 'acceptance           Run integration tests and require every scenario to have evidence'
 	@echo 'release              Build native images and a checksumed release archive'
 	@echo 'build-go             Build seven native migration entry points'
+	@echo 'build-cli            Build standalone Windows/Linux clients and Desktop assets'
 	@echo 'native-agent-images  Build Agent targets containing Go MCP/package helpers'
 	@echo 'native-helper-images Build Go file/snapshot helper images'
 	@echo 'native-compatibility-images Build real SDK-version and registry fault fixtures'
@@ -28,6 +29,10 @@ generate:
 
 build-go:
 	bash scripts/build-go.sh
+
+.PHONY: build-cli
+build-cli:
+	node scripts/build-cli.mjs
 
 webui-assets:
 	npm run clean -w @piwork/desktop-webui -w @piwork/console-webui

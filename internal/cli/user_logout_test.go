@@ -80,9 +80,7 @@ func TestLogoutClearFailureDoesNotReportSuccessOrReplay(t *testing.T) {
 	var calls atomic.Int32
 	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if err := os.Chmod(filepath.Dir(path), 0755); err != nil {
-			t.Error(err)
-		}
+		makePublicFixtureDirectory(t, filepath.Dir(path))
 		w.WriteHeader(401)
 		_, _ = io.WriteString(w, `{"code":"AUTHENTICATION_FAILED","message":"Revoked"}`)
 	}))

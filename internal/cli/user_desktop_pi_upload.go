@@ -11,37 +11,53 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"piwork/internal/client"
+	"piwork/internal/clientfs"
+	"piwork/internal/localweb"
 	"piwork/internal/pipackage"
 )
+
+type desktopPackageInput struct {
+	filename, name, source string
+	bytes                  int64
+	digest                 string
+}
+
+var errDesktopPiUploadMedia = errors.New("UNSUPPORTED_MEDIA_TYPE")
 
 // The browser sends a multipart upload for either one ZIP or one directory.
 // The directory's first component is its display name, not part of the Pi
 // package tree that Core installs.
-func receiveDesktopPiPackage(ctx context.Context, w http.ResponseWriter, r *http.Request, stage string) (consolePackageInput, error) {
+func receiveDesktopPiPackage(ctx context.Context, w http.ResponseWriter, r *http.Request, stage string) (desktopPackageInput, error) {
 	media, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "multipart/form-data" || params["boundary"] == "" || len(params["boundary"]) > 70 {
-		return consolePackageInput{}, errConsoleUploadMedia
+		return desktopPackageInput{}, errDesktopPiUploadMedia
 	}
 	if r.ContentLength > pipackage.RestoredBytes+(64<<20) {
-		return consolePackageInput{}, pipackage.ErrLimit
+		return desktopPackageInput{}, pipackage.ErrLimit
 	}
 	reader := multipart.NewReader(io.LimitReader(r.Body, pipackage.RestoredBytes+(64<<20)+1), params["boundary"])
 	var kind, rootName, zipName string
 	var count, total int64
 	seen := map[string]bool{}
 	treeRoot := filepath.Join(stage, "tree")
-	if err := os.Mkdir(treeRoot, 0700); err != nil {
-		return consolePackageInput{}, err
+	stageRoot, err := clientfs.OpenPrivateDirectory(stage, false)
+	if err != nil {
+		return desktopPackageInput{}, err
 	}
+	defer stageRoot.Close()
+	treeDirectory, err := stageRoot.Child("tree", true)
+	if err != nil {
+		return desktopPackageInput{}, err
+	}
+	defer treeDirectory.Close()
 	for {
 		if err := ctx.Err(); err != nil {
-			return consolePackageInput{}, err
+			return desktopPackageInput{}, err
 		}
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(time.Minute))
 		part, err := reader.NextPart()
@@ -49,18 +65,18 @@ func receiveDesktopPiPackage(ctx context.Context, w http.ResponseWriter, r *http
 			break
 		}
 		if err != nil {
-			return consolePackageInput{}, err
+			return desktopPackageInput{}, err
 		}
 		field := part.FormName()
 		if field == "kind" {
 			if kind != "" || count != 0 {
 				part.Close()
-				return consolePackageInput{}, pipackage.ErrSource
+				return desktopPackageInput{}, pipackage.ErrSource
 			}
 			value, err := io.ReadAll(io.LimitReader(part, 17))
 			part.Close()
 			if err != nil || string(value) != "zip" && string(value) != "local" {
-				return consolePackageInput{}, pipackage.ErrSource
+				return desktopPackageInput{}, pipackage.ErrSource
 			}
 			kind = string(value)
 			continue
@@ -69,49 +85,60 @@ func receiveDesktopPiPackage(ctx context.Context, w http.ResponseWriter, r *http
 		name := disposition["filename"]
 		if err != nil || kind == "" || name == "" || (kind == "zip" && field != "zip" || kind == "local" && field != "files") {
 			part.Close()
-			return consolePackageInput{}, pipackage.ErrSource
+			return desktopPackageInput{}, pipackage.ErrSource
 		}
-		validated, ok := consoleUploadPath(url.PathEscape(name))
+		validated, ok := localweb.UploadPath(url.PathEscape(name), pipackage.MaxPathBytes, pipackage.MaxDepth)
 		if !ok || seen[validated] || kind == "zip" && strings.Contains(validated, "/") {
 			part.Close()
-			return consolePackageInput{}, pipackage.ErrSource
+			return desktopPackageInput{}, pipackage.ErrSource
 		}
 		seen[validated] = true
 		count++
 		if count > pipackage.MaxEntries {
 			part.Close()
-			return consolePackageInput{}, pipackage.ErrLimit
+			return desktopPackageInput{}, pipackage.ErrLimit
 		}
-		var target string
+		parent := stageRoot
+		leaf := "package.zip"
 		if kind == "zip" {
-			if count != 1 || !consoleDisplayName(validated) {
+			if count != 1 || !localweb.DisplayName(validated) {
 				part.Close()
-				return consolePackageInput{}, pipackage.ErrSource
+				return desktopPackageInput{}, pipackage.ErrSource
 			}
 			zipName = validated
-			target = filepath.Join(stage, "package.zip")
 		} else {
 			parts := strings.Split(validated, "/")
-			if len(parts) < 2 || !consoleDisplayName(parts[0]) {
+			if len(parts) < 2 || !localweb.DisplayName(parts[0]) {
 				part.Close()
-				return consolePackageInput{}, pipackage.ErrSource
+				return desktopPackageInput{}, pipackage.ErrSource
 			}
 			if rootName == "" {
 				rootName = parts[0]
 			} else if rootName != parts[0] {
 				part.Close()
-				return consolePackageInput{}, pipackage.ErrSource
+				return desktopPackageInput{}, pipackage.ErrSource
 			}
-			target = filepath.Join(treeRoot, filepath.FromSlash(strings.Join(parts[1:], "/")))
-			if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
-				part.Close()
-				return consolePackageInput{}, err
+			parent = treeDirectory
+			for _, component := range parts[1 : len(parts)-1] {
+				next, openErr := parent.Child(component, true)
+				if parent != treeDirectory {
+					parent.Close()
+				}
+				if openErr != nil {
+					part.Close()
+					return desktopPackageInput{}, openErr
+				}
+				parent = next
 			}
+			leaf = parts[len(parts)-1]
 		}
-		file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		file, err := parent.CreateExclusive(leaf)
+		if parent != stageRoot && parent != treeDirectory {
+			parent.Close()
+		}
 		if err != nil {
 			part.Close()
-			return consolePackageInput{}, err
+			return desktopPackageInput{}, err
 		}
 		var fileBytes int64
 		buffer := make([]byte, 64<<10)
@@ -124,12 +151,12 @@ func receiveDesktopPiPackage(ctx context.Context, w http.ResponseWriter, r *http
 				if fileBytes > pipackage.FileBytes || total > pipackage.RestoredBytes || kind == "zip" && fileBytes > pipackage.CompressedBytes {
 					file.Close()
 					part.Close()
-					return consolePackageInput{}, pipackage.ErrLimit
+					return desktopPackageInput{}, pipackage.ErrLimit
 				}
 				if _, err := file.Write(buffer[:n]); err != nil {
 					file.Close()
 					part.Close()
-					return consolePackageInput{}, err
+					return desktopPackageInput{}, err
 				}
 			}
 			if readErr == io.EOF {
@@ -138,45 +165,45 @@ func receiveDesktopPiPackage(ctx context.Context, w http.ResponseWriter, r *http
 			if readErr != nil {
 				file.Close()
 				part.Close()
-				return consolePackageInput{}, readErr
+				return desktopPackageInput{}, readErr
 			}
 		}
 		if err := file.Sync(); err != nil {
 			file.Close()
 			part.Close()
-			return consolePackageInput{}, err
+			return desktopPackageInput{}, err
 		}
 		if err := file.Close(); err != nil {
 			part.Close()
-			return consolePackageInput{}, err
+			return desktopPackageInput{}, err
 		}
 		part.Close()
 	}
 	if count == 0 {
-		return consolePackageInput{}, pipackage.ErrSource
+		return desktopPackageInput{}, pipackage.ErrSource
 	}
 	if kind == "zip" {
 		archive, err := pipackage.OpenArchive(ctx, filepath.Join(stage, "package.zip"))
 		if err != nil {
-			return consolePackageInput{}, err
+			return desktopPackageInput{}, err
 		}
 		archive.Close()
-		return consolePackageInput{filename: filepath.Join(stage, "package.zip"), name: zipName, source: "zip", bytes: total}, nil
+		return desktopPackageInput{filename: filepath.Join(stage, "package.zip"), name: zipName, source: "zip", bytes: total}, nil
 	}
 	if !seen[rootName+"/package.json"] {
-		return consolePackageInput{}, pipackage.ErrSource
+		return desktopPackageInput{}, pipackage.ErrSource
 	}
 	tree, err := pipackage.OpenTree(ctx, treeRoot)
 	if err != nil {
-		return consolePackageInput{}, err
+		return desktopPackageInput{}, err
 	}
 	defer tree.Close()
 	filename := filepath.Join(stage, "package.zip")
 	packed, err := pipackage.PackArchive(ctx, tree, filename)
 	if err != nil {
-		return consolePackageInput{}, err
+		return desktopPackageInput{}, err
 	}
-	return consolePackageInput{filename: filename, name: rootName, source: "local", bytes: packed.Bytes, digest: packed.Digest}, nil
+	return desktopPackageInput{filename: filename, name: rootName, source: "local", bytes: packed.Bytes, digest: packed.Digest}, nil
 }
 
 func (d *nativeDesktop) uploadDesktopPiPackage(w http.ResponseWriter, r *http.Request, _ desktopSession, t *desktopTransfers, workID string) {
@@ -206,19 +233,20 @@ func (d *nativeDesktop) uploadDesktopPiPackage(w http.ResponseWriter, r *http.Re
 	t.busy++
 	t.mu.Unlock()
 	defer func() { t.mu.Lock(); t.busy--; t.mu.Unlock() }()
-	stage, err := os.MkdirTemp(t.directory, "pi-package-")
+	stageRoot, name, err := t.root.CreateTempDirectory("pi-package-")
 	if err != nil {
 		desktopTransferError(w, 507, "TRANSFER_STORAGE_FULL")
 		return
 	}
-	defer os.RemoveAll(stage)
+	defer func() { _ = t.root.RemoveTree(name); _ = stageRoot.Close() }()
+	stage := filepath.Join(t.directory, name)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()
 	input, err := receiveDesktopPiPackage(ctx, w, r, stage)
 	if err != nil {
 		var packageErr *pipackage.InputError
 		switch {
-		case errors.Is(err, errConsoleUploadMedia):
+		case errors.Is(err, errDesktopPiUploadMedia):
 			desktopTransferError(w, 415, "MULTIPART_REQUIRED")
 		case errors.As(err, &packageErr):
 			status := 400
@@ -238,7 +266,7 @@ func (d *nativeDesktop) uploadDesktopPiPackage(w http.ResponseWriter, r *http.Re
 		desktopTransferError(w, 409, "CONNECTION_CHANGED")
 		return
 	}
-	file, err := os.Open(input.filename)
+	file, err := stageRoot.OpenRegular(filepath.Base(input.filename))
 	if err != nil {
 		desktopTransferError(w, 507, "TRANSFER_STORAGE_FULL")
 		return

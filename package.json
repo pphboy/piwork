@@ -14,6 +14,7 @@
     "packages/*"
   ],
   "scripts": {
+    "build:cli": "node scripts/build-cli.mjs",
     "clean": "npm run clean --workspaces --if-present",
     "typecheck": "npm run typecheck -w @piwork/contracts -w @piwork/pi-package -w @piwork/work-store -w @piwork/pi-adapter -w @piwork/agentd -w @piwork/desktop-webui -w @piwork/console-webui",
     "build": "make build",

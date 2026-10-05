@@ -15,9 +15,6 @@ func Entry(program string, args []string, stdout, stderr io.Writer) int {
 	if program == "piwork-cli" {
 		return runUser(args, stdout, stderr)
 	}
-	if program == "piwork-console" {
-		return runConsole(args, stdout, stderr)
-	}
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
 		if err := json.NewEncoder(stdout).Encode(buildinfo.Read(program)); err != nil {
 			fmt.Fprintln(stderr, "Unable to write version information.")

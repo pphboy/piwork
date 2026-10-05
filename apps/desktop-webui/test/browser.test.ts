@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { chromium, expect } from "@playwright/test";
@@ -26,6 +26,16 @@ function spawnClient(args: string[], env: NodeJS.ProcessEnv) {
   return spawn(nativeCli, args, { env });
 }
 async function saveTestCredential(path: string, value: Record<string, unknown>): Promise<void> {
+  if (process.platform === 'win32') {
+    const fixture = process.env.PIWORK_TEST_CREDENTIAL_FIXTURE;
+    assert(fixture, 'required native credential fixture unavailable: build scripts/check-cli-credential-fixture.go');
+    await new Promise<void>((resolve,reject)=>{
+      const child=execFile(fixture,['--config',path],error=>error?reject(new Error('Native credential fixture failed')):resolve());
+      child.stdin!.end(JSON.stringify(value));
+    });
+    return;
+  }
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writeFile(path, JSON.stringify(value), { mode: 0o600 });
 }
 const browserLaunchOptions = process.env.PIWORK_TEST_BROWSER_BIN
@@ -128,7 +138,7 @@ test("browser signs in and out without exposing Core bearer to page storage", as
   const port = localAddress.port;
   await new Promise<void>((done) => listener.close(() => done()));
   const child = spawnClient(["--core", coreUrl, "desktop", "--port", String(port), "--no-open"],
-    { ...process.env, PIWORK_CONFIG_PATH: join(directory, "client.json") });
+    { ...process.env, PIWORK_CONFIG_PATH: join(directory, "credentials", "client.json") });
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
     const launchUrl = await new Promise<string>((done, fail) => {
@@ -267,7 +277,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
   const address = core.address(); assert(address && typeof address !== "string");
   const coreUrl = `http://127.0.0.1:${address.port}`;
   const directory = await mkdtemp(join(tmpdir(), "piwork-desktop-lifecycle-"));
-  await saveTestCredential(join(directory, "client.json"), { version: 1, coreUrl, token: "lifecycle-token",
+  await saveTestCredential(join(directory, "credentials", "client.json"), { version: 1, coreUrl, token: "lifecycle-token",
     expiresAt: "2099-01-01T00:00:00Z", user: { id: "owner", account: "owner", role: "user" } });
   const listener = createServer();
   await new Promise<void>((done) => listener.listen(0, "127.0.0.1", done));
@@ -275,7 +285,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
   const port = local.port;
   await new Promise<void>((done) => listener.close(() => done()));
   const child = spawnClient(["--core", coreUrl, "desktop", "--port", String(port), "--no-open"],
-    { ...process.env, PIWORK_CONFIG_PATH: join(directory, "client.json") });
+    { ...process.env, PIWORK_CONFIG_PATH: join(directory, "credentials", "client.json") });
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
     const launchUrl = await new Promise<string>((done, fail) => {
@@ -701,7 +711,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
   const address = core.address(); assert(address && typeof address !== "string");
   const coreUrl = `http://127.0.0.1:${address.port}`;
   const directory = await mkdtemp(join(tmpdir(), "piwork-desktop-preview-"));
-  await saveTestCredential(join(directory, "client.json"), { version: 1, coreUrl, token: "platform-secret",
+  await saveTestCredential(join(directory, "credentials", "client.json"), { version: 1, coreUrl, token: "platform-secret",
     expiresAt: "2099-01-01T00:00:00Z", user: { id: "owner", account: "owner", role: "user" } });
   const listener = createServer();
   await new Promise<void>((done) => listener.listen(0, "127.0.0.1", done));
@@ -709,7 +719,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
   const port = local.port;
   await new Promise<void>((done) => listener.close(() => done()));
   const child = spawnClient(["--core", coreUrl, "desktop", "--port", String(port), "--no-open"],
-    { ...process.env, PIWORK_CONFIG_PATH: join(directory, "client.json") });
+    { ...process.env, PIWORK_CONFIG_PATH: join(directory, "credentials", "client.json") });
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   let davProxy: ReturnType<typeof spawn> | undefined;
   try {

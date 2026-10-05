@@ -10,17 +10,18 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"golang.org/x/sys/unix"
+	"piwork/internal/clientfs"
 	"piwork/internal/contracts"
 )
 
 type Tree struct {
-	Root          *os.Root
-	Entries       []contracts.DigestEntry
-	RestoredBytes int64
-	Manifest      Manifest
-	ManifestBytes []byte
-	identities    map[string]os.FileInfo
+	Root           *os.Root
+	Entries        []contracts.DigestEntry
+	RestoredBytes  int64
+	Manifest       Manifest
+	ManifestBytes  []byte
+	identities     map[string]os.FileInfo
+	fileIdentities map[string]clientfs.FileIdentity
 }
 
 func (tree *Tree) Close() error { return tree.Root.Close() }
@@ -54,7 +55,7 @@ func safeLink(name, target string) error {
 }
 
 func OpenTree(ctx context.Context, directory string) (*Tree, error) {
-	root, err := os.OpenRoot(directory)
+	root, err := openTreeRoot(directory)
 	if err != nil {
 		return nil, ErrSource
 	}
@@ -76,7 +77,7 @@ func OpenTreeAt(ctx context.Context, parent *os.Root, name string) (*Tree, error
 	return scanTree(ctx, root)
 }
 func scanTree(ctx context.Context, root *os.Root) (*Tree, error) {
-	tree := &Tree{Root: root, Entries: []contracts.DigestEntry{}, identities: make(map[string]os.FileInfo)}
+	tree := &Tree{Root: root, Entries: []contracts.DigestEntry{}, identities: make(map[string]os.FileInfo), fileIdentities: make(map[string]clientfs.FileIdentity)}
 	keep := false
 	defer func() {
 		if !keep {
@@ -97,6 +98,9 @@ func scanTree(ctx context.Context, root *os.Root) (*Tree, error) {
 				return ctx.Err()
 			}
 			name := item.Name()
+			if !nativePackageComponent(name) {
+				return ErrUnsafe
+			}
 			if prefix != "" {
 				name = prefix + "/" + name
 			}
@@ -116,6 +120,17 @@ func scanTree(ctx context.Context, root *os.Root) (*Tree, error) {
 				entry.Type = "directory"
 				entry.Mode = 0755
 			case info.Mode().IsRegular():
+				file, err := openTreeFile(root, name)
+				if err != nil {
+					return ErrUnsafe
+				}
+				identity, identityErr := clientfs.Identity(file)
+				opened, statErr := file.Stat()
+				closeErr := file.Close()
+				if identityErr != nil || statErr != nil || closeErr != nil || !os.SameFile(info, opened) || info.Size() != identity.Size || !info.ModTime().Equal(opened.ModTime()) {
+					return ErrUnsafe
+				}
+				tree.fileIdentities[name] = identity
 				entry.Type = "file"
 				entry.Mode = 0644
 				if info.Mode()&0111 != 0 {
@@ -134,12 +149,12 @@ func scanTree(ctx context.Context, root *os.Root) (*Tree, error) {
 					if err != nil {
 						return nil, err
 					}
-					return &contextFile{ctx: ctx, File: file}, nil
+					return &contextFile{ctx: ctx, File: file, check: func() error { return tree.checkFile(name, file) }}, nil
 				}
 			case info.Mode()&os.ModeSymlink != 0:
 				entry.Type = "symlink"
 				entry.Mode = 0777
-				entry.Target, err = root.Readlink(name)
+				entry.Target, err = readTreeLink(root, name)
 				if err != nil {
 					return ErrUnsafe
 				}
@@ -180,7 +195,7 @@ func scanTree(ctx context.Context, root *os.Root) (*Tree, error) {
 		return nil, err
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, ManifestBytes+1))
-	closeErr := file.Close()
+	closeErr := errors.Join(tree.checkFile("package.json", file), file.Close())
 	if err != nil || closeErr != nil || int64(len(raw)) > ManifestBytes {
 		return nil, ErrManifest
 	}
@@ -196,17 +211,30 @@ func scanTree(ctx context.Context, root *os.Root) (*Tree, error) {
 // os.Root pins containment for every parent component; O_NOFOLLOW prevents a
 // raced leaf from becoming a link, and NONBLOCK avoids blocking on a raced FIFO.
 func (tree *Tree) openFile(name string) (*os.File, error) {
-	file, err := tree.Root.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	file, err := openTreeFile(tree.Root, name)
 	if err != nil {
 		return nil, ErrUnsafe
 	}
 	info, err := file.Stat()
+	identity, identityErr := clientfs.Identity(file)
 	prior, ok := tree.identities[name]
-	if err != nil || !info.Mode().IsRegular() || !ok || !os.SameFile(info, prior) || info.Mode() != prior.Mode() || info.Size() != prior.Size() || !info.ModTime().Equal(prior.ModTime()) {
+	if err != nil || identityErr != nil || identity != tree.fileIdentities[name] || !info.Mode().IsRegular() || !ok || !os.SameFile(info, prior) || info.Mode() != prior.Mode() || info.Size() != prior.Size() || !info.ModTime().Equal(prior.ModTime()) {
 		file.Close()
 		return nil, ErrUnsafe
 	}
 	return file, nil
+}
+
+func (tree *Tree) checkFile(name string, file *os.File) error {
+	identity, err := clientfs.Identity(file)
+	if err != nil || identity != tree.fileIdentities[name] {
+		return ErrUnsafe
+	}
+	current, err := tree.openFile(name)
+	if err != nil {
+		return ErrUnsafe
+	}
+	return current.Close()
 }
 
 func (tree *Tree) ValidateDependencies() error {
@@ -233,7 +261,7 @@ func (tree *Tree) Digest() (string, error) {
 // Measure counts logical bytes without following symlinks and without reading
 // sparse file contents. Exceeding the preparation cap is a measurement result.
 func Measure(ctx context.Context, directory string) (int64, error) {
-	root, err := os.OpenRoot(directory)
+	root, err := openTreeRoot(directory)
 	if err != nil {
 		return 0, ErrSource
 	}
@@ -296,6 +324,11 @@ var errMeasuredLimit = errors.New("measurement limit reached")
 type contextFile struct {
 	ctx context.Context
 	*os.File
+	check func() error
+}
+
+func (file *contextFile) Close() error {
+	return errors.Join(file.check(), file.File.Close())
 }
 
 func (file *contextFile) Read(data []byte) (int, error) {
@@ -306,7 +339,7 @@ func (file *contextFile) Read(data []byte) (int, error) {
 }
 
 func eachDirectory(ctx context.Context, root *os.Root, name string, visit func(os.DirEntry) error) error {
-	dir, err := root.OpenFile(name, os.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	dir, err := openTreeDirectory(root, name)
 	if err != nil {
 		return ErrUnsafe
 	}

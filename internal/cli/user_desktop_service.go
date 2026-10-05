@@ -75,7 +75,7 @@ func (d *nativeDesktop) serveServiceOrigin(w http.ResponseWriter, r *http.Reques
 		d.mu.Lock()
 		current := d.serviceEntries[entry.id]
 		session, live := d.sessions[entry.sessionID]
-		valid := current != nil && current.ticket != "" && consoleEqual(current.ticket, ticket) &&
+		valid := current != nil && current.ticket != "" && equalDesktopSecret(current.ticket, ticket) &&
 			time.Now().Before(current.ticketEnd) && live && time.Now().Before(session.end) &&
 			current.generation == d.identity.generation && d.identity.checked && d.identity.credential != nil
 		if valid {

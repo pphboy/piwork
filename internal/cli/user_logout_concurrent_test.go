@@ -1,5 +1,3 @@
-//go:build linux
-
 package cli
 
 import (
@@ -18,17 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"piwork/internal/client"
 )
 
 func TestLogoutConcurrentLoginProcesses(t *testing.T) {
-	binary := filepath.Join(t.TempDir(), "piwork-cli")
-	build := exec.Command("go", "build", "-mod=readonly", "-o", binary, "./cmd/piwork-cli")
-	build.Dir = "../.."
-	if result, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, result)
-	}
+	binary := nativeCLIForTest(t)
 	for _, otherCore := range []bool{false, true} {
 		for _, status := range []int{204, 401} {
 			name := "same-core"
@@ -139,11 +131,10 @@ func TestLogoutConditionalCleanupOutcomes(t *testing.T) {
 	for _, kind := range []string{"absent", "lock-busy", "malformed"} {
 		t.Run(kind, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "credentials", "client.json")
-			var lockFD atomic.Int32
-			lockFD.Store(-1)
+			var unlock func()
 			defer func() {
-				if fd := lockFD.Load(); fd >= 0 {
-					_ = unix.Close(int(fd))
+				if unlock != nil {
+					unlock()
 				}
 			}()
 			var calls atomic.Int32
@@ -159,15 +150,7 @@ func TestLogoutConditionalCleanupOutcomes(t *testing.T) {
 						t.Error(err)
 					}
 				case "lock-busy":
-					fd, err := unix.Open(filepath.Dir(path), unix.O_RDONLY|unix.O_DIRECTORY, 0)
-					if err != nil {
-						t.Error(err)
-						return
-					}
-					lockFD.Store(int32(fd))
-					if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
-						t.Error(err)
-					}
+					unlock = holdCredentialFixtureLock(t, path)
 				}
 				w.WriteHeader(204)
 			}))

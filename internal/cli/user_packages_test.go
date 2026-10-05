@@ -8,13 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -50,7 +48,7 @@ func TestPackageWaitInterruptKeepsAcceptedJob(t *testing.T) {
 		ExpiresAt: "2099-01-01T00:00:00Z", User: client.Identity{ID: "user-1", Account: "owner", Role: "user"}}); err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(os.Args[0], "-test.run=^TestPackageWaitInterruptKeepsAcceptedJob$")
+	child := nativeTestCommand(t, "-test.run=^TestPackageWaitInterruptKeepsAcceptedJob$")
 	child.Env = append(os.Environ(), "PIWORK_TEST_PACKAGE_WAIT_CHILD=1", "PIWORK_CONFIG_PATH="+credential, "PIWORK_CORE_URL="+core.URL)
 	var stdout, stderr bytes.Buffer
 	child.Stdout, child.Stderr = &stdout, &stderr
@@ -68,7 +66,7 @@ func TestPackageWaitInterruptKeepsAcceptedJob(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("package operation was not observed")
 	}
-	if err := child.Process.Signal(syscall.SIGINT); err != nil {
+	if err := interruptTestProcess(child); err != nil {
 		t.Fatal(err)
 	}
 	finished := make(chan error, 1)

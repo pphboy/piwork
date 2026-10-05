@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"piwork/internal/client"
+	"piwork/internal/localweb"
 )
 
 type desktopIdentity struct {
@@ -89,21 +89,7 @@ func (d *nativeDesktop) authorize(r *http.Request, mutation bool) (desktopSessio
 }
 
 func readDesktopObject(r *http.Request, limit int64) (map[string]json.RawMessage, error) {
-	if r.Header.Get("Content-Type") != "application/json" {
-		return nil, errors.New("JSON_REQUIRED")
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(raw)) > limit {
-		return nil, errors.New("REQUEST_TOO_LARGE")
-	}
-	var value map[string]json.RawMessage
-	if json.Unmarshal(raw, &value) != nil || value == nil {
-		return nil, errors.New("INVALID_JSON")
-	}
-	return value, nil
+	return localweb.ReadObject(r, limit)
 }
 
 func desktopInputError(w http.ResponseWriter, err error) {
@@ -291,7 +277,7 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if path == "/_desktop/api/session" || path == "/_desktop/api/login" || path == "/_desktop/api/logout" || path == "/_desktop/api/connection" || path == "/_desktop/api/status" {
+	if path == "/_desktop/api/session" || path == "/_desktop/api/login" || path == "/_desktop/api/logout" || path == "/_desktop/api/connection" || path == "/_desktop/api/status" || path == "/_desktop/api/preferences" {
 		guarded, request, finish, allowed := d.guardAccess(w, r, session, false)
 		if !allowed {
 			return
@@ -300,6 +286,8 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		w, r = guarded, request
 	}
 	switch {
+	case path == "/_desktop/api/preferences":
+		d.servePreferences(w, r)
 	case path == "/_desktop/api/session" && r.Method == http.MethodGet:
 		desktopJSON(w, 200, d.view(r.Context(), session.csrf))
 	case path == "/_desktop/api/login" && r.Method == http.MethodPost:
@@ -421,8 +409,8 @@ func (d *nativeDesktop) switchCore(w http.ResponseWriter, r *http.Request, csrf 
 		desktopError(w, 400, "INVALID_CORE_URL")
 		return
 	}
-	parsed, err := client.ParseCoreURL(raw)
-	if err != nil || parsed.Scheme == "http" && !isLocalCoreHost(parsed.Hostname()) {
+	coreURL, err := client.DesktopCoreURL(raw)
+	if err != nil {
 		desktopError(w, 400, "INVALID_CORE_URL")
 		return
 	}
@@ -436,8 +424,8 @@ func (d *nativeDesktop) switchCore(w http.ResponseWriter, r *http.Request, csrf 
 		d.transfers.revoke(true)
 	}
 	d.revokeLocked()
-	d.identity.coreURL = parsed.Scheme + "://" + parsed.Host
-	if saved, err := d.store.Load(); err == nil && saved != nil && sameCoreOrigin(saved.CoreURL, parsed.String()) {
+	d.identity.coreURL = coreURL
+	if saved, err := d.store.Load(); err == nil && saved != nil && sameCoreOrigin(saved.CoreURL, coreURL) {
 		d.identity.credential = saved
 	}
 	d.mu.Unlock()

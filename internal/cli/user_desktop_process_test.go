@@ -7,11 +7,9 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -22,7 +20,7 @@ func TestNativeDesktopHelperProcess(t *testing.T) {
 	if os.Getenv("PIWORK_TEST_DESKTOP_CHILD") != "1" {
 		return
 	}
-	api, err := client.New("http://127.0.0.1:1", "")
+	api, err := client.New("http://192.0.2.1:1", "")
 	if err != nil {
 		os.Exit(91)
 	}
@@ -41,7 +39,7 @@ func TestNativeDesktopMissingBrowserOpenerPrintsManualAddress(t *testing.T) {
 	}
 	port := free.Addr().(*net.TCPAddr).Port
 	_ = free.Close()
-	command := exec.Command(os.Args[0], "-test.run=^TestNativeDesktopHelperProcess$")
+	command := nativeTestCommand(t, "-test.run=^TestNativeDesktopHelperProcess$")
 	command.Env = []string{"PIWORK_TEST_DESKTOP_CHILD=1", "PIWORK_TEST_DESKTOP_OPEN=1", "PIWORK_TEST_DESKTOP_PORT=" + strconv.Itoa(port), "PATH=" + filepath.Join(t.TempDir(), "no-browser-opener")}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -76,7 +74,7 @@ func TestNativeDesktopMissingBrowserOpenerPrintsManualAddress(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Desktop did not show manual address when opener was absent")
 	}
-	if err := command.Process.Signal(syscall.SIGINT); err != nil {
+	if err := interruptTestProcess(command); err != nil {
 		t.Fatal(err)
 	}
 	if err := command.Wait(); errorCode(err) != 130 {
@@ -93,7 +91,7 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	busyPort := occupied.Addr().(*net.TCPAddr).Port
-	busy := exec.Command(os.Args[0], "-test.run=^TestNativeDesktopHelperProcess$")
+	busy := nativeTestCommand(t, "-test.run=^TestNativeDesktopHelperProcess$")
 	busy.Env = []string{"PIWORK_TEST_DESKTOP_CHILD=1", "PIWORK_TEST_DESKTOP_PORT=" + strconv.Itoa(busyPort), "PATH=" + filepath.Join(t.TempDir(), "no-host-tools")}
 	busyOutput, busyErr := busy.CombinedOutput()
 	_ = occupied.Close()
@@ -106,7 +104,7 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 	}
 	port := free.Addr().(*net.TCPAddr).Port
 	_ = free.Close()
-	command := exec.Command(os.Args[0], "-test.run=^TestNativeDesktopHelperProcess$")
+	command := nativeTestCommand(t, "-test.run=^TestNativeDesktopHelperProcess$")
 	command.Dir = t.TempDir()
 	command.Env = []string{"PIWORK_TEST_DESKTOP_CHILD=1", "PIWORK_TEST_DESKTOP_PORT=" + strconv.Itoa(port), "PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "HOME=" + t.TempDir()}
 	stdout, err := command.StdoutPipe()
@@ -180,7 +178,7 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 	if cookie == "" {
 		t.Fatal("Desktop did not set local cookie")
 	}
-	if err := command.Process.Signal(syscall.SIGINT); err != nil {
+	if err := interruptTestProcess(command); err != nil {
 		t.Fatal(err)
 	}
 	finished := make(chan error, 1)
@@ -196,7 +194,7 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 	}
 	// Rebinding the same local port creates a fresh authority; old browser
 	// cookies and tickets must not gain access to this new listener.
-	restarted := exec.Command(os.Args[0], "-test.run=^TestNativeDesktopHelperProcess$")
+	restarted := nativeTestCommand(t, "-test.run=^TestNativeDesktopHelperProcess$")
 	restarted.Dir = command.Dir
 	restarted.Env = command.Env
 	freshOutput, err := restarted.StdoutPipe()

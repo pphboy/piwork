@@ -1,4 +1,4 @@
-package cli
+package consoleapp
 
 import (
 	"context"
@@ -13,11 +13,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"piwork/internal/client"
+	"piwork/internal/localweb"
 	"piwork/internal/pipackage"
 )
 
@@ -30,40 +29,11 @@ type consolePackageInput struct {
 var errConsoleUploadMedia = errors.New("UNSUPPORTED_MEDIA_TYPE")
 
 func consoleDisplayName(value string) bool {
-	if value == "" || value == "." || value == ".." || len(value) > 255 || !utf8.ValidString(value) {
-		return false
-	}
-	for _, letter := range value {
-		if letter < 0x20 || letter == 0x7f || letter == '\\' || letter == '/' {
-			return false
-		}
-	}
-	return true
+	return localweb.DisplayName(value)
 }
 
 func consoleUploadPath(encoded string) (string, bool) {
-	value, err := url.PathUnescape(encoded)
-	if err != nil || value == "" || !utf8.ValidString(value) || len(value) > pipackage.MaxPathBytes || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
-		return "", false
-	}
-	if len(value) >= 2 && value[1] == ':' && (value[0] >= 'A' && value[0] <= 'Z' || value[0] >= 'a' && value[0] <= 'z') {
-		return "", false
-	}
-	parts := strings.Split(value, "/")
-	if len(parts) > pipackage.MaxDepth {
-		return "", false
-	}
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." || len(part) > 255 {
-			return "", false
-		}
-		for _, letter := range part {
-			if letter < 0x20 || letter == 0x7f {
-				return "", false
-			}
-		}
-	}
-	return value, true
+	return localweb.UploadPath(encoded, pipackage.MaxPathBytes, pipackage.MaxDepth)
 }
 
 func (c *nativeConsole) uploadPackage(w http.ResponseWriter, r *http.Request, sessionID string, session consoleSession, kind string) {
