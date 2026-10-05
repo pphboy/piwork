@@ -39,6 +39,8 @@ export PIWORK_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptan
 
 Agent image 由 `config set --agent-image` 指定；Package helper 必须是带原生 package-helper 能力的可信 Agent 镜像。Core 在启动或接受任务前核验对应镜像标签、原生文件、平台和固定 ID；缺失时相应能力返回明确错误，不启动旧 TS/Python helper。File helper 缺失不会破坏 Service 网关。Agent 镜像内仍运行完整 TS Pi SDK harness；Package helper 与 Service MCP 为镜像内 Go 二进制。用户 Service 镜像的语言不受限制。
 
+启用 SELinux 的宿主需要为 Core 的受管容器共享目录设置合适的持久标签，并使用配套的 Core/snapshot helper；目录授权、标签边界和验证步骤见 [SELinux 宿主上的 Core](selinux.md)。Core 宿主不需要安装用户 CLI 或运行 Desktop。
+
 ## 初始化和权限
 
 Core 可以健康启动但尚未就绪。`GET /healthz` 表示 listener 活着；`GET /readyz` 区分 `ADMIN_REQUIRED`、`RUNTIME_NOT_CONFIGURED`、`RUNTIME_UNAVAILABLE`、`RECOVERING` 等状态。先运行 `admin bootstrap`，再 `config set`，命令示例见 [README](../README.md)。operator 凭证位于数据目录的私有文件，用户 CLI 凭证位于 `$XDG_CONFIG_HOME/piwork/client.json`、`$HOME/.config/piwork/client.json` 或 `PIWORK_CONFIG_PATH`。两种身份不能互用。密码、模型 key 使用隐藏输入或 `--password-stdin`、`--api-key-stdin`、`--api-key-file`，不要放在命令参数中。
