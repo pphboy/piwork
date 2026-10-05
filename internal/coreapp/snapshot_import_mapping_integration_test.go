@@ -635,7 +635,7 @@ func TestNativeSnapshotMovesServicesContextsAndPackagesBetweenOfflineInstallatio
 	data, err := io.ReadAll(response.Body)
 	response.Body.Close()
 	if err != nil || response.StatusCode != 200 || !bytes.Equal(data, opaque) {
-		t.Fatal("user data/source URL rewritten", err)
+		t.Fatal("restored user data read failed or changed", response.StatusCode, len(data), sha256.Sum256(data), sha256.Sum256(opaque), err)
 	}
 	response = request(targetBase, targetAuth, "GET", targetPath+"/files/user-token.txt", nil, nil)
 	tokenBytes, err := io.ReadAll(response.Body)
@@ -731,11 +731,57 @@ func TestNativeSnapshotMovesServicesContextsAndPackagesBetweenOfflineInstallatio
 	}
 	nextSessionID := nextSession["sessionId"].(string)
 	snapshotNativeRun(t, ctx, targetBase, targetAuth, targetWork, nextSessionID, "target-package-after-edit", "invoke package tool fixture_hello", "package-tool-result:fixture_hello:v1:")
+	reexportMessages := map[string][]byte{}
+	for _, retainedSession := range []string{sessionID, nextSessionID} {
+		status, history := packageHTTPCall(t, targetBase, targetPath+"/sessions/"+retainedSession, "GET", targetAuth, nil)
+		if status != 200 {
+			t.Fatal(status, history)
+		}
+		reexportMessages[retainedSession], _ = json.Marshal(history["messages"])
+	}
 	accepted(target, targetBase, targetAuth, targetPath+"/stop", "offline-target-stop")
 	// Re-export must include both imported provenance and newly accepted history,
 	// without replaying historical control records or changing user bytes.
-	accepted(target, targetBase, targetAuth, targetPath+"/exports", "offline-target-reexport")
-	t.Log("offline migration:", source.Store.InstallationID(), target.Store.InstallationID(), digest, size, sourceWork, targetWork, targetServices)
+	reexport := accepted(target, targetBase, targetAuth, targetPath+"/exports", "offline-target-reexport")
+	var reexportPackage string
+	if err := target.Store.Read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRow(`SELECT package_id FROM snapshot_jobs WHERE snapshot_id=?`, reexport["snapshotId"]).Scan(&reexportPackage)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status, reimport := packageHTTPCall(t, targetBase, "/api/v1/work-imports", "POST", targetAuth, map[string]string{"packageId": reexportPackage, "idempotencyKey": "offline-target-reimport"})
+	if status != 202 {
+		t.Fatal("re-exported package import admission", status, reimport)
+	}
+	waitWorkOperation(t, ctx, target, reimport["operationId"].(string))
+	reimportedWork := reimport["workId"].(string)
+	restored, err := target.Store.Work(ctx, reimportedWork, false)
+	if err != nil || restored.DesiredState != "stopped" || restored.ObservedState != "stopped" || reimportedWork == targetWork || reimportedWork == sourceWork || reimportedWork == secondWork {
+		t.Fatal("re-import did not publish an independent stopped Work", restored, err)
+	}
+	for _, kind := range []string{"agent", "service"} {
+		containers, err := target.dockerRuntime.ListContainers(ctx, kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range containers {
+			if item.Config.Labels["piwork.work_id"] == reimportedWork {
+				t.Fatal("re-import executed runtime code before Start", kind, item.ID)
+			}
+		}
+	}
+	// Session endpoints require a ready Work. Assert no execution above before
+	// explicitly starting this copy to compare the retained transcripts.
+	accepted(target, targetBase, targetAuth, "/api/v1/works/"+reimportedWork+"/start", "offline-reimport-start")
+	for _, retainedSession := range []string{sessionID, nextSessionID} {
+		status, actual := packageHTTPCall(t, targetBase, "/api/v1/works/"+reimportedWork+"/sessions/"+retainedSession, "GET", targetAuth, nil)
+		got, _ := json.Marshal(actual["messages"])
+		if status != 200 || !bytes.Equal(reexportMessages[retainedSession], got) {
+			t.Fatal("re-import lost retained or newly accepted history", retainedSession, status, actual)
+		}
+	}
+	accepted(target, targetBase, targetAuth, "/api/v1/works/"+reimportedWork+"/stop", "offline-reimport-stop")
+	t.Log("offline migration and re-import:", source.Store.InstallationID(), target.Store.InstallationID(), digest, size, sourceWork, targetWork, reimportedWork, targetServices)
 }
 
 func snapshotNativeRun(t *testing.T, ctx context.Context, base, auth, work, session, key, prompt, want string) {

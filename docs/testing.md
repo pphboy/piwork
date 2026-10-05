@@ -27,6 +27,8 @@ Go Engine 完整批次的单包时间上限为 120 分钟，包含真实故障�
 
 真实 Core 的 package、file 和 snapshot 测试需要事先构建 Agent 及 helper 镜像。`make test-integration` 完成这些构建；直接运行 Go integration test 时，应按 [Go 迁移验收记录](go-migration-acceptance.md) 给出固定镜像环境变量。Core/CLI 子进程测试在 PATH 中移除解释器和 Docker CLI；Pi Agent 容器内仍使用它自己的 Node 运行时。
 
+SELinux 快照回归见 [专用验收流程](selinux-snapshot-acceptance.md)。`PIWORK_TEST_SELINUX=1` 启用真实标签测试，并要求宿主为 Enforcing；未设置时该平台用例明确跳过。常规树库测试仍检查用户属性、ACL/capability 名称、异常枚举和失败后的内容保留。独立 Docker helper 验收脚本只创建带精确安装标签的测试卷和容器，按该身份清理，不操作现有 Work。
+
 浏览器测试源位于 `apps/desktop-webui/test` 与 `apps/console-webui/browser-tests`，测试进程只启动 Go CLI、Go Console 和 Go Core。Chrome/Edge 人工界面 Review 与无解释器宿主的发布包验收单列在迁移阶段 gate 中；自动 Chromium 通过不能替代它们。
 Desktop 的真实 Go Core/CLI 联合脚本已接入 `make test-integration`，默认使用 Playwright Chromium。Chrome 或 Edge 的正式界面验收可分别使用 `PIWORK_TEST_BROWSER_BIN=/path/to/browser PIWORK_TEST_SCREENSHOT_DIR=/path/to/evidence npm run test:real-core -w @piwork/desktop-webui` 执行；脚本为每次测试创建独立 Core 数据目录和受管 Work，并在结束后清理。该脚本依赖预先构建的 Agent 与原生 file/snapshot helper 镜像。
 

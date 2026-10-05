@@ -62,22 +62,39 @@ func metadata(info unix.Stat_t, parts []string, kind string) workpackage.TreeEnt
 	return workpackage.TreeEntry{SegmentsBase64: encoded, UID: int64(info.Uid), GID: int64(info.Gid), Mode: int64(info.Mode & 07777), MtimeNS: nanoseconds(info.Mtim), Type: kind}
 }
 func noAttrs(fd int) error {
-	n, err := unix.Flistxattr(fd, nil)
-	if err != nil {
-		return ErrUnreadable
-	}
-	if n != 0 {
-		return ErrUnsupported
-	}
-	return nil
+	return noPortableAttrs(func(raw []byte) (int, error) { return unix.Flistxattr(fd, raw) })
 }
 func noLinkAttrs(fd int, name string) error {
-	n, err := unix.Llistxattr(fmt.Sprintf("/proc/self/fd/%d/%s", fd, name), nil)
+	path := fmt.Sprintf("/proc/self/fd/%d/%s", fd, name)
+	return noPortableAttrs(func(raw []byte) (int, error) { return unix.Llistxattr(path, raw) })
+}
+
+// SELinux assigns this label on the target host, including to empty Docker
+// volumes. It is neither portable Work data nor metadata to restore from a
+// package. All other xattrs, including ACLs and file capabilities, still fail.
+func noPortableAttrs(list func([]byte) (int, error)) error {
+	n, err := list(nil)
 	if err != nil {
 		return ErrUnreadable
 	}
-	if n != 0 {
-		return ErrUnsupported
+	if n == 0 {
+		return nil
+	}
+	if n < 0 || n > 64<<10 {
+		return ErrUnreadable
+	}
+	raw := make([]byte, n)
+	n, err = list(raw)
+	if err != nil || n < 0 || n > len(raw) {
+		return ErrUnreadable
+	}
+	raw = raw[:n]
+	for len(raw) > 0 {
+		end := bytes.IndexByte(raw, 0)
+		if end <= 0 || string(raw[:end]) != "security.selinux" {
+			return ErrUnsupported
+		}
+		raw = raw[end+1:]
 	}
 	return nil
 }

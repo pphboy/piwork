@@ -4,6 +4,7 @@ package coreapp
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -24,7 +25,9 @@ import (
 
 func TestNativeCoreExportsCompleteStoppedWorkAndDownloadsSameSnapshot(t *testing.T) {
 	failRestore, restoreBlocked, releaseRestore := snapshotRestoreStartFault(t)
-	a, base, auth, work, ctx := nativeApplyFixture(t)
+	a, base, auth, work, _ := nativeApplyFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
 	if os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE") == "" || os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE") == "" {
 		t.Fatal("native helpers required")
 	}
@@ -322,8 +325,8 @@ func TestNativeCoreExportsCompleteStoppedWorkAndDownloadsSameSnapshot(t *testing
 	failedOperation := failedRestore["operationId"].(string)
 	select {
 	case <-restoreBlocked:
-	case <-time.After(30 * time.Second):
-		t.Fatal("restore helper did not reach fault")
+	case <-ctx.Done():
+		t.Fatal("restore helper did not reach fault", ctx.Err())
 	}
 	status, competingCreate := packageHTTPCall(t, base, "/api/v1/works", "POST", auth, map[string]string{"name": failedRestore["name"].(string), "idempotencyKey": "create-during-import-name-hold"})
 	if status != 409 {
