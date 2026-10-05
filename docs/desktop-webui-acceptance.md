@@ -1,5 +1,104 @@
 # Desktop WebUI 本机验收记录
 
+## improve-desktop-workspace-ux（2026-10-05）
+
+本次规则以 [Desktop 规范](../openspec/specs/desktop-webui/spec.md)、
+[聊天规范](../openspec/specs/agent-conversation/spec.md)、
+[Service 访问规范](../openspec/specs/browser-service-access/spec.md) 和
+[界面语言规范](../openspec/specs/desktop-ui-language/spec.md) 为准。
+以下仅记录验收证据，不另定义产品规则。
+
+### 第 9–12 组补充验收
+
+第 1–8 组初版的 37 项证据保留在下一节。本节独立核对用户确认的 SDK 来源、Focus 返回
+和 UIUX 一致性，不沿用旧完成标记。
+
+| 补充范围 | 新执行证据 |
+| --- | --- |
+| CONV-MODEL-001、CONV-RUN-001：第 9 组 | Agent 83 项、Pi adapter 18 项与 Go 模型转发回归通过；额外 6 项 model 单测核对 SDK 名称仅用于公开展示，不改 Run descriptor。固定 SDK 0.86.1 的 DeepSeek Anthropic-compatible 受控 HTTP fixture 逐档验证 Off/Low/High/Max、SDK 实际档位、Run 快照、extension 后最终 payload 与子 Agent 能力重载。Off 无 effort/budget 冲突，官方端点严格匹配，未知能力明确拒绝。 |
+| DUL-002、DUL-WORKSPACE-002、DWUI-FOCUS-001、BSA-FOCUS-001：第 10 组 | 新 `UX revision` 浏览器场景验证四种布局、重复放大、Files/普通 Chat 来源、明确 Service/Session 新选择、直接退出、与 Open/More 的几何及 aria 一致。完整往返保留 iframe 与所有祖先、文档加载计数、应用表单、同一 Chat/Session/草稿、阅读锚点误差小于 2px、Activity 展开，布局没有新增业务请求。菜单/全屏/恢复/覆盖层/退出逐层处理；全屏双向拒绝、跨源按键、Work/预览失去资格及独立窗口零 Chat 请求通过。Go CLI/Core Service/Gateway 回归通过。 |
+| DUL-WORKSPACE-001/002、DWUI-MODEL-001、DWUI-COMMAND-001、DWUI-ACTIVITY-001：第 11 组 | 本轮 23 项 UX 浏览器回归通过。宽屏 Model/Thinking/Input options/Send 的真实高度与中心一致；360px 长名称菜单换行、发送与错误恢复可达。点击与网页命令打开同一实际档位列表；打开不写、取消保留、IME 不执行、串行保存、丢回复只 GET、改写草稿不被旧确认清除、当前 Run 不变。失败 Activity 摘要直接可见；Service identity 保留开关和参数边界；Session/Run 技术身份按需展开。首次 Work 读取迟到时保留已明确选择的 Service 和 Focus 下未保存 Files 编辑；原未知 Start 锁与 Session 局部读取反馈保持可见。 |
+| 本次补充 CONV、DUL、DWUI、BSA：第 12 组 | 最终 Desktop Go embed + 新 Agent 的隔离 `test:real-core` 通过：目录→实际菜单→完整设置→SDK 资源命令→Activity→Focus/Focus chat/Restore layout/Exit focus 与直接退出→Files/Apply→Stop/Export/Inspect/Import/Start→继续原 Session。Focus 往返无业务修改，Session/Run 历史、desired/active 配置逐项相同，iframe 及所有祖先与草稿不变、文档加载计数为 0。Go conversation 与模型真实 SDK 集成通过；Agent 受控 HTTP fixture 完成真实能力→Session 设置→各档实际请求。 |
+
+受控结果日志：`/tmp/piwork-ux-revision-agent-unit.log`、
+`/tmp/piwork-ux-revision-adapter-unit.log`、`/tmp/piwork-ux-revision-model-label.log`、
+`/tmp/piwork-ux-revision-browser-allux.log`、`/tmp/piwork-ux-revision-service-access.log`。
+测试代码分别见 [SDK fixture](../apps/agentd/src/pi-sdk-executor.test.ts)、
+[交互回归](../apps/desktop-webui/test/recovery.test.ts)；复现 UX 场景需先构建 Desktop，
+然后编译 `tsconfig.test.json`，执行 `node --test --test-name-pattern=UX apps/desktop-webui/dist/test/recovery.test.js`。
+
+最终 Desktop 全套浏览器回归为 192 项：191 通过，1 项需要实际等待五分钟的旧票据到期
+用例按原环境开关跳过。Chrome 154.0.8037.97、Edge 154.0.4258.53 各通过全部 23 项 UX
+场景，包括新增的完整 Focus 返回和真实菜单。日志为
+`/tmp/piwork-ux-revision-browser-full.log`、`/tmp/piwork-ux-revision-chrome.log`、
+`/tmp/piwork-ux-revision-edge.log`。受影响 workspace typecheck、Agent 83 项单测及 Go
+client/contracts/Core/CLI/history/RPC 回归通过。
+
+Desktop 生成资源已同步进 Go embed，验收二进制位于 `/tmp/piwork-ux-revision-bin/`。
+隔离 Agent 镜像 `piwork-agentd:desktop-ux-revision-production` 的 ID 为
+`sha256:4200aea3f321f64b68019b7bc19f25251cb8c0c6d23c5eae1d99bda881aab5c4`；
+`piwork-agentd:desktop-ux-revision-acceptance` 为
+`sha256:6cbbc2bf42ef6d1eae44c7c78b04c4a1a89b14ec0ce0a4aa6fb81188c638287e`。
+生产镜像另在 `--network none` 下确认 SDK 0.86.1、SDK 名称 `DeepSeek V4.1 Flash` 与
+Off/Low/High/Max 能力；证据在 `/tmp/piwork-ux-revision-image-capabilities.log`。
+依赖锁文件、SQL schema 4、协议 v2、存储版本 2 与 `.work` 版本 1 均未变。
+
+最终真实 Core 使用安装 `installation-036057fa9dbd8d53330f0ebf0e6bbbdb`；主文档重载
+计数为 0，测试安装的容器、网络、卷清理后均为 0。日志：
+`/tmp/piwork-ux-revision-real-core.log`、`/tmp/piwork-ux-revision-go-integration.log`，截图：
+`/tmp/piwork-ux-revision-real-screens/02-focused-chat.png` 与 `02-service-and-chat.png`。
+复现使用本节的 Agent 标签及配套 `piwork-snapshot-helper:desktop-ux-acceptance`，
+`PIWORK_TEST_NATIVE_CORE`/`PIWORK_TEST_NATIVE_CLI` 指向新 Go 二进制；
+`PIWORK_TEST_DATA_ROOT` 指向有足够空间的隔离磁盘目录。
+受控 fixture、实际浏览器和真实 Core 证据分别记录，不将确定性模型当作外部 DeepSeek
+服务调用。`openspec validate improve-desktop-workspace-ux --strict` 与 `git diff --check`
+通过；第 9–12 组十项全部完成，没有重启用户运行中的 Work。
+
+### 第 1–8 组初版验收
+
+| 覆盖范围 | 执行证据 |
+| --- | --- |
+| DWUI-011/014/019：局部读取、授权开场、原锁和显式核对 | `test:browser` 的 feedback/local-auth 用例通过；打开 Work 立即进入目标外壳，受控延迟下仅局部等待。Cookie-first、票据移除、CSRF、未知写入恢复保持通过。 |
+| DWUI-ACTIVITY-001、CONV-TOOL-HISTORY-001 | chat-projection 单元测试验证正文边界、Run/toolCallId 合并、历史键和重复正文；浏览器验证插入先前消息后阅读锚点误差小于 2px、两层展开保持、恶意文本仅作文本、360px 可达。Pi adapter 验证非文本、缺失结果、UTF-8 64 KiB 边界与完整私有 SDK 文件。 |
+| DWUI-MODEL-001、CONV-MODEL-001、CONV-RUN-001 | recovery 浏览器验证完整 pair 串行保存、最新 revision、default-only、丢响应后只读核对、草稿保留；真实 SDK 本地 API fixture 验证 Off/High 的实际请求参数、Run 快照和两个独立凭据。 |
+| DWUI-COMMAND-001、CONV-COMMAND-001、CONV-SUBMISSION-001 | 浏览器验证 Enter/Tab 填入、再次提交、既有参数、IME/Shift+Enter/Esc、网页入口、参数拒绝、字面 slash、原键恢复和 not-found 保持未知；恢复 Session 后保留原完整设置，未自动 PATCH/Run。真实 SDK 验证 Skill/Prompt 展开及不执行任意扩展 handler。 |
+| DWUI-FOCUS-001、DUL-002、BSA-FOCUS-001 | Chromium 与真实 Chrome 154.0.8037.97、Edge 154.0.4258.53 各通过 Focus/Fullscreen 两项浏览器用例：同一 iframe/Chat 节点、未保存表单/草稿、展开保持、360px、原生全屏与退出、请求拒绝时保留 Focus。全量 Go 测试包含原 Service 准入、授权撤销和连接关闭回归。 |
+| CONV-CHAT-CAPABILITY-001、CONV-CHAT-HISTORY-001 | TS contracts/pi-package/work-store/pi-adapter/agentd 单元测试分别为 13/8/40/18/79 项，全部通过；Go contracts/wire/client/history 和全量 `go test -mod=readonly ./...` 通过。新/旧/未知可选 Readiness 契约不改变原全局准入。 |
+
+Desktop 全套浏览器回归：180 项，179 通过、1 个依赖显式真实环境的用例跳过；
+包含阅读锚点、运行恢复后的能力/命令目录重读，以及不兼容 Session 的草稿与网页入口保留。所有 workspace `npm run typecheck`、
+`openspec validate improve-desktop-workspace-ux --strict` 与 `git diff --check` 通过。
+
+已构建隔离标签 `piwork-agentd:desktop-ux-production`、`piwork-agentd:desktop-ux-acceptance`、
+`piwork-snapshot-helper:desktop-ux-acceptance` 及 Go Desktop embed。
+旧 `piwork-agentd:brain-go-acceptance` 的真实 Go/SDK 模型集成通过：capability 0
+仅使三个新增读取端点返回 501，原模型/Session/Run 流程继续正常。
+
+Go `TestGoCoreHTTPToRealTSAgentConversation`、`TestNativeChatModelSelectionRunsThroughGoAndRealSDK`
+通过；使用本次 Helper 后 `TestNativeSnapshotHistoryRebuildContinuesRealTSSDKSession` 通过。
+旧 Helper 的严格校验会拒绝新增 Thinking JSON 字段，发布需配套更新 Helper；
+回退边界见 [包格式说明](work-package-format.md#可选聊天元数据schema-4)。
+协议 v2、schema 4、存储版本 2、`.work` 版本 1 和 SDK 0.86.1 未改变。
+所有真实测试使用独立安装和安装标签清理，未重启用户运行中的 Work。
+
+`npm run test:real-core -w @piwork/desktop-webui` 本轮在 Chromium 140.0.7339.186
+通过完整真实 Go Core/CLI/Docker 链路：上传并加载 Skill→读取目录→完整 pair→资源命令参数→
+两次 read 合并 Activity→Focus/Hide/Show/原生全屏→Files/Save/Apply→显式 `/new`→
+Stop/Start/Stop/Export/Inspect/Import/Start→按原 Session ID 选择并继续资源命令→Delete。
+Apply 前的 Session 仍为历史且设置不可用；当前上下文的原 Session 在导入后保持 Thinking Off
+并成功继续，两个 Run 的同名工具各自形成 Activity。浏览器主文档重载次数为 0；
+启用/禁用 Service、38 字节 sentinel、二进制 WebDAV、写入回复丢失与 390/1024/1440px
+回归通过。清理确认测试安装的容器、网络、卷均为 0。
+
+复现使用 Node 24，先构建 Desktop embed 和配套 Agent/Helper，再设置
+`PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:desktop-ux-acceptance`、
+`PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:desktop-ux-acceptance`、
+`PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance`。
+用 `PIWORK_TEST_DATA_ROOT` 指向足够空间的磁盘目录，用 `PIWORK_TEST_SCREENSHOT_DIR`
+保存截图。真实 Chrome/Edge 的 Focus/Fullscreen 验证可对 `recovery.test.js` 设置
+`PIWORK_TEST_BROWSER_BIN`，运行 `--test-name-pattern="UX full screen|UX Focus"`；
+该部分使用受控 HTTP fixture，完整真实 Core 结果对应本节的 Chromium 链路。
+
 ## 当前 Go 后端验收
 
 2026-10-02，桌面 Chrome 154.0.8037.57 与 Edge 154.0.4258.37 均通过 `npm run test:real-core -w @piwork/desktop-webui`。使用真实 Go Core/CLI、Docker Engine、完整 TS Agent/Pi SDK 及 Go 文件/快照 helper；覆盖 Service 内嵌和独立打开、文件编辑与回复丢失、Save→Apply、Chat、Stop→Export→Inspect→Import→Start、历史恢复和加载/空/错误状态。完整命令、日志和 UI Review 见 [Go 迁移验收记录的 12.9](go-migration-acceptance.md)。

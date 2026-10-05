@@ -31,7 +31,7 @@ Work List 提供搜索、创建、导入、状态动作和按 ID 查询 Operatio
 
 **Manage Services** 保留禁用、失败和没有 Web 端口的 Service；详情可按状态执行 Start、Stop、Restart、Retry、Remove 并刷新有限日志。Stop 会把该 Service 持久设为禁用，Start 一个已停止 Work 里的 Service 不会自动启动 Work；移除 Service 不会删除共享 workspace 文件。日志是一次有界快照，遇到不可用或截断会显示原因。危险动作会确认目标并保留原 Operation ID 供检查。
 
-Agent 对话只在用户提交消息时启动 Run。勾选 Service identity 只把选中 Service 的身份写入消息，不会自动传送页面 DOM、表单或登录状态。若希望 Agent 分析应用数据，请在消息中明确说明要读取哪些共享 workspace 文件或 Service API；实际可达范围取决于 Work 和 Service 的配置。
+Agent 对话只在用户提交消息时启动 Run。Chat Box 的 Input options 可勾选 Service identity，只把选中 Service 的身份写入普通消息，不会自动传送页面 DOM、表单或登录状态。资源命令仅发送原命令及参数，不附加身份，并在入口说明原因；回到普通消息保留原开关。若希望 Agent 分析应用数据，请在消息中明确说明要读取哪些共享 workspace 文件或 Service API；实际可达范围取决于 Work 和 Service 的配置。
 
 例如在 Chat 里写“读取共享 workspace 的 `/note.txt` 和 Notes Service 的 `/api/data`，比较并注明每条结论的来源”。Agent 只有在这些路径实际可达且工具调用成功时才能引用内容；Service 页面里的未保存输入、浏览器 Cookie 和 localStorage 不随消息传递。若文件或 API 不可达，回复应说明无法读取，不能称页面数据已同步。
 
@@ -52,8 +52,22 @@ Settings 的 Skills、Pi Packages、AGENTS.md 和完整 JSON 都先保存为 Wor
 本次交付界面的适配层、共享样式、实际测试范围和构建命令见 [两套 WebUI 接入记录](webui-integration.md)。
 
 
-Chat provides **Model for next message** and an explicit **Save model** for the selected Session. The Work default is a null preference. Saving does not change the active Run; Run history shows the actual model and Chat/Service source accepted for each Run. A dirty, unavailable or unconfirmed preference blocks Send while retaining the draft. After a lost PATCH reply, **Check Session model** reads the original Session; the UI does not resend the PATCH or prompt. Different Work/Session and authentication generations remain isolated.
+Chat Box 的 Model、Thinking 和 Send 在底部同一行等高居中，窄屏可换行；长模型名可从 tooltip 与选择菜单完整读取。点击或 `/model`、`/thinking` 打开同一个选择菜单，打开和取消不写入，明确选择后自动保存完整设置。Thinking 档位以固定 Pi SDK 的实际模型能力为准；不支持推理和能力未确认分别显示原因，不以 Off 代替未知。保存中、失败及未知在控件旁显示，确认前保留草稿并锁定 Send；**Check chat settings** 只读原 Session，丢响应不会自动重发 PATCH 或消息。选择只作用下一次手动 Run，当前 Run 的实际设置不变；Work/Session 与身份代际保持隔离。
 
 **Pi requests** lists Service/Chat goals with pagination. Details show the original request, Run/evidence IDs, wait reference and deadline; closing details does not cancel. Cancellation applies to the original request, and explicit Retry creates a new stable submission key only for an eligible live terminal request. Historical imported requests remain readonly. Pi Packages shows **Saved**, **Not applied**, **Loaded** and the actual behavior verification result independently; **Apply** remains the separate adoption action. The brain source is editable under `.pi/packages/piwork-brain/` in Files.
 
 The existing brain **Details** view shows the accepted active/saved selection and whether it still matches, the fixed verification goal/capability, a safe input summary, required checks, preparation/publication and the original Apply ID/state. **Original request** and Operation links read those original IDs; **Refresh package** reads current facts and preserves the application iframe. **No matching Apply**, **Apply observation unavailable**, **Apply failed** and **Behavior checks failed** describe separate outcomes. Failed reads keep the last confirmed details with an observation error; a successful refresh clears that error. Internal context identities, artifact digests, credentials and host paths are excluded.
+
+### Chat 与 Service 专注入口
+
+Chat 输入框底部提供 Model/Thinking；选择自动保存完整设置，确认前保留草稿并锁定 Send。
+输入 `/` 打开网页、Skill 与 Prompt 目录，Enter/Tab 先填入，再次提交执行。未知命令可切为
+Send as text；资源命令不附加 Selected Service 身份。丢响应时核对原设置或原提交键。
+Service 工具栏的 Focus 提供 Service + Chat、Hide/Show chat；Focus chat 放大当前对话，
+头部始终提供 Restore layout 与 Exit focus。前者恢复放大前布局，后者直接退出全部 Focus，
+普通 Chat 模块与专注布局分开。所有 Focus 动作复用 Open/More 的图标角色，Full screen 为
+独立用户动作。布局切换保持 iframe 及祖先、Chat、草稿与阅读位置；独立窗口仅显示 Service。
+Activity 默认折叠，失败数量与首个错误直接显示；设置、slash 菜单沿用现有菜单样式。
+Run 历史与 Submission details 按需展开技术身份，错误和可执行恢复始终直接可见。
+产品规则以 [Desktop 规范](../openspec/specs/desktop-webui/spec.md)
+与 [UI 语言规范](../openspec/specs/desktop-ui-language/spec.md) 为准。

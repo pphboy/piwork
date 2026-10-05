@@ -50,3 +50,21 @@ Pi 开发服务时创建 `.pi/services/<name>.json`，声明 `{contractVersion:1
 Service 将持久 outbox 的原事件以 Bearer 发送到 Agent `POST /pi/v1/events`，先写 WorkStore 再回 receipt。页面事实只保留 pathname，普通事实不调用模型；只有声明原因的 `agent.requested` 创建目标。Service 只可查询/取消自己的 `/pi/v1/requests/:requestId`。同持久实体 Restart 后仍用原 outbox 事件和新 token 重投，原 origin 和 eventId 不改，Agent 返回原 receipt；导入副本有新 Work/Service ID，不能冒领源事件。普通事件、请求、Action/Job 的内容不会经由 Core 中转。
 
 业务 Action 使用稳定 actionId、声明 input 和预期 stateVersion，Service 原子判定同键异内容/并发状态冲突；Agent 在发送前记录效果身份，响应丢失只 GET 原 Action，禁止重复 POST。异步结果通过原 Job ID 和有界查询核对。服务无法连接 Agent 时保留原 outbox，收到已持久化 receipt 后才确认投递。
+
+### 专注预览
+
+现有 Service 工具栏用与 Open/More 相同的图标按钮提供 Focus；Work 内可隐藏/显示同一个
+Chat，并从 Service + Chat 或仅 Service 放大为 Focus chat。仅 Chat 头部持续显示
+Restore layout（返回放大前布局）与 Exit focus（直接恢复最初常规区域）；重复放大不会
+覆盖返回目标，用户明确切换的 Service、端口或 Session 在返回后保留。普通 Chat 模块仍有
+常规导航；独立应用窗口仅支持 Service 专注，返回仍可 Back to Work，不读取或创建 Chat。
+
+Full screen 单独请求浏览器授权；打开失败、原生退出都保留 Focus。Exit focus 先退出浏览器
+全屏，关闭失败则保留当前布局、错误和可重试出口。外壳的 Esc 每次只处理一层：菜单/弹层、
+浏览器全屏、Focus chat 恢复、小屏 Chat 覆盖层、剩余 Focus。跨 origin iframe 内的按键不会
+保证冒泡，常驻图标出口始终可用。Work/Service 失去资格时仍显示访问原因和退出入口。
+
+布局切换保持 iframe 及祖先、同一个 Chat、表单、草稿、阅读位置和 Activity 展开，不改
+src/origin 或重新取得入口。嵌入策略、Service 准入、独立标签页回退和两秒连接撤销保持
+原规则；小屏 Chat 以同一节点覆盖，Run 状态不会自动弹出 Chat。
+参见 [Service 专注规范](../openspec/specs/browser-service-access/spec.md)。

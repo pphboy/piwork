@@ -30,3 +30,17 @@ Accepted Work exports and Work-scoped Pi package jobs retain Work IDs as idempot
 Current history is schema 4 with thirteen fixed tables. The native verifier checks feedback, candidate, experience and SDK tool/input/check relationships without executing uploaded SQL. Rebuild changes only declared Work/context references and declared control Operation IDs. SDK events, tool inputs, user payloads and business files stay byte-identical; imported requests/events are historical and cannot schedule, cancel or retry original effects. Private helper input contains safe recipient model descriptions and the declared Operation map, never API keys. Explicit Session preferences bind only to a unique enabled recipient provider/model/normalized endpoint match; zero or multiple matches stay unavailable. Imported Service instances get fresh private identity; preserved source outbox records cannot claim the new origin.
 
 Upload verification streams and hashes every archive blob, then reads validated archive sections directly for package and image checks. Only the managed SQLite files are materialized for isolated history inspection and are removed afterward. The helper does not duplicate image blobs into its spool, so an archive larger than the helper's memory limit can also be checked when the spool resides on tmpfs.
+
+### 可选聊天元数据（schema 4）
+
+`model_preference_json` 与 `actual_model_json` 可包含合法 `thinkingLevel`，缺省按历史 Off
+解释；Session 导入绑定新 modelRef 时保留原档位，由运行时检查当前模型是否支持。
+`model_selector_json` 增补可选 `inputMode`（text/command），旧省略摘要不变。
+TS 与 Go 冷历史校验拒绝未知字段和非法档位，导入不执行迁移、不重新提交 Run。
+SDK `piwork-run` 标记和完整工具结果作为原 SDK 文件保留，公开预览不替代归档原文。
+数据库 schema 4、存储版本 2、`.work` 版本 1 均不变。
+参见 [聊天历史与提交规范](../openspec/specs/agent-conversation/spec.md)。
+
+本次发布需配套更新 Snapshot Helper 的 schema 4 JSON 校验器；旧 Helper 对新增字段的
+严格拒绝仍保留。聊天 capability 0 的界面降级不代表旧 Agent/Helper 能读取已写入新字段
+的历史；回退需使用写入新字段前的 `.work` 备份，不能依靠自动删除元数据回退。

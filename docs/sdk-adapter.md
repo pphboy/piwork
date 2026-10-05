@@ -1,5 +1,20 @@
 # pi SDK adapter decisions
 
+## 可选工作区聊天契约
+
+聊天增量使用 `chat_controls_contract_version=1`，未声明为 0，不加入现有 v2、
+context/package/model/feedback/history readiness 的必需门槛。固定旧 Agent 继续基本
+聊天；新客户端只能在能力确认后使用 Thinking、资源命令、完整设置与原键查询。
+定义见 [工作区 UX 变更](../openspec/changes/archive/2026-10-05-improve-desktop-workspace-ux/design.md)
+及 [Agent 会话规范](../openspec/specs/agent-conversation/spec.md)。
+
+新增 AgentContent RPC 为 ListChatModels、ListSlashCommands、GetSessionChatOptions、
+SetSessionChatOptions、LookupChatSubmission。模型公开描述保持原字段，能力列表补充
+thinkingLevels/defaultThinkingLevel，Session/Run 另列 thinkingLevel。SubmitRun 的
+optional inputMode 区分 text 与 command，省略保留原语义与幂等摘要。历史以安全顺序块
+扩展原 entryId/role/text；工具结果投影有界且不返回参数、凭据或原始 Thinking。
+协议 tag、SDK 0.86.1、SQL history schema 4、storage layout 2 与 .work 格式 1 保持不变。
+
 The product adapter pins `@earendil-works/pi-coding-agent` to `0.86.1`.
 
 Go 平台迁移保留完整 TS Agent harness 和 Pi SDK adapter。包准备程序已提供 Go 四入口；来源、依赖、静态制品校验及镜像内工具边界见 [pi-package-helper.md](pi-package-helper.md)。准备环境必须取自固定目标镜像，不使用宿主 Node ABI。Go helper 与完整镜像的集成状态以迁移任务 3.9 为准。
@@ -112,3 +127,47 @@ Agent models/Run/Session/SDK 21 项测试。真实 SDK 在同一 Session 连续�
 当前 Go HTTP 提供 `GET /api/v1/works/:id/models`、`PATCH /api/v1/works/:id/sessions/:sessionId/model`。PATCH 输入为 `{modelRef: null | catalogId}`；保存独立 Session 偏好，执行中的 Run 保留原 `actualModel`。`POST .../runs` 的 `modelRef` 省略取已确认偏好，null 取 captured active Work 默认，string 指定当前可用模型。busy 返回 429，不排队；同 submissionKey 先比对原输入再返回原 Run，不重新解析失效模型。模型相关公共视图仅含 modelRef/label/provider/model。保存响应丢失时读取原 Session 确认，禁止自动重发 PATCH 或发送依赖未确认偏好的 prompt。
 
 Go 实际启动配置直接携带当前代次 mTLS 私有控制接口；测试 `TestNativeChatModelSelectionRunsThroughGoAndRealSDK` 在真实容器中验证同 Session 两个真实 SDK 模型、忙碌保存、显式默认、失效后重放和独立新 Session。
+
+## 基础聊天控件与安全历史投影
+
+可选 `chatControlsContractVersion = 1` 使用五个 `AgentContent` RPC：
+`ListChatModels`、`ListSlashCommands`、`GetSessionChatOptions`、`SetSessionChatOptions`、
+`LookupChatSubmission`。Readiness 字段 20；协议仍是 v2，原模型契约 1、反馈契约 1、
+历史 schema 4 不变。Core 单独协商新能力，0 或未知版本不影响原普通聊天、模型与 Service。
+产品行为以 [本变更设计](../openspec/changes/archive/2026-10-05-improve-desktop-workspace-ux/design.md) 和
+[agent-conversation](../openspec/specs/agent-conversation/spec.md) 为准。
+
+HTTP 前缀为 `/api/v1/works/:id`，Desktop 对应 `/_desktop/api/works/:id`：
+`GET /chat-capabilities`、`GET /chat-models`、`GET /commands`、
+`GET|PATCH /sessions/:sessionId/chat-options`、
+`GET /sessions/submissions/:key`、`GET /runs/submissions/:key`。
+PATCH 始终提交完整 `{modelRef, thinkingLevel}`；原模型 PATCH 保留 Thinking，
+不兼容时完整拒绝。Thinking 来自固定 SDK 0.86.1 的实际模型能力，default-only 是合法结果。
+每个受理 Run 固定实际模型和 Thinking，执行器核对 SDK 值；凭据解析不把 Thinking 当模型描述。
+
+能力查询与执行共用 `resolveProductionModel`。内建 provider/id 保留固定 SDK 的完整定义；
+仅对 `anthropic` 的官方 HTTPS `api.deepseek.com/anthropic` 端点，以相同 id 继承 SDK
+`deepseek` 的名称、reasoning、thinkingLevelMap、模态与限制，保留原凭据绑定和 Messages
+传输。代理域名、其他路径和未知 id 不猜测能力；新设置拒绝未确认能力，真正非推理模型
+才提供 Off。旧模型专用接口、未带新输入模式且未保存 Thinking 的请求与自动处理保留旧
+custom 模型行为，不将该兼容路径当作新能力确认。
+
+该兼容模型的最终 payload 在已有扩展处理后落实受理值：Off 使用 disabled，其他档位使用
+enabled 与 SDK 映射的 output_config.effort，不发送 Claude budget 或关闭时冲突的 effort。
+其他 provider 使用 SDK 原生序列化。子 Agent 的私有模型文件保留 capability/compat 元数据，
+仍绑定 Work 默认；手动 Session 偏好不改写它的凭据或配置。
+`pi-sdk-executor.test.ts` 通过隔离 HTTP 捕获逐档核对最终请求、扩展链、SDK 实际值与持久
+Run，并验证子 Agent 重载；没有请求真实 Provider。版本常量、SQL 与公开字段保持原值。
+
+`SubmitRunRequest.input_mode` 为可选字段 6：`text` 禁止 slash 展开，`command` 仅执行
+已加载 Skill/Prompt，省略保留原 SDK 行为与原幂等摘要。命令目录从 validated active loader
+缓存读取，不重新加载扩展；网页命令、扩展冲突与不安全 token 不进入资源目录。
+资源命令使用 SDK 展开参数，执行前确认目录、可读资源与扩展冲突。五个网页入口不发模型 Run。
+原键查询只返回持久受理事实；not-found 不能证明在途请求失败，恢复不自动发送或重试。
+
+SDK Session 在新 Run 前追加 `piwork-run` custom entry。公开历史保留原 role/text，增补
+有序 blocks 和原 Run ID；标记必须对应同 Work/Session 的真实 Run。旧消息仅凭唯一原
+持久 toolCallId 事件关联，缺证据时保留未知。工具预览以 UTF-8 64 KiB 为界，显示截断、
+非文本或未确认状态；不包含参数全集、Thinking 原文、资源路径等私有元数据。
+Session 的 Thinking 字段为 8，Run 为 17，消息 blocks/run_id 为 5/6，ToolEvent 预览为 6。
+私有 SDK 文件与完整 `.work` 归档保留原始内容。

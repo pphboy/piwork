@@ -91,3 +91,14 @@ piwork-cli work start <importedWorkId> --wait
 
 
 Chat JSON Run markers include only the accepted safe `actualModel` description, `source`, and `adoptedExperienceVersion`; existing chat arguments are unchanged. Credentials and private endpoints remain inside Go Core/Agent execution. The Desktop local API allowlists Work models, Session model preference PATCH and original request/evidence reads and cancel/retry, using the same current user, CSRF and credential-generation fence as the existing Work API. Query fields and pagination are strict; request details reject list-only filters. Cancellation and retry are runtime mutations and are rejected when the Work is stopped.
+
+### Desktop 聊天控件
+
+Desktop 控制 API 增加 Work 的 `chat-capabilities`、`chat-models`、`commands`，以及
+Session `chat-options` 的 GET/PATCH。完整设置为 `{modelRef:null|catalogId,thinkingLevel}`。
+创建 Session 可显式提供 `idempotencyKey`，提交 Run 可提供 `submissionKey` 和
+`inputMode:text|command`；省略键仍由 CLI 生成。只读 `sessions/submissions/:key`、
+`runs/submissions/:key` 用于核对原受理事实，not-found 不解锁未知提交，也不自动重发。
+所有修改沿用原 Cookie、CSRF、Core/账户与 Work 所有权准入。
+旧 Agent 继续使用原模型和聊天接口，新控件明确不可用，不自动更换镜像。
+参见 [规范](../openspec/specs/agent-conversation/spec.md)。
