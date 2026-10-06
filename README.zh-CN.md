@@ -39,15 +39,15 @@ Linux：在新的目录下载、校验并解压安装包：
 ```sh
 (
     set -eu
-    mkdir piwork-preview-0.0.1
-    cd piwork-preview-0.0.1
+    mkdir piwork-preview-0.0.1 || exit
+    cd piwork-preview-0.0.1 || exit
     PIWORK_RELEASE_URL=https://github.com/pphboy/piwork/releases/download/v0.0.1
-    curl --fail --location --output piwork-docker-0.0.1.tar.gz "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz"
-    curl --fail --location --output piwork-docker-0.0.1.tar.gz.sha256 "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz.sha256"
-    sha256sum --check piwork-docker-0.0.1.tar.gz.sha256
-    tar -xzf piwork-docker-0.0.1.tar.gz
-    cd piwork-docker
-    sha256sum --check SHA256SUMS
+    curl --fail --location --output piwork-docker-0.0.1.tar.gz "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz" || exit
+    curl --fail --location --output piwork-docker-0.0.1.tar.gz.sha256 "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz.sha256" || exit
+    sha256sum --check piwork-docker-0.0.1.tar.gz.sha256 || exit
+    tar -xzf piwork-docker-0.0.1.tar.gz || exit
+    cd piwork-docker || exit
+    sha256sum --check SHA256SUMS || exit
 ) && cd piwork-preview-0.0.1/piwork-docker
 ```
 
