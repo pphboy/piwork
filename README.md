@@ -131,6 +131,33 @@ Core manages resources and control operations. The Harness runs models and tools
 
 ## Roadmap
 
+Piwork is still early. The current focus is to make the Work lifecycle reliable, portable, and easy to understand.
+
+### Near term
+
+- Improve the first-run experience and installation flow
+- Strengthen `.work` import / export reliability
+- Improve Windows client compatibility
+- Improve Desktop UX and model configuration
+- Publish more example Works and end-to-end demos
+
+### Next
+
+- Make Works easier to share and reuse
+- Improve Service lifecycle management
+- Expand Harness capabilities and tool integration
+- Improve cross-machine and multi-environment portability
+- Introduce better Work packaging and distribution
+
+### Longer term
+
+- Evolve Piwork into a portable AI-native workspace runtime
+- Let Harnesses adapt and evolve with the Work
+- Enable AI to operate and modify Services directly
+- Explore layered Work packaging and richer distribution models
+
+The roadmap will evolve based on real usage and feedback.
+
 ## Contributing
 
 Read [AGENTS.md](AGENTS.md) for development conventions and the [testing guide](docs/testing.md) for test entry points. The basic build requires Go 1.25.5, Node 24 (see `.nvmrc`)/npm, Git, Make, and Bash. Run these commands from the repository root:

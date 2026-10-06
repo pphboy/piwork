@@ -131,6 +131,33 @@ Core 负责资源管理与控制，Harness 执行模型和工具，Service 提�
 
 ## Roadmap
 
+Piwork 仍处于早期阶段。当前重点是让 Work 的生命周期可靠、可迁移且易于理解。
+
+### 近期
+
+- 改善首次使用体验和安装流程
+- 提升 `.work` 导入 / 导出的可靠性
+- 改善 Windows 客户端兼容性
+- 改善 Desktop 用户体验和模型配置
+- 发布更多 Work 示例和端到端演示
+
+### 下一阶段
+
+- 让 Work 更易于分享和复用
+- 改善 Service 生命周期管理
+- 扩展 Harness 能力和工具集成
+- 提升跨机器和多环境的可迁移性
+- 引入更完善的 Work 打包和分发机制
+
+### 长期
+
+- 将 Piwork 演进为可迁移的 AI 原生工作空间运行时
+- 让 Harness 随 Work 适应和演进
+- 让 AI 能够直接操作和修改 Service
+- 探索分层 Work 打包和更丰富的分发模式
+
+路线图将根据实际使用情况和反馈持续调整。
+
 ## Contributing
 
 开发约定见 [AGENTS.md](AGENTS.md)，测试入口见 [测试说明](docs/testing.md)。基础构建需要 Go 1.25.5、Node 24（`.nvmrc`）/npm、Git、Make 和 Bash，在仓库根目录执行：
