@@ -5,33 +5,35 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
-	"time"
 
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
 	"piwork/internal/dockerengine"
 )
 
-func (a *Application) captureSnapshotHelper(ctx context.Context) {
+func (a *Application) captureSnapshotHelper(ctx context.Context) error {
+	a.snapshotMu.Lock()
+	captured := a.snapshotImageCaptured
+	a.snapshotMu.Unlock()
+	if captured {
+		return nil
+	}
+	if strings.TrimSpace(a.options.SnapshotHelperImage) == "" || a.engine == nil || a.inspector == nil {
+		return contracts.NewError("SNAPSHOT_HELPER_UNAVAILABLE", "")
+	}
+	image, err := a.preparation.prepareImage(ctx, "snapshot", a.options.SnapshotHelperImage)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.preparation.currentLocked(ctx) {
+		return context.Canceled
+	}
 	a.snapshotMu.Lock()
 	defer a.snapshotMu.Unlock()
-	if a.snapshotImageCaptured {
-		return
-	}
-	a.snapshotImageCaptured = true
-	if strings.TrimSpace(a.options.SnapshotHelperImage) == "" || a.engine == nil || a.inspector == nil {
-		return
-	}
-	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	image, err := a.engine.PrepareImage(bounded, a.options.SnapshotHelperImage)
-	if err != nil {
-		return
-	}
-	capabilities, err := a.inspector.InspectNativeSnapshotHelper(bounded, image.ID)
-	if err == nil && capabilities.SnapshotHelper {
-		a.snapshotImageID = image.ID
-	}
+	a.snapshotImageID, a.snapshotImageCaptured = image.ID, true
+	return nil
 }
 func (a *Application) requireSnapshotImage() (string, error) {
 	a.snapshotMu.Lock()

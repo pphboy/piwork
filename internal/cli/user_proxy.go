@@ -30,15 +30,16 @@ const proxyDefaultPort = 17890
 var serviceDomainPattern = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\.w-[a-f0-9]{8,61}\.work$`)
 
 type userProxy struct {
-	api      *client.Client
-	port     int
-	password string
-	stderr   io.Writer
-	cancel   context.CancelFunc
-	stopOnce sync.Once
-	stopCode atomic.Int32
-	mu       sync.Mutex
-	conns    map[net.Conn]struct{}
+	containerMode bool
+	api           *client.Client
+	port          int
+	password      string
+	stderr        io.Writer
+	cancel        context.CancelFunc
+	stopOnce      sync.Once
+	stopCode      atomic.Int32
+	mu            sync.Mutex
+	conns         map[net.Conn]struct{}
 }
 
 type proxyTrackingListener struct {
@@ -95,6 +96,11 @@ func parseUserProxyPort(args []string) (int, error) {
 }
 
 func runUserProxy(api *client.Client, args []string, jsonMode bool, stdout, stderr io.Writer) int {
+	container, err := cliContainerMode()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 	port, err := parseUserProxyPort(args)
 	if err != nil || jsonMode {
 		if jsonMode {
@@ -145,8 +151,8 @@ func runUserProxy(api *client.Client, args []string, jsonMode bool, stdout, stde
 	}
 	proxyCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	p := &userProxy{api: api, port: port, password: base64.RawURLEncoding.EncodeToString(secret), stderr: stderr, cancel: cancel, conns: make(map[net.Conn]struct{})}
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	p := &userProxy{containerMode: container, api: api, port: port, password: base64.RawURLEncoding.EncodeToString(secret), stderr: stderr, cancel: cancel, conns: make(map[net.Conn]struct{})}
+	listener, err := listenCLILocal(port, container)
 	if err != nil {
 		fmt.Fprintln(stderr, "proxy port is occupied or unavailable")
 		return 6
@@ -194,7 +200,7 @@ func (p *userProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.RequestURI == "/proxy.pac" {
-		if !isLoopbackPeer(r.RemoteAddr) {
+		if !p.localPeer(r.RemoteAddr) || p.containerMode && !p.localRequest(r) {
 			proxyJSONError(w, 403, "PAC_LOCAL_ONLY")
 			return
 		}

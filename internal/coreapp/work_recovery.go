@@ -107,6 +107,9 @@ func (a *Application) recoverCapturedWorks(ctx context.Context) error {
 			continue
 		}
 		if blockedFiles[id] {
+			if _, err := a.requireFileImage(); err != nil {
+				continue
+			}
 			// Stop runtime resources even if a helper's absence remains unknown.
 			_ = a.stopAcceptedWork(ctx, id)
 			if err := a.Store.Write(ctx, func(tx *sql.Tx) error {

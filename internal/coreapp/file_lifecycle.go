@@ -103,6 +103,13 @@ func (a *Application) recoverCoreFiles(ctx context.Context) (map[string]bool, er
 		works[job.WorkID] = true
 	}
 	blocked := map[string]bool{}
+	if len(works) > 0 {
+		if _, err := a.requireFileImage(); err != nil {
+			// Preserve the journal and Work until this process can recover its
+			// helper. Other Works can still complete startup recovery.
+			return works, nil
+		}
+	}
 	for id := range works {
 		if err := a.settleWorkFiles(ctx, id, false); err != nil {
 			if ctx.Err() != nil {
@@ -115,6 +122,9 @@ func (a *Application) recoverCoreFiles(ctx context.Context) (map[string]bool, er
 }
 
 func (a *Application) scheduleFileRecovery(ctx context.Context) {
+	if _, err := a.requireFileImage(); err != nil {
+		return
+	}
 	var jobs []corestore.FileJob
 	if err := a.Store.Read(ctx, func(tx *sql.Tx) error { var err error; jobs, err = corestore.PendingFileJobs(tx, nil); return err }); err != nil {
 		return

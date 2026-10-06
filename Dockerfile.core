@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+ARG PIWORK_RUNTIME_IMAGE=alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+FROM ${PIWORK_RUNTIME_IMAGE}
+RUN apk add --no-cache ca-certificates curl
+ARG PIWORK_VERSION
+ARG PIWORK_COMMIT
+ARG PIWORK_MODIFIED
+LABEL org.opencontainers.image.title="piwork-core" \
+      org.opencontainers.image.version="${PIWORK_VERSION}" \
+      org.opencontainers.image.revision="${PIWORK_COMMIT}" \
+      io.piwork.source.modified="${PIWORK_MODIFIED}"
+COPY --chmod=0555 dist/docker/bin/piwork-serve /usr/local/bin/piwork-serve
+ENTRYPOINT ["/usr/local/bin/piwork-serve"]
+CMD ["serve", "--allow-insecure-remote"]

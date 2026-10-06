@@ -23,7 +23,7 @@ func TestAdminRuntimeReturnsSavedConfigurationWithUnavailableStatus(t *testing.T
 		t.Fatal(err)
 	}
 	status, body := httpCall(t, base, "/api/v1/admin/runtime", "PUT", "Bearer "+login.Token, map[string]any{"agentImage": "fixture/native", "provider": "fixture", "model": "saved", "credential": "private-api-key"})
-	if status != 200 || body["status"].(map[string]any)["state"] != "RUNTIME_UNAVAILABLE" {
+	if status != 200 || body["status"].(map[string]any)["ready"] != false {
 		t.Fatal("saved runtime was reported as a failed save", status, body)
 	}
 	runtime := body["runtime"].(map[string]any)

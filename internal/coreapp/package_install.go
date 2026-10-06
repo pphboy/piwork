@@ -303,7 +303,7 @@ func (a *Application) probePackageEnvironment(ctx context.Context, imageID strin
 	}
 	result, err = pipackage.ValidateEnvironment(raw)
 	if err != nil {
-		return result, contracts.NewError("PI_PACKAGE_ENVIRONMENT_MISMATCH", "")
+		return result, errors.Join(contracts.NewError("PI_PACKAGE_ENVIRONMENT_MISMATCH", ""), dockerengine.ErrImageIncompatible)
 	}
 	return result, nil
 }

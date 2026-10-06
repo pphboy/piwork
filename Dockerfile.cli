@@ -1,0 +1,20 @@
+# syntax=docker/dockerfile:1
+ARG PIWORK_RUNTIME_IMAGE=alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+FROM ${PIWORK_RUNTIME_IMAGE}
+RUN apk add --no-cache ca-certificates curl jq \
+ && mkdir -p /var/lib/piwork/client /exchange \
+ && chmod 0700 /var/lib/piwork/client
+ARG PIWORK_VERSION
+ARG PIWORK_COMMIT
+ARG PIWORK_MODIFIED
+ARG PIWORK_DESKTOP_UI_HASH
+LABEL org.opencontainers.image.title="piwork-cli" \
+      org.opencontainers.image.version="${PIWORK_VERSION}" \
+      org.opencontainers.image.revision="${PIWORK_COMMIT}" \
+      io.piwork.source.modified="${PIWORK_MODIFIED}" \
+      io.piwork.desktop.input-sha256="${PIWORK_DESKTOP_UI_HASH}"
+COPY --chmod=0555 dist/cli/linux-amd64/piwork-cli /usr/local/bin/piwork-cli
+ENV PIWORK_CLI_CONTAINER_MODE=1 \
+    PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json
+ENTRYPOINT ["/usr/local/bin/piwork-cli"]
+CMD ["desktop", "--no-open"]

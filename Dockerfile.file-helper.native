@@ -10,9 +10,14 @@ COPY internal ./internal
 COPY cmd/piwork-file-helper ./cmd/piwork-file-helper
 ARG PIWORK_COMMIT=unknown
 ARG PIWORK_DIRTY=true
+ARG PIWORK_VERSION=0.1.0-dev
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -ldflags="-s -w -X piwork/internal/buildinfo.Commit=${PIWORK_COMMIT} -X piwork/internal/buildinfo.Modified=${PIWORK_DIRTY}" -o /out/piwork-file-helper ./cmd/piwork-file-helper
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -ldflags="-s -w -X piwork/internal/buildinfo.Version=${PIWORK_VERSION} -X piwork/internal/buildinfo.Commit=${PIWORK_COMMIT} -X piwork/internal/buildinfo.Modified=${PIWORK_DIRTY}" -o /out/piwork-file-helper ./cmd/piwork-file-helper
 FROM scratch
+ARG PIWORK_COMMIT=unknown
+ARG PIWORK_DIRTY=true
+ARG PIWORK_VERSION=0.1.0-dev
+LABEL org.opencontainers.image.revision="${PIWORK_COMMIT}" org.opencontainers.image.version="${PIWORK_VERSION}" io.piwork.source.modified="${PIWORK_DIRTY}"
 LABEL piwork.file_protocol="1"
 COPY --from=build --chmod=0555 /out/piwork-file-helper /usr/local/bin/piwork-file-helper
 USER 10001:10001

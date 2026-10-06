@@ -1,0 +1,42 @@
+name: piwork-core
+services:
+  core:
+    image: ${PIWORK_CORE_IMAGE:?必须使用发行 release.env}
+    init: true
+    user: "0:0"
+    network_mode: host
+    command: ["serve", "--allow-insecure-remote"]
+    env_file: [./core.env]
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_CONTEXT: ""
+      PIWORK_DATA_DIR: ${PIWORK_DATA_DIR:?必须设置相同的绝对数据路径}
+      PIWORK_CORE_URL: http://127.0.0.1:7171
+      PIWORK_AGENT_IMAGE: ${PIWORK_AGENT_IMAGE:?发行包缺少 Agent 镜像}
+      PIWORK_PACKAGE_HELPER_IMAGE: ${PIWORK_PACKAGE_HELPER_IMAGE:?发行包缺少 package helper 镜像}
+      PIWORK_FILE_HELPER_IMAGE: ${PIWORK_FILE_HELPER_IMAGE:?发行包缺少 file helper 镜像}
+      PIWORK_SNAPSHOT_HELPER_IMAGE: ${PIWORK_SNAPSHOT_HELPER_IMAGE:?发行包缺少 snapshot helper 镜像}
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PIWORK_DATA_DIR:?必须设置相同的绝对数据路径}
+        target: ${PIWORK_DATA_DIR:?必须设置相同的绝对数据路径}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/lib/piwork/core-exchange
+        target: /var/lib/piwork/core-exchange
+        bind:
+          create_host_path: false
+    stop_grace_period: 60s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:7171/readyz?profile=docker-delivery"]
+      interval: 5s
+      timeout: 4s
+      retries: 120
+      start_period: 10s

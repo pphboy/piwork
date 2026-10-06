@@ -143,7 +143,11 @@ func TestNativeCoreFileJobsSurviveCrashBeforeAndAfterCommit(t *testing.T) {
 				}
 				for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 					if status, _ := packageHTTPCall(t, announcement.URL, "/readyz", "GET", "", nil); status == 200 {
-						return process, announcement.URL
+						_, control := packageHTTPCall(t, announcement.URL, "/control/status", "GET", "", nil)
+						components := control["preparation"].(map[string]any)["components"].(map[string]any)
+						if components["fileHelper"].(map[string]any)["state"] == "ready" && components["defaultContext"].(map[string]any)["state"] == "ready" {
+							return process, announcement.URL
+						}
 					}
 				}
 				diagnostic, _ := os.ReadFile(stderr.Name())

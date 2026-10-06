@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -218,10 +217,8 @@ func proxyFileFail(w http.ResponseWriter, method, code string) {
 
 func (p *userProxy) serveFile(w http.ResponseWriter, r *http.Request) {
 	fail := func(code string) { proxyFileFail(w, r.Method, code) }
-	localHost := r.Host == fmt.Sprintf("127.0.0.1:%d", p.port) || r.Host == fmt.Sprintf("localhost:%d", p.port)
 	origin := "http://" + r.Host
-	if !isLoopbackPeer(r.RemoteAddr) || !localHost || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != origin ||
-		r.Header.Get("Sec-Fetch-Site") == "cross-site" || r.Header.Get("Upgrade") != "" {
+	if !p.localRequest(r) {
 		fail("FILE_REQUEST_DENIED")
 		return
 	}
@@ -258,7 +255,7 @@ func (p *userProxy) serveFile(w http.ResponseWriter, r *http.Request) {
 	headers := make(http.Header)
 	for name, values := range r.Header {
 		lower := strings.ToLower(name)
-		if lower == "authorization" || lower == "cookie" || lower == "host" || strings.HasPrefix(lower, "proxy-") || strings.HasPrefix(lower, "x-piwork-") ||
+		if lower == "authorization" || lower == "cookie" || lower == "host" || lower == "forwarded" || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "proxy-") || strings.HasPrefix(lower, "x-piwork-") ||
 			lower == "connection" || lower == "upgrade" || lower == "te" || lower == "trailer" || lower == "keep-alive" || lower == "transfer-encoding" {
 			continue
 		}

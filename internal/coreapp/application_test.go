@@ -41,6 +41,29 @@ func appFixture(t *testing.T, options Options) (*Application, string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Most existing fixtures exercise business behavior after startup recovery.
+	// Production Listen is asynchronous; this fixture explicitly observes it.
+	startup, cancelStartup := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancelStartup()
+	_ = a.preparation.waitForBase(startup)
+	if a.Status().Ready && options.DependencyCheck == nil {
+		for {
+			preparation := a.Preparation()
+			waiting := false
+			for _, name := range []string{"fileHelper", "snapshotHelper", "defaultContext"} {
+				state := preparation.Components[name].State
+				waiting = waiting || state == "pending" || state == "preparing"
+			}
+			if !waiting {
+				break
+			}
+			select {
+			case <-startup.Done():
+				t.Fatal("helper preparation did not settle", preparation)
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
 	raw, err := os.ReadFile(filepath.Join(options.DataDirectory, "operator.credential"))
 	if err != nil {
 		t.Fatal(err)

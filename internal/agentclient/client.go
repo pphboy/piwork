@@ -44,7 +44,7 @@ func Open(ctx context.Context, manager *internaltls.Manager, scope internaltls.S
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(net.JoinHostPort(ip, strconv.Itoa(7443)), grpc.WithTransportCredentials(credentials.NewTLS(config)))
+	conn, err := grpc.NewClient(net.JoinHostPort(ip, strconv.Itoa(7443)), grpc.WithTransportCredentials(credentials.NewTLS(config)), grpc.WithNoProxy())
 	if err != nil {
 		return nil, err
 	}

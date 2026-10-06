@@ -1,0 +1,5 @@
+**
+!dist/
+!dist/cli/
+!dist/cli/linux-amd64/
+!dist/cli/linux-amd64/piwork-cli

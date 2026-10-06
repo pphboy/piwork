@@ -118,6 +118,7 @@ type Application struct {
 	closed                bool
 	refresh               chan struct{}
 	refreshWG             sync.WaitGroup
+	preparation           *runtimePreparation
 	server                *http.Server
 	listener              net.Listener
 	serveDone             chan error
@@ -238,6 +239,7 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 	a := &Application{Store: store, Identity: id, Settings: settings, files: files, inspectionRoot: root, options: options, ctx: lifetime, cancel: cancel, state: "STORE_OPEN", refresh: make(chan struct{}, 1), serveDone: make(chan error, 1)}
 	a.serviceGateway = newServiceGateway(a)
 	a.packageSlots = make(chan struct{}, 2)
+	a.preparation = newRuntimePreparation(a)
 	if err := store.Write(ctx, func(tx *sql.Tx) error {
 		var err error
 		a.fileEpoch, err = corestore.NextFileCoreEpoch(tx)
@@ -319,7 +321,9 @@ func (a *Application) Listen(address ListenAddress) (ListenAddress, error) {
 	}()
 	// The socket is already available to health/control clients during runtime
 	// checking. Missing admin/runtime and Engine failures do not exit Core.
-	_ = a.RefreshRuntime(a.ctx)
+	if err := a.ScheduleRuntimeRefresh(); err != nil {
+		a.setState("RUNTIME_UNAVAILABLE", true, false, false)
+	}
 	actual := listener.Addr().(*net.TCPAddr)
 	return ListenAddress{actual.IP.String(), actual.Port}, nil
 }
@@ -340,119 +344,32 @@ func (a *Application) setState(state string, admin, configured, available bool) 
 func (a *Application) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.statusLocked()
+}
+func (a *Application) statusLocked() Status {
 	status := a.status
 	status.State = a.state
 	status.Ready = a.state == "READY"
 	return status
 }
 
+func (a *Application) deliveryStatus() (Status, Preparation) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.statusLocked(), a.preparationLocked()
+}
+
 var errRecoveryRequired = errors.New("startup recovery handlers are required")
 
 func (a *Application) RefreshRuntime(request context.Context) error {
-	// Admission + WaitGroup registration share the closing mutex, preventing
-	// shutdown from waiting while a new refresh is registered afterwards.
-	a.mu.Lock()
-	if a.closed {
-		a.mu.Unlock()
-		return context.Canceled
-	}
-	a.refreshWG.Add(1)
-	a.mu.Unlock()
-	defer a.refreshWG.Done()
-	ctx, cancel := context.WithTimeout(request, time.Minute)
-	defer cancel()
-	stop := context.AfterFunc(a.ctx, cancel)
-	defer stop()
-	select {
-	case a.refresh <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-a.refresh }()
-	admin, err := a.Identity.HasEnabledAdministrator(ctx)
-	if err != nil {
+	// Retained for in-process callers which explicitly need an observation
+	// barrier. Production startup and HTTP handlers only schedule preparation.
+	if err := a.ScheduleRuntimeRefresh(); err != nil {
 		return err
 	}
-	if !admin {
-		a.setState("ADMIN_REQUIRED", false, false, false)
-		return nil
-	}
-	profile, configured, err := a.Settings.LoadRuntime()
-	if err != nil {
-		a.setState("RUNTIME_UNAVAILABLE", true, false, false)
-		return err
-	}
-	if !configured {
-		a.setState("RUNTIME_NOT_CONFIGURED", true, false, false)
-		return nil
-	}
-	a.setState("RECOVERING", true, true, false)
-	if err := a.ensureRuntimeCatalog(ctx, profile); err != nil {
-		return err
-	}
-	if a.options.DependencyCheck != nil {
-		err = a.options.DependencyCheck(ctx, a, profile)
-	} else {
-		err = a.checkDocker(ctx, profile)
-	}
-	if err != nil {
-		a.setState("RUNTIME_UNAVAILABLE", true, true, false)
-		return contracts.NewError("RUNTIME_UNAVAILABLE", "")
-	}
-	if err := a.ensureBundledBrain(ctx); err != nil {
-		a.setState("RUNTIME_UNAVAILABLE", true, true, false)
-		return contracts.NewError("RUNTIME_UNAVAILABLE", "")
-	}
-	if err := a.Store.SyncDefaultWorkRuntime(ctx, profile.Revision, runtimeImageCatalogID(profile.Revision), runtimeModelCatalogID(profile.Revision), defaultWorkConfiguration(profile)); err != nil {
-		return err
-	}
-	if a.dockerRuntime != nil && !a.packagesRecovered {
-		if err := a.recoverCorePackageJobs(ctx); err != nil {
-			return err
-		}
-		a.packagesRecovered = true
-	}
-	if a.dockerRuntime != nil {
-		if err := a.resumeRetainedVolumePurges(ctx); err != nil {
-			return err
-		}
-	}
-	a.captureFileHelper(ctx)
-	a.captureSnapshotHelper(ctx)
-	if !a.snapshotsRecovered && a.dockerRuntime != nil {
-		if err := a.recoverSnapshotJobs(ctx, false); err != nil {
-			return err
-		}
-		a.snapshotsRecovered = true
-	}
-	if a.options.Recover != nil {
-		err = a.options.Recover(ctx, a)
-	} else if a.workRuntime != nil {
-		err = a.recoverCapturedWorks(ctx)
-	} else {
-		err = a.emptyRecovery(ctx)
-	}
-	if err != nil {
-		a.setState("RECOVERING", true, true, true)
-		return err
-	}
-	latest, _, err := a.Settings.LoadRuntime()
-	if err != nil {
-		return err
-	}
-	if latest.Revision != profile.Revision {
-		return contracts.NewError("REVISION_CONFLICT", "")
-	}
-	a.setState("READY", true, true, true)
-	if a.workRuntime != nil {
-		a.recoveryOnce.Do(func() {
-			a.recoveryWG.Add(1)
-			go a.runtimeRecoveryLoop()
-		})
-	}
-	return nil
+	return a.preparation.waitForBase(request)
 }
-func (a *Application) checkDocker(ctx context.Context, profile RuntimeProfile) error {
+func (a *Application) initializeDocker(ctx context.Context) error {
 	if a.engine == nil {
 		endpoint, err := dockerengine.SelectEndpoint(a.options.DockerOptions)
 		if err != nil {
@@ -467,18 +384,16 @@ func (a *Application) checkDocker(ctx context.Context, profile RuntimeProfile) e
 			engine.Close()
 			return err
 		}
-		a.engine = engine
-		a.inspector = inspector
+		a.mu.Lock()
+		if a.closed || ctx.Err() != nil {
+			a.mu.Unlock()
+			engine.Close()
+			return context.Canceled
+		}
+		a.engine, a.inspector = engine, inspector
+		a.mu.Unlock()
 	}
-	view, err := a.Settings.RuntimeView()
-	if err != nil || view.Model == nil || !view.Model.CredentialAvailable {
-		return contracts.NewError("RUNTIME_UNAVAILABLE", "")
-	}
-	image, err := a.engine.PrepareImage(ctx, profile.AgentImage)
-	if err != nil {
-		return err
-	}
-	if _, err = a.inspector.InspectNativeAgent(ctx, image.ID); err != nil {
+	if err := a.engine.Ping(ctx); err != nil {
 		return err
 	}
 	if a.workRuntime == nil {
@@ -495,9 +410,15 @@ func (a *Application) checkDocker(ctx context.Context, profile RuntimeProfile) e
 		if err != nil {
 			return err
 		}
-		a.dockerRuntime = resources
-		a.agentTLS = manager
+		a.mu.Lock()
+		if a.closed || ctx.Err() != nil {
+			a.mu.Unlock()
+			manager.Close()
+			return context.Canceled
+		}
+		a.dockerRuntime, a.agentTLS = resources, manager
 		a.workRuntime = &workruntime.Runtime{Docker: resources, Inspector: a.inspector, TLS: manager}
+		a.mu.Unlock()
 	}
 	return a.listenServiceRPC(ctx)
 }

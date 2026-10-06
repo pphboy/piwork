@@ -4,6 +4,7 @@ FROM ${GO_BUILDER_IMAGE} AS native-build
 ARG GOPROXY=https://goproxy.cn,direct
 ARG PIWORK_COMMIT=unknown
 ARG PIWORK_MODIFIED=true
+ARG PIWORK_VERSION=0.1.0-dev
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 WORKDIR /source
 COPY go.mod go.sum ./
@@ -13,7 +14,7 @@ COPY cmd/piwork-service-mcp ./cmd/piwork-service-mcp
 COPY cmd/piwork-package-helper ./cmd/piwork-package-helper
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     go build -mod=readonly -trimpath \
-      -ldflags "-X piwork/internal/buildinfo.Commit=$PIWORK_COMMIT -X piwork/internal/buildinfo.Modified=$PIWORK_MODIFIED" \
+      -ldflags "-X piwork/internal/buildinfo.Version=$PIWORK_VERSION -X piwork/internal/buildinfo.Commit=$PIWORK_COMMIT -X piwork/internal/buildinfo.Modified=$PIWORK_MODIFIED" \
       -o /native/ ./cmd/piwork-service-mcp ./cmd/piwork-package-helper
 
 FROM node:24-bookworm-slim AS build
@@ -53,6 +54,12 @@ RUN npm run build -w @piwork/contracts \
  && find /workspace/apps/agentd/dist /workspace/packages/*/dist -depth -type d -empty -delete
 
 FROM node:24-bookworm-slim AS runtime
+ARG PIWORK_COMMIT=unknown
+ARG PIWORK_MODIFIED=true
+ARG PIWORK_VERSION=0.1.0-dev
+LABEL org.opencontainers.image.revision="${PIWORK_COMMIT}" \
+      org.opencontainers.image.version="${PIWORK_VERSION}" \
+      io.piwork.source.modified="${PIWORK_MODIFIED}"
 LABEL io.piwork.agent.protocol="v2" io.piwork.agent.version="0.1.0" \
       io.piwork.package-helper.contract="2" io.piwork.service-mcp.contract="1" \
       io.piwork.work-history.schema="4" io.piwork.run-model.contract="1" io.piwork.work-feedback.contract="1"

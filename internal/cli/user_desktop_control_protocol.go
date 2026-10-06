@@ -92,6 +92,11 @@ func validDesktopLaunchURL(address string, port int) bool {
 	return true
 }
 func runDesktopControl(args []string, stdout, stderr io.Writer) int {
+	container, err := cliContainerMode()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 	options, err := parseDesktopControlOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -119,7 +124,7 @@ func runDesktopControl(args []string, stdout, stderr io.Writer) int {
 			return 5
 		}
 		fmt.Fprintf(stdout, "Piwork Desktop: %s\n", reply.LaunchURL)
-		if options.open {
+		if options.open && !container {
 			openDesktopBrowserContext(ctx, reply.LaunchURL, stderr)
 		}
 		if ctx.Err() != nil {

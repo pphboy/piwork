@@ -202,3 +202,12 @@ func Connect(ctx context.Context, endpoint Endpoint) (*Engine, error) {
 	return &Engine{api: api, Endpoint: endpoint, APIVersion: api.ClientVersion()}, nil
 }
 func (e *Engine) Close() error { return e.api.Close() }
+
+// Ping uses the already selected endpoint without renegotiation or fallback.
+// Callers set their own short liveness deadline independently of image pulls.
+func (e *Engine) Ping(ctx context.Context) error {
+	if _, err := e.api.Ping(ctx, client.PingOptions{}); err != nil {
+		return ErrUnavailable
+	}
+	return nil
+}

@@ -1,0 +1,8 @@
+{
+  "manifestVersion": 1,
+  "platform": "linux/amd64",
+  "runtimeImage": "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8",
+  "coreFormat": "piwork-go-core",
+  "coreSchemaVersion": 1,
+  "clientCredentialVersion": 1
+}

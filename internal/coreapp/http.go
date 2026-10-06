@@ -141,29 +141,49 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	if r.Method == "GET" && path == "/readyz" {
-		status := a.Status()
+		profiles, hasProfile := r.URL.Query()["profile"]
+		if hasProfile && (len(profiles) != 1 || profiles[0] != "docker-delivery") {
+			return contracts.NewError("INVALID_REQUEST", "profile")
+		}
+		status, value := a.deliveryStatus()
+		ready, reason := status.Ready, status.State
+		var preparation *Preparation
+		if hasProfile {
+			preparation = &value
+			ready = ready && value.Ready
+			if status.Ready && !value.Ready {
+				reason = "DEPENDENCIES_PREPARING"
+				for _, component := range value.Components {
+					if component.State == "failed" {
+						reason = "DEPENDENCY_FAILED"
+					}
+				}
+			}
+		}
 		code := 503
-		if status.Ready {
+		if ready {
 			code = 200
 		}
 		name := "not_ready"
-		if status.Ready {
+		if ready {
 			name = "ready"
 		}
 		send(w, code, struct {
-			Status string `json:"status"`
-			Reason string `json:"reason"`
-			State  string `json:"state"`
-			Ready  bool   `json:"ready"`
-			Checks any    `json:"checks"`
-		}{Status: name, Reason: status.State, State: status.State, Ready: status.Ready, Checks: status.Checks})
+			Status      string       `json:"status"`
+			Reason      string       `json:"reason"`
+			State       string       `json:"state"`
+			Ready       bool         `json:"ready"`
+			Checks      any          `json:"checks"`
+			Preparation *Preparation `json:"preparation,omitempty"`
+		}{Status: name, Reason: reason, State: status.State, Ready: ready, Checks: status.Checks, Preparation: preparation})
 		return nil
 	}
 	if r.Method == "GET" && path == "/control/status" {
-		if a.Status().State == "RUNTIME_UNAVAILABLE" {
-			_ = a.RefreshRuntime(r.Context())
-		}
-		send(w, 200, a.Status())
+		status, preparation := a.deliveryStatus()
+		send(w, 200, struct {
+			Status
+			Preparation Preparation `json:"preparation"`
+		}{status, preparation})
 		return nil
 	}
 	if r.Method == "POST" && path == "/api/v1/login" {
@@ -196,7 +216,9 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 			if err != nil {
 				return err
 			}
-			_ = a.RefreshRuntime(r.Context())
+			if err := a.ScheduleRuntimeRefresh(); err != nil {
+				return err
+			}
 			send(w, 201, map[string]any{"userId": user.Id, "account": user.Account})
 			return nil
 		}
@@ -561,20 +583,23 @@ func (a *Application) control(w http.ResponseWriter, r *http.Request, actor iden
 		if body.BaseUrl.Present {
 			input.BaseURL = &body.BaseUrl.Value
 		}
-		view, err := a.Settings.ConfigureRuntimeAuthorized(input, func() error { return a.Identity.AuthorizeAdministrator(r.Context(), actor) })
+		view, err := a.Settings.ConfigureRuntimeAuthorized(input, func() error {
+			if err := a.Identity.AuthorizeAdministrator(r.Context(), actor); err != nil {
+				return err
+			}
+			a.invalidateRuntimePreparation()
+			return nil
+		})
 		if err != nil {
+			_ = a.ScheduleRuntimeRefresh()
 			return err
 		}
-		refreshErr := a.RefreshRuntime(r.Context())
+		if err := a.ScheduleRuntimeRefresh(); err != nil {
+			return err
+		}
 		if admin {
 			send(w, 200, map[string]any{"runtime": adminRuntime(view), "status": adminStatus(a.Status())})
 		} else {
-			if refreshErr != nil {
-				return refreshErr
-			}
-			if !a.Status().Ready {
-				return contracts.NewError("RUNTIME_UNAVAILABLE", "")
-			}
 			send(w, 200, view)
 		}
 		return nil

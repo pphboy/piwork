@@ -1,0 +1,5 @@
+**
+!dist/
+!dist/docker/
+!dist/docker/bin/
+!dist/docker/bin/piwork-serve

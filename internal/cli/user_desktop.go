@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -100,6 +99,11 @@ func desktopSecret() (string, error) {
 }
 
 func runUserDesktop(api *client.Client, store client.CredentialStore, saved *client.Credential, args []string, stdout, stderr io.Writer) int {
+	container, err := cliContainerMode()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 	options, err := parseUserDesktopOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -111,7 +115,7 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 			return 5
 		}
 	}
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(options.port)))
+	listener, err := listenCLILocal(options.port, container)
 	if err != nil {
 		fmt.Fprintln(stderr, "Desktop port is already in use or unavailable")
 		return 6
@@ -124,11 +128,14 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 	if saved != nil && sameCoreOrigin(saved.CoreURL, api.Base.String()) {
 		d.identity.credential = saved
 	}
-	launchURL, err := d.issueTicket()
-	if err != nil {
-		_ = listener.Close()
-		fmt.Fprintln(stderr, "Unable to create Desktop session")
-		return 5
+	launchURL := origin + "/"
+	if !container {
+		launchURL, err = d.issueTicket()
+		if err != nil {
+			_ = listener.Close()
+			fmt.Fprintln(stderr, "Unable to create Desktop session")
+			return 5
+		}
 	}
 	control, err := startDesktopControl(d)
 	if err != nil {
@@ -144,7 +151,10 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	fmt.Fprintf(stdout, "Piwork Desktop: %s\n", launchURL)
-	if options.open {
+	if container {
+		fmt.Fprintln(stdout, "Run piwork-cli desktop open --no-open inside this running container, then open its URL in the browser on this computer.")
+	}
+	if options.open && !container {
 		go openDesktopBrowser(launchURL, stderr)
 	}
 	exitCode := 0

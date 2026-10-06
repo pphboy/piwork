@@ -1,0 +1,31 @@
+name: piwork-client
+services:
+  cli:
+    image: ${PIWORK_CLI_IMAGE:?必须使用发行 release.env}
+    init: true
+    user: "0:0"
+    command: ["desktop", "--no-open"]
+    env_file: [./client.env]
+    environment:
+      PIWORK_CLI_CONTAINER_MODE: "1"
+      PIWORK_CONFIG_PATH: /var/lib/piwork/client/credentials.json
+    ports: ["127.0.0.1:17891:17891"]
+    volumes:
+      - client-state:/var/lib/piwork/client
+      - client-exchange:/exchange
+    networks: [local]
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--output", "/dev/null", "--max-time", "3", "--header", "Host: desktop.localhost:17891", "http://127.0.0.1:17891/"]
+      interval: 5s
+      timeout: 4s
+      retries: 3
+networks:
+  local:
+    name: piwork-client-local
+volumes:
+  client-state:
+    name: piwork-client-state
+  client-exchange:
+    name: piwork-client-exchange

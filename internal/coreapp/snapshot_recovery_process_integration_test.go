@@ -189,7 +189,7 @@ func TestNativeCoreSnapshotJobsRecoverAcrossActualProcessCrashes(t *testing.T) {
 			t.Fatal("Core startup exceeded budget")
 		}
 		for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
-			if status, _ := packageHTTPCall(t, announcement.URL, "/readyz", "GET", "", nil); status == 200 {
+			if status, _ := packageHTTPCall(t, announcement.URL, "/readyz?profile=docker-delivery", "GET", "", nil); status == 200 {
 				return process, announcement.URL
 			}
 		}

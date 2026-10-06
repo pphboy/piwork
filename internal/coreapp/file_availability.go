@@ -3,33 +3,35 @@ package coreapp
 import (
 	"context"
 	"strings"
-	"time"
 
 	"piwork/internal/fileprotocol"
 )
 
 // The operator's reference is captured once; neither a Work nor an HTTP
 // request can choose an image. Failure degrades file access independently.
-func (a *Application) captureFileHelper(ctx context.Context) {
+func (a *Application) captureFileHelper(ctx context.Context) error {
+	a.fileMu.Lock()
+	captured := a.fileImageCaptured
+	a.fileMu.Unlock()
+	if captured {
+		return nil
+	}
+	if strings.TrimSpace(a.options.FileHelperImage) == "" || a.engine == nil || a.inspector == nil {
+		return fileprotocol.Failure("FILE_HELPER_UNAVAILABLE")
+	}
+	image, err := a.preparation.prepareImage(ctx, "file", a.options.FileHelperImage)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.preparation.currentLocked(ctx) {
+		return context.Canceled
+	}
 	a.fileMu.Lock()
 	defer a.fileMu.Unlock()
-	if a.fileImageCaptured {
-		return
-	}
-	a.fileImageCaptured = true
-	if strings.TrimSpace(a.options.FileHelperImage) == "" || a.engine == nil || a.inspector == nil {
-		return
-	}
-	request, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	image, err := a.engine.PrepareImage(request, a.options.FileHelperImage)
-	if err != nil {
-		return
-	}
-	capabilities, err := a.inspector.InspectNativeFileHelper(request, image.ID)
-	if err == nil && capabilities.FileHelper {
-		a.fileImageID = image.ID
-	}
+	a.fileImageID, a.fileImageCaptured = image.ID, true
+	return nil
 }
 func (a *Application) requireFileImage() (string, error) {
 	a.fileMu.Lock()

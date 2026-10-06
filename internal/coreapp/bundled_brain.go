@@ -117,7 +117,7 @@ func (a *Application) prepareEmbeddedBrain(ctx context.Context) (packageprepare.
 	if err != nil || !configured {
 		return packageprepare.Result{}, errBundledBrain
 	}
-	image, err := a.engine.PrepareImage(ctx, profile.AgentImage)
+	image, err := a.preparation.prepareImage(ctx, "agent", profile.AgentImage)
 	if err != nil {
 		return packageprepare.Result{}, err
 	}
@@ -125,11 +125,8 @@ func (a *Application) prepareEmbeddedBrain(ctx context.Context) (packageprepare.
 	if trustedRef == "" {
 		trustedRef = profile.AgentImage
 	}
-	trusted, err := a.engine.PrepareImage(ctx, trustedRef)
+	trusted, err := a.preparation.prepareImage(ctx, "agent", trustedRef)
 	if err != nil {
-		return packageprepare.Result{}, err
-	}
-	if _, err = a.inspector.InspectNativeAgent(ctx, trusted.ID); err != nil {
 		return packageprepare.Result{}, err
 	}
 	environment, err := a.probePackageEnvironment(ctx, image.ID)

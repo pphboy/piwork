@@ -34,7 +34,8 @@ func InitializationFromEnvironment(values map[string]string) (Initialization, er
 	if !hasCredential {
 		credential, hasCredential = values["PIWORK_MODEL_API_KEY"]
 	}
-	any := hasImage || hasProvider || hasModel || hasCredential
+	_, hasBaseURL := values["PIWORK_MODEL_BASE_URL"]
+	any := hasImage || hasProvider || hasModel || hasCredential || hasBaseURL
 	all := hasImage && hasProvider && hasModel && hasCredential
 	if any && !all {
 		return initialization, errors.New("PIWORK_AGENT_IMAGE, PIWORK_MODEL_PROVIDER, PIWORK_MODEL, and PIWORK_API_KEY must be provided together")

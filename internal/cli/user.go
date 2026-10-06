@@ -127,6 +127,12 @@ func runUserWithDesktop(args []string, stdout, stderr io.Writer, launch func(*cl
 		fmt.Fprintf(stderr, "%s is an interactive command; --json is unavailable\n", command.args[0])
 		return 2
 	}
+	if command.args[0] == "proxy" || command.args[0] == "desktop" {
+		if _, err := cliContainerMode(); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+	}
 	if command.args[0] == "desktop" && len(command.args) > 1 && (command.args[1] == "open" || command.args[1] == "logout") {
 		if command.core != "" {
 			fmt.Fprintln(stderr, "desktop open/logout select an existing local instance; --core is unavailable")

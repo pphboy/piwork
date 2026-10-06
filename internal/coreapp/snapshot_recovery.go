@@ -16,6 +16,11 @@ import (
 )
 
 func (a *Application) recoverSnapshotJobs(ctx context.Context, onlyPending bool) error {
+	if onlyPending {
+		if _, err := a.requireSnapshotImage(); err != nil {
+			return nil
+		}
+	}
 	var jobs []corestore.SnapshotJob
 	if err := a.Store.Read(ctx, func(tx *sql.Tx) error { var err error; jobs, err = corestore.SnapshotJobs(tx); return err }); err != nil {
 		return err
