@@ -6,7 +6,7 @@
 
 ## 启动
 
-先按 [操作文档](operations.md#clean-installation) 启动 Core，并使用 `piwork-serve admin bootstrap` 创建首个管理员。面板不提供 bootstrap。构建后，为公开域名准备 TLS 证书与私钥，再启动：
+先按 [操作文档](operations.md#从源码启动) 启动 Core，并使用 `piwork-serve admin bootstrap` 创建首个管理员。面板不提供 bootstrap。构建后，为公开域名准备 TLS 证书与私钥，再启动：
 
 ```bash
 make build-go

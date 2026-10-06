@@ -1,6 +1,6 @@
 # piwork 系统架构与行为契约
 
-> 历史设计草案：本文保留早期讨论时的 TS 方案、旧命令名与未实施建议，不代表当前运行架构，也不作为 Go 迁移验收证据。当前入口、运行边界与验证结果分别见 [README](../README.md)、[运维说明](../docs/operations.md)和 [Go 迁移验收记录](../docs/go-migration-acceptance.md)。
+> 历史设计草案：本文保留早期讨论时的 TS 方案、旧命令名与未实施建议，不代表当前运行架构，也不作为 Go 迁移验收证据。当前入口、运行边界与验证结果分别见 [README](../../README.md)、[运维说明](../operations.md)和 [Go 迁移验收记录](../go-migration-acceptance.md)。
 
 本文以 [初始架构图](./architecture-initial.png) 和本轮架构讨论为设计输入，整理第一版的系统边界、进程与模块、状态归属、生命周期和 OpenSpec capability model。
 

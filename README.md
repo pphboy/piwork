@@ -1,22 +1,105 @@
-# piwork
+# Piwork
 
-piwork 是单机 Work 运行环境。Go Core 管理用户、Work 生命周期、Service、文件和快照；Go CLI 提供命令、本机代理和浏览器 Desktop；Go Console 是独立的管理员界面。每个运行中的 Work 使用容器内的 Pi Agent SDK harness，Agent harness 保留 TypeScript。浏览器界面也保留 TypeScript，编译后嵌入 Go 程序。
+Piwork 是一个以 Work 为单位，整合 AI 对话、工作文件和容器服务，并支持导出与迁移的工作环境。
 
-## 程序与依赖
+## Problem
 
-| 程序 | 用途 | 部署位置 |
-| --- | --- | --- |
-| `piwork-serve`（别名 `piwork`） | Core 服务与 operator 管理命令 | Core 宿主 |
-| `piwork-cli` | 用户命令、Service/WebDAV proxy、Desktop | 用户宿主 |
-| `piwork-console` | 独立 HTTPS 管理面板 | Core 宿主 |
-| `piwork-service-mcp`、`piwork-package-helper` | Agent 调用的原生辅助程序 | Agent 镜像内 |
-| `piwork-file-helper`、`piwork-snapshot-helper` | Workspace 文件与快照辅助程序 | 独立 helper 镜像内 |
+一次 AI 工作通常同时涉及对话历史、项目文件和需要持续运行的服务。Piwork 将这些内容组织为一个 Work，让用户在同一环境中对话、运行应用和管理文件，并通过启停、恢复和迁移继续使用这个环境。
 
-三个宿主程序关闭 CGo，运行时不调用 Node、npm、Python、Go、Docker CLI 或 OpenSSL。用户 CLI 面向 Windows 与 Linux，Windows 交付 `.exe`，Linux 交付可执行文件；Core 和 Console 沿用 Linux 部署。Core 使用本机 Docker Engine Unix socket。镜像内的 Pi SDK harness 仍需要 Node；用户 Service 和 Pi 包可以使用各自的语言。
+## Piwork 的核心模型：Work / Service / Harness
 
-源码构建和单元测试需要 Go 1.25.5、Node 24（`.nvmrc`）/npm、Git、Make 和 Bash。Docker Engine 仅在运行 Work、构建镜像和执行 Engine 集成测试时需要；浏览器测试另外需要 Playwright Chromium，Console 浏览器夹具还使用 OpenSSL 生成临时证书。
+| 模型 | 含义 |
+| --- | --- |
+| **Work** | 用户的工作单元，保存独立的配置、对话历史、工作文件和服务定义，可启动、停止、导出和导入。 |
+| **Service** | Work 内的应用服务，由 Core 管理生命周期，通过 Work 私网通信，并按授权共享工作目录。 |
+| **Harness** | Work 中的 Agent 执行层，基于 Pi Agent SDK 运行对话、模型和工具，加载 Skill 与 Pi Package。 |
 
-从干净 clone 的仓库根目录执行以下命令，不需要 `.env.test`、模型 API key 或预先生成的 `dist/`：
+每个 Work 拥有自己的 Harness。Harness 执行任务，Service 提供应用能力，两者在 Work 的环境中协作；Core 管理这些资源，CLI / Desktop 提供用户入口。
+
+## Demo GIF / Video
+
+## Quick Start
+
+### 连接已有 Core
+
+取得适合本机平台的 CLI 可执行文件，并确认 Core 已配置管理员、模型和运行时。在可执行文件所在目录启动 Desktop。
+
+Linux：
+
+```sh
+./piwork-cli desktop
+```
+
+Windows PowerShell：
+
+```powershell
+.\piwork-cli.exe desktop
+```
+
+浏览器打开后，输入 Core URL、账号和密码登录。在 Work 页面创建并启动 Work，随后进入对话、Service 或 Files。默认本机端口为 `17891`；需要手动打开浏览器时使用 `desktop --no-open`。
+
+纯命令行操作见 [用户 CLI 手册](docs/user-cli.md)，平台和安装说明见 [CLI 平台交付](docs/cli-platforms.md)。
+
+### 部署自己的 Core
+
+- **双 Docker**：按 [Docker 安装手册](deploy/docker/README.zh-CN.md) 配置并启动 Core、CLI 两个入口。手册包含 Linux 和 Windows Docker Desktop 客户端的完整命令；原生 CLI 继续可用。
+- **从源码运行**：按 [Core 启动与初始化](docs/operations.md#从源码启动) 构建程序和镜像、初始化管理员与模型，再启动 Desktop。
+- **管理员界面**：Console 的启动、TLS 配置和登录见 [Console 手册](docs/serve-console.md)。
+
+## .work Import / Export
+
+`.work` 是 Work 的完整离线副本，包含受管卷中的文件、私有对话历史、配置、服务定义、Skill、Pi Package 和固定容器镜像。
+
+下面使用 Linux 原生 CLI；先登录对应 Core，将 `WORK_ID` 替换为源 Work ID，将 `IMPORTED_WORK_ID` 替换为导入结果中的新 Work ID。导出路径必须尚不存在。
+
+```sh
+./piwork-cli work stop WORK_ID --wait
+./piwork-cli work export WORK_ID --output ./saved.work
+./piwork-cli work package inspect ./saved.work
+./piwork-cli work import ./saved.work --name 'Restored Work' --wait
+./piwork-cli work start IMPORTED_WORK_ID --wait
+```
+
+导出前必须停止 Work；导入会创建独立的新 Work，并保持停止状态，随后显式启动。迁移到另一台 Core 时，先在目标 Core 登录，再执行 import 和 start。离线 inspect 检查包的完整性，不代表目标安装已验证。
+
+目标 Core 需要另行配置匹配的模型凭据；平台管理的模型 key 和安装凭证不会随包迁移，但工作文件和历史中自行保存的秘密仍会进入包。完整流程和数据边界见 [Work 快照](docs/work-snapshot.md) 与 [包格式](docs/work-package-format.md)。
+
+## Architecture 简图
+
+```mermaid
+flowchart LR
+    Browser[Browser] --> CLI[CLI / Desktop]
+    Console[Console] --> Core[Core]
+    CLI --> Core
+    Core --> Engine[Docker Engine]
+    Core <--> Harness
+    Engine --> Harness
+    Engine --> Service
+    subgraph Work
+        Harness[Harness / Pi Agent SDK]
+        Service[Service]
+        Files[Workspace / Files]
+        Harness --> Files
+        Service --> Files
+    end
+    Harness --> Model[Model Provider]
+```
+
+Core 负责资源管理与控制，Harness 执行模型和工具，Service 提供应用，工作文件保存在 Work 的共享卷中。运行和数据边界见 [Core 运维](docs/operations.md)；实现与目录约定见 [AGENTS.md](AGENTS.md)。
+
+## Current Status / Limitations
+
+- **Core**：当前为单机 Linux 部署，使用本机 Docker Engine Unix socket。
+- **客户端**：原生 CLI 面向 Windows 和 Linux，提供命令行与 Desktop；Windows 原生正式验收的未完成项见 [CLI 平台交付](docs/cli-platforms.md)。
+- **Docker 交付**：当前验收范围为 `linux/amd64`、Linux Core，以及 Linux / Windows Docker Desktop 的 Linux CLI 容器；要求 Docker Engine 28+、Compose 2.24+。详情见 [交付验收](docs/docker-delivery-acceptance.md)。
+- **运行条件**：实际 Work 执行需要可用的 Docker Engine、模型配置与凭据。Core 正常退出会停止受管 Work 的运行容器并保留持久数据；退出 CLI 不停止 Work。
+- **验证状态**：干净 clone 的安装、构建和单元测试已通过。实际覆盖范围、跳过项与平台边界见 [开源前检查记录](docs/open-source-readiness.md) 和 [测试说明](docs/testing.md)。
+
+## Roadmap
+
+## Contributing
+
+开发约定见 [AGENTS.md](AGENTS.md)，测试入口见 [测试说明](docs/testing.md)。基础构建需要 Go 1.25.5、Node 24（`.nvmrc`）/npm、Git、Make 和 Bash，在仓库根目录执行：
 
 ```sh
 npm ci
@@ -24,75 +107,10 @@ make build
 make test
 ```
 
-需要浏览器、Docker 集成验收或发行包时，再执行对应入口：
+`make build` 输出原生程序到 `dist/go/`，同时构建 Agent 和浏览器资源。构建与单元测试不需要真实模型 key、本机运行数据或 `.env.test`。只构建客户端可执行 `npm run build:cli`，产物位于 `dist/cli/<目标>/`。
 
-```sh
-npx playwright install chromium
-make test-integration
-make acceptance
-make release
-```
+## License
 
-`make build` 编译保留的 harness、Desktop/Console 浏览器资源和七个 Go 程序，输出在 `dist/go/`。`make release` 另外构建原生 Agent/helper 镜像，并把三个宿主入口、版本与协议摘要、镜像清单和 SHA256SUMS 打进 `dist/release/`。测试范围与未完成 gate 见 [测试说明](docs/testing.md) 和 [迁移验收记录](docs/go-migration-acceptance.md)。
+[Apache License 2.0](LICENSE)
 
-源码、测试夹具和设计材料的目录约定及本次干净 clone 检查结果见 [开源发布检查](docs/open-source-readiness.md)。实际 Work 的模型运行需要另外配置可用模型；不要把真实 env、Core 数据、凭证或快照提交到 Git。Docker 安装见 [Core 与 CLI Docker 手册](deploy/docker/README.zh-CN.md)。
-
-只构建客户端可运行 `npm run build:cli`（或 `make build-cli`）；它只构建 Desktop 资源和 `cmd/piwork-cli`，输出到 `dist/cli/<目标>/`。目标配置、原生验收和独立打包见 [CLI 平台交付](docs/cli-platforms.md)。用户运行产物不需要构建工具或本机容器。
-
-## 启动 Core
-
-为 Go 安装选择新的空数据目录。当前格式不读取旧 TS Core 开发数据，也不会自动改写该目录。
-
-```sh
-make native-agent-images native-helper-images
-export PIWORK_DATA_DIR="$PWD/.piwork-go-core"
-export PIWORK_CORE_URL=http://127.0.0.1:7171
-export PIWORK_AGENT_IMAGE=piwork-agentd:go-migration-production
-export PIWORK_PACKAGE_HELPER_IMAGE=piwork-agentd:go-migration-production
-export PIWORK_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance
-export PIWORK_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance
-./dist/go/piwork-serve serve --data-dir "$PIWORK_DATA_DIR" --listen 127.0.0.1:7171
-```
-
-在另一个终端设置同样的 `PIWORK_DATA_DIR` 和 `PIWORK_CORE_URL`，随后初始化管理员与默认运行时。密码和 API key 从 stdin 读取；这里的模型名称只是命令格式示例，需要提供实际可用的模型配置。
-
-```sh
-printf '%s\n' "$PIWORK_ADMIN_PASSWORD" | ./dist/go/piwork-serve \
-  --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
-  admin bootstrap --account admin --password-stdin
-printf '%s\n' "$PIWORK_MODEL_API_KEY" | ./dist/go/piwork-serve \
-  --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
-  config set --agent-image "$PIWORK_AGENT_IMAGE" \
-  --model-provider "$PIWORK_MODEL_PROVIDER" --model "$PIWORK_MODEL_ID" --api-key-stdin
-./dist/go/piwork-serve --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" status
-```
-
-Operator 命令不读取用户对话；用户 CLI 不读取 operator 凭证。Core 数据目录、锁、环境文件及恢复规则见 [运维说明](docs/operations.md)。
-
-## 用户 Work 与浏览器
-
-```sh
-printf '%s\n' "$PIWORK_USER_PASSWORD" | ./dist/go/piwork-cli --core "$PIWORK_CORE_URL" \
-  login --account "$PIWORK_USER_ACCOUNT" --password-stdin
-./dist/go/piwork-cli --core "$PIWORK_CORE_URL" work create --name "My Work" --wait
-./dist/go/piwork-cli --core "$PIWORK_CORE_URL" work list
-./dist/go/piwork-cli --core "$PIWORK_CORE_URL" desktop
-```
-
-不带子命令的 `piwork-cli` 现在默认启动 Desktop；原来显示帮助的调用应改用 `piwork-cli --help` 或 `piwork-cli help`。原业务命令和显式 `desktop` 入口保留。Desktop 默认在 `127.0.0.1:17891` 打开浏览器。一个 Work 面板包含对话、Service 预览与独立窗口、文件、配置、生命周期和导入导出；浏览器无需配置 `.work` 代理。打开器不可用时使用 `desktop --no-open` 显示的本地地址。详情见 [Desktop](docs/desktop-webui.md)。
-
-Desktop 地址依次取 `--core`、`PIWORK_CORE_URL`、独立保存的 Desktop 默认 Core、登录凭证地址、loopback。登录/切换连接界面可保存或清除默认 Core，只影响后续启动，当前连接保持。业务 CLI 仍依次取参数、环境、凭证、loopback，不读取 Desktop 偏好；参数仅覆盖本次调用。
-
-命令行的身份、Work、配置、Pi Package、对话与迁移流程见 [Go 用户 CLI](docs/user-cli.md)。
-
-用户也可以运行 `piwork-cli proxy`，在同一个 `127.0.0.1:17890` listener 上访问 `<service>.<work-network-id>.work` 和 `/works/<workId>/files/` WebDAV；本地 WebDAV 密码每次启动随机生成，仅显示一次。Service 应用的认证与平台凭证分离。见 [Service 访问](docs/service-access.md) 和 [Work 文件](docs/work-files.md)。
-
-Work 文件根为同一 Work 的 workspace 卷，Agent 和获准挂载 workspace 的 Service 在容器内通过 `/var/data/workspace` 看到它。停止 Work 后保留数据，但首版 WebDAV 仅在 Work 运行时可读写。导出必须先显式 Stop；导入得到 stopped Work，再显式 Start。见 [快照](docs/work-snapshot.md) 和 [包格式](docs/work-package-format.md)。
-
-## 管理面板与设计语言
-
-`piwork-console serve` 独立提供 HTTPS 管理面板，通过 Core loopback API 管理用户、运行时、默认 Work、Skill 和 Core Package。它停止时不影响 Core 和已接受的 Operation。TLS 与 URL 参数见 [Console](docs/serve-console.md)。Desktop 的产品和视觉约束见 [UI 语言](docs/ui-language.md)。
-
-## 许可证
-
-本项目采用 [Apache License 2.0](LICENSE)。
+## Discussion / Issue
