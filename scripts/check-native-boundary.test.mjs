@@ -12,6 +12,7 @@ test('native source boundary scans scripts, runtime configuration, locks and cur
  await copyFile(new URL('./check-native-boundary.mjs',import.meta.url),join(root,'scripts/check-native-boundary.mjs'));
  await writeFile(join(root,'apps/agentd/package.json'),JSON.stringify({name:'@piwork/agentd'}));
  await writeFile(join(root,'package-lock.json'),JSON.stringify({packages:{}}));
+ await writeFile(join(root,'.gitleaks.toml'),'paths = ["apps/core/src/configuration/materialization.test.ts"]');
  const check=()=>run(process.execPath,['scripts/check-native-boundary.mjs'],{cwd:root});
  await check();
  for(const [path,body] of [

@@ -55,5 +55,5 @@
 ## 10. 将 Desktop docs 归入 Spec
 
 - [x] 10.1 将三份 Desktop docs 的产品语义、容器返回、视觉角色、表单/焦点和任务细则补全到现有 Spec，增加对应验收场景；更新 proposal/design/UIL-001，按 design 迁移表核对覆盖，保留 DUL 编号且取消三份 docs 作为规范交付物的要求（DUL-001 至 DUL-016、UIL-001）。
-- [x] 10.2 按迁移表核对规则已在 Spec 中后，删除 `docs/desktop-product-language.md`、`docs/desktop-design-language.md`、`docs/desktop-ui-language.md`；修订 `docs/product-language.md`、`docs/ui-language.md`、`arch/piwork-desktop-prototype.md` 的规范入口为能力名与 DUL 编号，清理全仓活动引用，保留 Serve 原规则及原型素材。主 Spec 同步前不得引入失效或归档后断开的链接（DUL-001、DUL-016、UIL-001）。
+- [x] 10.2 按迁移表核对规则已在 Spec 中后，删除 `docs/desktop-product-language.md`、`docs/desktop-design-language.md`、`docs/desktop-ui-language.md`；修订 `docs/product-language.md`、`docs/ui-language.md`、`docs/design/piwork-desktop-prototype.md` 的规范入口为能力名与 DUL 编号，清理全仓活动引用，保留 Serve 原规则及原型素材。主 Spec 同步前不得引入失效或归档后断开的链接（DUL-001、DUL-016、UIL-001）。
 - [x] 10.3 验证三份重复文档已移除、活动文档无旧链接或并行规范声明，现有 Spec 可独立覆盖八组能力和 UI 细则；检查全部相关相对链接、原型素材未变、OpenSpec strict 与差异检查。本任务仅核验规范迁移，不代表 WebUI 运行验收（DUL-001、DUL-007、DUL-010、DUL-016）。

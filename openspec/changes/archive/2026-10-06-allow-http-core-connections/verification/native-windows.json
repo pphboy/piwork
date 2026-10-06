@@ -15,7 +15,7 @@
         "candidate --core <HTTP origin> --json status",
         "candidate [--core <HTTP origin>] desktop --port <independent port> --no-open; authorize; status; preferences save/read; desktop open; interrupt; restart without --core; clear"
       ],
-      "diagnostic": "native windows/amd64; sha256=5c62047572bb9afb3bcb2f3ac0de086e7a273020bf1af5cc453aa135f802c750; deployed Core=http://192.168.14.134:7171; fresh private configuration, non-source cwd, no developer-tool PATH; healthy/ready, anonymous status, origin and identity, persisted HTTP default, recovery and exit 130"
+      "diagnostic": "native windows/amd64; sha256=5c62047572bb9afb3bcb2f3ac0de086e7a273020bf1af5cc453aa135f802c750; deployed Core=http://<core-host>:7171; fresh private configuration, non-source cwd, no developer-tool PATH; healthy/ready, anonymous status, origin and identity, persisted HTTP default, recovery and exit 130"
     },
     {
       "id": "http-default-root",
@@ -29,8 +29,8 @@
   "executionContext": {
     "date": "2026-10-06",
     "os": "Windows native Host",
-    "command": ".\\native-check.exe --build .\\candidate --root .\\expected-ui --http-core http://192.168.14.134:7171",
-    "root": "C:\\Users\\p\\AppData\\Local\\Temp\\piwork-cli-platform-tests",
+    "command": ".\\native-check.exe --build .\\candidate --root .\\expected-ui --http-core http://<core-host>:7171",
+    "root": "%TEMP%\\piwork-cli-platform-tests",
     "portPreparation": "user explicitly authorized temporarily interrupting the existing Linux Desktop PID 5052 to free shared 17891; Core remained running",
     "desktopRestoration": "original executable, working directory and Core/startup arguments restored after TIME_WAIT; listener 17891 and desktop open verified; now background with private log"
   }

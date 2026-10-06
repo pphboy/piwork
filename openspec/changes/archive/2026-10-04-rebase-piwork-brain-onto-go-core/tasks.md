@@ -1,6 +1,6 @@
 # Tasks
 
-实施位置：master 基线工作树 `/home/p/Projects/piwork__worktrees/rebase-piwork-brain-onto-go-core`。功能来源 `1608098` 只提供可复用保留层；所有平台入口使用本工作树的 Go 实现。以下任务均须落地其对应测试与当前文档，不能以旧 TS 平台测试结果替代。验收范围以 design 的八条回路为准。
+实施位置：master 基线工作树 `<brain-migration-worktree>`。功能来源 `1608098` 只提供可复用保留层；所有平台入口使用本工作树的 Go 实现。以下任务均须落地其对应测试与当前文档，不能以旧 TS 平台测试结果替代。验收范围以 design 的八条回路为准。
 
 ## 1. 当前双端契约与历史基础
 

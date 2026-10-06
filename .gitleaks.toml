@@ -1,0 +1,78 @@
+# Gitleaks 8.30.1. Keep every default rule; exemptions require an exact path AND value.
+title = "Piwork source and history secret scan"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Public HTTPS URL authority/path, not an API key"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)apps/agentd/src/pi\-sdk\-executor\.test\.ts$''']
+regexes = ['''^443/anthropic/$''']
+
+[[rules.allowlists]]
+description = "Synthetic secretId reference in historical configuration tests"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)apps/core/src/configuration/materialization\.integration\.ts$''']
+regexes = ['''^secret\-0199e6d8abcd$''']
+
+[[rules.allowlists]]
+description = "Synthetic secretId reference in historical configuration tests"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)apps/core/src/configuration/materialization\.test\.ts$''']
+regexes = ['''^secret\-0199e6d8abcd$''']
+
+[[rules.allowlists]]
+description = "Synthetic secretId reference in historical configuration tests"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)apps/core/src/configuration/validation\.test\.ts$''']
+regexes = ['''^secret\-0199e6d8abcd$''']
+
+[[rules.allowlists]]
+description = "SHA256 of synthetic fixture package names"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)internal/contracts/testdata/ts\-encoding\.json$''']
+regexes = ['''^4f82d8fc0c3c133aea821d006444ef368ef95e5d867282e197f7d72db38cf055$''']
+
+[[rules.allowlists]]
+description = "SHA256 of synthetic fixture package names"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)internal/contracts/testdata/ts\-encoding\.json$''']
+regexes = ['''^72726d8818f693066ceb69afa364218b692e62ea92b385782363780f47529c21$''']
+
+[[rules.allowlists]]
+description = "SHA256 of synthetic fixture package names"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)internal/contracts/testdata/ts\-encoding\.json$''']
+regexes = ['''^f0443a342c5ef54783a111b51ba56c938e474c32324d90c3a60c9c8e3a37e2d9$''']
+
+[[rules.allowlists]]
+description = "SHA256 of synthetic fixture package names"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)internal/contracts/testdata/ts\-encoding\.json$''']
+regexes = ['''^f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d$''']
+
+[[rules.allowlists]]
+description = "Deterministic fixture package digest"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)internal/dockerengine/snapshot_helper_integration_test\.go$''']
+regexes = ['''^1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef$''']
+
+[[rules.allowlists]]
+description = "RFC6455 public example WebSocket nonce in historical test"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(?:^|/)scripts/product\-acceptance\.mjs$''']
+regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']

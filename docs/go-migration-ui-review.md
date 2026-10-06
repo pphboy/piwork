@@ -5,8 +5,8 @@
 ## 规范与覆盖来源
 
 - `openspec/specs/desktop-ui-language/spec.md` 是 Desktop 的唯一产品、交互、视觉硬规则，`ui-language/spec.md` 规定与管理面板的适用关系。仓库不再有三份重复 Desktop 语言规则。
-- `arch/piwork-desktop-prototype.md` 的 CLI 覆盖矩阵逐项列出身份、Work、Session/Run、Service、文件、配置、Pi Package、Operation、迁移入口；它指向 DUL-001 至 DUL-016，不另立规则。
-- `arch/desktop-review/README.md` 将 36 个画面分为 8 个可单独评审的模块；草图是互斥状态研究，不要求产品同时陈列全部状态。
+- `docs/design/piwork-desktop-prototype.md` 的 CLI 覆盖矩阵逐项列出身份、Work、Session/Run、Service、文件、配置、Pi Package、Operation、迁移入口；它指向 DUL-001 至 DUL-016，不另立规则。
+- `docs/design/desktop-review/README.md` 将 36 个画面分为 8 个可单独评审的模块；草图是互斥状态研究，不要求产品同时陈列全部状态。
 - 后续新增文件分析应在 Files/Agent 使用用户明确提出的文件/API 请求。技术设置进入 Settings/Advanced；Work 终端、改名和全局 Operation 列表在无能力前不提供假入口。新增功能仍需逐项记录对象、容器、返回路径、状态、窄屏/键盘及偏离理由。
 
 ## 运行与视觉证据

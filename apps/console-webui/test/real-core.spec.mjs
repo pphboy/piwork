@@ -28,7 +28,7 @@ async function consoleResponds(url) {
   });
 }
 test.use({ viewport: { width: 1440, height: 900 } });
-let root, core, consoleServer, origin;
+let root, core, consoleServer, origin, coreOrigin;
 let nativeCoreOutput = "", nativeConsoleOutput = "";
 function captureProcessOutput(child, append) {
   child.stdout?.on("data", (chunk) => append(chunk.toString()));
@@ -38,6 +38,7 @@ test.beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "piwork-console-real-core-"));
   const [corePort, grpcPort, consolePort] = await Promise.all([freePort(), freePort(), freePort()]);
   const coreUrl = `http://127.0.0.1:${corePort}`;
+  coreOrigin = coreUrl;
   core = spawn(nativeCore, ["serve", "--data-dir", join(root, "core"),
     "--listen", `127.0.0.1:${corePort}`, "--agent-grpc-listen", `127.0.0.1:${grpcPort}`,
     "--agent-grpc-advertise", `127.0.0.1:${grpcPort}`], {
@@ -124,15 +125,24 @@ test('delivered Serve UI uses real administrator users, revocation, and browser 
   await expect(page.getByRole('heading',{name:'real-skill',exact:true})).toBeVisible();
   expect(JSON.stringify(await page.context().cookies())).not.toContain('Bearer ');
 });
-test('real Serve runtime and starting point distinguish saved changes from existing Work', async ({page}) => {
-  test.setTimeout(120000); await login(page);
+async function saveFixtureRuntime(page) {
   await page.goto(`${origin}/runtime`);
+  const image = page.getByLabel('Agent image', {exact:true});
+  const edit = page.getByRole('button', {name:'Edit runtime',exact:true});
+  await expect(image.or(edit).first()).toBeVisible();
+  if (await edit.isVisible()) await edit.click();
   await page.getByLabel('Agent image', {exact:true}).fill(process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE || 'piwork-agentd:go-migration-acceptance');
   await page.getByLabel('Model provider', {exact:true}).fill('anthropic');
   await page.getByLabel('Model ID', {exact:true}).fill('fixture');
   await page.getByLabel('API Key', {exact:true}).fill('browser-acceptance-only');
   await page.getByRole('button',{name:'Save runtime',exact:true}).click();
   await expect(page.getByRole('button',{name:'Edit runtime',exact:true})).toBeVisible({timeout:90000});
+  // Saving persists configuration; automatic image/context preparation completes later.
+  await expect.poll(async () => (await fetch(`${coreOrigin}/readyz`)).status,
+    { timeout: 90000, message: 'Core preparation requires a reachable Docker Engine and the native acceptance Agent image' }).toBe(200);
+}
+test('real Serve runtime and starting point distinguish saved changes from existing Work', async ({page}) => {
+  test.setTimeout(120000); await login(page); await saveFixtureRuntime(page);
   await page.getByRole('link',{name:'Work setup',exact:true}).click();
   await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();
   await page.locator('#agentsMd').fill('# Console native default\n');
@@ -145,7 +155,7 @@ test('real Serve runtime and starting point distinguish saved changes from exist
 test('real browser Package directory installs asynchronously and operation deep link recovers', async ({page}) => {
   test.setTimeout(120000); const directory = join(root,'native-console-package'); await mkdir(directory);
   await writeFile(join(directory,'package.json'),'{"name":"native-console-package","version":"1.0.0","pi":{"prompts":["review.md"]}}'); await writeFile(join(directory,'review.md'),'# Review\n');
-  await login(page); await page.goto(`${origin}/packages`);
+  await login(page); await saveFixtureRuntime(page); await page.goto(`${origin}/packages`);
   await page.getByRole('button',{name:'Install Package',exact:true}).click();
   await page.getByRole('button',{name:'Local directory',exact:true}).click();
   await page.getByLabel('Choose Package directory').setInputFiles(directory);

@@ -1,6 +1,6 @@
 # 测试与验收
 
-本页描述 Go 平台和保留的 Pi Agent harness。构建机需要 Go 1.25.5、Node 24/npm、Docker Engine、Playwright Chromium；发布包的宿主程序运行时不需要 Node、npm、Python、Go、Docker CLI 或 OpenSSL 可执行文件。Agent 镜像内仍包含 Node 和 Pi SDK。
+本页描述 Go 平台和保留的 Pi Agent harness。源码构建和单元测试需要 Go 1.25.5、Node 24/npm、Git、Make 与 Bash；Docker 集成测试另外需要 Docker Engine，浏览器测试需要 Playwright Chromium，Console 浏览器夹具还需要 OpenSSL。发布包的宿主程序运行时不需要 Node、npm、Python、Go、Docker CLI 或 OpenSSL 可执行文件。Agent 镜像内仍包含 Node 和 Pi SDK。
 
 ## 统一入口
 
@@ -21,6 +21,20 @@ make test-native-host  # 发布包 + scratch 宿主 + 独立 Engine 的完整运
 
 Go Engine 完整批次的单包时间上限为 120 分钟，包含真实故障、包准备和全闭包快照往返。若批次失败或超时，记录已完成、失败和未执行清单，以当前代码逐项复验；不能把超时命令记录为 PASS，也不能用历史场景索引替代实际执行。
 
+## 干净 clone
+
+在 Node 24、Go 1.25.5 下执行 `npm ci && make build && make test`，不需要真实模型配置或 Docker。`make test` 同时发现 `scripts/*.test.mjs`，覆盖客户端构建、平台检查和验收门槛。
+
+浏览器依赖在仓库根目录安装：
+
+```sh
+npx playwright install chromium
+npm run test:browser -w @piwork/console-webui
+npm run test:browser -w @piwork/desktop-webui
+```
+
+以上浏览器夹具使用已构建的 Go 程序及合成 HTTP 数据。Console 的真实 Core/Package 测试通过 `npm run test:real-core -w @piwork/console-webui` 单独执行，需要可达的 Docker Engine 和 `make native-agent-images` 构建的 acceptance Agent；测试在保存 runtime 后等待后台准备就绪，各场景独立初始化。这个入口仍接入 `make test-integration`，不通过排除真实测试把集成失败记为通过。完整 Work/Run 流程仍按下节执行 Docker 集成验收。环境变量、数据和输出忽略规则及本次检查证据见 [开源发布检查](open-source-readiness.md)。
+
 ## Docker 隔离
 
 `internal/testsupport` 为每次测试生成独立的 `piwork-test-<uuid>` 安装身份。测试创建的 Docker container/network/volume 均带 `piwork.installation_id`，发现、inspect 和清理只针对该身份。不得使用全局 prune、模糊名称过滤或跨安装清理。需要独立 Engine 时设置 `PIWORK_TEST_DOCKER_HOST=unix:///path/to/docker.sock`；测试宿主可以没有 Docker CLI，但构建镜像的开发入口需要它。
@@ -29,7 +43,7 @@ Go Engine 完整批次的单包时间上限为 120 分钟，包含真实故障�
 
 SELinux 快照回归见 [专用验收流程](selinux-snapshot-acceptance.md)。`PIWORK_TEST_SELINUX=1` 启用真实标签测试，并要求宿主为 Enforcing；未设置时该平台用例明确跳过。常规树库测试仍检查用户属性、ACL/capability 名称、异常枚举和失败后的内容保留。独立 Docker helper 验收脚本只创建带精确安装标签的测试卷和容器，按该身份清理，不操作现有 Work。
 
-浏览器测试源位于 `apps/desktop-webui/test` 与 `apps/console-webui/browser-tests`，测试进程只启动 Go CLI、Go Console 和 Go Core。Chrome/Edge 人工界面 Review 与无解释器宿主的发布包验收单列在迁移阶段 gate 中；自动 Chromium 通过不能替代它们。
+浏览器测试源位于 `apps/desktop-webui/test` 与 `apps/console-webui/test`，测试进程只启动 Go CLI、Go Console 和 Go Core。Chrome/Edge 人工界面 Review 与无解释器宿主的发布包验收单列在迁移阶段 gate 中；自动 Chromium 通过不能替代它们。
 Desktop 的真实 Go Core/CLI 联合脚本已接入 `make test-integration`，默认使用 Playwright Chromium。Chrome 或 Edge 的正式界面验收可分别使用 `PIWORK_TEST_BROWSER_BIN=/path/to/browser PIWORK_TEST_SCREENSHOT_DIR=/path/to/evidence npm run test:real-core -w @piwork/desktop-webui` 执行；脚本为每次测试创建独立 Core 数据目录和受管 Work，并在结束后清理。该脚本依赖预先构建的 Agent 与原生 file/snapshot helper 镜像。
 
 完整包包含固定镜像，大包验收应将 `TMPDIR` 指向空间充足的磁盘目录；内存盘 `/tmp` 的可用空间不足时，Desktop 按规定保留 1 GiB 余量并拒绝暂存，不能降低生产空间限制来通过测试。

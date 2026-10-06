@@ -15,7 +15,7 @@
         "candidate --core <HTTP origin> --json status",
         "candidate [--core <HTTP origin>] desktop --port <independent port> --no-open; authorize; status; preferences save/read; desktop open; interrupt; restart without --core; clear"
       ],
-      "diagnostic": "native windows/amd64; sha256=5c62047572bb9afb3bcb2f3ac0de086e7a273020bf1af5cc453aa135f802c750; deployed Core=http://192.168.14.134:7171; fresh private configuration, non-source cwd, no developer-tool PATH; healthy/ready, anonymous status, origin and identity, persisted HTTP default, recovery and exit 130"
+      "diagnostic": "native windows/amd64; sha256=5c62047572bb9afb3bcb2f3ac0de086e7a273020bf1af5cc453aa135f802c750; deployed Core=http://<core-host>:7171; fresh private configuration, non-source cwd, no developer-tool PATH; healthy/ready, anonymous status, origin and identity, persisted HTTP default, recovery and exit 130"
     },
     {
       "id": "http-default-root",

@@ -4,7 +4,7 @@
 
 ## 规范同步与归档收尾（2026-10-04）
 
-按用户指定顺序完成主规范同步和 change 归档；实现、正式主规范、文档及本归档构成本次 Git 提交范围。后续测试使用 `/home/p/Projects/piwork__worktrees/rebase-piwork-brain-onto-go-core` 工作树及同名分支。
+按用户指定顺序完成主规范同步和 change 归档；实现、正式主规范、文档及本归档构成本次 Git 提交范围。后续测试使用 `<brain-migration-worktree>` 工作树及同名分支。
 
 - 全部十二份 delta 已合入同一 Go 工作树的 `openspec/specs/`：新建 `piwork-brain`、`work-agent-feedback`，更新另外十份主规范，共新增 28 项、修改 15 项要求。既有 Purpose、98 项未修改要求及全部既有场景保留；新能力的 Purpose 使用已批准 delta 内容，没有 TBD 占位。
 - 同步后对十二份 delta 的 43 项要求逐项比较，均与主规范一致，重复同步没有待应用内容。`openspec validate --specs` 为 37 PASS、0 FAIL；当前 change 的 strict 校验通过。

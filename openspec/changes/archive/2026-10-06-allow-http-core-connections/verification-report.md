@@ -116,7 +116,7 @@ git diff --check
 
 ## 实际环境限制与后续
 
-Windows 实际 PE 使用 `http://192.168.14.134:7171`，Linux WSL 实际 ELF 使用已部署的 `http://127.0.0.1:7171`。已有 WSL 直连 LAN 地址的超时不能算通过。真实部署账号的全命令族/包/快照/proxy 和受原生系统信任的 HTTPS 成功 fixture 缺口仍属于并行跨平台验收，专用 TLS 合同测试不替代它们。
+Windows 实际 PE 使用 `http://<core-host>:7171`，Linux WSL 实际 ELF 使用已部署的 `http://127.0.0.1:7171`。已有 WSL 直连 LAN 地址的超时不能算通过。真实部署账号的全命令族/包/快照/proxy 和受原生系统信任的 HTTPS 成功 fixture 缺口仍属于并行跨平台验收，专用 TLS 合同测试不替代它们。
 
 原跨平台变更为 23/32；其另一用户、真实 symlink、Core/Agent 基线失败、完整协调器与正式打包门禁未被本次改动豁免。本核验没有把它们新增为本 HTTP 变更的重复任务。
 

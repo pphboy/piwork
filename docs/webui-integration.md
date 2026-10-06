@@ -179,7 +179,7 @@ Service 入口缓存和反馈归属 Work/Service/port。入口失败有显式 Re
 
 ### 逐入口测试映射
 
-下表中的 `feedback` 为 Desktop `test/feedback.test.ts` 或 Serve `browser-tests/feedback.spec.mjs`；这些测试在真实浏览器中操作交付 UI，并按入口阻塞请求，验证等待阶段、目标、重复请求数量和确认后的独立读取。它们使用隔离 HTTP fixture，不把模拟响应计为真实 Core 业务执行。
+下表中的 `feedback` 为 Desktop `test/feedback.test.ts` 或 Console `test/feedback.spec.mjs`；这些测试在真实浏览器中操作交付 UI，并按入口阻塞请求，验证等待阶段、目标、重复请求数量和确认后的独立读取。它们使用隔离 HTTP fixture，不把模拟响应计为真实 Core 业务执行。
 
 | 编号 | 实际入口与证据 |
 | --- | --- |

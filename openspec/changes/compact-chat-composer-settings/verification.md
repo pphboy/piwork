@@ -92,7 +92,7 @@
 
 ```bash
 npm run build:cli -- --target linux/amd64
-export PIWORK_TEST_BROWSER_BIN=/home/p/.cache/ms-playwright/chromium-1193/chrome-linux/chrome
+# Set PIWORK_TEST_BROWSER_BIN to the locally installed Chromium executable.
 export PIWORK_TEST_NATIVE_CLI="$PWD/dist/cli/linux-amd64/piwork-cli"
 export PIWORK_UIUX_EVIDENCE_DIR="$PWD/openspec/changes/compact-chat-composer-settings/verification/uiux"
 npm run test:browser -w @piwork/desktop-webui

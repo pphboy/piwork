@@ -45,7 +45,7 @@ CLI Desktop WebUI 面向 Work 所有者，让用户在 CLI 本机启动的网页
 ## Impact
 
 - 规范迁移：将 `docs/desktop-product-language.md`、`docs/desktop-design-language.md`、`docs/desktop-ui-language.md` 的硬规则归入现有 Spec，完成覆盖核对后移除这三份文件。
-- 导航/原型：`docs/product-language.md`、`docs/ui-language.md`、`arch/piwork-desktop-prototype.md` 改为引用 `desktop-ui-language` 规范能力；Excalidraw/PNG、`arch/desktop-review/` 及能力矩阵继续作为图示和评审入口。
+- 导航/原型：`docs/product-language.md`、`docs/ui-language.md`、`docs/design/piwork-desktop-prototype.md` 改为引用 `desktop-ui-language` 规范能力；Excalidraw/PNG、`docs/design/desktop-review/` 及能力矩阵继续作为图示和评审入口。
 - 规范：`desktop-webui-language` 的 proposal、design、spec、tasks 构成统一基线；保持 DUL-001 至 DUL-016 与 UIL-001 编号，spec 使用中文。
 - 后续实现依赖：本地认证与进程生命周期、Service 隔离及 HTTP/SSE/WebSocket/会话、文件转接与编辑限额、大包传输、本地已知操作记录的身份边界。
 - 现有运行行为：不变更 CLI/Core/agentd 代码、数据格式、接口、权限或 Serve 管理功能；不引入运行时依赖、数据迁移或部署。

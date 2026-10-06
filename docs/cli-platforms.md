@@ -8,7 +8,7 @@
 
 ```sh
 piwork-cli                          # 默认启动 Desktop
-piwork-cli --core http://192.168.14.134:7171  # HTTP 默认入口
+piwork-cli --core http://<core-host>:7171  # HTTP 默认入口
 piwork-cli --core http://core.example:7171 desktop --no-open
 piwork-cli --core https://core.example
 piwork-cli --help                   # 显式查看原业务命令

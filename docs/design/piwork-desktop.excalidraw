@@ -113,8 +113,8 @@
         "reviewAnnotation": true,
         "bold": false
       },
-      "text": "Screen IDs 01–36 are preserved. Full-size previews are in arch/desktop-review/.",
-      "originalText": "Screen IDs 01–36 are preserved. Full-size previews are in arch/desktop-review/.",
+      "text": "Screen IDs 01–36 are preserved. Full-size previews are in docs/design/desktop-review/.",
+      "originalText": "Screen IDs 01–36 are preserved. Full-size previews are in docs/design/desktop-review/.",
       "fontSize": 29,
       "fontFamily": 2,
       "textAlign": "left",

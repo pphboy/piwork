@@ -152,7 +152,7 @@ Go MCP/package-helper 在 3.7–3.9 先完成，真实 harness/Work 运行从 5.
 
 负责任务：12.1, 12.9。验证层级：L3/人工UI复核。
 
-现有参照：apps/cli/src/desktop/browser.test.ts；arch/piwork-desktop-prototype.md。
+现有参照：apps/cli/src/desktop/browser.test.ts；docs/design/piwork-desktop-prototype.md。
 
 | 索引 | Requirement 与规格来源 | 必须验证的 Scenario |
 | --- | --- | --- |

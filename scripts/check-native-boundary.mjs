@@ -51,6 +51,8 @@ for (const directory of ['apps','packages','scripts','docs','.github']) {
  if (await stat(directory).then(()=>true,()=>false))await scan(directory);
 }
 for(const item of await readdir('.',{withFileTypes:true})) {
+ // Secret-scanner exemptions name historical fixtures, not runtime dependencies.
+ if(item.name === '.gitleaks.toml')continue;
  if(!item.isFile()|| !(/\.(?:json|yaml|yml|toml|sh)$/.test(item.name)||/^(?:Dockerfile[^/]*|Makefile)$/.test(item.name)))continue;
  if(forbiddenImports.test(await readFile(item.name,'utf8')))throw new Error(`Legacy platform reference: ${item.name}`);
 }

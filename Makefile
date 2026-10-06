@@ -55,7 +55,7 @@ test-go:
 	go test -mod=readonly ./...
 
 test: build test-go
-	node --test scripts/check-go-acceptance.test.mjs scripts/check-native-boundary.test.mjs
+	node --test scripts/*.test.mjs
 	npm run test:unit -w @piwork/contracts -w @piwork/pi-package -w @piwork/work-store -w @piwork/pi-adapter -w @piwork/agentd
 	npm run typecheck -w @piwork/desktop-webui -w @piwork/console-webui
 
@@ -78,6 +78,7 @@ test-integration: build test-integration-go
 	npm run test:browser -w @piwork/desktop-webui
 	npm run test:real-core -w @piwork/desktop-webui
 	npm run test:browser -w @piwork/console-webui
+	npm run test:real-core -w @piwork/console-webui
 
 acceptance-index:
 	node scripts/update-go-acceptance-index.mjs

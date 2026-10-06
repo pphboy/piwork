@@ -13,7 +13,7 @@
 | `apps/core/src/work-services/service-gateway.ts` | 每次请求检查 owner、当前目标与声明端口；上游 Host 固定为逻辑 `.work`，活动资格每 2 秒复核；不替浏览器改写 Cookie/Origin/Location |
 | `apps/cli/src/work-snapshot.ts`、`packages/work-package` | 完整检查、hash、上传/下载流及冷快照语义；最大包 100 GiB，不可用整包 Buffer/Blob |
 | `apps/console` | 管理员专用产品，有 TypeScript DOM 浏览器构建、Cookie/CSRF、multipart 和浏览器测试先例；不能复用其 admin 授权/上传路径作为用户能力 |
-| `openspec/specs/desktop-ui-language`、`arch/piwork-desktop-prototype.md` | DUL-001—016 与 36 帧的产品基线；此前交付为静态规范 |
+| `openspec/specs/desktop-ui-language`、`docs/design/piwork-desktop-prototype.md` | DUL-001—016 与 36 帧的产品基线；此前交付为静态规范 |
 
 首版由用户确认仅验收桌面 Chrome/Edge 当前稳定版。规划阶段用仓库现有 Playwright Chromium 做了无文件修改的 loopback 探针：`ui.p-probe.localhost`、`s-a.p-probe.localhost` 可解析；HTTP 上 `isSecureContext=true`，各自的 `__Host-` + Secure + HttpOnly Cookie 可建立。此探针不是完整产品验收，也没有验证 Edge、跨源嵌入和真实应用。
 

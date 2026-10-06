@@ -14,18 +14,28 @@ piwork 是单机 Work 运行环境。Go Core 管理用户、Work 生命周期、
 
 三个宿主程序关闭 CGo，运行时不调用 Node、npm、Python、Go、Docker CLI 或 OpenSSL。用户 CLI 面向 Windows 与 Linux，Windows 交付 `.exe`，Linux 交付可执行文件；Core 和 Console 沿用 Linux 部署。Core 使用本机 Docker Engine Unix socket。镜像内的 Pi SDK harness 仍需要 Node；用户 Service 和 Pi 包可以使用各自的语言。
 
-构建机需要 Go 1.25.5、Node 24/npm 和 Docker Engine。全量构建及测试入口：
+源码构建和单元测试需要 Go 1.25.5、Node 24（`.nvmrc`）/npm、Git、Make 和 Bash。Docker Engine 仅在运行 Work、构建镜像和执行 Engine 集成测试时需要；浏览器测试另外需要 Playwright Chromium，Console 浏览器夹具还使用 OpenSSL 生成临时证书。
+
+从干净 clone 的仓库根目录执行以下命令，不需要 `.env.test`、模型 API key 或预先生成的 `dist/`：
 
 ```sh
 npm ci
 make build
 make test
+```
+
+需要浏览器、Docker 集成验收或发行包时，再执行对应入口：
+
+```sh
+npx playwright install chromium
 make test-integration
 make acceptance
 make release
 ```
 
 `make build` 编译保留的 harness、Desktop/Console 浏览器资源和七个 Go 程序，输出在 `dist/go/`。`make release` 另外构建原生 Agent/helper 镜像，并把三个宿主入口、版本与协议摘要、镜像清单和 SHA256SUMS 打进 `dist/release/`。测试范围与未完成 gate 见 [测试说明](docs/testing.md) 和 [迁移验收记录](docs/go-migration-acceptance.md)。
+
+源码、测试夹具和设计材料的目录约定及本次干净 clone 检查结果见 [开源发布检查](docs/open-source-readiness.md)。实际 Work 的模型运行需要另外配置可用模型；不要把真实 env、Core 数据、凭证或快照提交到 Git。Docker 安装见 [Core 与 CLI Docker 手册](deploy/docker/README.zh-CN.md)。
 
 只构建客户端可运行 `npm run build:cli`（或 `make build-cli`）；它只构建 Desktop 资源和 `cmd/piwork-cli`，输出到 `dist/cli/<目标>/`。目标配置、原生验收和独立打包见 [CLI 平台交付](docs/cli-platforms.md)。用户运行产物不需要构建工具或本机容器。
 
@@ -82,3 +92,7 @@ Work 文件根为同一 Work 的 workspace 卷，Agent 和获准挂载 workspace
 ## 管理面板与设计语言
 
 `piwork-console serve` 独立提供 HTTPS 管理面板，通过 Core loopback API 管理用户、运行时、默认 Work、Skill 和 Core Package。它停止时不影响 Core 和已接受的 Operation。TLS 与 URL 参数见 [Console](docs/serve-console.md)。Desktop 的产品和视觉约束见 [UI 语言](docs/ui-language.md)。
+
+## 许可证
+
+本项目采用 [Apache License 2.0](LICENSE)。

@@ -2,7 +2,7 @@
 
 ## Context
 
-动机与能力范围见 [proposal.md](./proposal.md)，架构输入见 [piwork.arch.md](../../../arch/piwork.arch.md)。项目是产品架构上的新项目，但存在独立 `demo/`：TypeScript、pi SDK `@earendil-works/pi-coding-agent`、grpc-js、ts-proto，以及真实 gRPC 往返测试。当前没有主 specs、Core、容器编排、登录或 Web 控制面板。
+动机与能力范围见 [proposal.md](./proposal.md)，架构输入见 [architecture.md](../../../../docs/design/architecture.md)。项目是产品架构上的新项目，但存在独立 `demo/`：TypeScript、pi SDK `@earendil-works/pi-coding-agent`、grpc-js、ts-proto，以及真实 gRPC 往返测试。当前没有主 specs、Core、容器编排、登录或 Web 控制面板。
 
 已观察到的约束：demo 的 SessionRegistry 是内存 Map；只会复用进程内已知 Session ID；连接取消会触发 SDK abort；客户端和服务端均使用 insecure gRPC；模型凭证可用性被称作 authenticated。这些是样例行为，不是新产品的兼容约束。复用事件映射和 SDK 封装方法，不能直接继承其恢复、权限和取消语义。
 

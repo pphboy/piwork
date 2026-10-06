@@ -37,7 +37,7 @@ piwork 需要把架构图中的 Work 变成可登录访问、可配置、可恢�
 
 ## Impact
 
-- 设计依据为 `arch/piwork.arch.md` 的第一版范围；架构中的推荐默认值在本 change 中转化为待评审的具体设计决定。
+- 设计依据为 `docs/design/architecture.md` 的第一版范围；架构中的推荐默认值在本 change 中转化为待评审的具体设计决定。
 - 新增 `apps/core`、`apps/agentd`、`apps/cli`、`apps/console`，以及 contracts、client-sdk、pi-adapter、runtime-docker、core-store、work-store 等共享模块。
 - 复用 `demo/` 的 SDK 适配经验、事件映射和 gRPC 集成测试方法；保留 demo 作为独立样例，不承诺其匿名 `Ask` 协议与新产品 API 兼容。
 - 引入 Docker、持久卷与网络隔离、SQLite、用户认证、TLS、MCP 客户端和最小 Web UI；生产模型凭证通过受控 secret 引用提供。

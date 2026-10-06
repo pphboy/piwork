@@ -5,12 +5,12 @@
 - Linux 当前候选在 `unshare -Urn` 的独立用户/网络 namespace 中实际执行 `candidate --core http://127.0.0.1:7171`，保存偏好后以无参数 `candidate` 重启；本地授权、匿名状态、默认地址、open 及真实 interrupt→130 全部通过。Desktop 实际监听 127.0.0.1:17891，未改产品端口或参数。
 - 隔离 namespace 的 HTTP 7171 经临时私有 Unix socket / 原始 TCP relay 连接宿主已有 Core 127.0.0.1:7171，不模拟响应、不部署 Core、不改变协议。临时通道与测试进程已退出。该隔离环境不作为跨平台变更另一用户或权限门禁的通过证据。
 - Windows 第一轮原生 smoke、真实 LAN HTTP Core status 与显式 Desktop/偏好重启通过，固定 17891 仍绑定失败；该轮保存为 verification/native-windows.explicit.2026-10-06.json。
-- 用户随后明确授权“允许临时退出并重新启动现有 Desktop”。保存原可执行文件后以 SIGINT 退出 PID 5052，原生 Windows 第二轮实际运行 `candidate --core http://192.168.14.134:7171`，保存 HTTP 默认值、退出后执行无参数 `candidate`；两次均在默认 17891 完成本地授权、匿名 Core 状态、open 和 interrupt→130。http-default-root 为 pass。Core 服务未停止或修改。
+- 用户随后明确授权“允许临时退出并重新启动现有 Desktop”。保存原可执行文件后以 SIGINT 退出 PID 5052，原生 Windows 第二轮实际运行 `candidate --core http://<core-host>:7171`，保存 HTTP 默认值、退出后执行无参数 `candidate`；两次均在默认 17891 完成本地授权、匿名 Core 状态、open 和 interrupt→130。http-default-root 为 pass。Core 服务未停止或修改。
 - 两平台没有重建候选，摘要与原报告相同；本轮实际 app.js/adapter.js 字节均匹配。Linux 本轮补默认根入口，显式 deployed-Core 流程仍由同一候选 2026-10-05 记录支持；Windows 本轮显式与默认入口有分别执行记录，不能将 helper 的概括命令当成一次执行所有分支。
-- 当前完整结果见 verification/native-linux.json、native-windows.json；2026-10-05 端口缺口保留于 native-*.2026-10-05.json，旧核验报告另存 verification-report.2026-10-05.md。Linux 隔离 wrapper 执行源码保存为 verification/linux-netns-fixture.2026-10-06.py，记录本次实际临时路径与拓扑。
+- 当前完整结果见 verification/native-linux.json、native-windows.json；2026-10-05 端口缺口保留于 native-*.2026-10-05.json，旧核验报告另存 verification-report.2026-10-05.md。Linux 隔离 wrapper 是当次临时夹具，依赖当次 /tmp 程序，不作为可重复运行的源码交付；隔离拓扑和执行结果保留在 JSON 记录中。
 - 本轮重点 Go 回归（偏好、默认入口、HTTP、TLS、proxy、Desktop）、Desktop 类型检查、两个变更严格 validate 和 git diff --check 全部通过。没有重新声称运行整仓、完整浏览器或正式发布验收。
 
-实际 Linux 命令：先 `go build -mod=readonly -o /tmp/piwork-http-native-check-20261006 scripts/check-cli-native.go`，再 `python3 /tmp/piwork-http-netns-20261006.py`；wrapper 源码见上述记录。Windows 在原生临时目录执行 `native-check.exe --build .\candidate --root .\expected-ui --http-core http://192.168.14.134:7171`。
+实际 Linux 命令：先 `go build -mod=readonly -o /tmp/piwork-http-native-check-20261006 scripts/check-cli-native.go`，再 `python3 /tmp/piwork-http-netns-20261006.py`；wrapper 源码见上述记录。Windows 在原生临时目录执行 `native-check.exe --build .\candidate --root .\expected-ui --http-core http://<core-host>:7171`。
 
 Windows 测试结束后，第一次恢复因共享端口 TIME_WAIT 返回端口不可用；等待释放后已恢复原 Desktop（PID 265662），使用保存的原二进制、原工作目录及 Core/启动参数。环境取自原登录 shell，未写入报告；该 shell 没有 PIWORK/XDG_CONFIG_HOME 覆盖。监听 17891 与当前候选 desktop open 已复验成功，Core PID 5034 保持运行。恢复的 Desktop 当前在后台运行，输出保存在私有日志；原浏览器本地会话需重新打开。恢复事实见 verification/desktop-restoration.2026-10-06.json，不含票据或凭据。
 
@@ -60,13 +60,13 @@ Windows 测试结束后，第一次恢复因共享端口 TIME_WAIT 返回端口�
 | 偏好浏览器专项 | Linux Chromium 与 Windows Edge 各 8 通过，无 skip；含 HTTP 保存/读回/清除、慢响应/短提示、未确认 GET 核对、晚响应、Inspect、当前连接 HTTP 切换。 |
 | Linux Desktop 全浏览器及 Windows 原生授权专项 | Windows 原生专项 9/9 通过；Linux 分组覆盖全部 201 项：native-auth 六项实际通过（含五分钟过期及 HTTP），修正等待后其余八文件 195/195 通过。均无必需 skip；不将首次失败算通过。 |
 | 两平台原生烟测与真实 HTTP Core | 通过，详见下一节；空根命令实际场景未验证。 |
-| 新 Windows exe 对 `https://192.168.14.134:8443` | 仍返回 `NETWORK_ERROR: Core request failed`，exit 5；未关闭 TLS 校验，也未自动改连 HTTP。先前证书诊断为自签名且原生系统不信任，此次没有修改证书或系统信任。 |
+| 新 Windows exe 对 `https://<core-host>:8443` | 仍返回 `NETWORK_ERROR: Core request failed`，exit 5；未关闭 TLS 校验，也未自动改连 HTTP。先前证书诊断为自签名且原生系统不信任，此次没有修改证书或系统信任。 |
 
 测试进程 TLS fixture 使用专用 CA 和 `x509.SetFallbackRoots` / `GODEBUG=x509usefallbackroots=1`，仅作用于隔离子进程，不安装证书、不增加产品参数。Windows/Linux 同一套实际网络断言覆盖 HTTP、可信 HTTPS 成功，以及不受信任、过期、错名的拒绝；同时测试标准 Core HTTP 请求与 proxy 的 TLS socket，负例没有应用层请求或 HTTP 回退。这些合同测试不代替正式发布要求的原生系统信任真实 HTTPS Core fixture。
 
 ## 真实 HTTP Core 与未完成原生验收
 
-Windows 在实际 Host 上执行当前 PE，连接用户提供的 `http://192.168.14.134:7171`。Linux 在 WSL2 原生执行当前 ELF，连接已部署的 `http://127.0.0.1:7171`。两者分别完成：
+Windows 在实际 Host 上执行当前 PE，连接用户提供的 `http://<core-host>:7171`。Linux 在 WSL2 原生执行当前 ELF，连接已部署的 `http://127.0.0.1:7171`。两者分别完成：
 
 1. `--core <HTTP origin> --json status` 返回 healthy、ready，exit 0。
 2. 从非源码临时目录、无开发工具 PATH、独立私有配置启动 `desktop --port <空闲端口> --no-open`；未本地授权 session 为 401。
@@ -82,14 +82,14 @@ go run -mod=readonly scripts/check-cli-native.go --build dist/cli/linux-amd64 --
 
 ```powershell
 # 在原生 Windows 临时目录执行 Go 1.25.5 编译的 native-check.exe；candidate 含 exe/build.json。
-.\native-check.exe --build .\candidate --root .\expected-ui --http-core http://192.168.14.134:7171
+.\native-check.exe --build .\candidate --root .\expected-ui --http-core http://<core-host>:7171
 ```
 
-Windows 的工具/测试/浏览器文件复制到 `C:\Users\p\AppData\Local\Temp\piwork-cli-platform-tests`，以当前普通用户运行；浏览器使用 Edge。Linux Go/Node 为 1.25.5/24.20.0，Windows Node 为 24.14.1。具体环境事实沿用 [跨平台报告](../../support-cross-platform-cli-and-default-desktop/verification-progress.md)，不构成产品平台要求。
+Windows 的工具/测试/浏览器文件复制到 `%TEMP%\piwork-cli-platform-tests`，以当前普通用户运行；浏览器使用 Edge。Linux Go/Node 为 1.25.5/24.20.0，Windows Node 为 24.14.1。具体环境事实沿用 [跨平台报告](../../support-cross-platform-cli-and-default-desktop/verification-progress.md)，不构成产品平台要求。
 
 **任务 4.2 保留未完成**：两系统的默认端口 17891 均无法用于本次验收，未接管或结束用户实例，所以空命令原生场景 `http-default-root` 如实记为 unverified。默认入口的 HTTP 路由及无 I/O 契约在两平台原生入口表测试通过，持久化默认 Core 在独立端口实际通过；这些不替代实际空命令验收。当前 exe 可显式指定独立端口连接 HTTP。
 
-WSL 直接访问 `http://192.168.14.134:7171/healthz` 的无代理请求在 10 秒后超时；不能声称 Linux 直连该 LAN 地址成功，也不能声称两端在同一真实 Core 完成所有命令族验收。上述 Linux HTTP 验收使用本机已部署 Core，没有自动部署或改动服务端。没有真实账号的全命令族/包/快照及受原生系统信任的 HTTPS Core fixture，原跨平台验收缺口继续保留。
+WSL 直接访问 `http://<core-host>:7171/healthz` 的无代理请求在 10 秒后超时；不能声称 Linux 直连该 LAN 地址成功，也不能声称两端在同一真实 Core 完成所有命令族验收。上述 Linux HTTP 验收使用本机已部署 Core，没有自动部署或改动服务端。没有真实账号的全命令族/包/快照及受原生系统信任的 HTTPS Core fixture，原跨平台验收缺口继续保留。
 
 ## 场景到实现与证据的映射
 

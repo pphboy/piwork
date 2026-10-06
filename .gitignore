@@ -1,13 +1,44 @@
+# Dependencies, builds and test output (at every workspace level).
 node_modules/
 dist/
 coverage/
 test-results/
-.env
-.piwork/
+playwright-report/
 *.tsbuildinfo
-.env.test
+__pycache__/
+*.py[cod]
+
+# Local environment inputs; only explicit examples belong in the repository.
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!.env.*.example
+!*.env.example
+
+# Installation state, credentials and exported user data.
+.piwork*/
+.cache/
+credentials.json
+operator.credential
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.pem
+*.key
+*.p12
+*.pfx
 *.work
 !/internal/workpackage/testdata/*.work
-__pycache__/
-*.pyc
-/.piwork-tools/
+
+# Debug output and machine-specific editor/OS files.
+*.log
+*.tmp
+*.swp
+*.swo
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

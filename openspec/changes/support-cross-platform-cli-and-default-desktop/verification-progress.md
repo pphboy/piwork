@@ -21,7 +21,7 @@
 
 当前 Desktop 输入摘要为 `31c57ca3104012c29dfb886e025903a4f73cc03884317c6817603630d0a7989b`，两原生产物的 app/adapter 均与生成资源逐字节核对。Linux 完整 Go、全组件构建、独立客户端构建通过；Windows client/cli 原生整套通过。偏好浏览器两端各 8 通过；Linux 浏览器分组全部 201 项通过，Windows 原生浏览器专项 9 项通过，包含实际五分钟过期。首次浏览器失败及测试输入/异步等待修正保留在 HTTP 报告，不作历史通过掩盖。
 
-实际 Windows exe 连接 `http://192.168.14.134:7171`，Linux ELF 连接本机已部署 `http://127.0.0.1:7171`，均通过 status、授权后匿名状态、HTTP 偏好保存→退出→无 Core 覆盖重启及 open。WSL 直连 LAN 地址超时，不能计为同一真实 Core 全命令族验收。正常 TLS 系统信任保留；测试子进程专用信任 fixture 的 HTTPS 正反例通过，真实可信 HTTPS Core 仍缺 fixture。
+实际 Windows exe 连接 `http://<core-host>:7171`，Linux ELF 连接本机已部署 `http://127.0.0.1:7171`，均通过 status、授权后匿名状态、HTTP 偏好保存→退出→无 Core 覆盖重启及 open。WSL 直连 LAN 地址超时，不能计为同一真实 Core 全命令族验收。正常 TLS 系统信任保留；测试子进程专用信任 fixture 的 HTTPS 正反例通过，真实可信 HTTPS Core 仍缺 fixture。
 
 这次不重新豁免任何下文九项缺口；当前 Linux 协调器 12 pass/6 unverified 的新摘要报告仍被打包工具拒绝，未生成正式归档。
 

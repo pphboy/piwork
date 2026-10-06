@@ -2,7 +2,7 @@
 
 ## Why
 
-同一 Core 的 HTTP 地址已经能被普通业务 CLI 使用，却被 Desktop 启动、界面切换、默认地址保存和 proxy 拒绝，导致用户无法选择实际可用的连接方式。Windows 原生候选对 `http://192.168.14.134:7171` 的 `status` 已返回 healthy/ready；客户端应统一接受用户选择的 HTTP(S) Core origin。
+同一 Core 的 HTTP 地址已经能被普通业务 CLI 使用，却被 Desktop 启动、界面切换、默认地址保存和 proxy 拒绝，导致用户无法选择实际可用的连接方式。Windows 原生候选对 `http://<core-host>:7171` 的 `status` 已返回 healthy/ready；客户端应统一接受用户选择的 HTTP(S) Core origin。
 
 ## What Changes
 

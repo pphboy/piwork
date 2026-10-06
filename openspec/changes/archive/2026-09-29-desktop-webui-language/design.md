@@ -26,8 +26,8 @@
 | --- | --- |
 | [Desktop Spec](specs/desktop-ui-language/spec.md) | DUL-001 至 DUL-016：用户场景、产品语义、容器与返回、视觉角色、状态和验收行为的唯一规范来源 |
 | 本 design | 设计理由、组织方式、既有能力边界、规范迁移及后续实现依赖 |
-| [原型说明与能力矩阵](../../../arch/piwork-desktop-prototype.md) | CLI/协议能力对应的画面、入口、操作、结果、失败及返回 |
-| [评审目录](../../../arch/desktop-review/README.md) | 按模块和单画面检查静态设计 |
+| [原型说明与能力矩阵](../../../../docs/design/piwork-desktop-prototype.md) | CLI/协议能力对应的画面、入口、操作、结果、失败及返回 |
+| [评审目录](../../../../docs/design/desktop-review/README.md) | 按模块和单画面检查静态设计 |
 
 后续功能引用 Spec 的需求编号、所属场景及能力映射。Spec 必须可独立用于实现和验收；design 解释选择原因，原型展示布局与流程。此前三份 Desktop docs 是迁移输入，规则补全后移除，不作为额外的规范来源。这样可避免修改 Spec 后还需同步三份正文造成规则分叉。
 
@@ -138,7 +138,7 @@ Excalidraw 为可编辑源，PNG 内嵌等价场景。保留 01–36 编号，�
 规范来源迁移分三步：
 
 1. 在当前 change 的 `specs/desktop-ui-language/spec.md` 补全三份 docs 的规则和场景，更新 UIL-001 的 Desktop 适用规则；保留所有既有需求编号。
-2. apply 阶段移除三份 `docs/desktop-*-language.md`，更新 `docs/product-language.md`、`docs/ui-language.md` 与 `arch/piwork-desktop-prototype.md` 的入口，清除失效链接与“三份文档为准”的要求。活动说明引用规范能力名 `desktop-ui-language` 和 DUL 编号；同步前可用普通代码路径说明目标主规范，不能建立指向尚不存在文件或即将移动的 change 目录的长期链接。
+2. apply 阶段移除三份 `docs/desktop-*-language.md`，更新 `docs/product-language.md`、`docs/ui-language.md` 与 `docs/design/piwork-desktop-prototype.md` 的入口，清除失效链接与“三份文档为准”的要求。活动说明引用规范能力名 `desktop-ui-language` 和 DUL 编号；同步前可用普通代码路径说明目标主规范，不能建立指向尚不存在文件或即将移动的 change 目录的长期链接。
 3. 后续通过 sync/archive 将本 delta 合入 `openspec/specs/desktop-ui-language/spec.md`；该主规范为持久入口。apply 不隐式执行同步或归档；旧文档仅在历史任务与迁移说明中作为来源记录保留。
 
 规范交付检查：DUL-001 至 DUL-016 与 UIL-001 编号保持；能力矩阵覆盖八组基础功能；正常、空、加载、停止、失败、未知与返回场景相互一致；Spec 独立包含规则和验收场景；删除后的相对链接有效；36 个 Frame 与预览可追溯。保留既有阶段完成记录，以新的迁移任务跟踪清理，不能以先前完成状态宣称迁移已完成；通过 OpenSpec strict 和文本差异检查。
