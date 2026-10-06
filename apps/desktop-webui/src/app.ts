@@ -167,6 +167,7 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
   let label = actionLabels[action]; if (!label) return;
   if (['service-action', 'confirm-service-control'].includes(action)) label = `${el.dataset.control || view.data.control || "Control"} Service`;
   const w = targetWork(el); let kind: ActionIntent['kind'] = 'read';
+  if(action==='send-message' && w && !view.literalSlash && /^\/(model|thinking)\s*$/.test((view.drafts[draftKey(w)] || '').trim())) return;
   if (['sign-in', 'sign-out', 'confirm-switch-core', 'confirm-reset-browser-access'].includes(action)) kind = 'identity';
   else if (['create-work', 'start-work', 'confirm-stop', 'confirm-delete'].includes(action)) kind = 'lifecycle';
   else if (['save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'upload-input'].includes(action)) kind = 'files';
@@ -319,13 +320,24 @@ function openModal(name: string, data: Record<string, string> = {}) {
 }
 function closeModal() {
   modalChoice++;
-  if (['chat-models','chat-thinking'].includes(view.modal) && pendingWebCommand && ['model','thinking'].includes(pendingWebCommand.kind) && !pendingWebCommand.pair) pendingWebCommand=undefined;
+  const responseSettings = view.modal === 'chat-response-settings';
+  const responseContext = responseSettings && chatSettingsContextCurrent();
+  const source = view.data.source;
+  const caret = [Number(view.data.caretStart), Number(view.data.caretEnd)];
+  if (responseSettings && pendingWebCommand && ['model','thinking'].includes(pendingWebCommand.kind) && !pendingWebCommand.pair) pendingWebCommand=undefined;
   if (view.modal === 'export') adapter.stopDownloadObservers();
   if (view.modal === "import") void adapter.abandonInspection();
   view.modal = "";
   view.modalError = "";
   render();
-  lastFocus?.focus();
+  if (responseSettings) {
+    focusReturn = '';
+    if (responseContext) {
+      const target = root.querySelector<HTMLTextAreaElement>(source === 'command' ? '#composer' : '#response-settings-trigger');
+      target?.focus({ preventScroll: true });
+      if (source === 'command' && target) target.setSelectionRange(caret[0], caret[1]);
+    }
+  } else lastFocus?.focus();
 }
 const phase = (op: Operation) => `<div class="phase-track" role="status"><div><span>${op.state === "succeeded" ? icon("check", 14) : icon("clock", 14)}</span>Current phase: ${esc(op.phase || op.state)}</div></div>`;
 function scenarioBar() { return ""; }
@@ -415,18 +427,13 @@ function agent(w: Work, focus: boolean) {
   const draft = view.drafts[draftKey(w, session?.id || "")] || "";
   adapter.activateChat(w.id,session?.id || "");
   const modelReady=adapter.modelReady(w.id,session?.id || "");
+  const agentError=w.resourceErrors?.agent!==adapter.models.get(w.id)?.error?w.resourceErrors?.agent:'';
   const webDraft=!view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
-  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout==="chat-only" && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}${session?.runs?.length ? `<details class="run-history"><summary>Run history · actual models and sources</summary>${session.runs.map(r=>`<p><code>${esc(r.id)}</code> · ${esc(modelDisplayName(r.actualModel))} · ${esc(r.source?.kind === "service" ? `Service: ${r.source.serviceName || "automatic"}` : "Chat")} · Thinking ${esc(r.thinkingLevel || "off")} · ${esc(r.status)}</p>`).join("")}</details>` : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${w.resourceErrors?.agent ? feedback(esc(w.resourceErrors.agent), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(modelDisplayName(run.actualModel))} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer"><textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${commandPalette(w,draft)}${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${!webDraft && (active || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
+  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout==="chat-only" && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}${session?.runs?.length ? `<details class="run-history"><summary>Run history · actual models and sources</summary>${session.runs.map(r=>`<p><code>${esc(r.id)}</code> · ${esc(modelDisplayName(r.actualModel))} · ${esc(r.source?.kind === "service" ? `Service: ${r.source.serviceName || "automatic"}` : "Chat")} · Thinking ${esc(r.thinkingLevel || "off")} · ${esc(r.status)}</p>`).join("")}</details>` : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(modelDisplayName(run.actualModel))} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer"><textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}<div class="composer-actions">${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${!webDraft && (active || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
 }
 function modelComposer(w:Work,sessionId:string) {
- const catalog=adapter.models.get(w.id),state=adapter.modelSelection(w.id,sessionId),session=w.sessions.find(s=>s.id===sessionId);
- const model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
- const disabled=state.phase==='unknown' || !catalog?.confirmed || !!catalog?.error;
- const levels=model?.thinkingLevels;
- const canThink=adapter.chatCapabilities.get(w.id)===1 && !!levels?.length;
- const thinkingDisabled=disabled || !canThink || levels?.length===1 && levels[0]===state.thinking;
- const name=model ? modelDisplayName(model) : state.ref===null?'Work default':modelDisplayName(session?.modelPreference);
- return `<div class="chat-options">${btn(`<small>Model</small><span>${esc(name)}</span>${icon('down',12)}`,'open-chat-models','quiet chat-picker',`id="model-select" value="${esc(state.ref || '')}" title="${esc(name)}${state.ref===null?' · Work default':''}" aria-label="Model for next message" aria-haspopup="dialog" ${disabled?'disabled':''}`)}${btn(`<small>Thinking</small><span>${esc(canThink?thinkingName(state.thinking):'Unavailable')}</span>${icon('down',12)}`,'open-chat-thinking','quiet chat-picker',`id="thinking-select" value="${esc(state.thinking)}" aria-label="Thinking for next message" aria-haspopup="dialog" ${thinkingDisabled?'disabled':''}`)}</div>`;
+ const {name,thinking,state}=chatSettings(w,sessionId);
+ return btn(`<span class="response-model-name">${esc(name)}</span><span class="response-thinking">· ${esc(thinking)}</span>${icon('down',12)}`,'open-chat-settings','quiet response-settings-trigger',`id="response-settings-trigger" title="${esc(name)}${state.ref===null?' · Work default':''} · Thinking ${esc(thinking)}" aria-label="Response settings: ${esc(name)}; Thinking ${esc(thinking)}. For your next message${sessionId?'':'. For new session'}" aria-haspopup="dialog"`);
 }
 function sessionDisplayName(w: Work, session?: Work['sessions'][number]): string {
   if (!session) return 'No Session yet';
@@ -437,21 +444,55 @@ function modelDisplayName(model?: { label?:string;model?:string } | null): strin
   return /^Runtime(?: model)? revision\b/i.test(model.label || '') ? model.model || 'Work model' : model.label || model.model || 'Work model';
 }
 function thinkingName(level:string):string { return level ? level[0]!.toUpperCase()+level.slice(1) : 'Unavailable'; }
-function modelFeedback(w: Work, sessionId: string) {
+function chatSettings(w: Work, sessionId: string) {
   const catalog=adapter.models.get(w.id),state=adapter.modelSelection(w.id,sessionId),session=w.sessions.find(s=>s.id===sessionId);
   const model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
-  const status=state.phase==='saving'?'Saving…':state.error || (session?.modelPreference?.availability==='unavailable'?'Saved settings unavailable':catalog?.loading?'Loading models…':catalog?.error || (adapter.chatCapabilities.get(w.id)===0?'Thinking unavailable in this Work':catalog?.confirmed && !model?.thinkingLevels?.length?'Thinking capabilities are unconfirmed':model?.thinkingLevels?.length===1 && model.thinkingLevels[0]==='off'?'Thinking is not supported by this model':!sessionId?'For new session':''));
-  return `<div class="options-status" role="status">${esc(status)}${state.phase==='unknown'?btn('Check chat settings','check-session-model','text-button'):catalog?.error || !catalog?.confirmed?btn('Retry models','load-models','text-button'):state.phase==='dirty' && sessionId?btn('Retry settings','save-model','text-button'):''}</div>`;
+  const name=model?modelDisplayName(model):session?.modelPreference?.modelRef===state.ref?modelDisplayName(session.modelPreference):state.ref===null?'Work default':'Unavailable model';
+  const capability=adapter.chatCapabilities.get(w.id),levels=model?.thinkingLevels;
+  const canThink=capability===1 && !!levels?.length;
+  const thinking=capability===0?'Unavailable':canThink?thinkingName(state.thinking):'Unconfirmed';
+  const editable=state.phase!=='unknown' && !!catalog?.confirmed && !catalog.error;
+  const thinkingEditable=editable && canThink && !(levels?.length===1 && levels[0]===state.thinking);
+  const status:string[]=[];
+  if(state.phase==='saving') status.push('Saving…');
+  else if(state.phase==='unknown') status.push('Unconfirmed.');
+  else if(state.phase==='dirty' && sessionId) status.push('Not saved.');
+  if(state.error && state.phase!=='clean') status.push(state.error);
+  if(catalog?.loading) status.push('Loading models…');
+  if(catalog?.error) status.push(`Models are unconfirmed. ${catalog.error}`);
+  else if(!catalog?.confirmed && !catalog?.loading) status.push('Models are unconfirmed.');
+  if(!catalog?.confirmed || catalog.error) status.push('Displayed values are last known settings.');
+  else if(!model || session?.modelPreference?.availability==='unavailable') status.push('Saved settings unavailable. Choose an available model.');
+  if(capability===0) status.push('Thinking unavailable in this Work.');
+  else if(catalog?.confirmed && !catalog.error && !canThink) status.push('Thinking capabilities are unconfirmed.');
+  else if(levels?.length===1 && levels[0]==='off') status.push('Thinking is not supported by this model.');
+  if(!sessionId) status.push('For new session.');
+  const recovery=state.phase==='unknown'?{label:'Check chat settings',action:'check-session-model'}:!catalog?.loading && (catalog?.error || !catalog?.confirmed)?{label:'Retry models',action:'load-models'}:state.phase==='dirty' && sessionId?{label:'Retry settings',action:'save-model'}:undefined;
+  return {catalog,state,model,name,thinking,editable,thinkingEditable,status:status.join(' '),recovery};
 }
-function openChatPicker(kind:'model'|'thinking') {
+function modelFeedback(w: Work, sessionId: string, inPanel=false) {
+  const {status,recovery}=chatSettings(w,sessionId);
+  const live=inPanel || view.modal!=='chat-response-settings';
+  return `<div class="options-status" ${inPanel?'id="response-settings-status"':''} ${live?'role="status"':''}>${esc(status)}${recovery?btn(recovery.label,recovery.action,'text-button'):''}</div>`;
+}
+function chatSettingsContextCurrent() {
+  const r=route();
+  return view.modal==='chat-response-settings' && view.data.epoch===String(adapter.identityEpoch) && r[0]==='work' && r[1]===view.data.workId && view.session===view.data.sessionId && view.tab===view.data.tab && view.layout!=='service-only';
+}
+function focusChatSettings(kind?:string) {
+  const dialog=root.querySelector<HTMLDialogElement>('#modal'); if(!dialog) return;
+  const row=dialog.querySelector<HTMLButtonElement>(kind==='thinking'?'#thinking-select':'#model-select');
+  const option=view.data.expanded?(dialog.querySelector<HTMLElement>('[role=menuitemradio][aria-checked=true]:not([disabled])') || dialog.querySelector<HTMLElement>('[role=menuitemradio]:not([disabled])')):null;
+  const recovery=dialog.querySelector<HTMLElement>('.options-status .button:not([disabled]),.modal-footer .button');
+  (option || (row && !row.disabled?row:recovery))?.focus({preventScroll:true});
+}
+function openChatPicker(kind?:'model'|'thinking') {
   const work=current(); if(!work) return;
-  const trigger=root.querySelector<HTMLButtonElement>(kind==='model'?'#model-select':'#thinking-select');
-  if (!trigger || trigger.disabled) throw new Error('Chat settings are unavailable. Check their status before choosing.');
+  const composer=root.querySelector<HTMLTextAreaElement>('#composer');
   view.commandDismissed=view.drafts[draftKey(work)] || '';
-  trigger.focus({preventScroll:true});
-  focusReturn=focusKey(trigger);
-  openModal(kind==='model'?'chat-models':'chat-thinking',{workId:work.id,sessionId:view.session});
-  root.querySelector<HTMLElement>('#modal [aria-checked=true],#modal [role=menuitemradio]')?.focus();
+  focusReturn=kind?'#composer':'#response-settings-trigger';
+  openModal('chat-response-settings',{workId:work.id,sessionId:view.session,epoch:String(adapter.identityEpoch),tab:view.tab,source:kind?'command':'summary',expanded:kind || '',caretStart:String(composer?.selectionStart ?? 0),caretEnd:String(composer?.selectionEnd ?? 0)});
+  focusChatSettings(kind);
 }
 function confirmPendingChatCommand() {
   const command=pendingWebCommand;
@@ -626,16 +667,16 @@ function modalMarkup() {
   const cancel = () => btn("Cancel", "close-modal");
   const close = () => btn("Close", "close-modal");
   switch (view.modal) {
-    case 'chat-models':
-    case 'chat-thinking': {
+    case 'chat-response-settings': {
       if(!target) break;
-      const catalog=adapter.models.get(target.id),state=adapter.modelSelection(target.id,view.data.sessionId || '');
-      const thinking=view.modal==='chat-thinking',model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
-      title=thinking?'Thinking':'Model';
-      const options=thinking?(model?.thinkingLevels || []).map(level=>({value:level,name:thinkingName(level),note:'',selected:level===state.thinking})):
-        [...(catalog?.defaultModel?[catalog.defaultModel]:[]),...(catalog?.models || []).filter(m=>m.modelRef!==null)].map(m=>({value:m.modelRef || '',name:modelDisplayName(m),note:m.modelRef===null?'Work default':'',selected:m.modelRef===state.ref}));
-      body=`<p class="muted">For your next message${view.data.sessionId?'':' in a new Session'}.</p><div class="menu-list chat-picker-menu" role="menu" aria-label="${thinking?'Thinking levels':'Models'}">${options.map(option=>btn(`<span>${esc(option.name)}</span>${option.note?`<small>${esc(option.note)}</small>`:''}${option.selected?icon('check',16):''}`,'choose-chat-setting','',`role="menuitemradio" aria-checked="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${thinking?'thinking':'model'}"`)).join('')}</div>${state.error?feedback(esc(state.error),'warning'):''}`;
-      footer=cancel();
+      const {catalog,state,model,name,thinking,editable,thinkingEditable}=chatSettings(target,view.data.sessionId || '');
+      const expanded=view.data.expanded,levels=expanded==='thinking';
+      title='Response settings';
+      const options=!editable || levels && !thinkingEditable?[]:levels?(model?.thinkingLevels || []).map(level=>({value:level,name:thinkingName(level),note:'',selected:level===state.thinking})):
+        [...(catalog?.defaultModel?[catalog.defaultModel]:[]),...(catalog?.models || []).filter(m=>m.modelRef!==null)].map(m=>({value:m.modelRef || '',name:modelDisplayName(m),note:m.modelRef===null?'Use Work default':'',selected:m.modelRef===state.ref}));
+      const row=(kind:string,label:string,value:string,enabled:boolean,note='')=>btn(`<span class="response-setting-label">${label}</span><span class="response-setting-value">${esc(value)}${note?`<small>${note}</small>`:''}</span>${icon('down',14)}`,'toggle-chat-setting','quiet response-setting-row',`id="${kind}-select" data-kind="${kind}" value="${esc(kind==='model'?state.ref || '':state.thinking)}" aria-label="${label}: ${esc(value)}" aria-expanded="${expanded===kind}" aria-controls="response-${kind}-options" aria-describedby="response-settings-status" ${enabled?'':'disabled'}`);
+      body=`<p class="muted response-settings-subtitle">For your next message${view.data.sessionId?'': ' · For new session'}</p><div class="response-setting-group">${row('model','Model',name,editable,state.ref===null?'Work default':'')}${row('thinking','Thinking',thinking,thinkingEditable)}</div>${modelFeedback(target,view.data.sessionId || '',true)}${expanded && options.length?`<div class="response-setting-options"><p class="muted">${levels?'Thinking':'Model'}</p><div id="response-${expanded}-options" class="menu-list chat-picker-menu" role="menu" aria-label="${levels?'Thinking levels':'Models'}">${options.map(option=>btn(`<span>${esc(option.name)}${option.note?`<small>${esc(option.note)}</small>`:''}</span>${option.selected?icon('check',16):''}`,'choose-chat-setting','',`role="menuitemradio" aria-checked="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${expanded}"`)).join('')}</div></div>`:''}`;
+      footer=close();
       break;
     }
     case 'chat-input-options':
@@ -925,7 +966,7 @@ function modalMarkup() {
       break;
     }
   }
-  return `<dialog id="modal" aria-labelledby="modal-title" class="modal ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head"><h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", 'aria-label="Close dialog"')}</div><div class="modal-body">${view.modalError ? feedback(esc(view.modalError), "warning") : ""}${body}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
+  return `<dialog id="modal" aria-labelledby="modal-title" class="modal ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head"><h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", 'aria-label="Close dialog"')}</div><div class="modal-body">${view.modalError ? feedback(esc(view.modalError), "warning") : ""}${body}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
 function serviceDetails(s: Service, w: Work) {
   return `<dl><dt>Domain</dt><dd><code>${esc(s.domain)}</code></dd><dt>Declared Web ports</dt><dd>${s.ports.length ? s.ports.join(", ") : "No Web ports declared"}</dd><dt>Enabled</dt><dd>${s.enabled ? "Yes" : "No · persists across Work restarts"}</dd><dt>Observed</dt><dd>${badge(s.observed)}</dd>${s.operationId ? `<dt>Operation</dt><dd><button class="inline-link" data-action="operation" data-id="${s.operationId}">${s.operationId}</button></dd>` : ""}</dl>${s.error ? feedback(esc(s.error), "warning") : ""}<div class="service-controls">${btn("Start", "service-action", "small", `data-control="start" data-id="${s.id}" ${!adapter.project(w).usable || s.observed === "Ready" ? "disabled" : ""}`)}${btn("Stop", "service-action", "small", `data-control="stop" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled ? "disabled" : ""}`)}${btn("Restart", "service-action", "small", `data-control="restart" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn("Retry", "service-action", "small", `data-control="retry" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}${btn("Remove", "service-action", "small danger", `data-control="remove" data-id="${s.id}" ${!adapter.project(w).usable ? "disabled" : ""}`)}</div><div class="logs-heading"><h3>Log snapshot</h3>${btn(`${icon("refresh", 14)} Refresh logs`, "refresh-logs", "small")}</div><pre class="logs">${esc(adapter.logs.get(s.id)?.text ?? adapter.logs.get(s.id)?.reason ?? "Logs have not been retrieved.")}</pre><p class="muted small-text">${esc(adapter.logs.get(s.id)?.status ?? "Not retrieved")} · Collected ${esc(adapter.logs.get(s.id)?.collectedAt ?? "Not provided")} · ${adapter.logs.get(s.id)?.truncated ? "Output truncated" : "Bounded snapshot"}. This is not a live stream.</p>`;
@@ -1031,16 +1072,28 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case 'save-default-core': await adapter.savePreferences(view.coreAddress || adapter.state.core.address); break;
     case 'clear-default-core': await adapter.savePreferences(null); break;
     case 'read-default-core': await adapter.loadPreferences(); break;
-    case 'open-chat-models':openChatPicker('model');break;
-    case 'open-chat-thinking':openChatPicker('thinking');break;
+    case 'open-chat-settings':openChatPicker();break;
+    case 'toggle-chat-setting': {
+      if(!chatSettingsContextCurrent()) break;
+      const kind=el.dataset.kind!;
+      view.data.expanded=view.data.expanded===kind?'':kind;
+      render();focusChatSettings(kind);break;
+    }
     case 'chat-input-options':openModal('chat-input-options');break;
     case 'choose-chat-setting': {
-      if(!currentWork || view.data.workId!==currentWork.id || view.data.sessionId!==view.session) break;
+      if(!currentWork || !chatSettingsContextCurrent()) break;
       const kind=el.dataset.kind;
-      if(kind==='model') adapter.selectModel(currentWork.id,view.session,el.dataset.optionValue || null);
-      else adapter.selectThinking(currentWork.id,view.session,el.dataset.optionValue!);
+      const {state,catalog,editable,thinkingEditable}=chatSettings(currentWork,view.session);
+      if(!editable || kind==='thinking' && !thinkingEditable) break;
+      view.data.expanded='';
+      if(kind==='model') {
+        const ref=el.dataset.optionValue || null,model=ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===ref);
+        if(!model) break;
+        const thinking=model.thinkingLevels && !model.thinkingLevels.includes(state.thinking)?model.defaultThinkingLevel ?? 'off':state.thinking;
+        if(ref!==state.ref || thinking!==state.thinking) adapter.selectModel(currentWork.id,view.session,ref);
+      } else if(el.dataset.optionValue!==state.thinking) adapter.selectThinking(currentWork.id,view.session,el.dataset.optionValue!);
       if(pendingWebCommand && pendingWebCommand.kind===kind){const state=adapter.modelSelection(currentWork.id,view.session);Object.assign(pendingWebCommand,{workId:currentWork.id,sessionId:view.session,pair:{ref:state.ref,thinking:state.thinking}});}
-      closeModal();confirmPendingChatCommand();break;
+      confirmPendingChatCommand();render();focusChatSettings(kind);break;
     }
     case 'service-focus':enterWorkspaceFocus(route()[0] === 'app' ? 'service-only' : 'service-chat', el);break;
     case 'focus-toggle-chat':if(view.layout === 'service-chat' || view.layout === 'service-only'){view.layout=view.layout==='service-chat'?'service-only':'service-chat';render();if(view.layout==='service-chat')root.querySelector<HTMLTextAreaElement>('#composer')?.focus();else restoreLayoutFocus();}break;
@@ -1053,7 +1106,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case 'check-chat-submission':if(currentWork){const result=await stay(adapter.recoverChatSubmission(currentWork.id));if(result){if(result.kind==='session'){const original=view.drafts[draftKey(currentWork)] || '';view.session=result.session.sessionId;if(original && !view.drafts[draftKey(currentWork)])view.drafts[draftKey(currentWork)]=original;}for(const old of actions.records.values())if(old.blocked && old.work===currentWork.id && old.kind==='agent' && (result.kind==='session'?old.action==='new-session'||old.action==='send-message':old.action==='send-message'))actions.review(old);}render();}break;
 
     case "close-modal": {
-      const key = focusReturn;
+      const key = view.modal==='chat-response-settings'?'':focusReturn;
       closeModal();
       if (key) root.querySelector<HTMLElement>(key)?.focus();
       break;
@@ -1296,7 +1349,12 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "retry-pi-request":
       if(currentWork){const result=await stay(adapter.retryRequest(currentWork.id,view.data.requestId));openModal('pi-request-detail',{requestId:result.requestId});await stay(adapter.loadRequest(currentWork.id,result.requestId));}break;
     case "load-models":
-      if(currentWork) await stay(adapter.loadModels(currentWork.id));break;
+      if(currentWork) {
+        const error=adapter.models.get(currentWork.id)?.error;
+        await stay(adapter.loadModels(currentWork.id).then(() => {
+          if(adapter.getWork(currentWork.id)===currentWork && error && currentWork.resourceErrors?.agent===error) delete currentWork.resourceErrors.agent;
+        }));
+      }break;
     case "save-model":
       if(currentWork && view.session) await stay(adapter.saveModel(currentWork.id,view.session));break;
     case "check-session-model":
@@ -1880,6 +1938,10 @@ function render() {
       ? workPage(w)
       : [...actions.records.values()].some(record => record.work === r[1] && record.pending) ? `${topbar()}<main>${empty('grid', 'Loading Work', esc(r[1]), btn('Back to Works', 'back-works'))}</main>` : `${topbar()}${empty("grid", workReadErrors.get(r[1])?.missing ? "Work not found" : "Work unavailable", esc(workReadErrors.get(r[1])?.message || "Read this Work again to confirm its current availability."), btn("Retry", "retry-work-read", "primary") + btn("Back to Works", "back-works"))}`;
   } else html = works();
+  if(view.modal==='chat-response-settings' && (!chatSettingsContextCurrent() || !html.includes('id="composer"'))) {
+    if(pendingWebCommand && !pendingWebCommand.pair && ['model','thinking'].includes(pendingWebCommand.kind)) pendingWebCommand=undefined;
+    view.modal='';view.modalError='';focusReturn='';lastFocus=null;modalChoice++;
+  }
   // Ephemeral status nodes must not displace existing iframe ancestors during reconciliation.
   root.querySelectorAll('[data-action-status]').forEach(node => node.remove());
   reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal && adapter.state.browserAccess === "authorized" ? modalMarkup() : ""}<input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
@@ -1890,7 +1952,7 @@ function render() {
     if (!dialog.open) dialog.showModal();
     if (!dialog.dataset.bound) { dialog.dataset.bound = "true"; dialog.addEventListener("cancel", (e) => {
       e.preventDefault();
-      const key = focusReturn;
+      const key = view.modal==='chat-response-settings'?'':focusReturn;
       closeModal();
       if (key) root.querySelector<HTMLElement>(key)?.focus();
     });
@@ -1899,8 +1961,8 @@ function render() {
     if (body) body.scrollTop = modalScroll;
   }
   if (activeKey) {
-    const replacement = root.querySelector<HTMLInputElement>(activeKey);
-    if (replacement && replacement !== active && (!dialog || dialog.contains(replacement))) {
+    const replacement = active?.isConnected ? active : root.querySelector<HTMLInputElement>(activeKey);
+    if (replacement && replacement !== document.activeElement && (!dialog || dialog.contains(replacement))) {
       replacement.focus({ preventScroll: true });
       if (
         selection !== null &&
@@ -1912,6 +1974,7 @@ function render() {
         } catch {}
     }
   }
+  if(dialog && view.modal==='chat-response-settings' && (!dialog.contains(document.activeElement) || (document.activeElement as HTMLButtonElement)?.disabled)) focusChatSettings(view.data.expanded || active?.dataset.kind);
   const next = root.querySelector<HTMLElement>("#messages");
   if (next) {
     const position = chatReading.get(next.dataset.readingKey || '');
@@ -2182,8 +2245,8 @@ root.addEventListener("compositionend", () => {
 root.addEventListener("keydown", (e) => {
   const dialog = root.querySelector<HTMLDialogElement>("#modal");
   if (e.isComposing || composition) { if(e.key==='Enter')e.preventDefault();return; }
-  if(dialog?.open && e.key==='Escape') {e.preventDefault();e.stopPropagation();const key=focusReturn;closeModal();if(key)root.querySelector<HTMLElement>(key)?.focus();return;}
-  if(dialog?.open && ['chat-models','chat-thinking'].includes(view.modal) && ['ArrowDown','ArrowUp','Home','End'].includes(e.key)) {
+  if(dialog?.open && e.key==='Escape') {e.preventDefault();e.stopPropagation();const key=view.modal==='chat-response-settings'?'':focusReturn;closeModal();if(key)root.querySelector<HTMLElement>(key)?.focus();return;}
+  if(dialog?.open && view.modal==='chat-response-settings' && (e.target as HTMLElement).getAttribute('role')==='menuitemradio' && ['ArrowDown','ArrowUp','Home','End'].includes(e.key)) {
     const options=[...dialog.querySelectorAll<HTMLElement>('[role=menuitemradio]:not([disabled])')];
     if(options.length){e.preventDefault();const index=options.indexOf(document.activeElement as HTMLElement);options[e.key==='Home'?0:e.key==='End'?options.length-1:(index+(e.key==='ArrowDown'?1:-1)+options.length)%options.length]?.focus();}return;
   }
