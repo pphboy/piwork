@@ -1,3 +1,5 @@
+<img src="docs/images/piwork-logo.png" alt="Piwork logo" width="160" height="160">
+
 # Piwork
 
 **English** | [简体中文](README.zh-CN.md)
