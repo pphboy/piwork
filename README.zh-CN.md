@@ -20,9 +20,40 @@ Piwork 是一个以 Work 为单位，整合 AI 对话、工作文件和容器服
 
 ## Demo GIF / Video
 
+![Piwork Desktop](docs/images/desktop-preview.png)
+
+Desktop 聊天界面的预览截图，来自界面验证 fixture。
+
 ## Quick Start
 
+### 推荐：使用 Docker 试用
+
+下载 [0.0.1 Preview](https://github.com/pphboy/piwork/releases/tag/v0.0.1) 的双 Docker 安装包。你启动 Core、CLI 两个入口；Core 自动准备 Agent 和 helper，并管理 Work 运行容器。
+
+Core 运行于 Linux。CLI 容器可运行于 Linux 或 Windows Docker Desktop 的 Linux 容器；要求 `linux/amd64`、Docker Engine 28+、Compose 2.24+。Windows 客户端连接可达的 Linux Core。
+
+Linux：在新的目录下载、校验并解压安装包：
+
+```sh
+(
+    set -eu
+    mkdir piwork-preview-0.0.1
+    cd piwork-preview-0.0.1
+    PIWORK_RELEASE_URL=https://github.com/pphboy/piwork/releases/download/v0.0.1
+    curl --fail --location --output piwork-docker-0.0.1.tar.gz "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz"
+    curl --fail --location --output piwork-docker-0.0.1.tar.gz.sha256 "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz.sha256"
+    sha256sum --check piwork-docker-0.0.1.tar.gz.sha256
+    tar -xzf piwork-docker-0.0.1.tar.gz
+    cd piwork-docker
+    sha256sum --check SHA256SUMS
+) && cd piwork-preview-0.0.1/piwork-docker
+```
+
+接着按 [Docker 安装手册](deploy/docker/README.zh-CN.md#6-完整操作命令) 填写管理员与模型配置，启动 Core 和 CLI，再执行 `desktop open --no-open`。将输出链接粘贴到同机浏览器，在 Desktop 中输入 Core URL、账号和密码登录，然后创建并启动 Work。手册也提供完整的 Windows PowerShell 下载与启动命令。
+
 ### 连接已有 Core
+
+原生客户端继续提供：[Linux Core / Console / CLI 包](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-linux-amd64-0.0.1.tar.gz)、[Windows CLI 实验性包](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-cli-windows-amd64-0.0.1.zip)。先核对发行页的 SHA256，再解压；Linux CLI 位于 `bin/`。
 
 取得适合本机平台的 CLI 可执行文件，并确认 Core 已配置管理员、模型和运行时。在可执行文件所在目录启动 Desktop。
 
@@ -91,6 +122,7 @@ Core 负责资源管理与控制，Harness 执行模型和工具，Service 提�
 
 ## Current Status / Limitations
 
+- **0.0.1 Preview**：用于试用与反馈。Windows 原生 CLI 为实验性附件，尚未完成全部正式验收。
 - **Core**：当前为单机 Linux 部署，使用本机 Docker Engine Unix socket。
 - **客户端**：原生 CLI 面向 Windows 和 Linux，提供命令行与 Desktop；Windows 原生正式验收的未完成项见 [CLI 平台交付](docs/cli-platforms.md)。
 - **Docker 交付**：当前验收范围为 `linux/amd64`、Linux Core，以及 Linux / Windows Docker Desktop 的 Linux CLI 容器；要求 Docker Engine 28+、Compose 2.24+。详情见 [交付验收](docs/docker-delivery-acceptance.md)。

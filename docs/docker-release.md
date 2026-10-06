@@ -2,7 +2,7 @@
 
 Docker 发行使用 `scripts/build-docker-release.mjs`，原生链继续使用 `make build-go`、`npm run build:cli`、原有 Go/CLI 打包工具。用户只拿到 `piwork-docker` 发行包，安装步骤见 `deploy/docker/README.zh-CN.md`，不运行此维护者工具。
 
-本次验证后的修复只统一 Core 关闭规范、修正安装/校验命令和刷新本机候选材料。下文构建与手动发布说明保留供维护者另行使用，不由本次 apply 自动执行；本次不重新构建/push、不上传包、不创建 Release、不配置托管站点，也不索取发布地址或凭证。实际对外发行不是修复完成条件。
+维护者在明确授权的发行任务中手动构建、推送镜像、打包和创建 GitHub Release。构建与打包工具本身不自动 push 或上传。本次发行目标为 `0.0.1 Preview`，镜像前缀为 `docker.io/pphboy`；历史 `0.1.0` 候选验收记录保持原样，不能作为新产物的通过收据。
 
 ## 输入和构建
 
@@ -16,10 +16,8 @@ go version
 docker version
 docker compose version
 npm ci
-make build-go
-npm run build:cli
-read -r -p '实际发行 registry/namespace：' PIWORK_RELEASE_REGISTRY
-export PIWORK_RELEASE_REGISTRY
+PIWORK_BUILD_VERSION=0.0.1 make build
+export PIWORK_RELEASE_REGISTRY=docker.io/pphboy
 node scripts/build-docker-release.mjs build
 ```
 
@@ -47,9 +45,9 @@ manifestVersion=1 记录实际镜像 reference/digest/imageId/platform/protocolL
 
 ## 本机候选材料更新与安装校验
 
-此前已授权的镜像发布使用 `docker.io/pphboy`。本次修复使用已有可读取的镜像刷新本机候选包及 `.sha256` 文件；维护者构建/打包工具没有自动上传或创建 Release 的步骤。
+保存旧候选包与证据，再以本次版本和干净提交重新构建镜像及发行材料。维护者构建/打包工具没有自动上传或创建 Release 的步骤。
 
-用户手册 6.1 提供 Bash/PowerShell 的完整已有本地包入口，输入本地路径及可信 SHA256 后先比较压缩包 hash，成功才解压并核对内部 SHA256SUMS。已有实际包与校验文件 URL 的用户可选择下载入口，无需在本次修复中建立公共站点。取得安装材料不代表镜像离线可用，镜像仍按既有 Docker 拉取条件取得。
+用户手册 6.1 提供 Bash/PowerShell 的完整已有本地包入口，输入本地路径及可信 SHA256 后先比较压缩包 hash，成功才解压并核对内部 SHA256SUMS。Preview 的下载入口指向 GitHub Release。取得安装材料不代表镜像离线可用，镜像仍按既有 Docker 拉取条件取得。
 
 只有文档变化且源码输入未变时，使用已验证的镜像重新执行 package，不必重新构建或推送同一批镜像；若工具报告源码输入已变，必须先按既有 build 流程重新构建，不能改 build.json 绕过检查。重新打包前将之前的候选包、checksum 和 D09 收据保留在以旧压缩包 SHA256 标识的历史目录，新包用新的 checksum 核对，不能沿用旧收据宣称新包通过。
 
@@ -63,9 +61,11 @@ PIWORK_DOCKER_ARCHIVE_NAME=$(node --input-type=module -e 'import { readFileSync 
 (cd dist/docker && sha256sum --check "$PIWORK_DOCKER_ARCHIVE_NAME.sha256")
 ```
 
-上述 package 只读取既有镜像 manifest/pull 并生成本机文件，不执行 push、包上传或创建 Release。本次不增加上传工具或发行流程。未来维护者若另行决定对外发行，再提供实际分发信息；本机检查不被描述为公共下载站点已经通过验收。
+上述 package 只读取镜像 manifest/pull 并生成本机文件，不执行 push、包上传或创建 Release。对外发布由维护者显式执行；本地构建通过不能代替公开下载与镜像可读性检查。
 
-Core 正常关闭成功前必须确认本安装全部受管 Work 的 Agent/Service 已停，并收尾受管任务；某 Work 失败仍尝试其他 Work。保留数据、历史、desiredState 和 Service 启用意图，重启恢复原期望 running 的 Work。无法确认关闭或预算耗尽按既有非零退出及未完成诊断处理；SIGKILL/崩溃/断电不能作为关闭成功证据。CLI 退出不停止 Work；这次文档补充沿用现有关闭实现。
+对外附件使用 `piwork-docker-0.0.1.tar.gz` 固定名称：复制同提交的工具生成包后，针对该公开文件名重新生成 `.sha256`。二进制 Preview 包附带 LICENSE、使用说明、构建元数据和校验文件；Windows 原生 CLI 为实验性附件，保留正式打包的完整原生验收门禁。所有附件与镜像必须对应同一个干净提交。
+
+Core 正常关闭成功前必须确认本安装全部受管 Work 的 Agent/Service 已停，并收尾受管任务；某 Work 失败仍尝试其他 Work。保留数据、历史、desiredState 和 Service 启用意图，重启恢复原期望 running 的 Work。无法确认关闭或预算耗尽按既有非零退出及未完成诊断处理；SIGKILL/崩溃/断电不能作为关闭成功证据。CLI 退出不停止 Work。
 
 ## 发布验收
 
@@ -73,4 +73,4 @@ Core 正常关闭成功前必须确认本安装全部受管 Work 的 Agent/Servi
 
 与原生链同时核对 `make build-go`、`npm run build:cli` 及原有 `scripts/package-go-release.sh` / `scripts/package-cli-release.go` 的产物。Docker 通过不代表另一变更中原生 Windows 未完成项通过。发布页面列出实际 OS/Engine/Compose/浏览器版本、支持范围、包 checksum、镜像 digest 和当前验收结果。
 
-2026-10-06 验证后的修复复核只记录本机包 hash、内部清单/manifest/release.env 一致性、Bash/PowerShell 静态审阅，以及受控本机 fixture 的 Bash 安装成功和失败终止结果。既有 Core 关闭/恢复与 Linux/Windows 实机使用证据用于未变行为，不新增公共下载入口验收或独立 headless Docker 端到端门禁，不以静态审阅冒充新的 Windows 实机结果。
+历史修复结果见既有验收记录；Preview 使用本次候选重新记录实际执行结果和环境。原生 Windows 的验收缺项必须在 Release 中明示。发布前先创建草稿并核对附件，再设为 prerelease；发布后验证公开下载和校验链。

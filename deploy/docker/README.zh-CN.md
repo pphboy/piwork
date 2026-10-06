@@ -1,5 +1,7 @@
 # Piwork Docker 安装与使用
 
+[English](README.md) | **简体中文**
+
 用户安装 Core 和 CLI 两个入口镜像；Agent、Service 和 helper 的容器、镜像、网络与卷由 Core 自动管理。原生 CLI 仍通过原来的发行包直接安装。
 
 ## 1. 平台和发行文件
@@ -8,7 +10,7 @@
 
 发行包包含 release.env、release-manifest.json、SHA256SUMS、三份 Compose、两个 env 示例和本手册。release.env 的镜像引用已经固定为实际发行 digest，无需用户查找 Agent/helper。确认发行页的平台和验收结果后按第 6 节操作。
 
-当前本机候选版为 `0.1.0`，此前已授权发布的镜像位于 `docker.io/pphboy`。本次修复只补齐安装/校验命令及 Core 关闭说明，不执行对外发行，也不以公共下载地址作为修复完成条件。已经取得压缩包及对应可信 SHA256 的用户可直接从 6.1 的本地包入口安装；已有实际下载地址时可选择下载入口。只取得安装材料不代表镜像离线可用，后续拉取仍需网络及 registry 可读。
+`0.0.1 Preview` 的发行入口为 [GitHub Release](https://github.com/pphboy/piwork/releases/tag/v0.0.1)，镜像位于 `docker.io/pphboy`。发行包名为 `piwork-docker-0.0.1.tar.gz`，校验文件为同名 `.sha256`；第 6 节提供完整安装命令。已取得本地包的用户可以选择本地包入口。安装包不包含离线镜像，后续拉取需要网络及 registry 可读。
 
 ## 2. 初始化和后台准备
 
@@ -81,13 +83,13 @@ flowchart LR
 
 ## 6. 完整操作命令
 
-命令按执行机器标注。大写 ID、source、下载 URL 等占位符须从实际查询或发行页取得；可选操作各自选择，不按整张命令表一次性执行。
+命令按执行机器标注。大写 ID、source 等占位符须从实际查询取得；可选操作各自选择，不按整张命令表一次性执行。
 
 #### 6.1 获取发行包与前置检查
 
-按手中材料选择已有本地包或可选下载入口。每次使用新的安装目录；不要在已有 `piwork-docker` 目录上解压或覆盖本机 env。已有本地包时直接输入交付者提供的可信预期 SHA256，不需要下载地址。可选下载入口仅在用户已有实际包 URL 和对应 `.sha256` 文件 URL 时使用，不能填示例地址，也不要求维护者在本次修复中建立或发布下载入口。校验文件只有一行，形如 `64位SHA256  原始压缩包文件名`；下载命令把文件统一命名为 `piwork-docker.tar.gz`，因此只提取该行的预期 hash 来比较本地文件。
+按手中材料选择 Release 下载入口或已有本地包入口。每次使用新的安装目录；不要在已有 `piwork-docker` 目录上解压或覆盖本机 env。已有本地包时直接输入发行页提供的可信预期 SHA256，不需要再次下载。校验文件只有一行，形如 `64位SHA256  原始压缩包文件名`；下载命令把文件统一命名为 `piwork-docker.tar.gz`，因此只提取该行的预期 hash 来比较本地文件。
 
-Linux Bash 可选下载入口（已有实际地址时，Core 主机及 Linux 客户端分别执行）：
+Linux Bash 下载入口（Core 主机及 Linux 客户端分别执行）：
 
 ```bash
 (
@@ -95,8 +97,8 @@ Linux Bash 可选下载入口（已有实际地址时，Core 主机及 Linux 客
     test ! -e piwork-docker
     test ! -e piwork-docker.tar.gz
     test ! -e piwork-docker.tar.gz.sha256
-    read -r -p '已有的实际压缩包 HTTP/HTTPS URL：' PIWORK_DOCKER_ARCHIVE_URL
-    read -r -p '同一版本 .sha256 文件的 HTTP/HTTPS URL：' PIWORK_DOCKER_CHECKSUM_URL
+    PIWORK_DOCKER_ARCHIVE_URL=https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-docker-0.0.1.tar.gz
+    PIWORK_DOCKER_CHECKSUM_URL="$PIWORK_DOCKER_ARCHIVE_URL.sha256"
     curl --fail --location --output piwork-docker.tar.gz "$PIWORK_DOCKER_ARCHIVE_URL"
     curl --fail --location --output piwork-docker.tar.gz.sha256 "$PIWORK_DOCKER_CHECKSUM_URL"
     read -r PIWORK_DOCKER_EXPECTED_SHA256 PIWORK_DOCKER_ORIGINAL_NAME < piwork-docker.tar.gz.sha256
@@ -135,14 +137,14 @@ else
 fi
 ```
 
-Windows PowerShell 可选下载入口（已有实际地址时，在用户电脑执行）：
+Windows PowerShell 下载入口（在用户电脑执行）：
 
 ```powershell
 & {
     $ErrorActionPreference = 'Stop'
     if ((Test-Path .\piwork-docker) -or (Test-Path .\piwork-docker.tar.gz) -or (Test-Path .\piwork-docker.tar.gz.sha256)) { throw '请在新的安装目录执行' }
-    $PIWORK_DOCKER_ARCHIVE_URL = Read-Host '已有的实际压缩包 HTTP/HTTPS URL'
-    $PIWORK_DOCKER_CHECKSUM_URL = Read-Host '同一版本 .sha256 文件的 HTTP/HTTPS URL'
+    $PIWORK_DOCKER_ARCHIVE_URL = 'https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-docker-0.0.1.tar.gz'
+    $PIWORK_DOCKER_CHECKSUM_URL = "$PIWORK_DOCKER_ARCHIVE_URL.sha256"
     curl.exe --fail --location --output piwork-docker.tar.gz "$PIWORK_DOCKER_ARCHIVE_URL"
     if ($LASTEXITCODE -ne 0) { throw '压缩包下载失败，停止安装' }
     curl.exe --fail --location --output piwork-docker.tar.gz.sha256 "$PIWORK_DOCKER_CHECKSUM_URL"
@@ -255,7 +257,7 @@ docker compose --env-file release.env --env-file client.env -f compose.cli.yaml 
 docker compose --env-file release.env --env-file client.env -f compose.cli.yaml exec -T cli piwork-cli desktop open --no-open
 ```
 
-Windows client.env 必须填可达的 Linux Core 地址。将 open 输出的完整链接粘贴到**同机宿主浏览器**，兑换本地授权后输入 Core 账号和密码；无有效 Core 登录时可使用本地 Inspect，不能访问 Work。链接过期执行同一 open；容器日志只用于诊断，不用于寻找授权链接。
+Windows client.env 必须填可达的 Linux Core 地址。将 open 输出的完整链接粘贴到**同机宿主浏览器**，兑换本地授权后输入 Core 账号和密码；在 Desktop 登录页可以直接输入 Core URL、账号和密码；无有效 Core 登录时可使用本地 Inspect，不能访问 Work。链接过期执行同一 open；容器日志只用于诊断，不用于寻找授权链接。
 
 以下命令 Bash/PowerShell 都可直接执行；它们使用同一 Compose project，exec/cp/ps 不重建已有容器，因此 Linux 不需要在每次 exec 再加网络覆盖文件：
 

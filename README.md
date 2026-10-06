@@ -20,9 +20,40 @@ Each Work has its own Harness. The Harness executes tasks, Services provide appl
 
 ## Demo GIF / Video
 
+![Piwork Desktop](docs/images/desktop-preview.png)
+
+Desktop chat interface preview, captured from a UI verification fixture.
+
 ## Quick Start
 
+### Recommended: Try Piwork with Docker
+
+Download the two-container installer from [0.0.1 Preview](https://github.com/pphboy/piwork/releases/tag/v0.0.1). You start Core and CLI; Core prepares the Agent and helpers and manages Work containers.
+
+Core runs on Linux. The CLI container runs on Linux or in Linux-container mode on Windows Docker Desktop. The supported target is `linux/amd64`, with Docker Engine 28+ and Compose 2.24+. Windows clients connect to a reachable Linux Core.
+
+On Linux, download, verify, and unpack the installer in a new directory:
+
+```sh
+(
+    set -eu
+    mkdir piwork-preview-0.0.1
+    cd piwork-preview-0.0.1
+    PIWORK_RELEASE_URL=https://github.com/pphboy/piwork/releases/download/v0.0.1
+    curl --fail --location --output piwork-docker-0.0.1.tar.gz "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz"
+    curl --fail --location --output piwork-docker-0.0.1.tar.gz.sha256 "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz.sha256"
+    sha256sum --check piwork-docker-0.0.1.tar.gz.sha256
+    tar -xzf piwork-docker-0.0.1.tar.gz
+    cd piwork-docker
+    sha256sum --check SHA256SUMS
+) && cd piwork-preview-0.0.1/piwork-docker
+```
+
+Continue with the [Docker setup guide](deploy/docker/README.md): configure the administrator and model, start Core and CLI, then run `desktop open --no-open`. Paste its link into a browser on the same client computer. In Desktop, enter the Core URL, account, and password, then create and start a Work. The guide also includes Windows PowerShell download and startup commands.
+
 ### Connect to an Existing Core
+
+Native clients remain available: [Linux Core / Console / CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-linux-amd64-0.0.1.tar.gz) and [experimental Windows CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-cli-windows-amd64-0.0.1.zip). Verify the SHA256 from the release before extracting; the Linux CLI is in `bin/`.
 
 Obtain the CLI executable for your platform and make sure Core has an administrator, model, and runtime configured. Start Desktop from the directory containing the executable.
 
@@ -44,7 +75,7 @@ For command-line usage, see the [CLI guide](docs/user-cli.md). Platform and inst
 
 ### Deploy Your Own Core
 
-- **Core and CLI containers**: Follow the [Docker setup guide](deploy/docker/README.zh-CN.md) to configure and start both containers. It includes complete commands for Linux and Windows Docker Desktop clients. The native CLI remains available.
+- **Core and CLI containers**: Follow the [Docker setup guide](deploy/docker/README.md) to configure and start both containers. It includes complete commands for Linux and Windows Docker Desktop clients. The native CLI remains available.
 - **Run from source**: Follow [Core startup and initialization](docs/operations.md#从源码启动) to build the programs and images, configure the administrator and model, then start Desktop.
 - **Administrator UI**: See the [Console guide](docs/serve-console.md) for startup, TLS configuration, and login.
 
@@ -91,6 +122,7 @@ Core manages resources and control operations. The Harness runs models and tools
 
 ## Current Status / Limitations
 
+- **0.0.1 Preview**: Intended for evaluation and feedback. The native Windows CLI is experimental and has not completed all formal acceptance checks.
 - **Core**: A single Linux installation using the local Docker Engine Unix socket.
 - **Clients**: The native CLI targets Windows and Linux, with command-line and Desktop interfaces. Outstanding native Windows acceptance checks are documented in [CLI delivery](docs/cli-platforms.md).
 - **Docker delivery**: The verified scope is `linux/amd64`, Linux Core, and Linux CLI containers on Linux or Windows Docker Desktop. Docker Engine 28+ and Compose 2.24+ are required. See [delivery acceptance](docs/docker-delivery-acceptance.md).
