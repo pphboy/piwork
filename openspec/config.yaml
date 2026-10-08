@@ -1,64 +1,14 @@
 schema: spec-driven
 
-context: |
-  Every change must be implementation-ready before execution begins.
-
-  Specifications must fully define required behavior, constraints,
-  invariants, failure behavior, acceptance criteria, and verification.
-
-  The implementation phase should execute approved decisions rather than
-  discover missing product, architecture, API, lifecycle, or behavioral decisions.
-
 rules:
-
-  proposal:
-    - Clearly define goals and non-goals.
-    - Define the user or system problem being solved.
-    - Identify affected subsystems and externally visible behavior.
-    - Identify relevant architectural, lifecycle, persistence, concurrency,
-      security, and compatibility concerns.
-
-  specs:
-    - Every requirement MUST describe observable behavior.
-    - Every requirement MUST include testable scenarios.
-    - Define normal, failure, empty, loading, boundary, and state-transition
-      behavior where applicable.
-    - All critical user interactions MUST be fully specified.
-    - No behavior required for implementation may remain implicit.
-    - Blocking open questions MUST be resolved before implementation.
-
   design:
-    - Resolve architecture and API decisions before implementation.
-    - Define relevant invariants and constraints.
-    - Define state transitions and data flow where applicable.
-    - Define error semantics and failure handling.
-    - Verify assumptions against the existing repository and system behavior.
-    - Explicitly identify affected components.
-    - Explicitly identify boundaries and behavior that MUST NOT change.
-    - Do not leave implementation-critical design decisions unresolved.
-
-  tasks:
-    - Every task MUST be directly executable.
-    - Every task MUST have an explicit verification method.
-    - Tasks MUST map back to requirements or scenarios.
-    - State-changing behavior MUST include corresponding verification or tests.
-    - Tasks MUST NOT delegate unresolved architecture, product, or API decisions
-      to the implementation phase.
-    - Do not use vague tasks such as "figure out", "decide", or "investigate"
-      unless investigation itself is the explicitly approved task.
+    - Explain the problem model, chosen solution, and key design decisions clearly and concisely.
+    - Identify the affected modules and relevant source files, explaining their responsibilities.
+    - Use Ascii diagrams when they help visualize architecture, relationships, or flows.
+    - Keep the design easy for the project owner to understand and review.
 
 operations:
-
   apply:
     guidance:
-      - Treat approved specifications and design decisions as authoritative.
-      - Do not silently invent missing product, architecture, API, lifecycle,
-        or behavioral semantics.
-      - If repository reality contradicts the specification, stop and report
-        the conflict.
-      - If implementation requires an unresolved design decision, stop and
-        report the missing decision.
-      - Preserve documented invariants and architectural boundaries.
-      - Do not perform unrelated refactors.
-      - Execute the verification associated with each task.
-      - Before completion, verify the implementation against all acceptance scenarios.
+      - Keep implementation changes easy to trace back to the design.
+      - Summarize the modified files, their purposes, and the important decisions made during implementation.
