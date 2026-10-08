@@ -1,10 +1,6 @@
-# Docker Delivery Specification
+# Spec Delta
 
-## Purpose
-
-提供能够从空安装完成使用的 Core 与 CLI Docker 交付契约，明确入口镜像、运行依赖、平台、网络、数据、完整操作文档与验收证据，使用户无需掌握内部容器编排即可使用既有 Work、Service、Files 和快照功能。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 交付两个入口镜像及可独立使用的发行包
 
@@ -66,38 +62,6 @@ Core Docker SHALL 在 Linux Docker Engine 的 host 网络下运行；CLI Docker 
 - **WHEN** 同机 Linux 用户拥有支持的 Docker Engine 和可用发行镜像，但没有 Compose
 - **THEN** 能完成默认的 Core/CLI 启动、登录、创建 Work 和聊天；Compose 依赖仅出现在可选 Demo 的前置条件中
 
-### Requirement: Core 管理运行过程并保留准确的宿主路径
-
-**Identifier:** DOCKER-DELIVERY-003
-
-Core 配置 SHALL 挂载同一 Linux Engine 的 Unix socket，默认 `/var/run/docker.sock`，并显式设置 `DOCKER_HOST=unix:///var/run/docker.sock`；不依赖宿主 Docker CLI 或不完整的 Docker context 文件。Core 数据目录 SHALL 在宿主和 Core 容器使用相同绝对路径，默认 `/var/lib/piwork/core`，以满足 Engine 创建 Agent/helper bind mount 的宿主路径语义。Core SHALL 按现有安装/Work 身份管理 Agent、Service/helper、Work 私网及私有/workspace 卷；用户不得通过 Compose 管理这些内部对象。
-
-Core SHALL 保留私有目录/文件权限与单实例锁。新安装默认以容器 UID 0 创建独占数据目录；接入已有数据时 SHALL 使用匹配现有所有者和 socket 访问权限的用户配置，禁止无条件改变已有文件所有者或降级权限检查。CLI SHALL 不挂载 Docker socket、Core 数据目录或 Work 私有卷。
-
-#### Scenario: Core 启动一个 Work
-- **WHEN** 登录用户创建 Work，Core 需要创建 Agent 和只读配置挂载
-- **THEN** 宿主 Engine 找到相同绝对路径的配置，Core 自动管理网络和两个 Work 数据卷，CLI 无需访问 Engine
-
-#### Scenario: 不同绝对路径或 socket 不可用
-- **WHEN** 用户偏离示例挂载到不同绝对路径，或 socket 不存在/权限不足
-- **THEN** 安装检查/就绪状态明确失败并提供修正说明，不报告完整交付就绪
-
-### Requirement: 容器网络覆盖本机和外部服务
-
-**Identifier:** DOCKER-DELIVERY-004
-
-Core host 网络 SHALL 支持 Core 直接访问其 Engine 上 Work 私网地址，以及 Agent 经 `piwork-core:host-gateway` 回连 Core 的既有 mTLS 控制端口；默认 HTTP 7171，Agent 控制 7172，不要求发布每个 Service 端口。Core Compose SHALL 对非 loopback HTTP 明确使用既有远程明文 opt-in，文档说明监听范围和已有认证/TLS 能力。
-
-CLI Compose SHALL 使用独立 bridge，仅将 Desktop `17891:17891` 发布到宿主 `127.0.0.1`；本地浏览器 URL 和内部端口保持一致。Windows SHALL 使用 Docker Desktop 内建 `host.docker.internal`；Linux 覆盖文件 SHALL 添加 `host.docker.internal:host-gateway`。公网/LAN Core 地址 SHALL 通过 `PIWORK_CORE_URL` 配置；不将宿主 `localhost`、CLI 的 hostname 或 CLI 出站网络误认为 Agent 的模型/MCP 网络。HTTPS 自定义 CA SHALL 提供显式挂载和配置方式，不关闭证书校验。
-
-#### Scenario: Linux 同机 Core 和 CLI
-- **WHEN** Core 使用 host 网络，CLI 使用 Linux 覆盖文件且配置 `http://host.docker.internal:7171`
-- **THEN** CLI 可以连接宿主 Core，同机浏览器通过 `http://desktop.localhost:17891` 访问 CLI
-
-#### Scenario: CLI 在 Windows 而模型在其他机器
-- **WHEN** Windows CLI 连接远端 Linux Core，Work 需要调用模型或 MCP
-- **THEN** 模型/MCP 地址必须从 Core 的 Work 网络可达；本机 CLI 的 `host.docker.internal` 不能替代该地址，既有模型 Base URL 校验保持
-
 ### Requirement: 客户端状态和文件交换可跨容器重建
 
 **Identifier:** DOCKER-DELIVERY-005
@@ -146,38 +110,6 @@ Core operator 和无 Desktop 用户业务命令 SHALL 列出可直接执行的�
 - **WHEN** 管理员或模型初始化字段缺项、密码过短，或填写了不合法的模型地址
 - **THEN** 文档对应的启动/就绪步骤不能报告成功，提示修正配置；不通过关闭校验、使用默认密码或写入 CLI 环境绕过错误
 
-### Requirement: 原生 CLI 交付继续独立存在
-
-**Identifier:** DOCKER-DELIVERY-007
-
-既有 Linux/Windows 原生 CLI 产物、命令名、默认 Desktop、可信 open/logout 和发行链 SHALL 保留；原生安装不得新增 Docker、Go、Node 或 Python 的用户运行依赖。未启用显式容器模式时 SHALL 保持原生 loopback 监听、浏览器打开和错误语义。Docker 验收不得代替 `support-cross-platform-cli-and-default-desktop` 中尚未完成的原生平台检查。
-
-#### Scenario: 用户继续使用原生 CLI
-- **WHEN** 用户按照既有方式安装并运行原生 `piwork-cli`
-- **THEN** 仍可使用全部原有入口，监听和打开浏览器行为保持，Docker 包是额外可选交付
-
-### Requirement: 保留安装状态并明确备份与回退边界
-
-**Identifier:** DOCKER-DELIVERY-008
-
-Core/CLI 停止、重建和 `down` 的默认说明 SHALL 保留 Core 目录、客户端卷及 Core 管理的 Work 卷。Core 正常关闭 SHALL 沿用 work-lifecycle 的既有有界排空与停止 Agent/Service 流程，保持 Work 的 desiredState、Service 启用意图及数据，不隐式将 Work 的持久目标改为 stopped 或删除 Work；重启按安装身份恢复 desiredState=running 的 Work 及启用的 Service。CLI 停止 SHALL 不停止 Work。需要持续停机的业务 SHALL 先明确执行 Work stop。不得在常规升级/卸载流程使用 `down -v`、全局 prune 或删除未核对的运行卷。
-
-Core 正常关闭成功 SHALL 以本安装全部受管 Work 运行容器已停止为前提，不要求 Work 在 Core 退出期间继续运行。某 Work 关闭失败仍须尝试其他 Work，无法确认停止时按既有非零退出及恢复诊断契约处理；异常退出不能被记录为已确认正常关闭。
-
-升级 SHALL 固定新发行 digest 并保留旧 `release.env`，先检查支持的数据格式与迁移规则；更换初始化 env 不覆盖持久管理员/模型，运行默认值的修改使用已有 operator 命令。回退 SHALL 仅在数据格式兼容时恢复旧镜像；不兼容时恢复经一致性确认的 Core 数据和匹配 Work 卷。`.work` 导出/import 是 Work 级迁移且产生新 Work，不得称为保留原 ID 的安装回滚。
-
-#### Scenario: Core 重建后恢复
-- **WHEN** 用户重建 Core 并保留其数据目录和匹配的运行卷
-- **THEN** 用户、Work/Operation/Session/Run 标识与持久配置保留，已有运行对象经身份核验恢复，不因 env 改变重置密码或模型
-
-#### Scenario: 只备份 Core 数据或旧镜像
-- **WHEN** Work 卷已丢失，用户只持有 Core SQLite/旧镜像
-- **THEN** 文档明确不能完整恢复 Work 内容，不能宣称镜像回退或数据库复制已完成安装恢复
-
-#### Scenario: Core 停止后所有 Work 停止
-- **WHEN** Core stop/down 已完成且 Core 报告正常关闭成功
-- **THEN** 本安装全部受管 Agent/Service 运行容器已停止，记录、运行意图及卷保持；重新启动 Core 后按原持久意图恢复
-
 ### Requirement: 以 Core 与 Desktop 实际使用验证交付闭环
 
 **Identifier:** DOCKER-DELIVERY-009
@@ -205,6 +137,8 @@ README 默认路径调整 SHALL 另行验证 Linux 同机的 Docker run Core 与
 #### Scenario: 候选无法通过既有发行门禁
 - **WHEN** 新材料需要重新构建或发布对应镜像才能满足源码身份、远端 digest 或完整候选检查
 - **THEN** 保留门禁并明确记录未执行的正式候选步骤，仍可完成独立的材料夹具检查和已发布镜像命令验证，不自动 push 或将夹具称为正式发行包
+
+## ADDED Requirements
 
 ### Requirement: README 提供最短的终端试用入口
 

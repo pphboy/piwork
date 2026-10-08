@@ -93,6 +93,7 @@ function build() {
 }
 
 function packageRelease() {
+  run('node', ['scripts/check-docker-quickstart.mjs']);
   const registry = registryPrefix();
   const expected = identity();
   const buildPath = join(root, 'dist/docker/build.json');
@@ -133,7 +134,7 @@ function packageRelease() {
   const stage = join(root, 'dist/docker/piwork-docker');
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(stage, { recursive: true });
-  for (const name of ['core.env.example', 'client.env.example', 'compose.core.yaml', 'compose.cli.yaml', 'compose.cli.linux.yaml', 'README.md', 'README.zh-CN.md']) copyFileSync(join(root, 'deploy/docker', name), join(stage, name));
+  for (const name of ['core.run.env.example', 'core.env.example', 'client.env.example', 'compose.core.yaml', 'compose.cli.yaml', 'compose.cli.linux.yaml', 'README.md', 'README.zh-CN.md']) copyFileSync(join(root, 'deploy/docker', name), join(stage, name));
   copyFileSync(join(root, 'LICENSE'), join(stage, 'LICENSE'));
   let releaseEnv = `PIWORK_RELEASE_VERSION=${expected.releaseVersion}\n`;
   for (const role of roles) releaseEnv += `${environmentKeys[role]}=${images[role].reference}\n`;

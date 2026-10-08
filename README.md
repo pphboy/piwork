@@ -1,4 +1,6 @@
-<img src="docs/images/piwork-logo.png" alt="Piwork logo" width="160" height="160">
+<p align="center">
+  <img src="docs/images/piwork-logo.png" alt="Piwork logo" width="160" height="160">
+</p>
 
 # Piwork
 
@@ -28,13 +30,15 @@ Desktop chat interface preview, captured from a UI verification fixture.
 
 ## Quick Start
 
-### Recommended: Try Piwork with Docker
+### Try Core and CLI with Docker
 
-Download the two-container installer from [0.0.1 Preview](https://github.com/pphboy/piwork/releases/tag/v0.0.1). You start Core and CLI; Core prepares the Agent and helpers and manages Work containers.
+<!-- docker-quickstart:start -->
 
-Core runs on Linux. The CLI container runs on Linux or in Linux-container mode on Windows Docker Desktop. The supported target is `linux/amd64`, with Docker Engine 28+ and Compose 2.24+. Windows clients connect to a reachable Linux Core.
+This example uses one Linux computer with a local rootful Docker Engine 28+ and `linux/amd64` images. Prepare a model provider, model ID, and API key; the model endpoint must be reachable from Work containers. Complete each step before continuing. If a command fails, stop and resolve it using the [terminal troubleshooting guide](deploy/docker/README.md#terminal-operations).
 
-On Linux, download, verify, and unpack the installer in a new directory:
+**1. Download and verify the installer.**
+
+Run these commands in your host terminal, starting in a new directory:
 
 ```sh
 (
@@ -42,44 +46,156 @@ On Linux, download, verify, and unpack the installer in a new directory:
     mkdir piwork-preview-0.0.1 || exit
     cd piwork-preview-0.0.1 || exit
     PIWORK_RELEASE_URL=https://github.com/pphboy/piwork/releases/download/v0.0.1
-    curl --fail --location --output piwork-docker-0.0.1.tar.gz "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz" || exit
-    curl --fail --location --output piwork-docker-0.0.1.tar.gz.sha256 "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz.sha256" || exit
-    sha256sum --check piwork-docker-0.0.1.tar.gz.sha256 || exit
+    curl --fail --location \
+        --output piwork-docker-0.0.1.tar.gz \
+        "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz" || exit
+    curl --fail --location \
+        --output piwork-docker-0.0.1.tar.gz.sha256 \
+        "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz.sha256" || exit
+    sha256sum --check --strict piwork-docker-0.0.1.tar.gz.sha256 || exit
     tar -xzf piwork-docker-0.0.1.tar.gz || exit
     cd piwork-docker || exit
-    sha256sum --check SHA256SUMS || exit
+    sha256sum --check --strict SHA256SUMS || exit
 ) && cd piwork-preview-0.0.1/piwork-docker
 ```
 
-Continue with the [Docker setup guide](deploy/docker/README.md): configure the administrator and model, start Core and CLI, then run `desktop open --no-open`. Paste its link into a browser on the same client computer. In Desktop, enter the Core URL, account, and password, then create and start a Work. The guide also includes Windows PowerShell download and startup commands.
+**2. Configure and start Core.**
 
-### Connect to an Existing Core
-
-Native clients remain available: [Linux Core / Console / CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-linux-amd64-0.0.1.tar.gz) and [experimental Windows CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-cli-windows-amd64-0.0.1.zip). Verify the SHA256 from the release before extracting; the Linux CLI is in `bin/`.
-
-Obtain the CLI executable for your platform and make sure Core has an administrator, model, and runtime configured. Start Desktop from the directory containing the executable.
-
-Linux:
+In the extracted installer directory, create a private `core.run.env`. New installers provide the run template; the fallback creates the same blank configuration for the published `0.0.1` installer:
 
 ```sh
-./piwork-cli desktop
+(
+    set -eu
+    test ! -e core.run.env
+    if [ -f core.run.env.example ]; then
+        cp core.run.env.example core.run.env
+    else
+        cat > core.run.env <<'EOF'
+# Docker run only. Enter raw values without surrounding syntax quotes; do not source.
+# Administrator password: at least 12 characters. Keep this file private (0600).
+PIWORK_ADMIN_ACCOUNT=
+PIWORK_ADMIN_PASSWORD=
+PIWORK_MODEL_PROVIDER=
+PIWORK_MODEL=
+PIWORK_API_KEY=
+# Optional HTTPS endpoint reachable from Work containers; omit instead of leaving empty.
+# PIWORK_MODEL_BASE_URL=https://your-model-endpoint.example/v1
+EOF
+    fi
+    chmod 600 core.run.env
+    ${EDITOR:-vi} core.run.env
+)
 ```
 
-Windows PowerShell:
+Fill the five blank values. The administrator password must be at least **12 characters**. Enter raw values without adding surrounding syntax quotes; do not source this file or reuse the Compose-only `core.env` format. For a custom model endpoint, uncomment the HTTPS `PIWORK_MODEL_BASE_URL` example and replace it with an address reachable from Work containers. Omit it when using the provider's default.
 
-```powershell
-.\piwork-cli.exe desktop
+Read the fixed image references from the verified `release.env` in the same host terminal:
+
+```sh
+PIWORK_CORE_IMAGE=$(
+    sed -n '/^PIWORK_CORE_IMAGE=.*@sha256:[0-9a-f]\{64\}$/s/^PIWORK_CORE_IMAGE=//p' release.env
+)
+PIWORK_CLI_IMAGE=$(
+    sed -n '/^PIWORK_CLI_IMAGE=.*@sha256:[0-9a-f]\{64\}$/s/^PIWORK_CLI_IMAGE=//p' release.env
+)
+test -n "$PIWORK_CORE_IMAGE" && test -n "$PIWORK_CLI_IMAGE"
 ```
 
-When the browser opens, enter your Core URL, account, and password. Create and start a Work, then open Chat, Service, or Files. Desktop uses local port `17891` by default; use `desktop --no-open` to open the browser manually.
+Start Core. Docker creates its data bind directory, and Core makes a new empty installation private. Keep the same absolute path on both sides of the mount. Core listens on `7171` and `7172` and uses the existing authenticated HTTP/control interfaces; remote HTTPS setup is covered in the installation guide.
 
-For command-line usage, see the [CLI guide](docs/user-cli.md). Platform and installation details are in [CLI delivery](docs/cli-platforms.md).
+```sh
+docker run --detach --init \
+    --name piwork-core-quickstart \
+    --user 0:0 \
+    --network host \
+    --env-file release.env \
+    --env-file core.run.env \
+    --env DOCKER_HOST=unix:///var/run/docker.sock \
+    --env DOCKER_CONTEXT= \
+    --env PIWORK_DATA_DIR=/var/lib/piwork/quickstart/core \
+    --env PIWORK_CORE_URL=http://127.0.0.1:7171 \
+    --env PIWORK_LISTEN=0.0.0.0:7171 \
+    --env PIWORK_AGENT_GRPC_LISTEN=0.0.0.0:7172 \
+    --env PIWORK_AGENT_GRPC_ADVERTISE=piwork-core:7172 \
+    --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+    --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
+    --stop-timeout 60 \
+    "$PIWORK_CORE_IMAGE" serve --allow-insecure-remote
+```
 
-### Deploy Your Own Core
+Core automatically prepares the Agent and helper images. Its installation data persists in `/var/lib/piwork/quickstart/core`; Work data is managed by Core.
 
-- **Core and CLI containers**: Follow the [Docker setup guide](deploy/docker/README.md) to configure and start both containers. It includes complete commands for Linux and Windows Docker Desktop clients. The native CLI remains available.
-- **Run from source**: Follow [Core startup and initialization](docs/operations.md#从源码启动) to build the programs and images, configure the administrator and model, then start Desktop.
-- **Administrator UI**: See the [Console guide](docs/serve-console.md) for startup, TLS configuration, and login.
+**3. Enter the CLI container.**
+
+Run this in the same host terminal. It opens an interactive shell; the named state volume retains your login between containers:
+
+```sh
+docker run --rm --init -it \
+    --add-host host.docker.internal:host-gateway \
+    --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
+    --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
+    --entrypoint /bin/sh \
+    "$PIWORK_CLI_IMAGE" -i
+```
+
+**4. Log in, create a Work, and receive a reply.**
+
+Run the remaining commands **inside the CLI container**. First wait up to ten minutes for Core and its dependencies to be ready:
+
+```sh
+timeout 600 curl \
+    --fail --silent --show-error \
+    --output /dev/null --max-time 3 \
+    --retry 120 --retry-delay 5 --retry-all-errors \
+    "${PIWORK_CORE_URL}/readyz?profile=docker-delivery"
+```
+
+After the wait succeeds, replace `ACCOUNT` with the account configured in `core.run.env`. Login prompts for a hidden password. Creating a Work starts it automatically; `--wait` observes that operation until it succeeds:
+
+```sh
+piwork-cli login --account ACCOUNT
+piwork-cli work create --name 'My Work' --wait
+```
+
+Replace `WORK_ID` with the actual `workId` in the creation result, then send your first message:
+
+```sh
+piwork-cli chat WORK_ID --message 'Hello, Piwork!'
+```
+
+The model reply appears in the terminal. Use `exit` to leave the container; the login volume and Work remain. Run the same CLI container command to return. If a Work operation or chat stream is interrupted, recover using its original ID as described in the [terminal operations guide](deploy/docker/README.md#terminal-operations).
+
+<!-- docker-quickstart:end -->
+
+Prefer Compose for Core deployment? See the optional [Core Compose Demo](deploy/docker/README.md#core-compose-demo); its CLI entry is the same terminal command. Compose 2.24+ is only needed for that Demo or advanced Compose setups. For Windows Docker clients and remote Linux Core addresses, see the [Docker installation guide](deploy/docker/README.md#terminal-operations).
+
+<details>
+<summary>Use the native CLI (connect to an existing Core)</summary>
+
+<!-- native-quickstart:start -->
+
+Download the [Linux Core / Console / CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-linux-amd64-0.0.1.tar.gz) or [experimental Windows CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-cli-windows-amd64-0.0.1.zip). Verify the release SHA256 before extracting; the Linux CLI is in `bin/`.
+
+Use an already configured, ready Core, such as the Core started above. In the directory containing the executable, replace `CORE_URL` with its address (`http://127.0.0.1:7171` for the same Linux computer) and `ACCOUNT` with your account. Login prompts for a hidden password. On Windows PowerShell, replace `./piwork-cli` with `.\piwork-cli.exe`.
+
+```sh
+./piwork-cli --core CORE_URL login --account ACCOUNT
+./piwork-cli work create --name 'My Work' --wait
+```
+
+Use the actual `workId` returned by creation:
+
+```sh
+./piwork-cli chat WORK_ID --message 'Hello, Piwork!'
+```
+
+More commands are in the [CLI guide](docs/user-cli.md); see [CLI delivery](docs/cli-platforms.md) for platform details.
+
+<!-- native-quickstart:end -->
+
+</details>
+
+To deploy Core from source, see [Core startup and initialization](docs/operations.md#从源码启动); administrator access is described in the [Console guide](docs/serve-console.md).
 
 ## .work Import / Export
 
@@ -127,7 +243,7 @@ Core manages resources and control operations. The Harness runs models and tools
 - **0.0.1 Preview**: Intended for evaluation and feedback. The native Windows CLI is experimental and has not completed all formal acceptance checks.
 - **Core**: A single Linux installation using the local Docker Engine Unix socket.
 - **Clients**: The native CLI targets Windows and Linux, with command-line and Desktop interfaces. Outstanding native Windows acceptance checks are documented in [CLI delivery](docs/cli-platforms.md).
-- **Docker delivery**: The verified scope is `linux/amd64`, Linux Core, and Linux CLI containers on Linux or Windows Docker Desktop. Docker Engine 28+ and Compose 2.24+ are required. See [delivery acceptance](docs/docker-delivery-acceptance.md).
+- **Docker delivery**: The verified scope is `linux/amd64`, Linux Core, and Linux CLI containers on Linux or Windows Docker Desktop. Docker Engine 28+ is required; Compose 2.24+ is optional for the Core Demo and advanced Compose setups. See [delivery acceptance](docs/docker-delivery-acceptance.md).
 - **Runtime requirements**: Running a Work requires an available Docker Engine, model configuration, and credentials. A normal Core shutdown stops managed Work containers and preserves persistent data. Exiting the CLI does not stop Works.
 - **Verification**: Installation, build, and unit tests have passed from a clean clone. Coverage, skipped checks, and platform boundaries are recorded in the [open-source readiness review](docs/open-source-readiness.md) and [testing guide](docs/testing.md).
 
