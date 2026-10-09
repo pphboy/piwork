@@ -3,7 +3,7 @@ import { request } from "node:http";
 const definitions = {
   brain_service: ["discover", "query", "action", "action_get", "job_get", "verify"],
   brain_feedback: ["events", "request_get", "wait", "finish", "cancel"],
-  brain_experience: ["list", "stage", "commit", "status"],
+  brain_experience: ["list", "stage", "commit", "status", "recall", "read", "revise", "invalidate"],
   brain_package_update: ["prepare", "status"],
 };
 
@@ -20,6 +20,8 @@ export default function (pi) {
         waitRef: { type: "object" }, state: { type: "string", enum: ["completed", "failed", "needs_attention"] },
         result: { type: "string" }, evidenceIds: { type: "array", items: { type: "string" } },
         entry: { type: "object" }, userPreference: { type: "boolean" },
+        entryId: { type: "string" }, query: { type: "string" }, reason: { type: "string" },
+        expectedVersion: { type: "integer", minimum: 0 },
         submissionKey: { type: "string" }, verificationGoal: { type: "string" },
         verificationTarget: { type: "object", properties: {
           contractVersion: { const: 1 }, toolName: { type: "string", pattern: "^package:piwork-brain:[a-zA-Z][a-zA-Z0-9_-]{0,63}$" },

@@ -54,6 +54,9 @@ func (a *Application) listenServiceRPC(ctx context.Context) error {
 		defer cancel()
 		return a.Store.Read(check, func(tx *sql.Tx) error {
 			_, err := a.authorizeServiceTx(tx, serviceActor{Runtime: &scope}, scope.WorkID, workaccess.Metadata)
+			if err != nil {
+				_, err = a.historyMigrationPlanTx(tx, scope)
+			}
 			return err
 		}) == nil
 	}

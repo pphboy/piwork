@@ -1,0 +1,172 @@
+[
+  {
+    "name": "valid-experience",
+    "accepted": true,
+    "sql": ""
+  },
+  {
+    "name": "valid-preference",
+    "accepted": true,
+    "sql": "UPDATE memory.memory_entries SET kind='preference',evidence_ids_json='[\"pref-proof\"]'; UPDATE memory.memory_candidates SET kind='preference',evidence_ids_json='[\"pref-proof\"]'"
+  },
+  {
+    "name": "entry-kind-only",
+    "accepted": false,
+    "sql": "UPDATE memory.memory_entries SET kind='preference'"
+  },
+  {
+    "name": "both-kinds-uncited-proof",
+    "accepted": false,
+    "sql": "UPDATE memory.memory_entries SET kind='preference'; UPDATE memory.memory_candidates SET kind='preference'"
+  },
+  {
+    "name": "no-preference-proof",
+    "accepted": false,
+    "sql": "DELETE FROM agent_evidence WHERE evidence_id='pref-proof'; UPDATE memory.memory_entries SET kind='preference'; UPDATE memory.memory_candidates SET kind='preference'"
+  },
+  {
+    "name": "wrong-prompt-digest",
+    "accepted": false,
+    "sql": "UPDATE memory.memory_entries SET kind='preference',evidence_ids_json='[\"pref-proof\"]'; UPDATE memory.memory_candidates SET kind='preference',evidence_ids_json='[\"pref-proof\"]'; UPDATE agent_evidence SET details_json='{\"userPreferenceVerified\":true,\"promptDigest\":\"other\"}' WHERE evidence_id='pref-proof'"
+  },
+  {
+    "name": "wrong-source-run",
+    "accepted": false,
+    "sql": "UPDATE memory.memory_entries SET kind='preference',evidence_ids_json='[\"pref-proof\"]'; UPDATE memory.memory_candidates SET kind='preference',evidence_ids_json='[\"pref-proof\"]'; UPDATE agent_evidence SET run_id=NULL WHERE evidence_id='pref-proof'"
+  },
+  {
+    "name": "candidate-kind-mismatch",
+    "accepted": false,
+    "sql": "UPDATE memory.memory_candidates SET kind='knowledge'"
+  },
+  {
+    "name": "candidate-created-at-mismatch",
+    "accepted": false,
+    "sql": "UPDATE memory.memory_candidates SET created_at='2026-10-07T00:00:00Z'"
+  },
+  {
+    "name": "head-zero-after-publication",
+    "accepted": false,
+    "sql": "UPDATE memory.memory_head SET version=0"
+  },
+  {
+    "name": "head-old-publication",
+    "accepted": false,
+    "sql": "INSERT INTO memory.memory_versions VALUES(3,'2026-10-08T00:00:01Z',0)"
+  },
+  {
+    "name": "head-dangling",
+    "accepted": false,
+    "sql": "PRAGMA foreign_keys=OFF; UPDATE memory.memory_head SET version=77"
+  },
+  {
+    "name": "unpublished-normal-version",
+    "accepted": false,
+    "sql": "INSERT INTO memory.memory_versions VALUES(99,NULL,0)"
+  },
+  {
+    "name": "legacy-partial-not-head",
+    "accepted": true,
+    "sql": "INSERT INTO memory.memory_versions VALUES(99,NULL,1)"
+  },
+  {
+    "name": "head-unpublished-legacy",
+    "accepted": false,
+    "sql": "INSERT INTO memory.memory_versions VALUES(99,NULL,1); UPDATE memory.memory_head SET version=99"
+  },
+  {
+    "name": "candidate-points-to-unpublished-version",
+    "accepted": false,
+    "sql": "UPDATE memory.memory_versions SET legacy=1,published_at=NULL WHERE version=2; UPDATE memory.memory_head SET version=0"
+  },
+  {
+    "name": "new-empty-publication",
+    "accepted": true,
+    "sql": "INSERT INTO memory.memory_versions VALUES(4,'2026-10-08T00:00:01Z',0); INSERT INTO memory.memory_candidates VALUES(3,'lesson','request','invalidate',2,'experience','work','Reusable verified knowledge','[\"proof\"]','Outdated','effective',4,'2026-10-08T00:00:01Z','2026-10-08T00:00:01Z'); UPDATE memory.memory_head SET version=4"
+  },
+  {
+    "name": "old-run-version-kept",
+    "accepted": true,
+    "sql": "INSERT INTO memory.memory_versions VALUES(4,'2026-10-08T00:00:01Z',0); UPDATE memory.memory_head SET version=4; UPDATE runs SET adopted_experience_version=2,adopted_memory_selection_json='{\"entryIds\":[\"lesson\"],\"matchedCount\":1,\"truncated\":false}'"
+  },
+  {
+    "name": "initial-empty-zero",
+    "accepted": true,
+    "sql": "DELETE FROM memory.memory_candidates; DELETE FROM memory.memory_entries; UPDATE memory.memory_head SET version=0; DELETE FROM memory.memory_versions WHERE version=2"
+  },
+  {
+    "name": "wrong-proof-request",
+    "accepted": false,
+    "sql": "INSERT INTO agent_requests(work_id,request_id,submission_key,request_digest,source_kind,goal,state,disposition,phase,expires_at,created_at,updated_at) VALUES('work-memory-source-1111','other','other','other','chat','Other goal','pending','live','handling','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z'); UPDATE memory.memory_entries SET kind='preference',evidence_ids_json='[\"pref-proof\"]'; UPDATE memory.memory_candidates SET kind='preference',evidence_ids_json='[\"pref-proof\"]'; UPDATE agent_evidence SET request_id='other' WHERE evidence_id='pref-proof'"
+  },
+  {
+    "name": "unverified-preference-proof",
+    "accepted": false,
+    "sql": "UPDATE memory.memory_entries SET kind='preference',evidence_ids_json='[\"pref-proof\"]'; UPDATE memory.memory_candidates SET kind='preference',evidence_ids_json='[\"pref-proof\"]'; UPDATE agent_evidence SET verified=0 WHERE evidence_id='pref-proof'"
+  },
+  {
+    "name": "future-staged-candidate-is-not-publication",
+    "accepted": true,
+    "sql": "INSERT INTO agent_requests(work_id,request_id,submission_key,request_digest,source_kind,goal,state,disposition,phase,expires_at,created_at,updated_at) VALUES('work-memory-source-1111','waiting','waiting','waiting','chat','Waiting goal','pending','live','handling','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z'); INSERT INTO agent_evidence(work_id,evidence_id,request_id,kind,object_ref,observed_at,summary,verified,details_json) VALUES('work-memory-source-1111','waiting-proof','waiting','query','summary','2026-10-08T00:00:00Z','Not verified',0,'{\"checks\":[{\"name\":\"state\",\"passed\":false}]}'); INSERT INTO memory.memory_candidates VALUES(99,'later','waiting','upsert',2,'experience','work','Wait for actual check','[\"waiting-proof\"]',NULL,'staged',NULL,'2026-10-08T00:00:00Z','2026-10-08T00:00:00Z')"
+  },
+  {
+    "name": "carry-valid",
+    "accepted": true,
+    "setup": "carry",
+    "sql": ""
+  },
+  {
+    "name": "carry-kind-mismatch",
+    "accepted": false,
+    "setup": "carry",
+    "sql": "UPDATE memory.memory_entries SET kind='knowledge' WHERE version=4 AND entry_id='lesson'"
+  },
+  {
+    "name": "carry-created-at-mismatch",
+    "accepted": false,
+    "setup": "carry",
+    "sql": "UPDATE memory.memory_entries SET created_at='2026-10-07T00:00:00Z' WHERE version=4 AND entry_id='lesson'"
+  },
+  {
+    "name": "carry-rule-mismatch",
+    "accepted": false,
+    "setup": "carry",
+    "sql": "UPDATE memory.memory_entries SET rule='Changed without a new candidate' WHERE version=4 AND entry_id='lesson'"
+  },
+  {
+    "name": "carry-scope-mismatch",
+    "accepted": false,
+    "setup": "carry",
+    "sql": "UPDATE memory.memory_entries SET scope='service:kanban' WHERE version=4 AND entry_id='lesson'"
+  },
+  {
+    "name": "carry-evidence-mismatch",
+    "accepted": false,
+    "setup": "carry",
+    "sql": "UPDATE memory.memory_entries SET evidence_ids_json='[\"pref-proof\"]' WHERE version=4 AND entry_id='lesson'"
+  },
+  {
+    "name": "carry-fixed-old-run",
+    "accepted": true,
+    "setup": "carry",
+    "sql": "UPDATE runs SET adopted_experience_version=2,adopted_memory_selection_json='{\"entryIds\":[\"lesson\"],\"matchedCount\":1,\"truncated\":false}' WHERE run_id='run'"
+  },
+  {
+    "name": "carry-legacy-without-candidate",
+    "accepted": true,
+    "setup": "carry",
+    "sql": "DELETE FROM memory.memory_candidates WHERE candidate_version=1; UPDATE memory.memory_versions SET legacy=1 WHERE version=2"
+  },
+  {
+    "name": "carry-valid-revision",
+    "accepted": true,
+    "setup": "carry",
+    "sql": "INSERT INTO runs(work_id,session_id,run_id,submission_key,prompt_digest,state,accepted_at,finished_at,context_identity,adopted_experience_version,adopted_memory_selection_json,source_json) VALUES('work-memory-source-1111','session','run-c','submit-c','digest-c','succeeded','2026-10-08T00:00:02Z','2026-10-08T00:00:02Z','context-memory-source',4,'{\"entryIds\":[\"lesson\"],\"matchedCount\":1,\"truncated\":false}','{\"kind\":\"chat\",\"requestId\":\"request-c\",\"phase\":\"handling\"}'); INSERT INTO agent_requests(work_id,request_id,submission_key,request_digest,source_kind,source_run_id,goal,state,disposition,phase,expires_at,created_at,updated_at) VALUES('work-memory-source-1111','request-c','key-c','digest-c','chat','run-c','Correct verified knowledge','completed','live','handling','2026-10-08T00:00:02Z','2026-10-08T00:00:02Z','2026-10-08T00:00:02Z'); INSERT INTO agent_request_runs VALUES('request-c','run-c','handling','live','2026-10-08T00:00:02Z'); INSERT INTO agent_evidence(work_id,evidence_id,request_id,run_id,kind,object_ref,observed_at,summary,verified,details_json) VALUES('work-memory-source-1111','proof-c','request-c','run-c','query','summary','2026-10-08T00:00:02Z','Verified correction',1,'{\"checks\":[{\"name\":\"state\",\"passed\":true}]}'); INSERT INTO memory.memory_versions VALUES(6,'2026-10-08T00:00:02Z',0); INSERT INTO memory.memory_entries SELECT 6,entry_id,kind,scope,rule,evidence_ids_json,source_request_id,created_at FROM memory.memory_entries WHERE version=4; UPDATE memory.memory_head SET version=6,updated_at='2026-10-08T00:00:02Z'; UPDATE memory.memory_entries SET rule='Verified revision',evidence_ids_json='[\"proof-c\"]',source_request_id='request-c',created_at='2026-10-08T00:00:02Z' WHERE version=6 AND entry_id='lesson'; INSERT INTO memory.memory_candidates VALUES(5,'lesson','request-c','upsert',4,'experience','work','Verified revision','[\"proof-c\"]',NULL,'effective',6,'2026-10-08T00:00:02Z','2026-10-08T00:00:02Z')"
+  },
+  {
+    "name": "carry-valid-invalidation",
+    "accepted": true,
+    "setup": "carry",
+    "sql": "INSERT INTO runs(work_id,session_id,run_id,submission_key,prompt_digest,state,accepted_at,finished_at,context_identity,adopted_experience_version,adopted_memory_selection_json,source_json) VALUES('work-memory-source-1111','session','run-c','submit-c','digest-c','succeeded','2026-10-08T00:00:02Z','2026-10-08T00:00:02Z','context-memory-source',4,'{\"entryIds\":[\"lesson\"],\"matchedCount\":1,\"truncated\":false}','{\"kind\":\"chat\",\"requestId\":\"request-c\",\"phase\":\"handling\"}'); INSERT INTO agent_requests(work_id,request_id,submission_key,request_digest,source_kind,source_run_id,goal,state,disposition,phase,expires_at,created_at,updated_at) VALUES('work-memory-source-1111','request-c','key-c','digest-c','chat','run-c','Correct verified knowledge','completed','live','handling','2026-10-08T00:00:02Z','2026-10-08T00:00:02Z','2026-10-08T00:00:02Z'); INSERT INTO agent_request_runs VALUES('request-c','run-c','handling','live','2026-10-08T00:00:02Z'); INSERT INTO agent_evidence(work_id,evidence_id,request_id,run_id,kind,object_ref,observed_at,summary,verified,details_json) VALUES('work-memory-source-1111','proof-c','request-c','run-c','query','summary','2026-10-08T00:00:02Z','Verified correction',1,'{\"checks\":[{\"name\":\"state\",\"passed\":true}]}'); INSERT INTO memory.memory_versions VALUES(6,'2026-10-08T00:00:02Z',0); INSERT INTO memory.memory_entries SELECT 6,entry_id,kind,scope,rule,evidence_ids_json,source_request_id,created_at FROM memory.memory_entries WHERE version=4; UPDATE memory.memory_head SET version=6,updated_at='2026-10-08T00:00:02Z'; DELETE FROM memory.memory_entries WHERE version=6 AND entry_id='lesson'; INSERT INTO memory.memory_candidates VALUES(5,'lesson','request-c','invalidate',4,'experience','work','Reusable verified knowledge','[\"proof-c\"]','Outdated','effective',6,'2026-10-08T00:00:02Z','2026-10-08T00:00:02Z')"
+  }
+]

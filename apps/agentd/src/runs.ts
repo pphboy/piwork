@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { WorkStore, type AcceptedRun, type RunEventRecord, type RunRecord } from "@piwork/work-store";
+import { WorkStore, type AcceptedRun, type RunEventRecord, type RunRecord, type MemorySelection } from "@piwork/work-store";
 import { AgentDaemonControl } from "./daemon.js";
 import { type AgentRunSource, type RunSubmissionSelector, type RunModelSnapshot, type ChatInputMode, type ThinkingLevel } from "@piwork/contracts";
 import { canonicalJson, type RequestPhase } from "@piwork/work-store";
@@ -17,6 +17,7 @@ export interface RunExecutionContext {
   readonly inputMode?: ChatInputMode;
   readonly source?: AgentRunSource;
   readonly adoptedExperienceVersion?: number;
+  readonly adoptedMemorySelection?: MemorySelection | null;
   emit(eventType: string, payload: unknown): void;
 }
 
@@ -40,6 +41,7 @@ export class RunManager {
     private readonly now: () => Date = () => new Date(),
     private readonly models?: RunModelResolver,
     private readonly validateCommand?: (prompt: string) => void,
+    private readonly memoryEnabled = true,
   ) {}
 
   recover(): RunRecord[] {
@@ -74,6 +76,10 @@ export class RunManager {
       submissionKey: input.submissionKey,
       requestDigest,
       promptDigest: digest(input.prompt),
+      memoryQuery: input.prompt,
+      memoryEnabled: this.memoryEnabled,
+      ...(input.agentRequest && this.store.feedback.getRequest(input.workId,input.agentRequest.requestId)?.source.serviceName
+        ? { memoryServiceName: this.store.feedback.getRequest(input.workId,input.agentRequest.requestId)!.source.serviceName } : {}),
       contextIdentity: session.contextIdentity ?? null,
       now: this.now().toISOString(),
       modelSelectorJson: JSON.stringify(selector),
@@ -199,6 +205,7 @@ export class RunManager {
           ...(run.modelSelectorJson && JSON.parse(run.modelSelectorJson).inputMode ? { inputMode: JSON.parse(run.modelSelectorJson).inputMode as ChatInputMode } : {}),
           ...(run.sourceJson ? { source: JSON.parse(run.sourceJson) as AgentRunSource } : {}),
           adoptedExperienceVersion: run.adoptedExperienceVersion ?? 0,
+          adoptedMemorySelection: run.adoptedMemorySelection,
           emit: (eventType, payload) => {
             this.store.appendEvent(run.runId, eventType, JSON.stringify(payload), this.now().toISOString());
             this.store.compactRunEvents(run.runId);

@@ -31,6 +31,7 @@ CREATE TABLE runs (
       latest_sequence INTEGER NOT NULL DEFAULT 0, context_identity TEXT,
       model_selector_json TEXT, actual_model_json TEXT, source_json TEXT,
       adopted_experience_version INTEGER NOT NULL DEFAULT 0 CHECK(adopted_experience_version >= 0),
+      adopted_memory_selection_json TEXT,
       FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)
     ) STRICT;
 
@@ -100,13 +101,7 @@ CREATE TABLE agent_evidence (
   object_ref TEXT NOT NULL, observed_at TEXT NOT NULL, state_version TEXT, code_version TEXT,
   summary TEXT NOT NULL, verified INTEGER NOT NULL CHECK(verified IN (0,1)), details_json TEXT
 ) STRICT;
-CREATE TABLE brain_experience_revisions (
-  work_id TEXT NOT NULL, version INTEGER NOT NULL CHECK(version >= 1), entry_id TEXT NOT NULL,
-  scope TEXT NOT NULL, rule TEXT NOT NULL, evidence_ids_json TEXT NOT NULL,
-  source_request_id TEXT NOT NULL REFERENCES agent_requests(request_id),
-  status TEXT NOT NULL CHECK(status IN ('staged','effective','failed')), created_at TEXT NOT NULL,
-  PRIMARY KEY(work_id,version,entry_id)
-) STRICT;
-CREATE TABLE brain_experience_heads (
-  work_id TEXT PRIMARY KEY, version INTEGER NOT NULL CHECK(version >= 1), updated_at TEXT NOT NULL
+CREATE TABLE work_memory_binding (
+  work_id TEXT PRIMARY KEY, store_id TEXT NOT NULL UNIQUE,
+  memory_schema_version INTEGER NOT NULL CHECK(memory_schema_version = 1)
 ) STRICT;

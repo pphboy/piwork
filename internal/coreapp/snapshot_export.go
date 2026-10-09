@@ -74,6 +74,9 @@ func (a *Application) acceptWorkExport(ctx context.Context, actor identity.Princ
 		if current.DesiredState != "stopped" || current.ObservedState != "stopped" {
 			return corestore.MutationEffect{}, contracts.NewError("SNAPSHOT_REQUIRES_STOPPED", "")
 		}
+		if err := a.rejectUnresolvedHistoryTx(tx, workID); err != nil {
+			return corestore.MutationEffect{}, err
+		}
 		var busy int
 		if err := tx.QueryRow(`SELECT count(*) FROM operations WHERE work_id=? AND id!=? AND state IN ('pending','running')`, workID, id).Scan(&busy); err != nil {
 			return corestore.MutationEffect{}, err

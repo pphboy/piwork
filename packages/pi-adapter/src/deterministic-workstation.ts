@@ -97,12 +97,13 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
     const brain = resolve(dirname(skill), "../..");
     if (!reads.length) invoke("read", { path: skill });
     else if (reads.length === 1) invoke("read", { path: resolve(brain, "references/service-contract.md") });
-    else if (reads.length === 2) invoke("read", { path: resolve(brain, "templates/workstation/app.py") });
+    else if (reads.length === 2) invoke("read", { path: resolve(brain, "templates/workstation/SPEC.md") });
+    else if (!previous("write")) invoke("write", {path:"apps/workstation/SPEC.md",content:text(reads[2]!)});
     else if (!previous("bash")) invoke("bash", { command: `mkdir -p apps/workstation data/workstation .pi/services && cp -R '${brain}/templates/workstation/.' apps/workstation/ && chmod -R u+rwX apps/workstation && printf '%s' '{"contractVersion":1,"serviceName":"workstation","apiPortName":"web","mode":"pi-managed"}' > .pi/services/workstation.json` });
     else if (!previous(modelMcpToolName("work-services", "deployment_context"))) invoke(modelMcpToolName("work-services", "deployment_context"), {});
     else if (!previous(modelMcpToolName("work-services", "service_create"))) invoke(modelMcpToolName("work-services", "service_create"), {
       definition: { name: "workstation", image: { reference: "piwork-workstation:acceptance" }, command: "sh",
-        args: ["-c", "cd /var/data/workspace/apps/workstation; if [ ! -x .venv/bin/python ]; then mkdir -p wheels; cp /opt/workstation/wheels/*.whl wheels/; sh prepare.sh; fi; exec .venv/bin/python app.py"],
+        args: ["-c", "set -e; cd /var/data/workspace/apps/workstation; if [ ! -x .venv/bin/python ]; then mkdir -p wheels; cp /opt/workstation/wheels/*.whl wheels/; sh prepare.sh; fi; .venv/bin/python -m unittest test_protocol test_workstation; exec .venv/bin/python app.py"],
         environment: { PYTHONDONTWRITEBYTECODE: "1" }, secretRefs: [], workingDirectory: "/var/data/workspace", mounts: [{ source: "workspace", target: "/var/data/workspace", readOnly: false }],
         ports: [{ name: "web", containerPort: 8080, protocol: "tcp" }], cpuMillis: 500, memoryBytes: 536870912, enabled: true, required: false,
         readiness: { kind: "http", portName: "web", path: "/health", deadlineMs: 120000, timeoutMs: 2000 }, restartPolicy: "bounded" }, idempotencyKey: "deterministic-workstation-v1" });
@@ -128,7 +129,10 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
     else if (handling && exporting && !previous("brain_feedback")) {
       const actual = value(queries.at(-1)); invoke("brain_feedback", { operation: "wait", waitRef: { kind: "job", serviceName: "workstation", id: actual.result.jobId,
         deadlineAt: new Date(Date.now() + 60000).toISOString(), nextPhase: "verifying", verificationGoal: "Verify the original export Job and persistent artifact" } });
-    } else if (handling && !exporting && !previous("bash") && !value(queries[0]).evidence.verified) invoke("bash", {
+    } else if (handling && !exporting && !previous("read") && !value(queries[0]).evidence.verified) invoke("read", {path:"apps/workstation/SPEC.md"});
+    else if (handling && !exporting && !previous("write") && !value(queries[0]).evidence.verified) invoke("write", {
+      path:"apps/workstation/SPEC.md",content:text(previous("read")!).replace("The initial review configuration intentionally excludes completed Todos as a repair fixture.","The reviewed configuration includes actual completed Todos; omissions remain a failing acceptance result.") });
+    else if (handling && !exporting && !previous("bash") && !value(queries[0]).evidence.verified) invoke("bash", {
       command: "cp apps/workstation/review_config.json apps/workstation/review_config.checkpoint.json && node -e 'const fs=require(\"node:fs\"); const p=\"apps/workstation/review_config.json\"; const v=JSON.parse(fs.readFileSync(p,\"utf8\")); v.includeCompleted=true; v.codeVersion=\"workstation-v2\"; fs.writeFileSync(p,JSON.stringify(v));'" });
     else if (handling && !exporting && queries.length === 1) invoke("brain_service", { operation: "verify", serviceName: "workstation", name: "review", input: {} });
     else if (!previous("brain_experience")) {
@@ -137,6 +141,18 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
         rule: exporting ? "Verify original export Job and the persistent artifact before reporting completion." : "confirmed-fixture-rule: Personal reviews include actually completed Todos and verify the authoritative review query.", evidenceIds: [proof.evidenceId] } });
     } else if (!previous("brain_feedback")) invoke("brain_feedback", { operation: "finish", state: "completed", result: exporting ? "Original export and artifact verified" : "Completed Todos now appear in the personal review", evidenceIds: [value(queries.at(-1)).evidence.evidenceId] });
     else end(exporting && handling ? "workstation-waiting-original-export" : "workstation-feedback-verified");
+    return true;
+  }
+  if (/^(remember|revise|invalidate) deterministic preference(?: (.*))?$/.test(prompt)) {
+    const match=/^(remember|revise|invalidate) deterministic preference(?: (.*))?$/.exec(prompt)!;
+    const memory=results.filter(result=>result.toolName==="brain_experience");
+    if(!memory.length)invoke("brain_experience",{operation:"status"});
+    else if(memory.length===1){
+      const base=value(memory[0]).adoptedExperienceVersion;
+      if(match[1]==="invalidate")invoke("brain_experience",{operation:"invalidate",entryId:"ui-preference",expectedVersion:base,reason:"The user explicitly invalidated the previous preference",evidenceIds:[],userPreference:true});
+      else invoke("brain_experience",{operation:match[1]==="revise"?"revise":"stage",expectedVersion:base,userPreference:true,entry:{entryId:"ui-preference",scope:"work",rule:match[2]??"Use dark theme",evidenceIds:[]}});
+    }else if(memory.length===2)invoke("brain_experience",{operation:"commit",evidenceIds:value(memory[1]).evidenceIds});
+    else end(`memory-effective:${value(memory[2]).memoryCommit?.version??"missing"}`);
     return true;
   }
   if (prompt.startsWith("prepare broken workstation brain candidate ")) {

@@ -25,7 +25,8 @@ export class WorkPrivateClient {
   async bindings(): Promise<unknown> { return this.content("getServiceInteractionBindings", {}); }
   async prepareBrain(input: unknown): Promise<unknown> { return this.content("prepareBrainCandidate", input); }
   async brainState(input: unknown): Promise<unknown> { return this.content("getBrainCandidateState", input); }
-  private async content(method: "getServiceInteractionBindings" | "prepareBrainCandidate" | "getBrainCandidateState", input: unknown): Promise<unknown> {
+  async authorizeHistoryMigration(input: unknown): Promise<unknown> { return this.content("authorizeHistoryMigration", input); }
+  private async content(method: "getServiceInteractionBindings" | "prepareBrainCandidate" | "getBrainCandidateState" | "authorizeHistoryMigration", input: unknown): Promise<unknown> {
     const result = await this.call<RpcWorkPrivateResponse>((metadata, options, done) => this.client[method]({ inputJson: JSON.stringify(input) }, metadata, options, done), method === "prepareBrainCandidate" ? 60_000 : 10_000);
     return JSON.parse(result.valueJson);
   }

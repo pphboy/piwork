@@ -8,7 +8,7 @@ import { request } from "node:http";
 import { validatePiPackageArtifact } from "@piwork/pi-package";
 import { WorkStore } from "@piwork/work-store";
 import { createPackageResourceLoader, packageNameKey } from "./package-resources.js";
-import { BRAIN_TOOL_NAMES, initializeBrainSource, readBrainCognition } from "./brain-resources.js";
+import { BRAIN_TOOL_NAMES, initializeBrainSource, readBrainCognition, brainPrompt } from "./brain-resources.js";
 import { BrainFlow } from "./brain-flow.js";
 import { ServiceBindingRegistry, ServiceInteractionClient } from "./service-interaction.js";
 import { AgentSessionService } from "./sessions.js";
@@ -16,6 +16,12 @@ import { AgentDaemonControl } from "./daemon.js";
 import { PiSdkRunExecutor } from "./pi-sdk-executor.js";
 import { RunManager } from "./runs.js";
 import { selectPackageTools } from "./application.js";
+
+test("the actual cognition prompt reports provided IDs and truncation without claiming all Memory was read",()=>{
+ const prompt=brainPrompt("Stable cognition",{version:3,entries:[]},{entryIds:[],matchedCount:2,truncated:true}).join("\n");
+ assert.match(prompt,/version 3/);assert.match(prompt,/"matchedCount":2/);assert.match(prompt,/More matches were not provided/);
+ assert.doesNotMatch(brainPrompt("Stable cognition").join("\n"),/Memory selection/);
+});
 
 test("frozen brain is a real SDK package, injects cognition each Run, and bridges only active allowed calls", async () => {
   const root = mkdtempSync(join(tmpdir(), "piwork-brain-sdk-")); const store = WorkStore.open(join(root, "private", "work.sqlite"));

@@ -24,6 +24,7 @@ const (
 	WorkServices_GetServiceInteractionBindings_FullMethodName = "/piwork.core.services.v1.WorkServices/GetServiceInteractionBindings"
 	WorkServices_PrepareBrainCandidate_FullMethodName         = "/piwork.core.services.v1.WorkServices/PrepareBrainCandidate"
 	WorkServices_GetBrainCandidateState_FullMethodName        = "/piwork.core.services.v1.WorkServices/GetBrainCandidateState"
+	WorkServices_AuthorizeHistoryMigration_FullMethodName     = "/piwork.core.services.v1.WorkServices/AuthorizeHistoryMigration"
 	WorkServices_GetDeploymentContext_FullMethodName          = "/piwork.core.services.v1.WorkServices/GetDeploymentContext"
 	WorkServices_CreateService_FullMethodName                 = "/piwork.core.services.v1.WorkServices/CreateService"
 	WorkServices_ListServices_FullMethodName                  = "/piwork.core.services.v1.WorkServices/ListServices"
@@ -47,6 +48,7 @@ type WorkServicesClient interface {
 	GetServiceInteractionBindings(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*WorkPrivateResponse, error)
 	PrepareBrainCandidate(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*WorkPrivateResponse, error)
 	GetBrainCandidateState(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*WorkPrivateResponse, error)
+	AuthorizeHistoryMigration(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*WorkPrivateResponse, error)
 	GetDeploymentContext(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*DeploymentContext, error)
 	CreateService(ctx context.Context, in *CreateServiceRequest, opts ...grpc.CallOption) (*Acceptance, error)
 	ListServices(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListServicesResponse, error)
@@ -113,6 +115,16 @@ func (c *workServicesClient) GetBrainCandidateState(ctx context.Context, in *Wor
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WorkPrivateResponse)
 	err := c.cc.Invoke(ctx, WorkServices_GetBrainCandidateState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workServicesClient) AuthorizeHistoryMigration(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*WorkPrivateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkPrivateResponse)
+	err := c.cc.Invoke(ctx, WorkServices_AuthorizeHistoryMigration_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +260,7 @@ type WorkServicesServer interface {
 	GetServiceInteractionBindings(context.Context, *Empty) (*WorkPrivateResponse, error)
 	PrepareBrainCandidate(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error)
 	GetBrainCandidateState(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error)
+	AuthorizeHistoryMigration(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error)
 	GetDeploymentContext(context.Context, *Empty) (*DeploymentContext, error)
 	CreateService(context.Context, *CreateServiceRequest) (*Acceptance, error)
 	ListServices(context.Context, *Empty) (*ListServicesResponse, error)
@@ -284,6 +297,9 @@ func (UnimplementedWorkServicesServer) PrepareBrainCandidate(context.Context, *W
 }
 func (UnimplementedWorkServicesServer) GetBrainCandidateState(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetBrainCandidateState not implemented")
+}
+func (UnimplementedWorkServicesServer) AuthorizeHistoryMigration(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AuthorizeHistoryMigration not implemented")
 }
 func (UnimplementedWorkServicesServer) GetDeploymentContext(context.Context, *Empty) (*DeploymentContext, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDeploymentContext not implemented")
@@ -428,6 +444,24 @@ func _WorkServices_GetBrainCandidateState_Handler(srv interface{}, ctx context.C
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkServicesServer).GetBrainCandidateState(ctx, req.(*WorkPrivateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkServices_AuthorizeHistoryMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkPrivateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkServicesServer).AuthorizeHistoryMigration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkServices_AuthorizeHistoryMigration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkServicesServer).AuthorizeHistoryMigration(ctx, req.(*WorkPrivateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -674,6 +708,10 @@ var WorkServices_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBrainCandidateState",
 			Handler:    _WorkServices_GetBrainCandidateState_Handler,
+		},
+		{
+			MethodName: "AuthorizeHistoryMigration",
+			Handler:    _WorkServices_AuthorizeHistoryMigration_Handler,
 		},
 		{
 			MethodName: "GetDeploymentContext",

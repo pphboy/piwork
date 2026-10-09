@@ -56,6 +56,8 @@ type workApplyPlan struct {
 	ErrorCode         string                    `json:"errorCode,omitempty"`
 	ErrorStage        string                    `json:"errorStage,omitempty"`
 	PrimaryDiagnostic *contracts.SafeDiagnostic `json:"primaryDiagnostic,omitempty"`
+	HistoryBackup     *applyHistoryBackup       `json:"historyBackup,omitempty"`
+	HistoryRecovered  bool                      `json:"historyRecovered,omitempty"`
 }
 
 func applyPlanKey(id string) string { return "work_apply_" + strings.ReplaceAll(id, "-", "_") }
@@ -92,8 +94,18 @@ func (a *Application) saveApplyPlan(ctx context.Context, id string, plan workApp
 		if err := tx.QueryRow(`SELECT control_version FROM works WHERE id=? AND deleted_at IS NULL`, plan.WorkID).Scan(&control); err != nil {
 			return err
 		}
-		if control != plan.Control {
+		if control != plan.Control && (plan.HistoryBackup == nil || plan.HistoryBackup.RecoveryControl != control || control <= plan.Control) {
 			return errWorkSuperseded
+		}
+		if plan.HistoryBackup != nil && (plan.HistoryBackup.State == "planned" || plan.HistoryBackup.State == "saved") {
+			raw, _ := json.Marshal(map[string]any{"operationId": id, "control": plan.Control})
+			if _, err := tx.Exec("INSERT INTO control_metadata(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at", pendingHistoryKey(plan.WorkID), string(raw), packageNow()); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.Exec("DELETE FROM control_metadata WHERE key=? AND json_extract(value_json,'$.operationId')=?", pendingHistoryKey(plan.WorkID), id); err != nil {
+				return err
+			}
 		}
 		return putApplyPlan(tx, id, plan)
 	})
@@ -401,6 +413,21 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 	if err := a.applyCurrent(ctx, plan); err != nil {
 		return err
 	}
+	if err := a.reconcileHistoryUpgradeLocked(ctx, plan.WorkID, operation.ID); err != nil {
+		return err
+	}
+	if plan.Stage == "captured" && !plan.HistoryRecovered {
+		restored, err := a.restoredPriorHistory(ctx, plan)
+		if err != nil {
+			return err
+		}
+		if restored {
+			plan.HistoryRecovered = true
+			if err := a.saveApplyPlan(ctx, operation.ID, plan); err != nil {
+				return err
+			}
+		}
+	}
 	if a.workRuntime == nil || a.dockerRuntime == nil {
 		return a.finishWorkApply(ctx, operation, plan, "RUNTIME_PREPARE_FAILED", "runtime-prepare", "not-required", false)
 	}
@@ -424,6 +451,23 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 		return corestore.ErrStorage
 	}
 	candidate.InitializationOnly = plan.DesiredState == "stopped"
+	if plan.Stage == "captured" && plan.PriorContextID != nil {
+		prior, _, err := a.capturedContextSpec(ctx, plan.WorkID, 1, "inspection", *plan.PriorContextID, true)
+		if err != nil {
+			return err
+		}
+		old, err := a.inspector.InspectNativeAgent(ctx, prior.ImageID)
+		if err != nil {
+			return err
+		}
+		next, err := a.inspector.InspectNativeAgent(ctx, candidate.ImageID)
+		if err != nil {
+			return err
+		}
+		if old.WorkHistorySchema == 5 && next.WorkHistorySchema == 4 {
+			return a.finishWorkApply(ctx, operation, plan, "CONTEXT_FORMAT_UNSUPPORTED", "context-validate", "not-required", false)
+		}
+	}
 	if plan.Stage == "captured" {
 		if err := a.workRuntime.Prepare(ctx, candidate); err != nil {
 			return a.finishWorkApply(ctx, operation, plan, "RUNTIME_PREPARE_FAILED", "runtime-prepare", "not-required", false)
@@ -450,7 +494,15 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 			return a.finishWorkApply(ctx, operation, plan, "RUNTIME_PREPARE_FAILED", "runtime-prepare", "not-required", false)
 		}
 
-		if plan.DesiredState == "running" && plan.PriorContextID != nil {
+		priorAbsent := false
+		if plan.HistoryRecovered {
+			view, err := a.dockerRuntime.InspectContainer(ctx, dockerengine.ContainerIdentity{WorkID: plan.WorkID, Kind: "agent", LogicalID: "agentd"})
+			if err != nil {
+				return err
+			}
+			priorAbsent = view == nil
+		}
+		if plan.DesiredState == "running" && plan.PriorContextID != nil && !priorAbsent {
 			var generation int64
 			var instance string
 			if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
@@ -494,6 +546,15 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 		if err := a.removeApplyAgent(ctx, plan.WorkID); err != nil {
 			return a.finishWorkApply(ctx, operation, plan, "RUNTIME_PREPARE_FAILED", "runtime-prepare", "not-required", true)
 		}
+		if err := a.prepareHistoryUpgrade(ctx, operation.ID, &plan, candidate); err != nil {
+			plan.Stage = "rollback"
+			plan.ErrorCode = "RUNTIME_PREPARE_FAILED"
+			plan.ErrorStage = "runtime-prepare"
+			if err := a.saveApplyPlan(ctx, operation.ID, plan); err != nil {
+				return err
+			}
+			return a.rollbackWorkApply(ctx, operation, plan)
+		}
 		plan.Stage = "starting"
 		if err := a.saveApplyPlan(ctx, operation.ID, plan); err != nil {
 			return err
@@ -501,24 +562,49 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 
 	}
 	if plan.Stage == "starting" || plan.Stage == "validated" {
-		spec, err := a.applyGeneration(ctx, operation.ID, &plan, plan.ContextID, candidate.InitializationOnly)
-		if err != nil {
-			return err
-		}
-		started, err := a.startWorkRuntime(ctx, spec)
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if err == nil && a.applyCurrent(ctx, plan) != nil {
-			started.Client.Close()
-			_ = a.removeApplyAgent(ctx, plan.WorkID)
-			return errWorkSuperseded
-		}
-		if err == nil {
-			if candidate.InitializationOnly {
+		var startErr error
+		for {
+			migrationOnly := plan.HistoryBackup != nil && plan.HistoryBackup.State == "saved" && !plan.HistoryBackup.InitializationValidated
+			initializationOnly := candidate.InitializationOnly || migrationOnly
+			spec, err := a.applyGeneration(ctx, operation.ID, &plan, plan.ContextID, initializationOnly)
+			if err != nil {
+				return err
+			}
+			if migrationOnly {
+				spec.HistoryMigration = migrationGrant(operation.ID, plan)
+				spec.CorrelationID = operation.ID
+			}
+			started, err := a.startWorkRuntime(ctx, spec)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err == nil && a.applyCurrent(ctx, plan) != nil {
+				started.Client.Close()
+				_ = a.removeApplyAgent(ctx, plan.WorkID)
+				return errWorkSuperseded
+			}
+			if err != nil {
+				startErr = err
+				break
+			}
+			if initializationOnly {
 				started.Client.Close()
 				if err := a.removeApplyAgent(ctx, plan.WorkID); err != nil {
 					return a.finishWorkApply(ctx, operation, plan, "RUNTIME_START_FAILED", "runtime-start", "not-required", true)
+				}
+			}
+			if migrationOnly {
+				plan.HistoryBackup.InitializationValidated = true
+				plan.Stage = "validated"
+				if !candidate.InitializationOnly {
+					plan.Generation = 0
+					plan.InstanceID = ""
+				}
+				if err := a.saveApplyPlan(ctx, operation.ID, plan); err != nil {
+					return err
+				}
+				if !candidate.InitializationOnly {
+					continue
 				}
 			}
 			if err := a.publishWorkApply(ctx, operation, plan, spec, started, candidate.InitializationOnly); err != nil {
@@ -529,6 +615,7 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 			}
 			return nil
 		}
+		err = startErr
 		plan.Stage = "rollback"
 		primary := diagnosticCause(err, "RUNTIME_START_FAILED", "runtime-start")
 		plan.ErrorCode = string(primary.Code)
@@ -566,6 +653,9 @@ func (a *Application) rollbackWorkApply(ctx context.Context, operation corestore
 		return err
 	}
 	if err := a.removeApplyAgent(ctx, plan.WorkID); err != nil {
+		return a.finishWorkApply(ctx, operation, plan, plan.ErrorCode, plan.ErrorStage, "failed", true)
+	}
+	if err := a.restoreHistoryUpgrade(ctx, operation.ID, &plan); err != nil {
 		return a.finishWorkApply(ctx, operation, plan, plan.ErrorCode, plan.ErrorStage, "failed", true)
 	}
 	if plan.PriorContextID == nil {
@@ -676,6 +766,9 @@ func (a *Application) publishWorkApply(ctx context.Context, operation corestore.
 		if _, err := tx.Exec(`UPDATE works SET active_context_id=?,active_revision=?,observed_state=?,updated_at=? WHERE id=? AND control_version=?`, plan.ContextID, plan.Revision, observed, now, plan.WorkID, plan.Control); err != nil {
 			return err
 		}
+		if err := a.clearCommittedHistory(tx, operation.ID, plan); err != nil {
+			return err
+		}
 		var desiredRaw, desiredContextID string
 		if err := tx.QueryRow(`SELECT r.config_json,w.desired_context_id FROM works w JOIN work_config_revisions r ON r.work_id=w.id AND r.revision=w.desired_revision WHERE w.id=?`, plan.WorkID).Scan(&desiredRaw, &desiredContextID); err != nil {
 			return err
@@ -709,6 +802,9 @@ func (a *Application) publishWorkApply(ctx context.Context, operation corestore.
 		if err == nil {
 			err = errWorkSuperseded
 		}
+	}
+	if err == nil && plan.HistoryBackup != nil {
+		_ = a.retireHistoryBackup(ctx, operation.ID)
 	}
 	return err
 }

@@ -90,10 +90,10 @@ func VerifyReadiness(scope internaltls.Scope, contextID string, initializationOn
 }
 
 func VerifyObservation(scope internaltls.Scope, contextID string, response *agentv1.ReadinessResponse) error {
-	if response != nil && (response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4) {
+	if response != nil && (response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5) {
 		return ErrContextIncompatible
 	}
-	if contextID == "" || response == nil || response.GetWorkId() != scope.WorkID || response.GetGeneration() != uint64(scope.Generation) || response.GetInstanceId() != scope.InstanceID || response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 || response.GetContextIdentity() != contextID {
+	if contextID == "" || response == nil || response.GetWorkId() != scope.WorkID || response.GetGeneration() != uint64(scope.Generation) || response.GetInstanceId() != scope.InstanceID || response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5 || response.GetContextIdentity() != contextID {
 		return ErrReadiness
 	}
 	return nil

@@ -1,5 +1,26 @@
-export function resultText(result) {
-    return result?.kind === 'text' ? `${result.text}${result.truncated ? '\n[Preview limited to 64 KiB]' : ''}` : result?.kind === 'non-text' ? 'Non-text result. See the saved SDK history for the original.' : 'Result not confirmed.';
+export function memoryResultSummary(result, toolName) {
+    if (!['brain_experience', 'brain_feedback', 'package:piwork-brain:brain_experience', 'package:piwork-brain:brain_feedback'].includes(toolName ?? '') || result?.kind !== 'text')
+        return;
+    if (result.isError)
+        return 'Memory: operation failed; no effective update confirmed.';
+    try {
+        const value = JSON.parse(result.text), version = (n) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+        if (value.memoryCommit?.status === 'effective' && version(value.memoryCommit.version))
+            return `Memory: effective v${value.memoryCommit.version}.`;
+        if (value.status === 'staged' && version(value.version))
+            return `Memory: candidate v${value.version} proposed; not effective.`;
+        if (value.status === 'invalidated' && version(value.version))
+            return `Memory: entry invalidated at v${value.version}.`;
+        if (version(value.adoptedExperienceVersion) && version(value.effectiveVersion))
+            return `Memory: this Run uses v${value.adoptedExperienceVersion}; current effective v${value.effectiveVersion}.`;
+        if (version(value.version) && Array.isArray(value.items))
+            return `Memory: ${value.items.length ? 'matching entries' : 'no matching entries'} at v${value.version}${value.truncated ? ' (limited)' : ''}.`;
+    }
+    catch { /* Unknown or truncated results remain the actual bounded preview. */ }
+}
+export function resultText(result, toolName) {
+    const summary = memoryResultSummary(result, toolName);
+    return result?.kind === 'text' ? `${summary ? `${summary}\n` : ''}${result.text}${result.truncated ? '\n[Preview limited to 64 KiB]' : ''}` : result?.kind === 'non-text' ? 'Non-text result. See the saved SDK history for the original.' : 'Result not confirmed.';
 }
 export function upsertTool(messages, incoming) {
     const existing = incoming.runId && incoming.tool?.id ? messages.find(message => message.runId === incoming.runId && message.tool?.id === incoming.tool?.id) : undefined;
@@ -24,7 +45,7 @@ export function historyMessages(raw, previous = []) {
             if (block.type === 'text')
                 messages.push({ id: block.blockId, runId: message.runId || undefined, role: message.role, text: block.text });
             else
-                upsertTool(messages, { id: message.runId ? `${message.runId}-tool-${block.toolCallId}` : block.blockId, runId: message.runId || undefined, role: 'assistant', text: '', tool: { id: block.toolCallId, name: block.toolName, status: block.type === 'tool-call' ? 'Result not confirmed' : block.result?.isError ? 'Failed' : 'Completed', isError: block.result?.isError, content: resultText(block.result) } });
+                upsertTool(messages, { id: message.runId ? `${message.runId}-tool-${block.toolCallId}` : block.blockId, runId: message.runId || undefined, role: 'assistant', text: '', tool: { id: block.toolCallId, name: block.toolName, status: block.type === 'tool-call' ? 'Result not confirmed' : block.result?.isError ? 'Failed' : 'Completed', isError: block.result?.isError, content: resultText(block.result, block.toolName) } });
         }
     }
     const remaining = [...previous];

@@ -103,11 +103,15 @@ func (f *brainAcceptance) request(goal, state string) map[string]any {
 	f.t.Fatal("request did not reach state", goal, state, found)
 	return nil
 }
-func (f *brainAcceptance) serviceURL() string {
+func (f *brainAcceptance) serviceURL(names ...string) string {
 	f.t.Helper()
+	name := "workstation"
+	if len(names) == 1 {
+		name = names[0]
+	}
 	var id string
 	if err := f.a.Store.Read(f.ctx, func(tx *sql.Tx) error {
-		return tx.QueryRow("SELECT service_id FROM service_heads WHERE work_id=? AND name='workstation' AND tombstoned_at IS NULL", f.work).Scan(&id)
+		return tx.QueryRow("SELECT service_id FROM service_heads WHERE work_id=? AND name=? AND tombstoned_at IS NULL", f.work, name).Scan(&id)
 	}); err != nil {
 		f.t.Fatal(err)
 	}
@@ -215,7 +219,7 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 	if len(detail["evidence"].(map[string]any)["items"].([]any)) == 0 {
 		t.Fatal("completion lacks real Service evidence", detail)
 	}
-	cognition := f.chat("inspect piwork brain cognition", "adopt-experience")
+	cognition := f.chat("inspect piwork brain cognition for personal review", "adopt-experience")
 	if !strings.HasSuffix(cognition["finalText"].(string), ":true") || cognition["adoptedExperienceVersion"].(float64) < 1 {
 		t.Fatal("next SDK execution did not adopt committed experience", cognition)
 	}
@@ -478,9 +482,14 @@ func (f *brainAcceptance) shareCopies() {
 			f.t.Fatal("copy lacks its own actual SDK proof", proof)
 		}
 		target.control("stop", key+"-stop")
+		status, reexported := packageHTTPCall(f.t, f.base, target.path+"/exports", "POST", f.auth, map[string]string{"idempotencyKey": key + "-reexport"})
+		if status != 202 {
+			f.t.Fatal("recipient reexport", status, reexported)
+		}
+		waitWorkOperation(f.t, f.ctx, f.a, reexported["operationId"].(string))
 	}
 	f.control("start", "share-source-start")
-	f.t.Log("Full schema-4 .work produced two independently identified Work copies; old feedback stayed historical and each copy produced its own new feedback, candidate Apply and actual SDK proof")
+	f.t.Log("Full schema-5/Memory-1 .work produced two independently identified Work copies; old feedback stayed historical and each copy produced its own new feedback, candidate Apply and actual SDK proof")
 }
 
 // Crash after the actual business Action was durably accepted, before the SDK

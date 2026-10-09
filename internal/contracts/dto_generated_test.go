@@ -1031,6 +1031,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "WorkHistoryMigrationSchema":
+				value, err := Decode[WorkHistoryMigration](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "WorkImagePlatformSchema":
 				value, err := Decode[WorkImagePlatform](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {

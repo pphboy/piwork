@@ -9,6 +9,7 @@ import { WorkStore } from "./store.js";
 import { WorkHistorySnapshot, WorkHistoryValidationError } from "./snapshot.js";
 import { migrateWorkDatabase } from "./migrations.js";
 import { FeedbackError } from "./feedback.js";
+import { LEGACY_SCHEMA_SQL } from "./legacy-schema.js";
 
 const NOW = "2026-09-23T00:00:00.000Z", SOURCE = "work-source-1234567890", CONTEXT = "context-source";
 function fixture() {
@@ -24,14 +25,14 @@ function fixture() {
   return { root, volume, store, sdk, runId: accepted.run.runId, scope: { sourceWorkId: SOURCE, contextIds: new Set([CONTEXT]), scratchDirectory: root }, close: () => { store.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 function fingerprint(volume: string): Map<string, string> {
-  return new Map(readdirSync(volume).filter((name) => name.startsWith("work.sqlite") || name === "business.sqlite").map((name) => [name, createHash("sha256").update(readFileSync(join(volume, name))).digest("hex")]));
+  return new Map(readdirSync(volume).filter((name) => name.startsWith("work.sqlite") || name.startsWith("memory.sqlite") || name === "business.sqlite").map((name) => [name, createHash("sha256").update(readFileSync(join(volume, name))).digest("hex")]));
 }
 function edit(volume: string, sql: string): void {
-  const database = new DatabaseSync(join(volume, "work.sqlite")); try { database.exec(sql); } finally { database.close(); }
+  const database = new DatabaseSync(join(volume, "work.sqlite")); try { database.prepare("ATTACH DATABASE ? AS memory").run(join(volume,"memory.sqlite")); database.exec(sql); } finally { database.close(); }
 }
 
 test("schema4 snapshot reads committed WAL without migration or source mutation", () => {
-  const f = fixture();
+  const f = legacyFixture();
   try {
     assert.ok(existsSync(join(f.volume, "work.sqlite-wal")));
     const before = fingerprint(f.volume), snapshot = WorkHistorySnapshot.open(f.volume, f.scope);
@@ -77,8 +78,8 @@ test("offline check refuses trigger, view, virtual table, unknown tables/columns
     "CREATE VIRTUAL TABLE malicious USING fts5(content)",
     "CREATE TABLE malicious(value TEXT)",
     "ALTER TABLE runs ADD COLUMN unexpected TEXT",
-    "UPDATE schema_migrations SET version = 99 WHERE version = 4",
-    "DELETE FROM schema_migrations WHERE version = 4",
+    "UPDATE schema_migrations SET version = 99 ",
+    "DELETE FROM schema_migrations ",
     "CREATE INDEX unrecognized ON runs(state)",
   ];
   for (const sql of cases) {
@@ -158,7 +159,7 @@ function brainFixture() {
   return { ...f, learned: request.requestId, waiting: waiting.requestId };
 }
 
-test("schema4 cold history retains verified experience and waits while imports are historical and independently rebound", () => {
+test("schema5 cold history retains verified experience and waits while imports are historical and independently rebound", () => {
   const f = brainFixture();
   try {
     const original = fingerprint(f.volume), snapshot = WorkHistorySnapshot.open(f.volume, f.scope)!;
@@ -186,13 +187,13 @@ test("schema4 cold history retains verified experience and waits while imports a
   } finally { f.close(); }
 });
 
-test("schema4 import validation rejects forged completion, unconfirmed experience, dangling scope and malformed original waits", () => {
+test("schema5 import validation rejects forged completion, unconfirmed experience, dangling scope and malformed original waits", () => {
   const cases = [
     "UPDATE agent_evidence SET verified=0",
     "UPDATE agent_requests SET state='completed' WHERE state='waiting_result'",
     "UPDATE agent_requests SET state='failed' WHERE state='completed'",
     "UPDATE agent_requests SET wait_ref_json='{}' WHERE state='waiting_result'",
-    "UPDATE brain_experience_revisions SET evidence_ids_json='[\"missing\"]'",
+    "UPDATE memory.memory_entries SET evidence_ids_json='[\"missing\"]'",
     "UPDATE agent_evidence SET request_id=NULL WHERE kind='query'",
     "UPDATE sessions SET model_preference_json='{\"apiKey\":\"forbidden\"}'",
   ];
@@ -230,7 +231,7 @@ test("circular Service receipts and candidate Operation waits import historicall
   } finally { f.close(); }
 });
 
-function adoptionFixture() {
+function adoptionFixture(announcement=false) {
   const f = brainFixture();
   const run = f.store.acceptRun({ workId: SOURCE, sessionId: "session-local", submissionKey: "adopt", requestDigest: "adopt", promptDigest: "adopt", contextIdentity: CONTEXT, now: NOW }).run;
   const request = f.store.feedback.ensureChatRequest(SOURCE, run.runId, "Render a verified review", NOW);
@@ -240,6 +241,7 @@ function adoptionFixture() {
     expectedSourceDigest: sourceDigest, activeDigest: artifact, desiredDigest: artifact, activeContextId: CONTEXT, verificationTarget });
   f.store.feedback.recordCandidateArtifact(SOURCE, request.requestId, "capture-adopt", artifact, sourceDigest, NOW);
   {
+    if(announcement)f.store.appendEvent(run.runId,"tool-start",JSON.stringify({toolCallId:"actual-sdk-call",toolName:"review_probe"}),NOW);
     f.store.appendEvent(run.runId, "tool-start", JSON.stringify({ toolCallId: "actual-sdk-call", toolName: "review_probe", args: verificationTarget.input }), NOW);
     f.store.appendEvent(run.runId, "tool-end", JSON.stringify({ toolCallId: "actual-sdk-call", toolName: "review_probe", isError: false }), NOW);
   }
@@ -309,7 +311,7 @@ test("SDK tool start must persist the exact fixed verification input", () => {
  }
 });
 
-test('schema 4 optional Thinking and input mode survive cold validation and rebinding',()=>{
+test('schema 5 optional Thinking and input mode survive cold validation and rebinding',()=>{
  const f=fixture();try{
   const model={modelRef:'model-source-12345678',label:'Original',provider:'fixture',model:'one',thinkingLevel:'high'};
   f.store.setSessionModelPreference(SOURCE,'session-local',JSON.stringify({...model,availability:'available'}));
@@ -319,4 +321,38 @@ test('schema 4 optional Thinking and input mode survive cold validation and rebi
   const imported=WorkStore.open(join(target,'work.sqlite'));try{assert.equal(JSON.parse(imported.getSession('work-target-1234567890','session-local')!.modelPreferenceJson!).thinkingLevel,'high');assert.equal(JSON.parse(imported.getRun(f.runId)!.actualModelJson!).thinkingLevel,'high');assert.equal(JSON.parse(imported.getRun(f.runId)!.modelSelectorJson!).inputMode,'text');}finally{imported.close();}
   for(const invalid of ['"impossible"','null','3']){edit(f.volume,`UPDATE runs SET actual_model_json='{"modelRef":null,"label":"Default","provider":"fixture","model":"one","thinkingLevel":${invalid}}'`);assert.throws(()=>WorkHistorySnapshot.open(f.volume,f.scope),WorkHistoryValidationError);}
  }finally{f.close();}
+});
+
+function legacyFixture() {
+  const f = fixture(); f.store.close();
+  rmSync(join(f.volume,"work.sqlite")); rmSync(join(f.volume,"memory.sqlite"));
+  const db = new DatabaseSync(join(f.volume,"work.sqlite"));
+  db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON"); db.exec(LEGACY_SCHEMA_SQL);
+  db.prepare("INSERT INTO schema_migrations VALUES(4,?)").run(NOW);
+  db.prepare("INSERT INTO sessions(work_id,session_id,sdk_history_path,created_at,updated_at,active_context_identity) VALUES(?,?,?,?,?,?)")
+    .run(SOURCE,"session-local","/var/data/sessions/one.jsonl",NOW,NOW,CONTEXT);
+  db.prepare("INSERT INTO runs(work_id,session_id,run_id,submission_key,prompt_digest,state,accepted_at,finished_at,latest_sequence,context_identity) VALUES(?,?,?,?,?,'succeeded',?,?,2,?)")
+    .run(SOURCE,"session-local","run-legacy","submit-key","prompt-digest",NOW,NOW,CONTEXT);
+  for (const [sequence,type,payload] of [[1,"text",'{"text":"retained"}'],[2,"state",'{"state":"succeeded"}']] as const)
+    db.prepare("INSERT INTO run_events VALUES(?,?,?,?,?)").run("run-legacy",sequence,type,payload,NOW);
+  return { ...f, close: () => { db.close(); f.close(); } };
+}
+
+test("schema5 rejects mismatched Memory, dangling proofs, unknown adoption and extra executable schema",()=>{
+  for(const sql of [
+    "DELETE FROM work_memory_binding",
+    "UPDATE memory.memory_meta SET work_id='other-work'",
+    "UPDATE memory.memory_meta SET store_id='another-store'",
+    "UPDATE memory.memory_entries SET source_request_id='missing'",
+    "UPDATE memory.memory_entries SET evidence_ids_json='[\"missing\"]'",
+    "UPDATE runs SET adopted_experience_version=999",
+    "UPDATE runs SET adopted_memory_selection_json='{\"entryIds\":[\"missing\"],\"matchedCount\":1,\"truncated\":false}'",
+    "CREATE TABLE memory.extra(value TEXT)",
+    "CREATE TRIGGER memory.extra AFTER INSERT ON memory_entries BEGIN DELETE FROM memory_head; END",
+  ]) {const f=brainFixture();try{edit(f.volume,sql);const before=fingerprint(f.volume);assert.throws(()=>WorkHistorySnapshot.open(f.volume,f.scope),WorkHistoryValidationError);assert.deepEqual(fingerprint(f.volume),before);}finally{f.close();}}
+});
+
+
+test("fixed SDK proof permits its streaming announcement but still requires one ordered actual execution",()=>{
+ for(const announcement of [false,true]){const f=adoptionFixture(announcement);try{WorkHistorySnapshot.open(f.volume,f.scope)?.close();}finally{f.close();}}
 });

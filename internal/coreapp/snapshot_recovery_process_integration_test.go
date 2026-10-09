@@ -66,6 +66,29 @@ func snapshotProcessEngine(t *testing.T, installation, upstream string) (string,
 			return
 		}
 		gate := active.Load()
+		if gate != nil && gate.action == "history-migration-agent-remove" && !gate.claimed.Load() && r.Method == "DELETE" && strings.Contains(r.URL.Path, "/containers/") {
+			req, _ := http.NewRequestWithContext(r.Context(), "GET", "http://engine"+r.URL.Path+"/json", nil)
+			response, err := client.Do(req)
+			if err == nil {
+				raw, _ := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+				response.Body.Close()
+				var view struct {
+					Config struct{ Labels map[string]string }
+					State  struct{ Running bool }
+				}
+				if json.Unmarshal(raw, &view) == nil && view.Config.Labels[dockerengine.InstallationLabel] == installation && view.Config.Labels[dockerengine.KindLabel] == "agent" && view.Config.Labels["piwork.generation"] != "1" && !view.State.Running && gate.claimed.CompareAndSwap(false, true) {
+					close(gate.hit)
+					select {
+					case <-gate.release:
+					case <-r.Context().Done():
+						return
+					}
+					if r.Context().Err() != nil {
+						return
+					}
+				}
+			}
+		}
 		if gate != nil && !gate.claimed.Load() && r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/start") && strings.Contains(r.URL.Path, "/containers/") {
 			req, _ := http.NewRequestWithContext(r.Context(), "GET", "http://engine"+strings.TrimSuffix(r.URL.Path, "/start")+"/json", nil)
 			response, err := client.Do(req)

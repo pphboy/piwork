@@ -26,18 +26,6 @@ export const WORK_SCHEMA_OBJECTS = [
   },
   {
     "type": "index",
-    "name": "sqlite_autoindex_brain_experience_heads_1",
-    "tbl_name": "brain_experience_heads",
-    "sql": null
-  },
-  {
-    "type": "index",
-    "name": "sqlite_autoindex_brain_experience_revisions_1",
-    "tbl_name": "brain_experience_revisions",
-    "sql": null
-  },
-  {
-    "type": "index",
     "name": "sqlite_autoindex_run_events_1",
     "tbl_name": "run_events",
     "sql": null
@@ -97,6 +85,18 @@ export const WORK_SCHEMA_OBJECTS = [
     "sql": null
   },
   {
+    "type": "index",
+    "name": "sqlite_autoindex_work_memory_binding_1",
+    "tbl_name": "work_memory_binding",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_work_memory_binding_2",
+    "tbl_name": "work_memory_binding",
+    "sql": null
+  },
+  {
     "type": "table",
     "name": "agent_evidence",
     "tbl_name": "agent_evidence",
@@ -116,18 +116,6 @@ export const WORK_SCHEMA_OBJECTS = [
   },
   {
     "type": "table",
-    "name": "brain_experience_heads",
-    "tbl_name": "brain_experience_heads",
-    "sql": "CREATE TABLE brain_experience_heads (\n  work_id TEXT PRIMARY KEY, version INTEGER NOT NULL CHECK(version >= 1), updated_at TEXT NOT NULL\n) STRICT"
-  },
-  {
-    "type": "table",
-    "name": "brain_experience_revisions",
-    "tbl_name": "brain_experience_revisions",
-    "sql": "CREATE TABLE brain_experience_revisions (\n  work_id TEXT NOT NULL, version INTEGER NOT NULL CHECK(version >= 1), entry_id TEXT NOT NULL,\n  scope TEXT NOT NULL, rule TEXT NOT NULL, evidence_ids_json TEXT NOT NULL,\n  source_request_id TEXT NOT NULL REFERENCES agent_requests(request_id),\n  status TEXT NOT NULL CHECK(status IN ('staged','effective','failed')), created_at TEXT NOT NULL,\n  PRIMARY KEY(work_id,version,entry_id)\n) STRICT"
-  },
-  {
-    "type": "table",
     "name": "run_events",
     "tbl_name": "run_events",
     "sql": "CREATE TABLE run_events (\n      run_id TEXT NOT NULL REFERENCES runs(run_id),\n      sequence INTEGER NOT NULL,\n      event_type TEXT NOT NULL,\n      payload_json TEXT NOT NULL,\n      created_at TEXT NOT NULL,\n      PRIMARY KEY(run_id, sequence)\n    ) STRICT"
@@ -136,7 +124,7 @@ export const WORK_SCHEMA_OBJECTS = [
     "type": "table",
     "name": "runs",
     "tbl_name": "runs",
-    "sql": "CREATE TABLE runs (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      run_id TEXT PRIMARY KEY,\n      submission_key TEXT NOT NULL,\n      prompt_digest TEXT NOT NULL,\n      state TEXT NOT NULL CHECK (state IN (\n        'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'\n      )),\n      final_text TEXT,\n      error_json TEXT,\n      accepted_at TEXT NOT NULL,\n      started_at TEXT,\n      finished_at TEXT,\n      earliest_available_sequence INTEGER NOT NULL DEFAULT 1,\n      latest_sequence INTEGER NOT NULL DEFAULT 0, context_identity TEXT,\n      model_selector_json TEXT, actual_model_json TEXT, source_json TEXT,\n      adopted_experience_version INTEGER NOT NULL DEFAULT 0 CHECK(adopted_experience_version >= 0),\n      FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)\n    ) STRICT"
+    "sql": "CREATE TABLE runs (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      run_id TEXT PRIMARY KEY,\n      submission_key TEXT NOT NULL,\n      prompt_digest TEXT NOT NULL,\n      state TEXT NOT NULL CHECK (state IN (\n        'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'\n      )),\n      final_text TEXT,\n      error_json TEXT,\n      accepted_at TEXT NOT NULL,\n      started_at TEXT,\n      finished_at TEXT,\n      earliest_available_sequence INTEGER NOT NULL DEFAULT 1,\n      latest_sequence INTEGER NOT NULL DEFAULT 0, context_identity TEXT,\n      model_selector_json TEXT, actual_model_json TEXT, source_json TEXT,\n      adopted_experience_version INTEGER NOT NULL DEFAULT 0 CHECK(adopted_experience_version >= 0),\n      adopted_memory_selection_json TEXT,\n      FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)\n    ) STRICT"
   },
   {
     "type": "table",
@@ -173,5 +161,11 @@ export const WORK_SCHEMA_OBJECTS = [
     "name": "work_activity",
     "tbl_name": "work_activity",
     "sql": "CREATE TABLE work_activity (\n      work_id TEXT PRIMARY KEY,\n      active_run_id TEXT NOT NULL UNIQUE REFERENCES runs(run_id),\n      acquired_at TEXT NOT NULL\n    ) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "work_memory_binding",
+    "tbl_name": "work_memory_binding",
+    "sql": "CREATE TABLE work_memory_binding (\n  work_id TEXT PRIMARY KEY, store_id TEXT NOT NULL UNIQUE,\n  memory_schema_version INTEGER NOT NULL CHECK(memory_schema_version = 1)\n) STRICT"
   }
 ] as const;

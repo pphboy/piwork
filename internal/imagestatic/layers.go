@@ -339,6 +339,7 @@ func layerError(ctx context.Context, err error) error {
 }
 
 type Capabilities struct {
+	WorkHistorySchema                      int64
 	Environment                            *contracts.PiPackagePreparedEnvironment
 	Identity                               Identity
 	PackageHelper, ServiceMCP              bool
@@ -425,7 +426,8 @@ func InspectNativeAgent(ctx context.Context, reader io.ReaderAt, size int64, exp
 	if err != nil {
 		return Capabilities{}, err
 	}
-	if config.Config.Labels["io.piwork.agent.protocol"] != "v2" || config.Config.Labels["io.piwork.package-helper.contract"] != "2" || config.Config.Labels["io.piwork.service-mcp.contract"] != "1" || config.Config.Labels["io.piwork.work-history.schema"] != "4" || config.Config.Labels["io.piwork.run-model.contract"] != "1" || config.Config.Labels["io.piwork.work-feedback.contract"] != "1" {
+	history := config.Config.Labels["io.piwork.work-history.schema"]
+	if config.Config.Labels["io.piwork.agent.protocol"] != "v2" || config.Config.Labels["io.piwork.package-helper.contract"] != "2" || config.Config.Labels["io.piwork.service-mcp.contract"] != "1" || history != "4" && history != "5" || config.Config.Labels["io.piwork.run-model.contract"] != "1" || config.Config.Labels["io.piwork.work-feedback.contract"] != "1" {
 		return Capabilities{}, ErrIncompatible
 	}
 	state := newLayerState()
@@ -445,5 +447,9 @@ func InspectNativeAgent(ctx context.Context, reader io.ReaderAt, size int64, exp
 	if !state.nativeFile(PackageHelperPath) || !state.nativeFile(ServiceMCPPath) {
 		return Capabilities{}, ErrIncompatible
 	}
-	return Capabilities{Identity: expected, PackageHelper: true, ServiceMCP: true, PackageHelperSHA256: state.nodes[PackageHelperPath].digest, ServiceMCPSHA256: state.nodes[ServiceMCPPath].digest, Environment: state.packageEnvironment(expected)}, nil
+	version := int64(4)
+	if history == "5" {
+		version = 5
+	}
+	return Capabilities{Identity: expected, WorkHistorySchema: version, PackageHelper: true, ServiceMCP: true, PackageHelperSHA256: state.nodes[PackageHelperPath].digest, ServiceMCPSHA256: state.nodes[ServiceMCPPath].digest, Environment: state.packageEnvironment(expected)}, nil
 }

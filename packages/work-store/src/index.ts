@@ -13,3 +13,5 @@ export {
 } from "./store.js";
 export * from "./snapshot.js";
 export * from "./feedback.js";
+export * from "./memory.js";
+export type { HistoryMigration } from "./memory-migration.js";

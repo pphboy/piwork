@@ -3,16 +3,101 @@ package snapshothelper
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"piwork/internal/workhistory"
 	"piwork/internal/workpackage"
 )
+
+func TestSnapshotHelperSharedMemoryIntegrityCases(t *testing.T) {
+	raw, err := os.ReadFile("../workhistory/testdata/memory-integrity-cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name     string `json:"name"`
+		Accepted bool   `json:"accepted"`
+		SQL      string `json:"sql"`
+		Setup    string `json:"setup"`
+	}
+	if json.Unmarshal(raw, &cases) != nil {
+		t.Fatal("invalid cases")
+	}
+	mainSchema, err := os.ReadFile("../workhistory/schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	memorySchema, err := os.ReadFile("../workhistory/memory-schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := os.ReadFile("../workhistory/testdata/memory-integrity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	carry, err := os.ReadFile("../workhistory/testdata/memory-integrity-carry.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range cases {
+		t.Run(scenario.Name, func(t *testing.T) {
+			spool := t.TempDir()
+			volume := filepath.Join(t.TempDir(), "private")
+			if os.MkdirAll(filepath.Join(volume, "sessions"), 0700) != nil {
+				t.Fatal("mkdir")
+			}
+			if os.WriteFile(filepath.Join(volume, "sessions", "one.jsonl"), []byte("{\"type\":\"session\"}\n"), 0600) != nil {
+				t.Fatal("SDK fixture")
+			}
+			db, err := sql.Open("sqlite", filepath.Join(volume, "work.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			db.SetMaxOpenConns(1)
+			setup := ""
+			if scenario.Setup == "carry" {
+				setup = string(carry)
+			}
+			for _, query := range []string{string(mainSchema), "ATTACH DATABASE '" + filepath.Join(volume, "memory.sqlite") + "' AS memory", strings.ReplaceAll(strings.ReplaceAll(string(memorySchema), "CREATE TABLE ", "CREATE TABLE memory."), "CREATE INDEX ", "CREATE INDEX memory."), string(seed), setup, scenario.SQL} {
+				if _, err := db.Exec(query); err != nil {
+					db.Close()
+					t.Fatal(err)
+				}
+			}
+			db.Close()
+			fingerprint := func() [][]byte {
+				result := [][]byte{}
+				for _, name := range []string{"work.sqlite", "memory.sqlite"} {
+					raw, err := os.ReadFile(filepath.Join(volume, name))
+					if err != nil {
+						t.Fatal(err)
+					}
+					result = append(result, raw)
+				}
+				return result
+			}
+			before := fingerprint()
+			request, _ := json.Marshal(map[string]any{"sourceWorkId": "work-memory-source-1111", "contextIds": []string{"context-memory-source"}})
+			if os.WriteFile(filepath.Join(spool, "history-request.json"), request, 0600) != nil {
+				t.Fatal("request")
+			}
+			_, err = verifyVolumeHistory(context.Background(), volume, spool, false)
+			if (err == nil) != scenario.Accepted {
+				t.Fatal("helper differs from shared TS/Go fixture", err)
+			}
+			if !reflect.DeepEqual(before, fingerprint()) {
+				t.Fatal("helper modified source")
+			}
+		})
+	}
+}
 
 func TestUploadVerifierChecksNativePackageAndDoesNotExposePrivateContent(t *testing.T) {
 	raw, err := os.ReadFile("../workpackage/testdata/golden-native-pi-package.work")

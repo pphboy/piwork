@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, unlinkSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { migrateWorkDatabase, WORK_SCHEMA_VERSION } from "./migrations.js";
+import { initializeMemoryDatabase, migrateWorkDatabase, sameSchema, validateLegacyWorkDatabase, WORK_SCHEMA_VERSION } from "./migrations.js";
+import { LEGACY_SCHEMA_OBJECTS } from "./legacy-schema-objects.js";
 import { FeedbackStore, type RequestPhase } from "./feedback.js";
+import { MemoryStore, type MemorySelection } from "./memory.js";
+import { migrateExperience, type HistoryMigration } from "./memory-migration.js";
 
 export { WORK_SCHEMA_VERSION };
 export const DEFAULT_MAX_RUN_EVENTS = 10_000;
@@ -61,6 +64,7 @@ export interface RunRecord {
   readonly actualModelJson?: string | null;
   readonly sourceJson?: string | null;
   readonly adoptedExperienceVersion?: number;
+  readonly adoptedMemorySelection?: MemorySelection | null;
 }
 
 export interface AcceptRunRequest {
@@ -75,6 +79,9 @@ export interface AcceptRunRequest {
   readonly actualModelJson?: string | null;
   readonly sourceJson?: string | null;
   readonly adoptedExperienceVersion?: number;
+  readonly memoryQuery?: string;
+  readonly memoryEnabled?: boolean;
+  readonly memoryServiceName?: string;
   /** Internal automatic request admission; never accepted from the public Chat DTO. */
   readonly agentRequest?: { readonly requestId: string; readonly phase: RequestPhase };
 }
@@ -101,19 +108,72 @@ export class WorkStore {
   private closed = false;
   readonly feedback: FeedbackStore;
 
-  private constructor(private readonly database: DatabaseSync) { this.feedback = new FeedbackStore(database); }
+  readonly memory: MemoryStore;
+  private constructor(private readonly database: DatabaseSync) {
+    this.memory = new MemoryStore(database);
+    this.feedback = new FeedbackStore(database, this.memory);
+  }
 
-  static open(databasePath: string): WorkStore {
+  static open(databasePath: string, options: { workId?: string; historyMigration?: HistoryMigration } = {}): WorkStore {
+    if (databasePath !== resolve(databasePath) || databasePath.includes("\0")) throw new Error("WORK_HISTORY_INVALID");
     mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
+    let directory = "/";
+    for (const part of dirname(databasePath).split("/").filter(Boolean)) {
+      directory = join(directory, part);
+      const stat = lstatSync(directory);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("WORK_HISTORY_INVALID");
+    }
+    const secure = (path: string, create: boolean): { dev: number; ino: number } => {
+      const fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | (create ? constants.O_CREAT | constants.O_EXCL : 0), 0o600);
+      try { const stat = fstatSync(fd); if (!stat.isFile()) throw new Error("WORK_HISTORY_INVALID"); return {dev:stat.dev,ino:stat.ino}; } finally { closeSync(fd); }
+    };
+    try { secure(databasePath, false); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; secure(databasePath, true); }
     const database = new DatabaseSync(databasePath, { allowExtension: false, enableDoubleQuotedStringLiterals: false });
+    const memoryPath = join(dirname(databasePath), "memory.sqlite");
+    let createdMemory: {dev:number;ino:number} | undefined;
     try {
-      migrateWorkDatabase(database);
-      database.exec("PRAGMA journal_mode = WAL");
-      database.exec("PRAGMA foreign_keys = ON");
       database.exec("PRAGMA busy_timeout = 5000");
-      return new WorkStore(database);
+      const objects = database.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
+      const fresh = objects.length === 0;
+      const legacy = !fresh && sameSchema(objects, LEGACY_SCHEMA_OBJECTS);
+      if (legacy) {
+        validateLegacyWorkDatabase(database);
+        if (!options.historyMigration || options.historyMigration.workId !== options.workId) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+      } else if (!fresh) migrateWorkDatabase(database);
+      try { const identity=secure(memoryPath, fresh);if(fresh)createdMemory=identity; }
+      catch (error) {
+        if (fresh && (error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("MEMORY_STORAGE_CONFLICT");
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("WORK_MEMORY_INVALID");
+        throw error;
+      }
+      database.prepare("ATTACH DATABASE ? AS memory").run(memoryPath);
+      for (const schema of ["main", "memory"]) {
+        if (!fresh && !legacy && database.prepare(`PRAGMA ${schema}.journal_mode`).get()?.journal_mode !== "delete") throw new Error("WORK_MEMORY_JOURNAL_UNSUPPORTED");
+        if (database.prepare(`PRAGMA ${schema}.journal_mode = DELETE`).get()?.journal_mode !== "delete") throw new Error("WORK_MEMORY_JOURNAL_UNSUPPORTED");
+        database.exec(`PRAGMA ${schema}.synchronous = FULL`);
+        if (database.prepare(`PRAGMA ${schema}.synchronous`).get()?.synchronous !== 2) throw new Error("WORK_MEMORY_JOURNAL_UNSUPPORTED");
+      }
+      database.exec("PRAGMA foreign_keys = ON");
+      if (fresh) { database.exec("BEGIN IMMEDIATE"); migrateWorkDatabase(database); }
+      initializeMemoryDatabase(database);
+      if (legacy) migrateExperience(database, options.historyMigration!);
+      const store = new WorkStore(database);
+      const inferred = options.workId ?? String(database.prepare("SELECT work_id FROM work_memory_binding LIMIT 1").get()?.work_id ?? "");
+      if (inferred) {
+        if (fresh) store.memory.bind(inferred);
+        else store.memory.assertOwner(inferred);
+        store.memory.snapshot(inferred);
+      } else if (!fresh) throw new Error("WORK_MEMORY_INVALID");
+      if (fresh) database.exec("COMMIT");
+      return store;
     } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
       database.close();
+      if (createdMemory) {
+        try { const stat=lstatSync(memoryPath);if(stat.isFile()&&stat.dev===createdMemory.dev&&stat.ino===createdMemory.ino)unlinkSync(memoryPath); }
+        catch { /* A failed cleanup is never a reason to delete an unproven file. */ }
+      }
       throw error;
     }
   }
@@ -124,6 +184,7 @@ export class WorkStore {
 
   createSession(record: SessionRecord): void {
     this.assertOpen();
+    this.memory.bind(record.workId);
     this.database.prepare(`INSERT INTO sessions(
       work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity, model_preference_json, source_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -151,6 +212,7 @@ export class WorkStore {
         this.database.exec("COMMIT");
         return { session, reused: true };
       }
+      this.memory.bind(record.workId);
       this.database.prepare(`INSERT INTO sessions(work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity, model_preference_json, source_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(record.workId, record.sessionId, record.sdkHistoryPath, record.createdAt, record.updatedAt, record.contextIdentity ?? null, record.modelPreferenceJson ?? null, record.sourceJson ?? null);
       this.database.prepare(`INSERT INTO session_idempotency(work_id, idempotency_key, session_id, created_at)
@@ -209,11 +271,13 @@ export class WorkStore {
 
       const runId = `run-${randomUUID()}`;
       const now = request.now ?? new Date().toISOString();
-      const adoptedExperienceVersion = this.feedback.experienceSnapshot(request.workId).version;
+      const adoptedExperienceVersion = request.memoryEnabled === false ? 0 : this.feedback.experienceSnapshot(request.workId).version;
+      const selection = request.memoryEnabled === false ? { entryIds: [], matchedCount: 0, truncated: false }
+        : this.memory.select(request.workId, adoptedExperienceVersion, request.memoryQuery ?? "", request.memoryServiceName);
       this.database.prepare(`INSERT INTO runs(
         work_id, session_id, run_id, submission_key, prompt_digest, state, accepted_at, context_identity,
-        model_selector_json, actual_model_json, source_json, adopted_experience_version
-      ) VALUES (?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?)`).run(
+        model_selector_json, actual_model_json, source_json, adopted_experience_version, adopted_memory_selection_json
+      ) VALUES (?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?, ?)`).run(
         request.workId,
         request.sessionId,
         runId,
@@ -225,6 +289,7 @@ export class WorkStore {
         request.actualModelJson ?? null,
         request.sourceJson ?? null,
         adoptedExperienceVersion,
+        JSON.stringify(selection),
       );
       this.database.prepare(`INSERT INTO submit_idempotency(
         work_id, submission_key, request_digest, run_id, created_at
@@ -466,7 +531,7 @@ export class WorkStore {
     const row = this.database.prepare(`SELECT
       work_id, session_id, run_id, submission_key, prompt_digest, state,
       final_text, error_json, accepted_at, started_at, finished_at,
-      earliest_available_sequence, latest_sequence, context_identity, model_selector_json, actual_model_json, source_json, adopted_experience_version
+      earliest_available_sequence, latest_sequence, context_identity, model_selector_json, actual_model_json, source_json, adopted_experience_version, adopted_memory_selection_json
       FROM runs WHERE run_id = ?`).get(runId) as Record<string, string | number | null> | undefined;
     return row === undefined ? undefined : mapRun(row);
   }
@@ -513,6 +578,7 @@ function mapRun(row: Record<string, string | number | null>): RunRecord {
     ...(row.model_selector_json ? { modelSelectorJson: String(row.model_selector_json) } : {}),
     ...(row.actual_model_json ? { actualModelJson: String(row.actual_model_json) } : {}),
     ...(row.source_json ? { sourceJson: String(row.source_json) } : {}),
-    ...(row.adopted_experience_version ? { adoptedExperienceVersion: Number(row.adopted_experience_version) } : {}),
+    ...(row.adopted_experience_version !== null && row.adopted_experience_version !== undefined ? { adoptedExperienceVersion: Number(row.adopted_experience_version) } : {}),
+    adoptedMemorySelection: typeof row.adopted_memory_selection_json === "string" ? JSON.parse(row.adopted_memory_selection_json) as MemorySelection : null,
   };
 }

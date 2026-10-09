@@ -1959,13 +1959,14 @@ const file_work_services_proto_rawDesc = "" +
 	"\ttruncated\x18\x04 \x01(\bR\ttruncated\x12!\n" +
 	"\fcollected_at\x18\x05 \x01(\tR\vcollectedAt\x12=\n" +
 	"\x05error\x18\x06 \x01(\v2\".piwork.core.services.v1.SafeErrorH\x00R\x05error\x88\x01\x01B\b\n" +
-	"\x06_error2\xe3\r\n" +
+	"\x06_error2\xdb\x0e\n" +
 	"\fWorkServices\x12]\n" +
 	"\rListRunModels\x12\x1e.piwork.core.services.v1.Empty\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12k\n" +
 	"\x0fResolveRunModel\x12+.piwork.core.services.v1.WorkPrivateRequest\x1a+.piwork.core.services.v1.RunModelResolution\x12m\n" +
 	"\x1dGetServiceInteractionBindings\x12\x1e.piwork.core.services.v1.Empty\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12r\n" +
 	"\x15PrepareBrainCandidate\x12+.piwork.core.services.v1.WorkPrivateRequest\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12s\n" +
-	"\x16GetBrainCandidateState\x12+.piwork.core.services.v1.WorkPrivateRequest\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12b\n" +
+	"\x16GetBrainCandidateState\x12+.piwork.core.services.v1.WorkPrivateRequest\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12v\n" +
+	"\x19AuthorizeHistoryMigration\x12+.piwork.core.services.v1.WorkPrivateRequest\x1a,.piwork.core.services.v1.WorkPrivateResponse\x12b\n" +
 	"\x14GetDeploymentContext\x12\x1e.piwork.core.services.v1.Empty\x1a*.piwork.core.services.v1.DeploymentContext\x12c\n" +
 	"\rCreateService\x12-.piwork.core.services.v1.CreateServiceRequest\x1a#.piwork.core.services.v1.Acceptance\x12]\n" +
 	"\fListServices\x12\x1e.piwork.core.services.v1.Empty\x1a-.piwork.core.services.v1.ListServicesResponse\x12]\n" +
@@ -2042,37 +2043,39 @@ var file_work_services_proto_depIdxs = []int32{
 	0,  // 17: piwork.core.services.v1.WorkServices.GetServiceInteractionBindings:input_type -> piwork.core.services.v1.Empty
 	1,  // 18: piwork.core.services.v1.WorkServices.PrepareBrainCandidate:input_type -> piwork.core.services.v1.WorkPrivateRequest
 	1,  // 19: piwork.core.services.v1.WorkServices.GetBrainCandidateState:input_type -> piwork.core.services.v1.WorkPrivateRequest
-	0,  // 20: piwork.core.services.v1.WorkServices.GetDeploymentContext:input_type -> piwork.core.services.v1.Empty
-	17, // 21: piwork.core.services.v1.WorkServices.CreateService:input_type -> piwork.core.services.v1.CreateServiceRequest
-	0,  // 22: piwork.core.services.v1.WorkServices.ListServices:input_type -> piwork.core.services.v1.Empty
-	19, // 23: piwork.core.services.v1.WorkServices.GetService:input_type -> piwork.core.services.v1.ServiceIdRequest
-	21, // 24: piwork.core.services.v1.WorkServices.UpdateService:input_type -> piwork.core.services.v1.UpdateServiceRequest
-	20, // 25: piwork.core.services.v1.WorkServices.StartService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	20, // 26: piwork.core.services.v1.WorkServices.StopService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	20, // 27: piwork.core.services.v1.WorkServices.RestartService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	20, // 28: piwork.core.services.v1.WorkServices.RemoveService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	20, // 29: piwork.core.services.v1.WorkServices.RetryService:input_type -> piwork.core.services.v1.MutateServiceRequest
-	22, // 30: piwork.core.services.v1.WorkServices.GetOperation:input_type -> piwork.core.services.v1.OperationIdRequest
-	23, // 31: piwork.core.services.v1.WorkServices.ReadServiceLogs:input_type -> piwork.core.services.v1.ReadServiceLogsRequest
-	2,  // 32: piwork.core.services.v1.WorkServices.ListRunModels:output_type -> piwork.core.services.v1.WorkPrivateResponse
-	3,  // 33: piwork.core.services.v1.WorkServices.ResolveRunModel:output_type -> piwork.core.services.v1.RunModelResolution
-	2,  // 34: piwork.core.services.v1.WorkServices.GetServiceInteractionBindings:output_type -> piwork.core.services.v1.WorkPrivateResponse
-	2,  // 35: piwork.core.services.v1.WorkServices.PrepareBrainCandidate:output_type -> piwork.core.services.v1.WorkPrivateResponse
-	2,  // 36: piwork.core.services.v1.WorkServices.GetBrainCandidateState:output_type -> piwork.core.services.v1.WorkPrivateResponse
-	16, // 37: piwork.core.services.v1.WorkServices.GetDeploymentContext:output_type -> piwork.core.services.v1.DeploymentContext
-	15, // 38: piwork.core.services.v1.WorkServices.CreateService:output_type -> piwork.core.services.v1.Acceptance
-	18, // 39: piwork.core.services.v1.WorkServices.ListServices:output_type -> piwork.core.services.v1.ListServicesResponse
-	13, // 40: piwork.core.services.v1.WorkServices.GetService:output_type -> piwork.core.services.v1.ServiceView
-	15, // 41: piwork.core.services.v1.WorkServices.UpdateService:output_type -> piwork.core.services.v1.Acceptance
-	15, // 42: piwork.core.services.v1.WorkServices.StartService:output_type -> piwork.core.services.v1.Acceptance
-	15, // 43: piwork.core.services.v1.WorkServices.StopService:output_type -> piwork.core.services.v1.Acceptance
-	15, // 44: piwork.core.services.v1.WorkServices.RestartService:output_type -> piwork.core.services.v1.Acceptance
-	15, // 45: piwork.core.services.v1.WorkServices.RemoveService:output_type -> piwork.core.services.v1.Acceptance
-	15, // 46: piwork.core.services.v1.WorkServices.RetryService:output_type -> piwork.core.services.v1.Acceptance
-	14, // 47: piwork.core.services.v1.WorkServices.GetOperation:output_type -> piwork.core.services.v1.OperationView
-	24, // 48: piwork.core.services.v1.WorkServices.ReadServiceLogs:output_type -> piwork.core.services.v1.ServiceLogs
-	32, // [32:49] is the sub-list for method output_type
-	15, // [15:32] is the sub-list for method input_type
+	1,  // 20: piwork.core.services.v1.WorkServices.AuthorizeHistoryMigration:input_type -> piwork.core.services.v1.WorkPrivateRequest
+	0,  // 21: piwork.core.services.v1.WorkServices.GetDeploymentContext:input_type -> piwork.core.services.v1.Empty
+	17, // 22: piwork.core.services.v1.WorkServices.CreateService:input_type -> piwork.core.services.v1.CreateServiceRequest
+	0,  // 23: piwork.core.services.v1.WorkServices.ListServices:input_type -> piwork.core.services.v1.Empty
+	19, // 24: piwork.core.services.v1.WorkServices.GetService:input_type -> piwork.core.services.v1.ServiceIdRequest
+	21, // 25: piwork.core.services.v1.WorkServices.UpdateService:input_type -> piwork.core.services.v1.UpdateServiceRequest
+	20, // 26: piwork.core.services.v1.WorkServices.StartService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	20, // 27: piwork.core.services.v1.WorkServices.StopService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	20, // 28: piwork.core.services.v1.WorkServices.RestartService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	20, // 29: piwork.core.services.v1.WorkServices.RemoveService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	20, // 30: piwork.core.services.v1.WorkServices.RetryService:input_type -> piwork.core.services.v1.MutateServiceRequest
+	22, // 31: piwork.core.services.v1.WorkServices.GetOperation:input_type -> piwork.core.services.v1.OperationIdRequest
+	23, // 32: piwork.core.services.v1.WorkServices.ReadServiceLogs:input_type -> piwork.core.services.v1.ReadServiceLogsRequest
+	2,  // 33: piwork.core.services.v1.WorkServices.ListRunModels:output_type -> piwork.core.services.v1.WorkPrivateResponse
+	3,  // 34: piwork.core.services.v1.WorkServices.ResolveRunModel:output_type -> piwork.core.services.v1.RunModelResolution
+	2,  // 35: piwork.core.services.v1.WorkServices.GetServiceInteractionBindings:output_type -> piwork.core.services.v1.WorkPrivateResponse
+	2,  // 36: piwork.core.services.v1.WorkServices.PrepareBrainCandidate:output_type -> piwork.core.services.v1.WorkPrivateResponse
+	2,  // 37: piwork.core.services.v1.WorkServices.GetBrainCandidateState:output_type -> piwork.core.services.v1.WorkPrivateResponse
+	2,  // 38: piwork.core.services.v1.WorkServices.AuthorizeHistoryMigration:output_type -> piwork.core.services.v1.WorkPrivateResponse
+	16, // 39: piwork.core.services.v1.WorkServices.GetDeploymentContext:output_type -> piwork.core.services.v1.DeploymentContext
+	15, // 40: piwork.core.services.v1.WorkServices.CreateService:output_type -> piwork.core.services.v1.Acceptance
+	18, // 41: piwork.core.services.v1.WorkServices.ListServices:output_type -> piwork.core.services.v1.ListServicesResponse
+	13, // 42: piwork.core.services.v1.WorkServices.GetService:output_type -> piwork.core.services.v1.ServiceView
+	15, // 43: piwork.core.services.v1.WorkServices.UpdateService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 44: piwork.core.services.v1.WorkServices.StartService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 45: piwork.core.services.v1.WorkServices.StopService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 46: piwork.core.services.v1.WorkServices.RestartService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 47: piwork.core.services.v1.WorkServices.RemoveService:output_type -> piwork.core.services.v1.Acceptance
+	15, // 48: piwork.core.services.v1.WorkServices.RetryService:output_type -> piwork.core.services.v1.Acceptance
+	14, // 49: piwork.core.services.v1.WorkServices.GetOperation:output_type -> piwork.core.services.v1.OperationView
+	24, // 50: piwork.core.services.v1.WorkServices.ReadServiceLogs:output_type -> piwork.core.services.v1.ServiceLogs
+	33, // [33:51] is the sub-list for method output_type
+	15, // [15:33] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name

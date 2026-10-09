@@ -1,7 +1,12 @@
 import { constants, openSync, closeSync, fstatSync, readSync, writeSync, fsyncSync, mkdtempSync, rmSync, fchmodSync, fchownSync, renameSync, unlinkSync, chownSync } from "node:fs";
 import { join, isAbsolute, normalize } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { migrateWorkDatabase } from "./migrations.js";
+import { migrateWorkDatabase, initializeMemoryDatabase } from "./migrations.js";
+import { LEGACY_SCHEMA_SQL } from "./legacy-schema.js";
+import { LEGACY_SCHEMA_OBJECTS } from "./legacy-schema-objects.js";
+import { WORK_SCHEMA_OBJECTS } from "./schema-objects.js";
+import { randomUUID } from "node:crypto";
+import { MEMORY_TABLES } from "./snapshot-memory.js";
 import { validateBrainHistory } from "./snapshot-brain.js";
 import { normalizeModelBaseUrl, type RunModelSnapshot } from "@piwork/contracts";
 
@@ -11,7 +16,9 @@ export class WorkHistoryValidationError extends Error {
 function invalid(): never { throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_INVALID"); }
 const BASE_TABLES = ["schema_migrations", "sessions", "runs", "run_events", "submit_idempotency", "session_idempotency", "work_activity"] as const;
 const TABLES = [...BASE_TABLES, "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "brain_experience_revisions", "brain_experience_heads"] as const;
-type Table = typeof TABLES[number];
+const CURRENT_TABLES = [...BASE_TABLES, "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "work_memory_binding"] as const;
+type Table = typeof TABLES[number] | typeof CURRENT_TABLES[number];
+const tables = (version: 4 | 5): readonly Table[] => version === 4 ? TABLES : CURRENT_TABLES;
 type Row = Record<string, SQLInputValue>;
 const FILES = ["work.sqlite", "work.sqlite-wal", "work.sqlite-shm"] as const;
 const MAX_ROWS = 1_000_000, MAX_ROW_BYTES = 64 * 1024 ** 2;
@@ -80,7 +87,7 @@ export interface WorkHistorySummary { readonly sessions: number; readonly runs: 
  * The source database is never opened by SQLite: a byte copy is read-only validated first. */
 export class WorkHistorySnapshot {
   private closed = false;
-  private constructor(private readonly database: DatabaseSync, private readonly scratch: string, readonly scope: WorkHistoryScope, readonly summary: WorkHistorySummary, readonly schemaVersion: 4) {}
+  private constructor(private readonly database: DatabaseSync, private readonly scratch: string, readonly scope: WorkHistoryScope, readonly summary: WorkHistorySummary, readonly schemaVersion: 4 | 5) {}
 
   static open(privateDirectory: string, scope: WorkHistoryScope, stoppedWriterInspection = false): WorkHistorySnapshot | undefined {
     let root: number | undefined, scratch: string | undefined, database: DatabaseSync | undefined;
@@ -90,7 +97,7 @@ export class WorkHistorySnapshot {
       try { main = regular(root, FILES[0]); }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        for (const name of FILES.slice(1)) {
+        for (const name of [...FILES.slice(1), "memory.sqlite", "memory.sqlite-journal", "work.sqlite-journal"]) {
           try { const fd = regular(root, name); closeSync(fd); invalid(); }
           catch (sidecarError) { if ((sidecarError as NodeJS.ErrnoException).code !== "ENOENT") throw sidecarError; }
         }
@@ -111,12 +118,18 @@ export class WorkHistorySnapshot {
       }
       database = new DatabaseSync(join(scratch, FILES[0]), { readOnly: true, allowExtension: false, enableDoubleQuotedStringLiterals: false, enableForeignKeyConstraints: true });
       database.exec("PRAGMA trusted_schema = OFF; PRAGMA query_only = ON; PRAGMA busy_timeout = 1000");
-      const expected = new DatabaseSync(":memory:");
-      const version = 4;
-      try {
-        migrateWorkDatabase(expected);
-        if (!sameSchema(schema(database), schema(expected))) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
-      } finally { expected.close(); }
+      const actual = schema(database);
+      const version: 4 | 5 = sameSchema(actual, WORK_SCHEMA_OBJECTS as unknown as SchemaRow[]) ? 5
+        : sameSchema(actual, LEGACY_SCHEMA_OBJECTS as unknown as SchemaRow[]) ? 4 : (() => { throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED"); })();
+      if (version === 5) {
+        for (const name of ["work.sqlite-journal", "memory.sqlite-journal"]) {
+          try { const fd = regular(root, name); closeSync(fd); throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY"); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        }
+        const memory = regular(root, "memory.sqlite");
+        try { copy(memory, join(scratch, "memory.sqlite")); } finally { closeSync(memory); }
+        database.prepare("ATTACH DATABASE ? AS memory").run(`file:${join(scratch, "memory.sqlite")}?mode=ro`);
+      }
       const integrity = database.prepare("PRAGMA integrity_check").all();
       if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok" || database.prepare("PRAGMA foreign_key_check").get() !== undefined) invalid();
       const summary = validateRows(database, root, scope, version, stoppedWriterInspection);
@@ -133,7 +146,7 @@ export class WorkHistorySnapshot {
 
   /** Rebuild only the platform DB in an unpublished new private volume; never user DBs/SDK text. */
   rebuild(targetPrivateDirectory: string, targetWorkId: string, contexts: ReadonlyMap<string, string>, models: readonly RunModelSnapshot[] = [], operations: ReadonlyMap<string, string> = new Map()): void {
-    if (this.closed || this.schemaVersion !== 4 || !nonempty(targetWorkId) || targetWorkId === this.scope.sourceWorkId) invalid();
+    if (this.closed || !nonempty(targetWorkId) || targetWorkId === this.scope.sourceWorkId) invalid();
     if (contexts.size !== this.scope.contextIds.size || new Set(contexts.values()).size !== contexts.size || [...this.scope.contextIds].some((id) => !nonempty(contexts.get(id)))) invalid();
     const root = directory(targetPrivateDirectory);
     let staged: string | undefined, target: DatabaseSync | undefined;
@@ -145,15 +158,23 @@ export class WorkHistorySnapshot {
       const path = join(temporaryDirectory, FILES[0]);
       target = new DatabaseSync(path, { allowExtension: false, enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
       target.exec("PRAGMA trusted_schema = OFF; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL");
-      migrateWorkDatabase(target);
+      if (this.schemaVersion === 4) target.exec(LEGACY_SCHEMA_SQL);
+      else {
+        migrateWorkDatabase(target);
+        target.prepare("ATTACH DATABASE ? AS memory").run(join(temporaryDirectory, "memory.sqlite"));
+        target.exec("PRAGMA memory.journal_mode=DELETE; PRAGMA memory.synchronous=FULL");
+        initializeMemoryDatabase(target);
+      }
       target.exec("BEGIN IMMEDIATE; PRAGMA defer_foreign_keys = ON; DELETE FROM schema_migrations");
       try {
-        for (const table of TABLES) {
+        const storeId = randomUUID();
+        for (const table of tables(this.schemaVersion)) {
           const columns = (target.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
           const insert = target.prepare(`INSERT INTO ${table}(${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`);
           for (const source of this.database.prepare(`SELECT * FROM ${table}`).iterate()) {
             const row = { ...source } as Row;
             if (Object.hasOwn(row, "work_id")) row.work_id = targetWorkId;
+            if (table === "work_memory_binding") row.store_id = storeId;
             for (const field of ["active_context_identity", "context_identity"]) if (typeof row[field] === "string") row[field] = contexts.get(row[field]) ?? invalid();
             if (["service_events", "agent_requests", "agent_request_runs"].includes(table)) row.disposition = "historical";
             if (table === "agent_requests" && row.package_submission_json !== null) {
@@ -179,6 +200,18 @@ export class WorkHistorySnapshot {
             insert.run(...columns.map((column) => row[column]!));
           }
         }
+        if (this.schemaVersion === 5) {
+          for (const table of MEMORY_TABLES) {
+            const columns = (target.prepare(`PRAGMA memory.table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
+            const insert = target.prepare(`INSERT INTO memory.${table}(${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`);
+            for (const source of this.database.prepare(`SELECT * FROM memory.${table}`).iterate()) {
+              const row = { ...source } as Row;
+              if (table === "memory_meta") { row.work_id = targetWorkId; row.store_id = storeId; }
+              insert.run(...columns.map((column) => row[column]!));
+            }
+          }
+          if (target.prepare("PRAGMA memory.foreign_key_check").get()) invalid();
+        }
         if (target.prepare("PRAGMA foreign_key_check").get() !== undefined) invalid();
         target.exec("COMMIT");
       } catch (error) { target.exec("ROLLBACK"); throw error; }
@@ -186,6 +219,14 @@ export class WorkHistorySnapshot {
       const file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try { fchownSync(file, attributes.uid, attributes.gid); fchmodSync(file, attributes.mode & 0o7777); fsyncSync(file); }
       finally { closeSync(file); }
+      if (this.schemaVersion === 5) {
+        const memoryPath = join(temporaryDirectory, "memory.sqlite");
+        const memoryFD = openSync(memoryPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try { fchownSync(memoryFD, attributes.uid, attributes.gid); fchmodSync(memoryFD, 0o600); fsyncSync(memoryFD); }
+        finally { closeSync(memoryFD); }
+        const originalMemory = regular(root, "memory.sqlite"); closeSync(originalMemory);
+        renameSync(memoryPath, `/proc/self/fd/${root}/memory.sqlite`);
+      }
       renameSync(path, `/proc/self/fd/${root}/${FILES[0]}`);
       for (const name of FILES.slice(1)) {
         try { const fd = regular(root, name); closeSync(fd); unlinkSync(`/proc/self/fd/${root}/${name}`); }
@@ -201,10 +242,10 @@ export class WorkHistorySnapshot {
   close(): void { if (this.closed) return; this.closed = true; this.database.close(); rmSync(this.scratch, { recursive: true, force: true }); }
 }
 
-function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHistoryScope, version: 4, inspection: boolean): WorkHistorySummary {
+function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHistoryScope, version: 4 | 5, inspection: boolean): WorkHistorySummary {
   if (!nonempty(scope.sourceWorkId)) invalid();
   let count = 0; const counts = new Map<Table, number>();
-  for (const table of TABLES) {
+  for (const table of tables(version)) {
     let tableCount = 0;
     for (const row of database.prepare(`SELECT * FROM ${table}`).iterate() as Iterable<Row>) {
       if (++count > MAX_ROWS) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_LIMIT"); tableCount++;

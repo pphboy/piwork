@@ -5,6 +5,7 @@ import {
   type AgentRequestState, type AgentWaitRef, type ServiceEvent,
 } from "@piwork/contracts";
 import { Check } from "typebox/value";
+import { MemoryStore, type MemoryCandidateInput } from "./memory.js";
 
 export type RequestPhase = "handling" | "verifying" | "adopting";
 export const REQUEST_TERMINAL_STATES = ["completed", "failed", "cancelled", "needs_attention"] as const;
@@ -33,7 +34,7 @@ export interface Page<T> { readonly items: T[]; readonly nextCursor: string | nu
 
 /** One connection and transaction domain with Run admission. No network side effects here. */
 export class FeedbackStore {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: DatabaseSync, readonly memory?: MemoryStore) {}
 
   receiveEvent(event: ServiceEvent, declaredReasons: readonly string[], now = new Date().toISOString()): {
     readonly eventId: string; readonly requestId: string | null; readonly reused: boolean;
@@ -430,7 +431,8 @@ export class FeedbackStore {
           throw new FeedbackError("VERIFICATION_REQUIRED", "Completion requires actual successful query checks or SDK adoption verification");
         }
         this.commitExperience(workId, requestId, now);
-      } else this.db.prepare("UPDATE brain_experience_revisions SET status='failed' WHERE work_id=? AND source_request_id=? AND status='staged'").run(workId, requestId);
+      } else if (this.memory) this.memory.reject(workId, requestId, now);
+      else this.db.prepare("UPDATE brain_experience_revisions SET status='failed' WHERE work_id=? AND source_request_id=? AND status='staged'").run(workId, requestId);
       this.db.prepare("UPDATE agent_requests SET state=?,result=?,error_json=?,updated_at=? WHERE request_id=?")
         .run(state, result, error === null ? null : canonicalJson(error), now, requestId);
       return true;
@@ -541,8 +543,9 @@ export class FeedbackStore {
       nextCursor: rows.length > count && last ? encodeCursor(scope, `${last.observed_at}\0${last.evidence_id}`) : null };
   }
 
-  stageExperience(workId: string, requestId: string, entry: Omit<ExperienceEntry, "sourceRequestId">,
+  stageExperience(workId: string, requestId: string, entry: Omit<ExperienceEntry, "sourceRequestId"> & Partial<MemoryCandidateInput>,
     userPreference = false, now = new Date().toISOString()): number {
+    if (this.memory) return this.memory.propose(workId, requestId, entry, userPreference, now);
     return this.transaction(() => {
       const current = this.requireLive(workId, requestId);
       if (current.request.state !== "running") throw new FeedbackError("REQUEST_NOT_RUNNING", "Experience must be staged by the active goal");
@@ -563,6 +566,7 @@ export class FeedbackStore {
   }
 
   experienceSnapshot(workId: string, pinnedVersion?: number): ExperienceSnapshot {
+    if (this.memory) return this.memory.snapshot(workId, pinnedVersion);
     const h = this.db.prepare("SELECT version FROM brain_experience_heads WHERE work_id=?").get(workId) as Row | undefined;
     const version = pinnedVersion ?? (h ? Number(h.version) : 0);
     if (version === 0) return { version: 0, entries: [] };
@@ -584,6 +588,7 @@ export class FeedbackStore {
   }
 
   private commitExperience(workId: string, requestId: string, now: string): void {
+    if (this.memory) { this.memory.commit(workId, requestId, now); return; }
     const staged = this.db.prepare("SELECT * FROM brain_experience_revisions WHERE work_id=? AND source_request_id=? AND status='staged'").all(workId, requestId) as Row[];
     if (!staged.length) return;
     const current = new Map(this.experienceSnapshot(workId).entries.map((e) => [e.entryId, e]));

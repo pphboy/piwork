@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { chmodSync, rmSync } from "node:fs";
 import { Check } from "typebox/value";
 import { AgentWaitRefSchema, BRAIN_LIMITS, isBrainVerificationTarget, type BrainVerificationTarget, type AgentWaitRef } from "@piwork/contracts";
-import { FeedbackError, redactValue, type RequestInternals, type WorkStore } from "@piwork/work-store";
+import { FeedbackError, redactValue, type MemoryKind, type RequestInternals, type WorkStore } from "@piwork/work-store";
 import { BRAIN_TOOL_NAMES } from "./brain-resources.js";
 import type { RunExecutionContext, RunExecutor } from "./runs.js";
 import type { ServiceInteractionClient, ServiceRunContext } from "./service-interaction.js";
@@ -86,7 +86,7 @@ export class BrainFlow {
     }
     if (tool === "brain_feedback") {
       if (operation === "events") { const name = text(input, "serviceName"); scope(name); return this.store.feedback.listServiceEvents(context.workId, name, limit(input), optionalText(input, "cursor")); }
-      if (operation === "request_get") return goal ? { request: goal.request, evidence: this.store.feedback.listEvidence(context.workId, goal.request.requestId, limit(input), optionalText(input, "cursor")) } : { request: null, evidence: { items: [], nextCursor: null } };
+      if (operation === "request_get") return goal ? { request: goal.request, evidence: this.store.feedback.listEvidence(context.workId, goal.request.requestId, limit(input), optionalText(input, "cursor")), memoryCommit:this.store.memory.receipt(context.workId,goal.request.requestId) } : { request: null, evidence: { items: [], nextCursor: null } };
       if (operation === "wait") {
         const current = bind();
         if (!Check(AgentWaitRefSchema, input.waitRef)) throw new FeedbackError("INVALID_WAIT", "Wait reference is invalid");
@@ -116,21 +116,48 @@ export class BrainFlow {
     }
     if (tool === "brain_experience") {
       if (operation === "list" || operation === "status") return { adoptedExperienceVersion: context.adoptedExperienceVersion ?? 0,
-        snapshot: this.store.feedback.experienceSnapshot(context.workId, context.adoptedExperienceVersion ?? 0),
-        effectiveVersion: this.store.feedback.experienceSnapshot(context.workId).version };
-      if (operation === "stage") {
-        const current = bind(); const entry = input.entry as { entryId?: unknown; scope?: unknown; rule?: unknown; evidenceIds?: unknown } | undefined;
+        snapshot: (()=>{const snapshot=this.store.feedback.experienceSnapshot(context.workId, context.adoptedExperienceVersion ?? 0);
+          return goal?.request.source.kind==="service"?{...snapshot,entries:snapshot.entries.filter(entry=>entry.scope==="work"||entry.scope===`service:${goal!.request.source.serviceName}`)}:snapshot;})(),
+        effectiveVersion: this.store.feedback.experienceSnapshot(context.workId).version,
+        selection:context.adoptedMemorySelection??this.store.getRun(context.runId)?.adoptedMemorySelection,
+        ...(goal?{memoryCommit:this.store.memory.receipt(context.workId,goal.request.requestId)}:{}) };
+      if (operation === "recall") {
+        const source = goal?.request.source;
+        const name=optionalText(input,"serviceName")??(source?.kind==="service"?source.serviceName:undefined);
+        if(name)scope(name);
+        const recallLimit=input.limit===undefined?10:input.limit;
+        if(typeof recallLimit!=="number")throw new FeedbackError("EXPERIENCE_INVALID","Memory recall limit must be an integer");
+        return this.store.memory.recall(context.workId,context.adoptedExperienceVersion??0,text(input,"query"),name,recallLimit);
+      }
+      if (operation === "read") {
+        const id=text(input,"entryId"),version=context.adoptedExperienceVersion??0;
+        const result=this.store.memory.read(context.workId,version,id);
+        const entryScope=result.entry?.scope??result.scope;
+        if(entryScope?.startsWith("service:"))scope(entryScope.slice(8));
+        return result;
+      }
+      if (operation === "stage" || operation === "revise" || operation === "invalidate") {
+        const current = bind();
+        const version=input.expectedVersion===undefined && operation==="stage"?context.adoptedExperienceVersion??0:input.expectedVersion;
+        if(typeof version!=="number"||!Number.isSafeInteger(version)||version<0)throw new FeedbackError("EXPERIENCE_INVALID","Provide the expected Memory version");
+        const original=operation==="invalidate"?this.store.memory.read(context.workId,version,text(input,"entryId")).entry:undefined;
+        const entry = (operation==="invalidate"&&original?{...original,evidenceIds:input.evidenceIds}:input.entry) as { entryId?: unknown; scope?: unknown; rule?: unknown; evidenceIds?: unknown; kind?: unknown } | undefined;
         if (!entry || typeof entry.entryId !== "string" || typeof entry.scope !== "string" || typeof entry.rule !== "string" || !Array.isArray(entry.evidenceIds) || entry.evidenceIds.some((v) => typeof v !== "string")) throw new FeedbackError("EXPERIENCE_INVALID", "Experience entry is invalid");
-        const evidenceIds = entry.evidenceIds as string[];
+        if(entry.scope.startsWith("service:"))scope(entry.scope.slice(8));
+        if(operation==="revise"&&!this.store.memory.read(context.workId,version,entry.entryId).entry)throw new FeedbackError("EXPERIENCE_INVALID","Revision requires an existing entry");
+        const evidenceIds = [...entry.evidenceIds] as string[];
         if (input.userPreference === true) {
           if (current.request.source.kind !== "chat" || current.sourceRunId !== context.runId) throw new FeedbackError("VERIFICATION_REQUIRED", "A user preference must cite its original accepted Chat instruction");
           const proof = this.store.feedback.addEvidence(context.workId, { requestId: current.request.requestId, runId: context.runId, kind: "sdk",
             objectRef: context.runId, observedAt: this.now().toISOString(), summary: `Original user instruction: ${context.prompt}`, verified: true },
-          { userPreferenceVerified: true, promptDigest: this.store.getRun(context.runId)!.promptDigest });
+          { userPreferenceVerified: true, promptDigest: this.store.getRun(context.runId)!.promptDigest }, true);
           evidenceIds.push(proof.evidenceId);
         }
         return { version: this.store.feedback.stageExperience(context.workId, current.request.requestId,
-          { entryId: entry.entryId, scope: entry.scope, rule: entry.rule, evidenceIds }, input.userPreference === true, this.now().toISOString()), status: "staged", evidenceIds };
+          { entryId: entry.entryId, scope: entry.scope, rule: entry.rule, evidenceIds, expectedVersion:version,
+            ...(entry.kind!==undefined?{kind:entry.kind as MemoryKind}:{}),
+            ...(operation==="invalidate"?{operation:"invalidate" as const,reason:text(input,"reason")}:{}),
+          }, input.userPreference === true, this.now().toISOString()), status: "staged", evidenceIds };
       }
       if (operation === "commit") return this.finish(context, bind(), { ...input, state: "completed" });
     }
@@ -154,7 +181,9 @@ export class BrainFlow {
     if (result && Buffer.byteLength(result) > 32768) throw new FeedbackError("INVALID_BRAIN_INPUT", "Result exceeds limit");
     this.store.feedback.finish(context.workId, goal.request.requestId, state as "completed" | "failed" | "needs_attention", result,
       state === "completed" ? null : { code: state === "failed" ? "GOAL_FAILED" : "VERIFICATION_REQUIRED", message: result ?? "Goal could not be verified" }, proof, this.now().toISOString());
-    return this.store.feedback.getRequest(context.workId, goal.request.requestId);
+    const request=this.store.feedback.getRequest(context.workId, goal.request.requestId);
+    const memoryCommit=this.store.memory.receipt(context.workId,goal.request.requestId);
+    return {...request,...(memoryCommit?{memoryCommit,summary:`Memory effective version ${memoryCommit.version}; this Run retains version ${context.adoptedExperienceVersion??0}`}:{})};
   }
 }
 

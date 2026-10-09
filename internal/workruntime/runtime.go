@@ -21,6 +21,7 @@ import (
 	"piwork/internal/contracts"
 	"piwork/internal/diagnostics"
 	"piwork/internal/dockerengine"
+	"piwork/internal/imagestatic"
 	"piwork/internal/internaltls"
 	"piwork/internal/rpc/agentv1"
 	"piwork/internal/safefs"
@@ -48,6 +49,8 @@ type StartSpec struct {
 	ContextDirectory   string
 	Model              Model
 	InitializationOnly bool
+	HistoryMigration   *contracts.WorkHistoryMigration
+	workHistorySchema  int64
 	CorrelationID      string
 	Observe            func(diagnostics.Event) error `json:"-"`
 }
@@ -131,22 +134,28 @@ func readCaptured(spec StartSpec) (captured, error) {
 }
 
 func (r *Runtime) Prepare(ctx context.Context, spec StartSpec) error {
+	_, err := r.prepare(ctx, spec)
+	return err
+}
+
+func (r *Runtime) prepare(ctx context.Context, spec StartSpec) (imagestatic.Capabilities, error) {
 	if r == nil || r.Docker == nil || r.Inspector == nil || r.TLS == nil {
-		return ErrContext
+		return imagestatic.Capabilities{}, ErrContext
 	}
-	if _, err := r.Inspector.InspectNativeAgent(ctx, spec.ImageID); err != nil {
-		return err
+	capabilities, err := r.Inspector.InspectNativeAgent(ctx, spec.ImageID)
+	if err != nil {
+		return capabilities, err
 	}
 	if _, err := r.Docker.EnsureNetwork(ctx, spec.Scope.WorkID); err != nil {
-		return err
+		return capabilities, err
 	}
 	if _, err := r.Docker.EnsureVolume(ctx, spec.Scope.WorkID, "work-private"); err != nil {
-		return err
+		return capabilities, err
 	}
 	if _, err := r.Docker.EnsureVolume(ctx, spec.Scope.WorkID, "work-workspace"); err != nil {
-		return err
+		return capabilities, err
 	}
-	return nil
+	return capabilities, nil
 }
 
 func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, err error) {
@@ -188,9 +197,11 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 	if err = emit("started"); err != nil {
 		return result, err
 	}
-	if err := r.Prepare(ctx, spec); err != nil {
+	capabilities, err := r.prepare(ctx, spec)
+	if err != nil {
 		return result, err
 	}
+	spec.workHistorySchema = capabilities.WorkHistorySchema
 	if err = emit("succeeded"); err != nil {
 		return result, err
 	}
@@ -341,6 +352,9 @@ func agentConfig(spec StartSpec, work contracts.WorkConfig, identity internaltls
 	config.AgentsMdPath = contracts.Supplied("/run/piwork/AGENTS.md")
 	config.ContextIdentity = contracts.Supplied(spec.ContextID)
 	config.InitializationOnly = contracts.Supplied(spec.InitializationOnly)
+	if spec.HistoryMigration != nil {
+		config.HistoryMigration = contracts.Supplied(*spec.HistoryMigration)
+	}
 	config.ResolvedTools = contracts.Supplied(builtInTools(work.Tools))
 	if spec.CorrelationID != "" {
 		config.CorrelationId = contracts.Supplied(spec.CorrelationID)
@@ -398,6 +412,9 @@ func waitReady(ctx context.Context, docker *dockerengine.Runtime, identity docke
 	for time.Now().Before(deadline) {
 		response, err := client.Readiness(readyCtx, spec.ContextID, spec.InitializationOnly)
 		if err == nil {
+			if spec.workHistorySchema != 0 && int64(response.GetWorkHistorySchemaVersion()) != spec.workHistorySchema {
+				return nil, agentclient.ErrContextIncompatible
+			}
 			if err := verifyResources(response, captured); err != nil {
 				return nil, err
 			}

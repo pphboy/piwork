@@ -4,6 +4,7 @@ package coreapp
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -21,7 +22,12 @@ import (
 // Actual Engine and retained SDK exercise package activation independently of
 // preparation. A new desired artifact must never change the running loader.
 func TestNativePackageActivationRestartRollbackAndStoppedApply(t *testing.T) {
-	a, base, auth, id, ctx := nativeApplyFixture(t)
+	a, base, auth, id, _ := nativeApplyFixture(t)
+	// This scenario includes several real Apply failures, restarts and a Core
+	// reopen. Its observation budget must cover the whole scenario, independently
+	// of the shorter installation fixture; product timeouts stay unchanged.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
 	path := "/api/v1/works/" + id
 	name := "activation-tools"
 	entryPath := path + "/packages/" + url.PathEscape(name)

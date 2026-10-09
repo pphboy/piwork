@@ -551,6 +551,51 @@ test("host checks canonical deny and confirmed Chat preferences carry the origin
   } finally { await f.close(); }
 });
 
+test("Memory receipts distinguish a pinned Run from commit, and read-only calls do not create goals", async () => {
+  const f=await fixture();try {
+    const session=f.sessions.create();
+    const first=await f.runs.submitChat({workId:WORK,sessionId:session.sessionId,submissionKey:"remember",prompt:"Use dark theme for future reviews"});await ready();
+    assert.deepEqual((await f.flow.invoke("brain_experience",{operation:"recall",query:"theme"}) as {items:unknown[]}).items,[]);
+    assert.equal(f.store.feedback.listRequests(WORK).items.length,0);
+    const staged=await f.flow.invoke("brain_experience",{operation:"stage",userPreference:true,entry:{entryId:"theme",scope:"work",rule:"Use dark theme",evidenceIds:[]}}) as {evidenceIds:string[]};
+    const committed=await f.flow.invoke("brain_experience",{operation:"commit",evidenceIds:staged.evidenceIds}) as {memoryCommit:{version:number}};
+    assert.ok(committed.memoryCommit.version>0);
+    assert.deepEqual((await f.flow.invoke("brain_experience",{operation:"recall",query:"theme"}) as {items:unknown[]}).items,[],"the accepted Run keeps version zero after its own commit");
+    f.controlled.release(first.run.runId);await f.runs.wait(first.run.runId);
+    const next=await f.runs.submitChat({workId:WORK,sessionId:session.sessionId,submissionKey:"next",prompt:"Read theme preference"});await ready();
+    const read=await f.flow.invoke("brain_experience",{operation:"read",entryId:"theme"}) as {status:string,entry:{rule:string}};
+    assert.equal(read.status,"effective");assert.equal(read.entry.rule,"Use dark theme");
+    await assert.rejects(f.flow.invoke("brain_experience",{operation:"revise",entry:{entryId:"theme",scope:"work",rule:"Use light theme",evidenceIds:[]}}),/expected Memory version/);
+    await assert.rejects(f.flow.invoke("brain_experience",{operation:"revise",expectedVersion:null,entry:{entryId:"theme",scope:"work",rule:"Use light theme",evidenceIds:[]}}),/expected Memory version/);
+    await assert.rejects(f.flow.invoke("brain_experience",{operation:"recall",query:"theme",limit:"10"}),/limit must be an integer/);
+    const invalid=await f.flow.invoke("brain_experience",{operation:"invalidate",entryId:"theme",expectedVersion:committed.memoryCommit.version,reason:"User withdraws the preference",evidenceIds:[],userPreference:true}) as {evidenceIds:string[]};
+    await f.flow.invoke("brain_experience",{operation:"commit",evidenceIds:invalid.evidenceIds});
+    assert.equal((await f.flow.invoke("brain_experience",{operation:"read",entryId:"theme"}) as {status:string}).status,"effective");
+    f.controlled.release(next.run.runId);await f.runs.wait(next.run.runId);
+    const after=await f.runs.submitChat({workId:WORK,sessionId:f.sessions.create().sessionId,submissionKey:"after",prompt:"Read theme preference"});await ready();
+    assert.equal((await f.flow.invoke("brain_experience",{operation:"read",entryId:"theme"}) as {status:string}).status,"invalidated");
+    const count=f.store.feedback.listRequests(WORK).items.length;
+    await f.flow.invoke("brain_experience",{operation:"read",entryId:"missing"});
+    await assert.rejects(f.flow.invoke("brain_experience",{operation:"recall",query:"theme",limit:0}));
+    assert.equal(f.store.feedback.listRequests(WORK).items.length,count);
+    f.controlled.release(after.run.runId);await f.runs.wait(after.run.runId);
+  }finally {await f.close();}
+});
+
+test("automatic Memory recall/read and writes stay within the original Service scope",async()=>{
+ const f=await fixture();try{
+  const first=await f.runs.submitChat({workId:WORK,sessionId:f.sessions.create().sessionId,submissionKey:"foreign-scope",prompt:"Remember other Service preference"});await ready();
+  const staged=await f.flow.invoke("brain_experience",{operation:"stage",userPreference:true,entry:{entryId:"other-rule",scope:"service:other",rule:"Use the other review",evidenceIds:[]}}) as {evidenceIds:string[]};
+  await f.flow.invoke("brain_experience",{operation:"commit",evidenceIds:staged.evidenceIds});f.controlled.release(first.run.runId);await f.runs.wait(first.run.runId);
+  f.receive("scope");f.loop.start();f.advance(1000);await f.loop.tick();await ready();const run=f.store.activeRun(WORK)!;
+  assert.deepEqual((await f.flow.invoke("brain_experience",{operation:"recall",query:"review"}) as {items:unknown[]}).items,[]);
+  await assert.rejects(f.flow.invoke("brain_experience",{operation:"read",entryId:"other-rule"}),/scope/);
+  await assert.rejects(f.flow.invoke("brain_experience",{operation:"recall",query:"review",serviceName:"other"}),/scope/);
+  await assert.rejects(f.flow.invoke("brain_experience",{operation:"revise",expectedVersion:run.adoptedExperienceVersion,entry:{entryId:"other-rule",scope:"service:other",rule:"Changed",evidenceIds:[]}}),/scope/);
+  f.controlled.release(run.runId);await f.runs.wait(run.runId);
+ }finally{await f.close();}
+});
+
 test("automatic Run budget aborts execution but retains the slot until cleanup and cannot add an accepted queue", async (t) => {
   const f = await fixture(); try {
     const id = f.receive("budget"); f.loop.start(); f.advance(1000); await f.loop.tick(); await ready();

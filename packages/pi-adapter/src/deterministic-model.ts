@@ -13,6 +13,7 @@ import { modelMcpToolName } from "./mcp-bridge.js";
 
 const PROVIDER_ID = "piwork-deterministic";
 import { deterministicWorkstation } from "./deterministic-workstation.js";
+import { deterministicKanban } from "./deterministic-kanban.js";
 
 const MODEL_ID = "fixture-v1";
 const serviceTool = (name: string) => modelMcpToolName("work-services", name);
@@ -85,6 +86,7 @@ function streamDeterministic(
     const toolResults = context.messages.slice(latestUserIndex + 1).filter((message) => message.role === "toolResult");
     const brainSkill = [...systemPrompt.matchAll(/<location>([^<]*\/SKILL\.md)<\/location>/g)].map((match) => decodeXml(match[1]!)).find((path) => path.includes("deploy-work-service")) ?? manifestPath;
     if (deterministicWorkstation(stream, output, toolResults, brainSkill, prompt.trim())) return;
+    if (deterministicKanban(stream, output, toolResults, brainSkill, prompt.trim())) return;
     if (prompt.includes("deploy deterministic service")) {
       deterministicDeployment(stream, output, toolResults, brainSkill);
       return;
@@ -114,7 +116,7 @@ function streamDeterministic(
     if (prompt.trim() === "inspect piwork brain candidate cognition") {
       emitText(stream, output, `brain-candidate-new:${systemPrompt.includes("Workstation candidate cognition")}`); return;
     }
-    if (prompt.trim() === "inspect piwork brain cognition") {
+    if (prompt.trim() === "inspect piwork brain cognition" || prompt.trim() === "inspect piwork brain cognition for personal review") {
       emitText(stream, output, systemPrompt.includes("Piwork workstation cognition")
         ? `brain-cognition:${[...systemPrompt.matchAll(/experience adopted for this Run \(version (\d+)\)/g)].at(-1)?.[1] ?? "missing"}:${systemPrompt.includes("confirmed-fixture-rule")}` : "brain-cognition:disabled"); return;
     }

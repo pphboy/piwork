@@ -1737,7 +1737,7 @@ export class DesktopAdapter {
                 }
                 else if (kind?.$case === 'tool') {
                     const tool = kind.tool;
-                    upsertTool(session.messages, { id: `${run.id}-tool-${tool.toolCallId}`, runId: run.id, role: 'assistant', text: '', tool: { id: tool.toolCallId, name: tool.toolName, status: tool.phase === 'tool-end' ? (tool.isError ? 'Failed' : 'Completed') : 'Running', isError: tool.isError, content: resultText(tool.result) } });
+                    upsertTool(session.messages, { id: `${run.id}-tool-${tool.toolCallId}`, runId: run.id, role: 'assistant', text: '', tool: { id: tool.toolCallId, name: tool.toolName, status: tool.phase === 'tool-end' ? (tool.isError ? 'Failed' : 'Completed') : 'Running', isError: tool.isError, content: resultText(tool.result, tool.toolName) } });
                 }
                 else if (kind?.$case === 'state') {
                     run.status = runStates[kind.state.state] ?? 'interrupted';

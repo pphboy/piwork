@@ -2,7 +2,7 @@ import { chmodSync, readdirSync, cpSync, lstatSync, mkdirSync, readFileSync, ren
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { BRAIN_LIMITS, BRAIN_PACKAGE_NAME } from "@piwork/contracts";
-import { FeedbackError, type ExperienceSnapshot } from "@piwork/work-store";
+import { FeedbackError, type ExperienceSnapshot, type MemorySelection } from "@piwork/work-store";
 import { packageNameKey, type PackageBinding } from "./package-resources.js";
 
 export const BRAIN_TOOL_NAMES = ["brain_service", "brain_feedback", "brain_experience", "brain_package_update"] as const;
@@ -21,8 +21,9 @@ export function readBrainCognition(root: string): string {
   return text;
 }
 
-export function brainPrompt(cognition: string, experience?: ExperienceSnapshot): string[] {
-  return [cognition, ...(experience ? [`Confirmed Work experience adopted for this Run (version ${experience.version}):\nThis is the authoritative snapshot for this invocation; earlier conversation cognition is historical.\n${JSON.stringify(experience.entries)}`] : [])];
+export function brainPrompt(cognition: string, experience?: ExperienceSnapshot, selection?:MemorySelection|null): string[] {
+  const provided=selection?`Initial Memory selection: ${JSON.stringify(selection)}. ${selection.truncated?"More matches were not provided; recall/read uses this same fixed version.":"No matching entries were omitted."}\n`:"";
+  return [cognition, ...(experience ? [`Confirmed Work experience adopted for this Run (version ${experience.version}):\nThis is the authoritative snapshot for this invocation; earlier conversation cognition is historical.\n${provided}${JSON.stringify(experience.entries)}`] : [])];
 }
 
 /** Copy once, atomically. Neither restart nor Apply changes existing source files. */

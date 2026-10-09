@@ -3,7 +3,7 @@
 This example uses Python 3.13, NiceGUI 3.17.1 and SQLite. Other languages follow
 the same Service contract; the platform does not prescribe a language.
 
-Copy the template into `apps/workstation`, record the code checkpoint and prepare
+Read [SPEC.md](SPEC.md), copy the template into `apps/workstation`, record the code checkpoint and prepare
 its locked wheels there once. Use `prepare.sh` to install only those wheels into
 the persistent `.venv`. Start `.venv/bin/python app.py` offline in a Python 3.13
 Service image, mounted at `/var/data/workspace`, with the `web` TCP port 8080 and

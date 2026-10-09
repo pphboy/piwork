@@ -21,6 +21,34 @@ import (
 
 var scopeID = regexp.MustCompile(`^[a-zA-Z0-9-]{16,128}$`)
 
+func readBackupRequest(spool string) (workhistory.BackupRequest, error) {
+	var request workhistory.BackupRequest
+	root, err := workpackage.OpenDirectoryFD(spool)
+	if err != nil {
+		return request, err
+	}
+	defer unix.Close(root)
+	file, err := workhistory.Regular(root, "history-backup-request.json")
+	if err != nil {
+		return request, err
+	}
+	defer file.Close()
+	parsed, err := contracts.ParseJSON(file, 1<<20)
+	if err != nil {
+		return request, workhistory.ErrInvalid
+	}
+	raw, err := json.Marshal(parsed)
+	if err != nil {
+		return request, err
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil || !scopeID.MatchString(request.WorkID) || !scopeID.MatchString(request.OperationID) || !scopeID.MatchString(request.BackupKey) {
+		return request, workhistory.ErrInvalid
+	}
+	return request, nil
+}
+
 type historyRequest struct {
 	Models       []map[string]any  `json:"models,omitempty"`
 	Operations   map[string]string `json:"operations,omitempty"`
@@ -182,9 +210,15 @@ func verifyVolumeHistory(ctx context.Context, volume, spool string, restore bool
 		}
 	}
 	return struct {
-		HistoryPresent bool `json:"historyPresent"`
+		HistoryPresent bool  `json:"historyPresent"`
+		SchemaVersion  int64 `json:"schemaVersion"`
 		workhistory.Summary
-	}{snapshot != nil, summary}, nil
+	}{snapshot != nil, func() int64 {
+		if snapshot != nil {
+			return snapshot.SchemaVersion
+		}
+		return 0
+	}(), summary}, nil
 }
 func verifyPackageHistory(ctx context.Context, verified workpackage.Verified, openBlob func(contracts.WorkBlob) (io.ReadCloser, error), spool string) error {
 	spec := verified.Spec
@@ -221,7 +255,8 @@ func verifyPackageHistory(ctx context.Context, verified workpackage.Verified, op
 	if !hasMain {
 		_, wal := tree.Paths["work.sqlite-wal"]
 		_, shm := tree.Paths["work.sqlite-shm"]
-		if wal || shm || string(spec.ActiveContext) != "null" {
+		_, memory := tree.Paths["memory.sqlite"]
+		if wal || shm || memory && spec.Compatibility.WorkHistorySchema == 5 || string(spec.ActiveContext) != "null" {
 			return workhistory.ErrInvalid
 		}
 	}
@@ -235,7 +270,16 @@ func verifyPackageHistory(ctx context.Context, verified workpackage.Verified, op
 		return err
 	}
 	defer os.RemoveAll(temporary)
-	for _, name := range []string{"work.sqlite", "work.sqlite-wal", "work.sqlite-shm"} {
+	managedFiles := []string{"work.sqlite", "work.sqlite-wal", "work.sqlite-shm"}
+	if spec.Compatibility.WorkHistorySchema == 5 {
+		managedFiles = append(managedFiles, "memory.sqlite")
+		for _, name := range []string{"work.sqlite-journal", "memory.sqlite-journal"} {
+			if _, exists := tree.Paths[name]; exists {
+				return workhistory.ErrBusy
+			}
+		}
+	}
+	for _, name := range managedFiles {
 		_, exists := tree.Paths[name]
 		if !exists {
 			continue
@@ -289,6 +333,9 @@ func verifyPackageHistory(ctx context.Context, verified workpackage.Verified, op
 	}})
 	if snapshot != nil {
 		defer snapshot.Close()
+		if snapshot.SchemaVersion != int64(spec.Compatibility.WorkHistorySchema) {
+			return workhistory.ErrUnsupported
+		}
 	}
 	return err
 }
