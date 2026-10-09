@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 ARG GO_BUILDER_IMAGE=golang:1.25.5-alpine3.22
 FROM ${GO_BUILDER_IMAGE} AS build
-ARG GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY=https://proxy.golang.org,direct
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -17,7 +17,8 @@ FROM scratch
 ARG PIWORK_COMMIT=unknown
 ARG PIWORK_DIRTY=true
 ARG PIWORK_VERSION=0.1.0-dev
-LABEL org.opencontainers.image.revision="${PIWORK_COMMIT}" org.opencontainers.image.version="${PIWORK_VERSION}" io.piwork.source.modified="${PIWORK_DIRTY}"
+ARG PIWORK_SOURCE_INPUT_HASH
+LABEL org.opencontainers.image.revision="${PIWORK_COMMIT}" org.opencontainers.image.version="${PIWORK_VERSION}" io.piwork.source.modified="${PIWORK_DIRTY}" io.piwork.source.input-sha256="${PIWORK_SOURCE_INPUT_HASH}"
 LABEL piwork.snapshot_protocol="1"
 COPY --from=build --chmod=0555 /out/piwork-snapshot-helper /usr/local/bin/piwork-snapshot-helper
 USER 0:0

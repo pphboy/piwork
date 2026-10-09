@@ -63,7 +63,7 @@ make test
 - Docker、Work 生命周期及真实 Core 交互：执行相关 integration 测试；完整入口和额外依赖见 docs/testing.md。
 - 平台源码边界：node scripts/check-native-boundary.mjs；镜像边界使用对应 image 检查入口。
 - 纯文档整理：检查链接、命令与源码的一致性以及 git diff --check，无需为此重跑完整模型或 Docker 验收。
-- Docker 镜像、初始化环境变量、网络、数据目录、CLI 状态存储、就绪等待或关闭预算变化时，同步中英文 README 默认 Docker run 命令、Core Compose Demo、安装手册、模板和打包清单；执行 node scripts/check-docker-quickstart.mjs 与 node --test scripts/check-docker-quickstart.test.mjs。检查使用合成值，不输出真实秘密；后续材料维护不能只依赖人工记忆。
+- Docker 镜像、初始化环境变量、网络、数据目录、CLI 状态存储、就绪等待或关闭预算变化时，同步中英文 README 默认 Docker run 命令、Core-only Compose、examples/single-host/ 单机部署示例及其双语说明、安装手册、模板和打包清单；执行 node scripts/check-docker-quickstart.mjs 与 node --test scripts/check-docker-quickstart.test.mjs。检查使用合成值，不输出真实秘密；后续材料维护不能只依赖人工记忆。
 
 proto、HTTP DTO 和 Work history 的生成入口为 make generate；变更契约时同步生成产物和相关跨语言测试。历史场景索引和跳过项不能替代实际测试通过。
 

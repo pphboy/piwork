@@ -1,5 +1,36 @@
 # syntax=docker/dockerfile:1
+ARG GO_BUILDER_IMAGE=golang:1.25.5-alpine3.22
 ARG PIWORK_RUNTIME_IMAGE=alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+FROM node:24-bookworm-slim AS desktop
+WORKDIR /source
+COPY . .
+ARG PIWORK_VERSION
+ARG PIWORK_COMMIT
+ARG PIWORK_MODIFIED
+ARG PIWORK_SOURCE_INPUT_HASH
+ARG PIWORK_DESKTOP_UI_HASH
+ARG PIWORK_RELEASE_REGISTRY=docker.io/pphboy
+RUN PIWORK_VERSION="$PIWORK_VERSION" PIWORK_COMMIT="$PIWORK_COMMIT" \
+    PIWORK_MODIFIED="$PIWORK_MODIFIED" PIWORK_SOURCE_INPUT_HASH="$PIWORK_SOURCE_INPUT_HASH" \
+    PIWORK_DESKTOP_UI_HASH="$PIWORK_DESKTOP_UI_HASH" PIWORK_RELEASE_REGISTRY="$PIWORK_RELEASE_REGISTRY" \
+    node scripts/build-docker-release.mjs image /out
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --include-workspace-root -w @piwork/desktop-webui \
+ && npm run build -w @piwork/desktop-webui
+
+FROM ${GO_BUILDER_IMAGE} AS build
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
+WORKDIR /source
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY internal ./internal
+COPY cmd/piwork-cli ./cmd/piwork-cli
+COPY --from=desktop /source/internal/desktopassets/static/ ./internal/desktopassets/static/
+COPY --from=desktop /out/cli.ldflags /build.ldflags
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -buildvcs=false \
+      -ldflags="$(cat /build.ldflags)" -o /out/piwork-cli ./cmd/piwork-cli
+
 FROM ${PIWORK_RUNTIME_IMAGE}
 RUN apk add --no-cache ca-certificates curl jq \
  && mkdir -p /var/lib/piwork/client /exchange \
@@ -7,14 +38,18 @@ RUN apk add --no-cache ca-certificates curl jq \
 ARG PIWORK_VERSION
 ARG PIWORK_COMMIT
 ARG PIWORK_MODIFIED
+ARG PIWORK_SOURCE_INPUT_HASH
 ARG PIWORK_DESKTOP_UI_HASH
 LABEL org.opencontainers.image.title="piwork-cli" \
       org.opencontainers.image.version="${PIWORK_VERSION}" \
       org.opencontainers.image.revision="${PIWORK_COMMIT}" \
       io.piwork.source.modified="${PIWORK_MODIFIED}" \
+      io.piwork.source.input-sha256="${PIWORK_SOURCE_INPUT_HASH}" \
       io.piwork.desktop.input-sha256="${PIWORK_DESKTOP_UI_HASH}"
-COPY --chmod=0555 dist/cli/linux-amd64/piwork-cli /usr/local/bin/piwork-cli
+COPY --from=build --chmod=0555 /out/piwork-cli /usr/local/bin/piwork-cli
+COPY --chmod=0555 deploy/docker/cli-entrypoint.sh /usr/local/bin/piwork-cli-entrypoint
+COPY --chmod=0555 deploy/docker/wait-core.sh /usr/local/libexec/piwork/wait-core
 ENV PIWORK_CLI_CONTAINER_MODE=1 \
     PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json
-ENTRYPOINT ["/usr/local/bin/piwork-cli"]
-CMD ["desktop", "--no-open"]
+ENTRYPOINT ["/usr/local/bin/piwork-cli-entrypoint"]
+CMD []

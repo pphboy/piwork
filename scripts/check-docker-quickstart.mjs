@@ -1,213 +1,174 @@
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { sourceInputHash, renderCompose, roles } from './build-docker-release.mjs';
+import { coreRun, cliRun, composeCommands, firstWorkCommands, firstChatCommand, cliFileRun, singleHostReadme } from './docker-quickstart-content.mjs';
 
 export const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const initializationKeys = ['PIWORK_ADMIN_ACCOUNT', 'PIWORK_ADMIN_PASSWORD', 'PIWORK_MODEL_PROVIDER', 'PIWORK_MODEL', 'PIWORK_API_KEY'];
-const stateDirectory = '/var/lib/piwork/client';
-const runDataDirectory = '/var/lib/piwork/quickstart/core';
-const digestReference = /^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/;
-const imageRoles = { core: 'CORE', cli: 'CLI', agent: 'AGENT', packageHelper: 'PACKAGE_HELPER', fileHelper: 'FILE_HELPER', snapshotHelper: 'SNAPSHOT_HELPER' };
-
-export function section(text, name) {
-  const start = `<!-- ${name}:start -->`;
-  const end = `<!-- ${name}:end -->`;
-  if (text.split(start).length !== 2 || text.split(end).length !== 2) return null;
-  const left = text.indexOf(start) + start.length;
-  const right = text.indexOf(end);
-  return right >= left ? text.slice(left, right).trim() : null;
+export const installerFiles = ['docker-compose.yml', 'single-host-compose.yml', 'single-host-README.md', 'single-host-README.zh-CN.md', 'release-manifest.json', 'README.txt', 'push-commands.sh', 'SHA256SUMS'];
+export function section(text, marker) {
+  const start = `<!-- ${marker}:start -->`, end = `<!-- ${marker}:end -->`;
+  if (text.split(start).length !== 2 || text.split(end).length !== 2) throw new Error('Missing or duplicate document marker.');
+  return text.slice(text.indexOf(start) + start.length, text.indexOf(end));
 }
-
 export function codeBlocks(text) {
-  return [...text.matchAll(/^```([a-z]+)\n([\s\S]*?)\n```/gm)].map(match => ({ language: match[1], code: match[2] }));
+  return [...text.matchAll(/^```([^\n]*)\n([\s\S]*?)^```/gm)].map(match => ({ language: match[1], code: match[2].trimEnd() }));
 }
+const normalize = text => text.trim().replace(/\r\n/g, '\n');
+const sameCode = (first, second) => JSON.stringify(codeBlocks(first)) === JSON.stringify(codeBlocks(second));
+const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 
-const logical = code => code.replace(/[ \t]*\\\n[ \t]*/g, ' ');
-const unquote = token => /^(["']).*\1$/s.test(token) ? token.slice(1, -1) : token;
-function dockerRun(command) {
-  const tokens = (command.match(/"(?:\\.|[^"\\])*"|'[^']*'|\S+/g) || []).map(unquote);
-  const options = new Map();
-  const valueOptions = new Set(['--name', '--user', '--network', '--env-file', '--env', '-e', '--mount', '--volume', '-v', '--stop-timeout', '--entrypoint', '--add-host', '--publish', '-p']);
-  let index = 2;
-  while (tokens[index]?.startsWith('-')) {
-    const token = tokens[index++];
-    const equal = token.indexOf('=');
-    const key = equal === -1 ? token : token.slice(0, equal);
-    const value = equal !== -1 ? token.slice(equal + 1) : valueOptions.has(key) ? tokens[index++] : true;
-    options.set(key, [...(options.get(key) || []), value]);
-  }
-  return { options, image: tokens[index], args: tokens.slice(index + 1) };
-}
-const values = (run, key) => run.options.get(key) || [];
-const one = (run, key) => values(run, key).length === 1 ? values(run, key)[0] : undefined;
-const environment = run => new Map([...values(run, '--env'), ...values(run, '-e')].map(value => {
-  const equal = String(value).indexOf('=');
-  return [String(value).slice(0, equal), String(value).slice(equal + 1)];
-}));
-const pairs = contents => new Map(contents.split('\n').filter(line => line && !line.startsWith('#')).map(line => {
-  const equal = line.indexOf('=');
-  return [line.slice(0, equal), line.slice(equal + 1)];
-}));
-
-export function installerFiles(contents) {
-  const list = contents.match(/for\s*\(const name of \[([\s\S]*?)\]\)\s*copyFileSync/);
-  return list ? [...list[1].matchAll(/['"]([^'"]+)['"]/g)].map(match => match[1]) : [];
-}
-
-export function checkQuickStart(root = projectRoot) {
+export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   const errors = [];
-  const check = (condition, file, field) => { if (!condition) errors.push(`${file}: ${field}`); };
-  const read = file => {
-    try { return readFileSync(join(root, file), 'utf8'); }
-    catch { errors.push(`${file}: missing material`); return ''; }
+  const check = (valid, message) => { if (!valid) errors.push(message); };
+  const read = name => {
+    try { return readFileSync(join(base, name), 'utf8'); }
+    catch { errors.push(`${name}: missing material`); return ''; }
   };
-  const roots = ['README.md', 'README.zh-CN.md'];
-  const manuals = roots.map(name => `deploy/docker/${name}`);
-  const documents = [...roots, ...manuals].map(name => ({ name, text: read(name) }));
-  const runTemplate = read('deploy/docker/core.run.env.example');
-  const composeTemplate = read('deploy/docker/core.env.example');
-  const compose = read('deploy/docker/compose.core.yaml');
-  const cliImage = read('Dockerfile.cli');
-  const packager = read('scripts/build-docker-release.mjs');
-  const baseline = section(documents[0].text, 'docker-quickstart');
-  const baselineBlocks = baseline === null ? [] : codeBlocks(baseline);
+  let release;
+  try { release = JSON.parse(read('deploy/docker/release.json')); }
+  catch { return [...errors, 'deploy/docker/release.json: invalid metadata']; }
+  if (!release || !['candidate', 'published'].includes(release.state) || !release.images?.core || !release.images?.cli) return [...errors, 'deploy/docker/release.json: incomplete release identity'];
+  try { check(sourceInputHash(base) === release.sourceInputHash, 'deploy/docker/release.json: source inputs changed; regenerate candidate'); }
+  catch { check(false, 'source input inventory is unavailable'); }
+  for (const role of roles) check(typeof release.images[role] === 'string' && release.images[role].endsWith(`:${release.releaseId}`) && !release.images[role].endsWith(':latest'), `deploy/docker/release.json: ${role} fixed release reference`);
 
-  for (const { name, text } of documents) {
-    const main = section(text, 'docker-quickstart');
-    check(main !== null, name, 'unique docker-quickstart section');
-    if (main === null) continue;
-    const blocks = codeBlocks(main);
-    check(JSON.stringify(blocks) === JSON.stringify(baselineBlocks), name, 'paired terminal commands');
-    check(blocks.length === 8 && blocks.every(block => block.language === 'sh'), name, 'eight complete shell blocks');
-    const commands = blocks.map(block => logical(block.code)).join('\n');
-    check(!/\bdesktop\b|docker compose|\bwork (?:start|list)\b|\.\.\./.test(commands), name, 'terminal-only shortest path');
-    check(commands.includes('sha256sum --check --strict'), name, 'checksum failure stops installation');
-    check(commands.includes('test ! -e core.run.env') && commands.includes('chmod 600 core.run.env'), name, 'private configuration without overwrite');
-    check(commands.includes("if [ -f core.run.env.example ]; then") && commands.includes('cp core.run.env.example core.run.env'), name, 'new installer template');
-    const heredoc = commands.match(/cat > core\.run\.env <<'EOF'\n([\s\S]*?)\nEOF/);
-    check(heredoc?.[1] + '\n' === runTemplate, name, 'old installer blank template matches run example');
-    check(commands.includes('s/^PIWORK_CORE_IMAGE=//p') && commands.includes('s/^PIWORK_CLI_IMAGE=//p') && commands.includes('@sha256:[0-9a-f]\\{64\\}'), name, 'fixed image references read without source');
-    check(commands.includes('test -n "$PIWORK_CORE_IMAGE" && test -n "$PIWORK_CLI_IMAGE"'), name, 'both image references required');
-    const runs = commands.split('\n').filter(line => line.startsWith('docker run ')).map(dockerRun);
-    check(runs.length === 2, name, 'one Core run and one interactive CLI run');
-    const core = runs.find(run => run.image === '$PIWORK_CORE_IMAGE');
-    const cli = runs.find(run => run.image === '$PIWORK_CLI_IMAGE');
-    check(Boolean(core && cli), name, 'published Core/CLI image variables');
-    if (core) {
-      const env = environment(core);
-      check(one(core, '--network') === 'host' && core.options.has('--detach') && core.options.has('--init'), name, 'Core background host network');
-      check(one(core, '--user') === '0:0' && !core.options.has('--privileged'), name, 'Core installation user');
-      check(JSON.stringify(values(core, '--env-file')) === JSON.stringify(['release.env', 'core.run.env']), name, 'Core release and raw environment files');
-      for (const [key, value] of Object.entries({ DOCKER_HOST: 'unix:///var/run/docker.sock', DOCKER_CONTEXT: '', PIWORK_DATA_DIR: runDataDirectory, PIWORK_CORE_URL: 'http://127.0.0.1:7171', PIWORK_LISTEN: '0.0.0.0:7171', PIWORK_AGENT_GRPC_LISTEN: '0.0.0.0:7172', PIWORK_AGENT_GRPC_ADVERTISE: 'piwork-core:7172' })) {
-        check(env.has(key) && env.get(key) === value, name, `Core ${key}`);
+  const expected = [coreRun(release.images.core), cliRun(release.images.cli), firstWorkCommands, firstChatCommand];
+  const docs = ['README.md', 'README.zh-CN.md', 'deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
+  const trials = [];
+  for (const name of docs) {
+    const text = read(name);
+    try {
+      const trial = section(text, 'docker-quickstart'); trials.push(trial);
+      const blocks = codeBlocks(trial);
+      check(/examples\/single-host\//.test(trial), `${name}: single-host example reference missing`);
+      check(!/docker compose[^\n]*run/.test(trial), `${name}: default CLI must be independent of Compose`);
+      for (const command of expected) check(blocks.some(block => normalize(block.code) === normalize(command)), `${name}: complete startup and conversation commands must match the release`);
+      for (const block of blocks) {
+        check(block.language === 'sh', `${name}: default code uses shell language`);
+        check(!/--env-file|release\.env|--entrypoint|\bdesktop\b|make build|npm ci|tar -|core\.run\.env/.test(block.code), `${name}: default trial must use direct images and terminal commands`);
+        check(spawnSync('sh', ['-n'], { input: block.code, encoding: 'utf8' }).status === 0, `${name}: shell syntax is invalid`);
       }
-      check(one(core, '--volume') === `${runDataDirectory}:${runDataDirectory}`, name, 'Core same absolute data path');
-      check(one(core, '--mount') === 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock', name, 'existing Docker socket bind');
-      check(one(core, '--stop-timeout') === '60', name, 'Core 60 second shutdown budget');
-      check(JSON.stringify(core.args) === JSON.stringify(['serve', '--allow-insecure-remote']), name, 'Core existing HTTP opt-in');
-      check(![...env.keys()].some(key => initializationKeys.includes(key)), name, 'Core secrets use private file');
+      check(!/Download and verify the installer|Configure and start Core|下载并校验安装包|配置并启动 Core/.test(trial), `${name}: old download/configuration steps returned`);
+      check(release.state !== 'candidate' || /Local candidate|本地候选/.test(trial), `${name}: unpublished candidate must be identified`);
+      if (!name.startsWith('deploy/')) {
+        check(/^<p align="center">\s*<img[^>]*width="160"[^>]*height="160"[^>]*>\s*<\/p>/m.test(text), `${name}: centered Logo dimensions`);
+        check(text.indexOf('## Architecture') >= 0 && text.indexOf('## Architecture') < text.indexOf('## Problem'), `${name}: Architecture must precede Problem`);
+        const native = section(text, 'native-quickstart');
+        const before = text.slice(0, text.indexOf('<!-- native-quickstart:start -->'));
+        check(/<details>\s*<summary>[^<]+<\/summary>\s*$/.test(before), `${name}: native CLI must stay folded`);
+        check(!/\bdesktop\b/.test(codeBlocks(native).map(block => block.code).join('\n')), `${name}: native trial stays in the terminal`);
+      }
+    } catch { check(false, `${name}: missing required document sections`); }
+  }
+  for (const trial of trials) check(sameCode(trial, trials[0]), 'paired terminal commands differ between README/manual languages');
+
+  const core = read('Dockerfile.core'), cli = read('Dockerfile.cli');
+  check(/FROM \$\{GO_BUILDER_IMAGE\} AS build/.test(core) && /COPY --from=build/.test(core) && !/COPY[^\n]*dist\//.test(core), 'Dockerfile.core: source build must not require host dist');
+  check(/PIWORK_RELEASE_CONFIG_PATH=\/etc\/piwork\/docker-release\.json/.test(core) && /PIWORK_DATA_DIR=\/var\/lib\/piwork\/quickstart\/core/.test(core) && /DOCKER_HOST=unix:\/\/\/var\/run\/docker\.sock/.test(core), 'Dockerfile.core: nonsecret release defaults and same-path data');
+  check(/HEALTHCHECK/.test(core) && /readyz\?profile=docker-delivery/.test(core), 'Dockerfile.core: complete delivery healthcheck');
+  check(/ENTRYPOINT \["\/usr\/local\/bin\/piwork-cli-entrypoint"\]/.test(cli) && /CMD \[\]/.test(cli) && !/HEALTHCHECK/.test(cli), 'Dockerfile.cli: default terminal and explicit command entrypoint');
+  check(/PIWORK_CONFIG_PATH=\/var\/lib\/piwork\/client\/credentials\.json/.test(cli), 'Dockerfile.cli: private persistent state');
+  check(/COPY --from=desktop/.test(cli) && /npm run build -w @piwork\/desktop-webui/.test(cli), 'Dockerfile.cli: fresh embedded resources');
+  const entry = read('deploy/docker/cli-entrypoint.sh'), wait = read('deploy/docker/wait-core.sh');
+  check(/exec piwork-cli "\$@"/.test(entry) && /timeout -s TERM 600/.test(entry) && /exec \/bin\/sh -i/.test(entry), 'CLI entrypoint: forwarding and bounded terminal readiness');
+  check(/readyz\?profile=docker-delivery/.test(wait) && /piwork_wait_status" = 200/.test(wait), 'CLI readiness: exact full-readiness success');
+  const mainIgnore = read('.dockerignore');
+  for (const file of ['Dockerfile.core.dockerignore', 'Dockerfile.cli.dockerignore']) check(read(file) === mainIgnore, `${file}: source/secret exclusions must match main policy`);
+
+  const template = read('deploy/docker/docker-compose.yml.template');
+  check(!/\benv_file:|\binclude:|\bextends:|release\.env/.test(template), 'Compose: single-file deployment must not depend on setup files');
+  check(/network_mode: host/.test(template), 'Compose: Core host networking');
+  check(!/^  cli:|^volumes:|client-state|depends_on:/m.test(template), 'Compose: default file must contain Core only');
+  check(/source: \/var\/lib\/piwork\/quickstart\/core\n\s+target: \/var\/lib\/piwork\/quickstart\/core/.test(template), 'Compose: same absolute data path');
+  check(/source: \/var\/run\/docker\.sock\n\s+target: \/var\/run\/docker\.sock\n\s+bind:\n\s+create_host_path: false/.test(template), 'Compose: missing socket must not create a directory');
+  check(/stop_grace_period: 60s/.test(template), 'Compose: shutdown budget');
+  const singleHost = read('examples/single-host/docker-compose.yml.template');
+  const cliService = singleHost.split('  cli:\n')[1] || '';
+  check(/network_mode: host/.test(singleHost) && /host\.docker\.internal:host-gateway/.test(singleHost), 'single-host: Core host and CLI gateway networking');
+  check(!/env_file:|include:|extends:|depends_on:/.test(singleHost), 'single-host: no external files or lifecycle dependencies');
+  check(/PIWORK_DATA_DIR: \/var\/lib\/piwork\/examples\/single-host\/core/.test(singleHost) && /source: \/var\/lib\/piwork\/examples\/single-host\/core\n\s+target: \/var\/lib\/piwork\/examples\/single-host\/core/.test(singleHost), 'single-host: isolated same-path data');
+  check(/name: piwork-single-host-client-state/.test(singleHost) && /stop_grace_period: 60s/.test(singleHost), 'single-host: independent client state and shutdown budget');
+  check(/profiles: \[cli\]/.test(cliService) && /stdin_open: true/.test(cliService) && /tty: true/.test(cliService), 'single-host: interactive CLI');
+  check(!/ports:|docker\.sock|PIWORK_API_KEY|PIWORK_ADMIN_PASSWORD/.test(cliService), 'single-host: CLI must not receive Core secrets or resources');
+  for (const [language, name] of [['en', 'README.md'], ['zh', 'README.zh-CN.md']]) check(read('examples/single-host/' + name) === singleHostReadme(release, language), 'single-host: bilingual instructions differ from source');
+  try { check(read('examples/single-host/docker-compose.yml') === renderCompose(release, base, { singleHost: true }), 'single-host: generated file differs'); }
+  catch { check(false, 'single-host: rendering failed'); }
+  for (const key of ['PIWORK_ADMIN_ACCOUNT', 'PIWORK_ADMIN_PASSWORD', 'PIWORK_MODEL_PROVIDER', 'PIWORK_MODEL', 'PIWORK_API_KEY', 'PIWORK_MODEL_BASE_URL']) check(new RegExp(`^      ${key}:$`, 'm').test(template), `Compose: ${key} must pass through by name`);
+  try { check(read('deploy/docker/docker-compose.yml') === renderCompose(release, base), 'Compose: generated file differs from its release template'); }
+  catch { check(false, 'Compose: candidate rendering failed'); }
+  const demo = read('deploy/docker/compose.core.yaml');
+  check(/network_mode: host/.test(demo) && /PIWORK_DATA_DIR: \/var\/lib\/piwork\/core/.test(demo) && /stop_grace_period: 60s/.test(demo) && !/env_file|release\.env/.test(demo), 'Core Demo: independent data, image defaults and shutdown');
+  const builder = read('scripts/build-docker-release.mjs');
+  check(/scripts\/check-docker-quickstart\.mjs/.test(builder) && /writeMaterials/.test(builder), 'materials: executable consistency gate must run before exporting');
+
+  if (websiteRoot) {
+    const siteRead = name => { try { return readFileSync(join(websiteRoot, name), 'utf8'); } catch { errors.push(`website ${name}: missing material`); return ''; } };
+    for (const prefix of ['', 'zh/']) {
+      try { check(sameCode(section(siteRead(`docs/${prefix}guide/quick-start.md`), 'docker-quickstart'), trials[0]), `website ${prefix}Quick Start: startup commands differ`); }
+      catch { check(false, `website ${prefix}Quick Start: missing trial marker`); }
+      for (const marker of ['core-compose-demo', 'terminal-operations']) {
+        try { check(sameCode(section(siteRead(`docs/${prefix}guide/installation.md`), marker), section(read('deploy/docker/README.md'), marker)), `website ${prefix}installation: ${marker} commands differ`); }
+        catch { check(false, `website ${prefix}installation: missing ${marker}`); }
+      }
     }
-    if (cli) {
-      const env = environment(cli);
-      check(cli.options.has('--rm') && cli.options.has('--init') && cli.options.has('-it'), name, 'CLI removable interactive process');
-      check(one(cli, '--entrypoint') === '/bin/sh' && JSON.stringify(cli.args) === '["-i"]', name, 'CLI shell overrides Desktop');
-      check(one(cli, '--add-host') === 'host.docker.internal:host-gateway', name, 'Linux host-gateway');
-      check(env.size === 1 && env.get('PIWORK_CORE_URL') === 'http://host.docker.internal:7171' && !values(cli, '--env-file').length, name, 'CLI environment selects only Core origin');
-      check(one(cli, '--mount') === `type=volume,src=piwork-quickstart-client-state,dst=${stateDirectory}` && !values(cli, '--volume').length && !values(cli, '-v').length, name, 'CLI persistent credentials only');
-      check(!['--publish', '-p', '--publish-all', '-P', '--privileged', '--network'].some(key => cli.options.has(key)), name, 'CLI no server ports or privileged network');
+    for (const prefix of ['', 'zh/']) {
+      const first = siteRead(`docs/${prefix}guide/first-work.md`);
+      check(codeBlocks(first).some(block => normalize(block.code) === normalize(cliFileRun(release.images.cli))), `website ${prefix}First Work: CLI reference or exchange command differs`);
+      for (const name of ['index.md', 'guide/quick-start.md', 'guide/installation.md', 'guide/first-work.md', 'guide/source-installation.md', 'guide/index.md', 'spec/index.md']) {
+        const text = siteRead(`docs/${prefix}${name}`);
+        const refs = text.match(/(?:docker\.io\/)?pphboy\/piwork-[a-z-]+:[A-Za-z0-9_.-]+/g) || [];
+        check(refs.every(ref => Object.values(release.images).some(expected => expected.replace(/^docker\.io\//, '') === ref.replace(/^docker\.io\//, ''))), `website ${prefix}${name}: stale current image reference`);
+        const downloadIds = [...text.matchAll(/\/install\/([^/\s)]+)\/(?:docker-compose|single-host-compose)\.yml/g)].map(match => match[1]);
+        check(downloadIds.every(id => id === release.releaseId), `website ${prefix}${name}: stale current download reference`);
+      }
+      check(siteRead(`docs/${prefix}guide/installation.md`).includes('examples/single-host/'), `website ${prefix}installation: single-host reference missing`);
+      check(siteRead(`docs/${prefix}index.md`).includes(`/install/${release.releaseId}/docker-compose.yml`), `website ${prefix}homepage: Core download missing`);
     }
-    const ready = commands.split('\n').find(line => line.startsWith('timeout ')) || '';
-    check(ready.startsWith('timeout 600 curl ') && ready.includes('${PIWORK_CORE_URL}/readyz?profile=docker-delivery'), name, 'complete delivery readiness and 600 second budget');
-    for (const option of ['--fail', '--max-time 3', '--retry 120', '--retry-delay 5', '--retry-all-errors', '--output /dev/null']) check(ready.includes(option), name, `readiness ${option.split(' ')[0]}`);
-    check(commands.includes('piwork-cli login --account ACCOUNT') && !commands.includes('--password-stdin'), name, 'TTY hidden-password login');
-    check(commands.includes("piwork-cli work create --name 'My Work' --wait") && commands.includes("piwork-cli chat WORK_ID --message 'Hello, Piwork!'"), name, 'existing create and first-message commands');
-  }
+    check(siteRead(`docs/public/install/${release.releaseId}/docker-compose.yml`) === read('deploy/docker/docker-compose.yml'), 'website download: candidate Compose differs');
+    check(siteRead(`docs/public/install/${release.releaseId}/single-host-compose.yml`) === read('examples/single-host/docker-compose.yml'), 'website download: single-host Compose differs');
+    try { check(JSON.parse(siteRead(`docs/public/install/${release.releaseId}/release-metadata.json`)).sourceInputHash === release.sourceInputHash, 'website download: source identity differs'); } catch { check(false, 'website download: metadata invalid'); }
 
-  const nativeBaseline = section(documents[0].text, 'native-quickstart');
-  for (const { name, text } of documents.slice(0, 2)) {
-    check(/<p align="center">\s*<img\b[^>]*src="docs\/images\/piwork-logo\.png"[^>]*width="160"[^>]*height="160"[^>]*>\s*<\/p>/.test(text), name, 'centered original 160px logo');
-    check(/<details>\s*<summary>[^<]+<\/summary>\s*<!-- native-quickstart:start -->/.test(text), name, 'native CLI initially folded');
-    const native = section(text, 'native-quickstart');
-    check(native !== null && JSON.stringify(codeBlocks(native)) === JSON.stringify(codeBlocks(nativeBaseline || '')), name, 'paired native CLI commands');
-    const commands = codeBlocks(native || '').map(block => block.code).join('\n');
-    check(!/\bdesktop\b|\bwork (?:start|list)\b/.test(commands), name, 'native terminal shortest path');
-    check(commands.includes('./piwork-cli --core CORE_URL login --account ACCOUNT') && commands.includes('./piwork-cli chat WORK_ID'), name, 'native explicit business commands');
   }
-
-  const runValues = pairs(runTemplate);
-  check(runValues.size === initializationKeys.length && initializationKeys.every(key => runValues.has(key) && runValues.get(key) === ''), 'deploy/docker/core.run.env.example', 'five blank raw initialization values');
-  check(initializationKeys.every(key => composeTemplate.includes(`${key}=''`)), 'deploy/docker/core.env.example', 'same five blank Compose initialization keys');
-  check(runTemplate.includes('# PIWORK_MODEL_BASE_URL=https://') && composeTemplate.includes("# PIWORK_MODEL_BASE_URL='https://"), 'deploy/docker', 'separate optional HTTPS syntax');
-  check(cliImage.includes('PIWORK_CLI_CONTAINER_MODE=1') && cliImage.includes(`PIWORK_CONFIG_PATH=${stateDirectory}/credentials.json`) && cliImage.includes('chmod 0700 /var/lib/piwork/client'), 'Dockerfile.cli', 'private persistent state contract');
-
-  const demoBaseline = section(documents[2].text, 'core-compose-demo');
-  for (const { name, text } of documents.slice(2)) {
-    const demo = section(text, 'core-compose-demo');
-    check(demo !== null && JSON.stringify(codeBlocks(demo)) === JSON.stringify(codeBlocks(demoBaseline || '')), name, 'paired Core Compose Demo');
-    const commands = codeBlocks(demo || '').map(block => logical(block.code)).join('\n');
-    check(commands.includes('-f compose.core.yaml up -d --wait --wait-timeout 600 core'), name, 'Core Demo complete readiness');
-    check(!/compose\.cli|\bdesktop\b/.test(commands), name, 'Demo Core only, terminal CLI');
-    check(commands.includes(logical(baselineBlocks[4]?.code || 'missing')), name, 'Demo reuses interactive CLI');
-    check(commands.includes('sudo install -d -m 0700 -o 0 -g 0 /var/lib/piwork/core') && commands.includes('cp core.env.example core.env'), name, 'Demo private independent Core data');
-    check(section(text, 'terminal-operations') !== null, name, 'terminal diagnosis and recovery');
-  }
-  check(/image: \$\{PIWORK_CORE_IMAGE:/.test(compose) && /network_mode: host/.test(compose), 'deploy/docker/compose.core.yaml', 'Core Demo image and host network');
-  check(compose.includes('DOCKER_HOST: unix:///var/run/docker.sock') && compose.includes('DOCKER_CONTEXT: ""'), 'deploy/docker/compose.core.yaml', 'explicit Engine Unix socket');
-  check(compose.includes('source: ${PIWORK_DATA_DIR:') && compose.includes('target: ${PIWORK_DATA_DIR:'), 'deploy/docker/compose.core.yaml', 'Core Demo same absolute data path');
-  check(composeTemplate.includes('PIWORK_DATA_DIR=/var/lib/piwork/core'), 'deploy/docker/core.env.example', 'Core Demo isolated data default');
-  check(compose.includes('stop_grace_period: 60s') && compose.includes('readyz?profile=docker-delivery'), 'deploy/docker/compose.core.yaml', 'Core Demo shutdown and full readiness');
-  for (const name of ['core.run.env.example', 'core.env.example', 'client.env.example', 'compose.core.yaml', 'compose.cli.yaml', 'compose.cli.linux.yaml', 'README.md', 'README.zh-CN.md']) check(installerFiles(packager).includes(name), 'scripts/build-docker-release.mjs', `installer contains ${name}`);
-  check(packager.includes("run('node', ['scripts/check-docker-quickstart.mjs'])"), 'scripts/build-docker-release.mjs', 'candidate material check before copying');
-  return errors;
+  return [...new Set(errors)];
 }
 
-// Checks material integrity only. Image/source identity and public availability
-// remain the release builder's existing gates; a test fixture is not a release.
-export function checkPackageMaterials(stage, root = projectRoot) {
+export function checkPackageMaterials(directory, base = projectRoot) {
   const errors = [];
-  const fail = field => errors.push(`installer material: ${field}`);
-  const read = name => { try { return readFileSync(join(stage, name)); } catch { fail(`missing ${name}`); return null; } };
-  const files = installerFiles(readFileSync(join(root, 'scripts/build-docker-release.mjs'), 'utf8'));
-  const expected = [...files, 'LICENSE', 'release.env', 'release-manifest.json'].sort();
-  const actual = readdirSync(stage).filter(name => name !== 'SHA256SUMS').sort();
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) fail('complete expected file set');
-  for (const name of [...files, 'LICENSE']) {
-    const bytes = read(name);
-    const source = readFileSync(join(root, name === 'LICENSE' ? name : `deploy/docker/${name}`));
-    if (bytes && !bytes.equals(source)) fail(`source mismatch ${name}`);
-  }
-  const sums = read('SHA256SUMS');
-  if (sums) {
-    const seen = new Set();
-    for (const line of sums.toString().trimEnd().split('\n')) {
-      const match = line.match(/^([a-f0-9]{64})  ([a-zA-Z0-9_.-]+)$/);
-      if (!match || seen.has(match?.[2])) { fail('invalid or repeated checksum entry'); continue; }
-      const [, hash, name] = match;
-      seen.add(name);
-      const bytes = read(name);
-      if (bytes && createHash('sha256').update(bytes).digest('hex') !== hash) fail(`checksum mismatch ${name}`);
-    }
-    if (JSON.stringify([...seen].sort()) !== JSON.stringify(expected)) fail('checksum file set');
-  }
-  const release = read('release.env');
-  const metadata = read('release-manifest.json');
   try {
-    const refs = pairs(release?.toString() || '');
-    const manifest = JSON.parse(metadata?.toString() || '{}');
-    for (const [role, suffix] of Object.entries(imageRoles)) {
-      const reference = refs.get(`PIWORK_${suffix}_IMAGE`) || '';
-      if (!digestReference.test(reference) || manifest.images?.[role]?.reference !== reference) fail(`fixed ${role} reference and manifest`);
+    const release = JSON.parse(readFileSync(join(base, 'deploy/docker/release.json'), 'utf8'));
+    const manifest = JSON.parse(readFileSync(join(directory, 'release-manifest.json'), 'utf8'));
+    for (const name of installerFiles) if (!existsSync(join(directory, name))) errors.push('candidate material is missing');
+    if (manifest.sourceInputHash !== release.sourceInputHash || manifest.releaseId !== release.releaseId || !['candidate', 'published'].includes(manifest.state)) errors.push('candidate source identity differs');
+    for (const role of roles) {
+      if (manifest.images?.[role]?.reference !== release.images[role] || !/^sha256:[a-f0-9]{64}$/.test(manifest.images?.[role]?.imageId || '')) errors.push(`candidate ${role} image identity differs`);
+      if (manifest.state === 'published' && !/^sha256:[a-f0-9]{64}$/.test(manifest.images?.[role]?.digest || '')) errors.push(`published ${role} digest is missing`);
     }
-    if (refs.get('PIWORK_RELEASE_VERSION') !== manifest.releaseVersion) fail('release version and manifest');
-  } catch { fail('release metadata syntax'); }
-  return errors;
+    if (readFileSync(join(directory, 'docker-compose.yml'), 'utf8') !== renderCompose(release, base)) errors.push('candidate Compose differs from source');
+    if (readFileSync(join(directory, 'single-host-compose.yml'), 'utf8') !== renderCompose(release, base, { singleHost: true })) errors.push('candidate single-host Compose differs from source');
+    const lines = readFileSync(join(directory, 'SHA256SUMS'), 'utf8').trim().split('\n');
+    const checked = new Set();
+    for (const line of lines) {
+      const match = /^([a-f0-9]{64})  ([A-Za-z0-9_.-]+)$/.exec(line);
+      if (!match || checked.has(match[2])) { errors.push('candidate checksum entry is invalid'); continue; }
+      checked.add(match[2]);
+      if (sha(readFileSync(join(directory, match[2]))) !== match[1]) errors.push('candidate checksum mismatch');
+    }
+    for (const file of installerFiles.filter(name => name !== 'SHA256SUMS')) if (!checked.has(file)) errors.push('candidate checksum coverage is incomplete');
+  } catch { errors.push('candidate materials are unreadable or invalid'); }
+  return [...new Set(errors)];
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const errors = checkQuickStart();
-  if (errors.length) {
-    for (const error of errors) process.stderr.write(`Docker Quick Start: ${error}\n`);
-    process.exitCode = 1;
-  } else process.stdout.write('Docker Quick Start, Core Demo, templates and installer materials are consistent.\n');
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const args = process.argv.slice(2);
+  let websiteRoot;
+  if (args.length) {
+    if (args.length !== 2 || args[0] !== '--website-root') throw new Error('usage: check-docker-quickstart.mjs [--website-root PATH]');
+    websiteRoot = resolve(args[1]);
+  }
+  const errors = checkQuickStart(projectRoot, { websiteRoot });
+  if (errors.length) { process.stderr.write(errors.join('\n') + '\n'); process.exitCode = 1; }
+  else process.stdout.write('Docker Quick Start, image defaults and standalone Compose are coherent.\n');
 }

@@ -21,3 +21,6 @@ demo
 .cache
 .vscode
 .idea
+
+# The embedded UI build reads this public logo; keep other documentation excluded.
+!docs/images/piwork-logo.png

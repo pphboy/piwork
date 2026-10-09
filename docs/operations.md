@@ -72,6 +72,8 @@ Agent image 由 `config set --agent-image` 指定；Package helper 必须是带�
 
 ## 初始化和权限
 
+Docker 新默认入口使用镜像内 `/etc/piwork/docker-release.json` 的非敏感发行依赖，不要求用户准备 env 文件或指定 Agent/helper。宿主已有的 `PIWORK_ADMIN_ACCOUNT`、`PIWORK_ADMIN_PASSWORD`、`PIWORK_MODEL_PROVIDER`、`PIWORK_MODEL`、`PIWORK_API_KEY` 只按名称传给 Core；可选 `PIWORK_MODEL_BASE_URL` 未设置时保持缺省，显式空值非法。镜像 defaults 与用户模型初始化分开处理，未提供用户值仍保持健康可访问、非就绪。显式部署输入优先，合法初始化只补齐缺失持久配置；已有管理员、runtime 和 Work 不被新的发行 defaults 或初始化值覆盖。新默认数据路径为 `/var/lib/piwork/quickstart/core`，高级 Core-only Demo 使用独立 `/var/lib/piwork/core`。两种默认 Docker 入口及完整就绪等待见 [Docker 手册](../deploy/docker/README.zh-CN.md#terminal-docker-quick-start)。
+
 Core 可以健康启动但尚未就绪。`GET /healthz` 表示 listener 活着；`GET /readyz` 区分 `ADMIN_REQUIRED`、`RUNTIME_NOT_CONFIGURED`、`RUNTIME_UNAVAILABLE`、`RECOVERING` 等状态。先运行 `admin bootstrap`，再 `config set`，命令示例见 [从源码启动](#从源码启动)。operator 凭证位于数据目录的私有文件，用户 CLI 凭证位于 `$XDG_CONFIG_HOME/piwork/client.json`、`$HOME/.config/piwork/client.json` 或 `PIWORK_CONFIG_PATH`。两种身份不能互用。密码、模型 key 使用隐藏输入或 `--password-stdin`、`--api-key-stdin`、`--api-key-file`，不要放在命令参数中。
 
 `--env-file` 读取普通 `KEY=value`、引号、注释和空行，不执行 shell 表达式。支持 `PIWORK_DATA_DIR`、`PIWORK_LISTEN`、`PIWORK_CORE_URL`、`PIWORK_ADMIN_ACCOUNT`、`PIWORK_ADMIN_PASSWORD`、`PIWORK_AGENT_IMAGE`、`PIWORK_MODEL_PROVIDER`、`PIWORK_MODEL`/`PIWORK_MODEL_ID`、`PIWORK_API_KEY`/`PIWORK_MODEL_API_KEY`、`PIWORK_FILE_HELPER_IMAGE` 等初始化项；显式命令参数和进程环境优先，已有持久记录不会被初始化值覆写。离线 bootstrap/config 仅在未显式选择 Core URL 且默认 loopback 确认连接被拒绝时使用同一目录锁。显式目标超时或响应丢失不回退为本地写入。

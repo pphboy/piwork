@@ -1,76 +1,136 @@
 # Docker 发行维护
 
-Docker 发行使用 `scripts/build-docker-release.mjs`，原生链继续使用 `make build-go`、`npm run build:cli`、原有 Go/CLI 打包工具。用户只拿到 `piwork-docker` 发行包，安装步骤见 `deploy/docker/README.zh-CN.md`，不运行此维护者工具。
+Docker 发行直接使用 `docker build` 和 `docker push`。Core、CLI、Agent、file-helper、snapshot-helper 从同一源码输入制作，package helper 复用 Agent。默认用户入口为 Core、CLI 各自独立的 Docker 命令；`docker-compose.yml` 只部署 Core。合并方式是 [单机部署示例](../examples/single-host/README.zh-CN.md)，使用独立数据和凭证卷，见 [Docker 手册](../deploy/docker/README.zh-CN.md)。原生 `make release` 和 CLI 发行链保持独立。
 
-维护者在明确授权的发行任务中手动构建、推送镜像、打包和创建 GitHub Release。构建与打包工具本身不自动 push 或上传。本次发行目标为 `0.0.1 Preview`，镜像前缀为 `docker.io/pphboy`；历史 `0.1.0` 候选验收记录保持原样，不能作为新产物的通过收据。
+宿主需要 Git、Bash、Docker Engine 与支持多阶段构建、本地导出和命名上下文的 BuildKit/buildx；不要求宿主 Go、Node、npm 或 Make。Go 1.25.5、Node 24 在构建阶段运行。Core/CLI 运行层使用固定 Alpine digest，仅保留 CA、curl 和 CLI 所需 jq；Agent 保留 TS harness/Pi 生态。
 
-## 输入和构建
+## 本地构建
 
-Linux 构建机安装 Go 1.25.5、Node 24、项目 npm 依赖、Docker 和 Compose。首发 linux/amd64，运行基础层在 `config/docker-release.json` 固定为实际取得的 Alpine 3.22 digest；更新基础层须重新构建并复验。Core/CLI 包含 CA、curl；CLI 另含 jq，运行层没有 Go/Node/Python/Docker CLI。Agent 保留 Node/Pi SDK。版本取 package.json，所有原生程序、镜像和 Desktop hash 对应同一次构建；有工作区修改时记录 sourceModified=true，不能声称是干净提交构建。
-
-以下直接调用现有工具。仓库前缀必须是维护者实际可发布、可供用户/Core 读取的 registry/namespace，不能包含 URL 协议或认证信息；Docker Hub 使用 `docker.io/命名空间`。不要把示例地址当作已有发布仓库。
+在项目根目录记录真实 Git 身份，导出不含秘密的元数据。不要把密码、模型 key、token、真实 env 或数据目录作为构建参数或额外上下文。
 
 ```bash
-node --version
-go version
-docker version
-docker compose version
-npm ci
-PIWORK_BUILD_VERSION=0.0.1 make build
-export PIWORK_RELEASE_REGISTRY=docker.io/pphboy
-node scripts/build-docker-release.mjs build
+piwork_release_commit=$(git rev-parse --verify HEAD)
+piwork_release_modified=false
+if [[ -n $(git status --porcelain --untracked-files=normal) ]]; then
+    piwork_release_modified=true
+fi
+
+docker build -f Dockerfile.docker-release --target metadata \
+    --build-arg "PIWORK_COMMIT=$piwork_release_commit" \
+    --build-arg "PIWORK_MODIFIED=$piwork_release_modified" \
+    --build-arg PIWORK_RELEASE_REGISTRY=docker.io/pphboy \
+    --output type=local,dest=dist/docker/inputs \
+    .
 ```
 
-build 自动重新编译 Desktop，调用独立原生 CLI 构建生成 Linux/Windows 客户端，调用已有 build-go 将静态 Core 编译到 dist/docker/bin，构建两入口及既有 Agent/file/snapshot 镜像；Agent 的 npm 依赖从官方 registry.npmjs.org 获取。版本、平台、协议 labels、镜像 ID、镜像内程序 --version、内嵌 Desktop hash、CLI 目录权限与 jq 都须核对成功，才写 dist/docker/build.json。同提交的 package helper 复用 Agent。缺镜像或协议不兼容不会生成可发布包。sourceInputHash 覆盖本次源码与构建输入，构建期间输入变化或打包前再次修改会明确要求重建。
+版本来自 package.json。发行标识包含版本、commit、源码输入摘要，有工作区修改时附加 dirty。元数据还绑定 Desktop 输入摘要、平台、固定运行基础层、当前 Core 格式/schema 和客户端凭证版本；不能用旧历史记录替代当前事实。Core 内置同一发行标识的非敏感依赖引用，不要求先 push helper 再制作 Core。
 
-## 发布镜像和打包
-
-在有权限的实际发行仓库发布已校验的五个镜像。Docker 凭证使用维护者既有登录方式；密码不放进命令参数。普通用户/Core 默认必须可匿名读取所有发行依赖。私有仓库另行配置显式静态认证，Core 的 Go Engine 路径不调用宿主 credential helper。
+将导出的真实输入传入五个 Docker 构建命令：
 
 ```bash
-node --input-type=module -e 'import { readFileSync } from "node:fs"; const b=JSON.parse(readFileSync("dist/docker/build.json","utf8")); for(const v of Object.values(b.images)) console.log(v.reference);' > dist/docker/images-to-publish.txt
-while IFS= read -r PIWORK_IMAGE; do
-  docker push "$PIWORK_IMAGE"
-done < dist/docker/images-to-publish.txt
-node scripts/build-docker-release.mjs package
-cd dist/docker/piwork-docker
-sha256sum -c SHA256SUMS
-cd ..
-sha256sum -c piwork-docker-*.tar.gz.sha256
+piwork_release_input="$PWD/dist/docker/inputs"
+piwork_release_build_args=(
+    --platform linux/amd64
+    --build-arg "PIWORK_VERSION=$(cat "$piwork_release_input/version")"
+    --build-arg "PIWORK_COMMIT=$(cat "$piwork_release_input/commit")"
+    --build-arg "PIWORK_MODIFIED=$(cat "$piwork_release_input/modified")"
+    --build-arg "PIWORK_DIRTY=$(cat "$piwork_release_input/modified")"
+    --build-arg "PIWORK_SOURCE_INPUT_HASH=$(cat "$piwork_release_input/sourceInputHash")"
+    --build-arg "PIWORK_DESKTOP_UI_HASH=$(cat "$piwork_release_input/desktopUIHash")"
+    --build-arg "PIWORK_RELEASE_REGISTRY=$(cat "$piwork_release_input/registry")"
+)
+
+docker build -f Dockerfile.core "${piwork_release_build_args[@]}" \
+    -t "$(cat "$piwork_release_input/core")" .
+docker build -f Dockerfile.cli "${piwork_release_build_args[@]}" \
+    -t "$(cat "$piwork_release_input/cli")" .
+docker build -f Dockerfile.agentd "${piwork_release_build_args[@]}" \
+    --target production --build-arg NPM_REGISTRY=https://registry.npmjs.org \
+    -t "$(cat "$piwork_release_input/agent")" .
+docker build -f Dockerfile.file-helper.native "${piwork_release_build_args[@]}" \
+    -t "$(cat "$piwork_release_input/fileHelper")" .
+docker build -f Dockerfile.snapshot-helper.native "${piwork_release_build_args[@]}" \
+    -t "$(cat "$piwork_release_input/snapshotHelper")" .
 ```
 
-package 会检查源码输入与 build.json 一致、每个镜像具有真实 registry digest、使用不带发布凭证的临时 Docker 配置读取远端 manifest、pull 后 ID 与已验证构建一致，并再检查各协议/版本；只读取本地 cache 不算验证通过。结果为 dist/docker/piwork-docker 与带版本/提交的 tar.gz，内部 SHA256SUMS 覆盖其他全部文件，压缩包 SHA256 单独发布。包内只复制模板，不包含 core.env/client.env、.env.test、模型 key 或客户端凭证。
+构建期间保留同一源码输入；代码改变后重新导出并制作完整候选。Go 程序来自容器编译，CLI Desktop 资源在 Node 阶段重新生成，无需宿主 dist。构建同时保留真实版本和协议标签，当前 Work history 为 schema 5。
 
-manifestVersion=1 记录实际镜像 reference/digest/imageId/platform/protocolLabels、源码及 dirty 标识、sourceInputHash、Desktop 输入 hash、固定基础层、Core 格式/schema 和客户端凭证版本。第一版的 compatiblePreviousReleaseVersions/directlyRollbackablePreviousVersions 都为空，没有之前 Docker 发行的验证证据。后续增加前版声明必须先取得数据格式、协议和实际回退证据，不能从版本号推断。
+## 核查并导出候选
 
-## 本机候选材料更新与安装校验
-
-保存旧候选包与证据，再以本次版本和干净提交重新构建镜像及发行材料。维护者构建/打包工具没有自动上传或创建 Release 的步骤。
-
-用户手册 6.1 提供 Bash/PowerShell 的完整已有本地包入口，输入本地路径及可信 SHA256 后先比较压缩包 hash，成功才解压并核对内部 SHA256SUMS。Preview 的下载入口指向 GitHub Release。取得安装材料不代表镜像离线可用，镜像仍按既有 Docker 拉取条件取得。
-
-只有文档变化且源码输入未变时，使用已验证的镜像重新执行 package，不必重新构建或推送同一批镜像；若工具报告源码输入已变，必须先按既有 build 流程重新构建，不能改 build.json 绕过检查。重新打包前将之前的候选包、checksum 和 D09 收据保留在以旧压缩包 SHA256 标识的历史目录，新包用新的 checksum 核对，不能沿用旧收据宣称新包通过。
-
-仅准备本机候选文件（在源码根目录，已有验证过的 `dist/docker/build.json`）：
+使用实际 Docker inspect、镜像内版本、资源摘要、默认配置及运行工具边界生成检查记录。检查工具只在标准 Node 容器中处理记录，不增加独立发布的 Release 工具镜像。首次更新材料时，通过标准 Node 容器把同一元数据同步到 README/手册、Core-only Compose 和单机部署示例：
 
 ```bash
-export PIWORK_RELEASE_REGISTRY=docker.io/pphboy
-node scripts/build-docker-release.mjs package
-PIWORK_DOCKER_ARCHIVE_NAME=$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const m=JSON.parse(readFileSync("dist/docker/piwork-docker/release-manifest.json","utf8")); process.stdout.write(`piwork-docker-${m.releaseVersion}-${m.sourceCommit.slice(0,12)}.tar.gz`);')
-(cd dist/docker/piwork-docker && sha256sum --check SHA256SUMS)
-(cd dist/docker && sha256sum --check "$PIWORK_DOCKER_ARCHIVE_NAME.sha256")
+docker run --rm --network none \
+    --user "$(id -u):$(id -g)" \
+    --volume "$PWD:/source" --workdir /source \
+    node:24-bookworm-slim \
+    node scripts/sync-docker-quickstart.mjs
+
+bash scripts/collect-docker-release.sh dist/docker/inputs
+
+docker build -f Dockerfile.docker-release --target materials \
+    "${piwork_release_build_args[@]}" \
+    --build-context release-input=./dist/docker/inputs \
+    --output type=local,dest=dist/docker/candidate \
+    .
+
+(cd dist/docker/candidate && sha256sum --check SHA256SUMS)
 ```
 
-上述 package 只读取镜像 manifest/pull 并生成本机文件，不执行 push、包上传或创建 Release。对外发布由维护者显式执行；本地构建通过不能代替公开下载与镜像可读性检查。
+材料门禁在导出前检查中英文 README、镜像 defaults、Compose、Demo 和手册。源码、镜像、协议、CLI 资源、生成引用或校验不一致会失败；不能手改清单使陈旧镜像通过。生成的 manifestVersion=2 清单将未发布结果标为 candidate，不填造假的 registry digest。
 
-对外附件使用 `piwork-docker-0.0.1.tar.gz` 固定名称：复制同提交的工具生成包后，针对该公开文件名重新生成 `.sha256`。二进制 Preview 包附带 LICENSE、使用说明、构建元数据和校验文件；Windows 原生 CLI 为实验性附件，保留正式打包的完整原生验收门禁。所有附件与镜像必须对应同一个干净提交。
+本地验收按 [镜像发行与终端 Quick Start 验收](docker-release-quickstart-acceptance.md) 使用独立安装，分别验证默认独立 Docker run、Core-only Compose 配合独立 CLI 和单机部署示例、真实模型回复、CLI 凭证保持和 Core 正常关闭/恢复。尚未公开的标签可用本次专属本地 registry/mirror 验证冷启动，明确记录本地来源；这不代表 Docker Hub 匿名拉取通过。清理只处理本次资源，保留原有平台验收边界。
 
-Core 正常关闭成功前必须确认本安装全部受管 Work 的 Agent/Service 已停，并收尾受管任务；某 Work 失败仍尝试其他 Work。保留数据、历史、desiredState 和 Service 启用意图，重启恢复原期望 running 的 Work。无法确认关闭或预算耗尽按既有非零退出及未完成诊断处理；SIGKILL/崩溃/断电不能作为关闭成功证据。CLI 退出不停止 Work。
+## 用户判断与正式发行
 
-## 发布验收
+先提供 `dist/docker/candidate/release-manifest.json`、`SHA256SUMS`、实际验证结果及 `push-commands.sh` 供用户审阅。已登录 pphboy 不构成推送授权；上述构建、同步和导出都不会 push。
 
-在公开发行前完成 `docs/docker-delivery-acceptance.md` 的 D01–D09，以真实候选包及镜像验收 Linux Core、Linux Desktop 和 Windows Docker Desktop。完整 Run 使用真实支持模型；Windows 不能由 Linux 或原生 CLI 代替。无 Desktop Docker 只核查文档和共用逻辑，不新增独立端到端门禁。
+生成的 `push-commands.sh` 默认只做预检，不推送。它绑定已审阅清单的 SHA256，在首次 push 前重新核对全部五个角色的本地 image ID、平台、源码、协议、CLI 资源标签以及实时远端 manifest/config 身份。任一标签被重指向、远端身份冲突、认证/网络失败或结果无法确认都会退出，全部角色零推送。只有明确确认不存在或身份匹配才通过。远端 JSON 通过标准 `node:24-bookworm-slim` 容器解析，宿主不需要 Node；提前取得该标准工具镜像或允许 Docker 拉取。
 
-与原生链同时核对 `make build-go`、`npm run build:cli` 及原有 `scripts/package-go-release.sh` / `scripts/package-cli-release.go` 的产物。Docker 通过不代表另一变更中原生 Windows 未完成项通过。发布页面列出实际 OS/Engine/Compose/浏览器版本、支持范围、包 checksum、镜像 digest 和当前验收结果。
+```sh
+sh dist/docker/candidate/push-commands.sh --check
+```
 
-历史修复结果见既有验收记录；Preview 使用本次候选重新记录实际执行结果和环境。原生 Windows 的验收缺项必须在 Release 中明示。发布前先创建草稿并核对附件，再设为 prerelease；发布后验证公开下载和校验链。
+仅在用户明确审核允许本次候选之后，执行同一发布入口：
+
+```sh
+sh dist/docker/candidate/push-commands.sh --push
+```
+
+不要绕过预检单独推送可变标签。预检不消除外部并发改写风险，推送后仍须核对真实远端身份；不使用 latest。
+
+发布后用不带认证信息的临时 Docker 配置读取全部镜像，核对实际 manifest digest、pull 后 image ID、源码/协议和 CLI 资源。记录 `registryDigest`、`anonymousReadable`、`publishedImageId` 及匹配 RepoDigests 后，使用 `published-materials` 导出目标生成正式材料；镜像 config ID 不等于 registry manifest digest。本地候选不能代替这一步。
+
+远端核查记录齐全后，用同一源码及构建输入导出正式材料，再同步文档。候选清单保留原样；正式清单单独保存：
+
+```bash
+docker build -f Dockerfile.docker-release --target published-materials \
+    "${piwork_release_build_args[@]}" \
+    --build-context release-input=./dist/docker/inputs \
+    --output type=local,dest=dist/docker/published \
+    .
+
+docker run --rm --network none \
+    --user "$(id -u):$(id -g)" \
+    --volume "$PWD:/source" --workdir /source \
+    node:24-bookworm-slim \
+    node scripts/sync-docker-quickstart.mjs dist/docker/published/release-manifest.json
+
+(cd dist/docker/published && sha256sum --check SHA256SUMS)
+```
+
+官网同步时将同版 `release-manifest.json` 与两份 Compose 一并纳入静态目录和 SHA256SUMS，核对构建后的下载字节与正式材料一致。镜像已发布不表示官网已经部署：尚未发布时明确下载入口待启用，不能把本地预览当作公开下载证据。发布状态变更后执行 Docker Quick Start 的脚本测试，候选负向夹具须显式指定候选状态，不能依赖当前仓库恰好尚未发行。
+
+正式 Core-only Compose 与单机部署示例下载材料与官网位于独立 `install/<release-id>/`；旧 0.0.1/0.1.0 材料保留归属。仓库和官网发布按用户明确指令执行，核对实际下载文件后才宣称入口可取得。升级保留 Core、CLI 与 Work 数据以及旧引用、Compose 和清单，回退先检查格式兼容；首次新版候选不凭历史包推断安全回退版本。
+
+## 一致性检查
+
+开发环境或标准 Node 24 容器内运行：
+
+```sh
+node scripts/check-docker-quickstart.mjs
+node --test scripts/check-docker-quickstart.test.mjs
+node --test scripts/build-docker-release.test.mjs scripts/docker-cli-entrypoint.test.mjs scripts/docker-publish-preflight.test.mjs
+```
+
+同步本地官网时另外执行 `node scripts/check-docker-quickstart.mjs --website-root /home/p/Projects/pphboy.github.io/piwork`，在官网目录运行 `pnpm build`。测试使用合成初始化值，不打印真实秘密或真实 Compose 展开配置。未来修改网络、数据目录、状态卷、初始化输入、等待或关闭预算时同步所有材料并执行门禁。

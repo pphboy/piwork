@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 ARG GO_BUILDER_IMAGE=golang:1.25.5-alpine3.22
 FROM ${GO_BUILDER_IMAGE} AS native-build
-ARG GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY=https://proxy.golang.org,direct
 ARG PIWORK_COMMIT=unknown
 ARG PIWORK_MODIFIED=true
 ARG PIWORK_VERSION=0.1.0-dev
@@ -57,9 +57,11 @@ FROM node:24-bookworm-slim AS runtime
 ARG PIWORK_COMMIT=unknown
 ARG PIWORK_MODIFIED=true
 ARG PIWORK_VERSION=0.1.0-dev
+ARG PIWORK_SOURCE_INPUT_HASH
 LABEL org.opencontainers.image.revision="${PIWORK_COMMIT}" \
       org.opencontainers.image.version="${PIWORK_VERSION}" \
-      io.piwork.source.modified="${PIWORK_MODIFIED}"
+      io.piwork.source.modified="${PIWORK_MODIFIED}" \
+      io.piwork.source.input-sha256="${PIWORK_SOURCE_INPUT_HASH}"
 LABEL io.piwork.agent.protocol="v2" io.piwork.agent.version="0.1.0" \
       io.piwork.package-helper.contract="2" io.piwork.service-mcp.contract="1" \
       io.piwork.work-history.schema="5" io.piwork.run-model.contract="1" io.piwork.work-feedback.contract="1"

@@ -8,6 +8,29 @@
 
 Piwork 是一个以 Work 为单位，整合 AI 对话、工作文件和容器服务，并支持导出与迁移的工作环境。
 
+## Architecture 简图
+
+```mermaid
+flowchart LR
+    Browser[Browser] --> CLI[CLI / Desktop]
+    Console[Console] --> Core[Core]
+    CLI --> Core
+    Core --> Engine[Docker Engine]
+    Core <--> Harness
+    Engine --> Harness
+    Engine --> Service
+    subgraph Work
+        Harness[Harness / Pi Agent SDK]
+        Service[Service]
+        Files[Workspace / Files]
+        Harness --> Files
+        Service --> Files
+    end
+    Harness --> Model[Model Provider]
+```
+
+Core 负责资源管理与控制，Harness 执行模型和工具，Service 提供应用，工作文件保存在 Work 的共享卷中。运行和数据边界见 [Core 运维](docs/operations.md)；实现与目录约定见 [AGENTS.md](AGENTS.md)。
+
 ## Problem
 
 一次 AI 工作通常同时涉及对话历史、项目文件和需要持续运行的服务。Piwork 将这些内容组织为一个 Work，让用户在同一环境中对话、运行应用和管理文件，并通过启停、恢复和迁移继续使用这个环境。
@@ -34,140 +57,61 @@ Desktop 聊天界面的预览截图，来自界面验证 fixture。
 
 <!-- docker-quickstart:start -->
 
-本例在同一台 Linux 电脑运行，要求本机 rootful Docker Engine 28+ 和 `linux/amd64` 镜像。准备模型提供方、模型 ID 和 API key；模型服务须从 Work 容器可达。完成每一步后再继续；命令失败时先停下，按[终端故障处理](deploy/docker/README.zh-CN.md#terminal-operations)解决问题。
+### Core
 
-**1. 下载并校验安装包。**
+使用 Linux x86-64 和 Docker Engine 28+。宿主环境中应已有 `PIWORK_ADMIN_ACCOUNT`、`PIWORK_ADMIN_PASSWORD`（至少 12 位）、`PIWORK_MODEL_PROVIDER`、`PIWORK_MODEL`、`PIWORK_API_KEY`。可选 `PIWORK_MODEL_BASE_URL` 使用 Work 可达的 HTTPS 地址；不用时保持未设置。
 
-在宿主机终端执行，从新的目录开始：
-
-```sh
-(
-    set -eu
-    mkdir piwork-preview-0.0.1 || exit
-    cd piwork-preview-0.0.1 || exit
-    PIWORK_RELEASE_URL=https://github.com/pphboy/piwork/releases/download/v0.0.1
-    curl --fail --location \
-        --output piwork-docker-0.0.1.tar.gz \
-        "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz" || exit
-    curl --fail --location \
-        --output piwork-docker-0.0.1.tar.gz.sha256 \
-        "$PIWORK_RELEASE_URL/piwork-docker-0.0.1.tar.gz.sha256" || exit
-    sha256sum --check --strict piwork-docker-0.0.1.tar.gz.sha256 || exit
-    tar -xzf piwork-docker-0.0.1.tar.gz || exit
-    cd piwork-docker || exit
-    sha256sum --check --strict SHA256SUMS || exit
-) && cd piwork-preview-0.0.1/piwork-docker
-```
-
-**2. 配置并启动 Core。**
-
-在解压后的安装目录创建私有 `core.run.env`。新版安装包提供 run 模板；缺少该模板的已发行 `0.0.1` 安装包使用下面的空白配置分支：
-
-```sh
-(
-    set -eu
-    test ! -e core.run.env
-    if [ -f core.run.env.example ]; then
-        cp core.run.env.example core.run.env
-    else
-        cat > core.run.env <<'EOF'
-# Docker run only. Enter raw values without surrounding syntax quotes; do not source.
-# Administrator password: at least 12 characters. Keep this file private (0600).
-PIWORK_ADMIN_ACCOUNT=
-PIWORK_ADMIN_PASSWORD=
-PIWORK_MODEL_PROVIDER=
-PIWORK_MODEL=
-PIWORK_API_KEY=
-# Optional HTTPS endpoint reachable from Work containers; omit instead of leaving empty.
-# PIWORK_MODEL_BASE_URL=https://your-model-endpoint.example/v1
-EOF
-    fi
-    chmod 600 core.run.env
-    ${EDITOR:-vi} core.run.env
-)
-```
-
-填写五个空白值，管理员密码至少 **12 位**。直接填写原始值，不要为了配置语法在值外加引号，不要 source 此文件，也不要混用 Compose 专用的 `core.env` 格式。自定义模型地址时，取消 HTTPS `PIWORK_MODEL_BASE_URL` 示例的注释，填写 Work 容器可达的地址；使用提供方默认地址时保持省略。
-
-在同一个宿主机终端，从已校验的 `release.env` 读取固定镜像引用：
-
-```sh
-PIWORK_CORE_IMAGE=$(
-    sed -n '/^PIWORK_CORE_IMAGE=.*@sha256:[0-9a-f]\{64\}$/s/^PIWORK_CORE_IMAGE=//p' release.env
-)
-PIWORK_CLI_IMAGE=$(
-    sed -n '/^PIWORK_CLI_IMAGE=.*@sha256:[0-9a-f]\{64\}$/s/^PIWORK_CLI_IMAGE=//p' release.env
-)
-test -n "$PIWORK_CORE_IMAGE" && test -n "$PIWORK_CLI_IMAGE"
-```
-
-启动 Core。Docker 创建数据挂载目录，Core 将新的空安装设为私有；两端挂载必须使用相同绝对路径。Core 监听 `7171`、`7172`，沿用已有认证的 HTTP 与控制接口；远程 HTTPS 部署见安装手册。
+在宿主终端运行 Core。镜像自带发行默认值，并自动准备 Agent 和 helper：
 
 ```sh
 docker run --detach --init \
     --name piwork-core-quickstart \
-    --user 0:0 \
     --network host \
-    --env-file release.env \
-    --env-file core.run.env \
-    --env DOCKER_HOST=unix:///var/run/docker.sock \
-    --env DOCKER_CONTEXT= \
-    --env PIWORK_DATA_DIR=/var/lib/piwork/quickstart/core \
-    --env PIWORK_CORE_URL=http://127.0.0.1:7171 \
-    --env PIWORK_LISTEN=0.0.0.0:7171 \
-    --env PIWORK_AGENT_GRPC_LISTEN=0.0.0.0:7172 \
-    --env PIWORK_AGENT_GRPC_ADVERTISE=piwork-core:7172 \
+    --restart unless-stopped \
+    --stop-timeout 60 \
+    --env PIWORK_ADMIN_ACCOUNT \
+    --env PIWORK_ADMIN_PASSWORD \
+    --env PIWORK_MODEL_PROVIDER \
+    --env PIWORK_MODEL \
+    --env PIWORK_API_KEY \
+    --env PIWORK_MODEL_BASE_URL \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    --stop-timeout 60 \
-    "$PIWORK_CORE_IMAGE" serve --allow-insecure-remote
+    docker.io/pphboy/piwork-core:0.0.1-fc409adc1a0b-808d890c6607-dirty
 ```
 
-Core 自动准备 Agent 和 helper 镜像。安装数据保存在 `/var/lib/piwork/quickstart/core`，Work 数据由 Core 管理。
+Core 也可用 [Core-only docker-compose.yml](deploy/docker/docker-compose.yml) 单独部署（Compose 2.24+），CLI 仍使用自己的 Docker 命令。切换 Core 部署方式前先停止原容器，保留同一数据目录。Core 与 CLI 合并的可选方式见 [单机部署示例](examples/single-host/README.zh-CN.md)。
 
-**3. 进入 CLI 容器。**
+### CLI
 
-在同一个宿主机终端执行。命令进入交互 shell，状态卷会跨容器保留登录凭证：
+CLI 独立运行，只需已有且可达的 Core，不需要 Core 初始化变量。下面连接同机 Core；连接其他 Core 时替换 `PIWORK_CORE_URL`。它等待完整就绪后进入终端：
 
 ```sh
-docker run --rm --init -it \
+docker run --rm --init --interactive --tty \
     --add-host host.docker.internal:host-gateway \
     --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    --entrypoint /bin/sh \
-    "$PIWORK_CLI_IMAGE" -i
+    docker.io/pphboy/piwork-cli:0.0.1-fc409adc1a0b-808d890c6607-dirty
 ```
 
-**4. 登录、创建 Work 并收到回复。**
-
-以下命令都在 **CLI 容器内**执行。先等待 Core 和依赖完整就绪，最多等待十分钟：
-
-```sh
-timeout 600 curl \
-    --fail --silent --show-error \
-    --output /dev/null --max-time 3 \
-    --retry 120 --retry-delay 5 --retry-all-errors \
-    "${PIWORK_CORE_URL}/readyz?profile=docker-delivery"
-```
-
-等待成功后，将 `ACCOUNT` 替换为 `core.run.env` 中配置的账号。登录时隐藏输入密码。创建 Work 会自动启动，`--wait` 等待该操作成功：
+下面的命令在 **CLI 容器内**执行。将 `ACCOUNT` 替换为你的账号；登录时隐藏密码输入。创建 Work 会自动启动它：
 
 ```sh
 piwork-cli login --account ACCOUNT
 piwork-cli work create --name 'My Work' --wait
 ```
 
-将 `WORK_ID` 替换为创建结果中实际的 `workId`，发送第一条消息：
+使用创建结果中的实际 `workId` 替换 `WORK_ID`，发送第一条消息：
 
 ```sh
 piwork-cli chat WORK_ID --message 'Hello, Piwork!'
 ```
 
-模型回复直接显示在终端。用 `exit` 退出容器，登录卷和 Work 会保留；再次执行相同的 CLI 容器启动命令即可进入。Work 操作或消息流中断时，按[终端操作手册](deploy/docker/README.zh-CN.md#terminal-operations)使用原 ID 恢复。
+回复直接显示在终端。用 `exit` 离开；同样的 CLI 启动命令会复用凭证，Work 不因 CLI 退出而停止。等待失败或观察中断时，按 [终端操作说明](deploy/docker/README.zh-CN.md#terminal-operations) 查询状态或恢复原 Operation/Run，不重复提交。
 
 <!-- docker-quickstart:end -->
 
-使用 Compose 部署 Core 可参考可选的 [Core Compose Demo](deploy/docker/README.zh-CN.md#core-compose-demo)，CLI 仍使用同一终端入口。只有该 Demo 或高级 Compose 部署需要 Compose 2.24+。Windows Docker 客户端和远程 Linux Core 地址见 [Docker 安装手册](deploy/docker/README.zh-CN.md#terminal-operations)。
+Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 [Docker 手册](deploy/docker/README.zh-CN.md#terminal-operations)。
 
 <details>
 <summary>使用原生 CLI（连接已有 Core）</summary>
@@ -176,7 +120,7 @@ piwork-cli chat WORK_ID --message 'Hello, Piwork!'
 
 下载 [Linux Core / Console / CLI 包](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-linux-amd64-0.0.1.tar.gz)或 [Windows CLI 实验性包](https://github.com/pphboy/piwork/releases/download/v0.0.1/piwork-cli-windows-amd64-0.0.1.zip)。先核对发行 SHA256 再解压；Linux CLI 位于 `bin/`。
 
-连接已经配置完成且就绪的 Core，例如上面启动的 Core。在可执行文件所在目录，将 `CORE_URL` 替换为其地址（同机 Linux 为 `http://127.0.0.1:7171`），将 `ACCOUNT` 替换为账号；登录时隐藏输入密码。Windows PowerShell 将 `./piwork-cli` 替换为 `.\piwork-cli.exe`。
+连接已经配置完成且就绪的 Core，并与原生 CLI 版本兼容的 Core。在可执行文件所在目录，将 `CORE_URL` 替换为其地址（同机 Linux 为 `http://127.0.0.1:7171`），将 `ACCOUNT` 替换为账号；登录时隐藏输入密码。Windows PowerShell 将 `./piwork-cli` 替换为 `.\piwork-cli.exe`。
 
 ```sh
 ./piwork-cli --core CORE_URL login --account ACCOUNT
@@ -215,35 +159,12 @@ piwork-cli chat WORK_ID --message 'Hello, Piwork!'
 
 目标 Core 需要另行配置匹配的模型凭据；平台管理的模型 key 和安装凭证不会随包迁移，但工作文件和历史中自行保存的秘密仍会进入包。完整流程和数据边界见 [Work 快照](docs/work-snapshot.md) 与 [包格式](docs/work-package-format.md)。
 
-## Architecture 简图
-
-```mermaid
-flowchart LR
-    Browser[Browser] --> CLI[CLI / Desktop]
-    Console[Console] --> Core[Core]
-    CLI --> Core
-    Core --> Engine[Docker Engine]
-    Core <--> Harness
-    Engine --> Harness
-    Engine --> Service
-    subgraph Work
-        Harness[Harness / Pi Agent SDK]
-        Service[Service]
-        Files[Workspace / Files]
-        Harness --> Files
-        Service --> Files
-    end
-    Harness --> Model[Model Provider]
-```
-
-Core 负责资源管理与控制，Harness 执行模型和工具，Service 提供应用，工作文件保存在 Work 的共享卷中。运行和数据边界见 [Core 运维](docs/operations.md)；实现与目录约定见 [AGENTS.md](AGENTS.md)。
-
 ## Current Status / Limitations
 
 - **0.0.1 Preview**：用于试用与反馈。Windows 原生 CLI 为实验性附件，尚未完成全部正式验收。
 - **Core**：当前为单机 Linux 部署，使用本机 Docker Engine Unix socket。
 - **客户端**：原生 CLI 面向 Windows 和 Linux，提供命令行与 Desktop；Windows 原生正式验收的未完成项见 [CLI 平台交付](docs/cli-platforms.md)。
-- **Docker 交付**：当前验收范围为 `linux/amd64`、Linux Core，以及 Linux / Windows Docker Desktop 的 Linux CLI 容器；要求 Docker Engine 28+；Core Demo 或高级 Compose 部署另需 Compose 2.24+。详情见 [交付验收](docs/docker-delivery-acceptance.md)。
+- **Docker 交付**：当前验收范围为 `linux/amd64`、Linux Core，以及 Linux / Windows Docker Desktop 的 Linux CLI 容器；要求 Docker Engine 28+；选择 Core Compose、单机部署示例或高级 Compose 部署时另需 Compose 2.24+。详情见 [交付验收](docs/docker-release-quickstart-acceptance.md)。
 - **运行条件**：实际 Work 执行需要可用的 Docker Engine、模型配置与凭据。Core 正常退出会停止受管 Work 的运行容器并保留持久数据；退出 CLI 不停止 Work。
 - **验证状态**：干净 clone 的安装、构建和单元测试已通过。实际覆盖范围、跳过项与平台边界见 [开源前检查记录](docs/open-source-readiness.md) 和 [测试说明](docs/testing.md)。
 

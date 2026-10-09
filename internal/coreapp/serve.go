@@ -102,7 +102,11 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if value, ok := options["--agent-grpc-advertise"]; ok {
 		explicit["PIWORK_AGENT_GRPC_ADVERTISE"] = value
 	}
-	values := MergeEnvironment(file, os.Environ(), explicit)
+	values, err := ApplyDockerReleaseDefaults(MergeEnvironment(file, os.Environ(), explicit))
+	if err != nil {
+		fmt.Fprintln(stderr, "piwork-serve:", err)
+		return 2
+	}
 	grpcListen := values["PIWORK_AGENT_GRPC_LISTEN"]
 	if grpcListen == "" {
 		grpcListen = "0.0.0.0:7172"

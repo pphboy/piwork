@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+FROM node:24-bookworm-slim AS source
+WORKDIR /source
+COPY . .
+ARG PIWORK_COMMIT
+ARG PIWORK_MODIFIED
+ARG PIWORK_RELEASE_REGISTRY=docker.io/pphboy
+ARG PIWORK_SOURCE_INPUT_HASH
+
+FROM scratch AS source-snapshot
+COPY --from=source /source/ /
+
+FROM source AS metadata-build
+RUN PIWORK_COMMIT="$PIWORK_COMMIT" PIWORK_MODIFIED="$PIWORK_MODIFIED" \
+    PIWORK_RELEASE_REGISTRY="$PIWORK_RELEASE_REGISTRY" \
+    node scripts/build-docker-release.mjs metadata /out
+FROM scratch AS metadata
+COPY --from=metadata-build /out/ /
+
+FROM source AS materials-build
+COPY --from=release-input / /release-input/
+RUN PIWORK_COMMIT="$PIWORK_COMMIT" PIWORK_MODIFIED="$PIWORK_MODIFIED" \
+    PIWORK_RELEASE_REGISTRY="$PIWORK_RELEASE_REGISTRY" \
+    PIWORK_SOURCE_INPUT_HASH="$PIWORK_SOURCE_INPUT_HASH" \
+    node scripts/build-docker-release.mjs materials /out /release-input
+FROM scratch AS materials
+COPY --from=materials-build /out/ /
+
+FROM source AS published-materials-build
+COPY --from=release-input / /release-input/
+RUN PIWORK_COMMIT="$PIWORK_COMMIT" PIWORK_MODIFIED="$PIWORK_MODIFIED" \
+    PIWORK_RELEASE_REGISTRY="$PIWORK_RELEASE_REGISTRY" \
+    PIWORK_SOURCE_INPUT_HASH="$PIWORK_SOURCE_INPUT_HASH" \
+    node scripts/build-docker-release.mjs published-materials /out /release-input
+FROM scratch AS published-materials
+COPY --from=published-materials-build /out/ /

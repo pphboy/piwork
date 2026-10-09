@@ -1,104 +1,140 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { checkQuickStart, checkPackageMaterials, codeBlocks, installerFiles, projectRoot, section } from './check-docker-quickstart.mjs';
+import { checkQuickStart, codeBlocks, section, projectRoot } from './check-docker-quickstart.mjs';
+import { syncWebsite } from './sync-docker-website.mjs';
+import { sourceInputHash } from './build-docker-release.mjs';
 
 const docs = ['README.md', 'README.zh-CN.md', 'deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
-const materials = ['core.run.env.example', 'core.env.example', 'client.env.example', 'compose.core.yaml', 'compose.cli.yaml', 'compose.cli.linux.yaml', 'README.md', 'README.zh-CN.md'];
-const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-const sourceBlocks = () => codeBlocks(section(readFileSync(join(projectRoot, 'README.md'), 'utf8'), 'docker-quickstart'));
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'piwork-quickstart-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const name of [...docs, ...materials.map(name => `deploy/docker/${name}`), 'Dockerfile.cli', 'scripts/build-docker-release.mjs', 'scripts/check-docker-quickstart.mjs', 'LICENSE']) {
-    mkdirSync(dirname(join(root, name)), { recursive: true });
-    copyFileSync(join(projectRoot, name), join(root, name));
-  }
-  return root;
+  const base = mkdtempSync(join(tmpdir(), 'piwork-quickstart-contract-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  for (const path of ['cmd', 'internal', 'proto', 'apps', 'packages', 'scripts', 'config', 'deploy', 'examples']) cpSync(join(projectRoot, path), join(base, path), { recursive: true, filter: path => !/\/(?:node_modules|dist)(?:\/|$)/.test(path) });
+  for (const name of ['README.md', 'README.zh-CN.md', '.dockerignore', 'go.mod', 'go.sum', 'package.json', 'package-lock.json', 'tsconfig.base.json', 'Dockerfile.core', 'Dockerfile.cli', 'Dockerfile.core.dockerignore', 'Dockerfile.cli.dockerignore', 'Dockerfile.agentd', 'Dockerfile.file-helper.native', 'Dockerfile.snapshot-helper.native', 'Dockerfile.docker-release']) copyFileSync(join(projectRoot, name), join(base, name));
+  mkdirSync(join(base, 'docs/images'), { recursive: true });
+  copyFileSync(join(projectRoot, 'docs/images/piwork-logo.png'), join(base, 'docs/images/piwork-logo.png'));
+  refresh(base);
+  return base;
 }
-const replace = (root, name, from, to) => {
-  const path = join(root, name);
-  const before = readFileSync(path, 'utf8');
-  assert(before.includes(from), `Fixture target exists in ${name}`);
-  writeFileSync(path, before.replaceAll(from, to));
-};
+function refresh(base) {
+  const path = join(base, 'deploy/docker/release.json');
+  const metadata = JSON.parse(readFileSync(path, 'utf8'));
+  metadata.sourceInputHash = sourceInputHash(base);
+  writeFileSync(path, JSON.stringify(metadata, null, 2) + '\n');
+}
+function replace(base, name, from, to) {
+  const path = join(base, name), text = readFileSync(path, 'utf8');
+  assert(text.includes(from), `fixture target exists: ${name}`);
+  writeFileSync(path, text.replaceAll(from, to));
+}
 
-test('current bilingual Quick Start, Core Demo and package inputs stay coherent', () => {
-  assert.deepEqual(checkQuickStart(), []);
+test('paired default commands are standalone, terminal-only and parse as shell', () => {
+  const baseline = codeBlocks(section(readFileSync(join(projectRoot, docs[0]), 'utf8'), 'docker-quickstart'));
+  for (const name of docs) {
+    const blocks = codeBlocks(section(readFileSync(join(projectRoot, name), 'utf8'), 'docker-quickstart'));
+    assert.deepEqual(blocks, baseline);
+    for (const block of blocks) assert.equal(spawnSync('sh', ['-n'], { input: block.code }).status, 0);
+  }
 });
 
-test('command-line gate exits nonzero on drift and never prints a configured value', t => {
-  const root = fixture(t);
-  const run = () => spawnSync(process.execPath, [join(root, 'scripts/check-docker-quickstart.mjs')], { cwd: root, encoding: 'utf8' });
-  assert.equal(run().status, 0);
-  docs.forEach(name => replace(root, name, '--entrypoint /bin/sh', '--env PIWORK_API_KEY=synthetic-canary-must-not-print --entrypoint /bin/sh'));
-  const failed = run();
-  assert.equal(failed.status, 1);
-  assert.match(failed.stderr, /CLI environment selects only Core origin/);
-  assert(!failed.stderr.includes('synthetic-canary-must-not-print'));
+test('consistent candidate passes with current source inputs', t => {
+  const base = fixture(t);
+  assert.deepEqual(checkQuickStart(base), []);
 });
 
-test('drift in deployment contracts is rejected without printing configured values', async t => {
+test('semantic deployment drift fails with safe diagnostics', async t => {
   const cases = [
-    ['Core bind mismatch', root => docs.forEach(name => replace(root, name, '--volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core', '--volume /var/lib/piwork/quickstart/core:/wrong')), 'same absolute data path'],
-    ['missing host-gateway', root => docs.forEach(name => replace(root, name, 'host.docker.internal:host-gateway', 'host.docker.internal:127.0.0.1')), 'host-gateway'],
-    ['published CLI port', root => docs.forEach(name => replace(root, name, '--entrypoint /bin/sh', '--publish 17891:17891 --entrypoint /bin/sh')), 'no server ports'],
-    ['CLI receives Core secret', root => docs.forEach(name => replace(root, name, '--entrypoint /bin/sh', '--env PIWORK_API_KEY=synthetic-canary-must-not-print --entrypoint /bin/sh')), 'selects only Core origin'],
-    ['CLI reads Core env-file', root => docs.forEach(name => replace(root, name, '--entrypoint /bin/sh', '--env-file core.run.env --entrypoint /bin/sh')), 'selects only Core origin'],
-    ['shutdown budget', root => docs.forEach(name => replace(root, name, '--stop-timeout 60', '--stop-timeout 10')), 'shutdown budget'],
-    ['language command mismatch', root => replace(root, 'README.zh-CN.md', "--message 'Hello, Piwork!'", "--message 'Different command'"), 'paired terminal commands'],
-    ['missing raw template', root => rmSync(join(root, 'deploy/docker/core.run.env.example')), 'missing material'],
-    ['unexpected quoted raw value', root => replace(root, 'deploy/docker/core.run.env.example', 'PIWORK_API_KEY=\n', "PIWORK_API_KEY=''\n"), 'blank raw initialization'],
-    ['stale image credential path', root => replace(root, 'Dockerfile.cli', 'PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json', 'PIWORK_CONFIG_PATH=/wrong/credentials.json'), 'private persistent state'],
-    ['Demo network changed', root => replace(root, 'deploy/docker/compose.core.yaml', 'network_mode: host', 'network_mode: bridge'), 'Demo image and host network'],
-    ['Demo data mismatch', root => replace(root, 'deploy/docker/compose.core.yaml', 'target: ${PIWORK_DATA_DIR:', 'target: ${OTHER_DIRECTORY:'), 'Demo same absolute data path'],
-    ['missing packed template', root => replace(root, 'scripts/build-docker-release.mjs', "'core.run.env.example', ", ''), 'installer contains core.run.env.example'],
-    ['missing packed manual', root => replace(root, 'scripts/build-docker-release.mjs', "'README.zh-CN.md'", "'missing-manual.md'"), 'installer contains README.zh-CN.md'],
-    ['material gate removed', root => replace(root, 'scripts/build-docker-release.mjs', "run('node', ['scripts/check-docker-quickstart.mjs']);", ''), 'before copying'],
+    ['Core bind', base => docs.forEach(name => replace(base, name, '--volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core', '--volume /var/lib/piwork/quickstart/core:/wrong')), 'complete startup'],
+    ['Core secret leaked to CLI', base => docs.forEach(name => replace(base, name, '--add-host host.docker.internal:host-gateway', '--env PIWORK_API_KEY=synthetic-canary-must-not-print --add-host host.docker.internal:host-gateway')), 'complete startup'],
+    ['language mismatch', base => replace(base, 'README.zh-CN.md', 'Hello, Piwork!', 'Different message'), 'paired terminal'],
+    ['Arch moved back', base => replace(base, 'README.md', '## Architecture', '## Hidden Architecture'), 'Architecture'],
+    ['Logo alignment', base => replace(base, 'README.md', '<p align="center">', '<p align="left">'), 'Logo'],
+    ['image state path', base => replace(base, 'Dockerfile.cli', 'PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json', 'PIWORK_CONFIG_PATH=/wrong'), 'private persistent'],
+    ['old Docker build context', base => writeFileSync(join(base, 'Dockerfile.core.dockerignore'), '**\n!dist/\n'), 'source/secret'],
+    ['missing readiness', base => replace(base, 'deploy/docker/wait-core.sh', 'readyz?profile=docker-delivery', 'healthz'), 'exact full-readiness'],
+    ['Compose host network', base => replace(base, 'deploy/docker/docker-compose.yml.template', 'network_mode: host', 'network_mode: bridge'), 'Core host'],
+    ['Compose env file', base => replace(base, 'deploy/docker/docker-compose.yml.template', '    environment:', '    env_file: ./core.env\n    environment:'), 'single-file'],
+    ['optional address empty', base => replace(base, 'deploy/docker/docker-compose.yml.template', '      PIWORK_MODEL_BASE_URL:', '      PIWORK_MODEL_BASE_URL: ""'), 'pass through by name'],
+    ['CLI gets socket', base => replace(base, 'examples/single-host/docker-compose.yml.template', '      - client-state:/var/lib/piwork/client', '      - /var/run/docker.sock:/var/run/docker.sock'), 'CLI must not receive'],
+    ['Core file includes CLI', base => replace(base, 'deploy/docker/docker-compose.yml.template', 'services:', 'services:\n  cli:\n    image: unexpected'), 'Core only'],
+    ['example dependency', base => replace(base, 'examples/single-host/docker-compose.yml.template', '    profiles: [cli]', '    profiles: [cli]\n    depends_on: [core]'), 'lifecycle dependencies'],
+    ['shutdown budget', base => replace(base, 'deploy/docker/docker-compose.yml.template', 'stop_grace_period: 60s', 'stop_grace_period: 10s'), 'shutdown budget'],
+    ['generated material changed', base => replace(base, 'deploy/docker/docker-compose.yml', 'name: piwork-quickstart', 'name: another'), 'generated file'],
+    ['candidate warning removed', base => {
+      // This negative case must remain a candidate even when the checkout is published.
+      const path = join(base, 'deploy/docker/release.json');
+      const metadata = JSON.parse(readFileSync(path, 'utf8'));
+      metadata.state = 'candidate';
+      writeFileSync(path, JSON.stringify(metadata, null, 2) + '\n');
+      for (const name of docs) {
+        const file = join(base, name);
+        writeFileSync(file, readFileSync(file, 'utf8').replaceAll(name.includes('zh-CN') ? '本地候选' : 'Local candidate', 'Release'));
+      }
+    }, 'unpublished'],
   ];
-  for (const [name, mutate, expected] of cases) {
-    await t.test(name, sub => {
-      const root = fixture(sub);
-      mutate(root);
-      const errors = checkQuickStart(root);
-      assert(errors.some(error => error.includes(expected)), `Expected field diagnostic: ${expected}`);
-      assert(!errors.join('\n').includes('synthetic-canary-must-not-print'));
-    });
-  }
+  for (const [name, mutate, expected] of cases) await t.test(name, sub => {
+    const base = fixture(sub); mutate(base); refresh(base);
+    const errors = checkQuickStart(base);
+    assert(errors.some(message => message.includes(expected)), `expected diagnostic: ${expected}`);
+    assert(!errors.join('\n').includes('synthetic-canary-must-not-print'));
+  });
 });
 
-test('documented shell blocks parse and new/old installer branches preserve private existing config', t => {
-  const blocks = sourceBlocks();
-  for (const { code } of blocks) assert.equal(spawnSync('sh', ['-n'], { input: code, encoding: 'utf8' }).status, 0);
-  const root = fixture(t);
-  for (const modern of [true, false]) {
-    const base = join(root, modern ? 'modern' : 'legacy');
-    mkdirSync(base);
-    if (modern) copyFileSync(join(root, 'deploy/docker/core.run.env.example'), join(base, 'core.run.env.example'));
-    const options = { cwd: base, env: { ...process.env, EDITOR: 'true' }, encoding: 'utf8' };
-    assert.equal(spawnSync('sh', ['-c', blocks[1].code], options).status, 0);
-    assert.equal(readFileSync(join(base, 'core.run.env'), 'utf8'), readFileSync(join(root, 'deploy/docker/core.run.env.example'), 'utf8'));
-    assert.equal(statSync(join(base, 'core.run.env')).mode & 0o777, 0o600);
-    writeFileSync(join(base, 'core.run.env'), 'synthetic existing configuration\n');
-    assert.notEqual(spawnSync('sh', ['-c', blocks[1].code], options).status, 0);
-    assert.equal(readFileSync(join(base, 'core.run.env'), 'utf8'), 'synthetic existing configuration\n');
-  }
+test('CLI gate reports source drift without displaying configured values', t => {
+  const base = fixture(t);
+  replace(base, 'Dockerfile.cli', 'PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json', 'PIWORK_CONFIG_PATH=synthetic-canary-must-not-print');
+  const result = spawnSync(process.execPath, [join(base, 'scripts/check-docker-quickstart.mjs')], { cwd: base, encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /source inputs changed/);
+  assert(!result.stderr.includes('synthetic-canary-must-not-print'));
 });
 
-test('actual download block stops on download, checksum and internal-integrity failures', async t => {
-  const root = fixture(t);
-  const payload = join(root, 'payload/piwork-docker');
-  mkdirSync(payload, { recursive: true });
+test('website command and download drift is checked without a sibling-repository dependency', t => {
+  const base = fixture(t), website = join(base, 'website');
+  const release = JSON.parse(readFileSync(join(base, 'deploy/docker/release.json'), 'utf8'));
+  for (const prefix of ['', 'zh/']) {
+    const guide = join(website, 'docs', prefix, 'guide'); mkdirSync(guide, { recursive: true });
+    mkdirSync(join(website, 'docs', prefix, 'spec'), { recursive: true });
+    writeFileSync(join(website, 'docs', prefix, 'index.md'), prefix ? '# Home\n\n## 开始使用\n' : '# Home\n\n## Get started\n');
+    for (const name of ['first-work.md', 'source-installation.md', 'index.md']) writeFileSync(join(guide, name), '# Fixture\n\n```sh\ndocker run old:tag\n```\n');
+    writeFileSync(join(website, 'docs', prefix, 'spec/index.md'), '# Spec\n');
+  }
+  writeFileSync(join(website, 'README.md'), '## Content maintenance\n\n## Build and deployment\n');
+  syncWebsite(website, release, base);
+  const publicPath = join(website, 'docs/public/install', release.releaseId);
+  assert.deepEqual(checkQuickStart(base, { websiteRoot: website }), []);
+  const next = { ...release, releaseId: release.releaseId + '-next', images: Object.fromEntries(Object.entries(release.images).map(([role, ref]) => [role, ref + '-next'])) };
+  const historical = join(website, 'docs/public/install/0.0.1'); mkdirSync(historical, { recursive: true });
+  writeFileSync(join(historical, 'frozen.txt'), 'old-release');
+  syncWebsite(website, next, base);
+  for (const prefix of ['', 'zh/']) assert(readFileSync(join(website, 'docs', prefix, 'guide/first-work.md'), 'utf8').includes(next.images.cli));
+  assert.equal(readFileSync(join(historical, 'frozen.txt'), 'utf8'), 'old-release');
+  syncWebsite(website, release, base);
+  for (const prefix of ['', 'zh/']) for (const name of ['index.md', 'guide/first-work.md', 'guide/installation.md', 'guide/source-installation.md', 'guide/index.md', 'spec/index.md']) {
+    const path = join(website, 'docs', prefix, name), original = readFileSync(path, 'utf8');
+    writeFileSync(path, original + '\n' + next.images.cli + '\n');
+    assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('stale current image')), name);
+    writeFileSync(path, original);
+  }
+  replace(website, 'docs/zh/guide/quick-start.md', 'Hello, Piwork!', 'A different message');
+  assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website zh/Quick Start')));
+  writeFileSync(join(publicPath, 'docker-compose.yml'), 'different material');
+  assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website download')));
+});
+
+test('legacy download still stops on download, checksum and internal-integrity failures', async t => {
+  const base = mkdtempSync(join(tmpdir(), 'piwork-legacy-installer-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const payload = join(base, 'payload/piwork-docker'), bin = join(base, 'bin');
+  mkdirSync(payload, { recursive: true }); mkdirSync(bin);
   const bytes = 'PIWORK_CORE_IMAGE=fixture@sha256:' + 'a'.repeat(64) + '\n';
+  const sha = data => createHash('sha256').update(data).digest('hex');
   writeFileSync(join(payload, 'release.env'), bytes);
-  const archive = join(root, 'fixture.tar.gz');
-  const checksum = join(root, 'fixture.sha256');
-  const bin = join(root, 'bin');
-  mkdirSync(bin);
+  const archive = join(base, 'fixture.tar.gz'), checksum = join(base, 'fixture.sha256');
   writeFileSync(join(bin, 'curl'), `#!/bin/sh
 output=
 url=
@@ -112,61 +148,15 @@ case "$url" in
     *) cp "$PIWORK_DOWNLOAD_FIXTURE_ARCHIVE" "$output" ;;
 esac
 `, { mode: 0o755 });
-  for (const mode of ['success', 'download-failure', 'wrong-checksum', 'invalid-checksum', 'invalid-internal-checksum']) {
-    await t.test(mode, () => {
-      const correctInternal = mode !== 'invalid-internal-checksum';
-      writeFileSync(join(payload, 'SHA256SUMS'), `${correctInternal ? sha(bytes) : '0'.repeat(64)}  release.env\n`);
-      assert.equal(spawnSync('tar', ['-C', join(root, 'payload'), '-czf', archive, 'piwork-docker']).status, 0);
-      const archiveHash = mode === 'wrong-checksum' ? '0'.repeat(64) : sha(readFileSync(archive));
-      writeFileSync(checksum, mode === 'invalid-checksum' ? 'invalid checksum\n' : `${archiveHash}  piwork-docker-0.0.1.tar.gz\n`);
-      const base = join(root, mode);
-      mkdirSync(base);
-      const result = spawnSync('sh', ['-c', sourceBlocks()[0].code + ' && printf "continued" > installation-continued\n'], {
-        cwd: base, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PIWORK_DOWNLOAD_FIXTURE_MODE: mode, PIWORK_DOWNLOAD_FIXTURE_ARCHIVE: archive, PIWORK_DOWNLOAD_FIXTURE_CHECKSUM: checksum },
-      });
-      const continued = join(base, 'piwork-preview-0.0.1/piwork-docker/installation-continued');
-      if (mode === 'success') {
-        assert.equal(result.status, 0);
-        assert(existsSync(continued));
-        assert(existsSync(join(base, 'piwork-preview-0.0.1/piwork-docker/release.env')));
-      } else {
-        assert.notEqual(result.status, 0);
-        assert(!existsSync(continued));
-        if (mode !== 'invalid-internal-checksum') assert(!existsSync(join(base, 'piwork-preview-0.0.1/piwork-docker')));
-      }
-    });
-  }
-});
-
-test('material fixture archives contain both templates, exact checksums and matching fixed references', t => {
-  const root = fixture(t);
-  const stage = join(root, 'stage/piwork-docker');
-  mkdirSync(stage, { recursive: true });
-  for (const name of installerFiles(readFileSync(join(root, 'scripts/build-docker-release.mjs'), 'utf8'))) copyFileSync(join(root, 'deploy/docker', name), join(stage, name));
-  copyFileSync(join(root, 'LICENSE'), join(stage, 'LICENSE'));
-  const roles = { core: 'CORE', cli: 'CLI', agent: 'AGENT', packageHelper: 'PACKAGE_HELPER', fileHelper: 'FILE_HELPER', snapshotHelper: 'SNAPSHOT_HELPER' };
-  const manifest = { releaseVersion: 'synthetic-material-fixture', images: {} };
-  let release = `PIWORK_RELEASE_VERSION=${manifest.releaseVersion}\n`;
-  for (const [role, suffix] of Object.entries(roles)) {
-    const reference = `docker.io/fixture/${role.toLowerCase()}@sha256:${'a'.repeat(64)}`;
-    release += `PIWORK_${suffix}_IMAGE=${reference}\n`;
-    manifest.images[role] = { reference };
-  }
-  writeFileSync(join(stage, 'release.env'), release);
-  writeFileSync(join(stage, 'release-manifest.json'), JSON.stringify(manifest));
-  const names = [...materials, 'LICENSE', 'release.env', 'release-manifest.json'].sort();
-  writeFileSync(join(stage, 'SHA256SUMS'), names.map(name => `${sha(readFileSync(join(stage, name)))}  ${name}\n`).join(''));
-  assert.deepEqual(checkPackageMaterials(stage, root), []);
-  const archive = join(root, 'material-fixture.tar.gz');
-  assert.equal(spawnSync('tar', ['-C', join(root, 'stage'), '-czf', archive, 'piwork-docker']).status, 0);
-  writeFileSync(archive + '.sha256', `${sha(readFileSync(archive))}  material-fixture.tar.gz\n`);
-  assert.equal(spawnSync('sha256sum', ['--check', '--strict', archive + '.sha256'], { cwd: root }).status, 0);
-  const unpacked = join(root, 'unpacked');
-  mkdirSync(unpacked);
-  assert.equal(spawnSync('tar', ['-C', unpacked, '-xzf', archive]).status, 0);
-  assert.deepEqual(checkPackageMaterials(join(unpacked, 'piwork-docker'), root), []);
-  writeFileSync(join(stage, 'core.run.env.example'), 'tampered material\n');
-  assert(checkPackageMaterials(stage, root).some(error => error.includes('checksum mismatch core.run.env.example')));
-  rmSync(join(stage, 'core.run.env.example'));
-  assert(checkPackageMaterials(stage, root).some(error => error.includes('missing core.run.env.example')));
+  const download = codeBlocks(section(readFileSync(join(projectRoot, 'deploy/docker/README.md'), 'utf8'), 'legacy-docker-quickstart'))[0].code;
+  for (const mode of ['success', 'download-failure', 'wrong-checksum', 'invalid-checksum', 'invalid-internal-checksum']) await t.test(mode, () => {
+    writeFileSync(join(payload, 'SHA256SUMS'), `${mode === 'invalid-internal-checksum' ? '0'.repeat(64) : sha(bytes)}  release.env\n`);
+    assert.equal(spawnSync('tar', ['-C', join(base, 'payload'), '-czf', archive, 'piwork-docker']).status, 0);
+    writeFileSync(checksum, mode === 'invalid-checksum' ? 'invalid checksum\n' : `${mode === 'wrong-checksum' ? '0'.repeat(64) : sha(readFileSync(archive))}  piwork-docker-0.0.1.tar.gz\n`);
+    const cwd = join(base, mode); mkdirSync(cwd);
+    const result = spawnSync('sh', ['-c', download + ' && printf continued > installation-continued\n'], { cwd, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PIWORK_DOWNLOAD_FIXTURE_MODE: mode, PIWORK_DOWNLOAD_FIXTURE_ARCHIVE: archive, PIWORK_DOWNLOAD_FIXTURE_CHECKSUM: checksum } });
+    const continued = existsSync(join(cwd, 'piwork-preview-0.0.1/piwork-docker/installation-continued'));
+    assert.equal(result.status === 0, mode === 'success');
+    assert.equal(continued, mode === 'success');
+  });
 });
