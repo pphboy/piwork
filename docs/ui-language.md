@@ -11,6 +11,12 @@ piwork 管理界面应是安静、精确、紧凑的技术工作台。借鉴 Git
 - 边框用于分组和分隔；默认没有投影。列表使用行与分隔线，不为每条记录叠加卡片。
 - 不使用紫蓝渐变、毛玻璃、深色大顶栏、大尺寸指标卡、营销插画、过度留白或靠颜色单独传达状态。
 
+## 共享品牌图形
+
+Console（Serve 管理界面）与 CLI Desktop 统一使用仓库 `docs/images/piwork-logo.png`，构建时复制并嵌入各自 Go 程序，不依赖运行目录或外部图片服务。Console 使用 `/piwork-logo.png`，Desktop 使用 `/desktop/piwork-logo.png`；登录前也可取得图片。Logo 按原比例完整显示，保留透明背景，不裁剪、拉伸或添加色彩滤镜。
+
+根据 UIL-010，只移除页头 Logo 旁独立的 Piwork 品牌文字，保留 Serve / Desktop 产品标签、浏览器文档标题及页面功能标题、Work 名称和导航。Console 登录区域也使用同一 Logo，保留 Administrator sign in 标题。品牌链接继续返回 Console 概览或 Desktop Works，并以英文可访问名称说明目的；链接内图片使用空 alt，独立登录图片使用 `Piwork logo`，键盘焦点保持可见。Desktop 登录页和 Works 列表使用现有品牌顶栏；Work 常规页面保留“返回＋Work 名称”身份栏，不新增 Logo 或全局顶栏。标准视图与焦点视图继续遵循 DUL-002。
+
 ## 颜色令牌
 
 以下语义名和值是默认浅色主题的基准。当前实现位于 `apps/console-webui/public/style.css` 的 `:root`。新页面先使用相同角色；确有不同需求时说明原因与替代规则。

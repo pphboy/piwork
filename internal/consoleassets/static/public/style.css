@@ -199,14 +199,17 @@ pre {
 .brand:hover {
   text-decoration: none;
 }
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 29px;
-  height: 29px;
-  color: white;
-  border-radius: 7px;
-  background: #202c3e;
+.brand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.brand-logo {
+  display: block;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
 }
 .brand-divider {
   height: 18px;
@@ -1134,10 +1137,10 @@ progress {
   text-align: center;
   margin-bottom: 26px;
 }
-.login .brand-mark {
+.login .brand-logo {
   margin: 0 auto 18px;
-  width: 36px;
-  height: 36px;
+  width: 64px;
+  height: 64px;
 }
 .login .section {
   padding: 25px;
@@ -1416,10 +1419,6 @@ dialog::backdrop {
   }
   .nav {
     gap: 17px;
-  }
-  .brand-sub,
-  .brand-divider {
-    display: none;
   }
 }
 @media (max-width: 960px) {
@@ -1723,9 +1722,6 @@ dialog::backdrop {
   .prototype-control {
     right: 12px;
     bottom: 10px;
-  }
-  .brand-sub {
-    display: none;
   }
   .account-name {
     display: none;
@@ -2654,10 +2650,6 @@ dialog::backdrop {
   }
 }
 @media (max-width: 480px) {
-  .task-shell .brand-sub,
-  .task-shell .brand-divider {
-    display: none;
-  }
   .task-shell .brand {
     font-size: 15px;
   }

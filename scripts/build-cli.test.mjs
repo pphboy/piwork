@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { buildCLI, parseTargets } from './build-cli.mjs';
+import { buildCLI, desktopInputHash, parseTargets } from './build-cli.mjs';
 
 test('CLI target selection is explicit, validated and never hides a bad configured list', () => {
  assert.deepEqual(parseTargets(['--target','windows/arm64','--target','linux/amd64'], {version:8}, 'linux/amd64'), ['windows/arm64','linux/amd64']);
@@ -15,9 +15,10 @@ test('CLI target selection is explicit, validated and never hides a bad configur
 test('CLI build prepares fresh Desktop once and builds only the requested clients', () => {
  const base=mkdtempSync(join(tmpdir(),'piwork-cli-build-'));
  try {
-  for (const directory of ['apps/desktop-webui/src','apps/desktop-webui/public','apps/desktop-webui/scripts','apps/desktop-webui/dist','scripts']) mkdirSync(join(base,directory),{recursive:true});
+  for (const directory of ['apps/desktop-webui/src','apps/desktop-webui/public','apps/desktop-webui/scripts','apps/desktop-webui/dist','scripts','docs/images']) mkdirSync(join(base,directory),{recursive:true});
   for (const name of ['apps/desktop-webui/tsconfig.json','apps/desktop-webui/package.json','scripts/sync-desktop-assets.mjs','package-lock.json']) writeFileSync(join(base,name),'{}');
   writeFileSync(join(base,'package.json'),'{"version":"0.1.0"}');
+  writeFileSync(join(base,'docs/images/piwork-logo.png'),'fixture logo');
   writeFileSync(join(base,'apps/desktop-webui/dist/stale.js'),'old UI');
   const calls=[];
   const run=(command,args,options) => {
@@ -42,6 +43,9 @@ test('CLI build prepares fresh Desktop once and builds only the requested client
   assert(!calls.some(call=>call.command==='npm'||call.command==='docker'||call.command==='bash'||call.args.some(arg=>arg.includes('console'))));
   const metadata=JSON.parse(readFileSync(join(dirname(outputs[0]),'build.json'),'utf8'));
   assert.match(metadata.desktopUIHash,/^[a-f0-9]{64}$/); assert.match(metadata.sha256,/^[a-f0-9]{64}$/);
+  assert.equal(desktopInputHash(base),metadata.desktopUIHash);
+  writeFileSync(join(base,'docs/images/piwork-logo.png'),'updated fixture logo');
+  assert.notEqual(desktopInputHash(base),metadata.desktopUIHash);
   assert.throws(()=>buildCLI([],{base,run,nodeVersion:'25.0.0'}),/Node 24/);
  } finally {rmSync(base,{recursive:true,force:true});}
 });

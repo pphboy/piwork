@@ -270,26 +270,17 @@ pre,
   text-decoration: none;
   color: var(--ink);
 }
-.brand > b {
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: -0.7px;
+.brand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
 }
-.brand-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 31px;
-  height: 32px;
-  font-size: 29px;
-  line-height: 1;
-  letter-spacing: -7px;
-  font-weight: 700;
-  transform: translateY(-2px);
-  padding-right: 5px;
-}
-.brand-mark span {
-  color: var(--accent);
+.brand-logo {
+  display: block;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
 }
 .brand-product {
   border-left: 1px solid var(--border);
@@ -2368,9 +2359,6 @@ dd > .button {
   .topbar {
     height: 66px;
     padding: 0 19px;
-  }
-  .brand-product {
-    display: none;
   }
   .topbar-right {
     gap: 5px;

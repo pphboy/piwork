@@ -242,6 +242,8 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/style.css":
 		path, contentType = "static/public/style.css", "text/css; charset=utf-8"
+	case r.URL.Path == "/desktop/piwork-logo.png":
+		path, contentType = "static/public/piwork-logo.png", "image/png"
 	case strings.HasPrefix(r.URL.Path, "/desktop/browser/") && nativeBrowserAsset.MatchString(strings.TrimPrefix(r.URL.Path, "/desktop/browser/")):
 		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/desktop/browser/"), "text/javascript; charset=utf-8"
 	case r.URL.Path == "/" || desktopWorkRoute(r.URL.Path):

@@ -12,7 +12,7 @@ let root, consoleServer, coreServer, base;
 const nativeConsole = process.env.PIWORK_TEST_NATIVE_CONSOLE || fileURLToPath(new URL("../../../dist/go/piwork-console", import.meta.url));
 let nativeConsoleOutput = "";
 async function startNativeConsole(binary, args) {
-  const child = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(binary, args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", (chunk) => { nativeConsoleOutput += chunk; });
   child.stderr.on("data", (chunk) => { nativeConsoleOutput += chunk; });
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -177,10 +177,32 @@ async function login(page) {
 }
 test.use({ viewport:{width:1440,height:900} });
 test('delivered workspaces retain every management deep link, mobile layout, and secret isolation', async ({browser}) => {
-  for(const width of [1440,390]) {
+  for(const width of [1440,360]) {
     const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width,height:900}}); const page=await context.newPage();
     try {
+      const screenshots = fileURLToPath(new URL("../../../dist/logo-title-style", import.meta.url));
+      await mkdir(screenshots, {recursive:true});
+      await page.goto(`${base}/login`);
+      await expect(page.getByRole('heading',{name:'Administrator sign in',exact:true})).toBeVisible();
+      await expect.poll(()=>page.locator('.login .brand-logo').evaluate(image=>image.complete && image.naturalWidth > 0)).toBe(true);
+      await expect(page.locator('.login .brand-logo')).toHaveAttribute('alt','Piwork logo');
+      await page.screenshot({path:join(screenshots,`console-login-${width}.png`),fullPage:true});
       await login(page);
+      const brand = page.getByRole('link',{name:'Piwork overview',exact:true});
+      await expect(brand).toHaveAttribute('href','/');
+      await expect(brand).toHaveText('Serve');
+      await expect(brand.getByText('Serve',{exact:true})).toBeVisible();
+      await expect(page.getByLabel('Administrator account')).toBeVisible();
+      await expect(brand.locator('img')).toHaveAttribute('alt','');
+      await expect.poll(()=>brand.locator('img').evaluate(image=>image.complete && image.naturalWidth > 0)).toBe(true);
+      await brand.focus();
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Shift+Tab");
+      await expect(brand).toBeFocused();
+      expect(await brand.evaluate(el=>getComputedStyle(el).outlineStyle)).toBe('solid');
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading',{name:'What’s next for your Core?'})).toBeVisible();
+      await page.screenshot({path:join(screenshots,`console-overview-${width}.png`),fullPage:true});
       if (width < 700) await page.getByRole('button',{name:'Open navigation'}).click();
       await expect(page.getByRole('link',{name:'Overview',exact:true})).toBeVisible();
       await expect(page.getByRole('link',{name:'User access',exact:true})).toBeVisible();
@@ -189,6 +211,14 @@ test('delivered workspaces retain every management deep link, mobile layout, and
         await page.goto(base+path); await expect(page.locator('h1')).toBeVisible();
         expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),path).toBe(true);
       }
+      await page.goto(base+'/operations/operation-0199e6d8abcd');
+      await expect(page.getByRole('heading',{name:'Package operation',exact:true})).toBeVisible();
+      await expect.poll(()=>page.locator('.brand-logo').evaluate(image=>image.complete && image.naturalWidth > 0)).toBe(true);
+      await page.screenshot({path:join(screenshots,`console-detail-${width}.png`),fullPage:true});
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await brand.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading',{name:'What’s next for your Core?'})).toBeVisible();
       const state=await page.evaluate(()=>({local:{...localStorage},session:{...sessionStorage},text:document.body.innerText}));
       expect(JSON.stringify(state)).not.toContain('core-secret-bearer'); expect(JSON.stringify(await context.cookies())).not.toContain('core-secret-bearer');
       expect(await page.locator('[onclick],[style]').count()).toBe(0);

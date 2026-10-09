@@ -1,6 +1,7 @@
 package consoleapp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -193,6 +194,24 @@ func TestNativeConsoleBrowserAndAdministratorSession(t *testing.T) {
 	}
 	if page := call("GET", "/", "", "", "", ""); page.Code != 200 || !strings.Contains(page.Body.String(), "PiWork Serve") {
 		t.Fatal("embedded Console page failed", page.Code)
+	}
+	logoSource, err := os.ReadFile(filepath.Join("..", "..", "docs", "images", "piwork-logo.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logo := call("GET", "/piwork-logo.png", "", "", "", "")
+	if logo.Code != 200 || logo.Header().Get("Content-Type") != "image/png" || !bytes.Equal(logo.Body.Bytes(), logoSource) {
+		t.Fatal("anonymous embedded Logo differs from project PNG", logo.Code, logo.Header())
+	}
+	if missing := call("GET", "/unknown-logo.png", "", "", "", ""); missing.Code != 404 {
+		t.Fatal("unknown PNG accepted", missing.Code)
+	}
+	badHost := httptest.NewRequest("GET", "https://console.example:7173/piwork-logo.png", nil)
+	badHost.Host = "evil.example"
+	denied := httptest.NewRecorder()
+	c.ServeHTTP(denied, badHost)
+	if denied.Code != 400 {
+		t.Fatal("Logo bypassed Host boundary", denied.Code)
 	}
 	if module := call("GET", "/browser/package-phase.js", "", "", "", ""); module.Code != 200 || !strings.Contains(module.Body.String(), "Unrecognized phase") {
 		t.Fatal("embedded package phase module failed", module.Code)

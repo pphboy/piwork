@@ -342,7 +342,7 @@ function closeModal() {
 const phase = (op: Operation) => `<div class="phase-track" role="status"><div><span>${op.state === "succeeded" ? icon("check", 14) : icon("clock", 14)}</span>Current phase: ${esc(op.phase || op.state)}</div></div>`;
 function scenarioBar() { return ""; }
 function brand() {
-  return `<a href="#/works" class="brand" aria-label="piwork Works"><span class="brand-mark">p<span>i</span></span><b>piwork</b><span class="brand-product">Desktop</span></a>`;
+  return `<a href="#/works" class="brand" aria-label="Piwork Works"><img class="brand-logo" src="/desktop/piwork-logo.png" alt="" width="40" height="40"><span class="brand-product">Desktop</span></a>`;
 }
 function topbar() {
   if (adapter.state.browserAccess !== "authorized") return `<header class="topbar">${brand()}</header>`;

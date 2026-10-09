@@ -256,6 +256,8 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.URL.Path == "/style.css":
 		path, contentType = "static/public/style.css", "text/css; charset=utf-8"
+	case r.URL.Path == "/piwork-logo.png":
+		path, contentType = "static/public/piwork-logo.png", "image/png"
 	case strings.HasPrefix(r.URL.Path, "/browser/") && localweb.BrowserAsset.MatchString(strings.TrimPrefix(r.URL.Path, "/browser/")):
 		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/browser/"), "text/javascript; charset=utf-8"
 	default:

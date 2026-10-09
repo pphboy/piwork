@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { chromium, expect } from "@playwright/test";
+import { chromium, expect, type Page } from "@playwright/test";
 const nativeCli = process.env.PIWORK_TEST_NATIVE_CLI || fileURLToPath(new URL("../../../../dist/go/piwork-cli", import.meta.url));
 const workPackagePath = fileURLToPath(new URL("../../../../internal/workpackage/testdata/golden-native-pi-package.work", import.meta.url));
 const WORK_PACKAGE_MIME = "application/vnd.piwork.work-package";
@@ -23,7 +23,7 @@ const FILE_LIMITS = {
   authorizationRecheckMs: 2000,
 };
 function spawnClient(args: string[], env: NodeJS.ProcessEnv) {
-  return spawn(nativeCli, args, { env });
+  return spawn(nativeCli, args, { env, cwd: tmpdir() });
 }
 async function saveTestCredential(path: string, value: Record<string, unknown>): Promise<void> {
   if (process.platform === 'win32') {
@@ -41,6 +41,28 @@ async function saveTestCredential(path: string, value: Record<string, unknown>):
 const browserLaunchOptions = process.env.PIWORK_TEST_BROWSER_BIN
   ? { headless: true, executablePath: process.env.PIWORK_TEST_BROWSER_BIN }
   : { headless: true, channel: "chromium" as const };
+
+async function checkBrand(page: Page, name: string): Promise<void> {
+  const directory = fileURLToPath(new URL("../../../../dist/logo-title-style", import.meta.url));
+  await mkdir(directory, {recursive:true});
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({width, height:900});
+    const brand = page.getByRole('link', {name:'Piwork Works', exact:true});
+    await expect(brand).toHaveText('Desktop');
+    await expect(brand.getByText('Desktop',{exact:true})).toBeVisible();
+    await expect(brand).toHaveAttribute('href','#/works');
+    await expect(brand.locator('img')).toHaveAttribute('alt','');
+    await expect.poll(()=>brand.locator('img').evaluate(image=>(image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0)).toBe(true);
+    await brand.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(brand).toBeFocused();
+    assert.equal(await brand.evaluate(el=>getComputedStyle(el).outlineStyle), 'solid');
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth), true);
+    await page.screenshot({path:join(directory,`desktop-${name}-${width}.png`),fullPage:true});
+  }
+  await page.setViewportSize({width:1440,height:900});
+}
 
 test("browser signs in and out without exposing Core bearer to page storage", async () => {
   const workPackage = await readFile(workPackagePath);
@@ -156,10 +178,14 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     const page = await context.newPage();
     await page.goto(launchUrl);
     await page.getByRole('heading', {name:'Connect to your Core'}).waitFor();
+    await checkBrand(page, 'login');
     await page.getByLabel('Account', {exact:true}).fill('owner');
     await page.getByLabel('Password').fill('password');
     await page.getByRole('button', {name:'Sign in',exact:true}).click();
     await page.getByRole('heading', {name:'Works',exact:true}).waitFor();
+    await checkBrand(page, 'works');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible();
     assert.doesNotMatch(await page.locator('body').innerText(), /browser-private-core-token/);
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
     const create = async (name: string) => { await page.getByRole('button', {name:'New Work',exact:true}).first().click(); await page.locator('#create-name').fill(name); await page.getByRole('button',{name:'Create Work',exact:true}).click(); };
@@ -751,6 +777,17 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await page.frameLocator('iframe').getByText('App signed in').waitFor();
     assert.equal(await page.frameLocator('iframe').locator('body').getAttribute('data-feedback-frame'), 'same', 'Feedback must preserve the live application document');
     await capture('service-signed-in');
+    const screenshots = fileURLToPath(new URL("../../../../dist/logo-title-style", import.meta.url));
+    await mkdir(screenshots, {recursive:true});
+    for (const width of [1440,360]) {
+      await page.setViewportSize({width,height:900});
+      await expect(page.locator('.work-header h1')).toHaveText('笔记工作');
+      await expect(page.getByRole('button',{name:'Back to Works',exact:true})).toBeVisible();
+      await expect(page.locator('.brand')).toHaveCount(0);
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth), true);
+      await page.screenshot({path:join(screenshots,`desktop-work-${width}.png`),fullPage:true});
+    }
+    await page.setViewportSize({width:1440,height:900});
     assert(upstream.every(value => value === ''), 'Service received platform Authorization');
     await page.frameLocator('iframe').locator('body').evaluate(() => localStorage.setItem('service-state','notes'));
     const liveProtocols = await page.frameLocator("iframe").locator("body").evaluate(async () => {
@@ -807,6 +844,10 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     assert.equal(appRootLoads, roots, 'Run updates reloaded the Service iframe');
     assert.equal(submittedPrompt, 'Read shared workspace /note.txt and Notes Service API /api/data; summarize both and cite each source.');
     for (const width of [1440,390]) { await page.setViewportSize({width,height:900}); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); }
+    await page.getByRole('button',{name:'Back to Works',exact:true}).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible();
+
   } finally {
     releaseFinalRun();
     releaseFailedApply();

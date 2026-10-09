@@ -152,6 +152,14 @@ func Smoke(ctx context.Context, buildDirectory, root string) (Result, error) {
 	if err != nil || !bytes.Equal(adapter, expectedAdapter) {
 		return result, errors.New("candidate embedded adapter differs from synchronized Desktop")
 	}
+	status, logo, logoHeaders, err := request("GET", "/desktop/piwork-logo.png", nil, strings.TrimPrefix(origin, "http://"))
+	if err != nil || status != 200 || logoHeaders.Get("Content-Type") != "image/png" {
+		return result, errors.New("candidate embedded Logo unavailable")
+	}
+	expectedLogo, err := os.ReadFile(filepath.Join(root, "docs/images/piwork-logo.png"))
+	if err != nil || !bytes.Equal(logo, expectedLogo) {
+		return result, errors.New("candidate embedded Logo differs from project PNG")
+	}
 	status, _, _, err = request("GET", "/_desktop/api/preferences", nil, strings.TrimPrefix(origin, "http://"))
 	if err != nil || status != 401 {
 		return result, errors.New("candidate preferences lack local authorization")
@@ -208,6 +216,7 @@ func Smoke(ctx context.Context, buildDirectory, root string) (Result, error) {
 	}
 	hash := sha256.Sum256(script)
 	adapterHash := sha256.Sum256(adapter)
-	result.Scenarios = append(result.Scenarios, clirelease.Scenario{ID: "standalone-runtime", Status: "pass", Commands: []string{"candidate --json --version; candidate --help; candidate --json; candidate desktop --no-open; candidate desktop open; native console interrupt"}, Diagnostic: fmt.Sprintf("native %s/%s, non-source cwd, PATH excludes development tools; embedded app.js sha256=%s; adapter.js sha256=%s", runtime.GOOS, runtime.GOARCH, hex.EncodeToString(hash[:]), hex.EncodeToString(adapterHash[:]))})
+	logoHash := sha256.Sum256(logo)
+	result.Scenarios = append(result.Scenarios, clirelease.Scenario{ID: "standalone-runtime", Status: "pass", Commands: []string{"candidate --json --version; candidate --help; candidate --json; candidate desktop --no-open; candidate desktop open; native console interrupt"}, Diagnostic: fmt.Sprintf("native %s/%s, non-source cwd, PATH excludes development tools; embedded app.js sha256=%s; adapter.js sha256=%s; Logo PNG sha256=%s", runtime.GOOS, runtime.GOARCH, hex.EncodeToString(hash[:]), hex.EncodeToString(adapterHash[:]), hex.EncodeToString(logoHash[:]))})
 	return result, nil
 }

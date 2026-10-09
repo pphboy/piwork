@@ -77,6 +77,24 @@ func TestNativeDesktopEmbeddedBrowserAndLocalIdentity(t *testing.T) {
 			t.Fatal("embedded Desktop asset", path, response.Code)
 		}
 	}
+	logoSource, err := os.ReadFile(filepath.Join("..", "..", "docs", "images", "piwork-logo.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logo := serve("GET", "/desktop/piwork-logo.png", nil, "", "", "")
+	if logo.Code != 200 || logo.Header().Get("Content-Type") != "image/png" || !bytes.Equal(logo.Body.Bytes(), logoSource) {
+		t.Fatal("anonymous embedded Logo differs from project PNG", logo.Code, logo.Header())
+	}
+	if missing := serve("GET", "/desktop/unknown-logo.png", nil, "", "", ""); missing.Code != 404 {
+		t.Fatal("unknown PNG accepted", missing.Code)
+	}
+	badHost := httptest.NewRequest("GET", "http://desktop.localhost:17891/desktop/piwork-logo.png", nil)
+	badHost.Host = "evil.example"
+	denied := httptest.NewRecorder()
+	d.ServeHTTP(denied, badHost)
+	if denied.Code != 403 {
+		t.Fatal("Logo bypassed Host boundary", denied.Code)
+	}
 	if response := serve("POST", "/_desktop/api/bootstrap", strings.NewReader(`{"ticket":"ticket"}`), "", "", "http://evil.example"); response.Code != 403 {
 		t.Fatal("cross origin bootstrap accepted")
 	}
