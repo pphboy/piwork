@@ -89,7 +89,8 @@ func (a *Application) captureSnapshotPackage(ctx context.Context, job corestore.
 		return workpackage.Verified{}, err
 	}
 	var history struct {
-		HistoryPresent bool `json:"historyPresent"`
+		HistoryPresent bool  `json:"historyPresent"`
+		SchemaVersion  int64 `json:"schemaVersion"`
 	}
 	if strictMetadata(output, &history) != nil {
 		var full map[string]any
@@ -101,6 +102,12 @@ func (a *Application) captureSnapshotPackage(ctx context.Context, job corestore.
 			return workpackage.Verified{}, snapshotInvalid("history.private")
 		}
 		history.HistoryPresent = present
+		if raw, err := json.Marshal(full["schemaVersion"]); err == nil {
+			_ = json.Unmarshal(raw, &history.SchemaVersion)
+		}
+	}
+	if history.HistoryPresent && history.SchemaVersion != 4 && history.SchemaVersion != 5 {
+		return workpackage.Verified{}, snapshotInvalid("history.schema")
 	}
 	if string(metadata.ActiveContext) != "null" && !history.HistoryPresent {
 		return workpackage.Verified{}, snapshotInvalid("history.private")
@@ -233,7 +240,16 @@ func (a *Application) captureSnapshotPackage(ctx context.Context, job corestore.
 			spec.Compatibility.Architecture = actual.Architecture
 			spec.Compatibility.Variant = snapshotVariant(actual.Variant)
 			spec.Compatibility.AgentProtocol = "v2"
-			spec.Compatibility.WorkHistorySchema = 4
+			if history.HistoryPresent {
+				spec.Compatibility.WorkHistorySchema = float64(history.SchemaVersion)
+			} else {
+				// For an uninitialized aggregate, derive its captured image contract, never installation defaults.
+				if actual.Labels["io.piwork.work-history.schema"] == "5" {
+					spec.Compatibility.WorkHistorySchema = 5
+				} else {
+					spec.Compatibility.WorkHistorySchema = 4
+				}
+			}
 			spec.Compatibility.StorageLayout = 2
 			spec.Compatibility.PiPackageContract = 1
 		}

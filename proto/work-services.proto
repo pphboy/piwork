@@ -101,6 +101,7 @@ service WorkServices {
   rpc GetServiceInteractionBindings(Empty) returns (WorkPrivateResponse);
   rpc PrepareBrainCandidate(WorkPrivateRequest) returns (WorkPrivateResponse);
   rpc GetBrainCandidateState(WorkPrivateRequest) returns (WorkPrivateResponse);
+  rpc AuthorizeHistoryMigration(WorkPrivateRequest) returns (WorkPrivateResponse);
   rpc GetDeploymentContext(Empty) returns (DeploymentContext);
   rpc CreateService(CreateServiceRequest) returns (Acceptance);
   rpc ListServices(Empty) returns (ListServicesResponse);

@@ -5,6 +5,7 @@ package workhistory
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -83,8 +84,25 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 		return err
 	}
 	defer target.Close()
-	if _, err := target.ExecContext(ctx, schemaSQL); err != nil {
+	definition := schemaSQL
+	if s.SchemaVersion == 5 {
+		definition = currentSchemaSQL
+	}
+	if _, err := target.ExecContext(ctx, definition); err != nil {
 		return err
+	}
+	storeID := uuid.NewString()
+	if s.SchemaVersion == 5 {
+		if _, err := target.ExecContext(ctx, "ATTACH DATABASE ? AS memory", filepath.Join(staged, "memory.sqlite")); err != nil {
+			return err
+		}
+		if _, err := target.ExecContext(ctx, "PRAGMA memory.journal_mode=DELETE; PRAGMA memory.synchronous=FULL;"); err != nil {
+			return err
+		}
+		memoryDefinition := strings.ReplaceAll(strings.ReplaceAll(memorySchemaSQL, "CREATE TABLE ", "CREATE TABLE memory."), "CREATE INDEX ", "CREATE INDEX memory.")
+		if _, err := target.ExecContext(ctx, memoryDefinition); err != nil {
+			return err
+		}
 	}
 	tx, err := target.BeginTx(ctx, nil)
 	if err != nil {
@@ -94,7 +112,7 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 	if _, err := tx.ExecContext(ctx, "PRAGMA defer_foreign_keys=ON"); err != nil {
 		return err
 	}
-	for _, table := range tables {
+	for _, table := range historyTables(s.SchemaVersion) {
 		rows, err := s.database.QueryContext(ctx, "SELECT * FROM "+table)
 		if err != nil {
 			return err
@@ -124,6 +142,9 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 			}
 			if _, exists := row["work_id"]; exists {
 				row["work_id"] = targetWorkID
+			}
+			if table == "work_memory_binding" {
+				row["store_id"] = storeID
 			}
 			for _, column := range []string{"active_context_identity", "context_identity"} {
 				if source, ok := row[column].(string); ok {
@@ -260,6 +281,65 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 			return rowErr
 		}
 	}
+	if s.SchemaVersion == 5 {
+		for _, table := range memoryTables {
+			rows, err := s.database.QueryContext(ctx, "SELECT * FROM memory."+table)
+			if err != nil {
+				return err
+			}
+			columns, err := rows.Columns()
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			placeholders := make([]string, len(columns))
+			for i := range placeholders {
+				placeholders[i] = "?"
+			}
+			statement, err := tx.PrepareContext(ctx, "INSERT INTO memory."+table+"("+strings.Join(columns, ",")+") VALUES("+strings.Join(placeholders, ",")+")")
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			for rows.Next() {
+				row, err := rowValues(rows, columns)
+				if err != nil {
+					statement.Close()
+					rows.Close()
+					return err
+				}
+				if table == "memory_meta" {
+					row["work_id"] = targetWorkID
+					row["store_id"] = storeID
+				}
+				values := make([]any, len(columns))
+				for i, key := range columns {
+					values[i] = row[key]
+				}
+				if _, err := statement.ExecContext(ctx, values...); err != nil {
+					statement.Close()
+					rows.Close()
+					return err
+				}
+			}
+			rowErr := rows.Err()
+			statement.Close()
+			rows.Close()
+			if rowErr != nil {
+				return rowErr
+			}
+		}
+		check, err := tx.QueryContext(ctx, "PRAGMA memory.foreign_key_check")
+		if err != nil {
+			return err
+		}
+		bad := check.Next()
+		rowErr := check.Err()
+		check.Close()
+		if bad || rowErr != nil {
+			return ErrInvalid
+		}
+	}
 	foreign, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
 	if err != nil {
 		return err
@@ -293,6 +373,26 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 		return err
 	}
 	defer unix.Close(stagedFD)
+	if s.SchemaVersion == 5 {
+		originalMemory, err := Regular(root, "memory.sqlite")
+		if err != nil {
+			return err
+		}
+		originalMemory.Close()
+		memoryFile, err := Regular(stagedFD, "memory.sqlite")
+		if err != nil {
+			return err
+		}
+		memoryFD := int(memoryFile.Fd())
+		if unix.Fchown(memoryFD, int(attributes.Uid), int(attributes.Gid)) != nil || unix.Fchmod(memoryFD, 0600) != nil || memoryFile.Sync() != nil {
+			memoryFile.Close()
+			return ErrInvalid
+		}
+		memoryFile.Close()
+		if err := unix.Renameat(stagedFD, "memory.sqlite", root, "memory.sqlite"); err != nil {
+			return err
+		}
+	}
 	if err := unix.Renameat(stagedFD, files[0], root, files[0]); err != nil {
 		return err
 	}

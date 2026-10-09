@@ -86,11 +86,11 @@ Work Spec SHALL 是完整快照的清单，而不是要求用户编写的重建�
 
 **Identifier:** PWORK-003
 
-包 SHALL 携带各 context 和已解析服务 revision 的实际固定镜像，去重但不省略镜像层；接收端 SHALL 校验镜像身份和运行平台，不能跟随 mutable tag、更换 agent 镜像、拉取替代镜像或自动升级。未解析的历史服务 revision SHALL 保留 unresolved 状态，不在导出时解析 tag；存在已绑定但丢失的镜像 SHALL 使导出以 SNAPSHOT_IMAGE_MISSING 失败。未解析的当前服务保留其失败/未完成准备事实，不能被宣称可离线启动。v1 SHALL 仅支持 Linux 且 OS/architecture/variant 与目标 Docker 一致、agent protocol 受支持、history schema=4、storage layout=2 的包；不兼容 SHALL 在创建 Work 之前返回 PACKAGE_INCOMPATIBLE。镜像不受信任，校验/导入阶段 MUST NOT 运行包内 ENTRYPOINT、hooks、shell、MCP 或模型请求。
+包 SHALL 携带各 context 和已解析服务 revision 的实际固定镜像，去重但不省略镜像层；接收端 SHALL 校验镜像身份和运行平台，不能跟随 mutable tag、更换 agent 镜像、拉取替代镜像或自动升级。未解析的历史服务 revision SHALL 保留 unresolved 状态，不在导出时解析 tag；存在已绑定但丢失的镜像 SHALL 使导出以 SNAPSHOT_IMAGE_MISSING 失败。未解析的当前服务保留其失败/未完成准备事实，不能被宣称可离线启动。v1 SHALL 仅支持 Linux 且 OS/architecture/variant 与目标 Docker 一致、agent protocol 受支持、storage layout=2，history schema 为精确已知的 4 或 5 的包；schema 5 的已初始化私有历史必须同时包含并完整校验独立 Memory schema 1。不兼容 SHALL 在创建 Work 之前返回 PACKAGE_INCOMPATIBLE。镜像不受信任，校验/导入阶段 MUST NOT 运行包内 ENTRYPOINT、hooks、shell、MCP 或模型请求。
 
 包 SHALL 携带 Pi package 实际准备好的依赖，不在 export/import 时 npm install、Git checkout、rebuild、执行 lifecycle script 或 extension。piPackageContract、OS/architecture/variant、Node ABI 和 Pi SDK 兼容关系 SHALL 校验；不匹配返回 PACKAGE_INCOMPATIBLE。接收端 package catalog 缺失或存在同名异内容不影响恢复，也不得被覆盖。
 
-本版 SHALL 只处理当前 history schema 4 的完整数据；不支持的历史格式在发布或执行包内代码之前明确拒绝，不执行升级、双读或缺字段补齐。
+导入 SHALL 按所声明的 schema 4 或 schema 5 静态校验各自精确结构与完整引用闭包，不在导入时升级历史或替换固定 agent 镜像，不支持其他历史/Memory 版本、未知受管对象或缺字段补齐。schema 4 Work 的一次性升级仅在之后显式采用新 harness 时遵守 WMEM-005；这不是两套长期运行的 Experience/Memory 权威源。未初始化且两库与 sidecar 均缺席的合法空私有历史按 CONV-SNAPSHOT-001 保留。
 
 #### Scenario: Import without the original registry
 - **WHEN** 源固定镜像已打包且目标无法访问原 registry
@@ -113,8 +113,16 @@ Work Spec SHALL 是完整快照的清单，而不是要求用户编写的重建�
 - **THEN** 发布 Work 前返回 PACKAGE_INCOMPATIBLE，不重新编译来掩盖不兼容
 
 #### Scenario: 当前历史契约明确不支持
-- **WHEN** 完整包声明的历史版本与本版不一致
+- **WHEN** 完整包声明的历史版本不是精确支持的 schema 4 或 5，或 schema 5 的 Memory 版本不受支持
 - **THEN** 导入返回 PACKAGE_INCOMPATIBLE，原文件不变，不发布 Work 或启动任何候选
+
+#### Scenario: 保留旧固定镜像的导入
+- **WHEN** 合法 schema 4 包的 active context 仍引用原 schema 4 agent 镜像
+- **THEN** 静态导入保留原镜像与原经验数据，显式 Start 不自动升级；后续显式 Apply 新 harness 才进行受控迁移
+
+#### Scenario: 新格式缺失或错配 Memory
+- **WHEN** 已初始化 schema 5 包缺少独立 Memory、store 绑定不匹配或引用不存在的 Evidence/采用版本
+- **THEN** 整体拒绝导入，不创建空 Memory 或丢弃非法条目后发布 Work
 
 ### Requirement: Instantiate independent identity with automatic platform resolution
 
@@ -172,7 +180,13 @@ Work 的默认网络名称、service 域名、Docker 名称及活动访问连接
 
 **Identifier:** PWORK-BRAIN-001
 
-完整包 SHALL 在既有 workspace、agent-private、retained context 和 Pi package 制品组件内包含脑包工作区副本与候选、实际包版本/依赖、业务数据库及待发事件、Work 事实与处理进度、全部关联 Run 和证据、有效与失败经验历史、Session 模型偏好和 Run 非秘密实际模型描述。新增受管历史表、关系、版本、字段和空集合 SHALL 完整校验，不得把 managed 数据当作无校验普通文件，也不在 framing 中增加未声明组件。
+完整包 SHALL 在既有 workspace、agent-private、retained context 和 Pi package 制品组件内包含脑包工作区副本与候选、实际包版本/依赖、业务数据库及待发事件、Work 事实与处理进度、全部关联 Run 和证据、有效、候选、失败及失效认知历史（schema 4 的原 Experience 或 schema 5 的独立 Memory）、Session 模型偏好和 Run 非秘密实际模型描述。新增受管历史表、关系、版本、字段和空集合 SHALL 完整校验，不得把 managed 数据当作无校验普通文件，也不在 framing 中增加未声明组件。
+
+独立 Memory SHALL 包含在既有 agent-private 树中，不增加 framing 组件、第三卷或新的平台 secret 绑定。静态验证 SHALL 覆盖 Memory schema、归属绑定、版本/head、已采用条目、来源请求及 Evidence 的跨库闭包，包括真实空版本；分别导入两份后，受管 Work/store 归属按目标重建，Memory 文本、版本、entryId 与本地来源 ID 保持，原来源请求统一 historical。迁移候选或未完成持久恢复不得被导出成可运行成功包。
+
+完整闭包 SHALL 包含 WMEM-001 的最新持久发布 head 和 WMEM-003 的有效 preference 原 Chat 来源、published candidate/entry 的 kind/createdAt 等元数据一致性。history schema 5 的旧合法版本不能冒充当前 head；historical 不能豁免偏好证明。TS 与 Go 校验 SHALL 对同一合法/伪造夹具保持接受/拒绝一致，拒绝不运行源代码、不生成证明、不修复正文或数据库。
+
+该闭包 SHALL 按 WMEM-003 校验后续快照中的复制条目与其适用候选，不仅比较候选首次发布版本。Go Open/原 snapshot helper SHALL 在重建或发布导入 Work 之前拒绝 kind、createdAt 或 rule 已与原来源不一致的非法副本，不允许静态验证与 Rebuild 成功后才由运行时发现同一错误。合法复制、合法修订/失效及无对应候选的合法迁移历史 SHALL 保留；重建后的合法数据须能通过运行时相同的来源校验，原请求仍为只读 historical。
 
 导入 SHALL 仅映射受管的 Work/context 归属及声明的引用，Service 运行目标通过逻辑名称在新 Work 解析；应用数据库、历史文本、用户代码和字面 URL 保持原字节。所有已导入处理请求、阶段和投递幂等记录 SHALL 标为 historical 且保留原状态，不能恢复为 live 队列；当前实例产生的新请求才可自动执行。Service 待发事件 SHALL 携带生成时归属，导入后的旧 outbox 保留为历史且不得重新发送为新请求或重开旧 Job；正常原 Work 重启仍可发送本 Work 未完成的待发事件。
 
@@ -211,3 +225,27 @@ Work 的默认网络名称、service 域名、Docker 名称及活动访问连接
 #### Scenario: 两个副本分别验证新脑包行为
 - **WHEN** 两份同源导入 Work 显式 Start 后各自产生新候选并由用户 Apply
 - **THEN** 各自通过当前身份和固定验收项的实际 SDK 行为 checks 后完成，旧候选历史不执行，源 Work 和另一副本的状态与证据不改变
+
+#### Scenario: 两份独立认知与再导出
+- **WHEN** schema 5 Work 冷导出后导入 A 与 B，A 提交新的 Memory 并再次导出
+- **THEN** A、B 与源的数据库和有效 head 相互独立，三者都能查询原 Evidence；再次导出保留 A 的新旧版本与失败/失效历史，旧目标仍不执行
+
+#### Scenario: 失效认知与未完成候选保留历史
+- **WHEN** 源 Memory 含失效条目及未提交候选，完整包被导入并 Start
+- **THEN** 失效内容不进入默认 Recall，候选保留只读历史且不自动提交或生成新的 Run
+
+#### Scenario: 拒绝无原指令证明的伪偏好
+- **WHEN** 包内普通 Query 经验被改为 preference，只有 entry 被改或 entry/candidate 同时被改，或实际引用的 Evidence 不含原 Chat 偏好证明
+- **THEN** TS/Go 完整校验均拒绝；不发布 Work，不以 historical 或 Query verified 接受伪造用户偏好
+
+#### Scenario: 拒绝过期 head 但保留真实空发布
+- **WHEN** 包内 head 指向存在的旧版本而有更新的持久发布，或最后一条失效后正确指向最新空版本
+- **THEN** 前者拒绝，后者按原空版本、来源和历史导入；legacy null 发布时间的部分历史不被误判为新 head
+
+#### Scenario: 导入前拒绝复制条目的来源差异
+- **WHEN** 正常发布 A 后提交不同条目 B 的历史包，仅在后续版本改写 A 的 kind、createdAt 或 rule，首次发布版本及原候选/Evidence 不变
+- **THEN** TS/Go 完整校验一致拒绝，原 helper 不重建该非法数据，Core 不发布导入 Work；源输入不变，没有旧模型或任务执行
+
+#### Scenario: 合法副本重建后可被运行时打开
+- **WHEN** 合法复制、修订/失效或无对应候选的合法迁移历史完成静态校验和目标身份重建，并显式启动导入 Work
+- **THEN** 运行时通过同一来源校验，保留正确版本、内容和证据引用，旧请求不复活，不出现静态接受而运行时因同一来源关系拒绝的结果

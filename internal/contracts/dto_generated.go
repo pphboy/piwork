@@ -281,7 +281,8 @@ type AgentRuntimeConfig struct {
 		ClientCertificatePath string `json:"clientCertificatePath"`
 		ClientPrivateKeyPath  string `json:"clientPrivateKeyPath"`
 	}] `json:"serviceControl,omitzero"`
-	FeedbackListen Field[string] `json:"feedbackListen,omitzero"`
+	FeedbackListen   Field[string]               `json:"feedbackListen,omitzero"`
+	HistoryMigration Field[WorkHistoryMigration] `json:"historyMigration,omitzero"`
 }
 
 type AgentWaitRef struct {
@@ -1338,6 +1339,15 @@ type WorkControlHistory struct {
 	} `json:"configurationRevisions"`
 	Operations  []ArchivedWorkOperation   `json:"operations"`
 	Idempotency []ArchivedWorkIdempotency `json:"idempotency"`
+}
+
+type WorkHistoryMigration struct {
+	OperationId          string         `json:"operationId"`
+	WorkId               string         `json:"workId"`
+	FromSchema           float64        `json:"fromSchema"`
+	ToSchema             float64        `json:"toSchema"`
+	StoreId              string         `json:"storeId"`
+	BackupManifestDigest WorkBlobDigest `json:"backupManifestDigest"`
 }
 
 type WorkImagePlatform struct {

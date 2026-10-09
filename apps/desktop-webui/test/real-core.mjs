@@ -178,10 +178,15 @@ try {
   await page.locator('#composer').fill('/model');
   await page.locator('#composer').press('Escape');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Model', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Response settings', exact: true })).toBeVisible();
+  // Model and Thinking share the current settings dialog. Keep validating the
+  // actual default-model selection and preserved command below.
+  if (await page.locator('#model-select').getAttribute('aria-expanded') !== 'true') await page.locator('#model-select').click();
   await expect(page.locator('#composer')).toHaveValue('/model');
   await page.locator('#modal [data-action=choose-chat-setting][data-option-value=""]').click();
   await expect(page.locator('#composer')).toHaveValue('');
+  await page.locator('#modal').getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.locator('#modal')).toHaveCount(0);
   await page.locator('#composer').fill('/skill:workspace-review "preserved argument"');
   await page.locator('#composer').press('Escape');
   const runAcceptance = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${workId}/runs`) && response.request().method() === 'POST');

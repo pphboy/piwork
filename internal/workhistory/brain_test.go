@@ -268,7 +268,7 @@ func TestCurrentFeedbackRecoveryAndHistoricalCopies(t *testing.T) {
 }
 
 func TestNativeCandidateProofRequiresActualSDKInputAndChecks(t *testing.T) {
-	for _, damage := range []string{"valid", "wrong-input", "missing-input", "wrong-tool", "failed-check", "missing-check", "wrong-run"} {
+	for _, damage := range []string{"valid", "stream-announcement", "duplicate-execution", "wrong-input", "missing-input", "wrong-tool", "failed-check", "missing-check", "wrong-run"} {
 		t.Run(damage, func(t *testing.T) {
 			private, scope := brainFixture(t)
 			db, err := database(filepath.Join(private, files[0]), false)
@@ -320,12 +320,23 @@ func TestNativeCandidateProofRequiresActualSDKInputAndChecks(t *testing.T) {
 			exec(`INSERT INTO run_events VALUES('run-local',2,'tool-end',?,'2026-10-03T00:00:00Z')`, encoded(map[string]any{"toolName": "review_probe", "toolCallId": "actual-call", "isError": false}))
 			exec(`INSERT INTO run_events VALUES('run-local',3,'state','{"state":"succeeded"}','2026-10-03T00:00:00Z')`)
 			exec(`UPDATE runs SET earliest_available_sequence=1,latest_sequence=3 WHERE run_id='run-local'`)
+			if damage == "stream-announcement" || damage == "duplicate-execution" {
+				exec(`UPDATE run_events SET sequence=sequence+10 WHERE run_id='run-local'`)
+				exec(`UPDATE run_events SET sequence=sequence-9 WHERE run_id='run-local'`)
+				announcement := map[string]any{"toolName": "review_probe", "toolCallId": "actual-call"}
+				if damage == "duplicate-execution" {
+					announcement["args"] = target["input"]
+				}
+				exec(`INSERT INTO run_events VALUES('run-local',1,'tool-start',?,'2026-10-03T00:00:00Z')`, encoded(announcement))
+				exec(`UPDATE runs SET latest_sequence=4 WHERE run_id='run-local'`)
+			}
+
 			db.Close()
 			snapshot, err := Open(context.Background(), private, scope)
 			if snapshot != nil {
 				snapshot.Close()
 			}
-			if damage == "valid" {
+			if damage == "valid" || damage == "stream-announcement" {
 				if err != nil {
 					t.Fatal("current actual input proof rejected", err)
 				}

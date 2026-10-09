@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const {historyMessages,upsertTool,activityGroups}=await import(new URL('../browser/chat-projection.js',import.meta.url).href);
 
+test('Memory feedback comes from the saved host result and distinguishes candidate, effective, adopted and failure',()=>{
+ const result=(value:any,isError=false)=>({kind:'text',text:JSON.stringify(value),isError,truncated:false});
+ const project=(value:any,isError=false,name='brain_experience')=>historyMessages([{entryId:'memory',runId:'run-memory',role:'toolResult',blocks:[{blockId:'one',type:'tool-result',toolCallId:'call-memory',toolName:name,result:result(value,isError)}]}])[0].tool.content;
+ assert.match(project({version:1,status:'staged'}),/candidate v1 proposed; not effective/);
+ assert.match(project({memoryCommit:{version:2,status:'effective',entryIds:['lesson'],evidenceIds:['proof']}}),/Memory: effective v2/);
+ assert.match(project({adoptedExperienceVersion:1,effectiveVersion:2}),/this Run uses v1; current effective v2/);
+ assert.match(project({version:3,status:'invalidated'}),/invalidated at v3/);
+ assert.match(project({version:2,items:[]}),/no matching entries at v2/);
+ assert.match(project({memoryCommit:{version:2,status:'effective'}},true),/operation failed; no effective update confirmed/);
+ assert.doesNotMatch(project({memoryCommit:{version:2,status:'effective'}},false,'bash'),/Memory: effective/);
+});
+
 test('UX ordered history and replay merge only original Run/tool IDs, keeping prose boundaries and safe results',()=>{
  const messages=historyMessages([
   {entryId:'one',runId:'run-1',role:'assistant',blocks:[{blockId:'one-0',type:'text',text:'Before'},{blockId:'one-1',type:'tool-call',toolCallId:'call-1',toolName:'read'},{blockId:'one-2',type:'text',text:'After'}]},

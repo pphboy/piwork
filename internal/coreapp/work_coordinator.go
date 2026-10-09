@@ -453,6 +453,9 @@ func (a *Application) stopAcceptedWork(ctx context.Context, workID string) (retu
 	if err := a.stopWorkServicesLocked(ctx, workID, false); err != nil {
 		return errors.Join(err, missingAgentErr)
 	}
+	if err := a.reconcileHistoryUpgradeLocked(ctx, workID); err != nil {
+		return err
+	}
 	if missingAgentErr != nil {
 		return missingAgentErr
 	}

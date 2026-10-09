@@ -11,7 +11,7 @@ const config = JSON.parse(readFileSync(join(root, 'config/docker-release.json'),
 const roles = ['core', 'cli', 'agent', 'fileHelper', 'snapshotHelper'];
 const protocols = {
   core: {}, cli: {},
-  agent: { 'io.piwork.agent.protocol': 'v2', 'io.piwork.package-helper.contract': '2', 'io.piwork.service-mcp.contract': '1', 'io.piwork.work-history.schema': '4', 'io.piwork.run-model.contract': '1', 'io.piwork.work-feedback.contract': '1' },
+  agent: { 'io.piwork.agent.protocol': 'v2', 'io.piwork.package-helper.contract': '2', 'io.piwork.service-mcp.contract': '1', 'io.piwork.work-history.schema': '5', 'io.piwork.run-model.contract': '1', 'io.piwork.work-feedback.contract': '1' },
   fileHelper: { 'piwork.file_protocol': '1' }, snapshotHelper: { 'piwork.snapshot_protocol': '1' },
 };
 const binaries = { core: ['piwork-serve'], cli: ['piwork-cli'], agent: ['piwork-package-helper', 'piwork-service-mcp'], fileHelper: ['piwork-file-helper'], snapshotHelper: ['piwork-snapshot-helper'] };

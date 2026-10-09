@@ -3731,6 +3731,15 @@ export const WorkServicesService = {
     responseSerialize: (value: WorkPrivateResponse): Buffer => Buffer.from(WorkPrivateResponse.encode(value).finish()),
     responseDeserialize: (value: Buffer): WorkPrivateResponse => WorkPrivateResponse.decode(value),
   },
+  authorizeHistoryMigration: {
+    path: "/piwork.core.services.v1.WorkServices/AuthorizeHistoryMigration" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: WorkPrivateRequest): Buffer => Buffer.from(WorkPrivateRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): WorkPrivateRequest => WorkPrivateRequest.decode(value),
+    responseSerialize: (value: WorkPrivateResponse): Buffer => Buffer.from(WorkPrivateResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): WorkPrivateResponse => WorkPrivateResponse.decode(value),
+  },
   getDeploymentContext: {
     path: "/piwork.core.services.v1.WorkServices/GetDeploymentContext" as const,
     requestStream: false as const,
@@ -3849,6 +3858,7 @@ export interface WorkServicesServer extends UntypedServiceImplementation {
   getServiceInteractionBindings: handleUnaryCall<Empty, WorkPrivateResponse>;
   prepareBrainCandidate: handleUnaryCall<WorkPrivateRequest, WorkPrivateResponse>;
   getBrainCandidateState: handleUnaryCall<WorkPrivateRequest, WorkPrivateResponse>;
+  authorizeHistoryMigration: handleUnaryCall<WorkPrivateRequest, WorkPrivateResponse>;
   getDeploymentContext: handleUnaryCall<Empty, DeploymentContext>;
   createService: handleUnaryCall<CreateServiceRequest, Acceptance>;
   listServices: handleUnaryCall<Empty, ListServicesResponse>;
@@ -3934,6 +3944,21 @@ export interface WorkServicesClient extends Client {
     callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
   ): ClientUnaryCall;
   getBrainCandidateState(
+    request: WorkPrivateRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  authorizeHistoryMigration(
+    request: WorkPrivateRequest,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  authorizeHistoryMigration(
+    request: WorkPrivateRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: WorkPrivateResponse) => void,
+  ): ClientUnaryCall;
+  authorizeHistoryMigration(
     request: WorkPrivateRequest,
     metadata: Metadata,
     options: Partial<CallOptions>,

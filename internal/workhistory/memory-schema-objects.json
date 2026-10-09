@@ -1,0 +1,56 @@
+[
+  {
+    "type": "index",
+    "name": "memory_candidates_entry",
+    "tbl_name": "memory_candidates",
+    "sql": "CREATE INDEX memory_candidates_entry ON memory_candidates(entry_id,published_version)"
+  },
+  {
+    "type": "index",
+    "name": "memory_candidates_request",
+    "tbl_name": "memory_candidates",
+    "sql": "CREATE INDEX memory_candidates_request ON memory_candidates(source_request_id,status,candidate_version)"
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_memory_candidates_1",
+    "tbl_name": "memory_candidates",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_memory_entries_1",
+    "tbl_name": "memory_entries",
+    "sql": null
+  },
+  {
+    "type": "table",
+    "name": "memory_candidates",
+    "tbl_name": "memory_candidates",
+    "sql": "CREATE TABLE memory_candidates (\n  candidate_version INTEGER NOT NULL CHECK(candidate_version >= 1),\n  entry_id TEXT NOT NULL, source_request_id TEXT NOT NULL,\n  operation TEXT NOT NULL CHECK(operation IN ('upsert','invalidate')),\n  base_version INTEGER NOT NULL REFERENCES memory_versions(version),\n  kind TEXT NOT NULL CHECK(kind IN ('preference','experience','knowledge')),\n  scope TEXT NOT NULL, rule TEXT NOT NULL, evidence_ids_json TEXT NOT NULL,\n  reason TEXT,\n  status TEXT NOT NULL CHECK(status IN ('staged','effective','failed')),\n  published_version INTEGER REFERENCES memory_versions(version),\n  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,\n  PRIMARY KEY(candidate_version,entry_id)\n) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "memory_entries",
+    "tbl_name": "memory_entries",
+    "sql": "CREATE TABLE memory_entries (\n  version INTEGER NOT NULL REFERENCES memory_versions(version),\n  entry_id TEXT NOT NULL,\n  kind TEXT NOT NULL CHECK(kind IN ('preference','experience','knowledge')),\n  scope TEXT NOT NULL, rule TEXT NOT NULL, evidence_ids_json TEXT NOT NULL,\n  source_request_id TEXT NOT NULL, created_at TEXT NOT NULL,\n  PRIMARY KEY(version,entry_id)\n) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "memory_head",
+    "tbl_name": "memory_head",
+    "sql": "CREATE TABLE memory_head (\n  singleton INTEGER PRIMARY KEY CHECK(singleton = 1),\n  version INTEGER NOT NULL REFERENCES memory_versions(version), updated_at TEXT NOT NULL\n) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "memory_meta",
+    "tbl_name": "memory_meta",
+    "sql": "CREATE TABLE memory_meta (\n  singleton INTEGER PRIMARY KEY CHECK(singleton = 1),\n  schema_version INTEGER NOT NULL CHECK(schema_version = 1),\n  work_id TEXT NOT NULL, store_id TEXT NOT NULL\n) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "memory_versions",
+    "tbl_name": "memory_versions",
+    "sql": "CREATE TABLE memory_versions (\n  version INTEGER PRIMARY KEY CHECK(version >= 0),\n  published_at TEXT, legacy INTEGER NOT NULL CHECK(legacy IN (0,1))\n) STRICT"
+  }
+]

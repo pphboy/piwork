@@ -1,0 +1,13 @@
+INSERT INTO schema_migrations VALUES(5,'2026-10-08T00:00:00Z');
+INSERT INTO work_memory_binding VALUES('work-memory-source-1111','store-memory-source',1);
+INSERT INTO memory.memory_meta VALUES(1,1,'work-memory-source-1111','store-memory-source');
+INSERT INTO memory.memory_versions VALUES(0,'2026-10-08T00:00:00Z',0),(2,'2026-10-08T00:00:00Z',0);
+INSERT INTO memory.memory_head VALUES(1,2,'2026-10-08T00:00:00Z');
+INSERT INTO sessions(work_id,session_id,sdk_history_path,created_at,updated_at,active_context_identity) VALUES('work-memory-source-1111','session','/var/data/sessions/one.jsonl','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','context-memory-source');
+INSERT INTO runs(work_id,session_id,run_id,submission_key,prompt_digest,state,accepted_at,finished_at,context_identity,adopted_memory_selection_json,source_json) VALUES('work-memory-source-1111','session','run','submit','digest','succeeded','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','context-memory-source','{"entryIds":[],"matchedCount":0,"truncated":false}','{"kind":"chat","requestId":"request","phase":"handling"}');
+INSERT INTO agent_requests(work_id,request_id,submission_key,request_digest,source_kind,source_run_id,goal,state,disposition,phase,expires_at,created_at,updated_at) VALUES('work-memory-source-1111','request','key','digest','chat','run','Remember verified result','completed','live','handling','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z');
+INSERT INTO agent_request_runs VALUES('request','run','handling','live','2026-10-08T00:00:00Z');
+INSERT INTO agent_evidence(work_id,evidence_id,request_id,run_id,kind,object_ref,observed_at,summary,verified,details_json) VALUES('work-memory-source-1111','proof','request','run','query','summary','2026-10-08T00:00:00Z','Verified state',1,'{"checks":[{"name":"state","passed":true}]}');
+INSERT INTO agent_evidence(work_id,evidence_id,request_id,run_id,kind,object_ref,observed_at,summary,verified,details_json) VALUES('work-memory-source-1111','pref-proof','request','run','sdk','run','2026-10-08T00:00:00Z','Original preference',1,'{"userPreferenceVerified":true,"promptDigest":"digest"}');
+INSERT INTO memory.memory_entries VALUES(2,'lesson','experience','work','Reusable verified knowledge','["proof"]','request','2026-10-08T00:00:00Z');
+INSERT INTO memory.memory_candidates VALUES(1,'lesson','request','upsert',0,'experience','work','Reusable verified knowledge','["proof"]',NULL,'effective',2,'2026-10-08T00:00:00Z','2026-10-08T00:00:00Z');

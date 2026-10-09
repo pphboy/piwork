@@ -43,6 +43,9 @@ func (a *Application) startWorkRuntime(ctx context.Context, spec workruntime.Sta
 	} else if spec.CorrelationID == "" {
 		spec.CorrelationID = spec.Scope.InstanceID
 	}
+	if err := a.reconcileHistoryUpgradeLocked(ctx, spec.Scope.WorkID, spec.CorrelationID); err != nil {
+		return workruntime.Started{}, err
+	}
 	for _, logical := range []string{"work-private", "work-workspace"} {
 		var binding corestore.ResourceBinding
 		err := a.Store.Read(ctx, func(tx *sql.Tx) error {
@@ -415,6 +418,9 @@ func (a *Application) stopCapturedWorkLocked(ctx context.Context, workID string,
 	cancel()
 	if stopErr != nil {
 		return errors.Join(drainErr, stopErr)
+	}
+	if err := a.reconcileHistoryUpgradeLocked(ctx, workID); err != nil {
+		return err
 	}
 	now = time.Now().UTC().Format(time.RFC3339Nano)
 	err = a.Store.Write(ctx, func(tx *sql.Tx) error {

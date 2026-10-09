@@ -1,0 +1,9 @@
+INSERT INTO runs(work_id,session_id,run_id,submission_key,prompt_digest,state,accepted_at,finished_at,context_identity,adopted_experience_version,adopted_memory_selection_json,source_json) VALUES('work-memory-source-1111','session','run-b','submit-b','digest-b','succeeded','2026-10-08T00:00:01Z','2026-10-08T00:00:01Z','context-memory-source',2,'{"entryIds":["lesson"],"matchedCount":1,"truncated":false}','{"kind":"chat","requestId":"request-b","phase":"handling"}');
+INSERT INTO agent_requests(work_id,request_id,submission_key,request_digest,source_kind,source_run_id,goal,state,disposition,phase,expires_at,created_at,updated_at) VALUES('work-memory-source-1111','request-b','key-b','digest-b','chat','run-b','Remember another verified result','completed','live','handling','2026-10-08T00:00:01Z','2026-10-08T00:00:01Z','2026-10-08T00:00:01Z');
+INSERT INTO agent_request_runs VALUES('request-b','run-b','handling','live','2026-10-08T00:00:01Z');
+INSERT INTO agent_evidence(work_id,evidence_id,request_id,run_id,kind,object_ref,observed_at,summary,verified,details_json) VALUES('work-memory-source-1111','proof-b','request-b','run-b','query','summary','2026-10-08T00:00:01Z','Verified second state',1,'{"checks":[{"name":"state","passed":true}]}');
+INSERT INTO memory.memory_versions VALUES(4,'2026-10-08T00:00:01Z',0);
+INSERT INTO memory.memory_entries SELECT 4,entry_id,kind,scope,rule,evidence_ids_json,source_request_id,created_at FROM memory.memory_entries WHERE version=2;
+INSERT INTO memory.memory_entries VALUES(4,'other','experience','work','Another verified result','["proof-b"]','request-b','2026-10-08T00:00:01Z');
+INSERT INTO memory.memory_candidates VALUES(3,'other','request-b','upsert',2,'experience','work','Another verified result','["proof-b"]',NULL,'effective',4,'2026-10-08T00:00:01Z','2026-10-08T00:00:01Z');
+UPDATE memory.memory_head SET version=4,updated_at='2026-10-08T00:00:01Z';

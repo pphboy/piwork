@@ -28,7 +28,20 @@ func validateBrainHistory(ctx context.Context, db *sql.DB, scope Scope) error {
 	graph := map[string][]historyRow{}
 	objects := map[string]map[string]historyRow{}
 	for table, key := range map[string]string{"sessions": "session_id", "runs": "run_id", "service_events": "event_pk", "agent_requests": "request_id", "agent_request_runs": "run_id", "agent_evidence": "evidence_id", "brain_experience_revisions": "", "brain_experience_heads": "work_id", "run_events": ""} {
-		rows, err := db.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY rowid")
+		query := "SELECT * FROM " + table + " ORDER BY rowid"
+		if historyVersion(ctx, db) == 5 {
+			if table == "brain_experience_revisions" {
+				query = "SELECT ? AS work_id,version,entry_id,scope,rule,evidence_ids_json,source_request_id,'effective' AS status,created_at FROM memory.memory_entries UNION ALL SELECT ?,candidate_version,entry_id,scope,rule,evidence_ids_json,source_request_id,status,created_at FROM memory.memory_candidates WHERE status!='effective'"
+			}
+			if table == "brain_experience_heads" {
+				query = "SELECT ? AS work_id,version,updated_at FROM memory.memory_head"
+			}
+		}
+		var args []any
+		for i := 0; i < strings.Count(query, "?"); i++ {
+			args = append(args, scope.SourceWorkID)
+		}
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return ErrInvalid
 		}
@@ -141,7 +154,8 @@ func validateBrainHistory(ctx context.Context, db *sql.DB, scope Scope) error {
 		}
 		tool := stringValue(target["toolName"])
 		tool = tool[strings.LastIndex(tool, ":")+1:]
-		started, ended, count := false, false, 0
+		var announcement, executed, ended int
+		var announcementAt, executionAt, endAt int64
 		for _, event := range graph["run_events"] {
 			if event["run_id"] != proof["run_id"] || event["event_type"] != "tool-start" && event["event_type"] != "tool-end" {
 				continue
@@ -154,16 +168,33 @@ func validateBrainHistory(ctx context.Context, db *sql.DB, scope Scope) error {
 			if call["toolCallId"] != details["toolCallId"] {
 				continue
 			}
-			count++
-			if call["toolName"] == tool {
-				if event["event_type"] == "tool-start" {
-					started = reflect.DeepEqual(call["args"], target["input"])
-				} else if call["isError"] == false {
-					ended = true
+			if call["toolName"] != tool {
+				return false
+			}
+			seq := event["sequence"].(int64)
+			if event["event_type"] == "tool-start" {
+				if _, hasInput := call["args"]; !hasInput {
+					announcement++
+					announcementAt = seq
+				} else {
+					if !reflect.DeepEqual(call["args"], target["input"]) {
+						return false
+					}
+					executed++
+					executionAt = seq
 				}
+			} else {
+				if call["isError"] != false {
+					return false
+				}
+				ended++
+				endAt = seq
 			}
 		}
-		return count == 2 && started && ended
+		// SDK streaming announces a call before its actual execution. Only the
+		// execution carrying the fixed input and successful end prove adoption.
+		return announcement <= 1 && executed == 1 && ended == 1 && executionAt < endAt && (announcement == 0 || announcementAt < executionAt)
+
 	}
 	for _, r := range graph["sessions"] {
 		if v := field("sessions", r, "model_preference_json"); v != nil && !validHistoryModel(v) {
@@ -352,6 +383,10 @@ func validateBrainHistory(ctx context.Context, db *sql.DB, scope Scope) error {
 			return true
 		}
 		rows := versions[version]
+		if len(rows) == 0 && historyVersion(ctx, db) == 5 {
+			var found int
+			return db.QueryRowContext(ctx, "SELECT 1 FROM memory.memory_versions WHERE version=?", version).Scan(&found) == nil
+		}
 		if len(rows) == 0 || len(rows) > 100 {
 			return false
 		}

@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
+	"syscall"
 
 	"piwork/internal/cli"
 	"piwork/internal/snapshottree"
+	"piwork/internal/workhistory"
 	"piwork/internal/workpackage"
 )
 
@@ -38,6 +41,66 @@ func run(ctx context.Context, args []string, sink io.Writer) string {
 		return "SNAPSHOT_HELPER_ARGUMENT"
 	}
 	action := args[0]
+	if action == "checkpoint-history" || action == "restore-history-backup" {
+		if len(args) != 1 {
+			return "SNAPSHOT_HELPER_ARGUMENT"
+		}
+		request, err := readBackupRequest("/snapshot/spool")
+		if err != nil {
+			return historyCode(err)
+		}
+		var result workhistory.BackupResult
+		if action == "checkpoint-history" {
+			result, err = workhistory.CheckpointHistory(ctx, "/var/data", "/snapshot/spool", request)
+		} else {
+			result, err = workhistory.RestoreHistoryBackup(ctx, "/var/data", "/snapshot/spool", request)
+		}
+		if err != nil {
+			return historyCode(err)
+		}
+		raw, err := json.Marshal(result)
+		if err != nil {
+			return "SNAPSHOT_STORAGE_UNREADABLE"
+		}
+		file, err := os.CreateTemp("/snapshot/spool", action+"-result-*.tmp")
+		if err != nil {
+			return "SNAPSHOT_STORAGE_UNREADABLE"
+		}
+		parent, statErr := os.Stat("/snapshot/spool")
+		if statErr != nil {
+			file.Close()
+			return "SNAPSHOT_STORAGE_UNREADABLE"
+		}
+		attrs, ok := parent.Sys().(*syscall.Stat_t)
+		if !ok || file.Chown(int(attrs.Uid), int(attrs.Gid)) != nil {
+			file.Close()
+			return "SNAPSHOT_STORAGE_UNREADABLE"
+		}
+		_, err = file.Write(raw)
+		if err == nil {
+			err = file.Sync()
+		}
+		closeErr := file.Close()
+		if err != nil || closeErr != nil {
+			return "SNAPSHOT_STORAGE_UNREADABLE"
+		}
+		if os.Rename(file.Name(), "/snapshot/spool/"+action+"-result.json") != nil {
+			return "SNAPSHOT_STORAGE_UNREADABLE"
+		}
+		dir, err := os.Open("/snapshot/spool")
+		if err != nil {
+			return "SNAPSHOT_STORAGE_UNREADABLE"
+		}
+		err = dir.Sync()
+		dir.Close()
+		if err != nil {
+			return "SNAPSHOT_STORAGE_UNREADABLE"
+		}
+		if json.NewEncoder(sink).Encode(result) != nil {
+			return "SNAPSHOT_STORAGE_UNREADABLE"
+		}
+		return ""
+	}
 	if action == "verify-history" || action == "restore-history" || action == "verify-package" {
 		if len(args) != 1 {
 			return "SNAPSHOT_HELPER_ARGUMENT"

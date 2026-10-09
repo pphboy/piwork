@@ -218,6 +218,15 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 				Text struct {
 					Delta string `json:"delta"`
 				} `json:"text"`
+				Tool struct {
+					ToolName string `json:"toolName"`
+					Phase    string `json:"phase"`
+					IsError  bool   `json:"isError"`
+					Result   struct {
+						Kind string `json:"kind"`
+						Text string `json:"text"`
+					} `json:"result"`
+				} `json:"tool"`
 			} `json:"kind"`
 		}
 		_ = json.Unmarshal(event, &envelope)
@@ -231,6 +240,13 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 		if envelope.Kind.Case == "text" {
 			_, err := io.WriteString(stdout, envelope.Kind.Text.Delta)
 			return err
+		}
+		if envelope.Kind.Case == "tool" && envelope.Kind.Tool.Phase == "tool-end" {
+			tool := envelope.Kind.Tool
+			if summary := memoryToolSummary(tool.ToolName, tool.IsError, tool.Result.Kind, tool.Result.Text); summary != "" {
+				_, err := fmt.Fprintln(stderr, summary)
+				return err
+			}
 		}
 		return nil
 	})
@@ -299,4 +315,42 @@ func emitChatMarker(stdout io.Writer, jsonOutput bool, marker map[string]any) er
 	}
 	_, err := fmt.Fprintf(stdout, "%s: %s\n", marker["type"], marker[fmt.Sprint(marker["type"])+"Id"])
 	return err
+}
+
+func memoryToolSummary(name string, isError bool, kind, text string) string {
+	if name != "brain_experience" && name != "brain_feedback" && name != "package:piwork-brain:brain_experience" && name != "package:piwork-brain:brain_feedback" || kind != "text" {
+		return ""
+	}
+	if isError {
+		return "Memory: operation failed; no effective update confirmed."
+	}
+	var value struct {
+		MemoryCommit *struct {
+			Version int64  `json:"version"`
+			Status  string `json:"status"`
+		} `json:"memoryCommit"`
+		Version   *int64 `json:"version"`
+		Status    string `json:"status"`
+		Adopted   *int64 `json:"adoptedExperienceVersion"`
+		Effective *int64 `json:"effectiveVersion"`
+	}
+	if json.Unmarshal([]byte(text), &value) != nil {
+		return ""
+	}
+	valid := func(n int64) bool { return n >= 0 && n <= contracts.MaxSafeInteger }
+	if value.MemoryCommit != nil && value.MemoryCommit.Status == "effective" && valid(value.MemoryCommit.Version) {
+		return fmt.Sprintf("Memory: effective v%d.", value.MemoryCommit.Version)
+	}
+	if value.Version != nil && valid(*value.Version) {
+		if value.Status == "staged" {
+			return fmt.Sprintf("Memory: candidate v%d proposed; not effective.", *value.Version)
+		}
+		if value.Status == "invalidated" {
+			return fmt.Sprintf("Memory: entry invalidated at v%d.", *value.Version)
+		}
+	}
+	if value.Adopted != nil && value.Effective != nil && valid(*value.Adopted) && valid(*value.Effective) {
+		return fmt.Sprintf("Memory: this Run uses v%d; current effective v%d.", *value.Adopted, *value.Effective)
+	}
+	return ""
 }

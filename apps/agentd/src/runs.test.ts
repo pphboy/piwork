@@ -23,7 +23,7 @@ test("unavailable Work storage rejects submission before executor side effects",
 });
 
 test("submission is durable and idempotent with one active slot per Work and parallel different Works", async () => {
-  await withStore(async (store) => {
+  await withStore(async (store, peerStore) => {
     const executor = new ControlledExecutor();
     const manager = readyManager(store, executor);
     const first = manager.submit({ workId: "work-a", sessionId: "session-a", submissionKey: "submit-1", prompt: "hello" });
@@ -34,13 +34,16 @@ test("submission is durable and idempotent with one active slot per Work and par
       () => manager.submit({ workId: "work-a", sessionId: "session-a", submissionKey: "submit-2", prompt: "second" }),
       (error) => error instanceof WorkBusyError,
     );
-    const other = manager.submit({ workId: "work-b", sessionId: "session-b", submissionKey: "submit-b", prompt: "parallel" });
+    const peer = readyManager(peerStore,executor);
+    const other = peer.submit({ workId: "work-b", sessionId: "session-b", submissionKey: "submit-b", prompt: "parallel" });
     await Promise.all([executor.waitUntilRunning(first.run.runId), executor.waitUntilRunning(other.run.runId)]);
     assert.equal(executor.running.size, 2);
     executor.resolve(first.run.runId, "answer-a");
     executor.resolve(other.run.runId, "answer-b");
     assert.equal((await manager.wait(first.run.runId)).state, "succeeded");
-    assert.equal((await manager.wait(other.run.runId)).state, "succeeded");
+    assert.equal((await peer.wait(other.run.runId)).state, "succeeded");
+    assert.equal(store.getRun(other.run.runId),undefined);
+    assert.equal(peerStore.getRun(first.run.runId),undefined);
   });
 });
 
@@ -210,14 +213,15 @@ function readyManager(store: WorkStore, executor: RunExecutor): RunManager {
   return new RunManager(store, daemon, executor, () => new Date(NOW));
 }
 
-async function withStore(run: (store: WorkStore) => Promise<void>) {
+async function withStore(run: (store: WorkStore, peerStore: WorkStore) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "piwork-runs-"));
   const store = WorkStore.open(join(root, "work.sqlite"));
-  for (const [workId, sessionId] of [["work-a", "session-a"], ["work-b", "session-b"]] as const) {
-    store.createSession({ workId, sessionId, sdkHistoryPath: join(root, `${sessionId}.jsonl`), createdAt: NOW, updatedAt: NOW });
+  const peerStore=WorkStore.open(join(root,"peer","work.sqlite"));
+  for (const [current,workId, sessionId] of [[store,"work-a", "session-a"], [peerStore,"work-b", "session-b"]] as const) {
+    current.createSession({ workId, sessionId, sdkHistoryPath: join(root, `${sessionId}.jsonl`), createdAt: NOW, updatedAt: NOW });
   }
-  try { await run(store); }
-  finally { store.close(); await rm(root, { recursive: true, force: true }); }
+  try { await run(store,peerStore); }
+  finally { store.close();peerStore.close(); await rm(root, { recursive: true, force: true }); }
 }
 
 test("incompatible or missing Session refuses admission before model resolution and SDK effects", async () => {

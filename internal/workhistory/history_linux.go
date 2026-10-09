@@ -1,6 +1,6 @@
 //go:build linux
 
-// Package workhistory validates only the managed schema-4 history database in
+// Package workhistory validates the exact managed schema-4/5 history and Memory databases in
 // isolated snapshot helpers. SDK JSONL and business databases remain opaque.
 package workhistory
 
@@ -25,10 +25,10 @@ import (
 	"piwork/internal/workpackage"
 )
 
-//go:embed schema.sql
+//go:embed schema-v4.sql
 var schemaSQL string
 
-//go:embed schema-objects.json
+//go:embed schema-v4-objects.json
 var schemaObjects []byte
 var tables = []string{"schema_migrations", "sessions", "runs", "run_events", "submit_idempotency", "session_idempotency", "work_activity", "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "brain_experience_revisions", "brain_experience_heads"}
 var files = []string{"work.sqlite", "work.sqlite-wal", "work.sqlite-shm"}
@@ -54,11 +54,12 @@ type Summary struct {
 	Events   int64 `json:"events"`
 }
 type Snapshot struct {
-	database *sql.DB
-	scratch  string
-	spoolFD  int
-	scope    Scope
-	Summary  Summary
+	database      *sql.DB
+	scratch       string
+	spoolFD       int
+	scope         Scope
+	Summary       Summary
+	SchemaVersion int64
 }
 type schemaObject struct {
 	Type, Name string
@@ -171,7 +172,7 @@ func Open(ctx context.Context, privateDirectory string, scope Scope) (returned *
 	defer unix.Close(root)
 	main, err := Regular(root, files[0])
 	if errors.Is(err, unix.ENOENT) {
-		for _, name := range files[1:] {
+		for _, name := range append(append([]string{}, files[1:]...), "memory.sqlite", "memory.sqlite-journal", "work.sqlite-journal") {
 			sidecar, err := Regular(root, name)
 			if err == nil {
 				sidecar.Close()
@@ -231,6 +232,35 @@ func Open(ctx context.Context, privateDirectory string, scope Scope) (returned *
 	if err := validateSchema(ctx, snapshot.database); err != nil {
 		return nil, err
 	}
+	snapshot.SchemaVersion = historyVersion(ctx, snapshot.database)
+	if snapshot.SchemaVersion == 5 {
+		for _, name := range []string{"work.sqlite-journal", "memory.sqlite-journal"} {
+			file, err := Regular(root, name)
+			if err == nil {
+				file.Close()
+				return nil, ErrBusy
+			}
+			if !errors.Is(err, unix.ENOENT) {
+				return nil, ErrInvalid
+			}
+		}
+		file, err := Regular(root, "memory.sqlite")
+		if err != nil {
+			return nil, ErrInvalid
+		}
+		err = copyFile(ctx, file, filepath.Join(scratch, "memory.sqlite"))
+		file.Close()
+		if err != nil {
+			return nil, err
+		}
+		uri := (&url.URL{Scheme: "file", Path: filepath.Join(scratch, "memory.sqlite"), RawQuery: "mode=ro"}).String()
+		if _, err := snapshot.database.ExecContext(ctx, "ATTACH DATABASE ? AS memory", uri); err != nil {
+			return nil, ErrInvalid
+		}
+		if err := validateMemorySchema(ctx, snapshot.database); err != nil {
+			return nil, err
+		}
+	}
 	var integrity string
 	if err := snapshot.database.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
 		return nil, ErrInvalid
@@ -269,10 +299,6 @@ func (s *Snapshot) Close() error {
 	return errors.Join(failures...)
 }
 func validateSchema(ctx context.Context, db *sql.DB) error {
-	var expected []schemaObject
-	if json.Unmarshal(schemaObjects, &expected) != nil {
-		return ErrUnsupported
-	}
 	rows, err := db.QueryContext(ctx, "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name")
 	if err != nil {
 		return ErrInvalid
@@ -280,32 +306,33 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 	defer rows.Close()
 	var actual []schemaObject
 	for rows.Next() {
-		if len(actual) >= len(expected) {
-			return ErrUnsupported
-		}
-		var object schemaObject
-		if err := rows.Scan(&object.Type, &object.Name, &object.Table, &object.SQL); err != nil {
+		var r schemaObject
+		if rows.Scan(&r.Type, &r.Name, &r.Table, &r.SQL) != nil {
 			return ErrInvalid
 		}
-		actual = append(actual, object)
+		actual = append(actual, r)
+		if len(actual) > 100 {
+			return ErrUnsupported
+		}
 	}
 	if rows.Err() != nil {
 		return ErrInvalid
 	}
-	normalize := func(items []schemaObject) {
-		for i := range items {
-			if items[i].SQL != nil {
-				sql := strings.Join(strings.Fields(*items[i].SQL), " ")
-				items[i].SQL = &sql
+	normalizeSchema(actual)
+	for index, raw := range [][]byte{schemaObjects, currentSchemaObjects} {
+		var expected []schemaObject
+		if json.Unmarshal(raw, &expected) != nil {
+			return ErrUnsupported
+		}
+		normalizeSchema(expected)
+		if reflect.DeepEqual(actual, expected) {
+			if historyVersion(ctx, db) != int64(4+index) {
+				return ErrUnsupported
 			}
+			return nil
 		}
 	}
-	normalize(actual)
-	normalize(expected)
-	if !reflect.DeepEqual(actual, expected) {
-		return ErrUnsupported
-	}
-	return nil
+	return ErrUnsupported
 }
 func nonempty(value any) bool {
 	text, ok := value.(string)
@@ -341,7 +368,7 @@ func rowValues(rows *sql.Rows, columns []string) (map[string]any, error) {
 func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summary, error) {
 	counts := map[string]int64{}
 	var count int64
-	for _, table := range tables {
+	for _, table := range historyTables(historyVersion(ctx, db)) {
 		rows, err := db.QueryContext(ctx, "SELECT * FROM "+table)
 		if err != nil {
 			return Summary{}, ErrInvalid
@@ -416,6 +443,11 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 			return Summary{}, ErrInvalid
 		}
 	}
+	if historyVersion(ctx, db) == 5 {
+		if err := validateMemoryHistory(ctx, db, scope); err != nil {
+			return Summary{}, err
+		}
+	}
 	if err := validateBrainHistory(ctx, db, scope); err != nil {
 		return Summary{}, err
 	}
@@ -424,7 +456,7 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 func validateRow(table string, row map[string]any, root int, scope Scope) error {
 	switch table {
 	case "schema_migrations":
-		if row["version"] != int64(4) {
+		if row["version"] != int64(4) && row["version"] != int64(5) {
 			return ErrUnsupported
 		}
 	case "sessions":

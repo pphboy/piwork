@@ -12,7 +12,7 @@ import type { PiPackageArtifactMetadata, PiPackageSelectionEntry } from "@piwork
 import { assertPiPackageEnvironment, validatePiPackageArtifactSync } from "@piwork/pi-package";
 import { BRAIN_PACKAGE_NAME } from "@piwork/contracts";
 import { WEB_SLASH_COMMANDS, type SlashCommand } from "@piwork/contracts";
-import type { ExperienceSnapshot } from "@piwork/work-store";
+import type { ExperienceSnapshot, MemorySelection } from "@piwork/work-store";
 import { brainPrompt, readBrainCognition } from "./brain-resources.js";
 
 export interface PackageBinding {
@@ -41,6 +41,7 @@ export async function createPackageResourceLoader(input: {
   readonly workspace: string;
   readonly agentDirectory: string;
   readonly experience?: ExperienceSnapshot;
+  readonly memorySelection?: MemorySelection|null;
 }): Promise<{ readonly loader: ResourceLoader; readonly packages: readonly LoadedPackageResource[]; readonly resources: readonly { readonly packageName: string; readonly kind: string; readonly name: string }[]; readonly toolNames: ReadonlyMap<string, string>; readonly commands: readonly SlashCommand[] }> {
   if (input.bindings.length !== input.selection.length) throw new Error("package binding count mismatch");
   const enabledRoots: string[] = [];
@@ -74,7 +75,7 @@ export async function createPackageResourceLoader(input: {
     agentsFilesOverride: () => ({ agentsFiles: [{ path: "/run/piwork/AGENTS.md", content: input.agentsMd }] }),
     skillsOverride: (result) => ({ skills: [...input.standaloneSkills, ...result.skills], diagnostics: result.diagnostics }),
     systemPromptOverride: () => undefined,
-    appendSystemPromptOverride: () => cognition === undefined ? [] : brainPrompt(cognition, input.experience),
+    appendSystemPromptOverride: () => cognition === undefined ? [] : brainPrompt(cognition, input.experience,input.memorySelection),
   });
   await sdk.reload();
   if (cognition !== undefined && input.standaloneSkills.some((skill) => skill.name === "deploy-work-service")) {

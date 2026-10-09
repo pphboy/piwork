@@ -80,7 +80,7 @@ func (r *Runtime) snapshotHelperPolicy(ctx context.Context, spec SnapshotHelperS
 		return "", nil, nil, ErrSpecification
 	}
 	switch spec.Action {
-	case "capture", "restore", "restore-context", "restore-package", "verify-history", "restore-history", "verify-package":
+	case "capture", "restore", "restore-context", "restore-package", "verify-history", "restore-history", "verify-package", "checkpoint-history", "restore-history-backup":
 	default:
 		return "", nil, nil, ErrSpecification
 	}
@@ -93,6 +93,9 @@ func (r *Runtime) snapshotHelperPolicy(ctx context.Context, spec SnapshotHelperS
 		return "", nil, nil, ErrSpecification
 	}
 	if !noVolume {
+		if (spec.Action == "checkpoint-history" || spec.Action == "restore-history-backup") && spec.VolumeLogicalID != "work-private" {
+			return "", nil, nil, ErrSpecification
+		}
 		if spec.VolumeLogicalID != "work-private" && spec.VolumeLogicalID != "work-workspace" {
 			return "", nil, nil, ErrSpecification
 		}
@@ -127,7 +130,11 @@ func (r *Runtime) snapshotHelperPolicy(ctx context.Context, spec SnapshotHelperS
 		host.CapAdd = []string{"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_DAC_READ_SEARCH", "CAP_FOWNER"}
 	}
 	if !noVolume {
-		host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: spec.VolumeName, Target: "/snapshot/volume", ReadOnly: spec.Action == "capture" || spec.Action == "verify-history", VolumeOptions: &mount.VolumeOptions{NoCopy: true}})
+		target := "/snapshot/volume"
+		if spec.Action == "checkpoint-history" || spec.Action == "restore-history-backup" {
+			target = "/var/data"
+		}
+		host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: spec.VolumeName, Target: target, ReadOnly: spec.Action == "capture" || spec.Action == "verify-history", VolumeOptions: &mount.VolumeOptions{NoCopy: true}})
 	}
 	config := &container.Config{Image: spec.ImageID, User: user, Entrypoint: []string{"/usr/local/bin/piwork-snapshot-helper"}, Cmd: arguments, Labels: labels, AttachStdout: true, AttachStderr: true}
 	encoded, _ := json.Marshal(struct {

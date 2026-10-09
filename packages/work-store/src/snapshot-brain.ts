@@ -3,6 +3,8 @@ import { Check } from "typebox/value";
 import { AgentRunSourceSchema, AgentWaitRefSchema, BrainCandidateSubmissionSchema, isBrainVerificationTarget, BRAIN_LIMITS,
   RunModelDescriptionSchema, RunSubmissionSelectorSchema, ThinkingLevelSchema, ServiceEventSchema } from "@piwork/contracts";
 import { canonicalJson, contentDigest, FeedbackStore, validBrainAdoption } from "./feedback.js";
+import { MemoryStore } from "./memory.js";
+import { validateMemoryHistory } from "./snapshot-memory.js";
 
 type Row = Record<string, SQLInputValue>;
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -27,7 +29,8 @@ function model(value: unknown): boolean {
 
 /** Validate platform relationships on a read-only scratch DB. Never interpret user databases or execute source SQL. */
 export function validateBrainHistory(database: DatabaseSync, workId: string, contextIds: ReadonlySet<string>): void {
-  const feedback = new FeedbackStore(database);
+  const current = database.prepare("SELECT version FROM schema_migrations").get()?.version === 5;
+  const feedback = new FeedbackStore(database, current ? new MemoryStore(database) : undefined);
   const candidateFor = (id: string): Record<string, unknown> | null => {
     const row = database.prepare("SELECT package_submission_json FROM agent_requests WHERE request_id=? AND work_id=?").get(id, workId);
     return row?.package_submission_json == null ? null : json(row.package_submission_json) as Record<string, unknown>;
@@ -38,14 +41,19 @@ export function validateBrainHistory(database: DatabaseSync, workId: string, con
     const run = database.prepare("SELECT context_identity FROM runs WHERE run_id=? AND work_id=?").get(proof.run_id, workId);
     if (!candidate || !isBrainVerificationTarget(candidate.verificationTarget) || !object(details) || !run
       || proof.object_ref !== candidate.verificationTarget.toolName || !contextIds.has(String(run.context_identity))) return false;
-    const call = database.prepare("SELECT event_type,payload_json FROM run_events WHERE run_id=? AND event_type IN('tool-start','tool-end') AND json_extract(payload_json,'$.toolCallId')=?")
+    const call = database.prepare("SELECT event_type,payload_json FROM run_events WHERE run_id=? AND event_type IN('tool-start','tool-end') AND json_extract(payload_json,'$.toolCallId')=? ORDER BY sequence")
       .all(proof.run_id, typeof details.toolCallId === "string" ? details.toolCallId : "");
     const target = candidate.verificationTarget;
     const native = target.toolName.split(":").at(-1);
-    if (call.length !== 2 || !call.some((event) => event.event_type === "tool-start" && (json(event.payload_json) as Record<string, unknown>).toolName === native
-        && canonicalJson((json(event.payload_json) as Record<string, unknown>).args) === canonicalJson(target.input))
-      || !call.some((event) => event.event_type === "tool-end" && (json(event.payload_json) as Record<string, unknown>).toolName === native
-        && (json(event.payload_json) as Record<string, unknown>).isError === false)) return false;
+    const events=call.map(event=>({type:event.event_type,value:json(event.payload_json) as Record<string,unknown>}));
+    const announcements=events.filter(e=>e.type==='tool-start'&&!Object.hasOwn(e.value,'args'));
+    const executions=events.filter(e=>e.type==='tool-start'&&Object.hasOwn(e.value,'args'));
+    const endings=events.filter(e=>e.type==='tool-end');
+    if(events.some(e=>e.value.toolName!==native)||announcements.length>1||executions.length!==1||endings.length!==1
+      ||canonicalJson(executions[0]!.value.args)!==canonicalJson(target.input)||endings[0]!.value.isError!==false
+      ||events.indexOf(executions[0]!)>=events.indexOf(endings[0]!)
+      ||announcements.length===1&&events.indexOf(announcements[0]!)>=events.indexOf(executions[0]!))return false;
+
     const receiptRows = database.prepare("SELECT details_json FROM agent_evidence WHERE request_id=? AND kind='package'").all(proof.request_id);
     const receipts = receiptRows.map((row) => row.details_json == null ? {} : json(row.details_json) as Record<string, unknown>)
       .filter((receipt) => receipt.candidateArtifactDigest !== undefined);
@@ -157,6 +165,7 @@ export function validateBrainHistory(database: DatabaseSync, workId: string, con
       }
     }
   }
+  if (current) { validateMemoryHistory(database, workId); return; }
   for (const r of database.prepare("SELECT * FROM brain_experience_revisions").iterate() as Iterable<Row>) {
     const req = feedback.getRequest(workId, String(r.source_request_id)), refs = json(r.evidence_ids_json);
     if (!req || !text(r.entry_id) || !text(r.scope) || !text(r.rule) || Buffer.byteLength(r.rule) > BRAIN_LIMITS.experienceRuleBytes

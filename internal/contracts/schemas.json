@@ -3315,6 +3315,47 @@
       "feedbackListen": {
         "type": "string",
         "const": "0.0.0.0:7444"
+      },
+      "historyMigration": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128
+          },
+          "workId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128
+          },
+          "fromSchema": {
+            "type": "number",
+            "const": 4
+          },
+          "toSchema": {
+            "type": "number",
+            "const": 5
+          },
+          "storeId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 128
+          },
+          "backupManifestDigest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "operationId",
+          "workId",
+          "fromSchema",
+          "toSchema",
+          "storeId",
+          "backupManifestDigest"
+        ],
+        "additionalProperties": false
       }
     },
     "required": [
@@ -5349,6 +5390,10 @@
       {
         "type": "string",
         "const": "TARGET_MODEL_UNAVAILABLE"
+      },
+      {
+        "type": "string",
+        "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
       }
     ]
   },
@@ -5513,6 +5558,10 @@
               {
                 "type": "string",
                 "const": "TARGET_MODEL_UNAVAILABLE"
+              },
+              {
+                "type": "string",
+                "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
               }
             ]
           },
@@ -7345,6 +7394,10 @@
                 {
                   "type": "string",
                   "const": "TARGET_MODEL_UNAVAILABLE"
+                },
+                {
+                  "type": "string",
+                  "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
                 }
               ]
             },
@@ -7534,6 +7587,10 @@
                   {
                     "type": "string",
                     "const": "TARGET_MODEL_UNAVAILABLE"
+                  },
+                  {
+                    "type": "string",
+                    "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
                   }
                 ]
               },
@@ -7823,6 +7880,10 @@
                   {
                     "type": "string",
                     "const": "TARGET_MODEL_UNAVAILABLE"
+                  },
+                  {
+                    "type": "string",
+                    "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
                   }
                 ]
               },
@@ -11026,6 +11087,10 @@
                       {
                         "type": "string",
                         "const": "TARGET_MODEL_UNAVAILABLE"
+                      },
+                      {
+                        "type": "string",
+                        "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
                       }
                     ]
                   },
@@ -11238,8 +11303,16 @@
             "const": "v2"
           },
           "workHistorySchema": {
-            "type": "number",
-            "const": 4
+            "anyOf": [
+              {
+                "type": "number",
+                "const": 4
+              },
+              {
+                "type": "number",
+                "const": 5
+              }
+            ]
           },
           "storageLayout": {
             "type": "number",
@@ -12294,6 +12367,10 @@
                             {
                               "type": "string",
                               "const": "TARGET_MODEL_UNAVAILABLE"
+                            },
+                            {
+                              "type": "string",
+                              "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
                             }
                           ]
                         },
@@ -13804,6 +13881,10 @@
                   {
                     "type": "string",
                     "const": "TARGET_MODEL_UNAVAILABLE"
+                  },
+                  {
+                    "type": "string",
+                    "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
                   }
                 ]
               },
@@ -14196,6 +14277,10 @@
                     {
                       "type": "string",
                       "const": "TARGET_MODEL_UNAVAILABLE"
+                    },
+                    {
+                      "type": "string",
+                      "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
                     }
                   ]
                 },
@@ -14385,6 +14470,10 @@
                       {
                         "type": "string",
                         "const": "TARGET_MODEL_UNAVAILABLE"
+                      },
+                      {
+                        "type": "string",
+                        "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
                       }
                     ]
                   },
@@ -14674,6 +14763,10 @@
                       {
                         "type": "string",
                         "const": "TARGET_MODEL_UNAVAILABLE"
+                      },
+                      {
+                        "type": "string",
+                        "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
                       }
                     ]
                   },
@@ -15484,6 +15577,10 @@
           {
             "type": "string",
             "const": "TARGET_MODEL_UNAVAILABLE"
+          },
+          {
+            "type": "string",
+            "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
           }
         ]
       },
@@ -15863,6 +15960,10 @@
           {
             "type": "string",
             "const": "TARGET_MODEL_UNAVAILABLE"
+          },
+          {
+            "type": "string",
+            "const": "HISTORY_BACKUP_CLEANUP_REQUIRED"
           }
         ]
       },
@@ -20159,6 +20260,47 @@
         }
       }
     },
+    "additionalProperties": false
+  },
+  "WorkHistoryMigrationSchema": {
+    "type": "object",
+    "properties": {
+      "operationId": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 128
+      },
+      "workId": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 128
+      },
+      "fromSchema": {
+        "type": "number",
+        "const": 4
+      },
+      "toSchema": {
+        "type": "number",
+        "const": 5
+      },
+      "storeId": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 128
+      },
+      "backupManifestDigest": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    },
+    "required": [
+      "operationId",
+      "workId",
+      "fromSchema",
+      "toSchema",
+      "storeId",
+      "backupManifestDigest"
+    ],
     "additionalProperties": false
   },
   "WorkImagePlatformSchema": {

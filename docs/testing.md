@@ -54,3 +54,9 @@ Desktop 的真实 Go Core/CLI 联合脚本已接入 `make test-integration`，�
 当前 brain 回归使用 `internal/coreapp/brain_workstation_integration_test.go`、`brain_candidates_integration_test.go`、`run_models_integration_test.go` 和 `service_interactions_integration_test.go`；所有平台控制由 Go Core 与原生 helper 处理，确定性模型只在 acceptance Agent 镜像中注册。工作站 fixture 的 Python/NiceGUI 是示例 Service 的运行环境，不是宿主依赖，也不限制用户选择技术栈。
 
 `node scripts/check-native-boundary.mjs` 扫描当前 apps/packages、scripts、构建与运行配置、锁文件及当前 docs。仅规则文件自身、注入测试和明确列出的历史验收记录排除；不会排除整个 scripts。`node --test scripts/check-native-boundary.test.mjs` 注入旧启动脚本、动态 import、运行配置、lock 和当前文档，验证 gate 逐一拒绝，合法 Agent/browser 引用仍通过。镜像和 release 有各自独立的内容 gate。
+
+## 独立 Memory 验收
+
+本变更沿用现有测试体系。存储/联合事务/版本与失效测试位于 `packages/work-store/src/memory.test.ts`，TS 冷历史验证在 `snapshot*.test.ts`；原生 schema 4/5 与 Memory 图、重建测试在 `internal/workhistory/memory_test.go`。`npm run test:unit -w @piwork/work-store` 和 `go test -mod=readonly ./internal/workhistory` 不依赖 Docker 或真实模型凭据。
+
+Memory 子进程测试在真实磁盘 SQLite 的 COMMIT 前/后 SIGKILL writer，再原路径恢复，检查请求与 Memory 一致且不重放 Run。这是进程中断验收，不是物理断电实验。完整迁移/回退、固定旧镜像、真实 SDK/Service 与两份 Export/Import 按当前 change 的 T01–T06 任务分别执行；未执行的项目不能用这些单测标为通过。Memory 不新增通用 Eval 平台。

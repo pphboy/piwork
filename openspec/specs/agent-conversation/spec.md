@@ -134,7 +134,7 @@ daemon 启动恢复时 SHALL 将旧进程未终结的 accepted/running/cancellin
 
 所有者 SHALL 能通过 import-provenance 查询导入包 digest、import Operation ID 和源到目标历史 Operation ID 映射，再用既有 operation show 读取映射后的终态安全投影。此历史查询不触发执行，非所有者管理员也不得读取该 provenance；源用户/平台 secret 信息不在响应中。
 
-最终 MVP SHALL 使用 history schema 4，并完整保留本版模型选择、实际模型、安全执行来源、反馈关联与采用经验版本；新增反馈图及导入历史的执行边界遵守 PWORK-BRAIN-001。平台派生身份不从源环境恢复为 live 权限。
+系统 SHALL 完整保留 schema 4 的现有模型选择、实际模型、安全执行来源、反馈关联与采用经验版本；新 harness 使用 history schema 5，并额外保存独立 Memory 绑定与新 Run 实际提供的 entryId/截断信息。已知 schema 4 的导入按原格式静态校验并保留固定运行镜像，不在导入时升级；采用新 harness 的受控迁移遵守 WMEM-005。新增反馈图及导入历史的执行边界遵守 PWORK-BRAIN-001。平台派生身份不从源环境恢复为 live 权限。
 
 #### Scenario: Continue a copied Session
 - **WHEN** 同一个包被导入两份，分别启动并继续其匹配 active context 的同一局部 Session ID
@@ -163,6 +163,10 @@ daemon 启动恢复时 SHALL 将旧进程未终结的 accepted/running/cancellin
 #### Scenario: Go 版本恢复反馈及模型历史
 - **WHEN** 本版完整包被 Go Core 导入并显式启动
 - **THEN** 原 Session/Run、模型描述和反馈关联可查询，旧目标为 historical 且不执行，新目标使用接收方权限
+
+#### Scenario: 两种已知格式保留采用事实
+- **WHEN** 分别导入合法 schema 4 历史或 schema 5 与 Memory schema 1 的历史
+- **THEN** 旧版本号不改写成新 head，新 Run 的实际提供条目引用保持，均不恢复旧请求的执行权限或替换固定 agent 镜像
 
 ### Requirement: 在同一 Session 为下一次手动 Run 选择模型
 
@@ -330,3 +334,23 @@ Session 历史 SHALL 在保留原文本接口的基础上提供稳定消息身�
 #### Scenario: Run 接受未知与尚未找到映射
 - **WHEN** 用户按原提交键查询已受理的 Run，或查询时原请求尚未持久完成
 - **THEN** 分别返回同一 Run 供继续观察，或保持尚未确认；不把其他 Run 当作接受事实，不自动重发
+
+### Requirement: 记录固定 Memory 版本及实际提供内容
+
+**Identifier:** CONV-MEMORY-001
+
+新 Run SHALL 在持久受理时记录 WMEM-004 的固定 Memory 版本、初始提供 entryId 集合及截断信息，实际 SDK 初始化使用该内容，幂等重放不重新检索。既有公开 adoptedExperienceVersion 字段 SHALL 继续表示该版本，不另建含同一含义的平行版本字段；旧历史没有提供条目明细时明确未知，不能补造已阅读事实。脑包未启用或内容未提供时不能宣称已采用。
+
+既有 UI / CLI 的 Run 与工具记录 SHALL 能查证版本和 Memory 操作的实际结果；当前有效 head 和某个 Run 已采用版本 SHALL 分开显示。历史读取 SHALL 继续按当前 Work 权限执行；只读查询、观察断开和 Memory 提交不改变 Run 单槽、模型、取消、等待与恢复规则。
+
+#### Scenario: UI CLI 与 SDK 一致
+- **WHEN** 新 Run 提供一组相关 Memory 并执行一次 recall 或提交
+- **THEN** SDK 上下文、持久 Run 版本、真实工具结果以及 UI / CLI 可见版本一致，提交 effectiveVersion 的推进不改写当前 adoptedExperienceVersion
+
+#### Scenario: 幂等重放不重新采用
+- **WHEN** Memory head 已更新后重放原 Run 提交键
+- **THEN** 返回原 Run、版本与初始提供集合，不重新读新规则或再次执行
+
+#### Scenario: 旧记录未知与禁用脑包
+- **WHEN** 查看迁移前没有提供明细的 Run，或当前 Run 未启用脑包
+- **THEN** 前者保留原版本且明细标为未知，后者不注入 Memory 也不伪造采用；两者均不改变既有 Session context

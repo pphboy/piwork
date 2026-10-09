@@ -71,6 +71,7 @@ import { BrainFlow } from "./brain-flow.js";
 import { BrainLoop } from "./brain-loop.js";
 import { BrainCandidates } from "./brain-candidates.js";
 import type { RunExecutionContext } from "./runs.js";
+import type { HistoryMigration } from "@piwork/work-store";
 import { requireResourceCommand } from "./resource-commands.js";
 
 export const AGENT_PROTOCOL_VERSION = CONTRACT_VERSION;
@@ -90,6 +91,7 @@ export interface AgentRuntimeConfig {
   readonly contextIdentity?: string;
   readonly resolvedTools?: readonly string[];
   readonly initializationOnly?: boolean;
+  readonly historyMigration?: HistoryMigration;
   readonly correlationId?: string;
   readonly model: {
     readonly provider: string;
@@ -178,7 +180,18 @@ export class AgentApplication {
     }
     if (!config.deterministic) { await initializeChildAgentDirectory(); await initializeDefaultChildAgentModel(config.model); }
     mkdirSync(config.dataDirectory, { recursive: true, mode: 0o700 });
-    const store = WorkStore.open(join(config.dataDirectory, "work.sqlite"));
+    if(config.historyMigration && (config.initializationOnly!==true || config.historyMigration.workId!==config.workId
+      || config.historyMigration.operationId!==config.correlationId || config.historyMigration.fromSchema!==4 || config.historyMigration.toSchema!==5)) {
+      throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+    }
+    if (config.historyMigration) {
+      if (!config.serviceControl) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+      const authority = new WorkPrivateClient(config.serviceControl);
+      try { await authority.authorizeHistoryMigration(config.historyMigration); }
+      finally { authority.close(); }
+    }
+    const store = WorkStore.open(join(config.dataDirectory, "work.sqlite"), { workId: config.workId,
+      ...(config.historyMigration?{historyMigration:config.historyMigration}:{}) });
     let mcp: McpBridge | undefined;
     let control: WorkPrivateClient | undefined;
     let feedbackServer: ServiceFeedbackServer | undefined;
@@ -248,7 +261,7 @@ export class AgentApplication {
         { ...config.model, deterministic: config.deterministic },
         { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools, models, commands: loaded.commands, packageTools: new Map(packageTools),
           onSdkToolResult: (run, result) => candidates.recordSdkResult(run, result, new Map(packageTools)) },
-      )), undefined, models, prompt => { requireResourceCommand(loaded.commands, prompt); });
+      )), undefined, models, prompt => { requireResourceCommand(loaded.commands, prompt); }, activeBrain !== undefined);
       runs.recover();
       daemon.configure({
         modelCredentialStatus: "available",
@@ -649,7 +662,7 @@ async function loadValidatedWorkContext(context: CapturedWorkContext, workspace:
   onSkillsLoaded();
   const loaderFactory = (run?: RunExecutionContext) => createPackageResourceLoader({ root: "/run/piwork/packages", bindings: context.packageBindings,
     selection: context.packages, standaloneSkills: loaded.skills, agentsMd: context.agentsMd, workspace, agentDirectory,
-    ...(run ? { experience: store.feedback.experienceSnapshot(run.workId, run.adoptedExperienceVersion ?? 0) } : {}) });
+    ...(run ? { experience: adoptedMemory(store,run),memorySelection:run.adoptedMemorySelection??store.getRun(run.runId)?.adoptedMemorySelection } : {}) });
   const packageResources = await loaderFactory();
   const tools = new Set(context.resolvedTools);
   return {
@@ -673,6 +686,12 @@ async function loadValidatedWorkContext(context: CapturedWorkContext, workspace:
       };
     }),
   };
+}
+
+function adoptedMemory(store: WorkStore,run: RunExecutionContext) {
+  const snapshot=store.feedback.experienceSnapshot(run.workId,run.adoptedExperienceVersion??0);
+  const selection=run.adoptedMemorySelection??store.getRun(run.runId)?.adoptedMemorySelection;
+  return {version:snapshot.version,entries:snapshot.entries.filter(entry=>selection?.entryIds.includes(entry.entryId))};
 }
 
 function mcpServer(server: McpServer): McpBridgeServer {

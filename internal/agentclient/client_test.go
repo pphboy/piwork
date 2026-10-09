@@ -14,6 +14,11 @@ func TestReadinessRequiresCurrentIdentityAndContracts(t *testing.T) {
 	if err := VerifyReadiness(scope, "context-1", false, base); err != nil {
 		t.Fatal(err)
 	}
+	current := *base
+	current.WorkHistorySchemaVersion = 5
+	if err := VerifyReadiness(scope, "context-1", false, &current); err != nil {
+		t.Fatal("current history 5 rejected", err)
+	}
 	for _, version := range []uint32{0, 1, 2} {
 		value := *base
 		value.ChatControlsContractVersion = version
@@ -31,6 +36,7 @@ func TestReadinessRequiresCurrentIdentityAndContracts(t *testing.T) {
 		{"old-protocol", func(r *agentv1.ReadinessResponse) { r.ProtocolVersion = "v1" }},
 		{"old-context-contract", func(r *agentv1.ReadinessResponse) { r.ContextContractVersion = 0 }},
 		{"old-history", func(r *agentv1.ReadinessResponse) { r.WorkHistorySchemaVersion = 3 }},
+		{"unknown-future-history", func(r *agentv1.ReadinessResponse) { r.WorkHistorySchemaVersion = 6 }},
 		{"no-model-contract", func(r *agentv1.ReadinessResponse) { r.RunModelContractVersion = 0 }},
 		{"no-feedback-contract", func(r *agentv1.ReadinessResponse) { r.WorkFeedbackContractVersion = 0 }},
 		{"old-package-contract", func(r *agentv1.ReadinessResponse) { r.PackageContractVersion = 0 }},
