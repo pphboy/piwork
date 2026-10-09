@@ -171,7 +171,7 @@ func (a *Application) ScheduleRuntimeRefresh() error {
 		if err := a.ensureRuntimeCatalog(a.ctx, profile); err != nil {
 			return err
 		}
-		if err := a.Store.SyncDefaultWorkRuntime(a.ctx, profile.Revision, runtimeImageCatalogID(profile.Revision), runtimeModelCatalogID(profile.Revision), defaultWorkConfiguration(profile)); err != nil {
+		if err := a.Store.SyncDefaultWorkRuntime(a.ctx, profile.Revision, runtimeImageCatalogID(profile.Revision), defaultModelReference(profile), defaultWorkConfiguration(profile)); err != nil {
 			return err
 		}
 	}

@@ -67,3 +67,9 @@ CGO_ENABLED=0 go test -mod=readonly -tags=integration ./internal/coreapp \
 ```
 
 The first test executes the sequence above with two independent installations, takes the source offline, continues a real SDK Session, calls the target Go MCP, and re-exports the imported Work. The second uses actual Core subprocess SIGKILL boundaries and a final SIGTERM; production has no fault-injection endpoints. See [migration acceptance](go-migration-acceptance.md) for the recorded runs and incomplete later gates.
+
+## 多供应商模型绑定
+
+导入使用目标 Core 已启用供应商的模型及目标 Key，按接口、Model ID、规范化端点和能力描述匹配；源供应商 ID、API Key 和执行授权不迁移。缺少匹配默认模型时返回 TARGET_MODEL_UNAVAILABLE。多个目标供应商使 Session 偏好有歧义时，保留历史和 Thinking，由所有者显式重选。新增可选模型能力描述由支持它的读取器严格校验，旧读取器明确拒绝未知字段。见 [多供应商模型](ai-models.md)。
+
+模型配置现在按单条模型独立管理，不需 Provider 或能力 JSON。未知 Model ID 可按指定协议普通执行，其 `thinkingLevel:null` 表示未请求额外 Thinking，与旧记录缺省 Off 不同；Go/TS 历史校验、快照/helper 和跨安装重绑定保留该事实。公开 Chat 通过版本 3 协商 nullable 行为；旧读取器不支持时明确拒绝，需升级后导入，不能把 null 改成 Off。源模型身份、Key 和在途授权不随包复制。

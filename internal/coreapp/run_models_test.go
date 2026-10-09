@@ -27,7 +27,11 @@ func runModelFixture(t *testing.T) (*Application, serviceActor, string, string) 
 	config := defaultWorkConfiguration(profile)
 	raw, _ := json.Marshal(config)
 	contextID := "context-model-fixture1"
+	profileRaw, _ := json.Marshal(profile)
 	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec("UPDATE work_config_revisions SET runtime_profile_json=?,config_json=? WHERE work_id=? AND revision=1", string(profileRaw), string(raw), id); err != nil {
+			return err
+		}
 		if err := corestore.InsertContext(tx, corestore.ContextSnapshot{SnapshotID: contextID, WorkID: id, InternalRevision: func() *int64 { v := int64(1); return &v }(), ConfigurationJSON: string(raw), ImageIdentity: "sha256:" + strings.Repeat("a", 64), CreatedByUserID: owner.User.UserID, CreatedAt: packageNow()}); err != nil {
 			return err
 		}
@@ -168,8 +172,11 @@ func TestNativeRunModelDefaultAvailabilityAndEndpointNormalization(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.listRunModels(ctx, actor, id); err == nil {
-		t.Fatal("missing default became a successful empty list")
+	if list, err := a.listRunModels(ctx, actor, id); err != nil || !list.DefaultUnavailable || len(list.Models) != 0 {
+		t.Fatal("disabled models did not produce a confirmed empty catalog", err, list)
+	}
+	if _, _, err := a.resolveRunModel(ctx, actor, id, modelResolutionInput{ModelRef: contracts.Field[string]{Present: true, Null: true}}); err == nil {
+		t.Fatal("unavailable default allowed execution")
 	}
 	for input, expected := range map[string]string{"https://EXAMPLE.test:443/": "https://example.test", "http://localhost:80/api/": "http://localhost/api", "http://[::1]:80/": "http://[::1]", "https://example.test/a/../api": "https://example.test/api"} {
 		actual, err := normalizeRunModelEndpoint(&input)

@@ -98,6 +98,8 @@ export interface AgentRuntimeConfig {
     readonly id: string;
     readonly baseUrl?: string;
     readonly credentialPath?: string;
+    readonly api?: import("@piwork/contracts").ModelApi;
+    readonly capabilities?: import("@piwork/contracts").ModelCapabilities;
   };
   readonly tls: {
     readonly caCertificatePath: string;
@@ -385,7 +387,7 @@ export class AgentApplication {
         const saved = await this.sessions.setChatOptions(request.objectId, input, this.models);
         const model = JSON.parse(saved.modelPreferenceJson!) as RunModelSnapshot;
         return { valueJson: JSON.stringify({ sessionId: saved.sessionId, modelRef: model.modelRef, model: publicRunModel(model),
-          thinkingLevel: model.thinkingLevel ?? "off", availability: "available", checkedAt: saved.updatedAt }) };
+          thinkingLevel: model.thinkingLevel === undefined ? "off" : model.thinkingLevel, availability: "available", checkedAt: saved.updatedAt }) };
       }),
       lookupChatSubmission: unary((request: AgentContentRequest): AgentContentResponse => {
         this.verifyWork(request.workId);
@@ -458,6 +460,7 @@ export class AgentApplication {
           workFeedbackContractVersion: 1,
           workHistorySchemaVersion: this.store.schemaVersion,
           chatControlsContractVersion: CHAT_CONTROLS_CONTRACT_VERSION,
+          modelProviderContractVersion: 1,
         };
       }),
       prepareConfigurationChange: unary((request: PrepareConfigurationChangeRequest): PrepareConfigurationChangeResponse => {
@@ -469,10 +472,12 @@ export class AgentApplication {
         await this.runs.drain(Math.min(request.timeoutMs, 60_000));
         return { drained: true };
       }),
-      createSession: unary((request: CreateSessionRequest): Session => {
+      createSession: unary(async (request: CreateSessionRequest): Promise<Session> => {
         this.verifyWork(request.workId);
         this.assertAcceptingRuns();
-        return sessionMessage(this.sessions.create(request.idempotencyKey));
+        let record=this.sessions.create(request.idempotencyKey);
+        if(!record.modelPreferenceJson){try{const model=await this.models.resolve(null);const thinking=await this.models.thinking(model);if(thinking.defaultThinkingLevel===null)record=await this.sessions.setChatOptions(record.sessionId,{modelRef:null,thinkingLevel:null},this.models);}catch(error){if(!(error instanceof RunModelError))throw error;}}
+        return sessionMessage(record);
       }),
       listSessions: unary((request: ListSessionsRequest): ListSessionsResponse => {
         this.verifyWork(request.workId);
@@ -755,7 +760,7 @@ function sessionMessage(value: SessionRecord): Session {
   const preference = value.modelPreferenceJson ? JSON.parse(value.modelPreferenceJson) as RunModelSnapshot & { availability?: string } : undefined;
   return { workId: value.workId, sessionId: value.sessionId, sdkHistoryPath: value.sdkHistoryPath, createdAt: value.createdAt, updatedAt: value.updatedAt,
     modelPreferenceJson: preference ? JSON.stringify({ ...publicRunModel(preference), availability: preference.availability ?? "available" }) : "",
-    sourceJson: value.sourceJson ?? "", thinkingLevel: preference?.thinkingLevel ?? "off" };
+    sourceJson: value.sourceJson ?? "", thinkingUnrequested: preference?.thinkingLevel === null, thinkingLevel: preference?.thinkingLevel ?? "off" };
 }
 
 function runMessage(value: RunRecord): Run {
@@ -776,6 +781,7 @@ function runMessage(value: RunRecord): Run {
     earliestAvailableSequence: BigInt(value.earliestAvailableSequence), latestSequence: BigInt(value.latestSequence),
     actualModelJson: value.actualModelJson ? JSON.stringify(publicRunModel(JSON.parse(value.actualModelJson) as RunModelSnapshot)) : "",
     sourceJson: value.sourceJson ?? "", adoptedExperienceVersion: value.adoptedExperienceVersion ?? 0,
+    thinkingUnrequested: value.actualModelJson ? (JSON.parse(value.actualModelJson) as RunModelSnapshot).thinkingLevel === null : false,
     thinkingLevel: value.actualModelJson ? (JSON.parse(value.actualModelJson) as RunModelSnapshot).thinkingLevel ?? "off" : "off",
   };
 }
@@ -783,7 +789,7 @@ function runMessage(value: RunRecord): Run {
 function publicSessionLookup(value: SessionRecord) {
   const session = sessionMessage(value);
   return { workId: session.workId, sessionId: session.sessionId, createdAt: session.createdAt, updatedAt: session.updatedAt,
-    modelPreference: session.modelPreferenceJson ? JSON.parse(session.modelPreferenceJson) : null, thinkingLevel: session.thinkingLevel,
+    modelPreference: session.modelPreferenceJson ? JSON.parse(session.modelPreferenceJson) : null, thinkingLevel: session.thinkingUnrequested ? null : session.thinkingLevel,
     source: session.sourceJson ? JSON.parse(session.sourceJson) : { kind: "chat" } };
 }
 
@@ -792,7 +798,7 @@ function publicRunLookup(value: RunRecord) {
   return { workId: run.workId, sessionId: run.sessionId, runId: run.runId, submissionKey: run.submissionKey, state: run.state,
     promptDigest: run.promptDigest, finalText: run.finalText, acceptedAt: run.acceptedAt, startedAt: run.startedAt, finishedAt: run.finishedAt,
     earliestAvailableSequence: String(run.earliestAvailableSequence), latestSequence: String(run.latestSequence),
-    actualModel: run.actualModelJson ? JSON.parse(run.actualModelJson) : null, thinkingLevel: run.thinkingLevel,
+    actualModel: run.actualModelJson ? JSON.parse(run.actualModelJson) : null, thinkingLevel: run.thinkingUnrequested ? null : run.thinkingLevel,
     source: run.sourceJson ? JSON.parse(run.sourceJson) : { kind: "chat" }, adoptedExperienceVersion: run.adoptedExperienceVersion,
     ...(run.error ? { error: run.error } : {}) };
 }

@@ -368,6 +368,12 @@ func consoleAllowedAdmin(method, path string) bool {
 	}
 	if len(parts) == 1 {
 		switch parts[0] {
+		case "model-providers":
+			return method == "GET" || method == "POST"
+		case "models":
+			return method == "GET" || method == "POST"
+		case "model-tests":
+			return method == "POST"
 		case "status":
 			return method == "GET"
 		case "users", "skills", "packages":
@@ -380,6 +386,8 @@ func consoleAllowedAdmin(method, path string) bool {
 	}
 	if len(parts) == 2 {
 		switch parts[0] {
+		case "model-providers", "models":
+			return method == "GET" || method == "PATCH" || method == "DELETE"
 		case "skills":
 			return method == "GET" || method == "PUT" || method == "DELETE"
 		case "packages":
@@ -390,6 +398,10 @@ func consoleAllowedAdmin(method, path string) bool {
 	}
 	if len(parts) == 3 && method == "POST" {
 		switch parts[0] {
+		case "model-providers":
+			return parts[2] == "models" || parts[2] == "enable" || parts[2] == "disable"
+		case "models":
+			return parts[2] == "enable" || parts[2] == "disable"
 		case "users":
 			return parts[2] == "enable" || parts[2] == "disable" || parts[2] == "reset-credential"
 		case "skills":

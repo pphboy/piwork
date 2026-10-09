@@ -21,6 +21,18 @@ test("chat discovery distinguishes optional capability, default-only and an empt
   assert.equal(Check(ChatModelListSchema, { contractVersion: 1, models: [], defaultModel: { ...model, thinkingLevels: ["off", "off"] }, checkedAt, availability: "available" }), false);
 });
 
+test('Chat recovery projections distinguish empty authorization from unconfirmed capabilities without private fields',()=>{
+  const empty={contractVersion:2,models:[],defaultModel:null,defaultUnavailableReason:'Enable a model in AI models.',checkedAt,availability:'available'};
+  assert.equal(Check(ChatModelListSchema,empty),true);
+  const unavailable={modelRef:'model-unconfirmed-0001',label:'Provider / Unknown',provider:'openai',model:'unknown',reason:'capabilities-unconfirmed',recovery:'Configure a model definition in AI models.'};
+  assert.equal(Check(ChatModelListSchema,{...empty,unavailableModels:[unavailable]}),true);
+  assert.equal(Check(ChatModelListSchema,{...empty,unavailableModels:[{...unavailable,reason:'sdk-unsupported'}]}),true);
+  for(const extra of [{baseUrl:'https://private.invalid'},{credential:'synthetic-key'},{executionBindingId:'model-execution-private1'},{reason:'other'}]){
+    assert.equal(Check(ChatModelListSchema,{...empty,unavailableModels:[{...unavailable,...extra}]}),false);
+  }
+  assert.equal(Check(ChatModelListSchema,{contractVersion:1,models:[],defaultModel:model,checkedAt,availability:'available',unavailableModels:[unavailable]}),false);
+});
+
 test("chat settings require one complete pair and reject unknown fields and levels", () => {
   for (const thinkingLevel of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
     assert.equal(Check(SetSessionChatOptionsSchema, { modelRef: null, thinkingLevel }), true);
@@ -46,4 +58,11 @@ test("submission lookup and tool previews do not admit invented acceptance or pr
   assert.equal(Check(ToolResultPreviewSchema, { kind: "unavailable", truncated: false, isError: false }), true);
   assert.equal(Check(ToolResultPreviewSchema, { kind: "text", text: "x".repeat(65537), truncated: true, isError: false }), false);
   assert.equal(Check(ToolResultPreviewSchema, { kind: "text", text: "result", args: { token: "secret" }, truncated: false, isError: false }), false);
+});
+
+test('version 3 unknown Thinking admits only explicit ordinary null without relaxing legacy catalogs',()=>{
+ const unknown={...model,thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:'unknown'};
+ for(const version of [1,2,3])assert.equal(Check(ChatModelListSchema,{contractVersion:version,models:[unknown],defaultModel:unknown,checkedAt,availability:'available'}),version===3);
+ assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:null}),true);
+ for(const extra of [{thinkingAvailability:'unsupported'},{defaultThinkingLevel:'off'},{thinkingLevels:['off']},{credential:'synthetic-private'}])assert.equal(Check(ChatModelListSchema,{contractVersion:3,models:[{...unknown,...extra}],defaultModel:unknown,checkedAt,availability:'available'}),false);
 });

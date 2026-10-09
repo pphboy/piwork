@@ -201,7 +201,10 @@ export type RunModelDescription = Type.Static<typeof RunModelDescriptionSchema>;
 /** Private, non-secret descriptor. Endpoint is omitted from public projections. */
 export interface RunModelSnapshot extends RunModelDescription {
   readonly baseUrl?: string;
-  readonly thinkingLevel?: import("./chat-controls.js").ThinkingLevel;
+  readonly thinkingLevel?: import("./chat-controls.js").ThinkingLevel | null;
+  readonly api?: import("./ai-model-management.js").ModelApi;
+  readonly capabilities?: import("./ai-model-management.js").ModelCapabilities;
+  readonly executionBindingId?: string;
 }
 /** Work-private runtime authority. Never serialize this type in public DTOs. */
 export interface ServiceInteractionBinding {

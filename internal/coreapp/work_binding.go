@@ -4,20 +4,23 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"strings"
-	"time"
 
 	"piwork/internal/contracts"
+	"piwork/internal/corestore"
 )
 
 type catalogModelMetadata struct {
-	Version               int     `json:"version"`
-	Provider              string  `json:"provider"`
-	ID                    string  `json:"id"`
-	BaseURL               *string `json:"baseUrl,omitempty"`
-	CredentialRef         string  `json:"credentialRef"`
-	SourceRuntimeRevision int64   `json:"sourceRuntimeRevision"`
-	UpdatedAt             string  `json:"updatedAt"`
+	Version               int             `json:"version"`
+	Provider              string          `json:"provider"`
+	ID                    string          `json:"id"`
+	BaseURL               *string         `json:"baseUrl,omitempty"`
+	CredentialRef         string          `json:"credentialRef"`
+	SourceRuntimeRevision int64           `json:"sourceRuntimeRevision"`
+	UpdatedAt             string          `json:"updatedAt"`
+	API                   string          `json:"api,omitempty"`
+	ProviderID            string          `json:"providerId,omitempty"`
+	ManagedModelID        string          `json:"managedModelId,omitempty"`
+	Capabilities          json.RawMessage `json:"capabilities,omitempty"`
 }
 
 // resolveWorkBinding uses enabled catalog references only for a newly chosen
@@ -59,33 +62,33 @@ func (a *Application) resolveWorkBinding(ctx context.Context, config contracts.W
 		profile.AgentImage = selected
 	}
 	if modelChanged {
-		var kind string
-		var enabled bool
-		var raw string
-		err := a.Store.Read(ctx, func(tx *sql.Tx) error {
-			return tx.QueryRowContext(ctx, `SELECT kind,enabled,metadata_json FROM catalog_entries WHERE id=?`, config.ModelRef).Scan(&kind, &enabled, &raw)
-		})
-		if err != nil || kind != "model" || !enabled {
-			return "", "", 0, contracts.NewError("INVALID_CONFIGURATION", "modelRef")
-		}
 		var metadata catalogModelMetadata
-		if strictMetadata([]byte(raw), &metadata) != nil || metadata.Version != 1 || !providerPattern.MatchString(metadata.Provider) || strings.TrimSpace(metadata.ID) == "" || metadata.CredentialRef == "" || metadata.SourceRuntimeRevision < 1 {
-			return "", "", 0, contracts.NewError("INVALID_CONFIGURATION", "modelRef")
-		}
-		if _, err := time.Parse(time.RFC3339Nano, metadata.UpdatedAt); err != nil {
-			return "", "", 0, contracts.NewError("INVALID_CONFIGURATION", "modelRef")
-		}
-		if secret, err := a.files.ReadSecret(metadata.CredentialRef); err != nil || len(secret) < 2 || secret[len(secret)-1] != '\n' {
+		err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+			var err error
+			defaults, readErr := corestore.ReadDefaultWorkTx(tx)
+			if readErr != nil {
+				return readErr
+			}
+			current := defaults.Configuration == nil || defaults.Configuration.ModelRef != config.ModelRef
+			metadata, _, _, err = a.catalogModelTx(tx, string(config.ModelRef), current)
+			if err != nil {
+				return err
+			}
+			secret, err := a.files.ReadSecret(metadata.CredentialRef)
+			if err != nil || len(secret) < 2 || secret[len(secret)-1] != '\n' {
+				return contracts.NewError("INVALID_CONFIGURATION", "modelRef")
+			}
+			return nil
+		})
+		if err != nil {
 			return "", "", 0, contracts.NewError("INVALID_CONFIGURATION", "modelRef")
 		}
 		profile.Version = 1
 		profile.Revision = metadata.SourceRuntimeRevision
-		profile.Model.Provider = metadata.Provider
-		profile.Model.ID = metadata.ID
-		profile.Model.BaseURL = metadata.BaseURL
-		profile.Model.CredentialRef = metadata.CredentialRef
 		profile.UpdatedAt = metadata.UpdatedAt
+		bindProfileModel(&profile, string(config.ModelRef), metadata)
 	}
+
 	if profile.Version != 1 || profile.Revision < 1 || !capturedImageID.MatchString(imageID) || profile.AgentImage == "" || profile.Model.CredentialRef == "" {
 		return "", "", 0, contracts.NewError("INVALID_CONFIGURATION", "")
 	}

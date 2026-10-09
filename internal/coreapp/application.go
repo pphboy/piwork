@@ -86,6 +86,9 @@ type Application struct {
 	packageWG             sync.WaitGroup
 	packageSlots          chan struct{}
 	packageRunning        sync.Map
+	modelTests            sync.Map
+	modelTestTimeout      time.Duration
+	modelRegistryFault    func(string) error
 	packageStorageMu      sync.Mutex
 	packagesRecovered     bool
 	fileMu                sync.Mutex
@@ -263,6 +266,13 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 		return nil, err
 	}
 	if err := a.recoverPackageUploadFiles(ctx); err != nil {
+		root.Close()
+		cancel()
+		return nil, err
+	}
+	// Model management is available before Runtime is configured. Migrate its
+	// registry independently of runtime catalog/default initialization.
+	if err := a.adoptRuntimeModels(ctx); err != nil {
 		root.Close()
 		cancel()
 		return nil, err

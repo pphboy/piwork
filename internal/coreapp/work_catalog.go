@@ -32,7 +32,7 @@ func (a *Application) ensureRuntimeCatalog(ctx context.Context, profile RuntimeP
 	if now == "" {
 		now = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	return a.Store.Write(ctx, func(tx *sql.Tx) error {
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
 		for _, entry := range []struct {
 			id, kind, name, metadata string
 			mutable                  *string
@@ -40,6 +40,9 @@ func (a *Application) ensureRuntimeCatalog(ctx context.Context, profile RuntimeP
 			{string(runtimeImageCatalogID(profile.Revision)), "agent_image", fmt.Sprintf("Runtime image revision %d", profile.Revision), string(imageMetadata), &profile.AgentImage},
 			{string(runtimeModelCatalogID(profile.Revision)), "model", fmt.Sprintf("Runtime model revision %d", profile.Revision), string(modelMetadata), nil},
 		} {
+			if entry.kind == "model" && profile.ModelRef != "" {
+				continue
+			}
 			var kind, metadata string
 			var mutable *string
 			err := tx.QueryRowContext(ctx, `SELECT kind,mutable_reference,metadata_json FROM catalog_entries WHERE id=?`, entry.id).Scan(&kind, &mutable, &metadata)
@@ -57,5 +60,8 @@ func (a *Application) ensureRuntimeCatalog(ctx context.Context, profile RuntimeP
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	return a.adoptRuntimeModels(ctx)
 }

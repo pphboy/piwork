@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package piwork.core.services.v1;
 
-message Empty {}
+message Empty { optional uint32 model_provider_contract_version = 1; }
 // Authenticated only through the current agentd runtime mTLS identity.
 message WorkPrivateRequest { string input_json = 1; }
 message WorkPrivateResponse { string value_json = 1; }

@@ -50,7 +50,7 @@ export class AgentSessionService {
   async setModelPreference(sessionId: string, modelRef: string | null, models: RunModelResolver): Promise<SessionRecord> {
     const record = this.requireRecord(sessionId);
     const savedThinking = record.modelPreferenceJson ? (JSON.parse(record.modelPreferenceJson) as RunModelSnapshot).thinkingLevel : undefined;
-    try { return await this.setChatOptions(sessionId, { modelRef, thinkingLevel: savedThinking ?? "off" }, models); }
+    try { return await this.setChatOptions(sessionId, { modelRef, thinkingLevel: savedThinking === undefined ? "off" : savedThinking }, models); }
     catch (error) {
       if (savedThinking !== undefined || !(error instanceof RunModelError) || error.modelErrorCode !== "MODEL_NOT_SUPPORTED") throw error;
       // The original model-only API can retain legacy custom models without
@@ -66,7 +66,7 @@ export class AgentSessionService {
     const { modelRef, thinkingLevel } = options;
     const model = await models.resolve(modelRef);
     const levels = models.thinking ? (await models.thinking(model)).thinkingLevels : ["off"];
-    if (!levels.includes(thinkingLevel)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Choose a Thinking level supported by this model.");
+    if (!(thinkingLevel === null ? levels.length === 0 : levels.includes(thinkingLevel))) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Choose a Thinking level supported by this model.");
     this.requireRecord(sessionId);
     return this.store.setSessionModelPreference(this.workId, sessionId, JSON.stringify({ ...model, thinkingLevel, availability: "available" }), this.now().toISOString());
   }
@@ -74,13 +74,14 @@ export class AgentSessionService {
   async chatOptions(sessionId: string, models: RunModelResolver): Promise<SessionChatOptions> {
     const record = this.requireRecord(sessionId, false);
     const saved = record.modelPreferenceJson ? JSON.parse(record.modelPreferenceJson) as RunModelSnapshot & { availability?: string } : undefined;
-    const modelRef = saved?.modelRef ?? null, thinkingLevel = saved?.thinkingLevel ?? "off";
+    const modelRef = saved?.modelRef ?? null; let thinkingLevel = saved?.thinkingLevel === undefined ? "off" as const : saved.thinkingLevel;
     let model: RunModelSnapshot;
     let available = saved?.availability !== "unavailable" && (!this.contextIdentity || record.contextIdentity === this.contextIdentity);
     try {
       model = await models.resolve(modelRef);
       const levels = models.thinking ? (await models.thinking(model)).thinkingLevels : ["off"];
-      available = available && levels.includes(thinkingLevel);
+      if(!saved && !levels.length) thinkingLevel=null;
+      available = available && (thinkingLevel === null ? levels.length === 0 : levels.includes(thinkingLevel));
     } catch (error) {
       if (!saved) throw error;
       model = saved; available = false;

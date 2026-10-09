@@ -7,15 +7,22 @@ import type { WorkPrivateClient } from "./work-private-client.js";
 import { resolveProductionModel } from "./pi-sdk-executor.js";
 
 export class RunModelError extends Error {
-  constructor(readonly modelErrorCode: "MODEL_UNAVAILABLE" | "MODEL_NOT_SUPPORTED" | "MODEL_LIST_UNAVAILABLE" | "RUN_MODEL_SELECTION_UNSUPPORTED" | "THINKING_LEVEL_UNSUPPORTED" | "CHAT_OPTIONS_UNAVAILABLE" | "SLASH_COMMAND_UNKNOWN" | "SLASH_COMMAND_UNSUPPORTED" | "SLASH_COMMAND_UNAVAILABLE" | "CHAT_COMMANDS_UNAVAILABLE", message: string) {
+  constructor(readonly modelErrorCode: "MODEL_UNAVAILABLE" | "MODEL_NOT_SUPPORTED" | "MODEL_LIST_UNAVAILABLE" | "RUN_MODEL_SELECTION_UNSUPPORTED" | "THINKING_LEVEL_UNSUPPORTED" | "CHAT_OPTIONS_UNAVAILABLE" | "SLASH_COMMAND_UNKNOWN" | "SLASH_COMMAND_UNSUPPORTED" | "SLASH_COMMAND_UNAVAILABLE" | "CHAT_COMMANDS_UNAVAILABLE", message: string, readonly capabilityReason?: "capabilities-unconfirmed" | "sdk-unsupported") {
     super(message); this.name = "RunModelError";
   }
+}
+const capabilityRecovery = (reason: "capabilities-unconfirmed" | "sdk-unsupported") => reason === "capabilities-unconfirmed"
+  ? "Capabilities unconfirmed. Ask an administrator to configure a compatible model definition in AI models."
+  : "Unsupported by this Work Agent. Ask an administrator to check the model definition or update the Agent image, then Apply.";
+function capabilityFailure(error: unknown): RunModelError {
+  const reason = error instanceof Error && /capabilities are unconfirmed/.test(error.message) ? "capabilities-unconfirmed" : "sdk-unsupported";
+  return new RunModelError("MODEL_NOT_SUPPORTED", "This Work cannot confirm the model's Thinking capabilities. " + capabilityRecovery(reason), reason);
 }
 export interface RunModelResolver {
   list(): Promise<RunModelList>;
   resolve(modelRef: string | null): Promise<RunModelSnapshot>;
   credential(model: RunModelSnapshot): Promise<string>;
-  thinking?(model: RunModelSnapshot): Promise<{ thinkingLevels: ThinkingLevel[]; defaultThinkingLevel: ThinkingLevel }>;
+  thinking?(model: RunModelSnapshot): Promise<{ thinkingLevels: ThinkingLevel[]; defaultThinkingLevel: ThinkingLevel | null; thinkingAvailability?: "unknown" }>;
 }
 export class AgentRunModels implements RunModelResolver {
   constructor(private readonly config: AgentRuntimeConfig["model"] & { deterministic: boolean },
@@ -39,7 +46,7 @@ export class AgentRunModels implements RunModelResolver {
     let model: RunModelSnapshot;
     if (modelRef === null) {
       model = { modelRef: null, label: this.config.id, provider: this.config.provider, model: this.config.id,
-        ...(this.config.baseUrl ? { baseUrl: normalizeModelBaseUrl(this.config.baseUrl) } : {}) };
+        ...(this.config.baseUrl ? { baseUrl: normalizeModelBaseUrl(this.config.baseUrl) } : {}), ...(this.config.api?{api:this.config.api}:{}), ...(this.config.capabilities?{capabilities:this.config.capabilities}:{}) };
       if (this.control) {
         try { model = (await this.control.resolveModel(null)).model; this.assertDefault(model); }
         catch { throw new RunModelError("MODEL_UNAVAILABLE", "Active Work model is unavailable."); }
@@ -53,38 +60,52 @@ export class AgentRunModels implements RunModelResolver {
     await this.assertSupported(model);
     return model;
   }
-  async thinking(model: RunModelSnapshot): Promise<{ thinkingLevels: ThinkingLevel[]; defaultThinkingLevel: ThinkingLevel }> {
+  async thinking(model: RunModelSnapshot): Promise<{ thinkingLevels: ThinkingLevel[]; defaultThinkingLevel: ThinkingLevel | null; thinkingAvailability?: "unknown" }> {
     try {
       if (this.config.deterministic && model.provider === "piwork-deterministic" && /^fixture-v[12]$/.test(model.model)) {
         return { thinkingLevels: ["off"], defaultThinkingLevel: "off" };
       }
       const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
-      const actual = resolveProductionModel(runtime, { provider: model.provider, id: model.model, ...(model.baseUrl ? { baseUrl: model.baseUrl } : {}) }, true);
+      try { resolveProductionModel(runtime, {provider:model.provider,id:model.model,...(model.baseUrl?{baseUrl:model.baseUrl}:{}),...(model.api?{api:model.api}:{}),...(model.capabilities?{capabilities:model.capabilities}:{})},true); }
+      catch(error) { if(error instanceof Error && /capabilities are unconfirmed/.test(error.message)){resolveProductionModel(runtime,{provider:model.provider,id:model.model,...(model.baseUrl?{baseUrl:model.baseUrl}:{}),...(model.api?{api:model.api}:{})}); return {thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:"unknown"};} throw error; }
+      const actual = resolveProductionModel(runtime, { provider: model.provider, id: model.model, ...(model.baseUrl ? { baseUrl: model.baseUrl } : {}), ...(model.api?{api:model.api}:{}), ...(model.capabilities?{capabilities:model.capabilities}:{}) }, true);
       const thinkingLevels = getSupportedThinkingLevels(actual);
       const defaultThinkingLevel = clampThinkingLevel(actual, "off");
       if (!thinkingLevels.length || thinkingLevels.some(level => !THINKING_LEVELS.includes(level)) || !thinkingLevels.includes(defaultThinkingLevel)) throw new Error();
       return { thinkingLevels, defaultThinkingLevel };
-    } catch { throw new RunModelError("MODEL_NOT_SUPPORTED", "This Work cannot confirm the model's Thinking capabilities."); }
+    } catch (error) { throw capabilityFailure(error); }
   }
   async chatList(): Promise<ChatModelList> {
     try {
       const candidates = this.control ? await this.control.models() : { models: [], defaultModel: await this.resolve(null), checkedAt: new Date().toISOString() };
-      this.assertDefault(candidates.defaultModel);
+      if(!("defaultUnavailable" in candidates && candidates.defaultUnavailable)) this.assertDefault(candidates.defaultModel);
       const describe = async (model: RunModelSnapshot): Promise<ChatModel> => {
         const capabilities = await this.thinking(model);
         let label = model.label;
         if (model.provider !== 'piwork-deterministic' && (label === model.model || /^Runtime(?: model)? revision\b/i.test(label))) {
           const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
-          label = resolveProductionModel(runtime, { provider:model.provider,id:model.model,...(model.baseUrl?{baseUrl:model.baseUrl}:{}) }, true).name;
+          label = resolveProductionModel(runtime, { provider:model.provider,id:model.model,...(model.baseUrl?{baseUrl:model.baseUrl}:{}), ...(model.api?{api:model.api}:{}), ...(model.capabilities?{capabilities:model.capabilities}:{}) }).name;
         }
-        return { ...publicRunModel(model), label, ...capabilities };
+        return capabilities.defaultThinkingLevel===null ? {...publicRunModel(model),label,thinkingAvailability:"unknown",thinkingLevels:[],defaultThinkingLevel:null} : {...publicRunModel(model),label,thinkingLevels:capabilities.thinkingLevels,defaultThinkingLevel:capabilities.defaultThinkingLevel};
       };
       const models: ChatModel[] = [];
+      const unavailableModels: NonNullable<Extract<ChatModelList, { contractVersion: 2 }>["unavailableModels"]> = [];
+      const unavailable = (model: RunModelSnapshot, error: unknown) => {
+        const reason = error instanceof RunModelError && error.capabilityReason ? error.capabilityReason : "sdk-unsupported";
+        return { ...publicRunModel(model), reason, recovery: capabilityRecovery(reason) };
+      };
       for (const model of candidates.models) {
-        try { await this.assertSupported(model); models.push(await describe(model)); } catch { /* Only confirmed SDK models are offered. */ }
+        try { await this.assertSupported(model); models.push(await describe(model)); } catch (error) { unavailableModels.push(unavailable(model, error)); }
       }
-      const defaultModel = await describe(candidates.defaultModel);
-      return { contractVersion: 1, models, defaultModel, checkedAt: candidates.checkedAt, availability: "available" };
+      let defaultModel: ChatModel|null=null;
+      let defaultUnavailableReason = candidates.models.length === 0
+        ? "No enabled models are available. Ask an administrator to enable a model in AI models."
+        : "Work default is unavailable. Choose an available model or ask an administrator to check its enabled state and credentials.";
+      if(!("defaultUnavailable" in candidates && candidates.defaultUnavailable)) {
+        try{defaultModel=await describe(candidates.defaultModel);}catch (error) { defaultUnavailableReason=unavailable(candidates.defaultModel,error).recovery; }
+      }
+      if(defaultModel && !unavailableModels.length && defaultModel.defaultThinkingLevel!==null && models.every(m=>m.defaultThinkingLevel!==null)) return {contractVersion:1,models:models as Extract<ChatModelList,{contractVersion:1}>['models'],defaultModel:defaultModel as Extract<ChatModelList,{contractVersion:1}>['defaultModel'],checkedAt:candidates.checkedAt,availability:"available"};
+      return {contractVersion:3,models,defaultModel,...(!defaultModel?{defaultUnavailableReason}:{}),...(unavailableModels.length?{unavailableModels}:{}),checkedAt:candidates.checkedAt,availability:"available"};
     } catch { throw new RunModelError("MODEL_LIST_UNAVAILABLE", "Available chat models could not be loaded. Retry when the Work is ready."); }
   }
   async credential(model: RunModelSnapshot): Promise<string> {
@@ -108,11 +129,11 @@ export class AgentRunModels implements RunModelResolver {
       if (!model.provider || !model.model || !model.label || normalizeModelBaseUrl(model.baseUrl) !== model.baseUrl) throw new Error();
       if (this.config.deterministic && model.provider === "piwork-deterministic" && /^fixture-v[12]$/.test(model.model)) return;
       const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
-      resolveProductionModel(runtime, { provider: model.provider, id: model.model, ...(model.baseUrl ? { baseUrl: model.baseUrl } : {}) });
-    } catch { throw new RunModelError("MODEL_NOT_SUPPORTED", "Selected model is unsupported by this Work's Pi SDK."); }
+      resolveProductionModel(runtime, { provider: model.provider, id: model.model, ...(model.baseUrl ? { baseUrl: model.baseUrl } : {}), ...(model.api?{api:model.api}:{}), ...(model.capabilities?{capabilities:model.capabilities}:{}) });
+    } catch (error) { throw capabilityFailure(error); }
   }
   private assertDefault(model: RunModelSnapshot): void {
-    if (model.provider !== this.config.provider || model.model !== this.config.id || model.baseUrl !== normalizeModelBaseUrl(this.config.baseUrl)) {
+    if (model.provider !== this.config.provider || model.model !== this.config.id || model.baseUrl !== normalizeModelBaseUrl(this.config.baseUrl) || model.api !== this.config.api || JSON.stringify(model.capabilities) !== JSON.stringify(this.config.capabilities)) {
       throw new RunModelError("MODEL_UNAVAILABLE", "Accepted Work model no longer matches this context.");
     }
   }

@@ -69,14 +69,16 @@ test.beforeAll(async () => {
     if (req.url === "/api/v1/me") { res.end(JSON.stringify(req.headers.authorization === "Bearer second-admin-private-token" ? users.find(item => item.account === "new-admin") : users[0])); return; }
     if (req.url === "/api/v1/admin/status") { res.end(JSON.stringify({ adminApiVersion: 1, state: "READY", ready: true,
       checks: { administrator: true, runtimeConfigured: true, runtimeAvailable: true, filesystemMigrationReady: true } })); return; }
+    if (req.url === "/api/v1/admin/model-providers") {res.end(JSON.stringify({providers:[]}));return;}
+    if (req.url === "/api/v1/admin/models") {res.end(JSON.stringify({models:[{id:"managed-test-00001",providerId:"provider-test-00001",modelRef:"model-test-00000001",name:"Fixture model",model:"new-model",providerName:"Fixture provider",api:"anthropic-messages",enabled:true,providerEnabled:true,credentialAvailable:true,capabilityStatus:"sdk"}]}));return;}
     if (req.url === "/api/v1/admin/runtime") { if (req.method === "PUT") { runtimeSaves.push(body); runtimeConfigured = true;
         runtimeLast = { configured: true, agentImage: body.agentImage,
-          model: { provider: body.provider, id: body.model, credentialAvailable: true }, updatedAt: new Date().toISOString() };
+          modelRef: body.modelRef, model: { provider: body.provider ?? "anthropic", id: body.model ?? "new-model", credentialAvailable: true }, updatedAt: new Date().toISOString() };
         res.end(JSON.stringify({ runtime: runtimeLast,
         status: { adminApiVersion: 1, state: "RUNTIME_UNAVAILABLE", ready: false,
           checks: { administrator: true, runtimeConfigured: true, runtimeAvailable: false, filesystemMigrationReady: true } } })); }
       else res.end(JSON.stringify(runtimeConfigured ? runtimeLast ?? { configured: true, agentImage: "piwork-agentd:local",
-        model: { provider: "anthropic", id: "fixture", credentialAvailable: true }, updatedAt: new Date().toISOString() } :
+        modelRef:"model-test-00000001", model: { provider: "anthropic", id: "fixture", credentialAvailable: true }, updatedAt: new Date().toISOString() } :
         { configured: false })); return; }
     if (req.url === "/api/v1/admin/default-work") { if (req.method === "GET") defaultReads += 1;
       if (req.method === "PATCH") { defaultPatches.push(body);
@@ -223,12 +225,12 @@ test('default draft submits only edited fields and retains unknown public config
   await page.locator('details').filter({has:page.getByText('Public configuration',{exact:true})}).count();
   expect(await page.locator('body').innerText()).not.toContain('networkMode');
 });
-test('runtime sends write-only credential and model schema, clears secret, and separates readiness',async({page})=>{
+test('runtime references a configured model without sending credentials and separates readiness',async({page})=>{
   await login(page); await page.goto(base+'/runtime'); await page.getByRole('button',{name:'Edit runtime',exact:true}).click();
-  await page.getByLabel('Agent image',{exact:true}).fill('piwork-agentd:fixture'); await page.getByLabel('Model provider',{exact:true}).fill('anthropic'); await page.getByLabel('Model ID',{exact:true}).fill('new-model'); await page.getByLabel('API Key',{exact:true}).fill('write-only-browser-secret');
+  await page.getByLabel('Agent image',{exact:true}).fill('piwork-agentd:fixture'); await page.getByLabel('AI model',{exact:true}).selectOption('model-test-00000001');
   await page.getByRole('button',{name:'Save runtime',exact:true}).click(); await expect(page.getByRole('button',{name:'Edit runtime',exact:true})).toBeVisible();
-  expect(runtimeSaves.at(-1)).toEqual({agentImage:'piwork-agentd:fixture',provider:'anthropic',model:'new-model',credential:'write-only-browser-secret'});
-  expect(await page.locator('body').innerText()).not.toContain('write-only-browser-secret'); await page.getByRole('button',{name:'Edit runtime',exact:true}).click(); await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('');
+  expect(runtimeSaves.at(-1)).toEqual({agentImage:'piwork-agentd:fixture',modelRef:'model-test-00000001'});
+  expect(await page.locator('body').innerText()).not.toContain('write-only-browser-secret'); await page.getByRole('button',{name:'Edit runtime',exact:true}).click(); await expect(page.getByLabel('API Key',{exact:true})).toHaveCount(0);
 });
 test('Skill directory preflight, actual multipart bytes, immutable identity, and 204 removal',async({page})=>{
   const dir=join(root,'code-review');await mkdir(dir,{recursive:true});await writeFile(join(dir,'SKILL.md'),'# Browser Skill\n');await writeFile(join(dir,'reference.md'),'reference-bytes');
@@ -256,7 +258,7 @@ test('Package lost acceptance recovers original key and payload without duplicat
 test('malformed successful runtime response requires readback rather than claiming success',async({page})=>{
   await login(page);await page.goto(base+'/runtime');await page.getByRole('button',{name:'Edit runtime',exact:true}).click();
   await page.route('**/console/api/admin/runtime',route=>route.request().method()==='PUT'?route.fulfill({status:200,contentType:'application/json',body:'{}'}):route.continue());
-  await page.getByLabel('API Key',{exact:true}).fill('unknown-runtime-secret');await page.getByRole('button',{name:'Save runtime',exact:true}).click();await expect(page.getByText(/runtime acceptance response is incomplete/)).toBeVisible();expect(await page.getByLabel('API Key',{exact:true}).inputValue()).toBe('');
+  await page.getByLabel('AI model',{exact:true}).selectOption('model-test-00000001');await page.getByRole('button',{name:'Save runtime',exact:true}).click();await expect(page.getByText(/Read current runtime before saving again/)).toBeVisible();await expect(page.getByLabel('API Key',{exact:true})).toHaveCount(0);
 });
 test('Operation observation is serial and does not re-submit acceptance',async({page})=>{
   operationState='running';operationDelayMs=1200;operationMaxInFlight=0;const accepts=packageAccepts.length;

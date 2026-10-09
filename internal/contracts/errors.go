@@ -24,6 +24,9 @@ type errorDefinition struct {
 }
 
 var publicErrors = map[string]errorDefinition{
+	"DEFAULT_WORK_NOT_CONFIGURED":       {409, "Configure Runtime before editing Default Work", false},
+	"MODEL_IN_USE":                      {409, "Remove the model's configuration dependencies before deleting it", false},
+	"MODEL_TEST_BUSY":                   {429, "A model test is already running for this administrator", true},
 	"CHAT_OPTIONS_UNSUPPORTED":          {501, "This Work does not support the chat controls contract", false},
 	"THINKING_LEVEL_UNSUPPORTED":        {409, "Choose a Thinking level supported by this model", false},
 	"SLASH_COMMAND_UNKNOWN":             {400, "Choose an available resource command or send as text", false},

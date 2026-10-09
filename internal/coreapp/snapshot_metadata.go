@@ -228,6 +228,12 @@ func (a *Application) collectSnapshotMetadata(ctx context.Context, workID, curre
 			}
 			modelKey := modelKeys[string(source.Config.ModelRef)]
 			requirement := map[string]any{"key": modelKey, "provider": profile.Model.Provider, "model": profile.Model.ID, "baseUrl": profile.Model.BaseURL}
+			if profile.Model.API != "" {
+				requirement["api"] = profile.Model.API
+			}
+			if len(profile.Model.Capabilities) > 0 {
+				requirement["capabilities"] = profile.Model.Capabilities
+			}
 			if prior, exists := modelRequirements[modelKey]; exists && !bytes.Equal(snapshotRaw(prior), snapshotRaw(requirement)) {
 				return snapshotInvalid("context.model")
 			}

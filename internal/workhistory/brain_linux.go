@@ -468,14 +468,28 @@ func validHistoryModel(value any) bool {
 	}
 	description := map[string]any{}
 	for key, v := range model {
-		if key != "baseUrl" && key != "availability" && key != "thinkingLevel" {
+		if key != "baseUrl" && key != "availability" && key != "thinkingLevel" && key != "api" && key != "capabilities" && key != "executionBindingId" {
 			description[key] = v
 		}
 	}
 	if contracts.Validate("RunModelDescriptionSchema", description) != nil {
 		return false
 	}
-	if level, exists := model["thinkingLevel"]; exists && contracts.Validate("ThinkingLevelSchema", level) != nil {
+	if api, exists := model["api"]; exists {
+		if contracts.Validate("ModelApiSchema", api) != nil {
+			return false
+		}
+		if api == "openai-responses" && model["provider"] != "openai" || api == "anthropic-messages" && model["provider"] != "anthropic" {
+			return false
+		}
+	}
+	if caps, exists := model["capabilities"]; exists && contracts.Validate("ModelCapabilitiesSchema", caps) != nil {
+		return false
+	}
+	if binding, exists := model["executionBindingId"]; exists && contracts.Validate("ResourceIdSchema", binding) != nil {
+		return false
+	}
+	if level, exists := model["thinkingLevel"]; exists && contracts.Validate("ThinkingSettingSchema", level) != nil {
 		return false
 	}
 	if v, exists := model["availability"]; exists && !oneOf(v, "available", "unavailable") {

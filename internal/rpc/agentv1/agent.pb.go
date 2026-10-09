@@ -250,29 +250,30 @@ func (x *ReadinessRequest) GetInstanceId() string {
 }
 
 type ReadinessResponse struct {
-	state                       protoimpl.MessageState `protogen:"open.v1"`
-	WorkId                      string                 `protobuf:"bytes,1,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
-	Generation                  uint64                 `protobuf:"varint,2,opt,name=generation,proto3" json:"generation,omitempty"`
-	InstanceId                  string                 `protobuf:"bytes,3,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	ProtocolVersion             string                 `protobuf:"bytes,4,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
-	AcceptingRuns               bool                   `protobuf:"varint,5,opt,name=accepting_runs,json=acceptingRuns,proto3" json:"accepting_runs,omitempty"`
-	Draining                    bool                   `protobuf:"varint,6,opt,name=draining,proto3" json:"draining,omitempty"`
-	ContextContractVersion      uint32                 `protobuf:"varint,7,opt,name=context_contract_version,json=contextContractVersion,proto3" json:"context_contract_version,omitempty"`
-	ContextIdentity             string                 `protobuf:"bytes,8,opt,name=context_identity,json=contextIdentity,proto3" json:"context_identity,omitempty"`
-	InitializationComplete      bool                   `protobuf:"varint,9,opt,name=initialization_complete,json=initializationComplete,proto3" json:"initialization_complete,omitempty"`
-	LoadedSkills                []*LoadedSkill         `protobuf:"bytes,10,rep,name=loaded_skills,json=loadedSkills,proto3" json:"loaded_skills,omitempty"`
-	ResolvedTools               []string               `protobuf:"bytes,11,rep,name=resolved_tools,json=resolvedTools,proto3" json:"resolved_tools,omitempty"`
-	ActiveRunCount              uint32                 `protobuf:"varint,12,opt,name=active_run_count,json=activeRunCount,proto3" json:"active_run_count,omitempty"`
-	PackageContractVersion      uint32                 `protobuf:"varint,13,opt,name=package_contract_version,json=packageContractVersion,proto3" json:"package_contract_version,omitempty"`
-	LoadedPackages              []*LoadedPackage       `protobuf:"bytes,14,rep,name=loaded_packages,json=loadedPackages,proto3" json:"loaded_packages,omitempty"`
-	PackageResources            []*PackageResource     `protobuf:"bytes,15,rep,name=package_resources,json=packageResources,proto3" json:"package_resources,omitempty"`
-	PackageDiagnostics          []*PackageDiagnostic   `protobuf:"bytes,16,rep,name=package_diagnostics,json=packageDiagnostics,proto3" json:"package_diagnostics,omitempty"`
-	RunModelContractVersion     uint32                 `protobuf:"varint,17,opt,name=run_model_contract_version,json=runModelContractVersion,proto3" json:"run_model_contract_version,omitempty"`
-	WorkFeedbackContractVersion uint32                 `protobuf:"varint,18,opt,name=work_feedback_contract_version,json=workFeedbackContractVersion,proto3" json:"work_feedback_contract_version,omitempty"`
-	WorkHistorySchemaVersion    uint32                 `protobuf:"varint,19,opt,name=work_history_schema_version,json=workHistorySchemaVersion,proto3" json:"work_history_schema_version,omitempty"`
-	ChatControlsContractVersion uint32                 `protobuf:"varint,20,opt,name=chat_controls_contract_version,json=chatControlsContractVersion,proto3" json:"chat_controls_contract_version,omitempty"`
-	unknownFields               protoimpl.UnknownFields
-	sizeCache                   protoimpl.SizeCache
+	state                        protoimpl.MessageState `protogen:"open.v1"`
+	WorkId                       string                 `protobuf:"bytes,1,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	Generation                   uint64                 `protobuf:"varint,2,opt,name=generation,proto3" json:"generation,omitempty"`
+	InstanceId                   string                 `protobuf:"bytes,3,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	ProtocolVersion              string                 `protobuf:"bytes,4,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	AcceptingRuns                bool                   `protobuf:"varint,5,opt,name=accepting_runs,json=acceptingRuns,proto3" json:"accepting_runs,omitempty"`
+	Draining                     bool                   `protobuf:"varint,6,opt,name=draining,proto3" json:"draining,omitempty"`
+	ContextContractVersion       uint32                 `protobuf:"varint,7,opt,name=context_contract_version,json=contextContractVersion,proto3" json:"context_contract_version,omitempty"`
+	ContextIdentity              string                 `protobuf:"bytes,8,opt,name=context_identity,json=contextIdentity,proto3" json:"context_identity,omitempty"`
+	InitializationComplete       bool                   `protobuf:"varint,9,opt,name=initialization_complete,json=initializationComplete,proto3" json:"initialization_complete,omitempty"`
+	LoadedSkills                 []*LoadedSkill         `protobuf:"bytes,10,rep,name=loaded_skills,json=loadedSkills,proto3" json:"loaded_skills,omitempty"`
+	ResolvedTools                []string               `protobuf:"bytes,11,rep,name=resolved_tools,json=resolvedTools,proto3" json:"resolved_tools,omitempty"`
+	ActiveRunCount               uint32                 `protobuf:"varint,12,opt,name=active_run_count,json=activeRunCount,proto3" json:"active_run_count,omitempty"`
+	PackageContractVersion       uint32                 `protobuf:"varint,13,opt,name=package_contract_version,json=packageContractVersion,proto3" json:"package_contract_version,omitempty"`
+	LoadedPackages               []*LoadedPackage       `protobuf:"bytes,14,rep,name=loaded_packages,json=loadedPackages,proto3" json:"loaded_packages,omitempty"`
+	PackageResources             []*PackageResource     `protobuf:"bytes,15,rep,name=package_resources,json=packageResources,proto3" json:"package_resources,omitempty"`
+	PackageDiagnostics           []*PackageDiagnostic   `protobuf:"bytes,16,rep,name=package_diagnostics,json=packageDiagnostics,proto3" json:"package_diagnostics,omitempty"`
+	RunModelContractVersion      uint32                 `protobuf:"varint,17,opt,name=run_model_contract_version,json=runModelContractVersion,proto3" json:"run_model_contract_version,omitempty"`
+	WorkFeedbackContractVersion  uint32                 `protobuf:"varint,18,opt,name=work_feedback_contract_version,json=workFeedbackContractVersion,proto3" json:"work_feedback_contract_version,omitempty"`
+	WorkHistorySchemaVersion     uint32                 `protobuf:"varint,19,opt,name=work_history_schema_version,json=workHistorySchemaVersion,proto3" json:"work_history_schema_version,omitempty"`
+	ChatControlsContractVersion  uint32                 `protobuf:"varint,20,opt,name=chat_controls_contract_version,json=chatControlsContractVersion,proto3" json:"chat_controls_contract_version,omitempty"`
+	ModelProviderContractVersion *uint32                `protobuf:"varint,21,opt,name=model_provider_contract_version,json=modelProviderContractVersion,proto3,oneof" json:"model_provider_contract_version,omitempty"`
+	unknownFields                protoimpl.UnknownFields
+	sizeCache                    protoimpl.SizeCache
 }
 
 func (x *ReadinessResponse) Reset() {
@@ -441,6 +442,13 @@ func (x *ReadinessResponse) GetWorkHistorySchemaVersion() uint32 {
 func (x *ReadinessResponse) GetChatControlsContractVersion() uint32 {
 	if x != nil {
 		return x.ChatControlsContractVersion
+	}
+	return 0
+}
+
+func (x *ReadinessResponse) GetModelProviderContractVersion() uint32 {
+	if x != nil && x.ModelProviderContractVersion != nil {
+		return *x.ModelProviderContractVersion
 	}
 	return 0
 }
@@ -967,6 +975,7 @@ type Session struct {
 	ModelPreferenceJson string                 `protobuf:"bytes,6,opt,name=model_preference_json,json=modelPreferenceJson,proto3" json:"model_preference_json,omitempty"`
 	SourceJson          string                 `protobuf:"bytes,7,opt,name=source_json,json=sourceJson,proto3" json:"source_json,omitempty"`
 	ThinkingLevel       string                 `protobuf:"bytes,8,opt,name=thinking_level,json=thinkingLevel,proto3" json:"thinking_level,omitempty"`
+	ThinkingUnrequested bool                   `protobuf:"varint,9,opt,name=thinking_unrequested,json=thinkingUnrequested,proto3" json:"thinking_unrequested,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1055,6 +1064,13 @@ func (x *Session) GetThinkingLevel() string {
 		return x.ThinkingLevel
 	}
 	return ""
+}
+
+func (x *Session) GetThinkingUnrequested() bool {
+	if x != nil {
+		return x.ThinkingUnrequested
+	}
+	return false
 }
 
 type CreateSessionRequest struct {
@@ -1580,6 +1596,7 @@ type Run struct {
 	SourceJson                string                 `protobuf:"bytes,15,opt,name=source_json,json=sourceJson,proto3" json:"source_json,omitempty"`
 	AdoptedExperienceVersion  uint32                 `protobuf:"varint,16,opt,name=adopted_experience_version,json=adoptedExperienceVersion,proto3" json:"adopted_experience_version,omitempty"`
 	ThinkingLevel             string                 `protobuf:"bytes,17,opt,name=thinking_level,json=thinkingLevel,proto3" json:"thinking_level,omitempty"`
+	ThinkingUnrequested       bool                   `protobuf:"varint,18,opt,name=thinking_unrequested,json=thinkingUnrequested,proto3" json:"thinking_unrequested,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -1731,6 +1748,13 @@ func (x *Run) GetThinkingLevel() string {
 		return x.ThinkingLevel
 	}
 	return ""
+}
+
+func (x *Run) GetThinkingUnrequested() bool {
+	if x != nil {
+		return x.ThinkingUnrequested
+	}
+	return false
 }
 
 type SubmitRunRequest struct {
@@ -2387,7 +2411,7 @@ const file_agent_proto_rawDesc = "" +
 	"generation\x18\x02 \x01(\x04R\n" +
 	"generation\x12\x1f\n" +
 	"\vinstance_id\x18\x03 \x01(\tR\n" +
-	"instanceId\"\xba\b\n" +
+	"instanceId\"\xaa\t\n" +
 	"\x11ReadinessResponse\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1e\n" +
 	"\n" +
@@ -2412,7 +2436,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x1arun_model_contract_version\x18\x11 \x01(\rR\x17runModelContractVersion\x12C\n" +
 	"\x1ework_feedback_contract_version\x18\x12 \x01(\rR\x1bworkFeedbackContractVersion\x12=\n" +
 	"\x1bwork_history_schema_version\x18\x13 \x01(\rR\x18workHistorySchemaVersion\x12C\n" +
-	"\x1echat_controls_contract_version\x18\x14 \x01(\rR\x1bchatControlsContractVersion\"\xb4\x01\n" +
+	"\x1echat_controls_contract_version\x18\x14 \x01(\rR\x1bchatControlsContractVersion\x12J\n" +
+	"\x1fmodel_provider_contract_version\x18\x15 \x01(\rH\x00R\x1cmodelProviderContractVersion\x88\x01\x01B\"\n" +
+	" _model_provider_contract_version\"\xb4\x01\n" +
 	"\rLoadedPackage\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
 	"\x0econtent_digest\x18\x02 \x01(\tR\rcontentDigest\x12\x1e\n" +
@@ -2457,7 +2483,7 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"timeout_ms\x18\x04 \x01(\rR\ttimeoutMs\")\n" +
 	"\rDrainResponse\x12\x18\n" +
-	"\adrained\x18\x01 \x01(\bR\adrained\"\xa5\x02\n" +
+	"\adrained\x18\x01 \x01(\bR\adrained\"\xd8\x02\n" +
 	"\aSession\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
@@ -2470,7 +2496,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x15model_preference_json\x18\x06 \x01(\tR\x13modelPreferenceJson\x12\x1f\n" +
 	"\vsource_json\x18\a \x01(\tR\n" +
 	"sourceJson\x12%\n" +
-	"\x0ethinking_level\x18\b \x01(\tR\rthinkingLevel\"X\n" +
+	"\x0ethinking_level\x18\b \x01(\tR\rthinkingLevel\x121\n" +
+	"\x14thinking_unrequested\x18\t \x01(\bR\x13thinkingUnrequested\"X\n" +
 	"\x14CreateSessionRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12'\n" +
 	"\x0fidempotency_key\x18\x02 \x01(\tR\x0eidempotencyKey\"j\n" +
@@ -2509,7 +2536,7 @@ const file_agent_proto_rawDesc = "" +
 	"\bRunError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1c\n" +
-	"\tretryable\x18\x03 \x01(\bR\tretryable\"\x9d\x05\n" +
+	"\tretryable\x18\x03 \x01(\bR\tretryable\"\xd0\x05\n" +
 	"\x03Run\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
@@ -2534,7 +2561,8 @@ const file_agent_proto_rawDesc = "" +
 	"\vsource_json\x18\x0f \x01(\tR\n" +
 	"sourceJson\x12<\n" +
 	"\x1aadopted_experience_version\x18\x10 \x01(\rR\x18adoptedExperienceVersion\x12%\n" +
-	"\x0ethinking_level\x18\x11 \x01(\tR\rthinkingLevel\"\xec\x01\n" +
+	"\x0ethinking_level\x18\x11 \x01(\tR\rthinkingLevel\x121\n" +
+	"\x14thinking_unrequested\x18\x12 \x01(\bR\x13thinkingUnrequested\"\xec\x01\n" +
 	"\x10SubmitRunRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
@@ -2748,6 +2776,7 @@ func file_agent_proto_init() {
 	if File_agent_proto != nil {
 		return
 	}
+	file_agent_proto_msgTypes[3].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[22].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[25].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[30].OneofWrappers = []any{

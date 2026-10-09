@@ -1,4 +1,5 @@
 import { packagePhaseView, packageSteps } from './package-phase.js';
+import { ModelManagement, type ModelTestDialog } from './model-management.js';
 import { ActionState, renderActionStates, type ActionIntent, type ActionRecord } from './action-state.js';
 import {
   adapter,
@@ -42,6 +43,7 @@ const modules: [string, string][] = [
   ["Status", "/"],
   ["Users", "/users"],
   ["Runtime", "/runtime"],
+  ["AI models", "/models"],
   ["Default Work", "/default-work"],
   ["Skills", "/skills"],
   ["Packages", "/packages"],
@@ -58,7 +60,7 @@ let path = location.pathname,
   runtime: Runtime | null = null,
   defaults: Defaults | null = null,
   defaultDraft: Defaults | null = null,
-  runtimeDraft = { agentImage: "", provider: "", modelId: "", baseUrl: "" },
+  runtimeDraft = { agentImage: "", provider: "", modelId: "", baseUrl: "", modelRef:"" },
   operation: Operation | null = null;
 let dirty = false,
   saving = false,
@@ -104,6 +106,8 @@ let pendingNavigation: (() => void) | null = null,
   submissionPending = false;
 let preflightPending = false, selectionVersion = 0, signingIn = false;
 const actions = new ActionState(() => renderConsoleActions());
+const modelManagement = new ModelManagement(()=>{if(path==='/models'||path.startsWith('/models/'))renderPage();},value=>{dirty=value;},error=>isSessionError(error),openModelTestDialog);
+let modelCatalogError='';
 let actionIdentity = adapter.identityEpoch;
 const manualLabels: Record<string, string> = { 'save-defaults': 'Saving defaults', refresh: 'Reading current page', 'verify-runtime': 'Verifying runtime', 'refresh-status': 'Checking status', 'refresh-operation': 'Checking Operation', 'resume-observation': 'Resuming observation', readback: 'Reading configuration', 'sign-out': 'Signing out', 'retry-connection': 'Checking connection' };
 function consoleIntent(button: HTMLElement): ActionIntent | undefined {
@@ -159,8 +163,9 @@ function shell(body: string) {
     ["Overview", "/", path === "/" || path === "/runtime"],
     ["User access", "/users", path === "/users"],
     ["Work setup", "/default-work", workSetup],
+    ["AI models", "/models", path==='/models'||path.startsWith('/models/')],
   ];
-  app.innerHTML = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav><span class="brand-mark">${icon("box", 20)}</span>PiWork<span class="brand-divider"></span><span class="brand-sub">Serve</span></a>${login ? "" : `<nav class="nav" aria-label="Main navigation">${nav.map(([name, url, active]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${name}</a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}">${icon("search", 14)} Find operation</a><button class="btn ghost mobile-menu" data-action="menu" aria-label="Open navigation" aria-expanded="false">Menu ${icon("down", 14)}</button><details class="account-menu"><summary aria-label="Administrator account"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</summary><div class="account-popover"><p><strong>${esc(adapter.account)}</strong></p><p class="muted">Administrator</p>${Button("Sign out", "sign-out", "secondary")}</div></details>`}</div></header>${login ? "" : `<div class="context-strip">${icon("server", 15)}<span>Core</span><span class="context-tag">Administrator</span><span class="context-end">${path === "/runtime" ? "Core setup" : workSetup ? "Work setup" : path === "/users" ? "User access" : path.startsWith("/operations") ? "Package recovery" : "Overview"}</span></div>`}<main id="main" class="main task-main" tabindex="-1">${body}</main><footer class="footer"><span>${icon("shield", 13)} Core runs independently from this console</span><span>PiWork Serve </span></footer><div id="toast-root" aria-live="polite"></div>`;
+  app.innerHTML = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav><span class="brand-mark">${icon("box", 20)}</span>PiWork<span class="brand-divider"></span><span class="brand-sub">Serve</span></a>${login ? "" : `<nav class="nav" aria-label="Main navigation">${nav.map(([name, url, active]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${name}</a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}">${icon("search", 14)} Find operation</a><button class="btn ghost mobile-menu" data-action="menu" aria-label="Open navigation" aria-expanded="false">Menu ${icon("down", 14)}</button><details class="account-menu"><summary aria-label="Administrator account"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</summary><div class="account-popover"><p><strong>${esc(adapter.account)}</strong></p><p class="muted">Administrator</p>${Button("Sign out", "sign-out", "secondary")}</div></details>`}</div></header>${login ? "" : `<div class="context-strip">${icon("server", 15)}<span>Core</span><span class="context-tag">Administrator</span><span class="context-end">${path === "/runtime" ? "Core setup" : path==="/models"||path.startsWith("/models/") ? "AI models" : workSetup ? "Work setup" : path === "/users" ? "User access" : path.startsWith("/operations") ? "Package recovery" : "Overview"}</span></div>`}<main id="main" class="main task-main" tabindex="-1">${body}</main><footer class="footer"><span>${icon("shield", 13)} Core runs independently from this console</span><span>PiWork Serve </span></footer><div id="toast-root" aria-live="polite"></div>`;
   document.title = `${login ? "Sign in" : path === "/" ? "Overview" : modules.find(([, p]) => p === path)?.[0] || "Details"} · PiWork Serve`;
   startStatusTimer();
 }
@@ -393,8 +398,10 @@ async function loadPage() {
         overviewDataConfirmed = true;
       }
     } else if (path === "/users") users = await read(adapter.users());
+    else if (path==='/models'||path.startsWith('/models/')) await read(modelManagement.load(path));
     else if (path === "/runtime") {
       runtime = await read(adapter.runtime());
+      try{await read(modelManagement.load('/models'));modelCatalogError='';}catch(error){if(error instanceof ConsoleViewChanged||isSessionError(error))throw error;modelCatalogError=err(error);}
       runtimeEditing = !runtime;
       try {
         health = await read(adapter.health());
@@ -409,8 +416,9 @@ async function loadPage() {
             provider: runtime.provider,
             modelId: runtime.modelId,
             baseUrl: runtime.baseUrl,
+            modelRef: runtime.modelRef || '',
           }
-        : { agentImage: "", provider: "", modelId: "", baseUrl: "" };
+        : { agentImage: "", provider: "", modelId: "", baseUrl: "",modelRef:"" };
     } else if (path === "/default-work") {
       [defaults, skills, packages] = await read(Promise.all([
         adapter.defaults(),
@@ -495,10 +503,11 @@ async function loadPage() {
 }
 function renderPage() {
   let body = "";
-  if (path === "/login") body = loginPage();
+  if (path === "/login") { modelManagement.reset();body = loginPage(); }
   else if (path === "/") body = statusPage();
   else if (path === "/users") body = usersPage();
   else if (path === "/runtime") body = runtimePage();
+  else if (path==='/models'||path.startsWith('/models/')) body=modelManagement.markup();
   else if (path === "/default-work") body = defaultsPage();
   else if (path === "/skills")
     body = workSetupTabs() + setupJourneyBanner() + skillsPage();
@@ -514,6 +523,7 @@ function renderPage() {
       PageHeader("Page not found", "This console page is unavailable.") +
       NavLink("Back to Status", "/", "btn secondary");
   shell(body);
+  modelManagement.afterRender();
   renderConsoleActions();
 }
 function loginPage() {
@@ -586,7 +596,7 @@ function statusPage() {
   } else if (!hasRuntime) {
     title = "Make this Core ready";
     description =
-      "Configure the Agent image and model credentials. Then confirm that Core can use them.";
+      "Add an AI model, configure the Agent image, and confirm Core readiness.";
     label = "START HERE";
     tone = "setup";
     action = NavLink(
@@ -668,8 +678,8 @@ function runtimePage() {
   const body = runtimeEditing
     ? Section(
         configured ? "Edit runtime" : "Configure runtime",
-        "Enter the image, model, and a complete API Key.",
-        `<div class="section-body"><form id="runtime-form" class="form-grid">${Field("agentImage", "Agent image", Input("agentImage", runtimeDraft.agentImage, 'required placeholder="ghcr.io/piwork/agent:stable"'))}${Field("provider", "Model provider", Input("provider", runtimeDraft.provider, 'required placeholder="openai"'))}${Field("modelId", "Model ID", Input("modelId", runtimeDraft.modelId, 'required placeholder="Model identifier"'))}${Field("baseUrl", "Custom Base URL", Input("baseUrl", runtimeDraft.baseUrl, 'type="url" placeholder="https://… (optional)"'), "Leave blank to use the provider default.")}${Field("apiKey", "API Key", Input("apiKey", "", 'type="password" autocomplete="new-password" required placeholder="Enter the complete API Key"'), "Write-only. Enter it again for every save; it is never returned.")}<div class="form-actions"><button type="submit" class="btn primary" ${saving || readbackRequired ? "disabled" : ""}>${saving ? "Saving…" : "Save runtime"}</button>${Button("Cancel editing", "cancel-runtime-edit", "secondary")}</div><p class="help form-notice">After saving, check readiness separately. No existing Work is changed.</p></form></div>${configured ? Disclosure("Compare with saved configuration", summary) : ""}`,
+        "Enter the Agent image and select a configured AI model.",
+        `<div class="section-body"><form id="runtime-form" class="form-grid">${Field("agentImage", "Agent image", Input("agentImage", runtimeDraft.agentImage, 'required placeholder="ghcr.io/piwork/agent:stable"'))}${Field("modelRef","AI model",`<select id="modelRef" name="modelRef" required><option value="">Choose a model</option>${modelManagement.models.map(m=>`<option ${!m.enabled||!m.credentialAvailable?'disabled':''} value="${esc(m.modelRef)}" ${m.modelRef===runtimeDraft.modelRef?'selected':''}>${esc(m.api+' / '+m.name+' ('+m.model+') · '+m.id.slice(-8)+(!m.enabled?' · Disabled':!m.credentialAvailable?' · Key unavailable':''))}</option>`).join('')}${runtimeDraft.modelRef&&!modelManagement.models.some(m=>m.modelRef===runtimeDraft.modelRef)?`<option selected disabled value="${esc(runtimeDraft.modelRef)}">Saved model configuration · select an available model</option>`:''}</select>`,"Select a configured model. The model Key is kept by Core.")}${NavLink("Manage AI models","/models")}${modelCatalogError?Feedback("Model list could not be loaded. "+modelCatalogError,"warning"):!modelManagement.models.length?Feedback("No models configured. Add a model in AI models first.","info"):''}<div class="form-actions"><button type="submit" class="btn primary" ${saving || readbackRequired ? "disabled" : ""}>${saving ? "Saving…" : "Save runtime"}</button>${Button("Cancel editing", "cancel-runtime-edit", "secondary")}</div><p class="help form-notice">After saving, check readiness separately. No existing Work is changed.</p></form></div>${configured ? Disclosure("Compare with saved configuration", summary) : ""}`,
       )
     : Section(
         "Runtime configuration",
@@ -1259,6 +1269,7 @@ function openDialog(
   action: (form: FormData) => void | Promise<void>,
   kind = "primary",
   preserveDraft = false,
+  readOnly = false,
 ) {
   const active = document.activeElement as HTMLElement;
   const origin = dialogOrigin || active;
@@ -1266,13 +1277,13 @@ function openDialog(
   dialogOrigin = origin;
   dialogOriginQuery = origin?.dataset.action
     ? `[data-action="${origin.dataset.action}"]${origin.dataset.id ? `[data-id="${origin.dataset.id}"]` : origin.dataset.name ? `[data-name="${CSS.escape(origin.dataset.name)}"]` : ""}`
-    : "";
+    : origin?.dataset.modelAction ? `[data-model-action="${origin.dataset.modelAction}"]` : "";
   currentModalTitle = title;
-  dialogAction = action;
+  dialogAction = readOnly ? null : action;
   if (!preserveDraft) dialogDirty = false;
   dialog = document.createElement("dialog");
   dialog.setAttribute("aria-labelledby", "dialog-title");
-  dialog.innerHTML = `<form id="dialog-form"><div class="dialog-heading"><div><h2 id="dialog-title">${esc(title)}</h2><p>${esc(description)}</p></div>${Button(icon("close", 17), "close-dialog", "icon-button", 'aria-label="Close dialog"')}</div><div class="dialog-body"><div id="dialog-feedback"></div>${body}</div><div class="dialog-footer">${Button("Cancel", "close-dialog", "secondary")}<button type="submit" class="btn ${kind}" id="dialog-submit">${esc(submitLabel)}</button></div></form>`;
+  dialog.innerHTML = `<form id="dialog-form"><div class="dialog-heading"><div><h2 id="dialog-title">${esc(title)}</h2><p>${esc(description)}</p></div>${Button(icon("close", 17), "close-dialog", "icon-button", 'aria-label="Close dialog"')}</div><div class="dialog-body"><div id="dialog-feedback"></div>${body}</div><div class="dialog-footer">${readOnly?Button("Close", "close-dialog", "secondary"):`${Button("Cancel", "close-dialog", "secondary")}<button type="submit" class="btn ${kind}" id="dialog-submit">${esc(submitLabel)}</button>`}</div></form>`;
   document.body.append(dialog);
   dialog.addEventListener("cancel", (event) => {
     if (submissionPending) {
@@ -1285,12 +1296,20 @@ function openDialog(
   trapDialogFocus(dialog);
   dialog.showModal();
   const focus =
-    kind === "danger"
+    kind === "danger" || readOnly
       ? dialog.querySelector<HTMLButtonElement>('[data-action="close-dialog"]')
       : dialog.querySelector<HTMLElement>(
           "input:not([type=hidden]),select,textarea,button[type=submit]",
         );
   setTimeout(() => focus?.focus(), 0);
+}
+function openModelTestDialog(body:string):ModelTestDialog {
+  openDialog('Model Test','Send one message to the specified model and inspect its reply.',body,'',()=>{},'primary',false,true);
+  const target=dialog!;
+  return {
+    update(body){if(dialog===target&&target.isConnected)target.querySelector('.dialog-body')!.innerHTML=`<div id="dialog-feedback"></div>${body}`;},
+    close(){if(dialog===target)closeDialog(true);},
+  };
 }
 function closeDialog(force = false) {
   if (submissionPending && !force) return;
@@ -1914,74 +1933,25 @@ async function readback() {
   }
 }
 async function saveRuntime(form: FormData) {
-  const input = {
-    agentImage: String(form.get("agentImage")).trim(),
-    provider: String(form.get("provider")).trim(),
-    modelId: String(form.get("modelId")).trim(),
-    baseUrl: String(form.get("baseUrl")).trim(),
-  };
-  runtimeDraft = input;
-  const submittedVersion = JSON.stringify(input), valid = currentView();
-  for (const id of ["agentImage", "provider", "modelId"] as const)
-    if (!input[id]) {
-      setFieldError(id, "This field is required.");
-      return;
-    }
-  const key = String(form.get("apiKey") || "");
-  if (!key) {
-    setFieldError("apiKey", "Enter the complete API Key for this save.");
-    return;
-  }
-  const submittedKeyField = document.querySelector<HTMLInputElement>('#apiKey');
-  saving = true;
-  const button = document.querySelector<HTMLButtonElement>(
-    "#runtime-form button[type=submit]",
-  )!;
-  button.disabled = true;
-  button.textContent = "Saving…";
-  try {
-    runtime = await awaitCurrent(adapter.saveRuntime(input, key));
-    if (submittedKeyField) submittedKeyField.value = '';
-    dirty = JSON.stringify(runtimeDraft) !== submittedVersion;
-    runtimeEditing = dirty;
-    readbackRequired = false;
+  const agentImage=String(form.get('agentImage')||'').trim(),modelRef=String(form.get('modelRef')||'');
+  if(!agentImage){setFieldError('agentImage','Enter an Agent image.');return;}
+  if(!modelRef){setFieldError('modelRef','Select an available model.');return;}
+  runtimeDraft={...runtimeDraft,agentImage,modelRef};
+  const valid=currentView(),submittedVersion=JSON.stringify(runtimeDraft);saving=true;
+  const button=document.querySelector<HTMLButtonElement>('#runtime-form button[type=submit]');if(button){button.disabled=true;button.textContent='Saving…';}
+  try{
+    runtime=await awaitCurrent(adapter.saveRuntimeSelection(agentImage,modelRef));
+    if(!runtime||runtime.modelRef!==modelRef)throw new ConsoleError('RESULT_UNKNOWN','Read current runtime before saving again.');
+    dirty=JSON.stringify(runtimeDraft)!==submittedVersion;runtimeEditing=dirty;readbackRequired=false;
+    if(!dirty)runtimeDraft={agentImage:runtime.agentImage,provider:runtime.provider,modelId:runtime.modelId,baseUrl:runtime.baseUrl,modelRef:runtime.modelRef||''};
     confirmedMutation('Runtime saved');
-    feedback = Feedback('Runtime saved. Verifying readiness.', 'success'); renderPage();
-    try {
-      health = await awaitCurrent(adapter.health());
-      statusError = "";
-      feedback = Feedback(
-        health.ready
-          ? "Runtime saved. Core is ready."
-          : "Runtime saved. Core is not ready yet. " + health.reason,
-        health.ready ? "success" : "warning",
-        NavLink("View Core status", "/", "btn secondary"),
-      );
-    } catch (error) {
-      if (error instanceof ConsoleViewChanged) return;
-      statusError = "Current readiness could not be confirmed after saving.";
-      feedback = Feedback(
-        "Runtime saved. Current readiness could not be confirmed.",
-        "warning",
-        NavLink("Refresh status", "/", "btn secondary"),
-      );
-    }
-  } catch (e) {
-        if (e instanceof ConsoleViewChanged) return;
-    if (isSessionError(e)) return;
-    for (const record of actions.records.values()) if (record.pending && record.kind === 'configuration' && record.view === path) actions.fail(record, e);
-    readbackRequired = e instanceof ConsoleError && e.code === "RESULT_UNKNOWN";
-    feedback = Feedback(
-      err(e),
-      readbackRequired ? "warning" : "error",
-      readbackRequired ? Button("Read current runtime", "readback") : "",
-    );
-  } finally {
-    if (valid()) saving = false;
-    if (submittedKeyField) submittedKeyField.value = '';
-  }
-  renderPage();
+    feedback=Feedback('Runtime saved. Verifying readiness.','success');renderPage();
+    try{health=await awaitCurrent(adapter.health());statusError='';feedback=Feedback(health.ready?'Runtime saved. Core is ready.':'Runtime saved. Core is not ready yet. '+health.reason,health.ready?'success':'warning');}
+    catch(error){if(error instanceof ConsoleViewChanged)return;statusError='Current readiness could not be confirmed.';feedback=Feedback('Runtime saved. Current readiness could not be confirmed.','warning');}
+  }catch(error){if(error instanceof ConsoleViewChanged||isSessionError(error))return;readbackRequired=error instanceof ConsoleError&&error.code==='RESULT_UNKNOWN';feedback=Feedback(err(error),readbackRequired?'warning':'error',readbackRequired?Button('Read current runtime','readback'):'');}
+  finally{if(valid()){saving=false;renderPage();}}
 }
+
 async function saveDefaults() {
   if (
     !defaults ||
@@ -2096,7 +2066,7 @@ document.addEventListener("input", (event) => {
   }
   if (
     path === "/runtime" &&
-    ["agentImage", "provider", "modelId", "baseUrl"].includes(el.id)
+    ["agentImage", "modelRef"].includes(el.id)
   ) {
     Object.assign(runtimeDraft, { [el.id]: el.value });
     updateDirty();
@@ -2316,8 +2286,9 @@ async function handleConsoleAction(button: HTMLButtonElement) {
             provider: runtime.provider,
             modelId: runtime.modelId,
             baseUrl: runtime.baseUrl,
+            modelRef: runtime.modelRef || "",
           }
-        : { agentImage: "", provider: "", modelId: "", baseUrl: "" };
+        : { agentImage: "", provider: "", modelId: "", baseUrl: "", modelRef:"" };
       renderPage();
     };
     if (dirty) confirmDiscard(cancel);

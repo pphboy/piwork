@@ -5,3 +5,4 @@ export * from "./work-services.js";
 export * from "./harness.js";
 export * from "./work-feedback.js";
 export * from "./chat-controls.js";
+export * from "./ai-model-management.js";

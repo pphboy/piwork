@@ -197,6 +197,8 @@ More commands are in the [CLI guide](docs/user-cli.md); see [CLI delivery](docs/
 
 To deploy Core from source, see [Core startup and initialization](docs/operations.md#从源码启动); administrator access is described in the [Console guide](docs/serve-console.md).
 
+Model connections can be managed in Console **AI models**: independent Responses / Messages models, advisory message Test and lifecycle actions, without Provider or capability JSON setup. Work Chat keeps its existing model and Thinking selection. See [AI models](docs/ai-models.md).
+
 ## .work Import / Export
 
 A `.work` file is a complete offline copy of a Work, including files in its managed volumes, private conversation history, configuration, service definitions, Skills, Pi Packages, and fixed container images.

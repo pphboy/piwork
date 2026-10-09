@@ -105,8 +105,8 @@ func (c *Client) ChatControlsVersion(ctx context.Context, contextID string) (uin
 	if err != nil {
 		return 0, err
 	}
-	if response.GetChatControlsContractVersion() == 1 {
-		return 1, nil
+	if version := response.GetChatControlsContractVersion(); version == 1 || version == 2 || version == 3 {
+		return version, nil
 	}
 	return 0, nil
 }

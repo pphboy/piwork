@@ -211,6 +211,10 @@ type nativeConsole struct {
 
 func consoleShellRoute(escapedPath string) bool {
 	parts := strings.Split(escapedPath, "/")
+	if len(parts) == 4 && parts[0] == "" && parts[1] == "models" && parts[2] == "providers" {
+		_, valid := localweb.ResourcePart(parts[3], localweb.IDPattern)
+		return valid
+	}
 	if len(parts) != 3 || parts[0] != "" {
 		return false
 	}
@@ -218,7 +222,7 @@ func consoleShellRoute(escapedPath string) bool {
 	switch parts[1] {
 	case "skills", "packages":
 		pattern = localweb.NamePattern
-	case "operations":
+	case "operations", "models":
 	default:
 		return false
 	}
@@ -259,7 +263,7 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.Path, "/browser/") && localweb.BrowserAsset.MatchString(strings.TrimPrefix(r.URL.Path, "/browser/")):
 		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/browser/"), "text/javascript; charset=utf-8"
 	default:
-		if strings.Contains("|/|/login|/users|/runtime|/default-work|/skills|/packages|/operations|", "|"+r.URL.Path+"|") || consoleShellRoute(r.URL.EscapedPath()) {
+		if strings.Contains("|/|/login|/users|/runtime|/default-work|/skills|/packages|/operations|/models|", "|"+r.URL.Path+"|") || consoleShellRoute(r.URL.EscapedPath()) {
 			path, contentType = "static/public/index.html", "text/html; charset=utf-8"
 		} else {
 			consoleFailure(w, 404, "NOT_FOUND")

@@ -197,6 +197,8 @@ piwork-cli chat WORK_ID --message 'Hello, Piwork!'
 
 从源码部署 Core 见 [Core 启动与初始化](docs/operations.md#从源码启动)；管理员入口见 [Console 手册](docs/serve-console.md)。
 
+可在 Console **AI models** 直接添加 Responses / Messages 模型，无需 Provider 或能力 JSON 配置，执行独立 HTTP Test 并管理生命周期；Work Chat 保留模型和 Thinking 选择。见 [AI 模型](docs/ai-models.md)。
+
 ## .work Import / Export
 
 `.work` 是 Work 的完整离线副本，包含受管卷中的文件、私有对话历史、配置、服务定义、Skill、Pi Package 和固定容器镜像。

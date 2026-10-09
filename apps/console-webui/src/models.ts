@@ -25,6 +25,7 @@ export type Package = {
   resources: number | null;
 };
 export type Runtime = {
+	modelRef?: string;
   agentImage: string;
   provider: string;
   modelId: string;
@@ -32,6 +33,8 @@ export type Runtime = {
   credentialAvailable: boolean;
   updatedAt: string;
 };
+export type ModelProvider = { id:string;name:string;api:'openai-responses'|'anthropic-messages';baseUrl:string;enabled:boolean;credentialAvailable:boolean;createdAt:string;updatedAt:string };
+export type ManagedModel = { id:string;providerId:string;name:string;model:string;modelRef:string;api:ModelProvider['api'];providerName:string;providerEnabled:boolean;credentialAvailable:boolean;enabled:boolean;capabilityStatus:'sdk'|'explicit'|'unconfirmed';capabilities?:unknown;createdAt:string;updatedAt:string };
 export type Defaults = {
   publicConfiguration?: Record<string, unknown>;
   agentImage: string;

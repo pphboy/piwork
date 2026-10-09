@@ -23,7 +23,7 @@ test("session and run messages survive binary serialization", () => {
     updatedAt: "2026-09-20T00:01:00Z",
     modelPreferenceJson: "",
     sourceJson: "",
-    thinkingLevel: "high",
+    thinkingLevel: "high", thinkingUnrequested:false,
   });
   assert.equal(session.sessionId, "session-0199e6d8abcd");
   assert.equal(session.thinkingLevel, "high");
@@ -45,7 +45,7 @@ test("session and run messages survive binary serialization", () => {
     actualModelJson: "",
     sourceJson: "",
     adoptedExperienceVersion: 0,
-    thinkingLevel: "off",
+    thinkingLevel: "off", thinkingUnrequested:false,
   });
   assert.equal(run.state, RunState.RUN_STATE_INTERRUPTED);
   assert.equal(run.earliestAvailableSequence, 41n);

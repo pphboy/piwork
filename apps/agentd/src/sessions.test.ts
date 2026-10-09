@@ -121,10 +121,11 @@ test("legacy custom model selection does not claim a confirmed Off capability", 
     });
     const sessions = new AgentSessionService("work-custom", store, workspace, join(root, "sessions"), "context-custom");
     const session = sessions.create();
-    const saved = await sessions.setModelPreference(session.sessionId, null, models);
-    assert.equal(JSON.parse(saved.modelPreferenceJson!).thinkingLevel, undefined);
-    assert.equal((await sessions.chatOptions(session.sessionId, models)).availability, "unavailable");
-    await assert.rejects(sessions.setChatOptions(session.sessionId, { modelRef: null, thinkingLevel: "off" }, models), /cannot confirm/);
+    await assert.rejects(sessions.setModelPreference(session.sessionId,null,models),/Thinking level/);
+    const saved = await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:null},models);
+    assert.equal(JSON.parse(saved.modelPreferenceJson!).thinkingLevel, null);
+    assert.equal((await sessions.chatOptions(session.sessionId, models)).availability, "available");
+    await assert.rejects(sessions.setChatOptions(session.sessionId, { modelRef: null, thinkingLevel: "off" }, models), /Thinking level/);
     assert.equal(store.getSession("work-custom", session.sessionId)?.modelPreferenceJson, saved.modelPreferenceJson);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
 });

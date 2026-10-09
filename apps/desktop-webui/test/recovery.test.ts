@@ -426,12 +426,84 @@ test('opening and refreshing the existing candidate detail action preserves the 
 
 const chatModel={modelRef:null as string|null,label:'Default chat model',provider:'fixture',model:'one',thinkingLevels:['off','low','high'],defaultThinkingLevel:'off'};
 const chatModels=()=>({contractVersion:1,models:[],defaultModel:chatModel,availability:'available',checkedAt:new Date().toISOString()});
+
+test('multi-provider Chat keeps other models and Thinking selectable when the Work default is unavailable',async t=>{
+  const alternative={...chatModel,modelRef:'model-provider-00000001',label:'Other provider / Reasoning',provider:'openai',model:'gpt-5.1'};
+  let ref:string|null=null,thinking='high';
+  const {page,requests}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:2}};
+    if(r.path.endsWith('/chat-models'))return{json:{contractVersion:2,models:[alternative],defaultModel:null,defaultUnavailableReason:'Work default is disabled.',availability:'available',checkedAt:new Date().toISOString()}};
+    if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){const input=JSON.parse(r.body);ref=input.modelRef;thinking=input.thinkingLevel;}return{json:{sessionId:'session-1',modelRef:ref,thinkingLevel:thinking,model:ref?alternative:chatModel,availability:ref?'available':'unavailable',checkedAt:new Date().toISOString()}};}
+  });
+  await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft survives default revocation');await expect(button(page,'send-message')).toBeDisabled();
+  await openResponseSettings(page,'model');await expect(page.locator('#modal')).toContainText('Work default is disabled');await page.locator(`[data-option-value="${alternative.modelRef}"]`).click();
+  await expect.poll(()=>ref).toBe(alternative.modelRef);await expect(page.locator('#thinking-select')).toContainText('High');await closeResponseSettings(page);
+  await expect(button(page,'send-message')).toBeEnabled();await expect(page.locator('#composer')).toHaveValue('draft survives default revocation');
+  assert.equal(requests.filter(r=>r.method==='POST'&&r.path.endsWith('/runs')).length,0);assert.equal(thinking,'high');
+});
+
+test('multi-provider empty catalog preserves draft and saved Thinking through disable and reenable',async t=>{
+  const alternative={...chatModel,modelRef:'model-provider-00000001',label:'Provider / Saved model',provider:'openai',model:'gpt-5.1'};
+  let enabled=true,readFailure=false;
+  const {page,requests}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:2}};
+    if(r.path.endsWith('/chat-models'))return readFailure?{status:503,json:{code:'MODEL_LIST_UNAVAILABLE',message:'Fixture read failed.'}}:{json:{contractVersion:2,models:enabled?[alternative]:[],defaultModel:null,defaultUnavailableReason:'No enabled models are available. Ask an administrator to enable a provider and model in AI models.',availability:'available',checkedAt:new Date().toISOString()}};
+    if(r.path.endsWith('/chat-options'))return{json:{sessionId:'session-1',modelRef:alternative.modelRef,thinkingLevel:'high',model:alternative,availability:enabled?'available':'unavailable',checkedAt:new Date().toISOString()}};
+  });
+  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('preserved across all models disabled');
+  enabled=false;await api(page,"await adapter.loadModels('work-1');");await openResponseSettings(page);
+  await expect(page.locator('#response-settings-status')).toContainText('No enabled models');await expect(page.locator('#response-settings-status')).not.toContainText('Models are unconfirmed');await expect(button(page,'send-message')).toBeDisabled();
+  const selection=await api(page,"return adapter.modelSelection('work-1','session-1');");assert.equal(selection.ref,alternative.modelRef);assert.equal(selection.thinking,'high');
+  await closeResponseSettings(page);await expect(page.locator('#composer')).toHaveValue('preserved across all models disabled');await expect(page.locator('#messages')).toContainText('original prompt');
+  enabled=true;await api(page,"await adapter.loadModels('work-1');");await expect(button(page,'send-message')).toBeEnabled();await openResponseSettings(page);await expect(page.locator('#thinking-select')).toContainText('High');await closeResponseSettings(page);
+  readFailure=true;await api(page,"await adapter.loadModels('work-1').catch(()=>{});");await openResponseSettings(page);await expect(page.locator('#response-settings-status')).toContainText('Models are unconfirmed');await closeResponseSettings(page);
+  assert.equal(chatWrites(requests).length,0);await expect(page.locator('#composer')).toHaveValue('preserved across all models disabled');
+});
+
+test('multi-provider Chat explains capability and SDK recovery without offering unsupported models',async t=>{
+  const unavailableModels=[
+    {modelRef:'model-custom-00000001',label:'Provider / Custom',provider:'openai',model:'custom',reason:'capabilities-unconfirmed',recovery:'Capabilities unconfirmed. Ask an administrator to configure a compatible model definition in AI models.'},
+    {modelRef:'model-unsupported-00001',label:'Provider / New model',provider:'openai',model:'new-model',reason:'sdk-unsupported',recovery:'Unsupported by this Work Agent. Ask an administrator to check the model definition or update the Agent image, then Apply.'},
+  ];
+  const {page,requests}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:2}};
+    if(r.path.endsWith('/chat-models'))return{json:{...chatModels(),contractVersion:2,unavailableModels}};
+    if(r.path.endsWith('/chat-options'))return{json:chatOptions('high')};
+  });
+  await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft with compatibility hints');await openResponseSettings(page,'model');
+  await expect(page.locator('#response-settings-status')).toContainText('Provider / Custom: Capabilities unconfirmed');await expect(page.locator('#response-settings-status')).toContainText('AI models');await expect(page.locator('#response-settings-status')).toContainText('Agent image, then Apply');
+  await expect(page.locator('[data-option-value="model-custom-00000001"]')).toHaveCount(0);await expect(page.locator('#thinking-select')).toContainText('High');
+  await closeResponseSettings(page);await expect(button(page,'send-message')).toBeEnabled();await expect(page.locator('#composer')).toHaveValue('draft with compatibility hints');assert.equal(chatWrites(requests).length,0);
+});
+
+for(const version of [0,1])test(`legacy Work Agent contract ${version} offers an explicit image upgrade and Apply recovery hint`,async t=>{
+  const {page}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:version}};
+    if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+    if(r.path.endsWith('/chat-options'))return{json:chatOptions('high')};
+  });
+  await button(page,'tab-Chat').click();await openResponseSettings(page);await expect(page.locator('#response-settings-status')).toContainText('Update the Work Agent image and Apply');
+});
+
+test('multi-provider Chat contract retains active resource commands and explicit text semantics',async t=>{
+  const submitted:Record<string,any>[]=[];
+  const {page}=await fixture(t,r=>{
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:2}};
+    if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+    if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[{kind:'skill',command:'/skill:managed',name:'managed',description:'Active skill',sourceName:'managed'}],checkedAt:new Date().toISOString()}};
+    if(r.path.endsWith('/chat-options'))return{json:{sessionId:'session-1',modelRef:null,thinkingLevel:'off',model:chatModel,availability:'available',checkedAt:new Date().toISOString()}};
+    if(r.path.endsWith('/runs')&&r.method==='POST'){submitted.push(JSON.parse(r.body));return{status:409,json:{code:'WORK_BUSY',message:'Fixture rejected acceptance after checking the request.'}};}
+  });
+  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();
+  await page.locator('#composer').fill('/skill:managed preserved');await page.locator('#composer').press('Escape');await button(page,'send-message').click();await expect.poll(()=>submitted.length).toBe(1);assert.equal(submitted[0]!.inputMode,'command');assert.equal(submitted[0]!.prompt,'/skill:managed preserved');
+  await page.locator('#composer').fill('ordinary text');await button(page,'send-message').click();await expect.poll(()=>submitted.length).toBe(2);assert.equal(submitted[1]!.inputMode,'text');
+});
 const chatOptions=(thinkingLevel='off',model:Pick<typeof chatModel,'modelRef'|'label'|'provider'|'model'>=chatModel)=>({sessionId:'session-1',modelRef:model.modelRef,model:{modelRef:model.modelRef,label:model.label,provider:model.provider,model:model.model},thinkingLevel,availability:'available',checkedAt:new Date().toISOString()});
 
 test('UX composer serializes complete pairs, retains latest revision, and defaults work with an empty catalog',async t=>{
  let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());let active=0,max=0;const pairs:any[]=[];
  const {page}=await fixture(t,async r=>{
-  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
   if(r.path.endsWith('/chat-models'))return{json:chatModels()};
   if(r.path.endsWith('/chat-options') && r.method==='PATCH'){const pair=JSON.parse(r.body);pairs.push(pair);max=Math.max(max,++active);if(pairs.length===1)await gate;active--;return{json:chatOptions(pair.thinkingLevel)};}
  });
@@ -444,7 +516,7 @@ test('UX composer serializes complete pairs, retains latest revision, and defaul
 
 test('UX unknown options only read original pair and never resend PATCH',async t=>{
  let saved='off';const {page,requests}=await fixture(t,r=>{
-  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};
   if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){saved=JSON.parse(r.body).thinkingLevel;return{abort:true};}return{json:chatOptions(saved)};}
  });
  await button(page,'tab-Chat').click();await expectThinkingEditable(page);await page.locator('#composer').fill('keep draft');await chooseThinking(page,'high');await expect(button(page,'check-session-model')).toBeVisible();await expect(button(page,'send-message')).toBeDisabled();
@@ -454,7 +526,7 @@ test('UX unknown options only read original pair and never resend PATCH',async t
 test('UX slash menu fills on Enter, executes on next submit, preserves arguments and excludes Service identity',async t=>{
  const commands=[{kind:'prompt',command:'/review',name:'review',description:'Review supplied files',sourceName:'Work prompts'}];
  const {page,requests}=await fixture(t,r=>{
-  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands,checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands,checkedAt:new Date().toISOString()}};
   if(r.path==='works/work-1/runs' && r.method==='POST')return{json:{run:{runId:'run-command',sessionId:'session-1',state:1}}};if(r.path.endsWith('/events'))return{abort:true};
  });
  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('/rev');await expect(page.locator('[role=option]').filter({hasText:'/review'})).toBeVisible();await page.locator('#composer').press('Enter');await expect(page.locator('#composer')).toHaveValue('/review ');assert.equal(requests.filter(r=>r.method==='POST').length,0);
@@ -464,7 +536,7 @@ test('UX slash menu fills on Enter, executes on next submit, preserves arguments
 
 test('UX web commands open controls without a Run, reject arguments and allow literal slash',async t=>{
  const {page,requests}=await fixture(t,r=>{
-  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[],checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[],checkedAt:new Date().toISOString()}};
   if(r.path.endsWith('/runs') && r.method==='POST')return{json:{run:{runId:'run-literal',sessionId:'session-1',state:1}}};if(r.path.endsWith('/events'))return{abort:true};
  });
  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('/model');await page.locator('#composer').press('Escape');await button(page,'send-message').click();await expect(page.getByRole('heading',{name:'Response settings',exact:true})).toBeVisible();assert.equal(requests.filter(r=>r.method==='POST').length,0);await expect(page.locator('#composer')).toHaveValue('/model');await page.keyboard.press('Escape');await expect(page.locator('#composer')).toBeFocused();
@@ -474,7 +546,7 @@ test('UX web commands open controls without a Run, reject arguments and allow li
 
 test('UX lost creation uses its original key; not-found stays unknown and recovery never submits a Run',async t=>{
  let found=false,key='';const {page,requests}=await fixture(t,r=>{
-  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};
   if(r.path.endsWith('/sessions')){if(r.method==='POST'){key=JSON.parse(r.body).idempotencyKey;return{abort:true};}return{json:{sessions:[]}};}
   if(r.path.includes('/sessions/submissions/'))return{json:found?{kind:'session',key,status:'accepted',session:{workId:'work-1',sessionId:'session-recovered',modelPreference:null,thinkingLevel:'off'}}:{kind:'session',key,status:'not-found'}};
  });
@@ -599,7 +671,7 @@ test('UX revision Files and ordinary Chat remain distinct from Focus chat and pr
 
 test('UX revision Focus icons use their toolbar roles and Escape closes exactly one level', async t => {
   const {page,requests}=await fixture(t,r=>{
-    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
     if(r.path.endsWith('/chat-models'))return{json:chatModels()};
     return focusFixture(r);
   });
@@ -633,7 +705,7 @@ test('UX revision Focus icons use their toolbar roles and Escape closes exactly 
 
 test('UX revision fullscreen failures keep Chat exits and browser exit preserves the Focus layout', async t => {
   const {page}=await fixture(t,r=>{
-    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
     if(r.path.endsWith('/chat-models'))return{json:chatModels()};
     return focusFixture(r);
   });
@@ -699,17 +771,17 @@ test('UX revision standalone Service Focus never reads Chat settings or creates 
 test('UX revision composer geometry aligns all controls and long model names remain usable at 360px', async t => {
   const label='DeepSeek Flash with a deliberately long model name for a narrow composer';
   const {page}=await fixture(t,r=>{
-    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
     if(r.path.endsWith('/chat-models'))return{json:{...chatModels(),defaultModel:{...chatModel,label,thinkingLevels:['off','low','high','max']}}};
   });
   await button(page,'tab-Chat').click();await expectThinkingEditable(page);
   const boxes=await page.locator('#response-settings-trigger,[data-action=send-message],[data-action=chat-input-options]').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return{top:r.top,height:r.height,center:r.top+r.height/2,width:r.width};}));
   assert.equal(boxes.length,3);for(const rect of boxes) {assert.equal(rect.height,31);assert.ok(Math.abs(rect.center-boxes[0]!.center)<1);}
   assert.ok(boxes[0]!.width<=320);
-  await expect(page.locator('#response-settings-trigger')).toHaveAttribute('title',label+' · Work default · Thinking Off');
+  await expect(page.locator('#response-settings-trigger')).toHaveAttribute('title',label+' (one) · Work default · Thinking Off');
   await page.setViewportSize({width:360,height:800});await openResponseSettings(page,'model');
-  await expect(page.locator('#modal [role=menuitemradio]')).toHaveText(label+'Use Work default');
-  await expect(page.locator('#modal .response-setting-value').first()).toHaveText(label+'Work default');
+  await expect(page.locator('#modal [role=menuitemradio]')).toHaveText(label+' (one)Use Work default');
+  await expect(page.locator('#modal .response-setting-value').first()).toHaveText(label+' (one)Work default');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   assert.ok(await page.locator('#modal [role=menuitemradio]').evaluate(node=>node.scrollWidth<=node.clientWidth));
   await page.keyboard.press('Escape');await expect(button(page,'send-message')).toBeVisible();
@@ -723,7 +795,7 @@ test('UX revision composer geometry aligns all controls and long model names rem
 test('UX revision slash Thinking opens the actual SDK choices and consumes only confirmed selections', async t => {
   let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());let saved='off';
   const {page,requests}=await fixture(t,async r=>{
-    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
     if(r.path.endsWith('/chat-models'))return{json:{...chatModels(),defaultModel:{...chatModel,thinkingLevels:['off','low','high','max']}}};
     if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[],checkedAt:new Date().toISOString()}};
     if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){saved=JSON.parse(r.body).thinkingLevel;await gate;}return{json:chatOptions(saved)};}
@@ -752,7 +824,7 @@ test('UX revision slash Thinking opens the actual SDK choices and consumes only 
 test('UX revision truly nonreasoning and unavailable capabilities show distinct reasons without fabricated levels', async t => {
   let mode='plain';
   const {page,requests}=await fixture(t,r=>{
-    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
     if(r.path.endsWith('/chat-models'))return mode==='plain'?{json:{...chatModels(),defaultModel:{...chatModel,thinkingLevels:['off']}}}:{status:503,json:{code:'MODEL_NOT_SUPPORTED',message:'Thinking capabilities could not be confirmed'}};
   });
   await button(page,'tab-Chat').click();await openResponseSettings(page);await expect(page.locator('#thinking-select')).toBeDisabled();await expect(page.locator('#thinking-select')).toContainText('Off');await closeResponseSettings(page);
@@ -765,7 +837,7 @@ test('UX revision truly nonreasoning and unavailable capabilities show distinct 
 test('UX revision lost slash settings preserve edited drafts and recover with one readonly check', async t => {
   let saved='off';
   const {page,requests}=await fixture(t,r=>{
-    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
     if(r.path.endsWith('/chat-models'))return{json:chatModels()};
     if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[],checkedAt:new Date().toISOString()}};
     if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){saved=JSON.parse(r.body).thinkingLevel;return{abort:true};}return{json:chatOptions(saved)};}
@@ -783,7 +855,7 @@ test('UX revision lost slash settings preserve edited drafts and recover with on
 
 test('UX revision Activity failures remain visible and secondary Service identity preserves its command boundary', async t => {
   const {page}=await fixture(t,r=>{
-    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+    if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
     if(r.path.endsWith('/chat-models'))return{json:chatModels()};
     if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[{kind:'prompt',command:'/review',name:'review',description:'Review supplied files',sourceName:'Work prompts'}],checkedAt:new Date().toISOString()}};
     return focusFixture(r);
@@ -807,7 +879,7 @@ test('UX revision Activity failures remain visible and secondary Service identit
 
 test('UX commands preserve existing parameters and IME/Shift Enter do not execute',async t=>{
  const {page,requests}=await fixture(t,r=>{
-  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[{kind:'prompt',command:'/review',name:'review',description:'Review',sourceName:'Work prompts'}],checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[{kind:'prompt',command:'/review',name:'review',description:'Review',sourceName:'Work prompts'}],checkedAt:new Date().toISOString()}};
  });
  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('/rev keep\tthese arguments');await page.locator('#composer').evaluate((input:HTMLTextAreaElement)=>{input.setSelectionRange(4,4);input.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowLeft',bubbles:true}));});await expect(page.locator('[role=option]').filter({hasText:'/review'})).toBeVisible();await page.locator('#composer').press('Tab');await expect(page.locator('#composer')).toHaveValue('/review keep\tthese arguments');
  await page.locator('#composer').evaluate(input=>{input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}));input.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));});await page.locator('#composer').press('Shift+Enter');assert.equal(requests.filter(r=>r.method==='POST').length,0);
@@ -838,7 +910,7 @@ test('UX runtime recovery rereads optional capabilities and replaces a stale com
 
 test('UX incompatible Session settings stay unavailable while web navigation remains reachable',async t=>{
  const {page,requests}=await fixture(t,r=>{
-  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
   if(r.path.endsWith('/chat-models'))return{json:chatModels()};
   if(r.path.endsWith('/chat-options'))return{json:{...chatOptions(),availability:'unavailable'}};
  });
@@ -848,7 +920,7 @@ test('UX incompatible Session settings stay unavailable while web navigation rem
 
 test('Compact settings summary shares the confirmed pair across containers; inspection preserves draft, caret, reading anchor and iframe', async t => {
   const { page, requests } = await fixture(t, r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: chatModels() };
     if (r.path.endsWith('/chat-options')) return { json: chatOptions('high') };
     return focusFixture(r);
@@ -872,7 +944,7 @@ test('Compact settings summary shares the confirmed pair across containers; insp
     await expect(page.locator('#response-settings-trigger')).toHaveCount(1);
     await expect(page.locator('.composer [data-action=open-chat-settings]')).toHaveCount(1);
     await expect(page.locator('.composer small,.composer #model-select,.composer #thinking-select')).toHaveCount(0);
-    await expect(page.locator('#response-settings-trigger')).toHaveAccessibleName('Response settings: Default chat model; Thinking High. For your next message');
+    await expect(page.locator('#response-settings-trigger')).toHaveAccessibleName('Response settings: Default chat model (one); Thinking High. For your next message');
     await expect(page.locator('.composer-wrap > .options-status')).toBeEmpty();
     await openResponseSettings(page);
     await expect(page.locator('#model-select')).toBeFocused();
@@ -905,7 +977,7 @@ test('Compact settings summary shares the confirmed pair across containers; insp
 
 test('Compact settings confirmed repeats consume matching web commands without PATCH or Run', async t => {
   const { page, requests } = await fixture(t, r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: chatModels() };
     if (r.path.endsWith('/chat-options')) return { json: chatOptions('high') };
   });
@@ -938,7 +1010,7 @@ test('Compact settings saving survives close, reopen and same pending selection 
   t.after(async () => release());
   let saved = 'off';
   const { page, requests } = await fixture(t, async r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: chatModels() };
     if (r.path.endsWith('/chat-options')) {
       if (r.method === 'PATCH') { await gate; saved = JSON.parse(r.body).thinkingLevel; }
@@ -977,7 +1049,7 @@ test('Compact settings saving survives close, reopen and same pending selection 
 test('Compact settings rejected saves retain the pair and confirmed preference, with retry inside the panel', async t => {
   let reject = true, saved = 'off';
   const { page, requests } = await fixture(t, r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: chatModels() };
     if (r.path.endsWith('/chat-options')) {
       if (r.method === 'PATCH') {
@@ -1013,7 +1085,7 @@ test('Compact settings rejected saves retain the pair and confirmed preference, 
 test('Compact settings unknown recovery reads only the original Session, including a failed check and actual differing pair', async t => {
   let saved = 'off', failCheck = false;
   const { page, requests } = await fixture(t, r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: chatModels() };
     if (r.path.endsWith('/chat-options')) {
       if (r.method === 'PATCH') { saved = 'low'; return { abort: true }; }
@@ -1062,7 +1134,7 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
   t.after(async () => release());
   let available = false;
   const { page, requests } = await fixture(t, async r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) {
       if (!available) { await gate; return { status: 503, json: { code: 'MODEL_LIST_UNAVAILABLE', message: 'Models could not be confirmed.' } }; }
       return { json: chatModels() };
@@ -1096,7 +1168,7 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
   await expect(page.locator('#composer')).toHaveValue('typing continues while models are read');
   await expect(button(page, 'send-message')).toBeEnabled();
   await openResponseSettings(page, 'model');
-  await expect(page.locator('#modal [role=menuitemradio]')).toHaveText('Default chat modelUse Work default');
+  await expect(page.locator('#modal [role=menuitemradio]')).toHaveText('Default chat model (one)Use Work default');
   await closeResponseSettings(page);
   assert.equal(chatWrites(requests).length, 0);
 });
@@ -1142,7 +1214,7 @@ test('Compact settings model transition shows the real fallback Thinking and sav
   const plain = { ...chatModel, modelRef: 'model-plain', label: 'Plain model', model: 'plain', thinkingLevels: ['off'], defaultThinkingLevel: 'off' };
   let saved = chatOptions('high');
   const { page, requests } = await fixture(t, async r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: { ...chatModels(), models: [plain] } };
     if (r.path.endsWith('/chat-options')) {
       if (r.method === 'PATCH') {
@@ -1176,7 +1248,7 @@ test('Compact settings model transition shows the real fallback Thinking and sav
 test('Compact settings no-Session selections stay local until one explicit creation confirms the pair', async t => {
   let created = false, saved = 'off';
   const { page, requests } = await fixture(t, r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: chatModels() };
     if (r.path.endsWith('/sessions')) {
       if (r.method === 'POST') { created = true; return { json: { sessionId: 'session-1', thinkingLevel: 'off' } }; }
@@ -1194,7 +1266,7 @@ test('Compact settings no-Session selections stay local until one explicit creat
   await expect(page.locator('#modal')).toContainText('For new session');
   await chooseModel(page, '', true);
   await closeResponseSettings(page);
-  await expect(page.locator('#response-settings-trigger')).toHaveAccessibleName('Response settings: Default chat model; Thinking High. For your next message. For new session');
+  await expect(page.locator('#response-settings-trigger')).toHaveAccessibleName('Response settings: Default chat model (one); Thinking High. For your next message. For new session');
   await expect(page.locator('.options-status')).toContainText('For new session');
   assert.equal(chatWrites(requests).length, 0);
   await button(page, 'agent-menu').click();
@@ -1214,7 +1286,7 @@ test('Compact settings context changes close the panel and late saves update onl
   t.after(async () => release());
   let saved = 'off';
   const { page, requests } = await fixture(t, async r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: chatModels() };
     if (r.path.endsWith('/sessions')) return { json: { sessions: [{ sessionId: 'session-1', thinkingLevel: 'off' }, { sessionId: 'session-2', thinkingLevel: 'low' }] } };
     if (r.path.endsWith('/sessions/session-2')) return { json: { session: { sessionId: 'session-2', workId: 'work-1', thinkingLevel: 'low', modelPreference: null }, messages: [], runs: [] } };
@@ -1261,7 +1333,7 @@ test('Compact settings Core and account changes discard an open panel and ignore
       const gate = new Promise<void>(done => release = done);
       subtest.after(async () => release());
       const { page, requests } = await fixture(subtest, async r => {
-        if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+        if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
         if (r.path.endsWith('/chat-models')) return { json: chatModels() };
         if (r.path.endsWith('/chat-options')) { if (r.method === 'PATCH') await gate; return { json: chatOptions(r.method === 'PATCH' ? 'high' : 'off') }; }
       });
@@ -1285,7 +1357,7 @@ test('Compact settings Core and account changes discard an open panel and ignore
 test('Compact settings keyboard keeps list navigation, IME, Tab, focus return and response updates in the same dialog', async t => {
   let saved = 'off', levels = ['off', 'low', 'high'];
   const { page, requests } = await fixture(t, r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: { ...chatModels(), defaultModel: { ...chatModel, thinkingLevels: levels } } };
     if (r.path.endsWith('/chat-options')) { if (r.method === 'PATCH') saved = JSON.parse(r.body).thinkingLevel; return { json: chatOptions(saved) }; }
     return focusFixture(r);
@@ -1366,7 +1438,7 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   let longName = false;
   const label = 'Work model with a deliberately long descriptive name that remains readable in response settings';
   const { page, requests } = await fixture(t, r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: { ...chatModels(), defaultModel: { ...chatModel, label: longName ? label : 'Work model', thinkingLevels: ['off', 'low', 'medium', 'high'] }, models: Array.from({ length: 14 }, (_, i) => ({ ...chatModel, modelRef: `model-option-${i}`, label: `Available model ${i + 1}`, thinkingLevels: ['off', 'low', 'medium', 'high'] })) } };
     if (r.path.endsWith('/chat-options')) return { json: chatOptions('medium') };
     return focusFixture(r);
@@ -1405,15 +1477,15 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   await closeResponseSettings(page);
   longName = true;
   await api(page, "await adapter.loadModels('work-1');");
-  await expect(page.locator('.response-model-name')).toHaveText(label);
+  await expect(page.locator('.response-model-name')).toHaveText(label + ' (one)');
   assert.ok(await page.locator('.response-model-name').evaluate(node => node.scrollWidth > node.clientWidth));
   const narrow = await aligned();
   for (const box of narrow) assert.ok(box.x >= 0 && box.right <= 360);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await uiuxEvidence(page, '08-long-model-360');
   await openResponseSettings(page, 'model');
-  await expect(page.locator('#modal .response-setting-value').first()).toHaveText(label + 'Work default');
-  await expect(page.locator('#modal [role=menuitemradio]').first()).toHaveText(label + 'Use Work default');
+  await expect(page.locator('#modal .response-setting-value').first()).toHaveText(label + ' (one)Work default');
+  await expect(page.locator('#modal [role=menuitemradio]').first()).toHaveText(label + ' (one)Use Work default');
   assert.ok(await page.locator('#modal [role=menuitemradio]').first().evaluate(node => node.scrollHeight <= node.clientHeight));
   assert.ok(await page.locator('#modal [role=menu]').evaluate(node => node.scrollHeight > node.clientHeight && node.clientHeight <= 240));
   await uiuxEvidence(page, '09-long-model-panel-360');
@@ -1438,7 +1510,7 @@ test('Compact settings both fields adjust in one panel and serialize the latest 
   const pairs: { modelRef: string | null; thinkingLevel: string }[] = [];
   let active = 0, max = 0, saved = chatOptions('high');
   const { page, requests } = await fixture(t, async r => {
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: { ...chatModels(), models: [other] } };
     if (r.path.endsWith('/chat-options')) {
       if (r.method === 'PATCH') {
@@ -1483,7 +1555,7 @@ test('Compact settings switching Work closes the original panel and late saves p
   const { page, requests } = await fixture(t, async r => {
     if (r.path === 'works') return { json: { works: ['1', '2'].map(id => ({ id: `work-${id}`, name: id === '1' ? 'Recovery Work' : 'Other Work', observedState: 'ready', desiredState: 'running' })) } };
     if (r.path === 'works/work-2') return { json: { id: 'work-2', name: 'Other Work', observedState: 'ready', desiredState: 'running' } };
-    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
     if (r.path.endsWith('/chat-models')) return { json: { ...chatModels(), defaultModel: r.path.includes('work-2') ? other : chatModel } };
     if (r.path === 'works/work-2/sessions') return { json: { sessions: [{ sessionId: 'session-other', thinkingLevel: 'low' }] } };
     if (r.path === 'works/work-2/sessions/session-other') return { json: { session: { sessionId: 'session-other', workId: 'work-2', modelPreference: null, thinkingLevel: 'low' }, messages: [], runs: [] } };
@@ -1500,20 +1572,113 @@ test('Compact settings switching Work closes the original panel and late saves p
   await page.evaluate(() => { location.hash = '/work/work-2'; });
   await expect(page.getByRole('heading', { name: 'Other Work', exact: true })).toBeVisible();
   await expect(page.locator('#modal')).toHaveCount(0);
-  await expect(page.locator('#response-settings-trigger')).toContainText('Other Work model· Low');
+  await expect(page.locator('#response-settings-trigger')).toContainText('Other Work model (one)· Low');
   await page.locator('#composer').fill('second Work draft');
   await page.locator('#composer').focus();
   release();
   await expect.poll(() => api(page, "return adapter.modelSelection('work-1','session-1').phase;")).toBe('clean');
   await expect(page.locator('#composer')).toBeFocused();
   await expect(page.locator('#composer')).toHaveValue('second Work draft');
-  await expect(page.locator('#response-settings-trigger')).toContainText('Other Work model· Low');
+  await expect(page.locator('#response-settings-trigger')).toContainText('Other Work model (one)· Low');
   await expect(page.locator('#modal')).toHaveCount(0);
   await button(page, 'back-works').click();
   await page.locator('[data-action=open-work][data-id=work-1]').first().click();
-  await expect(page.locator('#response-settings-trigger')).toContainText('Default chat model· High');
+  await expect(page.locator('#response-settings-trigger')).toContainText('Default chat model (one)· High');
   await expect(page.locator('#composer')).toHaveValue('first Work draft');
   assert.equal(requests.filter(r => r.method === 'PATCH').length, 1);
   assert.ok(requests.find(r => r.method === 'PATCH')!.path.includes('work-1/sessions/session-1/chat-options'));
   assert.equal(requests.filter(r => r.method === 'POST' && /\/(runs|sessions)$/.test(r.path)).length, 0);
+});
+
+test('unknown model stays selectable and requires explicit Normal before replacing saved High',async t=>{
+ const unknown={modelRef:'model-unknown-0000001',label:'Custom model',provider:'anthropic',model:'custom-unknown',thinkingAvailability:'unknown',thinkingLevels:[],defaultThinkingLevel:null};
+ let ref:string|null=null,thinking:string|null='high';
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
+  if(r.path.endsWith('/chat-models'))return{json:{contractVersion:3,models:[unknown],defaultModel:chatModel,availability:'available',checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){const v=JSON.parse(r.body);ref=v.modelRef;thinking=v.thinkingLevel;}return{json:{sessionId:'session-1',modelRef:ref,thinkingLevel:thinking,model:ref?unknown:chatModel,availability:'available',checkedAt:new Date().toISOString()}};}
+ });
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft kept through explicit ordinary confirmation');
+ await chooseModel(page,unknown.modelRef,true);assert.equal(chatWrites(requests).length,0);assert.equal(thinking,'high');await expect(page.locator('#response-settings-status')).toContainText('Choose Normal');await expect(button(page,'send-message')).toBeDisabled();
+ await page.locator('#thinking-select').click();await page.locator('[data-option-value="normal"]').click();await expect.poll(()=>ref).toBe(unknown.modelRef);assert.equal(thinking,null);await closeResponseSettings(page);await expect(button(page,'send-message')).toBeEnabled();await expect(page.locator('#composer')).toHaveValue('draft kept through explicit ordinary confirmation');
+ const writes=requests.filter(r=>r.method==='PATCH');assert.equal(writes.length,1);assert.deepEqual(JSON.parse(writes[0]!.body),{modelRef:unknown.modelRef,thinkingLevel:null});
+ await api(page,"await adapter.loadModels('work-1');");assert.equal((await api(page,"return adapter.modelSelection('work-1','session-1');")).thinking,null);
+});
+
+test('reopening Chat restores the original active Run, its cancel button and event cursor without submitting again',async t=>{
+ let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());let cancelled=false;
+ const run=()=>({workId:'work-1',sessionId:'session-1',runId:'run-original',submissionKey:'original-key',state:cancelled?6:2,acceptedAt:mtime1,latestSequence:'1',actualModel:null});
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path==='works/work-1/sessions/session-1')return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:null,thinkingLevel:'off'},messages:[{entryId:'original-user',runId:'run-original',role:'user',blocks:[{blockId:'original-user',type:'text',text:'Original user request'}]}],runs:[run()]}};
+  if(r.path==='works/work-1/runs/run-original/events'){await gate;return{body:JSON.stringify({sequence:'1',kind:{$case:'state',state:{state:6}}})+'\n',headers:{'Content-Type':'application/x-ndjson'}};}
+  if(r.path==='works/work-1/runs/run-original/cancel'){cancelled=true;release();return{json:run()};}
+  if(r.path==='works/work-1/runs/run-original')return{json:run()};
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'cancel-run')).toBeVisible();await expect(button(page,'send-message')).toBeDisabled();
+ assert.equal((await api(page,"return adapter.getWork('work-1').run;")).id,'run-original');
+ await page.locator('#composer').fill('Draft kept while cancelling');await button(page,'cancel-run').click();await expect.poll(()=>requests.filter(r=>r.path.endsWith('/run-original/cancel')&&r.method==='POST').length).toBe(1);
+ assert.equal(requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST').length,0);await expect(page.locator('#composer')).toHaveValue('Draft kept while cancelling');
+});
+
+test('busy submission recovers the original Run and cancellation instead of presenting legacy rate limiting or replaying',async t=>{
+ let active=false;let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());
+ const run={workId:'work-1',sessionId:'session-1',runId:'run-existing',submissionKey:'original',state:2,acceptedAt:mtime1};
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path==='works/work-1/runs'&&r.method==='POST'){active=true;return{status:429,json:{code:'RATE_LIMITED',message:'rate limited'}};}
+  if(r.path==='works/work-1/sessions/session-1')return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:null,thinkingLevel:'off'},messages:[],runs:active?[run]:[]}};
+  if(r.path==='works/work-1/runs/run-existing/events'){await gate;return{body:'',headers:{'Content-Type':'application/x-ndjson'}};}
+  if(r.path==='works/work-1/runs/run-existing')return{json:run};
+ });
+ await button(page,'tab-Chat').click();await api(page,"await adapter.loadModels('work-1');");
+ const error=await api(page,"try{await adapter.send('work-1','session-1','new prompt',false);}catch(e){return {code:e.code,message:e.message};}");
+ assert.equal(error.code,'WORK_BUSY');assert.match(error.message,/already active.*Cancel run/);await expect(button(page,'cancel-run')).toBeVisible();
+ assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,1);
+});
+
+test('late known default capabilities initialize only the untouched new-session draft to the confirmed SDK suggestion',async t=>{
+ let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());
+ const model={...chatModel,model:'claude-opus-5',label:'Opus 5',thinkingLevels:['minimal','low','medium','high','xhigh','max'],defaultThinkingLevel:'minimal'};
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path.endsWith('/sessions'))return{json:{sessions:[]}};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
+  if(r.path.endsWith('/chat-models')){await gate;return{json:{contractVersion:1,models:[],defaultModel:model,checkedAt:new Date().toISOString(),availability:'available'}};}
+ });
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('new session draft');await api(page,"adapter.modelSelection('work-1','');");release();
+ await expect.poll(async()=>api(page,"return adapter.modelSelection('work-1','').thinking;")).toBe('minimal');await openResponseSettings(page);await expect(page.locator('#thinking-select')).toContainText('Minimal');await closeResponseSettings(page);await expect(page.locator('#composer')).toHaveValue('new session draft');assert.equal(chatWrites(requests).length,0);
+});
+
+test('explicit creation confirms an untouched SDK suggestion and lost acceptance retains it without replay',async t=>{
+ for(const lost of [false,true])await t.test(lost?'lost acceptance':'confirmed acceptance',async t=>{
+  const model={...chatModel,model:'claude-opus-5',thinkingLevels:['minimal','high'],defaultThinkingLevel:'minimal'};let created=false,saved='off';
+  const {page,requests}=await fixture(t,r=>{
+   if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
+   if(r.path.endsWith('/chat-models'))return{json:{contractVersion:1,models:[],defaultModel:model,checkedAt:new Date().toISOString(),availability:'available'}};
+   if(r.path==='works/work-1/sessions'){
+    if(r.method==='POST'){created=true;return lost?{abort:true}:{json:{workId:'work-1',sessionId:'session-new',thinkingLevel:'off',modelPreference:null}};}
+    return{json:{sessions:created?[{sessionId:'session-new'}]:[]}};
+   }
+   if(r.path.includes('/sessions/submissions/'))return{json:{kind:'session',key:r.path.split('/').at(-1),status:'accepted',session:{workId:'work-1',sessionId:'session-new',thinkingLevel:'off',modelPreference:null}}};
+   if(r.path.endsWith('/session-new/chat-options')){if(r.method==='PATCH')saved=JSON.parse(r.body).thinkingLevel;return{json:{sessionId:'session-new',modelRef:null,model,thinkingLevel:saved,availability:'available',checkedAt:new Date().toISOString()}};}
+  });
+  await button(page,'tab-Chat').click();await api(page,"await adapter.loadModels('work-1');adapter.modelSelection('work-1','');");
+  await api(page,"try{await adapter.newSession('work-1');}catch{};");
+  if(lost){await api(page,"await adapter.recoverChatSubmission('work-1');");const state=await api(page,"return adapter.modelSelection('work-1','session-new');");assert.equal(state.thinking,'minimal');assert.equal(state.phase,'dirty');assert.equal(requests.filter(r=>r.method==='PATCH').length,0);}
+  await api(page,"await adapter.saveModel('work-1','session-new');");assert.equal(saved,'minimal');assert.equal((await api(page,"return adapter.modelSelection('work-1','session-new');")).phase,'clean');
+  assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='works/work-1/sessions').length,1);assert.equal(requests.filter(r=>r.method==='PATCH').length,1);assert.equal(requests.filter(r=>r.method==='POST'&&r.path.endsWith('/runs')).length,0);
+ });
+});
+
+test('Work default shows the captured ID after directory rename without changing stored choices or history',async t=>{
+ let renamed=false;const oldId='old-id-'+'x'.repeat(249),newId='new-id';const model=()=>({...chatModel,model:oldId,label:renamed?'Friendly new':'Friendly old'});
+ const head=()=>({...chatModel,modelRef:'model-new-head-000001',model:newId,label:'Friendly new'});
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
+  if(r.path.endsWith('/chat-models'))return{json:{...chatModels(),models:[head()],defaultModel:model()}};
+  if(r.path.endsWith('/chat-options'))return{json:chatOptions('high',model())};
+ });
+ await button(page,'tab-Chat').click();await expect(page.locator('#response-settings-trigger')).toContainText(oldId);
+ const before=await api(page,"return {ref:adapter.modelSelection('work-1','session-1').ref,thinking:adapter.modelSelection('work-1','session-1').thinking,messages:adapter.getWork('work-1').sessions[0].messages};");
+ renamed=true;await api(page,"await adapter.loadModels('work-1');");await expect(page.locator('#response-settings-trigger')).toContainText('Friendly new ('+oldId+')');await expect(page.locator('#response-settings-trigger')).toHaveAttribute('title',new RegExp(oldId));
+ await page.setViewportSize({width:360,height:800});await openResponseSettings(page,'model');await expect(page.locator('#model-select')).toContainText(oldId);await expect(page.locator('#modal [data-option-value=""]')).toContainText(oldId);await expect(page.locator('#modal [data-option-value="model-new-head-000001"]')).toContainText(newId);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await closeResponseSettings(page);
+ const after=await api(page,"return {ref:adapter.modelSelection('work-1','session-1').ref,thinking:adapter.modelSelection('work-1','session-1').thinking,messages:adapter.getWork('work-1').sessions[0].messages};");assert.deepEqual(after,before);assert.equal(chatWrites(requests).length,0);
 });

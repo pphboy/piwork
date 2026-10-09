@@ -6,7 +6,8 @@ import { randomUUID } from "node:crypto";
 import { createDeterministicRuntime, getSupportedThinkingLevels, mapSdkEvent } from "@piwork/pi-adapter";
 import type { RunExecutionContext, RunExecutor } from "./runs.js";
 import type { AgentSessionService } from "./sessions.js";
-import { isBrainVerificationTarget, type RunModelSnapshot, type SlashCommand, type ThinkingLevel } from "@piwork/contracts";
+import { isBrainVerificationTarget, type RunModelSnapshot, type SlashCommand, type ThinkingLevel, type ModelApi, type ModelCapabilities } from "@piwork/contracts";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { RunModelResolver } from "./run-models.js";
 import { parseResourceCommand, requireResourceCommand, validateLoadedResourceCommand } from "./resource-commands.js";
 
@@ -22,6 +23,8 @@ export class PiSdkRunExecutor implements RunExecutor {
       readonly baseUrl?: string;
       readonly credentialPath?: string;
       readonly deterministic: boolean;
+      readonly api?: ModelApi;
+      readonly capabilities?: ModelCapabilities;
     },
     private readonly context: { readonly resourceLoaderFactory: (context?: RunExecutionContext) => Promise<ResourceLoader>; readonly resolvedTools: readonly string[]; readonly customTools?: readonly ToolDefinition[]; readonly models?: RunModelResolver;
       readonly packageTools?: ReadonlyMap<string, string>; readonly commands?: readonly SlashCommand[];
@@ -33,6 +36,7 @@ export class PiSdkRunExecutor implements RunExecutor {
     // Credentials exist only in this invocation's ModelRuntime. The persisted
     // descriptor and SDK history contain no credential or ambient auth authority.
     const credential = context.actualModel && this.context.models ? await this.context.models.credential(context.actualModel) : undefined;
+    if(context.actualModel?.executionBindingId && this.context.models) await refreshManagedChildAgentModel(this.context.models,context.actualModel);
     const { runtime, model } = this.modelConfig.deterministic && (!context.actualModel || context.actualModel.provider === "piwork-deterministic")
       ? await createDeterministicRuntime(context.actualModel?.model)
       : await this.productionRuntime(context.actualModel, credential);
@@ -111,6 +115,17 @@ export class PiSdkRunExecutor implements RunExecutor {
           return deepSeekThinkingPayload(transformed === undefined ? payload : transformed, model, context.actualModel?.thinkingLevel ?? "off");
         };
       }
+      if (context.actualModel?.thinkingLevel === null) {
+        const transform = session.agent.onPayload;
+        session.agent.onPayload = async (payload, requestModel) => {
+          assertAcceptedOptions();
+          const transformed = await transform?.(payload, requestModel);
+          const result = {...(transformed === undefined ? payload : transformed) as Record<string,unknown>};
+          delete result.reasoning; delete result.thinking;
+          if(result.output_config && typeof result.output_config === 'object') {const output={...result.output_config as Record<string,unknown>};delete output.effort;if(Object.keys(output).length)result.output_config=output;else delete result.output_config;}
+          return result;
+        };
+      }
       let prompt = context.prompt;
       if (context.inputMode === "command") {
         const command = requireResourceCommand(this.context.commands ?? [], prompt);
@@ -176,7 +191,7 @@ export class PiSdkRunExecutor implements RunExecutor {
     }
     if (credential === "") throw new Error("model credential is invalid");
     const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
-    const config = snapshot ? { provider: snapshot.provider, id: snapshot.model, ...(snapshot.baseUrl ? { baseUrl: snapshot.baseUrl } : {}) } : this.modelConfig;
+    const config = snapshot ? { provider: snapshot.provider, id: snapshot.model, ...(snapshot.baseUrl ? { baseUrl: snapshot.baseUrl } : {}), ...(snapshot.api ? {api:snapshot.api}:{}), ...(snapshot.capabilities ? {capabilities:snapshot.capabilities}:{}) } : this.modelConfig;
     const model = resolveProductionModel(runtime, config);
     await runtime.setRuntimeApiKey(config.provider, credential);
     return { runtime, model };
@@ -184,7 +199,7 @@ export class PiSdkRunExecutor implements RunExecutor {
 }
 
 /** Existing package children retain the Work default; overrides never rewrite it. */
-export async function initializeDefaultChildAgentModel(config: { readonly provider: string; readonly id: string; readonly baseUrl?: string; readonly credentialPath?: string }): Promise<void> {
+export async function initializeDefaultChildAgentModel(config: { readonly provider: string; readonly id: string; readonly baseUrl?: string; readonly credentialPath?: string; readonly api?: ModelApi; readonly capabilities?: ModelCapabilities }): Promise<void> {
   if (!config.credentialPath) throw new Error("Work model credential is unavailable");
   const information = lstatSync(config.credentialPath);
   if (!information.isFile() || information.isSymbolicLink() || information.size < 1 || information.size > 64 * 1024) throw new Error("Work model credential is invalid");
@@ -201,6 +216,19 @@ export async function initializeChildAgentDirectory(directory = CHILD_AGENT_DIRE
   const information = await lstat(directory);
   if (!information.isDirectory() || information.isSymbolicLink()) throw new Error("child agent configuration directory is invalid");
   await chmod(directory, 0o700);
+}
+
+/** Future child launches read the current authorized Work default. An already
+ * running child retains its own SDK session; no provider-wide Key list is used. */
+export async function refreshManagedChildAgentModel(models:RunModelResolver,actual:RunModelSnapshot,directory=CHILD_AGENT_DIRECTORY):Promise<boolean>{
+  await initializeChildAgentDirectory(directory);
+  try{
+    const snapshot=actual.modelRef===null?actual:await models.resolve(null);
+    const credential=await models.credential(snapshot);
+    const runtime=await ModelRuntime.create({modelsPath:null,refreshOnCreate:false,allowModelNetwork:false});
+    const model=resolveProductionModel(runtime,{provider:snapshot.provider,id:snapshot.model,...(snapshot.baseUrl?{baseUrl:snapshot.baseUrl}:{}),...(snapshot.api?{api:snapshot.api}:{}),...(snapshot.capabilities?{capabilities:snapshot.capabilities}:{})});
+    await writeChildAgentModelFiles(directory,model,credential);return true;
+  }catch{await initializeChildAgentDirectory(directory);return false;}
 }
 
 export async function writeChildAgentModelFiles(
@@ -240,12 +268,25 @@ function emitRunPhase(context: Pick<RunExecutionContext, "workId" | "sessionId" 
 
 export function resolveProductionModel(
   runtime: ModelRuntime,
-  config: { readonly provider: string; readonly id: string; readonly baseUrl?: string },
+  config: { readonly provider: string; readonly id: string; readonly baseUrl?: string; readonly api?: ModelApi; readonly capabilities?: ModelCapabilities },
   requireThinkingCapabilities = false,
 ) {
   const existing = runtime.getModel(config.provider, config.id);
   const compatible = existing === undefined && isDeepSeekAnthropicEndpoint(config)
     ? runtime.getModel("deepseek", config.id) : undefined;
+  if(config.api) {
+    const source=config.capabilities?.kind==='sdk' ? runtime.getModel(config.capabilities.provider,config.capabilities.model) : existing ?? compatible;
+    const explicit=config.capabilities?.kind==='explicit' ? config.capabilities.definition : undefined;
+    if(config.capabilities && !source && !explicit) throw new Error("model capability template is unavailable");
+    if(!source && !explicit && requireThinkingCapabilities) throw new Error("model capabilities are unconfirmed");
+    if(source && source.api!==config.api && !(compatible===source && isDeepSeekAnthropicEndpoint(config))) throw new Error("model capability template uses another protocol");
+    const definition={...(explicit ? {...explicit,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}} : source ?? {reasoning:false,input:["text"],contextWindow:128_000,maxTokens:8_192,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}),id:config.id,name:source?.name ?? config.id,api:config.api,provider:config.provider,baseUrl:config.baseUrl ?? source?.baseUrl} as Model<Api>;
+    if(!definition.baseUrl) throw new Error("model endpoint is missing");
+    runtime.registerProvider(config.provider,{baseUrl:definition.baseUrl,api:config.api,models:[definition]});
+    const selected=runtime.getModel(config.provider,config.id);
+    if(!selected || selected.api!==config.api)throw new Error("configured model protocol is unavailable");
+    return selected;
+  }
   if (requireThinkingCapabilities && !existing && !compatible) throw new Error("model Thinking capabilities are unconfirmed");
   if (config.baseUrl !== undefined) {
     if (existing === undefined && config.provider === "anthropic") {

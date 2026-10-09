@@ -17,6 +17,38 @@ type snapshotBoundModel struct {
 }
 type snapshotBindings map[string]snapshotBoundModel
 
+func samePortableCapabilities(required, actual json.RawMessage, provider, model, endpoint string) bool {
+	if len(required) == 0 && len(actual) == 0 {
+		return true
+	}
+	normalize := func(raw json.RawMessage) any {
+		if len(raw) == 0 {
+			return map[string]any{"kind": "sdk", "provider": provider, "model": model}
+		}
+		var v any
+		if json.Unmarshal(raw, &v) != nil {
+			return nil
+		}
+		return v
+	}
+	a, b := normalize(required), normalize(actual)
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	// The existing exact DeepSeek Messages adapter inherits its SDK definition.
+	if provider == "anthropic" && endpoint == "https://api.deepseek.com/anthropic" {
+		canonical := map[string]any{"kind": "sdk", "provider": "deepseek", "model": model}
+		if len(required) == 0 {
+			a = canonical
+		}
+		if len(actual) == 0 {
+			b = canonical
+		}
+		return reflect.DeepEqual(a, b)
+	}
+	return false
+}
+
 func snapshotModelURL(raw *string) (string, error) {
 	if raw == nil {
 		return "", nil
@@ -48,8 +80,12 @@ func (a *Application) resolveSnapshotBindings(tx *sql.Tx, owner string, requirem
 			rows.Close()
 			return nil, err
 		}
-		var m catalogModelMetadata
-		if strictMetadata([]byte(raw), &m) != nil || m.Version != 1 || m.SourceRuntimeRevision < 1 || m.CredentialRef == "" {
+		m, _, _, resolveErr := a.catalogModelTx(tx, id, true)
+		if resolveErr != nil {
+			if errors.Is(resolveErr, corestore.ErrStorage) {
+				rows.Close()
+				return nil, resolveErr
+			}
 			continue
 		}
 		secret, err := a.files.ReadSecret(m.CredentialRef)
@@ -57,10 +93,8 @@ func (a *Application) resolveSnapshotBindings(tx *sql.Tx, owner string, requirem
 			continue
 		}
 		p := RuntimeProfile{Version: 1, Revision: m.SourceRuntimeRevision, UpdatedAt: m.UpdatedAt}
-		p.Model.Provider = m.Provider
-		p.Model.ID = m.ID
-		p.Model.BaseURL = m.BaseURL
-		p.Model.CredentialRef = m.CredentialRef
+		bindProfileModel(&p, id, m)
+
 		candidates = append(candidates, snapshotBoundModel{id, p})
 	}
 	err = rows.Err()
@@ -85,7 +119,7 @@ func (a *Application) resolveSnapshotBindings(tx *sql.Tx, owner string, requirem
 			}
 			base = &s
 		}
-		expected, err := snapshotModelURL(base)
+		expected, err := logicalModelEndpoint(r.Provider, base)
 		if err != nil {
 			return nil, err
 		}
@@ -93,10 +127,31 @@ func (a *Application) resolveSnapshotBindings(tx *sql.Tx, owner string, requirem
 			if captured != nil && candidate.CatalogID != captured[key].CatalogID {
 				continue
 			}
-			actual, err := snapshotModelURL(candidate.Profile.Model.BaseURL)
+			actual, err := logicalModelEndpoint(candidate.Profile.Model.Provider, candidate.Profile.Model.BaseURL)
 			if err != nil || candidate.Profile.Model.Provider != r.Provider || candidate.Profile.Model.ID != r.Model || actual != expected {
 				continue
 			}
+			actualAPI := candidate.Profile.Model.API
+			if actualAPI == "" {
+				actualAPI = modelAPI(candidate.Profile.Model.Provider)
+			}
+			if r.Api.Present && string(r.Api.Value) != actualAPI {
+				continue
+			}
+			var required json.RawMessage
+			if r.Capabilities.Present {
+				required = r.Capabilities.Value
+			}
+			if !samePortableCapabilities(required, candidate.Profile.Model.Capabilities, candidate.Profile.Model.Provider, candidate.Profile.Model.ID, expected) {
+				continue
+			}
+			// Preserve the source's exact descriptor for its fixed harness.
+			candidate.Profile.Model.BaseURL = base
+			candidate.Profile.Model.API = ""
+			if r.Api.Present {
+				candidate.Profile.Model.API = string(r.Api.Value)
+			}
+			candidate.Profile.Model.Capabilities = append(json.RawMessage(nil), required...)
 			if captured != nil && !reflect.DeepEqual(candidate, captured[key]) {
 				continue
 			}
@@ -116,7 +171,11 @@ func (a *Application) resolveSnapshotBindings(tx *sql.Tx, owner string, requirem
 // Only safe, currently enabled descriptions are given to the isolated history rebuild.
 // Ambiguous identities remain unavailable rather than picking a catalog ID.
 func (a *Application) snapshotHistoryModels(tx *sql.Tx) ([]runModelSnapshot, error) {
-	rows, err := tx.Query("SELECT id FROM catalog_entries WHERE kind='model' AND enabled=1 ORDER BY id LIMIT 257")
+	reg, err := modelRegistryTx(tx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query("SELECT id FROM catalog_entries WHERE kind='model' AND enabled=1 ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +185,13 @@ func (a *Application) snapshotHistoryModels(tx *sql.Tx) ([]runModelSnapshot, err
 		if err := rows.Scan(&ref); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if id := reg.References[ref]; id != "" {
+			m := reg.Models[id]
+			p := modelConnection(reg, m)
+			if m.Deleted || p.Deleted || !m.Enabled || !p.Enabled || m.ModelRef != ref {
+				continue
+			}
 		}
 		refs = append(refs, ref)
 	}

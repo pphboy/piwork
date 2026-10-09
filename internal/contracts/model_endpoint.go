@@ -33,3 +33,23 @@ func NormalizeModelEndpoint(value *string) (*string, error) {
 	endpoint := strings.TrimRight(u.String(), "/")
 	return &endpoint, nil
 }
+
+// NormalizeProtocolModelEndpoint is for new connection input. Retained Work
+// descriptors continue using NormalizeModelEndpoint to preserve their facts.
+func NormalizeProtocolModelEndpoint(api string, value *string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	endpoint, err := NormalizeModelEndpoint(&trimmed)
+	if err != nil || endpoint == nil {
+		return endpoint, err
+	}
+	if api == "anthropic-messages" {
+		for strings.HasSuffix(*endpoint, "/v1") {
+			normalized := strings.TrimSuffix(*endpoint, "/v1")
+			endpoint = &normalized
+		}
+	}
+	return endpoint, nil
+}
