@@ -122,7 +122,7 @@ Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 
 
 <!-- native-quickstart:start -->
 
-下载 [Linux Core / Console / CLI 包](https://github.com/pphboy/piwork/releases/download/v0.0.2/piwork-linux-amd64-0.0.2.tar.gz)或 [Windows CLI 实验性程序](https://github.com/pphboy/piwork/releases/download/v0.0.2/piwork-cli-windows-amd64-0.0.2.exe)。先核对发行 SHA256；Linux 包解压后 CLI 位于 `bin/`，Windows 程序保存为 `piwork-cli.exe` 即可。Windows 完整原生验收仍未完成。
+下载 [Linux Core / Console / CLI 包](https://github.com/pphboy/piwork/releases/download/v0.0.3/piwork-linux-amd64-0.0.3.tar.gz)或 [Windows CLI 实验性程序](https://github.com/pphboy/piwork/releases/download/v0.0.3/piwork-cli-windows-amd64-0.0.3.exe)。先核对发行 SHA256；Linux 包解压后 CLI 位于 `bin/`，Windows 程序保存为 `piwork-cli.exe` 即可。Windows 完整原生验收仍未完成。
 
 连接已经配置完成且就绪的 Core，并与原生 CLI 版本兼容的 Core。在可执行文件所在目录，将 `CORE_URL` 替换为其地址（同机 Linux 为 `http://127.0.0.1:7171`），将 `ACCOUNT` 替换为账号；登录时隐藏输入密码。Windows PowerShell 将 `./piwork-cli` 替换为 `.\piwork-cli.exe`。
 
@@ -167,7 +167,7 @@ Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 
 
 ## Current Status / Limitations
 
-- **0.0.2 Preview**：用于试用与反馈。Windows 原生 CLI 为实验性附件，尚未完成全部正式验收。
+- **0.0.3 Preview**：用于试用与反馈。Windows 原生 CLI 为实验性附件，尚未完成全部正式验收。
 - **Core**：当前为单机 Linux 部署，使用本机 Docker Engine Unix socket。
 - **客户端**：原生 CLI 面向 Windows 和 Linux，提供命令行与 Desktop；Windows 原生正式验收的未完成项见 [CLI 平台交付](docs/cli-platforms.md)。
 - **Docker 交付**：当前验收范围为 `linux/amd64`、Linux Core，以及 Linux / Windows Docker Desktop 的 Linux CLI 容器；要求 Docker Engine 28+；选择 Core Compose、单机部署示例或高级 Compose 部署时另需 Compose 2.24+。详情见 [交付验收](docs/docker-release-quickstart-acceptance.md)。

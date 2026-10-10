@@ -122,7 +122,7 @@ For Windows Docker clients, remote Linux Core addresses, or the advanced Core-on
 
 <!-- native-quickstart:start -->
 
-Download the [Linux Core / Console / CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.2/piwork-linux-amd64-0.0.2.tar.gz) or [experimental Windows CLI executable](https://github.com/pphboy/piwork/releases/download/v0.0.2/piwork-cli-windows-amd64-0.0.2.exe). Verify the release SHA256. Extract the Linux bundle to find the CLI in `bin/`; save the Windows executable as `piwork-cli.exe`. Full Windows native acceptance remains pending.
+Download the [Linux Core / Console / CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.3/piwork-linux-amd64-0.0.3.tar.gz) or [experimental Windows CLI executable](https://github.com/pphboy/piwork/releases/download/v0.0.3/piwork-cli-windows-amd64-0.0.3.exe). Verify the release SHA256. Extract the Linux bundle to find the CLI in `bin/`; save the Windows executable as `piwork-cli.exe`. Full Windows native acceptance remains pending.
 
 Use an already configured, ready Core, compatible with your native CLI version. In the directory containing the executable, replace `CORE_URL` with its address (`http://127.0.0.1:7171` for the same Linux computer) and `ACCOUNT` with your account. Login prompts for a hidden password. On Windows PowerShell, replace `./piwork-cli` with `.\piwork-cli.exe`.
 
@@ -167,7 +167,7 @@ Configure matching model credentials on the target Core separately. Platform-man
 
 ## Current Status / Limitations
 
-- **0.0.2 Preview**: Intended for evaluation and feedback. The native Windows CLI is experimental and has not completed all formal acceptance checks.
+- **0.0.3 Preview**: Intended for evaluation and feedback. The native Windows CLI is experimental and has not completed all formal acceptance checks.
 - **Core**: A single Linux installation using the local Docker Engine Unix socket.
 - **Clients**: The native CLI targets Windows and Linux, with command-line and Desktop interfaces. Outstanding native Windows acceptance checks are documented in [CLI delivery](docs/cli-platforms.md).
 - **Docker delivery**: The verified scope is `linux/amd64`, Linux Core, and Linux CLI containers on Linux or Windows Docker Desktop. Docker Engine 28+ is required; Compose 2.24+ is needed when choosing the Core-only deployment, the single-host example or advanced Compose setups. See [delivery acceptance](docs/docker-release-quickstart-acceptance.md).
