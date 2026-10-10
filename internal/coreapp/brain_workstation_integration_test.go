@@ -191,7 +191,10 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 		t.Fatal(err)
 	} // Development-only browser driver; product host PATH is removed by fixture.
 	a, base, auth, work, _ := nativeApplyFixtureConfig(t, true)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	// The complete locked environment is shared through three exports and two
+	// independent imports. Allow the test driver to finish those disk round trips;
+	// each Service readiness and automatic Run/Goal keeps its product deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	f := brainAcceptance{t: t, a: a, base: base, auth: auth, work: work, path: "/api/v1/works/" + work, ctx: ctx}
 
@@ -208,7 +211,7 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 	if !strings.Contains(deployed["finalText"].(string), "workstation-deployed:") {
 		t.Fatal(deployed)
 	}
-	program := `import {chromium,expect} from '@playwright/test'; const browser=await chromium.launch({headless:true,channel:'chromium'});try{const page=await browser.newPage();await page.goto(process.argv[1]);await page.getByLabel('Todo title',{exact:true}).fill('Go Core closed loop');await page.getByRole('button',{name:'Add Todo',exact:true}).click();await expect(page.getByText('Go Core closed loop',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Complete',exact:true}).click();await expect(page.getByText('Completed',{exact:true})).toBeVisible();await page.getByRole('link',{name:'Personal review'}).click();await expect(page.getByText('Completed Todos: 0',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Report missing completed Todos',exact:true}).click();console.log('real NiceGUI browser and WebSocket created/completed Todo and submitted feedback');}finally{await browser.close()}`
+	program := `import {chromium,expect} from '@playwright/test'; const browser=await chromium.launch({headless:true,channel:'chromium'});try{const page=await browser.newPage();page.on('pageerror',e=>console.error('Application error:',e.message));await page.goto(process.argv[1]);await page.getByLabel('Todo title',{exact:true}).fill('Go Core closed loop');await page.getByRole('button',{name:'Add Todo',exact:true}).click();await expect(page.getByText('Go Core closed loop',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Complete',exact:true}).click();await expect(page.getByText('Completed',{exact:true})).toBeVisible();await page.getByRole('link',{name:'Personal review'}).click();await expect(page.getByText('Completed Todos: 0',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Report missing completed Todos',exact:true}).click();console.log('real React browser and FastAPI created/completed Todo and submitted feedback');}finally{await browser.close()}`
 	command := exec.CommandContext(ctx, node, "--input-type=module", "-e", program, f.serviceURL())
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -366,7 +369,7 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 		t.Fatal("failed behavior committed effective experience", experienceBefore, experienceAfter)
 	}
 	t.Log("Current failed SDK checks", badID, failedProof["runId"], failedProof["summary"], "active context", *current.ActiveContextID, "experience unchanged")
-	t.Log("Go Core + real SDK/MCP + NiceGUI: facts, automatic repair, Job continuation, committed experience, explicit Apply, actual matching behavior proof and loaded failure all observed")
+	t.Log("Go Core + real SDK/MCP + FastAPI/React: facts, automatic repair, Job continuation, committed experience, explicit Apply, actual matching behavior proof and loaded failure all observed")
 	// Check public graph and private credentials remain separated.
 	raw, _ := json.Marshal(f.requests())
 	if strings.Contains(string(raw), "credentialRef") || strings.Contains(string(raw), "/etc/piwork") {

@@ -109,7 +109,7 @@ try {
   await operator(['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], 'native-host-fixture-password\n');
   await operator(['config', 'set', '--agent-image', agentImage, '--model-provider', 'piwork-deterministic',
     '--model', 'fixture-v1', '--api-key-stdin'], 'fixture-key\n');
-  await waitFor(async () => (await fetch(`${base}/readyz`)).ok, 'scratch Core readiness');
+  await waitFor(async () => (await fetch(`${base}/readyz?profile=docker-delivery`)).ok, 'scratch Core and helper readiness');
   console.log('Scratch Core initialized and ready.');
   const cli = async (args, input) => {
     const result = await command('docker', ['exec', '-i', '-e', 'PIWORK_CONFIG_PATH=/data/client/client.json', core,
@@ -208,7 +208,8 @@ try {
   await new Promise((resolve,reject)=>{browserRelay.once('error',reject);browserRelay.listen(0,'127.0.0.1',resolve);});
   const browserProxy = `http://127.0.0.1:${browserRelay.address().port}`;
   const {chromium,expect} = await import('@playwright/test');
-  await sdkChat(workId, 'deploy deterministic workstation');
+  const baseReference = JSON.parse(await readFile(join(repository, 'internal/coreassets/piwork-brain/references/web-base.json'), 'utf8'));
+  await sdkChat(workId, baseReference.state === 'published' ? 'deploy published workstation' : 'deploy deterministic workstation');
   const workstation=(await api(`/works/${workId}/services`)).services.find(s=>s.name==='workstation');
   assert(workstation && workstation.observedState==='ready');
   const browser=await chromium.launch({headless:true,channel:'chromium',proxy:{server:browserProxy}});
@@ -223,12 +224,11 @@ try {
     await expect(page.getByText('Completed Todos: 0',{exact:true})).toBeVisible();
     await page.getByRole('button',{name:'Report missing completed Todos',exact:true}).click();
     await feedback(workId,'personal review omits','completed');
-    await page.getByRole('button',{name:'Refresh review',exact:true}).click();
     await expect(page.getByText('Completed Todos: 1',{exact:true})).toBeVisible({timeout:30000});
     const receipt=await page.evaluate(async()=>{const response=await fetch('/ui/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:'export_review',goal:'Export the personal review and verify its original Job'})});return {status:response.status,value:await response.json()};});
     assert.equal(receipt.status,200,'User feedback HTTP must reach the real workstation');
     await feedback(workId,'Export','waiting_result');
-    const cognition=await sdkChat(workId,'inspect piwork brain cognition');
+    const cognition=await sdkChat(workId,'inspect piwork brain cognition for personal review');
     assert(cognition.adoptedExperienceVersion>0 && cognition.finalText.endsWith(':true'));
     await feedback(workId,'Export','completed');
   } finally {await browser.close();}
@@ -247,6 +247,7 @@ try {
   };
   await candidateProof(workId,'scratch-original');
   await operator(['config','set','--agent-image',agentImage,'--model-provider','piwork-deterministic','--model','fixture-v2','--api-key-stdin'],'fixture-two-key\n');
+  await waitFor(async () => (await fetch(`${base}/readyz?profile=docker-delivery`)).ok, 'updated default runtime and helper readiness');
   const models=await api(`/works/${workId}/models`);
   assert.equal(models.models.length,2);
   const modelSession=JSON.parse(await cli(['session','create',workId]));
@@ -259,8 +260,19 @@ try {
 
   assert.equal(JSON.parse(await cli(['work', 'stop', workId, '--wait'])).state, 'succeeded');
   const exportPath = `/data/client/${workId}.work`;
-  const exported = JSON.parse(await docker(['exec', '-w', '/data/client', '-e', 'PIWORK_CONFIG_PATH=/data/client/client.json', core,
-    '/bin/piwork-cli', '--core', 'http://127.0.0.1:7171', '--json', 'work', 'export', workId]));
+  const exportAttempt = await command('docker', ['exec', '-w', '/data/client', '-e', 'PIWORK_CONFIG_PATH=/data/client/client.json', core,
+    '/bin/piwork-cli', '--core', 'http://127.0.0.1:7171', '--json', 'work', 'export', workId], { allowFailure: true });
+  let exported = JSON.parse(exportAttempt.stdout);
+  if (exportAttempt.code === 5 && exported.state === 'waiting' && typeof exported.operationId === 'string' &&
+      typeof exported.snapshotId === 'string' && observationCodes.includes(exported.error?.code)) {
+    console.log('Export observation interrupted; checking the original accepted Operation, then downloading its Snapshot.');
+    const original = await waitFor(async () => {
+      const current = JSON.parse(await cli(['operation', 'show', exported.operationId]));
+      return ['succeeded', 'failed', 'superseded'].includes(current.state) ? current : undefined;
+    }, 'original export Operation', 300_000);
+    assert.equal(original.state, 'succeeded', 'Original export Operation failed');
+    exported = JSON.parse(await cli(['work', 'snapshot', 'download', exported.snapshotId, '--output', exportPath]));
+  } else assert.equal(exportAttempt.code, 0, 'Native CLI export failed before a recoverable acceptance');
   assert(exported.size > 0 && exported.snapshotId);
   const inspected = JSON.parse(await cli(['work', 'package', 'inspect', exportPath]));
   assert.equal(inspected.integrityVerified, true);

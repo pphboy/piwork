@@ -1,0 +1,9 @@
+# Test-only compatibility layer. Preserve the actual schema-4 harness/store;
+# adapt only its deterministic deployment driver and Service MCP to Web base.
+ARG CURRENT_AGENT_IMAGE=piwork-agentd:go-migration-acceptance
+ARG LEGACY_AGENT_IMAGE=piwork-memory-history4:acceptance
+FROM ${CURRENT_AGENT_IMAGE} AS current
+FROM ${LEGACY_AGENT_IMAGE}
+LABEL io.piwork.fixture.web-base-history4="true" io.piwork.source.modified="true"
+COPY --from=current /workspace/packages/pi-adapter/dist/deterministic-workstation.js /workspace/packages/pi-adapter/dist/deterministic-workstation.js
+COPY --from=current /usr/local/bin/piwork-service-mcp /usr/local/bin/piwork-service-mcp

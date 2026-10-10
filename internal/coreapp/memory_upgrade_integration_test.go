@@ -12,7 +12,11 @@ import (
 
 func TestNativeLegacyMemoryUpgradeRollbackAndDowngradeFence(t *testing.T) {
 	nextImage := os.Getenv("PIWORK_TEST_NATIVE_AGENT_IMAGE")
-	t.Setenv("PIWORK_TEST_NATIVE_AGENT_IMAGE", "piwork-memory-history4:acceptance")
+	legacyImage := os.Getenv("PIWORK_TEST_NATIVE_HISTORY4_IMAGE")
+	if legacyImage == "" {
+		legacyImage = "piwork-memory-history4:acceptance"
+	}
+	t.Setenv("PIWORK_TEST_NATIVE_AGENT_IMAGE", legacyImage)
 	a, base, auth, work, _ := nativeApplyFixtureConfig(t, true)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()

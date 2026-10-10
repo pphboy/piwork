@@ -70,6 +70,10 @@ workstation-fixture:
 web-base-image:
 	node scripts/build-web-base.mjs
 
+.PHONY: native-history4-web-base-fixture
+native-history4-web-base-fixture:
+	docker build -f internal/coreapp/testdata/Dockerfile.memory-history4-web-base -t piwork-memory-history4-web-base:acceptance .
+
 test-integration-go: harness-fixtures build-go native-compatibility-images native-helper-images workstation-fixture
 	PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:go-migration-acceptance \
 	PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance \

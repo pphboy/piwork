@@ -46,7 +46,8 @@ test('native acceptance rejects a foreign target, changed binary and source that
  const {checkPlatform}=await import('./check-cli-platform.mjs');const {desktopInputHash}=await import('./build-cli.mjs');
  const base=mkdtempSync(join(tmpdir(),'piwork-native-binding-test-'));
  try {
-  for(const dir of ['apps/desktop-webui/src','apps/desktop-webui/public','apps/desktop-webui/scripts','build'])mkdirSync(join(base,dir),{recursive:true});
+  for(const dir of ['apps/desktop-webui/src','apps/desktop-webui/public','apps/desktop-webui/scripts','docs/images','build'])mkdirSync(join(base,dir),{recursive:true});
+  writeFileSync(join(base,'docs/images/piwork-logo.png'),'synthetic public logo');
   for(const file of ['apps/desktop-webui/tsconfig.json','apps/desktop-webui/package.json','scripts/sync-desktop-assets.mjs','package-lock.json']){mkdirSync(dirname(join(base,file)),{recursive:true});writeFileSync(join(base,file),'{}');}
   const data=Buffer.from('native candidate fixture'),sha256=createHash('sha256').update(data).digest('hex');
   const metadata={version:1,program:'piwork-cli',target:'linux/amd64',binary:'piwork-cli',sha256,releaseVersion:'0.1.0',commit:'a'.repeat(40),modified:true,desktopUIHash:desktopInputHash(base),goVersion:'go1.25.5'};

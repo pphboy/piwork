@@ -60,7 +60,10 @@ func TestNativeMemoryMigrationProcessRecoveryAndStopSupersession(t *testing.T) {
 			endpoint, arm := snapshotProcessEngine(t, scope.ID(), upstream)
 			_, source, _, _ := runtime.Caller(0)
 			binary := filepath.Join(filepath.Dir(source), "../../dist/go/piwork-serve")
-			image := "piwork-memory-history4:acceptance"
+			image := os.Getenv("PIWORK_TEST_NATIVE_HISTORY4_IMAGE")
+			if image == "" {
+				image = "piwork-memory-history4:acceptance"
+			}
 			start := func() (*exec.Cmd, string) {
 				p := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0")
 				p.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + endpoint, "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass", "PIWORK_AGENT_IMAGE=" + image, "PIWORK_PACKAGE_HELPER_IMAGE=" + next, "PIWORK_FILE_HELPER_IMAGE=" + os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), "PIWORK_SNAPSHOT_HELPER_IMAGE=" + os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"), "PIWORK_MODEL_PROVIDER=piwork-deterministic", "PIWORK_MODEL=fixture-v1", "PIWORK_API_KEY=acceptance-only"}
