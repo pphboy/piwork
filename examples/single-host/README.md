@@ -2,8 +2,6 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**Local candidate: images have not been pushed.**
-
 Run Core and CLI as two separate containers on one Linux host with Compose. See [Quick Start](../../README.md#quick-start) for independent usage. Core is the background service; CLI is the terminal client. Exiting or reopening CLI leaves Core and its tasks running.
 
 Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. Exported host inputs: `PIWORK_ADMIN_ACCOUNT`, `PIWORK_ADMIN_PASSWORD` (at least 12 characters), `PIWORK_MODEL_PROVIDER`, `PIWORK_MODEL`, `PIWORK_API_KEY`; leave optional `PIWORK_MODEL_BASE_URL` unset when unused. Initialization inputs go only to Core.

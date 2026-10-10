@@ -2,8 +2,6 @@
 
 [English](README.md) | **简体中文**
 
-**本地候选：镜像尚未推送。**
-
 在一台 Linux 主机上用 Compose 运行 Core 和 CLI 两个独立容器。默认独立使用见 [Quick Start](../../README.zh-CN.md#quick-start)。Core 是后台服务；CLI 是终端客户端，退出或重新打开 CLI 都不影响 Core 和任务。
 
 要求 Linux x86-64、rootful Docker Engine 28+、Compose 2.24+。宿主已导出 `PIWORK_ADMIN_ACCOUNT`、`PIWORK_ADMIN_PASSWORD`（至少 12 位）、`PIWORK_MODEL_PROVIDER`、`PIWORK_MODEL`、`PIWORK_API_KEY`；可选 `PIWORK_MODEL_BASE_URL` 不用时保持未设置。初始化变量只传给 Core。

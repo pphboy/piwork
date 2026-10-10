@@ -1,10 +1,10 @@
 {
   "manifestVersion": 2,
-  "releaseVersion": "0.0.1",
-  "sourceCommit": "1a2cc85e7059d8ffac1c2ef457bbbe9fc291f085",
-  "sourceModified": true,
-  "sourceInputHash": "a6cb96f4e5b31fb0bcf00c12d07db6341b048707343c188a61eb8e433ff6c524",
-  "desktopUIHash": "6b32a51d3e633b4b0d469567a0d14ebe5db801cd369d818c8823549d4fbfb8a9",
+  "releaseVersion": "0.0.2",
+  "sourceCommit": "fb4f577da3b4d0008b97a59103b84efefbf9b508",
+  "sourceModified": false,
+  "sourceInputHash": "512ec778b2671454ce1e66ceb11893f4f3ff908286ec2ae4947fd24fda100f37",
+  "desktopUIHash": "d62146f86359755eef3f6ca4c451d2d7eee800a2a27e611b963299207f8b22a7",
   "registry": "docker.io/pphboy",
   "platform": "linux/amd64",
   "runtimeImage": "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8",
@@ -13,13 +13,16 @@
     "schemaVersion": 1
   },
   "clientCredentialVersion": 1,
-  "releaseId": "0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
+  "releaseId": "0.0.2-fb4f577da3b4-512ec778b267",
   "images": {
-    "core": "docker.io/pphboy/piwork-core:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
-    "cli": "docker.io/pphboy/piwork-cli:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
-    "agent": "docker.io/pphboy/piwork-agentd:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
-    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
-    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty"
+    "core": "docker.io/pphboy/piwork-core:0.0.2-fb4f577da3b4-512ec778b267",
+    "cli": "docker.io/pphboy/piwork-cli:0.0.2-fb4f577da3b4-512ec778b267",
+    "agent": "docker.io/pphboy/piwork-agentd:0.0.2-fb4f577da3b4-512ec778b267",
+    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.2-fb4f577da3b4-512ec778b267",
+    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.2-fb4f577da3b4-512ec778b267",
+    "packageHelper": "docker.io/pphboy/piwork-agentd:0.0.2-fb4f577da3b4-512ec778b267"
   },
-  "state": "candidate"
+  "state": "published",
+  "compatiblePreviousReleaseVersions": [],
+  "directlyRollbackablePreviousVersions": []
 }
