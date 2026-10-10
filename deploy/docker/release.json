@@ -1,10 +1,10 @@
 {
   "manifestVersion": 2,
-  "releaseVersion": "0.0.2",
-  "sourceCommit": "fb4f577da3b4d0008b97a59103b84efefbf9b508",
+  "releaseVersion": "0.0.3",
+  "sourceCommit": "30ac253e9dce501351a9e2499bac0f6f66545e91",
   "sourceModified": false,
-  "sourceInputHash": "512ec778b2671454ce1e66ceb11893f4f3ff908286ec2ae4947fd24fda100f37",
-  "desktopUIHash": "d62146f86359755eef3f6ca4c451d2d7eee800a2a27e611b963299207f8b22a7",
+  "sourceInputHash": "653d50a5d7d5cbeff48f0fd94c0db4a60cff72eb76594369862e7dfd69a8aa42",
+  "desktopUIHash": "1597a8a6c11e6433a4c498b940db461b296da014b9b3278e63e4942cd8af0ce9",
   "registry": "docker.io/pphboy",
   "platform": "linux/amd64",
   "runtimeImage": "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8",
@@ -13,14 +13,14 @@
     "schemaVersion": 1
   },
   "clientCredentialVersion": 1,
-  "releaseId": "0.0.2-fb4f577da3b4-512ec778b267",
+  "releaseId": "0.0.3-30ac253e9dce-653d50a5d7d5",
   "images": {
-    "core": "docker.io/pphboy/piwork-core:0.0.2-fb4f577da3b4-512ec778b267",
-    "cli": "docker.io/pphboy/piwork-cli:0.0.2-fb4f577da3b4-512ec778b267",
-    "agent": "docker.io/pphboy/piwork-agentd:0.0.2-fb4f577da3b4-512ec778b267",
-    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.2-fb4f577da3b4-512ec778b267",
-    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.2-fb4f577da3b4-512ec778b267",
-    "packageHelper": "docker.io/pphboy/piwork-agentd:0.0.2-fb4f577da3b4-512ec778b267"
+    "core": "docker.io/pphboy/piwork-core:0.0.3-30ac253e9dce-653d50a5d7d5",
+    "cli": "docker.io/pphboy/piwork-cli:0.0.3-30ac253e9dce-653d50a5d7d5",
+    "agent": "docker.io/pphboy/piwork-agentd:0.0.3-30ac253e9dce-653d50a5d7d5",
+    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.3-30ac253e9dce-653d50a5d7d5",
+    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.3-30ac253e9dce-653d50a5d7d5",
+    "packageHelper": "docker.io/pphboy/piwork-agentd:0.0.3-30ac253e9dce-653d50a5d7d5"
   },
   "state": "published",
   "compatiblePreviousReleaseVersions": [],

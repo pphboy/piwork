@@ -81,7 +81,7 @@ docker run --detach --init \
     --env PIWORK_MODEL_BASE_URL \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.2-fb4f577da3b4-512ec778b267
+    docker.io/pphboy/piwork-core:0.0.3-30ac253e9dce-653d50a5d7d5
 ```
 
 Core 也可用 [Core-only docker-compose.yml](deploy/docker/docker-compose.yml) 单独部署（Compose 2.24+），CLI 仍使用自己的 Docker 命令。切换 Core 部署方式前先停止原容器，保留同一数据目录。Core 与 CLI 合并的可选方式见 [单机部署示例](examples/single-host/README.zh-CN.md)。
@@ -95,7 +95,7 @@ docker run --rm --init --interactive --tty \
     --add-host host.docker.internal:host-gateway \
     --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.2-fb4f577da3b4-512ec778b267
+    docker.io/pphboy/piwork-cli:0.0.3-30ac253e9dce-653d50a5d7d5
 ```
 
 下面的命令在 **CLI 容器内**执行。将 `ACCOUNT` 替换为你的账号；登录时隐藏密码输入。创建 Work 会自动启动它：
