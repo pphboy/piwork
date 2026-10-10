@@ -1,7 +1,7 @@
 name: piwork-single-host
 services:
   core:
-    image: docker.io/pphboy/piwork-core:0.0.1-fc409adc1a0b-808d890c6607-dirty
+    image: docker.io/pphboy/piwork-core:0.0.1-03395d0810f7-c70a7cb33564-dirty
     init: true
     user: "0:0"
     network_mode: host
@@ -27,7 +27,7 @@ services:
     stop_grace_period: 60s
     restart: unless-stopped
   cli:
-    image: docker.io/pphboy/piwork-cli:0.0.1-fc409adc1a0b-808d890c6607-dirty
+    image: docker.io/pphboy/piwork-cli:0.0.1-03395d0810f7-c70a7cb33564-dirty
     profiles: [cli]
     init: true
     user: "0:0"

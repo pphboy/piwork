@@ -1,0 +1,25 @@
+{
+  "contractVersion": 1,
+  "state": "published",
+  "version": "0.1.0-03395d0810f7-bbb24bdd0167-dirty",
+  "commit": "03395d0810f7c9bb2922f34c3edd38e2d1208402",
+  "modified": true,
+  "inputHash": "bbb24bdd01672d007a68ef37402bd9548e0dca91527bc55a69394e3176e70665",
+  "platform": "linux/amd64",
+  "reference": "docker.io/pphboy/piwork-web-base:0.1.0-03395d0810f7-bbb24bdd0167-dirty",
+  "environment": {
+    "contractVersion": 1,
+    "version": "0.1.0",
+    "platform": "linux/amd64",
+    "pythonImage": "python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641",
+    "nodeImage": "node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20",
+    "pythonVersion": "3.13.16",
+    "nodeVersion": "24.21.0",
+    "sqlite3Version": "3.40.1-2+deb12u2"
+  },
+  "imageId": "sha256:3be06cbe6450c63d6def67cd2948be08fed635615a7d9d8982c2e710b5c06f3a",
+  "registryDigest": "sha256:e83902fb568e97b2d01d488ce7c9c3d15f373ab58b46e041337baa832b8cfb81",
+  "fixedReference": "docker.io/pphboy/piwork-web-base:0.1.0-03395d0810f7-bbb24bdd0167-dirty@sha256:e83902fb568e97b2d01d488ce7c9c3d15f373ab58b46e041337baa832b8cfb81",
+  "anonymousReadable": true,
+  "checkedAt": "2026-10-10T00:56:21.803Z"
+}
