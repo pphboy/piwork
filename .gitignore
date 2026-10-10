@@ -20,6 +20,9 @@ __pycache__/
 # Installation state, credentials and exported user data.
 .piwork*/
 .cache/
+.venv/
+.pytest_cache/
+__pycache__/
 credentials.json
 operator.credential
 *.sqlite

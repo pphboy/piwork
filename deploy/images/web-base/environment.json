@@ -1,0 +1,10 @@
+{
+  "contractVersion": 1,
+  "version": "0.1.0",
+  "platform": "linux/amd64",
+  "pythonImage": "python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641",
+  "nodeImage": "node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20",
+  "pythonVersion": "3.13.16",
+  "nodeVersion": "24.21.0",
+  "sqlite3Version": "3.40.1-2+deb12u2"
+}

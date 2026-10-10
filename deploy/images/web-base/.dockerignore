@@ -1,0 +1,10 @@
+*
+!Dockerfile
+!environment.json
+!requirements.lock
+!frontend/
+!frontend/package.json
+!frontend/package-lock.json
+!tools/
+!tools/*.py
+!tools/piwork-web

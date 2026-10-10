@@ -22,7 +22,8 @@ function nativeVersion(reference, program) {
 
 const retained = new Set(['contracts', 'pi-adapter', 'pi-package', 'work-store']);
 for (const variant of ['production', 'acceptance']) {
-  const reference = `piwork-agentd:go-migration-${variant}`;
+  const reference = (variant === 'production' ? process.env.PIWORK_TEST_NATIVE_PRODUCTION_AGENT_IMAGE : process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE)
+    || `piwork-agentd:go-migration-${variant}`;
   const image = inspect(reference);
   assert.deepEqual(image.Config.Entrypoint, ['node', '/workspace/apps/agentd/dist/main.js']);
   assert.equal(image.Config.Labels['io.piwork.agent.variant'], variant);
@@ -32,6 +33,10 @@ for (const variant of ['production', 'acceptance']) {
   assert.equal(image.Config.Labels['io.piwork.work-feedback.contract'], '1');
   assert.equal(image.Config.Labels['io.piwork.service-mcp.contract'], '1');
   assert.equal(image.Config.User, '10001:10001');
+  const sqlite = docker('run', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges', '--entrypoint', 'sqlite3', reference,
+    '-json', ':memory:', 'CREATE TABLE fixture(value INTEGER); INSERT INTO fixture VALUES(7); SELECT value FROM fixture;');
+  assert.deepEqual(JSON.parse(sqlite), [{ value: 7 }], `${reference}: real sqlite3 CLI is unavailable`);
   const listing = docker('run', '--rm', '--network', 'none', '--read-only', '--entrypoint', '/bin/sh',
     reference, '-c', 'find /workspace/apps /workspace/packages -type f | sort');
   const files = listing.split('\n');
@@ -58,8 +63,8 @@ for (const variant of ['production', 'acceptance']) {
   nativeVersion(reference, 'piwork-package-helper');
 }
 for (const [reference, program, label] of [
-  ['piwork-file-helper:go-migration-acceptance', 'piwork-file-helper', 'piwork.file_protocol'],
-  ['piwork-snapshot-helper:go-migration-acceptance', 'piwork-snapshot-helper', 'piwork.snapshot_protocol'],
+  [process.env.PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE || 'piwork-file-helper:go-migration-acceptance', 'piwork-file-helper', 'piwork.file_protocol'],
+  [process.env.PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE || 'piwork-snapshot-helper:go-migration-acceptance', 'piwork-snapshot-helper', 'piwork.snapshot_protocol'],
 ]) {
   const image = inspect(reference);
   assert.deepEqual(image.Config.Entrypoint, [`/usr/local/bin/${program}`]);

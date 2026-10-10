@@ -66,6 +66,10 @@ harness-fixtures:
 workstation-fixture:
 	node scripts/build-workstation-fixture.mjs
 
+.PHONY: web-base-image
+web-base-image:
+	node scripts/build-web-base.mjs
+
 test-integration-go: harness-fixtures build-go native-compatibility-images native-helper-images workstation-fixture
 	PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:go-migration-acceptance \
 	PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance \
