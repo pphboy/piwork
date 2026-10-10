@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { Check } from "typebox/value";
 import { AgentRunSourceSchema, AgentWaitRefSchema, BrainCandidateSubmissionSchema, isBrainVerificationTarget, BRAIN_LIMITS,
-  RunModelDescriptionSchema, RunSubmissionSelectorSchema, ThinkingLevelSchema, ServiceEventSchema } from "@piwork/contracts";
+  RunModelDescriptionSchema, RunSubmissionSelectorSchema, ThinkingSettingSchema, ServiceEventSchema, ModelApiSchema, ModelCapabilitiesSchema, ResourceIdSchema } from "@piwork/contracts";
 import { canonicalJson, contentDigest, FeedbackStore, validBrainAdoption } from "./feedback.js";
 import { MemoryStore } from "./memory.js";
 import { validateMemoryHistory } from "./snapshot-memory.js";
@@ -15,9 +15,12 @@ const optional = (value: SQLInputValue | undefined, check: (v: unknown) => boole
 };
 function model(value: unknown): boolean {
   if (!object(value)) return false;
-  const { baseUrl, availability, thinkingLevel, ...description } = value;
+  const { baseUrl, availability, thinkingLevel, api,capabilities,executionBindingId,...description } = value;
   if (!Check(RunModelDescriptionSchema, description)) return false;
-  if (thinkingLevel !== undefined && !Check(ThinkingLevelSchema, thinkingLevel)) return false;
+  if(api!==undefined&&(!Check(ModelApiSchema,api)||api==='openai-responses'&&description.provider!=='openai'||api==='anthropic-messages'&&description.provider!=='anthropic'))return false;
+  if(capabilities!==undefined&&!Check(ModelCapabilitiesSchema,capabilities))return false;
+  if(executionBindingId!==undefined&&!Check(ResourceIdSchema,executionBindingId))return false;
+  if (thinkingLevel !== undefined && !Check(ThinkingSettingSchema, thinkingLevel)) return false;
   if (availability !== undefined && !["available", "unavailable"].includes(String(availability))) return false;
   if (baseUrl !== undefined) {
     if (typeof baseUrl !== "string") return false;

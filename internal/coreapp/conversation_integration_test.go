@@ -138,7 +138,7 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 	if status != 201 || session["sessionId"] == nil {
 		t.Fatal("Core Session HTTP route failed", status, session)
 	}
-	if status, capabilities := httpCall(t, base, path+"/chat-capabilities", "GET", authorization, nil); status != 200 || capabilities["contractVersion"] != float64(1) {
+	if status, capabilities := httpCall(t, base, path+"/chat-capabilities", "GET", authorization, nil); status != 200 || capabilities["contractVersion"] != float64(3) {
 		t.Fatal("optional chat capabilities", status, capabilities)
 	}
 	if status, models := httpCall(t, base, path+"/chat-models", "GET", authorization, nil); status != 200 || models["defaultModel"].(map[string]any)["defaultThinkingLevel"] != "off" {
@@ -244,7 +244,7 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 		t.Fatal("deterministic cancellable Run was not accepted", status, waiting)
 	}
 	waitID := waiting["run"].(map[string]any)["runId"].(string)
-	if secondStatus, second := httpCall(t, base, path+"/runs", "POST", authorization, map[string]any{"sessionId": session["sessionId"], "submissionKey": "http-run-while-busy", "prompt": "hello"}); secondStatus != 429 || second["code"] != "RATE_LIMITED" {
+	if secondStatus, second := httpCall(t, base, path+"/runs", "POST", authorization, map[string]any{"sessionId": session["sessionId"], "submissionKey": "http-run-while-busy", "prompt": "hello"}); secondStatus != 409 || second["code"] != "WORK_BUSY" {
 		t.Fatal("second active Run was accepted", secondStatus, second)
 	}
 	if cancelStatus, cancelResult := httpCall(t, base, path+"/runs/"+waitID+"/cancel", "POST", authorization, map[string]any{"idempotencyKey": "http-cancel-wait"}); cancelStatus != 200 || cancelResult["runId"] != waitID {

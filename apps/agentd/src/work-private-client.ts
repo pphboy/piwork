@@ -14,12 +14,12 @@ export class WorkPrivateClient {
     });
   }
   close(): void { this.client.close(); }
-  async models(): Promise<{ models: RunModelSnapshot[]; defaultModel: RunModelSnapshot; checkedAt: string }> {
-    const result = await this.call<RpcWorkPrivateResponse>((metadata, options, done) => this.client.listRunModels({}, metadata, options, done));
-    return JSON.parse(result.valueJson) as { models: RunModelSnapshot[]; defaultModel: RunModelSnapshot; checkedAt: string };
+  async models(): Promise<{ models: RunModelSnapshot[]; defaultModel: RunModelSnapshot; defaultUnavailable?: boolean; checkedAt: string }> {
+    const result = await this.call<RpcWorkPrivateResponse>((metadata, options, done) => this.client.listRunModels({ modelProviderContractVersion: 1 }, metadata, options, done));
+    return JSON.parse(result.valueJson) as { models: RunModelSnapshot[]; defaultModel: RunModelSnapshot; defaultUnavailable?: boolean; checkedAt: string };
   }
   async resolveModel(modelRef: string | null, expected?: RunModelSnapshot): Promise<{ model: RunModelSnapshot; credential: string }> {
-    const result = await this.call<RpcRunModelResolution>((metadata, options, done) => this.client.resolveRunModel({ inputJson: JSON.stringify({ modelRef, ...(expected ? { expected } : {}) }) }, metadata, options, done));
+    const result = await this.call<RpcRunModelResolution>((metadata, options, done) => this.client.resolveRunModel({ inputJson: JSON.stringify({ modelProviderContractVersion: 1, modelRef, ...(expected ? { expected } : {}) }) }, metadata, options, done));
     return { model: JSON.parse(result.modelJson) as RunModelSnapshot, credential: result.credential };
   }
   async bindings(): Promise<unknown> { return this.content("getServiceInteractionBindings", {}); }
@@ -27,7 +27,9 @@ export class WorkPrivateClient {
   async brainState(input: unknown): Promise<unknown> { return this.content("getBrainCandidateState", input); }
   async authorizeHistoryMigration(input: unknown): Promise<unknown> { return this.content("authorizeHistoryMigration", input); }
   private async content(method: "getServiceInteractionBindings" | "prepareBrainCandidate" | "getBrainCandidateState" | "authorizeHistoryMigration", input: unknown): Promise<unknown> {
-    const result = await this.call<RpcWorkPrivateResponse>((metadata, options, done) => this.client[method]({ inputJson: JSON.stringify(input) }, metadata, options, done), method === "prepareBrainCandidate" ? 60_000 : 10_000);
+    const result = await this.call<RpcWorkPrivateResponse>((metadata, options, done) => method==='getServiceInteractionBindings'
+      ? this.client.getServiceInteractionBindings({},metadata,options,done)
+      : this.client[method]({ inputJson: JSON.stringify(input) }, metadata, options, done), method === "prepareBrainCandidate" ? 60_000 : 10_000);
     return JSON.parse(result.valueJson);
   }
   private call<R>(invoke: (metadata: Metadata, options: { deadline: Date }, done: (error: ServiceError | null, response: R) => void) => unknown, timeoutMs = 10_000): Promise<R> {

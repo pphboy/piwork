@@ -137,7 +137,7 @@ func readRequest(spool string) (historyRequest, error) {
 			}
 			public := map[string]any{}
 			for k, v := range m {
-				if k != "baseUrl" {
+				if k != "baseUrl" && k != "api" && k != "capabilities" {
 					public[k] = v
 				}
 			}
@@ -146,6 +146,14 @@ func readRequest(spool string) (historyRequest, error) {
 				return request, workhistory.ErrInvalid
 			}
 			refs[ref] = true
+			if api, exists := m["api"]; exists {
+				if contracts.Validate("ModelApiSchema", api) != nil || api == "openai-responses" && m["provider"] != "openai" || api == "anthropic-messages" && m["provider"] != "anthropic" {
+					return request, workhistory.ErrInvalid
+				}
+			}
+			if caps, exists := m["capabilities"]; exists && contracts.Validate("ModelCapabilitiesSchema", caps) != nil {
+				return request, workhistory.ErrInvalid
+			}
 			if v, exists := m["baseUrl"]; exists {
 				endpoint, ok := v.(string)
 				if !ok {

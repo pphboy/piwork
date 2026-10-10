@@ -41,6 +41,7 @@ type AdminDefaultWorkPatch struct {
 	Skills    Field[SkillSelection]  `json:"skills,omitzero"`
 	Packages  Field[[]PiPackageName] `json:"packages,omitzero"`
 	AgentsMd  Field[string]          `json:"agentsMd,omitzero"`
+	ModelRef  Field[ResourceId]      `json:"modelRef,omitzero"`
 }
 
 type AdminDefaultWorkView struct {
@@ -123,7 +124,9 @@ type AdminResetCredentialRequest struct {
 	Password string `json:"password"`
 }
 
-type AdminRuntimeInput struct {
+type AdminRuntimeInput = json.RawMessage
+
+type AdminRuntimeLegacyInput struct {
 	AgentImage string        `json:"agentImage"`
 	Provider   string        `json:"provider"`
 	Model      string        `json:"model"`
@@ -132,8 +135,13 @@ type AdminRuntimeInput struct {
 }
 
 type AdminRuntimeResult struct {
-	Runtime AdminRuntimeView `json:"runtime"`
-	Status  AdminStatus      `json:"status"`
+	Runtime json.RawMessage `json:"runtime"`
+	Status  AdminStatus     `json:"status"`
+}
+
+type AdminRuntimeSelection struct {
+	AgentImage string     `json:"agentImage"`
+	ModelRef   ResourceId `json:"modelRef"`
 }
 
 type AdminRuntimeView = json.RawMessage
@@ -263,10 +271,12 @@ type AgentRuntimeConfig struct {
 	InitializationOnly Field[bool]     `json:"initializationOnly,omitzero"`
 	CorrelationId      Field[string]   `json:"correlationId,omitzero"`
 	Model              struct {
-		Provider       string        `json:"provider"`
-		Id             string        `json:"id"`
-		BaseUrl        Field[string] `json:"baseUrl,omitzero"`
-		CredentialPath Field[string] `json:"credentialPath,omitzero"`
+		Provider       string                   `json:"provider"`
+		Id             string                   `json:"id"`
+		BaseUrl        Field[string]            `json:"baseUrl,omitzero"`
+		CredentialPath Field[string]            `json:"credentialPath,omitzero"`
+		Api            Field[ModelApi]          `json:"api,omitzero"`
+		Capabilities   Field[ModelCapabilities] `json:"capabilities,omitzero"`
 	} `json:"model"`
 	Tls struct {
 		CaCertificatePath        string `json:"caCertificatePath"`
@@ -366,22 +376,9 @@ type ChatCapabilities struct {
 
 type ChatInputMode string
 
-type ChatModelList struct {
-	ContractVersion float64     `json:"contractVersion"`
-	Models          []ChatModel `json:"models"`
-	DefaultModel    ChatModel   `json:"defaultModel"`
-	CheckedAt       Timestamp   `json:"checkedAt"`
-	Availability    string      `json:"availability"`
-}
+type ChatModelList = json.RawMessage
 
-type ChatModel struct {
-	ModelRef             json.RawMessage `json:"modelRef"`
-	Label                string          `json:"label"`
-	Provider             string          `json:"provider"`
-	Model                string          `json:"model"`
-	ThinkingLevels       []ThinkingLevel `json:"thinkingLevels"`
-	DefaultThinkingLevel ThinkingLevel   `json:"defaultThinkingLevel"`
-}
+type ChatModel = json.RawMessage
 
 type ChatRunView struct {
 	WorkId                    Identifier      `json:"workId"`
@@ -397,7 +394,7 @@ type ChatRunView struct {
 	EarliestAvailableSequence string          `json:"earliestAvailableSequence"`
 	LatestSequence            string          `json:"latestSequence"`
 	ActualModel               json.RawMessage `json:"actualModel"`
-	ThinkingLevel             ThinkingLevel   `json:"thinkingLevel"`
+	ThinkingLevel             ThinkingSetting `json:"thinkingLevel"`
 	Source                    AgentRunSource  `json:"source"`
 	AdoptedExperienceVersion  int64           `json:"adoptedExperienceVersion"`
 	Error                     Field[struct {
@@ -413,13 +410,34 @@ type ChatSessionView struct {
 	CreatedAt       Timestamp       `json:"createdAt"`
 	UpdatedAt       Timestamp       `json:"updatedAt"`
 	ModelPreference json.RawMessage `json:"modelPreference"`
-	ThinkingLevel   ThinkingLevel   `json:"thinkingLevel"`
+	ThinkingLevel   ThinkingSetting `json:"thinkingLevel"`
 	Source          AgentRunSource  `json:"source"`
 }
 
 type ChatSubmissionKey string
 
 type ChatSubmissionLookup = json.RawMessage
+
+type CreateManagedModel struct {
+	Name         string                   `json:"name"`
+	Model        string                   `json:"model"`
+	Capabilities Field[ModelCapabilities] `json:"capabilities,omitzero"`
+}
+
+type CreateModelConfig struct {
+	Model      string        `json:"model"`
+	Api        ModelApi      `json:"api"`
+	BaseUrl    string        `json:"baseUrl"`
+	Credential string        `json:"credential"`
+	Name       Field[string] `json:"name,omitzero"`
+}
+
+type CreateModelProvider struct {
+	Name       string   `json:"name"`
+	Api        ModelApi `json:"api"`
+	BaseUrl    string   `json:"baseUrl"`
+	Credential string   `json:"credential"`
+}
 
 type CreateUserRequest struct {
 	Account  Identifier      `json:"account"`
@@ -437,6 +455,13 @@ type DiagnosticCollection struct {
 type DiagnosticStage string
 
 type Digest string
+
+type DraftModelTestInput struct {
+	Api        ModelApi `json:"api"`
+	BaseUrl    string   `json:"baseUrl"`
+	Model      string   `json:"model"`
+	Credential string   `json:"credential"`
+}
 
 type ErrorCode string
 
@@ -548,6 +573,27 @@ type LookupChatSubmission struct {
 	Key  ChatSubmissionKey `json:"key"`
 }
 
+type ManagedModelList struct {
+	Models []ManagedModel `json:"models"`
+}
+
+type ManagedModel struct {
+	Id                  ResourceId               `json:"id"`
+	ProviderId          ResourceId               `json:"providerId"`
+	Name                string                   `json:"name"`
+	Model               string                   `json:"model"`
+	ModelRef            ResourceId               `json:"modelRef"`
+	Enabled             bool                     `json:"enabled"`
+	Api                 ModelApi                 `json:"api"`
+	ProviderName        string                   `json:"providerName"`
+	ProviderEnabled     bool                     `json:"providerEnabled"`
+	CredentialAvailable bool                     `json:"credentialAvailable"`
+	Capabilities        Field[ModelCapabilities] `json:"capabilities,omitzero"`
+	CapabilityStatus    string                   `json:"capabilityStatus"`
+	CreatedAt           Timestamp                `json:"createdAt"`
+	UpdatedAt           Timestamp                `json:"updatedAt"`
+}
+
 type ManagedSkill struct {
 	Name       SkillName `json:"name"`
 	Enabled    bool      `json:"enabled"`
@@ -567,6 +613,93 @@ type McpServer struct {
 	TimeoutMs         Field[int64]             `json:"timeoutMs,omitzero"`
 	SecretRefs        Field[[]SecretReference] `json:"secretRefs,omitzero"`
 	RequiredServiceId Field[ResourceId]        `json:"requiredServiceId,omitzero"`
+}
+
+type ModelApi string
+
+type ModelCapabilities = json.RawMessage
+
+type ModelConfigList struct {
+	Models []ModelConfig `json:"models"`
+}
+
+type ModelConfig struct {
+	Id                  ResourceId `json:"id"`
+	Name                string     `json:"name"`
+	Api                 ModelApi   `json:"api"`
+	BaseUrl             string     `json:"baseUrl"`
+	Model               string     `json:"model"`
+	ModelRef            ResourceId `json:"modelRef"`
+	Enabled             bool       `json:"enabled"`
+	CredentialAvailable bool       `json:"credentialAvailable"`
+	CreatedAt           Timestamp  `json:"createdAt"`
+	UpdatedAt           Timestamp  `json:"updatedAt"`
+}
+
+type ModelDefinition struct {
+	Reasoning        bool     `json:"reasoning"`
+	Input            []string `json:"input"`
+	ContextWindow    int64    `json:"contextWindow"`
+	MaxTokens        int64    `json:"maxTokens"`
+	ThinkingLevelMap Field[struct {
+		Off     Field[json.RawMessage] `json:"off,omitzero"`
+		Minimal Field[json.RawMessage] `json:"minimal,omitzero"`
+		Low     Field[json.RawMessage] `json:"low,omitzero"`
+		Medium  Field[json.RawMessage] `json:"medium,omitzero"`
+		High    Field[json.RawMessage] `json:"high,omitzero"`
+		Xhigh   Field[json.RawMessage] `json:"xhigh,omitzero"`
+		Max     Field[json.RawMessage] `json:"max,omitzero"`
+	}] `json:"thinkingLevelMap,omitzero"`
+	Compat Field[struct {
+		ForceAdaptiveThinking      Field[bool] `json:"forceAdaptiveThinking,omitzero"`
+		SupportsLongCacheRetention Field[bool] `json:"supportsLongCacheRetention,omitzero"`
+	}] `json:"compat,omitzero"`
+}
+
+type ModelProviderList struct {
+	Providers []ModelProvider `json:"providers"`
+}
+
+type ModelProvider struct {
+	Id                  ResourceId `json:"id"`
+	Name                string     `json:"name"`
+	Api                 ModelApi   `json:"api"`
+	BaseUrl             string     `json:"baseUrl"`
+	Enabled             bool       `json:"enabled"`
+	CredentialAvailable bool       `json:"credentialAvailable"`
+	CreatedAt           Timestamp  `json:"createdAt"`
+	UpdatedAt           Timestamp  `json:"updatedAt"`
+}
+
+type ModelTestFailure struct {
+	Api         ModelApi     `json:"api"`
+	Model       string       `json:"model"`
+	CheckedAt   Timestamp    `json:"checkedAt"`
+	DurationMs  int64        `json:"durationMs"`
+	TestMessage string       `json:"testMessage"`
+	HttpStatus  Field[int64] `json:"httpStatus,omitzero"`
+	Success     bool         `json:"success"`
+	Category    string       `json:"category"`
+	Reason      string       `json:"reason"`
+	Message     string       `json:"message"`
+	Recovery    string       `json:"recovery"`
+}
+
+type ModelTestInput = json.RawMessage
+
+type ModelTestResult = json.RawMessage
+
+type ModelTestSuccess struct {
+	Api            ModelApi     `json:"api"`
+	Model          string       `json:"model"`
+	CheckedAt      Timestamp    `json:"checkedAt"`
+	DurationMs     int64        `json:"durationMs"`
+	TestMessage    string       `json:"testMessage"`
+	HttpStatus     Field[int64] `json:"httpStatus,omitzero"`
+	Success        bool         `json:"success"`
+	Category       string       `json:"category"`
+	ReplyText      string       `json:"replyText"`
+	ReplyTruncated bool         `json:"replyTruncated"`
 }
 
 type OperationDiagnostics struct {
@@ -603,6 +736,26 @@ type OperatorSkill struct {
 
 type PackageHelperPrepareRequest struct {
 	Source json.RawMessage `json:"source"`
+}
+
+type PatchManagedModel struct {
+	Name         Field[string]          `json:"name,omitzero"`
+	Model        Field[string]          `json:"model,omitzero"`
+	Capabilities Field[json.RawMessage] `json:"capabilities,omitzero"`
+}
+
+type PatchModelConfig struct {
+	Model      Field[string]   `json:"model,omitzero"`
+	Api        Field[ModelApi] `json:"api,omitzero"`
+	BaseUrl    Field[string]   `json:"baseUrl,omitzero"`
+	Credential Field[string]   `json:"credential,omitzero"`
+	Name       Field[string]   `json:"name,omitzero"`
+}
+
+type PatchModelProvider struct {
+	Name       Field[string] `json:"name,omitzero"`
+	BaseUrl    Field[string] `json:"baseUrl,omitzero"`
+	Credential Field[string] `json:"credential,omitzero"`
 }
 
 type PiPackageArtifactMetadata struct {
@@ -876,6 +1029,13 @@ type PortableWorkSpec struct {
 	Blobs []WorkBlob `json:"blobs"`
 }
 
+type ProviderModelTestInput struct {
+	ProviderId ResourceId    `json:"providerId"`
+	Model      string        `json:"model"`
+	BaseUrl    Field[string] `json:"baseUrl,omitzero"`
+	Credential Field[string] `json:"credential,omitzero"`
+}
+
 type PublicOperation struct {
 	OperationId   ResourceId            `json:"operationId"`
 	WorkId        ResourceId            `json:"workId"`
@@ -993,6 +1153,14 @@ type SafeTerminalStageEvent struct {
 	Message   string            `json:"message"`
 	SkillName Field[SkillName]  `json:"skillName,omitzero"`
 	ServiceId Field[ResourceId] `json:"serviceId,omitzero"`
+}
+
+type SavedModelTestInput struct {
+	ModelId    ResourceId      `json:"modelId"`
+	Model      Field[string]   `json:"model,omitzero"`
+	Api        Field[ModelApi] `json:"api,omitzero"`
+	BaseUrl    Field[string]   `json:"baseUrl,omitzero"`
+	Credential Field[string]   `json:"credential,omitzero"`
 }
 
 type SecretReference struct {
@@ -1159,7 +1327,7 @@ type ServiceQueryResult struct {
 type SessionChatOptions struct {
 	SessionId     Identifier          `json:"sessionId"`
 	ModelRef      json.RawMessage     `json:"modelRef"`
-	ThinkingLevel ThinkingLevel       `json:"thinkingLevel"`
+	ThinkingLevel ThinkingSetting     `json:"thinkingLevel"`
 	Model         RunModelDescription `json:"model"`
 	Availability  string              `json:"availability"`
 	CheckedAt     Timestamp           `json:"checkedAt"`
@@ -1169,7 +1337,7 @@ type SessionContentBlock = json.RawMessage
 
 type SetSessionChatOptions struct {
 	ModelRef      json.RawMessage `json:"modelRef"`
-	ThinkingLevel ThinkingLevel   `json:"thinkingLevel"`
+	ThinkingLevel ThinkingSetting `json:"thinkingLevel"`
 }
 
 type SetSessionModel struct {
@@ -1222,6 +1390,8 @@ type SubmitRunInput struct {
 
 type ThinkingLevel string
 
+type ThinkingSetting = json.RawMessage
+
 type Timestamp string
 
 type ToolPolicy struct {
@@ -1252,10 +1422,12 @@ type User struct {
 
 type WorkBindingRequirements struct {
 	Models []struct {
-		Key      WorkLogicalKey  `json:"key"`
-		Provider string          `json:"provider"`
-		Model    string          `json:"model"`
-		BaseUrl  json.RawMessage `json:"baseUrl"`
+		Key          WorkLogicalKey           `json:"key"`
+		Provider     string                   `json:"provider"`
+		Model        string                   `json:"model"`
+		BaseUrl      json.RawMessage          `json:"baseUrl"`
+		Api          Field[ModelApi]          `json:"api,omitzero"`
+		Capabilities Field[ModelCapabilities] `json:"capabilities,omitzero"`
 	} `json:"models"`
 	Secrets []struct {
 		Key  WorkLogicalKey `json:"key"`

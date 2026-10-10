@@ -49,9 +49,9 @@ export interface Message {
   source?: string;
   tool?: { id?: string; name: string; status: string; content: string; isError?: boolean };
 }
-export interface RunModel { modelRef: string | null; label: string; provider: string; model: string; thinkingLevels?: string[]; defaultThinkingLevel?: string }
+export interface RunModel { modelRef: string | null; label: string; provider: string; model: string; thinkingLevels?: string[]; defaultThinkingLevel?: string | null; thinkingAvailability?: "unknown" }
 export interface Session {
-  thinkingLevel?: string;
+  thinkingLevel?: string | null;
   loading?: boolean;
   checkedAt?: string;
   error?: string;
@@ -64,7 +64,7 @@ export interface Session {
   runs?: Run[];
 }
 export interface Run {
-  thinkingLevel?: string;
+  thinkingLevel?: string | null;
   actualModel?: RunModel | null;
   source?: Session["source"];
   adoptedExperienceVersion?: number;

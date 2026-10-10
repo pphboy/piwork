@@ -234,12 +234,13 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 				if !validHistoryModel(pref) {
 					return ErrInvalid
 				}
+				delete(pref, "executionBindingId")
 				matches := []map[string]any{}
 				for _, model := range binding.Models {
 					if !validHistoryModel(model) {
 						return ErrInvalid
 					}
-					if model["provider"] == pref["provider"] && model["model"] == pref["model"] && reflect.DeepEqual(normalizedEndpoint(model["baseUrl"]), normalizedEndpoint(pref["baseUrl"])) {
+					if model["provider"] == pref["provider"] && model["model"] == pref["model"] && reflect.DeepEqual(normalizedEndpoint(model["baseUrl"]), normalizedEndpoint(pref["baseUrl"])) && (pref["api"] == nil || pref["api"] == model["api"]) && (pref["capabilities"] == nil || reflect.DeepEqual(pref["capabilities"], model["capabilities"])) {
 						matches = append(matches, model)
 					}
 				}

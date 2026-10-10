@@ -19,20 +19,25 @@ import (
 // The endpoint is private execution input. Public projections use only the
 // embedded four-field description; credentials never become model metadata.
 type runModelSnapshot struct {
-	ModelRef *string `json:"modelRef"`
-	Label    string  `json:"label"`
-	Provider string  `json:"provider"`
-	Model    string  `json:"model"`
-	BaseURL  *string `json:"baseUrl,omitempty"`
+	ModelRef           *string         `json:"modelRef"`
+	Label              string          `json:"label"`
+	Provider           string          `json:"provider"`
+	Model              string          `json:"model"`
+	BaseURL            *string         `json:"baseUrl,omitempty"`
+	API                string          `json:"api,omitempty"`
+	Capabilities       json.RawMessage `json:"capabilities,omitempty"`
+	ExecutionBindingID string          `json:"executionBindingId,omitempty"`
 }
 type runModelCandidates struct {
-	Models       []runModelSnapshot `json:"models"`
-	DefaultModel runModelSnapshot   `json:"defaultModel"`
-	CheckedAt    string             `json:"checkedAt"`
+	Models             []runModelSnapshot `json:"models"`
+	DefaultModel       runModelSnapshot   `json:"defaultModel"`
+	CheckedAt          string             `json:"checkedAt"`
+	DefaultUnavailable bool               `json:"defaultUnavailable,omitempty"`
 }
 type modelResolutionInput struct {
-	ModelRef contracts.Field[string] `json:"modelRef"`
-	Expected *runModelSnapshot       `json:"expected,omitempty"`
+	ModelRef                     contracts.Field[string] `json:"modelRef"`
+	Expected                     *runModelSnapshot       `json:"expected,omitempty"`
+	ModelProviderContractVersion int                     `json:"modelProviderContractVersion,omitempty"`
 }
 
 func normalizeRunModelEndpoint(value *string) (*string, error) {
@@ -46,29 +51,15 @@ func normalizeRunModelEndpoint(value *string) (*string, error) {
 	return endpoint, nil
 }
 func (a *Application) resolveRunModelEntry(tx *sql.Tx, reference string, modelRef *string) (runModelSnapshot, string, error) {
-	var kind, name, raw string
-	var enabled bool
-	if err := tx.QueryRow("SELECT kind,name,metadata_json,enabled FROM catalog_entries WHERE id=?", reference).Scan(&kind, &name, &raw, &enabled); err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return runModelSnapshot{}, "", corestore.ErrStorage
-		}
-		return runModelSnapshot{}, "", contracts.NewError("MODEL_UNAVAILABLE", "")
-	}
-	if kind != "model" || !enabled {
-		return runModelSnapshot{}, "", contracts.NewError("MODEL_UNAVAILABLE", "")
-	}
-	var metadata catalogModelMetadata
-	if strictMetadata([]byte(raw), &metadata) != nil || metadata.Version != 1 || metadata.SourceRuntimeRevision < 1 {
-		return runModelSnapshot{}, "", contracts.NewError("MODEL_UNAVAILABLE", "")
-	}
-	if _, err := time.Parse(time.RFC3339Nano, metadata.UpdatedAt); err != nil {
-		return runModelSnapshot{}, "", contracts.NewError("MODEL_UNAVAILABLE", "")
+	metadata, name, _, err := a.catalogModelTx(tx, reference, modelRef != nil)
+	if err != nil {
+		return runModelSnapshot{}, "", err
 	}
 	endpoint, err := normalizeRunModelEndpoint(metadata.BaseURL)
 	if err != nil {
 		return runModelSnapshot{}, "", err
 	}
-	model := runModelSnapshot{modelRef, name, metadata.Provider, metadata.ID, endpoint}
+	model := runModelSnapshot{ModelRef: modelRef, Label: name, Provider: metadata.Provider, Model: metadata.ID, BaseURL: endpoint, API: metadata.API, Capabilities: metadata.Capabilities}
 	public := map[string]any{"modelRef": nil, "label": name, "provider": metadata.Provider, "model": metadata.ID}
 	if modelRef != nil {
 		public["modelRef"] = *modelRef
@@ -115,10 +106,20 @@ func (a *Application) listRunModels(ctx context.Context, actor serviceActor, wor
 			return err
 		}
 		result.DefaultModel, _, err = a.resolveRunModelEntry(tx, reference, nil)
+		if err == nil {
+			err = a.capturedDefaultModelTx(tx, workID, &result.DefaultModel)
+		}
+		if err != nil {
+			if errors.Is(err, corestore.ErrStorage) {
+				return err
+			}
+			result.DefaultUnavailable = true
+		}
+		reg, err := modelRegistryTx(tx)
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT id FROM catalog_entries WHERE kind='model' AND enabled=1 ORDER BY name,id LIMIT 257")
+		rows, err := tx.QueryContext(ctx, "SELECT id FROM catalog_entries WHERE kind='model' AND enabled=1 ORDER BY name,id")
 		if err != nil {
 			return err
 		}
@@ -128,6 +129,13 @@ func (a *Application) listRunModels(ctx context.Context, actor serviceActor, wor
 			if err := rows.Scan(&ref); err != nil {
 				rows.Close()
 				return err
+			}
+			if id := reg.References[ref]; id != "" {
+				m := reg.Models[id]
+				p := modelConnection(reg, m)
+				if m.Deleted || p.Deleted || !m.Enabled || !p.Enabled || m.ModelRef != ref {
+					continue
+				}
 			}
 			refs = append(refs, ref)
 		}
@@ -155,7 +163,7 @@ func (a *Application) resolveRunModel(ctx context.Context, actor serviceActor, w
 	if !input.ModelRef.Present || !input.ModelRef.Null && (input.ModelRef.Value == "" || contracts.Validate("ResourceIdSchema", input.ModelRef.Value) != nil) {
 		return model, "", contracts.NewError("INVALID_REQUEST", "modelRef")
 	}
-	err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+	err := a.Store.Write(ctx, func(tx *sql.Tx) error {
 		reference, err := a.activeRunModelReference(tx, actor, workID)
 		if err != nil {
 			return err
@@ -165,15 +173,30 @@ func (a *Application) resolveRunModel(ctx context.Context, actor serviceActor, w
 			reference = input.ModelRef.Value
 			ref = &input.ModelRef.Value
 		}
+		if input.Expected != nil && input.Expected.ExecutionBindingID != "" {
+			if (input.Expected.ModelRef == nil) != input.ModelRef.Null || input.Expected.ModelRef != nil && *input.Expected.ModelRef != input.ModelRef.Value {
+				return contracts.NewError("MODEL_UNAVAILABLE", "")
+			}
+			model, credential, err = a.resolvePinnedModelTx(tx, actor, workID, *input.Expected)
+			return err
+		}
 		model, credential, err = a.resolveRunModelEntry(tx, reference, ref)
 		if err != nil {
 			return err
+		}
+		if ref == nil {
+			if err := a.capturedDefaultModelTx(tx, workID, &model); err != nil {
+				return err
+			}
 		}
 		if expected := input.Expected; expected != nil {
 			endpoint, err := normalizeRunModelEndpoint(expected.BaseURL)
 			if err != nil || (expected.ModelRef == nil) != (model.ModelRef == nil) || expected.ModelRef != nil && *expected.ModelRef != *model.ModelRef || expected.Provider != model.Provider || expected.Model != model.Model || (endpoint == nil) != (model.BaseURL == nil) || endpoint != nil && *endpoint != *model.BaseURL {
 				return contracts.NewError("MODEL_UNAVAILABLE", "")
 			}
+		}
+		if input.Expected == nil && input.ModelProviderContractVersion == 1 {
+			return a.pinModelExecutionTx(tx, actor, workID, reference, &model)
 		}
 		return nil
 	})
@@ -196,7 +219,7 @@ func modelRPCError(err error) error {
 	}
 	return rpcServiceError(err)
 }
-func (server *serviceRPC) ListRunModels(ctx context.Context, _ *servicesv1.Empty) (*servicesv1.WorkPrivateResponse, error) {
+func (server *serviceRPC) ListRunModels(ctx context.Context, request *servicesv1.Empty) (*servicesv1.WorkPrivateResponse, error) {
 	actor, workID, err := rpcActor(ctx)
 	if err != nil {
 		return nil, err
@@ -204,6 +227,18 @@ func (server *serviceRPC) ListRunModels(ctx context.Context, _ *servicesv1.Empty
 	result, err := server.App.listRunModels(ctx, actor, workID)
 	if err != nil {
 		return nil, modelRPCError(err)
+	}
+	if request == nil || request.GetModelProviderContractVersion() != 1 {
+		if result.DefaultUnavailable {
+			return nil, modelRPCError(contracts.NewError("MODEL_UNAVAILABLE", ""))
+		}
+		for i := range result.Models {
+			result.Models[i].API = ""
+			result.Models[i].Capabilities = nil
+			result.Models[i].ExecutionBindingID = ""
+		}
+		result.DefaultModel.API = ""
+		result.DefaultModel.Capabilities = nil
 	}
 	raw, err := json.Marshal(result)
 	if err != nil {
@@ -223,6 +258,11 @@ func (server *serviceRPC) ResolveRunModel(ctx context.Context, request *services
 	model, credential, err := server.App.resolveRunModel(ctx, actor, workID, input)
 	if err != nil {
 		return nil, modelRPCError(err)
+	}
+	if input.ModelProviderContractVersion != 1 {
+		model.API = ""
+		model.Capabilities = nil
+		model.ExecutionBindingID = ""
 	}
 	raw, err := json.Marshal(model)
 	if err != nil {

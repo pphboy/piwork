@@ -1210,6 +1210,19 @@ dialog::backdrop {
 .dialog-body {
   padding: 20px 22px;
 }
+[data-model-test-dialog] pre {
+  margin: 10px 0 18px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #f8fafc;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+[data-model-test-dialog] .summary-list dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .dialog-body .field {
   display: block;
   margin-bottom: 16px;
@@ -1476,6 +1489,7 @@ dialog::backdrop {
   }
   .page-header .header-actions {
     width: 100%;
+    flex-wrap: wrap;
   }
   .page-header p {
     font-size: 12px;
@@ -2857,3 +2871,16 @@ dialog::backdrop {
 [data-layout="layout-role-8"] { padding-top:0; }
 
 .action-status { overflow-wrap: anywhere; min-width: 0; }
+
+.catalog-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.catalog-row:last-child { border-bottom: 0; }
+.catalog-row > div { min-width: 0; overflow-wrap: anywhere; }
+.catalog-row p { color: var(--muted); margin-top: 3px; }
+.catalog-row > .status-label { flex-shrink: 0; }

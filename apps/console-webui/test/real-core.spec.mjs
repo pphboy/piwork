@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
+import { createServer as createHTTPServer } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -95,6 +96,39 @@ async function login(page) {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'What’s next for your Core?' })).toBeVisible();
 }
+test('real message Test sends to the specified model and displays actual Responses and Messages replies in a Modal',async({page})=>{
+  const captured=[];let failureStatus=0;
+  const gateway=createHTTPServer(async(request,response)=>{
+    const chunks=[];for await(const chunk of request)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString());
+    const api=request.url==='/v1/responses'?'openai-responses':'anthropic-messages';
+    captured.push({api,path:request.url,body,key:request.headers.authorization||request.headers['x-api-key']});
+    if(failureStatus){response.writeHead(failureStatus,{'Content-Type':'application/json'});response.end(JSON.stringify({error:{message:'private upstream error must not be shown'}}));return;}
+    const text='Actual '+api+' reply from '+body.model;
+    response.setHeader('Content-Type','application/json');response.end(JSON.stringify(api==='openai-responses'?{status:'completed',error:null,output:[{type:'message',role:'assistant',content:[{type:'output_text',text}]}]}:{type:'message',role:'assistant',content:[{type:'text',text}]}));
+  });
+  await new Promise(done=>gateway.listen(0,'127.0.0.1',done));const baseUrl=`http://127.0.0.1:${gateway.address().port}`;
+  try{
+    await login(page);
+    for(const api of ['openai-responses','anthropic-messages']){
+      const provider='Message Test '+api,model='Specified '+api;
+      await page.goto(origin+'/models');await page.getByLabel('Display name (optional)',{exact:true}).fill(provider);await page.getByLabel('API type',{exact:true}).selectOption(api);await page.getByLabel('Base URL',{exact:true}).fill(baseUrl+'/v1/');await page.getByLabel('API Key',{exact:true}).fill('synthetic-'+api);await page.getByLabel('Model ID',{exact:true}).fill('specified-test-model');
+      await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');await expect(page.getByRole('dialog')).toContainText('Reply with OK.');await page.getByRole('button',{name:'Close',exact:true}).click();
+      await page.getByRole('button',{name:'Add model',exact:true}).click();await page.getByRole('link',{name:provider,exact:true}).click();
+      await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');await page.getByRole('button',{name:'Close',exact:true}).click();
+      const count=captured.length;await page.getByRole('button',{name:'View test result',exact:true}).click();await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');await page.getByRole('button',{name:'Close',exact:true}).click();expect(captured.length).toBe(count);
+    }
+    expect(captured.length).toBe(4);
+    for(const request of captured){
+      expect(request.body.model).toBe('specified-test-model');expect(request.body.stream).toBe(false);
+      if(request.api==='openai-responses'){expect(request.path).toBe('/v1/responses');expect(request.body.input).toBe('Reply with OK.');expect(request.key).toBe('Bearer synthetic-openai-responses');}
+      else{expect(request.path).toBe('/v1/messages');expect(request.body.messages).toEqual([{role:'user',content:'Reply with OK.'}]);expect(request.key).toBe('synthetic-anthropic-messages');}
+    }
+    failureStatus=404;await page.goto(origin+'/models');await page.getByLabel('Display name (optional)',{exact:true}).fill('Remote failure can save');await page.getByLabel('API type',{exact:true}).selectOption('anthropic-messages');await page.getByLabel('Base URL',{exact:true}).fill(baseUrl+'/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-failed-test');await page.getByLabel('Model ID',{exact:true}).fill('specified-test-model');await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('[data-model-test-stage]')).toHaveText('Model request failed.');await expect(page.getByRole('dialog')).toContainText('model or endpoint');await expect(page.getByRole('dialog')).not.toContainText('private upstream');await page.getByRole('button',{name:'Close',exact:true}).click();
+    await page.getByRole('button',{name:'Add model',exact:true}).click();await page.getByRole('link',{name:'Remote failure can save',exact:true}).click();await expect(page.getByLabel('Base URL',{exact:true})).toHaveValue(baseUrl);
+    failureStatus=401;await page.getByLabel('Model ID',{exact:true}).fill('specified-test-model');await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('administrator login is still valid');await page.getByRole('button',{name:'Close',exact:true}).click();await expect(page.getByRole('heading',{name:'Remote failure can save',exact:true})).toBeVisible();expect(captured.length).toBe(6);
+    expect(JSON.stringify(await page.context().cookies())).not.toContain('synthetic-');
+  }finally{await new Promise(done=>gateway.close(done));}
+});
 test('delivered Serve UI uses real administrator users, revocation, and browser Skill upload', async ({page}) => {
   await login(page);
   await page.getByRole('link', { name: 'User access', exact: true }).click();
@@ -126,20 +160,30 @@ test('delivered Serve UI uses real administrator users, revocation, and browser 
   expect(JSON.stringify(await page.context().cookies())).not.toContain('Bearer ');
 });
 async function saveFixtureRuntime(page) {
+  await page.goto(`${origin}/models`);
+  const provider='Browser fixture provider',model='Browser fixture model';
+  await expect(page.getByRole('heading',{name:'AI models',exact:true})).toBeVisible();
+  if(!await page.getByRole('link',{name:provider,exact:true}).count()){
+    await page.getByLabel('Display name (optional)',{exact:true}).fill(provider);
+    await page.getByLabel('API type',{exact:true}).selectOption('anthropic-messages');
+    await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid');
+    await page.getByLabel('API Key',{exact:true}).fill('browser-acceptance-only');
+    await page.getByRole('button',{name:'Add model',exact:true}).click();
+    await expect(page.getByRole('link',{name:provider,exact:true})).toBeVisible();
+  }
+  await page.getByRole('link',{name:provider,exact:true}).click();
+  if(!await page.getByRole('link',{name:model,exact:true}).count()){
+    await page.getByLabel('Model name',{exact:true}).fill(model);await page.getByLabel('Model ID',{exact:true}).fill('claude-sonnet-4-5');
+    await page.getByRole('button',{name:'Add model',exact:true}).click();await expect(page.getByRole('link',{name:model,exact:true})).toBeVisible();
+  }
   await page.goto(`${origin}/runtime`);
-  const image = page.getByLabel('Agent image', {exact:true});
-  const edit = page.getByRole('button', {name:'Edit runtime',exact:true});
-  await expect(image.or(edit).first()).toBeVisible();
-  if (await edit.isVisible()) await edit.click();
-  await page.getByLabel('Agent image', {exact:true}).fill(process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE || 'piwork-agentd:go-migration-acceptance');
-  await page.getByLabel('Model provider', {exact:true}).fill('anthropic');
-  await page.getByLabel('Model ID', {exact:true}).fill('fixture');
-  await page.getByLabel('API Key', {exact:true}).fill('browser-acceptance-only');
-  await page.getByRole('button',{name:'Save runtime',exact:true}).click();
-  await expect(page.getByRole('button',{name:'Edit runtime',exact:true})).toBeVisible({timeout:90000});
-  // Saving persists configuration; automatic image/context preparation completes later.
-  await expect.poll(async () => (await fetch(`${coreOrigin}/readyz`)).status,
-    { timeout: 90000, message: 'Core preparation requires a reachable Docker Engine and the native acceptance Agent image' }).toBe(200);
+  const image=page.getByLabel('Agent image',{exact:true}),edit=page.getByRole('button',{name:'Edit runtime',exact:true});
+  await expect(image.or(edit).first()).toBeVisible();if(await edit.isVisible())await edit.click();
+  await image.fill(process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE||'piwork-agentd:go-migration-acceptance');
+  const option=page.locator('#modelRef option').filter({hasText:model});await page.locator('#modelRef').selectOption(await option.getAttribute('value'));
+  await expect(page.locator('#apiKey')).toHaveCount(0);
+  await page.getByRole('button',{name:'Save runtime',exact:true}).click();await expect(edit).toBeVisible({timeout:90000});
+  await expect.poll(async()=>(await fetch(`${coreOrigin}/readyz`)).status,{timeout:90000,message:'Core preparation requires the native acceptance image'}).toBe(200);
 }
 test('real Serve runtime and starting point distinguish saved changes from existing Work', async ({page}) => {
   test.setTimeout(120000); await login(page); await saveFixtureRuntime(page);
@@ -166,4 +210,11 @@ test('real browser Package directory installs asynchronously and operation deep 
   await expect(page.getByText(/^succeeded$/i).first()).toBeVisible(); expect(page.url()).toBe(operationURL);
   await page.goto(`${origin}/packages`);
   await expect(page.getByRole('link',{name:'native-console-package',exact:true})).toBeVisible();
+});
+
+test('real flat long model names round-trip through Console and Go Core without truncation',async({page})=>{
+ await login(page);await page.goto(origin+'/models');const model='long-'+ 'x'.repeat(251),name='😀'.repeat(256);
+ await page.getByLabel('Model ID',{exact:true}).fill(model);await page.getByLabel('API type',{exact:true}).selectOption('anthropic-messages');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid');await page.getByLabel('API Key',{exact:true}).fill('synthetic-long-model-key');await page.getByRole('button',{name:'Add model',exact:true}).click();await expect(page.getByRole('link',{name:model,exact:true})).toBeVisible();await page.getByRole('link',{name:model,exact:true}).click();await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue(model);
+ await page.getByLabel('Display name (optional)',{exact:true}).fill(name);await page.getByRole('button',{name:'Save model',exact:true}).click();await expect(page.getByRole('heading',{name,exact:true})).toBeVisible();await page.reload();await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue(name);await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('');
+ await page.getByLabel('Display name (optional)',{exact:true}).fill('');await page.getByRole('button',{name:'Save model',exact:true}).click();await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue('');await page.reload();await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue(model);expect(await page.content()).not.toContain('synthetic-long-model-key');
 });

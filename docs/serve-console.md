@@ -50,7 +50,7 @@ make build-go
 
 ## 交付界面与验证
 
-顶层导航为 **Overview / User access / Work setup**。Overview 根据真实 Core 状态提供运行时配置和 readiness 检查；Work setup 组织 Starting point、Skills 和 Packages；Find operation 是按已知 ID 恢复的辅助入口。`/runtime`、`/default-work`、`/skills/:name`、`/packages/:name`、`/operations/:id` 等已有深链接均保留。
+顶层导航为 **Overview / User access / Work setup / AI models**。Overview 根据真实 Core 状态提供运行时配置和 readiness 检查；Work setup 组织 Starting point、Skills 和 Packages；Find operation 是按已知 ID 恢复的辅助入口。`/runtime`、`/default-work`、`/skills/:name`、`/packages/:name`、`/operations/:id` 等已有深链接均保留。
 
 页面使用交付包的任务布局、详情与确认弹窗。默认 Work 的各编辑区共享一个草稿，只提交修改过的字段；添加能力后可以返回原选择上下文。控件、反馈与技术披露遵循当前任务层级，360px 窄屏通过 Menu 提供完整导航，表格可以在自身容器中滚动。公共样式来源为 `apps/ui-shared/tokens.css`；应用布局位于 `apps/console-webui/public/style.css`。
 
@@ -58,7 +58,10 @@ make build-go
 
 ## 内容与配置
 
-- “Runtime”保存全局 Agent 镜像、模型与完整 API Key。每次保存都要重新输入 Key；页面不会回显它。保存成功与运行就绪分别显示。已有 Work 保留自己的配置。
+- “AI models” 直接管理 Responses / Messages 模型：填写 Model ID、API type、Base URL、API Key 即可，显示名可选，无 Provider 或能力 JSON 步骤，支持独立消息 Test、Key 轮换、启停和依赖检查删除。Test 向指定 Model ID 发送 `Reply with OK.`，在 Modal 展示实际回复或安全失败、检查时间与耗时；关闭不丢弃草稿，查看旧结果不重发请求。Read current data 与 Configure runtime 位于标题栏右侧，All models 是详情返回导航。Test 不阻止保存或启用；不新增默认 Thinking 档位。完整说明见 [多供应商模型](ai-models.md)。
+
+Messages 的 Base URL 可以填服务根地址或末尾 `/v1`，系统会自动规范化，不重复拼接版本路径，保存、Test 和新执行定义使用同一端点。字段错误会指出输入及修改方向；Modal 区分未开始、请求失败、结果未确认和已收到回复，并提供安全的原因与恢复建议。供应商认证失败不注销管理员，也不阻止保存有效配置；只有 Core/Console 登录失效才要求重新登录。
+- “Runtime”保存全局 Agent 镜像并从已配置模型中选择新 Work 的默认值，无需重复输入模型 Key。保存成功与运行就绪分别显示。已有 Work 保留自己的捕获配置。
 - “Default Work”展示公开配置，可分别修改基础镜像、Skill 选择、Package 选择和 `AGENTS.md`。可选择本地 `AGENTS.md` 文件，再在文本框内编辑；文件须为 UTF-8，内容上限为 256 KiB。空文本或空选择会明确清空对应默认值。默认配置仅影响以后创建的 Work。
 - “Skills”选择浏览器设备上的完整目录，目录名就是 Skill 名称，根部必须有 `SKILL.md`。上传的是相对文件树，Core 设备无需有此目录。更新时选择与现有 Skill 同名的目录。单次最多 2,048 个普通文件，单文件 8 MiB，总内容 32 MiB；不能上传符号链接或特殊文件。被默认 Work 选中的 Skill 需先取消选择才能禁用或移除。
 - “Packages”可从 npm、Git、浏览器本地目录或 ZIP 安装或更新。目录中的 `package.json` 决定 Package 身份，目录名只是上传显示名；ZIP 按原字节上传并由 Core 验证。更新操作需指定来源，Package 名称不可更改。可在安装时选择原子加入默认 Work。被默认 Work 选中的 Package 需先取消选择才能禁用或移除。

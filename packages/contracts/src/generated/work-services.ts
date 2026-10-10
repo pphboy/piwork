@@ -22,6 +22,7 @@ import {
 export const protobufPackage = "piwork.core.services.v1";
 
 export interface Empty {
+  modelProviderContractVersion?: number | undefined;
 }
 
 /** Authenticated only through the current agentd runtime mTLS identity. */
@@ -213,11 +214,14 @@ export interface ServiceLogs {
 }
 
 function createBaseEmpty(): Empty {
-  return {};
+  return { modelProviderContractVersion: undefined };
 }
 
 export const Empty: MessageFns<Empty> = {
-  encode(_: Empty, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+  encode(message: Empty, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.modelProviderContractVersion !== undefined) {
+      writer.uint32(8).uint32(message.modelProviderContractVersion);
+    }
     return writer;
   },
 
@@ -234,6 +238,14 @@ export const Empty: MessageFns<Empty> = {
       while (reader.pos < end) {
         const tag = reader.uint32();
         switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 8) {
+              break;
+            }
+
+            message.modelProviderContractVersion = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -246,20 +258,30 @@ export const Empty: MessageFns<Empty> = {
     }
   },
 
-  fromJSON(_: any): Empty {
-    return {};
+  fromJSON(object: any): Empty {
+    return {
+      modelProviderContractVersion: isSet(object.modelProviderContractVersion)
+        ? globalThis.Number(object.modelProviderContractVersion)
+        : isSet(object.model_provider_contract_version)
+        ? globalThis.Number(object.model_provider_contract_version)
+        : undefined,
+    };
   },
 
-  toJSON(_: Empty): unknown {
+  toJSON(message: Empty): unknown {
     const obj: any = {};
+    if (message.modelProviderContractVersion !== undefined) {
+      obj.modelProviderContractVersion = Math.round(message.modelProviderContractVersion);
+    }
     return obj;
   },
 
   create(base?: DeepPartial<Empty>): Empty {
     return Empty.fromPartial(base ?? {});
   },
-  fromPartial(_: DeepPartial<Empty>): Empty {
+  fromPartial(object: DeepPartial<Empty>): Empty {
     const message = createBaseEmpty();
+    message.modelProviderContractVersion = object.modelProviderContractVersion ?? undefined;
     return message;
   },
 };

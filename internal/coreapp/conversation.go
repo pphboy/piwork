@@ -98,7 +98,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			send(w, 200, map[string]any{"contractVersion": version})
 			return true, nil
 		}
-		if version != 1 {
+		if version != 1 && version != 2 && version != 3 {
 			return true, contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
 		}
 		var result any
@@ -250,7 +250,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			if e != nil {
 				return true, conversationError(e)
 			}
-			if version != 1 {
+			if version != 1 && version != 2 && version != 3 {
 				return true, contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
 			}
 			modes = append(modes, string(input.InputMode.Value))
@@ -306,7 +306,13 @@ func conversationError(err error) error {
 		return contracts.NewError("WORK_UNAVAILABLE", "")
 	}
 	if state, ok := status.FromError(err); ok {
-		for _, code := range []string{"CHAT_OPTIONS_UNSUPPORTED", "THINKING_LEVEL_UNSUPPORTED", "SLASH_COMMAND_UNKNOWN", "SLASH_COMMAND_UNSUPPORTED", "SLASH_COMMAND_UNAVAILABLE", "MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
+		// The retained Agent reports its single active Run slot as resource
+		// exhaustion. Preserve real throttling for other exhaustion errors.
+		if state.Code() == codes.ResourceExhausted && strings.HasPrefix(state.Message(), "Work already has active Run ") {
+			return contracts.NewError("WORK_BUSY", "")
+		}
+
+		for _, code := range []string{"WORK_BUSY", "CHAT_OPTIONS_UNSUPPORTED", "THINKING_LEVEL_UNSUPPORTED", "SLASH_COMMAND_UNKNOWN", "SLASH_COMMAND_UNSUPPORTED", "SLASH_COMMAND_UNAVAILABLE", "MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
 			if strings.HasPrefix(state.Message(), code+":") {
 				return contracts.NewError(code, "")
 			}
@@ -340,7 +346,7 @@ func sessionView(session *agentv1.Session) any {
 	if session == nil {
 		return nil
 	}
-	view := map[string]any{"thinkingLevel": thinkingView(session.GetThinkingLevel()), "workId": session.GetWorkId(), "sessionId": session.GetSessionId(), "sdkHistoryPath": session.GetSdkHistoryPath(), "createdAt": session.GetCreatedAt(), "updatedAt": session.GetUpdatedAt()}
+	view := map[string]any{"thinkingLevel": thinkingFact(session.GetThinkingLevel(), session.GetThinkingUnrequested()), "workId": session.GetWorkId(), "sessionId": session.GetSessionId(), "sdkHistoryPath": session.GetSdkHistoryPath(), "createdAt": session.GetCreatedAt(), "updatedAt": session.GetUpdatedAt()}
 	if session.GetModelPreferenceJson() != "" {
 		view["modelPreference"] = decodePublicProjection(session.GetModelPreferenceJson())
 	} else {
@@ -358,7 +364,7 @@ func runView(run *agentv1.Run) any {
 	if run == nil {
 		return nil
 	}
-	view := map[string]any{"thinkingLevel": thinkingView(run.GetThinkingLevel()), "workId": run.GetWorkId(), "sessionId": run.GetSessionId(), "runId": run.GetRunId(), "submissionKey": run.GetSubmissionKey(), "state": int32(run.GetState()), "promptDigest": run.GetPromptDigest(), "finalText": run.GetFinalText(), "acceptedAt": run.GetAcceptedAt(), "startedAt": run.GetStartedAt(), "finishedAt": run.GetFinishedAt(), "earliestAvailableSequence": strconv.FormatUint(run.GetEarliestAvailableSequence(), 10), "latestSequence": strconv.FormatUint(run.GetLatestSequence(), 10)}
+	view := map[string]any{"thinkingLevel": thinkingFact(run.GetThinkingLevel(), run.GetThinkingUnrequested()), "workId": run.GetWorkId(), "sessionId": run.GetSessionId(), "runId": run.GetRunId(), "submissionKey": run.GetSubmissionKey(), "state": int32(run.GetState()), "promptDigest": run.GetPromptDigest(), "finalText": run.GetFinalText(), "acceptedAt": run.GetAcceptedAt(), "startedAt": run.GetStartedAt(), "finishedAt": run.GetFinishedAt(), "earliestAvailableSequence": strconv.FormatUint(run.GetEarliestAvailableSequence(), 10), "latestSequence": strconv.FormatUint(run.GetLatestSequence(), 10)}
 	if run.GetActualModelJson() != "" {
 		view["actualModel"] = decodePublicProjection(run.GetActualModelJson())
 	} else {
@@ -425,4 +431,11 @@ func sessionBlocksView(message *agentv1.SessionMessage) []any {
 		blocks = append(blocks, value)
 	}
 	return blocks
+}
+
+func thinkingFact(level string, unrequested bool) any {
+	if unrequested {
+		return nil
+	}
+	return thinkingView(level)
 }

@@ -170,60 +170,67 @@ func (s *Store) UpdateDefaultWork(ctx context.Context, mutate func(*sql.Tx, Defa
 // new installation runtime revision is accepted. Custom defaults for Skills,
 // packages, AGENTS.md, tools, MCP, and resources remain intact.
 func (s *Store) SyncDefaultWorkRuntime(ctx context.Context, runtimeRevision int64, imageID, modelID contracts.ResourceId, ifEmpty contracts.WorkConfig) error {
+	return s.Write(ctx, func(tx *sql.Tx) error {
+		return SyncDefaultWorkRuntimeTx(ctx, tx, runtimeRevision, imageID, modelID, ifEmpty)
+	})
+}
+
+// SyncDefaultWorkRuntimeTx publishes reference selection in the same transaction
+// as the provider/model admission check.
+func SyncDefaultWorkRuntimeTx(ctx context.Context, tx *sql.Tx, runtimeRevision int64, imageID, modelID contracts.ResourceId, ifEmpty contracts.WorkConfig) error {
 	if runtimeRevision < 1 || runtimeRevision > contracts.MaxSafeInteger || imageID == "" || modelID == "" {
 		return contracts.NewError("INVALID_REQUEST", "")
 	}
-	return s.Write(ctx, func(tx *sql.Tx) error {
-		var marker string
-		err := tx.QueryRowContext(ctx, `SELECT value_json FROM control_metadata WHERE key='default_work_source_runtime'`).Scan(&marker)
-		var prior struct {
-			Version  int   `json:"version"`
-			Revision int64 `json:"revision"`
-		}
-		if err == nil {
-			if json.Unmarshal([]byte(marker), &prior) != nil || prior.Version != 1 || prior.Revision < 1 || prior.Revision > runtimeRevision {
-				return ErrStorage
-			}
-			if prior.Revision == runtimeRevision {
-				return nil
-			}
-		} else if err != sql.ErrNoRows {
-			return err
-		}
-		current, err := readDefaultWork(tx)
-		if err != nil || current.Revision >= contracts.MaxSafeInteger {
+
+	var marker string
+	err := tx.QueryRowContext(ctx, `SELECT value_json FROM control_metadata WHERE key='default_work_source_runtime'`).Scan(&marker)
+	var prior struct {
+		Version  int   `json:"version"`
+		Revision int64 `json:"revision"`
+	}
+	if err == nil {
+		if json.Unmarshal([]byte(marker), &prior) != nil || prior.Version != 1 || prior.Revision < 1 || prior.Revision > runtimeRevision {
 			return ErrStorage
 		}
-		configuration := ifEmpty
-		if current.Configuration != nil {
-			configuration = *current.Configuration
+		if prior.Revision == runtimeRevision {
+			return nil
 		}
-		configuration.AgentImage.CatalogId = imageID
-		configuration.ModelRef = modelID
-		encoded, err := json.Marshal(configuration)
-		if err != nil {
-			return ErrStorage
-		}
-		validated, err := contracts.Decode[contracts.WorkConfig](bytes.NewReader(encoded), "WorkConfigSchema", 2<<20)
-		if err != nil {
-			return ErrStorage
-		}
-		current.Configuration = &validated
-		current.Revision++
-		raw, err := json.Marshal(current)
-		if err != nil {
-			return ErrStorage
-		}
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		if _, err := tx.ExecContext(ctx, `UPDATE control_metadata SET value_json=?,updated_at=? WHERE key='default_work_configuration'`, string(raw), now); err != nil {
-			return err
-		}
-		source, _ := json.Marshal(struct {
-			Version  int   `json:"version"`
-			Revision int64 `json:"revision"`
-		}{1, runtimeRevision})
-		_, err = tx.ExecContext(ctx, `INSERT INTO control_metadata(key,value_json,updated_at) VALUES('default_work_source_runtime',?,?)
-			ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`, string(source), now)
+	} else if err != sql.ErrNoRows {
 		return err
-	})
+	}
+	current, err := readDefaultWork(tx)
+	if err != nil || current.Revision >= contracts.MaxSafeInteger {
+		return ErrStorage
+	}
+	configuration := ifEmpty
+	if current.Configuration != nil {
+		configuration = *current.Configuration
+	}
+	configuration.AgentImage.CatalogId = imageID
+	configuration.ModelRef = modelID
+	encoded, err := json.Marshal(configuration)
+	if err != nil {
+		return ErrStorage
+	}
+	validated, err := contracts.Decode[contracts.WorkConfig](bytes.NewReader(encoded), "WorkConfigSchema", 2<<20)
+	if err != nil {
+		return ErrStorage
+	}
+	current.Configuration = &validated
+	current.Revision++
+	raw, err := json.Marshal(current)
+	if err != nil {
+		return ErrStorage
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `UPDATE control_metadata SET value_json=?,updated_at=? WHERE key='default_work_configuration'`, string(raw), now); err != nil {
+		return err
+	}
+	source, _ := json.Marshal(struct {
+		Version  int   `json:"version"`
+		Revision int64 `json:"revision"`
+	}{1, runtimeRevision})
+	_, err = tx.ExecContext(ctx, `INSERT INTO control_metadata(key,value_json,updated_at) VALUES('default_work_source_runtime',?,?)
+			ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`, string(source), now)
+	return err
 }

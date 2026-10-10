@@ -19,6 +19,7 @@ type defaultWorkPatch struct {
 	Skills    contracts.Field[contracts.SkillSelection]     `json:"skills"`
 	Packages  contracts.Field[contracts.PiPackageSelection] `json:"packages"`
 	AgentsMd  contracts.Field[string]                       `json:"agentsMd"`
+	ModelRef  contracts.Field[contracts.ResourceId]         `json:"modelRef"`
 }
 
 type defaultWorkOperatorInput struct {
@@ -26,7 +27,7 @@ type defaultWorkOperatorInput struct {
 }
 
 func adminDefaultPatch(input contracts.AdminDefaultWorkPatch) defaultWorkPatch {
-	result := defaultWorkPatch{BaseImage: input.BaseImage, Skills: input.Skills, AgentsMd: input.AgentsMd}
+	result := defaultWorkPatch{BaseImage: input.BaseImage, Skills: input.Skills, AgentsMd: input.AgentsMd, ModelRef: input.ModelRef}
 	if input.Packages.Present {
 		result.Packages = contracts.Supplied(contracts.PiPackageSelection{})
 		for _, name := range input.Packages.Value {
@@ -37,10 +38,10 @@ func adminDefaultPatch(input contracts.AdminDefaultWorkPatch) defaultWorkPatch {
 }
 
 func validDefaultPatch(patch defaultWorkPatch) error {
-	if !patch.BaseImage.Present && !patch.Skills.Present && !patch.Packages.Present && !patch.AgentsMd.Present {
+	if !patch.BaseImage.Present && !patch.Skills.Present && !patch.Packages.Present && !patch.AgentsMd.Present && !patch.ModelRef.Present {
 		return contracts.NewError("INVALID_REQUEST", "")
 	}
-	if patch.BaseImage.Null || patch.Skills.Null || patch.Packages.Null || patch.AgentsMd.Null {
+	if patch.BaseImage.Null || patch.Skills.Null || patch.Packages.Null || patch.AgentsMd.Null || patch.ModelRef.Null {
 		return contracts.NewError("INVALID_REQUEST", "")
 	}
 	if patch.BaseImage.Present && (strings.TrimSpace(patch.BaseImage.Value) == "" || len(patch.BaseImage.Value) > 4096) {
@@ -62,7 +63,14 @@ func (a *Application) patchDefaultWork(ctx context.Context, actor identity.Princ
 	if err := validDefaultPatch(patch); err != nil {
 		return contracts.AdminDefaultWorkView{}, err
 	}
-	_, err := a.Store.UpdateDefaultWork(ctx, func(tx *sql.Tx, current corestore.DefaultWorkConfiguration) (contracts.WorkConfig, error) {
+	stored, err := a.Store.DefaultWork(ctx)
+	if err != nil {
+		return contracts.AdminDefaultWorkView{}, err
+	}
+	if stored.Configuration == nil {
+		return contracts.AdminDefaultWorkView{}, contracts.NewError("DEFAULT_WORK_NOT_CONFIGURED", "")
+	}
+	_, err = a.Store.UpdateDefaultWork(ctx, func(tx *sql.Tx, current corestore.DefaultWorkConfiguration) (contracts.WorkConfig, error) {
 		if err := a.Identity.AuthorizeAdministratorTx(tx, actor); err != nil {
 			return contracts.WorkConfig{}, err
 		}
@@ -93,16 +101,32 @@ func (a *Application) patchDefaultWork(ctx context.Context, actor identity.Princ
 		if patch.AgentsMd.Present {
 			config.AgentsMd = patch.AgentsMd.Value
 		}
-		if err := validateSelectedPackagesTx(tx, config.Packages); err != nil {
-			return contracts.WorkConfig{}, err
+		if patch.ModelRef.Present {
+			if err := a.defaultModelSelectionTx(tx, patch.ModelRef.Value); err != nil {
+				return contracts.WorkConfig{}, err
+			}
+			config.ModelRef = patch.ModelRef.Value
 		}
-		if err := validateSelectedSkillsTx(tx, config.Skills); err != nil {
-			return contracts.WorkConfig{}, err
+		if patch.Packages.Present {
+			if err := validateSelectedPackagesTx(tx, config.Packages); err != nil {
+				return contracts.WorkConfig{}, err
+			}
+		}
+		if patch.Skills.Present {
+			if err := validateSelectedSkillsTx(tx, config.Skills); err != nil {
+				return contracts.WorkConfig{}, err
+			}
 		}
 		return config, nil
 	})
 	if err != nil {
 		return contracts.AdminDefaultWorkView{}, err
+	}
+	if patch.ModelRef.Present {
+		a.invalidateRuntimePreparation()
+		if err := a.ScheduleRuntimeRefresh(); err != nil {
+			return contracts.AdminDefaultWorkView{}, err
+		}
 	}
 	return a.defaultWorkView(ctx)
 }

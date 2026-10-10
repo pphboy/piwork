@@ -22,9 +22,10 @@ const (
 )
 
 type Empty struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                        protoimpl.MessageState `protogen:"open.v1"`
+	ModelProviderContractVersion *uint32                `protobuf:"varint,1,opt,name=model_provider_contract_version,json=modelProviderContractVersion,proto3,oneof" json:"model_provider_contract_version,omitempty"`
+	unknownFields                protoimpl.UnknownFields
+	sizeCache                    protoimpl.SizeCache
 }
 
 func (x *Empty) Reset() {
@@ -55,6 +56,13 @@ func (x *Empty) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Empty.ProtoReflect.Descriptor instead.
 func (*Empty) Descriptor() ([]byte, []int) {
 	return file_work_services_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *Empty) GetModelProviderContractVersion() uint32 {
+	if x != nil && x.ModelProviderContractVersion != nil {
+		return *x.ModelProviderContractVersion
+	}
+	return 0
 }
 
 // Authenticated only through the current agentd runtime mTLS identity.
@@ -1799,8 +1807,10 @@ var File_work_services_proto protoreflect.FileDescriptor
 
 const file_work_services_proto_rawDesc = "" +
 	"\n" +
-	"\x13work-services.proto\x12\x17piwork.core.services.v1\"\a\n" +
-	"\x05Empty\"3\n" +
+	"\x13work-services.proto\x12\x17piwork.core.services.v1\"w\n" +
+	"\x05Empty\x12J\n" +
+	"\x1fmodel_provider_contract_version\x18\x01 \x01(\rH\x00R\x1cmodelProviderContractVersion\x88\x01\x01B\"\n" +
+	" _model_provider_contract_version\"3\n" +
 	"\x12WorkPrivateRequest\x12\x1d\n" +
 	"\n" +
 	"input_json\x18\x01 \x01(\tR\tinputJson\"4\n" +
@@ -2105,6 +2115,7 @@ func file_work_services_proto_init() {
 	if File_work_services_proto != nil {
 		return
 	}
+	file_work_services_proto_msgTypes[0].OneofWrappers = []any{}
 	file_work_services_proto_msgTypes[8].OneofWrappers = []any{}
 	file_work_services_proto_msgTypes[11].OneofWrappers = []any{}
 	file_work_services_proto_msgTypes[13].OneofWrappers = []any{}

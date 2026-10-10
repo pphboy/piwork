@@ -172,54 +172,84 @@ daemon 启动恢复时 SHALL 将旧进程未终结的 accepted/running/cancellin
 
 **Identifier:** CONV-MODEL-001
 
-获准用户 SHALL 能查询当前 Work 可用的已启用模型安全列表并设置当前 Session 的模型偏好；列表只包含凭据可用、与当前执行环境匹配的模型，不返回 secret 或内部凭据路径。模型列表的加载、空集合、读取失败和已保存偏好不可用 SHALL 分开表达。
+获准用户 SHALL 查询当前 Work 的安全模型列表并设置 Session 的完整模型/Thinking 偏好。完整模型配置经启用、凭据和实际环境兼容性准入后进入可选列表，自定义 ID 不因 SDK 未收录、Thinking 未确认或无模板被过滤。相同 Model ID 的不同配置须可安全区分；公开列表不含 Key、端点、secret 路径或内部执行定义。真正停用、无凭据或旧环境不兼容须说明原因和恢复方向，列表加载、空集合、读取失败与偏好不可用分别表达。
 
-用户 SHALL 能保留同一 Session 历史，在下一次手动 Run 使用所选择的模型；选择与实际模型描述 SHALL 持久保存。选择 SHALL 不修改 Work active/desired、不产生 pendingApply、不触发 Apply或改绑 Session context。已接受 Run 的实际模型保持不变，自动处理忽略 Session 偏好而使用 active 默认模型。模型失效或无法解析 SHALL 明确拒绝新执行或形成安全失败，不静默使用其他模型。新 Session 默认使用 Work 默认。
+用户 SHALL 保留同一 Session 历史，在下一次手动 Run 使用所选模型；偏好与实际模型描述持久保存，不改 Work active/desired、pendingApply 或 Session context。已接受 Run 固定模型与有效 Thinking，自动执行忽略 Session 偏好而使用 active 默认；默认停用不妨碍查询/选择其他可用覆盖。新 Session 默认使用 Work 默认，目录/名称修改不重写既有历史。
 
-系统 SHALL 提供每个可用模型及 Work 默认的真实 Thinking 可选档位与默认建议值，并允许将模型选择和 Thinking 作为完整设置对原子读写。无模型覆盖但 Work 默认有效不构成聊天不可用。不支持 Thinking 的模型只允许 Off；其他模型只允许当前执行环境确认的档位，未知档位、不可用模型和不兼容设置 SHALL 明确拒绝且不部分保存。读取 SHALL 区分已保存偏好与其当前可用性，不为修复读取自动覆盖设置。
+Work default 选项、Response settings 和聊天输入区域 SHALL 明确展示该 Work 当前捕获描述中的实际 `model`，并与友好名称及“Work default”身份区分。目录名称或当前 head Model ID 变化不能使旧捕获默认只显示新名称而掩盖实际型号。使用现有安全公开字段；不得暴露端点/Key/私有定义，不能通过显示修复自动改变 modelRef、Work 配置、Session 偏好、Thinking 或历史；长 Model ID 在窄屏保持完整身份可访问。
 
-完整设置对 SHALL 只作用于下一次新手动 Run。已有模型专用入口保持兼容，并保留原 Thinking；新模型不支持原档位时明确拒绝，不能静默清除 Thinking。自动 Run SHALL 使用 active 默认模型及与旧执行行为一致的默认 Thinking，不继承用户 Session 设置。执行初始化后 SHALL 与受理快照的有效值一致，SDK 自动调整或模型变化不得导致公开实际值和执行值不一致。
+SDK 已知模型 SHALL 提供实际确认的 Thinking 档位和建议值，已确认不支持只允许 Off；未知档位/不兼容设置原子拒绝，不能只保存模型。已有模型专用入口保留原 Thinking，不兼容则明确拒绝，不能静默清除。能力查询、设置校验和执行共用同一解析定义，已知兼容模型的 reasoning/映射不能丢失。
 
-Session 中尚无 Thinking 的旧记录 SHALL 按旧 Off 偏好读取；模型实际不接受 Off 时明确显示不兼容，要求选择可用设置才接受新手动 Run。旧 Run 未保存 Thinking 的历史 SHALL 标为旧行为 Off，不根据当前模型能力改写。新 Desktop 初始草稿使用默认模型的已确认建议档位，并在显式创建/发送流程中确认完整设置，不静默更新旧 Session。
-模型及 Thinking 能力 SHALL 以固定 Pi SDK 在实际执行环境中解析的模型定义为准，模型同时满足 Core 已启用/凭据准入；SDK 全目录不代表已获执行权限。能力查询、偏好校验与执行 SHALL 使用一致解析结果，兼容注册不得丢弃 SDK 已确认的 reasoning、档位及映射。能力未知 SHALL 给出能力未确认及恢复方向，不能伪造 Off 或通用档位；真正不支持 Thinking 的已确认模型仍仅允许 Off。
+未知 Model ID SHALL 自动支持所选协议的普通消息执行，Thinking 单独标为 unknown，thinkingLevels 为空、thinkingLevel=null 表示未请求额外 Thinking；不把此状态伪装为已确认 Off 或已确认不支持。新建未知默认/覆盖 Session 可直接普通发送，无能力 JSON 或管理员设置步骤。已有非空 Thinking 与未知模型不兼容时保留原偏好并明确提示，用户显式确认普通模式后才原子保存新设置；模型仍可选择，不能被整个隐藏。
 
-已确认 Thinking SHALL 实际作用于模型请求，允许关闭的模型使用 Off 时明确关闭，不能仅记录本地字段却依赖 Provider 的另一默认值。SDK 实际值、受理记录与请求语义一致，不公开推理原文或新增凭据/路径投影。
+完整设置对 SHALL 仅作用于下一次新手动 Run，保存与受理交错须捕获完整旧组或新组。已知 Thinking 实际作用于请求，允许 Off 的模型应明确关闭，不仅记录本地值；普通模式不附加未经确认的 Thinking 参数，也不宣称供应商内部推理已关闭。自动 Run 使用 active 默认的原已知行为，未知默认使用普通模式，不继承聊天覆盖。
+
+缺少 Thinking 的旧 Session/Run SHALL 按旧 Off 解释，旧模型实际不接受 Off 时要求显式修复，不改历史。新 null 普通记录与缺省旧记录严格区分，不根据当前目录回写。新 Desktop 初始草稿使用已知默认的确认建议值，未知默认为普通模式，通过显式创建/发送确认完整设置。
+
+Test SHALL 不作为聊天准入或 Thinking 证明。执行配置改变发布新选择引用，旧覆盖明确不可用，不静默迁移；停用/删除后保留偏好、Thinking、草稿与历史。已经受理 Run 不随目录变化，同键重放先返回原事实，不因当前失效重执行或换模型。公开输出不含推理原文或新增凭据材料。
+
+新 nullable/unknown 行为 SHALL 明确协商版本并同步客户端/历史验证；旧环境不支持时给出升级方向，不误投影为 Off。兼容新版环境中，自定义模型必须完成真实 SDK 普通消息执行，不能只出现在下拉。
 
 #### Scenario: 保持历史切换模型
-- **WHEN** 用户在已有兼容 Session 选择另一可用模型并发送下一条消息
-- **THEN** 原历史保留，新 Run 使用该模型并展示实际模型，Work 配置及 pendingApply 不变
+- **WHEN** 用户在已有 Session 选择另一兼容模型并发送
+- **THEN** 原历史保留，新 Run 使用所选配置，Work 配置/pendingApply 不变
 
 #### Scenario: 执行中更改下一次偏好
-- **WHEN** 一个 Run 正在执行而用户保存另一个模型偏好
-- **THEN** 当前 Run 保持原模型，后续手动 Run 使用新偏好
+- **WHEN** Run 执行时用户保存另一完整设置
+- **THEN** 当前 Run 不变，后续手动 Run 使用新设置
 
 #### Scenario: 空列表、读取故障与不可用偏好
-- **WHEN** 模型查询分别为空、失败或已保存模型不可用
-- **THEN** 界面保留草稿，分别显示真实原因；用户可明确选择另一个可用模型或 Work 默认，不能静默替换
+- **WHEN** 模型查询为空、失败或旧偏好不可用
+- **THEN** 分别说明原因并保留草稿/原设置，不静默选择其他模型
 
 #### Scenario: 不支持的 Thinking 原子拒绝
-- **WHEN** 调用者提交可用模型和该模型不支持的 Thinking
-- **THEN** 明确拒绝，原模型与 Thinking 都不改变，不能仅保存模型
+- **WHEN** 提交已知模型不支持的 Thinking 或未知模型的未经确认非空档位
+- **THEN** 明确拒绝完整设置对，原模型/Thinking 都不改变，允许用户显式改为兼容模式
 
 #### Scenario: 保存与受理交错
-- **WHEN** 完整设置保存和新手动 Run 受理交错
-- **THEN** Run 捕获一组完整旧值或完整新值，不能混配；已受理执行不随后续保存变化
+- **WHEN** 完整设置保存与新 Run 受理交错
+- **THEN** 捕获完整旧组或新组，不能混配或随后改写已接受执行
 
 #### Scenario: 默认模型和旧记录
-- **WHEN** 覆盖列表为空但默认模型可用，或读取没有 Thinking 的旧 Session/Run
-- **THEN** 默认仍可使用，旧记录按 Off 解释；不兼容的 Session 设置要求明确修复，旧 Run 事实不改写
+- **WHEN** 覆盖为空但默认有效，或读取缺少 Thinking 的旧记录
+- **THEN** 默认仍可用，旧记录保持 Off 解释；新 null 记录保留普通模式语义，不与旧缺省混淆
 
 #### Scenario: SDK 已知兼容模型的 Thinking
-- **WHEN** 已获准的兼容端点模型在固定 SDK 中已有 reasoning 与档位定义
-- **THEN** 能力查询保留该 SDK 支持档位，设置与执行使用同一模型，不因兼容注册固定为非 reasoning
+- **WHEN** SDK 已知模型使用自定义连接
+- **THEN** 保留其真实档位和映射，设置/执行使用同一模型定义，不强制非 reasoning
 
 #### Scenario: Thinking 选择影响真实请求
-- **WHEN** 用户分别选择当前模型支持的 Off 和非 Off 档位并明确发送
-- **THEN** 每次新 Run 的记录、SDK 实际值与请求语义一致，Off 明确关闭，其他档位按 SDK 映射生效，既有 Run 不变
+- **WHEN** 用户发送已知模型支持的 Off 或非 Off，或未知模型的普通消息
+- **THEN** 前两者请求与受理档位一致，普通消息不加入未经确认的参数；三者记录分别真实，既有 Run 不改变
 
 #### Scenario: 能力未知与不支持区分
-- **WHEN** 一个模型的能力无法确认，另一个被 SDK 明确确认不支持 Thinking
-- **THEN** 前者显示能力未确认并拒绝依赖它的新设置，后者明确仅支持 Off，不能都返回假 Off 成功
+- **WHEN** 一个模型 Thinking 未确认，另一个被 SDK 确认不支持
+- **THEN** 前者可普通聊天并显示 unknown/null，后者明确 Off；不能伪造相同能力或隐藏前者
+
+#### Scenario: 同一 Model ID 的不同配置
+- **WHEN** 两条启用模型连接不同，用户选择第二条
+- **THEN** 列表可区分，真实请求使用第二条的地址与 Key，不混用或要求 Provider 管理
+
+#### Scenario: 默认停用后选择覆盖模型
+- **WHEN** 默认模型停用但另一配置可用
+- **THEN** 默认原因与覆盖分别表达，用户可明确选择覆盖并继续同一 Session
+
+#### Scenario: 编辑或删除已有偏好模型
+- **WHEN** 覆盖执行引用因模型编辑或删除失效
+- **THEN** 原历史/偏好/Thinking 保留，明确重选，不自动改绑新引用
+
+#### Scenario: 模型管理不覆盖 Thinking
+- **WHEN** 管理员 Test、启停、改 Key 或改名称
+- **THEN** Session Thinking 与已接受事实不被管理动作改写，不兼容设置显式处理
+
+#### Scenario: 自定义模型完整执行
+- **WHEN** 用户选择不在 SDK 目录的新模型并新建普通会话发送
+- **THEN** 经真实 SDK 请求原协议/ID/端点，得到回复，不需模板或其他配置；thinkingLevel=null 表示未请求额外 Thinking
+
+
+#### Scenario: 默认型号与当前目录名称分离
+- **WHEN** Work 捕获 old-id，管理员将同一条目的显示名称/当前 head 改为 new-id，用户打开默认模型菜单、响应设置或聊天输入区域
+- **THEN** Work default 明确显示实际 old-id，当前目录条目可单独辨认为 new-id，不显示秘密；Work 捕获、Session Thinking 和既有 Run 不改变，256 字符型号在 360px 下仍可辨认
 
 ### Requirement: 自动执行与业务目标有可追溯来源
 

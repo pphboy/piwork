@@ -41,6 +41,24 @@ npm run test:browser -w @piwork/desktop-webui
 
 真实 Core 的 package、file 和 snapshot 测试需要事先构建 Agent 及 helper 镜像。`make test-integration` 完成这些构建；直接运行 Go integration test 时，应按 [Go 迁移验收记录](go-migration-acceptance.md) 给出固定镜像环境变量。Core/CLI 子进程测试在 PATH 中移除解释器和 Docker CLI；Pi Agent 容器内仍使用它自己的 Node 运行时。
 
+## 多供应商模型专项
+
+平铺模型 CRUD、旧 Provider 数据映射、消息 Test 和固定执行绑定由 `internal/coreapp/model_*_test.go` 验证；真实 SDK 的未知 ID 普通请求、Responses effort、Messages budget/adaptive 和子代理授权材料由 `apps/agentd/src/model-providers.test.ts` 验证。Console 浏览器测试覆盖 advisory Test、Key 的内存草稿、未知写入读回和窄屏生命周期；Desktop 测试覆盖默认失效后选择其他模型、Thinking 和新聊天契约的资源命令。
+
+构建 Agent、file/snapshot helper 和两个宿主界面后，可以执行完整专项：
+
+```sh
+PIWORK_TEST_MODEL_BROWSER=1 \
+PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:go-migration-acceptance \
+PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance \
+PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance \
+go test -mod=readonly -tags=integration ./internal/coreapp \
+  -run '^TestNative(MultiProviderLifecycleThinkingAndPackageRoundTrip|ManagedModelEditsInflightReplayAndRestart|ModelURLNormalizationAndErrorRecovery|FlatUnknownDefaultAndDuplicateModelConnections)$' \
+  -count=1 -v -timeout=25m
+```
+
+专项使用独立安装、本地协议服务器、合成 Key 和临时测试 CA。Core 与容器内 SDK 保持 TLS 验证；测试临时派生镜像只信任该 CA，完成后精确清理本次资源。`PIWORK_TEST_MODEL_BROWSER=1` 还通过真实 Console/CLI Desktop 界面添加、Test 和切换模型，并将截图写到被忽略的 `dist/model-browser-evidence/`。快照 helper 必须与新模型字段校验同时更新；旧 helper 不能被记作完整多供应商包往返通过。
+
 SELinux 快照回归见 [专用验收流程](selinux-snapshot-acceptance.md)。`PIWORK_TEST_SELINUX=1` 启用真实标签测试，并要求宿主为 Enforcing；未设置时该平台用例明确跳过。常规树库测试仍检查用户属性、ACL/capability 名称、异常枚举和失败后的内容保留。独立 Docker helper 验收脚本只创建带精确安装标签的测试卷和容器，按该身份清理，不操作现有 Work。
 
 浏览器测试源位于 `apps/desktop-webui/test` 与 `apps/console-webui/test`，测试进程只启动 Go CLI、Go Console 和 Go Core。Chrome/Edge 人工界面 Review 与无解释器宿主的发布包验收单列在迁移阶段 gate 中；自动 Chromium 通过不能替代它们。

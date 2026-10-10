@@ -129,6 +129,7 @@ export interface ReadinessResponse {
   workFeedbackContractVersion: number;
   workHistorySchemaVersion: number;
   chatControlsContractVersion: number;
+  modelProviderContractVersion?: number | undefined;
 }
 
 export interface LoadedPackage {
@@ -192,6 +193,7 @@ export interface Session {
   modelPreferenceJson: string;
   sourceJson: string;
   thinkingLevel: string;
+  thinkingUnrequested: boolean;
 }
 
 export interface CreateSessionRequest {
@@ -263,6 +265,7 @@ export interface Run {
   sourceJson: string;
   adoptedExperienceVersion: number;
   thinkingLevel: string;
+  thinkingUnrequested: boolean;
 }
 
 export interface SubmitRunRequest {
@@ -651,6 +654,7 @@ function createBaseReadinessResponse(): ReadinessResponse {
     workFeedbackContractVersion: 0,
     workHistorySchemaVersion: 0,
     chatControlsContractVersion: 0,
+    modelProviderContractVersion: undefined,
   };
 }
 
@@ -718,6 +722,9 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     }
     if (message.chatControlsContractVersion !== 0) {
       writer.uint32(160).uint32(message.chatControlsContractVersion);
+    }
+    if (message.modelProviderContractVersion !== undefined) {
+      writer.uint32(168).uint32(message.modelProviderContractVersion);
     }
     return writer;
   },
@@ -895,6 +902,14 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
             message.chatControlsContractVersion = reader.uint32();
             continue;
           }
+          case 21: {
+            if (tag !== 168) {
+              break;
+            }
+
+            message.modelProviderContractVersion = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -1001,6 +1016,11 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
         : isSet(object.chat_controls_contract_version)
         ? globalThis.Number(object.chat_controls_contract_version)
         : 0,
+      modelProviderContractVersion: isSet(object.modelProviderContractVersion)
+        ? globalThis.Number(object.modelProviderContractVersion)
+        : isSet(object.model_provider_contract_version)
+        ? globalThis.Number(object.model_provider_contract_version)
+        : undefined,
     };
   },
 
@@ -1066,6 +1086,9 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     if (message.chatControlsContractVersion !== 0) {
       obj.chatControlsContractVersion = Math.round(message.chatControlsContractVersion);
     }
+    if (message.modelProviderContractVersion !== undefined) {
+      obj.modelProviderContractVersion = Math.round(message.modelProviderContractVersion);
+    }
     return obj;
   },
 
@@ -1096,6 +1119,7 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     message.workFeedbackContractVersion = object.workFeedbackContractVersion ?? 0;
     message.workHistorySchemaVersion = object.workHistorySchemaVersion ?? 0;
     message.chatControlsContractVersion = object.chatControlsContractVersion ?? 0;
+    message.modelProviderContractVersion = object.modelProviderContractVersion ?? undefined;
     return message;
   },
 };
@@ -2034,6 +2058,7 @@ function createBaseSession(): Session {
     modelPreferenceJson: "",
     sourceJson: "",
     thinkingLevel: "",
+    thinkingUnrequested: false,
   };
 }
 
@@ -2062,6 +2087,9 @@ export const Session: MessageFns<Session> = {
     }
     if (message.thinkingLevel !== "") {
       writer.uint32(66).string(message.thinkingLevel);
+    }
+    if (message.thinkingUnrequested !== false) {
+      writer.uint32(72).bool(message.thinkingUnrequested);
     }
     return writer;
   },
@@ -2143,6 +2171,14 @@ export const Session: MessageFns<Session> = {
             message.thinkingLevel = reader.string();
             continue;
           }
+          case 9: {
+            if (tag !== 72) {
+              break;
+            }
+
+            message.thinkingUnrequested = reader.bool();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2197,6 +2233,11 @@ export const Session: MessageFns<Session> = {
         : isSet(object.thinking_level)
         ? globalThis.String(object.thinking_level)
         : "",
+      thinkingUnrequested: isSet(object.thinkingUnrequested)
+        ? globalThis.Boolean(object.thinkingUnrequested)
+        : isSet(object.thinking_unrequested)
+        ? globalThis.Boolean(object.thinking_unrequested)
+        : false,
     };
   },
 
@@ -2226,6 +2267,9 @@ export const Session: MessageFns<Session> = {
     if (message.thinkingLevel !== "") {
       obj.thinkingLevel = message.thinkingLevel;
     }
+    if (message.thinkingUnrequested !== false) {
+      obj.thinkingUnrequested = message.thinkingUnrequested;
+    }
     return obj;
   },
 
@@ -2242,6 +2286,7 @@ export const Session: MessageFns<Session> = {
     message.modelPreferenceJson = object.modelPreferenceJson ?? "";
     message.sourceJson = object.sourceJson ?? "";
     message.thinkingLevel = object.thinkingLevel ?? "";
+    message.thinkingUnrequested = object.thinkingUnrequested ?? false;
     return message;
   },
 };
@@ -3187,6 +3232,7 @@ function createBaseRun(): Run {
     sourceJson: "",
     adoptedExperienceVersion: 0,
     thinkingLevel: "",
+    thinkingUnrequested: false,
   };
 }
 
@@ -3250,6 +3296,9 @@ export const Run: MessageFns<Run> = {
     }
     if (message.thinkingLevel !== "") {
       writer.uint32(138).string(message.thinkingLevel);
+    }
+    if (message.thinkingUnrequested !== false) {
+      writer.uint32(144).bool(message.thinkingUnrequested);
     }
     return writer;
   },
@@ -3403,6 +3452,14 @@ export const Run: MessageFns<Run> = {
             message.thinkingLevel = reader.string();
             continue;
           }
+          case 18: {
+            if (tag !== 144) {
+              break;
+            }
+
+            message.thinkingUnrequested = reader.bool();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -3494,6 +3551,11 @@ export const Run: MessageFns<Run> = {
         : isSet(object.thinking_level)
         ? globalThis.String(object.thinking_level)
         : "",
+      thinkingUnrequested: isSet(object.thinkingUnrequested)
+        ? globalThis.Boolean(object.thinkingUnrequested)
+        : isSet(object.thinking_unrequested)
+        ? globalThis.Boolean(object.thinking_unrequested)
+        : false,
     };
   },
 
@@ -3550,6 +3612,9 @@ export const Run: MessageFns<Run> = {
     if (message.thinkingLevel !== "") {
       obj.thinkingLevel = message.thinkingLevel;
     }
+    if (message.thinkingUnrequested !== false) {
+      obj.thinkingUnrequested = message.thinkingUnrequested;
+    }
     return obj;
   },
 
@@ -3582,6 +3647,7 @@ export const Run: MessageFns<Run> = {
     message.sourceJson = object.sourceJson ?? "";
     message.adoptedExperienceVersion = object.adoptedExperienceVersion ?? 0;
     message.thinkingLevel = object.thinkingLevel ?? "";
+    message.thinkingUnrequested = object.thinkingUnrequested ?? false;
     return message;
   },
 };

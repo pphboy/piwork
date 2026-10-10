@@ -2,6 +2,7 @@ package agentclient
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -19,6 +20,9 @@ type modelRPCFixture struct {
 }
 
 func (f *modelRPCFixture) ListRunModels(context.Context, *agentv1.AgentContentRequest, ...grpc.CallOption) (*agentv1.AgentContentResponse, error) {
+	return &agentv1.AgentContentResponse{ValueJson: f.list}, nil
+}
+func (f *modelRPCFixture) ListChatModels(context.Context, *agentv1.AgentContentRequest, ...grpc.CallOption) (*agentv1.AgentContentResponse, error) {
 	return &agentv1.AgentContentResponse{ValueJson: f.list}, nil
 }
 func (f *modelRPCFixture) SetSessionModel(_ context.Context, r *agentv1.AgentContentRequest, _ ...grpc.CallOption) (*agentv1.Session, error) {
@@ -81,6 +85,27 @@ func TestNativeModelListDistinguishesEmptyFromInvalid(t *testing.T) {
 		f.list = raw
 		if _, err := c.ListRunModels(context.Background()); err != ErrResponse {
 			t.Fatal("invalid model reply accepted", err)
+		}
+	}
+}
+
+func TestChatModelClientAcceptsEmptyAndSafeRecoveryButRejectsPrivateFields(t *testing.T) {
+	f := &modelRPCFixture{}
+	c := &Client{scope: internaltls.Scope{WorkID: "work-1"}, rpc: f}
+	const empty = `{"contractVersion":2,"models":[],"defaultModel":null,"defaultUnavailableReason":"No enabled models. Enable a provider in AI models.","checkedAt":"2026-10-09T00:00:00Z","availability":"available"}`
+	f.list = empty
+	if _, err := c.ListChatModels(context.Background()); err != nil {
+		t.Fatal("confirmed empty Chat catalog rejected", err)
+	}
+	const recovery = `{"modelRef":"model-unknown-00001","label":"Provider / Unknown","provider":"openai","model":"unknown","reason":"capabilities-unconfirmed","recovery":"Configure a compatible definition in AI models."}`
+	f.list = strings.TrimSuffix(empty, "}") + `,"unavailableModels":[` + recovery + `]}`
+	if _, err := c.ListChatModels(context.Background()); err != nil {
+		t.Fatal("safe recovery rejected", err)
+	}
+	for _, field := range []string{`"baseUrl":"https://private.invalid"`, `"credential":"synthetic-secret"`, `"executionBindingId":"model-execution-private1"`, `"capabilities":{}`} {
+		f.list = strings.TrimSuffix(empty, "}") + `,"unavailableModels":[` + strings.TrimSuffix(recovery, "}") + `,` + field + `}]}`
+		if _, err := c.ListChatModels(context.Background()); err != ErrResponse {
+			t.Fatal("private recovery projection accepted", field, err)
 		}
 	}
 }

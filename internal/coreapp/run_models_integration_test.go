@@ -13,7 +13,7 @@ import (
 func TestNativeChatModelSelectionRunsThroughGoAndRealSDK(t *testing.T) {
 	a, base, auth, id, ctx := nativeApplyFixture(t)
 	path := "/api/v1/works/" + id
-	if status, capabilities := packageHTTPCall(t, base, path+"/chat-capabilities", "GET", auth, nil); status != 200 || capabilities["contractVersion"] != float64(0) && capabilities["contractVersion"] != float64(1) {
+	if status, capabilities := packageHTTPCall(t, base, path+"/chat-capabilities", "GET", auth, nil); status != 200 || capabilities["contractVersion"] != float64(0) && capabilities["contractVersion"] != float64(1) && capabilities["contractVersion"] != float64(2) && capabilities["contractVersion"] != float64(3) {
 		t.Fatal("optional chat contract changed original runtime admission", status, capabilities)
 	} else if capabilities["contractVersion"] == float64(0) {
 		for _, endpoint := range []string{"chat-models", "commands", "sessions/submissions/old-agent-readonly"} {

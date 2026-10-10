@@ -121,11 +121,14 @@ type RuntimeProfile struct {
 	Version    int    `json:"version"`
 	Revision   int64  `json:"revision"`
 	AgentImage string `json:"agentImage"`
+	ModelRef   string `json:"modelRef,omitempty"`
 	Model      struct {
-		Provider      string  `json:"provider"`
-		ID            string  `json:"id"`
-		BaseURL       *string `json:"baseUrl,omitempty"`
-		CredentialRef string  `json:"credentialRef"`
+		Provider      string          `json:"provider"`
+		ID            string          `json:"id"`
+		BaseURL       *string         `json:"baseUrl,omitempty"`
+		CredentialRef string          `json:"credentialRef"`
+		API           string          `json:"api,omitempty"`
+		Capabilities  json.RawMessage `json:"capabilities,omitempty"`
 	} `json:"model"`
 	UpdatedAt string `json:"updatedAt"`
 }
@@ -134,6 +137,7 @@ type RuntimeView struct {
 	Version    int    `json:"version,omitempty"`
 	Revision   int64  `json:"revision,omitempty"`
 	AgentImage string `json:"agentImage,omitempty"`
+	ModelRef   string `json:"modelRef,omitempty"`
 	Model      *struct {
 		Provider            string  `json:"provider"`
 		ID                  string  `json:"id"`
@@ -172,17 +176,27 @@ func ValidateRuntime(input RuntimeInput) error {
 }
 func (s *Settings) LoadRuntime() (RuntimeProfile, bool, error) {
 	raw, err := s.files.Read("runtime-profile.json", 2<<20)
-	if corestore.IsMissingPlatformFile(err) {
-		return RuntimeProfile{}, false, nil
-	}
-	if err != nil {
-		return RuntimeProfile{}, false, corestore.ErrStorage
-	}
 	var p RuntimeProfile
-	if strictMetadata(raw, &p) != nil || p.Version != 1 || p.Revision < 1 || p.AgentImage == "" || p.Model.Provider == "" || p.Model.ID == "" || !regexp.MustCompile(`^model-[a-f0-9-]{36}\.secret$`).MatchString(p.Model.CredentialRef) {
-		return RuntimeProfile{}, false, corestore.ErrStorage
+	if err != nil && !corestore.IsMissingPlatformFile(err) {
+		return p, false, corestore.ErrStorage
 	}
-	return p, true, nil
+	if err == nil && (strictMetadata(raw, &p) != nil || p.Version != 1 || p.Revision < 1 || p.AgentImage == "" || p.Model.Provider == "" || p.Model.ID == "" || !regexp.MustCompile(`^model-[a-f0-9-]{36}\.secret$`).MatchString(p.Model.CredentialRef)) {
+		return p, false, corestore.ErrStorage
+	}
+	selection, err := s.store.ControlMetadata(context.Background(), "runtime_model_selection")
+	if err != nil {
+		return RuntimeProfile{}, false, err
+	}
+	if len(selection) > 0 {
+		var selected runtimeModelSelection
+		if strictMetadata(selection, &selected) != nil || selected.Version != 1 {
+			return RuntimeProfile{}, false, corestore.ErrStorage
+		}
+		if selected.SourceRevision == p.Revision {
+			p = selected.Profile
+		}
+	}
+	return p, p.Version == 1 && p.Revision > 0, nil
 }
 func (s *Settings) RuntimeView() (RuntimeView, error) {
 	p, exists, err := s.LoadRuntime()
@@ -193,7 +207,7 @@ func (s *Settings) RuntimeView() (RuntimeView, error) {
 		return RuntimeView{Configured: false}, nil
 	}
 	_, credentialErr := s.files.ReadSecret(p.Model.CredentialRef)
-	v := RuntimeView{Configured: true, Version: p.Version, Revision: p.Revision, AgentImage: p.AgentImage, UpdatedAt: p.UpdatedAt}
+	v := RuntimeView{Configured: true, Version: p.Version, Revision: p.Revision, AgentImage: p.AgentImage, UpdatedAt: p.UpdatedAt, ModelRef: string(defaultModelReference(p))}
 	v.Model = &struct {
 		Provider            string  `json:"provider"`
 		ID                  string  `json:"id"`
@@ -206,6 +220,13 @@ func (s *Settings) ConfigureRuntime(input RuntimeInput) (RuntimeView, error) {
 	return s.ConfigureRuntimeAuthorized(input, nil)
 }
 func (s *Settings) ConfigureRuntimeAuthorized(input RuntimeInput, authorize func() error) (RuntimeView, error) {
+	if api := modelAPI(input.Provider); api != "" && input.BaseURL != nil {
+		endpoint, err := contracts.NormalizeProtocolModelEndpoint(api, input.BaseURL)
+		if err != nil {
+			return RuntimeView{}, contracts.NewError("INVALID_REQUEST", "baseUrl")
+		}
+		input.BaseURL = endpoint
+	}
 	if err := ValidateRuntime(input); err != nil {
 		return RuntimeView{}, err
 	}

@@ -4,9 +4,28 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { Check } from "typebox/value";
+import { modelManagementSchemas } from "../packages/contracts/dist/ai-model-management.js";
+import * as chatSchemas from "../packages/contracts/dist/chat-controls.js";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 
 const root = resolve(import.meta.dirname, "..");
+const modelApis = Object.fromEntries(builtinProviders().flatMap(provider => provider.getModels().map(model => [`${provider.id}/${model.id}`, model.api])).sort(([a],[b]) => a.localeCompare(b)));
+await writeFile(resolve(root,"internal/coreapp/model-sdk-catalog.json"), `${JSON.stringify(modelApis,null,2)}\n`);
 const schemas = JSON.parse(await readFile(resolve(root, "internal/contracts/schemas.json"), "utf8"));
+Object.assign(schemas, modelManagementSchemas);
+Object.assign(schemas, Object.fromEntries(Object.entries(chatSchemas).filter(([name])=>name.endsWith("Schema"))));
+schemas.AgentRuntimeConfigSchema.properties.model.properties.api = schemas.ModelApiSchema;
+schemas.AgentRuntimeConfigSchema.properties.model.properties.capabilities = schemas.ModelCapabilitiesSchema;
+schemas.AdminRuntimeLegacyInputSchema ??= schemas.AdminRuntimeInputSchema;
+schemas.AdminRuntimeInputSchema = { anyOf: [schemas.AdminRuntimeLegacyInputSchema, schemas.AdminRuntimeSelectionSchema] };
+schemas.AdminDefaultWorkPatchSchema.properties.modelRef = schemas.ResourceIdSchema;
+schemas.WorkBindingRequirementsSchema.properties.models.items.properties.api = schemas.ModelApiSchema;
+schemas.WorkBindingRequirementsSchema.properties.models.items.properties.capabilities = schemas.ModelCapabilitiesSchema;
+schemas.PortableWorkSpecSchema.properties.bindings = schemas.WorkBindingRequirementsSchema;
+schemas.UploadedWorkPackageSchema.properties.bindingRequirements = schemas.WorkBindingRequirementsSchema;
+for (const variant of schemas.AdminRuntimeViewSchema.anyOf) {
+  if (variant.properties?.configured?.const === true) variant.properties.modelRef = schemas.ResourceIdSchema;
+}
 
 const named = Object.fromEntries(Object.entries(schemas).sort(([a], [b]) => a.localeCompare(b)));
 const out = resolve(root, "internal/contracts");

@@ -257,3 +257,31 @@ func TestRestoreBindingsAreStrictSafeDescriptionsAndDeclaredOperations(t *testin
 		t.Fatal(request, err)
 	}
 }
+
+func TestManagedProviderRestoreDescriptionsKeepProtocolCapabilitiesAndRejectGrants(t *testing.T) {
+	spool := t.TempDir()
+	model := map[string]any{"modelRef": "model-target-000000001", "label": "Target provider / Model", "provider": "openai", "model": "custom-alias", "baseUrl": "https://models.example/v1", "api": "openai-responses", "capabilities": map[string]any{"kind": "sdk", "provider": "openai", "model": "gpt-5.1"}}
+	write := func(m map[string]any) error {
+		raw, _ := json.Marshal(map[string]any{"sourceWorkId": "source-work-00000000001", "contextIds": []string{}, "models": []any{m}})
+		if err := os.WriteFile(filepath.Join(spool, "history-request.json"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := readRequest(spool)
+		return err
+	}
+	if err := write(model); err != nil {
+		t.Fatal("valid managed recipient rejected", err)
+	}
+	for _, change := range []map[string]any{{"api": "openai-completions"}, {"provider": "anthropic"}, {"executionBindingId": "model-execution-source-00001"}, {"capabilities": map[string]any{"kind": "sdk", "provider": "openai", "model": "gpt-5.1", "credential": "synthetic"}}} {
+		copy := map[string]any{}
+		for k, v := range model {
+			copy[k] = v
+		}
+		for k, v := range change {
+			copy[k] = v
+		}
+		if err := write(copy); err == nil {
+			t.Fatal("unsafe managed restore description accepted")
+		}
+	}
+}

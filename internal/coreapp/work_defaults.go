@@ -12,6 +12,12 @@ func runtimeImageCatalogID(revision int64) contracts.ResourceId {
 func runtimeModelCatalogID(revision int64) contracts.ResourceId {
 	return contracts.ResourceId(fmt.Sprintf("runtime-model-%08d", revision))
 }
+func defaultModelReference(profile RuntimeProfile) contracts.ResourceId {
+	if profile.ModelRef != "" {
+		return contracts.ResourceId(profile.ModelRef)
+	}
+	return runtimeModelCatalogID(profile.Revision)
+}
 
 // defaultWorkConfiguration is the existing pre-release product default. A
 // Work captures its own copy at creation; later runtime/default edits do not
@@ -22,7 +28,7 @@ func defaultWorkConfiguration(profile RuntimeProfile) contracts.WorkConfig {
 		Skills:     contracts.SkillSelection{},
 		Packages:   contracts.PiPackageSelection{{Name: "piwork-brain", Enabled: true}},
 		AgentsMd:   "",
-		ModelRef:   runtimeModelCatalogID(profile.Revision),
+		ModelRef:   defaultModelReference(profile),
 		McpServers: []contracts.McpServer{{
 			ServerId: "work-services", Transport: "stdio", Required: true,
 			Command: contracts.Supplied("/usr/local/bin/piwork-service-mcp"),

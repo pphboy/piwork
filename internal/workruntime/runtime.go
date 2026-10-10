@@ -6,6 +6,7 @@ package workruntime
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"path/filepath"
@@ -38,6 +39,8 @@ var serviceToolNames = []string{"deployment_context", "service_create", "service
 
 type Model struct {
 	Provider, ID string
+	API          string
+	Capabilities json.RawMessage
 	BaseURL      *string
 	Credential   []byte
 }
@@ -360,6 +363,12 @@ func agentConfig(spec StartSpec, work contracts.WorkConfig, identity internaltls
 		config.CorrelationId = contracts.Supplied(spec.CorrelationID)
 	}
 	config.Model.Provider, config.Model.Id = spec.Model.Provider, spec.Model.ID
+	if spec.Model.API != "" {
+		config.Model.Api = contracts.Supplied(contracts.ModelApi(spec.Model.API))
+	}
+	if len(spec.Model.Capabilities) > 0 {
+		config.Model.Capabilities = contracts.Supplied(spec.Model.Capabilities)
+	}
 	if spec.Model.BaseURL != nil {
 		config.Model.BaseUrl = contracts.Supplied(*spec.Model.BaseURL)
 	}
@@ -412,6 +421,9 @@ func waitReady(ctx context.Context, docker *dockerengine.Runtime, identity docke
 	for time.Now().Before(deadline) {
 		response, err := client.Readiness(readyCtx, spec.ContextID, spec.InitializationOnly)
 		if err == nil {
+			if spec.Model.API != "" && response.GetModelProviderContractVersion() != 1 {
+				return nil, agentclient.ErrContextIncompatible
+			}
 			if spec.workHistorySchema != 0 && int64(response.GetWorkHistorySchemaVersion()) != spec.workHistorySchema {
 				return nil, agentclient.ErrContextIncompatible
 			}

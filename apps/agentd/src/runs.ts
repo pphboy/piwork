@@ -115,14 +115,15 @@ export class RunManager {
       reference = preference.modelRef;
     }
     const actualModel = await this.models.resolve(reference);
-    const thinkingLevel = preference?.thinkingLevel ?? "off";
+    let thinkingLevel = preference?.thinkingLevel === undefined ? "off" : preference.thinkingLevel;
     let levels: readonly string[] = ["off"];
     try { if (this.models.thinking) levels = (await this.models.thinking(actualModel)).thinkingLevels; }
     catch (error) {
       // Requests predating chat settings keep their legacy custom-model behavior.
       if (input.inputMode !== undefined || preference?.thinkingLevel !== undefined || !(error instanceof RunModelError) || error.modelErrorCode !== "MODEL_NOT_SUPPORTED") throw error;
     }
-    if (!levels.includes(thinkingLevel)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Confirm a Thinking level supported by the selected model before sending.");
+    if(!preference && !levels.length) thinkingLevel=null;
+    if (!(thinkingLevel === null ? levels.length === 0 : levels.includes(thinkingLevel))) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Confirm a Thinking level supported by the selected model before sending.");
     return this.submit({ ...input, selector, actualModel: { ...actualModel, thinkingLevel } });
   }
 
@@ -133,7 +134,7 @@ export class RunManager {
     if (replay) return { run: replay, reused: true };
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
     const model = await this.models?.resolve(null);
-    let thinkingLevel: ThinkingLevel = "off";
+    let thinkingLevel: ThinkingLevel | null = "off";
     try { if (model && this.models?.thinking) thinkingLevel = (await this.models.thinking(model)).defaultThinkingLevel; }
     catch (error) { if (!(error instanceof RunModelError) || error.modelErrorCode !== "MODEL_NOT_SUPPORTED") throw error; }
     return this.submit({ ...input, selector, ...(model ? { actualModel: { ...model, thinkingLevel } } : {}), agentRequest: { requestId: input.requestId, phase: input.phase } });

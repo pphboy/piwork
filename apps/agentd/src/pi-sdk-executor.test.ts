@@ -114,7 +114,7 @@ test("actual SDK continues one Session with independently authenticated Run mode
     const manager = new RunManager(store, daemon, executor, undefined, models);
     const first = await manager.submitChat({ workId: "work-model", sessionId: session.sessionId, submissionKey: "first", prompt: "Answer one", modelRef: null });
     assert.equal((await manager.wait(first.run.runId)).finalText, "actual-model:fixture-model-one");
-    await assert.rejects(manager.submitChat({ workId: "work-model", sessionId: session.sessionId, submissionKey: "unconfirmed-thinking", prompt: "New controls require confirmed capabilities", inputMode: "text", modelRef: null }), /cannot confirm/);
+    assert.equal(JSON.parse(first.run.actualModelJson!).thinkingLevel,null);
     const second = await manager.submitChat({ workId: "work-model", sessionId: session.sessionId, submissionKey: "second", prompt: "Answer two", modelRef: selected.modelRef });
     assert.equal((await manager.wait(second.run.runId)).finalText, "actual-model:claude-sonnet-4-5");
     assert.deepEqual(observed, [{ model: "fixture-model-one", key: "default-private-fixture-key" }, { model: "claude-sonnet-4-5", key: "override-private-fixture-key", thinking:{type:"disabled"} }]);
@@ -206,7 +206,7 @@ test("official compatible Thinking reaches HTTP for every SDK level after extens
     const manager = new RunManager(store, daemon, executor, undefined, models);
     const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
     const native = runtime.getModel("deepseek", config.id)!;
-    const advertised = (await models.chatList()).defaultModel.thinkingLevels;
+    const advertised = (await models.chatList()).defaultModel!.thinkingLevels;
     assert.deepEqual(advertised, getSupportedThinkingLevels(native));
     for (const level of advertised) {
       await sessions.setChatOptions(session.sessionId, { modelRef: null, thinkingLevel: level }, models);

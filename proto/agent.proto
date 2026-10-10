@@ -62,6 +62,7 @@ message ReadinessResponse {
   uint32 work_feedback_contract_version = 18;
   uint32 work_history_schema_version = 19;
   uint32 chat_controls_contract_version = 20;
+  optional uint32 model_provider_contract_version = 21;
 }
 
 message LoadedPackage {
@@ -123,6 +124,7 @@ message Session {
   string model_preference_json = 6;
   string source_json = 7;
   string thinking_level = 8;
+  bool thinking_unrequested = 9;
 }
 
 message CreateSessionRequest {
@@ -205,6 +207,7 @@ message Run {
   string source_json = 15;
   uint32 adopted_experience_version = 16;
   string thinking_level = 17;
+  bool thinking_unrequested = 18;
 }
 
 message SubmitRunRequest {

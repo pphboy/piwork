@@ -254,3 +254,14 @@ test('input mode participates in accepted digest; replay skips changed command d
   assert.equal(store.findRunSubmission('work-a','mode-key')?.runId,accepted.run.runId);assert.equal(store.findRunSubmission('work-b','mode-key'),undefined);
  });
 });
+
+test('unknown default automatic Runs use ordinary null independently of saved Chat Thinking',async()=>{
+ await withStore(async(store)=>{
+ const models:RunModelResolver={async list(){throw new Error('unused');},async credential(){return 'synthetic';},async resolve(ref){return {modelRef:ref,label:'Unknown',provider:'openai',model:'custom-unknown',api:'openai-responses'};},async thinking(){return{thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:'unknown'};}};
+ const daemon=new AgentDaemonControl({workId:'fixture',generation:1,instanceId:'instance'});daemon.configure({modelCredentialStatus:'available',contextIdentity:'context-fixture',loadedSkills:[],resolvedTools:[],initializationComplete:true});
+ const manager=new RunManager(store,daemon,{async execute(context){assert.equal(context.actualModel?.thinkingLevel,null);assert.equal(context.actualModel?.modelRef,null);return {finalText:'ordinary'};}},undefined,models);
+ store.setSessionModelPreference('work-a','session-a',JSON.stringify({modelRef:'model-other',thinkingLevel:'high'}));
+ const received=store.feedback.receiveEvent({contractVersion:1,eventId:'event-unknown-auto',origin:{workId:'work-a',serviceId:'service-fixture'},serviceName:'fixture',type:'agent.requested',occurredAt:new Date().toISOString(),stateVersion:'one',actor:'user',payload:{goal:'ordinary',reason:'review',evidenceRefs:[]}},['review'],new Date().toISOString());
+ const automatic=await manager.submitAutomatic({workId:'work-a',sessionId:'session-a',submissionKey:'unknown-auto',prompt:'ordinary',requestId:received.requestId!,phase:'handling'});assert.equal((await manager.wait(automatic.run.runId)).finalText,'ordinary');assert.equal(JSON.parse(automatic.run.actualModelJson!).thinkingLevel,null);assert.equal(JSON.parse(store.getSession('work-a','session-a')!.modelPreferenceJson!).thinkingLevel,'high');
+ });
+});

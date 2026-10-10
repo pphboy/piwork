@@ -137,3 +137,20 @@ func TestSlowHTTPObserverTerminatesAtOneMiB(t *testing.T) {
 		t.Fatal("slow observer did not release after its socket resumed")
 	}
 }
+
+func TestConversationBusyRunIsNotProviderRateLimiting(t *testing.T) {
+	for _, item := range []struct {
+		message string
+		want    int
+		code    string
+	}{
+		{"Work already has active Run run-synthetic", 409, "WORK_BUSY"},
+		{"WORK_BUSY: Work already has an active Run", 409, "WORK_BUSY"},
+		{"synthetic request quota exhausted", 429, "RATE_LIMITED"},
+	} {
+		code, view := contracts.ProjectError(conversationError(status.Error(codes.ResourceExhausted, item.message)))
+		if code != item.want || view.Code != item.code {
+			t.Fatalf("%s: %d %s", item.message, code, view.Code)
+		}
+	}
+}

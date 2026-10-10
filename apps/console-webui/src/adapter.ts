@@ -3,7 +3,7 @@ import type { Defaults, Operation, Package, Runtime, Skill, Store, User } from "
 type Data = Record<string, any>;
 export type Scenario = string;
 export class ConsoleError extends Error {
-  constructor(public code: string, message: string, public retryAfterMs = 0, public correlationId = "") { super(message); }
+  constructor(public code: string, message: string, public retryAfterMs = 0, public correlationId = "", public field = "") { super(message); }
 }
 export type Health = { reachable: boolean; healthy: boolean; ready: boolean; reason: string; checkedAt: string; checks: { name: string; state: string; detail: string }[] };
 export type UploadSelection = { name: string; files: File[]; bytes: number; summary: string };
@@ -15,6 +15,9 @@ const codeAliases: Record<string, string> = {
   LAST_ADMINISTRATOR: "LAST_ADMIN", AUTH_REQUIRED: "SESSION_EXPIRED",
 };
 const explanations: Record<string, string> = {
+  MODEL_IN_USE: "Remove configuration dependencies before deleting this provider or model. Existing Work may need a different model and Apply.",
+  MODEL_TEST_BUSY: "A model Test is already running. Wait for its result before testing again.",
+  DEFAULT_WORK_NOT_CONFIGURED: "Configure Runtime with an Agent image and model before setting defaults.",
   CORE_UNREACHABLE: "Core could not be reached. Check the connection and try again.",
   SESSION_EXPIRED: "Your administrator session expired or was revoked. Sign in again.",
   ADMIN_ONLY: "Only administrators can access this console. Use the user CLI or Desktop for your own Work.",
@@ -24,15 +27,27 @@ const explanations: Record<string, string> = {
   PACKAGE_BUSY: "A Core package operation is still running. Wait, then refresh this entry.",
   OPERATION_UNAVAILABLE: "This Operation is unavailable. Only known Core package Operations can be queried.",
 };
+const invalidFields: Record<string,string> = {
+  baseUrl: 'Base URL is invalid. Enter an HTTPS URL (or loopback HTTP), without credentials, query or fragment. Messages accepts a service root or a Base URL ending in /v1.',
+  credential: 'API Key is invalid. Enter a nonempty Key on a single line. Leave the edit field blank only to keep a saved Key.',
+  model: 'Model ID is invalid. Enter the exact model identifier, up to 256 characters.',
+  modelRef: 'The selected model is invalid or unavailable. Read current data and select an enabled, compatible model.',
+  name: 'Name is invalid. Enter a nonempty name, up to 128 characters.',
+  api: 'API type is invalid. Choose OpenAI Responses or Anthropic Messages.',
+  agentImage: 'Agent image is invalid. Enter an available image reference.',
+  capabilities: 'Model capabilities are invalid. Check the compatible SDK template or explicit definition JSON.',
+};
 
 function errorFrom(value: Data, status: number, write: boolean, login = false): ConsoleError {
   const raw = String(value.code ?? value.error?.code ?? "REQUEST_FAILED");
   const code = status === 401 && !login ? "SESSION_EXPIRED" : codeAliases[raw] ?? raw;
   const uncertain = write && status >= 500 && !["CORE_UNAVAILABLE", "CORE_ADMIN_API_UNAVAILABLE"].includes(raw);
+  const field=typeof value.field==='string'?value.field:typeof value.error?.field==='string'?value.error.field:'';
+  const fieldMessage=code==='INVALID_REQUEST'?invalidFields[field.split('.')[0]]:undefined;
   return new ConsoleError(uncertain ? "RESULT_UNKNOWN" : code,
     uncertain ? "The write result is unknown. Read the current object before submitting again."
-      : explanations[code] ?? (typeof value.message === "string" && /^[\x20-\x7e\r\n]*$/.test(value.message) ? value.message : `${code}. Refresh the current object before retrying.`),
-    Number(value.retryAfterMs ?? 60000), typeof value.correlationId === "string" ? value.correlationId : "");
+      : fieldMessage ?? (code==='INVALID_REQUEST'?'Configuration is invalid. Check the required fields and supported options.':undefined) ?? explanations[code] ?? (typeof value.message === "string" && /^[\x20-\x7e\r\n]*$/.test(value.message) ? value.message : `${code}. Refresh the current object before retrying.`),
+    Number(value.retryAfterMs ?? 60000), typeof value.correlationId === "string" ? value.correlationId : "",field);
 }
 
 function userView(value: Data): User {
@@ -42,7 +57,7 @@ function userView(value: Data): User {
 function runtimeView(value: Data): Runtime | null {
   if (value?.configured === false) return null;
   if (value?.configured !== true || typeof value.agentImage !== "string" || typeof value.model?.provider !== "string" || typeof value.model?.id !== "string" || typeof value.model?.credentialAvailable !== "boolean") throw new ConsoleError("INVALID_RESPONSE", "The runtime response is incomplete. Read current runtime before submitting again.");
-  return { agentImage: value.agentImage, provider: value.model.provider, modelId: value.model.id,
+  return { ...(typeof value.modelRef==='string'?{modelRef:value.modelRef}:{}), agentImage: value.agentImage, provider: value.model.provider, modelId: value.model.id,
     baseUrl: value.model.baseUrl ?? "", credentialAvailable: value.model.credentialAvailable, updatedAt: value.updatedAt };
 }
 function defaultsView(value: Data): Defaults | null {
@@ -161,6 +176,15 @@ export class ConsoleAdapter {
     return { selfRevoked };
   }
   async runtime() { this.store.runtime = runtimeView(await this.request("admin/runtime")); return this.store.runtime; }
+  async modelRequest(resource:string,method='GET',body?:unknown) {
+    try{return await this.request(`admin/${resource}`,method,body);}
+    catch(error){if((resource==='models'||resource.startsWith('models/'))&&error instanceof ConsoleError&&error.code==='INVALID_REQUEST'&&error.field.split('.')[0]==='name')throw new ConsoleError('INVALID_REQUEST','Display name is invalid. Use at most 256 characters, or leave blank to use the Model ID.',error.retryAfterMs,error.correlationId,error.field);if(resource==='model-tests'&&error instanceof ConsoleError&&error.code==='RESULT_UNKNOWN')throw new ConsoleError('TEST_RESULT_UNAVAILABLE','The Test result could not be confirmed. Check the Core connection and explicitly test again. No configuration was saved.',error.retryAfterMs,error.correlationId);throw error;}
+  }
+  async saveRuntimeSelection(agentImage:string,modelRef:string) {
+    const value=await this.request('admin/runtime','PUT',{agentImage,modelRef});
+    try{this.store.runtime=runtimeView(value.runtime);}catch{throw new ConsoleError('RESULT_UNKNOWN','Read current runtime before saving again.');}
+    return this.store.runtime;
+  }
   async saveRuntime(input: Omit<Runtime, "updatedAt" | "credentialAvailable">, apiKey: string) {
     const value = await this.request("admin/runtime", "PUT", { agentImage: input.agentImage, provider: input.provider, model: input.modelId,
       ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}), credential: apiKey });

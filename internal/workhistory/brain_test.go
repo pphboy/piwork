@@ -365,7 +365,7 @@ func TestCurrentHistoryChatMetadataValidatesWithoutSchemaChange(t *testing.T) {
 			if snapshot != nil {
 				snapshot.Close()
 			}
-			valid := level == `"off"` || level == `"high"` || level == `"max"`
+			valid := level == `null` || level == `"off"` || level == `"high"` || level == `"max"`
 			if valid && err != nil || !valid && err != ErrInvalid {
 				t.Fatal("chat metadata validation", err)
 			}

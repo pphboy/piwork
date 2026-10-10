@@ -21,6 +21,7 @@
 | `/` | Status | Core 状态 |
 | `/users` | Users | 账号与角色 |
 | `/runtime` | Runtime | 全局运行配置 |
+| `/models` | AI models | 多供应商连接和模型生命周期 |
 | `/default-work` | Default Work | 后续新 Work 的默认值 |
 | `/skills` | Skills | Core Skill 目录 |
 | `/packages` | Packages | Core Package 包库 |

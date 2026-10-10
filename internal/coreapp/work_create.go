@@ -142,6 +142,9 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 		if err := a.Identity.AuthorizePrincipalTx(tx, actor); err != nil {
 			return corestore.MutationEffect{}, err
 		}
+		if _, _, _, err := a.catalogModelTx(tx, string(configuration.ModelRef), false); err != nil {
+			return corestore.MutationEffect{}, err
+		}
 		if err := validateSelectedSkillsTx(tx, configuration.Skills); err != nil {
 			return corestore.MutationEffect{}, err
 		}

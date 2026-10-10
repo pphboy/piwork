@@ -103,10 +103,12 @@ func validateManifestRelations(spec contracts.PortableWorkSpec) error {
 		artifacts[string(entry.Key)] = entry
 	}
 	if !sorted(spec.Contexts, func(c contracts.PortableWorkContext) string { return string(c.Key) }) || !sorted(spec.Services, func(s contracts.PortableWorkService) string { return string(s.Key) }) || !sorted(spec.Images, func(i contracts.PortableWorkImage) string { return string(i.Key) }) || !sorted(spec.PiPackageArtifacts, func(p contracts.PortablePiPackageArtifact) string { return string(p.Key) }) || !sorted(spec.Bindings.Models, func(m struct {
-		Key      contracts.WorkLogicalKey `json:"key"`
-		Provider string                   `json:"provider"`
-		Model    string                   `json:"model"`
-		BaseUrl  json.RawMessage          `json:"baseUrl"`
+		Key          contracts.WorkLogicalKey                     `json:"key"`
+		Provider     string                                       `json:"provider"`
+		Model        string                                       `json:"model"`
+		BaseUrl      json.RawMessage                              `json:"baseUrl"`
+		Api          contracts.Field[contracts.ModelApi]          `json:"api,omitzero"`
+		Capabilities contracts.Field[contracts.ModelCapabilities] `json:"capabilities,omitzero"`
 	}) string {
 		return string(m.Key)
 	}) {

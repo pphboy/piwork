@@ -20,6 +20,8 @@ The portable boundary includes the Work's two managed volumes, Work-owned contex
 
 The boundary does not include the Docker container's temporary layer, anonymous volumes, tmpfs, live processes, external services, global users/catalog/secrets, or platform-managed credentials. Import requires the target Core to have an enabled matching model and a readable credential; it selects that binding automatically. The imported Work remains stopped and creates its runtime network and certificates only on explicit start. Import restores package bytes from the archive without consulting Core defaults/catalog or rerunning npm, Git, or package code; subsequent Work package operations use the recipient Core only when explicitly requested. The V1 schema requires the Pi package fields even when empty, and older V1 files without them are rejected. V1 is Linux and protocol/layout-specific; a package is not a generic backup of its host.
 
+Model requirements may include the known optional `api` and `capabilities` fields inside the existing `bindings.models` component. They preserve Responses/Messages semantics and custom model capability definitions without transferring source provider IDs, Keys or live execution grants. Missing fields retain the original implicit SDK definition of a legacy captured image. Core and the snapshot helper validate these fields together; older readers reject unknown fields explicitly. Recipient Session preferences rebind only to an unambiguous matching definition and retain their Thinking selection.
+
 ## Native implementation compatibility
 
 The native implementation retains the exact V1 envelope, manifest, tree encoding and blob digests. It recognizes exact managed history schema 4 and schema 5 with Memory schema 1. The shared framing and static validation live in `internal/workpackage`, `internal/snapshottree`, `internal/imagestatic`, and `internal/workhistory`; the separate Go helper performs mounted-volume capture/restore and history reconstruction. SDK JSONL and user file bytes remain opaque. AGENTS.md is a file blob, not JSON metadata, and is restored byte-for-byte within the existing context bounds.
@@ -50,3 +52,5 @@ SDK `piwork-run` 标记和完整工具结果作为原 SDK 文件保留，公开�
 本次发布需配套更新 Snapshot Helper 的 schema 4 JSON 校验器；旧 Helper 对新增字段的
 严格拒绝仍保留。聊天 capability 0 的界面降级不代表旧 Agent/Helper 能读取已写入新字段
 的历史；回退需使用写入新字段前的 `.work` 备份，不能依靠自动删除元数据回退。
+
+模型配置现在按单条模型独立管理，不需 Provider 或能力 JSON。未知 Model ID 可按指定协议普通执行，其 `thinkingLevel:null` 表示未请求额外 Thinking，与旧记录缺省 Off 不同；Go/TS 历史校验、快照/helper 和跨安装重绑定保留该事实。公开 Chat 通过版本 3 协商 nullable 行为；旧读取器不支持时明确拒绝，需升级后导入，不能把 null 改成 Off。源模型身份、Key 和在途授权不随包复制。

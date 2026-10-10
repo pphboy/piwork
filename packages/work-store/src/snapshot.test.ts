@@ -159,6 +159,26 @@ function brainFixture() {
   return { ...f, learned: request.requestId, waiting: waiting.requestId };
 }
 
+test('managed model descriptors retain Thinking while imported preferences lose source execution authority',()=>{
+  const f=fixture();
+  const capabilities={kind:'sdk' as const,provider:'openai',model:'gpt-5.1'};
+  const source={modelRef:'model-source-12345678',label:'Original provider',provider:'openai',model:'custom-alias',api:'openai-responses' as const,baseUrl:'https://model.example/v1',capabilities,executionBindingId:'model-execution-source-00001',thinkingLevel:'high' as const,availability:'available'};
+  f.store.setSessionModelPreference(SOURCE,'session-local',JSON.stringify(source));
+  try{
+    const snapshot=WorkHistorySnapshot.open(f.volume,f.scope)!;
+    try{
+      for(const ambiguous of [false,true]){
+        const target=join(f.root,ambiguous?'ambiguous':'unique'),workId=ambiguous?'work-target-ambiguous':'work-target-unique';cpSync(f.volume,target,{recursive:true});
+        const candidate={modelRef:'model-target-12345678',label:'Recipient provider',provider:'openai',model:'custom-alias',api:'openai-responses' as const,baseUrl:'https://model.example/v1',capabilities};
+        snapshot.rebuild(target,workId,new Map([[CONTEXT,'context-target']]),ambiguous?[candidate,{...candidate,modelRef:'model-target-87654321'}]:[candidate]);
+        const imported=WorkStore.open(join(target,'work.sqlite'));
+        try{const pref=JSON.parse(imported.getSession(workId,'session-local')!.modelPreferenceJson!);assert.equal(pref.thinkingLevel,'high');assert.equal(pref.executionBindingId,undefined);assert.equal(pref.availability,ambiguous?'unavailable':'available');}
+        finally{imported.close();}
+      }
+    }finally{snapshot.close();}
+  }finally{f.close();}
+});
+
 test("schema5 cold history retains verified experience and waits while imports are historical and independently rebound", () => {
   const f = brainFixture();
   try {
@@ -319,7 +339,7 @@ test('schema 5 optional Thinking and input mode survive cold validation and rebi
   const snapshot=WorkHistorySnapshot.open(f.volume,f.scope)!;const target=join(f.root,'imported');cpSync(f.volume,target,{recursive:true});
   try{snapshot.rebuild(target,'work-target-1234567890',new Map([[CONTEXT,'context-target']]),[{...model,modelRef:'model-target-12345678',thinkingLevel:undefined}]);}finally{snapshot.close();}
   const imported=WorkStore.open(join(target,'work.sqlite'));try{assert.equal(JSON.parse(imported.getSession('work-target-1234567890','session-local')!.modelPreferenceJson!).thinkingLevel,'high');assert.equal(JSON.parse(imported.getRun(f.runId)!.actualModelJson!).thinkingLevel,'high');assert.equal(JSON.parse(imported.getRun(f.runId)!.modelSelectorJson!).inputMode,'text');}finally{imported.close();}
-  for(const invalid of ['"impossible"','null','3']){edit(f.volume,`UPDATE runs SET actual_model_json='{"modelRef":null,"label":"Default","provider":"fixture","model":"one","thinkingLevel":${invalid}}'`);assert.throws(()=>WorkHistorySnapshot.open(f.volume,f.scope),WorkHistoryValidationError);}
+  for(const invalid of ['"impossible"','3']){edit(f.volume,`UPDATE runs SET actual_model_json='{"modelRef":null,"label":"Default","provider":"fixture","model":"one","thinkingLevel":${invalid}}'`);assert.throws(()=>WorkHistorySnapshot.open(f.volume,f.scope),WorkHistoryValidationError);}
  }finally{f.close();}
 });
 

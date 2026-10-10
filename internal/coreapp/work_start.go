@@ -156,6 +156,21 @@ func (a *Application) capturedContextSpec(ctx context.Context, workID string, ge
 	if strictMetadata([]byte(record.profileJSON), &profile) != nil || profile.Version != 1 || profile.Revision < 1 || profile.Model.Provider == "" || profile.Model.ID == "" || profile.Model.CredentialRef == "" {
 		return spec, capturedWork{}, errCapturedWork
 	}
+	var configured contracts.WorkConfig
+	if json.Unmarshal([]byte(record.configuration), &configured) != nil {
+		return spec, capturedWork{}, errCapturedWork
+	}
+	err = a.Store.Read(ctx, func(tx *sql.Tx) error {
+		metadata, _, _, err := a.catalogModelTx(tx, string(configured.ModelRef), false)
+		if err != nil {
+			return err
+		}
+		profile.Model.CredentialRef = metadata.CredentialRef
+		return nil
+	})
+	if err != nil {
+		return spec, capturedWork{}, err
+	}
 	secret, err := a.files.ReadSecret(profile.Model.CredentialRef)
 	if err != nil || len(secret) < 2 || secret[len(secret)-1] != '\n' {
 		return spec, capturedWork{}, errCapturedWork
@@ -180,7 +195,7 @@ func (a *Application) capturedContextSpec(ctx context.Context, workID string, ge
 	spec = workruntime.StartSpec{
 		Scope:   internaltls.Scope{InstallationID: a.Store.InstallationID(), WorkID: workID, Generation: generation, InstanceID: instanceID},
 		ImageID: record.imageID, ContextID: record.contextID, ContextDirectory: contextDirectory,
-		Model: workruntime.Model{Provider: profile.Model.Provider, ID: profile.Model.ID, BaseURL: profile.Model.BaseURL, Credential: secret[:len(secret)-1]},
+		Model: workruntime.Model{Provider: profile.Model.Provider, ID: profile.Model.ID, BaseURL: profile.Model.BaseURL, Credential: secret[:len(secret)-1], API: profile.Model.API, Capabilities: profile.Model.Capabilities},
 	}
 	return spec, record, nil
 }

@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { IdentifierSchema, ResourceIdSchema, TimestampSchema } from "./harness.js";
 import { AgentRunSourceSchema, RunModelDescriptionSchema } from "./work-feedback.js";
 
-export const CHAT_CONTROLS_CONTRACT_VERSION = 1;
+export const CHAT_CONTROLS_CONTRACT_VERSION = 3;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const WEB_SLASH_COMMANDS = ["new", "resume", "model", "thinking", "settings"] as const;
 const strict = { additionalProperties: false } as const;
@@ -11,17 +11,34 @@ export const ThinkingLevelSchema = Type.Union([
   Type.Literal("high"), Type.Literal("xhigh"), Type.Literal("max"),
 ]);
 export const ChatInputModeSchema = Type.Union([Type.Literal("text"), Type.Literal("command")]);
-export const ChatCapabilitiesSchema = Type.Object({ contractVersion: Type.Union([Type.Literal(0), Type.Literal(1)]) }, strict);
-export const ChatModelSchema = Type.Object({
+export const ChatCapabilitiesSchema = Type.Object({ contractVersion: Type.Union([Type.Literal(0), Type.Literal(1), Type.Literal(2), Type.Literal(3)]) }, strict);
+export const ThinkingSettingSchema = Type.Union([ThinkingLevelSchema,Type.Null()]);
+const KnownChatModelSchema = Type.Object({
   ...RunModelDescriptionSchema.properties,
   thinkingLevels: Type.Array(ThinkingLevelSchema, { minItems: 1, maxItems: 7, uniqueItems: true }),
   defaultThinkingLevel: ThinkingLevelSchema,
 }, strict);
-export const ChatModelListSchema = Type.Object({
-  contractVersion: Type.Literal(1), models: Type.Array(ChatModelSchema, { maxItems: 256 }),
-  defaultModel: ChatModelSchema, checkedAt: TimestampSchema,
+export const ChatModelSchema = Type.Union([KnownChatModelSchema,Type.Object({
+ ...RunModelDescriptionSchema.properties,thinkingAvailability:Type.Literal("unknown"),thinkingLevels:Type.Array(ThinkingLevelSchema,{maxItems:0}),defaultThinkingLevel:Type.Null(),
+},strict)]);
+const ChatModelListV1Schema = Type.Object({
+  contractVersion: Type.Literal(1), models: Type.Array(KnownChatModelSchema, { maxItems: 256 }),
+  defaultModel: KnownChatModelSchema, checkedAt: TimestampSchema,
   availability: Type.Union([Type.Literal("available"), Type.Literal("unavailable")]),
 }, strict);
+export const ChatModelListSchema = Type.Union([ChatModelListV1Schema, Type.Object({
+  contractVersion: Type.Literal(2), models: Type.Array(KnownChatModelSchema, { maxItems: 256 }),
+  defaultModel: Type.Union([KnownChatModelSchema,Type.Null()]), defaultUnavailableReason: Type.Optional(Type.String({ maxLength: 256 })),
+  unavailableModels: Type.Optional(Type.Array(Type.Object({
+    ...RunModelDescriptionSchema.properties,
+    reason: Type.Union([Type.Literal("capabilities-unconfirmed"), Type.Literal("sdk-unsupported")]),
+    recovery: Type.String({ minLength: 1, maxLength: 256 }),
+  }, strict), { maxItems: 256 })),
+  checkedAt: TimestampSchema, availability: Type.Union([Type.Literal("available"), Type.Literal("unavailable")]),
+},strict),Type.Object({
+ contractVersion:Type.Literal(3),models:Type.Array(ChatModelSchema,{maxItems:256}),defaultModel:Type.Union([ChatModelSchema,Type.Null()]),defaultUnavailableReason:Type.Optional(Type.String({maxLength:256})),
+ unavailableModels:Type.Optional(Type.Array(Type.Object({...RunModelDescriptionSchema.properties,reason:Type.Union([Type.Literal("capabilities-unconfirmed"),Type.Literal("sdk-unsupported")]),recovery:Type.String({minLength:1,maxLength:256})},strict),{maxItems:256})),checkedAt:TimestampSchema,availability:Type.Union([Type.Literal("available"),Type.Literal("unavailable")]),
+},strict)]);
 export const SlashCommandSchema = Type.Object({
   kind: Type.Union([Type.Literal("skill"), Type.Literal("prompt")]),
   command: Type.String({ minLength: 2, maxLength: 256 }),
@@ -32,7 +49,7 @@ export const SlashCommandListSchema = Type.Object({
   contractVersion: Type.Literal(1), commands: Type.Array(SlashCommandSchema, { maxItems: 4096 }), checkedAt: TimestampSchema,
 }, strict);
 export const SetSessionChatOptionsSchema = Type.Object({
-  modelRef: Type.Union([ResourceIdSchema, Type.Null()]), thinkingLevel: ThinkingLevelSchema,
+  modelRef: Type.Union([ResourceIdSchema, Type.Null()]), thinkingLevel: ThinkingSettingSchema,
 }, strict);
 export const SessionChatOptionsSchema = Type.Object({
   sessionId: IdentifierSchema, ...SetSessionChatOptionsSchema.properties,
@@ -54,14 +71,14 @@ const modelPreference = Type.Object({
 }, strict);
 export const ChatSessionViewSchema = Type.Object({
   workId: IdentifierSchema, sessionId: IdentifierSchema, createdAt: TimestampSchema, updatedAt: TimestampSchema,
-  modelPreference: Type.Union([modelPreference, Type.Null()]), thinkingLevel: ThinkingLevelSchema, source: AgentRunSourceSchema,
+  modelPreference: Type.Union([modelPreference, Type.Null()]), thinkingLevel: ThinkingSettingSchema, source: AgentRunSourceSchema,
 }, strict);
 export const ChatRunViewSchema = Type.Object({
   workId: IdentifierSchema, sessionId: IdentifierSchema, runId: IdentifierSchema, submissionKey: Type.String({ minLength: 1, maxLength: 256 }),
   state: Type.Integer({ minimum: 1, maximum: 7 }), promptDigest: Type.String({ minLength: 1 }), finalText: Type.String(),
   acceptedAt: TimestampSchema, startedAt: Type.String(), finishedAt: Type.String(),
   earliestAvailableSequence: Type.String({ pattern: "^[0-9]+$" }), latestSequence: Type.String({ pattern: "^[0-9]+$" }),
-  actualModel: Type.Union([RunModelDescriptionSchema, Type.Null()]), thinkingLevel: ThinkingLevelSchema,
+  actualModel: Type.Union([RunModelDescriptionSchema, Type.Null()]), thinkingLevel: ThinkingSettingSchema,
   source: AgentRunSourceSchema, adoptedExperienceVersion: Type.Integer({ minimum: 0 }),
   error: Type.Optional(Type.Object({ code: Type.String(), message: Type.String(), retryable: Type.Boolean() }, strict)),
 }, strict);
@@ -92,3 +109,5 @@ export type RunSubmissionSelector = Type.Static<typeof RunSubmissionSelectorSche
 export type ChatSubmissionLookup = Type.Static<typeof ChatSubmissionLookupSchema>;
 export type ToolResultPreview = Type.Static<typeof ToolResultPreviewSchema>;
 export type ChatContentBlock = Type.Static<typeof SessionContentBlockSchema>;
+
+export type ThinkingSetting = Type.Static<typeof ThinkingSettingSchema>;

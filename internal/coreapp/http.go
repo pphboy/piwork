@@ -119,7 +119,7 @@ func adminRuntime(view RuntimeView) any {
 	if !view.Configured {
 		return map[string]any{"configured": false}
 	}
-	return map[string]any{"configured": true, "agentImage": view.AgentImage, "model": view.Model, "updatedAt": view.UpdatedAt}
+	return map[string]any{"configured": true, "agentImage": view.AgentImage, "model": view.Model, "modelRef": view.ModelRef, "updatedAt": view.UpdatedAt}
 }
 func adminStatus(status Status) any {
 	return struct {
@@ -321,6 +321,11 @@ func (a *Application) control(w http.ResponseWriter, r *http.Request, actor iden
 		return contracts.NewError("NOT_FOUND", "")
 	}
 	relative := strings.TrimPrefix(r.URL.EscapedPath(), prefix)
+	if admin {
+		if handled, err := a.modelAdminHTTP(w, r, actor, relative); handled {
+			return err
+		}
+	}
 	parts := strings.Split(strings.TrimPrefix(relative, "/"), "/")
 	allowed := ""
 	switch relative {
@@ -575,9 +580,17 @@ func (a *Application) control(w http.ResponseWriter, r *http.Request, actor iden
 		return nil
 	}
 	if r.Method == "PUT" && relative == "/runtime" {
-		body, err := readControlJSON[contracts.AdminRuntimeInput](r, "AdminRuntimeInputSchema", admin)
+		raw, err := readControlJSON[json.RawMessage](r, "AdminRuntimeInputSchema", admin)
 		if err != nil {
 			return err
+		}
+		var selection contracts.AdminRuntimeSelection
+		if contracts.Validate("AdminRuntimeSelectionSchema", raw) == nil && json.Unmarshal(raw, &selection) == nil {
+			return a.runtimeSelectionHTTP(w, r, actor, selection, admin)
+		}
+		var body contracts.AdminRuntimeLegacyInput
+		if json.Unmarshal(raw, &body) != nil {
+			return contracts.NewError("INVALID_REQUEST", "")
 		}
 		input := RuntimeInput{AgentImage: body.AgentImage, Provider: body.Provider, Model: body.Model, Credential: body.Credential}
 		if body.BaseUrl.Present {

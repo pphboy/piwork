@@ -284,8 +284,11 @@ function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHi
 
 function rebindPreference(encoded: string, models: readonly RunModelSnapshot[]): string {
   const preference = JSON.parse(encoded) as RunModelSnapshot & { availability?: string };
+  delete (preference as {executionBindingId?:string}).executionBindingId;
   if (preference.modelRef === null) return JSON.stringify({ ...preference, availability: "available" });
   const matches = models.filter((candidate) => candidate.provider === preference.provider && candidate.model === preference.model
-    && normalizeModelBaseUrl(candidate.baseUrl) === normalizeModelBaseUrl(preference.baseUrl));
+    && normalizeModelBaseUrl(candidate.baseUrl) === normalizeModelBaseUrl(preference.baseUrl)
+    && (!preference.api||preference.api===candidate.api)
+    && (!preference.capabilities||JSON.stringify(preference.capabilities)===JSON.stringify(candidate.capabilities)));
   return JSON.stringify(matches.length === 1 ? { ...matches[0], ...(preference.thinkingLevel === undefined ? {} : { thinkingLevel: preference.thinkingLevel }), availability: "available" } : { ...preference, availability: "unavailable" });
 }
