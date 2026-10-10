@@ -110,6 +110,8 @@ Core scope 的 actor SHALL 为 operator 或实际已登录管理员 userId；Wor
 
 用户只读 catalog SHALL 只公开 enabled 包；operator 及通过管理 API 访问的管理员 SHALL 能看到 enabled/disabled 和 isDefault。列表 SHALL 按 name 的 UTF-8 字节顺序返回，不返回制品文件内容、宿主路径、secret 或内部 digest。
 
+Core 启动 SHALL 允许将原内置且启用的旧 piwork-brain 更新为当前内嵌 package；这是内置包初始化入口的有限延续，不增加外部写权限或普通包自动更新。该更新 SHALL 保留默认引用和全部 Work 副本，沿用现有隔离准备、Core package 互斥、原子发布与引用保留规则。
+
 #### Scenario: Install without changing defaults
 - **WHEN** operator 安装 tools 且没有 --default
 - **THEN** tools 在 enabled catalog 可发现，已有默认集合及新 Work 的默认选择不变
@@ -129,6 +131,10 @@ Core scope 的 actor SHALL 为 operator 或实际已登录管理员 userId；Wor
 #### Scenario: 管理员和 operator 共享同一 Core 库
 - **WHEN** 管理员安装或修改 Core package 后 operator 查询，或反向执行
 - **THEN** 双方观察到同一 catalog/defaults，并共同遵守 Core package 并发门禁，已有 Work 副本不变
+
+#### Scenario: 内置脑包更新只作用于 Core
+- **WHEN** Core 启动更新原内置旧脑包
+- **THEN** 只切换 Core catalog 的已验证 head，既有 Work desired/active 不变，管理员替换、禁用或移除的包不被覆盖或重新安装
 
 ### Requirement: Distinguish install update and state-only mutations
 
