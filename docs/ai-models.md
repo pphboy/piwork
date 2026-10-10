@@ -1,5 +1,9 @@
 # AI models
 
+**English** | [简体中文](ai-models.zh-CN.md)
+
+This flow requires matching current Core, Console, Agent and CLI builds. Older fixed images retain their original capabilities; changing a document or restarting an old Agent does not upgrade it. See [existing data and moving Work](#existing-data-and-moving-work) before upgrading.
+
 In Serve UI **AI models**, add a model with **Model ID**, **API type**, **Base URL** and **API Key**. A display name is optional and defaults to the full Model ID. Model IDs and display names support up to 256 characters, including when editing or reading the generated default name. There is no Provider setup or capability JSON step. Each model owns its connection and Key; identical Model IDs can use different connections.
 
 The interfaces are **OpenAI Responses** and **Anthropic Messages**. Responses accepts an API base such as `https://gateway.example.invalid/v1` and appends `/responses`. Messages accepts a service root or a Base URL ending in `/v1`, with or without a trailing slash. Both forms produce one `/v1/messages` path. A gateway path prefix is preserved. Enter a Base URL rather than the full request path. Core requires HTTPS except for loopback HTTP and rejects embedded credentials, query strings and fragments.

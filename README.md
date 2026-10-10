@@ -145,7 +145,7 @@ More commands are in the [CLI guide](docs/user-cli.md); see [CLI delivery](docs/
 
 To deploy Core from source, see [Core startup and initialization](docs/operations.md#从源码启动); administrator access is described in the [Console guide](docs/serve-console.md).
 
-Model connections can be managed in Console **AI models**: independent Responses / Messages models, advisory message Test and lifecycle actions, without Provider or capability JSON setup. Work Chat keeps its existing model and Thinking selection. See [AI models](docs/ai-models.md).
+Model connections can be managed in Console **AI models**: independent Responses / Messages models, advisory message Test and lifecycle actions, without Provider or capability JSON setup. Work Chat keeps its existing model and Thinking selection. This flow requires matching current Core, Console, Agent and CLI builds; existing Works explicitly Apply a compatible Agent. See [AI models](docs/ai-models.md).
 
 ## .work Import / Export
 

@@ -145,7 +145,7 @@ Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 
 
 从源码部署 Core 见 [Core 启动与初始化](docs/operations.md#从源码启动)；管理员入口见 [Console 手册](docs/serve-console.md)。
 
-可在 Console **AI models** 直接添加 Responses / Messages 模型，无需 Provider 或能力 JSON 配置，执行独立 HTTP Test 并管理生命周期；Work Chat 保留模型和 Thinking 选择。见 [AI 模型](docs/ai-models.md)。
+可在 Console **AI models** 直接添加 Responses / Messages 模型，无需 Provider 或能力 JSON 配置，执行独立 HTTP Test 并管理生命周期；Work Chat 保留模型和 Thinking 选择。此流程需要配套的当前 Core、Console、Agent 与 CLI；旧 Work 采用兼容 Agent 仍须显式 Apply。见 [AI 模型](docs/ai-models.zh-CN.md)。
 
 ## .work Import / Export
 

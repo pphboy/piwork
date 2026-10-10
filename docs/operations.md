@@ -46,7 +46,7 @@ read -r -p '模型 ID: ' PIWORK_MODEL_ID
 
 使用自定义模型入口时，在 config set 中追加 `--model-base-url` 和实际入口地址。配置保存后，Core 在后台准备镜像和默认上下文；status 显示进度，`GET /readyz` 返回 200 后再创建 Work。
 
-已有 operator/env 初始化入口继续可用。每条模型的协议、地址和 Key 在 Console **AI models** 直接管理，无 Provider 设置步骤，Runtime 从列表选择默认模型；Key 轮换不重写 Work 捕获的端点或 Thinking。旧 Work 使用完整新能力前需显式采用兼容 harness 镜像并 Apply。见 [多供应商模型](ai-models.md)。
+已有 operator/env 初始化入口继续可用。每条模型的协议、地址和 Key 在 Console **AI models** 直接管理，无 Provider 设置步骤，Runtime 从列表选择默认模型；Key 轮换不重写 Work 捕获的端点或 Thinking。旧 Work 使用完整新能力前需显式采用兼容 harness 镜像并 Apply。见 [AI 模型配置](ai-models.zh-CN.md)。
 
 继续在第二个终端启动 Desktop，在浏览器中使用刚创建的管理员登录；Core URL 为 `http://127.0.0.1:7171`：
 
