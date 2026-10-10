@@ -1,10 +1,10 @@
 {
   "manifestVersion": 2,
   "releaseVersion": "0.0.1",
-  "sourceCommit": "03395d0810f7c9bb2922f34c3edd38e2d1208402",
+  "sourceCommit": "1a2cc85e7059d8ffac1c2ef457bbbe9fc291f085",
   "sourceModified": true,
-  "sourceInputHash": "c70a7cb33564caaa64b93b0d7ee0c20cb784d00966192999f09720ed22251ad3",
-  "desktopUIHash": "0508d57f6e7c0450d041f7136216fae5a7d3e9a1ad46991505ad9e79968759ad",
+  "sourceInputHash": "a6cb96f4e5b31fb0bcf00c12d07db6341b048707343c188a61eb8e433ff6c524",
+  "desktopUIHash": "6b32a51d3e633b4b0d469567a0d14ebe5db801cd369d818c8823549d4fbfb8a9",
   "registry": "docker.io/pphboy",
   "platform": "linux/amd64",
   "runtimeImage": "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8",
@@ -13,16 +13,13 @@
     "schemaVersion": 1
   },
   "clientCredentialVersion": 1,
-  "releaseId": "0.0.1-03395d0810f7-c70a7cb33564-dirty",
+  "releaseId": "0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
   "images": {
-    "core": "docker.io/pphboy/piwork-core:0.0.1-03395d0810f7-c70a7cb33564-dirty",
-    "cli": "docker.io/pphboy/piwork-cli:0.0.1-03395d0810f7-c70a7cb33564-dirty",
-    "agent": "docker.io/pphboy/piwork-agentd:0.0.1-03395d0810f7-c70a7cb33564-dirty",
-    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.1-03395d0810f7-c70a7cb33564-dirty",
-    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.1-03395d0810f7-c70a7cb33564-dirty",
-    "packageHelper": "docker.io/pphboy/piwork-agentd:0.0.1-03395d0810f7-c70a7cb33564-dirty"
+    "core": "docker.io/pphboy/piwork-core:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
+    "cli": "docker.io/pphboy/piwork-cli:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
+    "agent": "docker.io/pphboy/piwork-agentd:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
+    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty",
+    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.1-1a2cc85e7059-a6cb96f4e5b3-dirty"
   },
-  "state": "published",
-  "compatiblePreviousReleaseVersions": [],
-  "directlyRollbackablePreviousVersions": []
+  "state": "candidate"
 }
