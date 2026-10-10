@@ -1,6 +1,10 @@
 # Piwork-brain 与独立 Work Memory
 
-平台宿主只运行 Go Core 和原生 helper；Pi SDK、Agent、extension 在 Agent 容器内运行。Go 内嵌的 `internal/coreassets/piwork-brain/` 是普通 Pi extension package 的首次安装来源，包含认知、薄 extension、部署 Skill 和语言无关交互协议。它不作为 npm node module 安装。首次原生 prepare 成功后，普通 catalog、默认选择和一次性标记在同一事务提交；失败保持运行不可用并允许修复重试。管理员修改、清空、禁用或移除后，后续启动不重新播种。
+平台宿主只运行 Go Core 和原生 helper；Pi SDK、Agent、extension 在 Agent 容器内运行。Go 内嵌的 `internal/coreassets/piwork-brain/` 是普通 Pi extension package 的安装和内置更新来源，包含认知、薄 extension、部署 Skill 和语言无关交互协议。它不作为 npm node module 安装。首次原生 prepare 成功后，普通 catalog、默认选择和一次性标记在同一事务提交；失败保持运行不可用并允许修复重试。
+
+当前内置脑包版本为 `1.1.0`。更新并启动 Core 后，仍为原内置来源且启用的旧脑包会经原准备流程更新 Core 包库，重复启动不重复发布；失败保留旧包并通过原准备诊断报告。一次性标记只控制首次默认选择，不阻止内置包更新。管理员替换、禁用或移除的包保持原样；移出默认或显式清空默认集合后，不会被重新加入。
+
+新建 Work 捕获更新后的 Core 脑包；已有 Work 不自动换包或镜像，需要时沿原 `--from-core` Package Update 和显式 Apply 采用。新版包只交付 FastAPI + React + TypeScript + Vite 的默认指导、模板和固定 Web base，不提供旧栈兼容或回退。历史归档和验收记录保留原事实，不作为当前交付依据。
 
 新 Work 默认独立 Skills 为空、packages 含启用的 piwork-brain。显式 packages=[] 创建无脑包 Work；skills=[] 只清空独立 Skills，不移除脑包。启动时 captured active 包经过完整内容身份和当前 Linux/架构/Node ABI/SDK 校验，由真实 SDK 加载四类工具和认知。Go 静态镜像及 mTLS readiness 要求 package-helper=2、history=4/5、runModel=1、workFeedback=1。空 packages 同样必须满足当前协议。
 
