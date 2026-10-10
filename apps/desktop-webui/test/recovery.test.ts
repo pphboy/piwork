@@ -512,6 +512,39 @@ function focusFixture(r: RequestRecord): Reply | undefined {
   if (r.path === '/_desktop/focus-app/') return { body:'<html><body><input aria-label="Application draft"><p>Original application</p></body></html>',headers:{'Content-Type':'text/html'} };
 }
 
+test('an opened application survives temporary Service Starting without retaining stopped or disabled frames', async t => {
+  let observed = 'ready', enabled = true;
+  let port = 80;
+  const { page } = await fixture(t, r => {
+    if (r.path === 'works/work-1') return { json: { id: 'work-1', name: 'Recovery Work', desiredState: 'running', observedState: observed === 'starting' ? 'degraded' : 'ready' } };
+    if (r.path.endsWith('/services')) return { json: { services: [{ serviceId: 'service-a', name: 'Tool A', enabled, observedState: observed,
+      access: { hostname: 'a.work.test', ports: [{ port, url: 'http://a.work.test', name: 'web' }] } }] } };
+    return focusFixture(r);
+  });
+  await expect(page.locator('iframe')).toBeVisible();
+  await page.frameLocator('iframe').getByLabel('Application draft').fill('keep this open input');
+  await page.evaluate(() => { (window as any).startingFrame = document.querySelector('iframe'); });
+  observed = 'starting'; await api(page, "await adapter.refreshVisibleWork('work-1');");
+  await expect(page.locator('.service-identity')).toContainText('Starting');
+  assert.equal(await page.evaluate(() => document.querySelector('iframe') === (window as any).startingFrame), true);
+  await expect(page.frameLocator('iframe').getByLabel('Application draft')).toHaveValue('keep this open input');
+  observed = 'ready'; await api(page, "await adapter.refreshVisibleWork('work-1');");
+  assert.equal(await page.evaluate(() => document.querySelector('iframe') === (window as any).startingFrame), true);
+  await expect(page.frameLocator('iframe').getByLabel('Application draft')).toHaveValue('keep this open input');
+  observed = 'stopped'; await api(page, "await adapter.loadServices('work-1');");
+  await expect(page.locator('iframe')).toHaveCount(0);
+  observed = 'starting'; await api(page, "await adapter.loadServices('work-1');");
+  await expect(page.locator('iframe')).toHaveCount(0);
+  observed = 'ready'; await api(page, "await adapter.loadServices('work-1');");
+  await expect(page.locator('iframe')).toBeVisible();
+  enabled = false; observed = 'starting'; await api(page, "await adapter.loadServices('work-1');");
+  await expect(page.locator('iframe')).toHaveCount(0);
+  enabled = true; observed = 'ready'; await api(page, "await adapter.refreshVisibleWork('work-1');");
+  await expect(page.locator('iframe')).toBeVisible();
+  port = 81; observed = 'starting'; await api(page, "await adapter.refreshVisibleWork('work-1');");
+  await expect(page.locator('iframe')).toHaveCount(0);
+});
+
 test('UX revision late Work defaults retain a chosen Service and focused Files draft', async t => {
   let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());
   const {page}=await fixture(t,async r=>{
