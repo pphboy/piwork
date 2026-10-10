@@ -4,6 +4,8 @@
 
 This flow requires matching current Core, Console, Agent and CLI builds. Older fixed images retain their original capabilities; changing a document or restarting an old Agent does not upgrade it. See [existing data and moving Work](#existing-data-and-moving-work) before upgrading.
 
+Check `deploy/docker/release.json` for the platform image state. A `candidate` reference requires the matching local build/load and does not prove DockerHub availability; a published Web base is independent of the platform release. For an existing installation, back up stopped Core data and managed volumes, update Core/Console and compatible Agent/helpers, then update the client. Existing Work image changes still require the owner's explicit Apply.
+
 In Serve UI **AI models**, add a model with **Model ID**, **API type**, **Base URL** and **API Key**. A display name is optional and defaults to the full Model ID. Model IDs and display names support up to 256 characters, including when editing or reading the generated default name. There is no Provider setup or capability JSON step. Each model owns its connection and Key; identical Model IDs can use different connections.
 
 The interfaces are **OpenAI Responses** and **Anthropic Messages**. Responses accepts an API base such as `https://gateway.example.invalid/v1` and appends `/responses`. Messages accepts a service root or a Base URL ending in `/v1`, with or without a trailing slash. Both forms produce one `/v1/messages` path. A gateway path prefix is preserved. Enter a Base URL rather than the full request path. Core requires HTTPS except for loopback HTTP and rejects embedded credentials, query strings and fragments.

@@ -4,6 +4,8 @@
 
 本流程需要配套的当前 Core、Console、Agent 和 CLI。旧固定镜像保留原有能力，修改文档或重启旧 Agent 不会升级它；升级前先阅读本页的数据与 Work 迁移说明。
 
+平台镜像状态以 `deploy/docker/release.json` 为准。`candidate` 引用需要先构建或加载匹配的本地镜像，不代表 DockerHub 已可取得；Web base 的独立发布也不代表平台镜像已发布。已有安装先备份停止后的 Core 数据和受管卷，再配套更新 Core/Console、兼容 Agent/helper 和客户端；既有 Work 更换镜像仍由所有者显式 Apply。
+
 ## 添加与选择
 
 在 Serve UI 的 **AI models** 填写 **Model ID、API type、Base URL 和 API Key**，即可保存一条完整模型配置。显示名称可选，省略时使用完整 Model ID；型号和显示名最多 256 个字符。无需先创建 Provider，也无需填写能力 JSON。同一 Model ID 可以配置多个独立连接。
