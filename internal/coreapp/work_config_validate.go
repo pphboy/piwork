@@ -118,14 +118,14 @@ func validateRequiredServicesTx(tx *sql.Tx, workID string, config contracts.Work
 }
 
 func validateWorkCapacityTx(tx *sql.Tx, workID string, config contracts.WorkConfig) error {
-	var serviceCPU, serviceMemory, serviceSlots int64
+	var serviceCPU, serviceSlots int64
 	err := tx.QueryRow(`SELECT COALESCE(SUM(MAX(desired_cpu_millis,occupied_cpu_millis)),0),
-		COALESCE(SUM(MAX(desired_memory_bytes,occupied_memory_bytes)),0),COALESCE(SUM(service_slots),0)
-		FROM quota_reservations WHERE work_id=? AND subject_kind='service'`, workID).Scan(&serviceCPU, &serviceMemory, &serviceSlots)
+		COALESCE(SUM(service_slots),0)
+		FROM quota_reservations WHERE work_id=? AND subject_kind='service'`, workID).Scan(&serviceCPU, &serviceSlots)
 	if err != nil {
 		return err
 	}
-	if config.Resources.AgentCpuMillis+serviceCPU > config.Resources.CpuMillis || config.Resources.AgentMemoryBytes+serviceMemory > config.Resources.MemoryBytes {
+	if config.Resources.AgentCpuMillis+serviceCPU > config.Resources.CpuMillis || config.Resources.AgentMemoryBytes > config.Resources.MemoryBytes {
 		return contracts.NewError("INVALID_CONFIGURATION", "resources")
 	}
 	var services, volumes int64

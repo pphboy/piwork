@@ -9840,7 +9840,9 @@
       },
       "memoryBytes": {
         "type": "integer",
-        "minimum": 16777216
+        "minimum": 0,
+        "maximum": 9007199254740991,
+        "description": "Deprecated compatibility value; application Service memory is unlimited."
       },
       "enabled": {
         "type": "boolean"
@@ -10784,7 +10786,9 @@
                 },
                 "memoryBytes": {
                   "type": "integer",
-                  "minimum": 16777216
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "Deprecated compatibility value; application Service memory is unlimited."
                 },
                 "enabled": {
                   "type": "boolean"
@@ -12064,7 +12068,9 @@
                       },
                       "memoryBytes": {
                         "type": "integer",
-                        "minimum": 16777216
+                        "minimum": 0,
+                        "maximum": 9007199254740991,
+                        "description": "Deprecated compatibility value; application Service memory is unlimited."
                       },
                       "enabled": {
                         "type": "boolean"
@@ -16522,7 +16528,9 @@
       },
       "memoryBytes": {
         "type": "integer",
-        "minimum": 16777216
+        "minimum": 0,
+        "maximum": 9007199254740991,
+        "description": "Deprecated compatibility value; application Service memory is unlimited."
       },
       "enabled": {
         "type": "boolean"
@@ -16758,7 +16766,9 @@
       },
       "memoryBytes": {
         "type": "integer",
-        "minimum": 16777216
+        "minimum": 0,
+        "maximum": 9007199254740991,
+        "description": "Deprecated compatibility value; application Service memory is unlimited."
       },
       "enabled": {
         "type": "boolean"

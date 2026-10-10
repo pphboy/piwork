@@ -458,13 +458,14 @@ type ServiceDefinition struct {
 	Mounts           []*ServiceMount        `protobuf:"bytes,8,rep,name=mounts,proto3" json:"mounts,omitempty"`
 	Ports            []*ServicePort         `protobuf:"bytes,9,rep,name=ports,proto3" json:"ports,omitempty"`
 	CpuMillis        uint32                 `protobuf:"varint,10,opt,name=cpu_millis,json=cpuMillis,proto3" json:"cpu_millis,omitempty"`
-	MemoryBytes      uint64                 `protobuf:"varint,11,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
-	Enabled          bool                   `protobuf:"varint,12,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	Required         bool                   `protobuf:"varint,13,opt,name=required,proto3" json:"required,omitempty"`
-	Readiness        *ReadinessProbe        `protobuf:"bytes,14,opt,name=readiness,proto3,oneof" json:"readiness,omitempty"`
-	RestartPolicy    string                 `protobuf:"bytes,15,opt,name=restart_policy,json=restartPolicy,proto3" json:"restart_policy,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Deprecated compatibility value; application Service memory is unlimited.
+	MemoryBytes   uint64          `protobuf:"varint,11,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
+	Enabled       bool            `protobuf:"varint,12,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Required      bool            `protobuf:"varint,13,opt,name=required,proto3" json:"required,omitempty"`
+	Readiness     *ReadinessProbe `protobuf:"bytes,14,opt,name=readiness,proto3,oneof" json:"readiness,omitempty"`
+	RestartPolicy string          `protobuf:"bytes,15,opt,name=restart_policy,json=restartPolicy,proto3" json:"restart_policy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ServiceDefinition) Reset() {
@@ -904,6 +905,7 @@ type ServiceView struct {
 	LastError       *SafeError             `protobuf:"bytes,10,opt,name=last_error,json=lastError,proto3,oneof" json:"last_error,omitempty"`
 	CreatedAt       string                 `protobuf:"bytes,11,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	Access          *ServiceAccess         `protobuf:"bytes,12,opt,name=access,proto3" json:"access,omitempty"`
+	MemoryLimitMode string                 `protobuf:"bytes,13,opt,name=memory_limit_mode,json=memoryLimitMode,proto3" json:"memory_limit_mode,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -1020,6 +1022,13 @@ func (x *ServiceView) GetAccess() *ServiceAccess {
 		return x.Access
 	}
 	return nil
+}
+
+func (x *ServiceView) GetMemoryLimitMode() string {
+	if x != nil {
+		return x.MemoryLimitMode
+	}
+	return ""
 }
 
 type OperationView struct {
@@ -1213,6 +1222,7 @@ type DeploymentContext struct {
 	DefaultServiceCpuMillis   uint32                 `protobuf:"varint,11,opt,name=default_service_cpu_millis,json=defaultServiceCpuMillis,proto3" json:"default_service_cpu_millis,omitempty"`
 	DefaultServiceMemoryBytes uint64                 `protobuf:"varint,12,opt,name=default_service_memory_bytes,json=defaultServiceMemoryBytes,proto3" json:"default_service_memory_bytes,omitempty"`
 	ApiVersion                string                 `protobuf:"bytes,13,opt,name=api_version,json=apiVersion,proto3" json:"api_version,omitempty"`
+	ServiceMemoryPolicy       string                 `protobuf:"bytes,14,opt,name=service_memory_policy,json=serviceMemoryPolicy,proto3" json:"service_memory_policy,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -1334,6 +1344,13 @@ func (x *DeploymentContext) GetDefaultServiceMemoryBytes() uint64 {
 func (x *DeploymentContext) GetApiVersion() string {
 	if x != nil {
 		return x.ApiVersion
+	}
+	return ""
+}
+
+func (x *DeploymentContext) GetServiceMemoryPolicy() string {
+	if x != nil {
+		return x.ServiceMemoryPolicy
 	}
 	return ""
 }
@@ -1863,7 +1880,7 @@ const file_work_services_proto_rawDesc = "" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x14\n" +
 	"\x05field\x18\x03 \x01(\tR\x05field\x12 \n" +
 	"\vremediation\x18\x04 \x01(\tR\vremediation\x12%\n" +
-	"\x0ecorrelation_id\x18\x05 \x01(\tR\rcorrelationId\"\xd4\x04\n" +
+	"\x0ecorrelation_id\x18\x05 \x01(\tR\rcorrelationId\"\x80\x05\n" +
 	"\vServiceView\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
@@ -1882,7 +1899,8 @@ const file_work_services_proto_rawDesc = "" +
 	" \x01(\v2\".piwork.core.services.v1.SafeErrorH\x01R\tlastError\x88\x01\x01\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\v \x01(\tR\tcreatedAt\x12>\n" +
-	"\x06access\x18\f \x01(\v2&.piwork.core.services.v1.ServiceAccessR\x06accessB\x13\n" +
+	"\x06access\x18\f \x01(\v2&.piwork.core.services.v1.ServiceAccessR\x06access\x12*\n" +
+	"\x11memory_limit_mode\x18\r \x01(\tR\x0fmemoryLimitModeB\x13\n" +
 	"\x11_applied_revisionB\r\n" +
 	"\v_last_error\"\x9b\x02\n" +
 	"\rOperationView\x12!\n" +
@@ -1905,7 +1923,7 @@ const file_work_services_proto_rawDesc = "" +
 	"\foperation_id\x18\x02 \x01(\tR\voperationId\x12\x16\n" +
 	"\x06reused\x18\x03 \x01(\bR\x06reused\x12\x17\n" +
 	"\awork_id\x18\x04 \x01(\tR\x06workId\x12%\n" +
-	"\x0ecorrelation_id\x18\x05 \x01(\tR\rcorrelationId\"\xd7\x04\n" +
+	"\x0ecorrelation_id\x18\x05 \x01(\tR\rcorrelationId\"\x8b\x05\n" +
 	"\x11DeploymentContext\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12%\n" +
 	"\x0eworkspace_path\x18\x02 \x01(\tR\rworkspacePath\x12-\n" +
@@ -1921,7 +1939,8 @@ const file_work_services_proto_rawDesc = "" +
 	"\x1adefault_service_cpu_millis\x18\v \x01(\rR\x17defaultServiceCpuMillis\x12?\n" +
 	"\x1cdefault_service_memory_bytes\x18\f \x01(\x04R\x19defaultServiceMemoryBytes\x12\x1f\n" +
 	"\vapi_version\x18\r \x01(\tR\n" +
-	"apiVersion\"\x8b\x01\n" +
+	"apiVersion\x122\n" +
+	"\x15service_memory_policy\x18\x0e \x01(\tR\x13serviceMemoryPolicy\"\x8b\x01\n" +
 	"\x14CreateServiceRequest\x12J\n" +
 	"\n" +
 	"definition\x18\x01 \x01(\v2*.piwork.core.services.v1.ServiceDefinitionR\n" +

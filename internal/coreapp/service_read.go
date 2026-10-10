@@ -17,6 +17,7 @@ import (
 )
 
 type publicServiceView struct {
+	MemoryLimitMode string                      `json:"memoryLimitMode"`
 	WorkID          string                      `json:"workId"`
 	ServiceID       string                      `json:"serviceId"`
 	Name            string                      `json:"name"`
@@ -77,7 +78,7 @@ func (a *Application) serviceView(ctx context.Context, work corestore.WorkRecord
 	if err != nil {
 		return publicServiceView{}, err
 	}
-	return publicServiceView{WorkID: record.WorkID, ServiceID: record.ServiceID, Name: record.Name, DesiredRevision: record.DesiredRevision, AppliedRevision: record.AppliedRevision, Enabled: record.Enabled, ObservedState: record.ObservedState, LastError: safeServiceDiagnostic(record.LastErrorJSON, record.ServiceID), Definition: definition, Endpoints: endpoints, CreatedAt: record.CreatedAt, Access: access}, nil
+	return publicServiceView{MemoryLimitMode: "unlimited", WorkID: record.WorkID, ServiceID: record.ServiceID, Name: record.Name, DesiredRevision: record.DesiredRevision, AppliedRevision: record.AppliedRevision, Enabled: record.Enabled, ObservedState: record.ObservedState, LastError: safeServiceDiagnostic(record.LastErrorJSON, record.ServiceID), Definition: definition, Endpoints: endpoints, CreatedAt: record.CreatedAt, Access: access}, nil
 }
 func (a *Application) readService(ctx context.Context, actor serviceActor, workID, serviceID string) (publicServiceView, error) {
 	var work corestore.WorkRecord

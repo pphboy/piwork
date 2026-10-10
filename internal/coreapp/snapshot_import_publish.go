@@ -100,16 +100,16 @@ func (a *Application) publishSnapshotImport(ctx context.Context, job corestore.S
 		var cpu, memory int64
 		for _, q := range spec.QuotaReservations {
 			cpu += int64(q.DesiredCpuMillis)
-			memory += int64(q.DesiredMemoryBytes)
+			memory += corestore.EffectiveMemoryBytes(q.SubjectKind, int64(q.DesiredMemoryBytes), 0)
 		}
 		if quota.DesiredCPUMillis != cpu || quota.DesiredMemoryBytes != memory || quota.OccupiedCPUMillis != 0 || quota.OccupiedMemoryBytes != 0 {
 			return corestore.ErrStorage
 		}
-		var hostCPU, hostMemory int64
-		if err := tx.QueryRow(`SELECT COALESCE(SUM(MAX(desired_cpu_millis,occupied_cpu_millis)),0),COALESCE(SUM(MAX(desired_memory_bytes,occupied_memory_bytes)),0) FROM quota_reservations`).Scan(&hostCPU, &hostMemory); err != nil {
+		usage, err := corestore.ReadQuotaUsage(tx, nil)
+		if err != nil {
 			return err
 		}
-		if hostCPU > 128000 || hostMemory > 256<<30 {
+		if usage.CPUMillis > 128000 || usage.MemoryBytes > 256<<30 {
 			return contracts.NewError("QUOTA_EXCEEDED", "")
 		}
 		if err := corestore.InsertWork(tx, corestore.WorkRecord{ID: targets.WorkID, OwnerUserID: job.OwnerUserID, Name: *job.Name, DesiredState: "stopped", ObservedState: "stopped", DesiredRevision: desiredRevision, ControlVersion: 1, CreatedAt: now, UpdatedAt: now}); err != nil {

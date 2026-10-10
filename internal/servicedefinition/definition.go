@@ -154,7 +154,7 @@ func Normalize(raw json.RawMessage) (contracts.ServiceDefinitionInput, error) {
 		input.CpuMillis = contracts.Supplied(int64(250))
 	}
 	if !input.MemoryBytes.Present {
-		input.MemoryBytes = contracts.Supplied(int64(128 << 20))
+		input.MemoryBytes = contracts.Supplied(int64(0))
 	}
 	if !input.Enabled.Present {
 		input.Enabled = contracts.Supplied(true)

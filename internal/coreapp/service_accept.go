@@ -75,7 +75,7 @@ func reserveServiceQuota(tx *sql.Tx, workID, serviceID string, definition contra
 		reservation.ServiceSlots = 0
 	} else if definition.Enabled {
 		reservation.DesiredCPUMillis = definition.CpuMillis
-		reservation.DesiredMemoryBytes = definition.MemoryBytes
+		reservation.DesiredMemoryBytes = 0
 	}
 	return corestore.ReserveQuota(tx, reservation, corestore.QuotaLimits{CPUMillis: config.Resources.CpuMillis, MemoryBytes: config.Resources.MemoryBytes, MaxServices: &config.Resources.MaxServices, MaxRetainedVolumes: &config.Resources.MaxRetainedVolumes}, corestore.QuotaLimits{CPUMillis: 128000, MemoryBytes: 256 << 30})
 }
@@ -108,7 +108,9 @@ func (a *Application) acceptServiceDefinition(ctx context.Context, actor service
 	}
 	kind := "create-service"
 	revision := int64(1)
-	request := map[string]any{"definition": input}
+	// Version the normalized request, not the immutable historical receipts.
+	// This separates new zero-default requests from the old 128-MiB default.
+	request := map[string]any{"definition": input, "normalizationVersion": 2}
 	if serviceID != "" {
 		if expected < 1 || expected >= contracts.MaxSafeInteger {
 			return output, contracts.NewError("INVALID_REQUEST", "expectedRevision")
@@ -123,6 +125,35 @@ func (a *Application) acceptServiceDefinition(ctx context.Context, actor service
 	requestJSON, err := json.Marshal(request)
 	if err != nil {
 		return output, err
+	}
+	prior, found, replayErr := a.Store.FindAcceptedMutation(ctx, actor.key(), workID, kind, key, string(requestJSON))
+	if errors.Is(replayErr, corestore.ErrIdempotencyConflict) {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil {
+			return output, contracts.NewError("INVALID_REQUEST", "definition")
+		}
+		legacy := input
+		if _, specified := fields["memoryBytes"]; !specified {
+			legacy.MemoryBytes = contracts.Supplied(int64(128 << 20))
+		}
+		legacyRequest := make(map[string]any, len(request))
+		for name, value := range request {
+			if name != "normalizationVersion" {
+				legacyRequest[name] = value
+			}
+		}
+		legacyRequest["definition"] = legacy
+		legacyJSON, marshalErr := json.Marshal(legacyRequest)
+		if marshalErr != nil {
+			return output, marshalErr
+		}
+		prior, found, replayErr = a.Store.FindAcceptedMutation(ctx, actor.key(), workID, kind, key, string(legacyJSON))
+	}
+	if replayErr != nil {
+		return output, servicePublicError(replayErr)
+	}
+	if found {
+		return serviceAcceptance(workID, prior), nil
 	}
 	definition := assignServiceDefinition(input, serviceID, revision)
 	accepted, err := a.Store.AcceptMutation(ctx, corestore.MutationRequest{PrincipalID: actor.key(), WorkScope: workID, Kind: kind, IdempotencyKey: key, RequestJSON: string(requestJSON), TargetVersion: revision, WorkID: &workID, ServiceID: &serviceID, ExpectedWorkVersion: &work.ControlVersion, FenceScope: "service"}, func(tx *sql.Tx, operationID string) (corestore.MutationEffect, error) {

@@ -243,11 +243,11 @@ func reserveSnapshotImportQuota(tx *sql.Tx, work string, spec contracts.Portable
 	}
 	var cpu, memory, services int64
 	for _, q := range spec.QuotaReservations {
-		if int64(q.DesiredCpuMillis) > contracts.MaxSafeInteger-cpu || int64(q.DesiredMemoryBytes) > contracts.MaxSafeInteger-memory {
+		if int64(q.DesiredCpuMillis) > contracts.MaxSafeInteger-cpu || corestore.EffectiveMemoryBytes(q.SubjectKind, int64(q.DesiredMemoryBytes), 0) > contracts.MaxSafeInteger-memory {
 			return contracts.NewError("QUOTA_EXCEEDED", "")
 		}
 		cpu += int64(q.DesiredCpuMillis)
-		memory += int64(q.DesiredMemoryBytes)
+		memory += corestore.EffectiveMemoryBytes(q.SubjectKind, int64(q.DesiredMemoryBytes), 0)
 	}
 	for _, s := range spec.Services {
 		if string(s.TombstonedAt) == "null" {

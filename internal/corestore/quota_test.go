@@ -70,7 +70,7 @@ func TestConcurrentQuotaAcceptanceRollsBackLosingService(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if use != (QuotaUsage{800, 800}) {
+		if use != (QuotaUsage{800, 300}) {
 			t.Fatal(use)
 		}
 		return nil

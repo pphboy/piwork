@@ -349,7 +349,7 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 			view = nil
 		}
 	}
-	if view != nil && view.Config.Labels[serviceRevisionLabel] != strconv.FormatInt(target.Revision, 10) {
+	if view != nil && (view.Config.Labels[serviceRevisionLabel] != strconv.FormatInt(target.Revision, 10) || view.HostConfig == nil || view.HostConfig.Memory != 0 || view.HostConfig.MemoryReservation != 0) {
 		if err := a.stopServiceRuntime(ctx, target.WorkID, target.ServiceID, true); err != nil {
 			return err
 		}
@@ -437,7 +437,7 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 	if err := transition("service-start", "SERVICE_START_FAILED"); err != nil {
 		return err
 	}
-	ensured, err := a.dockerRuntime.EnsureContainer(ctx, dockerengine.ContainerSpec{Identity: identity, Image: *imageID, DisplayName: networkName + "_" + definition.Name, Entrypoint: []string{definition.Command}, Command: definition.Args, Environment: environment, User: "10001:10001", CPUMillis: definition.CpuMillis, MemoryBytes: definition.MemoryBytes, WorkingDirectory: path.Clean(definition.WorkingDirectory), Network: &dockerengine.ContainerNetwork{Name: network.Name, WorkID: target.WorkID, Aliases: []string{"svc-" + definition.Name}}, Mounts: mounts})
+	ensured, err := a.dockerRuntime.EnsureContainer(ctx, dockerengine.ContainerSpec{Identity: identity, Image: *imageID, DisplayName: networkName + "_" + definition.Name, Entrypoint: []string{definition.Command}, Command: definition.Args, Environment: environment, User: "10001:10001", CPUMillis: definition.CpuMillis, MemoryBytes: 0, WorkingDirectory: path.Clean(definition.WorkingDirectory), Network: &dockerengine.ContainerNetwork{Name: network.Name, WorkID: target.WorkID, Aliases: []string{"svc-" + definition.Name}}, Mounts: mounts})
 	if err != nil {
 		return &serviceRuntimeError{Code: "SERVICE_START_FAILED", Stage: "service-start"}
 	}
@@ -466,7 +466,7 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 		}
 		// Once a create has been confirmed its resource charge persists even
 		// when start/readiness fails, until a confirmed stop releases it.
-		return corestore.ConfirmQuotaOccupation(tx, target.WorkID, "service", target.ServiceID, definition.CpuMillis, definition.MemoryBytes, true)
+		return corestore.ConfirmQuotaOccupation(tx, target.WorkID, "service", target.ServiceID, definition.CpuMillis, 0, true)
 	}); err != nil {
 		return err
 	}

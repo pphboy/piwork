@@ -74,6 +74,7 @@ export interface ServiceDefinition {
   mounts: ServiceMount[];
   ports: ServicePort[];
   cpuMillis: number;
+  /** Deprecated compatibility value; application Service memory is unlimited. */
   memoryBytes: bigint;
   enabled: boolean;
   required: boolean;
@@ -129,6 +130,7 @@ export interface ServiceView {
   lastError?: SafeError | undefined;
   createdAt: string;
   access?: ServiceAccess | undefined;
+  memoryLimitMode: string;
 }
 
 export interface OperationView {
@@ -164,6 +166,7 @@ export interface DeploymentContext {
   defaultServiceCpuMillis: number;
   defaultServiceMemoryBytes: bigint;
   apiVersion: string;
+  serviceMemoryPolicy: string;
 }
 
 export interface CreateServiceRequest {
@@ -1913,6 +1916,7 @@ function createBaseServiceView(): ServiceView {
     lastError: undefined,
     createdAt: "",
     access: undefined,
+    memoryLimitMode: "",
   };
 }
 
@@ -1953,6 +1957,9 @@ export const ServiceView: MessageFns<ServiceView> = {
     }
     if (message.access !== undefined) {
       ServiceAccess.encode(message.access, writer.uint32(98).fork()).join();
+    }
+    if (message.memoryLimitMode !== "") {
+      writer.uint32(106).string(message.memoryLimitMode);
     }
     return writer;
   },
@@ -2066,6 +2073,14 @@ export const ServiceView: MessageFns<ServiceView> = {
             message.access = ServiceAccess.decode(reader, reader.uint32());
             continue;
           }
+          case 13: {
+            if (tag !== 106) {
+              break;
+            }
+
+            message.memoryLimitMode = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2122,6 +2137,11 @@ export const ServiceView: MessageFns<ServiceView> = {
         ? globalThis.String(object.created_at)
         : "",
       access: isSet(object.access) ? ServiceAccess.fromJSON(object.access) : undefined,
+      memoryLimitMode: isSet(object.memoryLimitMode)
+        ? globalThis.String(object.memoryLimitMode)
+        : isSet(object.memory_limit_mode)
+        ? globalThis.String(object.memory_limit_mode)
+        : "",
     };
   },
 
@@ -2163,6 +2183,9 @@ export const ServiceView: MessageFns<ServiceView> = {
     if (message.access !== undefined) {
       obj.access = ServiceAccess.toJSON(message.access);
     }
+    if (message.memoryLimitMode !== "") {
+      obj.memoryLimitMode = message.memoryLimitMode;
+    }
     return obj;
   },
 
@@ -2189,6 +2212,7 @@ export const ServiceView: MessageFns<ServiceView> = {
     message.access = (object.access !== undefined && object.access !== null)
       ? ServiceAccess.fromPartial(object.access)
       : undefined;
+    message.memoryLimitMode = object.memoryLimitMode ?? "";
     return message;
   },
 };
@@ -2569,6 +2593,7 @@ function createBaseDeploymentContext(): DeploymentContext {
     defaultServiceCpuMillis: 0,
     defaultServiceMemoryBytes: 0n,
     apiVersion: "",
+    serviceMemoryPolicy: "",
   };
 }
 
@@ -2626,6 +2651,9 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
     }
     if (message.apiVersion !== "") {
       writer.uint32(106).string(message.apiVersion);
+    }
+    if (message.serviceMemoryPolicy !== "") {
+      writer.uint32(114).string(message.serviceMemoryPolicy);
     }
     return writer;
   },
@@ -2747,6 +2775,14 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
             message.apiVersion = reader.string();
             continue;
           }
+          case 14: {
+            if (tag !== 114) {
+              break;
+            }
+
+            message.serviceMemoryPolicy = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2822,6 +2858,11 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
         : isSet(object.api_version)
         ? globalThis.String(object.api_version)
         : "",
+      serviceMemoryPolicy: isSet(object.serviceMemoryPolicy)
+        ? globalThis.String(object.serviceMemoryPolicy)
+        : isSet(object.service_memory_policy)
+        ? globalThis.String(object.service_memory_policy)
+        : "",
     };
   },
 
@@ -2866,6 +2907,9 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
     if (message.apiVersion !== "") {
       obj.apiVersion = message.apiVersion;
     }
+    if (message.serviceMemoryPolicy !== "") {
+      obj.serviceMemoryPolicy = message.serviceMemoryPolicy;
+    }
     return obj;
   },
 
@@ -2896,6 +2940,7 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
         ? BigInt(object.defaultServiceMemoryBytes)
         : 0n;
     message.apiVersion = object.apiVersion ?? "";
+    message.serviceMemoryPolicy = object.serviceMemoryPolicy ?? "";
     return message;
   },
 };

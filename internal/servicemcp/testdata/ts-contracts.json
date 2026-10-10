@@ -11,7 +11,7 @@
         "content": [
           {
             "type": "text",
-            "text": "{\"workId\":\"work-fixture\",\"workspacePath\":\"/var/data/workspace\",\"workspaceWritable\":true,\"lifecycle\":\"running\",\"totalCpuMillis\":2000,\"totalMemoryBytes\":\"1610612736\",\"agentCpuMillis\":1000,\"agentMemoryBytes\":\"805306368\",\"availableCpuMillis\":1000,\"availableMemoryBytes\":\"805306368\",\"defaultServiceCpuMillis\":250,\"defaultServiceMemoryBytes\":\"134217728\",\"apiVersion\":\"v2\"}"
+            "text": "{\"workId\":\"work-fixture\",\"workspacePath\":\"/var/data/workspace\",\"workspaceWritable\":true,\"lifecycle\":\"running\",\"totalCpuMillis\":2000,\"totalMemoryBytes\":\"1610612736\",\"agentCpuMillis\":1000,\"agentMemoryBytes\":\"805306368\",\"availableCpuMillis\":1000,\"availableMemoryBytes\":\"805306368\",\"defaultServiceCpuMillis\":250,\"defaultServiceMemoryBytes\":\"0\",\"apiVersion\":\"v2\",\"serviceMemoryPolicy\":\"unlimited\"}"
           }
         ],
         "structuredContent": {
@@ -26,8 +26,9 @@
           "availableCpuMillis": 1000,
           "availableMemoryBytes": "805306368",
           "defaultServiceCpuMillis": 250,
-          "defaultServiceMemoryBytes": "134217728",
-          "apiVersion": "v2"
+          "defaultServiceMemoryBytes": "0",
+          "apiVersion": "v2",
+          "serviceMemoryPolicy": "unlimited"
         }
       }
     },
@@ -42,7 +43,7 @@
         "content": [
           {
             "type": "text",
-            "text": "{\"services\":[{\"workId\":\"work-fixture\",\"serviceId\":\"service-fixture\",\"name\":\"counter\",\"desiredRevision\":1,\"enabled\":true,\"observedState\":\"running\",\"definition\":{\"name\":\"counter\",\"command\":\"\",\"args\":[],\"environment\":{\"中文\":\"数据\"},\"secretRefs\":[],\"workingDirectory\":\"\",\"mounts\":[],\"ports\":[],\"cpuMillis\":0,\"memoryBytes\":\"18446744073709551615\",\"enabled\":false,\"required\":false,\"restartPolicy\":\"\"},\"endpoints\":[],\"createdAt\":\"\",\"access\":{\"hostname\":\"counter.w-a1b2c3d4.work\",\"status\":\"available\",\"ports\":[]}}]}"
+            "text": "{\"services\":[{\"workId\":\"work-fixture\",\"serviceId\":\"service-fixture\",\"name\":\"counter\",\"desiredRevision\":1,\"enabled\":true,\"observedState\":\"running\",\"definition\":{\"name\":\"counter\",\"command\":\"\",\"args\":[],\"environment\":{\"中文\":\"数据\"},\"secretRefs\":[],\"workingDirectory\":\"\",\"mounts\":[],\"ports\":[],\"cpuMillis\":0,\"memoryBytes\":\"18446744073709551615\",\"enabled\":false,\"required\":false,\"restartPolicy\":\"\"},\"endpoints\":[],\"createdAt\":\"\",\"access\":{\"hostname\":\"counter.w-a1b2c3d4.work\",\"status\":\"available\",\"ports\":[]},\"memoryLimitMode\":\"unlimited\"}]}"
           }
         ],
         "structuredContent": {
@@ -77,7 +78,8 @@
                 "hostname": "counter.w-a1b2c3d4.work",
                 "status": "available",
                 "ports": []
-              }
+              },
+              "memoryLimitMode": "unlimited"
             }
           ]
         }
@@ -111,7 +113,7 @@
             "mounts": [],
             "ports": [],
             "cpuMillis": 250,
-            "memoryBytes": "134217728",
+            "memoryBytes": "0",
             "enabled": true,
             "required": false,
             "restartPolicy": "bounded"
@@ -253,7 +255,7 @@
         "content": [
           {
             "type": "text",
-            "text": "{\"workId\":\"work-fixture\",\"serviceId\":\"service-fixture\",\"name\":\"counter\",\"desiredRevision\":1,\"enabled\":true,\"observedState\":\"running\",\"definition\":{\"name\":\"counter\",\"command\":\"\",\"args\":[],\"environment\":{\"中文\":\"数据\"},\"secretRefs\":[],\"workingDirectory\":\"\",\"mounts\":[],\"ports\":[],\"cpuMillis\":0,\"memoryBytes\":\"18446744073709551615\",\"enabled\":false,\"required\":false,\"restartPolicy\":\"\"},\"endpoints\":[],\"createdAt\":\"\",\"access\":{\"hostname\":\"counter.w-a1b2c3d4.work\",\"status\":\"available\",\"ports\":[]}}"
+            "text": "{\"workId\":\"work-fixture\",\"serviceId\":\"service-fixture\",\"name\":\"counter\",\"desiredRevision\":1,\"enabled\":true,\"observedState\":\"running\",\"definition\":{\"name\":\"counter\",\"command\":\"\",\"args\":[],\"environment\":{\"中文\":\"数据\"},\"secretRefs\":[],\"workingDirectory\":\"\",\"mounts\":[],\"ports\":[],\"cpuMillis\":0,\"memoryBytes\":\"18446744073709551615\",\"enabled\":false,\"required\":false,\"restartPolicy\":\"\"},\"endpoints\":[],\"createdAt\":\"\",\"access\":{\"hostname\":\"counter.w-a1b2c3d4.work\",\"status\":\"available\",\"ports\":[]},\"memoryLimitMode\":\"unlimited\"}"
           }
         ],
         "structuredContent": {
@@ -286,7 +288,8 @@
             "hostname": "counter.w-a1b2c3d4.work",
             "status": "available",
             "ports": []
-          }
+          },
+          "memoryLimitMode": "unlimited"
         }
       }
     },
@@ -322,7 +325,7 @@
             "mounts": [],
             "ports": [],
             "cpuMillis": 250,
-            "memoryBytes": "134217728",
+            "memoryBytes": "0",
             "enabled": true,
             "required": false,
             "restartPolicy": "bounded"

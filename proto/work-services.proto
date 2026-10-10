@@ -30,6 +30,7 @@ message ServiceDefinition {
   repeated ServiceMount mounts = 8;
   repeated ServicePort ports = 9;
   uint32 cpu_millis = 10;
+  // Deprecated compatibility value; application Service memory is unlimited.
   uint64 memory_bytes = 11;
   bool enabled = 12;
   bool required = 13;
@@ -53,6 +54,7 @@ message ServiceView {
   optional SafeError last_error = 10;
   string created_at = 11;
   ServiceAccess access = 12;
+  string memory_limit_mode = 13;
 }
 message OperationView {
   string operation_id = 1;
@@ -85,6 +87,7 @@ message DeploymentContext {
   uint32 default_service_cpu_millis = 11;
   uint64 default_service_memory_bytes = 12;
   string api_version = 13;
+  string service_memory_policy = 14;
 }
 message CreateServiceRequest { ServiceDefinition definition = 1; string idempotency_key = 2; }
 message ListServicesResponse { repeated ServiceView services = 1; }

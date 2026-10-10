@@ -259,7 +259,7 @@ func rpcServiceView(value publicServiceView) (*servicesv1.ServiceView, error) {
 		probe := input.Readiness.Value
 		definition.Readiness = &servicesv1.ReadinessProbe{Kind: probe.Kind, PortName: string(probe.PortName.Value), Path: probe.Path.Value, Command: probe.Command.Value, DeadlineMs: uint32(probe.DeadlineMs.Value), TimeoutMs: uint32(probe.TimeoutMs.Value)}
 	}
-	result := &servicesv1.ServiceView{WorkId: value.WorkID, ServiceId: value.ServiceID, Name: value.Name, DesiredRevision: uint32(value.DesiredRevision), Enabled: value.Enabled, ObservedState: value.ObservedState, Definition: definition, CreatedAt: value.CreatedAt, Access: &servicesv1.ServiceAccess{Hostname: value.Access.Hostname, DefaultUrl: value.Access.DefaultURL, DefaultPortName: value.Access.DefaultPortName, Status: value.Access.Status}}
+	result := &servicesv1.ServiceView{MemoryLimitMode: "unlimited", WorkId: value.WorkID, ServiceId: value.ServiceID, Name: value.Name, DesiredRevision: uint32(value.DesiredRevision), Enabled: value.Enabled, ObservedState: value.ObservedState, Definition: definition, CreatedAt: value.CreatedAt, Access: &servicesv1.ServiceAccess{Hostname: value.Access.Hostname, DefaultUrl: value.Access.DefaultURL, DefaultPortName: value.Access.DefaultPortName, Status: value.Access.Status}}
 	if value.AppliedRevision != nil {
 		revision := uint32(*value.AppliedRevision)
 		result.AppliedRevision = &revision
@@ -367,12 +367,12 @@ func (server *serviceRPC) GetDeploymentContext(ctx context.Context, _ *servicesv
 		if err != nil {
 			return err
 		}
-		var cpu, memory int64
-		if err := tx.QueryRow(`SELECT COALESCE(SUM(MAX(desired_cpu_millis,occupied_cpu_millis)),0),COALESCE(SUM(MAX(desired_memory_bytes,occupied_memory_bytes)),0) FROM quota_reservations WHERE work_id=?`, workID).Scan(&cpu, &memory); err != nil {
+		usage, err := corestore.ReadQuotaUsage(tx, &workID)
+		if err != nil {
 			return err
 		}
-		availableCPU, availableMemory := max(int64(0), config.Resources.CpuMillis-cpu), max(int64(0), config.Resources.MemoryBytes-memory)
-		result = &servicesv1.DeploymentContext{WorkId: workID, WorkspacePath: "/var/data/workspace", WorkspaceWritable: true, Lifecycle: work.DesiredState, TotalCpuMillis: uint32(config.Resources.CpuMillis), TotalMemoryBytes: uint64(config.Resources.MemoryBytes), AgentCpuMillis: uint32(config.Resources.AgentCpuMillis), AgentMemoryBytes: uint64(config.Resources.AgentMemoryBytes), AvailableCpuMillis: uint32(availableCPU), AvailableMemoryBytes: uint64(availableMemory), DefaultServiceCpuMillis: 250, DefaultServiceMemoryBytes: 128 << 20, ApiVersion: "v2"}
+		availableCPU, availableMemory := max(int64(0), config.Resources.CpuMillis-usage.CPUMillis), max(int64(0), config.Resources.MemoryBytes-usage.MemoryBytes)
+		result = &servicesv1.DeploymentContext{WorkId: workID, WorkspacePath: "/var/data/workspace", WorkspaceWritable: true, Lifecycle: work.DesiredState, TotalCpuMillis: uint32(config.Resources.CpuMillis), TotalMemoryBytes: uint64(config.Resources.MemoryBytes), AgentCpuMillis: uint32(config.Resources.AgentCpuMillis), AgentMemoryBytes: uint64(config.Resources.AgentMemoryBytes), AvailableCpuMillis: uint32(availableCPU), AvailableMemoryBytes: uint64(availableMemory), DefaultServiceCpuMillis: 250, DefaultServiceMemoryBytes: 0, ServiceMemoryPolicy: "unlimited", ApiVersion: "v2"}
 		return nil
 	})
 	return result, rpcServiceError(err)

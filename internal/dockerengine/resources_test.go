@@ -50,7 +50,7 @@ func resourceFixture(t *testing.T) (*Runtime, *atomic.Int64, chan struct{}) {
 				http.Error(w, `{"message":"conflict"}`, 409)
 				return
 			}
-			record = &container.InspectResponse{ID: "container-fixed", Name: "/" + req.URL.Query().Get("name"), State: &container.State{Status: "created"}, Config: body.Config}
+			record = &container.InspectResponse{ID: "container-fixed", Name: "/" + req.URL.Query().Get("name"), State: &container.State{Status: "created"}, Config: body.Config, HostConfig: body.HostConfig}
 			_ = json.NewEncoder(w).Encode(map[string]string{"Id": "container-fixed"})
 			return
 		}

@@ -83,9 +83,21 @@ func (s *Store) QuotaReservation(ctx context.Context, workID, kind, id string) (
 	})
 	return value, err
 }
+
+// EffectiveMemoryBytes excludes application Service compatibility values.
+// Historical rows remain intact for snapshots and audit.
+func EffectiveMemoryBytes(kind string, desired, occupied int64) int64 {
+	if kind == "service" {
+		return 0
+	}
+	return maximum(desired, occupied)
+}
+
+func ReadQuotaUsage(tx *sql.Tx, workID *string) (QuotaUsage, error) { return quotaUsage(tx, workID) }
+
 func quotaUsage(tx *sql.Tx, workID *string) (QuotaUsage, error) {
 	var usage QuotaUsage
-	query := `SELECT desired_cpu_millis,desired_memory_bytes,occupied_cpu_millis,occupied_memory_bytes FROM quota_reservations`
+	query := `SELECT subject_kind,desired_cpu_millis,desired_memory_bytes,occupied_cpu_millis,occupied_memory_bytes FROM quota_reservations`
 	var args []any
 	if workID != nil {
 		query += " WHERE work_id=?"
@@ -97,8 +109,9 @@ func quotaUsage(tx *sql.Tx, workID *string) (QuotaUsage, error) {
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var kind string
 		var desiredCPU, desiredMemory, occupiedCPU, occupiedMemory int64
-		if err := rows.Scan(&desiredCPU, &desiredMemory, &occupiedCPU, &occupiedMemory); err != nil {
+		if err := rows.Scan(&kind, &desiredCPU, &desiredMemory, &occupiedCPU, &occupiedMemory); err != nil {
 			return usage, err
 		}
 		for _, n := range []int64{desiredCPU, desiredMemory, occupiedCPU, occupiedMemory} {
@@ -106,7 +119,7 @@ func quotaUsage(tx *sql.Tx, workID *string) (QuotaUsage, error) {
 				return usage, ErrUnsupported
 			}
 		}
-		cpu, memory := maximum(desiredCPU, occupiedCPU), maximum(desiredMemory, occupiedMemory)
+		cpu, memory := maximum(desiredCPU, occupiedCPU), EffectiveMemoryBytes(kind, desiredMemory, occupiedMemory)
 		if usage.CPUMillis > contracts.MaxSafeInteger-cpu || usage.MemoryBytes > contracts.MaxSafeInteger-memory {
 			return usage, ErrQuotaExceeded
 		}
@@ -145,7 +158,7 @@ func ReserveQuota(tx *sql.Tx, next QuotaReservation, work, host QuotaLimits) err
 		return err
 	}
 	cpuDelta := maximum(next.DesiredCPUMillis, next.OccupiedCPUMillis) - maximum(current.DesiredCPUMillis, current.OccupiedCPUMillis)
-	memoryDelta := maximum(next.DesiredMemoryBytes, next.OccupiedMemoryBytes) - maximum(current.DesiredMemoryBytes, current.OccupiedMemoryBytes)
+	memoryDelta := EffectiveMemoryBytes(next.SubjectKind, next.DesiredMemoryBytes, next.OccupiedMemoryBytes) - EffectiveMemoryBytes(next.SubjectKind, current.DesiredMemoryBytes, current.OccupiedMemoryBytes)
 	if cpuDelta > work.CPUMillis-local.CPUMillis || cpuDelta > host.CPUMillis-global.CPUMillis || memoryDelta > work.MemoryBytes-local.MemoryBytes || memoryDelta > host.MemoryBytes-global.MemoryBytes {
 		return ErrQuotaExceeded
 	}

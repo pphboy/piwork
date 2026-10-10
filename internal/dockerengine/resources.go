@@ -261,14 +261,17 @@ func normalizeContainer(spec ContainerSpec) (ContainerSpec, error) {
 	if spec.CPUMillis == 0 {
 		spec.CPUMillis = 100
 	}
-	if spec.MemoryBytes == 0 {
+	if spec.MemoryBytes == 0 && spec.Identity.Kind != "service" {
 		spec.MemoryBytes = 64 << 20
 	}
 	if spec.User == "" {
 		spec.User = "65532:65532"
 	}
-	if spec.CPUMillis < 10 || spec.CPUMillis > 128000 || spec.MemoryBytes < 16<<20 || spec.MemoryBytes > contracts.MaxSafeInteger || !numericUser.MatchString(spec.User) {
+	if spec.CPUMillis < 10 || spec.CPUMillis > 128000 || (spec.MemoryBytes < 16<<20 && !(spec.Identity.Kind == "service" && spec.MemoryBytes == 0)) || spec.MemoryBytes > contracts.MaxSafeInteger || !numericUser.MatchString(spec.User) {
 		return spec, ErrSpecification
+	}
+	if spec.Identity.Kind == "service" {
+		spec.MemoryBytes = 0
 	}
 	uid, err := strconv.ParseUint(strings.Split(spec.User, ":")[0], 10, 32)
 	if err != nil || uid == 0 {
