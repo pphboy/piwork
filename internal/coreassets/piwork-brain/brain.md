@@ -12,7 +12,7 @@ Discover and use named Service Query / Action / Job capabilities. UI and Agent o
 
 ## Verify
 
-Read actual affected business state and artifacts, run the relevant existing tests, and cite the host's Evidence. An accepted Action, a running process, a successful model Run or a statement is insufficient. Report failed, unavailable and unknown outcomes honestly. Preserve failed checks and original acceptance criteria; use bounded repairs and disclose unresolved results.
+Read actual affected business state and artifacts, run the relevant existing tests, and cite the host's Evidence. After application code/configuration changes, make them take effect: follow the deployment Skill to check/build, update or restart the Service when needed, and verify the actually running code version and business result. Do not finish by asking the user to refresh or restart; the default application template adopts ready versions automatically. This never authorizes automatic Package/Work Apply. An accepted Action, a running process, a successful model Run or a statement is insufficient. Report failed, unavailable and unknown outcomes honestly. Preserve failed checks and original acceptance criteria; use bounded repairs and disclose unresolved results.
 
 ## Remember
 

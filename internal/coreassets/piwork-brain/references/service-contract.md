@@ -1,6 +1,6 @@
 # Service interaction contract, version 1
 
-Any language may implement this contract. The bundled Python helper is source to copy into an application, not a mandatory platform SDK or npm module. The default workstation example uses Python 3.13, NiceGUI 3.17.1 and SQLite.
+Any language may implement this contract. The bundled Python helper is source to copy into an application, not a mandatory platform SDK or npm module. The default Web/workstation templates use Python 3.13, FastAPI, React, TypeScript, Vite and SQLite with the fixed piwork-web-base environment. The real sqlite3 CLI is provided in both the application base and the Agent image.
 
 The Service owns business state. Pi owns durable goal progress, actual evidence and confirmed experience in this Work. Core owns runtime identity, infrastructure, model resources and package Apply. Share state by reading the Service's named queries and by reading the original Pi request receipt; do not copy business state into prompts or Core tables.
 

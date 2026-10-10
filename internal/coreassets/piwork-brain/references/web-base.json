@@ -1,0 +1,11 @@
+{
+  "contractVersion": 1,
+  "state": "published",
+  "reference": "docker.io/pphboy/piwork-web-base:0.1.0-03395d0810f7-bbb24bdd0167-dirty@sha256:e83902fb568e97b2d01d488ce7c9c3d15f373ab58b46e041337baa832b8cfb81",
+  "platform": "linux/amd64",
+  "version": "0.1.0-03395d0810f7-bbb24bdd0167-dirty",
+  "imageId": "sha256:3be06cbe6450c63d6def67cd2948be08fed635615a7d9d8982c2e710b5c06f3a",
+  "inputHash": "bbb24bdd01672d007a68ef37402bd9548e0dca91527bc55a69394e3176e70665",
+  "anonymousReadable": true,
+  "maintenanceSource": "deploy/images/web-base/"
+}

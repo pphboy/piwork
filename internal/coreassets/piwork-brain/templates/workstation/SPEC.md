@@ -13,7 +13,7 @@ Provide persistent Todos, personal review and asynchronous review export. Users 
 
 ## State
 
-`data/workstation/workstation.sqlite` holds authoritative business state and transactional outbox. `ws_meta.version` is the expectedStateVersion; codeVersion comes from `review_config.json`. Jobs retain original executor, deadline and terminal result. A replacement executor marks unfinished old Jobs interrupted; it does not replay them.
+`data/workstation/workstation.sqlite` holds authoritative business state and transactional outbox. `ws_meta.version` is the expectedStateVersion; the deployed codeVersion comes from the actually checked/loaded build (unit fixtures may use `review_config.json`). Jobs retain original executor, deadline and terminal result. A replacement executor marks unfinished old Jobs interrupted; it does not replay them.
 
 ## Business Flow
 
@@ -34,7 +34,7 @@ The initial review configuration intentionally excludes completed Todos as a rep
 | Responsibility | Code coordinates |
 | --- | --- |
 | Capability/state/query/Action/export semantics | `workstation.py`: `Workstation.capabilities`, `query`, `perform`, `export`, `job` |
-| Shared UI and HTTP entry points | `app.py`: `user_action` and `/pi/v1` routes |
+| Shared UI and HTTP entry points | `backend/main.py`: UI Actions and `/pi/v1` routes; `frontend/src/App.tsx`: React; `app.py`: entry |
 | Idempotency/version checks/outbox/identity | `piwork_protocol.py`: `WorkProtocol.action`, `event`, `deliver_once` |
 | Review behavior/version | `review_config.json`: `includeCompleted`, `codeVersion` |
 | Business regression | `test_workstation.py`: `StationTest` |
@@ -42,4 +42,6 @@ The initial review configuration intentionally excludes completed Todos as a rep
 
 ## Acceptance Criteria
 
-Run `python -m unittest test_protocol test_workstation` from the application directory. Confirm original Action fingerprint replay without another mutation, stale state rejection, actual completed review after repair, real export artifact, interrupted executor handling, import-origin isolation and safe pathname facts. In deployment, also verify Service HTTP/UI, named Actions/Queries and original receipts through the real SDK/MCP/Service path. A passing Python fixture alone does not establish deployment or real-model behavior.
+Run `piwork-web check` from the application directory. Confirm original Action fingerprint replay without another mutation, stale state rejection, actual completed review after repair, real export artifact, interrupted executor handling, import-origin isolation and safe pathname facts. In deployment, also verify Service HTTP/UI, named Actions/Queries and original receipts through the real SDK/MCP/Service path. A passing Python fixture alone does not establish deployment or real-model behavior.
+
+After edits, the Agent checks/builds and restarts/updates the stable Service, then verifies its actual loaded version and business state. The page updates itself and preserves supported drafts/path; no manual refresh is an acceptance step.

@@ -45,6 +45,54 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
   const invoke = (name: string, args: Record<string, unknown>) => call(stream, output, name, args, results.length);
   const previous = (name: string) => results.find((result) => result.toolName === name);
   const end = (message: string) => finish(stream, output, message);
+  if (prompt === "inspect deterministic sqlite3") {
+    if (!previous("bash")) invoke("bash", { command: "sqlite3 --version && sqlite3 -json /var/data/workspace/data/workstation/workstation.sqlite 'SELECT count(*) AS count FROM todos;'" });
+    else end("sqlite3-verified:" + text(previous("bash")!));
+    return true;
+  }
+  if (prompt === "add deterministic workstation Todo") {
+    const queries = results.filter(result => result.toolName === "brain_service");
+    if (!queries.length) invoke("brain_service", { operation: "query", serviceName: "workstation", name: "todos", input: {} });
+    else if (queries.length === 1) invoke("brain_service", { operation: "action", serviceName: "workstation", name: "todo_add", id: "agent-live-todo", input: { title: "Agent live Todo" }, expectedStateVersion: value(queries[0]).result.stateVersion });
+    else if (queries.length === 2) invoke("brain_service", { operation: "verify", serviceName: "workstation", name: "todos", input: {} });
+    else if (!previous("brain_feedback")) {
+      const proof = value(queries[2]);
+      if (!proof.evidence?.verified || !proof.result?.value.some((row: any) => row.title === "Agent live Todo")) end("workstation-live-todo-unverified");
+      else invoke("brain_feedback", { operation: "finish", state: "completed", result: "Agent Todo added and verified", evidenceIds: [proof.evidence.evidenceId] });
+    } else end("workstation-live-todo-verified");
+    return true;
+  }
+  if (/^update deterministic workstation (frontend|backend) [A-Za-z0-9-]+$/.test(prompt)) {
+    const kind = prompt.split(" ")[3]!, key = prompt.split(" ").at(-1)!;
+    const reads = results.filter(result => result.toolName === "read");
+    if (!reads.length) invoke("read", { path: "apps/workstation/SPEC.md" });
+    else if (!previous("write")) invoke("write", { path: "apps/workstation/SPEC.md", content: text(reads[0]!) + `\nAcceptance update: verify the actual ${kind} version and automatic page adoption.\n` });
+    else if (!previous("bash")) {
+      const script = kind === "frontend"
+        ? `const fs=require('fs');const p='apps/workstation/frontend/src/App.tsx';fs.copyFileSync(p,'apps/workstation/.build/App.checkpoint.tsx');fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('Personal workstation','Updated workstation'));`
+        : `const fs=require('fs');const p='apps/workstation/review_config.json';fs.copyFileSync(p,'apps/workstation/.build/review.checkpoint.json');const v=JSON.parse(fs.readFileSync(p,'utf8'));v.includeCompleted=true;v.codeVersion='workstation-v2';fs.writeFileSync(p,JSON.stringify(v));`;
+      invoke("bash", { command: `node -e ${shellQuote(script)}` });
+    } else if (!previous(modelMcpToolName("work-services", "service_list"))) invoke(modelMcpToolName("work-services", "service_list"), {});
+    else if (!previous(modelMcpToolName("work-services", "service_restart"))) {
+      const service = value(previous(modelMcpToolName("work-services", "service_list"))).services.find((item: any) => item.name === "workstation");
+      invoke(modelMcpToolName("work-services", "service_restart"), { serviceId: service.serviceId, idempotencyKey: `web-${kind}-${key}` });
+    } else {
+      const operation = results.filter(result => result.toolName === modelMcpToolName("work-services", "operation_get")).at(-1);
+      if (!operation || ["pending", "running"].includes(value(operation).state)) {
+        if (operation && results.at(-1)?.toolName !== "bash") invoke("bash", { command: "sleep 0.5" });
+        else invoke(modelMcpToolName("work-services", "operation_get"), { operationId: value(previous(modelMcpToolName("work-services", "service_restart"))).operationId });
+      } else if (value(operation).state !== "succeeded") end(`workstation-${kind}-deployment-failed`);
+      else if (reads.length === 1) invoke("read", { path: "apps/workstation/.build/checks.json" });
+      else if (!value(reads[1]).passed) end(`workstation-${kind}-checks-failed`);
+      else if (!previous("brain_service")) invoke("brain_service", { operation: "query", serviceName: "workstation", name: kind === "frontend" ? "todos" : "review", input: {} });
+      else {
+        const actual = value(previous("brain_service"));
+        if (actual.result?.codeVersion !== value(reads[1]).codeVersion || !actual.evidence?.verified) end(`workstation-${kind}-version-unverified`);
+        else end(`workstation-${kind}-updated:${actual.result.codeVersion}`);
+      }
+    }
+    return true;
+  }
   if (prompt === "hold workstation slot") {
     if (!previous("bash")) invoke("bash", { command: "sleep 6" }); else end("workstation-slot-released");
     return true;
@@ -91,21 +139,24 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
     else end("workstation-brain-adopted");
     return true;
   }
-  if (prompt === "deploy deterministic workstation") {
+  if (prompt === "deploy deterministic workstation" || prompt === "deploy published workstation") {
+    const published = prompt === "deploy published workstation";
     const reads = results.filter((result) => result.toolName === "read");
     if (!skill) { end("workstation-deployment-failed:skill-unavailable"); return true; }
     const brain = resolve(dirname(skill), "../..");
     if (!reads.length) invoke("read", { path: skill });
     else if (reads.length === 1) invoke("read", { path: resolve(brain, "references/service-contract.md") });
     else if (reads.length === 2) invoke("read", { path: resolve(brain, "templates/workstation/SPEC.md") });
-    else if (!previous("write")) invoke("write", {path:"apps/workstation/SPEC.md",content:text(reads[2]!)});
-    else if (!previous("bash")) invoke("bash", { command: `mkdir -p apps/workstation data/workstation .pi/services && cp -R '${brain}/templates/workstation/.' apps/workstation/ && chmod -R u+rwX apps/workstation && printf '%s' '{"contractVersion":1,"serviceName":"workstation","apiPortName":"web","mode":"pi-managed"}' > .pi/services/workstation.json` });
+    else if (published && reads.length === 3) invoke("read", { path: resolve(brain, "references/web-base.json") });
+    else if (published && (value(reads[3]).state !== "published" || !/@sha256:[a-f0-9]{64}$/.test(value(reads[3]).reference || ''))) end('workstation-deployment-failed:published-base-unavailable');
+    else if (!previous("bash")) invoke("bash", { command: `node ${shellQuote(resolve(brain, 'skills/deploy-work-service/initialize.mjs'))} --template workstation --name workstation` });
+    else if (previous("bash")!.isError || !text(previous("bash")!).includes('"initialized":true')) end("workstation-deployment-failed:initialization-refused");
     else if (!previous(modelMcpToolName("work-services", "deployment_context"))) invoke(modelMcpToolName("work-services", "deployment_context"), {});
     else if (!previous(modelMcpToolName("work-services", "service_create"))) invoke(modelMcpToolName("work-services", "service_create"), {
-      definition: { name: "workstation", image: { reference: "piwork-workstation:acceptance" }, command: "sh",
-        args: ["-c", "set -e; cd /var/data/workspace/apps/workstation; if [ ! -x .venv/bin/python ]; then mkdir -p wheels; cp /opt/workstation/wheels/*.whl wheels/; sh prepare.sh; fi; .venv/bin/python -m unittest test_protocol test_workstation; exec .venv/bin/python app.py"],
+      definition: { name: "workstation", image: { reference: published ? value(reads[3]).reference : "piwork-workstation:acceptance" }, command: "/usr/local/bin/piwork-web",
+        args: ["run", "--app", "/var/data/workspace/apps/workstation"],
         environment: { PYTHONDONTWRITEBYTECODE: "1" }, secretRefs: [], workingDirectory: "/var/data/workspace", mounts: [{ source: "workspace", target: "/var/data/workspace", readOnly: false }],
-        ports: [{ name: "web", containerPort: 8080, protocol: "tcp" }], cpuMillis: 500, memoryBytes: 536870912, enabled: true, required: false,
+        ports: [{ name: "web", containerPort: 8080, protocol: "tcp" }], cpuMillis: 500, memoryBytes: 0, enabled: true, required: false,
         readiness: { kind: "http", portName: "web", path: "/health", deadlineMs: 120000, timeoutMs: 2000 }, restartPolicy: "bounded" }, idempotencyKey: "deterministic-workstation-v1" });
     else {
       const receipt = value(previous(modelMcpToolName("work-services", "service_create")));
@@ -134,7 +185,21 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
       path:"apps/workstation/SPEC.md",content:text(previous("read")!).replace("The initial review configuration intentionally excludes completed Todos as a repair fixture.","The reviewed configuration includes actual completed Todos; omissions remain a failing acceptance result.") });
     else if (handling && !exporting && !previous("bash") && !value(queries[0]).evidence.verified) invoke("bash", {
       command: "cp apps/workstation/review_config.json apps/workstation/review_config.checkpoint.json && node -e 'const fs=require(\"node:fs\"); const p=\"apps/workstation/review_config.json\"; const v=JSON.parse(fs.readFileSync(p,\"utf8\")); v.includeCompleted=true; v.codeVersion=\"workstation-v2\"; fs.writeFileSync(p,JSON.stringify(v));'" });
-    else if (handling && !exporting && queries.length === 1) invoke("brain_service", { operation: "verify", serviceName: "workstation", name: "review", input: {} });
+    else if (handling && !exporting && previous("bash") && !previous(modelMcpToolName("work-services", "service_list"))) invoke(modelMcpToolName("work-services", "service_list"), {});
+    else if (handling && !exporting && previous("bash") && !previous(modelMcpToolName("work-services", "service_restart"))) {
+      const service = value(previous(modelMcpToolName("work-services", "service_list"))).services.find((s: any) => s.name === "workstation");
+      invoke(modelMcpToolName("work-services", "service_restart"), { serviceId: service.serviceId, idempotencyKey: `review-restart-${requestId}` });
+    } else if (handling && !exporting && previous(modelMcpToolName("work-services", "service_restart"))) {
+      const observed = results.filter(r => r.toolName === modelMcpToolName("work-services", "operation_get")).at(-1);
+      if (!observed || ["pending", "running"].includes(value(observed).state)) {
+        if (observed && results.at(-1)?.toolName !== "bash") invoke("bash", { command: "sleep 0.5" });
+        else invoke(modelMcpToolName("work-services", "operation_get"), { operationId: value(previous(modelMcpToolName("work-services", "service_restart"))).operationId });
+      } else if (value(observed).state !== "succeeded") end("workstation-repair-deployment-failed");
+      else if (queries.length === 1) invoke("brain_service", { operation: "verify", serviceName: "workstation", name: "review", input: {} });
+      else if (!previous("brain_experience")) invoke("brain_experience", { operation: "stage", entry: { entryId: "include-completed-review", scope: "service:workstation", rule: "confirmed-fixture-rule: Personal reviews include actually completed Todos and verify the authoritative review query.", evidenceIds: [value(queries.at(-1)).evidence.evidenceId] } });
+      else if (!previous("brain_feedback")) invoke("brain_feedback", { operation: "finish", state: "completed", result: "Completed Todos now appear in the personal review", evidenceIds: [value(queries.at(-1)).evidence.evidenceId] });
+      else end("workstation-feedback-verified");
+    } else if (handling && !exporting && queries.length === 1) invoke("brain_service", { operation: "verify", serviceName: "workstation", name: "review", input: {} });
     else if (!previous("brain_experience")) {
       const proof = value(queries.at(-1)).evidence;
       invoke("brain_experience", { operation: "stage", entry: { entryId: exporting ? "verify-original-export" : "include-completed-review", scope: "service:workstation",
