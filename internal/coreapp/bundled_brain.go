@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"piwork/internal/contracts"
 	"piwork/internal/coreassets"
 	"piwork/internal/corestore"
 	"piwork/internal/dockerengine"
@@ -18,32 +19,82 @@ import (
 
 var errBundledBrain = errors.New("built-in brain package is unavailable")
 
+const bundledBrainArtifactID = "core:bundled-piwork-brain"
+
 // This runs before READY. Catalog, default selection and the one-time marker
 // commit together only after immutable bytes passed native helper preparation.
 func (a *Application) ensureBundledBrain(ctx context.Context) error {
-	var seeded bool
-	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
-		var raw string
-		err := tx.QueryRow("SELECT value_json FROM control_metadata WHERE key='piwork_brain_seeded'").Scan(&raw)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if raw != `{"seeded":true}` {
-			return errBundledBrain
-		}
-		seeded = true
-		return nil
-	}); err != nil {
+	version, err := coreassets.BrainPackageVersion()
+	if err != nil {
 		return err
 	}
-	if seeded {
+	var seeded bool
+	var preparing bool
+	var head string
+	var generation int64
+	// Reserve against ordinary Core package acceptance in the same writer
+	// transaction. No new persistent job is needed for the startup preparation.
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		var raw string
+		err := tx.QueryRow("SELECT value_json FROM control_metadata WHERE key='piwork_brain_seeded'").Scan(&raw)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		seeded = err == nil
+		if seeded && raw != `{"seeded":true}` {
+			return errBundledBrain
+		}
+		if seeded {
+			var enabled bool
+			var metadataJSON string
+			err := tx.QueryRow(`SELECT c.head_artifact_id,c.generation,c.enabled,a.metadata_json FROM pi_package_catalog c JOIN pi_package_artifacts a ON a.id=c.head_artifact_id WHERE c.name=?`, coreassets.BrainPackageName).Scan(&head, &generation, &enabled, &metadataJSON)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil // An administrator removed the package.
+			}
+			if err != nil {
+				return err
+			}
+			if !enabled || head != bundledBrainArtifactID && !strings.HasPrefix(head, bundledBrainArtifactID+":") {
+				return nil // Disabled or replaced through ordinary package management.
+			}
+			metadata, err := contracts.Decode[contracts.PiPackageArtifactMetadata](strings.NewReader(metadataJSON), "PiPackageArtifactMetadataSchema", 2<<20)
+			if err != nil || metadata.Name != coreassets.BrainPackageName {
+				return errBundledBrain
+			}
+			var installedVersion string
+			if err := json.Unmarshal(metadata.Version, &installedVersion); err != nil {
+				return errBundledBrain
+			}
+			if installedVersion == version {
+				return nil
+			}
+		}
+		var busy bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM pi_package_jobs WHERE scope_kind='core' AND phase IN ('queued','source','prepare','validate','publish','cleanup-pending'))`).Scan(&busy); err != nil {
+			return err
+		}
+		if busy || !a.bundledBrainPreparing.CompareAndSwap(false, true) {
+			return contracts.NewError("PI_PACKAGE_BUSY", "")
+		}
+		preparing = true
 		return nil
-	} // Administrative removal/disable/customization is final.
+	}); err != nil {
+		if preparing {
+			a.bundledBrainPreparing.Store(false)
+		}
+		return err
+	}
+	if !preparing {
+		return nil
+	}
+	defer a.bundledBrainPreparing.Store(false)
+	select {
+	case a.packageSlots <- struct{}{}:
+		defer func() { <-a.packageSlots }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	var prepared packageprepare.Result
-	var err error
 	if a.prepareBrainForTest != nil {
 		prepared, err = a.prepareBrainForTest(ctx)
 	} else {
@@ -52,7 +103,8 @@ func (a *Application) ensureBundledBrain(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if prepared.Artifact.Metadata.Name != coreassets.BrainPackageName {
+	var preparedVersion string
+	if prepared.Artifact.Metadata.Name != coreassets.BrainPackageName || json.Unmarshal(prepared.Artifact.Metadata.Version, &preparedVersion) != nil || preparedVersion != version {
 		return errBundledBrain
 	}
 	storage, err := a.publishCorePackageBytes(ctx, prepared)
@@ -64,6 +116,31 @@ func (a *Application) ensureBundledBrain(ctx context.Context) error {
 		return err
 	}
 	return a.Store.Write(ctx, func(tx *sql.Tx) error {
+		if seeded {
+			var currentHead string
+			var currentGeneration int64
+			var enabled bool
+			err := tx.QueryRow(`SELECT head_artifact_id,generation,enabled FROM pi_package_catalog WHERE name=?`, coreassets.BrainPackageName).Scan(&currentHead, &currentGeneration, &enabled)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if currentHead != head || currentGeneration != generation || !enabled {
+				return nil
+			}
+			if generation >= contracts.MaxSafeInteger {
+				return corestore.ErrRevisionConflict
+			}
+			now := packageNow()
+			artifact := corestore.PackageArtifact{ID: bundledBrainArtifactID + ":" + version + ":" + strings.TrimPrefix(string(prepared.Artifact.Metadata.ContentDigest), "sha256:"), ScopeKind: "core", Name: coreassets.BrainPackageName, ContentDigest: string(prepared.Artifact.Metadata.ContentDigest), MetadataJSON: string(metadata), StoragePath: storage, CreatedAt: now}
+			if err := corestore.InsertPackageArtifact(tx, artifact); err != nil {
+				return err
+			}
+			_, err = tx.Exec(`UPDATE pi_package_catalog SET head_artifact_id=?,generation=generation+1,updated_at=? WHERE name=?`, artifact.ID, now, artifact.Name)
+			return err
+		}
 		var exists bool
 		if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM control_metadata WHERE key='piwork_brain_seeded')").Scan(&exists); err != nil {
 			return err
@@ -77,7 +154,7 @@ func (a *Application) ensureBundledBrain(ctx context.Context) error {
 		}
 		now := packageNow()
 		if !catalog {
-			artifact := corestore.PackageArtifact{ID: "core:bundled-piwork-brain", ScopeKind: "core", Name: coreassets.BrainPackageName, ContentDigest: string(prepared.Artifact.Metadata.ContentDigest), MetadataJSON: string(metadata), StoragePath: storage, CreatedAt: now}
+			artifact := corestore.PackageArtifact{ID: bundledBrainArtifactID, ScopeKind: "core", Name: coreassets.BrainPackageName, ContentDigest: string(prepared.Artifact.Metadata.ContentDigest), MetadataJSON: string(metadata), StoragePath: storage, CreatedAt: now}
 			if err := corestore.InsertPackageArtifact(tx, artifact); err != nil {
 				return err
 			}

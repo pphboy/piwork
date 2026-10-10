@@ -90,6 +90,7 @@ type Application struct {
 	modelTestTimeout      time.Duration
 	modelRegistryFault    func(string) error
 	packageStorageMu      sync.Mutex
+	bundledBrainPreparing atomic.Bool
 	packagesRecovered     bool
 	fileMu                sync.Mutex
 	fileImageCaptured     bool

@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"embed"
+	"encoding/json"
+	"errors"
 	"io/fs"
 	"strings"
 )
@@ -12,6 +14,22 @@ const BrainPackageName = "piwork-brain"
 
 //go:embed piwork-brain
 var brainPackage embed.FS
+
+// BrainPackageVersion uses the ordinary package manifest as the update marker.
+func BrainPackageVersion() (string, error) {
+	raw, err := brainPackage.ReadFile(BrainPackageName + "/package.json")
+	if err != nil {
+		return "", err
+	}
+	var manifest struct{ Name, Version string }
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return "", err
+	}
+	if manifest.Name != BrainPackageName || manifest.Version == "" {
+		return "", errors.New("invalid built-in brain manifest")
+	}
+	return manifest.Version, nil
+}
 
 // BrainPackageArchive provides the embedded editable source to the same native
 // preparation pipeline used by ordinary local Pi extension packages.

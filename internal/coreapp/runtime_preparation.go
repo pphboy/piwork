@@ -488,6 +488,14 @@ func (p *runtimePreparation) execute(ctx context.Context, name string, profile R
 }
 
 func (a *Application) prepareDefaultContext(ctx context.Context, profile RuntimeProfile) error {
+	// Recover accepted Core package jobs before the built-in package checks its
+	// scope gate; otherwise an interrupted job could prevent its own recovery.
+	if a.dockerRuntime != nil && !a.packagesRecovered {
+		if err := a.recoverCorePackageJobs(ctx); err != nil {
+			return err
+		}
+		a.packagesRecovered = true
+	}
 	if err := a.ensureBundledBrain(ctx); err != nil {
 		return err
 	}
@@ -495,12 +503,6 @@ func (a *Application) prepareDefaultContext(ctx context.Context, profile Runtime
 		return err
 	}
 	if a.dockerRuntime != nil {
-		if !a.packagesRecovered {
-			if err := a.recoverCorePackageJobs(ctx); err != nil {
-				return err
-			}
-			a.packagesRecovered = true
-		}
 		if err := a.resumeRetainedVolumePurges(ctx); err != nil {
 			return err
 		}

@@ -57,7 +57,7 @@ func (a *Application) packageCatalogMutation(w http.ResponseWriter, r *http.Requ
 		if err := tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM pi_package_jobs WHERE scope_kind='core' AND phase IN ('queued','source','prepare','validate','publish','cleanup-pending'))`).Scan(&busy); err != nil {
 			return err
 		}
-		if busy {
+		if busy || a.bundledBrainPreparing.Load() {
 			return contracts.NewError("PI_PACKAGE_BUSY", "")
 		}
 		if action == "remove" || action == "disable" {

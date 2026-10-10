@@ -162,6 +162,14 @@ func (a *Application) acceptPackage(r *http.Request, actor identity.Principal, w
 	if err != nil || found {
 		return accepted, err
 	}
+	// Existing requests still replay their original acceptance while startup
+	// preparation blocks new Core mutations before their environment probes.
+	if workID == "" && a.bundledBrainPreparing.Load() {
+		if err := a.Store.Read(ctx, func(tx *sql.Tx) error { return a.authorizeCorePackageTx(tx, r, actor) }); err != nil {
+			return accepted, err
+		}
+		return accepted, contracts.NewError("PI_PACKAGE_BUSY", "")
+	}
 	if kind == "update" && workID == "" {
 		var exists bool
 		err := a.Store.Read(ctx, func(tx *sql.Tx) error {
@@ -242,6 +250,9 @@ func (a *Application) acceptPackage(r *http.Request, actor identity.Principal, w
 		if workID == "" {
 			if err := a.authorizeCorePackageTx(tx, r, actor); err != nil {
 				return corestore.MutationEffect{}, err
+			}
+			if a.bundledBrainPreparing.Load() {
+				return corestore.MutationEffect{}, contracts.NewError("PI_PACKAGE_BUSY", "")
 			}
 		} else {
 			if err := a.Identity.AuthorizePrincipalTx(tx, actor); err != nil {
