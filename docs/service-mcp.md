@@ -12,6 +12,12 @@ Mutation 要求调用方提供 idempotencyKey，单次调用仅返回 Core 持�
 
 protobuf uint64 输出为十进制字符串，包括大于 JavaScript 安全整数的值；text 和 structuredContent 包含同一规范 JSON 对象，保留零值、空集合和 optional 字段缺失。RPC 错误只返回安全状态分类与固定消息，不回显 gRPC/npm/Docker 内部诊断或路径。
 
+## Service 资源与默认 Web 环境
+
+应用 Service 不设置 Piwork 内存上限，也不占用 Work/宿主的有效内存预留。`memoryBytes` 省略默认零，合法旧正数只保留请求与历史语义；负数、非整数和超过安全整数范围的值仍拒绝。当前 Service 的 `memoryLimitMode` 和 `deployment_context.serviceMemoryPolicy` 明确为 `unlimited`。`defaultServiceMemoryBytes=0` 表示无限制，旧 total/availableMemoryBytes 仅表示非 Service 预算。CPU、服务数、卷数和 Agent/helper 内存政策继续有效，恢复及导入不会重新施加旧 Service 限制。
+
+默认脑包为新的 Web 应用选择固定 Web base、FastAPI + React + TypeScript + Vite 和共享 workspace 模板。部署入口仍是已有 Service MCP；修改后自动检查、构建、更新或重启，并核对原 Operation、实际运行版本及业务结果。模板自身提供页面自动采用，不增加新的 MCP 工具或 Apply 流程。具体命令见 [Web base 手册](../deploy/images/web-base/README.zh-CN.md)，正常升级及持久化语义见 [运维说明](operations.md#service-资源与版本升级)。
+
 ## 配置、安全和退出
 
 只读取 `/etc/piwork/service-control.json` 与三个固定的 `/etc/piwork/control/` PEM 文件；拒绝未知配置字段、重复 JSON key、不安全整数、symlink leaf、非普通/超过 1 MiB 的文件和替代路径。Core serverName 固定为 `piwork-core`，endpoint 由 Core 写入。Go 验证安装 CA、客户端完整 installation/Work/generation/instance/role URI 与 clientAuth，服务端链、DNS 和完整 Core 角色 URI；Core 在每次 RPC 重新授权当前 runtime。

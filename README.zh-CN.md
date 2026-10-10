@@ -47,6 +47,8 @@ Core 负责资源管理与控制，Harness 执行模型和工具，Service 提�
 
 默认 Web 开发环境采用 FastAPI + React + TypeScript + Vite。可复用镜像的源码、维护流程、sqlite3 工具及应用更新行为见 [Web base 手册](deploy/images/web-base/README.zh-CN.md)。
 
+默认模板自动采用成功部署的更新，并保留支持恢复的草稿与路径。应用 Service 不设置 Piwork 内存上限；CPU/数量限制和 Agent/helper 内存政策仍有效。既有 Work 通过显式 Update/Apply 采用新包与 Agent 镜像。详见[官网指南](https://pphboy.github.io/piwork/zh/guide/web-development.html)和 [Brain 工作流程](docs/piwork-brain.md)。
+
 ## Demo GIF / Video
 
 ![Piwork Desktop](docs/images/desktop-preview.png)

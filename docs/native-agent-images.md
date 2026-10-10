@@ -20,6 +20,14 @@ Go 构建阶段默认 `golang:1.25.5-alpine3.22`，可通过 `GO_BUILDER_IMAGE` 
 
 helper 启动能力与 Pi package **内容 contract 1**、context contract 1、`.work` V1 分开。镜像不复制已移除的 TS package-helper/service-mcp workspace，不创建 Node shebang 或链接启动器。完整 Agent harness 和其 Pi 生态依赖保留。
 
+## sqlite3 与应用开发环境
+
+production 和 acceptance 共用的 runtime 层预装固定版本 sqlite3 CLI，可由 UID/GID `10001:10001` 的授权 SDK bash 在共享 workspace 内建表、写入并输出 JSON 查询结果。根文件系统保持只读，数据库与临时文件位于可写 workspace；Python sqlite3 模块或仅 Service 内的命令不能替代 Agent CLI。工具策略仍有效，bash 被禁止时没有额外 SQL 入口。
+
+Agent 负责模型、工具与私有历史；FastAPI、React、TypeScript、Vite 和应用离线依赖由独立的 [Web base](../deploy/images/web-base/README.zh-CN.md) 提供。宿主不新增解释器或 sqlite3 依赖。给旧 Work 增加 Agent 系统命令需要选择新兼容 Agent 镜像并显式 Apply，单独更新脑包不能补装二进制。
+
+两种 Agent target 的 CLI 检查由 `node scripts/check-native-image-boundary.mjs` 执行，真实 SDK bash、Service 环境和已发布固定引用的验证见 [Web base 验收记录](web-base-acceptance.md#核验后修复2026-10-10)。
+
 ## 静态检查与资源边界
 
 `internal/dockerengine.ImageInspector` 固定 image ID，通过 Engine inspect/save 获取归档，不运行 ENTRYPOINT、Node、helper、MCP 或用户包，不创建检查容器、网络或卷。调用方提供已锁定的安装私有目录与持久 registry；分配归档 scratch 之前提交安装/image 归属记录。

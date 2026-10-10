@@ -47,6 +47,8 @@ Each Work has its own Harness. The Harness executes tasks, Services provide appl
 
 The default Web development environment uses FastAPI + React + TypeScript + Vite. Its reusable image source, maintenance process, sqlite3 tools, and application update behavior are documented in the [Web base guide](deploy/images/web-base/README.md).
 
+The default templates adopt successfully deployed updates automatically and preserve supported drafts and paths. Application Services have no Piwork memory cap; CPU/count limits and Agent/helper memory policies still apply. Existing Works adopt new packages and Agent images through explicit Update/Apply. See the [website guide](https://pphboy.github.io/piwork/guide/web-development.html) and [Brain workflow](docs/piwork-brain.md).
+
 ## Demo GIF / Video
 
 ![Piwork Desktop](docs/images/desktop-preview.png)

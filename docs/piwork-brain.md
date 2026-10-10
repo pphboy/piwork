@@ -6,6 +6,16 @@
 
 Work 首次加载时将独立可编辑源码复制到 `.pi/packages/piwork-brain/`。重启和 Apply 不覆盖已有编辑，源码编辑不会热加载；每次执行使用 captured active 中的固定认知，并读取该 Run 固定采用的有效经验版本。包资源、Files、Chat 都沿用 master 的入口。
 
+## 默认 Web 开发环境与应用交付
+
+未指定技术栈的新 Web Service 默认使用 FastAPI + React + TypeScript + Vite，以及已发布的 `pphboy/piwork-web-base` 固定 tag@digest。通用起点为脑包的 `templates/web-app/`，完整工作站例子为 `templates/workstation/`；用户指定其他栈或维护既有应用时沿用目标环境。镜像维护源在本仓库 `deploy/images/web-base/`，工具链、锁文件、使用与派生方式见 [Web base 手册](../deploy/images/web-base/README.zh-CN.md)。脑包只保存使用指导、模板与固定引用。
+
+部署 Skill 的共享初始化入口在写入 Spec、源码、锁文件和注册信息前拒绝已有应用目标，包括空目录、文件和链接。已有应用先读取实际内容再局部修改，不能重新复制模板覆盖。应用源码与可写依赖位于 `apps/<service-name>`，业务数据位于 `data/<service-name>`，普通启动、重启和环境升级均沿用这些内容。
+
+应用修改的交付包括必要 checks/build、原 Service 更新或重启、原 Operation 观察、实际运行版本和业务结果验证。默认页面自动采用就绪的新前端，并保留支持恢复的非秘密草稿与当前路径；仅后端更新和普通 Agent Action 通过查询重读生效，显式开发模式提供前后端热更新。代码与前端版本均绑定实际镜像环境身份，因此仅升级基础环境也会自动采用新产物。无需用户手动刷新，失败或断线不冒充完成，也不额外启动被动 Run 或触发脑包 Apply。
+
+Agent 生产/验收镜像与 Web base 都预装真正的 sqlite3 CLI。AI 的授权 bash 在 Agent 中执行，可用于 workspace 数据开发和诊断；普通业务变更仍走 Query/Action，不能直接改写 Core/history/Memory。宿主无需安装 Python、Node 或 sqlite3。旧 Work 保留捕获的包和镜像；采用新脑包及 Agent 工具仍走 Package Update、镜像选择和显式 Apply，一次性默认种子不重新覆盖管理员定制。
+
 ## Pi → Service
 
 1. 用户通过 Chat 提出目标，SDK 调用脑包工具时才给需要修改的业务建立目标关联；普通查询直接形成观察证据。
