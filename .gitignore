@@ -45,3 +45,6 @@ operator.credential
 .idea/
 .DS_Store
 Thumbs.db
+
+# Emacs transient editor locks
+.#*

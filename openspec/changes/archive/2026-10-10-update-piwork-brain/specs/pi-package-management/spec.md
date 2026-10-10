@@ -35,4 +35,3 @@ Core 启动 SHALL 允许将原内置且启用的旧 piwork-brain 更新为当前
 #### Scenario: 内置脑包更新只作用于 Core
 - **WHEN** Core 启动更新原内置旧脑包
 - **THEN** 只切换 Core catalog 的已验证 head，既有 Work desired/active 不变，管理员替换、禁用或移除的包不被覆盖或重新安装
-
