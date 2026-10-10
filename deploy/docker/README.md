@@ -4,6 +4,8 @@
 
 Start Core and CLI separately; Core manages the Agent, helpers, Services and Work storage. Native CLI delivery remains independent.
 
+This release runs application Services without a Piwork memory cap or Service memory reservation. CPU, service/volume counts and Agent/helper memory policy still apply. Legacy Service memoryBytes values remain compatibility history; memoryLimitMode / serviceMemoryPolicy explicitly report unlimited, and zero is not a zero-byte allowance. A normal Core upgrade replaces older capped Service containers through managed recovery and retains workspace data. See [resource and upgrade details](../../docs/operations.md#service-资源与版本升级) and the [Web base guide](../images/web-base/README.md).
+
 ## Terminal Docker Quick Start
 
 <!-- docker-quickstart:start -->

@@ -45,6 +45,8 @@ An AI task often involves conversation history, project files, and running servi
 
 Each Work has its own Harness. The Harness executes tasks, Services provide application capabilities, and both operate within the Work. Core manages these resources, while CLI / Desktop provides the user interface.
 
+The default Web development environment uses FastAPI + React + TypeScript + Vite. Its reusable image source, maintenance process, sqlite3 tools, and application update behavior are documented in the [Web base guide](deploy/images/web-base/README.md).
+
 ## Demo GIF / Video
 
 ![Piwork Desktop](docs/images/desktop-preview.png)

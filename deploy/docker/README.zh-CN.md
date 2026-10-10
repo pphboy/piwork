@@ -4,6 +4,8 @@
 
 Core 和 CLI 分别启动；Agent、helper、Service 与 Work 存储由 Core 管理。原生 CLI 继续独立交付。
 
+本版应用 Service 不设置 Piwork 内存上限或 Service 内存预留；CPU、服务/卷数量及 Agent/helper 内存政策仍有效。旧 Service memoryBytes 仅保留为兼容历史，memoryLimitMode / serviceMemoryPolicy 明确为 unlimited，零不表示零字节额度。正常关闭并启动新版 Core 后，受管恢复替换旧受限 Service 容器并保留 workspace。详见[资源与升级说明](../../docs/operations.md#service-资源与版本升级)和 [Web base 手册](../images/web-base/README.zh-CN.md)。
+
 ## Terminal Docker Quick Start
 
 <!-- docker-quickstart:start -->

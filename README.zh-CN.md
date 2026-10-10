@@ -45,6 +45,8 @@ Core 负责资源管理与控制，Harness 执行模型和工具，Service 提�
 
 每个 Work 拥有自己的 Harness。Harness 执行任务，Service 提供应用能力，两者在 Work 的环境中协作；Core 管理这些资源，CLI / Desktop 提供用户入口。
 
+默认 Web 开发环境采用 FastAPI + React + TypeScript + Vite。可复用镜像的源码、维护流程、sqlite3 工具及应用更新行为见 [Web base 手册](deploy/images/web-base/README.zh-CN.md)。
+
 ## Demo GIF / Video
 
 ![Piwork Desktop](docs/images/desktop-preview.png)

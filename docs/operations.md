@@ -2,6 +2,16 @@
 
 piwork 支持一台 Linux 主机上的 Docker Engine。`piwork-serve` 是 Core daemon 和 operator 命令；`piwork-cli` 是用户命令；`piwork-console` 是独立 HTTPS 管理面板。Core 直接调用本机 Engine Unix API，不运行 Docker CLI 或 OpenSSL。Agent 通过 Work 私有 bridge 和代次绑定的双向 TLS 与 Core 通信，Agent 端口不发布到宿主。
 
+## Service 资源与版本升级
+
+当前源码的应用 Service 不设置内存上限，也不申请 Work/安装级内存预留。Service 定义中的 `memoryBytes` 是弃用兼容字段：省略或零表示无限制；合法历史正数保留作原请求/快照事实，不恢复为有效限制。Service 投影的 `memoryLimitMode` 和部署上下文的 `serviceMemoryPolicy` 明确返回 `unlimited`，`defaultServiceMemoryBytes=0` 不能解释为零可用内存。
+
+Work 的 `resources.memoryBytes` 和旧 total/availableMemoryBytes 字段只用于 Agent 等仍受管对象的内存预算，不是 Work 内全部应用的总内存上限，也不是宿主实时剩余内存。Agent/helper 内存政策、Agent 加 Service 的 CPU 预留、服务数和卷数仍然有效。旧 Service 内存预留不阻断新部署、Work 配置或完整包导入；历史 CPU/slots 及快照数据继续保留。Service 实际可用内存由宿主与外层部署环境决定。
+
+按正常流程关闭旧 Core，再启动由当前源码构建的新 Core；受限旧 Service 容器会在受管恢复中替换，保留 Service 身份、固定镜像和 workspace 数据，不必逐个修改业务定义。发布镜像的功能以其固定版本为准，不能仅更新文档就使旧 Core 获得此政策。
+
+Web 开发基础镜像的长期维护源及双语用法见 [Web base](../deploy/images/web-base/README.zh-CN.md)。Agent/base 中的 sqlite3 是容器工具，不是宿主依赖；新增 Agent 工具需要使用包含它的新 Agent 镜像，旧 Work 沿原镜像选择和显式 Apply 采用。
+
 ## 从源码启动
 
 以下步骤用于 Linux 本机安装，在仓库根目录执行。源码构建依赖见 [Contributing](../README.md#contributing)，运行 Work 还需要当前用户可访问的本机 Docker Engine。双 Docker 安装使用 [Docker 手册](../deploy/docker/README.zh-CN.md)。

@@ -51,7 +51,11 @@ Desktop 的真实 Go Core/CLI 联合脚本已接入 `make test-integration`，�
 `make test-native-host` 使用开发机 Docker CLI/Node/OpenSSL 准备测试夹具；这些工具不在被测宿主内。测试创建带唯一 fixture label 的临时 `docker:27-dind` 特权容器作为独立 Engine，并把发布包三个程序放在 scratch 容器中，共享该 Engine 的 Unix socket 和同机数据路径。被测 Core/CLI/Console 的根文件系统没有解释器、shell、Go、Docker CLI 或 OpenSSL，PATH 为 `/nonexistent`。脚本验证真实 SDK→Go MCP 部署、Service proxy、WebDAV、嵌入 Desktop/Console、Export/Inspect/Import/Start 和 workspace 数据，再核对实际进程及缺失工具。准备 fixture 时需要 `docker:27-dind` 和 `python:3.13-slim`；后者仅运行用户测试 Service。结束只清理该 fixture 的 container、volume、scratch image，不清理其他安装。此 gate 已接入 `make acceptance`。
 
 
-当前 brain 回归使用 `internal/coreapp/brain_workstation_integration_test.go`、`brain_candidates_integration_test.go`、`run_models_integration_test.go` 和 `service_interactions_integration_test.go`；所有平台控制由 Go Core 与原生 helper 处理，确定性模型只在 acceptance Agent 镜像中注册。工作站 fixture 的 Python/NiceGUI 是示例 Service 的运行环境，不是宿主依赖，也不限制用户选择技术栈。
+当前 brain 回归使用 `internal/coreapp/brain_workstation_integration_test.go`、`brain_candidates_integration_test.go`、`run_models_integration_test.go` 和 `service_interactions_integration_test.go`；所有平台控制由 Go Core 与原生 helper 处理，确定性模型只在 acceptance Agent 镜像中注册。工作站 fixture 使用与交付相同的 FastAPI + React + TypeScript + Vite Web base。Agent 和 base 都预装 sqlite3 CLI，真实 SDK bash 与 Service 分别验证；这些是容器工具，不是宿主依赖，也不限制用户选择技术栈。`node scripts/check-web-base.mjs` 在无外网的独立网络验证离线准备、只读根、业务/版本及持久化，真实 Core/CLI/浏览器回归另行验证用户无需手动刷新。
+
+Web base 的额外入口为 `node scripts/check-web-base.mjs dist/web-base/candidate.json web-app`（通用模板）和 `node scripts/check-web-base-core.mjs`（真实 SDK/MCP/Core/CLI/浏览器、热更新、失败恢复、派生镜像及内存政策）。生成镜像后执行，使用已构建的 acceptance Agent/helper 与 Go 程序；输出在被忽略的 `dist/web-base/`，资源只按本次唯一标签/installation ID 清理。
+
+旧历史迁移回归另外需要预备的真实 schema-4 Agent 镜像 `piwork-memory-history4:acceptance`。`make native-history4-web-base-fixture` 在它之上仅适配确定性部署 driver 和 Go Service MCP，不替换 schema-4 harness/store；设置 `PIWORK_TEST_NATIVE_HISTORY4_IMAGE=piwork-memory-history4-web-base:acceptance` 执行升级/进程恢复回归。该依赖属于开发验收，不是用户运行依赖，也不通过更改旧数据库伪造迁移。
 
 `node scripts/check-native-boundary.mjs` 扫描当前 apps/packages、scripts、构建与运行配置、锁文件及当前 docs。仅规则文件自身、注入测试和明确列出的历史验收记录排除；不会排除整个 scripts。`node --test scripts/check-native-boundary.test.mjs` 注入旧启动脚本、动态 import、运行配置、lock 和当前文档，验证 gate 逐一拒绝，合法 Agent/browser 引用仍通过。镜像和 release 有各自独立的内容 gate。
 
