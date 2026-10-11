@@ -2,6 +2,8 @@
 
 日期：2026-10-11。本次沿现有五角色 Docker 发行链发布 Core、CLI、Agent、file-helper、snapshot-helper；package-helper 复用 Agent。NiceGUI base 独立发布。
 
+后续 `fix-create-slow` 合并加入镜像检查/包环境探测缓存与默认 Work 预热；这些源码优化不属于本次 0.0.4 固定镜像。分支性能结果见 [Work 创建与启动延迟验收](work-create-start-latency-acceptance.md)，不能据此改写本次发行的验证范围或身份。
+
 ## 固定身份
 
 - 发行标识：`0.0.4-079f92ce3b33-96bc1d1ff3d6`。

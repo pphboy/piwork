@@ -49,6 +49,8 @@ Core 负责资源管理与控制，Harness 执行模型和工具，Service 提�
 
 Core 0.0.4 内置 piwork-brain 1.2.1，并采用已发布的 NiceGUI 默认环境。[发行记录](docs/core-release-0.0.4.md)列出固定身份、采用行为和验证范围。
 
+当前源码还复用成功的镜像检查与包环境探测，并在 Core 就绪前准备默认 Work 环境。这些创建与启动优化在 0.0.4 发行后合入；Quick Start 所列 Docker 镜像尚不包含它们。源码构建与测量入口见[性能验收](docs/testing.md#work-创建与启动性能验收)。
+
 默认模板自动采用成功部署的更新，并保留支持恢复的草稿与路径。应用 Service 不设置 Piwork 内存上限；CPU/数量限制和 Agent/helper 内存政策仍有效。既有 Work 通过显式 Update/Apply 采用新包与 Agent 镜像。详见[官网指南](https://pphboy.github.io/piwork/zh/guide/web-development.html)和 [Brain 工作流程](docs/piwork-brain.md)。
 
 ## Demo GIF / Video

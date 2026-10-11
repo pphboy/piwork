@@ -121,4 +121,4 @@ node scripts/measure-work-latency.mjs --core dist/work-latency/baseline/piwork-s
 
 结构与恢复回归使用 `internal/preparationcache/`、`internal/dockerengine/image_cache_test.go`、`internal/coreapp/environment_cache_test.go`、`default_work_prewarm_test.go` 和 `work_latency_integration_test.go`；延迟 mTLS 监听及就绪 / 诊断计时位于 `internal/agentclient/startup_test.go` 与 `internal/workruntime/performance_test.go`。大包、外部慢 MCP、冷镜像和并发准备不混入默认时间预算，分别保留阶段事实。
 
-本次运行配置不新增环境变量、目录、端口或用户运行依赖；Docker run / Compose 仍保留现有 CLI 600 秒等待、Core readiness 预算与关闭窗口。双语 Quick Start、Core-only / 单机 Compose 模板及说明通过同一内容生成入口维护，打包自动包含新增 Go 包，无需增加运行制品。`check-docker-quickstart` 的当前源码 hash 检查是发行身份检查：修改源码后它会拒绝沿用历史发行的输入 hash。应保留已发布 `release.json`、commit、dirty 和 digest，按实际结果报告此差异；未来显式准备新发行时再生成新的候选材料，不能为本地检查通过而改写已发布制品身份。
+本次运行配置不新增环境变量、目录、端口或用户运行依赖；Docker run / Compose 仍保留现有 CLI 600 秒等待、Core readiness 预算与关闭窗口。双语 Quick Start、Core-only / 单机 Compose 模板及说明通过同一内容生成入口维护，打包自动包含新增 Go 包，无需增加运行制品。`check-docker-quickstart` 对已发布材料校验其记录的发行身份与部署材料一致性，允许当前源码继续演进；未发布候选仍需匹配当前源码输入 hash。应保留已发布 `release.json`、commit、dirty 和 digest；未来显式准备新发行时再生成新的候选材料，不能为本地检查通过而改写已发布制品身份。

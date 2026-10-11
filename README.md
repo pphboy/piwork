@@ -49,6 +49,8 @@ The current source defaults new application Services to Python + NiceGUI + SQLit
 
 Core 0.0.4 ships piwork-brain 1.2.1 with the published NiceGUI default. The [release record](docs/core-release-0.0.4.md) lists fixed identities, adoption behavior and verification scope.
 
+The current source also reuses successful image checks and package-environment probes, and prepares the default Work environment before Core becomes ready. These creation/startup optimizations were merged after the 0.0.4 release; the Docker images in Quick Start do not include them. See [performance verification](docs/testing.md#work-创建与启动性能验收) for building and measuring the source.
+
 The default templates adopt successfully deployed updates automatically and preserve supported drafts and paths. Application Services have no Piwork memory cap; CPU/count limits and Agent/helper memory policies still apply. Existing Works adopt new packages and Agent images through explicit Update/Apply. See the [website guide](https://pphboy.github.io/piwork/guide/web-development.html) and [Brain workflow](docs/piwork-brain.md).
 
 ## Demo GIF / Video

@@ -80,3 +80,12 @@ API 使用同进程单调计时，Ready 通过至多 100ms 周期的独立只读
 入口和参数见 [测试手册](testing.md#work-创建与启动性能验收)。本机 `dist/work-latency/` 保存 `before-api.json`、`after.json`、`cases.json`、`provenance.json`、`validation.json`、文档入口冒烟及实际测试日志；该目录被 Git 忽略，重新执行入口可取得本机证据。
 
 验收只覆盖上述真实执行的条件。未测量基线 Desktop 的独立分布，未测量缺失镜像的联网拉取、所有第三方 MCP 或任意大包，也没有对外发行本次构建。
+
+## 合入 NiceGUI 主分支后的回归
+
+2026-10-11，合并提交 `4681b4a` 将 `fix-create-slow` 的四个提交合入保留 NiceGUI 默认环境的 `main`；以下检查基于合并后的源码，构建时工作区含待提交文档修改。
+
+- 完整 `make test` 通过，覆盖宿主程序与浏览器资源构建、Go / TS 单元测试、脚本测试及类型检查。
+- 真实 Docker / SDK 定向回归三项全部通过：默认脑包及显式空包覆盖、八调用者冷准备与大包 / 慢 MCP / Stop 竞争、热默认创建与保留数据 Start / Core 重启。集成套件耗时 171.742 s，默认脑包保持 `piwork-brain@1.2.1`。
+- 41 份主规格严格校验、29 项 Docker Quick Start 合成测试、部署材料一致性、原生平台边界与 `git diff --check` 通过。当前已发布材料校验允许源码后续演进，原分支验收中旧检查器报告的 hash 差异仍保留为当时事实。
+- 本轮日志保存在被忽略的 `dist/merge-fix-create-slow/`。本轮未重采 API / Desktop 各 20 次性能分布，前述 P95 继续仅代表原分支验收；也未重新发布镜像，公开 0.0.4 固定制品不包含此次提速优化。
