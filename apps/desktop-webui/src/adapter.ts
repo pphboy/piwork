@@ -5,6 +5,7 @@ import { parseEntries, mutationResults } from './files.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
 import { MetadataReads, ObservationDeferred, ObservationStopped } from './observation.js';
 type Data = Record<string, any>;
+import type { ImageInput, HistoryImage } from './images.js';
 export interface TransferResult { path: string; status: 'succeeded' | 'failed' | 'unknown'; message: string; httpStatus?: number; modified?: string; needsConsent?: boolean }
 export function fileVersion(value: string | null | undefined): string {
   const time = value ? Date.parse(value) : NaN;
@@ -20,6 +21,47 @@ const blankConfig = (): Configuration => ({ skills: [], packages: [], agents: ''
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const stateLabel = (value: string) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
 export class DesktopAdapter {
+  imageCapabilities = new Map<string,{loading:boolean;error:string;value?:Data}>();
+  imageLoads = new Map<string,{phase:'loading'|'ready'|'error';url?:string;error?:string}>();
+  private imageControllers = new Set<AbortController>();
+  private imageQueue:Array<()=>void>=[];
+  private imageActive=0;
+  async loadImageCapabilities(id:string) {
+    if(this.imageCapabilities.has(id)){if(this.imageCapabilities.get(id)?.loading)await this.request(`works/${part(id)}/chat-image-capabilities`).catch(()=>undefined);return;}
+    const state={loading:true,error:'',value:undefined as Data|undefined},epoch=this.epoch;this.imageCapabilities.set(id,state);this.emit();
+    try {const value=await this.request(`works/${part(id)}/chat-image-capabilities`);if(epoch!==this.epoch)return;if(value.profile!=='chat-images-v1')throw new Error('Image input is not supported by this Work.');state.value=value;}
+    catch(error){if(epoch===this.epoch)state.error=[404,501].includes((error as DesktopError).httpStatus || 0)?'Image input is unavailable. Update Core or the Work Agent as needed, then explicitly Apply the compatible Agent image.':errorText(error);}
+    finally{if(epoch===this.epoch){state.loading=false;this.emit();const selected=this.chatSelection.startsWith(`${id}:`)?this.chatSelection.slice(id.length+1):'',session=this.getWork(id)?.sessions.find(s=>s.id===selected);if(state.value&&session?.checkedAt&&!session.imageProfile)void this.loadSession(id,selected).catch(()=>undefined);}}
+  }
+  async refreshImageCapabilities(id:string) {
+    const epoch=this.epoch;if(this.imageCapabilities.get(id)?.loading)await this.loadImageCapabilities(id);
+    if(epoch!==this.epoch)return;this.imageCapabilities.delete(id);return this.loadImageCapabilities(id);
+  }
+  imageInputReason(id:string,sessionId:string):string {
+    const capability=this.imageCapabilities.get(id);if(!capability || capability.loading)return 'Checking image input support…';
+    if(!capability.value)return capability.error || 'Update the Work Agent and Apply to use image input.';
+    const ref=this.modelSelection(id,sessionId).ref;
+    const model=ref===null?capability.value.defaultModel:capability.value.models.find((m:Data)=>m.modelRef===ref);
+    return model?.availability==='supported'?'':model?.availability==='unsupported'?'This model does not support images. Choose an image-capable model.':'Image capability is unconfirmed. Choose an image-capable model.';
+  }
+  historyImageKey(id:string,session:string,run:string,index:number){return `${id}:${session}:${run}:${index}`;}
+  loadHistoryImage(id:string,session:string,run:string,image:HistoryImage) {
+    const key=this.historyImageKey(id,session,run,image.imageIndex);if(this.imageLoads.has(key))return;
+    const state={phase:'loading' as 'loading'|'ready'|'error',url:undefined as string|undefined,error:''},epoch=this.epoch;this.imageLoads.set(key,state);
+    const start=async()=>{this.imageActive++;const controller=new AbortController();this.imageControllers.add(controller);
+      try {if(epoch!==this.epoch)return;const response=await fetch(`/_desktop/api/works/${part(id)}/sessions/${part(session)}/runs/${part(run)}/images/${image.imageIndex}`,{credentials:'same-origin',signal:controller.signal});
+        if(!response.ok){const value=await response.json().catch(()=>({}));if(response.status===401)await this.checkBrowserAccess().catch(()=>undefined);throw new Error(value.message || value.code || 'Image could not be read.');}
+        if(response.headers.get('Content-Type')!==image.mimeType || Number(response.headers.get('Content-Length'))!==image.byteSize || image.byteSize>5*1024**2)throw new Error('The image response could not be verified.');
+        const blob=await response.blob();if(blob.size!==image.byteSize)throw new Error('The image response is incomplete.');
+        const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer())),x=>x.toString(16).padStart(2,'0')).join('');if(hash!==image.sha256)throw new Error('The saved image is corrupt.');
+        if(epoch!==this.epoch||controller.signal.aborted)return;state.url=URL.createObjectURL(blob);state.phase='ready';
+      }catch(error){if(epoch===this.epoch&&!controller.signal.aborted){state.phase='error';state.error=errorText(error);}}
+      finally{this.imageControllers.delete(controller);this.imageActive--;this.imageQueue.shift()?.();if(epoch===this.epoch)this.emit();}
+    };
+    if(this.imageActive<2)void start();else this.imageQueue.push(()=>{void start();});
+  }
+  retryHistoryImage(id:string,session:string,run:string,image:HistoryImage){this.imageLoads.delete(this.historyImageKey(id,session,run,image.imageIndex));this.loadHistoryImage(id,session,run,image);this.emit();}
+  stopImageReads(){for(const c of this.imageControllers)c.abort();this.imageQueue=[];for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();}
   state = { works: [] as Work[], operations: [] as Operation[], snapshots: [] as Snapshot[], scenario: 'loading', signedIn: false,
     browserAccess: 'checking' as 'checking' | 'authorized' | 'required' | 'unavailable', browserAccessReason: '', browserAccessChecked: '', cleanupRequired: false,
     core: { address: '', name: 'Core', account: '', role: '', proxyPort: '', username: '' }, transfers: [] as TransferResult[], lastChecked: '' };
@@ -170,6 +212,7 @@ export class DesktopAdapter {
     this.epoch++; this.worksLoading = false; this.worksChecked = ''; this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
     this.terminalEvidence.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
     this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear();
+    this.stopImageReads();for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();this.imageCapabilities.clear();
     this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();
     for (const status of Object.values(this.catalog)) Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });
     this.uploadIntents.clear(); this.skills = []; this.packages = []; this.entries.clear(); this.entryErrors.clear(); this.entryPromises.clear(); this.entryChecks.clear(); this.logs.clear(); this.inspection = null; this.inspectionTransfer = '';
@@ -529,7 +572,7 @@ export class DesktopAdapter {
       if(epoch!==this.epoch)return;Object.assign(state,{confirmed:true,models:value.models,defaultModel:value.defaultModel ?? undefined,defaultUnavailableReason:value.defaultUnavailableReason,unavailableModels:value.unavailableModels,checkedAt:value.checkedAt,error:''});await this.loadCommands(id);
       const draft=this.modelSelections.get(`${id}:`);if(draft&&!draft.revision&&state.defaultModel)draft.thinking=state.defaultModel.defaultThinkingLevel===undefined?'off':state.defaultModel.defaultThinkingLevel;
       const selected=this.chatSelection?.startsWith(`${id}:`)?this.chatSelection.slice(id.length+1):'';if(selected)await this.readSessionOptions(id,selected);
-    } catch(error){if(epoch===this.epoch)state.error=errorText(error);throw error;}finally{if(epoch===this.epoch){state.loading=false;this.emit();}}
+    } catch(error){if(epoch===this.epoch)state.error=errorText(error);throw error;}finally{if(epoch===this.epoch){state.loading=false;this.emit();if(!state.error)void this.refreshImageCapabilities(id);}}
   }
   selectModel(id: string,sessionId: string,ref: string|null) {const state=this.modelSelection(id,sessionId);if(state.phase==='unknown')throw new DesktopError('MODEL_NOT_CONFIRMED','Check the original Session model first.');state.ref=ref;const catalog=this.models.get(id),model=ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===ref);
     if(model?.thinkingAvailability==='unknown'){
@@ -600,10 +643,11 @@ export class DesktopAdapter {
   async loadSession(id: string, sessionId: string) {
     const work = this.getWork(id); if (work?.run?.sessionId === sessionId && ['accepted', 'running', 'cancelling'].includes(work.run.status) && this.streams.has(id)) return;
     const version=this.sessionVersions.get(id)||0;const target=this.getWork(id)?.sessions.find(s=>s.id===sessionId);if(target){target.loading=true;target.error='';this.emit();}
-    let value:Data;try{value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}`);}catch(error){if(target)target.error=errorText(error);throw error;}finally{if(target){target.loading=false;this.emit();}} const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+    const imageCheck=this.loadImageCapabilities(id),profile=this.imageCapabilities.get(id)?.value?'?imageProfile=chat-images-v1':'',epoch=this.epoch;
+    let value:Data;try{value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}${profile}`);}catch(error){if(target)target.error=errorText(error);throw error;}finally{if(target){target.loading=false;this.emit();}} const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
     if (session) { this.confirmSessionModel(id,session,value.session,version); session.runs=(value.runs ?? []).map((run: Data)=>this.runRecord(run,sessionId)); }
     if (session) {
-      session.messages=historyMessages(value.messages ?? [],session.messages);session.checkedAt=new Date().toISOString();
+      session.messages=historyMessages(value.messages ?? [],session.messages);session.checkedAt=new Date().toISOString();session.imageProfile=!!profile;
       const active=(value.runs ?? []).find((run:Data)=>[1,2,3].includes(run.state));
       const restore=active && work && (!work.run || !['accepted','running','cancelling'].includes(work.run.status));
       if(restore){
@@ -615,6 +659,7 @@ export class DesktopAdapter {
       }
       await this.readSessionOptions(id,sessionId);
     } this.emit();
+    if(!profile)void imageCheck.then(()=>{if(epoch===this.epoch&&this.chatSelection===`${id}:${sessionId}`&&this.imageCapabilities.get(id)?.value)void this.loadSession(id,sessionId).catch(()=>undefined);});
   }
   serviceEntryUrl(workId: string, serviceId: string, port: number) { return this.entries.get(`${workId}:${serviceId}:${port}`)?.entryUrl ?? null; }
   serviceEntryError(workId: string, serviceId: string, port: number) { return this.entryErrors.get(`${workId}:${serviceId}:${port}`) || ''; }
@@ -821,18 +866,21 @@ export class DesktopAdapter {
       const state=this.modelSelection(id,sessionId);if(intent.pair && (intent.pair.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==intent.pair.ref || state.thinking!==intent.pair.thinking)))Object.assign(state,{...intent.pair,revision:Math.max(1,intent.pair.revision),phase:'dirty',error:'Your selected settings are kept. Confirm them before sending.'});
     }
     else {if(value.run?.workId!==id || value.run?.sessionId!==intent.sessionId || value.run?.submissionKey!==intent.key)throw new DesktopError('INVALID_RESPONSE','The original Run identity could not be confirmed.');const work=this.getWork(id)!;work.run=this.runRecord(value.run,value.run.sessionId);await this.loadSession(id,value.run.sessionId);void this.resumeRun(id);}
-    this.chatSubmissions.delete(id);this.emit();return value;
+    if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();return value;
   }
-  async send(id:string,sessionId:string,text:string,includeIdentity:boolean,inputMode?:'text'|'command') {
-    if(!text.trim())throw new Error('Write a message first.');const work=this.getWork(id)!;
+  async send(id:string,sessionId:string,text:string,includeIdentity:boolean,inputMode?:'text'|'command',images:ImageInput[]=[]) {
+    if(!text.trim()&&!images.length)throw new Error('Write a message or add an image first.');const work=this.getWork(id)!;
+    if(images.length){const reason=this.imageInputReason(id,sessionId);if(reason)throw new Error(reason);if(inputMode!=='text')throw new Error('Images require Send as text.');}
     if(!this.modelReady(id,sessionId))throw new DesktopError('MODEL_NOT_CONFIRMED','Confirm the Session model and Thinking settings before sending.');
     const prompt=includeIdentity && inputMode!=='command'?`${text}\n\nSelected Service: ${work.services.find(s=>s.id===this.selectedService)?.domain ?? ''}`:text;
-    const intent={kind:'run' as const,key:crypto.randomUUID(),sessionId,error:''};this.chatSubmissions.set(id,intent);this.emit();
-    try {const value=await this.request(`works/${part(id)}/runs`,'POST',{sessionId,prompt,submissionKey:intent.key,...(inputMode?{inputMode}:{})});const raw=value.run;
+    const epoch=this.epoch;const intent={kind:'run' as const,key:crypto.randomUUID(),sessionId,error:''};this.chatSubmissions.set(id,intent);this.emit();
+    try {const descriptors=await Promise.all(images.map(async(image,imageIndex)=>{const bytes=Uint8Array.from(atob(image.data),c=>c.charCodeAt(0));const sha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');return {imageIndex,mimeType:image.mimeType,byteSize:bytes.length,sha256};}));
+      if(epoch!==this.epoch||this.chatSubmissions.get(id)!==intent)throw new DesktopError('CONNECTION_CHANGED','The image submission belongs to a previous identity.');
+      const value=await this.request(`works/${part(id)}/runs`,'POST',{sessionId,prompt,submissionKey:intent.key,...(inputMode?{inputMode}:{}),...(images.length?{images}:{})});const raw=value.run;
       if(!raw?.runId || raw.sessionId!==sessionId)throw new DesktopError('INVALID_RESPONSE','Run acceptance has no original ID.');
-      work.run=this.runRecord(raw,sessionId);(work.sessions.find(s=>s.id===sessionId)!.runs ??=[]).push(work.run);
-      work.sessions.find(s=>s.id===sessionId)!.messages.push({id:`${raw.runId}-user`,runId:raw.runId,role:'user',text});this.chatSubmissions.delete(id);this.emit();void this.resumeRun(id);return raw.runId as string;
-    }catch(error){const code=(error as DesktopError).code;if(!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(code==='WORK_BUSY'||code==='RATE_LIMITED'){await this.loadSessions(id).catch(()=>undefined);const active=this.getWork(id)?.run;if(code==='WORK_BUSY'||active&&['accepted','running','cancelling'].includes(active.status))error=new DesktopError('WORK_BUSY','A Run is already active in this Work. Wait for it to finish or use Cancel run.');}intent.error=errorText(error);throw error;}finally{this.emit();}
+      const acceptedWork=this.getWork(id) ?? work;const acceptedSession=acceptedWork.sessions.find(s=>s.id===sessionId) ?? work.sessions.find(s=>s.id===sessionId)!;if(!acceptedWork.sessions.includes(acceptedSession))acceptedWork.sessions.push(acceptedSession);acceptedWork.run=this.runRecord(raw,sessionId);(acceptedSession.runs ??=[]).push(acceptedWork.run);
+      acceptedSession.messages.push({id:`${raw.runId}-user`,runId:raw.runId,role:'user',text,...(descriptors.length?{images:descriptors}:{})});if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();void this.resumeRun(id);return raw.runId as string;
+    }catch(error){const code=(error as DesktopError).code;if(this.chatSubmissions.get(id)===intent&&!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(code==='WORK_BUSY'||code==='RATE_LIMITED'){await this.loadSessions(id).catch(()=>undefined);const active=this.getWork(id)?.run;if(code==='WORK_BUSY'||active&&['accepted','running','cancelling'].includes(active.status))error=new DesktopError('WORK_BUSY','A Run is already active in this Work. Wait for it to finish or use Cancel run.');}intent.error=errorText(error);throw error;}finally{this.emit();}
   }
   selectedService = '';
   async cancelRun(id: string) { const work = this.getWork(id)!; const run = work.run; if (run && !run.cancellationRequested) { await this.request(`works/${part(id)}/runs/${part(run.id)}/cancel`, 'POST'); run.cancellationRequested = true; this.emit(); void this.request(`works/${part(id)}/runs/${part(run.id)}`).then(value => { if (work.run === run) { run.status = runStates[(value.run ?? value).state] ?? 'interrupted'; this.emit(); } }).catch(error => { if (work.run === run) { run.error = `Cancellation requested; status not confirmed: ${errorText(error)}`; this.emit(); } }); } }
@@ -851,12 +899,14 @@ export class DesktopAdapter {
       if (!current()) return;
       const raw = value.run ?? value;
       run.status = runStates[raw.state] ?? 'interrupted';
-      const history = await this.request(`works/${part(id)}/sessions/${part(run.sessionId)}`, 'GET', undefined, controller.signal);
+      const profile=this.imageCapabilities.get(id)?.value || this.getWork(id)?.sessions.find(s=>s.id===run.sessionId)?.imageProfile?'?imageProfile=chat-images-v1':'';
+      const history = await this.request(`works/${part(id)}/sessions/${part(run.sessionId)}${profile}`, 'GET', undefined, controller.signal);
       if (!current()) return;
       if (!Array.isArray(history.messages)) throw new Error('Saved session history is incomplete.');
       const session = this.getWork(id)?.sessions.find(s => s.id === run.sessionId);
       if (session) {
         session.messages = historyMessages(history.messages,session.messages);
+        session.imageProfile=!!profile;
         if (!['accepted', 'running', 'cancelling'].includes(run.status) && raw.finalText && !session.messages.some(m => m.role === 'assistant' && !m.tool && m.text === raw.finalText)) session.messages.push({ role: 'assistant', text: raw.finalText });
       }
       observer.failures = 0;

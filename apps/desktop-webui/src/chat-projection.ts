@@ -25,6 +25,9 @@ export function historyMessages(raw: any[], previous: Message[] = []): Message[]
   const messages: Message[] = [];
   for (const message of raw) {
     if (!['user', 'assistant', 'toolResult'].includes(message.role)) continue;
+    if(message.role==='user' && message.blocks?.some((block:any)=>block.type==='image')) {
+      messages.push({id:message.runId?`${message.runId}-user`:message.entryId,runId:message.runId || undefined,role:'user',text:message.blocks.filter((b:any)=>b.type==='text').map((b:any)=>b.text).join(''),images:message.blocks.filter((b:any)=>b.type==='image').map((b:any)=>b.image)});continue;
+    }
     if (!message.blocks?.length) {
       messages.push(message.role === 'toolResult' ? { id: message.entryId, role: 'assistant', text: '', tool: { name: 'Tool result', status: 'Unconfirmed', content: resultText(undefined) } } : { id: message.entryId, role: message.role, text: message.text ?? '' }); continue;
     }
@@ -44,7 +47,7 @@ export function historyMessages(raw: any[], previous: Message[] = []): Message[]
 export function activityGroups(messages: Message[]): Array<{ key: string; messages: Message[]; activity: boolean }> {
   const groups: Array<{ key: string; messages: Message[]; activity: boolean }> = [];
   messages.forEach((message, index) => {
-    if (!message.text && !message.tool) return;
+    if (!message.text && !message.tool && !message.images?.length) return;
     const last = groups.at(-1);
     if (message.tool && message.runId && last?.activity && last.messages[0]?.runId === message.runId) last.messages.push(message);
     else groups.push({ key: message.id ?? `${message.runId || 'legacy'}-${index}`, messages: [message], activity: !!message.tool });

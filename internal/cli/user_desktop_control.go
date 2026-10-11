@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"piwork/internal/chatimages"
 	"piwork/internal/client"
 	"piwork/internal/contracts"
 	"piwork/internal/localweb"
@@ -31,7 +32,10 @@ func desktopResourcePart(raw string, pattern *regexp.Regexp) (string, bool) {
 }
 
 func desktopControlInput(r *http.Request, allowed ...string) (map[string]json.RawMessage, error) {
-	input, err := readDesktopObject(r, 1<<20)
+	return desktopControlInputLimit(r, 1<<20, allowed...)
+}
+func desktopControlInputLimit(r *http.Request, limit int64, allowed ...string) (map[string]json.RawMessage, error) {
+	input, err := readDesktopObject(r, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +187,10 @@ func desktopControlFailure(w http.ResponseWriter, err error) {
 		return
 	}
 	switch err.Error() {
+	case "IMAGE_INVALID":
+		desktopError(w, 400, "IMAGE_INVALID")
+	case "IMAGE_LIMIT_EXCEEDED":
+		desktopError(w, 413, "IMAGE_LIMIT_EXCEEDED")
 	case "JSON_REQUIRED":
 		desktopError(w, 415, "JSON_REQUIRED")
 	case "REQUEST_TOO_LARGE":
@@ -206,7 +214,8 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 		}
 	}
 	feedbackRead := r.Method == http.MethodGet && len(parts) >= 3 && len(parts) <= 4 && parts[0] == "works" && parts[2] == "agent-requests"
-	if r.URL.RawQuery != "" && !feedbackRead && !(len(parts) == 5 && parts[0] == "works" && parts[2] == "services" && parts[4] == "logs") {
+	imageHistory := r.Method == http.MethodGet && len(parts) == 4 && parts[0] == "works" && parts[2] == "sessions"
+	if r.URL.RawQuery != "" && !feedbackRead && !imageHistory && !(len(parts) == 5 && parts[0] == "works" && parts[2] == "services" && parts[4] == "logs") {
 		return desktopControl{}, true, errors.New("INVALID_INPUT")
 	}
 	method := r.Method
@@ -424,7 +433,7 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 		}
 		return desktopControl{}, false, nil
 	}
-	if (parts[2] == "models" || parts[2] == "chat-capabilities" || parts[2] == "chat-models" || parts[2] == "commands") && len(parts) == 3 && method == http.MethodGet {
+	if (parts[2] == "models" || parts[2] == "chat-image-capabilities" || parts[2] == "chat-capabilities" || parts[2] == "chat-models" || parts[2] == "commands") && len(parts) == 3 && method == http.MethodGet {
 		return create(method, base+"/"+parts[2], nil, 200)
 	}
 	if parts[2] == "agent-requests" || parts[2] == "evidence" {
@@ -553,14 +562,22 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			if err != nil {
 				return desktopControl{}, true, err
 			}
-			return create(method, path+"/"+sessionID, nil, 200)
+			suffix := ""
+			if r.URL.RawQuery != "" {
+				q := r.URL.Query()
+				if len(q) != 1 || len(q["imageProfile"]) != 1 || q.Get("imageProfile") != chatimages.Profile {
+					return desktopControl{}, true, errors.New("INVALID_INPUT")
+				}
+				suffix = "?imageProfile=" + chatimages.Profile
+			}
+			return create(method, path+"/"+sessionID+suffix, nil, 200)
 		}
 		return desktopControl{}, false, nil
 	}
 	if parts[2] == "runs" {
 		path := base + "/runs"
 		if len(parts) == 3 && method == http.MethodPost {
-			input, err := desktopControlInput(r, "sessionId", "prompt", "modelRef", "submissionKey", "inputMode")
+			input, err := desktopControlInputLimit(r, chatimages.MaxRequestBytes, "sessionId", "prompt", "modelRef", "submissionKey", "inputMode", "images")
 			if err != nil {
 				return desktopControl{}, true, err
 			}
@@ -574,8 +591,21 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			if _, okay := desktopResourcePart(sessionID, desktopIDPattern); !okay || !valid {
 				return desktopControl{}, true, errors.New("INVALID_INPUT")
 			}
-			if _, valid := desktopFieldString(input, "prompt", 65536); !valid {
+			var images []chatimages.Input
+			if raw, ok := input["images"]; ok {
+				if string(raw) == "null" || json.Unmarshal(raw, &images) != nil {
+					return desktopControl{}, true, chatimages.ErrInvalid
+				}
+				if _, err := chatimages.Validate(images); err != nil {
+					return desktopControl{}, true, err
+				}
+			}
+			var prompt string
+			if json.Unmarshal(input["prompt"], &prompt) != nil || len(prompt) > 65536 || strings.ContainsRune(prompt, 0) || strings.TrimSpace(prompt) == "" && len(images) == 0 {
 				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			if len(images) > 0 && string(input["inputMode"]) != `"text"` {
+				return desktopControl{}, true, chatimages.ErrInvalid
 			}
 			if mode, exists := input["inputMode"]; exists {
 				var value any

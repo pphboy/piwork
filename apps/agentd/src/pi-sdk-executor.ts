@@ -7,6 +7,7 @@ import { createDeterministicRuntime, getSupportedThinkingLevels, mapSdkEvent } f
 import type { RunExecutionContext, RunExecutor } from "./runs.js";
 import type { AgentSessionService } from "./sessions.js";
 import { isBrainVerificationTarget, type RunModelSnapshot, type SlashCommand, type ThinkingLevel, type ModelApi, type ModelCapabilities } from "@piwork/contracts";
+import { ChatImageError, chatInputDigest } from "@piwork/contracts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { RunModelResolver } from "./run-models.js";
 import { parseResourceCommand, requireResourceCommand, validateLoadedResourceCommand } from "./resource-commands.js";
@@ -52,6 +53,8 @@ export class PiSdkRunExecutor implements RunExecutor {
       throw new Error("historical Session cannot be continued in this context");
     }
     emitRunPhase(context, "session-continue-succeeded");
+    this.sessions.restoreImageInputs(context.sessionId,context.runId,sessionManager);
+    if((context.images?.length || sessionManager.buildSessionContext().messages.some(m=>"content" in m && Array.isArray(m.content) && m.content.some(p=>p.type==="image"))) && !model.input.includes("image")) throw new ChatImageError("IMAGE_MODEL_UNSUPPORTED","This model does not support the Session's image context.");
     const { session } = await createAgentSession({
       cwd: this.sessions.workspaceDirectory(),
       agentDir: this.agentDirectory,
@@ -127,6 +130,21 @@ export class PiSdkRunExecutor implements RunExecutor {
         };
       }
       let prompt = context.prompt;
+      if(context.images?.length) {
+        const transform=session.agent.onPayload;
+        session.agent.onPayload=async(payload,requestModel)=>{
+          const changed=await transform?.(payload,requestModel),result=changed===undefined?payload:changed;
+          // Keep checking retries of the first model turn. Later tool turns
+          // and SDK compaction may legitimately change the effective context.
+          if(!session.messages.some(message=>message.role==='assistant'&&!previousMessages.has(message)&&message.stopReason!=='error'&&message.stopReason!=='aborted'))assertAcceptedImagePayload(result,context.images!);return result;
+        };
+        const original=session.extensionRunner.emitInput.bind(session.extensionRunner);
+        session.extensionRunner.emitInput=async(...args)=>{
+          const result=await original(...args);
+          if(result.action==="handled" || result.action==="transform" && chatInputDigest(result.text,result.images?.map(i=>({mimeType:i.mimeType as "image/png"|"image/jpeg"|"image/webp",data:i.data})) ?? context.images)!==chatInputDigest(context.prompt,context.images)) throw new ChatImageError("IMAGE_INPUT_UNSUPPORTED","An input handler changed or consumed the accepted image message.");
+          return result;
+        };
+      }
       if (context.inputMode === "command") {
         const command = requireResourceCommand(this.context.commands ?? [], prompt);
         validateLoadedResourceCommand(resourceLoader, command);
@@ -144,10 +162,11 @@ export class PiSdkRunExecutor implements RunExecutor {
       sessionManager.appendCustomEntry("piwork-run", { runId: context.runId });
       phase = "run";
       emitRunPhase(context, "prompt-started");
-      await session.prompt(prompt, { expandPromptTemplates: context.inputMode !== "text", preflightResult: success => {
+      await session.prompt(prompt, { ...(context.images?.length?{images:context.images.map(i=>({type:"image" as const,mimeType:i.mimeType,data:i.data}))}:{}), expandPromptTemplates: context.inputMode !== "text", preflightResult: success => {
         if (success) { if (runErrors > 0) failExtensionEvent("run"); assertAcceptedOptions(); }
       } });
       emitRunPhase(context, "prompt-finished");
+      this.sessions.syncImageInputs(context.sessionId);
       if (runErrors > 0) failExtensionEvent("run");
       const assistant = session.messages.findLast((message) => message.role === "assistant" && !previousMessages.has(message));
       if (assistant === undefined || assistant.role !== "assistant") throw new Error("model execution produced no assistant result");
@@ -196,6 +215,18 @@ export class PiSdkRunExecutor implements RunExecutor {
     await runtime.setRuntimeApiKey(config.provider, credential);
     return { runtime, model };
   }
+}
+
+function assertAcceptedImagePayload(payload:unknown,images:NonNullable<RunExecutionContext['images']>):void {
+  const value=payload as {input?:Array<{role?:string;content?:unknown}>;messages?:Array<{role?:string;content?:unknown}>};
+  const message=(value.input ?? value.messages ?? []).filter(m=>m.role==='user').at(-1);
+  const parts=Array.isArray(message?.content)?message.content as Array<Record<string,any>>:[];
+  const actual=parts.flatMap(part=>{
+    if(part.type==='input_image' && typeof part.image_url==='string'){const match=/^data:([^;]+);base64,([\s\S]+)$/.exec(part.image_url);return match?[{mimeType:match[1],data:match[2]}]:[];}
+    if(part.type==='image' && part.source?.type==='base64')return [{mimeType:part.source.media_type,data:part.source.data}];
+    return [];
+  });
+  if(actual.length!==images.length || actual.some((image,index)=>image.mimeType!==images[index]!.mimeType || image.data!==images[index]!.data))throw new ChatImageError('IMAGE_INPUT_UNSUPPORTED','A provider input handler changed the accepted images.');
 }
 
 /** Existing package children retain the Work default; overrides never rewrite it. */

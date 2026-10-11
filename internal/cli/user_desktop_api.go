@@ -316,6 +316,9 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		if d.serveRunEvents(w, r) {
 			return
 		}
+		if d.serveChatImage(w, r) {
+			return
+		}
 		if d.serveKnownOperations(w, r) {
 			return
 		}

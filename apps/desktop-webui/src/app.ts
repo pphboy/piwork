@@ -1,4 +1,5 @@
 import { activityGroups } from './chat-projection.js';
+import { ImageDrafts, type DraftImage, type HistoryImage } from './images.js';
 import { editAdvanced, synchronizeConfiguration } from './configuration.js';
 import { ActionState, renderActionStates, type ActionIntent, type ActionRecord } from './action-state.js';
 import { adapter, DesktopError, fileVersion, type TransferResult } from "./adapter.js";
@@ -11,6 +12,13 @@ import {
 } from "./models.js";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
+const imageDrafts = new ImageDrafts(()=>render());
+const imageDraftErrors=new Map<string,{message:string}>();
+const textDraftRevisions=new Map<string,number>();
+let imageSelection=0;
+interface ImageSubmission {key:string;destinationKey:string;text:string;textRevision:number;images:DraftImage[];epoch:number;error?:{message:string}}
+const pendingImageSubmissions=new Map<string,ImageSubmission>();
+const imageObserver=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){const el=entry.target as HTMLElement;imageObserver.unobserve(el);const w=adapter.getWork(el.dataset.work!),session=w?.sessions.find(s=>s.id===el.dataset.session),image=session?.messages.find(m=>m.runId===el.dataset.run && m.images?.some(i=>i.imageIndex===Number(el.dataset.index)))?.images?.find(i=>i.imageIndex===Number(el.dataset.index));if(w&&session&&image)adapter.loadHistoryImage(w.id,session.id,el.dataset.run!,image);}});
 const esc = (s: unknown) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -167,7 +175,7 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
   let label = actionLabels[action]; if (!label) return;
   if (['service-action', 'confirm-service-control'].includes(action)) label = `${el.dataset.control || view.data.control || "Control"} Service`;
   const w = targetWork(el); let kind: ActionIntent['kind'] = 'read';
-  if(action==='send-message' && w && !view.literalSlash && /^\/(model|thinking)\s*$/.test((view.drafts[draftKey(w)] || '').trim())) return;
+  if(action==='send-message' && w && !imageDrafts.get(draftKey(w)).length && !view.literalSlash && /^\/(model|thinking)\s*$/.test((view.drafts[draftKey(w)] || '').trim())) return;
   if (['sign-in', 'sign-out', 'confirm-switch-core', 'confirm-reset-browser-access'].includes(action)) kind = 'identity';
   else if (['create-work', 'start-work', 'confirm-stop', 'confirm-delete'].includes(action)) kind = 'lifecycle';
   else if (['save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'upload-input'].includes(action)) kind = 'files';
@@ -268,6 +276,20 @@ function rememberWork() {
 }
 function draftKey(w: Work, session = view.session) {
   return `${w.id}:${session || "new"}`;
+}
+function imageDraftMarkup(w:Work,key:string) {
+  const images=imageDrafts.get(key),reason=images.length?adapter.imageInputReason(w.id,view.session):'';
+  return `${images.length?`<div class="chat-image-drafts">${images.map(image=>`<div class="chat-image-draft"><img src="${esc(image.url)}" alt="${esc(image.name)}"><span>${esc(image.name)}${image.reading?' · Checking…':''}</span>${btn('Remove','remove-chat-image','small',`data-id="${esc(image.id)}" aria-label="Remove ${esc(image.name)}"`)}</div>`).join('')}</div>`:''}${reason?feedback(esc(reason),'warning',adapter.imageCapabilities.get(w.id)?.error?btn('Check image support','check-image-support','small'):''):''}${imageDraftErrors.get(key)?.message?feedback(esc(imageDraftErrors.get(key)!.message),'warning'):''}`;
+}
+async function addChatImages(files:File[]) {
+ const w=current();if(!w)return;const key=draftKey(w),epoch=adapter.identityEpoch,origin=location.hash,session=view.session,selection=imageSelection;
+ const valid=()=>epoch===adapter.identityEpoch&&origin===location.hash&&selection===imageSelection&&(!session||view.session===session);
+ imageDraftErrors.set(key,{message:''});const errors=await imageDrafts.add(key,files,valid);if(valid()){imageDraftErrors.set(key,{message:errors.join(' ')});render();}
+}
+function historyImageMarkup(w:Work,session:string,run:string,image:HistoryImage) {
+ const key=adapter.historyImageKey(w.id,session,run,image.imageIndex),state=adapter.imageLoads.get(key);
+ const attrs=`data-work="${esc(w.id)}" data-session="${esc(session)}" data-run="${esc(run)}" data-index="${esc(image.imageIndex)}"`;
+ return `<div class="chat-history-image" data-history-image ${attrs}>${state?.phase==='ready'?`<button data-action="preview-chat-image" ${attrs} aria-label="View image ${esc(image.imageIndex+1)}"><img src="${esc(state.url)}" alt="Sent image ${esc(image.imageIndex+1)}" loading="lazy"></button>`:state?.phase==='error'?`${feedback(esc(state.error),'warning')}${btn('Retry image','retry-chat-image','small',attrs)}`:'<span role="status">Loading image…</span>'}</div>`;
 }
 async function openWork(w: Work, record?: ActionRecord) {
   await guard(async () => {
@@ -423,17 +445,19 @@ function agent(w: Work, focus: boolean) {
   const readingSessions = !w.resourceChecked?.agent && !w.resourceErrors?.agent;
   const session =
     w.sessions.find((s) => s.id === view.session) || w.sessions[0];
-  if(session){if(!view.session && view.drafts[draftKey(w,"")] && !view.drafts[draftKey(w,session.id)])view.drafts[draftKey(w,session.id)]=view.drafts[draftKey(w,"")];view.session=session.id;}
+  if(session){if(!view.session && view.drafts[draftKey(w,"")] && !view.drafts[draftKey(w,session.id)]){view.drafts[draftKey(w,session.id)]=view.drafts[draftKey(w,"")];textDraftRevisions.set(draftKey(w,session.id),textDraftRevisions.get(draftKey(w,"")) || 0);}const from=draftKey(w,""),to=draftKey(w,session.id);if(imageDrafts.get(from).length&&!imageDrafts.get(to).length&&imageDraftErrors.has(from)){imageDraftErrors.set(to,imageDraftErrors.get(from)!);imageDraftErrors.delete(from);}imageDrafts.move(from,to);view.session=session.id;}
   const run = w.run;
   const active =
     run && ["accepted", "running", "cancelling"].includes(run.status);
   const busy = active && run.sessionId !== session?.id;
   const draft = view.drafts[draftKey(w, session?.id || "")] || "";
   adapter.activateChat(w.id,session?.id || "");
+  if(!adapter.imageCapabilities.has(w.id))queueMicrotask(()=>{void adapter.loadImageCapabilities(w.id);});
   const modelReady=adapter.modelReady(w.id,session?.id || "");
   const agentError=w.resourceErrors?.agent!==adapter.models.get(w.id)?.error?w.resourceErrors?.agent:'';
+  const draftImages=imageDrafts.get(draftKey(w,session?.id || ""));const imageWaiting=draftImages.length>0 && (!w.resourceChecked?.agent || session?.loading && !session.checkedAt || draftImages.some(image=>image.reading));
   const webDraft=!view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
-  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout==="chat-only" && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}${session?.runs?.length ? `<details class="run-history"><summary>Run history · actual models and sources</summary>${session.runs.map(r=>`<p><code>${esc(r.id)}</code> · ${esc(modelDisplayName(r.actualModel))} · ${esc(r.source?.kind === "service" ? `Service: ${r.source.serviceName || "automatic"}` : "Chat")} · Thinking ${esc(r.thinkingLevel===null?"Normal (Thinking unconfirmed)":r.thinkingLevel || "off")} · ${esc(r.status)}</p>`).join("")}</details>` : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(modelDisplayName(run.actualModel))} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer"><textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}<div class="composer-actions">${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${!webDraft && (active || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
+  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout==="chat-only" && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}${session?.runs?.length ? `<details class="run-history"><summary>Run history · actual models and sources</summary>${session.runs.map(r=>`<p><code>${esc(r.id)}</code> · ${esc(modelDisplayName(r.actualModel))} · ${esc(r.source?.kind === "service" ? `Service: ${r.source.serviceName || "automatic"}` : "Chat")} · Thinking ${esc(r.thinkingLevel===null?"Normal (Thinking unconfirmed)":r.thinkingLevel || "off")} · ${esc(r.status)}</p>`).join("")}</details>` : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(modelDisplayName(run.actualModel))} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}<div class="composer-actions">${btn(icon("upload",16),"add-chat-images","icon-button quiet",'title="Add images" aria-label="Add images"')}${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${imageWaiting || !webDraft && (active || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
 }
 function modelComposer(w:Work,sessionId:string) {
  const {name,thinking,state}=chatSettings(w,sessionId);
@@ -570,7 +594,7 @@ function messageMarkup(w:Work,sessionId:string,messages:import('./models.js').Me
  const key=`${adapter.identityEpoch}:${w.id}:${sessionId}:${group.key}`;
  if(group.activity){const running=group.messages.some(m=>m.tool?.status==='Running'),failures=group.messages.filter(m=>m.tool?.status==='Failed'),unknown=group.messages.some(m=>m.tool?.status?.includes('confirmed'));
  return `<details class="activity" data-message-key="${esc(key)}" data-activity-key="${esc(key)}" ${expandedActivity.get(key)?'open':''}><summary>${icon('terminal',14)} Activity · ${group.messages.length} ${group.messages.length===1?'tool':'tools'} · ${failures.length?'Needs attention':running?'Running':unknown?'Result not confirmed':'Completed'}${failures.length?` · ${failures.length} failed<small class="activity-error">${esc(failures[0]?.tool?.content?.slice(0,160) || 'A tool failed. Open Activity to review the result.')}</small>`:''}</summary>${group.messages.map(m=>`<details class="tool-event" data-message-key="${esc(`${key}:${m.tool?.id || m.id}`)}" data-activity-key="${esc(`${key}:${m.tool?.id || m.id}`)}" ${expandedActivity.get(`${key}:${m.tool?.id || m.id}`)?"open":""}><summary>${esc(m.tool?.name)} · ${esc(m.tool?.status)}</summary><pre>${esc(m.tool?.content)}</pre></details>`).join('')}</details>`;}
- return group.messages.map(m=>`<div class="message ${m.role}" data-message-key="${esc(key)}">${m.role==='assistant'?`<div class="message-author">${icon('spark',14)} piwork</div>`:''}<div class="message-text">${esc(m.text)}</div>${m.source?`<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${icon('file',13)} ${esc(m.source)}</button>`:''}</div>`).join('');
+ return group.messages.map(m=>`<div class="message ${m.role}" data-message-key="${esc(key)}">${m.role==='assistant'?`<div class="message-author">${icon('spark',14)} piwork</div>`:''}<div class="message-text">${esc(m.text)}</div>${m.images?.length?`<div class="chat-message-images">${m.images.map(image=>historyImageMarkup(w,sessionId,m.runId!,image)).join('')}</div>`:''}${m.source?`<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${icon('file',13)} ${esc(m.source)}</button>`:''}</div>`).join('');
  }).join('');
 }
 const webCommands=['new','resume','model','thinking','settings'];
@@ -591,7 +615,7 @@ function commandPalette(w:Work,draft:string) {
 }
 function fillCommand(command:string) {
  const work=current();if(!work)return;const key=draftKey(work),draft=view.drafts[key] || '';
- view.drafts[key]=draft.replace(/^(\s*)\/[^\s]*/,`$1${command}`)+( /\s/.test(draft.trimStart())?'':' ');view.commandIndex=0;render();const input=root.querySelector<HTMLTextAreaElement>('#composer');if(input){input.value=view.drafts[key];input.focus();const position=(/^\s*\/[^\s]*/.exec(input.value)?.[0].length ?? input.value.length)+1;view.commandCaret=Math.min(position,input.value.length);input.setSelectionRange(view.commandCaret,view.commandCaret);}
+ textDraftRevisions.set(key,(textDraftRevisions.get(key) || 0)+1);view.drafts[key]=draft.replace(/^(\s*)\/[^\s]*/,`$1${command}`)+( /\s/.test(draft.trimStart())?'':' ');view.commandIndex=0;render();const input=root.querySelector<HTMLTextAreaElement>('#composer');if(input){input.value=view.drafts[key];input.focus();const position=(/^\s*\/[^\s]*/.exec(input.value)?.[0].length ?? input.value.length)+1;view.commandCaret=Math.min(position,input.value.length);input.setSelectionRange(view.commandCaret,view.commandCaret);}
 }
 function files(w: Work) {
   const directory = adapter.directories.get(`${w.id}:${view.path}`);
@@ -792,6 +816,7 @@ function modalMarkup() {
       title = "Agent options";
       body = `<div class="menu-list">${btn("Sessions", "sessions")}${btn("New session", "new-session")}${btn("Run details", "run-details", "", target?.run ? "" : "disabled")}${btn("Focus chat", "focus-chat")}</div>`;
       break;
+    case "chat-image-preview":title="Image preview";body=`${target && !adapter.project(target).usable?'<p class="muted">Previously loaded image. Start this Work to read current history.</p>':''}<img class="chat-image-preview" src="${esc(view.data.url)}" alt="Sent image">`;footer=close();break;
     case "run-details":
       title = "Run details";
       body = target?.run
@@ -1115,7 +1140,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case 'choose-command':fillCommand(el.dataset.command!);break;
     case 'load-commands':if(currentWork)await adapter.loadCommands(currentWork.id);break;
     case 'toggle-slash-mode':view.literalSlash=!view.literalSlash;render();break;
-    case 'check-chat-submission':if(currentWork){const result=await stay(adapter.recoverChatSubmission(currentWork.id));if(result){if(result.kind==='session'){const original=view.drafts[draftKey(currentWork)] || '';view.session=result.session.sessionId;if(original && !view.drafts[draftKey(currentWork)])view.drafts[draftKey(currentWork)]=original;}for(const old of actions.records.values())if(old.blocked && old.work===currentWork.id && old.kind==='agent' && (result.kind==='session'?old.action==='new-session'||old.action==='send-message':old.action==='send-message'))actions.review(old);}render();}break;
+    case 'check-chat-submission':if(currentWork){const result=await stay(adapter.recoverChatSubmission(currentWork.id));if(result){if(result.kind==='run'){const submitted=pendingImageSubmissions.get(currentWork.id);if(submitted&&submitted.epoch===adapter.identityEpoch){consumeImageSubmission(currentWork.id,submitted);}}if(result.kind==='session'){const original=view.drafts[draftKey(currentWork)] || '';view.session=result.session.sessionId;if(original && !view.drafts[draftKey(currentWork)])view.drafts[draftKey(currentWork)]=original;}for(const old of actions.records.values())if(old.blocked && old.work===currentWork.id && old.kind==='agent' && (result.kind==='session'?old.action==='new-session'||old.action==='send-message':old.action==='send-message'))actions.review(old);}render();}break;
 
     case "close-modal": {
       const key = view.modal==='chat-response-settings'?'':focusReturn;
@@ -1190,11 +1215,11 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     }
     case "import-sign-in": importSignInSuspended = true; view.modal = ""; render(); toast("Sign in to continue importing the inspected package."); break;
     case "sign-out": {
-      const result = await stay(adapter.signOut()); view.drafts = {}; view.config = null; view.configDirty = false; view.file = "";
+      const result = await stay(adapter.signOut()); view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();imageDraftErrors.clear(); view.config = null; view.configDirty = false; view.file = "";
       closeModal(); toast(result.credentialCleared === false ? `Local identity cleared; saved credential cleanup is incomplete. Run ${adapter.logoutCommand()}.` : result.remoteRevocationConfirmed ? "Signed out. Browser access is retained." : "Local identity and saved credential cleared. Remote revocation could not be confirmed."); break;
     }
     case "reconnect": toast("Start piwork-cli desktop and open the fresh launch address."); break;
-    case "confirm-switch-core": await stay(adapter.switchCore(view.coreAddress)); view.drafts = {}; view.config = null; view.configDirty = false; closeModal(); break;
+    case "confirm-switch-core": await stay(adapter.switchCore(view.coreAddress)); view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();imageDraftErrors.clear(); view.config = null; view.configDirty = false; closeModal(); break;
     case "retry-works": await stay(adapter.listWorks()); break;
     case "check-connection": await stay(adapter.checkConnection()); toast("Connection checked."); break;
     case "start-work":
@@ -1340,6 +1365,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "suggest-files":
       if (currentWork) {
         if (!view.session) view.session = await stay(adapter.newSession(currentWork.id));
+        textDraftRevisions.set(draftKey(currentWork),(textDraftRevisions.get(draftKey(currentWork)) || 0)+1);
         view.drafts[draftKey(currentWork)] =
           action === "suggest-message"
             ? "Build a simple notes app and save its data in the shared workspace."
@@ -1371,10 +1397,21 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       if(currentWork && view.session) await stay(adapter.saveModel(currentWork.id,view.session));break;
     case "check-session-model":
       if(currentWork && view.session) await stay(adapter.checkSessionModel(currentWork.id,view.session));break;
+    case "check-image-support":if(currentWork)await stay(adapter.refreshImageCapabilities(currentWork.id));break;
+    case "add-chat-images": root.querySelector<HTMLInputElement>('#chat-image-input')?.click();break;
+    case "remove-chat-image":if(currentWork)imageDrafts.remove(draftKey(currentWork),el.dataset.id!);break;
+    case "retry-chat-image":case "preview-chat-image": {
+      const session=currentWork?.sessions.find(s=>s.id===el.dataset.session),image=session?.messages.flatMap(m=>m.runId===el.dataset.run?m.images ?? []:[]).find(i=>i.imageIndex===Number(el.dataset.index));
+      if(currentWork&&session&&image){if(action==='retry-chat-image')adapter.retryHistoryImage(currentWork.id,session.id,el.dataset.run!,image);else{const state=adapter.imageLoads.get(adapter.historyImageKey(currentWork.id,session.id,el.dataset.run!,image.imageIndex));if(state?.url)openModal('chat-image-preview',{url:state.url});}}
+      break;
+    }
     case "send-message":
       if (currentWork) {
         const originalKey = draftKey(currentWork);
         const text = view.drafts[originalKey] || "";
+        const images=imageDrafts.capture(originalKey),textRevision=textDraftRevisions.get(originalKey) || 0,error=imageDraftErrors.get(originalKey);
+        if(images.length){const reason=adapter.imageInputReason(currentWork.id,view.session);if(reason)throw new Error(reason);}
+        if(images.length && text.trimStart().startsWith('/') && !view.literalSlash)throw new Error('Images require Send as text. Your draft is kept.');
         if(text.trimStart().startsWith('/') && !view.literalSlash){
           const match=/^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text.trim());const name=match?.[1] || '';
           if(webCommands.includes(name)){
@@ -1391,10 +1428,12 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
         }
         if(!view.session){view.session=await stay(adapter.newSession(currentWork.id));render();await stay(adapter.saveModel(currentWork.id,view.session));}
         adapter.selectedService = view.service;
-        await stay(adapter.send(currentWork.id, view.session, text, view.includeIdentity,text.trimStart().startsWith("/") && !view.literalSlash?"command":(adapter.chatCapabilities.get(currentWork.id) ?? 0)>=1?"text":undefined));
-        if (record) { record.businessId=currentWork.run?.id; actions.confirm(record, 'Message accepted'); }
-        if (view.drafts[draftKey(currentWork)] === text) view.drafts[draftKey(currentWork)] = "";
-        if (view.drafts[originalKey] === text) view.drafts[originalKey] = "";
+        const submission:ImageSubmission={key:originalKey,destinationKey:draftKey(currentWork),text,textRevision,images,epoch:adapter.identityEpoch,error};if(images.length)pendingImageSubmissions.set(currentWork.id,submission);
+        let submittedRunId="";try {submittedRunId=await stay(adapter.send(currentWork.id, view.session, text, view.includeIdentity,text.trimStart().startsWith("/") && !view.literalSlash?"command":images.length || (adapter.chatCapabilities.get(currentWork.id) ?? 0)>=1?"text":undefined,images.map(i=>i.input)).then(result=>{if(images.length)consumeImageSubmission(currentWork.id,submission);return result;}));}catch(error){if(!adapter.chatSubmissions.has(currentWork.id))pendingImageSubmissions.delete(currentWork.id);throw error;}
+        pendingImageSubmissions.delete(currentWork.id);
+        if (record) { record.businessId=submittedRunId; actions.confirm(record, 'Message accepted'); }
+        if(!images.length){if (view.drafts[draftKey(currentWork)] === text) view.drafts[draftKey(currentWork)] = "";
+        if (view.drafts[originalKey] === text) view.drafts[originalKey] = "";}
         view.scrollPinned=true;render();const composer=root.querySelector<HTMLTextAreaElement>("#composer");if(composer && composer.value===text)composer.value=view.drafts[draftKey(currentWork)] || "";
       }
       break;
@@ -1956,9 +1995,10 @@ function render() {
   }
   // Ephemeral status nodes must not displace existing iframe ancestors during reconciliation.
   root.querySelectorAll('[data-action-status]').forEach(node => node.remove());
-  reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal && adapter.state.browserAccess === "authorized" ? modalMarkup() : ""}<input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
+  reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal && adapter.state.browserAccess === "authorized" ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
   for (const frame of root.querySelectorAll<HTMLIFrameElement>('iframe[data-service-key]')) if (!frame.dataset.observed) { frame.dataset.observed = 'true'; frame.addEventListener('load', () => { const [workId, serviceId, port] = frame.dataset.serviceKey!.split(':'); void adapter.serviceFrameLoaded(workId, serviceId, Number(port)).catch(error => toast(error.message)); }); }
   renderActionStates(root, actions, location.hash, el => actionIntent(el), record => !record.resource?.startsWith('service:') || record.resource === `service:${view.data.serviceId || (current() ? activeService(current()!)?.id : view.service)}${record.kind === 'service' ? '' : `:${view.port}`}`);
+  for(const el of root.querySelectorAll<HTMLElement>('[data-history-image]'))if(!el.dataset.imageObserved){el.dataset.imageObserved='true';imageObserver.observe(el);}
   const dialog = root.querySelector<HTMLDialogElement>("#modal");
   if (dialog) {
     if (!dialog.open) dialog.showModal();
@@ -2018,6 +2058,7 @@ function render() {
 root.addEventListener("click", (e) => {
   const el = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
   if (!el || el.hasAttribute("disabled")) return;
+  if(["select-session","new-session"].includes(el.dataset.action || ""))imageSelection++;
   if (!view.modal) focusReturn = focusKey(el);
   const origin = viewKey();
   void dispatchAction(el).catch((error) => {
@@ -2054,7 +2095,7 @@ root.addEventListener("input", (e) => {
       break;
     case "composer": {
       const work = current();
-      if(work){view.drafts[draftKey(work)]=value;view.commandCaret=input.selectionStart ?? value.length;view.commandIndex=0;render();}
+      if(work){textDraftRevisions.set(draftKey(work),(textDraftRevisions.get(draftKey(work)) || 0)+1);view.drafts[draftKey(work)]=value;view.commandCaret=input.selectionStart ?? value.length;view.commandIndex=0;render();}
       break;
     }
     case "note-title":
@@ -2364,7 +2405,7 @@ async function restoreRuntimePanel(work: Work) {
 }
 adapter.subscribe(() => { if (lastIdentity !== adapter.identityEpoch) { lastIdentity = adapter.identityEpoch; actions.clear(); workReadErrors.clear(); view.serviceOpenError = "";
     view.file = ""; view.fileDraft = ""; view.fileOriginal = ""; view.fileBaseline = ""; view.fileReread = null;
-    view.config = null; view.configDirty = false; view.drafts = {};resetWorkspaceFocus();chatReading.clear();expandedActivity.clear();pendingWebCommand=undefined; fileSelections.clear(); runtimeAvailability.clear();
+    view.config = null; view.configDirty = false; view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();imageDraftErrors.clear();resetWorkspaceFocus();chatReading.clear();expandedActivity.clear();pendingWebCommand=undefined; fileSelections.clear(); runtimeAvailability.clear();
     if (!(view.modal === "import" && adapter.inspection)) { view.modal = ""; view.modalError = ""; } }
   const work = current();
   const restore = work && runtimeAvailability.get(work.id) === false && adapter.project(work).usable;
@@ -2483,3 +2524,22 @@ document.addEventListener('fullscreenchange',()=>render());
 function composerCaret(event:Event){const input=event.target;if(input instanceof HTMLTextAreaElement && input.id==='composer' && !composition){const position=input.selectionStart ?? 0;if(position!==view.commandCaret){view.commandCaret=position;render();}}}
 root.addEventListener('click',composerCaret);
 root.addEventListener('keyup',composerCaret);
+
+root.addEventListener('paste',event=>{if(!(event.target as HTMLElement).closest('#composer'))return;const files=[...(event.clipboardData?.items ?? [])].filter(item=>item.kind==='file').map(item=>item.getAsFile()).filter((file):file is File=>!!file);if(!files.length)return;if(!event.clipboardData?.getData('text/plain'))event.preventDefault();void addChatImages(files);});
+root.addEventListener('dragover',event=>{if((event.target as HTMLElement).closest('.composer') && event.dataTransfer?.types.includes('Files'))event.preventDefault();});
+root.addEventListener('drop',event=>{if(!(event.target as HTMLElement).closest('.composer'))return;const files=[...(event.dataTransfer?.files ?? [])];if(files.length){event.preventDefault();void addChatImages(files);}});
+root.addEventListener('change',event=>{const input=event.target as HTMLInputElement;if(input.id==='chat-image-input'){const files=[...(input.files ?? [])];input.value='';void addChatImages(files);}});
+window.addEventListener('pagehide',()=>{imageDrafts.clear();adapter.stopImageReads();imageObserver.disconnect();});
+
+window.addEventListener('hashchange',()=>adapter.stopImageReads());
+
+function consumeImageSubmission(workId:string,submitted:ImageSubmission) {
+ if(submitted.epoch!==adapter.identityEpoch)return;
+ for(const key of new Set([submitted.key,submitted.destinationKey])){
+  imageDrafts.consume(key,submitted.images);
+  if((textDraftRevisions.get(key) || 0)===submitted.textRevision && view.drafts[key]===submitted.text)view.drafts[key]='';
+  if(imageDraftErrors.get(key)===submitted.error)imageDraftErrors.delete(key);
+ }
+ if(pendingImageSubmissions.get(workId)===submitted)pendingImageSubmissions.delete(workId);
+ render();
+}

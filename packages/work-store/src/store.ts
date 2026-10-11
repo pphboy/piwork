@@ -7,6 +7,7 @@ import { LEGACY_SCHEMA_OBJECTS } from "./legacy-schema-objects.js";
 import { FeedbackStore, type RequestPhase } from "./feedback.js";
 import { MemoryStore, type MemorySelection } from "./memory.js";
 import { migrateExperience, type HistoryMigration } from "./memory-migration.js";
+import { parseChatImageInput, chatInputDigest, ChatImageError } from "@piwork/contracts";
 
 export { WORK_SCHEMA_VERSION };
 export const DEFAULT_MAX_RUN_EVENTS = 10_000;
@@ -68,6 +69,7 @@ export interface RunRecord {
 }
 
 export interface AcceptRunRequest {
+  readonly privateInputJson?: string;
   readonly workId: string;
   readonly sessionId: string;
   readonly submissionKey: string;
@@ -305,6 +307,12 @@ export class WorkStore {
         runId,
         now,
       );
+      if (request.privateInputJson) {
+        const input = parseChatImageInput(request.privateInputJson);
+        if (chatInputDigest(input.prompt, input.images) !== request.promptDigest) throw new Error("IMAGE_HISTORY_CORRUPT");
+        this.database.prepare("INSERT INTO run_events(run_id,sequence,event_type,payload_json,created_at) VALUES(?,1,'run.input',?,?)").run(runId, request.privateInputJson, now);
+        this.database.prepare("UPDATE runs SET latest_sequence=1 WHERE run_id=?").run(runId);
+      }
       if (request.agentRequest) this.feedback.claimRun(request.workId, request.agentRequest.requestId, runId, request.agentRequest.phase, now);
       const run = this.readRun(runId);
       if (run === undefined) throw new Error(`accepted Run ${runId} was not readable`);
@@ -500,6 +508,8 @@ export class WorkStore {
     try {
       const run = this.readRun(runId);
       if (run === undefined) throw new Error(`Run ${runId} does not exist`);
+      // Until the SDK copy is on disk this event is the only accepted input.
+      if (this.database.prepare("SELECT 1 FROM run_events WHERE run_id=? AND event_type='run.input'").get(runId)) { this.database.exec("COMMIT"); return run; }
       const earliestToKeep = Math.max(1, run.latestSequence - maxEvents + 1);
       this.database.prepare("DELETE FROM run_events WHERE run_id = ? AND sequence < ?").run(runId, earliestToKeep);
       this.database.prepare("UPDATE runs SET earliest_available_sequence = ? WHERE run_id = ?").run(
@@ -512,6 +522,20 @@ export class WorkStore {
       this.database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  privateInput(runId: string): ReturnType<typeof parseChatImageInput> | undefined {
+    const row = this.database.prepare("SELECT payload_json FROM run_events WHERE run_id=? AND event_type='run.input'").get(runId);
+    if (!row) return;
+    try {const value = parseChatImageInput(String(row.payload_json));
+    if (chatInputDigest(value.prompt,value.images) !== this.getRun(runId)?.promptDigest) throw new Error("IMAGE_HISTORY_CORRUPT");
+    return value;
+    }catch{throw new ChatImageError('IMAGE_HISTORY_CORRUPT','The accepted image input could not be verified.');}
+  }
+
+  /** Called only after the adapter verifies and syncs the complete SDK copy. */
+  releasePrivateInput(runId: string): void {
+    this.database.prepare("UPDATE run_events SET event_type='run.input.saved',payload_json='{}' WHERE run_id=? AND event_type='run.input'").run(runId);
   }
 
   listTables(): string[] {

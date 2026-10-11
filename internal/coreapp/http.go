@@ -65,6 +65,9 @@ func readCredentials(r *http.Request) (string, string, error) {
 	return body.Account.Value, body.Password.Value, nil
 }
 func readControlJSON[T any](r *http.Request, schema string, admin bool) (T, error) {
+	return readControlJSONLimit[T](r, schema, admin, 2<<20)
+}
+func readControlJSONLimit[T any](r *http.Request, schema string, admin bool, limit int64) (T, error) {
 	if admin {
 		values := r.Header.Values("Content-Type")
 		if len(values) != 1 || values[0] != "application/json" {
@@ -73,7 +76,7 @@ func readControlJSON[T any](r *http.Request, schema string, admin bool) (T, erro
 		}
 	}
 	body := &bodyReader{ReadCloser: r.Body}
-	result, err := contracts.Decode[T](body, schema, 2<<20)
+	result, err := contracts.Decode[T](body, schema, limit)
 	if timedOut(body.err) {
 		return result, contracts.NewError("REQUEST_TIMEOUT", "")
 	}

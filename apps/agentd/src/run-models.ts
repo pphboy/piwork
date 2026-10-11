@@ -5,6 +5,7 @@ import { THINKING_LEVELS, normalizeModelBaseUrl, publicRunModel, type ChatModel,
 import type { AgentRuntimeConfig } from "./application.js";
 import type { WorkPrivateClient } from "./work-private-client.js";
 import { resolveProductionModel } from "./pi-sdk-executor.js";
+import { type ImageAvailability } from "@piwork/contracts";
 
 export class RunModelError extends Error {
   constructor(readonly modelErrorCode: "MODEL_UNAVAILABLE" | "MODEL_NOT_SUPPORTED" | "MODEL_LIST_UNAVAILABLE" | "RUN_MODEL_SELECTION_UNSUPPORTED" | "THINKING_LEVEL_UNSUPPORTED" | "CHAT_OPTIONS_UNAVAILABLE" | "SLASH_COMMAND_UNKNOWN" | "SLASH_COMMAND_UNSUPPORTED" | "SLASH_COMMAND_UNAVAILABLE" | "CHAT_COMMANDS_UNAVAILABLE", message: string, readonly capabilityReason?: "capabilities-unconfirmed" | "sdk-unsupported") {
@@ -19,12 +20,21 @@ function capabilityFailure(error: unknown): RunModelError {
   return new RunModelError("MODEL_NOT_SUPPORTED", "This Work cannot confirm the model's Thinking capabilities. " + capabilityRecovery(reason), reason);
 }
 export interface RunModelResolver {
+  images?(model: RunModelSnapshot): Promise<ImageAvailability>;
   list(): Promise<RunModelList>;
   resolve(modelRef: string | null): Promise<RunModelSnapshot>;
   credential(model: RunModelSnapshot): Promise<string>;
   thinking?(model: RunModelSnapshot): Promise<{ thinkingLevels: ThinkingLevel[]; defaultThinkingLevel: ThinkingLevel | null; thinkingAvailability?: "unknown" }>;
 }
 export class AgentRunModels implements RunModelResolver {
+  async images(model: RunModelSnapshot): Promise<ImageAvailability> {
+    if(this.config.deterministic && model.provider === "piwork-deterministic") return "unsupported";
+    const runtime = await ModelRuntime.create({modelsPath:null,refreshOnCreate:false,allowModelNetwork:false});
+    try {
+      const selected = resolveProductionModel(runtime,{provider:model.provider,id:model.model,...(model.baseUrl?{baseUrl:model.baseUrl}:{}),...(model.api?{api:model.api}:{}),...(model.capabilities?{capabilities:model.capabilities}:{})},true);
+      return selected.input.includes("image") ? "supported" : "unsupported";
+    } catch { return "unknown"; }
+  }
   constructor(private readonly config: AgentRuntimeConfig["model"] & { deterministic: boolean },
     private readonly control?: Pick<WorkPrivateClient, "models" | "resolveModel">) {}
 

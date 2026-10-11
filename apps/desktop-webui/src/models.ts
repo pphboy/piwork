@@ -42,6 +42,7 @@ export interface WorkspaceFile {
   content?: string;
 }
 export interface Message {
+  images?: import('./images.js').HistoryImage[];
   id?: string;
   runId?: string;
   role: "user" | "assistant";
@@ -51,6 +52,7 @@ export interface Message {
 }
 export interface RunModel { modelRef: string | null; label: string; provider: string; model: string; thinkingLevels?: string[]; defaultThinkingLevel?: string | null; thinkingAvailability?: "unknown" }
 export interface Session {
+  imageProfile?: boolean;
   thinkingLevel?: string | null;
   loading?: boolean;
   checkedAt?: string;

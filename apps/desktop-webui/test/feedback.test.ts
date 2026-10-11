@@ -3,6 +3,7 @@ import test, { before, after } from 'node:test';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { chromium, expect, type Page, type Route } from '@playwright/test';
+import { createHash } from 'node:crypto';
 
 let browser: Awaited<ReturnType<typeof chromium.launch>>;
 let base = '';
@@ -16,8 +17,8 @@ const server = createServer(async (request, response) => {
 before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, channel: 'chromium' }); });
 after(async () => { await browser.close(); await new Promise<void>(done => server.close(() => done())); });
 
-type RequestRecord = { bytes?: Buffer | null; path: string; method: string; headers: Record<string, string>; body: string };
-type Reply = { passthrough?: boolean; status?: number; json?: unknown; body?: string; headers?: Record<string, string>; abort?: boolean };
+type RequestRecord = { bytes?: Buffer | null; path: string; search?:string; method: string; headers: Record<string, string>; body: string };
+type Reply = { passthrough?: boolean; status?: number; json?: unknown; body?: string | Buffer; headers?: Record<string, string>; abort?: boolean };
 const mtime1 = 'Sat, 03 Oct 2026 01:00:00 GMT';
 const mtime2 = 'Sat, 03 Oct 2026 01:00:02 GMT';
 const mtime3 = 'Sat, 03 Oct 2026 01:00:04 GMT';
@@ -28,7 +29,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
   let desired: Record<string, any> = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents', modelRef: 'original', mcp: { servers: [] } };
   const session = () => ({ state: signedIn ? 'authenticated' : 'signed-out', generation, csrf: 'local-session-csrf', coreUrl: core, ...(signedIn ? { user: { account: 'owner', role: 'user' } } : {}) });
   await page.route('**/_desktop/**', async (route: Route) => {
-    const r: RequestRecord = { path: new URL(route.request().url()).pathname.replace('/_desktop/api/', ''), method: route.request().method(), bytes: route.request().postDataBuffer(), headers: route.request().headers(), body: route.request().postData() ?? '' }; requests.push(r);
+    const r: RequestRecord = { path: new URL(route.request().url()).pathname.replace('/_desktop/api/', ''), search:new URL(route.request().url()).search, method: route.request().method(), bytes: route.request().postDataBuffer(), headers: route.request().headers(), body: route.request().postData() ?? '' }; requests.push(r);
     let reply = await handler(r);
     if (!reply) {
       if (r.path === 'session') reply = { json: session() };
@@ -65,6 +66,36 @@ function listing(body: string, modified: string) { return `<d:multistatus xmlns:
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
+for(const method of ['picker','paste','drop'])test(`Chat images: ${method} adds without side effects and sends a pure image`,async t=>{
+ const bytes=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url));
+ let accepted=false,submitted:any;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-image-capabilities'))return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};
+  if(r.path==='works/work-1/runs' && r.method==='POST'){submitted=JSON.parse(r.body);accepted=true;return {json:{run:{workId:'work-1',sessionId:'session-1',runId:'run-images',submissionKey:submitted.submissionKey,state:4,finalText:'Seen'}}};}
+  if(r.path==='works/work-1/runs/run-images')return {json:{run:{workId:'work-1',sessionId:'session-1',runId:'run-images',submissionKey:submitted?.submissionKey,state:4,finalText:'Seen'}}};
+  if(r.path.endsWith('/sessions/session-1') && accepted)return {json:{session:{workId:'work-1',sessionId:'session-1'},messages:[{entryId:'accepted',role:'user',runId:'run-images',blocks:[{blockId:'image',type:'image',image:{imageIndex:0,mimeType:'image/png',byteSize:bytes.length,sha256:'unused'}}]}],runs:[]}};
+ });
+ await page.locator('#composer').waitFor();const before=requests.filter(r=>r.method==='POST').length;
+ if(method==='picker')await page.locator('#chat-image-input').setInputFiles({name:'image.png',mimeType:'image/png',buffer:bytes});
+ else await page.evaluate(({data,method})=>{const file=new File([Uint8Array.from(atob(data),c=>c.charCodeAt(0))],'image.png',{type:'image/png'}),transfer=new DataTransfer();transfer.items.add(file);if(method==='paste')document.querySelector('#composer')!.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));else document.querySelector('.composer')!.dispatchEvent(new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));},{data:bytes.toString('base64'),method});
+ await expect(page.locator('.chat-image-draft')).toHaveCount(1);await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');
+ assert.equal(requests.filter(r=>r.method==='POST').length,before);
+ await button(page,'send-message').click();await expect.poll(()=>submitted?.images?.length).toBe(1);
+ assert.equal(submitted.prompt,'');assert.equal(submitted.inputMode,'text');assert.equal(submitted.images[0].data,bytes.toString('base64'));
+ await expect(page.locator('.chat-image-draft')).toHaveCount(0);assert.equal(requests.filter(r=>r.path==='works/work-1/runs' && r.method==='POST').length,1);
+});
+
+test('a pending picked image follows automatic initial Session discovery and finishes checking',async t=>{
+ const sessions=deferred();t.after(()=>sessions.resolve());const bytes=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url));let submitted:any;
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path==='works/work-1/sessions'){await sessions.promise;return {json:{sessions:[{sessionId:'session-1'}]}};}
+  if(r.path.endsWith('/chat-image-capabilities'))return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};
+  if(r.path==='works/work-1/runs'&&r.method==='POST'){submitted=JSON.parse(r.body);return {json:{run:{workId:'work-1',sessionId:'session-1',runId:'run-discovered',submissionKey:submitted.submissionKey,state:4}}};}
+ });
+ await page.evaluate(()=>{const original=File.prototype.arrayBuffer;File.prototype.arrayBuffer=function(){const file=this;return new Promise<ArrayBuffer>(resolve=>{(window as any).releaseImageRead=()=>{File.prototype.arrayBuffer=original;resolve(original.call(file));};});};});
+ await page.locator('#chat-image-input').setInputFiles({name:'early.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-draft')).toContainText('Checking');sessions.resolve();await expect(page.locator('.messages')).toContainText('original prompt');await page.evaluate(()=>(window as any).releaseImageRead());await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await button(page,'send-message').click();await expect.poll(()=>submitted?.sessionId).toBe('session-1');assert.equal(requests.filter(r=>r.path==='works/work-1/sessions'&&r.method==='POST').length,0);
+});
+
 test('Create Work geometry stays stable during delayed feedback on a narrow viewport',async t=>{
  const gate=deferred();t.after(()=>gate.resolve());
  const {page,requests}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {status:400,json:{code:'INVALID_REQUEST',message:'A long rejected creation message '.repeat(30)}};}});
@@ -82,6 +113,56 @@ test('Advanced Create Work keeps feedback visible and buttons stable when the re
  await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Advanced creation');await button(page,'toggle-create-advanced').click();await page.locator('#create-agents').fill('Long advanced instructions\n'.repeat(80));
  const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(page.locator('.create-action-status')).toContainText('Creating Work');await expect(page.locator('.create-action-status')).toBeInViewport();gate.resolve();await expect(page.locator('.create-action-status')).toContainText(/unknown|lost|not confirmed/i);
  const after=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-after![key])<=1,`${key} moved`);await expect(button(page,'create-work')).toBeDisabled();assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);
+});
+
+test('image mixed batches retain valid files and let the user remove only one',async t=>{
+ const png=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url)),jpg=await readFile(new URL('../../../../fixtures/chat-images/jpeg.jpg',import.meta.url));
+ const {page,requests}=await fixture(t,r=>r.path.endsWith('/chat-image-capabilities')?{json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}}:undefined);
+ await page.locator('#chat-image-input').setInputFiles([{name:'first.png',mimeType:'image/png',buffer:png},{name:'unsafe.svg',mimeType:'image/svg+xml',buffer:Buffer.from('<svg/>')},{name:'next.jpg',mimeType:'image/jpeg',buffer:jpg}]);
+ await expect(page.locator('.chat-image-draft')).toHaveCount(2);await expect(page.locator('.composer')).toContainText('unsafe.svg');await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');
+ await page.getByRole('button',{name:'Remove first.png',exact:true}).click();await expect(page.locator('.chat-image-draft')).toHaveCount(1);await expect(page.locator('.chat-image-draft')).toContainText('next.jpg');assert.equal(requests.filter(r=>r.method==='POST').length,0);
+});
+
+for(const nextCaption of ['new caption','original caption'])test(`image acceptance consumes the original snapshot and preserves a revised ${nextCaption}`,async t=>{
+ const gate=deferred();t.after(()=>gate.resolve());const png=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url)),jpg=await readFile(new URL('../../../../fixtures/chat-images/jpeg.jpg',import.meta.url));let submitted:any;
+ const {page,requests}=await fixture(t,async r=>{if(r.path.endsWith('/chat-image-capabilities'))return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};if(r.path==='works/work-1/runs'&&r.method==='POST'){submitted=JSON.parse(r.body);await gate.promise;return {json:{run:{runId:'run-snapshot',workId:'work-1',sessionId:'session-1',submissionKey:submitted.submissionKey,state:4}}};}});
+ await page.locator('#chat-image-input').setInputFiles({name:'first.png',mimeType:'image/png',buffer:png});await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await page.locator('#composer').fill('original caption');await button(page,'send-message').click();await expect.poll(()=>submitted?.images?.length).toBe(1);
+ await page.locator('#composer').fill('');await page.locator('#composer').fill(nextCaption);await page.locator('#chat-image-input').setInputFiles({name:'next.jpg',mimeType:'image/jpeg',buffer:jpg});await expect(page.locator('.chat-image-draft')).toHaveCount(2);await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');gate.resolve();
+ await expect(page.locator('.chat-image-draft')).toHaveCount(1);await expect(page.locator('.chat-image-draft')).toContainText('next.jpg');await expect(page.locator('#composer')).toHaveValue(nextCaption);assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,1);assert.equal(submitted.images[0].data,png.toString('base64'));
+});
+
+test('unknown image acceptance is recovered by the original key and history retries only the binary read',async t=>{
+ const bytes=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url));let submitted:any,failImage=true;const descriptor={mimeType:'image/png',byteSize:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),imageIndex:0};
+ const run=()=>({workId:'work-1',sessionId:'session-1',runId:'run-original-image',submissionKey:submitted?.submissionKey,state:4,finalText:'Seen'});
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-image-capabilities'))return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};
+  if(r.path==='works/work-1/runs'&&r.method==='POST'){submitted=JSON.parse(r.body);return {abort:true};}
+  if(r.path.includes('/runs/submissions/'))return {json:{kind:'run',key:submitted.submissionKey,status:'accepted',run:run()}};
+  if(r.path.endsWith('/sessions/session-1')&&submitted)return {json:{session:{workId:'work-1',sessionId:'session-1'},messages:[{entryId:'saved',role:'user',runId:'run-original-image',blocks:[{blockId:'image-0',type:'image',image:descriptor}]}],runs:[run()]}};
+  if(r.path.endsWith('/runs/run-original-image'))return {json:run()};
+  if(r.path.endsWith('/images/0'))return failImage?{status:503,json:{code:'RUNTIME_UNAVAILABLE',message:'Image temporarily unavailable'}}:{body:bytes,headers:{'Content-Type':'image/png','Content-Length':String(bytes.length)}};
+ });
+ await page.locator('#chat-image-input').setInputFiles({name:'original.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await expect(page.locator('.chat-image-draft')).toHaveCount(1);
+ await button(page,'check-chat-submission').click();await expect(page.locator('.chat-image-draft')).toHaveCount(0);await expect(button(page,'retry-chat-image')).toBeVisible();failImage=false;await button(page,'retry-chat-image').click();await expect(page.locator('.chat-history-image img')).toBeVisible();await button(page,'preview-chat-image').click();await expect(page.getByRole('heading',{name:'Image preview',exact:true})).toBeVisible();assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,1);
+});
+
+test('slow image discovery leaves text usable and then upgrades history to image metadata',async t=>{
+ const gate=deferred();t.after(()=>gate.resolve());const bytes=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url)),sha256=createHash('sha256').update(bytes).digest('hex');
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path.endsWith('/chat-image-capabilities')){await gate.promise;return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};}
+  if(r.path.endsWith('/sessions/session-1'))return {json:{session:{workId:'work-1',sessionId:'session-1'},messages:[{entryId:'old',role:'user',runId:'run-historical',blocks:r.search?.includes('imageProfile=')?[{blockId:'image',type:'image',image:{imageIndex:0,mimeType:'image/png',byteSize:bytes.length,sha256}}]:[{blockId:'text',type:'text',text:'Original caption'}]}],runs:[]}};
+  if(r.path.endsWith('/images/0'))return {body:bytes,headers:{'Content-Type':'image/png','Content-Length':String(bytes.length)}};
+ });
+ await expect(page.locator('.messages')).toContainText('Original caption');await page.locator('#composer').fill('Text is still editable');gate.resolve();await expect(page.locator('.chat-history-image img')).toBeVisible();await expect(page.locator('#composer')).toHaveValue('Text is still editable');assert.equal(requests.filter(r=>r.method==='POST').length,0);
+});
+
+test('accepted image cleanup after navigation preserves the new modal and consumes only the original draft',async t=>{
+ const gate=deferred();t.after(()=>gate.resolve());const bytes=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url));let submitted:any;
+ const run=()=>({workId:'work-1',sessionId:'session-1',runId:'run-left-view',submissionKey:submitted?.submissionKey,state:4});
+ const {page,requests}=await fixture(t,async r=>{if(r.path.endsWith('/chat-image-capabilities'))return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};if(r.path==='works/work-1/runs'&&r.method==='POST'){submitted=JSON.parse(r.body);await gate.promise;return {json:{run:run()}};}if(r.path.endsWith('/runs/run-left-view'))return {json:run()};});
+ await page.locator('#chat-image-input').setInputFiles({name:'original.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await page.locator('#composer').fill('Original image caption');await button(page,'send-message').click();await expect.poll(()=>submitted?.images?.length).toBe(1);
+ await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Keep this new form');gate.resolve();await expect.poll(()=>api(page,"return adapter.chatSubmissions.has('work-1');")).toBe(false);await expect(page.locator('#create-name')).toHaveValue('Keep this new form');
+ await button(page,'close-modal').click();await page.locator('[data-action="open-work"][data-id="work-1"]').click();await expect(page.locator('.chat-image-draft')).toHaveCount(0);await expect(page.locator('#composer')).toHaveValue('');assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,1);
 });
 
 for (const action of ['start', 'retry', 'stop', 'delete', 'create'] as const) test(`D02/D03 ${action}: first paint, duplicate prevention and acceptance before readback`, async t => {

@@ -5,8 +5,10 @@ import { type AgentRunSource, type RunSubmissionSelector, type RunModelSnapshot,
 import { canonicalJson, type RequestPhase } from "@piwork/work-store";
 import { BRAIN_LIMITS } from "@piwork/contracts";
 import { RunModelError, type RunModelResolver } from "./run-models.js";
+import { CHAT_IMAGE_PROFILE, ChatImageError, chatInputDigest, validateChatImages, type ChatImageInput } from "@piwork/contracts";
 
 export interface RunExecutionContext {
+  readonly images?: readonly ChatImageInput[];
   readonly workId: string;
   readonly sessionId: string;
   readonly runId: string;
@@ -42,6 +44,7 @@ export class RunManager {
     private readonly models?: RunModelResolver,
     private readonly validateCommand?: (prompt: string) => void,
     private readonly memoryEnabled = true,
+    private readonly imageContext?: (sessionId: string) => boolean,
   ) {}
 
   recover(): RunRecord[] {
@@ -57,15 +60,18 @@ export class RunManager {
     readonly sessionId: string;
     readonly submissionKey: string;
     readonly prompt: string;
+    readonly images?: readonly ChatImageInput[];
     readonly selector?: RunSubmissionSelector;
     readonly actualModel?: RunModelSnapshot;
     readonly agentRequest?: { readonly requestId: string; readonly phase: RequestPhase };
   }): AcceptedRun {
     const selector = input.selector ?? { kind: "session-preference" };
-    const requestDigest = submissionDigest(input.sessionId, input.prompt, selector);
+    const requestDigest = submissionDigest(input.sessionId, input.prompt, selector, input.images);
     const replay = this.store.findRunReplay(input.workId, input.submissionKey, requestDigest);
     if (replay) return { run: replay, reused: true };
-    if (input.prompt.trim() === "") throw new Error("prompt must not be empty");
+    if (input.prompt.trim() === "" && !input.images?.length) throw new Error("prompt must not be empty");
+    if (Buffer.byteLength(input.prompt)>65536) throw new ChatImageError("IMAGE_LIMIT_EXCEEDED", "Message text exceeds 64 KiB.");
+    if (input.images?.length) { validateChatImages(input.images); if(selector.inputMode!=="text") throw new ChatImageError("IMAGE_INVALID","Images require Send as text."); }
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
     const session = this.store.getSession(input.workId, input.sessionId);
     if (session === undefined) throw Object.assign(new Error(`session ${input.sessionId} does not exist in Work ${input.workId}`), {name: "SessionNotFoundError"});
@@ -75,7 +81,8 @@ export class RunManager {
       sessionId: input.sessionId,
       submissionKey: input.submissionKey,
       requestDigest,
-      promptDigest: digest(input.prompt),
+      promptDigest: chatInputDigest(input.prompt, input.images),
+      ...(input.images?.length ? {privateInputJson: JSON.stringify({profile:CHAT_IMAGE_PROFILE,prompt:input.prompt,images:input.images})} : {}),
       memoryQuery: input.prompt,
       memoryEnabled: this.memoryEnabled,
       ...(input.agentRequest && this.store.feedback.getRequest(input.workId,input.agentRequest.requestId)?.source.serviceName
@@ -87,14 +94,14 @@ export class RunManager {
       sourceJson: JSON.stringify({ kind: "chat" }),
       ...(input.agentRequest ? { agentRequest: input.agentRequest } : {}),
     });
-    if (!accepted.reused) this.launch(accepted.run, input.prompt);
+    if (!accepted.reused) this.launch(accepted.run, input.prompt, input.images);
     return accepted;
   }
 
   async submitChat(input: { readonly workId: string; readonly sessionId: string; readonly submissionKey: string;
-    readonly prompt: string; readonly modelRef?: string | null; readonly inputMode?: ChatInputMode }): Promise<AcceptedRun> {
+    readonly prompt: string; readonly modelRef?: string | null; readonly inputMode?: ChatInputMode; readonly images?: readonly ChatImageInput[] }): Promise<AcceptedRun> {
     const selector: RunSubmissionSelector = { ...modelSelector(input.modelRef), ...(input.inputMode === undefined ? {} : { inputMode: input.inputMode }) };
-    const replay = this.store.findRunReplay(input.workId, input.submissionKey, submissionDigest(input.sessionId, input.prompt, selector));
+    const replay = this.store.findRunReplay(input.workId, input.submissionKey, submissionDigest(input.sessionId, input.prompt, selector, input.images));
     if (replay) return { run: replay, reused: true };
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
     const session = this.store.getSession(input.workId, input.sessionId);
@@ -115,6 +122,10 @@ export class RunManager {
       reference = preference.modelRef;
     }
     const actualModel = await this.models.resolve(reference);
+    if (input.images?.length || this.imageContext?.(input.sessionId)) {
+      const availability = await this.models.images?.(actualModel) ?? "unknown";
+      if (availability !== "supported") throw new ChatImageError(availability === "unknown" ? "IMAGE_MODEL_UNCONFIRMED" : "IMAGE_MODEL_UNSUPPORTED", "This model cannot confirm image input. Choose an image-capable model or a new text-only Session.");
+    }
     let thinkingLevel = preference?.thinkingLevel === undefined ? "off" : preference.thinkingLevel;
     let levels: readonly string[] = ["off"];
     try { if (this.models.thinking) levels = (await this.models.thinking(actualModel)).thinkingLevels; }
@@ -182,7 +193,7 @@ export class RunManager {
     } finally { if (timer !== undefined) clearTimeout(timer); }
   }
 
-  private launch(run: RunRecord, prompt: string): void {
+  private launch(run: RunRecord, prompt: string, images?: readonly ChatImageInput[]): void {
     const controller = new AbortController();
     const source = run.sourceJson ? JSON.parse(run.sourceJson) as AgentRunSource : undefined;
     const goal = source?.requestId ? this.store.feedback.internal(run.workId, source.requestId) : undefined;
@@ -200,6 +211,7 @@ export class RunManager {
           sessionId: run.sessionId,
           runId: run.runId,
           prompt,
+          ...(images?.length ? {images} : {}),
           contextIdentity: run.contextIdentity ?? null,
           signal: controller.signal,
           ...(run.actualModelJson ? { actualModel: JSON.parse(run.actualModelJson) as RunModelSnapshot } : {}),
@@ -226,8 +238,8 @@ export class RunManager {
           this.store.tryCompleteRun(run.runId, "cancelled", null, null, this.now().toISOString());
         } else {
           this.store.tryCompleteRun(run.runId, "failed", null, JSON.stringify({
-            code: error instanceof RunModelError ? error.modelErrorCode : "MODEL_EXECUTION_FAILED",
-            message: error instanceof RunModelError ? error.message : "Model execution failed.",
+            code: error instanceof RunModelError ? error.modelErrorCode : error instanceof ChatImageError ? error.code : "MODEL_EXECUTION_FAILED",
+            message: error instanceof RunModelError || error instanceof ChatImageError ? error.message : "Model execution failed.",
             retryable: true,
           }), this.now().toISOString());
         }
@@ -246,8 +258,8 @@ export class RunManager {
 export function modelSelector(reference: string | null | undefined): RunSubmissionSelector {
   return reference === undefined ? { kind: "session-preference" } : reference === null || reference === "" ? { kind: "work-default" } : { kind: "model", modelRef: reference };
 }
-function submissionDigest(sessionId: string, prompt: string, selector: RunSubmissionSelector): string {
-  return digest(canonicalJson({ sessionId, prompt, selector }));
+function submissionDigest(sessionId: string, prompt: string, selector: RunSubmissionSelector, images: readonly ChatImageInput[] = []): string {
+  return digest(canonicalJson({ sessionId, prompt, selector, ...(images.length ? {images:validateChatImages(images),imageProfile:CHAT_IMAGE_PROFILE} : {}) }));
 }
 
 function digest(value: string): string {
