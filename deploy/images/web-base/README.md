@@ -1,98 +1,104 @@
-# Piwork Web base
+# Piwork NiceGUI base
 
 **English** | [简体中文](README.zh-CN.md)
 
-A reusable FastAPI + React + TypeScript + Vite development base for multiple Works. The Harness edits a shared workspace from the Agent container; Core runs an independent Service with this image. Application code/data belong to the Work. The image supplies a fixed toolchain, offline dependencies and common commands, and supports downstream FROM extensions.
+A reusable Python 3.13 + NiceGUI + SQLite environment for application Services. Agent edits the shared Work workspace; Core runs the application in a separate Service. Standard packages and browser resources are already installed in the image. Applications need no npm install, frontend build, or copy of the standard Python environment.
+
+## Availability and identity
+
+The current source defines environment contract **2**, version series **0.2.0**, Python **3.13.16**, NiceGUI **3.18.0**, pip **26.2.1**, and sqlite3 CLI **3.40.1-2+deb12u2**, initially for Linux amd64. Exact standard dependencies are in [requirements.lock](requirements.lock); [environment.json](environment.json) fixes the upstream Python image. The built read-only manifest also records installed packages and the actual input hash.
 
 <!-- web-base-reference:start -->
-Published and anonymously verified:
-
-```text
-docker.io/pphboy/piwork-web-base:0.1.0-03395d0810f7-bbb24bdd0167-dirty@sha256:e83902fb568e97b2d01d488ce7c9c3d15f373ab58b46e041337baa832b8cfb81
-```
+**Local candidate; not published.** `dist/web-base/candidate.json` identifies the actual local tag, image ID and inputs. The bundled brain's `references/web-base.json` distinguishes this candidate from a published fixed tag@digest. Ordinary published-default deployment remains unavailable until publication is explicitly requested and anonymously verified. A local development/acceptance task can explicitly select its verified prebuilt image. The previous FastAPI/React release identity remains in [the historical release record](releases/fastapi-react-0.1.0.json); it does not describe the NiceGUI candidate.
 <!-- web-base-reference:end -->
-
-## Environment
-
-The first release supports Linux amd64: Python 3.13.16, Node 24.21.0, FastAPI 0.143.0, React 19.3.0, TypeScript 7.0.2 and Vite 8.3.4. [environment.json](environment.json), [requirements.lock](requirements.lock) and [package-lock.json](frontend/package-lock.json) define the environment and complete locks. sqlite3 CLI is Debian 3.40.1-2+deb12u2. The Agent image also installs this command because AI bash executes inside Agent.
 
 ## Use in a Work
 
-Copy the brain's templates/web-app/ into a writable apps/<service-name>, maintain its SPEC.md, then implement the business. templates/workstation/ is a complete feedback/asynchronous export example. The image itself contains no Todo application.
+For a new Pi-managed application, invoke `node <loaded-skill-directory>/initialize.mjs --template web-app --name <service-name>` through authorized **Agent bash**. `workstation` selects the feedback/export example. The initializer rejects every existing target before writes, creates SPEC.md first and copies an editable application into `apps/<service-name>`. Maintain existing applications with targeted edits; do not initialize them again.
 
-Use a published fixed tag@digest, command `/usr/local/bin/piwork-web`, args `["run", "--app", "/var/data/workspace/apps/<service-name>"]`, an explicit read/write workspace grant, web TCP 8080 and HTTP /health readiness. Read deployment_context for CPU/count admission. The normal readiness budget remains 120 seconds; the existing 300-second maximum can be selected explicitly.
+Use an actual verified image reference, explicit read/write workspace grant, command `/usr/local/bin/piwork-web`, args `["run", "--app", "/var/data/workspace/apps/<service-name>"]`, TCP port 8080 named `web`, and HTTP `/health` readiness. Source, checks and temporary files stay under the app; business data stays in `data/<service-name>`. Core injects interaction identity and CA at `/etc/piwork/interaction`; they never enter browser JavaScript or source.
 
-Core injects identity/CA under /etc/piwork/interaction. Standard templates run as Core-managed Services; standalone Docker examples must not invent platform identities. Browser code calls its own same-origin backend and never receives a platform token.
+The same base can run an ordinary NiceGUI script with its own `python app.py` command, or be extended with `FROM`. It contains no Todo/review business application and requires no Pi identity for an ordinary script. Pi-managed templates use the existing Service protocol.
 
-Initialize through the `initialize.mjs` beside the loaded brain deployment Skill in Agent: `node <loaded-skill-directory>/initialize.mjs --template web-app --name <service-name>`. It writes the initial Spec before other template files and refuses every existing target before any write. Read and adapt the Spec before business implementation. Existing applications use targeted edits; repeat initialization never replaces source, locks, registration or data.
+## Commands and adopting changes
 
-## Commands and automatic adoption
-
-Run from the application directory:
+Inside the **Service base**, in the application directory:
 
 ```sh
 piwork-web prepare
 piwork-web check
-piwork-web build
 piwork-web serve
 piwork-web run
 piwork-web dev
 ```
 
-prepare creates writable offline .venv/node_modules and restores the previous usable dependencies on failure. check runs isolated backend/frontend tests and type checks, recording .build/checks.json. build publishes matching frontend output; serve rejects stale source/build pairs; run combines these steps. Explicit dev mode supplies React Fast Refresh, backend reload and the same 8080 entry.
+`prepare` selects the standard or prepared extra environment. `check` runs Python source/application checks. `run` prepares, runs missing/mismatched checks and serves; identical input reuses valid checks on restart. `serve` refuses unmatched checks. `dev` explicitly enables Python reload. There is no separate frontend build command.
 
-After edits, AI completes required checks/build and Service update/restart, then verifies actual codeVersion and business results. The default page checks safe versions every five seconds and on visibility/connection recovery, adopts a ready frontend, periodically re-reads business queries so Agent Actions appear without a Service restart, and restores supported nonsecret drafts/path. Users need no manual refresh. Failed/same/unreachable versions do not cause reload loops. Brain/Work configuration still requires the existing explicit Apply.
+After editing, Pi completes necessary checks and the original Service update/restart, then verifies the actually running codeVersion and business result. The template adopts ready versions automatically, restores its supported nonsecret Todo-title draft and current path, and re-reads shared business state. Failed checks, temporary disconnection and unchanged versions do not cause reload loops. These actions do not Apply brain/Work configuration.
 
-Both code and frontend versions bind the actual image environment identity as well as their source/locks. An environment-only rebuild/deployment also updates an open page; backend-only edits preserve the frontend version.
+The application exposes safe versions at `/api/runtime-version`: codeVersion binds source/configuration, extra dependency locks and the actual base environment; frontendVersion binds Python page/resources, locks and environment. A writable marker does not change the process's loaded version.
 
-## Files, data and sqlite3
+The default page inputs are `app.py`, `ui.py`, `page-client.js` and `style.css` when present. Extend them with app-relative helper/resource paths in `page-files.json`:
 
-Source, locks, writable dependencies, caches, checks and builds stay under apps/<service-name>; business data stays under data/<service-name>. HOME/TMPDIR/caches point into workspace directories for UID/GID 10001:10001 and a read-only root filesystem. Ordinary startup never initializes over an existing application.
-
-```sh
-sqlite3 -readonly -json /var/data/workspace/data/<service-name>/app.sqlite 'SELECT name FROM sqlite_master WHERE type="table";'
+```json
+{"files": ["pages/header.py", "assets/theme.css"]}
 ```
 
-Use the actual application database filename; the workstation example uses workstation.sqlite. AI uses the Agent command through authorized bash for data development/diagnosis. Ordinary business changes retain Query/Action/expectedStateVersion semantics; SQL does not authorize editing managed Core/history/Memory state.
+Maintain this list and the application Spec when splitting pages or adding/removing resources. Effective paths are sorted and deduplicated; changing a listed file or the effective set changes frontendVersion, while independent business changes leave it stable. Missing/invalid files, escaping paths and symlinks fail checks/startup. Keep business modules, data, caches and dependency environments out of the list. Existing apps without a manifest retain the default page inputs.
 
-## Maintenance and dependency extensions
+## Additional Python packages
 
-| Location | Purpose |
-| --- | --- |
-| deploy/images/web-base/ | Long-term source, Dockerfile, locks, tools, environment and bilingual guides |
-| scripts/ and Makefile | Build, validation and publication entry points |
-| internal/coreassets/piwork-brain/ | Guidance, templates and fixed image reference |
-| dist/web-base/ | Ignored local candidates and validation output |
-| DockerHub pphboy/piwork-web-base | Published versions and registry digests |
+Put exact **additional** pins in the app's `requirements.in`, for example `package-name==1.2.3`, or a local wheel path below the app. Explicit preparation may acquire compatible packages from a reachable registry:
 
-After editing requirements.in, frontend/package.json and environment.json, regenerate locks with the fixed container toolchains, then build and validate. Developers need the repository build tools plus Docker Engine/CLI; user hosts gain no Node/Python/sqlite3 runtime requirement.
+```sh
+piwork-web prepare --install-deps
+```
+
+For Agent-driven installation, Pi writes the declaration and uses the existing Service command/Operation with `run --install-deps`; Agent bash itself has no Python/pip, and does not use Docker exec/build. Once prepared, the same input never re-downloads, including when the Service definition retains that flag.
+
+Extra packages are installed with pip into a writable, versioned `.deps/` environment which inherits standard packages. `requirements.lock`, validated wheels, and the active environment record are retained. Checks, the application and installed console scripts use the selected interpreter. The installer does not upgrade fixed base packages; conflicts, unavailable system libraries, download or integrity failures are reported and preserve the previous valid environment and data. Standard applications create no full venv/node_modules. Removing an extra environment or moving an app allows exact offline reconstruction from retained materials, with the matching base available.
+
+System libraries or changes to the base package versions belong in a derived image. At build time, a downstream Dockerfile can switch to root to install fixed dependencies, then return to `USER 10001:10001`. Applications using the version adapter must bind their derived environment manifest to their actual build inputs; do not advertise a modified environment using the unchanged base manifest.
+
+Build with `docker build --build-arg NICEGUI_BASE=<verified-fixed-reference> -t my-nicegui-app:local .`, providing your own app and complete hashed requirements.lock. A verified local candidate is valid for this local development build; use a published fixed digest for distribution.
+
+```dockerfile
+ARG NICEGUI_BASE
+FROM ${NICEGUI_BASE}
+USER 0:0
+COPY requirements.lock /opt/my-app/requirements.lock
+RUN python -m pip install --require-hashes -r /opt/my-app/requirements.lock
+COPY app.py /opt/my-app/app.py
+USER 10001:10001
+CMD ["python", "/opt/my-app/app.py"]
+```
+
+## Persistence, identity and sqlite3
+
+The runtime uses UID/GID **10001:10001**, a read-only root filesystem and only its granted workspace for writable HOME/TMPDIR/cache/dependencies. Stop/Start and Service replacement retain source, locks and data. Full Work export/import retains extra installation materials; import produces a stopped Work, and the user explicitly starts it. The fixed base image must be available on the destination. Existing Work packages/applications/images are not automatically converted.
+
+Both Agent and the base provide the real sqlite3 CLI. AI bash runs in Agent; a Service-only command is not evidence that Agent can execute it. Ordinary business changes still use the named Query/Action contract.
+
+```sh
+sqlite3 -readonly -json /var/data/workspace/data/<service-name>/workstation.sqlite 'SELECT name FROM sqlite_master WHERE type="table";'
+```
+
+Application Services have no Piwork memory cap/reservation; deprecated memoryBytes is compatibility history, not an available budget. CPU and count admission still apply. See [operations](../../../docs/operations.md#service-资源与版本升级).
+
+## Maintain, validate and publish
+
+The authority is this repository directory. Brain templates/references consume it; `dist/web-base/` contains ignored local outputs; DockerHub holds published artifacts. Developer image checks require Docker Engine/CLI and the repository's Node tooling; product hosts gain no Python/Node/sqlite3 dependency.
 
 ```sh
 node scripts/lock-web-base.mjs
 make web-base-image
+node scripts/test-web-base-tools.mjs
 node scripts/check-web-base.mjs
+node scripts/check-web-base.mjs dist/web-base/candidate.json web-app
+node scripts/check-web-base-dependencies.mjs
 node scripts/check-web-base-core.mjs
 ```
 
-Standard dependencies work offline. Missing additional wheels/cache fail explicitly. Retain exact application dependencies or derive a new image; running Pi receives no Docker build/socket capability. Downstream projects can extend a fixed version:
+Real Core/SDK/browser checks also need the compatible acceptance Agent/helper images and built Go programs described in [testing](../../../docs/testing.md). Tests use unique installation/fixture labels and only clean their own resources. Preparation/start/restart, workspace/snapshot sizes and complete sharing are measured separately; a timeout budget is not a measured performance result.
 
-```dockerfile
-FROM pphboy/piwork-web-base:0.1.0-03395d0810f7-bbb24bdd0167-dirty@sha256:e83902fb568e97b2d01d488ce7c9c3d15f373ab58b46e041337baa832b8cfb81
-USER 0:0
-# Install locked extra dependencies and copy your application during the build.
-USER 10001:10001
-CMD ["python", "/opt/my-app/main.py"]
-```
-
-## Memory, upgrades and publication
-
-Application Services have no Piwork memory cap/reservation. Deprecated memoryBytes omission/zero means unlimited; legitimate older positive values remain history. memoryLimitMode/serviceMemoryPolicy explicitly report unlimited; zero is not a zero-byte allowance. CPU, service/volume counts and Agent/helper memory policy remain effective. Host/outer deployment determines available memory. See [operations](../../../docs/operations.md#service-资源与版本升级).
-
-Local builds never push by default. Publication verifies candidate identity, offline and real SDK/CLI/browser evidence, and refuses to overwrite a different fixed tag. After explicit authorization, push and anonymously pull the same digest:
-
-```sh
-node scripts/publish-web-base.mjs
-node scripts/publish-web-base.mjs --push
-```
-
-Then update the brain's fixed reference and build compatible Core/Agent images. Existing installations update their default catalog through normal package management before new Works capture the new brain. Existing Works retain captured packages/images; adoption uses selection, Package Update and explicit Apply. Five-role delivery follows the [existing release workflow](../../../docs/docker-release.md); this publisher does not replace its complete preflight.
+Local build/validation does not push. Publication uses `scripts/publish-web-base.mjs` only after explicit release authorization, validates the exact current candidate and evidence, rejects conflicting remote tags, and verifies anonymous digest pull/run before updating the formal brain reference. Old commit/dirty/input/digest identities remain unchanged.

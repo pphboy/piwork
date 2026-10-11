@@ -69,9 +69,9 @@ Desktop 的真实 Go Core/CLI 联合脚本已接入 `make test-integration`，�
 `make test-native-host` 使用开发机 Docker CLI/Node/OpenSSL 准备测试夹具；这些工具不在被测宿主内。测试创建带唯一 fixture label 的临时 `docker:27-dind` 特权容器作为独立 Engine，并把发布包三个程序放在 scratch 容器中，共享该 Engine 的 Unix socket 和同机数据路径。被测 Core/CLI/Console 的根文件系统没有解释器、shell、Go、Docker CLI 或 OpenSSL，PATH 为 `/nonexistent`。脚本验证真实 SDK→Go MCP 部署、Service proxy、WebDAV、嵌入 Desktop/Console、Export/Inspect/Import/Start 和 workspace 数据，再核对实际进程及缺失工具。准备 fixture 时需要 `docker:27-dind` 和 `python:3.13-slim`；后者仅运行用户测试 Service。结束只清理该 fixture 的 container、volume、scratch image，不清理其他安装。此 gate 已接入 `make acceptance`。
 
 
-当前 brain 回归使用 `internal/coreapp/brain_workstation_integration_test.go`、`brain_candidates_integration_test.go`、`run_models_integration_test.go` 和 `service_interactions_integration_test.go`；所有平台控制由 Go Core 与原生 helper 处理，确定性模型只在 acceptance Agent 镜像中注册。工作站 fixture 使用与交付相同的 FastAPI + React + TypeScript + Vite Web base。Agent 和 base 都预装 sqlite3 CLI，真实 SDK bash 与 Service 分别验证；这些是容器工具，不是宿主依赖，也不限制用户选择技术栈。`node scripts/check-web-base.mjs` 在无外网的独立网络验证离线准备、只读根、业务/版本及持久化，真实 Core/CLI/浏览器回归另行验证用户无需手动刷新。
+当前 brain 回归使用 `internal/coreapp/brain_workstation_integration_test.go`、`brain_candidates_integration_test.go`、`run_models_integration_test.go` 和 `service_interactions_integration_test.go`；所有平台控制由 Go Core 与原生 helper 处理，确定性模型只在 acceptance Agent 镜像中注册。工作站 fixture 使用当前源码的 Python + NiceGUI + SQLite contract-2 base 本地候选；正式发布状态单独核对。Agent 和 base 都预装 sqlite3 CLI，真实 SDK bash 与 Service 分别验证；这些是容器工具，不是宿主依赖，也不限制用户选择技术栈。`node scripts/check-web-base.mjs` 在无外网的独立网络验证离线标准包复用、只读根、NiceGUI HTTP/WebSocket、业务/版本及持久化，真实 Core/CLI/浏览器回归另行验证用户无需手动刷新。
 
-Web base 的额外入口为 `node scripts/check-web-base.mjs dist/web-base/candidate.json web-app`（通用模板）和 `node scripts/check-web-base-core.mjs`（真实 SDK/MCP/Core/CLI/浏览器、热更新、失败恢复、派生镜像及内存政策）。生成镜像后执行，使用已构建的 acceptance Agent/helper 与 Go 程序；输出在被忽略的 `dist/web-base/`，资源只按本次唯一标签/installation ID 清理。
+Web base 的额外入口为 `node scripts/check-web-base.mjs dist/web-base/candidate.json web-app`（通用模板）和 `node scripts/check-web-base-core.mjs`（真实 SDK/MCP/Core/CLI/浏览器、Python 重载、页面自动采用、失败恢复、派生镜像及内存政策）。生成镜像后执行，使用已构建的 acceptance Agent/helper 与 Go 程序；输出在被忽略的 `dist/web-base/`，资源只按本次唯一标签/installation ID 清理。
 
 旧历史迁移回归另外需要预备的真实 schema-4 Agent 镜像 `piwork-memory-history4:acceptance`。`make native-history4-web-base-fixture` 在它之上仅适配确定性部署 driver 和 Go Service MCP，不替换 schema-4 harness/store；设置 `PIWORK_TEST_NATIVE_HISTORY4_IMAGE=piwork-memory-history4-web-base:acceptance` 执行升级/进程恢复回归。该依赖属于开发验收，不是用户运行依赖，也不通过更改旧数据库伪造迁移。
 
@@ -82,3 +82,11 @@ Web base 的额外入口为 `node scripts/check-web-base.mjs dist/web-base/candi
 本变更沿用现有测试体系。存储/联合事务/版本与失效测试位于 `packages/work-store/src/memory.test.ts`，TS 冷历史验证在 `snapshot*.test.ts`；原生 schema 4/5 与 Memory 图、重建测试在 `internal/workhistory/memory_test.go`。`npm run test:unit -w @piwork/work-store` 和 `go test -mod=readonly ./internal/workhistory` 不依赖 Docker 或真实模型凭据。
 
 Memory 子进程测试在真实磁盘 SQLite 的 COMMIT 前/后 SIGKILL writer，再原路径恢复，检查请求与 Memory 一致且不重放 Run。这是进程中断验收，不是物理断电实验。完整迁移/回退、固定旧镜像、真实 SDK/Service 与两份 Export/Import 按当前 change 的 T01–T06 任务分别执行；未执行的项目不能用这些单测标为通过。Memory 不新增通用 Eval 平台。
+
+### NiceGUI base 与 Python 扩展依赖
+
+`node scripts/test-web-base-tools.mjs` 使用当前候选在无网络、只读根和 workspace grant 下运行 Python 工具契约检查，包含页面辅助模块/本地资源版本、页面清单兼容及无效输入不能复用旧检查。`node scripts/check-web-base-dependencies.mjs` 使用独立内部网络和合成包注册表验证明确安装、真实导入/命令、基础包不变、应用隔离、冲突/下载/完整性失败、并发及输入变化拒绝、断网复用和离线重建。注册表与所有测试资源按本次唯一 fixture label 清理，不访问真实私有包凭据。
+
+`check-web-base-core.mjs` 验证仅修改清单内页面辅助模块时，实际页面版本变化、自动采用一次、草稿/非根路径保留及无额外 Run/Apply；另外通过真实 SDK/MCP 安装合成依赖，核对原 Operation、应用验证 Query、断开注册表后的重启与 Stop/Export/Import/Start，以及草稿准备失败时保留输入和自动恢复。完整 brain 回路仍保留两份独立导入各自的新反馈和 SDK 候选验证。
+
+计时区分镜像准备与已预备镜像中的应用准备、启动、重启、导出导入和完整回路，记录真实输入/镜像身份、缓存条件及 workspace/快照体积；失败与不可比项保留，不用超时预算或少跑用例宣称提速。测试私网浏览器和本地 HTTP 客户端需要绕过开发机环境代理；仅对本次测试进程设置直连，不改宿主代理配置。实测记录见 [NiceGUI 默认环境验收](nicegui-default-environment-acceptance.md)。

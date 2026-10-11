@@ -2,9 +2,9 @@
 
 平台宿主只运行 Go Core 和原生 helper；Pi SDK、Agent、extension 在 Agent 容器内运行。Go 内嵌的 `internal/coreassets/piwork-brain/` 是普通 Pi extension package 的安装和内置更新来源，包含认知、薄 extension、部署 Skill 和语言无关交互协议。它不作为 npm node module 安装。首次原生 prepare 成功后，普通 catalog、默认选择和一次性标记在同一事务提交；失败保持运行不可用并允许修复重试。
 
-当前内置脑包版本为 `1.1.0`。更新并启动 Core 后，仍为原内置来源且启用的旧脑包会经原准备流程更新 Core 包库，重复启动不重复发布；失败保留旧包并通过原准备诊断报告。一次性标记只控制首次默认选择，不阻止内置包更新。管理员替换、禁用或移除的包保持原样；移出默认或显式清空默认集合后，不会被重新加入。
+当前内置脑包版本为 `1.2.0`。更新并启动 Core 后，仍为原内置来源且启用的旧脑包会经原准备流程更新 Core 包库，重复启动不重复发布；失败保留旧包并通过原准备诊断报告。一次性标记只控制首次默认选择，不阻止内置包更新。管理员替换、禁用或移除的包保持原样；移出默认或显式清空默认集合后，不会被重新加入。
 
-新建 Work 捕获更新后的 Core 脑包；已有 Work 不自动换包或镜像，需要时沿原 `--from-core` Package Update 和显式 Apply 采用。新版包只交付 FastAPI + React + TypeScript + Vite 的默认指导、模板和固定 Web base，不提供旧栈兼容或回退。历史归档和验收记录保留原事实，不作为当前交付依据。
+新建 Work 捕获更新后的 Core 脑包；已有 Work 不自动换包或镜像，需要时沿原 `--from-core` Package Update 和显式 Apply 采用。新版包提供 Python + NiceGUI + SQLite 的默认指导与匹配模板，标准包由 base 预装；额外 Python 依赖在应用可写环境安装并精确保留。旧 Work/固定镜像仍保持原内容，不自动转换应用。历史归档和验收记录保留原事实，不作为当前交付依据。
 
 新 Work 默认独立 Skills 为空、packages 含启用的 piwork-brain。显式 packages=[] 创建无脑包 Work；skills=[] 只清空独立 Skills，不移除脑包。启动时 captured active 包经过完整内容身份和当前 Linux/架构/Node ABI/SDK 校验，由真实 SDK 加载四类工具和认知。Go 静态镜像及 mTLS readiness 要求 package-helper=2、history=4/5、runModel=1、workFeedback=1。空 packages 同样必须满足当前协议。
 
@@ -12,7 +12,7 @@ Work 首次加载时将独立可编辑源码复制到 `.pi/packages/piwork-brain
 
 ## 默认 Web 开发环境与应用交付
 
-未指定技术栈的新 Web Service 默认使用 FastAPI + React + TypeScript + Vite，以及已发布的 `pphboy/piwork-web-base` 固定 tag@digest。通用起点为脑包的 `templates/web-app/`，完整工作站例子为 `templates/workstation/`；用户指定其他栈或维护既有应用时沿用目标环境。镜像维护源在本仓库 `deploy/images/web-base/`，工具链、锁文件、使用与派生方式见 [Web base 手册](../deploy/images/web-base/README.zh-CN.md)。脑包只保存使用指导、模板与固定引用。
+未指定技术栈的新 Web Service 默认使用 Python + NiceGUI + SQLite 和匹配的 `pphboy/piwork-web-base`。当前 contract-2/0.2.0 base 是已验证的本地候选；正式默认引用只有在另有明确发布要求并完成匿名 digest 验证后才可用。本地开发/验收可显式选择已验证预备镜像，不能用旧 FastAPI digest 冒充 NiceGUI。通用起点为脑包的 `templates/web-app/`，完整工作站例子为 `templates/workstation/`；用户指定其他栈或维护既有应用时沿用目标环境。镜像维护源在本仓库 `deploy/images/web-base/`，工具链、锁文件、使用与派生方式见 [Web base 手册](../deploy/images/web-base/README.zh-CN.md)。脑包只保存使用指导、模板与固定引用。
 
 部署 Skill 的共享初始化入口在写入 Spec、源码、锁文件和注册信息前拒绝已有应用目标，包括空目录、文件和链接。已有应用先读取实际内容再局部修改，不能重新复制模板覆盖。应用源码与可写依赖位于 `apps/<service-name>`，业务数据位于 `data/<service-name>`，普通启动、重启和环境升级均沿用这些内容。
 
@@ -85,3 +85,11 @@ Memory 的偏好、经验与可信知识不改变 Tool 权限、平台配置或 
 用户通过原 Chat 工具活动、Run/请求/Evidence 和 CLI chat / run watch / run show 观察实际结果。Memory 回执引用原请求的实际提交版本，区别于当前 Run 已采用版本；界面不存第二份可修改的认知操作日志，也不靠最终模型文字判定生效。
 
 Founder 不变量见 [BASELINE.md](piwork-brain/BASELINE.md)。文档与 Git 历史不等于强身份审批保护。
+
+## Python 依赖与执行位置
+
+标准 NiceGUI 应用直接复用镜像包，无需 npm、前端构建或复制完整 venv。Pi 在 Agent 中编辑 `requirements.in` 的额外精确版本，再通过既有 Service 命令/Operation 的 `run --install-deps` 完成明确安装；Python/pip 在 Service base 内，不在 Agent bash。安装器保留锁、wheels 和版本化 `.deps/` 环境，匹配输入的重启/分享副本离线复用，环境缺失或路径变化时精确重建；冲突或失败保留原有效环境与数据，不给 Pi Docker exec/build 权限。
+
+源码、锁、实际 base 环境决定运行及页面版本；通过检查并完成部署后自动采用，恢复模板支持的非秘密草稿和路径。相同输入复用检查，旧 marker、文件已保存或 Service Ready 不单独证明新版业务通过。
+
+本次实测与候选状态见 [NiceGUI 默认环境验收](nicegui-default-environment-acceptance.md)，不以历史 NiceGUI 记录代替当前通过证据。
