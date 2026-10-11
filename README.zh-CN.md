@@ -86,6 +86,8 @@ docker run --detach --init \
 
 Core 也可用 [Core-only docker-compose.yml](deploy/docker/docker-compose.yml) 单独部署（Compose 2.24+），CLI 仍使用自己的 Docker 命令。切换 Core 部署方式前先停止原容器，保留同一数据目录。Core 与 CLI 合并的可选方式见 [单机部署示例](examples/single-host/README.zh-CN.md)。
 
+Core 就绪包括当前默认 Work 运行环境的准备和恢复。修改默认镜像或包选择后，创建 Work 前再次确认就绪；配置保存成功不表示后台准备已经结束。首次准备与普通创建的等待时间分别计算。
+
 ### CLI
 
 CLI 独立运行，只需已有且可达的 Core，不需要 Core 初始化变量。下面连接同机 Core；连接其他 Core 时替换 `PIWORK_CORE_URL`。它等待完整就绪后进入终端：

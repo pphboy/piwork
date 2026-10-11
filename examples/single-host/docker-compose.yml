@@ -1,4 +1,5 @@
 name: piwork-single-host
+# Readiness includes current default Work preparation; recheck after changing defaults.
 services:
   core:
     image: docker.io/pphboy/piwork-core:0.0.3-30ac253e9dce-653d50a5d7d5

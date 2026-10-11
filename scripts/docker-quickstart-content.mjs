@@ -34,6 +34,9 @@ export function cliFileRun(reference) {
 }
 
 const code = (text, language = 'sh') => '```' + language + '\n' + text + '\n```';
+const preparationNote = (zh) => zh
+  ? 'Core 就绪包括当前默认 Work 运行环境的准备和恢复。修改默认镜像或包选择后，创建 Work 前再次确认就绪；配置保存成功不表示后台准备已经结束。首次准备与普通创建的等待时间分别计算。'
+  : 'Core readiness includes preparation and recovery of the current default Work runtime. After changing the default image or package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.';
 export const composeCommands = 'docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core';
 export const singleHostCommands = composeCommands + '\ndocker compose -f docker-compose.yml run --rm --no-deps cli';
 export const firstWorkCommands = "piwork-cli login --account ACCOUNT\npiwork-cli work create --name 'My Work' --wait";
@@ -59,7 +62,7 @@ export function quickStart(metadata, language, { composeLink, operationsLink, ex
   const finish = zh
     ? `回复直接显示在终端。用 \`exit\` 离开；同样的 CLI 启动命令会复用凭证，Work 不因 CLI 退出而停止。等待失败或观察中断时，按 [终端操作说明](${operationsLink}) 查询状态或恢复原 Operation/Run，不重复提交。`
     : `The reply appears in the terminal. Use \`exit\` to leave; the same CLI startup command reuses credentials and exiting the CLI does not stop Work. For failed readiness or interrupted observation, use the [terminal operations guide](${operationsLink}) to inspect status or recover the original Operation/Run without resubmitting.`;
-  return notice + ['### Core', prerequisite, core, code(coreRun(refs.core)), compose, '### CLI', cli, code(cliRun(refs.cli)), login, code(firstWorkCommands), chat, code(firstChatCommand), finish].join('\n\n') + '\n';
+  return notice + ['### Core', prerequisite, core, code(coreRun(refs.core)), compose, preparationNote(zh), '### CLI', cli, code(cliRun(refs.cli)), login, code(firstWorkCommands), chat, code(firstChatCommand), finish].join('\n\n') + '\n';
 }
 
 export function coreDemo(metadata, language) {
@@ -94,7 +97,7 @@ export function terminalOperations(metadata, language) {
   const windowsIntro = zh ? 'Windows Docker Desktop 使用 Linux 容器，终端 CLI 连接可达的 Linux Core。PowerShell 中 `CORE_URL` 替换为实际地址；密码仍在容器内隐藏输入：' : 'Windows Docker Desktop uses Linux containers; the terminal CLI connects to a reachable Linux Core. Replace `CORE_URL` with the actual address in PowerShell; login still prompts for a hidden password inside the container:';
   const windows = ['docker run --rm --init --interactive --tty `', '    --env PIWORK_CORE_URL=CORE_URL `', '    --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client `', `    ${cli}`, "if ($LASTEXITCODE -ne 0) { throw 'CLI container failed' }"].join('\n');
   const remote = zh ? '远端 Linux 客户端同样替换 Core URL。HTTPS 保持证书验证；模型/MCP 地址须从 Core 的 Work 网络可达，CLI 的宿主别名不能替代它。' : 'Remote Linux clients likewise replace the Core URL. HTTPS retains certificate verification. Model/MCP endpoints must be reachable from Core Work networks; the client host alias does not replace them.';
-  return [intro, code(status), recovering, code(composeStatus), observe, code(observeCode), bounds, stop, code(stopCode), restart, code('docker start piwork-core-quickstart'), preserve, code(composeStop), windowsIntro, code(windows, 'powershell'), remote].join('\n\n') + '\n';
+  return [intro, code(status), recovering, code(composeStatus), preparationNote(zh), observe, code(observeCode), bounds, stop, code(stopCode), restart, code('docker start piwork-core-quickstart'), preserve, code(composeStop), windowsIntro, code(windows, 'powershell'), remote].join('\n\n') + '\n';
 }
 
 export function singleHostReadme(metadata, language) {
@@ -107,6 +110,7 @@ export function singleHostReadme(metadata, language) {
     zh ? '示例使用独立的 `/var/lib/piwork/examples/single-host/core` 和 `piwork-single-host-client-state` 卷，保留原有权限检查。7171/7172 不能与其他 Core 同时占用；运行前正常停止冲突服务，不删除其数据。本示例不会自动停止其他安装。' : 'Uses a separate `/var/lib/piwork/examples/single-host/core` directory and `piwork-single-host-client-state` volume, retaining permission checks. Ports 7171/7172 cannot be shared with another Core: stop conflicting services normally first, retaining their data. This example does not stop another installation automatically.',
     zh ? '取得本目录的 `docker-compose.yml`，在文件所在目录运行；无需 clone、环境文件或第二份 YAML。先启动 Core：' : 'Obtain this directory’s `docker-compose.yml` and run from its directory. No clone, environment file or second YAML is needed. Start Core first:',
     code(composeCommands),
+    preparationNote(zh),
     zh ? '打开 CLI；以后重新进入只需这一条命令，无需初始化变量。Core 不存在或未就绪时，CLI 等待至多 600 秒后安全失败，不自动启动 Core：' : 'Open CLI; repeat only this command to return, without initialization inputs. If Core is absent or unready, CLI waits up to 600 seconds and fails safely without starting Core:',
     code('docker compose -f docker-compose.yml run --rm --no-deps cli'),
     zh ? '在 CLI 容器内执行；ACCOUNT 为账号，登录隐藏输入密码，WORK_ID 来自创建结果：' : 'Inside CLI, replace ACCOUNT with your account; login prompts for a hidden password. WORK_ID comes from creation:',

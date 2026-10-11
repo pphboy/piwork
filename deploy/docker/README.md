@@ -35,6 +35,8 @@ docker run --detach --init \
 
 Core can also be deployed alone with [Core-only docker-compose.yml](docker-compose.yml) (Compose 2.24+); CLI keeps its independent Docker command. Stop the previous Core before switching deployment methods, retaining the same data directory. For an optional combined setup, see [Single-host deployment](../../examples/single-host/README.md).
 
+Core readiness includes preparation and recovery of the current default Work runtime. After changing the default image or package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.
+
 ### CLI
 
 Run CLI independently against an existing Core; no Core initialization variables are needed. This command connects to Core on the same host; replace `PIWORK_CORE_URL` for another Core. It waits for full readiness and opens a terminal:
@@ -104,6 +106,8 @@ For Core-only Compose, use:
 docker compose -f docker-compose.yml exec -T core piwork-serve --json status
 docker compose -f docker-compose.yml logs --tail 100 core
 ```
+
+Core readiness includes preparation and recovery of the current default Work runtime. After changing the default image or package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.
 
 Inside the CLI container, use the original returned IDs to recover an accepted Operation/Run without creating or sending again:
 
