@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { checkQuickStart, codeBlocks, section, projectRoot } from './check-docker-quickstart.mjs';
 import { syncWebsite } from './sync-docker-website.mjs';
 import { sourceInputHash } from './build-docker-release.mjs';
+import { singleHostReadme } from './docker-quickstart-content.mjs';
 
 const docs = ['README.md', 'README.zh-CN.md', 'deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
 function fixture(t) {
@@ -23,7 +24,7 @@ function fixture(t) {
 function refresh(base) {
   const path = join(base, 'deploy/docker/release.json');
   const metadata = JSON.parse(readFileSync(path, 'utf8'));
-  metadata.sourceInputHash = sourceInputHash(base);
+  if (metadata.state === 'candidate') metadata.sourceInputHash = sourceInputHash(base);
   writeFileSync(path, JSON.stringify(metadata, null, 2) + '\n');
 }
 function replace(base, name, from, to) {
@@ -41,9 +42,34 @@ test('paired default commands are standalone, terminal-only and parse as shell',
   }
 });
 
-test('consistent candidate passes with current source inputs', t => {
+test('published material retains its recorded identity as source development continues', t => {
   const base = fixture(t);
+  const original = readFileSync(join(base, 'deploy/docker/release.json'), 'utf8');
+  writeFileSync(join(base, 'cmd/new-development-input.go'), '// New source does not rewrite a published artifact.\n');
   assert.deepEqual(checkQuickStart(base), []);
+  assert.equal(readFileSync(join(base, 'deploy/docker/release.json'), 'utf8'), original);
+  const metadata = JSON.parse(original);
+  metadata.sourceInputHash = sourceInputHash(base);
+  writeFileSync(join(base, 'deploy/docker/release.json'), JSON.stringify(metadata));
+  assert(checkQuickStart(base).some(error => error.includes('published source identity')));
+});
+
+test('a consistent local candidate requires current inputs and an explicit candidate label', t => {
+  const base = fixture(t);
+  const path = join(base, 'deploy/docker/release.json');
+  const metadata = JSON.parse(readFileSync(path, 'utf8'));
+  metadata.state = 'candidate';
+  writeFileSync(path, JSON.stringify(metadata));
+  writeFileSync(join(base, 'examples/single-host/README.md'), singleHostReadme(metadata, 'en'));
+  writeFileSync(join(base, 'examples/single-host/README.zh-CN.md'), singleHostReadme(metadata, 'zh'));
+  for (const name of docs) {
+    const file = join(base, name);
+    writeFileSync(file, readFileSync(file, 'utf8').replace('<!-- docker-quickstart:start -->', '<!-- docker-quickstart:start -->\nLocal candidate / 本地候选\n'));
+  }
+  refresh(base);
+  assert.deepEqual(checkQuickStart(base), []);
+  writeFileSync(join(base, 'cmd/new-candidate-input.go'), '// Changed after candidate preparation.\n');
+  assert(checkQuickStart(base).some(error => error.includes('source inputs changed')));
 });
 
 test('semantic deployment drift fails with safe diagnostics', async t => {
@@ -86,6 +112,11 @@ test('semantic deployment drift fails with safe diagnostics', async t => {
 
 test('CLI gate reports source drift without displaying configured values', t => {
   const base = fixture(t);
+  const path = join(base, 'deploy/docker/release.json');
+  const metadata = JSON.parse(readFileSync(path, 'utf8'));
+  metadata.state = 'candidate';
+  writeFileSync(path, JSON.stringify(metadata));
+  refresh(base);
   replace(base, 'Dockerfile.cli', 'PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json', 'PIWORK_CONFIG_PATH=synthetic-canary-must-not-print');
   const result = spawnSync(process.execPath, [join(base, 'scripts/check-docker-quickstart.mjs')], { cwd: base, encoding: 'utf8' });
   assert.equal(result.status, 1);

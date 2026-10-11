@@ -31,8 +31,17 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   try { release = JSON.parse(read('deploy/docker/release.json')); }
   catch { return [...errors, 'deploy/docker/release.json: invalid metadata']; }
   if (!release || !['candidate', 'published'].includes(release.state) || !release.images?.core || !release.images?.cli) return [...errors, 'deploy/docker/release.json: incomplete release identity'];
-  try { check(sourceInputHash(base) === release.sourceInputHash, 'deploy/docker/release.json: source inputs changed; regenerate candidate'); }
-  catch { check(false, 'source input inventory is unavailable'); }
+  if (release.state === 'candidate') {
+    try { check(sourceInputHash(base) === release.sourceInputHash, 'deploy/docker/release.json: source inputs changed; regenerate candidate'); }
+    catch { check(false, 'source input inventory is unavailable'); }
+  } else {
+    // A published record identifies the released bytes, not the next checkout.
+    // Keep its provenance intact while checking the current deployment material.
+    const valid = /^[a-f0-9]{40}$/.test(release.sourceCommit || '') && /^[a-f0-9]{64}$/.test(release.sourceInputHash || '')
+      && typeof release.sourceModified === 'boolean'
+      && release.releaseId === `${release.releaseVersion}-${release.sourceCommit.slice(0, 12)}-${release.sourceInputHash.slice(0, 12)}${release.sourceModified ? '-dirty' : ''}`;
+    check(valid, 'deploy/docker/release.json: published source identity is inconsistent');
+  }
   for (const role of roles) check(typeof release.images[role] === 'string' && release.images[role].endsWith(`:${release.releaseId}`) && !release.images[role].endsWith(':latest'), `deploy/docker/release.json: ${role} fixed release reference`);
 
   const expected = [coreRun(release.images.core), cliRun(release.images.cli), firstWorkCommands, firstChatCommand];
