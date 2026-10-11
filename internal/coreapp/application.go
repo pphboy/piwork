@@ -23,6 +23,7 @@ import (
 	"piwork/internal/identity"
 	"piwork/internal/internaltls"
 	"piwork/internal/packageprepare"
+	"piwork/internal/preparationcache"
 	"piwork/internal/safefs"
 	"piwork/internal/skillartifact"
 	"piwork/internal/workfiles"
@@ -85,6 +86,10 @@ type Application struct {
 	packageUploads        atomic.Int32
 	packageWG             sync.WaitGroup
 	packageSlots          chan struct{}
+	environmentCache      *preparationcache.Cache[environmentKey, contracts.PiPackagePreparedEnvironment]
+	environmentSlots      chan struct{}
+	envRuntimeForTest     environmentProbeRuntime
+	envInspectForTest     func(context.Context, string) error
 	packageRunning        sync.Map
 	modelTests            sync.Map
 	modelTestTimeout      time.Duration
@@ -118,6 +123,8 @@ type Application struct {
 	recoveryOnce          sync.Once
 	recoveryWG            sync.WaitGroup
 	state                 string
+	shutdownMu            sync.Mutex
+	shutdownComplete      bool
 	status                Status
 	closed                bool
 	refresh               chan struct{}
@@ -243,6 +250,8 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 	a := &Application{Store: store, Identity: id, Settings: settings, files: files, inspectionRoot: root, options: options, ctx: lifetime, cancel: cancel, state: "STORE_OPEN", refresh: make(chan struct{}, 1), serveDone: make(chan error, 1)}
 	a.serviceGateway = newServiceGateway(a)
 	a.packageSlots = make(chan struct{}, 2)
+	a.environmentSlots = make(chan struct{}, 2)
+	a.environmentCache = preparationcache.New[environmentKey](lifetime, preparationcache.Options[contracts.PiPackagePreparedEnvironment]{Phase: "environment-probe", Clone: cloneEnvironment})
 	a.preparation = newRuntimePreparation(a)
 	if err := store.Write(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -390,7 +399,7 @@ func (a *Application) initializeDocker(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		inspector, err := dockerengine.NewImageInspector(ctx, engine, a.inspectionRoot, a.Store)
+		inspector, err := dockerengine.NewImageInspectorWithLifecycle(ctx, a.ctx, engine, a.inspectionRoot, a.Store)
 		if err != nil {
 			engine.Close()
 			return err
@@ -449,10 +458,12 @@ func (a *Application) emptyRecovery(ctx context.Context) error {
 	return nil
 }
 func (a *Application) Close(ctx context.Context) error {
+	a.shutdownMu.Lock()
+	defer a.shutdownMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, a.options.ShutdownTimeout)
 	defer cancel()
 	a.mu.Lock()
-	if a.closed {
+	if a.shutdownComplete {
 		a.mu.Unlock()
 		return nil
 	}
@@ -513,6 +524,22 @@ func (a *Application) Close(ctx context.Context) error {
 	} else if err := a.shutdownCapturedWorks(ctx); err != nil {
 		result = errors.New("Core workload shutdown was not confirmed")
 	}
+	if a.environmentCache != nil {
+		if err := a.environmentCache.Close(ctx); err != nil {
+			return errors.New("Core shared environment preparation shutdown was not confirmed")
+		}
+	}
+	if a.inspector != nil {
+		if err := a.inspector.Close(ctx); err != nil {
+			if a.inspector.InspectionsActive() {
+				return errors.New("Core shared image inspection shutdown was not confirmed")
+			}
+			result = errors.New("Core shared image inspection cleanup was not confirmed")
+		}
+	}
+	if err := a.closeEnvironmentProbes(ctx); err != nil {
+		result = err
+	}
 	if a.engine != nil {
 		a.engine.Close()
 	}
@@ -524,6 +551,9 @@ func (a *Application) Close(ctx context.Context) error {
 	if err := a.Store.Close(); err != nil {
 		result = errors.New("Core storage shutdown was not confirmed")
 	}
+	a.mu.Lock()
+	a.shutdownComplete = true
+	a.mu.Unlock()
 	return result
 }
 

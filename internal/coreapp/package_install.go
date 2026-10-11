@@ -291,24 +291,34 @@ func (a *Application) acceptPackage(r *http.Request, actor identity.Principal, w
 	return accepted, err
 }
 
-func (a *Application) probePackageEnvironment(ctx context.Context, imageID string) (result contracts.PiPackagePreparedEnvironment, returned error) {
+func (a *Application) probePackageEnvironmentUncached(ctx context.Context, imageID string) (result contracts.PiPackagePreparedEnvironment, returned error) {
 	spec := dockerengine.PackageHelperSpec{PackageIdentity: dockerengine.PackageIdentity{WorkID: "core", JobID: "probe-" + uuid.NewString()}, Epoch: 1, Action: "environment", ImageID: imageID}
+	runtime := environmentProbeRuntime(a.dockerRuntime)
+	if a.envRuntimeForTest != nil {
+		runtime = a.envRuntimeForTest
+	}
+	return probeEnvironment(ctx, runtime, spec, func(cleanup context.Context) error {
+		return a.Store.ReleaseResourceIntent(cleanup, "core", "package-helper", spec.JobID+"-1-environment", true)
+	})
+}
+
+func probeEnvironment(ctx context.Context, runtime environmentProbeRuntime, spec dockerengine.PackageHelperSpec, release func(context.Context) error) (result contracts.PiPackagePreparedEnvironment, returned error) {
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := a.dockerRuntime.RemovePackageHelper(cleanup, spec)
+		err := runtime.RemovePackageHelper(cleanup, spec)
 		if err == nil {
-			err = a.Store.ReleaseResourceIntent(cleanup, "core", "package-helper", spec.JobID+"-1-environment", true)
+			err = release(cleanup)
 		}
 		if err != nil {
 			result = contracts.PiPackagePreparedEnvironment{}
 			returned = contracts.NewError("RUNTIME_UNAVAILABLE", "")
 		}
 	}()
-	if _, err := a.dockerRuntime.EnsurePackageHelper(ctx, spec); err != nil {
+	if _, err := runtime.EnsurePackageHelper(ctx, spec); err != nil {
 		return result, contracts.NewError("PI_PACKAGE_ENVIRONMENT_MISMATCH", "")
 	}
-	raw, err := a.dockerRuntime.RunPackageHelper(ctx, spec)
+	raw, err := runtime.RunPackageHelper(ctx, spec)
 	if err != nil {
 		return result, contracts.NewError("PI_PACKAGE_ENVIRONMENT_MISMATCH", "")
 	}
