@@ -1,7 +1,39 @@
 {
   "version": 1,
   "releases": [
-    {"version":"Unreleased","component":"core","title":"Development changes","sections":[{"title":"Improvements","items":["Accept image messages from Desktop Chat and preserve images in private conversation history.","Expose the running Core version and its embedded release notes."]}]},
-    {"version":"Unreleased","component":"desktop","title":"Development changes","sections":[{"title":"Improvements","items":["Paste, drop or choose PNG, JPEG and WebP images in Chat.","Keep Create Work buttons stable while submitting or waiting.","View Desktop and Core versions and release notes in About Piwork."]}]}
+    {
+      "version": "0.0.5",
+      "component": "core",
+      "title": "Piwork 0.0.5 Preview",
+      "sections": [
+        {
+          "title": "Improvements",
+          "items": [
+            "Accept image messages from Desktop Chat and preserve images in private conversation history.",
+            "Expose the running Core version and its embedded release notes.",
+            "Prepare the default Work environment before readiness and reuse successful image and package-environment checks.",
+            "Bundle piwork-brain 1.2.2 with independent application awareness and conditional NiceGUI guidance.",
+            "Scope default template CSS and preserve drafts while reporting and recovering from business query failures."
+          ]
+        }
+      ],
+      "publishedAt": "2026-10-11"
+    },
+    {
+      "version": "0.0.5",
+      "component": "desktop",
+      "title": "Piwork 0.0.5 Preview",
+      "sections": [
+        {
+          "title": "Improvements",
+          "items": [
+            "Paste, drop or choose PNG, JPEG and WebP images in Chat.",
+            "Keep Create Work buttons stable while submitting or waiting.",
+            "View Desktop and Core versions and release notes in About Piwork."
+          ]
+        }
+      ],
+      "publishedAt": "2026-10-11"
+    }
   ]
 }
