@@ -142,3 +142,37 @@ go test -mod=readonly -tags=integration ./internal/coreapp \
 该场景核对实际模型收到图片、仅 metadata 的会话历史、原图二进制、提交幂等，以及 Stop/export、源 Core 下线、import、显式 Start 和同 Session 续聊。内置日志通过 `go test -mod=readonly ./internal/releaseinfo ./scripts/clirelease` 与相关构建脚本测试核对；正式候选缺失条目必须明确失败，开发构建不因未发行条目而失败。
 
 本次实际执行、制品身份与发布材料检查边界见 [Chat 图片、创建交互与版本日志验收](improve-desktop-chat-and-release-info-acceptance.md)。
+
+## 应用认知 Skill 与加载边界
+
+`application-awareness` 的完整五类认知位于 `internal/coreassets/piwork-brain/skills/application-awareness/SKILL.md`，与部署 Skill 平级。常驻路由、SDK 元数据发现、工具读取正文和实际业务效果分别验证，不把发现名称或模型文字当作行为通过。
+
+```sh
+npm run build -w @piwork/pi-adapter -w @piwork/agentd
+PIWORK_TEST_APPLICATION_AWARENESS_EVIDENCE=dist/application-awareness/sdk-history.json \
+  node --test apps/agentd/dist/brain-resources.test.js packages/pi-adapter/dist/sdk-smoke.test.js
+go test -mod=readonly ./internal/coreassets ./internal/coreapp \
+  -run 'Test(Brain|BundledBrain|FastAPIBrain)'
+```
+
+SDK 场景通过真实 read 工具读取冻结包内完整正文；可编辑副本的未 Apply 改动不生效，同一有效上下文复用不增加读取。独立业务 Query/Action 直接执行，小范围后台样本只修改原 Spec 与对应源码；禁用/空选择与包间同名冲突保持。可选 evidence 路径保存本轮合成 SDK 历史，夹具路径替换为 `<fixture>`，不使用真实用户内容或模型 key。确定性模型明确编排了样本工具调用，只证明资源和执行链路，不证明任意真实模型一定会遵循产品判断。
+
+Core 升级的定向 integration 为 `TestNativeCoreAddsApplicationAwarenessOnRestart` 与 `TestNativeDefaultBrainHasActualSDKToolsAndExplicitEmptyOverride`。沿本页 Docker 隔离规则提供兼容预备 Agent/helper 镜像，验证真实旧 1.2.1 制品升级、新 Work 发现两个 Skill、旧 Work/context/源码/数据保留和显式空包。不要求重建兼容 Agent，也不发布镜像。
+
+实际业务自更新使用现有 `node scripts/check-web-base-core.mjs --main-only` 聚焦主回路（省略该参数还会执行 Python 依赖扩展回归）：验证用户操作、Agent Action 后 UI 变化、无关草稿保留、Action 不重部署和无被动新 Run/Apply。该场景与代码版本自动采用分别观察；它不是视觉评分，也未声称覆盖所有应用的同步故障界面。五类认知中的失败/陈旧状态指导通过 SDK 正文读取核对，具体应用仍按受影响功能验证。验收事实见 [应用认知验收](application-awareness-acceptance.md)。
+
+### NiceGUI 认知扩展的定向验证
+
+`brain-resources.test.ts` 通过真实 SDK 从冻结包读取 NiceGUI Reference，并用实际工具列表核对无浏览器、入口不可达/未授权及有限诊断事实；非 NiceGUI/普通业务样本仍不新增专项读取。样本按固定模型分发，不能当作任意模型自主诊断能力的证明。
+
+```sh
+npm run build -w @piwork/pi-adapter -w @piwork/agentd
+node --test apps/agentd/dist/brain-resources.test.js packages/pi-adapter/dist/sdk-smoke.test.js
+node scripts/check-web-base.mjs dist/web-base/candidate.json web-app
+node scripts/check-web-base.mjs dist/web-base/candidate.json workstation
+node scripts/check-web-base-core.mjs --main-only
+```
+
+后两类入口先使用匹配的固定 NiceGUI base、兼容 Agent/helper 镜像及当前 Go 构建，按本页 Docker 隔离规则运行；本机私网访问仅对测试进程绕过环境代理。模板各运行实际 Python 检查，验证 CSS 前缀/局部范围和真实 refresh 函数的失败/恢复，再用真实页面验证草稿与状态。Core 主回路从实际 Desktop Service iframe 检查两个模板，注入框架样式隐藏、遮罩、bootstrap 资源失败以及可恢复的业务 Query 故障，分别核对 Ready/200 与页面可用、故障提示、草稿/焦点和恢复结果。
+
+可控故障仅写入隔离夹具副本，产品代码没有故障开关；共享断言位于 `scripts/check-application-awareness-page.mjs`。入口不新增平台工具或浏览器授权，不记录 ticket/token、私有 URL 参数或真实用户内容；页面证据置于忽略的 `dist/application-awareness/nicegui/`。此范围只检查受影响页面基本可用性，不评分美观或全量巡检。首轮失败与本轮实际结果继续追加到 [应用认知验收](application-awareness-acceptance.md)，不覆盖先前 14 项的历史事实。

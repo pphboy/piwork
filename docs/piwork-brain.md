@@ -1,8 +1,8 @@
 # Piwork-brain 与独立 Work Memory
 
-平台宿主只运行 Go Core 和原生 helper；Pi SDK、Agent、extension 在 Agent 容器内运行。Go 内嵌的 `internal/coreassets/piwork-brain/` 是普通 Pi extension package 的安装和内置更新来源，包含认知、薄 extension、部署 Skill 和语言无关交互协议。它不作为 npm node module 安装。首次原生 prepare 成功后，普通 catalog、默认选择和一次性标记在同一事务提交；失败保持运行不可用并允许修复重试。
+平台宿主只运行 Go Core 和原生 helper；Pi SDK、Agent、extension 在 Agent 容器内运行。Go 内嵌的 `internal/coreassets/piwork-brain/` 是普通 Pi extension package 的安装和内置更新来源，包含认知、薄 extension、应用认知/部署两个平级 Skill 和语言无关交互协议。它不作为 npm node module 安装。首次原生 prepare 成功后，普通 catalog、默认选择和一次性标记在同一事务提交；失败保持运行不可用并允许修复重试。
 
-当前内置脑包版本为 `1.2.1`。该补丁版让已经安装 `1.2.0` 的实例也能采用最新内置包；原 Work 保留捕获内容，仍需显式 Package Update/Apply。更新并启动 Core 后，仍为原内置来源且启用的旧脑包会经原准备流程更新 Core 包库，重复启动不重复发布；失败保留旧包并通过原准备诊断报告。一次性标记只控制首次默认选择，不阻止内置包更新。管理员替换、禁用或移除的包保持原样；移出默认或显式清空默认集合后，不会被重新加入。
+当前源码内置脑包版本为 `1.2.2`，新增独立 `application-awareness` Skill；已安装 `1.2.1` 或更早原内置包的实例可沿相同启动更新路径采用。原 Work 保留捕获内容，仍需显式 Package Update/Apply。更新并启动 Core 后，仍为原内置来源且启用的旧脑包会经原准备流程更新 Core 包库，重复启动不重复发布；失败保留旧包并通过原准备诊断报告。一次性标记只控制首次默认选择，不阻止内置包更新。管理员替换、禁用或移除的包保持原样；移出默认或显式清空默认集合后，不会被重新加入。
 
 新建 Work 捕获更新后的 Core 脑包；已有 Work 不自动换包或镜像，需要时沿原 `--from-core` Package Update 和显式 Apply 采用。新版包提供 Python + NiceGUI + SQLite 的默认指导与匹配模板，标准包由 base 预装；额外 Python 依赖在应用可写环境安装并精确保留。旧 Work/固定镜像仍保持原内容，不自动转换应用。历史归档和验收记录保留原事实，不作为当前交付依据。
 
@@ -10,9 +10,27 @@
 
 Work 首次加载时将独立可编辑源码复制到 `.pi/packages/piwork-brain/`。重启和 Apply 不覆盖已有编辑，源码编辑不会热加载；每次执行使用 captured active 中的固定认知，并读取该 Run 固定采用的有效经验版本。包资源、Files、Chat 都沿用 master 的入口。
 
+## 应用认知与实际加载
+
+脑包现在有两个平级 Skill：`application-awareness` 保存完整的 Product、UI、UX、Reactivity、Engineering Judgment 认知；`deploy-work-service` 保持原有必要 Spec、Service 契约、环境、持久化、部署与业务验证。五类认知的完整中文正文位于包内 `skills/application-awareness/SKILL.md`，不再通过部署 Skill 或额外 Reference 转入。
+
+加载分三层：`brain.md` 的短原则与路由自动进入执行上下文；SDK 发现启用包内 Skill 的名称、描述和冻结位置；创建应用、开发功能或修改交互时，AI 按 Brain 指令通过原 read 工具读取新 Skill 正文。元数据可见不表示正文已读，更不表示模型已遵循所有原则。当前上下文已有同一有效包正文时可复用，不要求每个工具调用重读。源码在 `.pi/packages/piwork-brain/` 的编辑仍要经包更新和显式 Apply 才实际采用。
+
+这些认知直接影响当前实现中的取舍，不添加设计阶段、独立报告、五项强制检查、逐项审批、视觉评分或额外 Run。普通 Query/Action、仅启停 Service 和部署未改造的第三方软件不进入产品设计流程。后台改动不主动增加无关 UI；用户明确的视觉目标仍按原范围实施。达到“功能可用、操作直观、状态正确、界面整洁”即可交付；必要功能检查和实际部署验证继续保留。
+
+业务数据同步与代码版本自动采用分别判断。默认模板在用户 Action 后刷新相关视图，并通过 Query/状态版本观察 Agent 数据变化，保留无关草稿；其他技术栈使用其现有简单机制。正常数据变化不要求用户刷新页面，不触发重部署或新模型目标；观察失败应按实际情况说明失败/陈旧状态，不能用新版代码已加载代替数据最新的证明。这是应用开发指导，不会自动改造所有既有应用。
+
+NiceGUI 页面开发或异常排查按需读取同 Skill 的 [NiceGUI Reference](../internal/coreassets/piwork-brain/skills/application-awareness/references/nicegui.md)，其他栈与普通业务任务不加载该资料。两个默认模板分别使用 `webapp-` / `workstation-` 自定义类前缀，并将业务样式限定在根容器下；保留实际框架布局类，不全局覆盖 `.column`、`.row`、`.card` 或 `.nicegui-column/.nicegui-row`。必要的文档级主题与限定范围的组件样式仍可使用。
+
+真实页面验证区分四层：Service Ready、HTTP 可达、业务 API 可用和用户界面可用。有当前可用且获准的浏览器能力时，经过用户实际 Desktop Service 入口检查受影响内容、主要操作和自动状态变化；Ready/200、接口通过或截图文件存在不能替代页面结果。当前默认 Work 内置工具没有独立浏览器工具，平台测试使用 Playwright 不代表 Work 已获该能力。浏览器不可用、入口不可达或授权不足时，分别报告后端已确认结果与“页面未验证”及原因，不擅自安装、扩权或获取用户凭据，不宣称完整 UI 交付。
+
+空白或不可操作页面按资源结果、浏览器错误、HTTP/WebSocket、DOM、计算样式/尺寸和遮罩证据区分故障层，不直接归因为架构不兼容或默认换栈；证据不足保留未知，修复后从原入口复验。默认页面的业务 Query 失败会保留最近确认内容并提示可能陈旧，恢复后自动清除提示、重读状态，保留无关草稿与当前操作。这是原任务中的基本可用性检查，不新增视觉评分、全页面巡检或设计审批。
+
+当前源码的 1.2.2 尚不属于已发布 Core 0.0.4 固定镜像。新版本进入安装后，默认新 Work 可捕获它；已有 Work 通过原 Package Update/Apply 采用，原包、代码、数据及模型配置保持。
+
 ## 默认 Web 开发环境与应用交付
 
-未指定技术栈的新 Web Service 默认使用 Python + NiceGUI + SQLite 和匹配的 `pphboy/piwork-web-base`。当前 contract-2/0.2.0 base 是已验证的本地候选；正式默认引用只有在另有明确发布要求并完成匿名 digest 验证后才可用。本地开发/验收可显式选择已验证预备镜像，不能用旧 FastAPI digest 冒充 NiceGUI。通用起点为脑包的 `templates/web-app/`，完整工作站例子为 `templates/workstation/`；用户指定其他栈或维护既有应用时沿用目标环境。镜像维护源在本仓库 `deploy/images/web-base/`，工具链、锁文件、使用与派生方式见 [Web base 手册](../deploy/images/web-base/README.zh-CN.md)。脑包只保存使用指导、模板与固定引用。
+未指定技术栈的新 Web Service 默认使用 Python + NiceGUI + SQLite 和匹配的 `pphboy/piwork-web-base`。当前 contract-2/0.2.0 base 已发布，脑包 `references/web-base.json` 使用经匿名验证的固定 tag@digest；实际发行身份见 [Core 0.0.4 发行记录](core-release-0.0.4.md)。该已发布镜像不因此包含后续 1.2.2 脑包源码变化。本地开发/验收可显式选择已验证预备镜像，不能用旧 FastAPI digest 冒充 NiceGUI。通用起点为脑包的 `templates/web-app/`，完整工作站例子为 `templates/workstation/`；用户指定其他栈或维护既有应用时沿用目标环境。镜像维护源在本仓库 `deploy/images/web-base/`，工具链、锁文件、使用与派生方式见 [Web base 手册](../deploy/images/web-base/README.zh-CN.md)。脑包只保存使用指导、模板与固定引用。
 
 部署 Skill 的共享初始化入口在写入 Spec、源码、锁文件和注册信息前拒绝已有应用目标，包括空目录、文件和链接。已有应用先读取实际内容再局部修改，不能重新复制模板覆盖。应用源码与可写依赖位于 `apps/<service-name>`，业务数据位于 `data/<service-name>`，普通启动、重启和环境升级均沿用这些内容。
 
