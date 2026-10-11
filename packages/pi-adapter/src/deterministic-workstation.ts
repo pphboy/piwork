@@ -69,7 +69,7 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
     else if (!previous("write")) invoke("write", { path: "apps/workstation/SPEC.md", content: text(reads[0]!) + `\nAcceptance update: verify the actual ${kind} version and automatic page adoption.\n` });
     else if (!previous("bash")) {
       const script = kind === "frontend"
-        ? `const fs=require('fs');const p='apps/workstation/frontend/src/App.tsx';fs.copyFileSync(p,'apps/workstation/.build/App.checkpoint.tsx');fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('Personal workstation','Updated workstation'));`
+        ? `const fs=require('fs');const p='apps/workstation/ui.py';fs.copyFileSync(p,'apps/workstation/.build/ui.checkpoint.py');fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('Personal workstation','Updated workstation'));`
         : `const fs=require('fs');const p='apps/workstation/review_config.json';fs.copyFileSync(p,'apps/workstation/.build/review.checkpoint.json');const v=JSON.parse(fs.readFileSync(p,'utf8'));v.includeCompleted=true;v.codeVersion='workstation-v2';fs.writeFileSync(p,JSON.stringify(v));`;
       invoke("bash", { command: `node -e ${shellQuote(script)}` });
     } else if (!previous(modelMcpToolName("work-services", "service_list"))) invoke(modelMcpToolName("work-services", "service_list"), {});
@@ -89,6 +89,37 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
         const actual = value(previous("brain_service"));
         if (actual.result?.codeVersion !== value(reads[1]).codeVersion || !actual.evidence?.verified) end(`workstation-${kind}-version-unverified`);
         else end(`workstation-${kind}-updated:${actual.result.codeVersion}`);
+      }
+    }
+    return true;
+  }
+  if (/^install deterministic workstation Python dependency [A-Za-z0-9-]+$/.test(prompt)) {
+    const key = prompt.split(" ").at(-1)!;
+    const reads = results.filter(result => result.toolName === "read");
+    if (!reads.length) invoke("read", { path: "apps/workstation/SPEC.md" });
+    else if (!previous("write")) invoke("write", { path: "apps/workstation/SPEC.md", content: text(reads[0]!) + "\nAcceptance: verify the actual extra Python environment through dependency_environment.\n" });
+    else if (!previous("bash")) {
+      const script = `const fs=require('fs');const root='apps/workstation/';fs.writeFileSync(root+'requirements.in','piwork-extra-fixture==1.0.0\\n');const p=root+'workstation.py';let v=fs.readFileSync(p,'utf8');if(!v.includes('dependency_environment')){fs.copyFileSync(p,root+'.build/dependency.checkpoint.py');v=v.replace('import os','import os\\nimport sys');v=v.replace('[("todos", "Current Todo state"),','[("dependency_environment", "Actual installed Python environment"), ("todos", "Current Todo state"),');v=v.replace('            if name == "todos":','            if name == "dependency_environment":\\n                import piwork_extra_fixture as extra\\n                result = {"version": extra.VERSION, "pythonPrefix": sys.prefix}\\n                checks = [{"name": "actual_extra_environment", "passed": extra.VERSION == "1.0.0" and "/.deps/" in sys.prefix, "summary": "The running application imported the pinned extra package"}]\\n            elif name == "todos":');fs.writeFileSync(p,v);}`;
+      invoke("bash", { command: `node -e ${shellQuote(script)}` });
+    } else if (!previous(modelMcpToolName("work-services", "service_list"))) invoke(modelMcpToolName("work-services", "service_list"), {});
+    else if (!previous(modelMcpToolName("work-services", "service_update"))) {
+      const service = value(previous(modelMcpToolName("work-services", "service_list"))).services.find((item: any) => item.name === "workstation");
+      const allowed = ["name", "image", "command", "args", "environment", "secretRefs", "workingDirectory", "mounts", "ports", "cpuMillis", "memoryBytes", "enabled", "required", "readiness", "restartPolicy"];
+      const definition = Object.fromEntries(allowed.filter(name => service.definition[name] !== undefined).map(name => [name, service.definition[name]]));
+      definition.args = ["run", "--app", "/var/data/workspace/apps/workstation", "--install-deps"];
+      definition.environment = { ...definition.environment, PIP_INDEX_URL: "http://svc-python-registry:8095/simple", PIP_TRUSTED_HOST: "svc-python-registry" };
+      invoke(modelMcpToolName("work-services", "service_update"), { serviceId: service.serviceId, expectedRevision: service.desiredRevision, definition, idempotencyKey: `python-dependency-${key}` });
+    } else {
+      const observed = results.filter(result => result.toolName === modelMcpToolName("work-services", "operation_get")).at(-1);
+      if (!observed || ["pending", "running"].includes(value(observed).state)) {
+        if (observed && results.at(-1)?.toolName !== "bash") invoke("bash", { command: "sleep 0.5" });
+        else invoke(modelMcpToolName("work-services", "operation_get"), { operationId: value(previous(modelMcpToolName("work-services", "service_update"))).operationId });
+      } else if (value(observed).state !== "succeeded") end("workstation-python-dependency-deployment-failed");
+      else if (!previous("brain_service")) invoke("brain_service", { operation: "verify", serviceName: "workstation", name: "dependency_environment", input: {} });
+      else {
+        const actual = value(previous("brain_service"));
+        if (!actual.evidence?.verified || actual.result?.value?.version !== "1.0.0") end("workstation-python-dependency-unverified");
+        else end("workstation-python-dependency-verified:" + actual.result.codeVersion);
       }
     }
     return true;

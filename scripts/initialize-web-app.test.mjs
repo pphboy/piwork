@@ -19,7 +19,7 @@ test('standard initialization preserves editable files and rejects repeats befor
       assert.equal(statSync(join(app, 'prepare.sh')).mode & 0o111, statSync(original).mode & 0o111);
       assert(statSync(join(app, 'prepare.sh')).mode & 0o200);
       mkdirSync(join(workspace, 'data', template), { recursive: true });
-      const paths = ['SPEC.md', 'app.py', 'frontend/package-lock.json'].map(name => join(app, name));
+      const paths = ['SPEC.md', 'app.py', 'ui.py', 'page-files.json', 'requirements.in', 'requirements.lock'].map(name => join(app, name));
       paths.push(join(workspace, 'data', template, 'business.txt'), join(workspace, '.pi/services', template + '.json'));
       for (const path of paths) writeFileSync(path, 'user content: ' + path);
       assert.throws(() => initialize({ workspace, name: template, template }), { code: 'EEXIST' });

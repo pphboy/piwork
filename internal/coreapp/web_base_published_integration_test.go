@@ -17,14 +17,24 @@ func TestNativeDefaultBrainDeploysPublishedWebBaseDigest(t *testing.T) {
 		Reference string
 	}
 	raw, err := os.ReadFile("../coreassets/piwork-brain/references/web-base.json")
-	if err != nil || json.Unmarshal(raw, &reference) != nil || reference.State != "published" || !strings.Contains(reference.Reference, "@sha256:") {
-		t.Fatal("A verified published Web base reference is required")
+	if err != nil || json.Unmarshal(raw, &reference) != nil || (reference.State != "published" && reference.State != "candidate") {
+		t.Fatal("An explicit candidate or verified published Web base reference is required")
 	}
 	a, base, auth, work, _ := nativeApplyFixtureConfig(t, true)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	f := brainAcceptance{t: t, a: a, base: base, auth: auth, work: work, path: "/api/v1/works/" + work, ctx: ctx}
 	run := f.chat("deploy published workstation", "published-base")
+	if reference.State == "candidate" {
+		if run["finalText"] != "workstation-deployment-failed:published-base-unavailable" || len(f.read(f.path + "/services")["services"].([]any)) != 0 {
+			t.Fatal("Unpublished base was deployed as an available default", run)
+		}
+		t.Log("Real SDK refused the unpublished candidate before initialization or Service mutation")
+		return
+	}
+	if !strings.Contains(reference.Reference, "@sha256:") {
+		t.Fatal("Published base lacks a verified digest")
+	}
 	if !strings.Contains(run["finalText"].(string), "workstation-deployed:") {
 		t.Fatal(run["finalText"])
 	}

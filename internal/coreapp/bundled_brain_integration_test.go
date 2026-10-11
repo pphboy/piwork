@@ -102,7 +102,7 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 	}
 	updatedAuth := "Bearer " + login.Token
 	head, generation := brainHead(t, updated)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.1.0:") || generation != 3 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.0:") || generation != 3 {
 		t.Fatal("Core did not update its seeded brain", head, generation)
 	}
 	configuration, err = updated.Store.Configuration(ctx, *oldID)
@@ -141,7 +141,7 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if !strings.Contains(string(content), "FastAPI + React + TypeScript + Vite") || strings.Contains(strings.ToLower(string(content)), "nicegui") {
+			if !strings.Contains(string(content), "Python + NiceGUI + SQLite") || strings.Contains(string(content), "use FastAPI + React + TypeScript + Vite") {
 				t.Fatal("new Work captured obsolete deployment guidance")
 			}
 			found = true
@@ -156,7 +156,7 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 	if _, actual := brainHead(t, updated); actual != generation {
 		t.Fatal("repeated preparation changed catalog generation", actual)
 	}
-	t.Log("Core restart updated only the seeded catalog; real SDK kept legacy Work content/data and loaded current FastAPI brain in a new Work")
+	t.Log("Core restart updated only the seeded catalog; real SDK kept legacy Work content/data and loaded current NiceGUI brain in a new Work")
 }
 
 func TestNativeDefaultBrainHasActualSDKToolsAndExplicitEmptyOverride(t *testing.T) {
@@ -191,7 +191,7 @@ func TestNativeDefaultBrainHasActualSDKToolsAndExplicitEmptyOverride(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ready.WorkHistorySchemaVersion != 4 || ready.RunModelContractVersion != 1 || ready.WorkFeedbackContractVersion != 1 || len(ready.LoadedPackages) != 1 || ready.LoadedPackages[0].Name != "piwork-brain" {
+	if ready.WorkHistorySchemaVersion != 5 || ready.RunModelContractVersion != 1 || ready.WorkFeedbackContractVersion != 1 || len(ready.LoadedPackages) != 1 || ready.LoadedPackages[0].Name != "piwork-brain" {
 		t.Fatal(ready)
 	}
 	for _, tool := range []string{"brain_service", "brain_feedback", "brain_experience", "brain_package_update"} {

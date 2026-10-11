@@ -2,7 +2,7 @@
 
 ## Intent
 
-Start a persistent FastAPI + React + TypeScript + Vite Service. The included Todo/review/export example demonstrates the Service contract and can be replaced with the requested domain; the base image contains no business application.
+Start a persistent Python + NiceGUI + SQLite Service. The included Todo/review/export example demonstrates the Service contract and can be replaced with the requested domain; the base image contains no business application.
 
 ## Objects
 
@@ -10,7 +10,7 @@ The sample has Todos, review projections, original Actions/Jobs and feedback rec
 
 ## State
 
-Business data and the transactional outbox use data/<service-name>/workstation.sqlite. Service name comes from the current injected identity. Code and frontend versions identify the actual checked build.
+Business data and the transactional outbox use data/<service-name>/workstation.sqlite. Service name comes from the current injected identity. Code and page versions identify the actual checked Python implementation and environment.
 
 ## Business Flow
 
@@ -22,11 +22,18 @@ Use /pi/v1/capabilities and the declared Query/Action/Job endpoints. Only explic
 
 ## Implementation Map
 
-- backend/main.py: FastAPI UI and Agent routes.
+- app.py: NiceGUI HTTP and Agent routes.
 - workstation.py: sample business logic; piwork_protocol.py: transactional interaction contract.
-- frontend/src/App.tsx: React UI; version-client.ts: version observation and draft recovery.
-- app.py: server entry; requirements.lock and frontend/package-lock.json: dependencies.
+- ui.py: NiceGUI pages and callbacks; image page client: version observation and draft recovery.
+- page-files.json: additional page helpers/resources; the base retains default page entry inputs.
+- requirements.in and requirements.lock: exact extra dependencies; standard packages come from the fixed base.
 
 ## Acceptance Criteria
 
-piwork-web check runs isolated backend and frontend tests. piwork-web run prepares/builds/serves the actual checked version. Verify real business results, browser/API behavior, automatic version adoption and retained data through the existing Service workflow.
+piwork-web check runs isolated Python business/protocol/version tests. piwork-web run prepares and serves the actual checked version, reusing valid checks for identical input. Verify real business results, NiceGUI browser/HTTP/WebSocket behavior, automatic version adoption and retained data through the existing Service workflow.
+
+## Environment and delivery
+
+Use the matching contract-2 NiceGUI base. Standard dependencies are preinstalled; extra exact pins are prepared with the Service command `run --install-deps`, retained in the app and reused offline. Complete Python checks, the original Service deployment and actual runtime-version/business verification. Page versions represent Python UI/resources; preserve supported nonsecret drafts/path during automatic ready-version adoption. Never use an unpublished candidate as a published default, overwrite an existing app during initialization, or perform Docker exec/build from Agent.
+
+Maintain `page-files.json` when page helpers/resources are introduced, split or removed. A listed helper/resource change must change frontendVersion; independent business changes must not. Invalid or missing declared files reject checks/startup instead of reusing old checks. Apps without a manifest retain the default input set.

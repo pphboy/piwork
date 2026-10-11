@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
+import { runCoreDependencyChecks } from './check-web-base-core-dependencies.mjs';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
@@ -67,6 +68,7 @@ async function chat(prompt) {
   }, prompt, 300000);
   assert.equal(run.state, 4, `${prompt}: Run failed`);
   results.push({ prompt, runId: run.runId, finalText: run.finalText });
+  console.log('Core check SDK completed:', prompt);
   return run;
 }
 try {
@@ -93,7 +95,7 @@ try {
     env: { ...process.env, PATH: '/nonexistent', PIWORK_CONFIG_PATH: join(temporary, 'client.json') } });
   desktopOutput = output(desktop);
   const launch = await wait(() => desktopOutput().match(/http:\/\/desktop\.localhost:\d+\/#ticket=[\w-]+/)?.[0], 'Desktop entry', 15000);
-  browser = await chromium.launch({ headless: true, channel: 'chromium' });
+  browser = await chromium.launch({ headless: true, channel: 'chromium', args: ['--proxy-server=direct://', '--proxy-bypass-list=*'] });
   const page = await browser.newPage();
   page.on('response', response => {
     if (response.request().isNavigationRequest()) documentResponses.push({ status: response.status(), path: new URL(response.url()).pathname });
@@ -143,7 +145,7 @@ try {
   const devReceipt = await api('PATCH', `/works/${work}/services/${originalService.serviceId}`, { definition: devDefinition, expectedRevision: originalService.desiredRevision, idempotencyKey: 'explicit-dev-mode' });
   await wait(async () => (await api('GET', `/operations/${devReceipt.operationId}`)).state === 'succeeded', 'dev mode');
   await expect(frame.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible({ timeout: 90000 });
-  await expect(frame.locator('script[src="/@vite/client"]')).toHaveCount(1, { timeout: 90000 });
+  await expect.poll(() => frame.getByRole('heading', { name: 'Updated workstation', exact: true }).evaluate(() => window.piworkRuntime?.mode), { timeout: 90000 }).toBe('development');
   const readSource = async path => {
     const response = await fetch(`${coreUrl}/api/v1/works/${work}/files/${path}`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(response.status, 200); return response.text();
@@ -155,7 +157,7 @@ try {
   };
   const beforeInitialization = await api('GET', `/works/${work}/services/${originalService.serviceId}`);
   const preserved = new Map();
-  for (const path of ['apps/workstation/SPEC.md', 'apps/workstation/frontend/package-lock.json', 'apps/workstation/app.py']) {
+  for (const path of ['apps/workstation/SPEC.md', 'apps/workstation/requirements.lock', 'apps/workstation/app.py']) {
     const changed = (await readSource(path)) + (path.endsWith('.py') ? '\n# User customization retained across rejected initialization.\n' : '\n');
     await writeSource(path, changed); preserved.set(path, changed);
   }
@@ -171,7 +173,7 @@ try {
   const retained = await api('GET', `/works/${work}/services/${originalService.serviceId}`);
   assert.equal(retained.desiredRevision, beforeInitialization.desiredRevision);
   await expect(frame.getByText('Agent live Todo', { exact: true })).toBeVisible();
-  const uiPath = 'apps/workstation/frontend/src/App.tsx', backendPath = 'apps/workstation/workstation.py';
+  const uiPath = 'apps/workstation/ui.py', backendPath = 'apps/workstation/workstation.py';
   const [uiSource, backendSource] = await Promise.all([readSource(uiPath), readSource(backendPath)]);
   await frame.getByRole('link', { name: 'Personal review', exact: true }).click();
   await writeSource(uiPath, uiSource.replace('Updated workstation', 'Live workstation'));
@@ -185,10 +187,10 @@ try {
   const normalReceipt = await api('PATCH', `/works/${work}/services/${originalService.serviceId}`, { definition: standard, expectedRevision: devView.desiredRevision, idempotencyKey: 'restore-standard-mode' });
   await wait(async () => (await api('GET', `/operations/${normalReceipt.operationId}`)).state === 'succeeded', 'default mode restored');
   await expect(frame.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible({ timeout: 90000 });
-  await expect(frame.locator('script[type="module"][src^="/assets/"]')).toHaveCount(1, { timeout: 90000 });
+  await expect.poll(() => frame.getByRole('heading', { name: 'Updated workstation', exact: true }).evaluate(() => window.piworkRuntime?.mode), { timeout: 90000 }).toBe('nicegui');
   await frame.getByRole('link', { name: 'Todos', exact: true }).click();
   await expect(frame.getByLabel('Todo title', { exact: true })).toHaveValue('keep this unfinished input');
-  await writeSource(uiPath, uiSource + '\nconst invalid: = ;\n');
+  await writeSource(uiPath, uiSource + '\ninvalid syntax = ;\n');
   const failedReceipt = await api('POST', `/works/${work}/services/${originalService.serviceId}/restart`, { idempotencyKey: 'failed-frontend-build' });
   const failedOperation = await wait(async () => {
     const value = await api('GET', `/operations/${failedReceipt.operationId}`);
@@ -200,6 +202,51 @@ try {
   await wait(async () => (await api('GET', `/operations/${repair.operationId}`)).state === 'succeeded', 'repaired frontend');
   await expect(frame.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible({ timeout: 90000 });
   await expect(frame.getByLabel('Todo title', { exact: true })).toHaveValue('keep this unfinished input');
+  // Split the page title into a declared helper, then change only that helper.
+  const helperPath = 'apps/workstation/page_helpers.py';
+  const manifestPath = 'apps/workstation/page-files.json';
+  const splitUI = uiSource.replace("TITLE = 'Updated workstation'", 'from page_helpers import TITLE');
+  assert.notEqual(splitUI, uiSource, 'Page helper fixture did not replace the actual title source');
+  const pageManifest = JSON.parse(await readSource(manifestPath));
+  pageManifest.files.push('page_helpers.py');
+  await writeSource(helperPath, "TITLE = 'Updated workstation'\n");
+  await writeSource(manifestPath, JSON.stringify(pageManifest) + '\n');
+  await writeSource(uiPath, splitUI);
+  const splitReceipt = await api('POST', `/works/${work}/services/${originalService.serviceId}/restart`, { idempotencyKey: 'split-page-helper' });
+  await wait(async () => (await api('GET', `/operations/${splitReceipt.operationId}`)).state === 'succeeded', 'split page helper');
+  const splitRuntime = await frame.getByRole('heading', { name: 'Updated workstation', exact: true }).evaluate(async () => (await fetch('/api/runtime-version')).json());
+  await expect.poll(() => frame.getByRole('heading', { name: 'Updated workstation', exact: true }).evaluate(() => window.piworkRuntime?.codeVersion), { timeout: 90000 })
+    .toBe(splitRuntime.codeVersion);
+  await frame.getByRole('link', { name: 'Personal review', exact: true }).click();
+  await expect(frame.getByRole('heading', { name: 'Personal review', exact: true })).toBeVisible();
+  const beforeHelper = await frame.getByRole('heading', { name: 'Personal review', exact: true }).evaluate(() => window.piworkRuntime);
+  const helperOrigin = await frame.getByRole('heading', { name: 'Personal review', exact: true }).evaluate(() => location.origin);
+  const helperFrame = page.frames().find(candidate => candidate.parentFrame() && new URL(candidate.url()).origin === helperOrigin);
+  assert(helperFrame);
+  let helperAdoptions = 0;
+  const countHelperAdoption = request => { if (request.isNavigationRequest() && request.frame() === helperFrame) helperAdoptions++; };
+  page.on('request', countHelperAdoption);
+  await writeSource(helperPath, "TITLE = 'Helper workstation'\n");
+  const helperReceipt = await api('POST', `/works/${work}/services/${originalService.serviceId}/restart`, { idempotencyKey: 'page-helper-only-update' });
+  await wait(async () => (await api('GET', `/operations/${helperReceipt.operationId}`)).state === 'succeeded', 'page helper update');
+  await expect(frame.getByRole('heading', { name: 'Helper workstation', exact: true })).toBeVisible({ timeout: 90000 });
+  await expect(frame.getByRole('heading', { name: 'Personal review', exact: true })).toBeVisible();
+  const afterHelper = await frame.getByRole('heading', { name: 'Helper workstation', exact: true }).evaluate(() => window.piworkRuntime);
+  assert.notEqual(afterHelper.codeVersion, beforeHelper.codeVersion);
+  assert.notEqual(afterHelper.frontendVersion, beforeHelper.frontendVersion);
+  assert.equal(await readSource(uiPath), splitUI, 'Helper update changed ui.py');
+  assert.equal(await readSource(manifestPath), JSON.stringify(pageManifest) + '\n', 'Helper update changed its declaration');
+  await new Promise(done => setTimeout(done, 11000));
+  assert.equal(helperAdoptions, 1, 'Page helper update did not perform exactly one application navigation');
+  assert(page.frames().includes(helperFrame), 'Helper adoption replaced the application iframe');
+  page.off('request', countHelperAdoption);
+  await frame.getByRole('link', { name: 'Todos', exact: true }).click();
+  await expect(frame.getByLabel('Todo title', { exact: true })).toHaveValue('keep this unfinished input');
+  await writeSource(helperPath, "TITLE = 'Updated workstation'\n");
+  const helperRestore = await api('POST', `/works/${work}/services/${originalService.serviceId}/restart`, { idempotencyKey: 'restore-page-helper-title' });
+  await wait(async () => (await api('GET', `/operations/${helperRestore.operationId}`)).state === 'succeeded', 'page helper title restored');
+  await expect(frame.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible({ timeout: 90000 });
+  console.log('Page helper-only update changed both loaded versions, adopted once and preserved draft/path.');
   const candidate = JSON.parse(await readFile(join(root, 'dist/web-base/candidate.json')));
   // Change the actual image environment, leaving all application source/locks intact.
   const environmentDirectory = join(temporary, 'environment'); await mkdir(environmentDirectory);
@@ -213,7 +260,7 @@ try {
   };
   const unchangedSource = sourceIdentity();
   const oldVersion = await frame.getByRole('heading', { name: 'Updated workstation', exact: true }).evaluate(async () => (await fetch('/api/runtime-version')).json());
-  const oldAsset = await frame.locator('script[type="module"]').getAttribute('src');
+  const oldAsset = await frame.locator('script[src^="/piwork-assets/page-client.js"]').getAttribute('src');
   await frame.getByRole('link', { name: 'Personal review', exact: true }).click();
   await expect(frame.getByRole('heading', { name: 'Personal review', exact: true })).toBeVisible();
   const applicationOrigin = await frame.getByRole('heading', { name: 'Personal review', exact: true }).evaluate(() => location.origin);
@@ -226,7 +273,7 @@ try {
   const environmentRevision = (await api('GET', `/works/${work}/services/${originalService.serviceId}`)).desiredRevision;
   const upgradedReceipt = await api('PATCH', `/works/${work}/services/${originalService.serviceId}`, { definition: { ...standard, image: { reference: environmentImage } }, expectedRevision: environmentRevision, idempotencyKey: 'environment-only-upgrade' });
   await wait(async () => (await api('GET', `/operations/${upgradedReceipt.operationId}`)).state === 'succeeded', 'environment upgrade');
-  await expect.poll(() => frame.locator('script[type="module"]').getAttribute('src'), { timeout: 90000 }).not.toBe(oldAsset);
+  await expect.poll(() => frame.locator('script[src^="/piwork-assets/page-client.js"]').getAttribute('src'), { timeout: 90000 }).not.toBe(oldAsset);
   await expect(frame.getByRole('heading', { name: 'Personal review', exact: true })).toBeVisible();
   const newVersion = await frame.getByRole('heading', { name: 'Personal review', exact: true }).evaluate(async () => (await fetch('/api/runtime-version')).json());
   assert.notEqual(newVersion.environmentHash, oldVersion.environmentHash);
@@ -242,7 +289,7 @@ try {
   const upgradedService = await api('GET', `/works/${work}/services/${originalService.serviceId}`);
   const restoredReceipt = await api('PATCH', `/works/${work}/services/${originalService.serviceId}`, { definition: standard, expectedRevision: upgradedService.desiredRevision, idempotencyKey: 'restore-original-environment' });
   await wait(async () => (await api('GET', `/operations/${restoredReceipt.operationId}`)).state === 'succeeded', 'original environment restored');
-  await expect.poll(() => frame.locator('script[type="module"]').getAttribute('src'), { timeout: 90000 }).toBe(oldAsset);
+  await expect.poll(() => frame.locator('script[src^="/piwork-assets/page-client.js"]').getAttribute('src'), { timeout: 90000 }).toBe(oldAsset);
   const memoryProgram = `import json,resource
 from http.server import BaseHTTPRequestHandler,HTTPServer
 memory=bytearray(192<<20)
@@ -309,14 +356,14 @@ HTTPServer(('0.0.0.0',8081),Handler).serve_forever()
   assert.deepEqual(requests.items.map(item => item.requestId).sort(), explicitRequests.map(item => item.requestId).sort(), 'Passive version observation started an Agent goal');
   assert.equal((await api('GET', `/works/${work}/configuration`)).pendingApply, false, 'Application refresh applied Work configuration');
   assert.deepEqual(errors, []);
-  await writeFile(join(root, 'dist/web-base/core-validation.json'), JSON.stringify({ passed: true, checkedAt: new Date().toISOString(), imageId: candidate.imageId,
-    inputHash: candidate.inputHash, checks: ['real-sdk-mcp', 'real-core-cli-browser', 'frontend-auto-adoption', 'backend-auto-adoption', 'agent-data-auto-adoption', 'environment-auto-adoption', 'safe-repeat-initialization', 'draft-path-retained', 'failed-build-recovery', 'dev-hmr-backend-reload', 'agent-sqlite3', 'no-extra-run-or-apply', 'memory-over-128MiB', 'legacy-cap-replaced', 'derived-image-service', 'core-graceful-recovery'], runs: results.map(({ prompt, runId }) => ({ prompt, runId })) }, null, 2) + '\n');
-  console.log('Real SDK/MCP/Core/CLI/browser: frontend and backend adopted automatically, draft/path retained, Agent sqlite3 executed; no manual reload or extra Run/Apply.');
+  await writeFile(join(root, 'dist/web-base/core-main-validation.json'), JSON.stringify({ contractVersion: 2, passed: true, checkedAt: new Date().toISOString(), imageId: candidate.imageId,
+    inputHash: candidate.inputHash, checks: ['real-sdk-mcp', 'real-core-cli-browser', 'frontend-auto-adoption', 'backend-auto-adoption', 'page-helper-auto-adoption', 'agent-data-auto-adoption', 'environment-auto-adoption', 'safe-repeat-initialization', 'draft-path-retained', 'failed-check-recovery', 'dev-python-reload', 'agent-sqlite3', 'no-extra-run-or-apply', 'memory-over-128MiB', 'legacy-cap-replaced', 'derived-image-service', 'core-graceful-recovery'], runs: results.map(({ prompt, runId }) => ({ prompt, runId })) }, null, 2) + '\n');
+  console.log('Real SDK/MCP/Core/CLI/browser: NiceGUI pages and business updates adopted automatically, draft/path retained, Agent sqlite3 executed; no manual reload or extra Run/Apply.');
 } catch (error) {
   console.error('Document response status/path (no credentials):', JSON.stringify(documentResponses.slice(-12)));
   for (const context of browser?.contexts() || []) for (const page of context.pages()) for (const frame of page.frames()) {
     try {
-      const diagnostic = await frame.evaluate(() => ({ path: location.pathname, scripts: document.querySelectorAll('script[type="module"]').length,
+      const diagnostic = await frame.evaluate(() => ({ path: location.pathname, scripts: document.querySelectorAll('script[src^="/piwork-assets/page-client.js"]').length,
         headings: [...document.querySelectorAll('h1,h2')].map(node => node.textContent),
         codes: document.body?.innerText.match(/(?:SERVICE|WORK|CORE|SESSION|AUTH|ENTRY|PROXY|ACCESS)_[A-Z_]+/g) || [] }));
       console.error('Frame diagnostic:', JSON.stringify(diagnostic));
@@ -340,3 +387,5 @@ HTTPServer(('0.0.0.0',8081),Handler).serve_forever()
   if (environmentImage) docker(['image', 'rm', environmentImage]);
   await rm(temporary, { recursive: true, force: true });
 }
+
+if (!process.argv.includes('--main-only')) await runCoreDependencyChecks();

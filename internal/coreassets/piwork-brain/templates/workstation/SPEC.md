@@ -34,9 +34,10 @@ The initial review configuration intentionally excludes completed Todos as a rep
 | Responsibility | Code coordinates |
 | --- | --- |
 | Capability/state/query/Action/export semantics | `workstation.py`: `Workstation.capabilities`, `query`, `perform`, `export`, `job` |
-| Shared UI and HTTP entry points | `backend/main.py`: UI Actions and `/pi/v1` routes; `frontend/src/App.tsx`: React; `app.py`: entry |
+| Shared UI and HTTP entry points | `app.py`: HTTP Actions, `/pi/v1`, lifecycle and entry; `ui.py`: NiceGUI pages and callbacks |
 | Idempotency/version checks/outbox/identity | `piwork_protocol.py`: `WorkProtocol.action`, `event`, `deliver_once` |
 | Review behavior/version | `review_config.json`: `includeCompleted`, `codeVersion` |
+| Page identity inputs | `page-files.json`: extra page helpers/resources; base version tool retains the default entry files |
 | Business regression | `test_workstation.py`: `StationTest` |
 | Protocol regression | `test_protocol.py`: protocol test cases |
 
@@ -44,4 +45,10 @@ The initial review configuration intentionally excludes completed Todos as a rep
 
 Run `piwork-web check` from the application directory. Confirm original Action fingerprint replay without another mutation, stale state rejection, actual completed review after repair, real export artifact, interrupted executor handling, import-origin isolation and safe pathname facts. In deployment, also verify Service HTTP/UI, named Actions/Queries and original receipts through the real SDK/MCP/Service path. A passing Python fixture alone does not establish deployment or real-model behavior.
 
-After edits, the Agent checks/builds and restarts/updates the stable Service, then verifies its actual loaded version and business state. The page updates itself and preserves supported drafts/path; no manual refresh is an acceptance step.
+After edits, the Agent completes necessary Python checks and restarts/updates the stable Service, then verifies its actual loaded version and business state. The page updates itself and preserves supported drafts/path; no manual refresh is an acceptance step.
+
+## Environment and delivery
+
+Use the matching contract-2 NiceGUI base. Standard dependencies are preinstalled; extra exact pins are prepared with the Service command `run --install-deps`, retained in the app and reused offline. Complete Python checks, the original Service deployment and actual runtime-version/business verification. Page versions represent Python UI/resources; preserve supported nonsecret drafts/path during automatic ready-version adoption. Never use an unpublished candidate as a published default, overwrite an existing app during initialization, or perform Docker exec/build from Agent.
+
+Maintain `page-files.json` when page helpers/resources are introduced, split or removed. A listed helper/resource change must change frontendVersion; independent business changes must not. Invalid or missing declared files reject checks/startup instead of reusing old checks. Apps without a manifest retain the default input set.

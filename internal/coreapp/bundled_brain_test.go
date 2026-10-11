@@ -20,10 +20,14 @@ import (
 // Pure native artifact fixture for tests which replace the Engine dependency.
 // Production always uses the isolated helper's prepare/capture pipeline.
 func unitBrainPreparer(t *testing.T, edits ...func(string)) func(context.Context) (packageprepare.Result, error) {
+	return unitBrainArchivePreparer(t, coreassets.BrainPackageArchive, edits...)
+}
+
+func unitBrainArchivePreparer(t *testing.T, source func() ([]byte, error), edits ...func(string)) func(context.Context) (packageprepare.Result, error) {
 	t.Helper()
 	return func(ctx context.Context) (packageprepare.Result, error) {
 		directory := t.TempDir()
-		archive, err := coreassets.BrainPackageArchive()
+		archive, err := source()
 		if err != nil {
 			return packageprepare.Result{}, err
 		}
@@ -57,21 +61,10 @@ func unitBrainPreparer(t *testing.T, edits ...func(string)) func(context.Context
 	}
 }
 
-// A minimal old package is sufficient for catalog migration tests. It has real
-// validated bytes and a distinct legacy cognition, never production resources.
+// Complete old FastAPI package bytes are isolated migration input only.
 func legacyBrainPreparer(t *testing.T) func(context.Context) (packageprepare.Result, error) {
 	t.Helper()
-	return unitBrainPreparer(t, func(directory string) {
-		for name, content := range map[string]string{
-			"package.json":                        `{"name":"piwork-brain","version":"1.0.0","type":"module","pi":{"extensions":["extensions/brain.js"],"skills":["skills"]}}`,
-			"brain.md":                            "Legacy workstation cognition uses Python/NiceGUI.\n",
-			"skills/deploy-work-service/SKILL.md": "---\nname: deploy-work-service\ndescription: Legacy service deployment\n---\nUse Python/NiceGUI.\n",
-		} {
-			if err := os.WriteFile(filepath.Join(directory, name), []byte(content), 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
+	return fastAPIBrainPreparer(t)
 }
 
 func installLegacyBrain(t *testing.T, a *Application, ids ...string) corestore.PackageArtifact {
@@ -126,7 +119,7 @@ func TestBundledBrainUpdatesLegacySeedAndPreservesDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	head, generation := brainHead(t, a)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.1.0:") || generation != 2 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.0:") || generation != 2 {
 		t.Fatal(head, generation)
 	}
 	after, _ := a.Store.DefaultWork(context.Background())
@@ -135,7 +128,7 @@ func TestBundledBrainUpdatesLegacySeedAndPreservesDefaults(t *testing.T) {
 	if string(left) != string(right) {
 		t.Fatal("update changed default configuration")
 	}
-	if raw, err := os.ReadFile(filepath.Join(a.options.DataDirectory, old.StoragePath, "brain.md")); err != nil || !strings.Contains(string(raw), "NiceGUI") {
+	if raw, err := os.ReadFile(filepath.Join(a.options.DataDirectory, old.StoragePath, "skills", "deploy-work-service", "SKILL.md")); err != nil || !strings.Contains(string(raw), "FastAPI + React + TypeScript + Vite") {
 		t.Fatal("old immutable package lost", err)
 	}
 	a.prepareBrainForTest = func(context.Context) (packageprepare.Result, error) {

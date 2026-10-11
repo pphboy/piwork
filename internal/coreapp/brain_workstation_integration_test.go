@@ -41,6 +41,8 @@ func (f *brainAcceptance) read(path string) map[string]any {
 }
 func (f *brainAcceptance) chat(prompt, key string) map[string]any {
 	f.t.Helper()
+	started := time.Now()
+	defer func() { f.t.Logf("brain-measure chat=%s elapsedMs=%d", key, time.Since(started).Milliseconds()) }()
 	if f.session == "" {
 		status, v := packageHTTPCall(f.t, f.base, f.path+"/sessions", "POST", f.auth, map[string]string{"idempotencyKey": "brain-chat-" + key})
 		if status != 201 {
@@ -211,7 +213,7 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 	if !strings.Contains(deployed["finalText"].(string), "workstation-deployed:") {
 		t.Fatal(deployed)
 	}
-	program := `import {chromium,expect} from '@playwright/test'; const browser=await chromium.launch({headless:true,channel:'chromium'});try{const page=await browser.newPage();page.on('pageerror',e=>console.error('Application error:',e.message));await page.goto(process.argv[1]);await page.getByLabel('Todo title',{exact:true}).fill('Go Core closed loop');await page.getByRole('button',{name:'Add Todo',exact:true}).click();await expect(page.getByText('Go Core closed loop',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Complete',exact:true}).click();await expect(page.getByText('Completed',{exact:true})).toBeVisible();await page.getByRole('link',{name:'Personal review'}).click();await expect(page.getByText('Completed Todos: 0',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Report missing completed Todos',exact:true}).click();console.log('real React browser and FastAPI created/completed Todo and submitted feedback');}finally{await browser.close()}`
+	program := `import {chromium,expect} from '@playwright/test'; const browser=await chromium.launch({headless:true,channel:'chromium',args:['--proxy-server=direct://','--proxy-bypass-list=*']});try{const page=await browser.newPage();page.on('pageerror',e=>console.error('Application error:',e.message));await page.goto(process.argv[1]);await page.getByLabel('Todo title',{exact:true}).fill('Go Core closed loop');await page.getByRole('button',{name:'Add Todo',exact:true}).click();await expect(page.getByText('Go Core closed loop',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Complete',exact:true}).click();await expect(page.getByText('Completed',{exact:true})).toBeVisible();await page.getByRole('link',{name:'Personal review'}).click();await expect(page.getByText('Completed Todos: 0',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Report missing completed Todos',exact:true}).click();await expect(page.getByText(/Feedback (pending|delivered|historical)/)).toBeVisible();console.log('real NiceGUI browser created/completed Todo and submitted feedback');}finally{await browser.close()}`
 	command := exec.CommandContext(ctx, node, "--input-type=module", "-e", program, f.serviceURL())
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -369,7 +371,7 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 		t.Fatal("failed behavior committed effective experience", experienceBefore, experienceAfter)
 	}
 	t.Log("Current failed SDK checks", badID, failedProof["runId"], failedProof["summary"], "active context", *current.ActiveContextID, "experience unchanged")
-	t.Log("Go Core + real SDK/MCP + FastAPI/React: facts, automatic repair, Job continuation, committed experience, explicit Apply, actual matching behavior proof and loaded failure all observed")
+	t.Log("Go Core + real SDK/MCP + NiceGUI: facts, automatic repair, Job continuation, committed experience, explicit Apply, actual matching behavior proof and loaded failure all observed")
 	// Check public graph and private credentials remain separated.
 	raw, _ := json.Marshal(f.requests())
 	if strings.Contains(string(raw), "credentialRef") || strings.Contains(string(raw), "/etc/piwork") {
@@ -379,6 +381,8 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 
 func (f *brainAcceptance) control(action, key string) {
 	f.t.Helper()
+	started := time.Now()
+	defer func() { f.t.Logf("brain-measure control=%s elapsedMs=%d", action, time.Since(started).Milliseconds()) }()
 	status, v := packageHTTPCall(f.t, f.base, f.path+"/"+action, "POST", f.auth, map[string]string{"idempotencyKey": key})
 	if status != 202 {
 		f.t.Fatal(action, status, v)
@@ -388,12 +392,15 @@ func (f *brainAcceptance) control(action, key string) {
 }
 func (f *brainAcceptance) shareCopies() {
 	f.t.Helper()
+	f.t.Log("brain-measure workspaceBytes=" + strings.TrimSpace(f.agentEval("import fs from 'node:fs';function size(p){let n=0;for(const e of fs.readdirSync(p,{withFileTypes:true})){const q=p+'/'+e.name;if(e.isDirectory())n+=size(q);else if(e.isFile())n+=fs.statSync(q).size;}return n;}console.log(size('/var/data/workspace'));")))
 	f.control("stop", "share-source-stop")
+	exportStarted := time.Now()
 	status, exported := packageHTTPCall(f.t, f.base, f.path+"/exports", "POST", f.auth, map[string]string{"idempotencyKey": "share-complete-brain"})
 	if status != 202 {
 		f.t.Fatal(status, exported)
 	}
 	waitWorkOperation(f.t, f.ctx, f.a, exported["operationId"].(string))
+	f.t.Logf("brain-measure export=source elapsedMs=%d", time.Since(exportStarted).Milliseconds())
 	request, err := http.NewRequestWithContext(f.ctx, "GET", f.base+"/api/v1/work-snapshots/"+exported["snapshotId"].(string)+"/content", nil)
 	if err != nil {
 		f.t.Fatal(err)
@@ -417,6 +424,7 @@ func (f *brainAcceptance) shareCopies() {
 	if err != nil {
 		f.t.Fatal(err)
 	}
+	f.t.Logf("brain-measure snapshotBytes=%d", size)
 	response.Body.Close()
 	if _, err := file.Seek(0, 0); err != nil {
 		f.t.Fatal(err)
@@ -443,11 +451,13 @@ func (f *brainAcceptance) shareCopies() {
 	}
 	seen := map[string]bool{f.work: true}
 	for _, key := range []string{"copy-one", "copy-two"} {
+		importStarted := time.Now()
 		status, accepted := packageHTTPCall(f.t, f.base, "/api/v1/work-imports", "POST", f.auth, map[string]string{"packageId": uploaded["packageId"].(string), "name": "Brain " + key, "idempotencyKey": key})
 		if status != 202 {
 			f.t.Fatal(status, accepted)
 		}
 		waitWorkOperation(f.t, f.ctx, f.a, accepted["operationId"].(string))
+		f.t.Logf("brain-measure import=%s elapsedMs=%d", key, time.Since(importStarted).Milliseconds())
 		work := accepted["workId"].(string)
 		if seen[work] {
 			f.t.Fatal("import reused Work identity")
@@ -485,11 +495,13 @@ func (f *brainAcceptance) shareCopies() {
 			f.t.Fatal("copy lacks its own actual SDK proof", proof)
 		}
 		target.control("stop", key+"-stop")
+		reexportStarted := time.Now()
 		status, reexported := packageHTTPCall(f.t, f.base, target.path+"/exports", "POST", f.auth, map[string]string{"idempotencyKey": key + "-reexport"})
 		if status != 202 {
 			f.t.Fatal("recipient reexport", status, reexported)
 		}
 		waitWorkOperation(f.t, f.ctx, f.a, reexported["operationId"].(string))
+		f.t.Logf("brain-measure export=%s elapsedMs=%d", key, time.Since(reexportStarted).Milliseconds())
 	}
 	f.control("start", "share-source-start")
 	f.t.Log("Full schema-5/Memory-1 .work produced two independently identified Work copies; old feedback stayed historical and each copy produced its own new feedback, candidate Apply and actual SDK proof")
