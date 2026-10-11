@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"piwork/internal/releaseinfo"
 	"strings"
 	"time"
 
@@ -241,6 +242,10 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 	session, err := a.Identity.Authenticate(r.Context(), token)
 	if err != nil {
 		return err
+	}
+	if path == "/api/v1/about" && r.Method == http.MethodGet {
+		send(w, 200, releaseinfo.Read("piwork-serve"))
+		return nil
 	}
 	if path == "/api/v1/service-access" && r.Method == http.MethodGet {
 		send(w, 200, map[string]any{"version": 1, "protocols": []string{"http", "sse", "websocket"}})

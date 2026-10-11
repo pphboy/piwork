@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { releaseInfoInputHash } from './release-info.mjs';
 
 export const root = dirname(dirname(fileURLToPath(import.meta.url)));
 export function parseTargets(args, config, fallback) {
@@ -45,6 +46,7 @@ export function buildCLI(args, { base = root, run = (command, argv, options) => 
   for (const target of targets) if (!supported.has(target)) throw new Error(`Go cannot build CLI target: ${target}`);
   const commit = invoke('git', ['rev-parse', '--verify', 'HEAD']);
   const uiHash = desktopInputHash(base);
+  const releaseInfoHash=releaseInfoInputHash(base);
   rmSync(join(base, 'apps/desktop-webui/dist'), { recursive: true, force: true });
   invoke(process.execPath, [join(base, 'node_modules/typescript/bin/tsc'), '-p', 'tsconfig.json'], join(base, 'apps/desktop-webui'));
   invoke(process.execPath, ['scripts/copy-static.mjs'], join(base, 'apps/desktop-webui'));
@@ -59,11 +61,11 @@ export function buildCLI(args, { base = root, run = (command, argv, options) => 
     const directory = join(base, 'dist/cli', `${goos}-${goarch}`);
     mkdirSync(directory, {recursive: true});
     const binary = join(directory, goos === 'windows' ? 'piwork-cli.exe' : 'piwork-cli');
-    const identity = JSON.stringify({ releaseVersion: version, commit, modified, desktopUIHash: uiHash, target, goVersion: 'go1.25.5' });
+    const identity = JSON.stringify({ releaseVersion: version, commit, modified, desktopUIHash: uiHash, releaseInfoHash, target, goVersion: 'go1.25.5' });
     const ldflags = stamps + ` -X 'piwork/internal/buildinfo.ClientReleaseIdentity=piwork-cli-release-v1:${identity}'`;
     invoke('go', ['build', '-mod=readonly', '-trimpath', '-buildvcs=true', '-ldflags', ldflags, '-o', binary, './cmd/piwork-cli'], base, {GOOS: goos, GOARCH: goarch});
     const data = readFileSync(binary);
-    const metadata = {version:1, program:'piwork-cli', releaseVersion:version, commit, modified, goVersion:'go1.25.5', target, binary:relative(directory,binary), bytes:data.length, sha256:createHash('sha256').update(data).digest('hex'), desktopUIHash:uiHash};
+    const metadata = {version:1, program:'piwork-cli', releaseVersion:version, commit, modified, goVersion:'go1.25.5', target, binary:relative(directory,binary), bytes:data.length, sha256:createHash('sha256').update(data).digest('hex'), desktopUIHash:uiHash, releaseInfoHash};
     writeFileSync(join(directory, 'build.json'), JSON.stringify(metadata, null, 2) + '\n');
     outputs.push(binary);
   }

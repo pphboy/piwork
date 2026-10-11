@@ -10,6 +10,7 @@ if [[ "$(go env GOVERSION)" != "go1.25.5" ]]; then
 fi
 
 piwork_build_dir="${PIWORK_GO_BUILD_DIR:-dist/go}"
+go run ./scripts/releaseinfo-check
 mkdir -p "$piwork_build_dir"
 piwork_build_commit="$(git rev-parse --verify HEAD)"
 piwork_build_modified=false

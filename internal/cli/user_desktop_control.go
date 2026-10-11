@@ -237,6 +237,9 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 		return strings.ReplaceAll(url.PathEscape(value), "@", "%40"), nil
 	}
 	mutationKey := func() (string, error) { return desktopRandomKey() }
+	if method == http.MethodGet && len(parts) == 1 && parts[0] == "core-about" {
+		return create(method, "/api/v1/about", nil, 200)
+	}
 	if method == http.MethodGet && (parts[0] == "skills" || parts[0] == "packages") && len(parts) <= 2 {
 		corePath := "/api/v1/" + parts[0]
 		if len(parts) == 2 {

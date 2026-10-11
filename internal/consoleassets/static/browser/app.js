@@ -6,6 +6,7 @@ import { esc, icon, Button, NavLink, StatusLabel, Feedback, PageHeader, Section,
 const app = document.querySelector("#app");
 const modules = [
     ["Status", "/"],
+    ["About Piwork", "/about"],
     ["Users", "/users"],
     ["Runtime", "/runtime"],
     ["AI models", "/models"],
@@ -19,6 +20,7 @@ let dirty = false, saving = false, readbackRequired = false, expandedUser = "", 
 let dialog = null, dialogOrigin = null, dialogAction = null, dialogDirty = false, upload = null, uploadKind = "npm", uploadTarget, uploadType = "skill", packageIntent = null, packageSourceDraft = "", intentLocked = false, rateUntil = 0, loginAccount = "";
 let defaultConflicts = [];
 let setupJourney = null;
+let productInfo = null;
 let runtimeEditing = false, defaultEditSection = null, defaultLastSaved = false, overviewDataConfirmed = false, rememberedOperation = null, lastCreatedUser = null, referenceReturn = null;
 let pendingNavigation = null, modalError = "", currentModalTitle = "", submissionPending = false;
 let preflightPending = false, selectionVersion = 0, signingIn = false;
@@ -135,7 +137,7 @@ function shell(body) {
         ["Work setup", "/default-work", workSetup],
         ["AI models", "/models", path === '/models' || path.startsWith('/models/')],
     ];
-    app.innerHTML = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="Piwork overview"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">Serve</span></a>${login ? "" : `<nav class="nav" aria-label="Main navigation">${nav.map(([name, url, active]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${name}</a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}">${icon("search", 14)} Find operation</a><button class="btn ghost mobile-menu" data-action="menu" aria-label="Open navigation" aria-expanded="false">Menu ${icon("down", 14)}</button><details class="account-menu"><summary aria-label="Administrator account"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</summary><div class="account-popover"><p><strong>${esc(adapter.account)}</strong></p><p class="muted">Administrator</p>${Button("Sign out", "sign-out", "secondary")}</div></details>`}</div></header>${login ? "" : `<div class="context-strip">${icon("server", 15)}<span>Core</span><span class="context-tag">Administrator</span><span class="context-end">${path === "/runtime" ? "Core setup" : path === "/models" || path.startsWith("/models/") ? "AI models" : workSetup ? "Work setup" : path === "/users" ? "User access" : path.startsWith("/operations") ? "Package recovery" : "Overview"}</span></div>`}<main id="main" class="main task-main" tabindex="-1">${body}</main><footer class="footer"><span>${icon("shield", 13)} Core runs independently from this console</span><span>PiWork Serve </span></footer><div id="toast-root" aria-live="polite"></div>`;
+    app.innerHTML = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="Piwork overview"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">Serve</span></a>${login ? "" : `<nav class="nav" aria-label="Main navigation">${nav.map(([name, url, active]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${name}</a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}">${icon("search", 14)} Find operation</a><button class="btn ghost mobile-menu" data-action="menu" aria-label="Open navigation" aria-expanded="false">Menu ${icon("down", 14)}</button><details class="account-menu"><summary aria-label="Administrator account"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</summary><div class="account-popover"><p><strong>${esc(adapter.account)}</strong></p><p class="muted">Administrator</p>${NavLink("About Piwork", "/about", "btn secondary")}${Button("Sign out", "sign-out", "secondary")}</div></details>`}</div></header>${login ? "" : `<div class="context-strip">${icon("server", 15)}<span>Core</span><span class="context-tag">Administrator</span><span class="context-end">${path === "/runtime" ? "Core setup" : path === "/models" || path.startsWith("/models/") ? "AI models" : workSetup ? "Work setup" : path === "/users" ? "User access" : path.startsWith("/operations") ? "Package recovery" : "Overview"}</span></div>`}<main id="main" class="main task-main" tabindex="-1">${body}</main><footer class="footer"><span>${icon("shield", 13)} Core runs independently from this console</span><span>PiWork Serve </span></footer><div id="toast-root" aria-live="polite"></div>`;
     document.title = `${login ? "Sign in" : path === "/" ? "Overview" : modules.find(([, p]) => p === path)?.[0] || "Details"} · PiWork Serve`;
     startStatusTimer();
 }
@@ -374,6 +376,8 @@ async function loadPage() {
                 overviewDataConfirmed = true;
             }
         }
+        else if (path === "/about")
+            productInfo = await read(adapter.about());
         else if (path === "/users")
             users = await read(adapter.users());
         else if (path === '/models' || path.startsWith('/models/'))
@@ -489,6 +493,8 @@ function renderPage() {
     }
     else if (path === "/")
         body = statusPage();
+    else if (path === "/about")
+        body = productInfoPage();
     else if (path === "/users")
         body = usersPage();
     else if (path === "/runtime")
@@ -2101,4 +2107,8 @@ void adapter.initialize().then(async () => { await adapter.connection().catch(()
 }
 catch { /* availability shown by login */ } await loadPage(); });
 window.addEventListener('pagehide', () => { actions.clear(); clearPolling(); selectionVersion++; preflightPending = false; });
+function productInfoPage() {
+    const info = productInfo, build = info?.build, notes = info?.releaseNotes;
+    return PageHeader('About Piwork', 'The version of your connected Core.') + (build ? `<section class="section"><div class="section-body"><dl class="summary-list"><dt>Core version</dt><dd>${esc(build.version)}</dd><dt>Build</dt><dd><code>${esc(build.commit)}</code>${build.modified ? ' · Modified' : ''}</dd><dt>Platform</dt><dd>${esc(build.os)} / ${esc(build.architecture)}</dd></dl><h2>Release notes</h2>${notes ? `<h3>${esc(notes.title)} · ${esc(notes.version)}</h3>${notes.publishedAt ? `<p>${esc(notes.publishedAt)}</p>` : ''}${notes.sections.map((section) => `<h3>${esc(section.title)}</h3><ul>${section.items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>`).join('')}` : '<p>Release notes are not available for this build.</p>'}<p><a href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">All releases</a></p></div></section>` : '<p>Core version is unavailable.</p>');
+}
 //# sourceMappingURL=app.js.map

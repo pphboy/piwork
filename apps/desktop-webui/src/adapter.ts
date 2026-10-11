@@ -21,6 +21,14 @@ const blankConfig = (): Configuration => ({ skills: [], packages: [], agents: ''
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const stateLabel = (value: string) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
 export class DesktopAdapter {
+  about={local:null as Data|null,core:null as Data|null,localError:'',coreError:'',localLoading:false,coreLoading:false,coreChecked:''};
+  loadAbout() {
+    const epoch=this.epoch;this.about.localLoading=true;this.about.localError='';this.emit();
+    void this.request('about').then(value=>{if(epoch===this.epoch)this.about.local=value;}).catch(error=>{if(epoch===this.epoch)this.about.localError=errorText(error);}).finally(()=>{if(epoch===this.epoch){this.about.localLoading=false;this.emit();}});
+    if(!this.state.signedIn){this.about.coreError='Sign in to read the connected Core version.';return;}
+    this.about.coreLoading=true;this.about.coreError='';
+    void this.request('core-about').then(value=>{if(epoch===this.epoch){this.about.core=value;this.about.coreChecked=new Date().toISOString();}}).catch(error=>{if(epoch===this.epoch)this.about.coreError=(error as DesktopError).httpStatus===404?'This Core does not support version information.':errorText(error);}).finally(()=>{if(epoch===this.epoch){this.about.coreLoading=false;this.emit();}});
+  }
   imageCapabilities = new Map<string,{loading:boolean;error:string;value?:Data}>();
   imageLoads = new Map<string,{phase:'loading'|'ready'|'error';url?:string;error?:string}>();
   private imageControllers = new Set<AbortController>();
@@ -212,6 +220,7 @@ export class DesktopAdapter {
     this.epoch++; this.worksLoading = false; this.worksChecked = ''; this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
     this.terminalEvidence.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
     this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear();
+    Object.assign(this.about,{core:null,coreError:'',coreLoading:false,coreChecked:''});
     this.stopImageReads();for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();this.imageCapabilities.clear();
     this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();
     for (const status of Object.values(this.catalog)) Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });

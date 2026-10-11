@@ -396,7 +396,7 @@ function brand() {
 function topbar() {
     if (adapter.state.browserAccess !== "authorized")
         return `<header class="topbar">${brand()}</header>`;
-    return `<header class="topbar">${brand()}<div class="topbar-right">${btn(`${icon("clock")} <span>Known operations</span>`, "operations", "quiet")}${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span><span>${esc(adapter.state.core.account || "Account")}</span>${icon("down", 14)}`, "account", "account-button quiet")}</div></header>`;
+    return `<header class="topbar">${brand()}<div class="topbar-right">${btn("About Piwork", "about-piwork", "quiet")}${btn(`${icon("clock")} <span>Known operations</span>`, "operations", "quiet")}${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span><span>${esc(adapter.state.core.account || "Account")}</span>${icon("down", 14)}`, "account", "account-button quiet")}</div></header>`;
 }
 function defaultCorePreferences() {
     const p = adapter.preferences, blocked = ['saving', 'clearing', 'unconfirmed'].includes(p.phase);
@@ -430,7 +430,7 @@ function workStatus(w) {
     return `${badge(state.label)}${state.explanation ? `<small>${esc(state.explanation)}</small>` : w.status === 'Degraded' ? '<small>A capability needs attention</small>' : ''}`;
 }
 function workHeader(w, standalone = false) {
-    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), standalone ? "back-work" : "back-works", "icon-button quiet", `aria-label="${standalone ? "Back to Work" : "Back to Works"}"`)}<span class="header-divider"></span><span class="work-icon small ${w.color}">${icon(w.icon, 19)}</span><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}</div><div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="Work options"`)}</div></header>`;
+    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), standalone ? "back-work" : "back-works", "icon-button quiet", `aria-label="${standalone ? "Back to Work" : "Back to Works"}"`)}<span class="header-divider"></span><span class="work-icon small ${w.color}">${icon(w.icon, 19)}</span><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}</div><div class="actions header-actions">${btn(icon("info", 16), "about-piwork", "icon-button quiet", 'aria-label="About Piwork" title="About Piwork"')}${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="Work options"`)}</div></header>`;
 }
 function workPage(w) {
     const settings = route()[2] === "settings";
@@ -886,6 +886,13 @@ function modalMarkup() {
             title = "Agent options";
             body = `<div class="menu-list">${btn("Sessions", "sessions")}${btn("New session", "new-session")}${btn("Run details", "run-details", "", target?.run ? "" : "disabled")}${btn("Focus chat", "focus-chat")}</div>`;
             break;
+        case "about-piwork": {
+            const info = adapter.about;
+            title = "About Piwork";
+            body = `${productInfoMarkup('Desktop (piwork-cli)', info.local, info.localLoading, info.localError)}${productInfoMarkup('Core', info.core, info.coreLoading, info.coreError)}${info.core && info.coreError ? `<p class="muted">Last confirmed ${esc(info.coreChecked)}</p>` : ''}`;
+            footer = `${btn('Refresh', 'refresh-about', 'quiet')}${close()}`;
+            break;
+        }
         case "chat-image-preview":
             title = "Image preview";
             body = `${target && !adapter.project(target).usable ? '<p class="muted">Previously loaded image. Start this Work to read current history.</p>' : ''}<img class="chat-image-preview" src="${esc(view.data.url)}" alt="Sent image">`;
@@ -1739,6 +1746,13 @@ async function handleAction(action, el, record) {
         case "check-session-model":
             if (currentWork && view.session)
                 await stay(adapter.checkSessionModel(currentWork.id, view.session));
+            break;
+        case "about-piwork":
+            openModal('about-piwork');
+            adapter.loadAbout();
+            break;
+        case "refresh-about":
+            adapter.loadAbout();
             break;
         case "check-image-support":
             if (currentWork)
@@ -3236,6 +3250,10 @@ root.addEventListener('change', event => { const input = event.target; if (input
     void addChatImages(files);
 } });
 window.addEventListener('pagehide', () => { imageDrafts.clear(); adapter.stopImageReads(); imageObserver.disconnect(); });
+function productInfoMarkup(label, info, loading, error) {
+    const build = info?.build, notes = info?.releaseNotes;
+    return `<section class="product-info"><h3>${esc(label)}</h3>${loading ? '<p role="status">Loading version…</p>' : ''}${error ? feedback(esc(error), 'warning') : ''}${build ? `<dl><dt>Version</dt><dd>${esc(build.version)}</dd><dt>Build</dt><dd><code>${esc(build.commit)}</code>${build.modified ? ' · Modified' : ''}</dd><dt>Platform</dt><dd>${esc(build.os)} / ${esc(build.architecture)}</dd></dl><details><summary>Release notes</summary>${notes ? `<h4>${esc(notes.title)} · ${esc(notes.version)}</h4>${notes.publishedAt ? `<p>${esc(notes.publishedAt)}</p>` : ''}${(notes.sections ?? []).map((section) => `<h4>${esc(section.title)}</h4><ul>${section.items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>`).join('')}` : '<p>Release notes are not available for this build.</p>'}</details>` : ''}<p><a href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">All releases</a></p></section>`;
+}
 window.addEventListener('hashchange', () => adapter.stopImageReads());
 function consumeImageSubmission(workId, submitted) {
     if (submitted.epoch !== adapter.identityEpoch)

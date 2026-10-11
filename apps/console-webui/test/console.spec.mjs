@@ -67,6 +67,7 @@ test.beforeAll(async () => {
       if (body.account !== "admin" || body.password !== "correct horse battery") { res.statusCode = 401; res.end('{"code":"AUTHENTICATION_FAILED"}'); return; }
       res.end(JSON.stringify({ token: "core-secret-bearer", expiresAt: new Date(Date.now() + 3600_000).toISOString(), user: users[0] })); return; }
     if (req.url === "/api/v1/me") { res.end(JSON.stringify(req.headers.authorization === "Bearer second-admin-private-token" ? users.find(item => item.account === "new-admin") : users[0])); return; }
+    if(req.url === "/api/v1/about"){res.end(JSON.stringify({aboutApiVersion:1,build:{program:"piwork-serve",version:"core-about-fixture",commit:"fixture",modified:false,os:"linux",architecture:"amd64"},releaseNotes:{version:"core-about-fixture",title:"Changes",sections:[{title:"Fixes",items:["<script>window.notesExecuted=true</script>"]}]},releasesUrl:"https://github.com/pphboy/piwork/releases"}));return;}
     if (req.url === "/api/v1/admin/status") { res.end(JSON.stringify({ adminApiVersion: 1, state: "READY", ready: true,
       checks: { administrator: true, runtimeConfigured: true, runtimeAvailable: true, filesystemMigrationReady: true } })); return; }
     if (req.url === "/api/v1/admin/model-providers") {res.end(JSON.stringify({providers:[]}));return;}
@@ -320,4 +321,9 @@ test('R6 actual Core phase enums drive progress and raw details, including readb
     const phase = await page.evaluate(async () => { const {packagePhaseView} = await import('/browser/package-phase.js'); return packagePhaseView('', 'running'); }); expect(phase.label).toBe('Submission accepted'); expect(phase.index).toBe(-1);
     expect(packageAccepts.length).toBe(accepts+1);
   } finally { operationPhase = null; operationState = 'succeeded'; }
+});
+
+test("About Piwork displays remote Core notes as text",async({page})=>{
+ await login(page);
+ await page.goto(base+"/about");await expect(page.getByRole('heading',{name:'About Piwork',exact:true})).toBeVisible();await expect(page.locator('main')).toContainText('core-about-fixture');await expect(page.locator('main')).toContainText('<script>');expect(await page.evaluate(()=>window.notesExecuted)).toBeUndefined();await expect(page.getByRole('link',{name:'All releases'})).toHaveAttribute('href','https://github.com/pphboy/piwork/releases');
 });

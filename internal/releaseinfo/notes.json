@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "releases": [
+    {"version":"Unreleased","component":"core","title":"Development changes","sections":[{"title":"Improvements","items":["Accept image messages from Desktop Chat and preserve images in private conversation history.","Expose the running Core version and its embedded release notes."]}]},
+    {"version":"Unreleased","component":"desktop","title":"Development changes","sections":[{"title":"Improvements","items":["Paste, drop or choose PNG, JPEG and WebP images in Chat.","Keep Create Work buttons stable while submitting or waiting.","View Desktop and Core versions and release notes in About Piwork."]}]}
+  ]
+}

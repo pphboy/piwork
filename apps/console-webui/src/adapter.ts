@@ -87,6 +87,7 @@ function operationView(value: Data, intent?: PackageIntent): Operation {
 }
 
 export class ConsoleAdapter {
+  about(){return this.request('about');}
   scenario: Scenario = "normal";
   session = false;
   currentUserId = "";

@@ -22,6 +22,33 @@ const blankConfig = () => ({ skills: [], packages: [], agents: '', advanced: '{}
 const errorText = (error) => error instanceof Error ? error.message : String(error);
 const stateLabel = (value) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
 export class DesktopAdapter {
+    about = { local: null, core: null, localError: '', coreError: '', localLoading: false, coreLoading: false, coreChecked: '' };
+    loadAbout() {
+        const epoch = this.epoch;
+        this.about.localLoading = true;
+        this.about.localError = '';
+        this.emit();
+        void this.request('about').then(value => { if (epoch === this.epoch)
+            this.about.local = value; }).catch(error => { if (epoch === this.epoch)
+            this.about.localError = errorText(error); }).finally(() => { if (epoch === this.epoch) {
+            this.about.localLoading = false;
+            this.emit();
+        } });
+        if (!this.state.signedIn) {
+            this.about.coreError = 'Sign in to read the connected Core version.';
+            return;
+        }
+        this.about.coreLoading = true;
+        this.about.coreError = '';
+        void this.request('core-about').then(value => { if (epoch === this.epoch) {
+            this.about.core = value;
+            this.about.coreChecked = new Date().toISOString();
+        } }).catch(error => { if (epoch === this.epoch)
+            this.about.coreError = error.httpStatus === 404 ? 'This Core does not support version information.' : errorText(error); }).finally(() => { if (epoch === this.epoch) {
+            this.about.coreLoading = false;
+            this.emit();
+        } });
+    }
     imageCapabilities = new Map();
     imageLoads = new Map();
     imageControllers = new Set();
@@ -352,6 +379,7 @@ export class DesktopAdapter {
         this.downloads.clear();
         this.downloadRequests.clear();
         this.uploadProgress.clear();
+        Object.assign(this.about, { core: null, coreError: '', coreLoading: false, coreChecked: '' });
         this.stopImageReads();
         for (const value of this.imageLoads.values())
             if (value.url)
