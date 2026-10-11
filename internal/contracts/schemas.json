@@ -4270,6 +4270,276 @@
     },
     "additionalProperties": false
   },
+  "ChatImageCapabilitiesSchema": {
+    "type": "object",
+    "required": [
+      "profile",
+      "mimeTypes",
+      "maxImages",
+      "imageBytes",
+      "totalBytes",
+      "maxDimension",
+      "maxPixels",
+      "defaultModel",
+      "models"
+    ],
+    "properties": {
+      "profile": {
+        "type": "string",
+        "const": "chat-images-v1"
+      },
+      "mimeTypes": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "image/png"
+            },
+            {
+              "type": "string",
+              "const": "image/jpeg"
+            },
+            {
+              "type": "string",
+              "const": "image/webp"
+            }
+          ]
+        },
+        "minItems": 3,
+        "maxItems": 3
+      },
+      "maxImages": {
+        "type": "number",
+        "const": 4
+      },
+      "imageBytes": {
+        "type": "number",
+        "const": 5242880
+      },
+      "totalBytes": {
+        "type": "number",
+        "const": 10485760
+      },
+      "maxDimension": {
+        "type": "number",
+        "const": 8192
+      },
+      "maxPixels": {
+        "type": "number",
+        "const": 40000000
+      },
+      "defaultModel": {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "modelRef",
+              "availability"
+            ],
+            "properties": {
+              "modelRef": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "availability": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "supported"
+                  },
+                  {
+                    "type": "string",
+                    "const": "unsupported"
+                  },
+                  {
+                    "type": "string",
+                    "const": "unknown"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "models": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "modelRef",
+            "availability"
+          ],
+          "properties": {
+            "modelRef": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "availability": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "supported"
+                },
+                {
+                  "type": "string",
+                  "const": "unsupported"
+                },
+                {
+                  "type": "string",
+                  "const": "unknown"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 256
+      }
+    },
+    "additionalProperties": false
+  },
+  "ChatImageDescriptorSchema": {
+    "type": "object",
+    "required": [
+      "mimeType",
+      "byteSize",
+      "sha256"
+    ],
+    "properties": {
+      "mimeType": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "image/png"
+          },
+          {
+            "type": "string",
+            "const": "image/jpeg"
+          },
+          {
+            "type": "string",
+            "const": "image/webp"
+          }
+        ]
+      },
+      "byteSize": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5242880
+      },
+      "sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    },
+    "additionalProperties": false
+  },
+  "ChatImageInputSchema": {
+    "type": "object",
+    "required": [
+      "mimeType",
+      "data"
+    ],
+    "properties": {
+      "mimeType": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "image/png"
+          },
+          {
+            "type": "string",
+            "const": "image/jpeg"
+          },
+          {
+            "type": "string",
+            "const": "image/webp"
+          }
+        ]
+      },
+      "data": {
+        "type": "string",
+        "minLength": 4,
+        "maxLength": 6990508
+      }
+    },
+    "additionalProperties": false
+  },
+  "ChatImageMimeSchema": {
+    "anyOf": [
+      {
+        "type": "string",
+        "const": "image/png"
+      },
+      {
+        "type": "string",
+        "const": "image/jpeg"
+      },
+      {
+        "type": "string",
+        "const": "image/webp"
+      }
+    ]
+  },
+  "ChatImageModelSchema": {
+    "type": "object",
+    "required": [
+      "modelRef",
+      "availability"
+    ],
+    "properties": {
+      "modelRef": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "availability": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "supported"
+          },
+          {
+            "type": "string",
+            "const": "unsupported"
+          },
+          {
+            "type": "string",
+            "const": "unknown"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
   "ChatInputModeSchema": {
     "anyOf": [
       {
@@ -17037,6 +17307,179 @@
     },
     "additionalProperties": false
   },
+  "ProductBuildSchema": {
+    "type": "object",
+    "required": [
+      "program",
+      "version",
+      "commit",
+      "modified",
+      "goVersion",
+      "os",
+      "architecture"
+    ],
+    "properties": {
+      "program": {
+        "type": "string"
+      },
+      "version": {
+        "type": "string"
+      },
+      "commit": {
+        "type": "string"
+      },
+      "modified": {
+        "type": "boolean"
+      },
+      "goVersion": {
+        "type": "string"
+      },
+      "os": {
+        "type": "string"
+      },
+      "architecture": {
+        "type": "string"
+      },
+      "desktopUIHash": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  },
+  "ProductInfoSchema": {
+    "type": "object",
+    "required": [
+      "aboutApiVersion",
+      "build",
+      "releasesUrl",
+      "releaseNotes"
+    ],
+    "properties": {
+      "aboutApiVersion": {
+        "type": "number",
+        "const": 1
+      },
+      "build": {
+        "type": "object",
+        "required": [
+          "program",
+          "version",
+          "commit",
+          "modified",
+          "goVersion",
+          "os",
+          "architecture"
+        ],
+        "properties": {
+          "program": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "modified": {
+            "type": "boolean"
+          },
+          "goVersion": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string"
+          },
+          "architecture": {
+            "type": "string"
+          },
+          "desktopUIHash": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "releasesUrl": {
+        "type": "string",
+        "const": "https://github.com/pphboy/piwork/releases"
+      },
+      "releaseNotes": {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "version",
+              "component",
+              "title",
+              "sections"
+            ],
+            "properties": {
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "component": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "core"
+                  },
+                  {
+                    "type": "string",
+                    "const": "desktop"
+                  }
+                ]
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "publishedAt": {
+                "type": "string",
+                "maxLength": 64
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "title",
+                    "items"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8192
+                      },
+                      "minItems": 1,
+                      "maxItems": 128
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "minItems": 1,
+                "maxItems": 16
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
   "ProviderModelTestInputSchema": {
     "type": "object",
     "required": [
@@ -19109,6 +19552,74 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 2000
+      }
+    },
+    "additionalProperties": false
+  },
+  "ReleaseNotesSchema": {
+    "type": "object",
+    "required": [
+      "version",
+      "component",
+      "title",
+      "sections"
+    ],
+    "properties": {
+      "version": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "component": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "core"
+          },
+          {
+            "type": "string",
+            "const": "desktop"
+          }
+        ]
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "publishedAt": {
+        "type": "string",
+        "maxLength": 64
+      },
+      "sections": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "title",
+            "items"
+          ],
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "minItems": 1,
+              "maxItems": 128
+            }
+          },
+          "additionalProperties": false
+        },
+        "minItems": 1,
+        "maxItems": 16
       }
     },
     "additionalProperties": false
@@ -21627,6 +22138,69 @@
         "required": [
           "blockId",
           "type",
+          "image"
+        ],
+        "properties": {
+          "blockId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$"
+          },
+          "type": {
+            "type": "string",
+            "const": "image"
+          },
+          "image": {
+            "type": "object",
+            "required": [
+              "mimeType",
+              "byteSize",
+              "sha256",
+              "imageIndex"
+            ],
+            "properties": {
+              "mimeType": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "image/png"
+                  },
+                  {
+                    "type": "string",
+                    "const": "image/jpeg"
+                  },
+                  {
+                    "type": "string",
+                    "const": "image/webp"
+                  }
+                ]
+              },
+              "byteSize": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5242880
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "imageIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "blockId",
+          "type",
           "text"
         ],
         "properties": {
@@ -22331,7 +22905,42 @@
       },
       "prompt": {
         "type": "string",
-        "minLength": 1
+        "maxLength": 65536
+      },
+      "images": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "mimeType",
+            "data"
+          ],
+          "properties": {
+            "mimeType": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "image/png"
+                },
+                {
+                  "type": "string",
+                  "const": "image/jpeg"
+                },
+                {
+                  "type": "string",
+                  "const": "image/webp"
+                }
+              ]
+            },
+            "data": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 6990508
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 4
       },
       "modelRef": {
         "anyOf": [

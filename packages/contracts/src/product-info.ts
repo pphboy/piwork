@@ -1,0 +1,5 @@
+import { Type } from "typebox";
+const strict={additionalProperties:false} as const;
+export const ProductBuildSchema=Type.Object({program:Type.String(),version:Type.String(),commit:Type.String(),modified:Type.Boolean(),goVersion:Type.String(),os:Type.String(),architecture:Type.String(),desktopUIHash:Type.Optional(Type.String())},strict);
+export const ReleaseNotesSchema=Type.Object({version:Type.String({minLength:1,maxLength:128}),component:Type.Union([Type.Literal('core'),Type.Literal('desktop')]),title:Type.String({minLength:1,maxLength:256}),publishedAt:Type.Optional(Type.String({maxLength:64})),sections:Type.Array(Type.Object({title:Type.String({minLength:1,maxLength:256}),items:Type.Array(Type.String({minLength:1,maxLength:8192}),{minItems:1,maxItems:128})},strict),{minItems:1,maxItems:16})},strict);
+export const ProductInfoSchema=Type.Object({aboutApiVersion:Type.Literal(1),build:ProductBuildSchema,releasesUrl:Type.Literal('https://github.com/pphboy/piwork/releases'),releaseNotes:Type.Union([ReleaseNotesSchema,Type.Null()])},strict);

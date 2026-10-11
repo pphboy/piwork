@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { IdentifierSchema, ResourceIdSchema, TimestampSchema } from "./harness.js";
 import { Check } from "typebox/value";
+import { ChatImageInputSchema } from "./chat-images.js";
 
 export const WORK_FEEDBACK_CONTRACT_VERSION = 1;
 export const RUN_MODEL_CONTRACT_VERSION = 1;
@@ -31,7 +32,8 @@ export const RunModelListSchema = Type.Object({
 export const SubmitRunInputSchema = Type.Object({
   sessionId: IdentifierSchema,
   submissionKey: Type.String({ minLength: 1, maxLength: 256 }),
-  prompt: Type.String({ minLength: 1 }),
+  prompt: Type.String({ maxLength: 65536 }),
+  images: Type.Optional(Type.Array(ChatImageInputSchema, { maxItems: 4 })),
   modelRef: Type.Optional(Type.Union([ResourceIdSchema, Type.Null()])),
   inputMode: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("command")])),
 }, strict);

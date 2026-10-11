@@ -24,6 +24,12 @@ type errorDefinition struct {
 }
 
 var publicErrors = map[string]errorDefinition{
+	"IMAGE_INVALID":                     {400, "Use a valid PNG, JPEG or WebP image and send as text", false},
+	"IMAGE_LIMIT_EXCEEDED":              {413, "Image count, size or dimensions exceed the Chat limit", false},
+	"IMAGE_MODEL_UNSUPPORTED":           {409, "Choose an image-capable model for this Session", false},
+	"IMAGE_MODEL_UNCONFIRMED":           {409, "Image capability is unconfirmed; choose a compatible model", false},
+	"IMAGE_INPUT_UNSUPPORTED":           {501, "Update the Work Agent and Apply to use image input", false},
+	"IMAGE_HISTORY_CORRUPT":             {502, "The saved image could not be verified", false},
 	"DEFAULT_WORK_NOT_CONFIGURED":       {409, "Configure Runtime before editing Default Work", false},
 	"MODEL_IN_USE":                      {409, "Remove the model's configuration dependencies before deleting it", false},
 	"MODEL_TEST_BUSY":                   {429, "A model test is already running for this administrator", true},

@@ -26,6 +26,8 @@ const (
 	AgentService_CreateSession_FullMethodName                     = "/piwork.agent.v1.AgentService/CreateSession"
 	AgentService_ListSessions_FullMethodName                      = "/piwork.agent.v1.AgentService/ListSessions"
 	AgentService_ReadSession_FullMethodName                       = "/piwork.agent.v1.AgentService/ReadSession"
+	AgentService_GetChatImageCapabilities_FullMethodName          = "/piwork.agent.v1.AgentService/GetChatImageCapabilities"
+	AgentService_ReadSessionImage_FullMethodName                  = "/piwork.agent.v1.AgentService/ReadSessionImage"
 	AgentService_SubmitRun_FullMethodName                         = "/piwork.agent.v1.AgentService/SubmitRun"
 	AgentService_GetRun_FullMethodName                            = "/piwork.agent.v1.AgentService/GetRun"
 	AgentService_WatchRun_FullMethodName                          = "/piwork.agent.v1.AgentService/WatchRun"
@@ -55,6 +57,8 @@ type AgentServiceClient interface {
 	CreateSession(ctx context.Context, in *CreateSessionRequest, opts ...grpc.CallOption) (*Session, error)
 	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
 	ReadSession(ctx context.Context, in *ReadSessionRequest, opts ...grpc.CallOption) (*SessionHistory, error)
+	GetChatImageCapabilities(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	ReadSessionImage(ctx context.Context, in *ReadSessionImageRequest, opts ...grpc.CallOption) (*SessionImage, error)
 	SubmitRun(ctx context.Context, in *SubmitRunRequest, opts ...grpc.CallOption) (*SubmitRunResponse, error)
 	GetRun(ctx context.Context, in *GetRunRequest, opts ...grpc.CallOption) (*Run, error)
 	WatchRun(ctx context.Context, in *WatchRunRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RunEvent], error)
@@ -145,6 +149,26 @@ func (c *agentServiceClient) ReadSession(ctx context.Context, in *ReadSessionReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionHistory)
 	err := c.cc.Invoke(ctx, AgentService_ReadSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) GetChatImageCapabilities(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_GetChatImageCapabilities_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) ReadSessionImage(ctx context.Context, in *ReadSessionImageRequest, opts ...grpc.CallOption) (*SessionImage, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SessionImage)
+	err := c.cc.Invoke(ctx, AgentService_ReadSessionImage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -331,6 +355,8 @@ type AgentServiceServer interface {
 	CreateSession(context.Context, *CreateSessionRequest) (*Session, error)
 	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
 	ReadSession(context.Context, *ReadSessionRequest) (*SessionHistory, error)
+	GetChatImageCapabilities(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	ReadSessionImage(context.Context, *ReadSessionImageRequest) (*SessionImage, error)
 	SubmitRun(context.Context, *SubmitRunRequest) (*SubmitRunResponse, error)
 	GetRun(context.Context, *GetRunRequest) (*Run, error)
 	WatchRun(*WatchRunRequest, grpc.ServerStreamingServer[RunEvent]) error
@@ -377,6 +403,12 @@ func (UnimplementedAgentServiceServer) ListSessions(context.Context, *ListSessio
 }
 func (UnimplementedAgentServiceServer) ReadSession(context.Context, *ReadSessionRequest) (*SessionHistory, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReadSession not implemented")
+}
+func (UnimplementedAgentServiceServer) GetChatImageCapabilities(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetChatImageCapabilities not implemented")
+}
+func (UnimplementedAgentServiceServer) ReadSessionImage(context.Context, *ReadSessionImageRequest) (*SessionImage, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReadSessionImage not implemented")
 }
 func (UnimplementedAgentServiceServer) SubmitRun(context.Context, *SubmitRunRequest) (*SubmitRunResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitRun not implemented")
@@ -569,6 +601,42 @@ func _AgentService_ReadSession_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AgentServiceServer).ReadSession(ctx, req.(*ReadSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_GetChatImageCapabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetChatImageCapabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetChatImageCapabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetChatImageCapabilities(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_ReadSessionImage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadSessionImageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).ReadSessionImage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_ReadSessionImage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).ReadSessionImage(ctx, req.(*ReadSessionImageRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -888,6 +956,14 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReadSession",
 			Handler:    _AgentService_ReadSession_Handler,
+		},
+		{
+			MethodName: "GetChatImageCapabilities",
+			Handler:    _AgentService_GetChatImageCapabilities_Handler,
+		},
+		{
+			MethodName: "ReadSessionImage",
+			Handler:    _AgentService_ReadSessionImage_Handler,
 		},
 		{
 			MethodName: "SubmitRun",

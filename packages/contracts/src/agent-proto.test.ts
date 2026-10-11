@@ -12,7 +12,17 @@ import {
   Session,
   SubmitRunRequest,
   WatchRunRequest,
+  ReadSessionRequest,
+  SessionContentBlock,
 } from "./agent.js";
+
+test("incremental image RPC fields preserve bytes and explicit history negotiation",()=>{
+ const data=Buffer.from([137,80,78,71,0,255]);
+ const value=SubmitRunRequest.fromPartial({workId:"w",sessionId:"s",submissionKey:"key",prompt:"",inputMode:"text",images:[{mimeType:"image/png",data}]});
+ assert.deepEqual(SubmitRunRequest.decode(SubmitRunRequest.encode(value).finish()),value);
+ const history=ReadSessionRequest.fromPartial({workId:"w",sessionId:"s",imageProfile:"chat-images-v1"});assert.equal(ReadSessionRequest.decode(ReadSessionRequest.encode(history).finish()).imageProfile,"chat-images-v1");
+ const block=SessionContentBlock.fromPartial({blockId:"run-image-0",type:"image",image:{mimeType:"image/png",byteSize:6,sha256:"a".repeat(64),imageIndex:0}});assert.deepEqual(SessionContentBlock.decode(SessionContentBlock.encode(block).finish()),block);
+});
 
 test("session and run messages survive binary serialization", () => {
   const session = roundTrip(Session, {
@@ -58,7 +68,7 @@ test("submit idempotency, watch cursor, cancellation, and event union serialize"
     workId: "work-0199e6d8abcd",
     sessionId: "session-0199e6d8abcd",
     submissionKey: "client-submit-42",
-    prompt: "continue the durable session",
+    prompt: "continue the durable session", images: [],
   });
   assert.equal(submit.submissionKey, "client-submit-42");
 
@@ -96,7 +106,7 @@ test("generated grpc-js service exposes the durable Agent API", () => {
     "drain",
     "createSession",
     "listSessions",
-    "readSession",
+    "readSession", "getChatImageCapabilities", "readSessionImage",
     "submitRun",
     "getRun",
     "watchRun",

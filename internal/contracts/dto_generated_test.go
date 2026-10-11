@@ -317,6 +317,36 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "ChatImageCapabilitiesSchema":
+				value, err := Decode[ChatImageCapabilities](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatImageDescriptorSchema":
+				value, err := Decode[ChatImageDescriptor](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatImageInputSchema":
+				value, err := Decode[ChatImageInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatImageMimeSchema":
+				value, err := Decode[ChatImageMime](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ChatImageModelSchema":
+				value, err := Decode[ChatImageModel](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "ChatInputModeSchema":
 				value, err := Decode[ChatInputMode](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -797,6 +827,18 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "ProductBuildSchema":
+				value, err := Decode[ProductBuild](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ProductInfoSchema":
+				value, err := Decode[ProductInfo](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "ProviderModelTestInputSchema":
 				value, err := Decode[ProviderModelTestInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -823,6 +865,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "ReadinessProbeSchema":
 				value, err := Decode[ReadinessProbe](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ReleaseNotesSchema":
+				value, err := Decode[ReleaseNotes](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}

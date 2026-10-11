@@ -1,0 +1,150 @@
+[
+  {
+    "name": "valid",
+    "input": {
+      "profile": "chat-images-v1",
+      "prompt": "look",
+      "images": [
+        {
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC"
+        }
+      ]
+    },
+    "promptDigest": "e6d0342b2ddcd777c19d0f49508deab71199c67a31295448a9475c49152e0023",
+    "valid": true
+  },
+  {
+    "name": "wrong-digest",
+    "input": {
+      "profile": "chat-images-v1",
+      "prompt": "look",
+      "images": [
+        {
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC"
+        }
+      ]
+    },
+    "promptDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+    "valid": false
+  },
+  {
+    "name": "wrong-mime",
+    "input": {
+      "profile": "chat-images-v1",
+      "prompt": "look",
+      "images": [
+        {
+          "mimeType": "image/jpeg",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC"
+        }
+      ]
+    },
+    "promptDigest": "e6d0342b2ddcd777c19d0f49508deab71199c67a31295448a9475c49152e0023",
+    "valid": false
+  },
+  {
+    "name": "missing-prompt",
+    "input": {
+      "profile": "chat-images-v1",
+      "images": [
+        {
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC"
+        }
+      ]
+    },
+    "promptDigest": "e6d0342b2ddcd777c19d0f49508deab71199c67a31295448a9475c49152e0023",
+    "valid": false
+  },
+  {
+    "name": "null-prompt",
+    "input": {
+      "profile": "chat-images-v1",
+      "prompt": null,
+      "images": [
+        {
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC"
+        }
+      ]
+    },
+    "promptDigest": "e6d0342b2ddcd777c19d0f49508deab71199c67a31295448a9475c49152e0023",
+    "valid": false
+  },
+  {
+    "name": "unknown-image-field",
+    "input": {
+      "profile": "chat-images-v1",
+      "prompt": "look",
+      "images": [
+        {
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC",
+          "path": "/private/not-allowed"
+        }
+      ]
+    },
+    "promptDigest": "e6d0342b2ddcd777c19d0f49508deab71199c67a31295448a9475c49152e0023",
+    "valid": false
+  },
+  {
+    "name": "unknown-profile",
+    "input": {
+      "profile": "unknown",
+      "prompt": "look",
+      "images": [
+        {
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC"
+        }
+      ]
+    },
+    "promptDigest": "e6d0342b2ddcd777c19d0f49508deab71199c67a31295448a9475c49152e0023",
+    "valid": false
+  },
+  {
+    "name": "no-images",
+    "input": {
+      "profile": "chat-images-v1",
+      "prompt": "look",
+      "images": []
+    },
+    "promptDigest": "e6d0342b2ddcd777c19d0f49508deab71199c67a31295448a9475c49152e0023",
+    "valid": false
+  },
+  {
+    "name": "preference-evidence-valid",
+    "input": {
+      "profile": "chat-images-v1",
+      "prompt": "look",
+      "images": [
+        {
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC"
+        }
+      ]
+    },
+    "promptDigest": "e6d0342b2ddcd777c19d0f49508deab71199c67a31295448a9475c49152e0023",
+    "valid": true,
+    "memoryPreference": true
+  },
+  {
+    "name": "preference-evidence-wrong-digest",
+    "input": {
+      "profile": "chat-images-v1",
+      "prompt": "look",
+      "images": [
+        {
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC"
+        }
+      ]
+    },
+    "promptDigest": "e6d0342b2ddcd777c19d0f49508deab71199c67a31295448a9475c49152e0023",
+    "valid": false,
+    "memoryPreference": true,
+    "badEvidence": true
+  }
+]
