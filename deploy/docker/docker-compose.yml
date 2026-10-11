@@ -1,7 +1,7 @@
 name: piwork-quickstart
 services:
   core:
-    image: docker.io/pphboy/piwork-core:0.0.3-30ac253e9dce-653d50a5d7d5
+    image: docker.io/pphboy/piwork-core:0.0.4-079f92ce3b33-96bc1d1ff3d6
     init: true
     user: "0:0"
     network_mode: host
