@@ -1,25 +1,37 @@
 {
-  "contractVersion": 1,
-  "state": "published",
-  "version": "0.1.0-03395d0810f7-bbb24bdd0167-dirty",
-  "commit": "03395d0810f7c9bb2922f34c3edd38e2d1208402",
+  "contractVersion": 2,
+  "state": "candidate",
+  "version": "0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty",
+  "commit": "5818e1de7bb5af9bd6305777fc88b40505a708b3",
   "modified": true,
-  "inputHash": "bbb24bdd01672d007a68ef37402bd9548e0dca91527bc55a69394e3176e70665",
+  "inputHash": "6b6f6f8bbf625e2b36502349e5ba13992060aeab4b5239436c3288919ae7d44e",
   "platform": "linux/amd64",
-  "reference": "docker.io/pphboy/piwork-web-base:0.1.0-03395d0810f7-bbb24bdd0167-dirty",
+  "reference": "docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty",
   "environment": {
-    "contractVersion": 1,
-    "version": "0.1.0",
+    "contractVersion": 2,
+    "version": "0.2.0",
     "platform": "linux/amd64",
     "pythonImage": "python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641",
-    "nodeImage": "node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20",
     "pythonVersion": "3.13.16",
-    "nodeVersion": "24.21.0",
-    "sqlite3Version": "3.40.1-2+deb12u2"
+    "sqlite3Version": "3.40.1-2+deb12u2",
+    "niceguiVersion": "3.18.0",
+    "pipVersion": "26.2.1"
   },
-  "imageId": "sha256:3be06cbe6450c63d6def67cd2948be08fed635615a7d9d8982c2e710b5c06f3a",
-  "registryDigest": "sha256:e83902fb568e97b2d01d488ce7c9c3d15f373ab58b46e041337baa832b8cfb81",
-  "fixedReference": "docker.io/pphboy/piwork-web-base:0.1.0-03395d0810f7-bbb24bdd0167-dirty@sha256:e83902fb568e97b2d01d488ce7c9c3d15f373ab58b46e041337baa832b8cfb81",
-  "anonymousReadable": true,
-  "checkedAt": "2026-10-10T00:56:21.803Z"
+  "imageId": "sha256:1b2dc23ea6cc78f5986217a5c133f045334c81d30a53c833f73aa59abdad87a1",
+  "maintenanceSource": "deploy/images/web-base/",
+  "localValidationState": "verified",
+  "anonymousReadable": false,
+  "validationRecords": [
+    "validation.json",
+    "validation-web-app.json",
+    "tools-validation.json",
+    "dependencies-validation.json",
+    "core-validation.json"
+  ],
+  "brainAcceptance": {
+    "passed": true,
+    "elapsedMs": 574680,
+    "snapshotBytes": 816069838,
+    "evidenceFile": "page-files-brain.log"
+  }
 }
