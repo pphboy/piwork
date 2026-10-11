@@ -20,10 +20,28 @@ import (
 )
 
 func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
+	testNativeCoreBrainUpgrade(t, false)
+}
+
+func TestNativeCoreAddsApplicationAwarenessOnRestart(t *testing.T) {
+	testNativeCoreBrainUpgrade(t, true)
+}
+
+func testNativeCoreBrainUpgrade(t *testing.T, priorNiceGUI bool) {
+	t.Helper()
 	a, base, auth, _, ctx := nativeApplyFixture(t)
 	// Synthetic legacy input has complete validated bytes and the same ordinary
 	// package version as the old seed. It never uses real installation data.
-	legacy := installLegacyBrain(t, a, bundledBrainArtifactID+":legacy-fixture")
+	var legacy corestore.PackageArtifact
+	if priorNiceGUI {
+		prepared, err := priorNiceGUIBrainPreparer(t)(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy = installPreparedBrain(t, a, prepared, bundledBrainArtifactID+":nicegui-1.2.1-fixture")
+	} else {
+		legacy = installLegacyBrain(t, a, bundledBrainArtifactID+":legacy-fixture")
+	}
 	create := func(base, auth, name string) (string, string) {
 		t.Helper()
 		status, accepted := packageHTTPCall(t, base, "/api/v1/works", "POST", auth, map[string]any{"name": name, "idempotencyKey": name})
@@ -44,9 +62,15 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	beforeConfig, _ := json.Marshal(configuration)
-	file := func(base, auth, method string) string {
+	file := func(base, auth, method string, locations ...string) string {
 		t.Helper()
-		request, err := http.NewRequestWithContext(ctx, method, base+"/api/v1/works/"+*oldID+"/files/upgrade-proof.txt", strings.NewReader("preserve-user-data"))
+		path, content := "upgrade-proof.txt", "preserve-user-data"
+		putStatus := http.StatusCreated
+		if len(locations) > 0 {
+			path, content = locations[0], "User edited brain source awaiting Apply"
+			putStatus = http.StatusNoContent
+		}
+		request, err := http.NewRequestWithContext(ctx, method, base+"/api/v1/works/"+*oldID+"/files/"+path, strings.NewReader(content))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,13 +81,14 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 		}
 		defer response.Body.Close()
 		raw, _ := io.ReadAll(response.Body)
-		if method == "PUT" && response.StatusCode != 201 || method == "GET" && response.StatusCode != 200 {
+		if method == "PUT" && response.StatusCode != putStatus || method == "GET" && response.StatusCode != http.StatusOK {
 			t.Fatal(method, response.StatusCode, string(raw))
 		}
 		return string(raw)
 	}
 	file(base, auth, "PUT")
-	readiness := func(app *Application, id string, digest string) {
+	file(base, auth, "PUT", ".pi/packages/piwork-brain/brain.md")
+	readiness := func(app *Application, id string, digest string, expectedSkills uint32) {
 		t.Helper()
 		work, err := app.Store.Work(ctx, id, false)
 		if err != nil {
@@ -81,11 +106,20 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 		ready, err := client.Readiness(ctx, *work.ActiveContextID, false)
-		if err != nil || len(ready.GetLoadedPackages()) != 1 || ready.GetLoadedPackages()[0].GetContentDigest() != digest {
+		if err != nil || len(ready.GetLoadedPackages()) != 1 || ready.GetLoadedPackages()[0].GetContentDigest() != digest || ready.GetLoadedPackages()[0].GetSkills() != expectedSkills {
 			t.Fatal("real SDK loaded the wrong brain", ready, err)
 		}
+		var awareness bool
+		for _, resource := range ready.GetPackageResources() {
+			if resource.PackageName == "piwork-brain" && resource.Kind == "skill" && resource.Name == "application-awareness" {
+				awareness = true
+			}
+		}
+		if awareness != (expectedSkills == 2) {
+			t.Fatal("captured package awareness discovery mismatch", ready)
+		}
 	}
-	readiness(a, *oldID, legacy.ContentDigest)
+	readiness(a, *oldID, legacy.ContentDigest, 1)
 	directory := a.options.DataDirectory
 	options := a.options
 	if err := a.Close(ctx); err != nil {
@@ -102,7 +136,7 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 	}
 	updatedAuth := "Bearer " + login.Token
 	head, generation := brainHead(t, updated)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.1:") || generation != 3 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.2:") || generation != 3 {
 		t.Fatal("Core did not update its seeded brain", head, generation)
 	}
 	configuration, err = updated.Store.Configuration(ctx, *oldID)
@@ -114,9 +148,12 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 	if err != nil || *recovered.ActiveContextID != *oldWork.ActiveContextID || recovered.ObservedState != "ready" {
 		t.Fatal("old Work did not recover its original context", recovered, err)
 	}
-	readiness(updated, *oldID, legacy.ContentDigest)
+	readiness(updated, *oldID, legacy.ContentDigest, 1)
 	if file(updatedBase, updatedAuth, "GET") != "preserve-user-data" {
 		t.Fatal("workspace data lost")
+	}
+	if file(updatedBase, updatedAuth, "GET", ".pi/packages/piwork-brain/brain.md") != "User edited brain source awaiting Apply" {
+		t.Fatal("upgrade replaced user editable source")
 	}
 	newIDValue, newOperation := create(updatedBase, updatedAuth, "Current brain Work")
 	waitWorkOperation(t, ctx, updated, newOperation)
@@ -129,25 +166,29 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	readiness(updated, *newID, current.ContentDigest)
+	readiness(updated, *newID, current.ContentDigest, 2)
 	manifest := filepath.Join(directory, "works", *newID)
-	var found bool
+	found := map[string]bool{}
 	if err := filepath.WalkDir(manifest, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if entry.Name() == "SKILL.md" && filepath.Base(filepath.Dir(path)) == "deploy-work-service" {
+		name := filepath.Base(filepath.Dir(path))
+		if entry.Name() == "SKILL.md" && (name == "deploy-work-service" || name == "application-awareness") {
 			content, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			if !strings.Contains(string(content), "Python + NiceGUI + SQLite") || strings.Contains(string(content), "use FastAPI + React + TypeScript + Vite") {
+			if name == "deploy-work-service" && (!strings.Contains(string(content), "Python + NiceGUI + SQLite") || strings.Contains(string(content), "use FastAPI + React + TypeScript + Vite")) {
 				t.Fatal("new Work captured obsolete deployment guidance")
 			}
-			found = true
+			if name == "application-awareness" && !strings.Contains(string(content), "Engineering Judgment") {
+				t.Fatal("new Work omitted full application cognition")
+			}
+			found[name] = true
 		}
 		return nil
-	}); err != nil || !found {
+	}); err != nil || len(found) != 2 {
 		t.Fatal("new Work deployment Skill unavailable", err)
 	}
 	if err := updated.ensureBundledBrain(context.Background()); err != nil {
@@ -156,7 +197,7 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 	if _, actual := brainHead(t, updated); actual != generation {
 		t.Fatal("repeated preparation changed catalog generation", actual)
 	}
-	t.Log("Core restart updated only the seeded catalog; real SDK kept legacy Work content/data and loaded current NiceGUI brain in a new Work")
+	t.Log("Core restart updated only the seeded catalog; real SDK kept old Work context/content/data/editable source and discovered both current peer Skills in a new Work")
 }
 
 func TestNativeDefaultBrainHasActualSDKToolsAndExplicitEmptyOverride(t *testing.T) {
@@ -201,6 +242,18 @@ func TestNativeDefaultBrainHasActualSDKToolsAndExplicitEmptyOverride(t *testing.
 	}
 	if int64(ready.WorkHistorySchemaVersion) != capabilities.WorkHistorySchema || ready.RunModelContractVersion != 1 || ready.WorkFeedbackContractVersion != 1 || len(ready.LoadedPackages) != 1 || ready.LoadedPackages[0].Name != "piwork-brain" {
 		t.Fatal(ready)
+	}
+	if ready.LoadedPackages[0].Skills != 2 {
+		t.Fatal("actual SDK omitted peer Skills", ready.LoadedPackages)
+	}
+	for _, name := range []string{"application-awareness", "deploy-work-service"} {
+		found := false
+		for _, resource := range ready.PackageResources {
+			found = found || resource.PackageName == "piwork-brain" && resource.Kind == "skill" && resource.Name == name
+		}
+		if !found {
+			t.Fatal("actual SDK did not discover", name)
+		}
 	}
 	for _, tool := range []string{"brain_service", "brain_feedback", "brain_experience", "brain_package_update"} {
 		found := false

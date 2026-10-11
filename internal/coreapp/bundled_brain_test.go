@@ -125,7 +125,7 @@ func TestBundledBrainUpdatesLegacySeedAndPreservesDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	head, generation := brainHead(t, a)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.1:") || generation != 2 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.2:") || generation != 2 {
 		t.Fatal(head, generation)
 	}
 	after, _ := a.Store.DefaultWork(context.Background())
@@ -187,7 +187,7 @@ func TestBundledBrainUpdatesPriorNiceGUISeedAndRetainsOldArtifact(t *testing.T) 
 		t.Fatal(err)
 	}
 	head, generation := brainHead(t, a)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.1:") || generation != 2 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.2:") || generation != 2 {
 		t.Fatal("prior NiceGUI seed was not updated", head, generation)
 	}
 	retained, err := os.ReadFile(oldManifest)
@@ -209,6 +209,63 @@ func TestBundledBrainUpdatesPriorNiceGUISeedAndRetainsOldArtifact(t *testing.T) 
 	}
 	if actual, g := brainHead(t, a); actual != head || g != generation {
 		t.Fatal("repeated startup republished the patch", actual, g)
+	}
+}
+
+func priorNiceGUIBrainPreparer(t *testing.T) func(context.Context) (packageprepare.Result, error) {
+	t.Helper()
+	return unitBrainArchivePreparer(t, func() ([]byte, error) {
+		return os.ReadFile("testdata/piwork-brain-nicegui-1.2.1.zip")
+	})
+}
+
+func TestBundledBrainAddsAwarenessToPriorNiceGUISeed(t *testing.T) {
+	a, _, _ := appFixture(t, Options{})
+	ctx := context.Background()
+	prior, err := priorNiceGUIBrainPreparer(t)(ctx)
+	if err != nil || string(prior.Artifact.Metadata.Version) != `"1.2.1"` || prior.Artifact.Metadata.ResourceCounts.Skills != 1 {
+		t.Fatal("invalid historical NiceGUI fixture", prior.Artifact.Metadata, err)
+	}
+	old := installPreparedBrain(t, a, prior)
+	oldSkill := filepath.Join(a.options.DataDirectory, old.StoragePath, "skills", "application-awareness", "SKILL.md")
+	if _, err := os.Stat(oldSkill); !os.IsNotExist(err) {
+		t.Fatal("old 1.2.1 unexpectedly contains the new Skill", err)
+	}
+	before, _ := a.Store.DefaultWork(ctx)
+	a.prepareBrainForTest = unitBrainPreparer(t)
+	if err := a.ensureBundledBrain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	head, generation := brainHead(t, a)
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.2:") || generation != 2 {
+		t.Fatal("1.2.1 catalog was not upgraded", head, generation)
+	}
+	var current corestore.PackageArtifact
+	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		var err error
+		current, err = corestore.ReadPackageArtifact(tx, head)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(a.options.DataDirectory, current.StoragePath, "skills", "application-awareness", "SKILL.md")); err != nil || !strings.Contains(string(raw), "Engineering Judgment") {
+		t.Fatal("new catalog omitted independent application cognition", err)
+	}
+	if _, err := os.Stat(oldSkill); !os.IsNotExist(err) {
+		t.Fatal("upgrade changed old immutable package", err)
+	}
+	after, _ := a.Store.DefaultWork(ctx)
+	left, _ := json.Marshal(before)
+	right, _ := json.Marshal(after)
+	if string(left) != string(right) {
+		t.Fatal("upgrade changed explicit default choices")
+	}
+	a.prepareBrainForTest = func(context.Context) (packageprepare.Result, error) {
+		t.Fatal("same awareness version prepared twice")
+		return packageprepare.Result{}, nil
+	}
+	if err := a.ensureBundledBrain(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 

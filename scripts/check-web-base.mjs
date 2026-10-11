@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { inputHash, root } from './build-web-base.mjs';
+import { queryFaultSource, checkQueryFailure } from './check-application-awareness-page.mjs';
 
 const metadata = JSON.parse(readFileSync(resolve(process.argv[2] || 'dist/web-base/candidate.json')));
 const template = process.argv[3] || 'workstation';
@@ -58,6 +59,8 @@ try {
     '--mount', `type=volume,src=${volume},dst=/var/data/workspace`, '--mount', `type=bind,src=${join(root, 'internal/coreassets/piwork-brain/templates', template)},dst=/template,readonly`,
     '--entrypoint', 'sh', metadata.reference, '-c', 'mkdir -p /var/data/workspace/apps/app; cp -R /template/. /var/data/workspace/apps/app/; chown -R 10001:10001 /var/data/workspace');
   const preparationStarted = Date.now();
+  docker('run', '--rm', '--network', 'none', '--label', `piwork.fixture=${id}`, '--mount', `type=volume,src=${volume},dst=/var/data/workspace`,
+    '--entrypoint', 'python', metadata.reference, '-c', `from pathlib import Path\np=Path(${JSON.stringify(app + '/workstation.py')});p.write_text(p.read_text()+${JSON.stringify(queryFaultSource)})`);
   docker('run', '--rm', '--label', `piwork.fixture=${id}`, '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--cpus', '.25', '--network', network,
     '--mount', `type=volume,src=${volume},dst=/var/data/workspace`, '--entrypoint', 'piwork-web', metadata.reference, 'prepare', '--app', app);
   const preparationMs = Date.now() - preparationStarted;
@@ -108,7 +111,7 @@ try {
   await page.getByLabel('Todo title', { exact: true }).fill('NiceGUI browser proof');
   await page.getByRole('button', { name: 'Add Todo', exact: true }).click();
   await expect(page.getByText('NiceGUI browser proof', { exact: true })).toBeVisible();
-  const row = page.locator('.todo-row').filter({ hasText: 'NiceGUI browser proof' });
+  const row = page.locator('.webapp-todo-row, .workstation-todo-row').filter({ hasText: 'NiceGUI browser proof' });
   await row.getByRole('button', { name: 'Complete', exact: true }).click();
   await expect(row.getByText('Completed', { exact: true })).toBeVisible();
   await page.getByLabel('Todo title', { exact: true }).fill('draft survives navigation');
@@ -119,6 +122,8 @@ try {
   assert(sockets.some(url => url.includes('/_nicegui_ws/')), 'No actual NiceGUI WebSocket');
   assert.deepEqual(external, [], 'Standard page requested a CDN or external resource');
   assert.deepEqual(errors, []);
+  await checkQueryFailure(page, enabled => python(`from pathlib import Path\np=Path('/var/data/workspace/data/${serviceName}/awareness-query-failure')\n${enabled ? "p.write_text('controlled fixture failure')" : 'p.unlink()'}`));
+  const recoveredTodos = (await (await fetch(address + '/ui/queries/todos')).json()).value;
   mkdirSync(join(root, 'dist/web-base'), { recursive: true });
   await page.screenshot({ path: join(root, 'dist/web-base', `nicegui-${template}.png`), fullPage: true });
   await browser.close(); browser = undefined;
@@ -140,7 +145,7 @@ try {
   docker('run', '--rm', '--network', 'none', '--label', `piwork.fixture=${id}`, '--mount', `type=volume,src=${volume},dst=/var/data/workspace`, '--workdir', app,
     '--entrypoint', 'python', metadata.reference, '-c', `from pathlib import Path\nimport json\nassert not json.loads(Path('.build/checks.json').read_text())['passed'];Path('.build/ui.original').replace('ui.py')`);
   docker('start', container); await ready(address);
-  assert.equal((await (await fetch(address + '/ui/queries/todos')).json()).value.length, 2);
+  assert.deepEqual((await (await fetch(address + '/ui/queries/todos')).json()).value, recoveredTodos);
   const plainSource = `from nicegui import app,ui\n@app.get('/health')\ndef health(): return {'ready':True}\nui.label('Generic NiceGUI application').props('role=heading aria-level=1')\nui.run(host='0.0.0.0',port=8081,show=False,reload=False,tailwind=False,show_welcome_message=False)\n`;
   python(`from pathlib import Path\np=Path('/var/data/workspace/apps/plain');p.mkdir();(p/'app.py').write_text(${JSON.stringify(plainSource)})`);
   docker('run', '-d', '--name', plain, '--label', `piwork.fixture=${id}`, '--network', network, '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',

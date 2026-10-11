@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { runCoreDependencyChecks } from './check-web-base-core-dependencies.mjs';
+import { queryFaultSource, checkQueryFailure, checkDesktopPageEvidence } from './check-application-awareness-page.mjs';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
@@ -13,6 +14,7 @@ const agent = process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE || 'piwork-agentd:go-mi
 const file = process.env.PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE || 'piwork-file-helper:go-migration-acceptance';
 const snapshot = process.env.PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE || 'piwork-snapshot-helper:go-migration-acceptance';
 await mkdir(join(root, 'dist/web-base'), { recursive: true });
+await mkdir(join(root, 'dist/application-awareness/nicegui'), { recursive: true });
 const temporary = await mkdtemp(join(root, 'dist/web-base/core-check-'));
 const data = join(temporary, 'core');
 const docker = args => {
@@ -50,6 +52,7 @@ let submission = 0;
 const results = [];
 const testSessions = new Set();
 const documentResponses = [];
+const resourceResponses = [];
 async function api(method, path, body) {
   const response = await fetch(coreUrl + '/api/v1' + path, { method, headers: {
     ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
@@ -58,6 +61,16 @@ async function api(method, path, body) {
   assert(response.ok, `${method} ${path}: ${value.error?.code || value.code || response.status}`);
   return value;
 }
+const readSource = async path => {
+  const response = await fetch(`${coreUrl}/api/v1/works/${work}/files/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(response.status, 200); return response.text();
+};
+const writeSource = async (path, content) => {
+  const response = await fetch(`${coreUrl}/api/v1/works/${work}/files/${path}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: content });
+  const result = await response.text();
+  assert(response.ok, `Development source update failed (${response.status}): ${result.slice(0, 500)}`);
+};
+
 async function chat(prompt) {
   if (!session) session = (await api('POST', `/works/${work}/sessions`, { idempotencyKey: 'web-base-validation' })).sessionId;
   testSessions.add(session);
@@ -91,14 +104,21 @@ try {
   await wait(async () => (await api('GET', `/operations/${created.operationId}`)).state === 'succeeded', 'Work creation');
   assert.match((await chat('deploy deterministic workstation')).finalText, /workstation-deployed:/);
 
+  const initialService = (await api('GET', `/works/${work}/services`)).services.find(item => item.name === 'workstation');
+  await writeSource('apps/workstation/workstation.py', (await readSource('apps/workstation/workstation.py')) + queryFaultSource);
+  const faultSetup = await api('POST', `/works/${work}/services/${initialService.serviceId}/restart`, { idempotencyKey: 'awareness-fault-fixture-setup' });
+  await wait(async () => { const op = await api('GET', `/operations/${faultSetup.operationId}`); assert.notEqual(op.state, 'failed'); return op.state === 'succeeded'; }, 'controlled query fixture');
+
   desktop = spawn(cliBinary, ['--core', coreUrl, 'desktop', '--port', String(desktopPort), '--no-open'], { stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PATH: '/nonexistent', PIWORK_CONFIG_PATH: join(temporary, 'client.json') } });
   desktopOutput = output(desktop);
   const launch = await wait(() => desktopOutput().match(/http:\/\/desktop\.localhost:\d+\/#ticket=[\w-]+/)?.[0], 'Desktop entry', 15000);
   browser = await chromium.launch({ headless: true, channel: 'chromium', args: ['--proxy-server=direct://', '--proxy-bypass-list=*'] });
-  const page = await browser.newPage();
+  const browserContext = await browser.newContext();
+  const page = await browserContext.newPage();
   page.on('response', response => {
     if (response.request().isNavigationRequest()) documentResponses.push({ status: response.status(), path: new URL(response.url()).pathname });
+    if (['script', 'stylesheet'].includes(response.request().resourceType())) resourceResponses.push({ status: response.status(), path: new URL(response.url()).pathname });
   });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(launch);
@@ -130,10 +150,63 @@ try {
   assert.match(sql.finalText, /sqlite3-verified:3\.40\.1/);
   assert.match(sql.finalText, /"count":1/);
   const beforeAction = (await api('GET', `/works/${work}/services`)).services.find(item => item.name === 'workstation');
+  const beforeActionNavigations = documentResponses.length;
+  await frame.getByLabel('Todo title', { exact: true }).focus();
   assert.equal((await chat('add deterministic workstation Todo')).finalText, 'workstation-live-todo-verified');
   await expect(frame.getByText('Agent live Todo', { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(frame.getByLabel('Todo title', { exact: true })).toHaveValue('keep this unfinished input');
+  await expect(frame.getByLabel('Todo title', { exact: true })).toBeFocused();
+  assert.equal(documentResponses.length, beforeActionNavigations, 'Business synchronization navigated or reloaded the page');
   const afterAction = await api('GET', `/works/${work}/services/${beforeAction.serviceId}`);
   assert.equal(afterAction.desiredRevision, beforeAction.desiredRevision, 'Ordinary Agent Action redeployed the Service');
+  const awarenessNavigations = documentResponses.length;
+  const confirmReady = async () => assert.equal((await api('GET', `/works/${work}/services/${beforeAction.serviceId}`)).observedState, 'ready');
+  const pageEvidence = await checkDesktopPageEvidence(page, frame, confirmReady);
+  const setFault = async (name, enabled) => {
+    const response = await fetch(`${coreUrl}/api/v1/works/${work}/files/data/${name}/awareness-query-failure`, {
+      method: enabled ? 'PUT' : 'DELETE', headers: { Authorization: `Bearer ${token}` }, body: enabled ? 'controlled fixture failure' : undefined,
+    });
+    assert(response.ok, 'Unable to toggle the owned query fixture');
+  };
+  const dataEvidence = await checkQueryFailure(frame, enabled => setFault('workstation', enabled));
+  assert.equal(documentResponses.length, awarenessNavigations, 'Query recovery navigated the original page');
+  assert.equal((await api('GET', `/works/${work}/services/${beforeAction.serviceId}`)).desiredRevision, beforeAction.desiredRevision);
+  console.log('Application awareness: Desktop entry detected hidden/blocked content and resource failure; Query failure/recovery retained draft and focus.');
+
+  // The other delivered template is also checked through the real Desktop entry.
+  const installation = JSON.parse(await readFile(join(data, 'core-format.json'))).installationId;
+  const agentIds = docker(['ps', '-q', '--filter', `label=piwork.installation_id=${installation}`, '--filter', `label=piwork.work_id=${work}`, '--filter', 'label=piwork.resource_kind=agent']).split('\n').filter(Boolean);
+  assert.equal(agentIds.length, 1);
+  const capturedAgent = JSON.parse(docker(['inspect', agentIds[0]]))[0];
+  const workspaceMount = capturedAgent.Mounts.find(mount => mount.Destination === '/var/data/workspace');
+  assert.equal(workspaceMount.Type, 'volume');
+  const fixtureLabel = 'piwork-awareness-init-' + randomUUID();
+  const initialized = docker(['run', '--rm', '--network', 'none', '--user', '10001:10001', '--label', `piwork.fixture=${fixtureLabel}`,
+    '--mount', `type=volume,src=${workspaceMount.Name},dst=/var/data/workspace`,
+    '--mount', `type=bind,src=${join(root, 'internal/coreassets/piwork-brain')},dst=/brain,readonly`, '--workdir', '/var/data/workspace',
+    'node:24-bookworm-slim', 'node', '/brain/skills/deploy-work-service/initialize.mjs', '--template', 'web-app', '--name', 'awareness-webapp']);
+  assert.match(initialized, /"initialized":true/);
+  await writeSource('apps/awareness-webapp/workstation.py', (await readSource('apps/awareness-webapp/workstation.py')) + queryFaultSource);
+  const templateFields = ['name', 'image', 'command', 'args', 'environment', 'secretRefs', 'workingDirectory', 'mounts', 'ports', 'cpuMillis', 'memoryBytes', 'enabled', 'required', 'readiness', 'restartPolicy'];
+  const templateDefinition = { ...Object.fromEntries(templateFields.filter(key => initialService.definition[key] !== undefined).map(key => [key, initialService.definition[key]])), name: 'awareness-webapp', args: ['run', '--app', '/var/data/workspace/apps/awareness-webapp'] };
+  const extra = await api('POST', `/works/${work}/services`, { definition: templateDefinition, idempotencyKey: 'awareness-webapp-fixture' });
+  await wait(async () => { const op = await api('GET', `/operations/${extra.operationId}`); assert.notEqual(op.state, 'failed'); return op.state === 'succeeded'; }, 'web-app template');
+  await expect(page.getByLabel('Service', { exact: true })).toContainText('awareness-webapp');
+  await page.getByLabel('Service', { exact: true }).selectOption({ label: 'awareness-webapp' });
+  await expect(frame.getByRole('heading', { name: 'Personal workstation', exact: true })).toBeVisible();
+  await expect(frame.locator('.webapp-root')).toBeVisible();
+  await frame.getByLabel('Todo title', { exact: true }).fill('Generic template Desktop proof');
+  await frame.getByRole('button', { name: 'Add Todo', exact: true }).click();
+  await expect(frame.getByText('Generic template Desktop proof', { exact: true })).toBeVisible();
+  const genericDataEvidence = await checkQueryFailure(frame, enabled => setFault('awareness-webapp', enabled));
+  await page.getByLabel('Service', { exact: true }).selectOption({ label: 'workstation' });
+  await expect(frame.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible();
+  const removeExtra = await api('POST', `/works/${work}/services/${extra.serviceId}/remove`, { idempotencyKey: 'awareness-webapp-fixture-remove' });
+  await wait(async () => (await api('GET', `/operations/${removeExtra.operationId}`)).state === 'succeeded', 'temporary web-app removal');
+  await writeFile(join(root, 'dist/application-awareness/nicegui/page-evidence.json'), JSON.stringify({
+    passed: true, entry: 'authenticated-desktop-service', pageEvidence, dataEvidence, genericDataEvidence,
+    checks: ['both-template-desktop-entry', 'framework-layout-preserved', 'ready-200-is-not-ui-proof', 'css-hidden-evidence', 'overlay-hit-evidence', 'bootstrap-resource-error-evidence', 'query-stale-recovery', 'draft-focus-retained'],
+  }, null, 2) + '\n');
   const explicitRequests = (await api('GET', `/works/${work}/agent-requests?limit=100`)).items;
   assert.equal(explicitRequests.length, 1, 'The explicit Action should have its original Chat request');
   assert.equal(explicitRequests[0].source.kind, 'chat');
@@ -146,15 +219,6 @@ try {
   await wait(async () => (await api('GET', `/operations/${devReceipt.operationId}`)).state === 'succeeded', 'dev mode');
   await expect(frame.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible({ timeout: 90000 });
   await expect.poll(() => frame.getByRole('heading', { name: 'Updated workstation', exact: true }).evaluate(() => window.piworkRuntime?.mode), { timeout: 90000 }).toBe('development');
-  const readSource = async path => {
-    const response = await fetch(`${coreUrl}/api/v1/works/${work}/files/${path}`, { headers: { Authorization: `Bearer ${token}` } });
-    assert.equal(response.status, 200); return response.text();
-  };
-  const writeSource = async (path, content) => {
-    const response = await fetch(`${coreUrl}/api/v1/works/${work}/files/${path}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: content });
-    const result = await response.text();
-    assert(response.ok, `Development source update failed (${response.status}): ${result.slice(0, 500)}`);
-  };
   const beforeInitialization = await api('GET', `/works/${work}/services/${originalService.serviceId}`);
   const preserved = new Map();
   for (const path of ['apps/workstation/SPEC.md', 'apps/workstation/requirements.lock', 'apps/workstation/app.py']) {
@@ -361,8 +425,11 @@ HTTPServer(('0.0.0.0',8081),Handler).serve_forever()
   console.log('Real SDK/MCP/Core/CLI/browser: NiceGUI pages and business updates adopted automatically, draft/path retained, Agent sqlite3 executed; no manual reload or extra Run/Apply.');
 } catch (error) {
   console.error('Document response status/path (no credentials):', JSON.stringify(documentResponses.slice(-12)));
+  console.error('Resource response status/path:', JSON.stringify(resourceResponses.slice(-16)));
+  let frameIndex = 0;
   for (const context of browser?.contexts() || []) for (const page of context.pages()) for (const frame of page.frames()) {
     try {
+      await writeFile(join(root, 'dist/application-awareness/nicegui', `failed-frame-${frameIndex++}.html`), await frame.content());
       const diagnostic = await frame.evaluate(() => ({ path: location.pathname, scripts: document.querySelectorAll('script[src^="/piwork-assets/page-client.js"]').length,
         headings: [...document.querySelectorAll('h1,h2')].map(node => node.textContent),
         codes: document.body?.innerText.match(/(?:SERVICE|WORK|CORE|SESSION|AUTH|ENTRY|PROXY|ACCESS)_[A-Z_]+/g) || [] }));

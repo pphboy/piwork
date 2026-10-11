@@ -14,15 +14,16 @@ def register_pages(station, loaded):
     def page(path):
         page_head(ui, loaded)
         ui.add_css(STYLE)
-        with ui.column().classes('station'):
-            ui.label('YOUR WORKSPACE').classes('eyebrow')
-            ui.label(TITLE).props('role=heading aria-level=1').classes('station-title')
-            ui.label('Build a little structure around your day.').classes('description')
-            with ui.row().classes('navigation'):
+        with ui.column().classes('webapp-root').props('data-piwork-app'):
+            ui.label('YOUR WORKSPACE').classes('webapp-eyebrow')
+            ui.label(TITLE).props('role=heading aria-level=1').classes('webapp-station-title')
+            ui.label('Build a little structure around your day.').classes('webapp-description')
+            with ui.row().classes('webapp-navigation'):
                 ui.link('Todos', '/')
                 ui.link('Personal review', '/review')
-            ui.label('').props('role=status data-piwork-status').classes('connection')
-            notice = ui.label('').props('role=alert').classes('notice')
+            ui.label('').props('role=status data-piwork-status').classes('webapp-connection')
+            notice = ui.label('').props('role=alert').classes('webapp-notice')
+            sync_notice = ui.label('').props('role=status data-piwork-data-status').classes('webapp-data-status')
             seen = [None]
             title = None
 
@@ -52,20 +53,25 @@ def register_pages(station, loaded):
                     notice.text = error.code
 
             if path == '/review':
-                ui.label('Personal review').props('role=heading aria-level=2').classes('section-title')
-                content = ui.column().classes('business-content')
+                ui.label('Personal review').props('role=heading aria-level=2').classes('webapp-section-title')
+                content = ui.column().classes('webapp-business-content').props('data-piwork-business-content')
                 ui.button('Report missing completed Todos', on_click=report)
                 ui.label('No feedback submitted.').props('role=status data-piwork-feedback')
                 ui.button('Export review', on_click=lambda: action('export_review', {}))
             else:
-                ui.label('Todos').props('role=heading aria-level=2').classes('section-title')
-                with ui.row().classes('new-todo'):
+                ui.label('Todos').props('role=heading aria-level=2').classes('webapp-section-title')
+                with ui.row().classes('webapp-new-todo'):
                     title = ui.input('Todo title').props('maxlength=200 data-piwork-draft=todo-title')
                     ui.button('Add Todo', on_click=lambda: action('todo_add', {'title': title.value}))
-                content = ui.column().classes('business-content')
+                content = ui.column().classes('webapp-business-content').props('data-piwork-business-content')
 
             def refresh(force=False):
-                query = station.query('review' if path == '/review' else 'todos', {})
+                try:
+                    query = station.query('review' if path == '/review' else 'todos', {})
+                except Exception:
+                    sync_notice.text = 'Unable to refresh data. Displayed data may be outdated; retrying automatically.'
+                    return
+                sync_notice.text = ''
                 if not force and seen[0] == query['stateVersion']:
                     return
                 seen[0] = query['stateVersion']
@@ -77,15 +83,15 @@ def register_pages(station, loaded):
                             ui.label(todo['title'])
                     else:
                         for todo in query['value']:
-                            with ui.row().classes('todo-row'):
+                            with ui.row().classes('webapp-todo-row'):
                                 ui.label(todo['title'])
                                 if todo['completed']:
-                                    ui.label('Completed').classes('completed')
+                                    ui.label('Completed').classes('webapp-completed')
                                 else:
                                     ui.button('Complete', on_click=functools.partial(action, 'todo_complete', {'id': todo['id']}))
             refresh(force=True)
             ui.timer(1.0, refresh)
-            ui.label('Changes appear automatically. Your work stays in this Work.').classes('footer')
+            ui.label('Changes appear automatically. Your work stays in this Work.').classes('webapp-footer')
         station.visit(path)
 
     @ui.page('/')

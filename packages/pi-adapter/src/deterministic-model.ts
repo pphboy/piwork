@@ -82,8 +82,47 @@ function streamDeterministic(
         : [])
       .join("\n");
     const skillLocations = [...systemPrompt.matchAll(/<location>([^<]*\/SKILL\.md)<\/location>/g)].map((match) => decodeXml(match[1]!));
-    const manifestPath = skillLocations.find((path) => !path.includes("piwork-brain") && !path.includes("/skills/deploy-work-service/")) ?? "";
+    const manifestPath = skillLocations.find((path) => !path.includes("piwork-brain") && !path.includes("/skills/deploy-work-service/") && !path.includes("/skills/application-awareness/")) ?? "";
     const toolResults = context.messages.slice(latestUserIndex + 1).filter((message) => message.role === "toolResult");
+    // These explicit fixture prompts exercise SDK dispatch, not model judgment.
+    if (["inspect NiceGUI application awareness", "verify NiceGUI fixture page"].includes(prompt.trim())) {
+      const location = skillLocations.find(path => path.endsWith("/skills/application-awareness/SKILL.md"));
+      if (!location) { emitText(stream, output, "application-awareness:unavailable"); return; }
+      const reads = toolResults.filter(result => result.toolName === "read");
+      if (!reads.length) { emitToolCall(stream, output, "nicegui-skill", "read", { path: location }); return; }
+      const reference = toolResultText(reads[0]!).match(/\]\((references\/nicegui\.md)\)/)?.[1];
+      if (!reference) throw new Error("NiceGUI fixture has no discovered Reference");
+      if (reads.length === 1) { emitToolCall(stream, output, "nicegui-reference", "read", { path: resolve(dirname(location), reference) }); return; }
+      if (prompt.trim() === "inspect NiceGUI application awareness") { emitText(stream, output, "nicegui-reference:read"); return; }
+      const queried = toolResults.find(result => result.toolName === "fixture_business");
+      if (!queried) { emitToolCall(stream, output, "nicegui-backend", "fixture_business", { operation: "query" }); return; }
+      const browser = context.messages.some(message => message.role === "system" && message.toolsAdded?.some(tool => tool.name === "fixture_browser"));
+      if (!browser) { emitText(stream, output, JSON.stringify({ backendVerified: !queried.isError, pageVerified: false, reason: "browser_unavailable", attribution: "unknown" })); return; }
+      const observed = toolResults.find(result => result.toolName === "fixture_browser");
+      if (!observed) { emitToolCall(stream, output, "nicegui-entry", "fixture_browser", { operation: "inspect", entry: "desktop-service" }); return; }
+      const facts = parseToolJson(observed);
+      const attribution = facts.domPresent === true && facts.displayNone === true ? "style" : typeof facts.resourceStatus === "number" && facts.resourceStatus >= 400 ? "resource" : "unknown";
+      emitText(stream, output, JSON.stringify({ backendVerified: !queried.isError, pageVerified: false, reason: facts.reason ?? "insufficient_evidence", attribution, facts })); return;
+    }
+    if (["inspect application awareness", "adjust application awareness backend", "reuse application awareness"].includes(prompt.trim())) {
+      const location = skillLocations.find(path => path.endsWith("/skills/application-awareness/SKILL.md"));
+      if (!location) { emitText(stream, output, "application-awareness:unavailable"); return; }
+      const earlierRead = context.messages.slice(0, latestUserIndex).find(message => message.role === "toolResult" && message.toolName === "read" && toolResultText(message).includes("### 1. Product"));
+      if (prompt.trim() === "reuse application awareness" && earlierRead) { emitText(stream, output, "application-awareness:reused"); return; }
+      const read = toolResults.find(result => result.toolName === "read");
+      if (!read) { emitToolCall(stream, output, "awareness-read", "read", { path: location }); return; }
+      if (prompt.trim() === "adjust application awareness backend") {
+        const writes = toolResults.filter(result => result.toolName === "write").length;
+        if (writes === 0) { emitToolCall(stream, output, "awareness-spec", "write", { path: "apps/example/SPEC.md", content: "# Example\nIntent: round amounts down.\nImplementation Map: logic.mjs / roundAmount.\nAcceptance: roundAmount(-1.2) equals -2.\n" }); return; }
+        if (writes === 1) { emitToolCall(stream, output, "awareness-logic", "write", { path: "apps/example/logic.mjs", content: "export const roundAmount = value => Math.floor(value);\n" }); return; }
+      }
+      emitText(stream, output, `application-awareness:read:${createHash("sha256").update(toolResultText(read)).digest("hex")}`); return;
+    }
+    if (["query application awareness fixture", "act application awareness fixture"].includes(prompt.trim())) {
+      if (!toolResults.length) emitToolCall(stream, output, "awareness-business", "fixture_business", { operation: prompt.startsWith("query") ? "query" : "action" });
+      else emitText(stream, output, toolResultText(toolResults[0]!));
+      return;
+    }
     const brainSkill = [...systemPrompt.matchAll(/<location>([^<]*\/SKILL\.md)<\/location>/g)].map((match) => decodeXml(match[1]!)).find((path) => path.includes("deploy-work-service")) ?? manifestPath;
     if (deterministicWorkstation(stream, output, toolResults, brainSkill, prompt.trim())) return;
     if (deterministicKanban(stream, output, toolResults, brainSkill, prompt.trim())) return;

@@ -4,6 +4,8 @@ Turn the user's intent into a working, operable Service using the current Work's
 
 ## Understand / Specify
 
+For application creation, feature development or interaction changes, read [application-awareness](skills/application-awareness/SKILL.md) directly and apply its product and UI/UX judgment within the current task. Reuse the same active package's text when already available. Do not add a design stage or delay delivery for minor decoration. Ordinary Query/Action, service start/stop and unchanged third-party deployments do not enter this design path.
+
 Understand the requested outcome. For a durable Service construction or code change, read [deploy-work-service](skills/deploy-work-service/SKILL.md) and form the necessary Service Spec before implementation. Update only the affected design and code coordinates. Ordinary business operations use existing capabilities directly.
 
 ## Act

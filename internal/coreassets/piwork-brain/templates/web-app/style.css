@@ -1,16 +1,18 @@
 body {background:#f5f8fc;color:#1b2634;font-family:Arial,sans-serif;}
-.station {width:min(760px,100%);margin:32px auto;padding:32px;gap:18px;background:white;border:1px solid #dce7f2;border-radius:10px;box-sizing:border-box;}
-.station-title {font-size:32px;font-weight:700;line-height:1.25;}
-.eyebrow {color:#526477;letter-spacing:.12em;font-size:12px;}
-.description,.footer {color:#526477;}
-.navigation {gap:24px;padding:10px 0;border-bottom:1px solid #dce7f2;width:100%;}
-.navigation a {color:#0969da;}
-.section-title {font-size:24px;font-weight:600;}
-.new-todo {align-items:center;gap:16px;width:100%;}
-.new-todo .q-field {flex:1;min-width:180px;}
-.business-content {width:100%;gap:12px;}
-.todo-row {align-items:center;justify-content:space-between;width:100%;padding:12px 0;border-bottom:1px solid #dce7f2;}
-.completed {color:#177044;}
-.notice,.connection {color:#8a5a00;}
-.footer {font-size:13px;padding-top:20px;}
-@media(max-width:600px) {.station {margin:0;padding:20px;border:0;border-radius:0;}.new-todo {flex-wrap:wrap;}}
+.webapp-root {width:min(760px,100%);margin:32px auto;padding:32px;gap:18px;background:white;border:1px solid #dce7f2;border-radius:10px;box-sizing:border-box;}
+.webapp-root .webapp-station-title {font-size:32px;font-weight:700;line-height:1.25;}
+.webapp-root .webapp-eyebrow {color:#526477;letter-spacing:.12em;font-size:12px;}
+.webapp-root .webapp-description,.webapp-root .webapp-footer {color:#526477;}
+.webapp-root .webapp-navigation {gap:24px;padding:10px 0;border-bottom:1px solid #dce7f2;width:100%;}
+.webapp-root .webapp-navigation a {color:#0969da;}
+.webapp-root .webapp-section-title {font-size:24px;font-weight:600;}
+.webapp-root .webapp-new-todo {align-items:center;gap:16px;width:100%;}
+.webapp-root .webapp-new-todo .q-field {flex:1;min-width:180px;}
+.webapp-root .webapp-business-content {width:100%;gap:12px;}
+.webapp-root .webapp-todo-row {align-items:center;justify-content:space-between;width:100%;padding:12px 0;border-bottom:1px solid #dce7f2;}
+.webapp-root .webapp-completed {color:#177044;}
+.webapp-root .webapp-notice,.webapp-root .webapp-connection {color:#8a5a00;}
+.webapp-root .webapp-footer {font-size:13px;padding-top:20px;}
+@media(max-width:600px) {.webapp-root {margin:0;padding:20px;border:0;border-radius:0;}.webapp-root .webapp-new-todo {flex-wrap:wrap;}}
+
+.webapp-root .webapp-data-status {color:#8a5a00;}
