@@ -70,6 +70,7 @@ func (a *Application) patchDefaultWork(ctx context.Context, actor identity.Princ
 	if stored.Configuration == nil {
 		return contracts.AdminDefaultWorkView{}, contracts.NewError("DEFAULT_WORK_NOT_CONFIGURED", "")
 	}
+	preparationChanged := patch.BaseImage.Present || patch.Packages.Present || patch.ModelRef.Present
 	_, err = a.Store.UpdateDefaultWork(ctx, func(tx *sql.Tx, current corestore.DefaultWorkConfiguration) (contracts.WorkConfig, error) {
 		if err := a.Identity.AuthorizeAdministratorTx(tx, actor); err != nil {
 			return contracts.WorkConfig{}, err
@@ -117,16 +118,19 @@ func (a *Application) patchDefaultWork(ctx context.Context, actor identity.Princ
 				return contracts.WorkConfig{}, err
 			}
 		}
+		if preparationChanged {
+			a.invalidateRuntimePreparation()
+		}
 		return config, nil
 	})
+	if preparationChanged || err == nil {
+		refreshErr := a.ScheduleRuntimeRefresh()
+		if err == nil {
+			err = refreshErr
+		}
+	}
 	if err != nil {
 		return contracts.AdminDefaultWorkView{}, err
-	}
-	if patch.ModelRef.Present {
-		a.invalidateRuntimePreparation()
-		if err := a.ScheduleRuntimeRefresh(); err != nil {
-			return contracts.AdminDefaultWorkView{}, err
-		}
 	}
 	return a.defaultWorkView(ctx)
 }

@@ -565,12 +565,19 @@ func send(w http.ResponseWriter, status int, value any) {
 }
 func (a *Application) route(w http.ResponseWriter, r *http.Request) {
 	trace := &operationTrace{app: a, correlation: string(requestCorrelation()), preacceptDiagnostics: diagnostics.Empty()}
-	r = r.WithContext(context.WithValue(r.Context(), traceKey{}, trace))
+	r = r.WithContext(diagnostics.WithPerformance(context.WithValue(r.Context(), traceKey{}, trace), diagnostics.PerformanceIdentity{CorrelationID: trace.correlation}))
+	var requestSpan *diagnostics.PerformanceSpan
+	var requestErr error
+	if r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/v1/works" {
+		requestSpan = diagnostics.BeginPerformance(r.Context(), "create-request")
+	}
+	defer func() { requestSpan.End(requestErr) }()
 	defer func() {
 		if failure := recover(); failure != nil {
 			if failure == http.ErrAbortHandler {
 				panic(failure)
 			}
+			requestErr = contracts.NewError("INTERNAL_ERROR", "")
 			contracts.WriteError(w, contracts.NewError("INTERNAL_ERROR", ""))
 		}
 	}()
@@ -579,6 +586,7 @@ func (a *Application) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.handle(w, r); err != nil {
+		requestErr = err
 		if strings.HasPrefix(r.URL.Path, "/api/v1/admin/") {
 			status, view := contracts.ProjectAdminError(err, requestCorrelation())
 			send(w, status, view)

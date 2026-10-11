@@ -67,6 +67,15 @@ func TestNativeDefaultWorkCreateAndSession(t *testing.T) {
 	if status, view := httpCall(t, base, "/api/v1/admin/default-work", "PATCH", authorization, map[string]any{"baseImage": imageRef}); status != 200 || view["baseImage"] != imageRef {
 		t.Fatal("default image selection did not save", status, view)
 	}
+	// Saving defaults accepts local configuration; its shared preparation is
+	// asynchronous and must finish before the first default Work is admitted.
+	for !a.Status().Ready {
+		select {
+		case <-ctx.Done():
+			t.Fatal("default preparation did not finish", a.Preparation())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 	create := func(target, payload string) (int, map[string]any) {
 		t.Helper()
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost, target+"/api/v1/works", bytes.NewBufferString(payload))

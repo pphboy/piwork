@@ -162,6 +162,11 @@ func (r *Runtime) prepare(ctx context.Context, spec StartSpec) (imagestatic.Capa
 }
 
 func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, err error) {
+	if spec.CorrelationID != "" {
+		ctx = diagnostics.WithPerformanceIfAbsent(ctx, diagnostics.PerformanceIdentity{CorrelationID: spec.CorrelationID, WorkID: spec.Scope.WorkID})
+	}
+	var performance *diagnostics.PerformanceSpan
+	defer func() { performance.End(err) }()
 	stage, code, containerID := "context-validate", "CONTEXT_NOT_FOUND", ""
 	emit := func(outcome string) error {
 		if spec.Observe == nil {
@@ -197,6 +202,7 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 		return result, err
 	}
 	stage, code = "runtime-prepare", "RUNTIME_PREPARE_FAILED"
+	performance = diagnostics.BeginPerformance(ctx, "runtime-prepare")
 	if err = emit("started"); err != nil {
 		return result, err
 	}
@@ -205,10 +211,12 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 		return result, err
 	}
 	spec.workHistorySchema = capabilities.WorkHistorySchema
+	performance.End(nil)
 	if err = emit("succeeded"); err != nil {
 		return result, err
 	}
 	stage, code = "runtime-start", "RUNTIME_START_FAILED"
+	performance = diagnostics.BeginPerformance(ctx, "container-start")
 	if err = emit("started"); err != nil {
 		return result, err
 	}
@@ -296,24 +304,22 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 		return result, err
 	}
 	stage, code = "readiness", "AGENT_READINESS_TIMEOUT"
+	performance.End(nil)
+	performance = diagnostics.BeginPerformance(ctx, "readiness-rpc")
 	if err = emit("started"); err != nil {
 		client.Close()
 		return result, err
 	}
 	readiness, err := waitReady(ctx, r.Docker, agent, ensured.ID, client, spec, captured)
+	performance.End(err)
 	if err != nil {
 		client.Close()
 		return result, err
 	}
 	if spec.Observe != nil {
-		logs, logErr := r.Docker.Logs(ctx, agent, 200, ensured.ID)
-		if logErr == nil {
-			for _, event := range diagnostics.ParseAgentLines(logs.Text, spec.Scope.WorkID, spec.CorrelationID) {
-				if err = spec.Observe(event); err != nil {
-					client.Close()
-					return result, err
-				}
-			}
+		if err = r.collectInitializationDiagnostics(ctx, spec, agent, ensured.ID); err != nil {
+			client.Close()
+			return result, err
 		}
 	}
 	if err = emit("succeeded"); err != nil {
@@ -321,6 +327,23 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 		return result, err
 	}
 	return Started{ContainerID: ensured.ID, Address: address, Client: client, scope: spec.Scope, contextID: spec.ContextID, verified: true, readiness: readiness}, nil
+}
+
+func (r *Runtime) collectInitializationDiagnostics(ctx context.Context, spec StartSpec, agent dockerengine.ContainerIdentity, containerID string) error {
+	span := diagnostics.BeginPerformance(ctx, "diagnostic-collection")
+	logs, err := r.Docker.Logs(ctx, agent, 200, containerID)
+	if err != nil {
+		span.End(err)
+		return nil
+	}
+	for _, event := range diagnostics.ParseAgentLines(logs.Text, spec.Scope.WorkID, spec.CorrelationID) {
+		if err := spec.Observe(event); err != nil {
+			span.End(err)
+			return err
+		}
+	}
+	span.End(nil)
+	return nil
 }
 
 func agentIdentity(scope internaltls.Scope, contextID string) dockerengine.ContainerIdentity {
@@ -448,6 +471,7 @@ func waitReady(ctx context.Context, docker *dockerengine.Runtime, identity docke
 		if !view.State.Running {
 			return nil, ErrAgentExited
 		}
+		client.RetryReadinessConnection(err)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()

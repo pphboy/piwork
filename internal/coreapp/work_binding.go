@@ -7,6 +7,7 @@ import (
 
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
+	"piwork/internal/dockerengine"
 )
 
 type catalogModelMetadata struct {
@@ -35,28 +36,9 @@ func (a *Application) resolveWorkBinding(ctx context.Context, config contracts.W
 		}
 	}
 	if imageChanged {
-		var kind string
-		var enabled bool
-		var reference, digest sql.NullString
-		err := a.Store.Read(ctx, func(tx *sql.Tx) error {
-			return tx.QueryRowContext(ctx, `SELECT kind,enabled,mutable_reference,resolved_digest FROM catalog_entries WHERE id=?`, config.AgentImage.CatalogId).Scan(&kind, &enabled, &reference, &digest)
-		})
-		if err != nil || kind != "agent_image" || !enabled || !reference.Valid && !digest.Valid {
-			return "", "", 0, contracts.NewError("INVALID_CONFIGURATION", "agentImage")
-		}
-		selected := reference.String
-		if !reference.Valid {
-			selected = digest.String
-		}
-		if a.engine == nil || a.inspector == nil {
-			return "", "", 0, contracts.NewError("RUNTIME_UNAVAILABLE", "")
-		}
-		image, err := a.engine.PrepareImage(ctx, selected)
+		image, selected, err := a.resolveWorkImage(ctx, config.AgentImage.CatalogId)
 		if err != nil {
-			return "", "", 0, contracts.NewError("RUNTIME_UNAVAILABLE", "agentImage")
-		}
-		if _, err := a.inspector.InspectNativeAgent(ctx, image.ID); err != nil {
-			return "", "", 0, contracts.NewError("INVALID_CONFIGURATION", "agentImage")
+			return "", "", 0, err
 		}
 		imageID = image.ID
 		profile.AgentImage = selected
@@ -97,4 +79,41 @@ func (a *Application) resolveWorkBinding(ctx context.Context, config contracts.W
 		return "", "", 0, contracts.NewError("INVALID_CONFIGURATION", "")
 	}
 	return imageID, string(raw), profile.Revision, nil
+}
+
+func (a *Application) selectedWorkImageReference(ctx context.Context, catalogID contracts.ResourceId) (string, error) {
+	var kind string
+	var enabled bool
+	var reference, digest sql.NullString
+	err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT kind,enabled,mutable_reference,resolved_digest FROM catalog_entries WHERE id=?`, catalogID).Scan(&kind, &enabled, &reference, &digest)
+	})
+	if err != nil || kind != "agent_image" || !enabled || !reference.Valid && !digest.Valid {
+		return "", contracts.NewError("INVALID_CONFIGURATION", "agentImage")
+	}
+	if reference.Valid {
+		return reference.String, nil
+	}
+	return digest.String, nil
+}
+
+// resolveWorkImage is shared by creation and default prewarming. It deliberately
+// does not read model credentials or construct any Work-owned resources.
+func (a *Application) resolveWorkImage(ctx context.Context, catalogID contracts.ResourceId) (dockerengine.PreparedImage, string, error) {
+	var empty dockerengine.PreparedImage
+	selected, err := a.selectedWorkImageReference(ctx, catalogID)
+	if err != nil {
+		return empty, "", err
+	}
+	if a.engine == nil || a.inspector == nil {
+		return empty, "", contracts.NewError("RUNTIME_UNAVAILABLE", "")
+	}
+	image, err := a.engine.PrepareImage(ctx, selected)
+	if err != nil {
+		return empty, "", contracts.NewError("RUNTIME_UNAVAILABLE", "agentImage")
+	}
+	if _, err := a.inspector.InspectNativeAgent(ctx, image.ID); err != nil {
+		return empty, "", contracts.NewError("INVALID_CONFIGURATION", "agentImage")
+	}
+	return image, selected, nil
 }

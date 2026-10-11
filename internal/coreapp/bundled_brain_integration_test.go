@@ -191,7 +191,15 @@ func TestNativeDefaultBrainHasActualSDKToolsAndExplicitEmptyOverride(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ready.WorkHistorySchemaVersion != 4 || ready.RunModelContractVersion != 1 || ready.WorkFeedbackContractVersion != 1 || len(ready.LoadedPackages) != 1 || ready.LoadedPackages[0].Name != "piwork-brain" {
+	spec, _, err := a.capturedStartSpec(ctx, id, generation, instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities, err := a.inspector.InspectNativeAgent(ctx, spec.ImageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(ready.WorkHistorySchemaVersion) != capabilities.WorkHistorySchema || ready.RunModelContractVersion != 1 || ready.WorkFeedbackContractVersion != 1 || len(ready.LoadedPackages) != 1 || ready.LoadedPackages[0].Name != "piwork-brain" {
 		t.Fatal(ready)
 	}
 	for _, tool := range []string{"brain_service", "brain_feedback", "brain_experience", "brain_package_update"} {

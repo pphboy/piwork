@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
+	"piwork/internal/diagnostics"
 	"piwork/internal/dockerengine"
 	"piwork/internal/identity"
 	"piwork/internal/workcontext"
@@ -113,7 +114,9 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 	if err := a.Store.Read(ctx, func(tx *sql.Tx) error { return validateSelectedSkillsTx(tx, configuration.Skills) }); err != nil {
 		return output, err
 	}
+	imageSpan := diagnostics.BeginPerformance(ctx, "image-resolve")
 	imageID, profileJSON, sourceRevision, err := a.resolveWorkBinding(ctx, configuration, "", "", true, true)
+	imageSpan.End(err)
 	if err != nil {
 		return output, err
 	}
@@ -122,9 +125,11 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 		return output, corestore.ErrStorage
 	}
 	workID, now := "work-"+id.String(), time.Now().UTC().Format(time.RFC3339Nano)
+	contextSpan := diagnostics.BeginPerformance(ctx, "context-capture")
 	a.skillMu.Lock()
 	defer a.skillMu.Unlock()
 	published, err := a.buildWorkContext(ctx, workID, "", true, configuration, imageID, now, nil)
+	contextSpan.End(err)
 	if err != nil {
 		_ = workcontext.RemoveUnaccepted(a.Store, workID)
 		return output, packagePublicError(err)
@@ -135,6 +140,7 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 			_ = workcontext.RemoveUnaccepted(a.Store, workID)
 		}
 	}()
+	acceptSpan := diagnostics.BeginPerformance(ctx, "acceptance")
 	accepted, err := a.Store.AcceptMutation(ctx, corestore.MutationRequest{
 		PrincipalID: actor.UserID, WorkScope: "new-work", Kind: "create-work", IdempotencyKey: key,
 		RequestJSON: string(publicRequest), TargetVersion: 1, FenceScope: "work", Now: now,
@@ -201,6 +207,7 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 		return corestore.MutationEffect{ResourceID: workID, WorkID: &workID, ResultJSON: diagnosticJSON}, nil
 	})
 	if err != nil {
+		acceptSpan.End(err)
 		if errors.Is(err, corestore.ErrQuotaExceeded) {
 			return output, contracts.NewError("QUOTA_EXCEEDED", "")
 		}
@@ -209,6 +216,8 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 		}
 		return output, err
 	}
+	diagnostics.BindPerformance(ctx, accepted.ResourceID, accepted.OperationID)
+	acceptSpan.End(nil)
 	committed = !accepted.Reused
 	a.enqueueWork(accepted.ResourceID)
 	return acceptedWorkAction{WorkID: accepted.ResourceID, OperationID: accepted.OperationID, Reused: accepted.Reused}, nil

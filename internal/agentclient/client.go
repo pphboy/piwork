@@ -17,7 +17,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 	"piwork/internal/internaltls"
 	"piwork/internal/rpc/agentv1"
 )
@@ -52,6 +55,16 @@ func Open(ctx context.Context, manager *internaltls.Manager, scope internaltls.S
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
+
+// RetryReadinessConnection is only for the bounded startup loop after Docker
+// confirms the current container is still running. Normal RPCs keep backoff.
+func (c *Client) RetryReadinessConnection(err error) bool {
+	if c.conn == nil || status.Code(err) != codes.Unavailable || c.conn.GetState() != connectivity.TransientFailure {
+		return false
+	}
+	c.conn.ResetConnectBackoff()
+	return true
+}
 
 func (c *Client) Readiness(ctx context.Context, contextID string, initializationOnly bool) (*agentv1.ReadinessResponse, error) {
 	response, err := c.ObserveReadiness(ctx, contextID)
