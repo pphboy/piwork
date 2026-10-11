@@ -4,6 +4,8 @@
 
 后续 `fix-create-slow` 合并加入镜像检查/包环境探测缓存与默认 Work 预热；这些源码优化不属于本次 0.0.4 固定镜像。分支性能结果见 [Work 创建与启动延迟验收](work-create-start-latency-acceptance.md)，不能据此改写本次发行的验证范围或身份。
 
+后续 `fix-misc-1` 合并的 Chat 图片、创建按钮布局修复和 About / 内置日志同样不属于本次固定镜像；采用这些功能需对应的新源码构建。操作与限制见 [Desktop 使用说明](desktop-webui.md)。
+
 ## 固定身份
 
 - 发行标识：`0.0.4-079f92ce3b33-96bc1d1ff3d6`。

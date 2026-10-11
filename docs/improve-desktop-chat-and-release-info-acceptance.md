@@ -78,3 +78,17 @@ About 分别采用本机 piwork-cli 和远端 piwork-serve 身份，与版本命
 ## 审阅与后续提交范围
 
 按图片端到端实现（契约、生成产物、Go/TS、冷历史、测试及配套资源）、创建布局、产品信息/日志与构建输入分别审阅。使用文档中英文对应修改单独组织；同文件多目的修改需分段暂存，生成资源随对应实现重建。OpenSpec 主规格同步和归档在明确请求后另行组织。本次未创建 Git 提交，也未归档其他在途变更。
+
+## 合入 NiceGUI 与创建提速主分支后的回归
+
+2026-10-11，合并提交 `57d0428` 将 `fix-misc-1` 的六个提交合入 `main`。以下检查在完成冲突处理的工作树上、合并提交前构建执行，保留主分支 NiceGUI 脑包 1.2.1、创建预热/缓存实现和已发布 0.0.4 固定身份。
+
+- 完整 `make test` 通过；Desktop 浏览器测试 251 项中 250 通过、0 失败、1 项原有五分钟长等待场景未启用；Console 浏览器测试 75 项全部通过。已知问题及组合覆盖缺口仍按前述核验发现保留，没有因合并而标记解决。
+- `make generate` 通过，212 个 Go DTO schema 与 6932 条 TS oracle 夹具重生成后无额外差异。首次生成等待下载 protoc，改用该分支工作树已有的同版 protoc 36.2 缓存后完成，没有修改生成入口或工具版本。
+- `make build-cli` 的 Linux amd64 / Windows amd64 交叉构建通过；本轮没有 Windows 实机运行证据。开发源码版本读取 0.0.4，新增日志仍为 Unreleased，不代表重发 0.0.4 或补造正式版本日志。
+- `TestNativeChatImagesAndOfflinePackageRoundTrip` 通过，套件耗时 93.166 s；真实 SDK 图片请求、metadata 历史、原图、幂等，以及源 Core 下线后的完整包导入和续聊通过。Agent/helper 采用前述本地验收镜像身份。
+- 首次图片夹具构建将裸 image ID 放入 Dockerfile `FROM`，被 Docker 当作远端镜像名而解析失败。给同一 Agent 镜像添加本轮专用本地标签后重跑通过；未更换镜像字节或修改产品代码，首轮日志保留。
+- 41 份主规格与本次 `improve-desktop-chat-and-release-info` change 的严格校验通过。全仓 `--all --strict` 为 47 通过、3 失败：`fix-desktop-local-auth-recovery`、`fix-webui-data-integrity-and-recovery`、`go-core-cli-migration` 的既有 delta 遗漏当前主规格场景；这些旧 change 未在本轮修改。本次 change 保留在途状态，未同步主规格或归档。
+- Docker Quick Start 材料一致性、原生边界与 `git diff --check` 通过；当前已发布材料校验允许后续源码演进，前述旧检查器的失败记录仍是原分支验收事实。公开 0.0.4 镜像不包含本轮新增功能，发布记录、固定引用和 digest 未改写。
+
+本轮本机构建与测试日志位于被忽略的 `dist/merge-fix-misc-1/`。未执行新的镜像发行。

@@ -129,12 +129,12 @@ node scripts/measure-work-latency.mjs --core dist/work-latency/baseline/piwork-s
 
 Desktop 的 `feedback.test.ts` 覆盖粘贴/拖拽/选择、纯图发送、创建按钮几何稳定和离线 About；Console 的 About 场景验证远端 Core 身份及安全正文。Go 的 about 测试覆盖普通用户/管理员、失效身份、未配置 runtime、本地授权和 Console 管理会话。
 
-完整图片包往返需要新构建的独立验收镜像；下例的 Agent 标签应替换为本次构建产物，helper 也需与当前源码一致。按上述 Docker 隔离规则执行：
+完整图片包往返需要新构建的独立验收镜像；下例的 Agent 标签应替换为本次构建产物，helper 也需与当前源码一致。Agent 夹具会通过 Dockerfile 添加合成 CA，因此使用可供 `FROM` 解析的本地标签或仓库 digest；仅有裸 image ID 时先给它添加本轮专用标签，结束后只移除该标签。按上述 Docker 隔离规则执行：
 
 ```sh
 PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:chat-release-validation \
-PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance \
-PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance \
+PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:chat-release-validation \
+PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:chat-release-validation \
 go test -mod=readonly -tags=integration ./internal/coreapp \
   -run '^TestNativeChatImagesAndOfflinePackageRoundTrip$' -count=1 -v -timeout=20m
 ```

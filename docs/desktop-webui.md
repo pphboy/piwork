@@ -45,6 +45,10 @@ Agent 对话只在用户提交消息时启动 Run。Chat Box 的 Input options �
 
 已发送图片保留在 Work 的私有会话历史，重新打开可按需查看并点击放大；单张读取失败可用 **Retry image**，不会重新运行模型。图片随完整 `.work` 包保留。停止 Work 后不会为读图自动启动；用户显式 Start 后才按现有历史准入读取。切换身份、注销或关闭页面会清理未发送图片草稿和本机预览，不创建公开分享链接或 workspace 文件。
 
+当前图片功能需要支持 `chat-images-v1` 的 Desktop、Core 与 Agent；已发布的 0.0.4 镜像不包含此功能。旧组件不支持时以界面能力提示为准，不会自动替换 Agent。
+
+已知问题：首次打开 Work、Session 列表尚未加载完成时，批量选择图片可能只迁移第一张，后续图片留在旧草稿且没有提示。请等待 Session 加载完成后再添加图片，发送前核对缩略图数量；问题尚未修复，复现及其他待补组合场景见[验收记录](improve-desktop-chat-and-release-info-acceptance.md#后续-openspec-核验发现)。
+
 ## 版本与更新日志
 
 已授权浏览器的登录页、Works 顶栏及 Work 标题栏提供 **About Piwork**。其中 **Desktop (piwork-cli)** 是本机可执行程序版本，**Core** 是当前连接的远端版本；两端可以不同。本机版本和内置日志在未登录 Core 或 Core 不可达时仍可阅读，远端区域单独说明读取中、不可达、不支持或最后确认时间。
