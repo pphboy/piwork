@@ -59,6 +59,8 @@ Core 0.0.4 内置 piwork-brain 1.2.1，并采用已发布的 NiceGUI 默认环�
 
 Desktop 聊天界面的预览截图，来自界面验证 fixture。
 
+当前源码构建的 Chat 支持粘贴、拖拽或选择图片，也可只发送图片。**About Piwork** 分别显示 Desktop/Core 版本及内置更新日志，并提供完整 Releases 链接。详见 [Desktop 使用说明](docs/desktop-webui.md)。
+
 ## Quick Start
 
 ### 使用 Docker 试用 Core 和 CLI

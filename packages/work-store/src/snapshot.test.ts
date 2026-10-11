@@ -11,6 +11,20 @@ import { migrateWorkDatabase } from "./migrations.js";
 import { FeedbackError } from "./feedback.js";
 import { LEGACY_SCHEMA_SQL } from "./legacy-schema.js";
 
+test('shared image input cold-history validation preserves valid envelopes and rejects corruption',()=>{
+ const cases=JSON.parse(readFileSync(new URL('../../../fixtures/chat-images/history-validation.json',import.meta.url),'utf8'));
+ for(const scenario of cases){const f=fixture();try{
+  const db=new DatabaseSync(join(f.volume,'work.sqlite'));db.prepare('UPDATE runs SET prompt_digest=? WHERE run_id=?').run(scenario.promptDigest,f.runId);const next=Number(db.prepare('SELECT latest_sequence FROM runs WHERE run_id=?').get(f.runId)!.latest_sequence)+1;db.prepare("INSERT INTO run_events VALUES(?,?,'run.input',?,?)").run(f.runId,next,JSON.stringify(scenario.input),NOW);db.prepare('UPDATE runs SET latest_sequence=? WHERE run_id=?').run(next,f.runId);db.close();
+  if(scenario.memoryPreference){const db=new DatabaseSync(join(f.volume,'work.sqlite'));db.prepare('ATTACH DATABASE ? AS memory').run(join(f.volume,'memory.sqlite'));
+   db.prepare("INSERT INTO agent_requests(work_id,request_id,submission_key,request_digest,source_kind,source_run_id,goal,state,disposition,phase,expires_at,created_at,updated_at) VALUES(?,'image-request','image-request','digest','chat',?,'Prefer image references','completed','live','handling',?,?,?)").run(SOURCE,f.runId,NOW,NOW,NOW);
+   db.prepare("INSERT INTO agent_request_runs VALUES('image-request',?,'handling','live',?)").run(f.runId,NOW);db.prepare('UPDATE runs SET source_json=? WHERE run_id=?').run(JSON.stringify({kind:'chat',requestId:'image-request',phase:'handling'}),f.runId);
+   db.prepare("INSERT INTO agent_evidence(work_id,evidence_id,request_id,run_id,kind,object_ref,observed_at,summary,verified,details_json) VALUES(?,'image-proof','image-request',?,'sdk',?,?,'Verified image preference',1,?)").run(SOURCE,f.runId,f.runId,NOW,JSON.stringify({userPreferenceVerified:true,promptDigest:scenario.badEvidence?'wrong':scenario.promptDigest}));
+   db.prepare('INSERT INTO memory.memory_versions VALUES(2,?,0)').run(NOW);db.prepare('UPDATE memory.memory_head SET version=2,updated_at=?').run(NOW);db.prepare("INSERT INTO memory.memory_entries VALUES(2,'image-lesson','preference','work','Prefer image references','[\"image-proof\"]','image-request',?)").run(NOW);db.close();
+  }
+  if(scenario.valid){const snapshot=WorkHistorySnapshot.open(f.volume,f.scope);assert.ok(snapshot);snapshot.close();}else assert.throws(()=>WorkHistorySnapshot.open(f.volume,f.scope),scenario.name);
+ }finally{f.close();}}
+});
+
 const NOW = "2026-09-23T00:00:00.000Z", SOURCE = "work-source-1234567890", CONTEXT = "context-source";
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "piwork-history-")); const volume = join(root, "private"); mkdirSync(join(volume, "sessions"), { recursive: true });

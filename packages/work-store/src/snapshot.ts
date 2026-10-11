@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { MEMORY_TABLES } from "./snapshot-memory.js";
 import { validateBrainHistory } from "./snapshot-brain.js";
 import { normalizeModelBaseUrl, type RunModelSnapshot } from "@piwork/contracts";
+import { parseChatImageInput, chatInputDigest } from "@piwork/contracts";
 
 export class WorkHistoryValidationError extends Error {
   constructor(readonly code: "SNAPSHOT_HISTORY_INVALID" | "SNAPSHOT_HISTORY_BUSY" | "SNAPSHOT_HISTORY_UNSUPPORTED" | "SNAPSHOT_HISTORY_LIMIT") { super(code); this.name = "WorkHistoryValidationError"; }
@@ -265,6 +266,13 @@ function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHi
         if (!nonempty(row.run_id) || !nonempty(row.session_id) || !nonempty(row.submission_key) || !nonempty(row.prompt_digest) || (!inspection && !timestamp(row.finished_at)) || (row.started_at !== null && !timestamp(row.started_at)) || !integer(row.earliest_available_sequence, 1) || !integer(row.latest_sequence) || row.latest_sequence < row.earliest_available_sequence - 1) invalid();
       } else if (table === "run_events") {
         if (!integer(row.sequence, 1) || !nonempty(row.event_type) || typeof row.payload_json !== "string") invalid();
+        if(row.event_type==="run.input") {
+          try {
+            const input=parseChatImageInput(String(row.payload_json));
+            const run=database.prepare("SELECT prompt_digest FROM runs WHERE run_id=?").get(row.run_id!);
+            if(chatInputDigest(input.prompt,input.images)!==run?.prompt_digest)invalid();
+          } catch { invalid(); }
+        }
       } else if (table === "submit_idempotency") {
         if (!nonempty(row.submission_key) || !nonempty(row.request_digest)) invalid();
       } else if (table === "session_idempotency") {

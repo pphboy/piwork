@@ -374,6 +374,36 @@ type ChatCapabilities struct {
 	ContractVersion float64 `json:"contractVersion"`
 }
 
+type ChatImageCapabilities struct {
+	Profile      string           `json:"profile"`
+	MimeTypes    []ChatImageMime  `json:"mimeTypes"`
+	MaxImages    float64          `json:"maxImages"`
+	ImageBytes   float64          `json:"imageBytes"`
+	TotalBytes   float64          `json:"totalBytes"`
+	MaxDimension float64          `json:"maxDimension"`
+	MaxPixels    float64          `json:"maxPixels"`
+	DefaultModel json.RawMessage  `json:"defaultModel"`
+	Models       []ChatImageModel `json:"models"`
+}
+
+type ChatImageDescriptor struct {
+	MimeType ChatImageMime  `json:"mimeType"`
+	ByteSize int64          `json:"byteSize"`
+	Sha256   WorkBlobDigest `json:"sha256"`
+}
+
+type ChatImageInput struct {
+	MimeType ChatImageMime `json:"mimeType"`
+	Data     string        `json:"data"`
+}
+
+type ChatImageMime string
+
+type ChatImageModel struct {
+	ModelRef     json.RawMessage `json:"modelRef"`
+	Availability string          `json:"availability"`
+}
+
 type ChatInputMode string
 
 type ChatModelList = json.RawMessage
@@ -1029,6 +1059,24 @@ type PortableWorkSpec struct {
 	Blobs []WorkBlob `json:"blobs"`
 }
 
+type ProductBuild struct {
+	Program       string        `json:"program"`
+	Version       string        `json:"version"`
+	Commit        string        `json:"commit"`
+	Modified      bool          `json:"modified"`
+	GoVersion     string        `json:"goVersion"`
+	Os            string        `json:"os"`
+	Architecture  string        `json:"architecture"`
+	DesktopUIHash Field[string] `json:"desktopUIHash,omitzero"`
+}
+
+type ProductInfo struct {
+	AboutApiVersion float64         `json:"aboutApiVersion"`
+	Build           ProductBuild    `json:"build"`
+	ReleasesUrl     string          `json:"releasesUrl"`
+	ReleaseNotes    json.RawMessage `json:"releaseNotes"`
+}
+
 type ProviderModelTestInput struct {
 	ProviderId ResourceId    `json:"providerId"`
 	Model      string        `json:"model"`
@@ -1074,6 +1122,17 @@ type ReadinessProbe struct {
 	Command    Field[[]string]   `json:"command,omitzero"`
 	DeadlineMs Field[int64]      `json:"deadlineMs,omitzero"`
 	TimeoutMs  Field[int64]      `json:"timeoutMs,omitzero"`
+}
+
+type ReleaseNotes struct {
+	Version     string        `json:"version"`
+	Component   string        `json:"component"`
+	Title       string        `json:"title"`
+	PublishedAt Field[string] `json:"publishedAt,omitzero"`
+	Sections    []struct {
+		Title string   `json:"title"`
+		Items []string `json:"items"`
+	} `json:"sections"`
 }
 
 type ResetUserPasswordRequest struct {
@@ -1381,11 +1440,12 @@ type SlashCommand struct {
 type SnapshotIdempotencyKey string
 
 type SubmitRunInput struct {
-	SessionId     Identifier             `json:"sessionId"`
-	SubmissionKey string                 `json:"submissionKey"`
-	Prompt        string                 `json:"prompt"`
-	ModelRef      Field[json.RawMessage] `json:"modelRef,omitzero"`
-	InputMode     Field[ChatInputMode]   `json:"inputMode,omitzero"`
+	SessionId     Identifier              `json:"sessionId"`
+	SubmissionKey string                  `json:"submissionKey"`
+	Prompt        string                  `json:"prompt"`
+	Images        Field[[]ChatImageInput] `json:"images,omitzero"`
+	ModelRef      Field[json.RawMessage]  `json:"modelRef,omitzero"`
+	InputMode     Field[ChatInputMode]    `json:"inputMode,omitzero"`
 }
 
 type ThinkingLevel string

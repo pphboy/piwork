@@ -27,6 +27,10 @@ generate:
 	npm run build -w @piwork/contracts
 	node scripts/generate-http-contracts.mjs
 
+.PHONY: check-release-info
+check-release-info:
+	go run ./scripts/releaseinfo-check --version "$(or $(PIWORK_BUILD_VERSION),$(shell node -p "require('./package.json').version"))" --require-current
+
 build-go:
 	bash scripts/build-go.sh
 

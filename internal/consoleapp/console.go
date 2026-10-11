@@ -265,7 +265,7 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.Path, "/browser/") && localweb.BrowserAsset.MatchString(strings.TrimPrefix(r.URL.Path, "/browser/")):
 		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/browser/"), "text/javascript; charset=utf-8"
 	default:
-		if strings.Contains("|/|/login|/users|/runtime|/default-work|/skills|/packages|/operations|/models|", "|"+r.URL.Path+"|") || consoleShellRoute(r.URL.EscapedPath()) {
+		if strings.Contains("|/|/login|/users|/runtime|/default-work|/skills|/packages|/operations|/models|/about|", "|"+r.URL.Path+"|") || consoleShellRoute(r.URL.EscapedPath()) {
 			path, contentType = "static/public/index.html", "text/html; charset=utf-8"
 		} else {
 			consoleFailure(w, 404, "NOT_FOUND")

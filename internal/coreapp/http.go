@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"piwork/internal/releaseinfo"
 	"strings"
 	"time"
 
@@ -65,6 +66,9 @@ func readCredentials(r *http.Request) (string, string, error) {
 	return body.Account.Value, body.Password.Value, nil
 }
 func readControlJSON[T any](r *http.Request, schema string, admin bool) (T, error) {
+	return readControlJSONLimit[T](r, schema, admin, 2<<20)
+}
+func readControlJSONLimit[T any](r *http.Request, schema string, admin bool, limit int64) (T, error) {
 	if admin {
 		values := r.Header.Values("Content-Type")
 		if len(values) != 1 || values[0] != "application/json" {
@@ -73,7 +77,7 @@ func readControlJSON[T any](r *http.Request, schema string, admin bool) (T, erro
 		}
 	}
 	body := &bodyReader{ReadCloser: r.Body}
-	result, err := contracts.Decode[T](body, schema, 2<<20)
+	result, err := contracts.Decode[T](body, schema, limit)
 	if timedOut(body.err) {
 		return result, contracts.NewError("REQUEST_TIMEOUT", "")
 	}
@@ -238,6 +242,10 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 	session, err := a.Identity.Authenticate(r.Context(), token)
 	if err != nil {
 		return err
+	}
+	if path == "/api/v1/about" && r.Method == http.MethodGet {
+		send(w, 200, releaseinfo.Read("piwork-serve"))
+		return nil
 	}
 	if path == "/api/v1/service-access" && r.Method == http.MethodGet {
 		send(w, 200, map[string]any{"version": 1, "protocols": []string{"http", "sse", "websocket"}})

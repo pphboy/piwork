@@ -114,9 +114,10 @@ test("actual SDK sends managed Responses and Messages Thinking to the selected H
         const model=resolveProductionModel(runtime,{provider,id:"managed-alias",api,baseUrl,capabilities:{kind:"sdk",provider,model:id}},true);
         if(!getSupportedThinkingLevels(model).includes(level))continue;
         await runtime.setRuntimeApiKey(provider,`synthetic-${provider}`);
-        const result=await runtime.completeSimple(model,{messages:[{role:"user",content:"Reply OK",timestamp:Date.now()}]},level==="off"?{}:{reasoning:level});
+        const image=(await readFile(new URL("../../../fixtures/chat-images/png.png",import.meta.url))).toString("base64");
+        const result=await runtime.completeSimple(model,{messages:[{role:"user",content:[{type:"text",text:"Reply OK"},{type:"image",mimeType:"image/png",data:image}],timestamp:Date.now()}]},level==="off"?{}:{reasoning:level});
         assert.notEqual(result.stopReason,"error",result.errorMessage??"");assert.equal(result.content.find(part=>part.type==="text")?.text,"OK");
-        const request=captured.at(-1)!;assert.equal(request.body.model,"managed-alias");
+        const request=captured.at(-1)!;assert.equal(request.body.model,"managed-alias");assert.ok(JSON.stringify(request.body).includes(image),"actual SDK provider request must contain image bytes");
         if(provider==="openai"){assert.equal(request.path,"/v1/responses");assert.equal(request.authorization,"Bearer synthetic-openai");assert.equal(request.body.reasoning.effort,level==="off"?model.thinkingLevelMap?.off??"none":model.thinkingLevelMap?.high??"high");}
         else{assert.equal(request.path,"/v1/messages");assert.equal(request.key,"synthetic-anthropic");if(level==="off")assert.equal(request.body.thinking.type,"disabled");else if((model.compat as {forceAdaptiveThinking?:boolean}|undefined)?.forceAdaptiveThinking){assert.equal(request.body.thinking.type,"adaptive");assert.equal(request.body.output_config.effort,model.thinkingLevelMap?.high??"high");}else{assert.equal(request.body.thinking.type,"enabled");assert.ok(request.body.thinking.budget_tokens>0);}}
       }

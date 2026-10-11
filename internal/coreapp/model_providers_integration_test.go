@@ -38,6 +38,7 @@ type modelGatewayRequest struct {
 	Thinking, Reasoning map[string]any
 	Stream              bool
 	Path                string
+	Body                map[string]any
 }
 type modelGateway struct {
 	URL      string
@@ -123,7 +124,7 @@ func nativeModelGateway(t *testing.T) (*modelGateway, string) {
 		thinking, _ := body["thinking"].(map[string]any)
 		reasoning, _ := body["reasoning"].(map[string]any)
 		g.mu.Lock()
-		g.requests = append(g.requests, modelGatewayRequest{api, model, auth, thinking, reasoning, stream, r.URL.Path})
+		g.requests = append(g.requests, modelGatewayRequest{api, model, auth, thinking, reasoning, stream, r.URL.Path, body})
 		var held chan struct{}
 		if stream && api == "openai-responses" && g.hold != nil {
 			held = g.hold

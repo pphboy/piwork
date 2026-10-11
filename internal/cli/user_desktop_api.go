@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"piwork/internal/releaseinfo"
 	"strings"
 	"time"
 
@@ -277,7 +278,7 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if path == "/_desktop/api/session" || path == "/_desktop/api/login" || path == "/_desktop/api/logout" || path == "/_desktop/api/connection" || path == "/_desktop/api/status" || path == "/_desktop/api/preferences" {
+	if path == "/_desktop/api/about" || path == "/_desktop/api/session" || path == "/_desktop/api/login" || path == "/_desktop/api/logout" || path == "/_desktop/api/connection" || path == "/_desktop/api/status" || path == "/_desktop/api/preferences" {
 		guarded, request, finish, allowed := d.guardAccess(w, r, session, false)
 		if !allowed {
 			return
@@ -286,6 +287,8 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		w, r = guarded, request
 	}
 	switch {
+	case path == "/_desktop/api/about" && r.Method == http.MethodGet:
+		desktopJSON(w, 200, releaseinfo.Read("piwork-cli"))
 	case path == "/_desktop/api/preferences":
 		d.servePreferences(w, r)
 	case path == "/_desktop/api/session" && r.Method == http.MethodGet:
@@ -314,6 +317,9 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if d.serveRunEvents(w, r) {
+			return
+		}
+		if d.serveChatImage(w, r) {
 			return
 		}
 		if d.serveKnownOperations(w, r) {

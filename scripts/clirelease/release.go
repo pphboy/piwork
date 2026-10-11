@@ -24,17 +24,18 @@ import (
 )
 
 type Build struct {
-	Version        int    `json:"version"`
-	Program        string `json:"program"`
-	ReleaseVersion string `json:"releaseVersion"`
-	Commit         string `json:"commit"`
-	Modified       bool   `json:"modified"`
-	GoVersion      string `json:"goVersion"`
-	Target         string `json:"target"`
-	Binary         string `json:"binary"`
-	Bytes          int64  `json:"bytes"`
-	SHA256         string `json:"sha256"`
-	DesktopUIHash  string `json:"desktopUIHash"`
+	ReleaseInfoHash string `json:"releaseInfoHash,omitempty"`
+	Version         int    `json:"version"`
+	Program         string `json:"program"`
+	ReleaseVersion  string `json:"releaseVersion"`
+	Commit          string `json:"commit"`
+	Modified        bool   `json:"modified"`
+	GoVersion       string `json:"goVersion"`
+	Target          string `json:"target"`
+	Binary          string `json:"binary"`
+	Bytes           int64  `json:"bytes"`
+	SHA256          string `json:"sha256"`
+	DesktopUIHash   string `json:"desktopUIHash"`
 }
 type Scenario struct {
 	ID         string   `json:"id"`
@@ -192,7 +193,7 @@ func ValidateBuild(directory string) (Build, string, error) {
 	if _, err := readJSON(filepath.Join(directory, "build.json"), &metadata); err != nil {
 		return metadata, "", err
 	}
-	if metadata.Version != 1 || metadata.Program != "piwork-cli" || !releaseVersionPattern.MatchString(metadata.ReleaseVersion) || !commitPattern.MatchString(metadata.Commit) || !hexDigest.MatchString(metadata.SHA256) || !hexDigest.MatchString(metadata.DesktopUIHash) || metadata.GoVersion != "go1.25.5" {
+	if metadata.ReleaseInfoHash != "" && !hexDigest.MatchString(metadata.ReleaseInfoHash) || metadata.Version != 1 || metadata.Program != "piwork-cli" || !releaseVersionPattern.MatchString(metadata.ReleaseVersion) || !commitPattern.MatchString(metadata.Commit) || !hexDigest.MatchString(metadata.SHA256) || !hexDigest.MatchString(metadata.DesktopUIHash) || metadata.GoVersion != "go1.25.5" {
 		return metadata, "", errors.New("invalid client build identity")
 	}
 	expected := "piwork-cli"
@@ -249,12 +250,13 @@ func validateStamp(raw []byte, metadata Build) error {
 		return errors.New("missing or ambiguous client release stamp")
 	}
 	var stamp struct {
-		ReleaseVersion string `json:"releaseVersion"`
-		Commit         string `json:"commit"`
-		Modified       bool   `json:"modified"`
-		DesktopUIHash  string `json:"desktopUIHash"`
-		Target         string `json:"target"`
-		GoVersion      string `json:"goVersion"`
+		ReleaseInfoHash string `json:"releaseInfoHash,omitempty"`
+		ReleaseVersion  string `json:"releaseVersion"`
+		Commit          string `json:"commit"`
+		Modified        bool   `json:"modified"`
+		DesktopUIHash   string `json:"desktopUIHash"`
+		Target          string `json:"target"`
+		GoVersion       string `json:"goVersion"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw[index+len(prefix)-1:]))
 	var encoded json.RawMessage
@@ -266,7 +268,7 @@ func validateStamp(raw []byte, metadata Build) error {
 	if err := decoder.Decode(&stamp); err != nil {
 		return errors.New("invalid client release stamp")
 	}
-	if stamp.ReleaseVersion != metadata.ReleaseVersion || stamp.Commit != metadata.Commit || stamp.Modified != metadata.Modified || stamp.DesktopUIHash != metadata.DesktopUIHash || stamp.Target != metadata.Target || stamp.GoVersion != metadata.GoVersion {
+	if stamp.ReleaseInfoHash != metadata.ReleaseInfoHash || stamp.ReleaseVersion != metadata.ReleaseVersion || stamp.Commit != metadata.Commit || stamp.Modified != metadata.Modified || stamp.DesktopUIHash != metadata.DesktopUIHash || stamp.Target != metadata.Target || stamp.GoVersion != metadata.GoVersion {
 		return errors.New("client release/UI identity mismatch")
 	}
 	return nil

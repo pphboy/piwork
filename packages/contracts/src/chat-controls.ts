@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { IdentifierSchema, ResourceIdSchema, TimestampSchema } from "./harness.js";
 import { AgentRunSourceSchema, RunModelDescriptionSchema } from "./work-feedback.js";
+import { ChatImageDescriptorSchema } from "./chat-images.js";
 
 export const CHAT_CONTROLS_CONTRACT_VERSION = 3;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -92,6 +93,7 @@ export const ToolResultPreviewSchema = Type.Union([
   Type.Object({ kind: Type.Union([Type.Literal("non-text"), Type.Literal("unavailable")]), truncated: Type.Boolean(), isError: Type.Boolean() }, strict),
 ]);
 export const SessionContentBlockSchema = Type.Union([
+  Type.Object({ blockId: IdentifierSchema, type: Type.Literal("image"), image: Type.Object({ ...ChatImageDescriptorSchema.properties, imageIndex: Type.Integer({ minimum: 0, maximum: 3 }) }, strict) }, strict),
   Type.Object({ blockId: IdentifierSchema, type: Type.Literal("text"), text: Type.String() }, strict),
   Type.Object({ blockId: IdentifierSchema, type: Type.Literal("tool-call"), toolCallId: IdentifierSchema, toolName: Type.String({ minLength: 1, maxLength: 256 }) }, strict),
   Type.Object({ blockId: IdentifierSchema, type: Type.Literal("tool-result"), toolCallId: IdentifierSchema, toolName: Type.String({ minLength: 1, maxLength: 256 }), result: ToolResultPreviewSchema }, strict),

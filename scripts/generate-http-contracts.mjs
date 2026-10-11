@@ -6,6 +6,9 @@ import { execFileSync } from "node:child_process";
 import { Check } from "typebox/value";
 import { modelManagementSchemas } from "../packages/contracts/dist/ai-model-management.js";
 import * as chatSchemas from "../packages/contracts/dist/chat-controls.js";
+import * as imageSchemas from "../packages/contracts/dist/chat-images.js";
+import * as productSchemas from "../packages/contracts/dist/product-info.js";
+import { SubmitRunInputSchema } from "../packages/contracts/dist/work-feedback.js";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 
 const root = resolve(import.meta.dirname, "..");
@@ -14,6 +17,9 @@ await writeFile(resolve(root,"internal/coreapp/model-sdk-catalog.json"), `${JSON
 const schemas = JSON.parse(await readFile(resolve(root, "internal/contracts/schemas.json"), "utf8"));
 Object.assign(schemas, modelManagementSchemas);
 Object.assign(schemas, Object.fromEntries(Object.entries(chatSchemas).filter(([name])=>name.endsWith("Schema"))));
+Object.assign(schemas, Object.fromEntries(Object.entries(imageSchemas).filter(([name])=>name.endsWith("Schema"))));
+Object.assign(schemas, Object.fromEntries(Object.entries(productSchemas).filter(([name])=>name.endsWith("Schema"))));
+schemas.SubmitRunInputSchema = SubmitRunInputSchema;
 schemas.AgentRuntimeConfigSchema.properties.model.properties.api = schemas.ModelApiSchema;
 schemas.AgentRuntimeConfigSchema.properties.model.properties.capabilities = schemas.ModelCapabilitiesSchema;
 schemas.AdminRuntimeLegacyInputSchema ??= schemas.AdminRuntimeInputSchema;

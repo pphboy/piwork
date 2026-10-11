@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { desktopInputHash } from './build-cli.mjs';
+import { releaseInfoInputHash } from './release-info.mjs';
 import { singleHostReadme } from './docker-quickstart-content.mjs';
 import { renderPublishScript } from './docker-publish-preflight.mjs';
 
@@ -65,6 +66,7 @@ export function identity(base = root, environment = process.env) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(releaseVersion || '')) throw new Error('Invalid release version.');
   if (config.platform !== 'linux/amd64' || !/^alpine:3\.22@sha256:[a-f0-9]{64}$/.test(config.runtimeImage)) throw new Error('Invalid release platform/runtime base.');
   const sourceHash = sourceInputHash(base);
+  releaseInfoInputHash(base);
   const desktopUIHash = desktopInputHash(base);
   const metadata = { manifestVersion: 2, releaseVersion, sourceCommit, sourceModified: modified === 'true', sourceInputHash: sourceHash, desktopUIHash, registry, platform: config.platform, runtimeImage: config.runtimeImage, core: { format: config.coreFormat, schemaVersion: config.coreSchemaVersion }, clientCredentialVersion: config.clientCredentialVersion };
   metadata.releaseId = `${releaseVersion}-${sourceCommit.slice(0, 12)}-${sourceHash.slice(0, 12)}${metadata.sourceModified ? '-dirty' : ''}`;

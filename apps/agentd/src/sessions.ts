@@ -4,7 +4,9 @@ import {
   readPersistentSession,
   type PersistentSession,
 } from "@piwork/pi-adapter";
-import { unlinkSync } from "node:fs";
+import { unlinkSync, openSync, fsyncSync, closeSync } from "node:fs";
+import { CHAT_IMAGE_PROFILE, ChatImageError, chatInputDigest, validateChatImages, type ChatImageInput } from "@piwork/contracts";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import { WorkStore, type SessionRecord } from "@piwork/work-store";
 import type { RunModelResolver } from "./run-models.js";
 import { RunModelError } from "./run-models.js";
@@ -91,11 +93,80 @@ export class AgentSessionService {
 
   read(sessionId: string): PersistentSession {
     this.requireRecord(sessionId, false);
-    return readPersistentSession(loadPersistentSession({
+    try {const snapshot=readPersistentSession(loadPersistentSession({
       cwd: this.workspace,
       sessionRoot: this.sessionRoot,
       sessionId,
     }));
+    for(const entry of snapshot.entries)if(entry.role==='user' && entry.blocks.some(b=>b.type==='image')){
+      const run=entry.runId?this.store.getRun(entry.runId):undefined;
+      if(!run||run.workId!==this.workId||run.sessionId!==sessionId)throw new ChatImageError('IMAGE_HISTORY_CORRUPT','The saved image belongs to another history object.');
+      this.assertInput(entry,run.promptDigest);
+    }
+    return snapshot;
+    }catch(error){if(error instanceof ChatImageError)throw new ChatImageError('IMAGE_HISTORY_CORRUPT','The saved image history could not be verified.');throw error;}
+  }
+
+  imageHistory(sessionId: string): PersistentSession {
+    const snapshot = this.read(sessionId);
+    const entries = [...snapshot.entries];
+    for (const run of this.store.listSessionRuns(this.workId, sessionId)) {
+      const input = this.store.privateInput(run.runId); if(!input) continue;
+      const found = entries.find(entry=>entry.role==="user" && entry.runId===run.runId);
+      if(found) { this.assertInput(found,run.promptDigest); continue; }
+      entries.push({id:`${run.runId}-user`,runId:run.runId,role:"user",text:input.prompt,blocks:[
+        ...(input.prompt ? [{blockId:`${run.runId}-text`,type:"text" as const,text:input.prompt}] : []),
+        ...input.images.map((value,imageIndex)=>({blockId:`${run.runId}-image-${imageIndex}`,type:"image" as const,input:value,image:{...validateChatImages([value])[0]!,imageIndex}})),
+      ]});
+    }
+    return {...snapshot,entries};
+  }
+
+  image(sessionId: string, runId: string, index: number): ChatImageInput {
+    const run=this.store.getRun(runId);
+    if(!run || run.workId!==this.workId || run.sessionId!==sessionId || !Number.isInteger(index) || index<0 || index>3) throw Object.assign(new Error("Image not found"),{code:5});
+    const entry=this.imageHistory(sessionId).entries.find(e=>e.role==="user" && e.runId===runId);
+    const block=entry?.blocks.find(b=>b.type==="image" && b.image.imageIndex===index);
+    if(!block || block.type!=="image") throw Object.assign(new Error("Image not found"),{code:5});
+    return block.input;
+  }
+
+  hasImageContext(sessionId: string): boolean {
+    const raw=this.read(sessionId).entries;
+    const sdk=this.continue(sessionId);
+    if(sdk.buildSessionContext().messages.some(m=>"content" in m && Array.isArray(m.content) && m.content.some(p=>p.type==="image"))) return true;
+    return this.store.listSessionRuns(this.workId,sessionId).some(run=>!!this.store.privateInput(run.runId) && !raw.some(e=>e.role==="user" && e.runId===run.runId));
+  }
+
+  restoreImageInputs(sessionId: string, currentRun: string, sdk: SessionManager): void {
+    const entries=readPersistentSession(sdk).entries;
+    const runs=this.store.listSessionRuns(this.workId,sessionId).slice().sort((a,b)=>a.acceptedAt.localeCompare(b.acceptedAt));
+    for(const run of runs) {
+      if(run.runId===currentRun || ["accepted","running","cancelling"].includes(run.state)) continue;
+      const input=this.store.privateInput(run.runId);if(!input)continue;
+      const found=entries.find(e=>e.role==="user" && e.runId===run.runId);
+      if(found){this.assertInput(found,run.promptDigest);continue;}
+      if((run.contextIdentity??null)!==(this.contextIdentity??null)) throw new ChatImageError("IMAGE_HISTORY_CORRUPT","The accepted image belongs to an unavailable Session context.");
+      sdk.appendCustomEntry("piwork-run",{runId:run.runId});
+      sdk.appendMessage({role:"user",content:[...(input.prompt?[{type:"text" as const,text:input.prompt}]:[]),...input.images.map(i=>({type:"image" as const,mimeType:i.mimeType,data:i.data}))],timestamp:Date.parse(run.acceptedAt)});
+    }
+  }
+
+  syncImageInputs(sessionId: string): void {
+    // Loading the physical file, rather than session.messages, excludes SDK buffering.
+    const snapshot=this.read(sessionId);
+    for(const run of this.store.listSessionRuns(this.workId,sessionId)) {
+      if(!this.store.privateInput(run.runId))continue;
+      const entry=snapshot.entries.find(e=>e.role==="user" && e.runId===run.runId);if(!entry)continue;
+      this.assertInput(entry,run.promptDigest);
+      const fd=openSync(snapshot.historyPath,"r");try{fsyncSync(fd);}finally{closeSync(fd);}
+      this.store.releasePrivateInput(run.runId);
+    }
+  }
+
+  private assertInput(entry: PersistentSession["entries"][number], digest: string): void {
+    const images=entry.blocks.flatMap(b=>b.type==="image"?[b.input]:[]);
+    if(chatInputDigest(entry.originalText ?? entry.text,images)!==digest)throw new ChatImageError("IMAGE_HISTORY_CORRUPT","The saved image message does not match its accepted Run.");
   }
 
   continue(sessionId: string) {

@@ -88,6 +88,7 @@ function operationView(value, intent) {
         ...(intent?.target ? { target: intent.target } : {}) };
 }
 export class ConsoleAdapter {
+    about() { return this.request('about'); }
     scenario = "normal";
     session = false;
     currentUserId = "";

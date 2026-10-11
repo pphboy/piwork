@@ -267,7 +267,7 @@ export default function (pi) {
     const metadata = (await validatePiPackageArtifact({ root: packageRoot, sourceKind: "local", resolvedSource: "fixture",
       preparedEnvironment: { os: "linux", architecture: process.arch === "x64" ? "amd64" : process.arch,
         variant: null, nodeAbi: process.versions.modules, piSdkVersion: "0.86.1" } })).metadata;
-    const sessions = { workspaceDirectory: () => workspace, continue: () => SessionManager.inMemory(workspace) } as unknown as AgentSessionService;
+    const sessions = { workspaceDirectory: () => workspace, continue: () => SessionManager.inMemory(workspace), restoreImageInputs() {}, syncImageInputs() {} } as unknown as AgentSessionService;
     let loaders = 0;
     const actualResults: Array<{ toolName: string; args: unknown; result: unknown }> = [];
     const executor = new PiSdkRunExecutor(sessions, agentDirectory,

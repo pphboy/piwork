@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const {historyMessages,upsertTool,activityGroups}=await import(new URL('../browser/chat-projection.js',import.meta.url).href);
 
+test('pure image history stays one user message and never becomes tool Activity',()=>{
+ const messages=historyMessages([{entryId:'sdk',runId:'run-image',role:'user',blocks:[{blockId:'img',type:'image',image:{imageIndex:0,mimeType:'image/png',byteSize:70,sha256:'a'.repeat(64)}}]}]);
+ assert.equal(messages.length,1);assert.equal(messages[0].role,'user');assert.equal(messages[0].id,'run-image-user');assert.equal(messages[0].images.length,1);assert.equal(activityGroups(messages)[0].activity,false);
+});
+
 test('Memory feedback comes from the saved host result and distinguishes candidate, effective, adopted and failure',()=>{
  const result=(value:any,isError=false)=>({kind:'text',text:JSON.stringify(value),isError,truncated:false});
  const project=(value:any,isError=false,name='brain_experience')=>historyMessages([{entryId:'memory',runId:'run-memory',role:'toolResult',blocks:[{blockId:'one',type:'tool-result',toolCallId:'call-memory',toolName:name,result:result(value,isError)}]}])[0].tool.content;

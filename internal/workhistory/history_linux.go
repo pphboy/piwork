@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"piwork/internal/chatimages"
 	"reflect"
 	"strings"
 	"time"
@@ -435,6 +436,32 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 	}
 	if counts["schema_migrations"] != 1 {
 		return Summary{}, ErrUnsupported
+	}
+	imageRows, imageErr := db.QueryContext(ctx, "SELECT e.payload_json,r.prompt_digest FROM run_events e JOIN runs r ON r.run_id=e.run_id WHERE e.event_type='run.input'")
+	if imageErr != nil {
+		return Summary{}, ErrInvalid
+	}
+	for imageRows.Next() {
+		var raw, digest string
+		if imageRows.Scan(&raw, &digest) != nil {
+			imageRows.Close()
+			return Summary{}, ErrInvalid
+		}
+		input, err := chatimages.ParseEnvelope(raw)
+		if err != nil {
+			imageRows.Close()
+			return Summary{}, ErrInvalid
+		}
+		got, err := chatimages.InputDigest(input.Prompt, input.Images)
+		if err != nil || got != digest {
+			imageRows.Close()
+			return Summary{}, ErrInvalid
+		}
+	}
+	imageErr = imageRows.Err()
+	imageRows.Close()
+	if imageErr != nil {
+		return Summary{}, ErrInvalid
 	}
 	for _, query := range []string{`SELECT 1 FROM submit_idempotency i JOIN runs r ON r.run_id=i.run_id WHERE i.work_id!=r.work_id OR i.submission_key!=r.submission_key LIMIT 1`, `SELECT 1 FROM runs r LEFT JOIN run_events e ON e.run_id=r.run_id GROUP BY r.run_id HAVING COUNT(e.sequence)!=r.latest_sequence-r.earliest_available_sequence+1 OR (COUNT(e.sequence)>0 AND (MIN(e.sequence)!=r.earliest_available_sequence OR MAX(e.sequence)!=r.latest_sequence)) LIMIT 1`} {
 		var value int

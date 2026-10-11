@@ -215,3 +215,9 @@ go run -mod=readonly scripts/package-cli-release.go --build dist/cli/windows-amd
 Windows ZIP/Linux tar.gz 按目标、版本和 commit 命名，附 `.sha256`；归档只包含客户端、manifest 和使用说明，Linux 执行位 0755。manifest 关联原生证据摘要，不含账号秘密。已有归档不会被覆盖，校验和发布失败不会留下此次不完整归档。
 
 解包后核对摘要，再从任意目录运行 `piwork-cli[.exe] --version`、`--help`、默认入口或显式业务命令即可。缺少合格原生证据时只保留候选二进制，不能把它包装为已完成验收的正式发布。
+
+## 运行版本与内置日志
+
+Desktop 的 About Piwork 显示本机 piwork-cli 的真实运行版本，与 `piwork-cli --version` 对应；远端 Core 信息另行读取。浏览器本地授权有效时，本机版本及内置日志无需 Core 登录或互联网。图片操作及 About 入口见 [Desktop 使用说明](desktop-webui.md#版本与更新日志)。
+
+独立客户端的构建记录和二进制身份包含 `releaseInfoHash`，绑定 `internal/releaseinfo/notes.json`；`desktopUIHash` 仍只表示浏览器资源输入。普通 `make build-cli` 允许缺少当前版本日志并显示未提供。正式候选审阅前执行 `make check-release-info`，或以 `PIWORK_BUILD_VERSION=<实际候选版本>` 指定版本；该检查仅在本地核对精确版本与组件，不联网，也不发布。未发行条目保留为 Unreleased，正式版本由实际发行流程确定。

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import type { ChatImageInput } from "@piwork/contracts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -263,5 +265,18 @@ test('unknown default automatic Runs use ordinary null independently of saved Ch
  store.setSessionModelPreference('work-a','session-a',JSON.stringify({modelRef:'model-other',thinkingLevel:'high'}));
  const received=store.feedback.receiveEvent({contractVersion:1,eventId:'event-unknown-auto',origin:{workId:'work-a',serviceId:'service-fixture'},serviceName:'fixture',type:'agent.requested',occurredAt:new Date().toISOString(),stateVersion:'one',actor:'user',payload:{goal:'ordinary',reason:'review',evidenceRefs:[]}},['review'],new Date().toISOString());
  const automatic=await manager.submitAutomatic({workId:'work-a',sessionId:'session-a',submissionKey:'unknown-auto',prompt:'ordinary',requestId:received.requestId!,phase:'handling'});assert.equal((await manager.wait(automatic.run.runId)).finalText,'ordinary');assert.equal(JSON.parse(automatic.run.actualModelJson!).thinkingLevel,null);assert.equal(JSON.parse(store.getSession('work-a','session-a')!.modelPreferenceJson!).thinkingLevel,'high');
+ });
+});
+
+test("multimodal acceptance fixes bytes and order while original-key replay never runs twice",async()=>{
+ await withStore(async store=>{
+  const executor=new ControlledExecutor(),manager=readyManager(store,executor);
+  const png:ChatImageInput={mimeType:'image/png',data:readFileSync(new URL('../../../fixtures/chat-images/png.png',import.meta.url)).toString('base64')};
+  const jpg:ChatImageInput={mimeType:'image/jpeg',data:readFileSync(new URL('../../../fixtures/chat-images/jpeg.jpg',import.meta.url)).toString('base64')};
+  const input={workId:'work-a',sessionId:'session-a',submissionKey:'image-once',prompt:'',images:[png,jpg],selector:{kind:'session-preference' as const,inputMode:'text' as const}};
+  const first=manager.submit(input);await executor.waitUntilRunning(first.run.runId);assert.deepEqual(store.privateInput(first.run.runId)?.images,[png,jpg]);
+  assert.equal(manager.submit(input).run.runId,first.run.runId);assert.throws(()=>manager.submit({...input,images:[jpg,png]}),/different content/);
+  assert.throws(()=>manager.submit({...input,images:[jpg]}),/different content/);assert.throws(()=>manager.submit({...input,submissionKey:'empty',images:[]}),/empty/);
+  executor.resolve(first.run.runId,'seen');await manager.wait(first.run.runId);assert.equal(manager.submit(input).run.runId,first.run.runId);
  });
 });

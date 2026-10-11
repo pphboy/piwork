@@ -134,3 +134,9 @@ node --test scripts/build-docker-release.test.mjs scripts/docker-cli-entrypoint.
 ```
 
 同步本地官网时另外执行 `node scripts/check-docker-quickstart.mjs --website-root /home/p/Projects/pphboy.github.io/piwork`，在官网目录运行 `pnpm build`。测试使用合成初始化值，不打印真实秘密或真实 Compose 展开配置。未来修改网络、数据目录、状态卷、初始化输入、等待或关闭预算时同步所有材料并执行门禁。
+
+## 内置更新日志检查
+
+`internal/releaseinfo/notes.json` 是 Core/Desktop 更新日志的可执行资源源文件，纳入现有 Docker sourceInputHash。按实际版本与 core/desktop 组件维护，正文使用用户可理解的变化说明；本次尚未发行的内容保留为 Unreleased，不补造旧版发布日期或发行事实。
+
+普通本地构建检查日志结构，允许当前版本缺失。正式候选审阅前执行 `make check-release-info`；候选版本不同于 package.json 时使用 `PIWORK_BUILD_VERSION=<实际候选版本> make check-release-info`。缺少对应组件日志、重复键或非法正文会失败。检查只读取本地资源，不连接 GitHub、不构建或推送镜像。日志修改不改写已发布记录的 commit、dirty、输入 hash 和 digest。应用中的 About Piwork / Release notes 只匹配运行版本，All releases 指向完整 Releases 页面。

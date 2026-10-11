@@ -1,8 +1,10 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { writeFileSync } from "node:fs";
 import { toolResultPreview, type ToolResultPreview } from "./tool-preview.js";
+import { validateChatImages, type ChatImageInput, type ChatImageDescriptor } from "@piwork/contracts";
 
 export type PersistentContentBlock =
+  | { blockId: string; type: "image"; input: ChatImageInput; image: ChatImageDescriptor & { imageIndex: number } }
   | { blockId: string; type: "text"; text: string }
   | { blockId: string; type: "tool-call"; toolCallId: string; toolName: string }
   | { blockId: string; type: "tool-result"; toolCallId: string; toolName: string; result: ToolResultPreview };
@@ -14,6 +16,7 @@ export interface PersistentSessionOptions {
 }
 
 export interface PersistentSessionEntry {
+  readonly originalText?: string;
   readonly id: string;
   readonly role: string;
   readonly text: string;
@@ -118,6 +121,11 @@ export function readPersistentSession(session: SessionManager): PersistentSessio
       else if (Array.isArray(content)) content.forEach((part, index) => {
         if (part.type === "text") blocks.push({ blockId: `${entry.id}-${index}`, type: "text", text: safeText(part.text) });
         else if (part.type === "toolCall") blocks.push({ blockId: `${entry.id}-${index}`, type: "tool-call", toolCallId: part.id, toolName: part.name });
+        else if (role === "user" && part.type === "image") {
+          const input = {mimeType:part.mimeType as ChatImageInput["mimeType"],data:part.data};
+          const imageIndex = blocks.filter(b=>b.type==="image").length;
+          blocks.push({blockId:`${entry.id}-${index}`,type:"image",input,image:{...validateChatImages([input])[0]!,imageIndex}});
+        }
       });
       const text = typeof content === "string"
         ? content
@@ -125,7 +133,7 @@ export function readPersistentSession(session: SessionManager): PersistentSessio
           ? content.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
           : "";
       const runId = runFor(entry.parentId);
-      return [{ id: entry.id, role, text: role === "toolResult" ? blocks.flatMap(block => block.type === "tool-result" && block.result.kind === "text" ? [block.result.text] : []).join("") : safeText(text), blocks, ...(runId === undefined ? {} : { runId }) }];
+      return [{ id: entry.id, role, originalText:text, text: role === "toolResult" ? blocks.flatMap(block => block.type === "tool-result" && block.result.kind === "text" ? [block.result.text] : []).join("") : safeText(text), blocks, ...(runId === undefined ? {} : { runId }) }];
     }),
   };
 }

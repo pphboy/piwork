@@ -37,6 +37,10 @@ export function historyMessages(raw, previous = []) {
     for (const message of raw) {
         if (!['user', 'assistant', 'toolResult'].includes(message.role))
             continue;
+        if (message.role === 'user' && message.blocks?.some((block) => block.type === 'image')) {
+            messages.push({ id: message.runId ? `${message.runId}-user` : message.entryId, runId: message.runId || undefined, role: 'user', text: message.blocks.filter((b) => b.type === 'text').map((b) => b.text).join(''), images: message.blocks.filter((b) => b.type === 'image').map((b) => b.image) });
+            continue;
+        }
         if (!message.blocks?.length) {
             messages.push(message.role === 'toolResult' ? { id: message.entryId, role: 'assistant', text: '', tool: { name: 'Tool result', status: 'Unconfirmed', content: resultText(undefined) } } : { id: message.entryId, role: message.role, text: message.text ?? '' });
             continue;
@@ -63,7 +67,7 @@ export function historyMessages(raw, previous = []) {
 export function activityGroups(messages) {
     const groups = [];
     messages.forEach((message, index) => {
-        if (!message.text && !message.tool)
+        if (!message.text && !message.tool && !message.images?.length)
             return;
         const last = groups.at(-1);
         if (message.tool && message.runId && last?.activity && last.messages[0]?.runId === message.runId)

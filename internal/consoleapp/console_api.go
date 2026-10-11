@@ -216,6 +216,21 @@ func (c *nativeConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 		consoleJSON(w, 200, map[string]bool{"loggedOut": true})
 		return
 	}
+	if path == "/console/api/about" && r.Method == http.MethodGet {
+		api, _ := client.New(c.options.coreURL, session.token)
+		var value json.RawMessage
+		if err := api.Request(r.Context(), "GET", "/api/v1/about", nil, &value); err != nil {
+			var apiErr *client.APIError
+			if errors.As(err, &apiErr) && apiErr.Status == 404 {
+				consoleFailure(w, 501, "ABOUT_UNSUPPORTED")
+			} else {
+				consoleFailure(w, 502, "CORE_UNAVAILABLE")
+			}
+			return
+		}
+		consoleJSON(w, 200, value)
+		return
+	}
 	if path == "/console/api/health" && r.Method == "GET" {
 		api, _ := client.New(c.options.coreURL, "")
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

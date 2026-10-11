@@ -163,8 +163,12 @@ func (c *Client) ListSessions(ctx context.Context, size uint32, token string) (*
 	return response, nil
 }
 
-func (c *Client) ReadSession(ctx context.Context, sessionID string) (*agentv1.SessionHistory, error) {
-	response, err := c.rpc.ReadSession(ctx, &agentv1.ReadSessionRequest{WorkId: c.scope.WorkID, SessionId: sessionID})
+func (c *Client) ReadSession(ctx context.Context, sessionID string, profiles ...string) (*agentv1.SessionHistory, error) {
+	request := &agentv1.ReadSessionRequest{WorkId: c.scope.WorkID, SessionId: sessionID}
+	if len(profiles) > 0 && profiles[0] != "" {
+		request.ImageProfile = &profiles[0]
+	}
+	response, err := c.rpc.ReadSession(ctx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +196,11 @@ func (c *Client) ReadSession(ctx context.Context, sessionID string) (*agentv1.Se
 			value := map[string]any{"blockId": block.BlockId, "type": block.Type}
 			if block.Type == "text" {
 				value["text"] = block.Text
+			} else if block.Type == "image" {
+				if block.Image == nil || request.ImageProfile == nil || message.RunId == "" {
+					return nil, ErrResponse
+				}
+				value["image"] = map[string]any{"mimeType": block.Image.MimeType, "byteSize": int64(block.Image.ByteSize), "sha256": block.Image.Sha256, "imageIndex": int64(block.Image.ImageIndex)}
 			} else {
 				value["toolCallId"] = block.ToolCallId
 				value["toolName"] = block.ToolName

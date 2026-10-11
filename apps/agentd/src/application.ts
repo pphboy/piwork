@@ -73,6 +73,7 @@ import { BrainCandidates } from "./brain-candidates.js";
 import type { RunExecutionContext } from "./runs.js";
 import type { HistoryMigration } from "@piwork/work-store";
 import { requireResourceCommand } from "./resource-commands.js";
+import { CHAT_IMAGE_LIMITS, CHAT_IMAGE_PROFILE, ChatImageError, validateChatImages, type ChatImageInput, type ReadSessionImageRequest, type SessionImage } from "@piwork/contracts";
 
 export const AGENT_PROTOCOL_VERSION = CONTRACT_VERSION;
 
@@ -148,7 +149,7 @@ export interface LoadedWorkContext {
 }
 
 export class AgentApplication {
-  private readonly server = new Server();
+  private readonly server = new Server({"grpc.max_receive_message_length":CHAT_IMAGE_LIMITS.requestBytes,"grpc.max_send_message_length":6*1024**2});
   private closed = false;
   private readonly installationId: string;
 
@@ -263,7 +264,7 @@ export class AgentApplication {
         { ...config.model, deterministic: config.deterministic },
         { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools, models, commands: loaded.commands, packageTools: new Map(packageTools),
           onSdkToolResult: (run, result) => candidates.recordSdkResult(run, result, new Map(packageTools)) },
-      )), undefined, models, prompt => { requireResourceCommand(loaded.commands, prompt); }, activeBrain !== undefined);
+      )), undefined, models, prompt => { requireResourceCommand(loaded.commands, prompt); }, activeBrain !== undefined, sessionId => sessions.hasImageContext(sessionId));
       runs.recover();
       daemon.configure({
         modelCredentialStatus: "available",
@@ -485,7 +486,8 @@ export class AgentApplication {
       }),
       readSession: unary((request: ReadSessionRequest): SessionHistory => {
         this.verifyWork(request.workId);
-        const value = this.sessions.read(request.sessionId);
+        if(request.imageProfile && request.imageProfile!==CHAT_IMAGE_PROFILE) throw Object.assign(new Error("Unsupported image profile"),{code:status.INVALID_ARGUMENT});
+        const value = request.imageProfile ? this.sessions.imageHistory(request.sessionId) : this.sessions.read(request.sessionId);
         const record = this.sessions.list().find((item) => item.sessionId === request.sessionId)!;
         const runs = this.store.listSessionRuns(request.workId, request.sessionId);
         const owners = new Map<string, Set<string>>();
@@ -499,22 +501,34 @@ export class AgentApplication {
           messages: value.entries.map((entry) => {
             let runId = entry.runId !== undefined ? runs.find(run => run.runId === entry.runId)?.runId ?? "" : "";
             if (entry.runId === undefined) {
-              const calls = entry.blocks.flatMap(block => block.type === "text" ? [] : [block.toolCallId]);
+              const calls = entry.blocks.flatMap(block => block.type === "tool-call" || block.type === "tool-result" ? [block.toolCallId] : []);
               const matches = calls.map(call => owners.get(call));
               if (matches.length && matches.every(match => match?.size === 1)) {
                 const ids = new Set(matches.flatMap(match => [...match!]));
                 if (ids.size === 1) runId = [...ids][0]!;
               }
             }
-            return { entryId: entry.id, role: entry.role, text: entry.text, createdAt: "", runId, blocks: entry.blocks.map(block => ({ blockId: block.blockId, type: block.type, text: block.type === "text" ? block.text : "", toolCallId: block.type === "text" ? "" : block.toolCallId, toolName: block.type === "text" ? "" : block.toolName, resultPreviewJson: block.type === "tool-result" ? JSON.stringify(block.result) : "" })) };
+            return { entryId: entry.id, role: entry.role, text: entry.text, createdAt: "", runId, blocks: entry.blocks.filter(block=>block.type!=="image" || request.imageProfile===CHAT_IMAGE_PROFILE).map(block => ({ blockId: block.type==="image"?`${runId}-image-${block.image.imageIndex}`:block.blockId, type: block.type, text: block.type === "text" ? block.text : "", toolCallId: block.type === "tool-call" || block.type === "tool-result" ? block.toolCallId : "", toolName: block.type === "tool-call" || block.type === "tool-result" ? block.toolName : "", resultPreviewJson: block.type === "tool-result" ? JSON.stringify(block.result) : "", ...(block.type==="image"?{image:block.image}:{}) })) };
           }),
           runs: runs.map(runMessage),
         };
       }),
+      getChatImageCapabilities: unary(async (request: AgentContentRequest): Promise<AgentContentResponse> => {
+        this.verifyWork(request.workId);
+        const list=await this.models.chatList().catch(()=>({models:[],defaultModel:null}));
+        const describe=async(ref:string|null)=>{const model=await this.models.resolve(ref);return {modelRef:ref,availability:await this.models.images(model)};};
+        return {valueJson:JSON.stringify({profile:CHAT_IMAGE_PROFILE,mimeTypes:["image/png","image/jpeg","image/webp"],maxImages:4,imageBytes:CHAT_IMAGE_LIMITS.imageBytes,totalBytes:CHAT_IMAGE_LIMITS.totalBytes,maxDimension:8192,maxPixels:40_000_000,defaultModel:await describe(null).catch(()=>null),models:await Promise.all(list.models.map(model=>describe(model.modelRef)))})};
+      }),
+      readSessionImage: unary((request: ReadSessionImageRequest): SessionImage => {
+        this.verifyWork(request.workId);
+        const value=this.sessions.image(request.sessionId,request.runId,request.imageIndex);
+        return {workId:request.workId,sessionId:request.sessionId,runId:request.runId,imageIndex:request.imageIndex,image:{...validateChatImages([value])[0]!,imageIndex:request.imageIndex},data:Buffer.from(value.data,"base64")};
+      }),
       submitRun: unary(async (request: SubmitRunRequest): Promise<SubmitRunResponse> => {
         this.verifyWork(request.workId);
         if (request.inputMode !== undefined && !Check(ChatInputModeSchema, request.inputMode)) throw Object.assign(new Error("Invalid input mode"), { code: status.INVALID_ARGUMENT });
-        const result = await this.runs.submitChat({ ...request, inputMode: request.inputMode as "text" | "command" | undefined, ...(request.modelRef === "" ? { modelRef: null } : {}) });
+        const images=(request.images ?? []).map(i=>({mimeType:i.mimeType as ChatImageInput["mimeType"],data:Buffer.from(i.data).toString("base64")}));
+        const result = await this.runs.submitChat({ ...request, images, inputMode: request.inputMode as "text" | "command" | undefined, ...(request.modelRef === "" ? { modelRef: null } : {}) });
         return { run: runMessage(result.run), reused: result.reused };
       }),
       getRun: unary((request: GetRunRequest): Run => runMessage(this.requireRun(request.workId, request.runId))),
@@ -804,7 +818,7 @@ function publicRunLookup(value: RunRecord) {
 }
 
 function eventMessage(value: RunEventRecord, run: RunRecord): RunEvent {
-  const payload = JSON.parse(value.payloadJson) as Record<string, unknown>;
+  const payload = value.eventType.startsWith("run.input") ? {} : JSON.parse(value.payloadJson) as Record<string, unknown>;
   const kind = value.eventType === "text"
     ? { $case: "text" as const, text: { delta: String(payload.delta ?? "") } }
     : value.eventType.startsWith("tool")
@@ -818,6 +832,7 @@ function isTerminal(run: RunRecord): boolean {
 }
 
 function grpcError(error: unknown): Error & { code: number } {
+  if(error instanceof ChatImageError) return Object.assign(new Error(`${error.code}: ${error.message}`),{code:error.code==="IMAGE_LIMIT_EXCEEDED"?status.RESOURCE_EXHAUSTED:status.FAILED_PRECONDITION});
   if (error instanceof RunModelError) return Object.assign(new Error(`${error.modelErrorCode}: ${error.message}`), { code: status.FAILED_PRECONDITION });
   if (error instanceof FeedbackError) return Object.assign(new Error(`${error.code}: ${error.message}`), { code: error.code === "REQUEST_NOT_FOUND" ? status.NOT_FOUND : error.code === "INVALID_CURSOR" ? status.INVALID_ARGUMENT : status.FAILED_PRECONDITION });
   const item = error as { message?: string; code?: number; name?: string };

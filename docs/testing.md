@@ -122,3 +122,23 @@ node scripts/measure-work-latency.mjs --core dist/work-latency/baseline/piwork-s
 结构与恢复回归使用 `internal/preparationcache/`、`internal/dockerengine/image_cache_test.go`、`internal/coreapp/environment_cache_test.go`、`default_work_prewarm_test.go` 和 `work_latency_integration_test.go`；延迟 mTLS 监听及就绪 / 诊断计时位于 `internal/agentclient/startup_test.go` 与 `internal/workruntime/performance_test.go`。大包、外部慢 MCP、冷镜像和并发准备不混入默认时间预算，分别保留阶段事实。
 
 本次运行配置不新增环境变量、目录、端口或用户运行依赖；Docker run / Compose 仍保留现有 CLI 600 秒等待、Core readiness 预算与关闭窗口。双语 Quick Start、Core-only / 单机 Compose 模板及说明通过同一内容生成入口维护，打包自动包含新增 Go 包，无需增加运行制品。`check-docker-quickstart` 对已发布材料校验其记录的发行身份与部署材料一致性，允许当前源码继续演进；未发布候选仍需匹配当前源码输入 hash。应保留已发布 `release.json`、commit、dirty 和 digest；未来显式准备新发行时再生成新的候选材料，不能为本地检查通过而改写已发布制品身份。
+
+## Chat 图片与产品信息
+
+共享图片容器/边界夹具位于 `fixtures/chat-images/`。`packages/contracts` 与 `internal/chatimages` 验证 PNG/JPEG/WebP、MIME、Base64、数量/字节/尺寸边界和内容摘要。Agent 的 `session-images.test.ts`、`image-models.test.ts`、`runs.test.ts` 验证受理持久化、SDK 写入前恢复、去重、事件压缩及模型能力；`model-providers.test.ts` 用合成提供商检查真实 SDK 的 Responses/Messages 图片请求，不使用真实 key。
+
+Desktop 的 `feedback.test.ts` 覆盖粘贴/拖拽/选择、纯图发送、创建按钮几何稳定和离线 About；Console 的 About 场景验证远端 Core 身份及安全正文。Go 的 about 测试覆盖普通用户/管理员、失效身份、未配置 runtime、本地授权和 Console 管理会话。
+
+完整图片包往返需要新构建的独立验收镜像；下例的 Agent 标签应替换为本次构建产物，helper 也需与当前源码一致。按上述 Docker 隔离规则执行：
+
+```sh
+PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:chat-release-validation \
+PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance \
+PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance \
+go test -mod=readonly -tags=integration ./internal/coreapp \
+  -run '^TestNativeChatImagesAndOfflinePackageRoundTrip$' -count=1 -v -timeout=20m
+```
+
+该场景核对实际模型收到图片、仅 metadata 的会话历史、原图二进制、提交幂等，以及 Stop/export、源 Core 下线、import、显式 Start 和同 Session 续聊。内置日志通过 `go test -mod=readonly ./internal/releaseinfo ./scripts/clirelease` 与相关构建脚本测试核对；正式候选缺失条目必须明确失败，开发构建不因未发行条目而失败。
+
+本次实际执行、制品身份与发布材料检查边界见 [Chat 图片、创建交互与版本日志验收](improve-desktop-chat-and-release-info-acceptance.md)。

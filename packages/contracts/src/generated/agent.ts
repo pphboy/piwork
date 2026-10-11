@@ -215,6 +215,35 @@ export interface ListSessionsResponse {
 export interface ReadSessionRequest {
   workId: string;
   sessionId: string;
+  imageProfile?: string | undefined;
+}
+
+export interface ImageInput {
+  mimeType: string;
+  data: Buffer;
+}
+
+export interface ImageDescriptor {
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  imageIndex: number;
+}
+
+export interface ReadSessionImageRequest {
+  workId: string;
+  sessionId: string;
+  runId: string;
+  imageIndex: number;
+}
+
+export interface SessionImage {
+  workId: string;
+  sessionId: string;
+  runId: string;
+  imageIndex: number;
+  image?: ImageDescriptor | undefined;
+  data: Buffer;
 }
 
 export interface SessionHistory {
@@ -239,6 +268,7 @@ export interface SessionContentBlock {
   toolCallId: string;
   toolName: string;
   resultPreviewJson: string;
+  image?: ImageDescriptor | undefined;
 }
 
 export interface RunError {
@@ -276,6 +306,7 @@ export interface SubmitRunRequest {
   /** Missing: Session preference; present empty: explicit Work default. */
   modelRef?: string | undefined;
   inputMode?: string | undefined;
+  images: ImageInput[];
 }
 
 export interface SubmitRunResponse {
@@ -2587,7 +2618,7 @@ export const ListSessionsResponse: MessageFns<ListSessionsResponse> = {
 };
 
 function createBaseReadSessionRequest(): ReadSessionRequest {
-  return { workId: "", sessionId: "" };
+  return { workId: "", sessionId: "", imageProfile: undefined };
 }
 
 export const ReadSessionRequest: MessageFns<ReadSessionRequest> = {
@@ -2597,6 +2628,9 @@ export const ReadSessionRequest: MessageFns<ReadSessionRequest> = {
     }
     if (message.sessionId !== "") {
       writer.uint32(18).string(message.sessionId);
+    }
+    if (message.imageProfile !== undefined) {
+      writer.uint32(26).string(message.imageProfile);
     }
     return writer;
   },
@@ -2630,6 +2664,14 @@ export const ReadSessionRequest: MessageFns<ReadSessionRequest> = {
             message.sessionId = reader.string();
             continue;
           }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.imageProfile = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2654,6 +2696,11 @@ export const ReadSessionRequest: MessageFns<ReadSessionRequest> = {
         : isSet(object.session_id)
         ? globalThis.String(object.session_id)
         : "",
+      imageProfile: isSet(object.imageProfile)
+        ? globalThis.String(object.imageProfile)
+        : isSet(object.image_profile)
+        ? globalThis.String(object.image_profile)
+        : undefined,
     };
   },
 
@@ -2665,6 +2712,9 @@ export const ReadSessionRequest: MessageFns<ReadSessionRequest> = {
     if (message.sessionId !== "") {
       obj.sessionId = message.sessionId;
     }
+    if (message.imageProfile !== undefined) {
+      obj.imageProfile = message.imageProfile;
+    }
     return obj;
   },
 
@@ -2675,6 +2725,525 @@ export const ReadSessionRequest: MessageFns<ReadSessionRequest> = {
     const message = createBaseReadSessionRequest();
     message.workId = object.workId ?? "";
     message.sessionId = object.sessionId ?? "";
+    message.imageProfile = object.imageProfile ?? undefined;
+    return message;
+  },
+};
+
+function createBaseImageInput(): ImageInput {
+  return { mimeType: "", data: Buffer.alloc(0) };
+}
+
+export const ImageInput: MessageFns<ImageInput> = {
+  encode(message: ImageInput, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.mimeType !== "") {
+      writer.uint32(10).string(message.mimeType);
+    }
+    if (message.data.length !== 0) {
+      writer.uint32(18).bytes(message.data);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ImageInput {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseImageInput();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.mimeType = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.data = Buffer.from(reader.bytes());
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): ImageInput {
+    return {
+      mimeType: isSet(object.mimeType)
+        ? globalThis.String(object.mimeType)
+        : isSet(object.mime_type)
+        ? globalThis.String(object.mime_type)
+        : "",
+      data: isSet(object.data) ? Buffer.from(bytesFromBase64(object.data)) : Buffer.alloc(0),
+    };
+  },
+
+  toJSON(message: ImageInput): unknown {
+    const obj: any = {};
+    if (message.mimeType !== "") {
+      obj.mimeType = message.mimeType;
+    }
+    if (message.data.length !== 0) {
+      obj.data = base64FromBytes(message.data);
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<ImageInput>): ImageInput {
+    return ImageInput.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ImageInput>): ImageInput {
+    const message = createBaseImageInput();
+    message.mimeType = object.mimeType ?? "";
+    message.data = object.data ?? Buffer.alloc(0);
+    return message;
+  },
+};
+
+function createBaseImageDescriptor(): ImageDescriptor {
+  return { mimeType: "", byteSize: 0, sha256: "", imageIndex: 0 };
+}
+
+export const ImageDescriptor: MessageFns<ImageDescriptor> = {
+  encode(message: ImageDescriptor, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.mimeType !== "") {
+      writer.uint32(10).string(message.mimeType);
+    }
+    if (message.byteSize !== 0) {
+      writer.uint32(16).uint32(message.byteSize);
+    }
+    if (message.sha256 !== "") {
+      writer.uint32(26).string(message.sha256);
+    }
+    if (message.imageIndex !== 0) {
+      writer.uint32(32).uint32(message.imageIndex);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ImageDescriptor {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseImageDescriptor();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.mimeType = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 16) {
+              break;
+            }
+
+            message.byteSize = reader.uint32();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.sha256 = reader.string();
+            continue;
+          }
+          case 4: {
+            if (tag !== 32) {
+              break;
+            }
+
+            message.imageIndex = reader.uint32();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): ImageDescriptor {
+    return {
+      mimeType: isSet(object.mimeType)
+        ? globalThis.String(object.mimeType)
+        : isSet(object.mime_type)
+        ? globalThis.String(object.mime_type)
+        : "",
+      byteSize: isSet(object.byteSize)
+        ? globalThis.Number(object.byteSize)
+        : isSet(object.byte_size)
+        ? globalThis.Number(object.byte_size)
+        : 0,
+      sha256: isSet(object.sha256) ? globalThis.String(object.sha256) : "",
+      imageIndex: isSet(object.imageIndex)
+        ? globalThis.Number(object.imageIndex)
+        : isSet(object.image_index)
+        ? globalThis.Number(object.image_index)
+        : 0,
+    };
+  },
+
+  toJSON(message: ImageDescriptor): unknown {
+    const obj: any = {};
+    if (message.mimeType !== "") {
+      obj.mimeType = message.mimeType;
+    }
+    if (message.byteSize !== 0) {
+      obj.byteSize = Math.round(message.byteSize);
+    }
+    if (message.sha256 !== "") {
+      obj.sha256 = message.sha256;
+    }
+    if (message.imageIndex !== 0) {
+      obj.imageIndex = Math.round(message.imageIndex);
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<ImageDescriptor>): ImageDescriptor {
+    return ImageDescriptor.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ImageDescriptor>): ImageDescriptor {
+    const message = createBaseImageDescriptor();
+    message.mimeType = object.mimeType ?? "";
+    message.byteSize = object.byteSize ?? 0;
+    message.sha256 = object.sha256 ?? "";
+    message.imageIndex = object.imageIndex ?? 0;
+    return message;
+  },
+};
+
+function createBaseReadSessionImageRequest(): ReadSessionImageRequest {
+  return { workId: "", sessionId: "", runId: "", imageIndex: 0 };
+}
+
+export const ReadSessionImageRequest: MessageFns<ReadSessionImageRequest> = {
+  encode(message: ReadSessionImageRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.workId !== "") {
+      writer.uint32(10).string(message.workId);
+    }
+    if (message.sessionId !== "") {
+      writer.uint32(18).string(message.sessionId);
+    }
+    if (message.runId !== "") {
+      writer.uint32(26).string(message.runId);
+    }
+    if (message.imageIndex !== 0) {
+      writer.uint32(32).uint32(message.imageIndex);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ReadSessionImageRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseReadSessionImageRequest();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.workId = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.sessionId = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.runId = reader.string();
+            continue;
+          }
+          case 4: {
+            if (tag !== 32) {
+              break;
+            }
+
+            message.imageIndex = reader.uint32();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): ReadSessionImageRequest {
+    return {
+      workId: isSet(object.workId)
+        ? globalThis.String(object.workId)
+        : isSet(object.work_id)
+        ? globalThis.String(object.work_id)
+        : "",
+      sessionId: isSet(object.sessionId)
+        ? globalThis.String(object.sessionId)
+        : isSet(object.session_id)
+        ? globalThis.String(object.session_id)
+        : "",
+      runId: isSet(object.runId)
+        ? globalThis.String(object.runId)
+        : isSet(object.run_id)
+        ? globalThis.String(object.run_id)
+        : "",
+      imageIndex: isSet(object.imageIndex)
+        ? globalThis.Number(object.imageIndex)
+        : isSet(object.image_index)
+        ? globalThis.Number(object.image_index)
+        : 0,
+    };
+  },
+
+  toJSON(message: ReadSessionImageRequest): unknown {
+    const obj: any = {};
+    if (message.workId !== "") {
+      obj.workId = message.workId;
+    }
+    if (message.sessionId !== "") {
+      obj.sessionId = message.sessionId;
+    }
+    if (message.runId !== "") {
+      obj.runId = message.runId;
+    }
+    if (message.imageIndex !== 0) {
+      obj.imageIndex = Math.round(message.imageIndex);
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<ReadSessionImageRequest>): ReadSessionImageRequest {
+    return ReadSessionImageRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ReadSessionImageRequest>): ReadSessionImageRequest {
+    const message = createBaseReadSessionImageRequest();
+    message.workId = object.workId ?? "";
+    message.sessionId = object.sessionId ?? "";
+    message.runId = object.runId ?? "";
+    message.imageIndex = object.imageIndex ?? 0;
+    return message;
+  },
+};
+
+function createBaseSessionImage(): SessionImage {
+  return { workId: "", sessionId: "", runId: "", imageIndex: 0, image: undefined, data: Buffer.alloc(0) };
+}
+
+export const SessionImage: MessageFns<SessionImage> = {
+  encode(message: SessionImage, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.workId !== "") {
+      writer.uint32(10).string(message.workId);
+    }
+    if (message.sessionId !== "") {
+      writer.uint32(18).string(message.sessionId);
+    }
+    if (message.runId !== "") {
+      writer.uint32(26).string(message.runId);
+    }
+    if (message.imageIndex !== 0) {
+      writer.uint32(32).uint32(message.imageIndex);
+    }
+    if (message.image !== undefined) {
+      ImageDescriptor.encode(message.image, writer.uint32(42).fork()).join();
+    }
+    if (message.data.length !== 0) {
+      writer.uint32(50).bytes(message.data);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): SessionImage {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseSessionImage();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.workId = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.sessionId = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.runId = reader.string();
+            continue;
+          }
+          case 4: {
+            if (tag !== 32) {
+              break;
+            }
+
+            message.imageIndex = reader.uint32();
+            continue;
+          }
+          case 5: {
+            if (tag !== 42) {
+              break;
+            }
+
+            message.image = ImageDescriptor.decode(reader, reader.uint32());
+            continue;
+          }
+          case 6: {
+            if (tag !== 50) {
+              break;
+            }
+
+            message.data = Buffer.from(reader.bytes());
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): SessionImage {
+    return {
+      workId: isSet(object.workId)
+        ? globalThis.String(object.workId)
+        : isSet(object.work_id)
+        ? globalThis.String(object.work_id)
+        : "",
+      sessionId: isSet(object.sessionId)
+        ? globalThis.String(object.sessionId)
+        : isSet(object.session_id)
+        ? globalThis.String(object.session_id)
+        : "",
+      runId: isSet(object.runId)
+        ? globalThis.String(object.runId)
+        : isSet(object.run_id)
+        ? globalThis.String(object.run_id)
+        : "",
+      imageIndex: isSet(object.imageIndex)
+        ? globalThis.Number(object.imageIndex)
+        : isSet(object.image_index)
+        ? globalThis.Number(object.image_index)
+        : 0,
+      image: isSet(object.image) ? ImageDescriptor.fromJSON(object.image) : undefined,
+      data: isSet(object.data) ? Buffer.from(bytesFromBase64(object.data)) : Buffer.alloc(0),
+    };
+  },
+
+  toJSON(message: SessionImage): unknown {
+    const obj: any = {};
+    if (message.workId !== "") {
+      obj.workId = message.workId;
+    }
+    if (message.sessionId !== "") {
+      obj.sessionId = message.sessionId;
+    }
+    if (message.runId !== "") {
+      obj.runId = message.runId;
+    }
+    if (message.imageIndex !== 0) {
+      obj.imageIndex = Math.round(message.imageIndex);
+    }
+    if (message.image !== undefined) {
+      obj.image = ImageDescriptor.toJSON(message.image);
+    }
+    if (message.data.length !== 0) {
+      obj.data = base64FromBytes(message.data);
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<SessionImage>): SessionImage {
+    return SessionImage.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<SessionImage>): SessionImage {
+    const message = createBaseSessionImage();
+    message.workId = object.workId ?? "";
+    message.sessionId = object.sessionId ?? "";
+    message.runId = object.runId ?? "";
+    message.imageIndex = object.imageIndex ?? 0;
+    message.image = (object.image !== undefined && object.image !== null)
+      ? ImageDescriptor.fromPartial(object.image)
+      : undefined;
+    message.data = object.data ?? Buffer.alloc(0);
     return message;
   },
 };
@@ -2948,7 +3517,7 @@ export const SessionMessage: MessageFns<SessionMessage> = {
 };
 
 function createBaseSessionContentBlock(): SessionContentBlock {
-  return { blockId: "", type: "", text: "", toolCallId: "", toolName: "", resultPreviewJson: "" };
+  return { blockId: "", type: "", text: "", toolCallId: "", toolName: "", resultPreviewJson: "", image: undefined };
 }
 
 export const SessionContentBlock: MessageFns<SessionContentBlock> = {
@@ -2970,6 +3539,9 @@ export const SessionContentBlock: MessageFns<SessionContentBlock> = {
     }
     if (message.resultPreviewJson !== "") {
       writer.uint32(50).string(message.resultPreviewJson);
+    }
+    if (message.image !== undefined) {
+      ImageDescriptor.encode(message.image, writer.uint32(58).fork()).join();
     }
     return writer;
   },
@@ -3035,6 +3607,14 @@ export const SessionContentBlock: MessageFns<SessionContentBlock> = {
             message.resultPreviewJson = reader.string();
             continue;
           }
+          case 7: {
+            if (tag !== 58) {
+              break;
+            }
+
+            message.image = ImageDescriptor.decode(reader, reader.uint32());
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -3071,6 +3651,7 @@ export const SessionContentBlock: MessageFns<SessionContentBlock> = {
         : isSet(object.result_preview_json)
         ? globalThis.String(object.result_preview_json)
         : "",
+      image: isSet(object.image) ? ImageDescriptor.fromJSON(object.image) : undefined,
     };
   },
 
@@ -3094,6 +3675,9 @@ export const SessionContentBlock: MessageFns<SessionContentBlock> = {
     if (message.resultPreviewJson !== "") {
       obj.resultPreviewJson = message.resultPreviewJson;
     }
+    if (message.image !== undefined) {
+      obj.image = ImageDescriptor.toJSON(message.image);
+    }
     return obj;
   },
 
@@ -3108,6 +3692,9 @@ export const SessionContentBlock: MessageFns<SessionContentBlock> = {
     message.toolCallId = object.toolCallId ?? "";
     message.toolName = object.toolName ?? "";
     message.resultPreviewJson = object.resultPreviewJson ?? "";
+    message.image = (object.image !== undefined && object.image !== null)
+      ? ImageDescriptor.fromPartial(object.image)
+      : undefined;
     return message;
   },
 };
@@ -3653,7 +4240,15 @@ export const Run: MessageFns<Run> = {
 };
 
 function createBaseSubmitRunRequest(): SubmitRunRequest {
-  return { workId: "", sessionId: "", submissionKey: "", prompt: "", modelRef: undefined, inputMode: undefined };
+  return {
+    workId: "",
+    sessionId: "",
+    submissionKey: "",
+    prompt: "",
+    modelRef: undefined,
+    inputMode: undefined,
+    images: [],
+  };
 }
 
 export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
@@ -3675,6 +4270,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     }
     if (message.inputMode !== undefined) {
       writer.uint32(50).string(message.inputMode);
+    }
+    for (const v of message.images) {
+      ImageInput.encode(v!, writer.uint32(58).fork()).join();
     }
     return writer;
   },
@@ -3740,6 +4338,14 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
             message.inputMode = reader.string();
             continue;
           }
+          case 7: {
+            if (tag !== 58) {
+              break;
+            }
+
+            message.images.push(ImageInput.decode(reader, reader.uint32()));
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -3780,6 +4386,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
         : isSet(object.input_mode)
         ? globalThis.String(object.input_mode)
         : undefined,
+      images: globalThis.Array.isArray(object?.images)
+        ? object.images.map((e: any) => ImageInput.fromJSON(e))
+        : [],
     };
   },
 
@@ -3803,6 +4412,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     if (message.inputMode !== undefined) {
       obj.inputMode = message.inputMode;
     }
+    if (message.images?.length) {
+      obj.images = message.images.map((e) => ImageInput.toJSON(e));
+    }
     return obj;
   },
 
@@ -3817,6 +4429,7 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     message.prompt = object.prompt ?? "";
     message.modelRef = object.modelRef ?? undefined;
     message.inputMode = object.inputMode ?? undefined;
+    message.images = object.images?.map((e) => ImageInput.fromPartial(e)) || [];
     return message;
   },
 };
@@ -4865,6 +5478,26 @@ export const AgentServiceService = {
     responseSerialize: (value: SessionHistory): Buffer => Buffer.from(SessionHistory.encode(value).finish()),
     responseDeserialize: (value: Buffer): SessionHistory => SessionHistory.decode(value),
   },
+  getChatImageCapabilities: {
+    path: "/piwork.agent.v1.AgentService/GetChatImageCapabilities" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  readSessionImage: {
+    path: "/piwork.agent.v1.AgentService/ReadSessionImage" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: ReadSessionImageRequest): Buffer =>
+      Buffer.from(ReadSessionImageRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): ReadSessionImageRequest => ReadSessionImageRequest.decode(value),
+    responseSerialize: (value: SessionImage): Buffer => Buffer.from(SessionImage.encode(value).finish()),
+    responseDeserialize: (value: Buffer): SessionImage => SessionImage.decode(value),
+  },
   submitRun: {
     path: "/piwork.agent.v1.AgentService/SubmitRun" as const,
     requestStream: false as const,
@@ -5030,6 +5663,8 @@ export interface AgentServiceServer extends UntypedServiceImplementation {
   createSession: handleUnaryCall<CreateSessionRequest, Session>;
   listSessions: handleUnaryCall<ListSessionsRequest, ListSessionsResponse>;
   readSession: handleUnaryCall<ReadSessionRequest, SessionHistory>;
+  getChatImageCapabilities: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  readSessionImage: handleUnaryCall<ReadSessionImageRequest, SessionImage>;
   submitRun: handleUnaryCall<SubmitRunRequest, SubmitRunResponse>;
   getRun: handleUnaryCall<GetRunRequest, Run>;
   watchRun: handleServerStreamingCall<WatchRunRequest, RunEvent>;
@@ -5153,6 +5788,36 @@ export interface AgentServiceClient extends Client {
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: SessionHistory) => void,
+  ): ClientUnaryCall;
+  getChatImageCapabilities(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getChatImageCapabilities(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getChatImageCapabilities(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  readSessionImage(
+    request: ReadSessionImageRequest,
+    callback: (error: ServiceError | null, response: SessionImage) => void,
+  ): ClientUnaryCall;
+  readSessionImage(
+    request: ReadSessionImageRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: SessionImage) => void,
+  ): ClientUnaryCall;
+  readSessionImage(
+    request: ReadSessionImageRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: SessionImage) => void,
   ): ClientUnaryCall;
   submitRun(
     request: SubmitRunRequest,
@@ -5389,6 +6054,14 @@ export const AgentServiceClient = makeGenericClientConstructor(
   service: typeof AgentServiceService;
   serviceName: string;
 };
+
+function bytesFromBase64(b64: string): Uint8Array {
+  return Uint8Array.from(globalThis.Buffer.from(b64, "base64"));
+}
+
+function base64FromBytes(arr: Uint8Array): string {
+  return globalThis.Buffer.from(arr).toString("base64");
+}
 
 type Builtin = Date | Function | Uint8Array | string | number | boolean | bigint | undefined;
 

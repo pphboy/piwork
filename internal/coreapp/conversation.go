@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"piwork/internal/agentclient"
+	"piwork/internal/chatimages"
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
 	"piwork/internal/identity"
@@ -24,7 +25,7 @@ import (
 
 func conversationPath(r *http.Request) (workID, resource, item, action string, matched bool) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/")
-	if len(parts) < 5 || len(parts) > 7 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" && parts[4] != "models" && parts[4] != "agent-requests" && parts[4] != "evidence" && parts[4] != "chat-capabilities" && parts[4] != "chat-models" && parts[4] != "commands" {
+	if len(parts) < 5 || len(parts) > 10 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" && parts[4] != "models" && parts[4] != "agent-requests" && parts[4] != "evidence" && parts[4] != "chat-capabilities" && parts[4] != "chat-models" && parts[4] != "commands" && parts[4] != "chat-image-capabilities" {
 		return "", "", "", "", false
 	}
 	for i := 3; i < len(parts); i++ {
@@ -35,6 +36,12 @@ func conversationPath(r *http.Request) (workID, resource, item, action string, m
 		parts[i] = decoded
 	}
 	workID, resource = parts[3], parts[4]
+	if len(parts) == 10 && resource == "sessions" && parts[6] == "runs" && parts[8] == "images" {
+		return workID, "session-images", parts[5], parts[7], true
+	}
+	if len(parts) > 7 {
+		return "", "", "", "", false
+	}
 	if len(parts) > 5 {
 		item = parts[5]
 	}
@@ -49,7 +56,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	if !matched {
 		return false, nil
 	}
-	valid := chatControlRoute(r.Method, resource, item, action) || feedbackRoute(r.Method, resource, item, action) || resource == "models" && item == "" && action == "" && r.Method == "GET" || resource == "sessions" && item != "" && action == "model" && r.Method == "PATCH" || action == "" && (resource == "sessions" && (r.Method == "GET" || r.Method == "POST" && item == "") || resource == "runs" && (r.Method == "POST" && item == "" || r.Method == "GET" && item != "")) || resource == "runs" && item != "" && r.Method == "POST" && action == "cancel" || resource == "runs" && item != "" && r.Method == "GET" && action == "events"
+	valid := (resource == "chat-image-capabilities" && item == "" || resource == "session-images") && r.Method == "GET" || chatControlRoute(r.Method, resource, item, action) || feedbackRoute(r.Method, resource, item, action) || resource == "models" && item == "" && action == "" && r.Method == "GET" || resource == "sessions" && item != "" && action == "model" && r.Method == "PATCH" || action == "" && (resource == "sessions" && (r.Method == "GET" || r.Method == "POST" && item == "") || resource == "runs" && (r.Method == "POST" && item == "" || r.Method == "GET" && item != "")) || resource == "runs" && item != "" && r.Method == "POST" && action == "cancel" || resource == "runs" && item != "" && r.Method == "GET" && action == "events"
 	if !valid {
 		return false, nil
 	}
@@ -83,6 +90,35 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	stopRouteWatch := context.AfterFunc(routeLifetime, cancelRoute)
 	defer stopRouteWatch()
 	r = r.WithContext(routeRequest)
+	if resource == "chat-image-capabilities" {
+		result, err := agent.ChatImageCapabilities(r.Context())
+		if status.Code(err) == codes.Unimplemented {
+			return true, contracts.NewError("IMAGE_INPUT_UNSUPPORTED", "")
+		}
+		if err != nil {
+			return true, conversationError(err)
+		}
+		send(w, 200, result)
+		return true, nil
+	}
+	if resource == "session-images" {
+		tail := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		index, err := strconv.ParseUint(tail, 10, 32)
+		if err != nil || index > 3 || strconv.FormatUint(index, 10) != tail {
+			return true, contracts.NewError("INVALID_REQUEST", "")
+		}
+		result, err := agent.ReadSessionImage(r.Context(), item, action, uint32(index))
+		if err != nil {
+			return true, conversationError(err)
+		}
+		w.Header().Set("Content-Type", result.Image.MimeType)
+		w.Header().Set("Content-Length", strconv.Itoa(len(result.Data)))
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(200)
+		_, _ = w.Write(result.Data)
+		return true, nil
+	}
 	if resource == "agent-requests" || resource == "evidence" {
 		return a.feedbackHTTP(w, r, agent, workID, resource, item, action)
 	}
@@ -197,7 +233,11 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			return true, nil
 		}
 		if item != "" {
-			history, err := agent.ReadSession(r.Context(), item)
+			profile := r.URL.Query().Get("imageProfile")
+			if profile != "" && profile != chatimages.Profile {
+				return true, contracts.NewError("INVALID_REQUEST", "")
+			}
+			history, err := agent.ReadSession(r.Context(), item, profile)
 			if err != nil {
 				return true, conversationError(err)
 			}
@@ -224,11 +264,24 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 		return true, nil
 	}
 	if r.Method == "POST" && item == "" {
-		input, err := readControlJSON[contracts.SubmitRunInput](r, "SubmitRunInputSchema", false)
+		input, err := readControlJSONLimit[contracts.SubmitRunInput](r, "SubmitRunInputSchema", false, chatimages.MaxRequestBytes)
 		if err != nil {
 			return true, err
 		}
-		if strings.TrimSpace(input.Prompt) == "" {
+		var images []chatimages.Input
+		if input.Images.Present {
+			raw, _ := json.Marshal(input.Images.Value)
+			if json.Unmarshal(raw, &images) != nil {
+				return true, contracts.NewError("IMAGE_INVALID", "")
+			}
+		}
+		if _, err := chatimages.Validate(images); err != nil {
+			return true, contracts.NewError(err.Error(), "")
+		}
+		if len(input.Prompt) > 65536 || len(images) > 0 && (!input.InputMode.Present || string(input.InputMode.Value) != "text") {
+			return true, contracts.NewError("IMAGE_INVALID", "")
+		}
+		if strings.TrimSpace(input.Prompt) == "" && len(images) == 0 {
 			return true, contracts.NewError("INVALID_REQUEST", "prompt")
 		}
 		var modelRef *string
@@ -255,7 +308,12 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			}
 			modes = append(modes, string(input.InputMode.Value))
 		}
-		result, err := agent.SubmitRun(r.Context(), string(input.SessionId), input.SubmissionKey, input.Prompt, modelRef, modes...)
+		var result *agentv1.SubmitRunResponse
+		if len(images) > 0 {
+			result, err = agent.SubmitImageRun(r.Context(), string(input.SessionId), input.SubmissionKey, input.Prompt, modelRef, "text", images)
+		} else {
+			result, err = agent.SubmitRun(r.Context(), string(input.SessionId), input.SubmissionKey, input.Prompt, modelRef, modes...)
+		}
 		if err != nil {
 			return true, conversationError(err)
 		}
@@ -296,6 +354,10 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 }
 
 func conversationError(err error) error {
+	var public *contracts.PublicError
+	if errors.As(err, &public) {
+		return public
+	}
 	if errors.Is(err, corestore.ErrSnapshotBusy) {
 		return contracts.NewError("WORK_SNAPSHOT_BUSY", "")
 	}
@@ -312,7 +374,7 @@ func conversationError(err error) error {
 			return contracts.NewError("WORK_BUSY", "")
 		}
 
-		for _, code := range []string{"WORK_BUSY", "CHAT_OPTIONS_UNSUPPORTED", "THINKING_LEVEL_UNSUPPORTED", "SLASH_COMMAND_UNKNOWN", "SLASH_COMMAND_UNSUPPORTED", "SLASH_COMMAND_UNAVAILABLE", "MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
+		for _, code := range []string{"IMAGE_INVALID", "IMAGE_LIMIT_EXCEEDED", "IMAGE_MODEL_UNSUPPORTED", "IMAGE_MODEL_UNCONFIRMED", "IMAGE_INPUT_UNSUPPORTED", "IMAGE_HISTORY_CORRUPT", "WORK_BUSY", "CHAT_OPTIONS_UNSUPPORTED", "THINKING_LEVEL_UNSUPPORTED", "SLASH_COMMAND_UNKNOWN", "SLASH_COMMAND_UNSUPPORTED", "SLASH_COMMAND_UNAVAILABLE", "MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
 			if strings.HasPrefix(state.Message(), code+":") {
 				return contracts.NewError(code, "")
 			}
@@ -421,6 +483,9 @@ func sessionBlocksView(message *agentv1.SessionMessage) []any {
 		value := map[string]any{"blockId": block.GetBlockId(), "type": block.GetType()}
 		if block.GetType() == "text" {
 			value["text"] = block.GetText()
+		} else if block.GetType() == "image" {
+			image := block.GetImage()
+			value["image"] = map[string]any{"mimeType": image.GetMimeType(), "byteSize": image.GetByteSize(), "sha256": image.GetSha256(), "imageIndex": image.GetImageIndex()}
 		} else {
 			value["toolCallId"] = block.GetToolCallId()
 			value["toolName"] = block.GetToolName()
