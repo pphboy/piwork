@@ -82,3 +82,23 @@ Web base 的额外入口为 `node scripts/check-web-base.mjs dist/web-base/candi
 本变更沿用现有测试体系。存储/联合事务/版本与失效测试位于 `packages/work-store/src/memory.test.ts`，TS 冷历史验证在 `snapshot*.test.ts`；原生 schema 4/5 与 Memory 图、重建测试在 `internal/workhistory/memory_test.go`。`npm run test:unit -w @piwork/work-store` 和 `go test -mod=readonly ./internal/workhistory` 不依赖 Docker 或真实模型凭据。
 
 Memory 子进程测试在真实磁盘 SQLite 的 COMMIT 前/后 SIGKILL writer，再原路径恢复，检查请求与 Memory 一致且不重放 Run。这是进程中断验收，不是物理断电实验。完整迁移/回退、固定旧镜像、真实 SDK/Service 与两份 Export/Import 按当前 change 的 T01–T06 任务分别执行；未执行的项目不能用这些单测标为通过。Memory 不新增通用 Eval 平台。
+
+## Chat 图片与产品信息
+
+共享图片容器/边界夹具位于 `fixtures/chat-images/`。`packages/contracts` 与 `internal/chatimages` 验证 PNG/JPEG/WebP、MIME、Base64、数量/字节/尺寸边界和内容摘要。Agent 的 `session-images.test.ts`、`image-models.test.ts`、`runs.test.ts` 验证受理持久化、SDK 写入前恢复、去重、事件压缩及模型能力；`model-providers.test.ts` 用合成提供商检查真实 SDK 的 Responses/Messages 图片请求，不使用真实 key。
+
+Desktop 的 `feedback.test.ts` 覆盖粘贴/拖拽/选择、纯图发送、创建按钮几何稳定和离线 About；Console 的 About 场景验证远端 Core 身份及安全正文。Go 的 about 测试覆盖普通用户/管理员、失效身份、未配置 runtime、本地授权和 Console 管理会话。
+
+完整图片包往返需要新构建的独立验收镜像；下例的 Agent 标签应替换为本次构建产物，helper 也需与当前源码一致。按上述 Docker 隔离规则执行：
+
+```sh
+PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:chat-release-validation \
+PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance \
+PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance \
+go test -mod=readonly -tags=integration ./internal/coreapp \
+  -run '^TestNativeChatImagesAndOfflinePackageRoundTrip$' -count=1 -v -timeout=20m
+```
+
+该场景核对实际模型收到图片、仅 metadata 的会话历史、原图二进制、提交幂等，以及 Stop/export、源 Core 下线、import、显式 Start 和同 Session 续聊。内置日志通过 `go test -mod=readonly ./internal/releaseinfo ./scripts/clirelease` 与相关构建脚本测试核对；正式候选缺失条目必须明确失败，开发构建不因未发行条目而失败。
+
+本次实际执行、制品身份与发布材料检查边界见 [Chat 图片、创建交互与版本日志验收](improve-desktop-chat-and-release-info-acceptance.md)。

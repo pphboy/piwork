@@ -55,6 +55,8 @@ The default templates adopt successfully deployed updates automatically and pres
 
 Desktop chat interface preview, captured from a UI verification fixture.
 
+The current source build accepts pasted, dropped or selected images in Chat, including image-only messages. **About Piwork** shows Desktop/Core versions and embedded release notes, with a link to all releases. See the [Desktop guide](docs/desktop-webui.md).
+
 ## Quick Start
 
 ### Try Core and CLI with Docker
