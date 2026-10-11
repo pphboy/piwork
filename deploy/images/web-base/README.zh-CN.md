@@ -9,7 +9,7 @@
 当前源码使用环境契约 **2**、**0.2.0** 版本系列，Python **3.13.16**、NiceGUI **3.18.0**、pip **26.2.1** 与 sqlite3 CLI **3.40.1-2+deb12u2**，首先验证 Linux amd64。精确标准依赖见 [requirements.lock](requirements.lock)，上游 Python 固定镜像见 [environment.json](environment.json)；镜像只读环境清单还记录实际安装包和构建输入 hash。
 
 <!-- web-base-reference:start -->
-**当前为本地候选，尚未发布。** `dist/web-base/candidate.json` 保存真实本地 tag、image ID 和输入；脑包的 `references/web-base.json` 区分候选与已发布固定 tag@digest。正式默认部署需在另有明确发布要求并完成匿名验证后才能使用；本地开发/验收可显式选择已验证的预备镜像。旧 FastAPI/React 制品身份保存在[历史发布记录](releases/fastapi-react-0.1.0.json)，不作为 NiceGUI 候选的交付身份。
+**已发布并通过匿名验证。** `docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty@sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098` 是固定的 Linux amd64、contract-2 base。[release.json](release.json) 保留真实构建 commit/dirty、输入 hash、image ID 和 registry digest；脑包使用该已验证引用。`dist/web-base/candidate.json` 保留本地构建身份。旧 FastAPI/React 制品继续保存在[历史发布记录](releases/fastapi-react-0.1.0.json)。
 <!-- web-base-reference:end -->
 
 ## 在 Work 中使用

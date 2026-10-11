@@ -124,3 +124,15 @@ W1 已通过可扩展的 `page-files.json` 页面输入集合修复：清单中�
 
 
 初次实现的最终检查补充了离线重建过程中依赖声明或锁被改动时的启用前拒绝。该变更产生上列 `85fb0b1a7e60` 候选；该阶段的工具、标准应用、扩展包、Core/浏览器和完整 brain 均重新绑定该候选 image ID/input hash 验证。此前 547.71 s 的成功完整回路保留在 brain-full.log，初次实现最终回路为 brain-current.log 的 557.17 s。计时是单次开发环境观察，开发检查存在后台负载，就绪轮询为旧 500 ms/新 250 ms；几百毫秒量化差异不作性能结论，完整失败与通过不换算成功倍率。
+
+## 归档后的授权发布
+
+用户随后明确要求发布 Core 与 NiceGUI base。2026-10-11 执行 `node scripts/publish-web-base.mjs --push`，通过固定 tag 冲突预检、推送、空 Docker 配置的匿名 digest 拉取及只读运行检查。
+
+- 正式引用：`docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty@sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098`。
+- registry digest：`sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098`。
+- 实际 image ID：`sha256:1b2dc23ea6cc78f5986217a5c133f045334c81d30a53c833f73aa59abdad87a1`；input hash 保持 `6b6f6f8bbf625e2b36502349e5ba13992060aeab4b5239436c3288919ae7d44e`。
+- 真实构建身份继续为 `5818e1de7bb5af9bd6305777fc88b40505a708b3`、dirty=true，不改写为后续提交。
+- 发布原始输出：`dist/web-base/nicegui-publication.log`；匿名验证记录：`dist/web-base/published.json`。
+
+上文候选阶段的状态与验收事实保留。脑包以 1.2.1 补丁版采用正式固定引用，使已经安装 1.2.0 的 Core catalog 也能触发升级；既有 Work 仍按原 Package Update/Apply 流程采用。Core 自身的发行身份与验证结果单独记录。

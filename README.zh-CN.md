@@ -45,7 +45,7 @@ Core 负责资源管理与控制，Harness 执行模型和工具，Service 提�
 
 每个 Work 拥有自己的 Harness。Harness 执行任务，Service 提供应用能力，两者在 Work 的环境中协作；Core 管理这些资源，CLI / Desktop 提供用户入口。
 
-当前源码对新应用 Service 默认采用 Python + NiceGUI + SQLite，预装标准依赖并支持追加 Python 包。新 base 目前是等待发布的本地候选，既有已发布 Docker 引用保留原发行身份。源码、维护、依赖安装、sqlite3 及应用自动更新见 [Web base 手册](deploy/images/web-base/README.zh-CN.md)。
+当前源码对新应用 Service 默认采用 Python + NiceGUI + SQLite，预装标准依赖并支持追加 Python 包。NiceGUI base 已取得匿名验证的固定发行引用；平台 Docker 引用保留各自记录的发行身份。源码、维护、依赖安装、sqlite3 及应用自动更新见 [Web base 手册](deploy/images/web-base/README.zh-CN.md)。
 
 默认模板自动采用成功部署的更新，并保留支持恢复的草稿与路径。应用 Service 不设置 Piwork 内存上限；CPU/数量限制和 Agent/helper 内存政策仍有效。既有 Work 通过显式 Update/Apply 采用新包与 Agent 镜像。详见[官网指南](https://pphboy.github.io/piwork/zh/guide/web-development.html)和 [Brain 工作流程](docs/piwork-brain.md)。
 
