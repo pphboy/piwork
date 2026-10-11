@@ -102,7 +102,7 @@ func TestNativeCoreUpdatesLegacyBundledBrainOnRestart(t *testing.T) {
 	}
 	updatedAuth := "Bearer " + login.Token
 	head, generation := brainHead(t, updated)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.0:") || generation != 3 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.1:") || generation != 3 {
 		t.Fatal("Core did not update its seeded brain", head, generation)
 	}
 	configuration, err = updated.Store.Configuration(ctx, *oldID)

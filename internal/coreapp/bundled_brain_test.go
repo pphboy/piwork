@@ -74,6 +74,12 @@ func installLegacyBrain(t *testing.T, a *Application, ids ...string) corestore.P
 	if err != nil {
 		t.Fatal(err)
 	}
+	return installPreparedBrain(t, a, result, ids...)
+}
+
+func installPreparedBrain(t *testing.T, a *Application, result packageprepare.Result, ids ...string) corestore.PackageArtifact {
+	t.Helper()
+	ctx := context.Background()
 	storage, err := a.publishCorePackageBytes(ctx, result)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +125,7 @@ func TestBundledBrainUpdatesLegacySeedAndPreservesDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	head, generation := brainHead(t, a)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.0:") || generation != 2 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.1:") || generation != 2 {
 		t.Fatal(head, generation)
 	}
 	after, _ := a.Store.DefaultWork(context.Background())
@@ -140,6 +146,69 @@ func TestBundledBrainUpdatesLegacySeedAndPreservesDefaults(t *testing.T) {
 	}
 	if actual, g := brainHead(t, a); actual != head || g != generation {
 		t.Fatal("repeated startup published twice", actual, g)
+	}
+}
+
+func TestBundledBrainUpdatesPriorNiceGUISeedAndRetainsOldArtifact(t *testing.T) {
+	a, _, _ := appFixture(t, Options{})
+	ctx := context.Background()
+	preparePrior := unitBrainPreparer(t, func(directory string) {
+		path := filepath.Join(directory, "package.json")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest map[string]any
+		if err := json.Unmarshal(raw, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest["version"] = "1.2.0"
+		raw, err = json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	prior, err := preparePrior(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := installPreparedBrain(t, a, prior)
+	oldManifest := filepath.Join(a.options.DataDirectory, old.StoragePath, "package.json")
+	oldBytes, err := os.ReadFile(oldManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := a.Store.DefaultWork(ctx)
+	a.prepareBrainForTest = unitBrainPreparer(t)
+	if err := a.ensureBundledBrain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	head, generation := brainHead(t, a)
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.1:") || generation != 2 {
+		t.Fatal("prior NiceGUI seed was not updated", head, generation)
+	}
+	retained, err := os.ReadFile(oldManifest)
+	if err != nil || string(retained) != string(oldBytes) {
+		t.Fatal("old immutable NiceGUI package changed", err)
+	}
+	after, _ := a.Store.DefaultWork(ctx)
+	left, _ := json.Marshal(before)
+	right, _ := json.Marshal(after)
+	if string(left) != string(right) {
+		t.Fatal("patch update changed default selection")
+	}
+	a.prepareBrainForTest = func(context.Context) (packageprepare.Result, error) {
+		t.Fatal("same patch version prepared twice")
+		return packageprepare.Result{}, nil
+	}
+	if err := a.ensureBundledBrain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if actual, g := brainHead(t, a); actual != head || g != generation {
+		t.Fatal("repeated startup republished the patch", actual, g)
 	}
 }
 

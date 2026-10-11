@@ -10,7 +10,7 @@ import (
 
 func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 	version, err := BrainPackageVersion()
-	if err != nil || version != "1.2.0" {
+	if err != nil || version != "1.2.1" {
 		t.Fatal(version, err)
 	}
 	raw, err := BrainPackageArchive()
@@ -38,7 +38,7 @@ func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 		}
 	}
 	for name, expected := range map[string]string{
-		"package.json":                          `"version": "1.2.0"`,
+		"package.json":                          `"version": "1.2.1"`,
 		"skills/deploy-work-service/SKILL.md":   "Python + NiceGUI + SQLite",
 		"references/web-base.json":              `"environmentContract": 2`,
 		"templates/web-app/app.py":              "from nicegui import app",
