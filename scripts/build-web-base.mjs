@@ -7,18 +7,30 @@ import { execFileSync } from 'node:child_process';
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const source = join(root, 'deploy/images/web-base');
 const sha = value => createHash('sha256').update(value).digest('hex');
+export function assertEnvironmentLocks(directory = source) {
+  const canonical = name => name.toLowerCase().replace(/[-_.]+/g, '-');
+  const locked = new Map(readFileSync(join(directory, 'requirements.lock'), 'utf8').split('\n').flatMap(line => {
+    const match = /^([A-Za-z0-9_.-]+)==([^\s]+)\s+--hash=sha256:[a-f0-9]{64}/.exec(line);
+    return match ? [[canonical(match[1]), match[2]]] : [];
+  }));
+  for (const line of readFileSync(join(directory, 'requirements.in'), 'utf8').split('\n').map(value => value.trim()).filter(value => value && !value.startsWith('#'))) {
+    const match = /^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==([^\s;]+)$/.exec(line);
+    if (!match || locked.get(canonical(match[1])) !== match[2]) throw new Error('Base requirements and the exact lock differ; regenerate the lock before building.');
+  }
+}
 export function inputHash(baseDirectory = source) {
   const paths = ['Dockerfile', '.dockerignore', 'environment.json', 'requirements.in', 'requirements.lock',
-    'frontend/package.json', 'frontend/package-lock.json', ...readdirSync(join(baseDirectory, 'tools')).sort().filter(name => name.endsWith('.py') || name === 'piwork-web').map(name => `tools/${name}`)];
+    ...readdirSync(join(baseDirectory, 'tools')).sort().filter(name => /\.(py|js)$/.test(name) || name === 'piwork-web').map(name => `tools/${name}`)];
   return sha(Buffer.concat(paths.map(name => Buffer.concat([Buffer.from(name + '\0'), readFileSync(join(baseDirectory, name))]))));
 }
 export function candidate() {
+  assertEnvironmentLocks();
   const environment = JSON.parse(readFileSync(join(source, 'environment.json')));
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   const modified = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim());
   const hash = inputHash();
   const version = `${environment.version}-${commit.slice(0, 12)}-${hash.slice(0, 12)}${modified ? '-dirty' : ''}`;
-  return { contractVersion: 1, state: 'candidate', version, commit, modified, inputHash: hash,
+  return { contractVersion: environment.contractVersion, state: 'candidate', version, commit, modified, inputHash: hash,
     platform: environment.platform, reference: `docker.io/pphboy/piwork-web-base:${version}`, environment };
 }
 

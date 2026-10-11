@@ -7,10 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { inputHash, root } from './build-web-base.mjs';
 
 const digest = /^sha256:[a-f0-9]{64}$/;
-export const baseChecks = ['offline-preparation', 'missing-dependency-rollback', 'failed-build-no-ready', 'backend-tests', 'frontend-tests', 'build', 'static-api', 'sqlite3', 'readonly-root', 'workspace-dependencies', 'restart-data'];
-export const coreChecks = ['real-sdk-mcp', 'real-core-cli-browser', 'frontend-auto-adoption', 'backend-auto-adoption', 'environment-auto-adoption', 'safe-repeat-initialization', 'draft-path-retained', 'failed-build-recovery', 'agent-sqlite3', 'no-extra-run-or-apply', 'dev-hmr-backend-reload', 'memory-over-128MiB', 'legacy-cap-replaced', 'derived-image-service', 'core-graceful-recovery'];
+export const baseChecks = ['offline-standard-environment', 'missing-extra-dependency-no-implicit-install', 'failed-check-no-ready', 'python-tests', 'nicegui-http-websocket', 'sqlite3', 'readonly-root', 'base-dependency-reuse', 'restart-data', 'checked-input-cache', 'loaded-version-fixed', 'generic-nicegui-service'];
+export const coreChecks = ['real-sdk-mcp', 'real-core-cli-browser', 'frontend-auto-adoption', 'backend-auto-adoption', 'page-helper-auto-adoption', 'environment-auto-adoption', 'safe-repeat-initialization', 'draft-path-retained', 'failed-check-recovery', 'agent-sqlite3', 'no-extra-run-or-apply', 'dev-python-reload', 'memory-over-128MiB', 'legacy-cap-replaced', 'derived-image-service', 'core-graceful-recovery', 'sdk-python-dependency-install', 'offline-extra-dependency-restart', 'offline-extra-dependency-import', 'draft-storage-failure-retained'];
+export const dependencyChecks = ['explicit-python-install', 'selected-console-interpreter', 'base-unchanged', 'application-environment-isolation', 'conflict-rollback', 'download-failure-rollback', 'serialized-preparation', 'changed-input-no-activation', 'offline-dependency-reuse', 'damaged-wheel-rejected', 'offline-reconstruction', 'moved-app-reconstruction', 'base-environment-reconstruction', 'actual-extra-application'];
+export const toolChecks = ['checked-execution-cache', 'ui-business-environment-version', 'loaded-version-fixed', 'unchecked-startup-rejected', 'offline-rebuild-changed-input', 'page-helper-resource-version', 'page-file-set-compatibility', 'invalid-page-manifest-no-ready'];
 
-export function verifyCandidate(candidate, image, validation, coreValidation, currentHash, starterValidation) {
+export function verifyCandidate(candidate, image, validation, coreValidation, currentHash, starterValidation, dependencyValidation, toolsValidation) {
+  assert.equal(candidate.contractVersion, 2, 'A NiceGUI environment-contract-2 candidate is required');
   assert.match(candidate.reference, /^docker\.io\/pphboy\/piwork-web-base:[A-Za-z0-9._-]+$/);
   assert.match(candidate.imageId, digest);
   assert.equal(candidate.platform, 'linux/amd64');
@@ -18,9 +21,10 @@ export function verifyCandidate(candidate, image, validation, coreValidation, cu
   assert.equal(image.Id, candidate.imageId, 'Local tag was changed after validation');
   assert.equal(image.Architecture, 'amd64'); assert.equal(image.Os, 'linux');
   assert.equal(image.Config.User, '10001:10001');
+  assert.equal(image.Config.Labels['io.piwork.web-base.contract'], '2');
   assert.equal(image.Config.Labels['io.piwork.web-base.input-sha256'], candidate.inputHash);
   assert.equal(image.Config.Labels['org.opencontainers.image.revision'], candidate.commit);
-  for (const [record, required] of [[validation, baseChecks], [coreValidation, coreChecks], [starterValidation, baseChecks]]) {
+  for (const [record, required] of [[validation, baseChecks], [coreValidation, coreChecks], [starterValidation, baseChecks], [dependencyValidation, dependencyChecks], [toolsValidation, toolChecks]]) {
     assert(record, 'Standard starter validation is missing');
     assert.equal(record.passed, true, 'Candidate validation is incomplete');
     assert.equal(record.imageId, candidate.imageId, 'Validation belongs to a different image');
@@ -30,6 +34,7 @@ export function verifyCandidate(candidate, image, validation, coreValidation, cu
   assert.equal(validation.internalNetwork, true, 'Offline validation must block registry egress');
   assert.equal(starterValidation.template, 'web-app');
   assert.equal(starterValidation.internalNetwork, true);
+  assert.equal(dependencyValidation.internalRegistry, true, 'Dependency acceptance must use its controlled registry');
 }
 
 export function configIdentity(manifest) {
@@ -37,12 +42,16 @@ export function configIdentity(manifest) {
   return manifest.config.digest;
 }
 
+export function assertRemoteIdentity(manifest, imageId) {
+  assert.equal(configIdentity(manifest), imageId, 'Fixed remote tag already contains different content');
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const load = name => JSON.parse(readFileSync(join(root, 'dist/web-base', name), 'utf8'));
   const candidate = load('candidate.json');
   const docker = (args, options = {}) => execFileSync('docker', args, { encoding: 'utf8', maxBuffer: 8 << 20, ...options });
   const image = JSON.parse(docker(['image', 'inspect', candidate.reference]))[0];
-  verifyCandidate(candidate, image, load('validation.json'), load('core-validation.json'), inputHash(), load('validation-web-app.json'));
+  verifyCandidate(candidate, image, load('validation.json'), load('core-validation.json'), inputHash(), load('validation-web-app.json'), load('dependencies-validation.json'), load('tools-validation.json'));
   const remote = spawnSync('docker', ['buildx', 'imagetools', 'inspect', candidate.reference, '--raw'], { encoding: 'utf8' });
   if (remote.status === 0) {
     let manifest = JSON.parse(remote.stdout);
@@ -52,7 +61,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       const repository = candidate.reference.slice(0, candidate.reference.lastIndexOf(':'));
       manifest = JSON.parse(docker(['buildx', 'imagetools', 'inspect', `${repository}@${matching[0].digest}`, '--raw']));
     }
-    assert.equal(configIdentity(manifest), candidate.imageId, 'Fixed remote tag already contains different content');
+    assertRemoteIdentity(manifest, candidate.imageId);
   } else if (!/not found|manifest unknown|404/i.test(remote.stderr) || /unauthorized|denied|timeout|network|connection/i.test(remote.stderr)) {
     throw new Error('Cannot confirm remote tag availability; no push performed: ' + remote.stderr.trim());
   }

@@ -1,29 +1,28 @@
-"""Small application-side static and actual loaded-version adapter."""
+"""Actual loaded NiceGUI version and application-owned browser update adapter."""
 import json
 import os
 from pathlib import Path
 
-from fastapi import HTTPException
 from fastapi.responses import FileResponse, JSONResponse
-from piwork_web import version
+from piwork_web import BASE, version
 
 
-def mount_frontend(app, root):
+def mount_runtime(app, root):
     root = Path(root).resolve()
     dev = os.environ.get('PIWORK_WEB_DEV') == '1'
-    loaded = version(root) if dev else json.loads(os.environ['PIWORK_WEB_RUNTIME_VERSION'])
-    loaded = {**loaded, 'ready': True}
-    dist = root / 'frontend/dist'
+    actual = version(root)
+    expected = actual if dev else json.loads(os.environ['PIWORK_WEB_RUNTIME_VERSION'])
+    if any(expected.get(key) != value for key, value in actual.items()):
+        raise RuntimeError('Application source/environment differs from its checked startup version')
+    loaded = {**actual, 'ready': True}
 
     def runtime():
-        ready = dev
-        if not dev:
-            try:
-                disk = json.loads((root / '.build/runtime.json').read_text())
-                ready = disk == loaded and (dist / 'index.html').is_file()
-            except (OSError, ValueError):
-                ready = False
-        return {**loaded, 'ready': ready, 'mode': 'development' if dev else 'static'}
+        try:
+            marker = json.loads((root / '.build/runtime.json').read_text())
+            ready = dev or marker == loaded
+        except (OSError, ValueError):
+            ready = dev
+        return {**loaded, 'ready': ready, 'mode': 'development' if dev else 'nicegui'}
 
     @app.get('/api/runtime-version')
     def runtime_version():
@@ -34,21 +33,15 @@ def mount_frontend(app, root):
         status = runtime()
         return JSONResponse(status, status_code=200 if status['ready'] else 503, headers={'Cache-Control': 'no-store'})
 
-    @app.get('/{path:path}', include_in_schema=False)
-    def frontend(path: str):
-        if path.split('/')[0] in {'api', 'pi', 'ui', 'health', 'assets'} and not path.startswith('assets/'):
-            raise HTTPException(404)
-        requested = (dist / path).resolve()
-        if not requested.is_relative_to(dist.resolve()):
-            raise HTTPException(404)
-        if path.startswith('assets/'):
-            if not requested.is_file():
-                raise HTTPException(404)
-            return FileResponse(requested, headers={'Cache-Control': 'public, max-age=31536000, immutable'})
-        if requested.is_file() and requested.name != 'index.html':
-            return FileResponse(requested)
-        if not runtime()['ready']:
-            raise HTTPException(503, 'Checked frontend is not ready')
-        return FileResponse(dist / 'index.html', headers={'Cache-Control': 'no-store'})
+    @app.get('/piwork-assets/page-client.js', include_in_schema=False)
+    def page_client():
+        return FileResponse(BASE / 'lib/page-client.js', media_type='application/javascript', headers={'Cache-Control': 'no-store'})
 
-    return loaded
+    return runtime()
+
+
+def page_head(ui, loaded):
+    # Synchronous head script installs the draft/reconnect guard before NiceGUI
+    # creates its Socket.IO client. All resources stay on the protected origin.
+    ui.add_head_html('<script>window.piworkRuntime=' + json.dumps(loaded) + ';</script>'
+                     '<script src="/piwork-assets/page-client.js?v=' + loaded['frontendVersion'] + '"></script>')
