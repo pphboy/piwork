@@ -174,7 +174,9 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
             continue;
         const anchor = record.anchor ? [...root.querySelectorAll(record.anchor)].find(shown) : null;
         const anchored = anchor?.closest('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ?? null;
-        const region = shown(anchored) ? anchored : regions.find(shown) ?? root;
+        const dialog = anchor?.closest('dialog');
+        const dialogSlot = dialog && (dialog.classList.contains('modal-create') || anchored?.matches('.modal-footer,.dialog-footer')) ? dialog.querySelector('[data-action-status-slot]') : null;
+        const region = dialogSlot || (shown(anchored) ? anchored : regions.find(shown) ?? root);
         if (!region)
             continue;
         const node = document.createElement('div');

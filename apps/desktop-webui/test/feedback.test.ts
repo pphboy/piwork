@@ -65,6 +65,25 @@ function listing(body: string, modified: string) { return `<d:multistatus xmlns:
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
+test('Create Work geometry stays stable during delayed feedback on a narrow viewport',async t=>{
+ const gate=deferred();t.after(()=>gate.resolve());
+ const {page,requests}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {status:400,json:{code:'INVALID_REQUEST',message:'A long rejected creation message '.repeat(30)}};}});
+ await page.setViewportSize({width:360,height:800});await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Long work name '.repeat(7));
+ const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(page.locator('[data-action-status]').filter({hasText:'Creating Work'})).toBeVisible();
+ const waiting=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-waiting![key])<=1,`${key} moved`);
+ await expect(page.locator('[data-action-status]').filter({hasText:'Still waiting'})).toBeVisible({timeout:12000});const longWait=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-longWait![key])<=1,`${key} moved on long wait`);
+ gate.resolve();await expect(button(page,'create-work')).toBeEnabled();const failed=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-failed![key])<=1,`${key} moved on error`);
+ assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+});
+
+test('Advanced Create Work keeps feedback visible and buttons stable when the result is unknown',async t=>{
+ const gate=deferred();t.after(()=>gate.resolve());
+ const {page,requests}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {abort:true};}});
+ await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Advanced creation');await button(page,'toggle-create-advanced').click();await page.locator('#create-agents').fill('Long advanced instructions\n'.repeat(80));
+ const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(page.locator('.create-action-status')).toContainText('Creating Work');await expect(page.locator('.create-action-status')).toBeInViewport();gate.resolve();await expect(page.locator('.create-action-status')).toContainText(/unknown|lost|not confirmed/i);
+ const after=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-after![key])<=1,`${key} moved`);await expect(button(page,'create-work')).toBeDisabled();assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);
+});
+
 for (const action of ['start', 'retry', 'stop', 'delete', 'create'] as const) test(`D02/D03 ${action}: first paint, duplicate prevention and acceptance before readback`, async t => {
   const submitting = deferred(), refreshing = deferred(); t.after(async () => { submitting.resolve(); refreshing.resolve(); });
   let armed = false, accepted = false;
