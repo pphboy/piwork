@@ -202,8 +202,21 @@ func TestOnlineOperatorUsesSeparateCredentialAndPublicOutput(t *testing.T) {
 		t.Fatal(code, body, stderr)
 	}
 
-	if code, body, stderr := invoke([]string{"status"}, ""); code != 0 || body["ready"] != true || stderr != "" {
-		t.Fatal(code, body, stderr)
+	// Updating defaults starts asynchronous preparation; status may truthfully
+	// report RECOVERING until that preparation finishes.
+	readyDeadline := time.Now().Add(5 * time.Second)
+	for {
+		code, body, stderr := invoke([]string{"status"}, "")
+		if code != 0 || stderr != "" {
+			t.Fatal(code, body, stderr)
+		}
+		if body["ready"] == true {
+			break
+		}
+		if time.Now().After(readyDeadline) {
+			t.Fatal("default preparation did not become ready", body)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if code, body, stderr := invoke([]string{"config", "show"}, ""); code != 0 || body["model"] == nil || stderr != "" {
 		t.Fatal(code, body, stderr)
