@@ -26,11 +26,11 @@ NiceGUI 页面开发或异常排查按需读取同 Skill 的 [NiceGUI Reference]
 
 空白或不可操作页面按资源结果、浏览器错误、HTTP/WebSocket、DOM、计算样式/尺寸和遮罩证据区分故障层，不直接归因为架构不兼容或默认换栈；证据不足保留未知，修复后从原入口复验。默认页面的业务 Query 失败会保留最近确认内容并提示可能陈旧，恢复后自动清除提示、重读状态，保留无关草稿与当前操作。这是原任务中的基本可用性检查，不新增视觉评分、全页面巡检或设计审批。
 
-当前源码的 1.2.2 尚不属于已发布 Core 0.0.4 固定镜像。新版本进入安装后，默认新 Work 可捕获它；已有 Work 通过原 Package Update/Apply 采用，原包、代码、数据及模型配置保持。
+Core 0.0.5 固定镜像交付脑包 1.2.2；旧 0.0.4 固定镜像继续保持原 1.2.1。新版本进入安装后，默认新 Work 可捕获它；已有 Work 通过原 Package Update/Apply 采用，原包、代码、数据及模型配置保持。
 
 ## 默认 Web 开发环境与应用交付
 
-未指定技术栈的新 Web Service 默认使用 Python + NiceGUI + SQLite 和匹配的 `pphboy/piwork-web-base`。当前 contract-2/0.2.0 base 已发布，脑包 `references/web-base.json` 使用经匿名验证的固定 tag@digest；实际发行身份见 [Core 0.0.4 发行记录](core-release-0.0.4.md)。该已发布镜像不因此包含后续 1.2.2 脑包源码变化。本地开发/验收可显式选择已验证预备镜像，不能用旧 FastAPI digest 冒充 NiceGUI。通用起点为脑包的 `templates/web-app/`，完整工作站例子为 `templates/workstation/`；用户指定其他栈或维护既有应用时沿用目标环境。镜像维护源在本仓库 `deploy/images/web-base/`，工具链、锁文件、使用与派生方式见 [Web base 手册](../deploy/images/web-base/README.zh-CN.md)。脑包只保存使用指导、模板与固定引用。
+未指定技术栈的新 Web Service 默认使用 Python + NiceGUI + SQLite 和匹配的 `pphboy/piwork-web-base`。当前 contract-2/0.2.0 base 已发布，脑包 `references/web-base.json` 使用经匿名验证的固定 tag@digest；实际发行身份见 [Core 0.0.5 发行记录](core-release-0.0.5.md)；历史 0.0.4 镜像身份保持原样。本地开发/验收可显式选择已验证预备镜像，不能用旧 FastAPI digest 冒充 NiceGUI。通用起点为脑包的 `templates/web-app/`，完整工作站例子为 `templates/workstation/`；用户指定其他栈或维护既有应用时沿用目标环境。镜像维护源在本仓库 `deploy/images/web-base/`，工具链、锁文件、使用与派生方式见 [Web base 手册](../deploy/images/web-base/README.zh-CN.md)。脑包只保存使用指导、模板与固定引用。
 
 部署 Skill 的共享初始化入口在写入 Spec、源码、锁文件和注册信息前拒绝已有应用目标，包括空目录、文件和链接。已有应用先读取实际内容再局部修改，不能重新复制模板覆盖。应用源码与可写依赖位于 `apps/<service-name>`，业务数据位于 `data/<service-name>`，普通启动、重启和环境升级均沿用这些内容。
 
