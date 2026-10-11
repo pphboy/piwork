@@ -90,3 +90,35 @@ Memory 子进程测试在真实磁盘 SQLite 的 COMMIT 前/后 SIGKILL writer�
 `check-web-base-core.mjs` 验证仅修改清单内页面辅助模块时，实际页面版本变化、自动采用一次、草稿/非根路径保留及无额外 Run/Apply；另外通过真实 SDK/MCP 安装合成依赖，核对原 Operation、应用验证 Query、断开注册表后的重启与 Stop/Export/Import/Start，以及草稿准备失败时保留输入和自动恢复。完整 brain 回路仍保留两份独立导入各自的新反馈和 SDK 候选验证。
 
 计时区分镜像准备与已预备镜像中的应用准备、启动、重启、导出导入和完整回路，记录真实输入/镜像身份、缓存条件及 workspace/快照体积；失败与不可比项保留，不用超时预算或少跑用例宣称提速。测试私网浏览器和本地 HTTP 客户端需要绕过开发机环境代理；仅对本次测试进程设置直连，不改宿主代理配置。实测记录见 [NiceGUI 默认环境验收](nicegui-default-environment-acceptance.md)。
+
+## Work 创建与启动性能验收
+
+`scripts/measure-work-latency.mjs` 使用独立临时 Core 安装、真实 production Agent 和合成模型配置；不会提交模型 Run，也不使用真实模型 Key。先完成默认镜像 / 包环境预热，再依次采样，包含第一个 Work，并单列首次 Core 准备和保留数据后的 Start。Docker 命令只用于开发夹具，Core / CLI 子进程的 PATH 为 `/nonexistent`。结束时依据本次数据目录的精确 installation ID，逐一核对并清理受管资源，不执行全局 prune。
+
+开发环境使用 Node 24、Go 1.25.5、Docker、npm 和已安装的 Playwright 浏览器。需要事先构建或取得当前兼容 production Agent，默认引用为 `piwork-agentd:go-migration-production`；`--image` 可显式指定其他已构建的 production 引用。验收 image、API 与 browser 来自同一轮固定条件；不要在测量时并行运行镜像构建或其他压力测试。
+
+```sh
+npm ci
+mkdir -p dist/go
+CGO_ENABLED=0 go build -mod=readonly -o dist/go/piwork-serve ./cmd/piwork-serve
+CGO_ENABLED=0 go build -mod=readonly -o dist/go/piwork-cli ./cmd/piwork-cli
+node scripts/measure-work-latency.mjs --mode both --samples 20 \
+  --output dist/work-latency/after.json
+```
+
+API 组与 browser 组各至少 20 个成功样本，记录所有失败 / 超预算及已完成的部分样本。参考条件是默认脑包、内置本地 MCP、Agent 1 CPU / 768 MiB、无用户 Service、无慢外部依赖、顺序执行。目标为创建接受 P95 ≤ 1 秒、接受后到后端 Ready P95 ≤ 3 秒，以及真实 Desktop 点击创建到列表 / 面板确认可用 P95 ≤ 6 秒；browser 数据来自实际页面观察，不用 API 时间或多个 P95 相加替代。现有两秒观察频率和重试规则保持。
+
+报告只保留安全的环境 / 构建元数据、P50 / P95 / 最大值、样本和允许的性能事件。`hotPathPreparation` 验证预热后完整镜像检查及环境探测增量为零；socket 单元测试另直接验证 ImageSave 调用数及同键合并。报告和本机产物置于被忽略的 `dist/`，不包含 token、Key、镜像 digest、宿主私有路径、内部 context 或会话内容。
+
+同机前后对照需在修改前保存原 Core 构建，使用同一脚本、镜像和环境运行原构建：
+
+```sh
+node scripts/measure-work-latency.mjs --core dist/work-latency/baseline/piwork-serve \
+  --mode api --samples 20 --baseline --output dist/work-latency/before-api.json
+```
+
+`--baseline` 保留全部原始样本并取消新性能预算判定；旧 Core 没有新性能事件时，准备次数为 `null`，不能把缺少事件解释为零。`--samples 1 --smoke` 仅用于入口冒烟，不是 20 样本验收。`--mode api` / `--mode browser` 可分开测量；`--cli` 指定与 Core 匹配的本机 CLI。`PIWORK_TEST_DOCKER_HOST` 可选定测试 Engine，其他生产 `PIWORK_*` 初始化值不会被夹具子进程继承。
+
+结构与恢复回归使用 `internal/preparationcache/`、`internal/dockerengine/image_cache_test.go`、`internal/coreapp/environment_cache_test.go`、`default_work_prewarm_test.go` 和 `work_latency_integration_test.go`；延迟 mTLS 监听及就绪 / 诊断计时位于 `internal/agentclient/startup_test.go` 与 `internal/workruntime/performance_test.go`。大包、外部慢 MCP、冷镜像和并发准备不混入默认时间预算，分别保留阶段事实。
+
+本次运行配置不新增环境变量、目录、端口或用户运行依赖；Docker run / Compose 仍保留现有 CLI 600 秒等待、Core readiness 预算与关闭窗口。双语 Quick Start、Core-only / 单机 Compose 模板及说明通过同一内容生成入口维护，打包自动包含新增 Go 包，无需增加运行制品。`check-docker-quickstart` 的当前源码 hash 检查是发行身份检查：修改源码后它会拒绝沿用历史发行的输入 hash。应保留已发布 `release.json`、commit、dirty 和 digest，按实际结果报告此差异；未来显式准备新发行时再生成新的候选材料，不能为本地检查通过而改写已发布制品身份。

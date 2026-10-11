@@ -324,11 +324,20 @@ func (a *Application) publishCapturedCorePackage(ctx context.Context, job corest
 				}
 			}
 			if current.AddToDefaults {
-				return corestore.AppendDefaultPackageTx(tx, prepared.Artifact.Metadata.Name, artifact.CreatedAt)
+				if err := corestore.AppendDefaultPackageTx(tx, prepared.Artifact.Metadata.Name, artifact.CreatedAt); err != nil {
+					return err
+				}
+				a.invalidateRuntimePreparation()
 			}
 			return nil
 		})
 	})
+	if job.AddToDefaults {
+		refreshErr := a.ScheduleRuntimeRefresh()
+		if err == nil {
+			err = refreshErr
+		}
+	}
 	return stage, err
 }
 

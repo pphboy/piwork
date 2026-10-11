@@ -74,6 +74,11 @@ func inspectionFixture(t *testing.T, labels map[string]string, save http.Handler
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := i.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	return i, calls, root
 }
 func nativeLabels() map[string]string {

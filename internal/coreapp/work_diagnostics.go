@@ -28,7 +28,7 @@ func (a *Application) traceOperation(ctx context.Context, operation corestore.Op
 		work = *operation.WorkID
 	}
 	correlation := decodeDiagnosticEnvelope(operation.ResultJSON, operation.ID).CorrelationID
-	return context.WithValue(ctx, traceKey{}, &operationTrace{app: a, work: work, operation: operation.ID, correlation: correlation})
+	return diagnostics.WithPerformance(context.WithValue(ctx, traceKey{}, &operationTrace{app: a, work: work, operation: operation.ID, correlation: correlation}), diagnostics.PerformanceIdentity{CorrelationID: correlation, WorkID: work, OperationID: operation.ID})
 }
 func traceFrom(ctx context.Context) *operationTrace {
 	value, _ := ctx.Value(traceKey{}).(*operationTrace)

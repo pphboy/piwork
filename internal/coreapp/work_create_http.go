@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"piwork/internal/contracts"
+	"piwork/internal/diagnostics"
 	"piwork/internal/identity"
 )
 
@@ -36,6 +37,7 @@ func (a *Application) workCreateHTTP(w http.ResponseWriter, r *http.Request, act
 	if err != nil {
 		return true, err
 	}
+	diagnostics.BindPerformance(r.Context(), accepted.WorkID, accepted.OperationID)
 	send(w, http.StatusAccepted, accepted)
 	return true, nil
 }

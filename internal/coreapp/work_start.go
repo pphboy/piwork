@@ -303,6 +303,8 @@ func (a *Application) startCapturedWork(ctx context.Context, workID string, gene
 			return zero, err
 		}
 	}
+	activationSpan := diagnostics.BeginPerformance(ctx, "activation")
+	defer func() { activationSpan.End(err) }()
 	now = time.Now().UTC().Format(time.RFC3339Nano)
 	err = a.Store.Write(ctx, func(tx *sql.Tx) error {
 		var control int64
@@ -337,6 +339,7 @@ func (a *Application) startCapturedWork(ctx context.Context, workID string, gene
 	}
 	if trace := traceFrom(ctx); trace != nil {
 		if err := trace.observe(ctx, diagnostics.Event{Component: "core", Stage: "activation", Outcome: "succeeded", Code: "WORK_OPERATION_FAILED"}); err != nil {
+			activationSpan.End(err)
 			return zero, err
 		}
 	}

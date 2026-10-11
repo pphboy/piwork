@@ -35,6 +35,7 @@ type preparationEntry struct {
 
 type preparationRequest struct {
 	generation                uint64
+	defaultRevision           int64
 	profile                   RuntimeProfile
 	configured, administrator bool
 }
@@ -175,6 +176,10 @@ func (a *Application) ScheduleRuntimeRefresh() error {
 			return err
 		}
 	}
+	defaults, err := a.Store.DefaultWork(a.ctx)
+	if err != nil {
+		return err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -186,10 +191,10 @@ func (a *Application) ScheduleRuntimeRefresh() error {
 	}
 	// Repeated in-process observation does not restart a completed or active
 	// generation. HTTP status never calls this method at all.
-	if p.started && !p.invalidated && profile.Revision == p.request.profile.Revision && configured == p.request.configured && admin == p.request.administrator {
+	if p.started && !p.invalidated && defaults.Revision == p.request.defaultRevision && profile.Revision == p.request.profile.Revision && configured == p.request.configured && admin == p.request.administrator {
 		return nil
 	}
-	p.request = preparationRequest{generation: p.request.generation + 1, profile: profile, configured: configured, administrator: admin}
+	p.request = preparationRequest{generation: p.request.generation + 1, defaultRevision: defaults.Revision, profile: profile, configured: configured, administrator: admin}
 	p.invalidated = false
 	if p.cancel != nil {
 		p.cancel()
@@ -260,6 +265,7 @@ func (p *runtimePreparation) loop() {
 		ctx, cancel := context.WithCancel(p.app.ctx)
 		ctx = context.WithValue(ctx, preparationGenerationKey{}, request.generation)
 		ctx = context.WithValue(ctx, preparationRevisionKey{}, request.profile.Revision)
+		ctx = context.WithValue(ctx, preparationDefaultKey{}, request.defaultRevision)
 		p.cancel = cancel
 		done = make(chan struct{})
 		p.app.mu.Unlock()
@@ -269,6 +275,7 @@ func (p *runtimePreparation) loop() {
 
 type preparationGenerationKey struct{}
 type preparationRevisionKey struct{}
+type preparationDefaultKey struct{}
 
 func (p *runtimePreparation) currentLocked(ctx context.Context) bool {
 	generation, _ := ctx.Value(preparationGenerationKey{}).(uint64)
@@ -502,18 +509,26 @@ func (a *Application) prepareDefaultContext(ctx context.Context, profile Runtime
 	if err := a.Store.SyncDefaultWorkRuntime(ctx, profile.Revision, runtimeImageCatalogID(profile.Revision), runtimeModelCatalogID(profile.Revision), defaultWorkConfiguration(profile)); err != nil {
 		return err
 	}
+	if err := a.prewarmDefaultWork(ctx, profile); err != nil {
+		return err
+	}
 	if a.dockerRuntime != nil {
 		if err := a.resumeRetainedVolumePurges(ctx); err != nil {
 			return err
 		}
 	}
+	var err error
 	if a.options.Recover != nil {
-		return a.options.Recover(ctx, a)
+		err = a.options.Recover(ctx, a)
+	} else if a.workRuntime != nil {
+		err = a.recoverCapturedWorks(ctx)
+	} else {
+		err = a.emptyRecovery(ctx)
 	}
-	if a.workRuntime != nil {
-		return a.recoverCapturedWorks(ctx)
+	if err != nil {
+		return err
 	}
-	return a.emptyRecovery(ctx)
+	return a.confirmDefaultPreparationRevision(ctx)
 }
 
 // Merge pulls for an exact reference within a runtime revision. Success retains

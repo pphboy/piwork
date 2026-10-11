@@ -14,6 +14,8 @@ Obtain this directory’s `docker-compose.yml` and run from its directory. No cl
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 ```
 
+Core readiness includes preparation and recovery of the current default Work runtime. After changing the default image or package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.
+
 Open CLI; repeat only this command to return, without initialization inputs. If Core is absent or unready, CLI waits up to 600 seconds and fails safely without starting Core:
 
 ```sh

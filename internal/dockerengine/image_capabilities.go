@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"piwork/internal/imagestatic"
+	"piwork/internal/preparationcache"
 	"piwork/internal/safefs"
 )
 
@@ -25,6 +26,21 @@ type ImageInspector struct {
 	prefix   string
 	gate     chan struct{}
 	registry InspectionRegistry
+	cache    *preparationcache.Cache[imageInspectionKey, imagestatic.Capabilities]
+}
+
+type imageInspectionKey struct {
+	imageID, kind string
+	version       int
+}
+
+func cloneCapabilities(value imagestatic.Capabilities) imagestatic.Capabilities {
+	if value.Environment != nil {
+		environment := *value.Environment
+		environment.Variant = append([]byte(nil), environment.Variant...)
+		value.Environment = &environment
+	}
+	return value
 }
 
 type InspectionRegistry interface {
@@ -35,6 +51,11 @@ type InspectionRegistry interface {
 }
 
 func NewImageInspector(ctx context.Context, engine *Engine, root *safefs.Root, registry InspectionRegistry) (*ImageInspector, error) {
+	return NewImageInspectorWithLifecycle(ctx, ctx, engine, root, registry)
+}
+
+// lifecycle must be Core's lifetime, never a single preparation attempt.
+func NewImageInspectorWithLifecycle(ctx, lifecycle context.Context, engine *Engine, root *safefs.Root, registry InspectionRegistry) (*ImageInspector, error) {
 	if registry == nil {
 		return nil, ErrSpecification
 	}
@@ -50,7 +71,40 @@ func NewImageInspector(ctx context.Context, engine *Engine, root *safefs.Root, r
 	if err := registry.RecoverImageInspections(ctx); err != nil {
 		return nil, ErrInspectionStorage
 	}
-	return &ImageInspector{engine: engine, root: root, prefix: prefix, gate: make(chan struct{}, 1), registry: registry}, nil
+	return &ImageInspector{engine: engine, root: root, prefix: prefix, gate: make(chan struct{}, 1), registry: registry,
+		cache: preparationcache.New[imageInspectionKey](lifecycle, preparationcache.Options[imagestatic.Capabilities]{Clone: cloneCapabilities, Phase: "image-inspection"})}, nil
+}
+
+func (i *ImageInspector) Close(ctx context.Context) error {
+	if err := i.cache.Close(ctx); err != nil {
+		return err
+	}
+	// All anonymous fds have been closed. Settle any metadata cleanup whose
+	// response failed earlier; no active inspection can be erased here.
+	if ctx.Err() == nil {
+		if err := i.root.RecoverAnonymousPlaceholders(i.prefix); err != nil {
+			return ErrInspectionStorage
+		}
+		if err := i.registry.RecoverImageInspections(ctx); err != nil {
+			return ErrInspectionStorage
+		}
+	}
+	return nil
+}
+
+func (i *ImageInspector) InspectionsActive() bool { return i.cache.Stats().Flights != 0 }
+
+func (i *ImageInspector) PreparationStats() preparationcache.Stats { return i.cache.Stats() }
+
+func (i *ImageInspector) PinAgentImages(ids ...string) error {
+	keys := make([]imageInspectionKey, 0, len(ids))
+	for _, id := range ids {
+		if !imageIDPattern.MatchString(id) {
+			return ErrSpecification
+		}
+		keys = append(keys, imageInspectionKey{id, "agent", 1})
+	}
+	return i.cache.Pin(keys...)
 }
 func (i *ImageInspector) InspectNativeAgent(ctx context.Context, imageID string) (result imagestatic.Capabilities, returned error) {
 	return i.inspectNative(ctx, imageID, "agent")
@@ -68,6 +122,41 @@ func (i *ImageInspector) inspectNative(ctx context.Context, imageID, kind string
 	if err := ctx.Err(); err != nil {
 		return imagestatic.Capabilities{}, err
 	}
+	key := imageInspectionKey{imageID, kind, 1}
+	image, err := i.engine.InspectImage(ctx, imageID)
+	if err != nil {
+		if errors.Is(err, ErrResourceMissing) || errors.Is(err, ErrSpecification) {
+			i.cache.Invalidate(key)
+		}
+		return result, err
+	}
+	if !nativeLabelsCompatible(image, kind) {
+		i.cache.Invalidate(key)
+		return result, ErrImageIncompatible
+	}
+	result, err = i.cache.Get(ctx, key, func(shared context.Context) (imagestatic.Capabilities, error) {
+		return i.inspectNativeUncached(shared, imageID, kind)
+	})
+	if err == nil && (result.Identity.ID != image.ID || result.Identity.OS != image.OS || result.Identity.Architecture != image.Architecture || result.Identity.Variant != image.Variant) {
+		i.cache.Invalidate(key)
+		return imagestatic.Capabilities{}, ErrImageIncompatible
+	}
+	return result, err
+}
+
+func nativeLabelsCompatible(image PreparedImage, kind string) bool {
+	switch kind {
+	case "agent":
+		return image.Labels["io.piwork.agent.protocol"] == "v2" && image.Labels["io.piwork.package-helper.contract"] == "2" && image.Labels["io.piwork.service-mcp.contract"] == "1"
+	case "file":
+		return image.Labels["piwork.file_protocol"] == "1"
+	case "snapshot":
+		return image.Labels["piwork.snapshot_protocol"] == "1"
+	}
+	return false
+}
+
+func (i *ImageInspector) inspectNativeUncached(ctx context.Context, imageID, kind string) (result imagestatic.Capabilities, returned error) {
 	// Serialize the large archive scratch allocation. Waiting is cancellable.
 	select {
 	case <-ctx.Done():
@@ -82,7 +171,7 @@ func (i *ImageInspector) inspectNative(ctx context.Context, imageID, kind string
 	if err != nil {
 		return imagestatic.Capabilities{}, err
 	}
-	if kind == "agent" && (image.Labels["io.piwork.agent.protocol"] != "v2" || image.Labels["io.piwork.package-helper.contract"] != "2" || image.Labels["io.piwork.service-mcp.contract"] != "1") || kind == "file" && image.Labels["piwork.file_protocol"] != "1" || kind == "snapshot" && image.Labels["piwork.snapshot_protocol"] != "1" {
+	if !nativeLabelsCompatible(image, kind) {
 		return imagestatic.Capabilities{}, ErrImageIncompatible
 	}
 	var nonce [16]byte

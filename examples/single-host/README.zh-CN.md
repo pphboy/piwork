@@ -14,6 +14,8 @@
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 ```
 
+Core 就绪包括当前默认 Work 运行环境的准备和恢复。修改默认镜像或包选择后，创建 Work 前再次确认就绪；配置保存成功不表示后台准备已经结束。首次准备与普通创建的等待时间分别计算。
+
 打开 CLI；以后重新进入只需这一条命令，无需初始化变量。Core 不存在或未就绪时，CLI 等待至多 600 秒后安全失败，不自动启动 Core：
 
 ```sh
