@@ -38,7 +38,7 @@ Enable the Work agent to turn user-requested persistent applications into Core-m
 
 **Identifier:** ADEP-002
 
-脑包默认认知 SHALL 将 Service 开发细节路由到现有部署 Skill 与 Reference；部署 Skill SHALL 指导 Pi 查询 deployment_context 确认 workspace、工具和配额，将代码放在 apps/<service-name>、业务数据放在 data/<service-name>，对未指定技术栈的新 Web Service 默认使用 WEBBASE-001 至 WEBBASE-007 的已发布固定 Web 基础镜像及匹配模板、固定可复现依赖准备、监听 0.0.0.0 并解析 Work 私网端点。Pi SHALL 显式更新匹配服务、使用稳定 mutation 键和预期定义版本、查询持久 Operation、失败及日志，并从 agentd 验证实际应用后才报告成功。
+脑包默认认知 SHALL 将 Service 开发细节路由到现有部署 Skill 与 Reference；部署 Skill SHALL 指导 Pi 查询 deployment_context 确认 workspace、工具和配额，将代码放在 apps/<service-name>、业务数据放在 data/<service-name>，对未指定技术栈的新 Web Service 默认使用 WEBBASE-001 至 WEBBASE-009 的 NiceGUI 基础镜像及匹配模板，直接复用标准环境并固定可复现地准备额外 Python 依赖。正式默认 SHALL 使用已发布固定引用，本地验收显式选择已验证预备镜像；应用 SHALL 监听 0.0.0.0 并通过 Work 私网端点验证。Pi SHALL 显式更新匹配服务、使用稳定 mutation 键和预期定义版本、查询持久 Operation、失败及日志，并从 agentd 验证实际应用后才报告成功。
 
 创建或修改持久且由 Pi 开发维护的 Service 之前，Pi SHALL 自动先维护 apps/<service-name>/SPEC.md 的必要设计，包含 Intent、Objects、State、Business Flow、Agent-operable Capabilities、Implementation Map 和 Acceptance Criteria。首次创建形成最小文档；已有 Service 先读当前 Spec 与受影响代码，仅更新相关条目与实现坐标；缺失旧 Spec 时根据真实代码和用户目标补齐最小依据后再改实现，不要求用户补文档。不因普通 Query / Action 操作改 Spec 或启动开发测试。
 
@@ -46,21 +46,21 @@ Enable the Work agent to turn user-requested persistent applications into Core-m
 
 实现 SHALL 使用现有项目测试验证相关 Acceptance Criteria，并读取实际 Service 状态与 Evidence；UI 与 Agent 业务入口复用同一业务逻辑与权威状态。失败保留真实结果，能自主修复时采用有界最小修复，受自动目标原预算约束，不通过删除失败用例或降低验收条件冒充通过。修改文件、Spec 和测试/业务结果 SHALL 通过原有 SDK 工具记录、Files、请求/Evidence 与 Chat/CLI 结果可查，不新增开发账本或 Eval 引擎，不要求额外人工 Spec/Plan/Eval 审批。
 
-Pi 开发维护的 Service SHALL 同时完成 WAF-001 至 WAF-009 的状态查询、Action/Job、必要 Event、反馈请求和验证路径；不能把观测及自动反馈留作下一阶段。第三方代码遵循 BRN-002 的外部观察范围。Service 代码修改 SHALL 保留恢复依据，代码/配置恢复与业务数据补偿分开。未指定技术栈的新 Web Service SHALL 默认采用 FastAPI + React + TypeScript + Vite；用户显式指定其他语言/框架、维护已有应用或部署第三方软件时沿用目标环境，不强制转换。当前默认模板和指导不得依赖 NiceGUI。
+Pi 开发维护的 Service SHALL 同时完成 WAF-001 至 WAF-009 的状态查询、Action/Job、必要 Event、反馈请求和验证路径；不能把观测及自动反馈留作下一阶段。第三方代码遵循 BRN-002 的外部观察范围。Service 代码修改 SHALL 保留恢复依据，代码/配置恢复与业务数据补偿分开。未指定技术栈的新 Web Service SHALL 默认采用 Python + NiceGUI + SQLite；用户显式指定其他语言/框架、维护已有应用或部署第三方软件时沿用目标环境，不强制转换。当前默认模板和指导 SHALL 不要求独立 React/Vite 工程、npm 准备或前端构建。
 
 Skill SHALL 区分进程 readiness 与应用可用、Stop Service 的持久禁用与 Stop Work，并解释共享存储和可复现启动。agentd 内后台进程、Skill 加载或 create 接受不得被当作成功持久部署，修复不得清除共享业务数据。
 
-应用代码/配置修改后，Skill SHALL 指导 Pi 自动执行必要 checks/build 与 Service update/restart，等待原 Operation 并核对实际运行 codeVersion 及受影响业务结果；不把保存文件或用户手动刷新当作部署步骤。默认模板 SHALL 按 WEBBASE-007 支持开发热更新及部署后的页面自动采用，保留支持恢复的草稿和路径；默认运行模式不得因逐个中间文件写入就发布未经检查的版本。刷新不新增模型 Run、不替代业务 Evidence、不绕过脑包显式 Apply。
+应用代码/配置修改后，Skill SHALL 指导 Pi 自动执行当前 Python/依赖环境的必要检查与 Service update/restart，等待原 Operation 并核对实际运行 codeVersion 及受影响业务结果；不把保存文件或用户手动刷新当作部署步骤。默认 NiceGUI 模板 SHALL 按 WEBBASE-007 支持开发重载及部署后的页面自动采用，保留支持恢复的草稿和路径；默认运行模式不得因逐个中间文件写入就发布未经检查的版本。刷新不新增模型 Run、不替代业务 Evidence、不绕过脑包显式 Apply。
 
-Skill SHALL 说明 sqlite3 CLI 在 Agent/base 的执行位置以及仓库 `deploy/images/web-base/` 的维护职责。AI 可在已有授权 bash 中执行实际 sqlite3 做获准数据开发/诊断；普通业务操作沿原 Action/Query，不把 Service 有命令误当 Agent 有命令，也不要求宿主安装 sqlite3。
+Skill SHALL 说明 sqlite3 CLI 在 Agent/base 的执行位置以及仓库 `deploy/images/web-base/` 的维护职责。AI 可在已有授权 bash 中执行实际 sqlite3 做获准数据开发/诊断；普通业务操作沿原 Action/Query，不把 Service 有命令误当 Agent 有命令，也不要求宿主安装 sqlite3。额外 Python 包 SHALL 按 WEBBASE-008 在 Service base 中安装到获准 workspace，支持明确的联网准备、精确锁定、离线材料保留与后续复用；准备失败不替换原有效依赖。部署 Skill SHALL 说明 Agent bash 与 Service Python/pip 的执行位置，沿现有 Service 定义、命令和 Operation 完成准备，不要求 Docker exec/build、新增平台脚本工具或扩大权限。
 
 #### Scenario: User requests persistence
 - **WHEN** 用户要求工作站在 Work 重启后持续使用
 - **THEN** Pi 通过 SDK/MCP 完成代码与数据落地、服务部署和业务交互验证，状态与反馈路径一起交付
 
 #### Scenario: Dependencies need installation
-- **WHEN** 应用依赖不在已有镜像中
-- **THEN** 使用 workspace 中固定可复现安装/启动流程或明确失败，不要求运行中的 Pi 构建镜像
+- **WHEN** 应用需要一个 base 未预装的兼容 Python 包
+- **THEN** Pi 通过现有 Service 命令完成明确安装、锁定及应用使用验证，workspace 保留离线材料，重启复用；失败保留原有效环境，不要求运行中的 Pi 构建镜像
 
 #### Scenario: Tools are unavailable
 - **WHEN** MCP 被移除、部署/业务工具被 deny 或脑包必要能力不可用
@@ -84,7 +84,7 @@ Skill SHALL 说明 sqlite3 CLI 在 Agent/base 的执行位置以及仓库 `deplo
 
 #### Scenario: 默认环境直接开发 Web 应用
 - **WHEN** 用户未指定技术栈，要求 Pi 开发一个新的 Web Service
-- **THEN** Pi 使用固定 Web 基础镜像和匹配模板，通过原 SDK/MCP 部署并实际验证，无需用户逐个决定环境或在 Work 内构建镜像
+- **THEN** Pi 使用匹配 NiceGUI 环境的固定基础镜像和模板，通过原 SDK/MCP 部署并实际验证，无需安装标准依赖、准备独立前端构建或在 Work 内构建镜像
 
 #### Scenario: 用户指定另一环境
 - **WHEN** 用户明确要求其他技术栈或修改已有非默认应用
@@ -92,11 +92,15 @@ Skill SHALL 说明 sqlite3 CLI 在 Agent/base 的执行位置以及仓库 `deplo
 
 #### Scenario: 修改后无需用户手动刷新
 - **WHEN** Pi 改变默认应用的前端或后端，用户保持业务页面打开
-- **THEN** Pi 自动完成必要构建/部署并查询新的运行版本，页面自动采用新效果，用户不需重启或刷新
+- **THEN** Pi 自动完成必要 Python 检查/部署并查询新的实际运行版本，NiceGUI 页面自动采用新效果，用户不需重启或刷新
 
 #### Scenario: 数据检查命令在正确容器执行
 - **WHEN** 获准任务需要用 sqlite3 检查 workspace 的合成或应用数据库
 - **THEN** Pi 在 Agent 的现有 bash 中执行实际命令并核对结果，不尝试 Docker exec 或临时安装，业务状态修改仍遵守原契约
+
+#### Scenario: 依赖准备失败不冒充交付
+- **WHEN** 新包下载、解析或安装失败，或与 base 锁定依赖冲突
+- **THEN** Pi 查询原 Service Operation 和安全日志，报告真实失败并保留原有效环境及业务数据，不以文件存在或准备已接受代替应用验证
 
 ### Requirement: Prove deployment with real SDK MCP containers and retained files
 
