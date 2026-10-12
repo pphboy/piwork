@@ -59,6 +59,7 @@ test-go:
 	go test -mod=readonly ./...
 
 test: build test-go
+	node scripts/check-repository-docs.mjs
 	node --test scripts/*.test.mjs
 	npm run test:unit -w @piwork/contracts -w @piwork/pi-package -w @piwork/work-store -w @piwork/pi-adapter -w @piwork/agentd
 	npm run typecheck -w @piwork/desktop-webui -w @piwork/console-webui

@@ -1,0 +1,57 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile, mkdtemp, mkdir, writeFile, rm, copyFile, rename } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { reconcileScenarioEvidence, updateAcceptanceIndex, acceptanceInputPaths } from './update-go-acceptance-index.mjs';
+const run = promisify(execFile);
+const inputs = acceptanceInputPaths(fileURLToPath(new URL('../', import.meta.url)));
+const matrix = await readFile(inputs.matrix, 'utf8');
+const frozen = JSON.parse(await readFile(inputs.frozen, 'utf8'));
+test('reconciliation retains evidence and rejects unreviewed changes without upgrading pending records', () => {
+  assert.deepEqual(reconcileScenarioEvidence(matrix, frozen), frozen);
+  const pending = structuredClone(frozen); pending[0].status = '未验证';
+  assert.equal(reconcileScenarioEvidence(matrix, pending)[0].status, '未验证');
+  assert.equal(reconcileScenarioEvidence(matrix, [])[0].status, '未验证');
+  const changed = structuredClone(frozen); changed[0].scenario += 'changed';
+  assert.throws(() => reconcileScenarioEvidence(matrix, changed), /Scenario changed/);
+  assert.throws(() => reconcileScenarioEvidence(matrix, [...frozen, frozen[0]]), /Duplicate historical/);
+  const falsePass = structuredClone(frozen); falsePass[0].results = [];
+  assert.throws(() => reconcileScenarioEvidence(matrix, falsePass), /No evidence/);
+  assert.throws(() => reconcileScenarioEvidence(matrix, [...frozen, { ...frozen[0], id: 'unknown/original' }]), /evidence lost/);
+  assert.throws(() => reconcileScenarioEvidence('', frozen), /matrix count/);
+});
+test('default output leaves frozen files unchanged and both generators work without root docs', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'piwork-evidence-')); t.after(() => rm(base, { recursive: true, force: true }));
+  const matrixPath = 'openspec/changes/go-core-cli-migration/verification-matrix.md';
+  const frozenEvidencePath = 'openspec/changes/go-core-cli-migration/evidence/legacy-docs/go-migration-scenarios.json';
+  for (const [name, body] of [[matrixPath, matrix], [frozenEvidencePath, JSON.stringify(frozen)], ['package.json', '{"devDependencies":{}}'], ['apps/agentd/package.json', '{"name":"@piwork/agentd"}'], ['apps/agentd/index.ts', 'export const fixture=1;']]) {
+    await mkdir(dirname(join(base, name)), { recursive: true }); await writeFile(join(base, name), body);
+  }
+  await mkdir(join(base, 'packages')); await mkdir(join(base, 'scripts'));
+  await copyFile(new URL('./collect-go-migration-boundary.mjs', import.meta.url), join(base, 'scripts/collect-go-migration-boundary.mjs'));
+  await copyFile(new URL('./update-go-acceptance-index.mjs', import.meta.url), join(base, 'scripts/update-go-acceptance-index.mjs'));
+  await copyFile(new URL('./check-go-acceptance.mjs', import.meta.url), join(base, 'scripts/check-go-acceptance.mjs'));
+  await copyFile(new URL('./resolve-change-artifact.mjs', import.meta.url), join(base, 'scripts/resolve-change-artifact.mjs'));
+  const original = await readFile(join(base, frozenEvidencePath));
+  const offlineCheck = await run(process.execPath, ['scripts/check-go-acceptance.mjs'], { cwd: base });
+  assert.match(offlineCheck.stdout, /970 acceptance scenarios/);
+  await updateAcceptanceIndex(base);
+  await run(process.execPath, ['scripts/collect-go-migration-boundary.mjs'], { cwd: base });
+  assert.deepEqual(await readFile(join(base, frozenEvidencePath)), original);
+  assert.equal(JSON.parse(await readFile(join(base, 'dist/verification/go-migration-scenarios.json'))).length, 970);
+  assert.equal(JSON.parse(await readFile(join(base, 'dist/verification/go-migration-boundary.json'))).modules.length, 1);
+  await assert.rejects(readFile(join(base, 'docs/go-migration-scenarios.json')), { code: 'ENOENT' });
+  await mkdir(join(base, 'openspec/changes/archive'));
+  await rename(join(base, 'openspec/changes/go-core-cli-migration'), join(base, 'openspec/changes/archive/2026-10-12-go-core-cli-migration'));
+  await rm(join(base, 'dist/verification/go-migration-scenarios.json'));
+  assert.match((await run(process.execPath, ['scripts/check-go-acceptance.mjs'], { cwd: base })).stdout, /970 acceptance scenarios/);
+  await updateAcceptanceIndex(base);
+  const archived = acceptanceInputPaths(base);
+  assert.deepEqual(await readFile(archived.frozen), original);
+  assert.match(await readFile(join(base, 'dist/verification/go-migration-acceptance.md'), 'utf8'), /archive\/2026-10-12-go-core-cli-migration/);
+  await assert.rejects(readFile(join(base, frozenEvidencePath)), { code: 'ENOENT' });
+});

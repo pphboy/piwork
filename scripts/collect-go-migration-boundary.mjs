@@ -1,6 +1,6 @@
 // Development inventory: declarations plus direct static/dynamic consumers.
 // Final release checks also compile remaining consumers and inspect images.
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, relative, dirname } from "node:path";
 const root = resolve(import.meta.dirname,"..");
 async function walk(directory) {
@@ -71,5 +71,6 @@ const inventory = {baseline:"23870cfbec6ad88a60eea008f9c5f106410c3fb5",state:"�
   browserAssets:all.filter(x => /apps\/(?:desktop-webui|console-webui)\/.*\.(?:html|css|svg)$/.test(x)).map(x => relative(root,x)).sort(),
   devTools:JSON.parse(await readFile(`${root}/package.json`,"utf8")).devDependencies,
   dependencyNotes:["Agent 镜像 Node/npm/Git、Pi SDK、grpc-js、MCP TS SDK、typebox/zod/semver 保留其实际消费者闭包", "pi-package 的 ZIP/source/upload I/O 与 yauzl/yazl 已删除；limits 属于共享核验常量", "宿主三个入口和镜像内四个辅助程序均为 Go；前端编译、proto 生成、测试 runner 为开发依赖", "work-store store/migrations、完整 Agent RPC/readiness/drain/Session/Run/MCP 客户端保留 TS", "用户 Service/Pi 包/workspace 中的 TS/其他语言不纳入平台删除检查"]};
-await writeFile(`${root}/docs/go-migration-boundary.json`,`${JSON.stringify(inventory,null,2)}\n`);
+await mkdir(`${root}/dist/verification`, {recursive:true});
+await writeFile(`${root}/dist/verification/go-migration-boundary.json`,`${JSON.stringify(inventory,null,2)}\n`);
 console.log(`Collected ${modules.length} source modules, ${modules.reduce((n,m) => n+m.exports.length,0)} declared exports and seven Go programs.`);

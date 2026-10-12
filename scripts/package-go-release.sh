@@ -9,7 +9,7 @@ release_root="dist/release"
 release_stage="$release_root/$release_name"
 mkdir -p "$release_root"
 rm -rf "$release_stage"
-mkdir -p "$release_stage/bin" "$release_stage/docs"
+mkdir -p "$release_stage/bin"
 
 for release_asset in \
   internal/desktopassets/static/browser/app.js \
@@ -83,9 +83,7 @@ done
 test "$(wc -l < "$release_stage/image-programs.ndjson")" -eq 6
 test "$(rg -c "$release_commit" "$release_stage/image-programs.ndjson")" -eq 6
 
-cp README.md "$release_stage/README.md"
-cp docs/*.md "$release_stage/docs/"
-cp docs/go-migration-scenarios.json "$release_stage/docs/"
+node scripts/stage-go-release-materials.mjs "$release_stage" "$release_commit"
 (
   cd "$release_stage"
   find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS

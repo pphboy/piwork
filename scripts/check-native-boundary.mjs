@@ -33,8 +33,7 @@ for (const root of ['apps', 'packages']) {
   }
 }
 
-// Exact historical evidence files are read-only records, not current entry points.
-const historical = new Set(['docs/go-migration-acceptance.md','docs/go-migration-final-report.md','docs/go-migration-scenarios.json','docs/go-migration-boundary.json','docs/go-migration-ui-review.md','docs/ui-prototypes/workspace-shell.html']);
+// Historical change evidence is outside the current source/spec scan.
 const forbiddenImports = /@piwork\/(?:core-store|runtime-docker|client-sdk|work-package|core|cli|console|file-helper|snapshot-helper|service-mcp|package-helper)(?=[\s/\"'`]|$)|(?:apps\/(?:core|cli|console|file-helper|snapshot-helper|service-mcp|package-helper)|packages\/(?:core-store|runtime-docker|client-sdk|work-package))(?:[\/"'`\s]|$)|Dockerfile\.(?:file-helper|snapshot-helper)(?!\.native)\b/;
 async function scan(directory) {
   for (const item of await readdir(directory, { withFileTypes: true })) {
@@ -42,12 +41,12 @@ async function scan(directory) {
     const path = join(directory, item.name);
     if (item.isDirectory()) { await scan(path); continue; }
     // Exclude only this rule-bearing file and its injected-fixture test.
-    if (path==='scripts/check-native-boundary.mjs'||path==='scripts/check-native-boundary.test.mjs'||historical.has(path))continue;
+    if (path==='scripts/check-native-boundary.mjs'||path==='scripts/check-native-boundary.test.mjs')continue;
     if (!/\.(?:ts|mjs|js|json|yaml|yml|toml|md|html|sh)$/.test(path) && !/^(?:Dockerfile[^/]*|Makefile)$/.test(item.name)) continue;
     if (forbiddenImports.test(await readFile(path, 'utf8'))) throw new Error(`Legacy platform reference: ${path}`);
   }
 }
-for (const directory of ['apps','packages','scripts','docs','.github']) {
+for (const directory of ['apps','packages','scripts','openspec/specs','deploy','examples','.github']) {
  if (await stat(directory).then(()=>true,()=>false))await scan(directory);
 }
 for(const item of await readdir('.',{withFileTypes:true})) {
@@ -56,4 +55,8 @@ for(const item of await readdir('.',{withFileTypes:true})) {
  if(!item.isFile()|| !(/\.(?:json|yaml|yml|toml|sh)$/.test(item.name)||/^(?:Dockerfile[^/]*|Makefile)$/.test(item.name)))continue;
  if(forbiddenImports.test(await readFile(item.name,'utf8')))throw new Error(`Legacy platform reference: ${item.name}`);
 }
-console.log('Current sources, scripts, build/runtime configuration, locks and docs use native Go platform entry points.');
+for (const name of ['README.md','README.zh-CN.md','AGENTS.md']) {
+ const source=await readFile(name,'utf8').catch(error=>{if(error.code==='ENOENT')return '';throw error;});
+ if(forbiddenImports.test(source))throw new Error(`Legacy platform reference: ${name}`);
+}
+console.log('Current sources, scripts, configuration, locks and main specs use native Go platform entry points.');
