@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/piwork-logo.png" alt="Piwork 标志" width="160" height="160">
+  <img src="apps/ui-shared/assets/piwork-logo.png" alt="Piwork 标志" width="160" height="160">
 </p>
 
 # Piwork
@@ -29,7 +29,7 @@ flowchart LR
     Harness --> Model[Model Provider]
 ```
 
-Core 负责资源管理与控制，Harness 执行模型和工具，Service 提供应用，工作文件保存在 Work 的共享卷中。运行和数据边界见 [Core 运维](docs/operations.md)；实现与目录约定见 [AGENTS.md](AGENTS.md)。
+Core 负责资源管理与控制，Harness 执行模型和工具，Service 提供应用，工作文件保存在 Work 的共享卷中。运行和数据边界见 [Core 运维](openspec/specs/core-service-startup/spec.md)；实现与目录约定见 [AGENTS.md](AGENTS.md)。
 
 ## Problem
 
@@ -47,21 +47,21 @@ Core 负责资源管理与控制，Harness 执行模型和工具，Service 提�
 
 当前源码对新应用 Service 默认采用 Python + NiceGUI + SQLite，预装标准依赖并支持追加 Python 包。NiceGUI base 已取得匿名验证的固定发行引用；平台 Docker 引用保留各自记录的发行身份。源码、维护、依赖安装、sqlite3 及应用自动更新见 [Web base 手册](deploy/images/web-base/README.zh-CN.md)。
 
-Core 0.0.5 内置 piwork-brain 1.2.2，并采用已发布的 NiceGUI 默认环境。[发行记录](docs/core-release-0.0.5.md)列出固定身份、采用行为和验证范围。
+Core 0.0.5 内置 piwork-brain 1.2.2，并采用已发布的 NiceGUI 默认环境。[发行记录](deploy/docker/releases/0.0.5-c3e361a44a6b-f327ba4d903f.json)列出已发布镜像的固定身份。
 
-0.0.5 内置 piwork-brain 1.2.2，新增独立 `application-awareness` Skill，承载产品、UI/UX、状态同步与工程取舍认知。Brain 直接路由应用开发任务，部署 Skill 保持平级职责，不增加设计或审批阶段。NiceGUI 专项指导按需读取；页面验证使用实际 Desktop Service 入口及可用、获准的浏览器，后端就绪不替代界面可用，浏览器访问能力不足时明确说明。加载与采用见 [Brain 说明](docs/piwork-brain.md#应用认知与实际加载)。
+0.0.5 内置 piwork-brain 1.2.2，新增独立 `application-awareness` Skill，承载产品、UI/UX、状态同步与工程取舍认知。Brain 直接路由应用开发任务，部署 Skill 保持平级职责，不增加设计或审批阶段。NiceGUI 专项指导按需读取；页面验证使用实际 Desktop Service 入口及可用、获准的浏览器，后端就绪不替代界面可用，浏览器访问能力不足时明确说明。加载与采用见 [Brain 说明](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包)。
 
-0.0.5 复用成功的镜像检查与包环境探测，并在 Core 就绪前准备默认 Work 环境。构建与测量入口见[性能验收](docs/testing.md#work-创建与启动性能验收)。
+0.0.5 复用成功的镜像检查与包环境探测，并在 Core 就绪前准备默认 Work 环境。源码构建与检查见[构建与验证入口](AGENTS.md#构建与验证)。
 
-默认模板自动采用成功部署的更新，并保留支持恢复的草稿与路径。应用 Service 不设置 Piwork 内存上限；CPU/数量限制和 Agent/helper 内存政策仍有效。既有 Work 通过显式 Update/Apply 采用新包与 Agent 镜像。详见[官网指南](https://pphboy.github.io/piwork/zh/guide/web-development.html)和 [Brain 工作流程](docs/piwork-brain.md)。
+默认模板自动采用成功部署的更新，并保留支持恢复的草稿与路径。应用 Service 不设置 Piwork 内存上限；CPU/数量限制和 Agent/helper 内存政策仍有效。既有 Work 通过显式 Update/Apply 采用新包与 Agent 镜像。详见[官网指南](https://pphboy.github.io/piwork/zh/guide/web-development.html)和 [Brain 工作流程](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包)。
 
 ## Demo GIF / Video
 
-![Piwork Desktop](docs/images/desktop-preview.png)
+![Piwork Desktop](apps/ui-shared/assets/desktop-preview.png)
 
 Desktop 聊天界面的预览截图，来自界面验证 fixture。
 
-0.0.5 的 Chat 支持粘贴、拖拽或选择图片，也可只发送图片。**About Piwork** 分别显示 Desktop/Core 版本及内置更新日志，并提供完整 Releases 链接。需要匹配的 Desktop、Core 和 Agent；已知限制和图片限额见 [Desktop 使用说明](docs/desktop-webui.md)。
+0.0.5 的 Chat 支持粘贴、拖拽或选择图片，也可只发送图片。**About Piwork** 分别显示 Desktop/Core 版本及内置更新日志，并提供完整 Releases 链接。需要匹配的 Desktop、Core 和 Agent；已知限制和图片限额见 [Desktop 使用说明](openspec/specs/desktop-webui/spec.md)。
 
 ## Quick Start
 
@@ -147,15 +147,15 @@ Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 
 ./piwork-cli chat WORK_ID --message 'Hello, Piwork!'
 ```
 
-更多命令见[用户 CLI 手册](docs/user-cli.md)，平台说明见 [CLI 平台交付](docs/cli-platforms.md)。
+更多命令见[用户 CLI 手册](openspec/specs/control-cli/spec.md)，平台说明见 [CLI 平台交付](openspec/specs/control-cli/spec.md)。
 
 <!-- native-quickstart:end -->
 
 </details>
 
-从源码部署 Core 见 [Core 启动与初始化](docs/operations.md#从源码启动)；管理员入口见 [Console 手册](docs/serve-console.md)。
+从源码部署 Core 见 [Core 启动与初始化](openspec/specs/core-service-startup/spec.md)；管理员入口见 [Console 手册](openspec/specs/serve-control-plane/spec.md)。
 
-可在 Console **AI models** 直接添加 Responses / Messages 模型，无需 Provider 或能力 JSON 配置，执行独立 HTTP Test 并管理生命周期；Work Chat 保留模型和 Thinking 选择。此流程需要配套的当前 Core、Console、Agent 与 CLI；旧 Work 采用兼容 Agent 仍须显式 Apply。见 [AI 模型](docs/ai-models.zh-CN.md)。
+可在 Console **AI models** 直接添加 Responses / Messages 模型，无需 Provider 或能力 JSON 配置，执行独立 HTTP Test 并管理生命周期；Work Chat 保留模型和 Thinking 选择。此流程需要配套的当前 Core、Console、Agent 与 CLI；旧 Work 采用兼容 Agent 仍须显式 Apply。见 [AI 模型](openspec/specs/ai-model-management/spec.md)。
 
 ## .work Import / Export
 
@@ -173,16 +173,16 @@ Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 
 
 导出前必须停止 Work；导入会创建独立的新 Work，并保持停止状态，随后显式启动。迁移到另一台 Core 时，先在目标 Core 登录，再执行 import 和 start。离线 inspect 检查包的完整性，不代表目标安装已验证。
 
-目标 Core 需要另行配置匹配的模型凭据；平台管理的模型 key 和安装凭证不会随包迁移，但工作文件和历史中自行保存的秘密仍会进入包。完整流程和数据边界见 [Work 快照](docs/work-snapshot.md) 与 [包格式](docs/work-package-format.md)。
+目标 Core 需要另行配置匹配的模型凭据；平台管理的模型 key 和安装凭证不会随包迁移，但工作文件和历史中自行保存的秘密仍会进入包。完整流程和数据边界见 [Work 快照](openspec/specs/work-snapshots/spec.md) 与 [包格式](openspec/specs/portable-work/spec.md)。
 
 ## Current Status / Limitations
 
 - **0.0.3 Preview**：用于试用与反馈。Windows 原生 CLI 为实验性附件，尚未完成全部正式验收。
 - **Core**：当前为单机 Linux 部署，使用本机 Docker Engine Unix socket。
-- **客户端**：原生 CLI 面向 Windows 和 Linux，提供命令行与 Desktop；Windows 原生正式验收的未完成项见 [CLI 平台交付](docs/cli-platforms.md)。
-- **Docker 交付**：当前验收范围为 `linux/amd64`、Linux Core，以及 Linux / Windows Docker Desktop 的 Linux CLI 容器；要求 Docker Engine 28+；选择 Core Compose、单机部署示例或高级 Compose 部署时另需 Compose 2.24+。详情见 [交付验收](docs/docker-release-quickstart-acceptance.md)。
+- **客户端**：原生 CLI 面向 Windows 和 Linux，提供命令行与 Desktop；Windows 原生正式验收尚未全部完成，[CLI 要求](openspec/specs/control-cli/spec.md)说明受支持的行为。
+- **Docker 交付**：当前验收范围为 `linux/amd64`、Linux Core，以及 Linux / Windows Docker Desktop 的 Linux CLI 容器；要求 Docker Engine 28+；选择 Core Compose、单机部署示例或高级 Compose 部署时另需 Compose 2.24+。详情见 [交付要求](openspec/specs/docker-delivery/spec.md)。
 - **运行条件**：实际 Work 执行需要可用的 Docker Engine、模型配置与凭据。Core 正常退出会停止受管 Work 的运行容器并保留持久数据；退出 CLI 不停止 Work。
-- **验证状态**：干净 clone 的安装、构建和单元测试已通过。实际覆盖范围、跳过项与平台边界见 [开源前检查记录](docs/open-source-readiness.md) 和 [测试说明](docs/testing.md)。
+- **验证状态**：前置条件和检查入口见[构建与测试](AGENTS.md#构建与验证)。平台与真实交互的覆盖范围随对应执行结果记录；跳过项不算通过。
 
 ## Roadmap
 
@@ -215,7 +215,7 @@ Piwork 仍处于早期阶段。当前重点是让 Work 的生命周期可靠、�
 
 ## Contributing
 
-开发约定见 [AGENTS.md](AGENTS.md)，测试入口见 [测试说明](docs/testing.md)。基础构建需要 Go 1.25.5、Node 24（`.nvmrc`）/npm、Git、Make 和 Bash，在仓库根目录执行：
+开发约定见 [AGENTS.md](AGENTS.md)，测试入口见 [测试说明](AGENTS.md#构建与验证)。基础构建需要 Go 1.25.5、Node 24（`.nvmrc`）/npm、Git、Make 和 Bash，在仓库根目录执行：
 
 ```sh
 npm ci

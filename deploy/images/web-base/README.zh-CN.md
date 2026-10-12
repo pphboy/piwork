@@ -83,7 +83,7 @@ Agent 和 base 均提供实际 sqlite3 CLI；AI bash 在 Agent 执行，Service 
 sqlite3 -readonly -json /var/data/workspace/data/<service-name>/workstation.sqlite 'SELECT name FROM sqlite_master WHERE type="table";'
 ```
 
-应用 Service 不设 Piwork 内存上限或预留；弃用的 memoryBytes 仅为兼容历史，不是可用预算。CPU 与数量准入保持，详见[运维说明](../../../docs/operations.md#service-资源与版本升级)。
+应用 Service 不设 Piwork 内存上限或预留；弃用的 memoryBytes 仅为兼容历史，不是可用预算。CPU 与数量准入保持，详见[运维说明](../../../openspec/specs/core-service-startup/spec.md)。
 
 ## 维护、验证与发布
 
@@ -99,6 +99,6 @@ node scripts/check-web-base-dependencies.mjs
 node scripts/check-web-base-core.mjs
 ```
 
-真实 Core/SDK/浏览器检查还使用兼容 acceptance Agent/helper 镜像与已构建 Go 程序，见[测试说明](../../../docs/testing.md)。测试按唯一 installation/fixture 标签创建并仅清理自身资源。分别测量准备/启动/重启、workspace/快照体积及完整分享，超时预算不作为性能结果。
+真实 Core/SDK/浏览器检查还使用兼容 acceptance Agent/helper 镜像与已构建 Go 程序，见[测试说明](../../../AGENTS.md#构建与验证)。测试按唯一 installation/fixture 标签创建并仅清理自身资源。分别测量准备/启动/重启、workspace/快照体积及完整分享，超时预算不作为性能结果。
 
 本地构建/检查不推送。只有明确要求发行后才使用 `scripts/publish-web-base.mjs`，核对实际当前候选与证据、拒绝远端 tag 冲突，并在匿名 digest 拉取/运行通过后更新正式脑包引用；旧 commit/dirty/input/digest 身份保留。

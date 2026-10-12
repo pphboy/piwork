@@ -137,6 +137,13 @@ test('website command and download drift is checked without a sibling-repository
   writeFileSync(join(website, 'README.md'), '## Content maintenance\n\n## Build and deployment\n');
   syncWebsite(website, release, base);
   const publicPath = join(website, 'docs/public/install', release.releaseId);
+  for (const prefix of ['', 'zh/']) {
+    const source = readFileSync(join(website, 'docs', prefix, 'guide/source-installation.md'), 'utf8');
+    assert(source.includes('blob/main/openspec/specs/docker-delivery/spec.md'));
+    for (const name of ['quick-start.md', 'installation.md', 'source-installation.md']) {
+      assert(!readFileSync(join(website, 'docs', prefix, 'guide', name), 'utf8').includes('openspec/changes/remove-docs-dir/'));
+    }
+  }
   assert.deepEqual(checkQuickStart(base, { websiteRoot: website }), []);
   const next = { ...release, releaseId: release.releaseId + '-next', images: Object.fromEntries(Object.entries(release.images).map(([role, ref]) => [role, ref + '-next'])) };
   const historical = join(website, 'docs/public/install/0.0.1'); mkdirSync(historical, { recursive: true });

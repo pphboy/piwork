@@ -15,7 +15,7 @@ for (const [prefix, language, readme] of [['', 'en', 'README.md'], ['zh/', 'zh',
   const zh = language === 'zh';
   const upstream = readFileSync(join(base, readme), 'utf8');
   const nativeDetails = upstream.match(/<details>\n<summary>[\s\S]*?<!-- native-quickstart:end -->\n\n<\/details>/)?.[0];
-  const native = nativeDetails?.replaceAll('](docs/', '](https://github.com/pphboy/piwork/blob/main/docs/');
+  const native = nativeDetails?.replaceAll('](openspec/', '](https://github.com/pphboy/piwork/blob/main/openspec/');
   const trial = quickStart(metadata, language, { composeLink: download, exampleLink: `https://github.com/pphboy/piwork/blob/main/examples/single-host/README${zh ? '.zh-CN' : ''}.md`, operationsLink: `/${prefix}guide/installation.html#terminal-operations` });
   write(`docs/${prefix}guide/quick-start.md`, '# Quick Start\n\n## ' + (zh ? '使用 Docker 试用 Core 和 CLI' : 'Try Core and CLI with Docker') + '\n\n' + block('docker-quickstart', trial) + '\n\n' + native + '\n');
   const installation = [zh ? '# 安装与部署' : '# Installation and Deployment', zh
@@ -49,8 +49,8 @@ for (const [prefix, language, readme] of [['', 'en', 'README.md'], ['zh/', 'zh',
   const sourcePath = `docs/${prefix}guide/source-installation.md`;
   let source = read(sourcePath);
   const notice = zh
-    ? '默认试用请使用 [Quick Start](/zh/guide/quick-start.html) 的独立 Core/CLI 镜像；Core 可单独使用 Compose。下面仅为开发者的原生源码构建；Docker 发行构建见 [发行维护](https://github.com/pphboy/piwork/blob/main/docs/docker-release.md)，宿主不必安装 Go/Node。'
-    : 'For the default trial, use the independent Core/CLI images (Core also supports Core-only Compose) in [Quick Start](/guide/quick-start.html). The following is a native source build for developers. [Docker release builds](https://github.com/pphboy/piwork/blob/main/docs/docker-release.md) compile inside Docker and need no host Go/Node.';
+    ? '默认试用请使用 [Quick Start](/zh/guide/quick-start.html) 的独立 Core/CLI 镜像；Core 可单独使用 Compose。下面仅为开发者的原生源码构建；Docker 发行构建见 [发行维护](https://github.com/pphboy/piwork/blob/main/openspec/specs/docker-delivery/spec.md)，宿主不必安装 Go/Node。'
+    : 'For the default trial, use the independent Core/CLI images (Core also supports Core-only Compose) in [Quick Start](/guide/quick-start.html). The following is a native source build for developers. [Docker release builds](https://github.com/pphboy/piwork/blob/main/openspec/specs/docker-delivery/spec.md) compile inside Docker and need no host Go/Node.';
   const marker = '<!-- docker-source-route -->';
   if (source.includes(marker)) source = source.replace(new RegExp(marker + '[\\s\\S]*?' + marker), marker + '\n' + notice + '\n' + marker);
   else source = source.replace(/^(# [^\n]+)\n/, '$1\n\n' + marker + '\n' + notice + '\n' + marker + '\n');
