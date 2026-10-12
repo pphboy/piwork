@@ -16,8 +16,8 @@ function fixture(t) {
   t.after(() => rmSync(base, { recursive: true, force: true }));
   for (const path of ['cmd', 'internal', 'proto', 'apps', 'packages', 'scripts', 'config', 'deploy', 'examples']) cpSync(join(projectRoot, path), join(base, path), { recursive: true, filter: path => !/\/(?:node_modules|dist)(?:\/|$)/.test(path) });
   for (const name of ['README.md', 'README.zh-CN.md', '.dockerignore', 'go.mod', 'go.sum', 'package.json', 'package-lock.json', 'tsconfig.base.json', 'Dockerfile.core', 'Dockerfile.cli', 'Dockerfile.core.dockerignore', 'Dockerfile.cli.dockerignore', 'Dockerfile.agentd', 'Dockerfile.file-helper.native', 'Dockerfile.snapshot-helper.native', 'Dockerfile.docker-release']) copyFileSync(join(projectRoot, name), join(base, name));
-  mkdirSync(join(base, 'docs/images'), { recursive: true });
-  copyFileSync(join(projectRoot, 'docs/images/piwork-logo.png'), join(base, 'docs/images/piwork-logo.png'));
+  mkdirSync(join(base, 'apps/ui-shared/assets'), { recursive: true });
+  copyFileSync(join(projectRoot, 'apps/ui-shared/assets/piwork-logo.png'), join(base, 'apps/ui-shared/assets/piwork-logo.png'));
   refresh(base);
   return base;
 }

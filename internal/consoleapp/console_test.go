@@ -195,7 +195,7 @@ func TestNativeConsoleBrowserAndAdministratorSession(t *testing.T) {
 	if page := call("GET", "/", "", "", "", ""); page.Code != 200 || !strings.Contains(page.Body.String(), "PiWork Serve") {
 		t.Fatal("embedded Console page failed", page.Code)
 	}
-	logoSource, err := os.ReadFile(filepath.Join("..", "..", "docs", "images", "piwork-logo.png"))
+	logoSource, err := os.ReadFile(filepath.Join("..", "..", "apps", "ui-shared", "assets", "piwork-logo.png"))
 	if err != nil {
 		t.Fatal(err)
 	}

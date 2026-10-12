@@ -8,11 +8,11 @@ import { identity, coreReleaseConfig, verifyImageRecords, writeMetadata, writeMa
 function fixture(t) {
   const base = mkdtempSync(join(tmpdir(), 'piwork-docker-release-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
-  for (const name of ['cmd', 'internal/releaseinfo', 'internal/corestore', 'proto', 'packages', 'apps/desktop-webui/src', 'apps/desktop-webui/public', 'apps/desktop-webui/scripts', 'scripts', 'config', 'deploy/docker', 'examples/single-host', 'docs/images']) mkdirSync(join(base, name), { recursive: true });
+  for (const name of ['cmd', 'internal/releaseinfo', 'internal/corestore', 'proto', 'packages', 'apps/desktop-webui/src', 'apps/desktop-webui/public', 'apps/desktop-webui/scripts', 'scripts', 'config', 'deploy/docker', 'examples/single-host', 'apps/ui-shared/assets']) mkdirSync(join(base, name), { recursive: true });
   for (const name of ['apps/desktop-webui/tsconfig.json', 'apps/desktop-webui/package.json', 'scripts/sync-desktop-assets.mjs', 'package-lock.json']) writeFileSync(join(base, name), '{}');
   writeFileSync(join(base, 'package.json'), '{"version":"0.0.1"}');
   writeFileSync(join(base,'internal/releaseinfo/notes.json'),JSON.stringify({version:1,releases:[]}));
-  writeFileSync(join(base, 'docs/images/piwork-logo.png'), 'synthetic-public-logo');
+  writeFileSync(join(base, 'apps/ui-shared/assets/piwork-logo.png'), 'synthetic-public-logo');
   writeFileSync(join(base, 'internal/corestore/store.go'), 'const Format = "piwork-go-core"\nconst SchemaVersion = 1\n');
   copyFileSync(new URL('../examples/single-host/docker-compose.yml.template', import.meta.url), join(base, 'examples/single-host/docker-compose.yml.template'));
   copyFileSync(new URL('../config/docker-release.json', import.meta.url), join(base, 'config/docker-release.json'));
@@ -38,7 +38,7 @@ test('metadata requires real identity and detects changed build inputs', t => {
   writeFileSync(join(base, 'README.md'), 'Documentation changes do not create a source-hash reference cycle.');
   writeFileSync(join(base, '.env.private'), 'SYNTHETIC_CANARY=do-not-read');
   assert.equal(identity(base, environment).sourceInputHash, first.sourceInputHash);
-  writeFileSync(join(base, 'docs/images/piwork-logo.png'), 'changed-synthetic-public-logo');
+  writeFileSync(join(base, 'apps/ui-shared/assets/piwork-logo.png'), 'changed-synthetic-public-logo');
   assert.notEqual(identity(base, environment).sourceInputHash, first.sourceInputHash);
   writeFileSync(join(base,'internal/releaseinfo/notes.json'),JSON.stringify({version:1,releases:[]},null,2));
   assert.notEqual(identity(base,environment).sourceInputHash,first.sourceInputHash);

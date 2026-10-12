@@ -77,7 +77,7 @@ func TestNativeDesktopEmbeddedBrowserAndLocalIdentity(t *testing.T) {
 			t.Fatal("embedded Desktop asset", path, response.Code)
 		}
 	}
-	logoSource, err := os.ReadFile(filepath.Join("..", "..", "docs", "images", "piwork-logo.png"))
+	logoSource, err := os.ReadFile(filepath.Join("..", "..", "apps", "ui-shared", "assets", "piwork-logo.png"))
 	if err != nil {
 		t.Fatal(err)
 	}
