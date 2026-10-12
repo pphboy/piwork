@@ -33,7 +33,7 @@
 - Desktop 选择 Core：参数 → 环境 → Desktop 偏好 → 凭证 → loopback。业务 CLI 仍为参数 → 环境 → 凭证 → loopback。UI 保存/清除默认 Core 仅作用于下次启动，不切换当前连接、不改凭证、不清理 Inspect；普通退出登录保留偏好。
 - 独立客户端构建重新生成内嵌 UI；运行候选无需相邻资源、源码或 Go/Node/Python/Docker。Windows 是 `.exe`，Linux 是可执行文件，不增加双击要求或固定最低 OS/架构名单。
 
-具体使用、存储安全、构建和 fixture 命令见 [CLI 平台文档](../../../docs/cli-platforms.md)。
+具体使用、存储安全、构建和 fixture 命令见 [CLI 平台文档](../remove-docs-dir/specs/control-cli/spec.md#requirement-平台私有状态与独立客户端交付)。
 
 ## HTTP 调整前候选身份（历史）
 

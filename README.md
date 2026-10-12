@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/piwork-logo.png" alt="Piwork logo" width="160" height="160">
+  <img src="apps/ui-shared/assets/piwork-logo.png" alt="Piwork logo" width="160" height="160">
 </p>
 
 # Piwork
@@ -29,7 +29,7 @@ flowchart LR
     Harness --> Model[Model Provider]
 ```
 
-Core manages resources and control operations. The Harness runs models and tools, Services provide applications, and work files live in the Work's shared volume. See [Core operations](docs/operations.md) for runtime and data boundaries, and [AGENTS.md](AGENTS.md) for implementation and directory conventions.
+Core manages resources and control operations. The Harness runs models and tools, Services provide applications, and work files live in the Work's shared volume. See [Core operations](openspec/specs/core-service-startup/spec.md) for runtime and data boundaries, and [AGENTS.md](AGENTS.md) for implementation and directory conventions.
 
 ## Problem
 
@@ -47,21 +47,21 @@ Each Work has its own Harness. The Harness executes tasks, Services provide appl
 
 The current source defaults new application Services to Python + NiceGUI + SQLite, with standard dependencies preinstalled and support for additional Python packages. The NiceGUI base now has an anonymously verified fixed release; platform Docker references retain their recorded release identities. See the [Web base guide](deploy/images/web-base/README.md) for source, maintenance, dependency installation, sqlite3 and automatic application updates.
 
-Core 0.0.5 ships piwork-brain 1.2.2 with the published NiceGUI default. The [release record](docs/core-release-0.0.5.md) lists fixed identities, adoption behavior and verification scope.
+Core 0.0.5 ships piwork-brain 1.2.2 with the published NiceGUI default. The [release record](deploy/docker/releases/0.0.5-c3e361a44a6b-f327ba4d903f.json) lists the published image identities.
 
-Release 0.0.5 embeds piwork-brain 1.2.2 with an independent `application-awareness` Skill for product, UI/UX, state synchronization and engineering judgment. Brain routes application work to it directly; the deployment Skill remains separate. It adds no design or approval stage. NiceGUI-specific guidance is read only when relevant. Page verification uses the actual Desktop Service entry with an available, authorized browser; backend readiness alone does not prove UI usability, and unavailable browser access is reported explicitly. See [Brain loading and adoption](docs/piwork-brain.md#应用认知与实际加载).
+Release 0.0.5 embeds piwork-brain 1.2.2 with an independent `application-awareness` Skill for product, UI/UX, state synchronization and engineering judgment. Brain routes application work to it directly; the deployment Skill remains separate. It adds no design or approval stage. NiceGUI-specific guidance is read only when relevant. Page verification uses the actual Desktop Service entry with an available, authorized browser; backend readiness alone does not prove UI usability, and unavailable browser access is reported explicitly. See [Brain loading and adoption](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包).
 
-Release 0.0.5 reuses successful image checks and package-environment probes, and prepares the default Work environment before Core becomes ready. See [performance verification](docs/testing.md#work-创建与启动性能验收) for building and measuring the source.
+Release 0.0.5 reuses successful image checks and package-environment probes, and prepares the default Work environment before Core becomes ready. See [build and verification entry points](AGENTS.md#构建与验证) for building and checking the source.
 
-The default templates adopt successfully deployed updates automatically and preserve supported drafts and paths. Application Services have no Piwork memory cap; CPU/count limits and Agent/helper memory policies still apply. Existing Works adopt new packages and Agent images through explicit Update/Apply. See the [website guide](https://pphboy.github.io/piwork/guide/web-development.html) and [Brain workflow](docs/piwork-brain.md).
+The default templates adopt successfully deployed updates automatically and preserve supported drafts and paths. Application Services have no Piwork memory cap; CPU/count limits and Agent/helper memory policies still apply. Existing Works adopt new packages and Agent images through explicit Update/Apply. See the [website guide](https://pphboy.github.io/piwork/guide/web-development.html) and [Brain workflow](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包).
 
 ## Demo GIF / Video
 
-![Piwork Desktop](docs/images/desktop-preview.png)
+![Piwork Desktop](apps/ui-shared/assets/desktop-preview.png)
 
 Desktop chat interface preview, captured from a UI verification fixture.
 
-Release 0.0.5 accepts pasted, dropped or selected images in Chat, including image-only messages. **About Piwork** shows Desktop/Core versions and embedded release notes, with a link to all releases. Use matching Desktop, Core and Agent components; known limitations and image limits are listed in the [Desktop guide](docs/desktop-webui.md).
+Release 0.0.5 accepts pasted, dropped or selected images in Chat, including image-only messages. **About Piwork** shows Desktop/Core versions and embedded release notes, with a link to all releases. Use matching Desktop, Core and Agent components; known limitations and image limits are listed in the [Desktop guide](openspec/specs/desktop-webui/spec.md).
 
 ## Quick Start
 
@@ -147,15 +147,15 @@ Use the actual `workId` returned by creation:
 ./piwork-cli chat WORK_ID --message 'Hello, Piwork!'
 ```
 
-More commands are in the [CLI guide](docs/user-cli.md); see [CLI delivery](docs/cli-platforms.md) for platform details.
+More commands are in the [CLI guide](openspec/specs/control-cli/spec.md); see [CLI delivery](openspec/specs/control-cli/spec.md) for platform details.
 
 <!-- native-quickstart:end -->
 
 </details>
 
-To deploy Core from source, see [Core startup and initialization](docs/operations.md#从源码启动); administrator access is described in the [Console guide](docs/serve-console.md).
+To deploy Core from source, see [Core startup and initialization](openspec/specs/core-service-startup/spec.md); administrator access is described in the [Console guide](openspec/specs/serve-control-plane/spec.md).
 
-Model connections can be managed in Console **AI models**: independent Responses / Messages models, advisory message Test and lifecycle actions, without Provider or capability JSON setup. Work Chat keeps its existing model and Thinking selection. This flow requires matching current Core, Console, Agent and CLI builds; existing Works explicitly Apply a compatible Agent. See [AI models](docs/ai-models.md).
+Model connections can be managed in Console **AI models**: independent Responses / Messages models, advisory message Test and lifecycle actions, without Provider or capability JSON setup. Work Chat keeps its existing model and Thinking selection. This flow requires matching current Core, Console, Agent and CLI builds; existing Works explicitly Apply a compatible Agent. See [AI models](openspec/specs/ai-model-management/spec.md).
 
 ## .work Import / Export
 
@@ -173,16 +173,16 @@ The following commands use the native Linux CLI. Log in to the appropriate Core 
 
 Stop the Work before exporting. Import creates an independent Work and leaves it stopped; start it explicitly afterward. To migrate to another Core, log in to the target Core before importing and starting it. Offline inspect verifies package integrity, not whether the target installation can use it.
 
-Configure matching model credentials on the target Core separately. Platform-managed model keys and installation credentials are excluded from the package, but secrets saved in your files or history travel with it. See [Work snapshots](docs/work-snapshot.md) and the [package format](docs/work-package-format.md) for the complete workflow and data boundaries.
+Configure matching model credentials on the target Core separately. Platform-managed model keys and installation credentials are excluded from the package, but secrets saved in your files or history travel with it. See [Work snapshots](openspec/specs/work-snapshots/spec.md) and the [package format](openspec/specs/portable-work/spec.md) for the complete workflow and data boundaries.
 
 ## Current Status / Limitations
 
 - **0.0.3 Preview**: Intended for evaluation and feedback. The native Windows CLI is experimental and has not completed all formal acceptance checks.
 - **Core**: A single Linux installation using the local Docker Engine Unix socket.
-- **Clients**: The native CLI targets Windows and Linux, with command-line and Desktop interfaces. Outstanding native Windows acceptance checks are documented in [CLI delivery](docs/cli-platforms.md).
-- **Docker delivery**: The verified scope is `linux/amd64`, Linux Core, and Linux CLI containers on Linux or Windows Docker Desktop. Docker Engine 28+ is required; Compose 2.24+ is needed when choosing the Core-only deployment, the single-host example or advanced Compose setups. See [delivery acceptance](docs/docker-release-quickstart-acceptance.md).
+- **Clients**: The native CLI targets Windows and Linux, with command-line and Desktop interfaces. Native Windows acceptance remains incomplete; [CLI requirements](openspec/specs/control-cli/spec.md) describe supported behavior.
+- **Docker delivery**: The verified scope is `linux/amd64`, Linux Core, and Linux CLI containers on Linux or Windows Docker Desktop. Docker Engine 28+ is required; Compose 2.24+ is needed when choosing the Core-only deployment, the single-host example or advanced Compose setups. See [delivery requirements](openspec/specs/docker-delivery/spec.md).
 - **Runtime requirements**: Running a Work requires an available Docker Engine, model configuration, and credentials. A normal Core shutdown stops managed Work containers and preserves persistent data. Exiting the CLI does not stop Works.
-- **Verification**: Installation, build, and unit tests have passed from a clean clone. Coverage, skipped checks, and platform boundaries are recorded in the [open-source readiness review](docs/open-source-readiness.md) and [testing guide](docs/testing.md).
+- **Verification**: See [build and test entry points](AGENTS.md#构建与验证) for prerequisites and checks. Platform and real-interaction coverage is reported with the corresponding execution results; skipped checks do not count as passing.
 
 ## Roadmap
 
@@ -215,7 +215,7 @@ The roadmap will evolve based on real usage and feedback.
 
 ## Contributing
 
-Read [AGENTS.md](AGENTS.md) for development conventions and the [testing guide](docs/testing.md) for test entry points. The basic build requires Go 1.25.5, Node 24 (see `.nvmrc`)/npm, Git, Make, and Bash. Run these commands from the repository root:
+Read [AGENTS.md](AGENTS.md) for development conventions and the [testing guide](AGENTS.md#构建与验证) for test entry points. The basic build requires Go 1.25.5, Node 24 (see `.nvmrc`)/npm, Git, Make, and Bash. Run these commands from the repository root:
 
 ```sh
 npm ci

@@ -22,5 +22,4 @@ demo
 .vscode
 .idea
 
-# The embedded UI build reads this public logo; keep other documentation excluded.
-!docs/images/piwork-logo.png
+# Shared UI product assets are included under apps/; development evidence stays excluded.

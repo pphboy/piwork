@@ -156,7 +156,7 @@ func Smoke(ctx context.Context, buildDirectory, root string) (Result, error) {
 	if err != nil || status != 200 || logoHeaders.Get("Content-Type") != "image/png" {
 		return result, errors.New("candidate embedded Logo unavailable")
 	}
-	expectedLogo, err := os.ReadFile(filepath.Join(root, "docs/images/piwork-logo.png"))
+	expectedLogo, err := os.ReadFile(filepath.Join(root, "apps/ui-shared/assets/piwork-logo.png"))
 	if err != nil || !bytes.Equal(logo, expectedLogo) {
 		return result, errors.New("candidate embedded Logo differs from project PNG")
 	}

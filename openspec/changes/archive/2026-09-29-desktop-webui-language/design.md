@@ -26,8 +26,8 @@
 | --- | --- |
 | [Desktop Spec](specs/desktop-ui-language/spec.md) | DUL-001 至 DUL-016：用户场景、产品语义、容器与返回、视觉角色、状态和验收行为的唯一规范来源 |
 | 本 design | 设计理由、组织方式、既有能力边界、规范迁移及后续实现依赖 |
-| [原型说明与能力矩阵](../../../../docs/design/piwork-desktop-prototype.md) | CLI/协议能力对应的画面、入口、操作、结果、失败及返回 |
-| [评审目录](../../../../docs/design/desktop-review/README.md) | 按模块和单画面检查静态设计 |
+| [原型说明与能力矩阵](../../remove-docs-dir/evidence/legacy-docs/design/piwork-desktop-prototype.md) | CLI/协议能力对应的画面、入口、操作、结果、失败及返回 |
+| [评审目录](../../remove-docs-dir/evidence/legacy-docs/design/desktop-review/README.md) | 按模块和单画面检查静态设计 |
 
 后续功能引用 Spec 的需求编号、所属场景及能力映射。Spec 必须可独立用于实现和验收；design 解释选择原因，原型展示布局与流程。此前三份 Desktop docs 是迁移输入，规则补全后移除，不作为额外的规范来源。这样可避免修改 Spec 后还需同步三份正文造成规则分叉。
 

@@ -16,8 +16,8 @@ function fixture(t) {
   t.after(() => rmSync(base, { recursive: true, force: true }));
   for (const path of ['cmd', 'internal', 'proto', 'apps', 'packages', 'scripts', 'config', 'deploy', 'examples']) cpSync(join(projectRoot, path), join(base, path), { recursive: true, filter: path => !/\/(?:node_modules|dist)(?:\/|$)/.test(path) });
   for (const name of ['README.md', 'README.zh-CN.md', '.dockerignore', 'go.mod', 'go.sum', 'package.json', 'package-lock.json', 'tsconfig.base.json', 'Dockerfile.core', 'Dockerfile.cli', 'Dockerfile.core.dockerignore', 'Dockerfile.cli.dockerignore', 'Dockerfile.agentd', 'Dockerfile.file-helper.native', 'Dockerfile.snapshot-helper.native', 'Dockerfile.docker-release']) copyFileSync(join(projectRoot, name), join(base, name));
-  mkdirSync(join(base, 'docs/images'), { recursive: true });
-  copyFileSync(join(projectRoot, 'docs/images/piwork-logo.png'), join(base, 'docs/images/piwork-logo.png'));
+  mkdirSync(join(base, 'apps/ui-shared/assets'), { recursive: true });
+  copyFileSync(join(projectRoot, 'apps/ui-shared/assets/piwork-logo.png'), join(base, 'apps/ui-shared/assets/piwork-logo.png'));
   refresh(base);
   return base;
 }
@@ -137,6 +137,13 @@ test('website command and download drift is checked without a sibling-repository
   writeFileSync(join(website, 'README.md'), '## Content maintenance\n\n## Build and deployment\n');
   syncWebsite(website, release, base);
   const publicPath = join(website, 'docs/public/install', release.releaseId);
+  for (const prefix of ['', 'zh/']) {
+    const source = readFileSync(join(website, 'docs', prefix, 'guide/source-installation.md'), 'utf8');
+    assert(source.includes('blob/main/openspec/specs/docker-delivery/spec.md'));
+    for (const name of ['quick-start.md', 'installation.md', 'source-installation.md']) {
+      assert(!readFileSync(join(website, 'docs', prefix, 'guide', name), 'utf8').includes('openspec/changes/remove-docs-dir/'));
+    }
+  }
   assert.deepEqual(checkQuickStart(base, { websiteRoot: website }), []);
   const next = { ...release, releaseId: release.releaseId + '-next', images: Object.fromEntries(Object.entries(release.images).map(([role, ref]) => [role, ref + '-next'])) };
   const historical = join(website, 'docs/public/install/0.0.1'); mkdirSync(historical, { recursive: true });

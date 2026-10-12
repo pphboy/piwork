@@ -1,13 +1,16 @@
 # 仓库开发约定
 
-本文件供开发代理和维护者使用。用户安装、操作和故障处理说明放在 README 与 docs/。
+本文件供开发代理和维护者使用。用户入口放在双语 README 与已有部署手册；当前开发契约统一归属 OpenSpec。
 
 ## 语言与文档
 
 - OpenSpec 规格使用中文，保留已有 Requirement、Scenario 和标识符约定。
 - README.md 是默认英文入口，README.zh-CN.md 提供中文版本；两份文档顶部互链，章节、命令、架构图及当前限制保持同步。缺少材料的章节继续留空。
 - README 面向首次使用者，保留项目介绍、使用入口、构建命令和文档导航。
-- 开发约定与实现边界放在本文件；用户操作放在 docs/；设计与原型放在 docs/design/；验收事实放在对应验收记录中。
+- 开发约定与实现边界放在本文件；当前需求与行为约束放在 OpenSpec Spec；设计、原型和必要验收事实归属对应 OpenSpec 变更。
+- AI 不自行创建开发笔记、长期计划、设计报告、验收汇总或替代文档目录。发现需要持久化的新需求、设计决策或开发知识时，先在对话中说明，由项目所有者发起或明确授权 OpenSpec 变更，形成必要 Spec 与规划后再通过 apply 执行；讨论、回答设计问题或继续调查不是落盘授权。
+- 已授权变更内可维护必要 proposal、design、specs、tasks 和验收附件，不逐文件重复确认。新范围仍遵循所有者授权；临时日志、截图、生成清单和报告默认放在被忽略的 dist/。
+- 仓库根不再建立 docs/，也不以其他目录承接 AI 自建开发文档。用户明确要求的既有 README/安装说明维护、源码注释和测试夹具按原职责处理；随产品交付的 brain.md、SKILL.md、Reference、模板 README、SPEC.md 属于实现，不能按开发文档清理。该规则不向产品 Work 新增 OpenSpec 审批阶段。
 - 历史设计和验收记录不能作为当前实现的依据，核对现行源码、规格和实际执行结果。
 
 ## Git 提交组织
@@ -42,14 +45,14 @@
 | scripts/ | 构建、生成、验证与打包入口 |
 | deploy/docker/ | 双 Docker 安装材料与手册 |
 | fixtures/、internal/*/testdata/ | 必要的合成夹具与协议 golden 数据 |
-| docs/、docs/design/ | 用户/开发文档与设计材料 |
-| openspec/ | 主规格、变更规划和归档 |
+| apps/ui-shared/assets/ | 两端 WebUI 共用的产品资源 |
+| openspec/ | 主规格、变更规划、归档及所属证据/原型附件 |
 | dist/ | 被忽略的构建产物与本机验证输出 |
 
 ## 运行与数据边界
 
 - operator 身份与用户 CLI 身份分离；用户 CLI 不读取 operator 凭证，管理员控制权限不等于读取他人 Work 内容的权限。
-- CLI 与 Desktop 共用用户凭证，但 Desktop 的默认 Core 偏好独立于业务 CLI 的地址选择。调整入口时核对 docs/cli-platforms.md 中的优先级和恢复规则。
+- CLI 与 Desktop 共用用户凭证，但 Desktop 的默认 Core 偏好独立于业务 CLI 的地址选择。调整入口时核对 control-cli、desktop-webui 及 cli-runtime-portability 的有效主规格/变更中的优先级和恢复规则。
 - Core 正常退出会停止本安装全部受管 Work 运行容器，保留持久意图、配置、历史和数据，供重启恢复。CLI 或 Console 退出不停止 Work。
 - Work workspace 是受管共享卷。导出前须确认 Work stopped；导入得到 stopped Work，随后由用户显式 Start。
 - 为开发或测试使用独立安装和数据目录。Docker 清理只针对本次创建的精确 installation ID/标签，不执行全局 prune 或删除其他安装资源。
@@ -68,10 +71,11 @@ make test
 按改动范围选择验证：
 
 - Go 或保留 TS 业务代码：执行对应单元/契约测试；涉及工作区或构建入口时核对基础构建流程。
-- CLI 平台适配：使用 make build-cli 和 docs/cli-platforms.md 的平台检查入口。
+- CLI 平台适配：使用 make build-cli，以及有效 control-cli / cli-runtime-portability 规格和对应变更中的平台检查入口。
 - 浏览器资源：通过各 workspace 的构建与 Playwright 入口核对；资源嵌入 Go 程序，修改后需重新构建宿主程序。
-- Docker、Work 生命周期及真实 Core 交互：执行相关 integration 测试；完整入口和额外依赖见 docs/testing.md。
+- Docker、Work 生命周期及真实 Core 交互：执行相关 integration 测试；入口由 Makefile、scripts/ 和对应 Spec/变更中的验证说明提供。
 - 平台源码边界：node scripts/check-native-boundary.mjs；镜像边界使用对应 image 检查入口。
+- 文档归属与路径：node scripts/check-repository-docs.mjs；检查根目录缺失、当前链接、生成输出和迁移清单，不把历史路径文字、外部官网或用户 Work 的同名目录当作本仓库依赖。
 - 纯文档整理：检查链接、命令与源码的一致性以及 git diff --check，无需为此重跑完整模型或 Docker 验收。
 - Docker 镜像、初始化环境变量、网络、数据目录、CLI 状态存储、就绪等待或关闭预算变化时，同步中英文 README 默认 Docker run 命令、Core-only Compose、examples/single-host/ 单机部署示例及其双语说明、安装手册、模板和打包清单；执行 node scripts/check-docker-quickstart.mjs 与 node --test scripts/check-docker-quickstart.test.mjs。检查使用合成值，不输出真实秘密；后续材料维护不能只依赖人工记忆。
 

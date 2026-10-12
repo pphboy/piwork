@@ -45,7 +45,7 @@ export function sourceInputHash(base = root) {
     const example = join(base, 'examples/single-host/docker-compose.yml.template');
     try { readFileSync(example); files.push('examples/single-host/docker-compose.yml.template'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
-  files.push('docs/images/piwork-logo.png');
+  files.push('apps/ui-shared/assets/piwork-logo.png');
   const hash = createHash('sha256');
   for (const name of files.sort()) {
     const bytes = readFileSync(join(base, name));

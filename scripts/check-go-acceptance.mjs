@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveChangeArtifact } from './resolve-change-artifact.mjs';
+import { frozenEvidencePath } from './update-go-acceptance-index.mjs';
 
 export function validateScenarioEvidence(records) {
   if (!Array.isArray(records) || records.length !== 970) throw new Error(`Expected 970 acceptance scenarios; found ${records?.length}`);
@@ -10,7 +12,11 @@ export function validateScenarioEvidence(records) {
   if (incomplete.length) throw new Error(`${incomplete.length} of ${records.length} acceptance scenarios remain unverified.\n${incomplete.slice(0,10).map(({id})=>id).join('\n')}`);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const records = JSON.parse(await readFile(new URL('../docs/go-migration-scenarios.json', import.meta.url), 'utf8'));
+  const text = await readFile(new URL('../dist/verification/go-migration-scenarios.json', import.meta.url), 'utf8').catch(error => {
+    if (error.code !== 'ENOENT') throw error;
+    return readFile(resolveChangeArtifact(fileURLToPath(new URL('../', import.meta.url)), { ownerChange: 'go-core-cli-migration', artifactPath: frozenEvidencePath }), 'utf8');
+  });
+  const records = JSON.parse(text);
   try {validateScenarioEvidence(records);console.log(`All ${records.length} acceptance scenarios have test, command, and result evidence.`);}
   catch(error){console.error(error.message);process.exitCode=1;}
 }
