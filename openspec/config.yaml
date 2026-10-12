@@ -1,14 +1,25 @@
 schema: spec-driven
 
+context: |
+  当前开发契约统一归属 OpenSpec。项目所有者发起或授权变更后才持久化新需求、设计决策或开发知识；AI 不自行创建长期开发文档或替代目录。已授权范围内维护必要变更产物，不逐文件审批。仓库根不建立 docs/，临时生成输出默认放在忽略的 dist/；历史事实和原型作为对应变更附件保留。产品随包交付的 Markdown 和用户 Work 不属于仓库开发文档治理范围。
+
 rules:
+  proposal:
+    - 在所有者已授权的范围内规划；不为保存 AI 自用笔记而自行增加新变更或开发文档。
+  specs:
+    - 当前有效约束按能力使用中文 Requirement / Scenario 表达；历史建议和验收结论不能自动成为新需求。
   design:
     - Explain the problem model, chosen solution, and key design decisions clearly and concisely.
     - Identify the affected modules and relevant source files, explaining their responsibilities.
     - Use Ascii diagrams when they help visualize architecture, relationships, or flows.
     - Keep the design easy for the project owner to understand and review.
+    - 设计与原型归属本变更；引用有效 Spec 和真实来源，不建立 OpenSpec 之外的长期开发报告。
+  tasks:
+    - 每项任务包含验证方式；必要验收附件归属原变更，临时生成物默认放在 dist/。
 
 operations:
   apply:
     guidance:
       - Keep implementation changes easy to trace back to the design.
       - Summarize the modified files, their purposes, and the important decisions made during implementation.
+      - 不重建根 docs/ 或替代开发文档目录；在已授权变更内维护必要 Spec 和证据，冻结历史附件不被默认生成入口覆写。
