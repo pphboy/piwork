@@ -1,0 +1,60 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Piwork-brain architecture</title><style>body{margin:0;background:#f4f7fb}svg{display:block;max-width:100%;height:auto}</style><svg xmlns="http://www.w3.org/2000/svg" width="1360" height="1080" viewBox="0 0 1360 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Piwork-brain 当前架构与实施后架构</title>
+  <desc id="desc">变更前 Experience 与 Run 和 Evidence 在 work.sqlite 中。目标保留 Go Core、Pi SDK、BrainFlow 与 BrainLoop，精简认知，独立 Memory 数据库通过同一宿主事务提交。实现使用原运行边界，Memory 独立存放并联合提交。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#526579"/></marker>
+    <style>
+      text{font-family:system-ui,-apple-system,"Noto Sans CJK SC",sans-serif;fill:#18324b}
+      .title{font-size:28px;font-weight:700}.section{font-size:21px;font-weight:650}.label{font-size:17px;font-weight:600}.small{font-size:15px}.note{font-size:14px;fill:#526579}
+      .panel{fill:#fff;stroke:#d9e3ee;stroke-width:2}.core{fill:#eaf1ff;stroke:#819cca;stroke-width:1.5}.agent{fill:#edf8f3;stroke:#7eae98;stroke-width:1.5}.data{fill:#fff5e6;stroke:#c6a260;stroke-width:1.5}.new{fill:#fff0d0;stroke:#ab811f;stroke-width:2}.line{fill:none;stroke:#526579;stroke-width:2;marker-end:url(#arrow)}.read{fill:none;stroke:#867439;stroke-width:2;stroke-dasharray:6 4;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1360" height="1080" fill="#f4f7fb"/>
+  <text x="44" y="48" class="title">Piwork-brain 架构简化与独立 Work Memory</text>
+  <text x="44" y="77" class="note">实现图 · Go Core / Pi SDK / BrainFlow / BrainLoop 保留 · 认知学习与固定软件更新分离</text>
+
+  <rect x="32" y="100" width="1296" height="330" rx="14" class="panel"/>
+  <text x="55" y="134" class="section">变更前：已有执行与真实验证，Experience 与历史共库</text>
+  <rect x="55" y="160" width="185" height="92" rx="9" class="core"/>
+  <text x="73" y="193" class="label">User UI / Go CLI</text><text x="73" y="220" class="small">Intent / Run 观察</text>
+  <rect x="289" y="160" width="185" height="92" rx="9" class="core"/>
+  <text x="307" y="193" class="label">Go Core</text><text x="307" y="220" class="small">Work / Service / 权限</text>
+  <rect x="523" y="160" width="327" height="92" rx="9" class="agent"/>
+  <text x="542" y="193" class="label">agentd + 真实 Pi SDK</text><text x="542" y="220" class="small">RunManager / BrainFlow / BrainLoop</text>
+  <rect x="900" y="160" width="380" height="92" rx="9" class="agent"/>
+  <text x="919" y="193" class="label">Service Contract → 实际业务</text><text x="919" y="220" class="small">Query / Action / Job / Verify / Feedback</text>
+  <path d="M240 206 H286" class="line"/><path d="M474 206 H520" class="line"/><path d="M850 206 H897" class="line"/>
+  <rect x="289" y="287" width="368" height="106" rx="9" class="data"/>
+  <text x="307" y="318" class="label">piwork-brain Package</text><text x="307" y="344" class="small">brain.md / Skill / Reference / Extension</text><text x="307" y="372" class="note">通用认知与开发 / 软件更新细节有重复</text>
+  <rect x="707" y="287" width="573" height="106" rx="9" class="data"/>
+  <text x="725" y="318" class="label">Work-private：work.sqlite（schema 4 / WAL）</text><text x="725" y="344" class="small">Session / Run / Request / Evidence / Experience</text><text x="725" y="372" class="note">验证、请求完成与经验发布在同一事务；Run 固定版本</text>
+  <path d="M657 318 L685 255" class="read"/><path d="M783 252 V284" class="line"/>
+
+  <rect x="32" y="450" width="1296" height="530" rx="14" class="panel"/>
+  <text x="55" y="484" class="section">实施后：精简职责，只新增独立 Memory</text>
+  <rect x="55" y="510" width="185" height="90" rx="9" class="core"/>
+  <text x="73" y="543" class="label">同一 UI / CLI</text><text x="73" y="570" class="small">原 Run / 请求 / 工具结果</text>
+  <rect x="289" y="510" width="185" height="90" rx="9" class="core"/>
+  <text x="307" y="543" class="label">同一 Go Core</text><text x="307" y="570" class="small">原生命周期与权限</text>
+  <rect x="523" y="510" width="327" height="90" rx="9" class="agent"/>
+  <text x="542" y="543" class="label">同一 agentd / Pi SDK</text><text x="542" y="570" class="small">原 BrainFlow / BrainLoop / RunManager</text>
+  <rect x="900" y="510" width="380" height="90" rx="9" class="agent"/>
+  <text x="919" y="543" class="label">同一 Service / 业务状态</text><text x="919" y="570" class="small">Spec → 实现；Action / Query → 实际验证</text>
+  <path d="M240 555 H286" class="line"/><path d="M474 555 H520" class="line"/><path d="M850 555 H897" class="line"/>
+  <rect x="55" y="637" width="419" height="190" rx="9" class="data"/>
+  <text x="74" y="670" class="label">piwork-brain Package（固定软件）</text>
+  <text x="74" y="702" class="small">Core：Understand / Specify · Act</text><text x="74" y="729" class="small">Verify · Remember</text>
+  <text x="74" y="764" class="small">原 Skill：Service Spec / 开发 / 部署 / 测试</text><text x="74" y="796" class="small">薄 Extension：保留四个原工具名</text>
+  <rect x="523" y="637" width="327" height="190" rx="9" class="data"/>
+  <text x="542" y="670" class="label">work.sqlite（schema 5）</text><text x="542" y="702" class="small">Session / Run / Request / Evidence</text><text x="542" y="735" class="small">固定 Memory 版本 + 实际提供条目</text><text x="542" y="768" class="small">同一连接 ATTACH，DELETE / FULL</text><text x="542" y="800" class="note">验证完成与 Memory 发布共用事务</text>
+  <rect x="900" y="637" width="380" height="190" rx="9" class="new"/>
+  <text x="919" y="670" class="label">memory.sqlite（唯一新增存储）</text><text x="919" y="702" class="small">偏好 / 经验证经验 / 可信知识</text><text x="919" y="735" class="small">Recall / Read / Stage / Commit</text><text x="919" y="768" class="small">Revise / Invalidate / 不可变版本</text><text x="919" y="800" class="note">同一 Work-private 卷 · 来源仅引用 Evidence</text>
+  <path d="M474 695 L535 603" class="read"/><path d="M682 600 V634" class="line"/><path d="M850 733 H897" class="line"/>
+  <rect x="55" y="851" width="1225" height="94" rx="9" fill="#f7f9fc" stroke="#d9e3ee"/>
+  <text x="74" y="880" class="small">操作：Intent → Query / Action → Verify → Result　　开发：Intent → 最小 Spec → 实现 → 原有验证 → 实际 Service</text>
+  <text x="74" y="908" class="small">认知更新只写 Memory；软件维护仍走 Prepare / 显式 Apply / 固定行为验收；Mark 控制 Founder 不变量</text>
+  <text x="74" y="933" class="note">Memory 按需读取 / 保存，不成为额外人工等待节点；迁移与 Export / Import 复用既有独占、恢复及私有数据边界</text>
+  <text x="44" y="1020" class="small">唯一新增产品能力：Work Memory。精简重复认知，保留执行 Runtime、Service Contract 和真实 Evidence。</text>
+  <text x="44" y="1050" class="note">无新的 Workflow Engine / Eval Framework / Development Ledger / 多 Agent Orchestrator / 管理后台。</text>
+</svg>
+</html>

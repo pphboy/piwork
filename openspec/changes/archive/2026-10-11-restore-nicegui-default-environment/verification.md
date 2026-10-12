@@ -47,7 +47,7 @@ Task Completion、Spec Coverage、Requirement Implementation Mapping、Scenario 
 
 ### S1：最终候选的预检证据引用
 
-[验收记录](../../../../docs/nicegui-default-environment-acceptance.md) 区分初次候选的测量及历史检查与修复后的当前候选，最终预检引用为 `publication-current-preflight.log`。该日志实际包含当前 tag `0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty`，旧 `publication-preflight.log` 保留原候选事实。
+[验收记录](evidence/legacy-docs/nicegui-default-environment-acceptance.md) 区分初次候选的测量及历史检查与修复后的当前候选，最终预检引用为 `publication-current-preflight.log`。该日志实际包含当前 tag `0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty`，旧 `publication-preflight.log` 保留原候选事实。
 
 七份 validation JSON、当前 release 与脑包引用的 image ID/input hash 均匹配当前候选。发布入口还验证新的页面辅助模块、清单与浏览器检查集合；缺少这些检查时契约测试明确拒绝。
 
