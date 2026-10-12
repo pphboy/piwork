@@ -1715,3 +1715,268 @@ test('Work default shows the captured ID after directory rename without changing
  await page.setViewportSize({width:360,height:800});await openResponseSettings(page,'model');await expect(page.locator('#model-select')).toContainText(oldId);await expect(page.locator('#modal [data-option-value=""]')).toContainText(oldId);await expect(page.locator('#modal [data-option-value="model-new-head-000001"]')).toContainText(newId);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await closeResponseSettings(page);
  const after=await api(page,"return {ref:adapter.modelSelection('work-1','session-1').ref,thinking:adapter.modelSelection('work-1','session-1').thinking,messages:adapter.getWork('work-1').sessions[0].messages};");assert.deepEqual(after,before);assert.equal(chatWrites(requests).length,0);
 });
+
+test('Work naming: creation conflict is local to Name, keeps advanced drafts and does not guess other conflicts', async t => {
+  for (const code of ['WORK_NAME_CONFLICT', 'CONFLICT']) {
+    await t.test(code, async t => {
+      const { page, requests } = await fixture(t, r => r.path === 'works' && r.method === 'POST'
+        ? { status: 409, json: { code, message: code === 'CONFLICT' ? 'A different state conflict' : 'Legacy name conflict', ...(code === 'WORK_NAME_CONFLICT' ? { field: 'name' } : {}) } } : undefined);
+      await button(page, 'back-works').click(); await button(page, 'new-work').click();
+      await page.setViewportSize({ width: 360, height: 780 });
+      const name = '<img src=x onerror="alert(1)">';
+      await page.locator('#create-name').fill(name);
+      await button(page, 'toggle-create-advanced').click();
+      await page.locator('#create-image').fill('fixture/image:one');
+      await page.locator('#create-agents').fill('Keep these instructions');
+      await page.locator('#create-json').fill('{"agentsMd":"Keep this JSON"}');
+      await button(page, 'create-work').focus(); await button(page, 'create-work').press('Enter');
+      if (code === 'WORK_NAME_CONFLICT') {
+        await expect(page.locator('#create-name-error')).toContainText('Choose a different name.');
+        await expect(page.locator('#create-name')).toHaveAttribute('aria-invalid', 'true');
+        await expect(page.locator('#create-name')).toHaveAttribute('aria-describedby', 'create-name-error');
+        await expect(page.locator('#modal [role=alert]')).toHaveCount(1);
+        await expect(page.locator('[data-action-status]')).toHaveCount(0);
+      } else {
+        await expect(page.locator('#modal')).toContainText('A different state conflict');
+        await expect(page.locator('#create-name-error')).toHaveCount(0);
+        await expect(page.locator('#create-name')).not.toHaveAttribute('aria-invalid', 'true');
+      }
+      await expect(page.locator('#create-name')).toHaveValue(name);
+      await expect(page.locator('#create-image')).toHaveValue('fixture/image:one');
+      await expect(page.locator('#create-agents')).toHaveValue('Keep these instructions');
+      await expect(page.locator('#create-json')).toHaveValue('{"agentsMd":"Keep this JSON"}');
+      await expect(page.locator('#modal img')).toHaveCount(0);
+      assert.equal(requests.filter(r => r.path === 'works' && r.method === 'POST').length, 1);
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      if (code === 'WORK_NAME_CONFLICT') {
+        await button(page, 'close-modal').click();
+        await expect(page.locator('[data-action-status]')).toHaveCount(0);
+        await button(page, 'new-work').click();
+        await expect(page.locator('#create-name')).toHaveValue(name);
+      }
+      await page.locator('#create-name').fill('Another name');
+      await expect(page.locator('#create-name-error')).toHaveCount(0);
+      assert.equal(requests.filter(r => r.path === 'works' && r.method === 'POST').length, 1);
+    });
+  }
+});
+
+async function inspectedNamingWork(page: Page, sourceName?: string) {
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await api(page, `adapter.inspection=${JSON.stringify({ ...(sourceName ? { sourceName } : {}), integrityVerified: true })};adapter.inspectionTransfer='transfer-name';adapter.inspectionContext={id:'transfer-name',nonce:1,core:'http://core.test',localSession:'local-session-csrf',ready:true,anonymous:false,importState:'unsubmitted'};adapter.emit();`);
+  await expect(page.locator('#import-name-help')).toContainText('Core adds a suffix');
+}
+
+test('Work naming: delayed creation conflict identifies the submitted name without invalidating the edited draft', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works' && r.method === 'POST') {
+      await gate;
+      return { status: 409, json: { code: 'WORK_NAME_CONFLICT', field: 'name' } };
+    }
+  });
+  await button(page, 'back-works').click(); await button(page, 'new-work').click();
+  const submitted = 'Taken <img src=x onerror="alert(1)">';
+  const name = page.locator('#create-name');
+  await name.fill(` ${submitted} `);
+  await button(page, 'toggle-create-advanced').click();
+  await page.locator('#create-json').fill('{"agentsMd":"Keep this draft"}');
+  await button(page, 'create-work').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works' && r.method === 'POST').length).toBe(1);
+  await expect(name).toBeEnabled(); await name.fill('New available draft');
+  release();
+  await expect(page.locator('#modal')).toContainText(`The request for Work name "${submitted}" was rejected.`);
+  await expect(name).toHaveValue('New available draft');
+  await expect(name).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(page.locator('#create-name-error')).toHaveCount(0);
+  await expect(page.locator('#modal .feedback.warning[role=status]')).toHaveCount(1);
+  await expect(page.locator('[data-action-status]')).toHaveCount(0);
+  await expect(page.locator('#modal img')).toHaveCount(0);
+  await expect(page.locator('#create-json')).toHaveValue('{"agentsMd":"Keep this draft"}');
+  const posts = requests.filter(r => r.path === 'works' && r.method === 'POST');
+  assert.equal(posts.length, 1); assert.equal(JSON.parse(posts[0]!.body).name, submitted);
+  await name.fill('Final available draft');
+  await expect(page.locator('#modal .feedback.warning')).toHaveCount(0);
+  await expect(page.locator('[data-action-status]')).toHaveCount(0);
+  await button(page, 'close-modal').click(); await button(page, 'new-work').click();
+  await expect(name).toHaveValue('Final available draft');
+  await expect(page.locator('[data-action-status]')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.path === 'works' && r.method === 'POST').length, 1);
+});
+
+test('Work naming: older creation rejection cannot clear the newer name conflict', async t => {
+  let releaseA!: () => void, releaseB!: () => void;
+  const gateA = new Promise<void>(done => releaseA = done);
+  const gateB = new Promise<void>(done => releaseB = done);
+  t.after(async () => { releaseA(); releaseB(); });
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works' && r.method === 'POST') {
+      await (JSON.parse(r.body).name === 'A taken' ? gateA : gateB);
+      return { status: 409, json: { code: 'WORK_NAME_CONFLICT', field: 'name' } };
+    }
+  });
+  await button(page, 'back-works').click(); await button(page, 'new-work').click();
+  const name = page.locator('#create-name');
+  await name.fill('A taken'); await button(page, 'create-work').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works' && r.method === 'POST').length).toBe(1);
+  await name.fill('B taken'); await button(page, 'toggle-create-advanced').click();
+  await page.locator('#create-json').fill('{"agentsMd":"Keep B draft"}');
+  await button(page, 'create-work').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works' && r.method === 'POST').length).toBe(2);
+  releaseB();
+  await expect(name).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.locator('#create-name-error')).toContainText('Choose a different name.');
+  const olderResponse = page.waitForResponse(response => response.request().method() === 'POST' && response.request().postDataJSON()?.name === 'A taken');
+  releaseA(); await (await olderResponse).finished();
+  await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveCount(0);
+  await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => done())));
+  await expect(name).toHaveValue('B taken');
+  await expect(name).toHaveAttribute('aria-invalid', 'true');
+  await expect(name).toHaveAttribute('aria-describedby', 'create-name-error');
+  await expect(page.locator('#create-name-error')).toContainText('Choose a different name.');
+  await expect(page.locator('#modal [role=alert]')).toHaveCount(1);
+  await expect(page.locator('#modal')).not.toContainText('The request for Work name "A taken" was rejected.');
+  await expect(page.locator('#create-json')).toHaveValue('{"agentsMd":"Keep B draft"}');
+  const posts = requests.filter(r => r.path === 'works' && r.method === 'POST').map(r => JSON.parse(r.body));
+  assert.deepEqual(posts.map(post => post.name), ['A taken', 'B taken']);
+  assert.equal(posts[1].configuration.agentsMd, 'Keep B draft');
+});
+
+test('Work naming: delayed Import conflict preserves a cleared name until the user explicitly submits again', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  let imports = 0;
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'work-packages/transfer-name') return { json: { phase: 'ready' } };
+    if (r.path === 'work-imports' && r.method === 'POST') {
+      if (++imports === 1) {
+        await gate;
+        return { status: 409, json: { code: 'WORK_NAME_CONFLICT', field: 'name' } };
+      }
+      return { status: 202, json: { operationId: 'operation-name-import', workId: 'work-name-import', name: '笔记-3' } };
+    }
+  });
+  await inspectedNamingWork(page, '笔记');
+  const name = page.locator('#import-name');
+  await name.fill('Taken'); await button(page, 'confirm-import').click();
+  await expect.poll(() => imports).toBe(1);
+  await expect(name).toBeEnabled(); await name.fill('');
+  release();
+  await expect(page.locator('#modal')).toContainText('The request for Work name "Taken" was rejected.');
+  await expect(name).toHaveValue('');
+  await expect(name).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(name).toHaveAttribute('aria-describedby', 'import-name-help');
+  await expect(page.locator('#import-name-error')).toHaveCount(0);
+  await expect(page.locator('.inspection-summary')).toBeVisible();
+  await expect(page.locator('#modal .feedback.warning[role=status]')).toHaveCount(1);
+  await expect(page.locator('[data-action-status]')).toHaveCount(0);
+  assert.equal(imports, 1);
+  await button(page, 'confirm-import').click();
+  await expect(page.locator('.import-name-feedback')).toContainText('笔记-3');
+  const posts = requests.filter(r => r.path === 'work-imports' && r.method === 'POST').map(r => JSON.parse(r.body));
+  assert.equal(posts.length, 2); assert.equal(posts[0].name, 'Taken'); assert.equal('name' in posts[1], false);
+  assert.equal(posts[0].transferId, posts[1].transferId);
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path === 'work-packages').length, 0);
+});
+
+test('Work naming: delayed conflicts still mark the field when only surrounding whitespace changes', async t => {
+  for (const importing of [false, true]) {
+    await t.test(importing ? 'Import' : 'creation', async t => {
+      let release!: () => void;
+      const gate = new Promise<void>(done => release = done); t.after(async () => release());
+      const path = importing ? 'work-imports' : 'works';
+      const { page, requests } = await fixture(t, async r => {
+        if (r.path === 'work-packages/transfer-name') return { json: { phase: 'ready' } };
+        if (r.path === path && r.method === 'POST') {
+          await gate;
+          return { status: 409, json: { code: 'WORK_NAME_CONFLICT', field: 'name' } };
+        }
+      });
+      if (importing) await inspectedNamingWork(page, '笔记');
+      else { await button(page, 'back-works').click(); await button(page, 'new-work').click(); }
+      const name = page.locator(importing ? '#import-name' : '#create-name');
+      await name.fill(' Taken '); await button(page, importing ? 'confirm-import' : 'create-work').click();
+      await expect.poll(() => requests.filter(r => r.path === path && r.method === 'POST').length).toBe(1);
+      await name.fill('Taken '); release();
+      await expect(name).toHaveValue('Taken ');
+      await expect(name).toHaveAttribute('aria-invalid', 'true');
+      await expect(page.locator(importing ? '#import-name-error' : '#create-name-error')).toContainText('Choose a different name.');
+      await expect(page.locator('#modal [role=alert]')).toHaveCount(1);
+      const posts = requests.filter(r => r.path === path && r.method === 'POST');
+      assert.equal(posts.length, 1); assert.equal(JSON.parse(posts[0]!.body).name, 'Taken');
+    });
+  }
+});
+
+test('Work naming: explicit Import conflict keeps the inspected package and only resubmits on user action', async t => {
+  let imports = 0;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'work-packages/transfer-name') return { json: { phase: 'ready' } };
+    if (r.path === 'work-imports' && r.method === 'POST') {
+      imports++;
+      return imports === 1 ? { status: 409, json: { code: 'WORK_NAME_CONFLICT', field: 'name', message: 'Name reserved' } }
+        : { status: 202, json: { operationId: 'operation-name-import', workId: 'work-name-import', name: '笔记-3' } };
+    }
+  });
+  await inspectedNamingWork(page, '笔记');
+  await api(page, `adapter.inspection.bindingRequirements={models:Array.from({length:20},()=>({provider:'fixture',model:'one'}))};adapter.emit();`);
+  await page.locator('#import-name').fill('Taken'); await button(page, 'confirm-import').click();
+  await expect(page.locator('#import-name-error')).toContainText('let Core choose one');
+  await expect(page.locator('#import-name-error')).toBeInViewport();
+  await expect(page.locator('#import-name')).toHaveValue('Taken');
+  await expect(page.locator('#import-name')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.locator('#import-name')).toHaveAttribute('aria-describedby', /import-name-error/);
+  await expect(page.locator('.inspection-summary')).toBeVisible();
+  await expect(page.locator('#modal [role=alert]')).toHaveCount(1);
+  await expect(page.locator('[data-action-status]')).toHaveCount(0);
+  assert.equal(imports, 1);
+  await page.locator('#import-name').fill('');
+  await expect(page.locator('#import-name-error')).toHaveCount(0);
+  assert.equal(imports, 1);
+  await button(page, 'confirm-import').click();
+  await expect(page.locator('.import-name-feedback')).toContainText('笔记-3');
+  const posts = requests.filter(r => r.path === 'work-imports' && r.method === 'POST').map(r => JSON.parse(r.body));
+  assert.equal(posts.length, 2); assert.equal(posts[0].name, 'Taken'); assert.equal('name' in posts[1], false);
+  assert.equal(posts[0].transferId, posts[1].transferId);
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path === 'work-packages').length, 0);
+});
+
+test('Work naming: Import uses the actual Core name and preserves it across stage updates', async t => {
+  for (const entry of [
+    { source: '笔记', input: '', actual: '笔记-3', renamed: true },
+    { source: '笔记', input: '研究笔记', actual: '研究笔记', renamed: false },
+    { source: '笔记', input: '', actual: '笔记', renamed: false },
+    { source: undefined, input: '', actual: 'Recovered name', renamed: false },
+    { source: '笔记', input: '', actual: undefined, renamed: false },
+  ]) {
+    await t.test(entry.actual || 'name not confirmed', async t => {
+      let state = 'running';
+      const { page, requests } = await fixture(t, r => {
+        if (r.path === 'work-imports' && r.method === 'POST') return { status: 202, json: { operationId: 'operation-name-import', workId: 'work-name-import', ...(entry.actual ? { name: entry.actual } : {}) } };
+        if (r.path === 'operations/operation-name-import') return { json: { operationId: 'operation-name-import', workId: 'work-name-import', kind: 'import-work', state, ...(state === 'failed' ? { error: { message: 'Import failed safely' } } : {}) } };
+        if (r.path === 'works/work-name-import') return state === 'succeeded'
+          ? { json: { id: 'work-name-import', name: entry.actual || 'Confirmed later', desiredState: 'stopped', observedState: 'stopped' } }
+          : { status: 404, json: { code: 'NOT_FOUND' } };
+      });
+      await inspectedNamingWork(page, entry.source);
+      await page.locator('#import-name').fill(entry.input); await button(page, 'confirm-import').click();
+      const feedback = page.locator('.import-name-feedback');
+      await expect(feedback).toContainText(entry.actual || 'has not been confirmed');
+      await expect(feedback).not.toContainText('Imported as');
+      assert.equal((await feedback.textContent())!.includes('because the source name was unavailable'), entry.renamed);
+      await button(page, 'check-operation').click();
+      await expect(feedback).toContainText(entry.actual || 'has not been confirmed');
+      assert.equal(await api(page, `return adapter.getOperation('operation-name-import').importName;`), entry.actual);
+      state = 'failed'; await button(page, 'check-operation').click();
+      await expect(page.locator('#modal')).toContainText('Import failed safely');
+      await expect(feedback).not.toContainText('Imported as');
+      state = 'succeeded'; await button(page, 'check-operation').click();
+      if (!entry.actual) await api(page, `await adapter.refreshWorkStatus('work-name-import');`);
+      await expect(feedback).toContainText('Imported as');
+      await expect(feedback).toContainText(entry.actual || 'Confirmed later');
+      assert.equal(requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length, 1);
+      assert.equal(requests.filter(r => r.path === 'work-packages' && r.method === 'POST').length, 0);
+    });
+  }
+});

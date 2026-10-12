@@ -10,10 +10,12 @@ export function fileVersion(value) {
 export class DesktopError extends Error {
     code;
     httpStatus;
-    constructor(code, message, httpStatus) {
+    field;
+    constructor(code, message, httpStatus, field) {
         super(message);
         this.code = code;
         this.httpStatus = httpStatus;
+        this.field = field;
     }
 }
 const part = encodeURIComponent;
@@ -529,7 +531,8 @@ export class DesktopAdapter {
                     this.emit();
                 }
             }
-            throw new DesktopError(code, value?.message ?? `Request failed (${response.status}).`, response.status);
+            const message = code === 'WORK_NAME_CONFLICT' ? 'This Work name is already in use or reserved. Choose a different name.' : value?.message ?? `Request failed (${response.status}).`;
+            throw new DesktopError(code, message, response.status, value?.field === 'name' ? 'name' : undefined);
         }
         if (!value || typeof value !== 'object')
             throw new DesktopError('INVALID_RESPONSE', 'The server returned an invalid response.');
@@ -1458,6 +1461,8 @@ export class DesktopAdapter {
             }
             this.requireWorkSync(operation.workId);
         }
+        if (kind === 'Import Work' && typeof value.name === 'string' && value.name)
+            operation.importName = value.name;
         this.state.operations.unshift(operation);
         if (operation.snapshotId)
             this.state.snapshots.unshift({ id: operation.snapshotId, operationId: operation.id, workId, status: 'preparing', filename: `${workId}.work`, size: '' });
@@ -2468,6 +2473,7 @@ export class DesktopAdapter {
             throw new Error(`Import is ${context.importState}. Recover the original transfer ${context.id} or known Operation; do not submit again.`);
         if (context.core !== this.state.core.address || context.localSession !== this.csrf || !this.state.signedIn)
             throw new Error('Sign in to the original Core before importing.');
+        const sourceName = !name && typeof this.inspection?.sourceName === 'string' ? this.inspection.sourceName : undefined;
         context.importState = 'submitting';
         this.emit();
         try {
@@ -2476,6 +2482,7 @@ export class DesktopAdapter {
                 throw new DesktopError('CONNECTION_CHANGED', 'The identity changed during import.');
             // Missing acceptance identity is also unknown; never offer a second POST.
             const operation = this.accepted(value, '', 'Import Work');
+            operation.importSourceName = sourceName;
             context.operationId = operation.id;
             context.importState = 'accepted';
             this.emit();

@@ -3182,3 +3182,6 @@ dd > .button {
 .local-read-status[aria-busy=true]::before { content:' '; display:inline-block; width:8px; height:8px; margin-right:6px; border:1px solid var(--border); border-top-color:currentColor; border-radius:50%; animation:read-spin 1s linear infinite; }
 @keyframes read-spin { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion:reduce) { .local-read-status[aria-busy=true]::before { animation:none; } }
+
+.field > .name-field-error { color:var(--danger, #a33b32); font-size:12px; overflow-wrap:anywhere; }
+.import-name-feedback { overflow-wrap:anywhere; }

@@ -122,6 +122,8 @@ export interface Work {
   resourceErrors?: Record<string, string>;
 }
 export interface Operation {
+  importName?: string;
+  importSourceName?: string;
   action?: LifecycleAction;
   observationError?: string;
   localRecordSaved?: boolean;

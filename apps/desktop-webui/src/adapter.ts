@@ -14,7 +14,7 @@ export function fileVersion(value: string | null | undefined): string {
 interface InspectionContext { id: string; nonce: number; core: string; localSession: string; anonymous: boolean; ready: boolean; importState: 'unsubmitted' | 'submitting' | 'unknown' | 'accepted'; xhr?: XMLHttpRequest; operationId?: string }
 interface UploadIntent { file: File; modified: string; absent: boolean }
 
-export class DesktopError extends Error { constructor(public code: string, message: string, public httpStatus?: number) { super(message); } }
+export class DesktopError extends Error { constructor(public code: string, message: string, public httpStatus?: number, public field?: string) { super(message); } }
 const part = encodeURIComponent;
 const runStates: RunStatus[] = ['interrupted', 'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'];
 const blankConfig = (): Configuration => ({ skills: [], packages: [], agents: '', advanced: '{}', revision: 0, activeRevision: 0, loaded: false, modelVisible: false });
@@ -297,7 +297,8 @@ export class DesktopAdapter {
           this.state.signedIn = false; this.state.scenario = 'auth-expired'; this.emit();
         }
       }
-      throw new DesktopError(code, value?.message ?? `Request failed (${response.status}).`, response.status);
+      const message = code === 'WORK_NAME_CONFLICT' ? 'This Work name is already in use or reserved. Choose a different name.' : value?.message ?? `Request failed (${response.status}).`;
+      throw new DesktopError(code, message, response.status, value?.field === 'name' ? 'name' : undefined);
     }
     if (!value || typeof value !== 'object') throw new DesktopError('INVALID_RESPONSE', 'The server returned an invalid response.');
     return value;
@@ -711,6 +712,7 @@ export class DesktopAdapter {
       if (work) { work.lifecycleIntent = { action: operation.action, operationId: operation.id, sequence, baseVersion: work.controlVersion }; work.operationId = operation.id; }
       this.requireWorkSync(operation.workId);
     }
+    if (kind === 'Import Work' && typeof value.name === 'string' && value.name) operation.importName = value.name;
     this.state.operations.unshift(operation); if (operation.snapshotId) this.state.snapshots.unshift({ id: operation.snapshotId, operationId: operation.id, workId, status: 'preparing', filename: `${workId}.work`, size: '' });
     this.scheduleOperationPoll(); this.emit(); return operation;
   }
@@ -1153,12 +1155,13 @@ export class DesktopAdapter {
     if (!context?.ready || !this.inspectionTransfer) throw new Error('Inspect the actual .work package first.');
     if (context.importState !== 'unsubmitted') throw new Error(`Import is ${context.importState}. Recover the original transfer ${context.id} or known Operation; do not submit again.`);
     if (context.core !== this.state.core.address || context.localSession !== this.csrf || !this.state.signedIn) throw new Error('Sign in to the original Core before importing.');
+    const sourceName = !name && typeof this.inspection?.sourceName === 'string' ? this.inspection.sourceName : undefined;
     context.importState = 'submitting'; this.emit();
     try {
       const value = await this.request('work-imports', 'POST', { transferId: context.id, ...(name ? { name } : {}) });
       if (this.inspectionContext !== context) throw new DesktopError('CONNECTION_CHANGED', 'The identity changed during import.');
       // Missing acceptance identity is also unknown; never offer a second POST.
-      const operation = this.accepted(value, '', 'Import Work'); context.operationId = operation.id; context.importState = 'accepted'; this.emit(); return operation;
+      const operation = this.accepted(value, '', 'Import Work'); operation.importSourceName = sourceName; context.operationId = operation.id; context.importState = 'accepted'; this.emit(); return operation;
     } catch (error) {
       if (this.inspectionContext === context) { context.importState = 'unknown'; this.emit();
         // The CLI may have attempted Core Import even when a gateway returned an

@@ -89,6 +89,7 @@ let view = {
     noteLoaded: "",
     toast: "",
     modalError: "",
+    modalNameError: null,
     createName: "",
     createAdvanced: false,
     createImage: "",
@@ -130,6 +131,7 @@ const chatReading = new Map();
 let pendingWebCommand;
 let importSignInSuspended = false;
 const actions = new ActionState(() => render());
+let latestCreateToken = 0;
 class ViewChanged extends Error {
 }
 let sessionChoice = 0, areaChoice = 0, serviceChoice = 0, selectionRequest = 0, modalChoice = 0;
@@ -209,6 +211,8 @@ async function dispatchAction(el, perform = record => handleAction(el.dataset.ac
             actions.fail(record, error);
         else
             actions.finish(record);
+        if (record.action === 'create-work' && record.token < latestCreateToken)
+            throw new ViewChanged();
         throw error;
     }
     finally {
@@ -349,12 +353,44 @@ async function openWork(w, record) {
         render();
     });
 }
+function currentNameError() {
+    const failure = view.modalNameError;
+    const name = (view.modal === 'import' ? view.importName : view.createName).trim();
+    return failure && failure.name === name ? failure.message : '';
+}
+function nameFieldError(id, importing = false) {
+    const message = currentNameError();
+    return message ? `<span id="${id}" class="name-field-error" role="alert">${esc(message)}${importing ? ' Or leave the name blank to let Core choose one.' : ''}</span>` : '';
+}
+function clearNameFieldError(renderNow = true) {
+    if (!view.modalNameError)
+        return;
+    for (const [key, record] of actions.records) {
+        if (!record.pending && !record.blocked && record.error === view.modalNameError.message && record.action === (view.modal === 'import' ? 'confirm-import' : 'create-work'))
+            actions.records.delete(key);
+    }
+    view.modalNameError = null;
+    view.modalError = '';
+    if (renderNow)
+        render();
+}
+function importNameFeedback(op) {
+    if (op.kind !== 'Import Work' && op.kind !== 'import-work')
+        return '';
+    const name = op.importName || adapter.getWork(op.workId)?.name;
+    if (!name)
+        return `<div class="import-name-feedback">${feedback('The import name has not been confirmed.')}</div>`;
+    const title = op.state === 'succeeded' ? 'Imported as' : 'Name selected for this import';
+    const renamed = op.importSourceName && op.importSourceName !== name;
+    return `<div class="import-name-feedback">${feedback(`${title}: <strong>${esc(name)}</strong>${renamed ? `<p>Core selected this name instead of <strong>${esc(op.importSourceName)}</strong> because the source name was unavailable.</p>` : ''}`)}</div>`;
+}
 function openModal(name, data = {}) {
     modalChoice++;
     lastFocus = document.activeElement;
     view.modal = name;
     view.data = data;
     view.modalError = "";
+    view.modalNameError = null;
     view.formName = "";
     view.formDestination = view.path;
     view.formOverwrite = false;
@@ -363,6 +399,8 @@ function openModal(name, data = {}) {
 }
 function closeModal() {
     modalChoice++;
+    if (view.modal === 'new-work' || view.modal === 'import')
+        clearNameFieldError(false);
     const responseSettings = view.modal === 'chat-response-settings';
     const responseContext = responseSettings && chatSettingsContextCurrent();
     const source = view.data.source;
@@ -375,6 +413,7 @@ function closeModal() {
         void adapter.abandonInspection();
     view.modal = "";
     view.modalError = "";
+    view.modalNameError = null;
     render();
     if (responseSettings) {
         focusReturn = '';
@@ -840,7 +879,7 @@ function modalMarkup() {
             break;
         case "new-work":
             title = "New Work";
-            body = `<p>Give your Work a name. It will inherit your Core’s defaults.</p><label class="field">Name<input id="create-name" placeholder="e.g. Reading notes" value="${esc(view.createName)}" autofocus required maxlength="120"></label><button class="advanced-toggle" data-action="toggle-create-advanced">${icon(view.createAdvanced ? "down" : "chevron", 14)} Advanced configuration <span>Optional</span></button>${view.createAdvanced
+            body = `<p>Give your Work a name. It will inherit your Core’s defaults.</p><label class="field">Name<input id="create-name" placeholder="e.g. Reading notes" value="${esc(view.createName)}" aria-label="Name" ${currentNameError() ? 'aria-invalid="true" aria-describedby="create-name-error"' : ""} autofocus required maxlength="120">${nameFieldError("create-name-error")}</label><button class="advanced-toggle" data-action="toggle-create-advanced">${icon(view.createAdvanced ? "down" : "chevron", 14)} Advanced configuration <span>Optional</span></button>${view.createAdvanced
                 ? `<div class="advanced-form"><label class="field">Base image<input id="create-image" placeholder="Use Core default" value="${esc(view.createImage)}"></label><label class="field">Skills<select id="create-skill-mode">${[
                     ["defaults", "Use defaults"],
                     ["choose", "Choose"],
@@ -1056,7 +1095,7 @@ function modalMarkup() {
         }
         case "import":
             title = "Import Work";
-            body = `<p>Inspect the actual <code>.work</code> package using the local CLI. No file is sent to Core until you confirm import.</p><div class="file-drop">${icon("upload", 28)}<strong>${esc(view.inspectFilename || "Choose a Work package")}</strong>${btn("Choose .work file", "choose-work-file", "", adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? "disabled" : "")}</div>${adapter.transferProgress ? feedback(`Transfer: ${esc(adapter.transferProgress.phase)} · ${esc(adapter.transferProgress.transferred ?? 0)} / ${esc(adapter.transferProgress.total ?? "unknown")} bytes`) : ""}${adapter.inspection ? `${feedback("Package format and contents verified locally.", "success")}<div class="inspection-summary"><h3>Verified package summary</h3><pre>${esc(JSON.stringify(adapter.inspection, null, 2))}</pre><p>Import creates a stopped Work. Private files may contain business data or credentials. No code starts automatically.</p></div><label class="field">Work name <span>Optional</span><input id="import-name" value="${esc(view.importName)}" placeholder="Leave blank to use the package name"></label>` : ""}`;
+            body = `<p>Inspect the actual <code>.work</code> package using the local CLI. No file is sent to Core until you confirm import.</p><div class="file-drop">${icon("upload", 28)}<strong>${esc(view.inspectFilename || "Choose a Work package")}</strong>${btn("Choose .work file", "choose-work-file", "", adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? "disabled" : "")}</div>${adapter.transferProgress ? feedback(`Transfer: ${esc(adapter.transferProgress.phase)} · ${esc(adapter.transferProgress.transferred ?? 0)} / ${esc(adapter.transferProgress.total ?? "unknown")} bytes`) : ""}${adapter.inspection ? `${feedback("Package format and contents verified locally.", "success")}<div class="inspection-summary"><h3>Verified package summary</h3><pre>${esc(JSON.stringify(adapter.inspection, null, 2))}</pre><p>Import creates a stopped Work. Private files may contain business data or credentials. No code starts automatically.</p></div><label class="field">Work name <span>Optional</span><input id="import-name" value="${esc(view.importName)}" aria-label="Work name" aria-describedby="import-name-help${currentNameError() ? ' import-name-error' : ''}" ${currentNameError() ? 'aria-invalid="true"' : ""} placeholder="Leave blank to use the package name"><span id="import-name-help">Leave blank to use the package name. Core adds a suffix if that name is unavailable.</span>${nameFieldError("import-name-error", true)}</label>` : ""}`;
             body += adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? feedback(`Original import: ${esc(adapter.inspectionContext.importState)} · <code>${esc(adapter.inspectionTransfer)}</code>. Check known operations; closing does not cancel or resubmit it.`, "warning", btn("Check original import", "check-inspection-import", "small") + btn("Known operations", "operations", "small")) : "";
             footer = `${cancel()}${adapter.inspection && adapter.inspectionContext?.importState === "unsubmitted" ? btn(adapter.state.signedIn ? "Import Work" : "Sign in to import", adapter.state.signedIn ? "confirm-import" : "import-sign-in", "primary") : ""}`;
             break;
@@ -1072,7 +1111,7 @@ function modalMarkup() {
             const op = adapter.getOperation(view.data.id);
             title = op ? esc(op.kind) : "Operation not found";
             body = op
-                ? `${phase(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">Work: ${workStatus(adapter.getWork(op.workId))}${quickAction(adapter.getWork(op.workId))}</div>` : ""}${feedback(`${esc(op.phase)}. ${op.state === "accepted" || op.state === "preparing" ? "Accepted does not mean completed. Closing this dialog will not cancel it." : op.state === "unknown" ? "Check this original Operation; do not repeat the request." : op.state === "succeeded" ? "The original Operation reached a confirmed result." : ""}`, op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>Operation ID</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="Copy Operation ID"`)}</dd><dt>Work ID</dt><dd><code>${op.workId}</code></dd><dt>State</dt><dd>${badge(op.state)}</dd><dt>Last confirmed</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>Snapshot ID</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}${op.observationError ? feedback(`Observation interrupted. ${esc(op.observationError)}`, "warning") : ""}${op.localRecordSaved === false ? feedback("Accepted, but the local record could not be saved. Copy the Operation ID; automatic recovery after reload is not guaranteed.", "warning") : ""}`
+                ? `${phase(op)}${importNameFeedback(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">Work: ${workStatus(adapter.getWork(op.workId))}${quickAction(adapter.getWork(op.workId))}</div>` : ""}${feedback(`${esc(op.phase)}. ${op.state === "accepted" || op.state === "preparing" ? "Accepted does not mean completed. Closing this dialog will not cancel it." : op.state === "unknown" ? "Check this original Operation; do not repeat the request." : op.state === "succeeded" ? "The original Operation reached a confirmed result." : ""}`, op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>Operation ID</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="Copy Operation ID"`)}</dd><dt>Work ID</dt><dd><code>${op.workId}</code></dd><dt>State</dt><dd>${badge(op.state)}</dd><dt>Last confirmed</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>Snapshot ID</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}${op.observationError ? feedback(`Observation interrupted. ${esc(op.observationError)}`, "warning") : ""}${op.localRecordSaved === false ? feedback("Accepted, but the local record could not be saved. Copy the Operation ID; automatic recovery after reload is not guaranteed.", "warning") : ""}`
                 : "<p>This Operation is not known for the current Core and user. Verify the ID or check the original Work.</p>";
             footer = `${close()}${op ? btn("Check status", "check-operation", "", `data-id="${op.id}"`) : ""}${op && !["succeeded", "failed", "superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? "Resume checking" : "Pause checking", adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${op.id}"`) : ""}${op?.state === "succeeded" && op.kind === "Import Work" ? `${btn("Open Work", "open-work", "primary", `data-id="${op.workId}"`)}${btn("Start Work", "start-work", "", `data-id="${op.workId}"`)}` : op?.state === "succeeded" && op.kind === "Create Work" ? btn("Open Work", "open-work", "primary", `data-id="${op.workId}"`) : op?.snapshotId ? btn("View package", "export", "primary", `data-id="${op.workId}"`) : ""}`;
             break;
@@ -1600,6 +1639,8 @@ async function handleAction(action, el, record) {
                         }));
             if (view.createAgents)
                 config.agents = view.createAgents;
+            if (record)
+                latestCreateToken = record.token;
             const op = await stay(adapter.createWork(view.createName.trim(), config, view.createImage));
             show(op);
             break;
@@ -2487,6 +2528,7 @@ function render() {
             pendingWebCommand = undefined;
         view.modal = '';
         view.modalError = '';
+        view.modalNameError = null;
         focusReturn = '';
         lastFocus = null;
         modalChoice++;
@@ -2583,12 +2625,19 @@ root.addEventListener("click", (e) => {
     if (!view.modal)
         focusReturn = focusKey(el);
     const origin = viewKey();
+    const submittedName = view.modal === 'new-work' && el.dataset.action === 'create-work' ? view.createName.trim()
+        : view.modal === 'import' && el.dataset.action === 'confirm-import' ? view.importName.trim() : undefined;
     void dispatchAction(el).catch((error) => {
         if (error instanceof ViewChanged || origin !== viewKey())
             return;
         if (view.modal) {
-            view.modalError = error instanceof Error ? error.message : String(error);
+            const nameConflict = submittedName !== undefined && error instanceof DesktopError && error.code === 'WORK_NAME_CONFLICT';
+            view.modalNameError = nameConflict ? { name: submittedName, message: error.message } : null;
+            view.modalError = nameConflict ? currentNameError() ? '' : `The request for Work name "${submittedName}" was rejected. ${error.message}`
+                : error instanceof Error ? error.message : String(error);
             render();
+            if (currentNameError())
+                root.querySelector(`#${view.modal === 'import' ? 'import-name-error' : 'create-name-error'}`)?.scrollIntoView({ block: 'nearest' });
         }
         else
             toast(error instanceof Error ? error.message : String(error));
@@ -2610,6 +2659,7 @@ root.addEventListener("input", (e) => {
             break;
         case "create-name":
             view.createName = value;
+            clearNameFieldError();
             break;
         case "create-image":
             view.createImage = value;
@@ -2664,6 +2714,7 @@ root.addEventListener("input", (e) => {
             break;
         case "import-name":
             view.importName = value;
+            clearNameFieldError();
             break;
         case "operation-query":
             view.operationQuery = value;
