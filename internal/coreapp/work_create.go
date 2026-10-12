@@ -68,7 +68,7 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 			return err
 		}
 		if count != 0 {
-			return contracts.NewError("CONFLICT", "")
+			return contracts.NewError("WORK_NAME_CONFLICT", "name")
 		}
 		return nil
 	}); err != nil {
@@ -159,7 +159,7 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 			return corestore.MutationEffect{}, err
 		}
 		if count != 0 {
-			return corestore.MutationEffect{}, contracts.NewError("CONFLICT", "")
+			return corestore.MutationEffect{}, contracts.NewError("WORK_NAME_CONFLICT", "name")
 		}
 		if err := corestore.InsertWork(tx, corestore.WorkRecord{ID: workID, OwnerUserID: actor.UserID, Name: name, DesiredState: "running", ObservedState: "provisioning", DesiredRevision: 1, ControlVersion: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
 			return corestore.MutationEffect{}, err

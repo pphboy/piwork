@@ -51,7 +51,7 @@ var publicErrors = map[string]errorDefinition{
 	"TARGET_MODEL_UNAVAILABLE":          {400, "A required recipient model credential is unavailable", false},
 	"EXTERNAL_MCP_SECRET_UNAVAILABLE":   {400, "A required external MCP credential is unavailable", false},
 	"PACKAGE_BINDING_INVALID":           {400, "Work package bindings are invalid", false},
-	"WORK_NAME_CONFLICT":                {409, "Work name is already reserved", false},
+	"WORK_NAME_CONFLICT":                {409, "This Work name is already in use or reserved. Choose a different name.", false},
 	"SNAPSHOT_VOLUME_CONFLICT":          {409, "Snapshot volume identity conflicts", false},
 	"SNAPSHOT_DEADLINE_EXCEEDED":        {408, "Snapshot deadline was exceeded", false},
 	"WORK_OPERATION_FAILED":             {500, "Work operation failed", false},

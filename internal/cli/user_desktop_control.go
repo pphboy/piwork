@@ -180,7 +180,14 @@ func desktopControlFailure(w http.ResponseWriter, err error) {
 			if status < 500 && apiErr.Text != "" {
 				message = apiErr.Text
 			}
-			desktopJSON(w, status, map[string]string{"code": apiErr.Code, "message": message})
+			failure := map[string]string{"code": apiErr.Code, "message": message}
+			var detail struct {
+				Field string `json:"field"`
+			}
+			if json.Unmarshal(apiErr.Details, &detail) == nil && detail.Field == "name" {
+				failure["field"] = "name"
+			}
+			desktopJSON(w, status, failure)
 		} else {
 			desktopError(w, status, "CORE_UNAVAILABLE")
 		}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,6 +14,38 @@ import (
 
 	"piwork/internal/client"
 )
+
+func TestDesktopNameConflictProjectsOnlySafeNameField(t *testing.T) {
+	for _, path := range []string{"/api/v1/works", "/api/v1/work-imports"} {
+		for _, field := range []any{"name", "configuration.secret", "../private", 42, nil} {
+			core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(409)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": "WORK_NAME_CONFLICT", "message": "Choose a different Work name.", "field": field, "requestJson": "PRIVATE-CONTENT", "stack": "/private/host/path"})
+			}))
+			api, err := client.New(core.URL, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = api.Request(context.Background(), "POST", path, map[string]string{"name": "Taken"}, nil)
+			core.Close()
+			if err == nil {
+				t.Fatal("expected Core rejection")
+			}
+			response := httptest.NewRecorder()
+			desktopControlFailure(response, err)
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != 409 || body["code"] != "WORK_NAME_CONFLICT" || body["message"] != "Choose a different Work name." || (body["field"] == "name") != (field == "name") {
+				t.Fatal(path, field, response.Code, body)
+			}
+			if strings.Contains(response.Body.String(), "PRIVATE") || strings.Contains(response.Body.String(), "private") || len(body) != 2 && len(body) != 3 {
+				t.Fatal("unsafe error details forwarded", body)
+			}
+		}
+	}
+}
 
 func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 	type forwarded struct {

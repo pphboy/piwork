@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/moby/moby/client"
 	"piwork/internal/corestore"
+	"piwork/internal/diagnostics"
 	"piwork/internal/dockerengine"
 	"piwork/internal/testsupport"
 )
@@ -107,6 +109,50 @@ func TestNativeDefaultWorkCreateAndSession(t *testing.T) {
 	}
 	if conflictStatus, conflict := create(base, `{"name":"Different Work","idempotencyKey":"create-default-once"}`); conflictStatus != 409 || conflict["code"] != "IDEMPOTENCY_CONFLICT" {
 		t.Fatal("same create key accepted different input", conflictStatus, conflict)
+	}
+	if status, conflict := create(base, `{"name":"默认工作","idempotencyKey":"duplicate-name"}`); status != 409 || conflict["code"] != "WORK_NAME_CONFLICT" || conflict["field"] != "name" {
+		t.Fatal("duplicate creation lost its name field", status, conflict)
+	}
+	// Occupy the name after context capture but before the acceptance transaction,
+	// using the existing performance observer rather than a production fault hook.
+	raceInserted := false
+	writer := workNamePerformanceWriter(func(raw []byte) (int, error) {
+		var event struct{ Phase, Outcome string }
+		if json.Unmarshal(raw, &event) == nil && event.Phase == "acceptance" && event.Outcome == "started" {
+			original, err := a.Store.Work(ctx, workID, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+				return corestore.InsertWork(tx, corestore.WorkRecord{ID: "work-name-race-holder", OwnerUserID: original.OwnerUserID, Name: "Concurrent name", DesiredState: "stopped", ObservedState: "stopped", DesiredRevision: 1, ControlVersion: 1, CreatedAt: packageNow(), UpdatedAt: packageNow()})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			raceInserted = true
+		}
+		return len(raw), nil
+	})
+	raceRequest := httptest.NewRequest("POST", "/api/v1/works", bytes.NewBufferString(`{"name":"Concurrent name","idempotencyKey":"name-race-rejected"}`))
+	raceRequest.Header.Set("Authorization", authorization)
+	raceRequest.Header.Set("Content-Type", "application/json")
+	raceRequest = raceRequest.WithContext(diagnostics.WithPerformanceWriter(ctx, writer))
+	raceResponse := httptest.NewRecorder()
+	a.route(raceResponse, raceRequest)
+	var raceFailure map[string]any
+	if err := json.Unmarshal(raceResponse.Body.Bytes(), &raceFailure); err != nil || !raceInserted || raceResponse.Code != 409 || raceFailure["code"] != "WORK_NAME_CONFLICT" || raceFailure["field"] != "name" {
+		t.Fatal("acceptance name race feedback", raceInserted, raceResponse.Code, raceFailure, err)
+	}
+	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		var named, acceptedRace int
+		if err := tx.QueryRow(`SELECT (SELECT count(*) FROM works WHERE name='Concurrent name'),(SELECT count(*) FROM idempotency_records WHERE idempotency_key='name-race-rejected')`).Scan(&named, &acceptedRace); err != nil {
+			return err
+		}
+		if named != 1 || acceptedRace != 0 {
+			t.Fatal("rejected race left a partial creation", named, acceptedRace)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if status, sessions := httpCall(t, base, "/api/v1/works/"+workID+"/sessions", "GET", authorization, nil); status != 200 || sessions["sessions"] == nil {
 		t.Fatal("created Work did not expose its real Agent", status, sessions)
@@ -270,6 +316,10 @@ func TestNativeDefaultWorkCreateAndSession(t *testing.T) {
 		}
 	}
 }
+
+type workNamePerformanceWriter func([]byte) (int, error)
+
+func (f workNamePerformanceWriter) Write(raw []byte) (int, error) { return f(raw) }
 
 func TestNativeManagedSkillLoadsFromCoreCopyAfterSourceRemoval(t *testing.T) {
 	imageRef := os.Getenv("PIWORK_TEST_NATIVE_AGENT_IMAGE")

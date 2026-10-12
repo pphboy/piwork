@@ -13,6 +13,7 @@ import (
 )
 
 type Inspection struct {
+	SourceName          string            `json:"sourceName"`
 	FormatVersion       float64           `json:"formatVersion"`
 	SnapshotKind        string            `json:"snapshotKind"`
 	Platform            any               `json:"platform"`
@@ -150,6 +151,7 @@ func ValidateTarget(spec contracts.PortableWorkSpec, platform contracts.WorkImag
 func SafeSummary(verified Verified) Inspection {
 	spec := verified.Spec
 	result := Inspection{FormatVersion: spec.FormatVersion, SnapshotKind: spec.SnapshotKind, Platform: spec.Compatibility, Digest: verified.Digest, Size: verified.Size, RestoredBytes: verified.RestoredBytes, Packages: []PackageIdentity{}, IntegrityVerified: true, InstallationValidated: false, Warning: "This package contains complete private Work content and may include credentials. Import does not execute it."}
+	result.SourceName = spec.SourceName
 	result.Counts.Contexts, result.Counts.Services, result.Counts.Images = int64(len(spec.Contexts)), int64(len(spec.Services)), int64(len(spec.Images))
 	result.Counts.Packages, result.Counts.Entries, result.Counts.Blobs = int64(len(spec.PiPackageArtifacts)), verified.EntryCount, int64(len(spec.Blobs))
 	for _, artifact := range spec.PiPackageArtifacts {

@@ -133,6 +133,10 @@ func TestOfflineInspectionChecksActualNativeImageAndKeepsSummarySafe(t *testing.
 	if !summary.IntegrityVerified || summary.InstallationValidated || summary.Counts.Packages != 1 || len(summary.Packages) != 1 {
 		t.Fatal(summary)
 	}
+	verified, err := Read(context.Background(), bytes.NewReader(raw), ReadOptions{})
+	if err != nil || summary.SourceName != verified.Spec.SourceName || summary.SourceName == "" {
+		t.Fatal("inspection lost the verified source name", summary.SourceName, err)
+	}
 	jsonBytes, err := json.Marshal(summary)
 	if err != nil {
 		t.Fatal(err)

@@ -297,7 +297,7 @@ func TestNativeCoreExportsCompleteStoppedWorkAndDownloadsSameSnapshot(t *testing
 		t.Fatal(err)
 	}
 	status, nameConflict := packageHTTPCall(t, base, "/api/v1/work-imports", "POST", auth, map[string]string{"packageId": sourcePackage, "name": "Apply Work", "idempotencyKey": "import-explicit-conflict"})
-	if status != 409 || nameConflict["code"] != "WORK_NAME_CONFLICT" {
+	if status != 409 || nameConflict["code"] != "WORK_NAME_CONFLICT" || nameConflict["field"] != "name" {
 		t.Fatal("name conflict", status, nameConflict)
 	}
 	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
