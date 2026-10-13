@@ -2472,3 +2472,26 @@ test('Reconcile history: 410 readback remains bound to the original Run beside a
   assert.equal(requests.filter(r => r.path.endsWith('/sessions/session-auto')).length, 0);
   assert.equal(chatWrites(requests).length, 0);
 });
+
+test('Reconcile configuration: delayed Save confirms only its captured draft and preserves later Advanced edits', async t => {
+  let submitted: any, release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(() => release());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path.endsWith('/configuration') && r.method === 'PUT') {
+      submitted = JSON.parse(r.body).configuration; await gate;
+      return { json: { desired: submitted, active: submitted, pendingApply: false } };
+    }
+  });
+  await button(page, 'settings').click(); await page.locator('[data-tab="Advanced"]').click();
+  const original = { skills: [], packages: [], agentsMd: '', modelRef: 'preserved-extra', mcp: { servers: [] } };
+  await page.locator('#advanced-editor').fill(JSON.stringify(original));
+  await button(page, 'save-config').click(); await expect.poll(() => !!submitted).toBe(true);
+  const later = { ...original, agentsMd: 'Later unsaved instructions', modelRef: 'later-extra' };
+  await page.locator('#advanced-editor').fill(JSON.stringify(later)); release();
+  await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveCount(0);
+  assert.deepEqual(submitted, original);
+  assert.deepEqual(JSON.parse(await page.locator('#advanced-editor').inputValue()), later);
+  await expect(page.locator('.settings-page')).toContainText('Unsaved changes');
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration') && r.method === 'PUT').length, 1);
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply')).length, 0);
+});
