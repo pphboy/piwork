@@ -148,6 +148,8 @@ For a ready Work, Core SHALL expose authenticated Session create/list/detail and
 
 Core 重启时 SHALL 恢复用户、会话、Work 和每个 Work 的 desired/active 配置版本。恢复 MUST 使用 Work 保存的配置，不得用新的全局默认配置替换已有 Work。正常关闭已经停止的 Work 运行容器 SHALL 按持久运行意图恢复；原本期望 stopped 的 Work SHALL 保持停止。用户、Work、Operation、Session、Run 标识和持久历史 SHALL 保留，恢复不得重新提交历史 Run 或创建重复 Work。
 
+Go 安装 SHALL 使用自身支持的持久格式恢复，不接管旧 TS 安装。异常退出后的恢复 SHALL 先核验残留资源及当前代次；Agent、Service 或文件 helper 尚未完成核验时，内容路由与写入准入保持关闭，不创建第二个有效主 daemon。
+
 #### Scenario: Continue after restart with changed defaults
 - **WHEN** Work A 使用 model-a，Core 正常关闭后全局默认改为 model-b，再次启动并恢复 Work A
 - **THEN** Work A 使用原保存的 model-a，原 Session 和历史可继续查询，不创建重复 Work
@@ -160,9 +162,13 @@ Core 重启时 SHALL 恢复用户、会话、Work 和每个 Work 的 desired/act
 - **WHEN** Core 在 Docker 已创建 Agent 容器、但 create Operation 尚未终结时异常退出，随后重启
 - **THEN** 恢复核对并接管或安全收尾已创建资源，继续或明确失败原 Operation，不创建重复 Work 实例
 
+#### Scenario: Recover before reopening access
+- **WHEN** 新进程正在核对 Agent 代次、Service 容器或残留文件 helper
+- **THEN** 未完成核验的路由与写入入口保持关闭，安全查询可显示恢复中或具体故障
+
 ### Requirement: Shut down Core without destroying running Works
 
-Core 收到 SIGINT、SIGTERM，或因 Docker Compose stop/down/重建进入正常关闭时 SHALL 停止接受新任务、撤销 readiness、停止生命周期调度，并在既有有界关闭流程内排空执行、收尾文件/快照/package 任务及停止本安装全部受管 Work 的 Agent 和附属 Service。正常关闭成功前 MUST 确认所有受管 Work 运行容器已经停止；不得要求或承诺这些 Work 在 Core 退出后继续运行。某 Work 的 drain 或停止失败 SHALL 不阻止尝试关闭其他受管 Work。
+Core 收到 SIGINT、SIGTERM，或因 Docker Compose stop/down/重建进入正常关闭时 SHALL 关闭 HTTP/runtime mutation 与文件准入、停止接受新任务、撤销 readiness、停止生命周期调度，并在既有有界关闭流程内排空执行、收尾文件/快照/package 任务及停止本安装全部受管 Work 的 Agent、附属 Service 与平台 helper。正常关闭成功前 MUST 确认所有受管 Work 运行容器已经停止；不得要求或承诺这些 Work 在 Core 退出后继续运行。某 Work 的 drain 或停止失败 SHALL 不阻止尝试关闭其他受管 Work。
 
 关闭 SHALL 保留 Work 记录、desiredState、Service 启用意图、配置、历史及匹配数据卷，不把 Core 退出隐式转换为用户的 Work stop/delete。默认 drain 30 秒、终止确认 10 秒和 Core 进程总预算 45 秒保持，Docker Compose 提供 60 秒关闭窗口。未确认关闭或超出预算 SHALL 非零退出并提供安全的未完成诊断及恢复记录，不报告正常关闭成功；关闭 SHALL 释放 listener 和 store 锁。SIGKILL、进程崩溃或断电不执行完整正常关闭流程，不得据此记录所有 Work 已停，重启沿用持久意图和资源归属恢复；本变更不新增进程外监护机制。CLI 退出 SHALL 不停止 Work。
 
@@ -182,23 +188,10 @@ Core 收到 SIGINT、SIGTERM，或因 Docker Compose stop/down/重建进入正�
 - **WHEN** Core 被 SIGKILL、崩溃或失去电源
 - **THEN** 不宣称已确认关闭全部 Work，后续 Core 核对原资源并恢复持久意图，不重提历史 Run 或操作未知归属资源
 
-### Requirement: 安全升级已有 Core 网络身份存储
+#### Scenario: Preserve service selection through shutdown
+- **WHEN** 一个 Work 含 enabled 服务和 disabled 服务，Core 优雅退出后再次启动
+- **THEN** 只恢复 desired-running Work 中的 enabled 服务，退出过程不改写这些选择或删除数据
 
-**Identifier:** CST-ACCESS-001
-
-新 Core SHALL 对空数据库创建 schema 9，并对现有 schema 8 执行一次原子升级，按 `(created_at,id)` 顺序为所有已有 Work 和保留 service 分配唯一网络身份，保留用户、会话、定义、Operations 和正在运行的容器。升级失败 SHALL 回滚且不报告 ready；版本小于 8、版本大于 9 或无合法 schema marker 的非空库继续返回存储格式不支持。Core recovery 完成且服务身份/容器核验前 SHALL 不接受网关访问。已升级到 schema 9 的数据目录 SHALL 不被旧 schema 8 二进制静默重写。
-
-#### Scenario: schema 8 升级并接管容器
-- **WHEN** Core 以现有 schema 8 数据目录启动，已有服务容器使用哈希名称且在运行
-- **THEN** 单次升级成功、保留原服务与会话、分配域名，Core 通过 labels 接管容器且不为改名重建
-
-#### Scenario: 升级中途失败
-- **WHEN** 网络别名回填发生存储错误或唯一性冲突无法解决
-- **THEN** 整个升级事务回滚，Core 不打开服务路由也不声称 ready
-
-#### Scenario: 拒绝旧格式
-- **WHEN** 非空 Core 数据库没有合法 marker 或 schema 版本低于 8
-- **THEN** Core 按原有存储不兼容语义拒绝，不能尝试猜测迁移
 
 ### Requirement: 使用显式容器环境完成首次初始化
 
@@ -367,3 +360,29 @@ PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:go-migration-acceptance \
   go test -mod=readonly -tags=integration -v ./internal/dockerengine \
   -run 'TestRealNativeAgentImageStaticCapabilitiesAndBuildEvidence|TestRealTSAgentNativeMutualTLSWithoutHostTools|TestRealTSMCPClientNativeStdioAndCoreMutualTLS|TestNativePackageHelperRealImageSourcesAndTSArtifactCompatibility'
 ```
+
+### Requirement: 初始化并核验 Go Core 持久存储
+
+**Identifier:** CST-NATIVE-001
+
+Go Core SHALL 为全新安装建立明确标识为 `piwork-go-core`、schemaVersion=1 的存储，并原子初始化所需业务表、安装身份和约束。该版本标识与 TS Core schema 8/9/10 及独立的 Agent history 版本分离。已支持的 Go 存储 SHALL 保留安装、用户、登录、Work、Operation、网络身份、文件任务及快照/包状态并按现有规则恢复。
+
+不支持的格式、未知版本、损坏 marker 或无法识别的非空目录 SHALL 在执行数据库迁移、创建 Docker 资源和开放业务路由前明确失败，不静默重建、清空、降级或猜测转换。首次初始化中断只允许从可证明属于本次 Go 初始化的未完成记录恢复，不能据此接受任意非空目录。存储锁 SHALL 保证单一 Core 所有者，未持锁进程不得修改存储。
+
+Work 与 service 的稳定网络身份 SHALL 在对应创建/导入事务发布时分配并持久化；Core 完成 recovery 与容器核验之前不得开启网关。业务重启恢复与 `.work` V1 导入仍为必要能力，不因取消历史安装升级而省略。
+
+#### Scenario: 空目录首次启动
+- **WHEN** Core 指向新的空数据目录
+- **THEN** 初始化合法 Go 存储并启动健康接口，未初始化管理员/runtime 时显示相应状态，不创建默认用户或 Work
+
+#### Scenario: 同格式重新启动
+- **WHEN** Go Core 重启并读取支持的完整 Go 存储
+- **THEN** 使用原安装身份和网络身份恢复，不重新分配 Work 域名、不清空 Operation 或配额
+
+#### Scenario: 拒绝旧开发目录或未知版本
+- **WHEN** 目录含旧 TS 数据、未知 Go schemaVersion 或无合法 marker 的非空库
+- **THEN** 启动非零退出并说明应使用独立支持的数据目录，原数据及 Docker 资源不被修改
+
+#### Scenario: 初始化中断或第二个所有者
+- **WHEN** 初始化事务中断后重试，或另一进程已持有目录锁
+- **THEN** 前者仅恢复可证明属于 Go 的未完成初始化，后者拒绝；两种情况均不产生部分可用的业务库或并行写入者
