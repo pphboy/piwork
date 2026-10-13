@@ -294,9 +294,15 @@ export class DesktopAdapter {
     if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while reading the response.');
     if (!response.ok) {
       const code = value?.code ?? `HTTP_${response.status}`;
-      if (path !== 'session' && code === 'LOCAL_AUTH_REQUIRED') this.requireBrowserAccess('Browser access ended. Use the latest reopen command.');
+      if (path !== 'session' && code === 'LOCAL_AUTH_REQUIRED') {
+        if (authSequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this response.');
+        this.requireBrowserAccess('Browser access ended. Use the latest reopen command.');
+      }
       else if (path !== 'session' && code === 'LOCAL_CSRF_OR_AUTH_REQUIRED') {
-        await this.checkBrowserAccess().catch(() => undefined);
+        if (authSequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this response.');
+        const pending = this.checkBrowserAccess(), sequence = this.authSequence;
+        await pending.catch(() => undefined);
+        if (sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this readback.');
         throw new DesktopError(code, this.state.browserAccess === 'authorized' ? 'Browser access checked. The original action was rejected locally; submit it explicitly again if needed.' : 'Browser access ended. Reopen Desktop from the same system user’s terminal.', response.status);
       }
       else if (response.status === 401 && path !== 'login' && path !== 'session') {

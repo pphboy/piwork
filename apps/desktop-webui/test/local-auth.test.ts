@@ -292,3 +292,62 @@ test('local auth: recovery commands and readonly check remain keyboard accessibl
   await expect(page.locator('#toast')).toContainText(/Copied|Clipboard unavailable/);
   assert.equal(await page.locator('[aria-live="polite"]').count() > 0, true);
 });
+
+for (const rejectedCode of ['LOCAL_CSRF_OR_AUTH_REQUIRED', 'LOCAL_AUTH_REQUIRED']) test(`Reconcile auth: an old ${rejectedCode} rejection cannot supersede a newer initialization`, async t => {
+  const rejected = pending(), fresh = pending();
+  let armed = false, entered = false, sessionReads = 0;
+  t.after(() => { rejected.resolve(); fresh.resolve(); });
+  const { page, records } = await fixture(t, async r => {
+    if (r.path === 'session') {
+      if (!armed) return { json: signedIn() };
+      if (++sessionReads === 1) { entered = true; await fresh.promise; return { json: signedOut(2) }; }
+      return { json: signedIn() };
+    }
+    if (r.path === 'status') return { json: { health: { available: false } } };
+    if (r.path === 'old-mutation') {
+      await rejected.promise;
+      return { status: rejectedCode === 'LOCAL_AUTH_REQUIRED' ? 401 : 403, json: { code: rejectedCode } };
+    }
+  });
+  await expect(page.locator('body')).toContainText('Core is unreachable');
+  armed = true;
+  const original = api(page, "return adapter.request('old-mutation', 'POST').catch(error => error.code)");
+  await expect.poll(() => records.some(r => r.path === 'old-mutation')).toBe(true);
+  const reopen = api(page, 'await adapter.initialize()');
+  await expect.poll(() => entered).toBe(true);
+  rejected.resolve();
+  assert.equal(await original, 'CONNECTION_CHANGED');
+  assert.equal(sessionReads, 1, 'old rejection started a competing session check');
+  fresh.resolve(); await reopen;
+  await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
+  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
+  assert.equal(await api(page, 'return adapter.state.signedIn'), false);
+  assert.equal(records.filter(r => r.path === 'old-mutation').length, 1);
+  assert.equal(records.filter(r => r.path === 'bootstrap' || r.path === 'login').length, 0);
+});
+
+test('Reconcile auth: an obsolete CSRF readback is discarded after initialization takes ownership', async t => {
+  const stale = pending(), fresh = pending();
+  let armed = false, sessionReads = 0;
+  t.after(() => { stale.resolve(); fresh.resolve(); });
+  const { page, records } = await fixture(t, async r => {
+    if (r.path === 'session') {
+      if (!armed) return { json: signedIn() };
+      if (++sessionReads === 1) { await stale.promise; return { json: signedOut(2) }; }
+      await fresh.promise; return { json: signedOut(2) };
+    }
+    if (r.path === 'status') return { json: { health: { available: false } } };
+    if (r.path === 'old-mutation') return { status: 403, json: { code: 'LOCAL_CSRF_OR_AUTH_REQUIRED' } };
+  });
+  await expect(page.locator('body')).toContainText('Core is unreachable'); armed = true;
+  const original = api(page, "return adapter.request('old-mutation','POST').catch(error=>error.code)");
+  await expect.poll(() => sessionReads).toBe(1);
+  const reopen = api(page, 'await adapter.initialize()');
+  await expect.poll(() => sessionReads).toBe(2);
+  stale.resolve(); assert.equal(await original, 'CONNECTION_CHANGED');
+  fresh.resolve(); await reopen;
+  await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
+  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
+  assert.equal(records.filter(r => r.path === 'old-mutation').length, 1);
+  assert.equal(records.filter(r => r.path === 'bootstrap' || r.path === 'login').length, 0);
+});
