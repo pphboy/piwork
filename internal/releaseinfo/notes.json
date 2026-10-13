@@ -2,6 +2,39 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.6",
+      "component": "core",
+      "title": "Piwork 0.0.6 Preview",
+      "sections": [
+        {
+          "title": "Improvements and fixes",
+          "items": [
+            "Coordinate Stop and send across Chat Sessions and Services, with original submission-key recovery and request/reply readback.",
+            "Expose Work name conflicts on the Name field and report imported source names separately from confirmed destination names.",
+            "Start managed Work shutdown before blocked control requests or coordination workers exhaust the process budget; retain durable Work and Service choices for restart."
+          ]
+        }
+      ],
+      "publishedAt": "2026-10-13"
+    },
+    {
+      "version": "0.0.6",
+      "component": "desktop",
+      "title": "Piwork 0.0.6 Preview",
+      "sections": [
+        {
+          "title": "Improvements and fixes",
+          "items": [
+            "View Service Agent requests, their Runs and replies; cancel or retry explicitly while imported history stays read-only.",
+            "Keep Chat failures visible beside background activity and retain original execution errors through expired-cursor history recovery.",
+            "Discard stale local authorization and CSRF failures when a newer authentication flow owns the session, without replaying rejected actions.",
+            "Preserve later configuration edits, the original inspected package and explicit naming choices during pending Save or import recovery."
+          ]
+        }
+      ],
+      "publishedAt": "2026-10-13"
+    },
+    {
       "version": "0.0.5",
       "component": "core",
       "title": "Piwork 0.0.5 Preview",
