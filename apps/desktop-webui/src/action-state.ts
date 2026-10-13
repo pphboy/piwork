@@ -106,6 +106,8 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
   }
   for (const record of actions.records.values()) {
     if(record.key.startsWith('route:') && !record.error)continue;
+    // Files owns busy/success in its fixed refresh button; errors and unknowns still use the local region.
+    if(record.action==='refresh-files' && !record.error && !record.blocked && record.refresh!=='failed')continue;
     if (!actions.visible(record) || record.view && record.view !== view || !visibleRecord(record)) continue;
     if (!record.pending && record.error && root.textContent?.includes(record.error) && !record.blocked && record.refresh !== 'failed') continue;
     if (!record.pending && record.result && root.textContent?.includes(record.result) && !record.error && !record.blocked && record.refresh === '') continue;

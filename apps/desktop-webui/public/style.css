@@ -3344,3 +3344,26 @@ dd > .button {
  .work-requests { min-width:30px; }
  .service-name { max-width:170px; }
 }
+
+/* Compact actions retain their original hit areas and local status. */
+.file-toolbar-actions .file-refresh { width:112px;min-width:112px;height:40px;min-height:40px;padding:0 8px;gap:6px; }
+.file-refresh span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.file-refresh.is-updated { color:var(--positive); }
+.file-refresh.is-reading svg { animation:read-spin 1s linear infinite; }
+.settings-heading { align-items:flex-start; }
+.settings-back { margin:0 0 10px -8px; }
+.configuration-compact { display:flex;align-items:center;gap:5px;flex-wrap:wrap;max-width:390px; }
+.configuration-compact .status { color:var(--positive);font-size:12px; }
+.configuration-compact details { flex-basis:100%;text-align:right;font-size:12px;color:var(--muted); }
+.configuration-compact details p { margin:6px 0; }
+.configuration-compact summary { cursor:pointer; }
+.account-context span { overflow-wrap:anywhere; }
+@media(max-width:899px) {
+ .work-layout.chat-main,.chat-focused .work-layout { display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr); }
+ .work-layout.chat-main > .agent-side,.chat-focused .work-layout > .agent-side { height:100%;min-height:0;grid-column:1; }
+ .work-layout.chat-main > .workspace-splitter,.chat-focused .work-layout > .workspace-splitter { display:none; }
+ .settings-heading { flex-wrap:wrap;gap:12px; }
+ .configuration-compact { max-width:100%; }
+ .configuration-compact details { text-align:left; }
+}
+@media(prefers-reduced-motion:reduce) { .file-refresh.is-reading svg { animation:none; } }

@@ -8,7 +8,7 @@ const {executionAnchors}=await import(new URL('../browser/workspace-layout.js',i
 function extract(...names:string[]){return names.map(name=>{const value=source.match(new RegExp('^(?:async )?function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];}).join('\n');}
 function fixture(){
  const work:any={id:'work-a',name:'Work A',sessions:[{id:'session-a',messages:[],runs:[]}],services:[],files:[],resourceChecked:{services:'now'},resourceErrors:{}};
- const c:any={innerWidth:1440,view:{modal:'',data:{},session:'session-a',tab:'Services',service:'',port:3000,layout:'workspace'},adapter:{identityEpoch:7,runDetails:new Map(),activeRuns:new Map(),requestReadErrors:new Map(),requestDetails:new Map(),requestResponses:new Map(),requestRetries:new Map(),getWork:()=>work,project:()=>({usable:true}),requestPage:()=>undefined,requestCancellation:()=>undefined},current:()=>work,route:()=>['work','work-a'],activityGroups,executionAnchors,expandedActivity:new Map(),historyImageMarkup:()=>'',requestNavigationCurrent:()=>false,requestCancellable:()=>false};
+ const c:any={innerWidth:1440,view:{modal:'',data:{},session:'session-a',tab:'Services',service:'',port:3000,layout:'workspace'},adapter:{identityEpoch:7,runDetails:new Map(),activeRuns:new Map(),cancelAndSendCapabilities:new Map(),requestReadErrors:new Map(),requestDetails:new Map(),requestResponses:new Map(),requestRetries:new Map(),getWork:()=>work,project:()=>({usable:true}),requestPage:()=>undefined,requestCancellation:()=>undefined},current:()=>work,route:()=>['work','work-a'],activityGroups,executionAnchors,expandedActivity:new Map(),historyImageMarkup:()=>'',requestNavigationCurrent:()=>false,requestCancellable:()=>false};
  vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);
  vm.runInContext(extract('isRequestInspector','nonmodalDialog','requestStateLabel','modelDisplayName','runFacts','executionMarkup','unmatchedExecutions','messageMarkup','modalMarkup','focusKey'),c);return {c,work};
 }
@@ -40,4 +40,16 @@ test('precise run focus selectors include run identity',()=>{
 test('Service selection lists real state and ports without Start mutation controls',()=>{
  const {c,work}=fixture();work.services=[{id:'ready',name:'Notes',ports:[3000,3001],enabled:true,observed:'Ready'},{id:'failed',name:'Reports',ports:[4100],enabled:true,observed:'Failed',error:'Start failed'},{id:'disabled',name:'Closed',ports:[5000],enabled:false,observed:'Stopped'},{id:'no-web',name:'Worker',ports:[],observed:'Ready'},{id:'removed',name:'Gone',ports:[80],observed:'Removed'}];c.activeService=()=>work.services[0];c.view.modal='service-picker';const html=c.modalMarkup();
  assert.match(html,/Declared Web ports · 3000, 3001/);assert.match(html,/aria-checked="true" data-id="ready"/);assert.match(html,/Start failed/);assert.match(html,/Disabled/);assert.doesNotMatch(html,/Worker|Gone|data-action="service-action"/);assert.match(html,/Manage services/);
+});
+
+test('confirmed externally started active Run in the selected Session has its own explicit controls',()=>{
+ const {c,work}=fixture();c.adapter.cancelAndSendCapabilities.set(work.id,1);c.adapter.activeRuns.set(work.id,{confirmed:true,run:{id:'external-current',sessionId:'session-a',status:'running'}});
+ const html=c.unmatchedExecutions(work,'session-a',[{text:'Legacy history without association'}]);
+ assert.match(html,/data-action="run-details"[^>]*data-run-id="external-current"/);assert.match(html,/data-action="cancel-run"[^>]*data-run-id="external-current"/);assert.match(html,/Run running/);
+ c.adapter.activeRuns.set(work.id,{confirmed:false,run:{id:'unconfirmed',sessionId:'session-a',status:'running'}});assert.equal(c.unmatchedExecutions(work,'session-a',[]),'');
+});
+
+test('confirmed empty active slot never exposes cancellation of a stale running history entry',()=>{
+ const {c,work}=fixture();c.adapter.cancelAndSendCapabilities.set(work.id,1);work.run={id:'stale',sessionId:'session-a',status:'running'};c.adapter.activeRuns.set(work.id,{confirmed:true,run:null});
+ assert.doesNotMatch(c.executionMarkup(work,'session-a','stale'),/data-action="cancel-run"/);assert.match(c.executionMarkup(work,'session-a','stale'),/data-action="run-details"/);
 });

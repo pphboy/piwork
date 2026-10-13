@@ -303,7 +303,7 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
   else if (['confirm-import', 'download-work', 'prepare-export', 'export'].includes(action)) kind = 'transfer';
   const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview'].includes(action);
   const serviceId = el.dataset.id || view.data.serviceId || view.service;
-  const resource = action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action==='settings' ? w?.id : ['cancel-pi-request','retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+  const resource = action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action==='settings' ? w?.id : ['cancel-pi-request','retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
   const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
   const chatAction = ['new-session','send-message','cancel-run','resume-run','check-session-model','save-model'].includes(action);
   return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || 'New Work' : chatAction ? w?.name || 'Chat' : `${w?.name || adapter.state.core.address || 'Local CLI'}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
@@ -555,7 +555,7 @@ function works() {
   const all = adapter.state.works.filter((w) =>
     w.name.toLowerCase().includes(view.search.toLowerCase()),
   );
-  return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${btn(`${icon("refresh")} Refresh Works`, "retry-works")}${btn(`${icon("upload")} Import Work`, "import")}${btn(`${icon("plus")} New Work`, "new-work", "primary")}</div></div>${adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(s === "loading" || adapter.worksLoading && !adapter.worksChecked) ? `<div class="loading-list">${[1, 2, 3].map(() => '<div class="skeleton"></div>').join("")}<p>Loading your Works…</p>${btn("Check connection", "check-connection")}</div>` : s === "list-error" ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "retry-works", "primary")) : s === "empty" ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><button class="work-name" data-action="open-work" data-id="${w.id}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></button><div class="work-status">${workStatus(w)}${controlMarkup(workControls.get(w.id))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${adapter.state.works.length} Works <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div></div></main>`;
+  return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${btn(icon("refresh"), "retry-works", "icon-button quiet", 'title="Refresh Works" aria-label="Refresh Works"')}${btn(icon("upload"), "import", "icon-button quiet", 'title="Import Work" aria-label="Import Work"')}${btn(icon("plus"), "new-work", "icon-button primary", 'title="New Work" aria-label="New Work"')}</div></div>${adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(s === "loading" || adapter.worksLoading && !adapter.worksChecked) ? `<div class="loading-list">${[1, 2, 3].map(() => '<div class="skeleton"></div>').join("")}<p>Loading your Works…</p>${btn("Check connection", "check-connection")}</div>` : s === "list-error" ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "retry-works", "primary")) : s === "empty" ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><button class="work-name" data-action="open-work" data-id="${w.id}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></button><div class="work-status">${workStatus(w)}${controlMarkup(workControls.get(w.id))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${adapter.state.works.length} Works <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div></div></main>`;
 }
 function quickAction(w: Work) {
   if (route()[0] === 'works' && controlReady(workControls.get(w.id), w)) return btn('Open Work', 'open-work', 'primary small', `data-id="${esc(w.id)}"`);
@@ -727,7 +727,7 @@ function focusControls(w: Work, showError = true) {
 }
 function agentLayoutControls(w: Work) {
   if (view.layout === 'chat-only') return focusControls(w, false);
-  return `${view.tab === 'Services' && view.layout === 'workspace' ? layoutButton('arrow', 'Hide chat', 'toggle-workspace-chat', 'aria-pressed="true"') : ''}${view.layout === 'service-chat' && innerWidth < 900 ? layoutButton('chat', 'Hide chat', 'focus-toggle-chat', 'aria-pressed="true"') : ''}${layoutButton('focus', 'Focus chat', 'focus-chat', 'aria-pressed="false"')}`;
+  return `${view.tab === 'Services' && view.layout === 'workspace' ? layoutButton('arrow', 'Hide chat', 'toggle-workspace-chat', 'aria-pressed="true"') : ''}${view.layout === 'service-chat' && innerWidth < 900 ? focusControls(w, false) : ''}${layoutButton('focus', 'Focus chat', 'focus-chat', 'aria-pressed="false"')}`;
 }
 function captureLayoutReturn(anchor: HTMLElement): LayoutReturn {
   return { workId: current()?.id || '', tab: view.tab, layout: view.layout === 'chat-only' ? 'workspace' : view.layout, anchor, selector: focusKey(anchor) };
@@ -779,15 +779,18 @@ function requestStateLabel(state: string) {
   return ({pending:'Pending',running:'Running',waiting_result:'Waiting for result',waiting_apply:'Waiting for apply',needs_attention:'Needs attention',completed:'Completed',cancelled:'Cancelled',cancelling:'Cancelling',failed:'Failed'} as Record<string,string>)[state] || state;
 }
 function executionMarkup(w: Work, sessionId: string, runId: string) {
-  const run=(w.run?.id===runId?w.run:undefined) || w.sessions.find(session=>session.id===sessionId)?.runs?.find(item=>item.id===runId) || adapter.runDetails.get(`${w.id}:${runId}`);
-  const active=adapter.activeRuns.get(w.id)?.run || w.run;
+  const observed=adapter.activeRuns.get(w.id), activeObserved=observed?.confirmed && observed.run?.id===runId?observed.run:undefined;
+  const run=(w.run?.id===runId?w.run:undefined) || activeObserved || w.sessions.find(session=>session.id===sessionId)?.runs?.find(item=>item.id===runId) || adapter.runDetails.get(`${w.id}:${runId}`);
+  const active=adapter.cancelAndSendCapabilities.get(w.id)===1 ? observed?.confirmed && !observed.error ? observed.run : undefined : w.run;
   const cancellable=active?.id===runId && ['accepted','running','cancelling'].includes(active.status);
-  return `<div class="message-execution" data-message-key="${esc(`${adapter.identityEpoch}:${w.id}:${sessionId}:execution:${runId}`)}"><div class="execution-summary">${run?badge(`Run ${run.status}`):'<span>Execution</span>'}${btn('Details','run-details','text-button',`data-run-id="${esc(runId)}" aria-label="Run details"`)}${cancellable?btn(active.cancellationRequested || active.status==='cancelling'?'Cancelling…':'Cancel run','cancel-run','text-button',`data-run-id="${esc(runId)}" ${active.cancellationRequested || active.status==='cancelling'?'disabled':''}`):''}</div>${run?.error?feedback(esc(run.error),'warning'):''}${run && run.id===w.run?.id && (run.error || run.status==='interrupted')?btn('Resume original Run','resume-run','text-button',`data-run-id="${esc(runId)}"`):''}</div>`;
+  return `<div class="message-execution" data-message-key="${esc(`${adapter.identityEpoch}:${w.id}:${sessionId}:execution:${runId}`)}"><div class="execution-summary">${run?badge(`Run ${run.status}`):'<span>Execution</span>'}${btn('Details','run-details','text-button',`data-run-id="${esc(runId)}" aria-label="Run details"`)}${cancellable?btn(active.cancellationRequested || active.status==='cancelling'?'Cancelling…':'Cancel run','cancel-run','text-button',`data-run-id="${esc(runId)}" ${active.cancellationRequested || active.status==='cancelling'?'disabled':''}`):''}</div>${run?.error?feedback(esc(run.error),'warning'):''}${run && run.id===w.run?.id && ['interrupted','accepted','running','cancelling'].includes(run.status) && (run.error || run.status==='interrupted')?btn('Resume original Run','resume-run','text-button',`data-run-id="${esc(runId)}"`):''}</div>`;
 }
 function unmatchedExecutions(w: Work, sessionId: string, messages: import('./models.js').Message[]) {
   const bound=new Set(messages.map(message=>message.runId).filter(Boolean));
   const runs=[...(w.sessions.find(session=>session.id===sessionId)?.runs || [])];
   if(w.run?.sessionId===sessionId && !runs.some(run=>run.id===w.run!.id))runs.push(w.run);
+  const active=adapter.activeRuns.get(w.id);
+  if(active?.confirmed && active.run?.sessionId===sessionId && !runs.some(run=>run.id===active.run!.id))runs.push(active.run);
   const missing=runs.filter(run=>!bound.has(run.id));
   if(!missing.length)return '';
   const current=missing.filter(run=>run.error || ['accepted','running','cancelling','failed','interrupted'].includes(run.status)), history=missing.filter(run=>!current.includes(run));
@@ -850,10 +853,17 @@ function fillCommand(command:string) {
  const work=current();if(!work)return;const key=draftKey(work),draft=view.drafts[key] || '';
  textDraftRevisions.set(key,(textDraftRevisions.get(key) || 0)+1);view.drafts[key]=draft.replace(/^(\s*)\/[^\s]*/,`$1${command}`)+( /\s/.test(draft.trimStart())?'':' ');view.commandIndex=0;render();const input=root.querySelector<HTMLTextAreaElement>('#composer');if(input){input.value=view.drafts[key];input.focus();const position=(/^\s*\/[^\s]*/.exec(input.value)?.[0].length ?? input.value.length)+1;view.commandCaret=Math.min(position,input.value.length);input.setSelectionRange(view.commandCaret,view.commandCaret);}
 }
+function fileRefreshButton(w: Work) {
+  const record=[...actions.records.values()].filter(item=>item.action==='refresh-files' && item.work===w.id && item.resource===(view.file || view.path) && item.view===location.hash).sort((a,b)=>b.token-a.token)[0];
+  const pending=record?.pending, updated=record && !record.error && !record.blocked && !record.refresh && actions.visible(record) && !pending;
+  const label=pending?(Date.now()-record.started>=10000?'Still reading files…':'Reading files…'):updated?'Updated':'Refresh files';
+  return btn(`${icon(updated?'check':'refresh',16)}<span>${pending?'Reading…':updated?'Updated':'Refresh'}</span>`,'refresh-files',`quiet file-refresh ${pending?'is-reading':''} ${updated?'is-updated':''}`,`aria-label="${label}" title="${label}" ${pending?'aria-busy="true"':''}`);
+}
 function files(w: Work) {
   const directory = adapter.directories.get(`${w.id}:${view.path}`);
   if(directory?.loading && !directory.checkedAt)return `<div class="local-loading" role="status" aria-busy="true">Loading workspace ${esc(view.path)}…</div>`;
-  if (w.resourceErrors?.files) return feedback(esc(w.resourceErrors.files), "warning", btn("Refresh files", "refresh-files"));
+  const filesError=w.resourceErrors?.files;
+  if (filesError && !directory?.checkedAt && !w.files.length) return feedback(esc(filesError), "warning", btn("Refresh files", "refresh-files"));
   if (adapter.state.scenario === "files-failed")
     return empty(
       "folder",
@@ -866,7 +876,7 @@ function files(w: Work) {
     const parent = x.path.slice(0, x.path.lastIndexOf("/")) || "/";
     return parent === view.path;
   });
-  return `${filesRestoreNotice ? feedback(esc(filesRestoreNotice), "warning") : ""}${uploadProgressMarkup()}<div class="files-toolbar"><div class="breadcrumbs"><button data-action="file-path" data-path="/">${icon("folder", 16)} Workspace</button>${view.path
+  return `${filesRestoreNotice ? feedback(esc(filesRestoreNotice), "warning") : ""}${filesError?feedback(esc(filesError),"warning"):""}${uploadProgressMarkup()}<div class="files-toolbar"><div class="breadcrumbs"><button data-action="file-path" data-path="/">${icon("folder", 16)} Workspace</button>${view.path
     .split("/")
     .filter(Boolean)
     .map(
@@ -875,7 +885,7 @@ function files(w: Work) {
     )
     .join(
       "",
-    )}</div><div class="actions file-toolbar-actions">${!f && view.selected.length ? `<span class="selection-count" role="status">${view.selected.length} selected</span>${btn(icon("copy",16), "file-copy", "icon-button quiet", 'aria-label="Copy selected files" title="Copy selected files"')}${btn(icon("arrow",16), "file-move", "icon-button quiet", 'aria-label="Move selected files" title="Move selected files"')}${btn(icon("trash",16), "file-delete", "icon-button quiet danger", 'aria-label="Delete selected files" title="Delete selected files"')}${btn(icon("close",16), "clear-selection", "icon-button quiet", 'aria-label="Clear selection" title="Clear selection"')}` : `${btn(icon("refresh", 16), "refresh-files", "icon-button quiet", 'aria-label="Refresh files"')}${btn(`${icon("upload", 16)} Upload`, "upload", "quiet small")}${btn(`${icon("plus", 16)} New folder`, "new-folder", "quiet small")}${btn(icon("more"), "file-options", "icon-button quiet", 'aria-label="Workspace options"')}`}</div></div>${f ? textEditor(f) : `${list.length ? `<div class="file-table"><div class="file-head"><span></span><span>NAME</span><span>SIZE</span><span>MODIFIED</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="Select ${esc(f.name)}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${icon(f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? "Special item" : f.kind === "directory" ? "Folder" : f.kind === "binary" ? "Binary file" : f.kind === "text" ? "UTF-8 text" : "File"}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="Actions for ${esc(f.name)}"`)}</div>`).join("")}</div>` : empty("folder", "This folder is empty", "Upload files or create a folder to get started.", btn("Upload files", "upload", "primary"))}`}<div class="file-scope"><span>Shared workspace · <code>/var/data/workspace</code></span><button data-action="webdav">Connect with WebDAV ${icon("external", 12)}</button></div>${transferResults()}`;
+    )}</div><div class="actions file-toolbar-actions">${!f && view.selected.length ? `<span class="selection-count" role="status">${view.selected.length} selected</span>${btn(icon("copy",16), "file-copy", "icon-button quiet", 'aria-label="Copy selected files" title="Copy selected files"')}${btn(icon("arrow",16), "file-move", "icon-button quiet", 'aria-label="Move selected files" title="Move selected files"')}${btn(icon("trash",16), "file-delete", "icon-button quiet danger", 'aria-label="Delete selected files" title="Delete selected files"')}${btn(icon("close",16), "clear-selection", "icon-button quiet", 'aria-label="Clear selection" title="Clear selection"')}` : `${fileRefreshButton(w)}${btn(icon('plus',16),'file-add','icon-button quiet','aria-label="Add files or folder" title="Add files or folder" aria-haspopup="dialog"')}}`}</div></div>${f ? textEditor(f) : `${list.length ? `<div class="file-table"><div class="file-head"><span></span><span>NAME</span><span>SIZE</span><span>MODIFIED</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="Select ${esc(f.name)}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${icon(f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? "Special item" : f.kind === "directory" ? "Folder" : f.kind === "binary" ? "Binary file" : f.kind === "text" ? "UTF-8 text" : "File"}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="Actions for ${esc(f.name)}"`)}</div>`).join("")}</div>` : empty("folder", "This folder is empty", "Upload files or create a folder to get started.", btn("Upload files", "upload", "primary"))}`}<div class="file-scope"><span>Shared workspace · <code>/var/data/workspace</code></span><button data-action="webdav">Connect with WebDAV ${icon("external", 12)}</button></div>${transferResults()}`;
 }
 const decodePaths = (value?: string): string[] =>
   value ? JSON.parse(value) : [];
@@ -897,11 +907,20 @@ function textEditor(f: WorkspaceFile) {
 }
 function settingsPage(w: Work) {
   const configurationError = w.resourceErrors?.configuration;
-  if (configurationError && !view.config && !w.resourceChecked?.configuration) return feedback(esc(configurationError), "warning", btn("Refresh configuration", "refresh-config", "primary"));
+  if (configurationError && !view.config && !w.resourceChecked?.configuration) return `<main class="settings-page">${btn(`${icon("arrow",16)} Back to Work`,"back-work","quiet settings-back")}<h1>Work settings</h1>${feedback(esc(configurationError), "warning", btn("Refresh configuration", "refresh-config", "primary"))}</main>`;
   if (!view.config) view.config = structuredClone(w.config);
   const c = view.config,
     pending = w.config.pendingApply === true;
-  return `<main class="settings-page">${configurationError ? feedback(`${esc(configurationError)} Last confirmed configuration and your draft are preserved.`, "warning") : ""}<div class="settings-heading"><div><h1>Work settings</h1><p>Shape what this Work can do.</p></div>${btn(`${icon("arrow", 16)} Back to Work`, "back-work", "quiet")}</div><div class="configuration-state"><div><strong>${view.configDirty ? "Unsaved changes" : pending ? "Saved changes" : "Configuration in use"}</strong><span>${view.configDirty ? "Save your draft before applying it." : pending ? "Not applied · Your running configuration is unchanged." : "Saved and active configuration are aligned"}</span></div><div class="actions">${btn(`${icon("refresh", 15)} Refresh status`, "refresh-config", "quiet small")}${view.configDirty ? btn("Save changes", "save-config", "") : btn("Apply changes", "apply-config", pending ? "primary" : "", pending && adapter.project(w).usable ? "" : 'disabled title="Start or check this Work before applying saved settings"')}</div></div><nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((t) => btn(t, "settings-section", view.settingsTab === t ? "tab active" : "tab", `data-tab="${t}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>Instructions for your Agent</h2><p>AGENTS.md is included with this Work’s capability configuration.</p></div>${btn(`${icon("upload", 15)} Import file`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? "Previous active configuration" : "Configuration in use"}</span><span>Saved configuration</span></div><label class="field">Desired AGENTS.md<textarea id="agents-editor" class="code-editor" rows="13">${esc(c.agents)}</textarea></label><details class="details-box"><summary>Current active content</summary><pre>${esc(w.config.active?.agentsMd ?? "No active configuration is reported")}</pre></details>` : `<div class="section-heading"><div><h2>Advanced configuration</h2><p>Public runtime configuration. Platform secrets are never displayed.</p></div>${btn(`${icon("upload", 15)} Import JSON`, "import-json", "small")}</div><label class="field">Configuration JSON<textarea id="advanced-editor" aria-label="Configuration JSON" class="code-editor" rows="17" spellcheck="false">${esc(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">Includes the image, model reference, MCP, resources, and tool policy. Validate against the current Core contract before production use.</p>`}</div>${view.configDirty ? `<div class="settings-savebar"><span>You have unsaved changes</span><div class="actions">${btn("Discard changes", "discard-config")}${btn("Save changes", "save-config", "primary")}</div></div>` : ""}</main>`;
+  const applyRecord=[...actions.records.values()].filter(item=>item.work===w.id && item.action==='apply-config').sort((a,b)=>b.token-a.token)[0];
+  const applyOperation=[...adapter.state.operations].reverse().find(item=>item.workId===w.id && item.kind==='Apply configuration');
+  const applying=!!applyRecord?.pending || !!applyOperation && ['accepted','pending','preparing','running'].includes(applyOperation.state);
+  const applyError=applyRecord?.error || (applyOperation?.state==='failed'?applyOperation.error || 'Apply failed':'');
+  const unknown=!!applyRecord?.blocked || applyOperation?.state==='unknown';
+  const attention=view.configDirty || pending || applying || applyError || unknown || configurationError;
+  const stateLabel=view.configDirty?'Unsaved changes':applying?'Applying':unknown?'Apply not confirmed':applyError?'Apply failed':pending?'Not applied':'Configuration in use';
+  const stateBody=view.configDirty?'Save your draft before applying.':applying?'Using the previous active configuration.':unknown?'Check the original Apply before trying again.':applyError?esc(applyError):pending?'Saved changes are not active yet.':'';
+  const statusActions=`${btn(icon('refresh',15),'refresh-config','icon-button quiet','aria-label="Refresh configuration status" title="Refresh configuration status"')}${applyOperation && (applying || unknown || applyError)?btn('Check Apply','operation','small',`data-id="${esc(applyOperation.id)}"`):''}${view.configDirty?btn('Save changes','save-config','primary'):pending && !applying && !unknown?btn('Apply changes','apply-config','primary',adapter.project(w).usable?'':'disabled title="Start or check this Work before applying saved settings"'):''}`;
+  return `<main class="settings-page">${configurationError ? feedback(`${esc(configurationError)} Last confirmed configuration and your draft are preserved.`, "warning") : ""}<div class="settings-heading"><div>${btn(`${icon('arrow',16)} Back to Work`,'back-work','quiet settings-back')}<h1>Work settings</h1></div>${!attention?`<div class="configuration-compact">${badge('Configuration in use')}${statusActions}<details><summary>Details</summary><p>Saved and active configuration are aligned.</p><p>Save and Apply are separate actions.</p></details></div>`:''}</div>${attention?`<div class="configuration-state"><div><strong>${esc(stateLabel)}</strong><span>${stateBody}</span></div><div class="actions">${statusActions}</div></div>`:''}<nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((t) => btn(t, "settings-section", view.settingsTab === t ? "tab active" : "tab", `data-tab="${t}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>Instructions for your Agent</h2><p>AGENTS.md is included with this Work’s capability configuration.</p></div>${btn(`${icon("upload", 15)} Import file`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? "Previous active configuration" : "Configuration in use"}</span><span>Saved configuration</span></div><label class="field">Desired AGENTS.md<textarea id="agents-editor" class="code-editor" rows="13">${esc(c.agents)}</textarea></label><details class="details-box"><summary>Current active content</summary><pre>${esc(w.config.active?.agentsMd ?? "No active configuration is reported")}</pre></details>` : `<div class="section-heading"><div><h2>Advanced configuration</h2><p>Public runtime configuration. Platform secrets are never displayed.</p></div>${btn(`${icon("upload", 15)} Import JSON`, "import-json", "small")}</div><label class="field">Configuration JSON<textarea id="advanced-editor" aria-label="Configuration JSON" class="code-editor" rows="17" spellcheck="false">${esc(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">Includes the image, model reference, MCP, resources, and tool policy. Validate against the current Core contract before production use.</p>`}</div>${view.configDirty ? `<div class="settings-savebar"><span>You have unsaved changes</span><div class="actions">${btn("Discard changes", "discard-config")}${btn("Save changes", "save-config", "primary")}</div></div>` : ""}</main>`;
 }
 function catalogFeedback(name: 'skills' | 'packages') {
   const status = adapter.catalog[name];
@@ -985,7 +1004,7 @@ function modalMarkup() {
       break;
     case "account":
       title = esc(adapter.state.core.account || "Account");
-      body = `<p class="account-context"><span>${esc(adapter.state.core.role)}</span><span title="${esc(adapter.state.core.address)}">${esc(adapter.state.core.address)}</span></p><div class="menu-list">${btn(`${icon("info")} About Piwork`, "about-piwork")}${btn(`${icon("clock")} Known operations`, "operations")}</div><div class="menu-list account-management">${btn(`${icon("refresh")} Switch Core`, "switch-core")}${btn(`${icon("lock")} Reset browser access`, "reset-browser-access")}${btn(`${icon("logout")} Sign out`, "sign-out", "danger")}</div>`;
+      body = `<p class="account-context"><span>Role: ${esc(adapter.state.core.role === 'admin' ? 'Administrator' : adapter.state.core.role)}</span><span title="${esc(adapter.state.core.address)}">Core: ${esc(adapter.state.core.address)}</span></p><div class="menu-list">${btn(`${icon("info")} About Piwork`, "about-piwork")}${btn(`${icon("clock")} Known operations`, "operations")}</div><div class="menu-list account-management">${btn(`${icon("refresh")} Switch Core`, "switch-core")}${btn(`${icon("lock")} Reset browser access`, "reset-browser-access")}${btn(`${icon("logout")} Sign out`, "sign-out", "danger")}</div>`;
       break;
     case "reset-browser-access":
       title = "Reset browser access?";
@@ -1144,9 +1163,9 @@ function modalMarkup() {
       if (cancellation) body += feedback(cancellation.phase === 'accepted' ? `Cancellation requested. Refresh the original request to check its current state.${cancellation.error ? ` ${esc(cancellation.error)}` : ''}` : cancellation.phase === 'unknown' ? `Cancellation result is unknown. Refresh the original request; it will not be submitted again. ${esc(cancellation.error)}` : 'Requesting cancellation…', cancellation.phase === 'unknown' || cancellation.error ? 'warning' : 'info');
       footer=`${editable && requestCancellable(r)?btn(r.state==='cancelling'?'Cancelling…':'Cancel request','cancel-pi-request','danger',r.state==='cancelling' || cancellation?'disabled':''):''}${view.data.source!=='service' && editable&&['failed','cancelled','needs_attention'].includes(r.state)?btn('Retry with new request','retry-pi-request','small',retryIntent?'disabled':''):''}${btn('Check status','pi-request-detail','small',`data-id="${esc(r.requestId)}"`)}${close()}`;break;
     }
-    case "file-options":
-      title = "Workspace options";
-      body = `<div class="menu-list">${btn("Refresh files", "refresh-files")}${btn("Connect with WebDAV", "webdav")}</div>`;
+    case "file-add":
+      title = "Add to workspace";
+      body = `<div class="menu-list">${btn(`${icon("upload",16)} Upload files`, "upload")}${btn(`${icon("folder",16)} New folder`, "new-folder")}</div>`;
       break;
     case "file-menu": {
       const f = target?.files.find((f) => f.path === view.data.path);
@@ -1557,7 +1576,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "import":
     case "agent-menu":
     case "manage-services":
-    case "file-options":
+    case "file-add":
     case "webdav":
     case "service-menu":
       openModal(action);
@@ -1993,15 +2012,13 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
         const fresh = currentWork.files.find((f) => f.path === view.file);
         if (fresh && (dirty() || view.fileWriteUncertain)) {
           view.fileReread = { ...fresh };
-          toast(
-            "Target reread. Your draft is kept; compare it with the known saved version before saving again.",
-          );
+
         } else if (fresh) {
           view.fileDraft = fresh.content || "";
           view.fileOriginal = view.fileDraft; view.fileBaseline = fileVersion(fresh.modified); view.fileReread = null; view.fileUnprotected = false;
         }
       }
-      toast("Workspace reread. Unknown writes were not repeated.");
+      render();
       break;
     case "file-path":
       await guard(async () => {
@@ -2145,6 +2162,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       }
       break;
     case "upload":
+      if(view.modal==='file-add')closeModal();
       if (!currentWork || !adapter.project(currentWork).usable) throw new Error('Confirm the current Work before choosing files to upload.');
       uploadPickerTarget = { epoch: adapter.identityEpoch, workId: currentWork.id, directory: view.path };
       root.querySelector<HTMLInputElement>("#upload-input")?.click();
@@ -2192,9 +2210,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
         await stay(adapter.loadConfiguration(currentWork.id));
         if (!view.configDirty)
           view.config = structuredClone(currentWork.config);
-        toast(
-          "Configuration status refreshed. Review In use, Loaded, and Visible to model separately.",
-        );
+
       }
       break;
     case "clear-skills":
@@ -2636,7 +2652,7 @@ root.addEventListener("click", (e) => {
         : error instanceof Error ? error.message : String(error);
       render();
       if (currentNameError()) root.querySelector(`#${view.modal === 'import' ? 'import-name-error' : 'create-name-error'}`)?.scrollIntoView({ block: 'nearest' });
-    } else toast(error instanceof Error ? error.message : String(error));
+    } else if(el.dataset.action!=='refresh-files') toast(error instanceof Error ? error.message : String(error));
   }).finally(() => { render(); });
 });
 root.addEventListener("input", (e) => {

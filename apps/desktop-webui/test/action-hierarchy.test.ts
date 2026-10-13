@@ -20,13 +20,13 @@ function fixture() {
     adapter: { state: { browserAccess: 'authorized', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [] },
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
       getSnapshot: () => undefined, downloads: new Map(), directories: new Map() },
-    current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(),
+    location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(),
     exportFlows: { forWork: () => undefined, get: () => undefined }, exportSnapshotAvailable: () => true,
     filesRestoreNotice: '', uploadProgressMarkup: () => '', transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
     downloadProgressMarkup: () => '', actions: { records: new Map() },
   };
   vm.createContext(c); vm.runInContext(helpers, c);
-  vm.runInContext(extract('isRequestInspector', 'brand', 'topbar', 'quickAction', 'workHeader', 'modalMarkup', 'exportPanel', 'files', 'syncDialogPresentation', 'beginExport'), c);
+  vm.runInContext(extract('isRequestInspector', 'brand', 'topbar', 'quickAction', 'workHeader', 'modalMarkup', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport'), c);
   return { c, work };
 }
 
@@ -117,7 +117,8 @@ test('Files has no empty selection strip and keeps checkbox/bulk controls in the
   let html = c.files(work);
   assert.doesNotMatch(html, /Select files for actions|selection-bar/);
   assert.match(html, /file-select-hit/); assert.match(html, /data-file-select="\/one.txt"/);
-  assert.match(html, /data-action="upload"/);
+  assert.match(html, /data-action="file-add"/);
+  assert.equal((html.match(/data-action="refresh-files"/g) || []).length, 1);
   c.view.selected = ['/one.txt']; html = c.files(work);
   const toolbar = html.split('<div class="file-table">')[0];
   for (const action of ['file-copy', 'file-move', 'file-delete', 'clear-selection']) assert.match(toolbar, new RegExp(`data-action="${action}"`));
