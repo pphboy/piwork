@@ -3505,4 +3505,9 @@ dd > .button {
 .modal-exit-backdrop { position:fixed;inset:0;z-index:60;background:#182b4555;pointer-events:none;animation:modal-backdrop-out 140ms ease-in both; }
 @media(prefers-reduced-motion:reduce) { .modal-exit-backdrop { animation:none; } }
 
-@media(max-width:600px) { .settings-heading { flex-direction:column;align-items:flex-start;gap:8px; } }
+@media(max-width:600px) {
+ .settings-heading { flex-direction:column;align-items:flex-start;gap:8px; }
+ .configuration-compact { position:relative; }
+ .configuration-compact details { position:static; }
+ .configuration-details-copy { left:0;right:auto; }
+}
