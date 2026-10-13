@@ -2433,3 +2433,42 @@ for(const scope of ['view','identity'])test(`Controls pagination: late evidence 
  else assert.equal(await api(page,"return adapter.requestDetails.size"),0);
  await expect(page.locator('#app')).not.toContainText('Abandoned evidence');assert.equal(chatWrites(requests).length,0);
 });
+
+test('Reconcile history: 410 readback remains bound to the original Run beside an active Service', async t => {
+  let recovering = false, failRunRead = false, historyReads = 0, entered = false, release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(() => release());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path.endsWith('/runs/active')) return { json: { run: controlRun() } };
+    if (r.path.endsWith('/runs/run-original/events')) return { status: 410 };
+    if (r.path.endsWith('/runs/run-original')) return failRunRead ? { status: 503, json: { message: 'Original Run read unavailable' } } : { json: { ...controlRun('run-original', 5, 'session-1', { kind: 'chat' }), error: { message: 'Original execution failed' } } };
+    if (recovering && r.path.endsWith('/sessions/session-1')) {
+      if (++historyReads === 1) { entered = true; await gate; return { status: 503, json: { message: 'Original history unavailable' } }; }
+      return { json: { messages: [{ role: 'user', text: 'original prompt' }, { role: 'assistant', text: 'Original recovered reply' }] } };
+    }
+    return controlFixture(r);
+  });
+  await expect(page.locator('iframe')).toBeVisible();
+  await page.locator('#composer').fill('Preserve next message');
+  await api(page, "window.reconcileFrame=document.querySelector('iframe');");
+  recovering = true;
+  await api(page, "adapter.getWork('work-1').run={id:'run-original',sessionId:'session-1',status:'running',cursor:77,created:'',source:{kind:'chat'}};window.reconcileRecovery=adapter.resumeRun('work-1');");
+  await expect.poll(() => entered).toBe(true);
+  await api(page, "await adapter.loadActiveRun('work-1',true);");
+  release(); await api(page, 'await window.reconcileRecovery;');
+  await expect(page.locator('.composer-wrap')).toContainText('History recovery failed');
+  await expect(page.locator('.composer-wrap')).toContainText('Original execution failed');
+  await expect(page.getByRole('button', { name: 'Check original Run', exact: true })).toHaveAttribute('data-run-id', 'run-original');
+  await expect(button(page, 'send-message')).toHaveAttribute('data-cancel-run-id', 'run-background');
+  failRunRead = true; await api(page, "await adapter.resumeRun('work-1');");
+  await expect(page.locator('.composer-wrap')).toContainText('Original execution failed');
+  await expect(page.locator('.composer-wrap')).toContainText('History recovery failed');
+  failRunRead = false;
+  await api(page, "await adapter.resumeRun('work-1');");
+  const facts = await api(page, "const w=adapter.getWork('work-1');return {run:w.run.id,status:w.run.status,error:w.run.error,replies:w.sessions[0].messages.filter(m=>m.text==='Original recovered reply').length,active:adapter.activeRuns.get('work-1').run.id,frame:window.reconcileFrame===document.querySelector('iframe')};");
+  assert.deepEqual(facts, { run: 'run-original', status: 'failed', error: 'Original execution failed', replies: 1, active: 'run-background', frame: true });
+  await expect(page.locator('.composer-wrap')).toContainText('Original execution failed');
+  await expect(page.locator('#composer')).toHaveValue('Preserve next message');
+  assert.equal(requests.filter(r => r.path.endsWith('/runs/run-original/events')).length, 1);
+  assert.equal(requests.filter(r => r.path.endsWith('/sessions/session-auto')).length, 0);
+  assert.equal(chatWrites(requests).length, 0);
+});

@@ -122,6 +122,41 @@ http.createServer((req,res)=>{
   await expect(page.getByRole('button',{name:'Check original Run',exact:true})).toHaveAttribute('data-run-id',failedManual.runId);
   await page.getByRole('button',{name:'Check original Run',exact:true}).click();await expect(page.locator('#modal')).toContainText(failedManual.runId);
   await page.locator('#modal .modal-footer [data-action=close-modal]').click();
+  // Expire only the browser event read. Original Run/Session data still comes
+  // from the real Core/Agentd, including the actual execution failure.
+  const expiredEvents=`**/_desktop/api/works/${id}/runs/${failedManual.runId}/events?*`;
+  let expiredReads=0,historyWrites=0,originalRunReads=0,originalSessionReads=0;
+  const observeWrites=request=>{
+    const pathname=new URL(request.url()).pathname;
+    if(request.method()==='POST'&&pathname.startsWith(`/_desktop/api/works/${id}/`))historyWrites++;
+    if(request.method()==='GET'&&pathname===`/_desktop/api/works/${id}/runs/${failedManual.runId}`)originalRunReads++;
+    if(request.method()==='GET'&&pathname===`/_desktop/api/works/${id}/sessions/${main}`)originalSessionReads++;
+  };
+  page.on('request',observeWrites);
+  await page.route(expiredEvents,route=>{expiredReads++;return route.fulfill({status:410,contentType:'application/json',body:JSON.stringify({code:'EVENT_CURSOR_EXPIRED'})});});
+  try {
+    const recovered=await page.evaluate(async({id,runId})=>{
+      const {adapter}=await import('/desktop/browser/adapter.js');
+      // Establish the interrupted original observer from its real readback.
+      // The fixture submitted this failure directly through Core, so the
+      // browser may currently be observing the newer background Service.
+      const run=await adapter.loadRunDetails(id,runId);
+      if(!run||run.id!==runId)throw new Error('Original failed Run was not confirmed');
+      adapter.getWork(id).run=run;
+      run.historyRecovery=false;await adapter.resumeRun(id);
+      return{runId:run.id,error:run.error,activeId:adapter.activeRuns.get(id)?.run?.id};
+    },{id,runId:failedManual.runId});
+    assert.deepEqual(recovered,{runId:failedManual.runId,error:failedResult.error.message,activeId:background.runIds.at(-1)});
+    await expect(page.locator('.composer-wrap')).toContainText(failedResult.error.message);
+    await expect(page.getByRole('button',{name:'Check original Run',exact:true})).toHaveAttribute('data-run-id',failedManual.runId);
+    await expect(page.locator('[data-action=send-message]')).toHaveAttribute('data-cancel-run-id',background.runIds.at(-1));
+    assert.equal(expiredReads,1);assert.equal(historyWrites,0);
+    assert.ok(originalRunReads>=2,'Original Run was not read again after 410');
+    assert.ok(originalSessionReads>=1,'Original Session history was not read after 410');
+  } finally {
+    page.off('request',observeWrites);await page.unroute(expiredEvents);
+  }
+  console.log('Chat controls recovery: real failed Run retains execution error after readonly 410 history recovery');
   await call('POST',path+'/agent-requests/'+background.requestId+'/cancel',{});
   await waitFor(async()=>(await call('GET',path+'/agent-requests/'+background.requestId)).request.state==='cancelled','background cancelled');
   assert.equal(await page.evaluate(()=>window.controlsFrame===document.querySelector('iframe') && window.controlsLoads===0),true);

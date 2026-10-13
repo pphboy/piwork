@@ -80,6 +80,7 @@ export interface Run {
   finished?: string;
   finalText?: string;
   error?: string;
+  executionError?: string;
 }
 export interface Configuration {
   skills: string[];

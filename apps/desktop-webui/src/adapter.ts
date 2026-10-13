@@ -679,7 +679,7 @@ export class DesktopAdapter {
       intent.error='Retry result remains unknown: no mapping confirmed for the original key.';this.emit();
     } catch(error){if(epoch===this.epoch && this.requestRetries.get(key)===intent){intent.error=`Retry result remains unknown: ${errorText(error)}`;this.emit();}throw error;}
   }
-  private runRecord(raw: Data,sessionId: string): Run { return { id:raw.runId,sessionId,status:runStates[raw.state] ?? 'interrupted',cursor:0,created:raw.acceptedAt ?? '',finished:raw.finishedAt,finalText:raw.finalText,error:raw.error?.message,actualModel:raw.actualModel ?? null,thinkingLevel:raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel,source:raw.source,adoptedExperienceVersion:raw.adoptedExperienceVersion }; }
+  private runRecord(raw: Data,sessionId: string): Run { return { id:raw.runId,sessionId,status:runStates[raw.state] ?? 'interrupted',cursor:0,created:raw.acceptedAt ?? '',finished:raw.finishedAt,finalText:raw.finalText,error:raw.error?.message,executionError:raw.error?.message,actualModel:raw.actualModel ?? null,thinkingLevel:raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel,source:raw.source,adoptedExperienceVersion:raw.adoptedExperienceVersion }; }
   modelSelection(id: string,sessionId: string) {
     const key=`${id}:${sessionId}`;let state=this.modelSelections.get(key);
     if(!state){const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);state={phase:'clean',ref:session?.modelPreference?.modelRef ?? null,thinking:session?.thinkingLevel === undefined ? (sessionId ? 'off' : this.models.get(id)?.defaultModel?.defaultThinkingLevel ?? (this.models.get(id)?.defaultModel?.thinkingAvailability==='unknown'?null:'off')) : session.thinkingLevel,error:'',revision:0};this.modelSelections.set(key,state);}return state;
@@ -1066,6 +1066,7 @@ export class DesktopAdapter {
       if (!current()) return;
       const raw = value.run ?? value;
       run.status = runStates[raw.state] ?? 'interrupted';
+      run.executionError = raw.error?.message;
       const profile=this.imageCapabilities.get(id)?.value || this.getWork(id)?.sessions.find(s=>s.id===run.sessionId)?.imageProfile?'?imageProfile=chat-images-v1':'';
       const history = await this.request(`works/${part(id)}/sessions/${part(run.sessionId)}${profile}`, 'GET', undefined, controller.signal);
       if (!current()) return;
@@ -1078,10 +1079,10 @@ export class DesktopAdapter {
       }
       observer.failures = 0;
       retry = ['accepted', 'running', 'cancelling'].includes(run.status);
-      run.error = retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined;
+      run.error = run.executionError ?? (retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined);
     } catch (error) {
       if (!current()) return;
-      run.error = `History recovery failed: ${errorText(error)}. Reread the original Run; do not resend the prompt.`;
+      run.error = [run.executionError, `History recovery failed: ${errorText(error)}. Reread the original Run; do not resend the prompt.`].filter(Boolean).join(' ');
       delay = Math.min(30000, 2000 * 2 ** Math.min(observer.failures++, 4));
       // Terminal history errors require explicit readback; do not claim completion
       // or poll an inaccessible/deleted Run indefinitely.
@@ -1102,7 +1103,7 @@ export class DesktopAdapter {
   }
   async resumeRun(id: string, connected?: () => void) {
     const work = this.getWork(id)!; const run = work.run; if (!run) return;
-    clearTimeout(this.reconnects.get(id)); this.reconnects.delete(id); run.error = undefined;
+    clearTimeout(this.reconnects.get(id)); this.reconnects.delete(id); run.error = run.executionError;
     this.historyObservers.get(id)?.controller.abort(); this.historyObservers.delete(id);
     this.streams.get(id)?.abort(); const controller = new AbortController(); this.streams.set(id, controller); const epoch = this.epoch;
     if (run.historyRecovery) { this.streams.delete(id); const observer = { controller, run, epoch, failures: 0 }; this.historyObservers.set(id, observer); await this.recoverRunHistory(id, observer); if (!observer.failures) connected?.(); return; }
@@ -1116,14 +1117,14 @@ export class DesktopAdapter {
         const session = work.sessions.find(s => s.id === run.sessionId); if (!session) return;
         const kind = event.kind; if (kind?.$case === 'text') { let message = session.messages.at(-1); if (!message || message.role !== 'assistant' || message.tool) { message = { id:`${run.id}-text-${sequence}`,runId:run.id,role: 'assistant', text: '' }; session.messages.push(message); } message.text += kind.text.delta ?? ''; }
         else if (kind?.$case === 'tool') { const tool = kind.tool; upsertTool(session.messages,{id:`${run.id}-tool-${tool.toolCallId}`,runId:run.id,role:'assistant',text:'',tool:{id:tool.toolCallId,name:tool.toolName,status:tool.phase==='tool-end'?(tool.isError?'Failed':'Completed'):'Running',isError:tool.isError,content:resultText(tool.result,tool.toolName)}}); }
-        else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted'; run.error = kind.state.error?.message; if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); }
+        else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted'; run.error = run.executionError = kind.state.error?.message; if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); }
         this.emit(); };
       while (epoch === this.epoch && !controller.signal.aborted && this.streams.get(id) === controller && this.getWork(id)?.run === run) { const { value, done } = await reader.read(); if (done) { buffer += decoder.decode(); if (buffer.trim()) consume(buffer); break; } buffer += decoder.decode(value, { stream: true }); if (buffer.length > 2_097_152) throw new Error('Run event exceeded the supported size.'); let index; while ((index = buffer.indexOf('\n')) !== -1) { consume(buffer.slice(0, index)); buffer = buffer.slice(index + 1); } }
       if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run) return;
-      const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`); run.status = runStates[(value.run ?? value).state] ?? 'interrupted';
+      const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`); run.status = runStates[(value.run ?? value).state] ?? 'interrupted'; run.executionError = (value.run ?? value).error?.message;
       if (['accepted', 'running', 'cancelling'].includes(run.status)) run.error = 'Event stream ended. Resume this Run to continue from its cursor.';
-      else { run.error = undefined; this.reconnectAttempts.delete(id); await this.loadSession(id, run.sessionId); await this.loadServices(id).catch(() => undefined); await this.loadConfiguration(id).catch(() => undefined); } this.emit();
-    } catch (error) { if (!controller.signal.aborted && epoch === this.epoch) { run.error = `${errorText(error)} Resume the original Run; do not send the prompt again.`; this.emit(); } }
+      else { run.error = run.executionError; this.reconnectAttempts.delete(id); await this.loadSession(id, run.sessionId); await this.loadServices(id).catch(() => undefined); await this.loadConfiguration(id).catch(() => undefined); } this.emit();
+    } catch (error) { if (!controller.signal.aborted && epoch === this.epoch) { run.error = [run.executionError, `${errorText(error)} Resume the original Run; do not send the prompt again.`].filter(Boolean).join(' '); this.emit(); } }
     finally {
       if (this.streams.get(id) === controller) {
         this.streams.delete(id);

@@ -1248,7 +1248,7 @@ export class DesktopAdapter {
             throw error;
         }
     }
-    runRecord(raw, sessionId) { return { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, created: raw.acceptedAt ?? '', finished: raw.finishedAt, finalText: raw.finalText, error: raw.error?.message, actualModel: raw.actualModel ?? null, thinkingLevel: raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel, source: raw.source, adoptedExperienceVersion: raw.adoptedExperienceVersion }; }
+    runRecord(raw, sessionId) { return { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, created: raw.acceptedAt ?? '', finished: raw.finishedAt, finalText: raw.finalText, error: raw.error?.message, executionError: raw.error?.message, actualModel: raw.actualModel ?? null, thinkingLevel: raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel, source: raw.source, adoptedExperienceVersion: raw.adoptedExperienceVersion }; }
     modelSelection(id, sessionId) {
         const key = `${id}:${sessionId}`;
         let state = this.modelSelections.get(key);
@@ -2121,6 +2121,7 @@ export class DesktopAdapter {
                 return;
             const raw = value.run ?? value;
             run.status = runStates[raw.state] ?? 'interrupted';
+            run.executionError = raw.error?.message;
             const profile = this.imageCapabilities.get(id)?.value || this.getWork(id)?.sessions.find(s => s.id === run.sessionId)?.imageProfile ? '?imageProfile=chat-images-v1' : '';
             const history = await this.request(`works/${part(id)}/sessions/${part(run.sessionId)}${profile}`, 'GET', undefined, controller.signal);
             if (!current())
@@ -2136,12 +2137,12 @@ export class DesktopAdapter {
             }
             observer.failures = 0;
             retry = ['accepted', 'running', 'cancelling'].includes(run.status);
-            run.error = retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined;
+            run.error = run.executionError ?? (retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined);
         }
         catch (error) {
             if (!current())
                 return;
-            run.error = `History recovery failed: ${errorText(error)}. Reread the original Run; do not resend the prompt.`;
+            run.error = [run.executionError, `History recovery failed: ${errorText(error)}. Reread the original Run; do not resend the prompt.`].filter(Boolean).join(' ');
             delay = Math.min(30000, 2000 * 2 ** Math.min(observer.failures++, 4));
             // Terminal history errors require explicit readback; do not claim completion
             // or poll an inaccessible/deleted Run indefinitely.
@@ -2172,7 +2173,7 @@ export class DesktopAdapter {
             return;
         clearTimeout(this.reconnects.get(id));
         this.reconnects.delete(id);
-        run.error = undefined;
+        run.error = run.executionError;
         this.historyObservers.get(id)?.controller.abort();
         this.historyObservers.delete(id);
         this.streams.get(id)?.abort();
@@ -2234,7 +2235,7 @@ export class DesktopAdapter {
                 }
                 else if (kind?.$case === 'state') {
                     run.status = runStates[kind.state.state] ?? 'interrupted';
-                    run.error = kind.state.error?.message;
+                    run.error = run.executionError = kind.state.error?.message;
                     if (kind.state.finalText && !session.messages.some(m => m.runId === run.id && m.role === 'assistant' && !!m.text))
                         session.messages.push({ id: `${run.id}-final`, runId: run.id, role: 'assistant', text: kind.state.finalText });
                 }
@@ -2261,10 +2262,11 @@ export class DesktopAdapter {
                 return;
             const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`);
             run.status = runStates[(value.run ?? value).state] ?? 'interrupted';
+            run.executionError = (value.run ?? value).error?.message;
             if (['accepted', 'running', 'cancelling'].includes(run.status))
                 run.error = 'Event stream ended. Resume this Run to continue from its cursor.';
             else {
-                run.error = undefined;
+                run.error = run.executionError;
                 this.reconnectAttempts.delete(id);
                 await this.loadSession(id, run.sessionId);
                 await this.loadServices(id).catch(() => undefined);
@@ -2274,7 +2276,7 @@ export class DesktopAdapter {
         }
         catch (error) {
             if (!controller.signal.aborted && epoch === this.epoch) {
-                run.error = `${errorText(error)} Resume the original Run; do not send the prompt again.`;
+                run.error = [run.executionError, `${errorText(error)} Resume the original Run; do not send the prompt again.`].filter(Boolean).join(' ');
                 this.emit();
             }
         }
