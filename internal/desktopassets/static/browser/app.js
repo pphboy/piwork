@@ -974,6 +974,8 @@ function restoreChatLayout() {
     restoreLayoutFocus(target);
 }
 async function exitWorkspaceFocus() {
+    if (view.layout === 'workspace' && document.fullscreenElement !== root)
+        return true;
     const epoch = adapter.identityEpoch, origin = location.hash, choice = areaChoice, target = workspaceReturn;
     const valid = () => epoch === adapter.identityEpoch && origin === location.hash && choice === areaChoice && target === workspaceReturn;
     if (document.fullscreenElement === root) {

@@ -146,3 +146,16 @@ for(const entry of ['search toolbar','no matching Works'])test(`Clear search fro
  c.render=()=>assert.equal(c.view.search,'');vm.runInContext(extract(['handleAction']),c);
  await c.handleAction('clear-search',{dataset:{origin:entry}});assert.equal(c.view.search,'');assert.equal(focused,1);
 });
+
+for(const action of ['tab-Services','tab-Files','tab-Chat','settings'])test(`${action} keeps its own keyboard focus when no Focus layout is active`,async()=>{
+ const {c,work}=fixture();c.view.layout='workspace';work.services=[];work.config={};c.root={};c.document={fullscreenElement:null};c.structuredClone=structuredClone;c.consumeWebSelection=()=>{};
+ let focused=action;c.restoreLayoutFocus=()=>{focused='tab-Services';};c.adapter.loadServices=async()=>{};c.adapter.loadDirectory=async()=>{};c.adapter.loadConfiguration=async()=>{};
+ vm.runInContext(extract(['resetWorkspaceFocus','exitWorkspaceFocus','handleAction']),c);
+ await c.handleAction(action,{dataset:{}});assert.equal(focused,action);assert.equal(c.view.layout,'workspace');
+ if(action.startsWith('tab-'))assert.equal(c.view.tab,action.slice(4));else assert.match(c.location.hash,/settings$/);
+});
+test('leaving a real Focus layout still restores its saved layout and focus target',async()=>{
+ const {c}=fixture();c.view.layout='service-chat';c.root={};c.document={fullscreenElement:null};const target={tab:'Files'};c.workspaceReturn=target;let restored:any;
+ c.restoreLayoutFocus=(value:any)=>{restored=value;};vm.runInContext(extract(['resetWorkspaceFocus','exitWorkspaceFocus']),c);
+ assert.equal(await c.exitWorkspaceFocus(),true);assert.equal(c.view.layout,'workspace');assert.equal(c.view.tab,'Files');assert.equal(restored,target);
+});
