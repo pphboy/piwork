@@ -62,3 +62,11 @@ test('Settings separates Back navigation from one aligned title/status action ro
  assert.match(css,/\.settings-heading \{ align-items:center; \}/);assert.match(css,/\.configuration-compact \{ display:flex;align-items:center;gap:8px;flex:none/);
  assert.doesNotMatch(css,/\.configuration-compact details \{ flex-basis:100%/);assert.match(css,/@media\(max-width:600px\) \{\s+\.settings-heading \{ flex-direction:column;align-items:flex-start/);assert.match(css,/\.configuration-compact details \{ position:static; \}/);assert.match(css,/\.configuration-details-copy \{ left:0;right:auto; \}/);
 });
+
+test('Files toolbar retains 40px actions at the narrow breakpoint in either selection state',()=>{
+ const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
+ assert.match(css,/\.icon-button \{\s+width: 40px;\s+height: 40px;/);
+ assert.doesNotMatch(css,/\.files-toolbar \.icon-button\s*\{/);
+ const {c,work}=fixture();work.files=[];c.adapter.directories=new Map();c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';vm.runInContext(extract('files'),c);
+ assert.match(c.files(work),/data-action="file-add"/);c.view.selected=['/A.txt'];const selected=c.files(work);for(const action of ['file-copy','file-move','file-delete','clear-selection'])assert.match(selected,new RegExp('data-action="'+action+'"'));assert.doesNotMatch(selected,/data-action="file-add"/);
+});

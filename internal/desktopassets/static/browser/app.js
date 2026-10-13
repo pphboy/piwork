@@ -2020,6 +2020,7 @@ async function handleAction(action, el, record) {
         case "clear-search":
             view.search = "";
             render();
+            root.querySelector('#search')?.focus({ preventScroll: true });
             break;
         case "operations":
             await stay(adapter.recoverOperations());

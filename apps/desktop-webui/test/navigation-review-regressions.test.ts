@@ -139,3 +139,10 @@ for(const boundary of ['route','modal','identity'])test(`Apply receipt keeps exa
  resolve({id:'accepted-exact',workId:'one',kind:'Apply configuration',state:'running'});
  await assert.rejects(request,c.ViewChanged);assert.equal(opened,0);assert.equal(record.businessId,boundary==='identity'?undefined:'accepted-exact');assert.equal(confirmed,boundary==='identity'?0:1);
 });
+
+for(const entry of ['search toolbar','no matching Works'])test(`Clear search from ${entry} restores keyboard input to the search field`,async()=>{
+ const {c}=fixture();c.view.search='missing work';c.location.hash='#/works';let focused=0;
+ c.root={querySelector:(selector:string)=>{assert.equal(selector,'#search');return{focus:(options:any)=>{assert.equal(options.preventScroll,true);focused++;}};}};
+ c.render=()=>assert.equal(c.view.search,'');vm.runInContext(extract(['handleAction']),c);
+ await c.handleAction('clear-search',{dataset:{origin:entry}});assert.equal(c.view.search,'');assert.equal(focused,1);
+});

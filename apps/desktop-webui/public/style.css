@@ -2624,11 +2624,6 @@ dd > .button {
     padding: 4px 7px;
     min-height: 33px;
   }
-  .files-toolbar .icon-button {
-    height: 33px;
-    min-height: 33px;
-    width: 28px;
-  }
   .breadcrumbs {
     font-size: 11px;
   }

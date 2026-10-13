@@ -1592,6 +1592,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "clear-search":
       view.search = "";
       render();
+      root.querySelector<HTMLInputElement>('#search')?.focus({preventScroll:true});
       break;
     case "operations": await stay(adapter.recoverOperations()); openModal("operations"); break;
     case "new-work":
