@@ -412,7 +412,8 @@ try {
   assert.equal((await stoppedGateway.json()).code, 'SERVICE_UNAVAILABLE');
   await page.screenshot({ path: join(screenshotDir, '07-work-stopped.png'), fullPage: true });
   await page.getByRole('button', { name: 'Start Work', exact: true }).first().click();
-  await expect(page.locator('#modal')).toContainText('Operation ID'); await page.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.locator('.object-control-progress [data-action=operation]')).toBeVisible();
+  await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 180000 });
   await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor({ timeout: 20000 });
   await waitState(workId, 'ready');
@@ -507,8 +508,8 @@ try {
   const start = page.getByRole('button', { name: 'Start Work', exact: true }).first();
   assert.equal(await start.getAttribute('data-id'), imported.id, 'Start must target the opened Work');
   await start.click();
-  await page.getByRole('heading', {name:'Start Work', exact:true}).waitFor();
-  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.locator('.object-control-progress [data-action=operation]')).toBeVisible();
+  await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 180000 });
   await waitState(imported.id, 'ready');
   await page.getByRole('button', { name: 'Services', exact: true }).click();

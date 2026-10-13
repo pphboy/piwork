@@ -2718,3 +2718,56 @@ for (const scenario of ['dirty-discard', 'read-error-retry']) test(`B brain sour
   assert.equal(new URL(page.url()).hash, '#/work/work-1');
   assert.equal(requests.filter(r => r.method === 'PUT' || r.path.endsWith('/apply')).length, 0);
 });
+
+// C fixture remains native-shaped synthetic HTTP; browser events, geometry and bytes are asserted separately.
+const cFileRoot = '/_desktop/files/works/work-1/files/';
+function cFilesReply(r: RequestRecord): Reply | undefined {
+  if (r.method === 'PROPFIND') return { status: 207, body: `<d:multistatus xmlns:d="DAV:">${['note.txt', 'archive.tar.gz', '.env'].map(name => `<d:response><d:href>${cFileRoot}${name}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>14</d:getcontentlength><d:getlastmodified>${mtime1}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`).join('')}</d:multistatus>` };
+  if (r.method === 'GET' && r.path.startsWith(cFileRoot)) return { body: 'saved version\n', headers: { 'Content-Type': 'text/plain', 'Last-Modified': mtime1 } };
+}
+
+test('C New folder focuses the field and local Enter submits only once while pending', async t => {
+  let release!: () => void; const held = new Promise<void>(done => release = done); t.after(() => release());
+  const { page, requests } = await fixture(t, async r => r.method === 'MKCOL' ? (await held, { status: 201 }) : cFilesReply(r));
+  await button(page, 'tab-Files').click(); await button(page, 'new-folder').click();
+  await expect(page.locator('#form-name')).toBeFocused(); await page.locator('#form-name').fill('中文 folder');
+  const before = await button(page, 'confirm-folder').boundingBox();
+  await page.locator('#form-name').press('Enter');
+  await expect.poll(() => requests.filter(r => r.method === 'MKCOL').length).toBe(1);
+  await expect(button(page, 'confirm-folder')).toBeDisabled(); await page.locator('#form-name').press('Enter');
+  const pending = await button(page, 'confirm-folder').boundingBox(); assert.ok(before && pending); assert.ok(Math.abs(before.y - pending.y) <= 1);
+  assert.equal(requests.filter(r => r.method === 'MKCOL').length, 1); release(); await expect(page.locator('#modal')).toHaveCount(0);
+});
+
+test('C Rename preselects the basename and composing Enter never submits', async t => {
+  const { page, requests } = await fixture(t, cFilesReply);
+  await button(page, 'tab-Files').click(); await page.getByRole('button', { name: 'Actions for archive.tar.gz', exact: true }).click();
+  await button(page, 'file-rename').click(); const input = page.locator('#form-name');
+  await expect(input).toHaveValue('archive.tar.gz'); await expect(input).toBeFocused();
+  assert.deepEqual(await input.evaluate((element: HTMLInputElement) => [element.selectionStart, element.selectionEnd]), [0, 11]);
+  // This is a synthetic event-guard regression, not proof of a particular OS IME.
+  await input.dispatchEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true });
+  assert.equal(requests.filter(r => r.method === 'MOVE').length, 0); await expect(page.locator('#modal')).toBeVisible();
+});
+
+test('C Files selection has an independent hit target and no first or last row jump', async t => {
+  const { page } = await fixture(t, cFilesReply); await button(page, 'tab-Files').click();
+  const checkbox = page.locator('[data-file-select="/note.txt"]'), row = checkbox.locator('xpath=../..'), label = checkbox.locator('..');
+  const before = await row.boundingBox(), hit = await label.boundingBox(); assert.ok(before && hit); assert.ok(hit.width >= 32 && hit.height >= 32);
+  await label.click({ position: { x: 1, y: 1 } }); await expect(checkbox).toBeChecked();
+  const selected = await row.boundingBox(); assert.ok(selected); assert.ok(Math.abs(before.y - selected.y) <= 1);
+  await checkbox.press('Space'); await expect(checkbox).not.toBeChecked();
+  const cleared = await row.boundingBox(); assert.ok(cleared); assert.ok(Math.abs(before.y - cleared.y) <= 1);
+});
+
+test('C Download saved version returns server bytes without saving or changing editor selection', async t => {
+  const { page, requests } = await fixture(t, cFilesReply); await button(page, 'tab-Files').click();
+  await page.locator('[data-action="open-file"][data-path="/note.txt"]').click(); const editor = page.locator('#file-editor');
+  await editor.fill('different unsaved draft'); await editor.press('Home'); await editor.press('ArrowRight');
+  const selection = await editor.evaluate((element: HTMLTextAreaElement) => [element.selectionStart, element.selectionEnd]);
+  const before = requests.filter(r => r.method === 'GET' && r.path === cFileRoot + 'note.txt').length;
+  const pending = page.waitForEvent('download'); await page.getByRole('button', { name: 'Download saved version', exact: true }).click();
+  const downloaded = await pending, path = await downloaded.path(); assert.ok(path); assert.equal(await readFile(path, 'utf8'), 'saved version\n');
+  await expect(editor).toHaveValue('different unsaved draft'); assert.deepEqual(await editor.evaluate((element: HTMLTextAreaElement) => [element.selectionStart, element.selectionEnd]), selection);
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 0); assert.equal(requests.filter(r => r.method === 'GET' && r.path === cFileRoot + 'note.txt').length, before + 1);
+});

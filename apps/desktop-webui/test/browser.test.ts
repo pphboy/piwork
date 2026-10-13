@@ -327,6 +327,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.locator('[data-action=open-work]').filter({hasText:'Lifecycle Work'}).click();
     await page.getByRole('heading', {name: 'Lifecycle Work', exact: true}).waitFor();
     await page.getByRole('button',{name:'Start Work',exact:true}).first().click();
+    await page.locator('.object-control-progress [data-action=operation]').click();
     await page.getByText('pending',{exact:true}).waitFor();
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.getByRole('button',{name:'Work options'}).click();

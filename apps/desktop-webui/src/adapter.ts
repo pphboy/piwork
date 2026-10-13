@@ -81,6 +81,7 @@ export class DesktopAdapter {
   requestRetries = new Map<string,{submissionKey:string; error:string; unknown:boolean}>();
   private cancellingRequests = new Set<string>();
   requestReadErrors = new Map<string,string>();
+  private requestCancellations = new Map<string, { phase: 'pending' | 'accepted' | 'unknown'; error: string }>();
   models = new Map<string, { loading: boolean; confirmed: boolean; error: string; models: RunModel[]; defaultModel?: RunModel; defaultUnavailableReason?:string; unavailableModels?:Array<{label:string;reason:string;recovery:string}>; checkedAt?: string }>();
   modelSelections = new Map<string, { phase: 'clean' | 'dirty' | 'saving' | 'unknown'; ref: string | null; thinking: string|null; error: string; revision: number; confirmedRevision?: number }>();
   chatCapabilities = new Map<string, 0|1|2|3>();
@@ -246,7 +247,7 @@ export class DesktopAdapter {
     this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear();
     Object.assign(this.about,{core:null,coreError:'',coreLoading:false,coreChecked:''});
     this.stopImageReads();for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();this.imageCapabilities.clear();
-    this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();this.cancellingRequests.clear();this.requestReadErrors.clear();
+    this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();this.cancellingRequests.clear();this.requestReadErrors.clear();this.requestCancellations.clear();
     for (const status of Object.values(this.catalog)) Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });
     this.uploadIntents.clear(); this.skills = []; this.packages = []; this.entries.clear(); this.entryErrors.clear(); this.entryPromises.clear(); this.entryChecks.clear(); this.entryVersions.clear(); this.serviceDenials.clear(); this.entryServiceGrants.clear(); this.serviceLoads.clear(); this.serviceReads.clear(); this.worksRequests.clear(); this.worksRequestSequence++; this.worksReadSequence = 0; this.logs.clear(); this.logStates.clear(); this.logRequests.clear(); this.inspection = null; this.inspectionTransfer = '';
     if (inspection) { this.inspectionContext = inspection.context; this.inspection = inspection.summary; this.inspectionTransfer = inspection.transfer; this.transferProgress = inspection.progress; }
@@ -673,6 +674,7 @@ export class DesktopAdapter {
     // A status refresh preserves evidence pages the user has already read.
     if(!explicit && previous && previous.evidence.items.length>value.evidence.items.length)value.evidence=previous.evidence;
     this.requestDetails.set(key,value);this.requestReadErrors.delete(key);
+    const cancellation=this.requestCancellations.get(key);if(cancellation?.phase==='accepted')cancellation.error='';
     const replies=this.requestResponses.get(key);if(replies){
       replies.runs=replies.runs.filter(run=>value.request.runIds.includes(run.id));
       replies.errors=value.request.runIds.flatMap((runId:string)=>replies.errorsByRun[runId]?[replies.errorsByRun[runId]]:[]);
@@ -700,11 +702,32 @@ export class DesktopAdapter {
     if(currentIds && (currentIds.length!==runIds.length || currentIds.some(runId=>!runIds.includes(runId))))
       void this.loadRequestResponses(id,requestId,currentIds,explicit);
   }
+  requestCancellation(id: string, requestId: string) { return this.requestCancellations.get(`${id}:${requestId}`); }
   async cancelRequest(id: string,requestId: string) {
-    this.cancellingRequests.add(`${id}:${requestId}`);
-    const value=await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/cancel`,'POST',{});
-    if(value.requestId!==requestId)throw new DesktopError('INVALID_RESPONSE','Cancellation needs original request readback.');
-    await this.loadRequest(id,requestId);return value;
+    const key = `${id}:${requestId}`, epoch = this.epoch;
+    if (this.requestCancellations.has(key)) throw new DesktopError('REQUEST_CANCEL_SUBMITTED', 'Cancellation was already submitted. Refresh the original request; do not cancel it again.');
+    const cancellation = { phase: 'pending' as 'pending' | 'accepted' | 'unknown', error: '' };
+    this.requestCancellations.set(key, cancellation); this.cancellingRequests.add(key); this.emit();
+    let value: Data;
+    try {
+      value = await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/cancel`, 'POST', {});
+      if (value.requestId !== requestId) throw new DesktopError('RESULT_UNKNOWN', 'Cancellation receipt could not be matched. Refresh the original request.');
+      if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This response was discarded.');
+      cancellation.phase = 'accepted'; this.emit();
+    } catch (error) {
+      if (epoch === this.epoch) {
+        const status = (error as DesktopError).httpStatus;
+        if (status && status >= 400 && status < 500) { this.requestCancellations.delete(key); this.cancellingRequests.delete(key); }
+        else { cancellation.phase = 'unknown'; cancellation.error = errorText(error); }
+        this.emit();
+      }
+      throw error;
+    }
+    // Acceptance belongs to this original request, not to a later observation.
+    // A failed read or stale running state must never release the cancel lock.
+    try { await this.loadRequest(id, requestId); }
+    catch (error) { if (epoch === this.epoch) { cancellation.error = errorText(error); this.emit(); } }
+    return value;
   }
   async retryRequest(id: string,requestId: string) {
     const original=await this.loadRequest(id,requestId);
@@ -1131,7 +1154,7 @@ export class DesktopAdapter {
     })().finally(() => { if (this.capabilityReads.get(id) === pending) this.capabilityReads.delete(id); });
     this.capabilityReads.set(id, pending); return pending;
   }
-  operationPaused(id: string) { return this.pausedOperations.has(id); }
+  operationPaused(id: string) { return this.pausedOperations.has(id) || this.metadata.paused(this.metadataKey(`operations/${part(id)}`)); }
   pauseOperation(id: string) { this.pausedOperations.add(id); }
   resumeOperation(id: string) { this.pausedOperations.delete(id); this.scheduleOperationPoll(); }
   async clearOperations() {
@@ -1284,7 +1307,7 @@ export class DesktopAdapter {
   fileURL(id: string, path: string) { if (!path.startsWith('/') || path.split('/').some(p => p === '.' || p === '..' || /[\\\x00]/.test(p))) throw new Error('Invalid workspace path.'); return `/_desktop/files/works/${part(id)}/files/${path.slice(1).split('/').map(part).join('/')}`; }
   async loadDirectory(id: string, path = '/') {
     const epoch = this.epoch; const work = this.getWork(id)!; const key = `${id}:${path}`, state = this.directories.get(key) || { loading: false, checkedAt: '', error: '' }; this.directories.set(key, state); state.loading = true; this.emit(); try { const base = this.fileURL(id, path).replace(/\/?$/, '/');
-    const response = await fetch(base, { method: 'PROPFIND', credentials: 'same-origin', headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } }); if (!response.ok) throw new Error(`Workspace cannot be read (${response.status}).`);
+    const response = await fetch(base, { method: 'PROPFIND', credentials: 'same-origin', headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } }); if (!response.ok) throw new DesktopError('FILES_READ_FAILED', `Workspace cannot be read (${response.status}).`, response.status);
     if (epoch !== this.epoch) throw new Error('The connection changed; the file listing was discarded.');
     const text = await response.text(); if (epoch !== this.epoch) throw new Error('The identity changed while reading directory metadata.'); const entries = parseEntries(text, base); state.checkedAt = new Date().toISOString(); state.error = ''; const children: WorkspaceFile[] = entries.filter(e => e.name !== '/').map(e => ({ path: (path === '/' ? '' : path) + '/' + e.name, name: e.name, kind: e.directory ? 'directory' : e.kind === 'file' ? 'file' : 'special', size: e.size ?? 0, modified: e.modified ?? '' }));
     for (const child of children) { const old = work.files.find(f => f.path === child.path); if (old?.content !== undefined && old.size === child.size && old.modified === child.modified) { child.content = old.content; child.kind = old.kind; } } work.files = [...work.files.filter(f => (f.path.slice(0, f.path.lastIndexOf('/')) || '/') !== path), ...children]; if (work.resourceErrors) delete work.resourceErrors.files; this.emit();
@@ -1292,9 +1315,9 @@ export class DesktopAdapter {
   }
   async readFile(id: string, path: string) {
     const epoch = this.epoch; const work = this.getWork(id)!; let file = work.files.find(f => f.path === path); if (!file) { await this.loadDirectory(id, path.slice(0, path.lastIndexOf('/')) || '/'); file = work.files.find(f => f.path === path); }
-    if (!file) throw new Error('File was not found in the current workspace listing.'); if (file.kind === 'directory') { await this.loadDirectory(id, path); return file; } if (file.kind === 'special') return file;
+    if (!file) throw new DesktopError('FILE_NOT_FOUND', 'File was not found in the current workspace listing.', 404); if (file.kind === 'directory') { await this.loadDirectory(id, path); return file; } if (file.kind === 'special') return file;
     if (file.size > 1_048_576) { file.kind = 'binary'; return file; }
-    const response = await fetch(this.fileURL(id, path), { credentials: 'same-origin' }); if (!response.ok) throw new Error(`File cannot be read (${response.status}).`);
+    const response = await fetch(this.fileURL(id, path), { credentials: 'same-origin' }); if (!response.ok) throw new DesktopError('FILE_READ_FAILED', `File cannot be read (${response.status}).`, response.status);
     const reader = response.body!.getReader(); const chunks: Uint8Array[] = []; let size = 0;
     while (true) { const result = await reader.read(); if (result.done) break; size += result.value.byteLength; if (size > 1_048_576) { await reader.cancel(); file.kind = 'binary'; this.emit(); return file; } chunks.push(result.value); }
     const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }

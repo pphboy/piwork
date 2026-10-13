@@ -162,6 +162,11 @@ p {
 .modal-action-status:empty { display:none; }
 .modal-action-status .action-status { margin:10px 0 0; }
 .modal-action-status { flex:none;max-height:120px;overflow:auto;padding:0 22px; }
+.modal-name .modal-action-status {
+  display: block;
+  height: 96px;
+  max-height: 96px;
+}
 .create-action-status .feedback { margin:8px 0; }
 .button:hover {
   background: var(--surface-subtle);
@@ -202,6 +207,17 @@ p {
 }
 .danger {
   color: var(--danger);
+}
+.button.text-button.danger {
+  color: var(--danger);
+}
+.button.text-button.danger:hover:not(:disabled),
+.button.text-button.danger:focus-visible:not(:disabled) {
+  background: var(--danger-soft);
+}
+.button.text-button.danger:disabled {
+  background: transparent;
+  border-color: transparent;
 }
 .button.danger-solid {
   background: var(--danger);
@@ -386,6 +402,10 @@ pre,
   min-width: 0;
   width: 100%;
   font-size: 13px;
+}
+.search-box input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 .connection {
   display: flex;
@@ -1052,6 +1072,10 @@ pre,
   max-height: 170px;
   padding: 0;
 }
+.composer textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 .composer-bottom {
   display: flex;
   align-items: center;
@@ -1346,7 +1370,7 @@ pre,
 .file-head,
 .file-row {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 76px 113px 38px;
+  grid-template-columns: 32px minmax(0, 1fr) 76px 113px 38px;
   gap: 14px;
   align-items: center;
   padding: 0 23px;
@@ -1365,7 +1389,19 @@ pre,
   font-size: 11px;
   color: var(--muted);
 }
-.file-row > input {
+.file-select-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  cursor: pointer;
+}
+.file-select-hit > input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
   accent-color: var(--accent);
 }
 .file-name {
@@ -1408,15 +1444,26 @@ pre,
   color: var(--accent);
 }
 .selection-bar {
+  min-height: 54px;
   padding: 10px 20px;
   display: flex;
+  flex: none;
   align-items: center;
   gap: 7px;
   background: var(--accent-soft);
   font-size: 12px;
 }
+.selection-bar.empty-selection {
+  background: var(--surface-subtle);
+  color: var(--muted);
+}
 .selection-bar > span {
+  min-width: 0;
   margin-right: auto;
+  overflow-wrap: anywhere;
+}
+.selection-bar > .button {
+  flex: none;
 }
 .editor-toolbar {
   display: flex;
@@ -2716,7 +2763,7 @@ dd > .button {
   }
   .file-head,
   .file-row {
-    grid-template-columns: 16px minmax(0, 1fr) 51px 30px;
+    grid-template-columns: 32px minmax(0, 1fr) 51px 30px;
     gap: 9px;
     padding: 0 15px;
   }
@@ -2779,7 +2826,7 @@ dd > .button {
   .selection-bar {
     padding: 9px 12px;
     gap: 3px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     font-size: 10px;
   }
   .selection-bar .button {
@@ -3304,3 +3351,9 @@ dd > .button {
  .composer-bottom { flex-wrap:wrap; }
  .composer-actions { margin-left:auto; }
 }
+
+/* Original task progress stays beside its Work or Service. */
+.object-control-progress { display: grid; gap: 4px; margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
+.object-control-progress .actions { flex-wrap: wrap; gap: 4px; }
+.object-control-progress small { color: var(--muted); }
+.work-header + .object-control-progress { margin: 8px 20px; }

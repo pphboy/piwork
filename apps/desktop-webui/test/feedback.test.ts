@@ -200,8 +200,11 @@ for (const action of ['start', 'retry', 'stop', 'delete', 'create'] as const) te
   await expect(button(page, trigger)).toBeDisabled();
   await page.evaluate(action => document.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)?.click(), trigger);
   assert.equal(requests.filter(r => r.method === 'POST' && (r.path.includes(`/${action}`) || action === 'create' && r.path === 'works')).length, 1);
-  submitting.resolve(); await expect(page.locator('#modal')).toContainText(`op-${action}`);
-  await expect(page.getByRole('button', { name: 'Close dialog' })).toBeEnabled();
+  submitting.resolve();
+  if (action === 'start' || action === 'retry') {
+    await expect(page.locator(`.object-control-progress [data-action=operation][data-id="op-${action}"]`)).toBeVisible();
+    await expect(page.locator('#modal')).toHaveCount(0);
+  } else { await expect(page.locator('#modal')).toContainText(`op-${action}`); await expect(page.getByRole('button', { name: 'Close dialog' })).toBeEnabled(); }
   assert.equal(armed, true); refreshing.resolve();
 });
 
@@ -390,7 +393,7 @@ for (const control of ['start','stop','restart','retry','remove'] as const) test
   await page.locator(`[data-action="service-action"][data-control="${control}"]`).click();
   if(control==='stop'||control==='remove') await button(page,'confirm-service-control').click();
   await expect(page.locator('[data-action-status][aria-busy="true"]').filter({hasText:'service-a'})).toBeVisible();
-  mutation.resolve();await expect(page.locator('#modal')).toContainText('op-service-'+control);assert.equal(requests.filter(r=>r.method==='POST').length,1);refresh.resolve();
+  mutation.resolve();await expect(page.locator(`#modal .object-control-progress [data-action=operation][data-id="op-service-${control}"]`)).toBeVisible();assert.equal(requests.filter(r=>r.method==='POST').length,1);refresh.resolve();
 });
 
 test('D02 acceptance allows Stop to supersede Start while Work readback is still pending',async t=>{
@@ -401,7 +404,7 @@ test('D02 acceptance allows Stop to supersede Start while Work readback is still
     if(r.path.endsWith('/stop'))return{json:{operationId:'op-stop',workId:'work-1'}};
     if(r.path==='operations/op-start')return{json:{state:'superseded',operationId:'op-start',workId:'work-1'}};
   });
-  await button(page,'start-work').click();await expect(page.locator('#modal')).toContainText('op-start');await button(page,'close-modal').click();
+  await button(page,'start-work').click();await expect(page.locator('.object-control-progress [data-action=operation][data-id="op-start"]')).toBeVisible();await expect(page.locator('#modal')).toHaveCount(0);
   await button(page,'stop-work').click();await button(page,'confirm-stop').click();await expect(page.locator('#modal')).toContainText('op-stop');
   assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,1);assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,1);readback.resolve();
 });
@@ -607,7 +610,7 @@ test('DWUI-012 pending Service A permits unrelated B; closing and reopening deta
   });
   await button(page,'tab-Services').click();await button(page,'manage-services').click();await page.locator('[data-action="service-details"][data-id="a"]').click();await page.locator('[data-action="service-action"][data-control="start"]').click();
   await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('service:a');await button(page,'close-modal').click();await button(page,'manage-services').click();await page.locator('[data-action="service-details"][data-id="b"]').click();
-  gate.resolve();await expect(page.locator('#modal-title')).toHaveText('Tool b');await page.locator('[data-action="service-action"][data-control="start"]').click();await expect(page.locator('#modal')).toContainText('op-b');
+  gate.resolve();await expect(page.locator('#modal-title')).toHaveText('Tool b');await page.locator('[data-action="service-action"][data-control="start"]').click();await expect(page.locator('#modal .object-control-progress [data-action=operation][data-id="op-b"]')).toBeVisible();
   assert.equal(requests.filter(r=>r.path==='works/work-1/services/a/start').length,1);assert.equal(requests.filter(r=>r.path==='works/work-1/services/b/start').length,1);
 });
 
@@ -631,7 +634,7 @@ test('W1 Service control stays locked across port changes while another Service 
   await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('service:a');
   await button(page, 'close-modal').click(); await details('b');
   await expect(page.locator('[data-control="restart"]')).toBeEnabled(); await page.locator('[data-control="restart"]').click();
-  await expect(page.locator('#modal')).toContainText('op-b');
+  await expect(page.locator('#modal .object-control-progress [data-action=operation][data-id="op-b"]')).toBeVisible();
   assert.equal(requests.filter(r => r.path === 'works/work-1/services/b/restart').length, 1);
   assert.ok(requests.some(r => r.path === 'service-entries' && JSON.parse(r.body).port === 8080));
 });
@@ -724,7 +727,7 @@ test('DWUI-016/017 Start to Ready, terminal readback failure and retry preserve 
     if (r.path === 'operations/original-start') return { json: { operationId: 'original-start', workId: 'work-1', kind: 'start-work', state: terminal ? 'succeeded' : 'running' } };
     if (r.path === 'works' || r.path === 'works/work-1') return fail ? { status: 503, json: { message: 'Work readback unavailable' } } : { json: r.path === 'works' ? { works: [raw()] } : raw() };
   });
-  await button(page, 'start-work').click(); await expect(page.locator('#modal')).toContainText('original-start'); await button(page, 'close-modal').click();
+  await button(page, 'start-work').click(); await expect(page.locator('.object-control-progress [data-action=operation][data-id="original-start"]')).toBeVisible(); await expect(page.locator('#modal')).toHaveCount(0);
   observed = 'starting'; await api(page, "await adapter.refreshWorkStatus('work-1')"); await expect(page.locator('.work-header')).toContainText('Starting');
   terminal = true; fail = true; await api(page, "await adapter.checkOperation('original-start'); await adapter.refreshWorkStatus('work-1').catch(()=>{}); await adapter.listWorks().catch(()=>{})");
   assert.equal(await api(page, "return adapter.state.operations[0].state"), 'succeeded');
@@ -820,7 +823,7 @@ test('DWUI-017 cleared Start history still recovers Ready and original lookup wi
     if (r.path === 'works' || r.path === 'works/work-1') return offline ? { status: 503, json: { message: 'readback offline' } } : { json: r.path === 'works' ? { works: [fact()] } : fact() };
   });
   const navigations: string[] = []; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url()); });
-  await button(page, 'start-work').click(); await expect(page.locator('#modal')).toContainText('cleared-start');
+  await button(page, 'start-work').click(); await page.locator('.object-control-progress [data-action=operation][data-id="cleared-start"]').click(); await expect(page.locator('#modal')).toContainText('cleared-start');
   await api(page, "await adapter.checkOperation('cleared-start'); await adapter.refreshWorkStatus('work-1').catch(() => {}); await adapter.listWorks().catch(() => {})");
   await button(page, 'close-modal').click(); await button(page, 'work-menu').click(); await button(page, 'operations').click();
   await button(page, 'clear-operations').click(); await expect(page.locator('#modal')).not.toContainText('cleared-start');
@@ -856,4 +859,84 @@ test('DWUI-017 browser B publishes multiple two-second updates while A response 
   assert.ok(times.length >= 3); for (const interval of times.slice(1).map((time, i) => time - times[i]!)) assert.ok(interval >= 1700 && interval < 3000, `B interval ${interval}ms`);
   assert.equal(requests.filter(r => r.path === 'operations/hanging-a').length, 1);
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('C01 Work reentry restores Chat instead of the first-visit Services area', async t => {
+  const { page, requests } = await fixture(t, () => undefined);
+  await expect(button(page, 'tab-Services')).toHaveClass(/active/);
+  await button(page, 'tab-Chat').click(); await expect(button(page, 'tab-Chat')).toHaveClass(/active/);
+  await button(page, 'back-works').click(); await page.locator('.work-name[data-id="work-1"]').click();
+  await expect(button(page, 'tab-Chat')).toHaveClass(/active/);
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('C01 Work reentry restores Files path and falls back only for a missing directory', async t => {
+  let removed = false;
+  const { page, requests } = await fixture(t, r => {
+    if (r.method !== 'PROPFIND') return;
+    const child = r.path.endsWith('/tree/');
+    if (child && removed) return { status: 404 };
+    return { status: 207, body: `<d:multistatus xmlns:d="DAV:">${!child && !removed ? '<d:response><d:href>/_desktop/files/works/work-1/files/tree/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>' : ''}</d:multistatus>` };
+  });
+  await button(page, 'tab-Files').click(); await page.locator('[data-action=open-file][data-path="/tree"]').click();
+  await expect(page.locator('.breadcrumbs')).toContainText('tree');
+  await button(page, 'back-works').click(); await page.locator('.work-name[data-id="work-1"]').click();
+  await expect(button(page, 'tab-Files')).toHaveClass(/active/); await expect(page.locator('.breadcrumbs')).toContainText('tree');
+  await button(page, 'back-works').click(); removed = true; await page.locator('.work-name[data-id="work-1"]').click();
+  await expect(button(page, 'tab-Files')).toHaveClass(/active/); await expect(page.locator('.main-panel')).toContainText('previous folder is no longer available');
+  await expect(page.locator('.breadcrumbs [data-path="/tree"]')).toHaveCount(0);
+  assert.equal(requests.filter(r => !['GET', 'PROPFIND'].includes(r.method)).length, 0);
+});
+
+test('C02 list Start keeps original local progress and gates Open Work on real readiness', async t => {
+  let started = false, terminal = false, ready = false;
+  const raw = () => ({ id: 'work-1', name: 'Recovery Work', observedState: !started ? 'stopped' : ready ? 'ready' : 'starting', desiredState: started ? 'running' : 'stopped', controlVersion: started ? 2 : 1 });
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works' || r.path === 'works/work-1') return { json: r.path === 'works' ? { works: [raw()] } : raw() };
+    if (r.path === 'works/work-1/start') { started = true; return { json: { operationId: 'c02-start', workId: 'work-1' } }; }
+    if (r.path === 'operations/c02-start') return { json: { operationId: 'c02-start', workId: 'work-1', kind: 'start-work', state: terminal ? 'succeeded' : 'running' } };
+  });
+  await button(page, 'back-works').click(); await button(page, 'start-work').click();
+  await expect(page.locator('.work-row .object-control-progress [data-id="c02-start"]')).toBeVisible();
+  await expect(page.locator('#modal')).toHaveCount(0); await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  terminal = true; await button(page, 'check-work-progress').click();
+  await expect(page.getByRole('button', { name: 'Open Work', exact: true })).toHaveCount(0);
+  ready = true; await button(page, 'check-work-progress').click();
+  await expect(page.getByRole('button', { name: 'Open Work', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open Work', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Recovery Work', exact: true })).toBeVisible();
+  assert.equal(requests.filter(r => r.path === 'works/work-1/start' && r.method === 'POST').length, 1);
+});
+
+for (const exit of ['close', 'view', 'start'] as const) test(`C03 Import ${exit} preserves explicit Start and original identities`, async t => {
+  let imported = false, started = false, ready = false;
+  const original = { id: 'work-1', name: 'Recovery Work', observedState: 'ready', desiredState: 'running' };
+  const restored = () => ({ id: 'imported', name: 'Imported sample', observedState: started ? ready ? 'ready' : 'starting' : 'stopped', desiredState: started ? 'running' : 'stopped', controlVersion: started ? 2 : 1 });
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works') return { json: { works: imported ? [original, restored()] : [original] } };
+    if (r.path === 'works/imported') return { json: restored() };
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { name: 'sample package' } } };
+    if (r.path === 'work-imports') { imported = true; return { json: { operationId: 'c03-import', workId: 'imported' } }; }
+    if (r.path === 'operations/c03-import') return { json: { operationId: 'c03-import', workId: 'imported', kind: 'import-work', state: 'succeeded' } };
+    if (r.path === 'works/imported/start') { started = true; return { json: { operationId: 'c03-start', workId: 'imported' } }; }
+    if (r.path === 'operations/c03-start') return { json: { operationId: 'c03-start', workId: 'imported', kind: 'start-work', state: ready ? 'succeeded' : 'running' } };
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('synthetic inspected package') });
+  await expect(page.locator('.inspection-summary')).toContainText('sample package');
+  await button(page, 'confirm-import').click(); await button(page, 'check-operation').click();
+  await expect(page.locator('#modal-title')).toHaveText('Imported · Not started');
+  assert.equal(requests.filter(r => r.path.endsWith('/start') && r.method === 'POST').length, 0);
+  if (exit === 'close') await button(page, 'close-modal').click();
+  if (exit === 'view') { await page.getByRole('button', { name: 'View Work', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Imported sample', exact: true })).toBeVisible(); }
+  if (exit === 'start') {
+    await button(page, 'start-import-open').click();
+    await expect(page.locator('#modal')).toContainText('c03-import'); await expect(page.locator('#modal')).toContainText('c03-start');
+    await expect(button(page, 'start-import-open')).toHaveCount(0); await expect(page).toHaveURL(/#\/works$/);
+    ready = true; await button(page, 'check-work-progress').click();
+    await expect(page.getByRole('heading', { name: 'Imported sample', exact: true })).toBeVisible();
+  }
+  assert.equal(requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length, 1);
+  assert.equal(requests.filter(r => r.path === 'works/imported/start' && r.method === 'POST').length, exit === 'start' ? 1 : 0);
 });

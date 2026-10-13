@@ -175,6 +175,7 @@ export class DesktopAdapter {
     requestRetries = new Map();
     cancellingRequests = new Set();
     requestReadErrors = new Map();
+    requestCancellations = new Map();
     models = new Map();
     modelSelections = new Map();
     chatCapabilities = new Map();
@@ -434,6 +435,7 @@ export class DesktopAdapter {
         this.requestRetries.clear();
         this.cancellingRequests.clear();
         this.requestReadErrors.clear();
+        this.requestCancellations.clear();
         for (const status of Object.values(this.catalog))
             Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });
         this.uploadIntents.clear();
@@ -1216,6 +1218,9 @@ export class DesktopAdapter {
             value.evidence = previous.evidence;
         this.requestDetails.set(key, value);
         this.requestReadErrors.delete(key);
+        const cancellation = this.requestCancellations.get(key);
+        if (cancellation?.phase === 'accepted')
+            cancellation.error = '';
         const replies = this.requestResponses.get(key);
         if (replies) {
             replies.runs = replies.runs.filter(run => value.request.runIds.includes(run.id));
@@ -1264,12 +1269,51 @@ export class DesktopAdapter {
         if (currentIds && (currentIds.length !== runIds.length || currentIds.some(runId => !runIds.includes(runId))))
             void this.loadRequestResponses(id, requestId, currentIds, explicit);
     }
+    requestCancellation(id, requestId) { return this.requestCancellations.get(`${id}:${requestId}`); }
     async cancelRequest(id, requestId) {
-        this.cancellingRequests.add(`${id}:${requestId}`);
-        const value = await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/cancel`, 'POST', {});
-        if (value.requestId !== requestId)
-            throw new DesktopError('INVALID_RESPONSE', 'Cancellation needs original request readback.');
-        await this.loadRequest(id, requestId);
+        const key = `${id}:${requestId}`, epoch = this.epoch;
+        if (this.requestCancellations.has(key))
+            throw new DesktopError('REQUEST_CANCEL_SUBMITTED', 'Cancellation was already submitted. Refresh the original request; do not cancel it again.');
+        const cancellation = { phase: 'pending', error: '' };
+        this.requestCancellations.set(key, cancellation);
+        this.cancellingRequests.add(key);
+        this.emit();
+        let value;
+        try {
+            value = await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/cancel`, 'POST', {});
+            if (value.requestId !== requestId)
+                throw new DesktopError('RESULT_UNKNOWN', 'Cancellation receipt could not be matched. Refresh the original request.');
+            if (epoch !== this.epoch)
+                throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This response was discarded.');
+            cancellation.phase = 'accepted';
+            this.emit();
+        }
+        catch (error) {
+            if (epoch === this.epoch) {
+                const status = error.httpStatus;
+                if (status && status >= 400 && status < 500) {
+                    this.requestCancellations.delete(key);
+                    this.cancellingRequests.delete(key);
+                }
+                else {
+                    cancellation.phase = 'unknown';
+                    cancellation.error = errorText(error);
+                }
+                this.emit();
+            }
+            throw error;
+        }
+        // Acceptance belongs to this original request, not to a later observation.
+        // A failed read or stale running state must never release the cancel lock.
+        try {
+            await this.loadRequest(id, requestId);
+        }
+        catch (error) {
+            if (epoch === this.epoch) {
+                cancellation.error = errorText(error);
+                this.emit();
+            }
+        }
         return value;
     }
     async retryRequest(id, requestId) {
@@ -2122,7 +2166,7 @@ export class DesktopAdapter {
         this.capabilityReads.set(id, pending);
         return pending;
     }
-    operationPaused(id) { return this.pausedOperations.has(id); }
+    operationPaused(id) { return this.pausedOperations.has(id) || this.metadata.paused(this.metadataKey(`operations/${part(id)}`)); }
     pauseOperation(id) { this.pausedOperations.add(id); }
     resumeOperation(id) { this.pausedOperations.delete(id); this.scheduleOperationPoll(); }
     async clearOperations() {
@@ -2511,7 +2555,7 @@ export class DesktopAdapter {
             const base = this.fileURL(id, path).replace(/\/?$/, '/');
             const response = await fetch(base, { method: 'PROPFIND', credentials: 'same-origin', headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
             if (!response.ok)
-                throw new Error(`Workspace cannot be read (${response.status}).`);
+                throw new DesktopError('FILES_READ_FAILED', `Workspace cannot be read (${response.status}).`, response.status);
             if (epoch !== this.epoch)
                 throw new Error('The connection changed; the file listing was discarded.');
             const text = await response.text();
@@ -2556,7 +2600,7 @@ export class DesktopAdapter {
             file = work.files.find(f => f.path === path);
         }
         if (!file)
-            throw new Error('File was not found in the current workspace listing.');
+            throw new DesktopError('FILE_NOT_FOUND', 'File was not found in the current workspace listing.', 404);
         if (file.kind === 'directory') {
             await this.loadDirectory(id, path);
             return file;
@@ -2569,7 +2613,7 @@ export class DesktopAdapter {
         }
         const response = await fetch(this.fileURL(id, path), { credentials: 'same-origin' });
         if (!response.ok)
-            throw new Error(`File cannot be read (${response.status}).`);
+            throw new DesktopError('FILE_READ_FAILED', `File cannot be read (${response.status}).`, response.status);
         const reader = response.body.getReader();
         const chunks = [];
         let size = 0;
