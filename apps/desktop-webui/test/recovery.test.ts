@@ -2495,3 +2495,35 @@ test('Reconcile configuration: delayed Save confirms only its captured draft and
   assert.equal(requests.filter(r => r.path.endsWith('/configuration') && r.method === 'PUT').length, 1);
   assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply')).length, 0);
 });
+
+test('Reconcile import: anonymous Inspect survives login, a name conflict and a lost acceptance without another upload', async t => {
+  let imports = 0, transfer = '', phase = 'ready';
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'work-packages' && r.method === 'POST') {
+      transfer = r.headers['x-piwork-transfer-id']!;
+      return { json: { transferId: transfer, summary: { sourceName: 'Original archive', integrityVerified: true } } };
+    }
+    if (r.path.startsWith('work-packages/') && r.method === 'GET') return { json: { phase } };
+    if (r.path === 'work-imports') {
+      imports++;
+      if (imports === 1) return { status: 409, json: { code: 'WORK_NAME_CONFLICT', field: 'name', message: 'Name occupied' } };
+      phase = 'accepted'; return { abort: true };
+    }
+  }, true);
+  await api(page, "await adapter.inspectWork(new File(['archive'],'original.work'));");
+  assert.equal(requests.filter(r => r.path === 'work-imports').length, 0);
+  await api(page, "await adapter.signIn('http://core.test','owner','pass');");
+  assert.equal(await api(page, 'return adapter.inspectionTransfer;'), transfer);
+  assert.equal(await api(page, 'return adapter.inspection.sourceName;'), 'Original archive');
+  await assert.rejects(api(page, "await adapter.importWork('Taken');"));
+  assert.equal(await api(page, 'return adapter.inspectionContext.importState;'), 'unsubmitted');
+  assert.equal(imports, 1);
+  await assert.rejects(api(page, "await adapter.importWork('');"));
+  assert.equal(await api(page, 'return adapter.inspectionContext.importState;'), 'accepted');
+  await api(page, "await adapter.abandonInspection();try{await adapter.importWork('another');}catch{}try{await adapter.inspectWork(new File(['new'],'new.work'));}catch{}");
+  const posts = requests.filter(r => r.path === 'work-imports').map(r => JSON.parse(r.body));
+  assert.deepEqual(posts, [{ transferId: transfer, name: 'Taken' }, { transferId: transfer }]);
+  assert.equal(requests.filter(r => r.path === 'work-packages' && r.method === 'POST').length, 1);
+  assert.equal(requests.filter(r => r.method === 'DELETE').length, 0);
+  assert.equal(await api(page, 'return adapter.inspectionTransfer;'), transfer);
+});
