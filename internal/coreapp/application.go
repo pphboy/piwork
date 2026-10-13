@@ -476,26 +476,38 @@ func (a *Application) Close(ctx context.Context) error {
 	a.cancel()
 	a.workQueueMu.Unlock()
 	a.Identity.Close()
+	// Work shutdown has its own fencing and per-Work locks. Start it after
+	// admission is closed and coordination is cancelled, while the total
+	// process budget is still available. A stalled control request or worker
+	// must not consume that budget before any managed runtime is stopped.
+	workloadsDone := make(chan error, 1)
+	go func() {
+		if a.options.Shutdown != nil {
+			workloadsDone <- a.options.Shutdown(ctx, a)
+		} else {
+			workloadsDone <- a.shutdownCapturedWorks(ctx)
+		}
+	}()
 	var result error
+	controlContext, stopControl := context.WithTimeout(ctx, a.options.WorkDrainTimeout)
 	if serviceServer != nil {
 		stopped := make(chan struct{})
 		go func() { serviceServer.GracefulStop(); close(stopped) }()
 		select {
 		case <-stopped:
-		case <-ctx.Done():
+		case <-controlContext.Done():
 			serviceServer.Stop()
 			result = errors.New("Core service control shutdown was not confirmed")
 		}
 	}
 	if server != nil {
-		httpContext, stopHTTP := context.WithTimeout(ctx, a.options.WorkDrainTimeout)
-		err := server.Shutdown(httpContext)
-		stopHTTP()
+		err := server.Shutdown(controlContext)
 		if err != nil {
 			server.Close()
 			result = errors.New("Core HTTP shutdown was not confirmed")
 		}
 	}
+	stopControl()
 	finished := make(chan struct{})
 	go func() { a.refreshWG.Wait(); close(finished) }()
 	select {
@@ -517,11 +529,12 @@ func (a *Application) Close(ctx context.Context) error {
 	case <-ctx.Done():
 		result = errors.New("Core recovery coordination did not stop")
 	}
-	if a.options.Shutdown != nil {
-		if err := a.options.Shutdown(ctx, a); err != nil {
+	select {
+	case err := <-workloadsDone:
+		if err != nil {
 			result = errors.New("Core workload shutdown was not confirmed")
 		}
-	} else if err := a.shutdownCapturedWorks(ctx); err != nil {
+	case <-ctx.Done():
 		result = errors.New("Core workload shutdown was not confirmed")
 	}
 	if a.environmentCache != nil {

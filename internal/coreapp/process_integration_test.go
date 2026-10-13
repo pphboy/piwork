@@ -87,8 +87,29 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 				<-wait
 				t.Fatal("empty-workload shutdown exceeded fixture bound")
 			}
-			if stderr.Len() != 0 {
-				t.Fatal("native Core emitted an unexpected diagnostic", stderr.String())
+			// Preparation has structured performance diagnostics. Accept only
+			// their bounded safe projection, rather than requiring silent stderr.
+			scanner := bufio.NewScanner(bytes.NewReader(stderr.Bytes()))
+			for scanner.Scan() {
+				var entry map[string]any
+				if json.Unmarshal(scanner.Bytes(), &entry) != nil || entry["event"] != "performance" || (entry["phase"] != "image-inspection" && entry["phase"] != "environment-probe") || (entry["outcome"] != "started" && entry["outcome"] != "succeeded" && entry["outcome"] != "cancelled") {
+					t.Fatal("native Core emitted a failure or an unexpected diagnostic")
+				}
+				for key := range entry {
+					if key != "event" && key != "phase" && key != "outcome" && key != "timestamp" && key != "correlationId" && key != "durationMs" && key != "cacheState" {
+						t.Fatal("native Core preparation diagnostic exposed an unexpected field", key)
+					}
+				}
+				if duration, ok := entry["durationMs"].(float64); !ok || duration < 0 {
+					t.Fatal("invalid preparation duration")
+				}
+				stamp, ok := entry["timestamp"].(string)
+				if _, err := time.Parse(time.RFC3339Nano, stamp); !ok || err != nil {
+					t.Fatal("invalid preparation timestamp")
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				t.Fatal("invalid preparation diagnostic stream", err)
 			}
 		}
 		return listening.URL, stop
@@ -158,6 +179,19 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	// is created in this startup/identity fixture and no real model is called.
 	if result := invoke(binary, []string{"config", "set", "--agent-image", image, "--model-provider", "piwork-deterministic", "--model", "fixture-v1", "--api-key-stdin"}, "native-deterministic-fixture", 0); result["configured"] != true {
 		t.Fatal("native operator did not save runtime")
+	}
+	// Saving the runtime confirms persistence; dependency preparation is
+	// asynchronous and must be observed before asserting a ready status.
+	readyDeadline := time.Now().Add(time.Minute)
+	for {
+		status, body := httpCall(t, base, "/readyz", "GET", "", nil)
+		if status == 200 {
+			break
+		}
+		if time.Now().After(readyDeadline) || ctx.Err() != nil {
+			t.Fatal("runtime preparation did not become ready", status, body)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	if result := invoke(alias, []string{"status"}, "", 0); result["ready"] != true {
 		t.Fatal("native alias did not read status")
