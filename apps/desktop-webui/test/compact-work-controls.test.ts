@@ -53,3 +53,12 @@ test('unknown Apply without an accepted ID never checks an unrelated old Operati
  c.actions.records.set('apply',{work:'work-a',action:'apply-config',token:3,blocked:true,pending:false});
  const html=c.settingsPage(work);assert.match(html,/Apply not confirmed/);assert.match(html,/data-action="refresh-config"/);assert.doesNotMatch(html,/old-finished|Check Apply|data-action="apply-config"/);
 });
+
+test('Settings separates Back navigation from one aligned title/status action row',()=>{
+ const {c,work}=fixture();const html=c.settingsPage(work);
+ assert.match(html,/<div class="settings-navigation">[\s\S]*?Back to Work<\/button><\/div><div class="settings-heading"><h1>Work settings<\/h1><div class="configuration-compact">/);
+ assert.match(html,/<summary>Details<\/summary><div class="configuration-details-copy">/);
+ const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
+ assert.match(css,/\.settings-heading \{ align-items:center; \}/);assert.match(css,/\.configuration-compact \{ display:flex;align-items:center;gap:8px;flex:none/);
+ assert.doesNotMatch(css,/\.configuration-compact details \{ flex-basis:100%/);assert.match(css,/@media\(max-width:600px\) \{ \.settings-heading \{ flex-direction:column;align-items:flex-start/);
+});
