@@ -201,3 +201,21 @@ GUI使用的 `app.js` SHA-256为 `a8cf325f050e5911304222183944cfbd6de8e76319b55a
 - `final315-02-settings.jpg`：`3753db0c1a2f8ef60cfff9028f43798862db11975c219fff1780b2645044f96b`。
 - `final315-08-stop-modal.jpg`：`479d13f567cd5e7f0194e0bbd82497eb4144ba9b470bddb142aee8f91b087580`。
 - `final315-04-focus-500.jpg`：`c5b26e7268b638ef4acf8c139823d0f7120cbc14bad60532a8fea156eab36274`。
+
+
+## 2026-10-13 末轮反馈：Chat入口去重与Settings对齐
+
+用户指出最终315截图中的Chat“双放大”和Configuration in use未对齐，以下为追加修复，原315验收不冒充本次补验：
+
+- `91d05d9abbe1f3dbe3b623c80fbde9970a30f35c`：窄屏service-chat头部原先同时包含focusControls的浏览器Full screen与追加的Focus chat，二者复用同一四角SVG。移除头部浏览器全屏入口，归入Agent/Service的⋯菜单，显示Browser full screen/Exit browser full screen文字；Focus/Restore保持主布局入口，Hide chat使用不同方向/聊天图标。菜单调用仍直接使用原Fullscreen API与错误处理，未修改执行协议。
+- `d5e221a190fd085e363e55fd8e3a07cf4491532b`：Back与标题原在同一左侧块，状态与Back顶对齐，Details又被flex-basis:100%强制换行。现Back独立导航行，标题与右侧状态/Refresh/Details同排居中；600px以下整组移至标题下。Details按需展开不撑歪标题；dirty/Apply/unknown行为不改。
+- 新增10项Chat布局/菜单生产renderer断言覆盖1180/500与workspace/service-chat/service-only/chat-only；新增Settings结构及CSS对齐回归。最终纯状态/adapter/生产函数368 pass，0 fail/skip；Desktop build、typecheck、测试编译及diff检查通过。既有Fullscreen浏览器测试入口同步改为先打开菜单；该完整Playwright并未执行。
+
+
+补验结果：
+
+- 最终功能冻结`1cba80bceb68af6a458f954af5c59a88fc6c2711`，官方云浏览器实际HTTP served 22/22 hash匹配。上一冻结d5的Chat代码与最终完全相同；最终同时复验500px入口。
+- 1180px普通Chat头部只有一个Focus四角图标，Hide为独立箭头；Chat Focus使用Restore箭头和Exit ×。500px普通/Chat Focus/Service Focus均无头部浏览器全屏入口；Agent/Service⋯里的Browser full screen文字、aria-label、aria-pressed=false可达，未进入OS fullscreen。布局还原/折叠保持Service document UUID及草稿。
+- 1180px Settings标题、状态、Refresh、Details中心Y全部231px；Back独立在上行。500px状态组统一位于标题下，组内中心Y=257.5px，scrollWidth=500。
+- 首次500px Details展开发现左侧裁切，追加`1cba80bc`仅调整窄屏浮层定位并补CSS约束回归；最终浮层x=20/right=300、正文完整、scrollWidth=500，实际补验通过。失败原图不作为最终展示。
+- 最终368项纯测试再跑通过，0失败/跳过；typecheck、build、native boundary、diff检查通过。宽窄对齐和入口定向已执行；OS fullscreen、真实读屏、完整Playwright及原其余未测矩阵状态不变，任务仍38/67。
