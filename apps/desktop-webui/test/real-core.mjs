@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -382,9 +383,11 @@ try {
   }
   await page.getByRole('button', { name: 'Work options' }).click();
   await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
-  await page.getByText(/Stop this Work explicitly/).waitFor();
+  await expect(page.getByRole('button', { name: 'Stop and export', exact: true })).toBeVisible();
   assert.equal(await page.locator('[data-action=prepare-export]').count(), 0);
-  await page.getByRole('button', { name: 'Stop Work first', exact: true }).click();
+  // This first cycle checks ordinary Stop/Start retention; do not authorize export yet.
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop Work', exact: true }).first().click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).last().click();
   await expect(page.locator('#modal')).toContainText('Operation ID');
   await page.getByRole('button', { name: 'Close dialog' }).click();
@@ -431,18 +434,43 @@ try {
   await expect(page.locator('#modal')).toContainText('Operation ID'); await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.getByRole('heading', { name: 'This Work is stopped', exact: true })).toBeVisible({ timeout: 180000 });
   await page.getByRole('button', { name: 'Work options' }).click();
-  await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
-  console.log('Real Desktop: second Stop confirmed; preparing snapshot');
-  await page.getByRole('button', { name: 'Prepare .work package', exact: true }).click();
-  await page.getByRole('button', { name: 'View package', exact: true }).waitFor({ timeout: 180_000 });
-  await page.getByRole('button', { name: 'View package', exact: true }).click();
-  console.log('Real Desktop: snapshot prepared');
+  console.log('Real Desktop: second Stop confirmed; exporting current content and downloading');
+  const exportRequests = [];
+  const recordExportRequest = request => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'POST' && path === `/_desktop/api/works/${workId}/exports` ||
+        request.method() === 'POST' && /^\/_desktop\/api\/work-snapshots\/[^/]+\/downloads$/.test(path) ||
+        request.method() === 'GET' && /^\/_desktop\/api\/downloads\/[^/]+\/content$/.test(path)) exportRequests.push({ path, method: request.method() });
+  };
+  page.on('request', recordExportRequest);
+  const exportResponse = page.waitForResponse(response => new URL(response.url()).pathname === `/_desktop/api/works/${workId}/exports` && response.request().method() === 'POST', { timeout: 180_000 });
+  const preparationResponse = page.waitForResponse(response => /^\/_desktop\/api\/work-snapshots\/[^/]+\/downloads$/.test(new URL(response.url()).pathname) && response.request().method() === 'POST', { timeout: 180_000 });
   const downloadEvent = page.waitForEvent('download', { timeout: 180_000 });
-  void downloadEvent.catch(() => undefined); // Keep early rejection handled until the click/wait joins it, so fixture cleanup always runs.
-  await page.getByRole('button', { name: 'Download .work', exact: true }).waitFor({timeout:180_000});
-  await page.getByRole('button', { name: 'Download .work', exact: true }).click();
+  // Arm every observer before the single Export action, and keep fixture cleanup reachable on early timeout.
+  void exportResponse.catch(() => undefined); void preparationResponse.catch(() => undefined); void downloadEvent.catch(() => undefined);
+  await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
+  const acceptanceResponse = await exportResponse;
+  assert.equal(acceptanceResponse.status(), 202, `Export acceptance: ${await acceptanceResponse.text()}`);
+  const acceptance = await acceptanceResponse.json(); assert.equal(acceptance.workId, workId); assert.ok(acceptance.operationId); assert.ok(acceptance.snapshotId);
   const download = await downloadEvent; const exportedPath = join(root, 'browser-export.work'); await download.saveAs(exportedPath); assert.equal(await download.failure(), null);
-  assert.equal((await readFile(exportedPath)).subarray(0,8).toString(), 'PIWORK1\n', 'export is not a real archive');
+  const exportedBytes = await readFile(exportedPath);
+  assert.equal(exportedBytes.subarray(0,8).toString(), 'PIWORK1\n', 'export is not a real archive');
+  const readyResponse = await preparationResponse; assert.equal(readyResponse.status(), 200);
+  const ready = await readyResponse.json();
+  assert.equal(ready.ready, true); assert.equal(ready.workId, workId); assert.equal(ready.snapshotId, acceptance.snapshotId);
+  assert.equal(ready.size, exportedBytes.length); assert.equal(ready.digest, createHash('sha256').update(exportedBytes).digest('hex'));
+  assert.equal(new URL(download.url()).pathname, `/_desktop/api/downloads/${ready.transferId}/content`);
+  const snapshot = (await api(coreUrl, token, 'GET', `/api/v1/work-snapshots/${acceptance.snapshotId}`)).data;
+  assert.equal(snapshot.workId, workId); assert.equal(snapshot.operationId, acceptance.operationId);
+  assert.equal(snapshot.state, 'succeeded'); assert.equal(snapshot.size, ready.size); assert.equal(snapshot.digest, ready.digest);
+  assert.deepEqual(exportRequests, [
+    { method: 'POST', path: `/_desktop/api/works/${workId}/exports` },
+    { method: 'POST', path: `/_desktop/api/work-snapshots/${acceptance.snapshotId}/downloads` },
+    { method: 'GET', path: `/_desktop/api/downloads/${ready.transferId}/content` },
+  ]);
+  page.off('request', recordExportRequest);
+  await expect(page.locator('#modal')).toContainText('Download started');
+  await expect(page.getByRole('button', { name: 'Download again', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Close dialog' }).click({ noWaitAfter: true });
   await expect(page.locator('#modal')).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to Works' }).click();

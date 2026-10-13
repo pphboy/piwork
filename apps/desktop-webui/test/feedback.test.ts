@@ -222,25 +222,93 @@ test('D14 configuration confirms before failed refresh and preserves newer edits
   assert.equal(requests.filter(r => r.method === 'PUT').length, 1);
 });
 
-test('D19 download observes while POST waits; close allows navigation and original ready transfer is reused', async t => {
+test('D19 close preserves one automatic original download and a manual same-transfer fallback', async t => {
   const preparation = deferred(); t.after(async () => preparation.resolve());
-  let id = '', ready = false, reads = 0;
+  const bytes = Buffer.alloc(1000, 'p'), digest = createHash('sha256').update(bytes).digest('hex');
+  let id = '', ready = false, reads = 0, downloadEvents = 0;
+  const metadata = { snapshotId: 'snap-1', operationId: 'op-export', workId: 'work-1', state: 'succeeded', size: bytes.length, digest, expiresAt: '2099-01-01T00:00:00Z' };
+  const transfer = () => ({ transferId: id, workId: 'work-1', snapshotId: 'snap-1', size: bytes.length, digest, ready });
   const { page, requests } = await fixture(t, async r => {
     if (r.path === 'works' || r.path === 'works/work-1') { const work = { id: 'work-1', name: 'Recovery Work', observedState: 'stopped', desiredState: 'stopped' }; return { json: r.path === 'works' ? { works: [work] } : work }; }
-    if (r.path === 'work-snapshots/snap-1') return { json: { snapshotId: 'snap-1', operationId: 'op-export', workId: 'work-1', state: 'succeeded', size: 1000 } };
-    if (r.path === 'work-snapshots/snap-1/downloads') { id = r.headers['x-piwork-transfer-id']!; await preparation.promise; ready = true; return { json: { transferId: id, ready: true } }; }
-    if (r.path.startsWith('downloads/')) { reads++; return { json: { transferId: id, phase: ready ? 'ready' : 'downloading', transferred: 400, total: 1000, ready } }; }
+    if (r.path === 'work-snapshots/snap-1') return { json: metadata };
+    if (r.path === 'operations/op-export') return { json: { operationId: 'op-export', workId: 'work-1', type: 'export_work', state: 'succeeded', result: { snapshotId: 'snap-1' } } };
+    if (r.path === 'work-snapshots/snap-1/downloads' && r.method === 'POST') { id = r.headers['x-piwork-transfer-id']!; await preparation.promise; ready = true; return { json: transfer() }; }
+    if (id && r.path === `downloads/${id}/content`) return { body: bytes, headers: { 'content-type': 'application/vnd.piwork.work-package', 'content-disposition': 'attachment; filename="original.work"' } };
+    if (id && r.path === `downloads/${id}`) { reads++; return { json: { transferId: id, kind: 'download', phase: ready ? 'ready' : 'downloading', transferred: ready ? bytes.length : 400, total: bytes.length, ...(ready ? transfer() : {}) } }; }
   });
-  await api(page, "await adapter.fetchSnapshot('snap-1')"); await button(page, 'work-menu').click(); await button(page, 'export').click();
-  // Export download is available from a verified snapshot regardless of original Work cache.
-  await api(page, "adapter.getWork('work-1').status='Stopped'; adapter.getWork('work-1').desired='stopped'");
-  await button(page, 'close-modal').click(); await button(page, 'work-menu').click(); await button(page, 'export').click();
+  page.on('download', () => { downloadEvents++; });
+  await button(page, 'work-menu').click(); await button(page, 'operations').click();
+  await page.locator('#snapshot-query').fill('snap-1'); await button(page, 'lookup-snapshot').click();
+  await expect(page.locator('.export-snapshot')).toContainText('snap-1');
   await button(page, 'download-work').click();
   await expect(page.locator('#modal')).toContainText('400 / 1000 bytes'); assert.ok(reads > 0);
+  assert.equal(downloadEvents, 0); assert.equal(requests.filter(r => r.path.endsWith('/content')).length, 0);
   await expect(button(page, 'close-modal')).toBeEnabled(); await button(page, 'close-modal').click(); await button(page, 'back-works').click();
-  preparation.resolve(); await expect.poll(() => api(page, "return adapter.downloads.get('snap-1')?.ready")).toBe(true);
-  assert.match(id, /^[0-9a-f-]{36}$/); assert.equal(requests.filter(r => r.path.endsWith('/downloads') && r.method === 'POST').length, 1);
-  await api(page, "await adapter.downloadSnapshot('snap-1')"); assert.equal(requests.filter(r => r.method === 'POST').length, 1);
+  const automaticDownload = page.waitForEvent('download'); preparation.resolve();
+  const download = await automaticDownload;
+  assert.equal(download.url(), `${base}/_desktop/api/downloads/${id}/content`);
+  assert.equal(await download.failure(), null); assert.deepEqual(await readFile((await download.path())!), bytes);
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  assert.match(id, /^[0-9a-f-]{36}$/);
+  assert.equal(downloadEvents, 1);
+  assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['work-snapshots/snap-1/downloads']);
+  assert.deepEqual(requests.filter(r => r.path.endsWith('/content')).map(r => r.path), [`downloads/${id}/content`]);
+  await button(page, 'operations').click(); await page.locator('#snapshot-query').fill('snap-1'); await button(page, 'lookup-snapshot').click();
+  await button(page, 'check-download').click(); await expect(button(page, 'save-export-file')).toBeEnabled();
+  assert.equal(downloadEvents, 1, 'reopening and checking the original transfer must not auto-download again');
+  const manualDownload = page.waitForEvent('download'); await button(page, 'save-export-file').click();
+  const again = await manualDownload;
+  assert.equal(again.url(), download.url()); assert.equal(await again.failure(), null);
+  assert.deepEqual(await readFile((await again.path())!), bytes);
+  assert.equal(downloadEvents, 2);
+  assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['work-snapshots/snap-1/downloads']);
+  assert.deepEqual(requests.filter(r => r.path.endsWith('/content')).map(r => r.path), [`downloads/${id}/content`, `downloads/${id}/content`]);
+});
+
+test('stopped Export delivers current content once despite a known old snapshot, and exact old selection stays old', async t => {
+  const packages: Record<string, Buffer> = { 'snap-old': Buffer.from('old snapshot bytes'), 'snap-new': Buffer.from('current snapshot bytes') };
+  const transfers = new Map<string, string>(); let downloadEvents = 0;
+  const metadata = (id: string) => ({ snapshotId: id, operationId: `op-${id}`, workId: 'work-1', state: 'succeeded', size: packages[id]!.length, digest: createHash('sha256').update(packages[id]!).digest('hex'), expiresAt: '2099-01-01T00:00:00Z' });
+  const ready = (snapshotId: string, transferId: string) => { const value = metadata(snapshotId); return { transferId, workId: value.workId, snapshotId, size: value.size, digest: value.digest, ready: true }; };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works' || r.path === 'works/work-1') { const work = { id: 'work-1', name: 'Recovery Work', observedState: 'stopped', desiredState: 'stopped' }; return { json: r.path === 'works' ? { works: [work] } : work }; }
+    if (r.path === 'works/work-1/exports' && r.method === 'POST') return { json: { workId: 'work-1', operationId: 'op-snap-new', snapshotId: 'snap-new' } };
+    for (const snapshotId of Object.keys(packages)) {
+      if (r.path === `work-snapshots/${snapshotId}`) return { json: metadata(snapshotId) };
+      if (r.path === `operations/op-${snapshotId}`) return { json: { operationId: `op-${snapshotId}`, workId: 'work-1', type: 'export_work', state: 'succeeded', result: { snapshotId } } };
+      if (r.path === `work-snapshots/${snapshotId}/downloads` && r.method === 'POST') { const transferId = r.headers['x-piwork-transfer-id']!; transfers.set(snapshotId, transferId); return { json: ready(snapshotId, transferId) }; }
+      const transferId = transfers.get(snapshotId);
+      if (transferId && r.path === `downloads/${transferId}`) return { json: { ...ready(snapshotId, transferId), kind: 'download', phase: 'ready', transferred: packages[snapshotId]!.length, total: packages[snapshotId]!.length } };
+      if (transferId && r.path === `downloads/${transferId}/content`) return { body: packages[snapshotId], headers: { 'content-type': 'application/vnd.piwork.work-package', 'content-disposition': `attachment; filename="${snapshotId}.work"` } };
+    }
+  });
+  page.on('download', () => { downloadEvents++; });
+  await button(page, 'work-menu').click(); await button(page, 'operations').click();
+  await page.locator('#snapshot-query').fill('snap-old'); await button(page, 'lookup-snapshot').click();
+  await expect(page.locator('.export-snapshot')).toContainText('snap-old');
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0, 'looking up an old snapshot must be read-only');
+  await button(page, 'close-modal').click(); await button(page, 'work-menu').click();
+  const currentDownload = page.waitForEvent('download'); await button(page, 'export').click();
+  const current = await currentDownload;
+  assert.equal(await current.failure(), null); assert.deepEqual(await readFile((await current.path())!), packages['snap-new']);
+  assert.equal(current.url(), `${base}/_desktop/api/downloads/${transfers.get('snap-new')}/content`);
+  await expect(page.locator('.export-snapshot')).toContainText('snap-new');
+  await expect(page.locator('.export-snapshot')).not.toContainText('snap-old');
+  await expect(button(page, 'prepare-export')).toBeEnabled();
+  await expect(button(page, 'save-export-file')).toHaveText('Download again');
+  await button(page, 'check-export-flow').click(); assert.equal(downloadEvents, 1);
+  await page.locator('[data-action="view-snapshot"][data-id="snap-old"]').click();
+  await expect(page.locator('.export-snapshot')).toContainText('snap-old');
+  await expect(page.locator('.export-snapshot')).not.toContainText('snap-new');
+  assert.equal(downloadEvents, 1, 'selecting an existing snapshot must not start a new delivery');
+  const oldDownload = page.waitForEvent('download'); await button(page, 'download-work').click();
+  const old = await oldDownload;
+  assert.equal(await old.failure(), null); assert.deepEqual(await readFile((await old.path())!), packages['snap-old']);
+  assert.equal(old.url(), `${base}/_desktop/api/downloads/${transfers.get('snap-old')}/content`);
+  assert.notEqual(transfers.get('snap-old'), transfers.get('snap-new')); assert.equal(downloadEvents, 2);
+  assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['works/work-1/exports', 'work-snapshots/snap-new/downloads', 'work-snapshots/snap-old/downloads']);
+  assert.deepEqual(requests.filter(r => r.path.endsWith('/content')).map(r => r.path), [`downloads/${transfers.get('snap-new')}/content`, `downloads/${transfers.get('snap-old')}/content`]);
 });
 
 test('D10 unknown preview preserves iframe; popup blocking offers protected link and entry failure allows retry', async t => {
@@ -427,11 +495,13 @@ for(const action of ['apply','skill-copy','remove-package'])test(`D14/D16 ${acti
 
 test('D19 lost preparation response and observation failure recover the original transfer without another POST',async t=>{
   let ready=false,readFailure=true,postID='';
+  const digest='a'.repeat(64);
   const {page,requests}=await fixture(t,r=>{
-    if(r.path.endsWith('/downloads')&&r.method==='POST'){postID=r.headers['x-piwork-transfer-id']!;return{abort:true};}
-    if(r.path.startsWith('downloads/'))return readFailure?{status:503,json:{message:'observation offline'}}:{json:{transferId:postID,ready,phase:ready?'ready':'validating',transferred:30}};
+    if(r.path==='work-snapshots/snap-recover')return{json:{snapshotId:'snap-recover',workId:'work-1',operationId:'op-recover',state:'succeeded',size:30,digest,expiresAt:'2099-01-01T00:00:00Z'}};
+    if(r.path==='work-snapshots/snap-recover/downloads'&&r.method==='POST'){postID=r.headers['x-piwork-transfer-id']!;return{abort:true};}
+    if(r.path===`downloads/${postID}`)return readFailure?{status:503,json:{message:'observation offline'}}:{json:{transferId:postID,kind:'download',phase:ready?'ready':'validating',transferred:30,total:30,...(ready?{workId:'work-1',snapshotId:'snap-recover',size:30,digest,ready:true}:{})}};
   });
-  await api(page,"await adapter.downloadSnapshot('snap-recover').catch(()=>{});");await expect.poll(()=>api(page,"return !!adapter.downloads.get('snap-recover').error")).toBe(true);
+  await api(page,"await adapter.fetchSnapshot('snap-recover'); await adapter.downloadSnapshot('snap-recover').catch(()=>{});");await expect.poll(()=>api(page,"return !!adapter.downloads.get('snap-recover').error")).toBe(true);
   await assert.rejects(api(page,"await adapter.checkDownload('snap-recover')"));
   readFailure=false;await api(page,"await adapter.checkDownload('snap-recover');adapter.observeDownload('snap-recover')");await expect.poll(()=>api(page,"return adapter.downloads.get('snap-recover').phase")).toBe('validating');
   ready=true;await expect.poll(()=>api(page,"return !!adapter.downloads.get('snap-recover').ready")).toBe(true);
@@ -503,9 +573,11 @@ for(const action of ['inspect','import','query','cleanup','export'] as const)tes
     if(r.path==='work-packages'&&r.method==='POST'){id=r.headers['x-piwork-transfer-id']!;await gate.promise;return{json:{transferId:id,summary:{name:'actual inspected'}}};}
     if(r.path===`work-packages/${id}`){if(armed)await gate.promise;return{json:{transferId:id,phase:action==='query'?'accepted':'ready',transferred:4}};}
     if(r.path==='work-imports'||r.path==='works/work-1/exports'){await gate.promise;accepted=true;return{json:{operationId:'op-'+action,workId:'work-1',...(action==='export'?{snapshotId:'snapshot-original'}:{})}};}
+    if(action==='export'&&r.path==='operations/op-export')return{json:{operationId:'op-export',workId:'work-1',type:'export_work',state:'running',result:{snapshotId:'snapshot-original'}}};
+    if(action==='export'&&r.path==='work-snapshots/snapshot-original'){await read.promise;return{json:{snapshotId:'snapshot-original',workId:'work-1',operationId:'op-export',state:'preparing',size:null,digest:null,expiresAt:null}};}
   });
   await button(page,'back-works').click();
-  if(action==='export'){await button(page,'work-menu').click();await button(page,'export').click();armed=true;await button(page,'prepare-export').click();}
+  if(action==='export'){await button(page,'work-menu').click();armed=true;await button(page,'export').click();}
   else if(action==='cleanup'){
     await api(page,`adapter.cleanupPending.set('${id}',{message:'Cleanup not confirmed',localSession:'local-session-csrf'})`);await button(page,'connection').click();await button(page,'close-modal').click();armed=true;await button(page,'retry-inspection-cleanup').click();
   }else{
@@ -517,7 +589,9 @@ for(const action of ['inspect','import','query','cleanup','export'] as const)tes
       armed=true;await button(page,action==='query'?'check-inspection-import':'confirm-import').click();
     }
   }
-  await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();gate.resolve();
+  if(action==='export'){await expect(page.locator('#modal')).toContainText('Submitting export');await expect(button(page,'prepare-export')).toBeDisabled();}
+  else await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
+  gate.resolve();
   if(action==='export'||action==='import'){await expect(page.locator('#modal')).toContainText('op-'+action);assert.equal(requests.filter(r=>r.path==='work-imports'||r.path.endsWith('/exports')).length,1);read.resolve();}
   else if(action==='inspect')await expect(page.locator('#modal')).toContainText('verified locally');
 });

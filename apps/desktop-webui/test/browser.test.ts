@@ -232,7 +232,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
   const workId = "work-lifecycle-12345678";
   const workPackage = await readFile(workPackagePath);
   const workPackageDigest = createHash("sha256").update(workPackage).digest("hex");
-  const work = { id: workId, name: "Lifecycle Work", desiredState: "stopped", observedState: "stopped" };
+  const work = { id: workId, name: "Lifecycle Work", desiredState: "stopped", observedState: "stopped", controlVersion: 1 };
   const longWork = { id: "work-long-name-12345678", name: "A very long Work name that should wrap cleanly across lines without hiding its current state or actions in a narrow browser window", desiredState: "running", observedState: "ready" };
   let deleted = false;
   let showLong = false;
@@ -252,7 +252,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
       response.writeHead(202); return response.end(JSON.stringify({ workId, operationId: "operation-export-browser-1234", snapshotId: "snapshot-export-browser-1234" }));
     }
     if (request.url === "/api/v1/operations/operation-export-browser-1234")
-      return response.end(JSON.stringify({ operationId: "operation-export-browser-1234", state: "succeeded", error: null }));
+      return response.end(JSON.stringify({ operationId: "operation-export-browser-1234", workId, state: "succeeded", result: { snapshotId: "snapshot-export-browser-1234" }, error: null }));
     if (request.url === "/api/v1/work-snapshots/snapshot-export-browser-1234")
       return response.end(JSON.stringify({ workId, snapshotId: "snapshot-export-browser-1234", operationId: "operation-export-browser-1234",
         state: "succeeded", digest: workPackageDigest, size: workPackage.length, expiresAt: "2099-01-01T00:00:00Z", error: null }));
@@ -276,22 +276,22 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
       return response.end(JSON.stringify({ workId, snapshotId: "full-snapshot-1234", operationId: "operation-export-browser-1234",
         state: "succeeded", digest: workPackageDigest, size: 6 * 1024 ** 3, expiresAt: "2099-01-01T00:00:00Z", error: null }));
     if (request.url === `/api/v1/works/${workId}/start` && request.method === "POST") {
-      submitted.push("start"); work.desiredState = "running"; work.observedState = "starting";
+      submitted.push("start"); work.controlVersion++; work.desiredState = "running"; work.observedState = "starting";
       response.writeHead(202); return response.end(JSON.stringify({ workId, operationId: "start-superseded-1234" }));
     }
     if (request.url === `/api/v1/works/${workId}/stop` && request.method === "POST") {
-      submitted.push("stop"); work.desiredState = "stopped"; work.observedState = "failed";
+      submitted.push("stop"); work.controlVersion++; work.desiredState = "stopped"; work.observedState = "failed";
       response.writeHead(202); return response.end(JSON.stringify({ workId, operationId: "stop-failed-1234" }));
     }
     if (request.url === `/api/v1/works/${workId}/delete` && request.method === "POST") {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk as Buffer);
       assert.equal("purgeData" in (JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>), false);
-      submitted.push("delete"); deleted = true;
+      submitted.push("delete"); work.controlVersion++; deleted = true;
       response.writeHead(202); return response.end(JSON.stringify({ workId, operationId: "delete-succeeded-1234" }));
     }
     if (request.url === "/api/v1/operations/stop-failed-1234")
-      return response.end(JSON.stringify({ operationId: "stop-failed-1234", state: "failed", error: { message: "Stop failed" } }));
+      return response.end(JSON.stringify({ operationId: "stop-failed-1234", workId, state: "failed", error: { message: "Stop failed" } }));
     if (request.url === "/api/v1/operations/start-superseded-1234")
       return response.end(JSON.stringify({ operationId: "start-superseded-1234", state: submitted.includes("stop") ? "superseded" : "pending", error: null }));
     if (request.url === "/api/v1/operations/delete-succeeded-1234")
@@ -332,9 +332,16 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.getByRole('button',{name:'Work options'}).click();
     await page.getByRole('button',{name:'Export Work',exact:true}).last().click();
     assert.equal(exportCalls, 0, 'running Work export submitted implicitly');
-    await page.getByRole('button',{name:'Stop Work first',exact:true}).click();
-    await page.getByRole('button',{name:'Stop Work',exact:true}).last().click();
+    await page.getByRole('button',{name:'Stop and export',exact:true}).click();
+    await expect(page.locator('#modal')).toContainText('Stop failed');
+    const originalStop = page.locator('#modal [data-action="operation"][data-id="stop-failed-1234"]');
+    await expect(originalStop).toBeVisible();
+    assert.equal(exportCalls, 0, 'failed original Stop must never advance to Export');
+    assert.equal(snapshotDownloads, 0, 'failed original Stop must never download a snapshot');
+    await originalStop.click();
     await page.getByText('failed',{exact:true}).waitFor();
+    await expect(page.locator('#modal')).toContainText('Stop failed');
+    await expect(page.locator('#modal')).toContainText('stop-failed-1234');
     await page.getByRole('button',{name:'Close dialog'}).click();
     assert.equal(await page.getByRole('button',{name:'Retry Work',exact:true}).count(), 0, 'failed Stop offered a Start retry');
     assert.deepEqual(submitted, ['start','stop']);

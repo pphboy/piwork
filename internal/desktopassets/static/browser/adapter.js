@@ -1735,7 +1735,7 @@ export class DesktopAdapter {
         if (work)
             this.associateOperations(work);
         if (operation.snapshotId)
-            await this.fetchSnapshot(operation.snapshotId).catch(() => undefined);
+            await this.fetchSnapshot(operation.snapshotId, explicit).catch(() => undefined);
         this.emit();
         this.scheduleOperationPoll();
         return operation;
@@ -2776,45 +2776,86 @@ export class DesktopAdapter {
             throw error;
         }
     }
-    async prepareExport(id) { return this.accepted(await this.request(`works/${part(id)}/exports`, 'POST'), id, 'Export Work'); }
-    async fetchSnapshot(id) {
-        const value = await this.request(`work-snapshots/${part(id)}`);
-        let snapshot = this.getSnapshot(id);
-        if (!snapshot) {
-            snapshot = { id, workId: value.workId, operationId: value.operationId, status: 'preparing', filename: `${value.workId}.work`, size: '' };
+    async prepareExport(id) {
+        const value = await this.request(`works/${part(id)}/exports`, 'POST');
+        if (value.workId !== id || typeof value.snapshotId !== 'string' || !value.snapshotId || typeof value.operationId !== 'string' || !value.operationId)
+            throw new DesktopError('RESULT_UNKNOWN', 'Export acceptance is incomplete or does not match the original Work. Check known operations; do not repeat Export.');
+        return this.accepted(value, id, 'Export Work');
+    }
+    async fetchSnapshot(id, explicit = true) {
+        const epoch = this.epoch;
+        const { value } = await this.readMetadata(`work-snapshots/${part(id)}`, explicit);
+        if (epoch !== this.epoch)
+            throw new DesktopError('CONNECTION_CHANGED', 'The original snapshot identity ended.');
+        const known = this.getSnapshot(id);
+        if (value.snapshotId !== id || typeof value.workId !== 'string' || !value.workId || typeof value.operationId !== 'string' || !value.operationId ||
+            known && (known.workId !== value.workId || known.operationId !== value.operationId))
+            throw new DesktopError('SNAPSHOT_MISMATCH', 'The snapshot does not match its original ID, Work and Operation.');
+        if (!['accepted', 'pending', 'preparing', 'running', 'succeeded', 'failed', 'superseded'].includes(value.state))
+            throw new DesktopError('INVALID_RESPONSE', 'Snapshot status could not be confirmed.');
+        // Package facts are immutable. Missing later metadata cannot revive an expired package.
+        const expiresAt = typeof known?.expiresAt === 'string' && (typeof value.expiresAt !== 'string' || Date.parse(value.expiresAt) >= Date.parse(known.expiresAt)) ? known.expiresAt : typeof value.expiresAt === 'string' ? value.expiresAt : known?.expiresAt ?? value.expiresAt;
+        const packageSize = typeof value.size === 'number' && Number.isFinite(value.size) && value.size >= 0 ? value.size : known?.packageSize ?? value.size;
+        const digest = typeof value.digest === 'string' ? value.digest : known?.digest ?? value.digest;
+        const expired = known?.status === 'expired' || typeof expiresAt === 'string' && (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now());
+        const unavailable = value.state === 'succeeded' && value.size === null && value.digest === null && value.expiresAt === null;
+        const snapshot = known ?? { id, workId: value.workId, operationId: value.operationId, status: 'preparing', filename: `${value.workId}.work`, size: '' };
+        Object.assign(snapshot, { expiresAt, packageSize, digest,
+            status: expired ? 'expired' : unavailable ? 'unavailable' : ['failed', 'superseded'].includes(value.state) ? 'failed' : value.state === 'succeeded' ? 'verified' : 'preparing',
+            size: typeof packageSize === 'number' ? `${packageSize} bytes` : '',
+            error: value.error?.message ?? (typeof value.error === 'string' ? value.error : unavailable ? 'The original snapshot package is unavailable. Check its metadata or explicitly create a new Export.' : undefined) });
+        if (!known)
             this.state.snapshots.push(snapshot);
-        }
-        Object.assign(snapshot, { status: value.expiresAt && Date.parse(value.expiresAt) <= Date.now() ? 'expired' : value.state === 'succeeded' ? 'verified' : value.state === 'failed' ? 'failed' : 'preparing', size: value.size ? `${value.size} bytes` : '' });
         this.emit();
         return snapshot;
     }
     stopDownloadObservers() { for (const observer of this.downloadObservers.values())
         observer.active = false; this.downloadObservers.clear(); }
-    async checkDownload(snapshotID) {
+    validateDownload(value, job) {
+        const snapshot = this.getSnapshot(job.snapshotId);
+        if (value.transferId !== job.transferId || value.snapshotId !== undefined && value.snapshotId !== job.snapshotId ||
+            value.workId !== undefined && value.workId !== job.workId || value.kind !== undefined && value.kind !== 'download' ||
+            value.ready && (value.snapshotId !== job.snapshotId || value.workId !== job.workId ||
+                snapshot?.packageSize != null && value.size !== snapshot.packageSize || snapshot?.digest != null && value.digest !== snapshot.digest))
+            throw new DesktopError('SNAPSHOT_MISMATCH', 'The transfer does not match the original Work and snapshot.');
+    }
+    async checkDownload(snapshotID, explicit = true) {
         const job = this.downloads.get(snapshotID);
         if (!job)
             throw new Error('No original transfer is known for this snapshot.');
+        const epoch = this.epoch;
         try {
-            const value = await this.request(`downloads/${part(job.transferId)}`);
-            if (this.downloads.get(snapshotID) !== job)
-                return;
-            if (!job.ready)
-                Object.assign(job, value, { seen: true, checkedAt: new Date().toISOString(), observationError: '' });
+            const value = await this.metadata.read(this.metadataKey(`downloads/${part(job.transferId)}`), async (signal) => {
+                try {
+                    return await this.request(`downloads/${part(job.transferId)}`, 'GET', undefined, signal);
+                }
+                catch (error) {
+                    // The preparation may not yet have claimed its local ID. This is not a lost POST retry.
+                    if (error instanceof DesktopError && error.httpStatus === 404 && job.pending && !job.seen)
+                        return null;
+                    throw error;
+                }
+            }, explicit);
+            if (epoch !== this.epoch || this.downloads.get(snapshotID) !== job)
+                throw new DesktopError('CONNECTION_CHANGED', 'Original transfer access ended.');
+            if (!value)
+                return job;
+            this.validateDownload(value, job);
+            if (!job.ready && !job.terminalFailure)
+                Object.assign(job, value, { seen: true, checkedAt: new Date().toISOString(), observationError: '', error: '' });
             else {
                 job.checkedAt = new Date().toISOString();
                 job.observationError = '';
             }
-            // A successful read resumes observation of the original transfer after a lost POST.
-            job.error = '';
             this.emit();
             return job;
         }
         catch (error) {
-            if (this.downloads.get(snapshotID) !== job)
+            if (epoch !== this.epoch || this.downloads.get(snapshotID) !== job)
                 throw error;
-            if (error instanceof DesktopError && error.httpStatus === 404 && job.pending && !job.seen)
-                return job;
-            job.observationError = errorText(error);
+            // A read that began before a valid ready POST cannot roll that confirmed result back.
+            if (!job.ready)
+                job.observationError = errorText(error);
             this.emit();
             throw error;
         }
@@ -2823,18 +2864,19 @@ export class DesktopAdapter {
         if (this.downloadObservers.has(snapshotID))
             return;
         const job = this.downloads.get(snapshotID);
-        if (!job || job.ready)
+        if (!job || job.ready || job.terminalFailure)
             return;
         const observer = { active: true };
         this.downloadObservers.set(snapshotID, observer);
         void (async () => {
             try {
                 while (observer.active && this.downloads.get(snapshotID) === job && !job.ready && !job.error) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => { const timer = setTimeout(resolve, 500); if (typeof timer === 'object' && 'unref' in timer)
+                        timer.unref(); });
                     if (!observer.active)
                         break;
                     try {
-                        await this.checkDownload(snapshotID);
+                        await this.checkDownload(snapshotID, false);
                     }
                     catch {
                         break;
@@ -2847,6 +2889,17 @@ export class DesktopAdapter {
             }
         })();
     }
+    retryDownloadSnapshot(id) {
+        const job = this.downloads.get(id);
+        if (!job?.terminalFailure || job.pending || this.downloadRequests.has(id))
+            return Promise.reject(new DesktopError('RESULT_UNKNOWN', 'Only a confirmed failed preparation can be retried explicitly.'));
+        const observer = this.downloadObservers.get(id);
+        if (observer)
+            observer.active = false;
+        this.downloadObservers.delete(id);
+        this.downloads.delete(id);
+        return this.downloadSnapshot(id);
+    }
     downloadSnapshot(id) {
         const old = this.downloads.get(id), known = this.downloadRequests.get(id);
         if (old?.ready)
@@ -2856,9 +2909,12 @@ export class DesktopAdapter {
             return known;
         }
         if (old)
-            return Promise.reject(new Error('An original transfer is already known. Check transfer before preparing again.'));
+            return Promise.reject(new DesktopError('RESULT_UNKNOWN', 'An original transfer is already known. Check transfer before preparing again.'));
+        const snapshot = this.getSnapshot(id);
+        if (!snapshot || snapshot.status !== 'verified' || snapshot.expiresAt && Date.parse(snapshot.expiresAt) <= Date.now())
+            return Promise.reject(new DesktopError('SNAPSHOT_NOT_READY', 'Check this original snapshot before preparing its download.'));
         const epoch = this.epoch;
-        const job = { transferId: crypto.randomUUID(), snapshotId: id, phase: 'Preparing', pending: true, seen: false, transferred: 0 };
+        const job = { transferId: crypto.randomUUID(), snapshotId: id, workId: snapshot.workId, phase: 'Preparing', pending: true, seen: false, transferred: 0 };
         this.downloads.set(id, job);
         this.emit();
         this.observeDownload(id);
@@ -2866,23 +2922,28 @@ export class DesktopAdapter {
         pending = (async () => {
             try {
                 const value = await this.requestOnce(`work-snapshots/${part(id)}/downloads`, 'POST', {}, undefined, { 'X-Piwork-Transfer-Id': job.transferId });
-                if (epoch !== this.epoch)
+                if (epoch !== this.epoch || this.downloads.get(id) !== job)
                     throw new DesktopError('CONNECTION_CHANGED', 'The identity changed. Original transfer access ended.');
-                if (value.transferId !== job.transferId || !value.ready)
+                this.validateDownload(value, job);
+                if (!value.ready)
                     throw new DesktopError('RESULT_UNKNOWN', 'Download confirmation was incomplete. Check the original transfer.');
-                Object.assign(job, value, { phase: 'ready', checkedAt: new Date().toISOString(), observationError: '' });
+                // Native ready POST publishes size only after full verification; it omits progress fields.
+                Object.assign(job, value, { phase: 'ready', transferred: value.size, total: value.size, checkedAt: new Date().toISOString(), observationError: '', error: '', terminalFailure: false });
                 return `/_desktop/api/downloads/${part(job.transferId)}/content`;
             }
             catch (error) {
                 const failure = error instanceof DesktopError ? error : new DesktopError('RESULT_UNKNOWN', 'Download response lost. Check the original transfer.');
-                if (epoch === this.epoch && !job.ready) {
-                    job.error = errorText(failure);
-                    job.phase = 'Not confirmed';
+                if (epoch === this.epoch && this.downloads.get(id) === job && !job.ready) {
+                    // These public CLI failures conclusively rejected/removed preparation. Unknown transport results remain locked.
+                    const terminalFailure = ['TRANSFER_STORAGE_FULL', 'PACKAGE_CHANGED', 'SNAPSHOT_MISMATCH', 'SNAPSHOT_NOT_READY', 'PACKAGE_EXPIRED', 'PACKAGE_INVALID', 'PACKAGE_LIMIT_EXCEEDED'].includes(failure.code) && failure.httpStatus !== undefined ||
+                        failure.code === 'TRANSFER_BUSY' && failure.httpStatus === 429 || ['CORE_UNAVAILABLE', 'TRANSFER_UNAVAILABLE'].includes(failure.code) && failure.httpStatus === 503 ||
+                        failure.code === 'SNAPSHOT_DOWNLOAD_FAILED' && failure.httpStatus !== undefined && failure.httpStatus >= 400 && failure.httpStatus <= 599;
+                    Object.assign(job, { error: errorText(failure), errorCode: failure.code, terminalFailure, phase: terminalFailure ? 'failed' : 'Not confirmed' });
                 }
                 throw failure;
             }
             finally {
-                if (epoch === this.epoch) {
+                if (epoch === this.epoch && this.downloads.get(id) === job) {
                     job.pending = false;
                     this.emit();
                 }

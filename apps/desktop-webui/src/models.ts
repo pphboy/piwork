@@ -156,9 +156,13 @@ export interface Snapshot {
   id: string;
   workId: string;
   operationId: string;
-  status: "preparing" | "validating" | "verified" | "expired" | "failed";
+  status: "preparing" | "validating" | "verified" | "expired" | "failed" | "unavailable";
   filename: string;
   size: string;
+  packageSize?: number | null;
+  digest?: string | null;
+  expiresAt?: string | null;
+  error?: string;
 }
 
 export type Scenario = string;

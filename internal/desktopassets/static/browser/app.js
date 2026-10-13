@@ -1,3 +1,5 @@
+import { exportWorkConflict, exportSnapshotAvailable } from './export-admission.js';
+import { ExportFlows } from './export-flow.js';
 import { activityGroups } from './chat-projection.js';
 import { ImageDrafts } from './images.js';
 import { editAdvanced, synchronizeConfiguration } from './configuration.js';
@@ -132,6 +134,30 @@ let pendingWebCommand;
 let importSignInSuspended = false;
 const actions = new ActionState(() => render());
 let latestCreateToken = 0;
+const exportFlows = new ExportFlows(adapter, {
+    deliver: (flow, url) => downloadURL(url, flow.workName),
+    changed: () => render(),
+    visible: () => document.visibilityState === 'visible',
+    canSubmitWorkMutation: (workId, flowId) => !exportWorkConflict(actions.records.values(), workId, flowId),
+});
+function openExportFlow(flow, record) { if (record) {
+    record.businessId = flow.id;
+    actions.confirm(record, 'Export intent retained; follow original progress');
+} openModal('export', { id: flow.workId, flowId: flow.id, snapshotId: flow.snapshotId || '' }); }
+function beginExport(work, stopConfirmed = false, record) {
+    const old = exportFlows.forWork(work.id);
+    if (old && !old.terminal) {
+        if (old.mode !== 'new')
+            throw new Error('This Work already has an active download for another intent. Check or finish that original download first.');
+        openExportFlow(old, record);
+        return;
+    }
+    if (!stopConfirmed && work.desired === 'running') {
+        openModal('stop-work', { id: work.id, exportAfterStop: 'true' });
+        return;
+    }
+    openExportFlow(exportFlows.start(work.id, { mode: 'new', stopConfirmed }), record);
+}
 class ViewChanged extends Error {
 }
 let sessionChoice = 0, areaChoice = 0, serviceChoice = 0, selectionRequest = 0, modalChoice = 0;
@@ -149,6 +175,7 @@ const actionLabels = {
     'confirm-upload-overwrite': 'Uploading files', 'confirm-folder': 'Creating folder', 'confirm-transfer': 'Transferring files', 'confirm-file-delete': 'Deleting files',
     'save-config': 'Saving settings', 'dirty-config-save': 'Saving settings', 'refresh-config': 'Reading settings', 'apply-config': 'Submitting Apply', 'confirm-core-skills': 'Copying Skill', 'check-catalog': 'Reading catalog',
     'confirm-install': 'Submitting package', 'confirm-remove-package': 'Removing package', 'confirm-import': 'Submitting import', 'prepare-export': 'Preparing Export',
+    'export': 'Preparing Export', 'view-snapshot': 'Checking snapshot', 'save-export-file': 'Checking original download', 'check-export-flow': 'Checking export', 'resume-export-flow': 'Resuming export',
     'download-work': 'Preparing download', 'check-download': 'Checking transfer', 'check-operation': 'Checking Operation', 'lookup-operation': 'Reading Operation', 'lookup-snapshot': 'Reading snapshot',
     'operations': 'Reading known Operations', 'clear-operations': 'Clearing completed records', 'resume-operation': 'Resuming observation', 'check-inspection-import': 'Checking transfer', 'retry-inspection-cleanup': 'Releasing local transfer',
 };
@@ -179,7 +206,7 @@ function actionIntent(el, action = el.dataset.action || '') {
     }
     else if (['new-session', 'send-message', 'cancel-run', 'save-model', 'cancel-pi-request', 'retry-pi-request'].includes(action))
         kind = 'agent';
-    else if (['confirm-import', 'download-work', 'prepare-export'].includes(action))
+    else if (['confirm-import', 'download-work', 'prepare-export', 'export'].includes(action))
         kind = 'transfer';
     const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview'].includes(action);
     const serviceId = el.dataset.id || view.data.serviceId || view.service;
@@ -196,6 +223,14 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
     const execute = perform ?? ((record) => handleAction(action, target, record));
     if (!intent) {
         await execute();
+        return;
+    }
+    if (intent.work && intent.kind === 'lifecycle' && exportFlows.workControlBlocked(intent.work)) {
+        toast('The original Stop or Export submission is not confirmed. Check its original progress before another Work control.');
+        return;
+    }
+    if (intent.work && ['export', 'prepare-export'].includes(intent.action || '') && exportWorkConflict(actions.records.values(), intent.work)) {
+        toast('An original Work control is still pending or unknown. Check that control before Export.');
         return;
     }
     const conflict = actions.conflict(intent);
@@ -429,8 +464,6 @@ function closeModal() {
     const caret = [Number(view.data.caretStart), Number(view.data.caretEnd)];
     if (responseSettings && pendingWebCommand && ['model', 'thinking'].includes(pendingWebCommand.kind) && !pendingWebCommand.pair)
         pendingWebCommand = undefined;
-    if (view.modal === 'export')
-        adapter.stopDownloadObservers();
     if (view.modal === "import")
         void adapter.abandonInspection();
     view.modal = "";
@@ -946,7 +979,8 @@ function modalMarkup() {
         case "stop-work":
             title = `Stop ${esc(target?.name)}?`;
             body = `<p>This stops the current Run, all running Services, and workspace file connections for this Work.</p><p>Your persistent workspace data is preserved. Enabled Services can resume the next time you start the Work.</p><div class="impact-box">${icon("stop")} Entire Work · Services · Agent · Files</div>`;
-            footer = `${cancel()}${btn("Stop Work", "confirm-stop", "danger-solid", `data-id="${target?.id}"`)}`;
+            body += view.data.exportAfterStop ? '<p>After the original stop is confirmed, this explicit choice generates a full .work package and starts its verified download. Packages may include private data and credentials.</p>' : '';
+            footer = `${cancel()}${btn(view.data.exportAfterStop ? "Stop and export" : "Stop Work", "confirm-stop", "danger-solid", `data-id="${target?.id}" ${view.data.exportAfterStop ? 'data-export-stop="true"' : ''}`)}`;
             break;
         case "delete-work":
             title = `Delete ${esc(target?.name)}?`;
@@ -1127,13 +1161,19 @@ function modalMarkup() {
             footer = `${cancel()}${btn(view.data.update ? "Update package" : "Install package", "confirm-install", "primary")}`;
             break;
         case "export": {
-            title = "Export Work";
-            const snap = adapter.state.snapshots.find((s) => s.workId === target?.id && adapter.getSnapshot(s.id));
-            const op = snap
-                ? adapter.state.operations.find((o) => o.id === snap.operationId)
-                : undefined;
-            body = `${snap ? downloadProgressMarkup(snap.id) : ""}<p>Create a full <code>.work</code> package, including the format-defined persistent workspace data.</p>${(!target || !adapter.project(target).exportable) ? feedback("Stop this Work explicitly, then return here to prepare the package. Export never stops a Work automatically.", "warning") : `${feedback("Work is confirmed stopped. Preparing a package will not start it.", "success")}`}${snap ? `<div class="export-snapshot"><h3>Original snapshot</h3><dl><dt>Snapshot ID</dt><dd><code>${snap.id}</code></dd><dt>Operation</dt><dd><button class="inline-link" data-action="operation" data-id="${snap.operationId}">${snap.operationId}</button></dd><dt>Status</dt><dd>${badge(op?.state === "failed" ? "Failed" : snap.status)}</dd></dl>${snap.status === "expired" ? feedback("This snapshot expired. Check the original snapshot ID. Prepare another package explicitly when ready.", "warning") : ""}${op?.error ? feedback(esc(op.error), "warning") : ""}${snap.status === "verified" ? '<p class="muted">Snapshot is verified. Download validates and saves the actual .work archive.</p>' : ""}</div>` : ""}`;
-            footer = `${close()}${(!target || !adapter.project(target).exportable) ? btn("Stop Work first", "stop-work", "danger", `data-id="${target?.id}"`) : snap?.status === "verified" ? btn(`${icon("download")} Download .work`, "download-work", "primary", `data-id="${snap.id}"`) : btn("Prepare .work package", "prepare-export", "primary", `data-id="${target?.id}" ${snap && ["preparing", "validating"].includes(snap.status) && op?.state !== "failed" ? "disabled" : ""}`)}`;
+            title = "Export and download";
+            const flow = view.data.flowId ? exportFlows.get(view.data.flowId) : undefined;
+            const selectedID = flow?.snapshotId || view.data.snapshotId;
+            const snap = selectedID ? adapter.getSnapshot(selectedID) : undefined;
+            const active = target ? exportFlows.forWork(target.id) : undefined;
+            const busy = !!active && !active.terminal;
+            const phases = { checking: 'Checking original state', stopping: 'Waiting for confirmed stop', exporting: 'Submitting export', snapshot: 'Generating package', preparing: 'Transferring and validating', ready: 'Ready to download', delivered: 'Download started', unknown: 'Result not confirmed', failed: 'Export not completed', revoked: 'Access ended' };
+            const job = snap ? adapter.downloads.get(snap.id) : undefined;
+            const snapshotDetails = snap ? `<div class="export-snapshot"><h3>Original snapshot</h3><dl><dt>Snapshot ID</dt><dd><code>${esc(snap.id)}</code></dd><dt>Operation</dt><dd>${btn(esc(snap.operationId), 'operation', 'text-button', `data-id="${esc(snap.operationId)}"`)}</dd><dt>Status</dt><dd>${badge(snap.status)}</dd><dt>Size</dt><dd>${esc(snap.size || 'Not provided')}</dd><dt>Expires</dt><dd>${esc(snap.expiresAt || 'Not provided')}</dd></dl>${snap.status === 'expired' ? feedback('This original snapshot expired. Export current content explicitly to create another.', 'warning') : snap.status === 'unavailable' ? feedback('This snapshot has no downloadable package metadata. Check its original ID; a new Export requires your explicit choice.', 'warning') : ''}${snap.error ? feedback(esc(snap.error), 'warning') : ''}</div>` : '';
+            const known = target ? adapter.state.snapshots.filter(value => value.workId === target.id && value.id !== selectedID) : [];
+            body = `<p>Create a full <code>.work</code> package of the current Work, or select an exact existing snapshot. An older snapshot may not include current content.</p>${feedback('Packages may include private files, business data and credentials. Download starts only after CLI integrity checks; confirm saving in your browser.', 'warning')}${flow ? feedback(`${esc(phases[flow.phase] || flow.phase)} · ${esc(flow.workName)}${flow.paused ? ' · Paused' : ''}${flow.error ? ` · ${esc(flow.error)}` : ''}`, flow.error ? 'warning' : 'info') : ''}${flow?.stopOperationId ? `<p>Original Stop ${btn(esc(flow.stopOperationId), 'operation', 'text-button', `data-id="${esc(flow.stopOperationId)}"`)}</p>` : ''}${flow?.exportOperationId ? `<p>Original Export ${btn(esc(flow.exportOperationId), 'operation', 'text-button', `data-id="${esc(flow.exportOperationId)}"`)}</p>` : ''}${snapshotDetails}${snap ? downloadProgressMarkup(snap.id) : ''}${known.length ? `<h3>Known snapshots</h3><div class="menu-list">${known.map(value => btn(`${esc(value.id)} · ${esc(value.status)}`, 'view-snapshot', '', `data-id="${esc(value.id)}" data-work-id="${esc(value.workId)}"`)).join('')}</div>` : ''}<p class="muted">Close only hides this panel. The current page can finish this authorized delivery. Pause holds later steps; reloading or changing identity ends automatic delivery.</p>`;
+            const canSave = snap?.status === 'verified' && job?.ready && (!snap.expiresAt || Date.parse(snap.expiresAt) > Date.now());
+            footer = `${close()}${flow ? btn('Check status', 'check-export-flow', '', `data-id="${esc(flow.id)}"`) : ''}${flow && !flow.terminal ? btn(flow.paused ? 'Resume' : 'Pause', flow.paused ? 'resume-export-flow' : 'pause-export-flow', '', `data-id="${esc(flow.id)}"`) : ''}${canSave ? btn(flow?.autoDeliveryConsumed ? 'Download again' : 'Save file', 'save-export-file', 'primary', `data-id="${esc(snap.id)}"`) : snap?.status === 'verified' ? btn(job?.terminalFailure ? 'Retry download' : 'Download this snapshot', 'download-work', 'primary', `data-id="${esc(snap.id)}" ${busy && active?.snapshotId !== snap.id ? 'disabled' : ''}`) : ''}${target ? btn('Export current Work and download', 'prepare-export', canSave ? '' : 'primary', `data-id="${esc(target.id)}" ${busy ? 'disabled' : ''}`) : ''}`;
             break;
         }
         case "import":
@@ -1156,7 +1196,7 @@ function modalMarkup() {
             body = op
                 ? `${phase(op)}${importNameFeedback(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">Work: ${workStatus(adapter.getWork(op.workId))}${quickAction(adapter.getWork(op.workId))}</div>` : ""}${feedback(`${esc(op.phase)}. ${op.state === "accepted" || op.state === "preparing" ? "Accepted does not mean completed. Closing this dialog will not cancel it." : op.state === "unknown" ? "Check this original Operation; do not repeat the request." : op.state === "succeeded" ? "The original Operation reached a confirmed result." : ""}`, op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>Operation ID</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="Copy Operation ID"`)}</dd><dt>Work ID</dt><dd><code>${op.workId}</code></dd><dt>State</dt><dd>${badge(op.state)}</dd><dt>Last confirmed</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>Snapshot ID</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}${op.observationError ? feedback(`Observation interrupted. ${esc(op.observationError)}`, "warning") : ""}${op.localRecordSaved === false ? feedback("Accepted, but the local record could not be saved. Copy the Operation ID; automatic recovery after reload is not guaranteed.", "warning") : ""}`
                 : "<p>This Operation is not known for the current Core and user. Verify the ID or check the original Work.</p>";
-            footer = `${close()}${op ? btn("Check status", "check-operation", "", `data-id="${op.id}"`) : ""}${op && !["succeeded", "failed", "superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? "Resume checking" : "Pause checking", adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${op.id}"`) : ""}${op?.state === "succeeded" && op.kind === "Import Work" ? `${btn("Open Work", "open-work", "primary", `data-id="${op.workId}"`)}${btn("Start Work", "start-work", "", `data-id="${op.workId}"`)}` : op?.state === "succeeded" && op.kind === "Create Work" ? btn("Open Work", "open-work", "primary", `data-id="${op.workId}"`) : op?.snapshotId ? btn("View package", "export", "primary", `data-id="${op.workId}"`) : ""}`;
+            footer = `${close()}${op ? btn("Check status", "check-operation", "", `data-id="${op.id}"`) : ""}${op && !["succeeded", "failed", "superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? "Resume checking" : "Pause checking", adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${op.id}"`) : ""}${op?.state === "succeeded" && op.kind === "Import Work" ? `${btn("Open Work", "open-work", "primary", `data-id="${op.workId}"`)}${btn("Start Work", "start-work", "", `data-id="${op.workId}"`)}` : op?.state === "succeeded" && op.kind === "Create Work" ? btn("Open Work", "open-work", "primary", `data-id="${op.workId}"`) : op?.snapshotId ? btn("View original snapshot", "view-snapshot", "primary", `data-id="${esc(op.snapshotId)}" data-work-id="${esc(op.workId)}"`) : ""}`;
             break;
         }
     }
@@ -1493,7 +1533,6 @@ async function handleAction(action, el, record) {
         case "work-info":
         case "delete-work":
         case "stop-work":
-        case "export":
             openModal(action, { id: w?.id || "" });
             break;
         case 'sessions':
@@ -1593,7 +1632,9 @@ async function handleAction(action, el, record) {
                 show(await stay(adapter.lifecycle(w.id, w.status === "Failed" ? "retry" : "start")));
             break;
         case "confirm-stop":
-            if (w)
+            if (w && (view.data.exportAfterStop || el.dataset.exportStop))
+                beginExport(w, true, record);
+            else if (w)
                 show(await stay(adapter.lifecycle(w.id, "stop")));
             break;
         case "confirm-delete":
@@ -2449,15 +2490,40 @@ async function handleAction(action, el, record) {
         case "confirm-import":
             show(await stay(adapter.importWork(view.importName.trim())));
             break;
-        case "prepare-export":
+        case 'export':
+        case 'prepare-export':
             if (w)
-                show(await stay(adapter.prepareExport(w.id)));
+                beginExport(w, false, record);
             break;
-        case "download-work": {
-            const pending = adapter.downloadSnapshot(el.dataset.id);
-            if (record)
-                record.businessId = adapter.downloads.get(el.dataset.id)?.transferId;
-            downloadURL(await stay(pending));
+        case 'view-snapshot': {
+            const snap = await stay(adapter.fetchSnapshot(el.dataset.id));
+            if (el.dataset.workId && snap.workId !== el.dataset.workId)
+                throw new Error('This snapshot does not belong to the original Work.');
+            openModal('export', { id: snap.workId, snapshotId: snap.id });
+            break;
+        }
+        case 'download-work': {
+            const snap = adapter.getSnapshot(el.dataset.id);
+            if (!snap)
+                throw new Error('Check the exact original snapshot first.');
+            openExportFlow(exportFlows.start(snap.workId, { mode: 'existing', snapshotId: snap.id }), record);
+            break;
+        }
+        case 'check-export-flow':
+            await exportFlows.check(el.dataset.id);
+            break;
+        case 'pause-export-flow':
+            exportFlows.pause(el.dataset.id);
+            break;
+        case 'resume-export-flow':
+            await exportFlows.resume(el.dataset.id);
+            break;
+        case 'save-export-file': {
+            const id = el.dataset.id, snap = await stay(adapter.fetchSnapshot(id));
+            const job = await stay(adapter.checkDownload(id));
+            if (adapter.getSnapshot(id) !== snap || adapter.downloads.get(id) !== job || !exportSnapshotAvailable(snap) || !job?.ready || job.snapshotId !== snap.id || job.workId !== snap.workId)
+                throw new Error('The original snapshot and transfer are not confirmed for download.');
+            downloadURL(`/_desktop/api/downloads/${encodeURIComponent(job.transferId)}/content`, adapter.getWork(snap.workId)?.name || snap.workId);
             break;
         }
         case 'check-download': {
@@ -2502,7 +2568,7 @@ async function handleAction(action, el, record) {
         case "lookup-snapshot": {
             const snap = await stay(adapter.fetchSnapshot(view.snapshotQuery.trim()));
             if (snap)
-                openModal("export", { id: snap.workId });
+                openModal("export", { id: snap.workId, snapshotId: snap.id });
             else
                 throw Error("Snapshot not found. Check its exact original ID and Core.");
             break;
@@ -3143,6 +3209,7 @@ async function restoreRuntimePanel(work) {
         render();
 }
 adapter.subscribe(() => {
+    exportFlows.update();
     if (lastIdentity !== adapter.identityEpoch) {
         lastIdentity = adapter.identityEpoch;
         actions.clear();
@@ -3186,7 +3253,7 @@ void adapter.initialize().then(async () => { view.coreAddress = adapter.state.co
     void adapter.loadPreferences(); await loadRoute(); }).catch(error => toast(error.message));
 let packageFiles = [];
 let pendingUploadFiles = [];
-function downloadURL(url) { const link = document.createElement('a'); link.href = url; link.download = ''; link.click(); toast('Download started. Check your browser to confirm it was saved.'); }
+function downloadURL(url, workName = '') { const link = document.createElement('a'); link.href = url; link.download = ''; link.click(); toast(`${workName ? workName + ' · ' : ''}Download started. Check your browser to confirm it was saved.`); }
 let routeLoad = 0;
 const workReadErrors = new Map();
 async function loadRoute() {
@@ -3364,8 +3431,8 @@ setInterval(() => {
     statusRefreshRunning = true;
     void adapter.refreshVisibleWork(work.id).catch(() => undefined).finally(() => { statusRefreshRunning = false; });
 }, 5000);
-document.addEventListener('visibilitychange', () => { observeCurrentPage(); });
-window.addEventListener('pagehide', () => { adapter.observePage('', false); });
+document.addEventListener('visibilitychange', () => { exportFlows.setVisible(document.visibilityState === 'visible'); observeCurrentPage(); });
+window.addEventListener('pagehide', () => { exportFlows.revoke('This page ended. Find the original snapshot to download explicitly.'); adapter.observePage('', false); });
 function consumeWebSelection(kind) { if (pendingWebCommand?.kind === kind) {
     if (view.drafts[pendingWebCommand.key] === pendingWebCommand.text)
         view.drafts[pendingWebCommand.key] = '';
