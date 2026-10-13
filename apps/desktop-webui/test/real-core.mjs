@@ -135,6 +135,9 @@ try {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
   await page.screenshot({ path: join(screenshotDir, '01-empty-work-list.png'), fullPage: true });
+  const runChatControls=async()=>{const {chatControlsAcceptance}=await import('./chat-controls-real-core.mjs');await chatControlsAcceptance({page,coreUrl,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),repositoryRoot,image,screenshotDir,fixtureRoot:root});};
+  if(process.env.PIWORK_TEST_CHAT_CONTROLS==='only')await runChatControls();
+  else {
   const lifecycleRequests = [];
   page.on('request', request => { const path = new URL(request.url()).pathname; if (request.method() === 'POST' && (/\/_desktop\/api\/works(?:$|\/[^/]+\/(?:start|stop|retry|delete)$)/).test(path)) lifecycleRequests.push(path); });
   let mainReloads = 0; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame() && !new URL(request.url()).pathname.startsWith('/_desktop/')) mainReloads++; });
@@ -489,7 +492,9 @@ try {
   assert.equal(lifecycleRequests.filter(path => path.endsWith(`/${imported.id}/delete`)).length, 1);
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY !== '1') assert.equal(mainReloads, 0, 'lifecycle required reloading the WebUI document');
   console.log(JSON.stringify({ result: 'lifecycle confirmed: enabled/disabled Service, sentinel bytes, stopped resources, Delete original ID', browserVersion: browser.version(), mainReloads, lifecycleRequests, installationId, sentinelBytes: sentinel.length, enabledService: restored.find(item => item.serviceId === service.data.serviceId)?.observedState, disabledService: restored.find(item => item.serviceId === disabled.data.serviceId)?.observedState, stoppedRunningResources: 0, stoppedFileRead: stoppedFiles.status, stoppedFileWrite: stoppedWrite.status }));
+  if(process.env.PIWORK_TEST_CHAT_CONTROLS==='1')await runChatControls();
   console.log(JSON.stringify({ result: 'real Go Core/CLI: lifecycle, Service iframe preservation/tab, Run, binary WebDAV, uncertain write, Save/Apply, Stop/Export/Inspect/Import/Start and responsive layout', workId, screenshots: screenshotDir }));
+  }
 } catch (error) {
   if (page && !page.isClosed()) {
     await page.screenshot({ path: join(screenshotDir, '99-failure.png'), fullPage: true }).catch(() => undefined);
