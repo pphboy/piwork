@@ -1,0 +1,44 @@
+# Desktop 连续任务与恢复使用说明
+
+本附件随 `fix-desktop-task-completion-and-ux` 维护，描述本次界面行为。基于 main `28bfdfa56b4c84b10ade9a63fedb7c2b75c04a90` 整合；实际验证范围和限制见[整合验收记录](acceptance.md)。
+
+## Desktop export intent and exact snapshot recovery
+
+当前导出动作面向一次完整目标：在Work options选择Export Work，已确认stopped时直接生成并下载；运行中先显示Stop and export的Run、Service和文件连接影响确认，取消不提交Stop或Export。已在停止中的Work沿原Stop Operation核对，实际未stopped前不提交Export；不会暗中Apply、另行Cancel Run或Start。 如果其他控制改变了这次停止的目标或控制版本超出原意图的保守边界，流程结束并要求重新核对、显式导出；不会借后来另一次Stop继续旧意图。
+
+进度显示原Work、Stop/Export Operation、snapshot、transfer和实际阶段。已有快照不遮蔽新导出入口；通过Known operations的snapshot ID查询或View original snapshot只查看该原对象，Download this snapshot不会改成另一份或称为最新内容。大小和expires来自可靠metadata，缺失不伪造；完整成功但无可下载package元数据时显示unavailable，不猜测过期时间。
+
+Close只隐藏进度，同身份换Work仍能完成原页面的一次交付。Pause会保留已接受操作但不推进未提交阶段或自动content；Check只核对，Resume先读原结果再继续有效授权。重复状态、晚准备响应和只读重开不重复自动下载。Save file/Download again使用同一已验证transfer，不重新Export或准备。
+
+下载准备收到明确的本地空间、校验、繁忙或原包读取失败时，可以对原snapshot显式Retry download并使用新transfer；没有可靠失败响应的未知准备保持原ID，Check只查原transfer，不能靠404或关闭重开变成自动重试。未知Stop/Export同样不重放。当前Work的实际Stop/Export提交仍与原生命周期动作互斥；已接受操作继续按原资格观察，独立的旧快照下载不会长期锁住运行Work的Stop。
+
+Core/账号切换、注销、本地授权失效及pagehide撤销旧自动交付资格；重新登录或重载后按原ID查询并显式下载。没有跨关页或CLI进程的后台续传队列。包可能包含私有文件或凭据；界面只说Download started，实际是否保存请在浏览器确认。真实Core/native与本轮合成验收的区别及未验范围见 [本变更验收记录](acceptance.md)，不能由本使用说明推断它们已经通过。
+
+### Work 状态、草稿和文件操作恢复
+
+曾确认可用的Work遇到临时状态读取失败时，已打开的应用、聊天与文件区域继续显示，并局部提示状态未确认。新Run、Service控制和文件写入仍要求当前可靠准入；已接受Stop、确认停止/删除或权限撤销会限制相关视口。保留页面不保证应用崩溃、浏览器强制关闭或真实网络中断后的数据恢复。
+
+所选Service变为Ready时会为原Work/Service/声明端口准备一次入口。入口错误在该区域显示；Retry是显式重新核对入口，不会通过普通Ready列表读重新授予已撤销的入口。独立窗口保留其请求端口，无效端口不自动改为另一个端口。Service详情先显示原对象与合法控制，日志单独加载；Retry logs只重新读取该Service日志。
+
+返回Works或页面重新可见会刷新列表，也可使用Refresh Works。失败保留旧行和搜索条件，错误不表示空列表。同身份内所有Work/Session未发送的聊天文本、图片及未确认提交会参与浏览器离页提示；取消离页保留页面草稿。该保护依赖浏览器的用户激活与离页确认支持，不把图片或文本持久保存，也不能保证强制关闭后的恢复。
+
+Create Work可靠受理后，下次明确打开New Work使用空名称和Core默认高级设置。拒绝或未知结果保留原输入；未知请求不因关闭、改名或重开而重复提交。同名提交仍去重；沿用上游显式改名后的独立提交及名称错误隔离。旧请求晚结果不覆盖已编辑的新草稿。Open brain source复用文件和设置的未保存更改确认，只在原文件读取成功后进入Files并退出Settings，不隐式Save或Apply。
+
+Copy、Move和Delete的结果显示在原操作弹窗内。每个路径的成功、失败或未知独立保留；再次处理失败项需先明确选择，成功项不会随失败项再次提交。目录递归操作的部分成功不能安全重放整个目录，需要读取现状后选择具体待处理路径。未知结果须先Refresh original paths核对原来源和目标；关闭不撤销已经完成的修改，也不解除未知路径保护。上传选择器与覆盖确认绑定打开时的Work、目录和身份，目标变化会阻止提交。上传过程中Work失去准入时，后续文件不再写入，先前已完成或未知的结果仍保留。
+
+
+### 页面内区域恢复与完成出口
+
+同一页面、同一Core与账号内，再次进入Work会恢复最近选择的Services、Chat或Files；首次进入默认Services。Files同时记住目录和已打开文件，先读取原目标。明确404/410时在Files内回到最近可读父目录并说明；暂时读取失败保留目标并提供重读，不跳转到另一个区域。记忆不跨重载或身份切换；文件和设置的未保存更改仍须先确认。
+
+Start/Retry在Works原行或Work本体显示进度，Operation details保留原操作详情。普通Start不会强制进入Work；原Operation成功且Work真实可用后，列表提供Open Work。Service控制完成后仍在原Service详情显示进度，日志独立加载，Ready且端口有效时提供Open Service。
+
+Import完成且确认stopped时显示Imported · Not started。View Work或Close不会启动；Start and open是独立、明确的一次Start意图，原Import与Start ID分开保留。失败或未知结果不会重Import或重放Start。真实可用后仅在仍停留于原导入进度时打开；已经关闭或切换页面时不把用户带回旧Work，可在原记录核对后显式打开。
+
+文本编辑器的Download saved version直接下载服务端当前保存字节，不保存或下载未保存草稿，也不清空草稿。界面只说明Download started，请在浏览器核对实际文件。
+
+### 局部键盘、选择和关闭
+
+Files选择栏保留固定位置，复选框有独立命中区；点击文件名仍是打开。Rename预填原basename并选择主名（目录选择全名）；New folder与Rename打开时聚焦输入。只有合法、可提交、非繁忙的命名表单响应普通Enter；输入法候选确认、229及覆盖确认不自动提交。
+
+只有干净、空闲的Work options、Service options和Work information允许同一主指针在弹窗外按下并释放后关闭。未知恢复、危险确认、Import和编辑表单不适用。Pi request的Close只收起查看；Cancel request只面向当前可用Work中的原live请求。取消受理或结果未知后保持原对象锁，Check status只读核对，不因旧running状态或读回失败再次提交。
