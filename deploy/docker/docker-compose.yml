@@ -2,7 +2,7 @@ name: piwork-quickstart
 # Readiness includes current default Work preparation; recheck after changing defaults.
 services:
   core:
-    image: docker.io/pphboy/piwork-core:0.0.5-c3e361a44a6b-f327ba4d903f
+    image: docker.io/pphboy/piwork-core:0.0.6-ff37c45b7093-1b352aec0357
     init: true
     user: "0:0"
     network_mode: host

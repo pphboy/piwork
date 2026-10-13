@@ -47,13 +47,15 @@ Each Work has its own Harness. The Harness executes tasks, Services provide appl
 
 The current source defaults new application Services to Python + NiceGUI + SQLite, with standard dependencies preinstalled and support for additional Python packages. The NiceGUI base now has an anonymously verified fixed release; platform Docker references retain their recorded release identities. See the [Web base guide](deploy/images/web-base/README.md) for source, maintenance, dependency installation, sqlite3 and automatic application updates.
 
-Core 0.0.5 ships piwork-brain 1.2.2 with the published NiceGUI default. The [release record](deploy/docker/releases/0.0.5-c3e361a44a6b-f327ba4d903f.json) lists the published image identities.
+Core 0.0.6 ships piwork-brain 1.2.2 with the published NiceGUI default. The [release record](deploy/docker/releases/0.0.6-ff37c45b7093-1b352aec0357.json) lists the published image identities.
 
-Release 0.0.5 embeds piwork-brain 1.2.2 with an independent `application-awareness` Skill for product, UI/UX, state synchronization and engineering judgment. Brain routes application work to it directly; the deployment Skill remains separate. It adds no design or approval stage. NiceGUI-specific guidance is read only when relevant. Page verification uses the actual Desktop Service entry with an available, authorized browser; backend readiness alone does not prove UI usability, and unavailable browser access is reported explicitly. See [Brain loading and adoption](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包).
+Release 0.0.6 embeds piwork-brain 1.2.2 with an independent `application-awareness` Skill for product, UI/UX, state synchronization and engineering judgment. Brain routes application work to it directly; the deployment Skill remains separate. It adds no design or approval stage. NiceGUI-specific guidance is read only when relevant. Page verification uses the actual Desktop Service entry with an available, authorized browser; backend readiness alone does not prove UI usability, and unavailable browser access is reported explicitly. See [Brain loading and adoption](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包).
 
-Release 0.0.5 reuses successful image checks and package-environment probes, and prepares the default Work environment before Core becomes ready. See [build and verification entry points](AGENTS.md#构建与验证) for building and checking the source.
+Release 0.0.6 reuses successful image checks and package-environment probes, and prepares the default Work environment before Core becomes ready. See [build and verification entry points](AGENTS.md#构建与验证) for building and checking the source.
 
 The default templates adopt successfully deployed updates automatically and preserve supported drafts and paths. Application Services have no Piwork memory cap; CPU/count limits and Agent/helper memory policies still apply. Existing Works adopt new packages and Agent images through explicit Update/Apply. See the [website guide](https://pphboy.github.io/piwork/guide/web-development.html) and [Brain workflow](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包).
+
+Release 0.0.6 provides **Stop and send** across Chat Sessions and Services, request/reply visibility and original-submission recovery, with improved authorization, history and shutdown recovery. Downloads are available in [0.0.6 Preview](https://github.com/pphboy/piwork/releases/tag/v0.0.6).
 
 ## Demo GIF / Video
 
@@ -61,7 +63,7 @@ The default templates adopt successfully deployed updates automatically and pres
 
 Desktop chat interface preview, captured from a UI verification fixture.
 
-Release 0.0.5 accepts pasted, dropped or selected images in Chat, including image-only messages. **About Piwork** shows Desktop/Core versions and embedded release notes, with a link to all releases. Use matching Desktop, Core and Agent components; known limitations and image limits are listed in the [Desktop guide](openspec/specs/desktop-webui/spec.md).
+Release 0.0.6 accepts pasted, dropped or selected images in Chat, including image-only messages. **About Piwork** shows Desktop/Core versions and embedded release notes, with a link to all releases. Use matching Desktop, Core and Agent components; known limitations and image limits are listed in the [Desktop guide](openspec/specs/desktop-webui/spec.md).
 
 ## Quick Start
 
@@ -89,7 +91,7 @@ docker run --detach --init \
     --env PIWORK_MODEL_BASE_URL \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.5-c3e361a44a6b-f327ba4d903f
+    docker.io/pphboy/piwork-core:0.0.6-ff37c45b7093-1b352aec0357
 ```
 
 Core can also be deployed alone with [Core-only docker-compose.yml](deploy/docker/docker-compose.yml) (Compose 2.24+); CLI keeps its independent Docker command. Stop the previous Core before switching deployment methods, retaining the same data directory. For an optional combined setup, see [Single-host deployment](examples/single-host/README.md).
@@ -105,7 +107,7 @@ docker run --rm --init --interactive --tty \
     --add-host host.docker.internal:host-gateway \
     --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.5-c3e361a44a6b-f327ba4d903f
+    docker.io/pphboy/piwork-cli:0.0.6-ff37c45b7093-1b352aec0357
 ```
 
 Run the following **inside the CLI container**. Replace `ACCOUNT` with your account; login prompts for a hidden password. Creating a Work starts it automatically:
