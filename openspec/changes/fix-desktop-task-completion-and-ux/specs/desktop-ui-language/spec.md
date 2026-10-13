@@ -1,0 +1,259 @@
+# Spec Delta
+
+## MODIFIED Requirements
+
+### Requirement: Work 打开后直接进入 Service 与 Agent 工作区
+
+**Identifier:** DUL-002
+
+Desktop SHALL 以独立 Work 列表为首层；打开 Work SHALL 进入该 Work 专属面板，常规布局顶部持续显示 Work 名称、真实状态、返回列表和生命周期操作，侧边 SHALL 不列其他 Work。同一有效身份重新进入时 SHALL 优先恢复上次明确选择且仍有效的 Services/Files/Chat 区域及对象；首次进入或没有有效区域记录时，若有可访问 Service，默认 SHALL 优先显示上次选中且仍可用的 Service，否则显示一个已就绪的默认 Web 入口；其真实可交互页面为主区域，Agent 当前 Session 对话为可输入的辅助栏。首次进入或无可恢复区域，且没有可访问 Service、Work 对话准入成功时，Agent 对话 SHALL 成为主区域并解释 Service 空态或不可用原因；Work 停止时 SHALL 显示启动与历史保留提示，不承诺读取 Session/Run。Desktop SHALL 不设置必须先经过的 Work 总览页。多个 Service SHALL 能在 Work 内切换并看到各自状态；聊天可聚焦为主区域，返回后恢复 Service/端口选择、当前 Session 及 Desktop 自己的阅读位置和非敏感草稿；任意 Service 网页内未保存表单、滚动和跨窗口同步 SHALL 不被外壳作通用保证。Service 可弹出独立窗口，Work 对话仍保留。Work 身份栏下 SHALL 有 Services / Files / Chat 同级入口及明确的 Settings，Workspace files 与设置 SHALL 在同一 Work 中打开；文件主区域可保持 Agent 辅助栏。Run、Operation 与日志按所属对象打开详情。
+
+各容器 SHALL 遵守以下职责与返回规则：
+
+| 容器 | 内容与返回 |
+| --- | --- |
+| Work List | 搜索、创建、导入、账号和状态快捷动作；返回列表不停止 Work 或 Run |
+| Service 工具栏与应用视口 | 前者展示服务名、状态、域名、选择器和浏览器访问动作；应用自己的导航、按钮和数据留在独立视口 |
+| Agent 辅助栏 / 聚焦 Chat | 同一份当前 Session、回复、执行反馈和输入；Focus chat 不复制会话或产生两个独立输入框 |
+| Files | 当前 Work 的路径、文件树/列表、选中项与动作；文件树是局部导航，返回保留 Work 上下文 |
+| Settings | Skills、Pi Packages、AGENTS.md、Advanced 与 Apply；Back to Work 返回原区域，未保存编辑先处理 |
+| 对象详情 | Service、Run、Operation、日志或身份诊断；Close/Back 返回来源，关闭只结束详情展示/观察，明确导出交付的协调观察按 DUL-009 继续；必要时放大为主区域 |
+| 输入与确认弹层 | 目标、字段/影响、提交与取消；取消不提交，成功返回来源并刷新，已接受操作不因关闭而取消 |
+
+Session 选择器 SHALL 仅列当前 Work 的 Sessions，并在顶部提供 New session。Manage services SHALL 从应用视图进入同 Work 服务列表/详情，返回恢复原 Service/端口选择；独立 Service 窗口 SHALL 保留 Back to Work，关闭不停止 Service。
+
+模型选择、Service 处理记录与证据 SHALL 进入既有 Agent 辅助栏、聚焦 Chat 和对象详情；脑包编辑与候选状态 SHALL 进入 Files / Settings 的 Pi Packages。入口不得新增必须先经过的总览；选中 Services 时常规布局保持 Service 主区域；各区域继续保持 Services / Files / Chat 同级导航、单一 Session 输入上下文及返回规则。
+
+Service 工具栏 SHALL 提供 Focus 进入当前 Work 的专注布局。专注布局 SHALL 隐藏常规 Work 身份栏、模块导航及全局低频动作，以紧凑工具栏保留当前对象身份、真实状态、Exit focus 和布局切换入口；仅 Chat 时由 Agent 头部承接可见退出动作；默认保留同一当前 Chat，Hide chat 进入仅 Service 视图。此布局是常规导航规则的明确例外，返回 SHALL 恢复原 Work、模块及对象选择。仅改变布局 SHALL 不改变应用 origin、不重载同一 Service/端口的 iframe、不创建 Session、不停止观察或执行；任意应用自身刷新、跨窗口同步和网络故障仍不属于外壳保存保证。Settings、Files 或其他模块导航 SHALL 先恢复常规布局，再沿原返回规则打开。
+Focus chat SHALL 从常规或 Service 专注布局放大同一 Session，Restore layout 返回放大前区域或专注布局，Exit focus 直接恢复首次进入专注前常规区域。两者目标可辨且持续可见，不依赖被隐藏的 Service 工具栏，不将返回统一固定为 Services。返回保留用户在专注期间明确作出的对象选择；失效对象给真实原因与可用出口。
+
+当前 Service 存在已确认的请求记录时，Desktop SHALL 在现有 Service 工具栏右侧操作区、Focus/独立打开等访问动作之前显示 Agent requests 按钮。确认没有记录时 SHALL 隐藏该新增按钮，不预留空白区域；已完成、已取消和 historical 记录仍属于存在记录。该入口 SHALL 不附带计数、摘要条、最近状态卡或额外顶层导航；初次读取未确认及读取失败不得被表述为真正空集合，已确认存在记录时读取失败 SHALL 保留入口及既有错误恢复。
+
+Agent requests SHALL 复用既有请求列表与对象详情，默认范围为当前 Work 和当前 Service，不按网页端口拆分；Chat 中原有全 Work 请求入口保持可用。Service + Chat 和仅 Service 专注布局中，符合显示条件的按钮 SHALL 保持可达；仅 Chat 布局使用原 Agent 请求入口。打开、取消后的刷新及关闭 SHALL 保持同一 Service iframe、当前用户 Session、草稿和阅读位置；返回及键盘焦点按 DUL-007 恢复，不创建第二个输入上下文。
+
+请求详情读取失败时，Desktop SHALL 在原容器保留同一请求最后确认的回复与执行信息，并叠加读取失败及最后确认时间；首次没有取得内容与已有内容暂时无法刷新 SHALL 分开表达。列表取消中的记录 SHALL 在原列表或对应详情可见时核对真实收尾，更新原记录而不重置分页、过滤或阅读位置；关闭只停止观察，不改变远端取消。
+
+证据分页的晚响应 SHALL 不覆盖同一请求较新的已确认状态、结果或回复关联。已确认终态后补齐证据及返回列表 SHALL 保持该终态、原分页和返回上下文，不重新显示 cancelling，不改变原取消收尾观察标记，也不重发取消。
+
+任务完成后的出口 SHALL 回到用户要使用的对象：Start 成功及能力确认后提供 Open Work；Service 控制保留所属详情/应用入口；Open brain source 经未保存确认后直达 Files 的目标文件。Operation 详情是可恢复的技术入口，不成为这些简单动作完成后唯一出口；普通 Start 不强制跳转，用户明确 Start and open 才衔接导航。
+
+#### Scenario: 有可用 Service 的 Work
+- **WHEN** 用户首次或没有可恢复区域时，从 Work 列表打开已运行、拥有可访问 Service 的 Work
+- **THEN** 直接看到 Service 真实页面和可输入的 Agent 对话；可切换 Service、聚焦聊天或打开文件，其他 Work 不在侧边
+
+#### Scenario: 空 Work 或 Service 不可用
+- **WHEN** 用户首次或没有可恢复区域时，打开没有可访问 Service、但 Work 对话准入成功的 Work
+- **THEN** 对话成为主区域，Service 的空、启动中、停止或无默认 Web 入口原因与下一步可辨，不出现空白或虚构预览
+
+#### Scenario: 从 Service 聚焦对话再返回
+- **WHEN** 用户聚焦当前 Session、继续输入，再返回 Service
+- **THEN** Work 身份、Session、Desktop 非敏感草稿与原 Service/端口选择保持可恢复，不声称保存了任意 Service 的页面内存状态
+
+#### Scenario: 查看详情后返回
+- **WHEN** 用户从当前 Work 打开 Service、Run 或 Operation 详情再关闭
+- **THEN** 回到原工作区及对象选择；关闭不取消执行、不停止服务，不产生另一个 Session 输入上下文
+
+#### Scenario: 从应用查看自动处理依据再返回
+- **WHEN** 用户在 Service 主区域打开该 Service 的处理记录和证据，随后关闭详情
+- **THEN** 返回原 Service 和当前 Session，应用视口不因查询被刷新，也不产生新的独立聊天输入框
+
+#### Scenario: 专注应用后恢复工作区
+- **WHEN** 用户在 Service 中进入 Focus、隐藏 Chat、再次显示 Chat 并返回工作区
+- **THEN** 同一应用视口和当前 Session 持续存在，原模块导航恢复，草稿和 Desktop 阅读位置保留，没有生命周期或对话提交副作用
+
+#### Scenario: 专注后聚焦聊天仍可退出
+- **WHEN** 用户依次进入 Focus、Focus chat、Restore layout、Exit focus
+- **THEN** 仅 Chat 中恢复和退出均可见，恢复返回原专注布局，退出恢复常规导航，Session 与草稿保留
+
+#### Scenario: 从 Files 放大 Chat 后恢复
+- **WHEN** 用户从 Files 辅助 Chat 进入 Focus chat 并恢复布局
+- **THEN** 返回原 Files 和未保存编辑，不强制切换 Services 或创建新 Session
+
+#### Scenario: 有记录才显示 Service 请求入口
+- **WHEN** 当前 Service 的读取分别确认无记录、有待处理记录或只有已完成/已取消/historical 记录
+- **THEN** 无记录时工具栏没有新增按钮及占位，其余情况在工具栏右侧显示 Agent requests，主区域没有摘要条、计数或状态卡
+
+#### Scenario: 从 Service 入口查看再返回
+- **WHEN** 用户从 Service 工具栏打开 Agent requests、查看详情并关闭
+- **THEN** 列表初始只显示该 Work/Service 的记录，返回保留原 Service/端口和 Main Chat 的 Session、草稿及阅读位置，同一 iframe 不重新加载
+
+#### Scenario: 专注和窄屏中的请求入口
+- **WHEN** 有记录的 Service 进入 Focus、隐藏 Chat，或窗口为 360px
+- **THEN** 工具栏中的 Agent requests 与 Exit focus 仍可操作，必要时工具栏换行，不另建页面；仅 Chat 时原 Agent 请求入口仍可达
+
+#### Scenario: 读取失败不伪造空态
+- **WHEN** 已确认有记录后请求读取失败，或首次读取尚未确认
+- **THEN** 前者保留按钮并沿既有错误恢复，后者不展示虚构记录或空状态卡，均不将读取失败说明为没有请求
+
+#### Scenario: 回复读取失败后仍可阅读最后确认内容
+- **WHEN** 用户已读到原请求的 Agent 回复，再次读取对应 Run 失败
+- **THEN** 原回复和实际执行信息仍可读，读取错误与最后确认时间可辨，不伪造没有回复或改变 Main Chat
+
+#### Scenario: 晚到证据页后返回列表仍显示终态
+- **WHEN** 用户在取消中的请求详情翻页，状态核对先确认 cancelled，而旧证据页随后返回，用户再返回原列表
+- **THEN** 证据正常追加，详情与列表仍显示 cancelled，原分页、过滤、焦点、阅读位置、Main Chat 草稿和同一 Service iframe 保持，不重新请求取消
+
+#### Scenario: 继续上次文件或聊天任务
+- **WHEN** 用户在 Files 子目录或 Chat 工作后离开并重进相同 Work
+- **THEN** 优先恢复有效区域，不因为有 Ready Service 强制回 Services，读取和资源失效在目标区域解释
+
+#### Scenario: 完成动作有对象出口
+- **WHEN** Start 或 Service 控制完成且所属对象真实可用
+- **THEN** 直接提供该 Work/Service 的访问或返回，原 Operation 仍可查，不要求用户自行重走菜单
+
+### Requirement: Desktop 视觉沿用 Serve 浅色令牌并保持主次
+
+**Identifier:** DUL-007
+
+Desktop SHALL 沿用 Serve 浅色语义令牌，包括 `#F5F8FC` 画布、`#F8FBFF` 次级背景、白色主表面、`#DCE7F2` 分隔、`#1B2634` 正文和 `#0969DA` 交互强调。Work 列表 SHALL 占独立页面；Work 内 SHALL 让真实 Service 或当前文件/聚焦对话占主区域，Agent 辅助栏保持可用，Work 身份和 Service 状态/域名分别处于稳定且较低干扰的工具栏。Work 列表行 SHALL 以一个当前状态快捷动作及低频菜单组织生命周期入口，已知 Operation 的活动区 SHALL 按需出现且不占永久导航。Import 审核与 Export 进度 SHALL 保持步骤、私有包提醒和恢复动作的层级。应用视口与 Desktop 外壳 SHALL 清楚区分，普通消息和列表行 SHALL 以留白、对齐及细分隔组织。窄屏 SHALL 将 Service、Chat、Files 变成可达的同级切换或覆盖层，不强挤窄列；360px 宽屏 SHALL 无整页横向滚动。焦点 SHALL 可见，普通文字对比度至少 4.5:1、大字至少 3:1，并尊重减少动态效果设置。
+
+同类控件 SHALL 使用一致的样式与状态规则：共享视觉角色调整后，所有对应 Desktop 使用处 SHALL 一致变化，局部布局及 Service 应用内部样式 SHALL 保持独立。Work 列表 SHALL 以名称摘要、状态、快捷动作、菜单的顺序组织，状态圆点与文字成组，行内垂直居中、跨行同列对齐；动作控件 SHALL 不同时触发行导航。实现 SHALL 用实际字体、长内容、键盘与窄屏核验，静态坐标不得替代验证，已知错位、遮挡和不可读问题 SHALL 在交付前修正。
+
+首版 SHALL 使用以下浅色角色，状态色始终配文字；未来主题需逐角色定义等价关系与对比度，不得简单反色或重排任务层级。
+
+| 视觉角色 | 基线值 | 用途 |
+| --- | --- | --- |
+| 画布 | `#F5F8FC` | 面板外层、中性输入底色 |
+| 次级背景 | `#F8FBFF` | Agent 辅助栏、低权重区域 |
+| 主表面 | `#FFFFFF` | Work、Service 外壳、文件与对话 |
+| 分隔 | `#DCE7F2` | 区域与列表行边界 |
+| 控件边框 | `#BAC9D8` | 输入与次级控件 |
+| 正文 / 次级文字 | `#1B2634` / `#526477` | 内容与辅助说明 |
+| 交互强调 / 选中背景 | `#0969DA` / `#EAF3FF` | 主动作、链接、焦点与当前选择 |
+| 危险 / 警告 | `#B42332` / `#8A5A00` | 明确影响或问题，配文字 |
+
+宽屏默认身份栏约 64–72px，Agent 辅助栏约占 28–34%；这些 SHALL 作为层级基线，允许随内容和宽度调整以保证可读与可操作，不能把 Service 缩成辅助预览卡。系统无衬线字体、4px 倍数间距、小圆角和细分隔 SHALL 保持一致；页面标题以 24–30px、正文 14–16px、辅助文字 12–13px 为基线。路径、域名、ID、日志与代码 SHALL 使用等宽字并能完整读取或复制。列表行不叠加重复大卡片；Agent 回复保持连贯，用户消息可用柔和浅底。
+
+每个当前任务 SHALL 只突出一个主动作，其余使用次级样式：文件区域突出 Upload，停止 Work 时突出 Start Work，快照就绪后突出 Download .work；Pop out 可作为 Service 工具栏主动作。同工具栏的输入和按钮 SHALL 等高、间隔一致，按钮文字居中；当前选择同时由位置、文字与柔和选中态表示，悬停弱于选中。状态、操作 ID、取得时间和恢复动作 SHALL 位于同一上下文，不能用旋转图标代替执行状态或在无关区域显示成功。
+
+键盘焦点 SHALL 有至少 2px 可见轮廓。模态弹层 SHALL 获得并限制焦点，非提交中的普通弹层可用 Escape 关闭，危险确认的 Escape 等于取消，关闭后焦点回到触发控件；未保存编辑离开须先处理 Save/Discard/Keep editing。可选过渡以 120–180ms 为基线并尊重 `prefers-reduced-motion`，不以动画伪装就绪。
+
+窄屏 SHALL 保留 Work 身份、返回、主要动作与 Pop out；文件树可收进可关闭面板，表格和代码只在局部滚动。Import 可全宽滚动，底部动作不能遮住私有包提醒；Export 步骤纵向排列。详情先目标与结果，再影响/恢复，最后技术 ID；错误不得通过缩小正文或挤掉名称容纳。
+
+Works 搜索和 Chat 输入 SHALL 保持至少 2px 的可见键盘焦点；使用容器焦点样式时同样能辨认输入位置。Pi Package Remove 等危险文本动作 SHALL 使用既有 danger 语义并在 hover/focus 保持，disabled 状态仍可辨，不受普通链接色覆盖。
+
+只有已明确列入轻量菜单/只读信息白名单、无草稿且非 busy 的弹层 SHALL 支持外部指针关闭；指针按下和抬起均在弹层外才关闭，拖选跨越边界不误关。危险确认、覆盖/丢弃、编辑、Inspect/Import 及提交/未知恢复流程不纳入该白名单；Escape、显式 Close/Cancel、焦点限制和返回规则保持。关闭观察的动作 SHALL 用 Close，Cancel request/run 保留真实执行对象。Files 选择命中区 SHALL 至少 32px 且与文件名的打开动作分离，选择工具栏不推移文件行。
+
+#### Scenario: 宽屏 Service 与 Agent
+- **WHEN** 用户在宽屏打开有可用 Service 的 Work
+- **THEN** Service 的实际内容成为视觉主角，聊天输入持续可用，域名和状态可读而不抢占内容，配色遵循 Serve 令牌
+
+#### Scenario: Work 列表的对齐与独立动作
+- **WHEN** 宽屏列表同时显示 Ready、Stopped、Stopping 和 Failed 的 Work
+- **THEN** 名称与摘要左对齐，状态圆点紧邻文字；状态、快捷按钮与菜单在各自行内垂直居中且跨行同列对齐，按钮尺寸一致；点击 Start、Retry 或菜单不同时打开行；长名称与窄屏布局不遮挡状态和动作
+
+#### Scenario: 统一调整 Desktop 样式
+- **WHEN** 后续实现修改共享颜色、字阶、间距变量或共用按钮样式
+- **THEN** 所有引用对应变量或组件的 Desktop 界面同步呈现变化，页面局部排列仍保留其作用范围；Service 应用内部样式不被外壳覆盖
+
+#### Scenario: 窄屏与键盘
+- **WHEN** 用户在 360px 宽屏通过键盘或触摸切换 Service、Chat、Files 并返回
+- **THEN** Work 身份、主要操作、对话输入、文件动作和返回入口均可达且焦点可辨，整页不横向溢出
+
+#### Scenario: 弹层关闭后的焦点与草稿
+- **WHEN** 用户用键盘打开编辑或危险确认弹层并尝试关闭
+- **THEN** 焦点保持在弹层内，取消危险确认不执行操作；未保存编辑先明确处理，关闭后焦点返回触发控件
+
+#### Scenario: 主次与长内容
+- **WHEN** Work、Service 或文件名称很长，页面同时有主要动作、次要动作和错误
+- **THEN** 主动作可辨，同类控件尺寸与对齐稳定，完整名称和技术标识可读取；错误贴近目标且不遮挡按钮或迫使整页横向滚动
+
+#### Scenario: 搜索与输入焦点可见
+- **WHEN** 用户仅用 Tab/Shift+Tab 到达 Works 搜索和 Chat 输入
+- **THEN** 输入位置有至少 2px 可见轮廓，既有设置摘要/菜单焦点规则保持，不出现无法辨认的焦点
+
+#### Scenario: 危险文本操作颜色正确
+- **WHEN** 用户查看 Pi Package Remove 的常态、hover/focus 和 disabled
+- **THEN** 危险角色与普通蓝色链接区分，状态变化不恢复错误颜色，必要确认仍保留
+
+#### Scenario: 轻量菜单允许安全外部关闭
+- **WHEN** 用户对无草稿且非 busy 的白名单信息窗在外部按下并抬起
+- **THEN** 关闭并正确回焦点；跨边界拖选不关闭，危险/编辑/传输确认不通过该规则退出或提交
+
+#### Scenario: 选择命中与布局稳定
+- **WHEN** 用户点击文件复选框周边留白、文件名或用 Space 切换选择
+- **THEN** 独立至少 32px 命中区切换选择，文件名只打开，首次/末次选择不让后续指针目标移动
+
+### Requirement: Work 导入导出是可恢复的分步传输
+
+**Identifier:** DUL-009
+
+Desktop SHALL 将 Export 表达为一次明确目标下连续完成的停止（需要时）、生成快照、传输校验和浏览器下载阶段，技术阶段分别可见但不要求用户逐段重复确认。只有 desired/observed 均 stopped 且无已知冲突控制任务时 SHALL 提交生成快照请求，并以 Core 的实际停止及快照准入结果为准；running/stopping 的导出流程入口仍可进入，分别提供明确停止影响确认或等待原停止；仅明确说明影响并获用户 Stop and export 确认后才可顺序提交停止和导出；普通导出不隐式停止，仍不暗中 Apply、额外取消 Run 或启动 Work。Export 接受后 SHALL 保留 Operation ID 与 snapshotId，快照成功并验证后才提供 `.work` 下载；下载中断 SHALL 在保留期内用原 snapshotId 重试，过期 SHALL 明确提示，不能静默重新 Export。Import SHALL 从 Work 列表进入，对本地包完整校验并展示安全摘要、私有内容提醒及可选名称；名称留空 SHALL 保持省略，使 Core 自动使用包名并处理重名，显式名称冲突 SHALL 指向字段。接受后 SHALL 保留原 Operation ID，完整发布前不显示新 Work；成功后显示 Core 返回的最终名称、新 Work ID、Imported · Not started 状态以及显式 `Start and open` 和仅查看/暂不启动入口，不自动运行包内代码或 Service；失败时不显示半成品 Work。Desktop SHALL 仅本地保存当前 WebUI 已知操作的 Core/用户、类型、Work/Service/Operation/snapshot ID 与时间，页面重载后按 ID 恢复查询，不保存包字节或凭证，也不声称是 Core 全局 Operation 列表；切换身份时不得混入其他用户记录。
+
+用户 SHALL 可仅在本地 Inspect 后关闭，不需登录 Core 或被迫导入；兼容性与权限仍由 Core 在导入时检查。上传未接受前 SHALL 不虚构 Operation，错误 SHALL 区分包损坏、名称、依赖/容量、运行时与未知结果。导入/下载前 SHALL 说明 Work 包可能包含代码、配置、共享数据、Session 与凭证；浏览器只能确认发起下载时，不得宣称文件已完整落盘。界面以 Export current Work and download、Stop and export、Download this snapshot 清楚区分新导出、必要停止确认和旧包下载；进度保留真实阶段，技术详情保留原 Operation/snapshot/transfer ID。
+
+已停止 Work 的显式导出 SHALL 在同一可收起的进度上下文连续完成；敏感内容提醒在交付前可见，停止确认不能被简化掉。成功快照不遮蔽导出当前内容入口；已有快照只表示其捕获时内容，不能被称为当前最新版。按明确 ID 找回 SHALL 不改选其他快照。
+
+关闭进度 SHALL 只收起展示，同一有效身份下原一次交付意图继续，未被用户手动暂停时，ready/恢复最多自动发起一次；明确 Pause 暂停后续交付推进，Check 仅核对而不解除手动暂停，Resume 核对原结果后才继续原授权目标；提供同一已验证文件的手动保存回退，不把浏览器发起当作落盘完成。账号/Core 切换、注销、本地授权失效撤销该自动交付，重载后只恢复查询和用户显式下载，不增加持久后台队列。
+
+#### Scenario: 运行中的 Work 申请导出
+- **WHEN** 用户在 ready 或正在停止的 Work 选择 Export
+- **THEN** running 时显示一次必要的 Stop and export 影响确认，确认前不停止；确认后待真实停止才沿原目标生成/校验/发起下载。stopping 时观察原停止且不重复 Stop，停止未确认无 Export/半成品下载
+
+#### Scenario: Stop 完成后 Export 被 Core 拒绝
+- **WHEN** 列表显示 stopped，但 Core 在 Export 准入时发现服务/文件写入者仍在运行、快照锁或其他冲突
+- **THEN** 界面展示 Core 的安全错误和处理方向，不显示已下载或再次自动 Stop/Export
+
+#### Scenario: 快照完成而下载中断
+- **WHEN** Export Operation succeeded，浏览器保存 `.work` 时连接中断
+- **THEN** 原 Operation 和 snapshotId 保留，用户在保留期内从同一快照重新下载；包已过期时提示需要新的用户操作
+
+#### Scenario: 省略或显式填写导入名称
+- **WHEN** 用户导入一个与现有 Work 同名的合法 `.work`，分别保持名称留空或填写冲突名称
+- **THEN** 留空时显示 Core 自动选定的不冲突名称；显式冲突时指出字段错误，不覆盖旧 Work 或擅自改名
+
+#### Scenario: 导入进行中、成功或失败
+- **WHEN** Import 已接受且包尚未发布，随后 Operation 成功或失败
+- **THEN** 进行中和失败时无新 Work 行且可查询原 Operation；成功时新 Work 行为 stopped，用户显式 Start 后才运行
+
+#### Scenario: 重载后恢复本地已知操作
+- **WHEN** 用户在 Import 未发布、Delete 已移出列表或 Export 已成功但未下载时重载 WebUI
+- **THEN** 活动区仅用本地已知 ID 向 Core 查询原 Operation 或 snapshot，保持所属 Core/用户边界，不自动重提 mutation，也不把这些记录称为全局历史
+
+#### Scenario: 仅检查包与传输边界
+- **WHEN** 用户未登录而检查本地 Work 包，或随后上传尚未被 Core 接受
+- **THEN** 可完成本地检查后关闭；上传阶段不显示虚构 Operation，接受后才按原 ID 恢复，私有内容提醒在提交与下载前可见
+
+#### Scenario: 一个明确目标完成停止态导出
+- **WHEN** 用户对已停止 Work 选择导出当前内容并下载
+- **THEN** 生成、校验和发起下载连续完成，用户不必跳 Operation 再点 View package/Download，阶段/错误/原身份仍可查看
+
+#### Scenario: 收起与身份切换有不同结果
+- **WHEN** 用户收起下载进度，或在准备时切换账号/Core
+- **THEN** 普通收起仍按原有效交付单次发起并标明原 Work；身份切换撤销旧自动交付且无内容泄漏，均不伪称文件落盘
+
+### Requirement: 文件表单、传输和外部客户端连接可完成任务
+
+**Identifier:** DUL-015
+
+在 DUL-005 基础上，原型 SHALL 展示 New folder、Rename、同 Work Move/Copy 目的地、文本 Save/Discard、上传逐文件结果、Download、覆盖和递归删除确认、`207 Multi-Status` 部分失败路径与未知写入重读。二进制/超出编辑限额文本 SHALL 提供下载替代，特殊项 SHALL 按真实类型说明限制，workspace 根 SHALL 受保护；无锁/ETag 时不得承诺自动合并，不暗示目录 ZIP 下载或跨 Work 修改。具体编辑限额 SHALL 在后续实现设计中确定并作为可见拒绝原因。
+
+文件主区域 SHALL 先展示 Work 归属、当前位置和 Upload/New folder，再按名称、类型、大小与状态组织列表，选中项动作紧邻目标。目录操作的成功与失败路径 SHALL 分别呈现；符号链接/特殊项不得作为普通文件直接编辑，根目录不得删除、移动或重命名。文本离开确认提供 Save file、Discard、Keep editing，取消不写入；外部客户端连接放在辅助区域。
+
+Connect with WebDAV SHALL 是独立客户端的可选辅助流程，使用现有 CLI proxy、完整 Work ID URL 和临时 Basic，展示启动方式、用户名、端口和临时密码获取/有效期说明。密码从启动终端一次获取，SHALL 不进入普通文件页面、URL、页面脚本或持久记录；浏览器 Files SHALL 无需执行此手工连接流程。文件能力缺失 SHALL 局部反馈，不把仍可用 Service 一并禁用。
+
+New folder/Rename SHALL 可直接在名称字段输入并用普通 Enter 提交合法非 busy 动作；输入法组合不提交，Rename 预填原名并保留扩展名，取消不修改。上述快捷键不扩展到危险/覆盖确认。文本编辑工具栏 SHALL 可直接下载已保存版本，不自动保存草稿。文件失败/未知/部分成功结果 SHALL 在当前操作弹层内显示到具体路径并给出安全下一步，不能只提示查看被弹层遮挡的结果；成功项不盲目重复，未知先核对。
+
+#### Scenario: 编辑与覆盖
+- **WHEN** 用户编辑文件、选择离开或覆盖已有目的文件
+- **THEN** 对应确认显示准确目标，取消不写入；无锁/ETag 的并发限制不被自动保存文案掩盖
+
+#### Scenario: 目录操作部分失败
+- **WHEN** COPY/MOVE/DELETE 返回逐路径部分失败
+- **THEN** UI 呈现已完成和失败项，刷新核对实际目录，不声称整体回滚或全部成功
+
+#### Scenario: 使用外部文件工具
+- **WHEN** 用户选择 Connect with WebDAV
+- **THEN** 知道如何使用现有 proxy 输出及临时凭证，重启密码失效有说明；回到 Files 可继续使用浏览器内操作
+
+#### Scenario: 文件改名只需修改已有名称
+- **WHEN** 用户打开文件 Rename，编辑原名后按普通 Enter，或处于中文输入法组合
+- **THEN** 分别提交一次合法名称，或仅确认候选不提交；原后缀可保留，错误后输入仍在，危险确认没有通用 Enter 提交
+
+#### Scenario: 打开文本后直接下载已保存版本
+- **WHEN** 用户在文本编辑器中有未保存草稿并选择下载
+- **THEN** 下载服务器已保存版本，草稿不变且不产生 Save file 请求
+
+#### Scenario: 当前弹层说明逐路径结果
+- **WHEN** 文件操作明确失败、部分成功或未知而弹层仍打开
+- **THEN** 结果与具体原因就在弹层内可读，恢复指向原路径，不要求先关闭才能找错误且不自动重复成功项
