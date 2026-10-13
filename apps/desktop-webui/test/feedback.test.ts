@@ -81,6 +81,7 @@ for(const method of ['picker','paste','drop','stop-and-send'])test(`Chat images:
  if(method==='picker'||method==='stop-and-send')await page.locator('#chat-image-input').setInputFiles({name:'image.png',mimeType:'image/png',buffer:bytes});
  else await page.evaluate(({data,method})=>{const file=new File([Uint8Array.from(atob(data),c=>c.charCodeAt(0))],'image.png',{type:'image/png'}),transfer=new DataTransfer();transfer.items.add(file);if(method==='paste')document.querySelector('#composer')!.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));else document.querySelector('.composer')!.dispatchEvent(new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));},{data:bytes.toString('base64'),method});
  await expect(page.locator('.chat-image-draft')).toHaveCount(1);await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');
+ await expect(page.locator('#app')).not.toContainText('This configuration file is not valid UTF-8');
  assert.equal(requests.filter(r=>r.method==='POST').length,before);
  await button(page,'send-message').click();await expect.poll(()=>submitted?.images?.length).toBe(1);
  if(method==='stop-and-send')assert.equal(submitted.cancelRunId,'old-image-run');
@@ -447,7 +448,7 @@ for (const action of ['read','path','refresh','save','folder','rename','move','c
     trigger=action==='delete'?'confirm-file-delete':'confirm-transfer';
   }
   armed=true;const before=requests.filter(r=>r.method===method&&r.path.startsWith('/_desktop/files/')).length;
-  if(action==='upload')await page.locator('#upload-input').setInputFiles({name:'binary.dat',mimeType:'application/octet-stream',buffer:Buffer.from([0,255,1,128])});
+  if(action==='upload'){await page.locator('[data-action=upload]').click();await page.locator('#upload-input').setInputFiles({name:'binary.dat',mimeType:'application/octet-stream',buffer:Buffer.from([0,255,1,128])});}
   else if(action==='read')await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();else await button(page,trigger).click();
   await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
   if(action==='upload'){await expect(page.locator('#app')).toContainText('File 1 of 1');await expect(page.locator('#app')).toContainText('Waiting for confirmation');}

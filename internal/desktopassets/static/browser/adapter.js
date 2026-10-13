@@ -202,6 +202,8 @@ export class DesktopAdapter {
     inspectionSelection = 0;
     catalog = { skills: { loading: false, error: '', confirmed: false, checkedAt: '' }, packages: { loading: false, error: '', confirmed: false, checkedAt: '' } };
     logs = new Map();
+    logStates = new Map();
+    logRequests = new Map();
     directories = new Map();
     uploadIntents = new Map();
     csrf = '';
@@ -216,6 +218,15 @@ export class DesktopAdapter {
     entryPromises = new Map();
     entryErrors = new Map();
     entryChecks = new Map();
+    entryVersions = new Map();
+    serviceDenials = new Map();
+    entryServiceGrants = new Map();
+    serviceLoads = new Map();
+    serviceReads = new Map();
+    serviceSequence = 0;
+    worksRequests = new Map();
+    worksRequestSequence = 0;
+    worksReadSequence = 0;
     pausedOperations = new Set();
     streams = new Map();
     reconnects = new Map();
@@ -432,7 +443,17 @@ export class DesktopAdapter {
         this.entryErrors.clear();
         this.entryPromises.clear();
         this.entryChecks.clear();
+        this.entryVersions.clear();
+        this.serviceDenials.clear();
+        this.entryServiceGrants.clear();
+        this.serviceLoads.clear();
+        this.serviceReads.clear();
+        this.worksRequests.clear();
+        this.worksRequestSequence++;
+        this.worksReadSequence = 0;
         this.logs.clear();
+        this.logStates.clear();
+        this.logRequests.clear();
         this.inspection = null;
         this.inspectionTransfer = '';
         if (inspection) {
@@ -487,7 +508,7 @@ export class DesktopAdapter {
         const outstanding = related.filter(op => !terminalOperation(op.state));
         work.operationId = work.lifecycleIntent?.operationId ?? (outstanding.length === 1 ? outstanding[0].id : related.length === 1 ? related[0].id : undefined);
     }
-    mergeWork(raw, sequence, mutation) {
+    mergeWork(raw, sequence, mutation, recoverAccess = false) {
         if (!raw || typeof raw.id !== 'string' || typeof raw.observedState !== 'string' || !['running', 'stopped', 'deleted'].includes(raw.desiredState))
             throw new DesktopError('INVALID_RESPONSE', 'The Work status response is incomplete.');
         const old = this.getWork(raw.id);
@@ -497,6 +518,7 @@ export class DesktopAdapter {
             return old;
         this.workReads.set(raw.id, sequence);
         if (raw.observedState === 'deleted') {
+            this.revokeWorkEntries(raw.id);
             this.deletedWorks.add(raw.id);
             this.state.works = this.state.works.filter(work => work.id !== raw.id);
             return;
@@ -504,6 +526,8 @@ export class DesktopAdapter {
         if (this.deletedWorks.has(raw.id))
             return;
         const mapped = this.mapWork(raw, old);
+        if (recoverAccess)
+            mapped.accessRevoked = false;
         const work = old ? Object.assign(old, mapped) : mapped;
         if (!old)
             this.state.works.push(work);
@@ -513,6 +537,8 @@ export class DesktopAdapter {
             raw.desiredState !== (['stop', 'delete'].includes(intent.action) ? intent.action === 'delete' ? 'deleted' : 'stopped' : 'running'))
             delete work.lifecycleIntent;
         this.associateOperations(work);
+        if (!this.project(work).retainWorkspace)
+            this.revokeWorkEntries(work.id);
         return work;
     }
     async requestOnce(path, method = 'GET', body, signal, headers = {}) {
@@ -783,7 +809,19 @@ export class DesktopAdapter {
         }
         this.emit();
     }
-    async listWorks(explicit = true) {
+    listWorks(explicit = true) {
+        const key = `${this.epoch}:${this.mutationSequence}`, previous = this.worksRequests.get(key);
+        if (previous)
+            return previous;
+        const requestSequence = ++this.worksRequestSequence;
+        const pending = this.readWorks(explicit, requestSequence).finally(() => {
+            if (this.worksRequests.get(key) === pending)
+                this.worksRequests.delete(key);
+        });
+        this.worksRequests.set(key, pending);
+        return pending;
+    }
+    async readWorks(explicit, requestSequence) {
         const epoch = this.epoch, mutations = new Map(this.workMutations);
         this.worksLoading = true;
         this.emit();
@@ -791,13 +829,20 @@ export class DesktopAdapter {
             const { value, sequence } = await this.readMetadata('works', explicit);
             if (epoch !== this.epoch)
                 throw new ObservationStopped('The identity changed.');
+            if (sequence < this.worksReadSequence)
+                return;
             if (!Array.isArray(value.works))
                 throw new DesktopError('INVALID_RESPONSE', 'The Work list response is incomplete. Retry loading the list.');
+            this.worksReadSequence = sequence;
             const ids = new Set(value.works.map((raw) => raw.id));
             for (const raw of value.works)
                 this.mergeWork(raw, sequence, mutations.get(raw.id) || 0);
-            this.state.works = this.state.works.filter(work => ids.has(work.id) ||
+            const previousWorks = this.state.works;
+            this.state.works = previousWorks.filter(work => ids.has(work.id) ||
                 (mutations.get(work.id) || 0) !== (this.workMutations.get(work.id) || 0) || sequence < (this.workReads.get(work.id) || 0));
+            for (const work of previousWorks)
+                if (!this.getWork(work.id))
+                    this.revokeWorkEntries(work.id);
             for (const [id, sync] of this.workSync) {
                 if (sync.generation !== (mutations.get(id) || 0) || sequence <= sync.after)
                     continue;
@@ -811,6 +856,8 @@ export class DesktopAdapter {
                 }
             }
             this.finishWorkSync();
+            if (requestSequence !== this.worksRequestSequence)
+                return;
             this.worksError = '';
             this.worksChecked = new Date().toISOString();
             if (['loading', 'empty', 'list-error'].includes(this.state.scenario))
@@ -820,7 +867,7 @@ export class DesktopAdapter {
             this.emit();
         }
         catch (error) {
-            if (epoch === this.epoch && this.state.signedIn && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
+            if (epoch === this.epoch && requestSequence === this.worksRequestSequence && this.state.signedIn && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
                 this.worksError = errorText(error);
                 if (!this.worksChecked)
                     this.state.scenario = 'list-error';
@@ -829,7 +876,7 @@ export class DesktopAdapter {
             throw error;
         }
         finally {
-            if (epoch === this.epoch) {
+            if (epoch === this.epoch && requestSequence === this.worksRequestSequence) {
                 this.worksLoading = false;
                 this.emit();
             }
@@ -838,7 +885,7 @@ export class DesktopAdapter {
     mapWork(raw, old) {
         return { ...(old ?? { network: '', services: [], files: [], sessions: [], config: blankConfig() }),
             id: raw.id, name: raw.name, description: raw.id, desired: raw.desiredState, observed: raw.observedState, status: workState(raw.observedState),
-            error: typeof raw.lastError === 'string' ? raw.lastError : raw.lastError?.message, controlVersion: raw.controlVersion, checkedAt: new Date().toISOString(), statusError: undefined, updated: raw.updatedAt ?? '', color: 'blue', icon: 'grid',
+            error: typeof raw.lastError === 'string' ? raw.lastError : raw.lastError?.message, controlVersion: raw.controlVersion, checkedAt: new Date().toISOString(), statusError: old?.accessRevoked ? old.statusError : undefined, updated: raw.updatedAt ?? '', color: 'blue', icon: 'grid',
             config: { ...(old?.config ?? blankConfig()), revision: raw.desiredRevision ?? 0, activeRevision: raw.activeRevision ?? 0 } };
     }
     async checkCatalog() {
@@ -883,7 +930,9 @@ export class DesktopAdapter {
             if (raw.id !== id)
                 throw new DesktopError('INVALID_RESPONSE', 'The Work status response does not match the original Work.');
             const previous = this.getWork(id), wasUsable = previous && this.project(previous).usable;
-            const work = this.mergeWork(raw, sequence, mutation);
+            const work = this.mergeWork(raw, sequence, mutation, true);
+            if (work && sequence === this.workReads.get(id) && mutation === (this.workMutations.get(id) || 0) && !work.accessRevoked)
+                work.statusError = undefined;
             const sync = this.workSync.get(id);
             if (sync && sequence > sync.after && sync.generation === mutation && mutation === (this.workMutations.get(id) || 0) && sequence >= (this.workReads.get(id) || 0) && (typeof raw.controlVersion !== 'number' || raw.controlVersion >= (work?.controlVersion || 0)))
                 sync.work = false;
@@ -896,8 +945,13 @@ export class DesktopAdapter {
         catch (error) {
             if (epoch === this.epoch && sequence >= (this.workReads.get(id) || 0) && mutation === (this.workMutations.get(id) || 0) && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
                 const work = this.getWork(id);
-                if (work)
+                if (work) {
                     work.statusError = errorText(error);
+                    if (error instanceof DesktopError && [401, 403, 404, 410].includes(error.httpStatus || 0)) {
+                        work.accessRevoked = true;
+                        this.revokeWorkEntries(id, errorText(error));
+                    }
+                }
                 if (error instanceof DesktopError && error.httpStatus === 404 && this.coordinationOperations().some(op => op.workId === id && op.action === 'delete' && op.state === 'succeeded')) {
                     this.deletedWorks.add(id);
                     this.state.works = this.state.works.filter(w => w.id !== id);
@@ -935,29 +989,60 @@ export class DesktopAdapter {
         this.emit();
         return work;
     }
-    async loadServices(id) {
+    loadServices(id) {
+        const key = `${this.epoch}:${this.workMutations.get(id) || 0}:${id}`, previous = this.serviceLoads.get(key);
+        if (previous)
+            return previous;
+        const pending = this.readServices(id).finally(() => { if (this.serviceLoads.get(key) === pending)
+            this.serviceLoads.delete(key); });
+        this.serviceLoads.set(key, pending);
+        return pending;
+    }
+    async readServices(id) {
         const work = this.getWork(id);
+        if (!work)
+            return;
+        const epoch = this.epoch, mutation = this.workMutations.get(id) || 0, sequence = ++this.serviceSequence;
+        this.serviceReads.set(id, sequence);
+        const current = () => epoch === this.epoch && this.getWork(id) === work && mutation === (this.workMutations.get(id) || 0) && this.serviceReads.get(id) === sequence;
         (work.resourceLoading ??= {}).services = true;
         this.emit();
         try {
-            const value = await this.request(`works/${part(id)}/services`);
+            // The outer coordinator scopes deduplication to the current control generation.
+            const value = await this.requestOnce(`works/${part(id)}/services`);
+            if (!current())
+                return;
             if (!Array.isArray(value.services))
                 throw new DesktopError('INVALID_RESPONSE', 'Service listing is incomplete.');
             (work.resourceChecked ??= {}).services = new Date().toISOString();
             work.services = value.services.map((raw) => ({ id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState), ports: (raw.access?.ports ?? []).filter((p) => /^https?:/.test(p.url ?? '')).sort((a, b) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p) => p.port), error: typeof raw.lastError === 'string' ? raw.lastError : raw.lastError?.message }));
             if (work.resourceErrors)
                 delete work.resourceErrors.services;
+            for (const key of this.serviceEntryKeys(id)) {
+                const service = work.services.find(service => key.startsWith(`${id}:${service.id}:`));
+                if (!service || !service.enabled || ['Stopped', 'Removed'].includes(service.observed) || !service.ports.some(port => key === `${id}:${service.id}:${port}`))
+                    this.revokeServiceEntry(key);
+            }
+            // Metadata confirms state, never a previously denied entry's authorization.
             const domain = work.services.find(service => service.domain)?.domain;
             work.network = domain ? domain.split('.').slice(1, -1).join('.') : '';
             this.emit();
         }
         catch (error) {
-            (work.resourceErrors ??= {}).services = errorText(error);
+            if (current()) {
+                (work.resourceErrors ??= {}).services = errorText(error);
+                if (error instanceof DesktopError && [401, 403].includes(error.httpStatus || 0)) {
+                    this.serviceDenials.set(id, { version: (this.serviceDenials.get(id)?.version || 0) + 1, reason: errorText(error) });
+                    this.revokeWorkEntries(id, errorText(error));
+                }
+            }
             throw error;
         }
         finally {
-            work.resourceLoading.services = false;
-            this.emit();
+            if (current()) {
+                work.resourceLoading.services = false;
+                this.emit();
+            }
         }
     }
     async loadConfiguration(id) {
@@ -1589,41 +1674,81 @@ export class DesktopAdapter {
             void imageCheck.then(() => { if (epoch === this.epoch && this.chatSelection === `${id}:${sessionId}` && this.imageCapabilities.get(id)?.value)
                 void this.loadSession(id, sessionId).catch(() => undefined); });
     }
-    serviceEntryUrl(workId, serviceId, port) { return this.entries.get(`${workId}:${serviceId}:${port}`)?.entryUrl ?? null; }
-    serviceEntryError(workId, serviceId, port) { return this.entryErrors.get(`${workId}:${serviceId}:${port}`) || ''; }
+    serviceEntryKeys(workId) {
+        return new Set([...this.entries.keys(), ...this.entryPromises.keys(), ...this.entryErrors.keys()].filter(key => key.startsWith(`${workId}:`)));
+    }
+    revokeServiceEntry(key, reason = '') {
+        this.entryVersions.set(key, (this.entryVersions.get(key) || 0) + 1);
+        this.entries.delete(key);
+        this.entryChecks.delete(key);
+        // Cache invalidation is not authorization recovery. A tuple denial survives
+        // stopped/removed metadata until a fresh explicit matching entry succeeds.
+        if (reason)
+            this.entryErrors.set(key, reason);
+    }
+    revokeWorkEntries(workId, reason = '') { for (const key of this.serviceEntryKeys(workId))
+        this.revokeServiceEntry(key, reason); }
+    serviceEntryAdmitted(workId, serviceId, port) {
+        const work = this.getWork(workId), service = work?.services.find(service => service.id === serviceId);
+        return !!work && this.project(work).usable && !!service?.enabled && service.observed === 'Ready' && service.ports.includes(port);
+    }
+    serviceEntryUrl(workId, serviceId, port) {
+        const work = this.getWork(workId);
+        return work && this.project(work).retainWorkspace && !this.serviceEntryError(workId, serviceId, port) ? this.entries.get(`${workId}:${serviceId}:${port}`)?.entryUrl ?? null : null;
+    }
+    serviceEntryError(workId, serviceId, port) {
+        const key = `${workId}:${serviceId}:${port}`, denial = this.serviceDenials.get(workId);
+        return this.entryErrors.get(key) || (denial && this.entryServiceGrants.get(key) !== denial.version ? denial.reason : '');
+    }
+    serviceEntryPending(workId, serviceId, port) { return this.entryPromises.has(`${workId}:${serviceId}:${port}`); }
     servicePreviewUnconfirmed(workId, serviceId, port) { const entry = this.entries.get(`${workId}:${serviceId}:${port}`); return entry?.checked && entry.embed === 'unknown'; }
-    async ensureServiceEntry(workId, serviceId, port) {
+    ensureServiceEntry(workId, serviceId, port, retry = false) {
         const key = `${workId}:${serviceId}:${port}`;
-        if (this.entries.has(key))
-            return;
-        const epoch = this.epoch;
-        let pending = this.entryPromises.get(key);
-        if (!pending) {
-            this.entryErrors.delete(key);
-            pending = (async () => {
-                try {
-                    const value = await this.request('service-entries', 'POST', { workId, serviceId, port });
-                    this.entries.set(key, value);
-                    void this.serviceFrameLoaded(workId, serviceId, port).catch(error => { if (epoch === this.epoch && this.entries.get(key) === value) {
+        const old = this.entryPromises.get(key);
+        if (old)
+            return old;
+        if (this.entries.has(key) || !retry && !!this.serviceEntryError(workId, serviceId, port) || !this.serviceEntryAdmitted(workId, serviceId, port))
+            return Promise.resolve();
+        const epoch = this.epoch, version = this.entryVersions.get(key) || 0, serviceVersion = this.serviceDenials.get(workId)?.version || 0;
+        const current = () => epoch === this.epoch && version === (this.entryVersions.get(key) || 0) && serviceVersion === (this.serviceDenials.get(workId)?.version || 0);
+        let pending;
+        pending = (async () => {
+            try {
+                const value = await this.request('service-entries', 'POST', { workId, serviceId, port });
+                if (!current() || !this.serviceEntryAdmitted(workId, serviceId, port))
+                    return;
+                if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port || !value.entryId || !value.entryUrl || !value.origin)
+                    throw new DesktopError('INVALID_RESPONSE', 'The application entry does not match the requested Work, Service and port.');
+                this.entries.set(key, value);
+                this.entryErrors.delete(key);
+                this.entryServiceGrants.set(key, serviceVersion);
+                void this.serviceFrameLoaded(workId, serviceId, port).catch(error => {
+                    if (current() && this.entries.get(key) === value) {
                         value.checked = true;
                         value.checkError = errorText(error);
                         this.emit();
-                    } });
-                }
-                catch (error) {
-                    if (epoch === this.epoch)
+                    }
+                });
+            }
+            catch (error) {
+                if (current()) {
+                    if (error instanceof DesktopError && [401, 403].includes(error.httpStatus || 0))
+                        this.revokeServiceEntry(key, errorText(error));
+                    else
                         this.entryErrors.set(key, errorText(error));
-                    throw error;
                 }
-                finally {
-                    if (this.entryPromises.get(key) === pending)
-                        this.entryPromises.delete(key);
+                throw error;
+            }
+            finally {
+                if (this.entryPromises.get(key) === pending)
+                    this.entryPromises.delete(key);
+                if (epoch === this.epoch)
                     this.emit();
-                }
-            })();
-            this.entryPromises.set(key, pending);
-        }
-        await pending;
+            }
+        })();
+        this.entryPromises.set(key, pending);
+        this.emit();
+        return pending;
     }
     serviceFrameLoaded(workId, serviceId, port) {
         const key = `${workId}:${serviceId}:${port}`;
@@ -1640,30 +1765,109 @@ export class DesktopAdapter {
         const entry = this.entries.get(key);
         if (!entry)
             return;
-        const epoch = this.epoch;
-        // The first iframe load can be the ticket bootstrap, before the application response arrives.
-        for (let attempt = 0; attempt < 12 && epoch === this.epoch && this.entries.get(key) === entry; attempt++) {
-            const value = await this.request(`service-entries/${part(entry.entryId)}`);
-            entry.embed = value.embed === 'blocked' ? 'denied' : value.embed;
-            entry.entryUrl = entry.origin + '/';
-            this.emit();
-            if (value.embed !== 'unknown') {
+        const epoch = this.epoch, version = this.entryVersions.get(key) || 0;
+        const current = () => epoch === this.epoch && this.entries.get(key) === entry && version === (this.entryVersions.get(key) || 0);
+        try {
+            // The first iframe load can be ticket bootstrap, before the application response.
+            for (let attempt = 0; attempt < 12 && current(); attempt++) {
+                const value = await this.request(`service-entries/${part(entry.entryId)}`);
+                if (!current())
+                    return;
+                if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port)
+                    throw new DesktopError('SERVICE_IDENTITY_CHANGED', 'The application entry identity changed.', 403);
+                entry.embed = value.embed === 'blocked' ? 'denied' : value.embed;
+                entry.entryUrl = entry.origin + '/';
+                entry.checkError = '';
+                this.emit();
+                if (value.embed !== 'unknown') {
+                    entry.checked = true;
+                    this.emit();
+                    return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 250));
+            }
+            if (current()) {
                 entry.checked = true;
                 this.emit();
-                return;
             }
-            await new Promise(resolve => setTimeout(resolve, 250));
         }
-        if (epoch === this.epoch && this.entries.get(key) === entry) {
-            entry.checked = true;
-            this.emit();
+        catch (error) {
+            if (current()) {
+                if (error instanceof DesktopError && [401, 403, 404, 410].includes(error.httpStatus || 0))
+                    this.revokeServiceEntry(key, errorText(error));
+                else {
+                    entry.checked = true;
+                    entry.checkError = errorText(error);
+                }
+                this.emit();
+            }
+            throw error;
         }
     }
     serviceEmbed(workId, serviceId, port) { return this.entries.get(`${workId}:${serviceId}:${port}`)?.embed; }
     servicePreviewError(workId, serviceId, port) { return this.entries.get(`${workId}:${serviceId}:${port}`)?.checkError || ''; }
-    async directServiceURL(workId, serviceId, port) { return (await this.request('service-entries', 'POST', { workId, serviceId, port })).entryUrl; }
+    async directServiceURL(workId, serviceId, port) {
+        const key = `${workId}:${serviceId}:${port}`, epoch = this.epoch, version = this.entryVersions.get(key) || 0, serviceVersion = this.serviceDenials.get(workId)?.version || 0;
+        const current = () => epoch === this.epoch && version === (this.entryVersions.get(key) || 0) && serviceVersion === (this.serviceDenials.get(workId)?.version || 0);
+        if (!this.serviceEntryAdmitted(workId, serviceId, port))
+            throw new DesktopError('SERVICE_ENTRY_UNAVAILABLE', 'Confirm the Work and Service status before opening the application.');
+        try {
+            // A new tab needs its own one-use bootstrap ticket, not an iframe's cached ticket.
+            const value = await this.request('service-entries', 'POST', { workId, serviceId, port });
+            if (!current() || !this.serviceEntryAdmitted(workId, serviceId, port))
+                throw new DesktopError('CONNECTION_CHANGED', 'Application access changed while preparing the entry.');
+            if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port || !value.entryId || !value.entryUrl || !value.origin)
+                throw new DesktopError('INVALID_RESPONSE', 'The application entry does not match the requested Work, Service and port.');
+            this.entryErrors.delete(key);
+            this.entryServiceGrants.set(key, serviceVersion);
+            return value.entryUrl;
+        }
+        catch (error) {
+            if (current() && error instanceof DesktopError && [401, 403].includes(error.httpStatus || 0)) {
+                this.revokeServiceEntry(key, errorText(error));
+                this.emit();
+            }
+            throw error;
+        }
+    }
     localLink(workId, serviceId, port) { return `${location.origin}/works/${part(workId)}/services/${part(serviceId)}?port=${port}`; }
-    async readLogs(workId, serviceId) { const value = await this.request(`works/${part(workId)}/services/${part(serviceId)}/logs?tailLines=100`); this.logs.set(serviceId, value); this.emit(); }
+    serviceLogs(workId, serviceId) { return this.logStates.get(`${workId}:${serviceId}`); }
+    readLogs(workId, serviceId) {
+        const key = `${workId}:${serviceId}`, previous = this.logRequests.get(key);
+        if (previous)
+            return previous;
+        const epoch = this.epoch, state = this.logStates.get(key) ?? { loading: false, error: '', checkedAt: '' };
+        this.logStates.set(key, state);
+        state.loading = true;
+        state.error = '';
+        let pending;
+        pending = (async () => {
+            try {
+                const value = await this.request(`works/${part(workId)}/services/${part(serviceId)}/logs?tailLines=100`);
+                if (epoch !== this.epoch || this.logStates.get(key) !== state)
+                    return;
+                state.value = value;
+                state.checkedAt = new Date().toISOString();
+                this.logs.set(key, value);
+            }
+            catch (error) {
+                if (epoch === this.epoch && this.logStates.get(key) === state)
+                    state.error = errorText(error);
+                throw error;
+            }
+            finally {
+                if (this.logRequests.get(key) === pending)
+                    this.logRequests.delete(key);
+                if (epoch === this.epoch && this.logStates.get(key) === state) {
+                    state.loading = false;
+                    this.emit();
+                }
+            }
+        })();
+        this.logRequests.set(key, pending);
+        this.emit();
+        return pending;
+    }
     accepted(value, workId, kind) {
         if (!value.operationId)
             throw new DesktopError('INVALID_RESPONSE', 'The acceptance response has no Operation ID. Check known operations.');
@@ -1676,6 +1880,8 @@ export class DesktopAdapter {
                 work.lifecycleIntent = { action: operation.action, operationId: operation.id, sequence, baseVersion: work.controlVersion };
                 work.operationId = operation.id;
             }
+            if (['stop', 'delete'].includes(operation.action))
+                this.revokeWorkEntries(operation.workId);
             this.requireWorkSync(operation.workId);
         }
         if (kind === 'Import Work' && typeof value.name === 'string' && value.name)
@@ -2451,18 +2657,16 @@ export class DesktopAdapter {
         if (epoch !== this.epoch)
             throw new Error('The connection changed; file results must be checked under the original account.');
         if (response.status === 207) {
-            let result;
             try {
-                result = mutationResults(await response.text());
+                return mutationResults(await response.text(), this.fileURL(id, '/')).results;
             }
             catch {
-                return [{ path, status: 'unknown', message: 'The per-path result could not be read. Refresh affected paths before trying again.' }];
+                return [{ path, status: 'unknown', message: 'The per-path result could not be verified. Refresh affected paths before trying again.' }];
             }
-            return [...result.succeeded.map(path => ({ path, status: 'succeeded', message: 'Confirmed' })), ...result.failed.map(path => ({ path, status: 'failed', message: 'Path failed; inspect its status.' }))];
         }
         if (!response.ok) {
             const value = await response.json().catch(() => ({}));
-            return [{ path, status: 'failed', httpStatus: response.status, message: response.status === 412 ? 'The target changed. Your input is kept. Reread the target and explicitly confirm its version before retrying.' : value.message ?? `Request failed (${response.status}).` }];
+            return [{ path, status: 'failed', httpStatus: response.status, message: response.status === 412 ? 'The target changed. Your input is kept. Reread the target and explicitly confirm its version before retrying.' : value.message ?? response.headers.get('X-Piwork-File-Error') ?? `Request failed (${response.status}).` }];
         }
         return [{ path, status: 'succeeded', message: 'Confirmed', modified: fileVersion(response.headers.get('Last-Modified')) }];
     }
@@ -2521,51 +2725,88 @@ export class DesktopAdapter {
         this.emit();
         return results;
     }
+    fileAdmissionReason(id) {
+        const work = this.getWork(id);
+        return !work ? 'The original Work is no longer available.' : !this.project(work).usable ? this.project(work).explanation || 'Confirm the Work is running before submitting file changes.' : '';
+    }
     async upload(id, directory, files, overwrite = false) {
-        const epoch = this.epoch;
-        const results = [];
-        for (const file of files) {
-            if (!file.name || /[\\/\x00]/.test(file.name))
-                throw new Error('Invalid upload file name.');
-            const path = (directory === '/' ? '' : directory) + '/' + file.name;
-            const key = `${id}:${path}`;
-            this.uploadProgress.set(id, { workId: id, path, phase: 'Checking target', index: files.indexOf(file) + 1, count: files.length });
+        const epoch = this.epoch, results = [];
+        const publish = () => { if (epoch === this.epoch) {
+            this.state.transfers = [...results];
+            this.transfersByWork.set(id, [...results]);
             this.emit();
-            let existing;
-            try {
-                existing = await fetch(this.fileURL(id, path), { method: 'HEAD', credentials: 'same-origin' });
+        } };
+        try {
+            for (const [index, file] of files.entries()) {
+                if (!file.name || /[\\/\x00]/.test(file.name))
+                    throw new Error('Invalid upload file name.');
+                const path = (directory === '/' ? '' : directory) + '/' + file.name, key = `${id}:${path}`;
+                const admission = () => epoch !== this.epoch ? 'The connection changed; upload was stopped.' : this.fileAdmissionReason(id);
+                let reason = admission();
+                if (reason) {
+                    results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` });
+                    publish();
+                    continue;
+                }
+                this.uploadProgress.set(id, { workId: id, path, phase: 'Checking target', index: index + 1, count: files.length });
+                this.emit();
+                // Emitting progress may itself reveal a newer accepted control. Check at dispatch.
+                reason = admission();
+                if (reason) {
+                    results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` });
+                    publish();
+                    continue;
+                }
+                let existing;
+                try {
+                    existing = await fetch(this.fileURL(id, path), { method: 'HEAD', credentials: 'same-origin' });
+                }
+                catch {
+                    results.push({ path, status: 'failed', notSubmitted: true, message: 'Target check failed. No upload was submitted; original input is kept.' });
+                    publish();
+                    continue;
+                }
+                reason = admission();
+                if (reason) {
+                    results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` });
+                    publish();
+                    continue;
+                }
+                if (!existing.ok && existing.status !== 404) {
+                    results.push({ path, status: 'failed', notSubmitted: true, httpStatus: existing.status, message: `Target check failed (${existing.status}). No upload was submitted.` });
+                    publish();
+                    continue;
+                }
+                const version = fileVersion(existing.headers.get('Last-Modified')), absent = existing.status === 404;
+                const intent = this.uploadIntents.get(key);
+                if (!absent && (!overwrite || !intent || intent.file !== file || intent.absent || intent.modified !== version)) {
+                    this.uploadIntents.set(key, { file, modified: version, absent: false });
+                    results.push({ path, status: 'failed', notSubmitted: true, needsConsent: true, message: intent && overwrite ? 'Target changed since confirmation. Confirm the newly checked version again.' : version ? 'Target exists. Confirm overwrite of this checked version.' : 'Target exists without a modification time. Overwrite cannot protect against concurrent changes; explicit consent is required.' });
+                    publish();
+                    continue;
+                }
+                const headers = { 'Content-Type': file.type || 'application/octet-stream', ...(absent ? { 'If-None-Match': '*' } : version ? { 'If-Unmodified-Since': intent.modified } : {}) };
+                reason = admission();
+                if (reason) {
+                    results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` });
+                    publish();
+                    continue;
+                }
+                const written = await this.writeFile(id, path, 'PUT', file, headers);
+                results.push(...written);
+                publish();
+                if (written.every(r => r.status === 'succeeded'))
+                    this.uploadIntents.delete(key);
+                // Unknown PUTs retain their original evidence; no PUT is automatically repeated.
             }
-            catch {
-                results.push({ path, status: 'unknown', message: 'Target check failed. Original upload input is kept.' });
-                continue;
-            }
-            if (epoch !== this.epoch)
-                throw new Error('The connection changed; upload was stopped.');
-            if (!existing.ok && existing.status !== 404) {
-                results.push({ path, status: 'failed', message: `Target check failed (${existing.status}).` });
-                continue;
-            }
-            const version = fileVersion(existing.headers.get('Last-Modified'));
-            const absent = existing.status === 404;
-            const intent = this.uploadIntents.get(key);
-            if (!absent && (!overwrite || !intent || intent.file !== file || intent.absent || intent.modified !== version)) {
-                this.uploadIntents.set(key, { file, modified: version, absent: false });
-                results.push({ path, status: 'failed', needsConsent: true, message: intent && overwrite ? 'Target changed since confirmation. Confirm the newly checked version again.' : version ? 'Target exists. Confirm overwrite of this checked version.' : 'Target exists without a modification time. Overwrite cannot protect against concurrent changes; explicit consent is required.' });
-                continue;
-            }
-            const headers = { 'Content-Type': file.type || 'application/octet-stream', ...(absent ? { 'If-None-Match': '*' } : version ? { 'If-Unmodified-Since': intent.modified } : {}) };
-            const written = await this.writeFile(id, path, 'PUT', file, headers);
-            results.push(...written);
-            if (written.every(r => r.status === 'succeeded'))
-                this.uploadIntents.delete(key);
-            // Retain the original File on 412/unknown. A retry must re-probe and, when
-            // the version changed, ask for consent again; never retry a PUT here.
+            return results;
         }
-        this.state.transfers = results;
-        this.transfersByWork.set(id, results);
-        this.uploadProgress.delete(id);
-        this.emit();
-        return results;
+        finally {
+            if (epoch === this.epoch) {
+                this.uploadProgress.delete(id);
+                publish();
+            }
+        }
     }
     async saveConfiguration(id, config) { const raw = synchronizeConfiguration(config); await this.request(`works/${part(id)}/configuration`, 'PUT', { configuration: raw }); this.getWork(id).config = structuredClone(config); this.emit(); }
     async replaceSkill(id, name) { const work = this.getWork(id); const skills = Array.from(new Set([...work.config.skills, name])); await this.request(`works/${part(id)}/configuration/skills`, 'PUT', { skills }); work.config = { ...work.config, skills }; this.emit(); }

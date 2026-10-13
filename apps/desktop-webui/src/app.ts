@@ -1,3 +1,5 @@
+import { NewWorkDraftRevision, hasUnsentDrafts, createSubmissionBlocked } from './draft-revision.js';
+import { FileMutationResults, UnknownFileLocks, type FileMutationTarget } from './file-results.js';
 import { exportWorkConflict, exportSnapshotAvailable } from './export-admission.js';
 import { ExportFlows, type ExportFlow } from './export-flow.js';
 import { activityGroups } from './chat-projection.js';
@@ -157,6 +159,18 @@ let pendingWebCommand: {key:string;text:string;kind:string;workId?:string;sessio
 let importSignInSuspended = false;
 const actions = new ActionState(() => render());
 let latestCreateToken = 0;
+const createDraft = new NewWorkDraftRevision();
+const unknownFiles = new UnknownFileLocks();
+type FileModalAttempt = { workId: string; operation: 'copy' | 'move' | 'delete'; overwrite: boolean; ledger: FileMutationResults; selected: Set<string>; feedbackRecords: Set<ActionRecord> };
+let fileAttempt: FileModalAttempt | undefined;
+let modalTransfers: TransferResult[] = [];
+let uploadPickerTarget: { epoch: number; workId: string; directory: string } | undefined;
+let pendingUploadTarget: { epoch: number; workId: string; directory: string } | undefined;
+function resetCreateFields() {
+  view.createName = ''; view.createAdvanced = false; view.createImage = '';
+  view.createSkillMode = 'defaults'; view.createPackageMode = 'defaults';
+  view.createSkills = []; view.createPackages = []; view.createAgents = ''; view.createJson = '';
+}
 const exportFlows = new ExportFlows(adapter, {
   deliver: (flow, url) => downloadURL(url, flow.workName),
   changed: () => render(),
@@ -176,6 +190,7 @@ function beginExport(work: Work, stopConfirmed = false, record?: ActionRecord) {
 
 class ViewChanged extends Error {}
 let sessionChoice = 0, areaChoice = 0, serviceChoice = 0, selectionRequest = 0, modalChoice = 0;
+let servicePreparationScheduled = false;
 const fileSelections = new Map<string, number>();
 const viewKey = () => `${location.hash}:${view.modal}:${modalChoice}:${view.tab}:${view.path}:${view.service}:${view.port}:${sessionChoice}`;
 const actionLabels: Record<string, string> = {
@@ -187,7 +202,7 @@ const actionLabels: Record<string, string> = {
   'service-details': 'Reading logs', 'service-action': 'Submitting Service control', 'confirm-service-control': 'Submitting Service control', 'refresh-logs': 'Reading logs',
   'open-app': 'Opening application', 'open-window': 'Opening application', 'retry-service-entry': 'Preparing application', 'check-preview': 'Checking preview',
   'refresh-files': 'Reading workspace', 'file-path': 'Reading directory', 'open-file': 'Reading file', 'open-source': 'Reading file', 'save-file': 'Saving file', 'dirty-save': 'Saving file',
-  'confirm-upload-overwrite': 'Uploading files', 'confirm-folder': 'Creating folder', 'confirm-transfer': 'Transferring files', 'confirm-file-delete': 'Deleting files',
+  'confirm-upload-overwrite': 'Uploading files', 'confirm-folder': 'Creating folder', 'retry-selected-files': 'Retrying selected paths', 'confirm-transfer': 'Transferring files', 'confirm-file-delete': 'Deleting files',
   'save-config': 'Saving settings', 'dirty-config-save': 'Saving settings', 'refresh-config': 'Reading settings', 'apply-config': 'Submitting Apply', 'confirm-core-skills': 'Copying Skill', 'check-catalog': 'Reading catalog',
   'confirm-install': 'Submitting package', 'confirm-remove-package': 'Removing package', 'confirm-import': 'Submitting import', 'prepare-export': 'Preparing Export',
   'export': 'Preparing Export', 'view-snapshot': 'Checking snapshot', 'save-export-file': 'Checking original download', 'check-export-flow': 'Checking export', 'resume-export-flow': 'Resuming export',
@@ -202,7 +217,7 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
   if(action==='send-message' && w && !imageDrafts.get(draftKey(w)).length && !view.literalSlash && /^\/(model|thinking)\s*$/.test((view.drafts[draftKey(w)] || '').trim())) return;
   if (['sign-in', 'sign-out', 'confirm-switch-core', 'confirm-reset-browser-access'].includes(action)) kind = 'identity';
   else if (['create-work', 'start-work', 'confirm-stop', 'confirm-delete'].includes(action)) kind = 'lifecycle';
-  else if (['save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'upload-input'].includes(action)) kind = 'files';
+  else if (['save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'upload-input'].includes(action)) kind = 'files';
   else if (['save-config', 'dirty-config-save', 'apply-config', 'confirm-core-skills', 'confirm-install', 'confirm-remove-package'].includes(action)) kind = 'configuration';
   else if (action === 'service-action' || action === 'confirm-service-control') { if (action === 'service-action' && ['stop', 'remove'].includes(el.dataset.control || '')) return; kind = 'service'; }
   else if (['new-session', 'send-message', 'cancel-run','save-model','cancel-pi-request','retry-pi-request'].includes(action)) kind = 'agent';
@@ -221,16 +236,16 @@ async function dispatchAction(el: HTMLElement, perform?: (record?: ActionRecord)
   const action=el.dataset.action || '',target=el.cloneNode(false) as HTMLElement;
   const execute=perform ?? ((record?:ActionRecord)=>handleAction(action,target,record));
   if (!intent) { await execute(); return; }
+  if (intent.action === 'create-work' && createSubmissionBlocked(actions.records.values(), view.createName)) { toast('The original Create Work result is still pending or unknown. Check that original request before creating another Work.'); return; }
   if (intent.work && intent.kind === 'lifecycle' && exportFlows.workControlBlocked(intent.work)) { toast('The original Stop or Export submission is not confirmed. Check its original progress before another Work control.'); return; }
   if (intent.work && ['export', 'prepare-export'].includes(intent.action || '') && exportWorkConflict(actions.records.values(), intent.work)) { toast('An original Work control is still pending or unknown. Check that control before Export.'); return; }
   const conflict = actions.conflict(intent); if (conflict) { toast(`${conflict.target} · ${conflict.phase}. Wait for confirmation.`); return; }
   const record = actions.begin(intent)!;
   try { await execute(record); actions.finish(record);
-    if (['refresh-files'].includes(action)) actions.reviewed(record.work, ['files']);
     if (['refresh-config'].includes(action)) actions.reviewed(record.work, ['configuration']);
   }
   catch (error) {
-    if (!(error instanceof ViewChanged)) actions.fail(record, error); else actions.finish(record);
+    if (!(error instanceof ViewChanged)) { const unknown = record.blocked; actions.fail(record, error); record.blocked ||= unknown; } else actions.finish(record);
     if (record.action === 'create-work' && record.token < latestCreateToken) throw new ViewChanged();
     throw error;
   }
@@ -251,6 +266,7 @@ function downloadProgressMarkup(snapshotID: string) {
 let toastTimer: ReturnType<typeof setTimeout>;
 let lastFocus: HTMLElement | null = null;
 let pendingNav: (() => void | Promise<void>) | null = null;
+let sourceGuardReturn: { epoch: number; route: string; modal: string; data: Record<string, string>; focus: string } | undefined;
 let composition = false;
 let lastRoute = "";
 const route = () => {
@@ -400,10 +416,18 @@ function openModal(name: string, data: Record<string, string> = {}) {
   view.formName = "";
   view.formDestination = view.path;
   view.formOverwrite = false;
+  fileAttempt = undefined; modalTransfers = [];
   view.deleteConfirmed = false;
   render();
 }
 function closeModal() {
+  if (['dirty-file', 'dirty-settings'].includes(view.modal) && sourceGuardReturn) {
+    const original = sourceGuardReturn; sourceGuardReturn = undefined; pendingNav = null;
+    if (original.epoch === adapter.identityEpoch && original.route === location.hash) {
+      modalChoice++; view.modal = original.modal; view.data = { ...original.data }; view.modalError = '';
+      render(); root.querySelector<HTMLElement>(original.focus)?.focus({ preventScroll: true }); return;
+    }
+  }
   modalChoice++;
   if (view.modal === 'new-work' || view.modal === 'import') clearNameFieldError(false);
   if(view.modal==='pi-request-detail' && requestNavigationCurrent()){
@@ -464,7 +488,7 @@ function works() {
   const all = adapter.state.works.filter((w) =>
     w.name.toLowerCase().includes(view.search.toLowerCase()),
   );
-  return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${btn(`${icon("upload")} Import Work`, "import")}${btn(`${icon("plus")} New Work`, "new-work", "primary")}</div></div>${adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(s === "loading" || adapter.worksLoading && !adapter.worksChecked) ? `<div class="loading-list">${[1, 2, 3].map(() => '<div class="skeleton"></div>').join("")}<p>Loading your Works…</p>${btn("Check connection", "check-connection")}</div>` : s === "list-error" ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "retry-works", "primary")) : s === "empty" ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><button class="work-name" data-action="open-work" data-id="${w.id}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></button><div class="work-status">${workStatus(w)}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${adapter.state.works.length} Works <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div>${btn("Create a Work", "new-work", "quiet")}</div></main>`;
+  return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${btn(`${icon("refresh")} Refresh Works`, "retry-works")}${btn(`${icon("upload")} Import Work`, "import")}${btn(`${icon("plus")} New Work`, "new-work", "primary")}</div></div>${adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(s === "loading" || adapter.worksLoading && !adapter.worksChecked) ? `<div class="loading-list">${[1, 2, 3].map(() => '<div class="skeleton"></div>').join("")}<p>Loading your Works…</p>${btn("Check connection", "check-connection")}</div>` : s === "list-error" ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "retry-works", "primary")) : s === "empty" ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><button class="work-name" data-action="open-work" data-id="${w.id}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></button><div class="work-status">${workStatus(w)}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${adapter.state.works.length} Works <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div>${btn("Create a Work", "new-work", "quiet")}</div></main>`;
 }
 function quickAction(w: Work) {
   const action = adapter.project(w).action;
@@ -481,7 +505,7 @@ function workHeader(w: Work, standalone = false) {
 }
 function workPage(w: Work) {
   const settings = route()[2] === "settings";
-  return `${workHeader(w)}<nav class="work-tabs" aria-label="Work areas"><div>${["Services", "Files", "Chat"].map((t) => btn(`${icon(t === "Services" ? "grid" : t === "Files" ? "folder" : "chat", 17)} ${t}`, `tab-${t}`, !settings && view.tab === t ? "tab active" : "tab")).join("")}</div>${btn(`${icon("settings", 17)} Settings`, "settings", settings ? "tab active" : "tab")}</nav>${w.status === "Degraded" ? `<div class="work-notice">${icon("info", 15)} Some capabilities need attention. Available Services remain usable. ${btn("View details", "manage-services", "text-button")}</div>` : ""}${settings ? settingsPage(w) : !adapter.project(w).usable ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${view.layout === "service-only" ? "chat-hidden" : ""}"><section class="main-panel">${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><aside class="agent-side">${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
+  return `${workHeader(w)}<nav class="work-tabs" aria-label="Work areas"><div>${["Services", "Files", "Chat"].map((t) => btn(`${icon(t === "Services" ? "grid" : t === "Files" ? "folder" : "chat", 17)} ${t}`, `tab-${t}`, !settings && view.tab === t ? "tab active" : "tab")).join("")}</div>${btn(`${icon("settings", 17)} Settings`, "settings", settings ? "tab active" : "tab")}</nav>${w.status === "Degraded" ? `<div class="work-notice">${icon("info", 15)} Some capabilities need attention. Available Services remain usable. ${btn("View details", "manage-services", "text-button")}</div>` : ""}${!settings && adapter.project(w).retainWorkspace && !adapter.project(w).usable ? feedback("Current Work status is not confirmed. Your open workspace is retained; new runtime and file changes are unavailable until checked.", "warning", btn("Check Work", "check-work", "small", `data-id="${esc(w.id)}"`)) : ""}${settings ? settingsPage(w) : !adapter.project(w).retainWorkspace ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${view.layout === "service-only" ? "chat-hidden" : ""}"><section class="main-panel">${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><aside class="agent-side">${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
 }
 function workState(w: Work) {
   const state = adapter.project(w);
@@ -495,7 +519,8 @@ function workState(w: Work) {
 }
 function services(w: Work) {
   if (!w.resourceChecked?.services && !w.resourceErrors?.services) return `<div class="local-loading" role="status" aria-busy="true">Loading Services…</div>`;
-  const s = activeService(w);
+  const s = route()[0] === "app" ? w.services.find(service => service.id === route()[2]) : activeService(w);
+  if (s && route()[0] !== "app" && !s.ports.includes(view.port)) view.port = s.ports[0] || 0;
   if (w.resourceErrors?.services && !w.resourceChecked?.services) return feedback(esc(w.resourceErrors.services), "warning", btn("Check connection", "check-connection"));
   if (!s || !s.ports.length)
     return empty(
@@ -511,7 +536,7 @@ function services(w: Work) {
   const keepStartingFrame = s.observed === 'Starting' && s.enabled && s.ports.includes(view.port) && w.desired === 'running'
     && (w.status === 'Ready' || w.status === 'Degraded')
     && [...root.querySelectorAll<HTMLIFrameElement>('iframe[data-service-key]')].some(frame => frame.dataset.serviceKey === serviceKey);
-  return `${w.resourceErrors?.services?feedback(esc(w.resourceErrors.services),"warning",btn("Check connection","check-connection","small")):""}<div class="service-toolbar"><div class="service-selector"><span class="app-indicator">${icon("grid", 16)}</span><select id="service-select" aria-label="Service">${list.map((x) => `<option value="${x.id}" ${x.id === s.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select><select id="port-select" aria-label="Declared Web port">${s.ports.map((p) => `<option ${p === view.port ? "selected" : ""}>${p}</option>`).join("")}</select></div><div class="service-identity">${badge(s.observed)}<span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div><div class="actions focus-actions">${adapter.requestPresence.get(`${w.id}:${s.name}`)?.hasRecords ? btn("Agent requests", "service-requests", "quiet small") : ""}${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn("Copy local link", "copy-local", "small")) : ""}${adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : s.observed !== "Ready" && !keepStartingFrame ? empty("grid", `${esc(s.name)} is ${s.observed.toLowerCase()}`, esc(s.error || "This Service is disabled. Starting the Work does not re-enable it."), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : empty("grid", "Opening application", `Preparing ${esc(s.name)} · port ${view.port}`)}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection ${w.resourceChecked?.services?` · Retrieved ${esc(new Date(w.resourceChecked.services).toLocaleTimeString())}`:""}</span><span>Shared workspace ${icon("folder", 13)}</span></div>`;
+  return `${w.resourceErrors?.services?feedback(esc(w.resourceErrors.services),"warning",btn("Check connection","check-connection","small")):""}<div class="service-toolbar"><div class="service-selector"><span class="app-indicator">${icon("grid", 16)}</span><select id="service-select" aria-label="Service">${list.map((x) => `<option value="${x.id}" ${x.id === s.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select><select id="port-select" aria-label="Declared Web port">${s.ports.map((p) => `<option ${p === view.port ? "selected" : ""}>${p}</option>`).join("")}</select></div><div class="service-identity">${badge(s.observed)}<span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div><div class="actions focus-actions">${adapter.requestPresence.get(`${w.id}:${s.name}`)?.hasRecords ? btn("Agent requests", "service-requests", "quiet small") : ""}${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn("Copy local link", "copy-local", "small")) : ""}${adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : s.observed !== "Ready" && !keepStartingFrame ? empty("grid", `${esc(s.name)} is ${s.observed.toLowerCase()}`, esc(s.error || "This Service is disabled. Starting the Work does not re-enable it."), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : adapter.serviceEntryPending(w.id, s.id, view.port) ? empty("grid", "Opening application", `Preparing ${esc(s.name)} · port ${view.port}`) : empty("grid", "Application entry not confirmed", s.ports.includes(view.port) ? "Check the current Work and Service status, then retry this entry." : "The requested port is no longer declared by this Service. Select a declared port or return to the Work.", btn("Retry", "retry-service-entry", "primary", s.ports.includes(view.port) ? "" : "disabled"))}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection ${w.resourceChecked?.services?` · Retrieved ${esc(new Date(w.resourceChecked.services).toLocaleTimeString())}`:""}</span><span>Shared workspace ${icon("folder", 13)}</span></div>`;
 }
 function agent(w: Work, focus: boolean) {
   const readingSessions = !w.resourceChecked?.agent && !w.resourceErrors?.agent;
@@ -535,7 +560,7 @@ function agent(w: Work, focus: boolean) {
   const draftImages=imageDrafts.get(draftKey(w,session?.id || ""));const imageWaiting=draftImages.length>0 && (!w.resourceChecked?.agent || session?.loading && !session.checkedAt || draftImages.some(image=>image.reading));
   const webDraft=!view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
   const stopAndSend=supported && active && !activeUnconfirmed && !webDraft;
-  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout==="chat-only" && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${activeUnconfirmed ? feedback(esc(observed?.error || "Checking the active Run…"), "warning", btn("Check status", "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? `A Run from Service ${esc(activeRun.source.serviceName || "")} is active.` : "A Run is active in another Session.", "warning", btn("View active Run", "active-run", "small")) : ""}${ownRun && (ownRun.error || ["failed","interrupted"].includes(ownRun.status)) ? feedback(esc(ownRun.error || `Run ${ownRun.status}`),"warning",btn("Check original Run","run-details","small",`data-run-id="${esc(ownRun.id)}"`)+(ownRun.id===w.run?.id && ["interrupted","accepted","running","cancelling"].includes(ownRun.status)?btn("Resume original Run","resume-run","small",`data-run-id="${esc(ownRun.id)}"`):'')) : ""}${run ? `<div class="run-strip"><button data-action="run-details" data-run-id="${esc(run.id)}"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(modelDisplayName(run.actualModel))} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", `data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status === "cancelling" ? "disabled" : ""}`) : ""}</div>` : session?.runs?.length ? btn("Run details", "run-details", "text-button", `data-run-id="${esc(session.runs.at(-1)!.id)}"`) : ""}<div class="composer">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}<div class="composer-actions">${btn(icon("upload",16),"add-chat-images","icon-button quiet",'title="Add images" aria-label="Add images"')}${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${btn(stopAndSend ? "Stop and send" : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}`, `aria-label="${stopAndSend ? "Stop and send" : "Send message"}" ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}"` : ""} ${imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
+  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout==="chat-only" && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${activeUnconfirmed ? feedback(esc(observed?.error || "Checking the active Run…"), "warning", btn("Check status", "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? `A Run from Service ${esc(activeRun.source.serviceName || "")} is active.` : "A Run is active in another Session.", "warning", btn("View active Run", "active-run", "small")) : ""}${ownRun && (ownRun.error || ["failed","interrupted"].includes(ownRun.status)) ? feedback(esc(ownRun.error || `Run ${ownRun.status}`),"warning",btn("Check original Run","run-details","small",`data-run-id="${esc(ownRun.id)}"`)+(ownRun.id===w.run?.id && ["interrupted","accepted","running","cancelling"].includes(ownRun.status)?btn("Resume original Run","resume-run","small",`data-run-id="${esc(ownRun.id)}"`):'')) : ""}${run ? `<div class="run-strip"><button data-action="run-details" data-run-id="${esc(run.id)}"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(modelDisplayName(run.actualModel))} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", `data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status === "cancelling" ? "disabled" : ""}`) : ""}</div>` : session?.runs?.length ? btn("Run details", "run-details", "text-button", `data-run-id="${esc(session.runs.at(-1)!.id)}"`) : ""}<div class="composer">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}<div class="composer-actions">${btn(icon("upload",16),"add-chat-images","icon-button quiet",'title="Add images" aria-label="Add images"')}${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${btn(stopAndSend ? "Stop and send" : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}`, `aria-label="${stopAndSend ? "Stop and send" : "Send message"}" ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
 }
 function modelComposer(w:Work,sessionId:string) {
  const {name,thinking,state}=chatSettings(w,sessionId);
@@ -877,7 +902,7 @@ function modalMarkup() {
             }<label class="field">AGENTS.md<textarea id="create-agents" rows="4" placeholder="Use Core default instructions">${esc(view.createAgents)}</textarea></label>${btn("Import AGENTS.md file", "create-import-agents", "small")}<label class="field">Full configuration JSON<textarea id="create-json" rows="4" class="mono" placeholder="Optional public configuration overrides">${esc(view.createJson)}</textarea></label></div>`
           : ""
       }<div class="merge-summary"><strong>Configuration to create</strong><span>Image: ${esc(view.createImage || "Core default")}</span><span>Skills: ${view.createSkillMode === "defaults" ? "Core defaults" : view.createSkillMode === "none" ? "None" : esc(view.createSkills.join(", ") || "None chosen")}</span><span>Pi Packages: ${view.createPackageMode === "defaults" ? "Core defaults" : view.createPackageMode === "none" ? "None" : esc(view.createPackages.join(", ") || "None chosen")}</span><span>Advanced fields override Core defaults; explicit selections override those fields.</span></div>`;
-      footer = `${cancel()}${btn("Create Work", "create-work", "primary")}`;
+      footer = `${cancel()}${btn("Create Work", "create-work", "primary", createSubmissionBlocked(actions.records.values(), view.createName) ? "disabled" : "")}`;
       break;
     case "stop-work":
       title = `Stop ${esc(target?.name)}?`;
@@ -988,7 +1013,7 @@ function modalMarkup() {
               )
               .join("")}</select></label>`
       }<p class="muted">The destination must be inside this same Work.</p>${view.formOverwrite ? feedback(`These exact destinations already exist: <code>${esc(view.data.overwritePath)}</code>. Continuing replaces every listed target, including its child paths.`, "warning") : ""}`;
-      footer = `${cancel()}${btn(view.formOverwrite ? "Overwrite target" : view.data.transfer === "copy" ? "Copy here" : view.data.transfer === "rename" ? "Rename" : "Move here", "confirm-transfer", view.formOverwrite ? "danger-solid" : "primary")}`;
+      footer = `${cancel()}${btn(view.formOverwrite ? "Overwrite target" : view.data.transfer === "copy" ? "Copy here" : view.data.transfer === "rename" ? "Rename" : "Move here", "confirm-transfer", view.formOverwrite ? "danger-solid" : "primary", fileAttempt?.ledger.hasResults ? "disabled" : "")}`;
       break;
     case "file-delete":
       title = "Delete selected files?";
@@ -999,7 +1024,7 @@ function modalMarkup() {
         .join(
           "",
         )}</div><p class="danger-text">Folders are deleted recursively, including every child path. The workspace root cannot be deleted.</p>`;
-      footer = `${cancel()}${btn("Delete paths", "confirm-file-delete", "danger-solid")}`;
+      footer = `${cancel()}${btn("Delete paths", "confirm-file-delete", "danger-solid", fileAttempt?.ledger.hasResults ? "disabled" : "")}`;
       break;
     case "dirty-file":
       title = "Save your file changes?";
@@ -1099,10 +1124,11 @@ function modalMarkup() {
       break;
     }
   }
-  return `<dialog id="modal" aria-labelledby="modal-title" class="modal ${view.modal==="new-work"?"modal-create":""} ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head"><h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", 'aria-label="Close dialog"')}</div><div class="modal-body">${view.modalError && view.modal!=="new-work" ? feedback(esc(view.modalError), "warning") : ""}${body}</div><div class="modal-action-status ${view.modal==="new-work"?"create-action-status":""}" data-action-status-slot>${view.modal==="new-work" && view.modalError?feedback(esc(view.modalError),"warning"):""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
+  return `<dialog id="modal" aria-labelledby="modal-title" class="modal ${view.modal==="new-work"?"modal-create":""} ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head"><h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", 'aria-label="Close dialog"')}</div><div class="modal-body">${view.modalError && view.modal!=="new-work" ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal==="new-work"?"create-action-status":""}" data-action-status-slot>${view.modal==="new-work" && view.modalError?feedback(esc(view.modalError),"warning"):""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
 function serviceDetails(s: Service, w: Work) {
-  return `<dl><dt>Domain</dt><dd><code>${esc(s.domain)}</code></dd><dt>Declared Web ports</dt><dd>${s.ports.length ? s.ports.join(", ") : "No Web ports declared"}</dd><dt>Enabled</dt><dd>${s.enabled ? "Yes" : "No · persists across Work restarts"}</dd><dt>Observed</dt><dd>${badge(s.observed)}</dd>${s.operationId ? `<dt>Operation</dt><dd><button class="inline-link" data-action="operation" data-id="${s.operationId}">${s.operationId}</button></dd>` : ""}</dl>${s.error ? feedback(esc(s.error), "warning") : ""}<div class="service-controls">${btn("Start", "service-action", "small", `data-control="start" data-id="${s.id}" ${!adapter.project(w).usable || s.observed === "Ready" ? "disabled" : ""}`)}${btn("Stop", "service-action", "small", `data-control="stop" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled ? "disabled" : ""}`)}${btn("Restart", "service-action", "small", `data-control="restart" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn("Retry", "service-action", "small", `data-control="retry" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}${btn("Remove", "service-action", "small danger", `data-control="remove" data-id="${s.id}" ${!adapter.project(w).usable ? "disabled" : ""}`)}</div><div class="logs-heading"><h3>Log snapshot</h3>${btn(`${icon("refresh", 14)} Refresh logs`, "refresh-logs", "small")}</div><pre class="logs">${esc(adapter.logs.get(s.id)?.text ?? adapter.logs.get(s.id)?.reason ?? "Logs have not been retrieved.")}</pre><p class="muted small-text">${esc(adapter.logs.get(s.id)?.status ?? "Not retrieved")} · Collected ${esc(adapter.logs.get(s.id)?.collectedAt ?? "Not provided")} · ${adapter.logs.get(s.id)?.truncated ? "Output truncated" : "Bounded snapshot"}. This is not a live stream.</p>`;
+  const logs = adapter.serviceLogs(w.id, s.id);
+  return `<dl><dt>Domain</dt><dd><code>${esc(s.domain)}</code></dd><dt>Declared Web ports</dt><dd>${s.ports.length ? s.ports.join(", ") : "No Web ports declared"}</dd><dt>Enabled</dt><dd>${s.enabled ? "Yes" : "No · persists across Work restarts"}</dd><dt>Observed</dt><dd>${badge(s.observed)}</dd>${s.operationId ? `<dt>Operation</dt><dd><button class="inline-link" data-action="operation" data-id="${s.operationId}">${s.operationId}</button></dd>` : ""}</dl>${s.error ? feedback(esc(s.error), "warning") : ""}<div class="service-controls">${btn("Start", "service-action", "small", `data-control="start" data-id="${s.id}" ${!adapter.project(w).usable || s.observed === "Ready" ? "disabled" : ""}`)}${btn("Stop", "service-action", "small", `data-control="stop" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled ? "disabled" : ""}`)}${btn("Restart", "service-action", "small", `data-control="restart" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn("Retry", "service-action", "small", `data-control="retry" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}${btn("Remove", "service-action", "small danger", `data-control="remove" data-id="${s.id}" ${!adapter.project(w).usable ? "disabled" : ""}`)}</div><div class="logs-heading"><h3>Log snapshot</h3>${btn(`${icon("refresh", 14)} Refresh logs`, "refresh-logs", "small")}</div>${logs?.loading ? '<p role="status">Reading this Service’s log snapshot…</p>' : ""}${logs?.error ? feedback(esc(logs.error), "warning", btn("Retry logs", "refresh-logs", "small")) : ""}<pre class="logs">${esc(logs?.value?.text ?? logs?.value?.reason ?? "Logs have not been retrieved.")}</pre><p class="muted small-text">${esc(logs?.value?.status ?? "Not retrieved")} · Collected ${esc(logs?.value?.collectedAt ?? "Not provided")} · ${logs?.value?.truncated ? "Output truncated" : "Bounded snapshot"}. This is not a live stream.</p>`;
 }
 let focusReturn = "";
 function focusKey(el: HTMLElement | null) {
@@ -1138,16 +1164,85 @@ function targetWork(el: HTMLElement) {
     ) || current()
   );
 }
+function assertFileAdmission(workId: string, targets: readonly FileMutationTarget[]) {
+  const work = adapter.getWork(workId);
+  if (!work || !adapter.project(work).usable) throw new Error('This Work is not ready for new file changes. Check its current state.');
+  const conflict = unknownFiles.conflict(workId, targets);
+  if (conflict) throw new Error(`The earlier result for ${conflict.paths.join(' and ')} is unknown. Refresh its original directories before a new action.`);
+}
+function retainFileResults(workId: string, targets: readonly FileMutationTarget[], rows: TransferResult[], record?: ActionRecord) {
+  const normalized = new FileMutationResults(targets); normalized.record(targets, rows);
+  const results = [...normalized.results];
+  if (results.some(result => result.status === 'unknown')) {
+    for (const target of targets) {
+      const belongs = (path: string) => [target.source, target.destination].some(root => root && (path === root || path.startsWith(root + '/')));
+      if (results.some(result => result.status === 'unknown' && belongs(result.path))) unknownFiles.add(workId, target, record);
+    }
+    if (record && actions.current(record)) record.blocked = true;
+  }
+  adapter.state.transfers = results; adapter.transfersByWork.set(workId, results);
+  return results;
+}
+function confirmFileAttempt(record: ActionRecord | undefined, results: readonly TransferResult[]) {
+  if (!record || !actions.current(record)) return;
+  // Only retainFileResults binds a lock to an actually submitted unknown path.
+  // A cumulative summary must not copy an earlier unknown into a later retry.
+  actions.confirm(record, `${results.filter(result => result.status === 'succeeded').length} paths confirmed; ${results.filter(result => result.status !== 'succeeded').length} need review`);
+}
+async function performFileAttempt(attempt: FileModalAttempt, targets: readonly FileMutationTarget[], record?: ActionRecord) {
+  const epoch = adapter.identityEpoch, origin = viewKey();
+  if (record) attempt.feedbackRecords.add(record);
+  const confirm = (results: readonly TransferResult[]) => { for (const original of attempt.feedbackRecords) confirmFileAttempt(original, results); };
+  for (const target of targets) {
+    if (epoch !== adapter.identityEpoch || origin !== viewKey()) throw new ViewChanged();
+    assertFileAdmission(attempt.workId, [target]);
+    const rows = await adapter.transfer(attempt.workId, attempt.operation, [target.source], target.destination, attempt.overwrite);
+    if (epoch !== adapter.identityEpoch) throw new ViewChanged();
+    const retained = retainFileResults(attempt.workId, [target], rows, record);
+    attempt.ledger.record([target], retained); attempt.selected.delete(target.source);
+    const combined = [...attempt.ledger.results];
+    adapter.state.transfers = combined; adapter.transfersByWork.set(attempt.workId, combined);
+    if (fileAttempt === attempt) modalTransfers = combined;
+    if (origin !== viewKey()) { confirm(combined); throw new ViewChanged(); }
+    render();
+  }
+  const results = [...attempt.ledger.results]; confirm(results);
+  if (record) void actions.refresh(record, () => adapter.loadDirectory(attempt.workId, view.path));
+  if (results.every(result => result.status === 'succeeded')) { view.selected = []; closeModal(); }
+  else { view.modalError = 'Review each path below. Select only confirmed failures to retry; unknown results require a read-only refresh.'; render(); }
+}
+function fileModalResults() {
+  let rows = fileAttempt ? fileAttempt.ledger.results : modalTransfers;
+  if (!rows.length && current()) {
+    // A modal can close without resolving its original mutation. Bring the
+    // original path evidence and read-only recovery back into the new panel.
+    const sources = ['file-transfer', 'file-delete'].includes(view.modal) ? decodePaths(view.data.paths) : [];
+    const name = view.formName.trim(), validRename = !!name && !['.', '..'].includes(name) && !/[\\/\x00-\x1f\x7f]/.test(name);
+    const targets = sources.map(source => ({ source, ...(view.modal === 'file-transfer' ? {
+      destination: view.data.transfer === 'rename'
+        ? (validRename ? joinPath(source.slice(0, source.lastIndexOf('/')) || '/', name) : source)
+        : joinPath(view.formDestination, source.split('/').pop()!),
+    } : {}) }));
+    const locks = [...new Set(targets.map(target => unknownFiles.conflict(current()!.id, [target])).filter(lock => !!lock))];
+    rows = locks.flatMap(lock => lock!.paths.map(path => ({ path, status: 'unknown' as const, message: 'An earlier change to this original path has an unknown result. Reread before another explicit action.' })));
+  }
+  if (!rows.length) return '';
+  const eligible = fileAttempt?.ledger.retryTargets(fileAttempt.ledger.targets.map(target => target.source)) || [];
+  return `<section class="transfer-results"><h3>Path results</h3>${rows.map(row => `<div class="transfer-row"><code>${esc(row.path)}</code><span>${esc(row.status)} · ${esc(row.message)}</span></div>`).join('')}${eligible.map(target => `<label class="check-row"><input type="checkbox" data-retry-source="${esc(target.source)}" ${fileAttempt?.selected.has(target.source) ? 'checked' : ''}> Retry ${esc(target.source)}</label>`).join('')}${eligible.length ? btn('Retry selected failed paths', 'retry-selected-files', 'small', fileAttempt?.selected.size ? '' : 'disabled') : ''}${rows.some(row => row.status === 'unknown') ? feedback('The original result is unknown. Refresh the source and destination before a new explicit action.', 'warning', btn('Refresh original paths', 'refresh-files', 'small')) : ''}</section>`;
+}
 async function saveFile(record?: ActionRecord) {
   const w = current();
   if (!w) return false;
   if (view.fileWriteUncertain) throw new Error("Reread the saved version and explicitly approve its baseline before retrying.");
+  assertFileAdmission(w.id, [{ source: view.file }]);
   const content = view.fileDraft;
-  const path = view.file, key = location.hash;
+  const path = view.file, key = location.hash, epoch = adapter.identityEpoch;
   const result = await adapter.saveFile(w.id, path, content, view.fileBaseline, view.fileUnprotected, confirmed => {
     if (record) { actions.confirm(record, 'Saved'); if (!confirmed.modified) { record.refresh = 'refreshing'; render(); } }
     if (key === location.hash && view.file === path) { view.fileOriginal = content; view.fileBaseline = confirmed.modified || ''; toast('File saved. Confirming the saved version.'); }
   });
+  if (epoch !== adapter.identityEpoch) throw new ViewChanged();
+  retainFileResults(w.id, [{ source: path }], [result], record);
   if (record) { record.refresh = result.message === 'Confirmed' ? '' : 'failed'; record.refreshError = result.message; }
   if (key !== location.hash || path !== view.file) throw new ViewChanged();
   if (result.status === "succeeded") {
@@ -1200,7 +1295,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
   const w = targetWork(el);
   const currentWork = current();
   const s = currentWork ? activeService(currentWork) : undefined;
-  if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete'].includes(action)) throw new Error('This Work is not ready for new runtime or file changes. Check its current state.');
+  if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files'].includes(action)) throw new Error('This Work is not ready for new runtime or file changes. Check its current state.');
   switch (action) {
     case 'save-default-core': await adapter.savePreferences(view.coreAddress || adapter.state.core.address); break;
     case 'clear-default-core': await adapter.savePreferences(null); break;
@@ -1273,9 +1368,11 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       render();
       break;
     case "operations": await stay(adapter.recoverOperations()); openModal("operations"); break;
+    case "new-work":
+      if (createDraft.open()) resetCreateFields();
+      openModal('new-work'); break;
     case "account":
     case "connection":
-    case "new-work":
     case "import":
     case "agent-menu":
     case "manage-services":
@@ -1397,11 +1494,12 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
               }));
       if (view.createAgents) config.agents = view.createAgents;
       if (record) latestCreateToken = record.token;
-      const op = await stay(adapter.createWork(
-        view.createName.trim(),
-        config,
-        view.createImage,
-      ));
+      const token = createDraft.capture(), origin = ownedView(), epoch = adapter.identityEpoch;
+      const op = await adapter.createWork(view.createName.trim(), config, view.createImage);
+      if (epoch !== adapter.identityEpoch) throw new ViewChanged();
+      if (op.id && op.workId) createDraft.accept(token);
+      if (record) { record.businessId = op.id; actions.confirm(record, `Accepted · ${op.id}`); }
+      if (origin !== ownedView()) throw new ViewChanged();
       show(op);
       break;
     }
@@ -1575,11 +1673,25 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       break;
     case "open-source":
       if (currentWork) {
+        sourceGuardReturn = (dirty() || view.configDirty) && view.modal ? { epoch: adapter.identityEpoch, route: location.hash, modal: view.modal, data: { ...view.data }, focus: focusKey(el) } : undefined;
         await guard(async () => {
-          areaChoice++;
-          view.tab = "Files";
-          await stay(openFile(currentWork, el.dataset.path!));
-          render();
+          const originalDetail = sourceGuardReturn; sourceGuardReturn = undefined;
+          const epoch = adapter.identityEpoch, origin = viewKey();
+          try { await openFile(currentWork, el.dataset.path!); }
+          catch (error) {
+            if (epoch === adapter.identityEpoch && origin === viewKey() && !(error instanceof ViewChanged)) {
+              if (originalDetail) { modalChoice++; view.modal = originalDetail.modal; view.data = { ...originalDetail.data }; }
+              view.modalError = error instanceof Error ? error.message : String(error); toast(view.modalError);
+            }
+            throw error;
+          }
+          // openFile verifies the captured view before publishing its own path.
+          // That deliberate path change must not be mistaken for navigation away.
+          if (epoch !== adapter.identityEpoch || current()?.id !== currentWork.id) throw new ViewChanged();
+          areaChoice++; view.tab = "Files"; view.config = null; view.configDirty = false;
+          view.modal = ""; modalChoice++;
+          history.replaceState(null, "", location.pathname + location.search + `#/work/${encodeURIComponent(currentWork.id)}`);
+          lastRoute = location.hash; render();
         });
       }
       break;
@@ -1613,12 +1725,12 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       }
       break;
     case 'retry-service-entry':
-      if (currentWork && s) await stay(adapter.ensureServiceEntry(currentWork.id, s.id, view.port)); break;
+      if (currentWork && s) await stay(adapter.ensureServiceEntry(currentWork.id, s.id, view.port, true)); break;
     case 'check-preview':
       if (currentWork && s) await stay(adapter.serviceFrameLoaded(currentWork.id, s.id, view.port)); break;
     case "service-details":
-      if (currentWork) await stay(adapter.readLogs(currentWork.id, el.dataset.id!));
       openModal("service-details", { serviceId: el.dataset.id! });
+      if (currentWork) await stay(adapter.readLogs(currentWork.id, el.dataset.id!));
       break;
     case "service-action": {
       const control = el.dataset.control!;
@@ -1649,7 +1761,15 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       render();
       break;
     case "refresh-files":
-      if (currentWork) { await stay(adapter.loadDirectory(currentWork.id, view.path)); if (view.file) await stay(adapter.readFile(currentWork.id, view.file)); }
+      if (currentWork) {
+        const epoch = adapter.identityEpoch, snapshot = unknownFiles.reviewSnapshot(currentWork.id), origin = ownedView();
+        const directories = [...new Set([view.path, ...snapshot.directories])], read: string[] = [];
+        for (const directory of directories) { await adapter.loadDirectory(currentWork.id, directory); if (epoch !== adapter.identityEpoch) throw new ViewChanged(); read.push(directory); }
+        const reviewed = unknownFiles.completeReview(snapshot, read);
+        for (const identity of reviewed.actions) { const original = actions.records.get(identity.key); if (original && original.token === identity.token && original.generation === identity.generation) actions.review(original); }
+        if (origin !== ownedView()) throw new ViewChanged();
+        if (view.file) await stay(adapter.readFile(currentWork.id, view.file));
+      }
       if (view.file && currentWork) {
         const fresh = currentWork.files.find((f) => f.path === view.file);
         if (fresh && (dirty() || view.fileWriteUncertain)) {
@@ -1727,18 +1847,27 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       openModal("new-folder");
       break;
     case "confirm-upload-overwrite":
-      if (currentWork) { const results = await stay(adapter.upload(currentWork.id, view.path, pendingUploadFiles, true)); filesConfirmed(results); pendingUploadFiles = pendingUploadFiles.filter(file => results.some(r => r.path.endsWith("/" + file.name) && r.status !== "succeeded")); if (!pendingUploadFiles.length) closeModal(); else { view.modalError = "Some uploads need review. Inputs are kept; review Transfer results before confirming again."; render(); } }
+      if (currentWork) {
+        if (!pendingUploadTarget || pendingUploadTarget.epoch !== adapter.identityEpoch || pendingUploadTarget.workId !== currentWork.id || pendingUploadTarget.directory !== view.path) throw new Error('The upload target changed. Choose these files again in the intended Work and directory.');
+        const files = [...pendingUploadFiles], directory = pendingUploadTarget.directory, targets = files.map(file => ({ source: joinPath(directory, file.name) }));
+        const epoch = adapter.identityEpoch, origin = viewKey(); assertFileAdmission(currentWork.id, targets);
+        const rows = await adapter.upload(currentWork.id, directory, files, true);
+        if (epoch !== adapter.identityEpoch) throw new ViewChanged();
+        const results = retainFileResults(currentWork.id, targets, rows, record); confirmFileAttempt(record, results);
+        if (origin !== viewKey()) throw new ViewChanged(); modalTransfers = results;
+        pendingUploadFiles = files.filter(file => results.some(row => row.path === joinPath(directory, file.name) && row.status !== 'succeeded'));
+        if (!pendingUploadFiles.length) closeModal(); else { view.modalError = 'Some uploads need review. Successful paths will not be submitted again.'; render(); }
+      }
       break;
     case "confirm-folder":
       if (currentWork) {
-        const name = validateName(view.formName);
-        const results = await stay(adapter.transfer(
-          currentWork.id,
-          "mkdir",
-          ["new-folder"],
-          joinPath(view.path, name),
-        ));
-        if (filesConfirmed(results)) closeModal();
+        const path = joinPath(view.path, validateName(view.formName)), targets = [{ source: path }];
+        const epoch = adapter.identityEpoch, origin = viewKey(); assertFileAdmission(currentWork.id, targets);
+        const results = await adapter.transfer(currentWork.id, 'mkdir', ['new-folder'], path);
+        if (epoch !== adapter.identityEpoch) throw new ViewChanged();
+        const retained = retainFileResults(currentWork.id, targets, results, record); confirmFileAttempt(record, retained);
+        if (origin !== viewKey()) throw new ViewChanged(); modalTransfers = retained;
+        if (filesConfirmed(retained)) closeModal();
       }
       break;
     case "file-rename":
@@ -1754,29 +1883,24 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     }
     case "confirm-transfer":
       if (currentWork) {
+        if (fileAttempt?.ledger.hasResults) throw new Error('Select only the confirmed failed paths to retry.');
         const paths = decodePaths(view.data.paths);
-        const destinations = paths.map((path) =>
-          view.data.transfer === "rename"
-            ? joinPath(
-                path.slice(0, path.lastIndexOf("/")) || "/",
-                validateName(view.formName),
-              )
-            : joinPath(view.formDestination, path.split("/").pop()!),
-        );
-        const conflicts = destinations.filter((p) =>
-          currentWork.files.some((f) => f.path === p),
-        );
-        if (conflicts.length && !view.formOverwrite) {
-          view.formOverwrite = true;
-          view.data.overwritePath = conflicts.join(", ");
-          render();
-          break;
-        }
-        const all: TransferResult[] = [];
-        for (let i = 0; i < paths.length; i++) all.push(...await stay(adapter.transfer(currentWork.id, view.data.transfer === "copy" ? "copy" : "move", [paths[i]], destinations[i], view.formOverwrite)));
-        adapter.state.transfers = all;
-        adapter.transfersByWork.set(currentWork.id, all);
-        if (filesConfirmed(all)) { view.selected = []; closeModal(); }
+        const targets = paths.map(source => ({ source, destination: view.data.transfer === 'rename'
+          ? joinPath(source.slice(0, source.lastIndexOf('/')) || '/', validateName(view.formName))
+          : joinPath(view.formDestination, source.split('/').pop()!) }));
+        assertFileAdmission(currentWork.id, targets);
+        const conflicts = targets.map(target => target.destination).filter(path => currentWork.files.some(file => file.path === path));
+        if (conflicts.length && !view.formOverwrite) { view.formOverwrite = true; view.data.overwritePath = conflicts.join(', '); render(); break; }
+        const attempt: FileModalAttempt = { workId: currentWork.id, operation: view.data.transfer === 'copy' ? 'copy' : 'move', overwrite: view.formOverwrite, ledger: new FileMutationResults(targets), selected: new Set(), feedbackRecords: new Set() };
+        fileAttempt = attempt;
+        await performFileAttempt(attempt, targets, record);
+      }
+      break;
+    case 'retry-selected-files':
+      if (fileAttempt && currentWork?.id === fileAttempt.workId) {
+        const attempt = fileAttempt, targets = attempt.ledger.retryTargets([...attempt.selected]);
+        if (!targets.length) throw new Error('Select a confirmed failed path to retry. Unknown or successful paths cannot be repeated.');
+        await performFileAttempt(attempt, targets, record);
       }
       break;
     case "file-delete": {
@@ -1787,15 +1911,17 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     }
     case "confirm-file-delete":
       if (currentWork) {
-        const results = await stay(adapter.transfer(
-          currentWork.id,
-          "delete",
-          decodePaths(view.data.paths),
-        ));
-        if (filesConfirmed(results)) { view.selected = []; closeModal(); }
+        if (fileAttempt?.ledger.hasResults) throw new Error('Select only the confirmed failed paths to retry.');
+        const targets = decodePaths(view.data.paths).map(source => ({ source }));
+        assertFileAdmission(currentWork.id, targets);
+        const attempt: FileModalAttempt = { workId: currentWork.id, operation: 'delete', overwrite: false, ledger: new FileMutationResults(targets), selected: new Set(), feedbackRecords: new Set() };
+        fileAttempt = attempt;
+        await performFileAttempt(attempt, targets, record);
       }
       break;
     case "upload":
+      if (!currentWork || !adapter.project(currentWork).usable) throw new Error('Confirm the current Work before choosing files to upload.');
+      uploadPickerTarget = { epoch: adapter.identityEpoch, workId: currentWork.id, directory: view.path };
       root.querySelector<HTMLInputElement>("#upload-input")?.click();
       break;
     case "download-file": {
@@ -2056,13 +2182,12 @@ function validateName(name: string) {
   return result;
 }
 async function openFile(w: Work, path: string) {
-  const key = viewKey();
+  const key = viewKey(), epoch = adapter.identityEpoch;
   await adapter.readFile(w.id, path);
-  if (key !== viewKey()) throw new ViewChanged();
+  if (key !== viewKey() || epoch !== adapter.identityEpoch) throw new ViewChanged();
   const f = w.files.find((f) => f.path === path);
   if (!f) {
-    toast("This file is not available in the workspace.");
-    return;
+    throw new Error("This file is not available in the workspace.");
   }
   if (f.kind === "directory") {
     view.path = f.path;
@@ -2122,8 +2247,8 @@ function render() {
     const w = adapter.getWork(r[1]);
     if (w) {
       view.service = r[2];
-      view.port = Number(r[3]) || 3000;
-      html = `${workHeader(w, true)}<div class="standalone-label">Independent application window · Closing this tab does not stop the Service</div><main class="standalone-app">${!adapter.project(w).usable ? `${view.layout !== 'workspace' ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ''}${workState(w)}` : services(w)}</main>`;
+      view.port = Number(r[3]);
+      html = `${workHeader(w, true)}<div class="standalone-label">Independent application window · Closing this tab does not stop the Service</div><main class="standalone-app">${!adapter.project(w).retainWorkspace ? `${view.layout !== 'workspace' ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ''}${workState(w)}` : services(w)}</main>`;
     } else html = works();
   } else if (r[0] === "work") {
     const w = adapter.getWork(r[1]);
@@ -2141,6 +2266,10 @@ function render() {
   for (const frame of root.querySelectorAll<HTMLIFrameElement>('iframe[data-service-key]')) if (!frame.dataset.observed) { frame.dataset.observed = 'true'; frame.addEventListener('load', () => { const [workId, serviceId, port] = frame.dataset.serviceKey!.split(':'); void adapter.serviceFrameLoaded(workId, serviceId, Number(port)).catch(error => toast(error.message)); }); }
   renderActionStates(root, actions, location.hash, el => actionIntent(el), record => !record.resource?.startsWith('service:') || record.resource === `service:${view.data.serviceId || (current() ? activeService(current()!)?.id : view.service)}${record.kind === 'service' ? '' : `:${view.port}`}`);
   for(const el of root.querySelectorAll<HTMLElement>('[data-history-image]'))if(!el.dataset.imageObserved){el.dataset.imageObserved='true';imageObserver.observe(el);}
+  if (!servicePreparationScheduled) {
+    servicePreparationScheduled = true;
+    queueMicrotask(() => { servicePreparationScheduled = false; prepareSelectedEntry(); });
+  }
   const dialog = root.querySelector<HTMLDialogElement>("#modal");
   if (dialog) {
     if (!dialog.open) dialog.showModal();
@@ -2220,6 +2349,7 @@ root.addEventListener("click", (e) => {
 root.addEventListener("input", (e) => {
   const input = e.target as HTMLInputElement | HTMLTextAreaElement;
   const value = input.value;
+  if (["create-name", "create-image", "create-agents", "create-json"].includes(input.id)) createDraft.edit();
   switch (input.id) {
     case "search":
       view.search = value;
@@ -2291,8 +2421,12 @@ root.addEventListener("input", (e) => {
 });
 root.addEventListener("change", (e) => {
   const input = e.target as HTMLInputElement | HTMLSelectElement;
+  // Chat images have their own validation and identity-bound draft handler.
+  if (input.id === 'chat-image-input') return;
   const value = input.value;
   const checked = (input as HTMLInputElement).checked;
+  if (input.dataset.createSkill || input.dataset.createPackage || ["create-skill-mode", "create-package-mode"].includes(input.id)) createDraft.edit();
+  if (input.dataset.retrySource && fileAttempt) { if (checked) fileAttempt.selected.add(input.dataset.retrySource); else fileAttempt.selected.delete(input.dataset.retrySource); render(); }
   const w = current();
   if(input.id==='pi-service-filter' && w){view.data.serviceName=value;void adapter.loadRequests(w.id,value).catch(error=>toast(error.message));render();}
   if (input.dataset.fileSelect) {
@@ -2386,13 +2520,19 @@ async function handleFiles(input: HTMLInputElement, record?: ActionRecord) {
   const files = Array.from(input.files || []);
   if (!files.length) return;
   const w = current();
-  if (input.id === "upload-input" && w) {
-    const directory = view.path;
-    const results = await adapter.upload(w.id, directory, files);
-    if (record) { actions.confirm(record, `${results.filter(result => result.status === 'succeeded').length} files confirmed; review per-path results`); void actions.refresh(record, () => adapter.loadDirectory(w.id, directory)); }
+  if (input.id === "upload-input") {
+    const selected = uploadPickerTarget; uploadPickerTarget = undefined;
+    if (!w || !selected || selected.epoch !== epoch || selected.workId !== w.id || selected.directory !== view.path) throw new Error('Upload not submitted: the original Work, directory, or identity changed while choosing files. Return to the intended Work and choose files again.');
+    pendingUploadTarget = selected;
+    const directory = selected.directory, targets = files.map(file => ({ source: joinPath(directory, file.name) }));
+    assertFileAdmission(w.id, targets);
+    const rows = await adapter.upload(w.id, directory, files);
+    if (epoch !== adapter.identityEpoch) throw new ViewChanged();
+    const results = retainFileResults(w.id, targets, rows, record); confirmFileAttempt(record, results);
+    if (record) void actions.refresh(record, () => adapter.loadDirectory(w.id, directory));
     if (!valid()) throw new ViewChanged();
     pendingUploadFiles = files.filter(file => results.some(result => result.path.endsWith("/" + file.name) && result.status !== "succeeded"));
-    if (pendingUploadFiles.length) openModal("upload-overwrite");
+    if (pendingUploadFiles.length) { openModal("upload-overwrite"); modalTransfers = results; }
     render();
   } else if (input.id === "work-file-input") {
     if (!files[0].name.endsWith(".work"))
@@ -2430,7 +2570,7 @@ async function handleFiles(input: HTMLInputElement, record?: ActionRecord) {
       );
     }
     if (!valid()) throw new ViewChanged();
-    if (input.id === "create-agents-input") view.createAgents = text;
+    if (input.id === "create-agents-input") { createDraft.edit(); view.createAgents = text; }
     else if (view.config) {
       if (input.id === "json-input") { editAdvanced(view.config, text); view.settingsTab = "Advanced"; }
       else { view.config.agents = text; synchronizeConfiguration(view.config); }
@@ -2533,7 +2673,7 @@ window.addEventListener("hashchange", () => {
 });
 window.addEventListener("pagehide", () => { actions.clear(); adapter.stopDownloadObservers(); adapter.stopRunObservers(); adapter.abandonInspectionOnUnload(); });
 window.addEventListener("beforeunload", (e) => {
-  if (dirty() || view.configDirty) {
+  if (dirty() || view.configDirty || hasUnsentDrafts({ texts: Object.values(view.drafts), imageGroups: imageDrafts.groups(), pending: pendingImageSubmissions.values() })) {
     e.preventDefault();
     e.returnValue = "";
   }
@@ -2547,13 +2687,13 @@ async function restoreRuntimePanel(work: Work) {
   const service = activeService(work);
   if (service) {
     view.service = service.id;
-    view.port = service.ports.includes(view.port) ? view.port : service.ports[0] || 0;
+    if (route()[0] !== 'app') view.port = service.ports.includes(view.port) ? view.port : service.ports[0] || 0;
     if (service.observed === 'Ready' && view.port && (tab === 'Services' || route()[0] === 'app')) await adapter.ensureServiceEntry(work.id, service.id, view.port).catch(() => undefined);
   }
   if (tab === 'Files' && path === view.path) await adapter.loadDirectory(work.id, path).catch(() => undefined);
   if (epoch === adapter.identityEpoch && origin === location.hash) render();
 }
-adapter.subscribe(() => { exportFlows.update(); if (lastIdentity !== adapter.identityEpoch) { lastIdentity = adapter.identityEpoch; actions.clear(); workReadErrors.clear(); view.serviceOpenError = "";
+adapter.subscribe(() => { exportFlows.update(); if (lastIdentity !== adapter.identityEpoch) { lastIdentity = adapter.identityEpoch; actions.clear(); createDraft.clear(); resetCreateFields(); unknownFiles.clear(); fileAttempt = undefined; modalTransfers = []; uploadPickerTarget = undefined; pendingUploadTarget = undefined; pendingUploadFiles = []; sourceGuardReturn = undefined; pendingNav = null; workSelections.clear(); workReadErrors.clear(); view.serviceOpenError = "";
     view.file = ""; view.fileDraft = ""; view.fileOriginal = ""; view.fileBaseline = ""; view.fileReread = null;
     view.config = null; view.configDirty = false; view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();imageDraftErrors.clear();resetWorkspaceFocus();chatReading.clear();expandedActivity.clear();pendingWebCommand=undefined; fileSelections.clear(); runtimeAvailability.clear();
     if (!(view.modal === "import" && adapter.inspection)) { view.modal = ""; view.modalError = ""; } }
@@ -2574,7 +2714,7 @@ const workReadErrors = new Map<string, { message: string; missing: boolean }>();
 async function loadRoute() {
   if (!adapter.state.signedIn) return;
   const version = ++routeLoad; const r = route();if(!['work','app'].includes(r[0]) || r[2]==='settings' || workspaceReturn && workspaceReturn.workId !== r[1]){await exitWorkspaceFocus();}
-  if (!['work', 'app'].includes(r[0]) || !r[1]) { render(); return; }
+  if (!['work', 'app'].includes(r[0]) || !r[1]) { render(); await adapter.listWorks().catch(() => undefined); return; }
   const record = actions.begin({ key: `route:${r[1]}:${version}`, kind: 'read', work: r[1], label: 'Loading Work', target: r[1], view: location.hash });
   try {
   const origin = location.hash, epoch = adapter.identityEpoch;
@@ -2585,7 +2725,7 @@ async function loadRoute() {
   const serviceId = r[0] === 'app' ? r[2] : choices.service === serviceChoice ? previous?.service ?? view.service : view.service;
   const port = r[0] === 'app' ? Number(r[3]) : choices.service === serviceChoice ? previous?.port || view.port : view.port;
   const service = work.services.find(s => s.id === serviceId) ?? work.services.find(s => s.enabled && s.observed === 'Ready' && s.ports.length);
-  view.service = service?.id ?? ''; view.port = service?.ports.includes(port) ? port : service?.ports[0] ?? 0;
+  view.service = r[0] === 'app' ? r[2] : service?.id ?? ''; view.port = r[0] === 'app' ? port : service?.ports.includes(port) ? port : service?.ports[0] ?? 0;
   const sessionId = choices.session === sessionChoice ? previous?.session ?? view.session : view.session;
   view.session = work.sessions.find(s => s.id === sessionId)?.id ?? work.sessions[0]?.id ?? '';
   if (view.session && r[0] !== 'app') await adapter.loadSession(work.id, view.session);
@@ -2663,6 +2803,16 @@ function brainCandidateDetails(entry?: Record<string, any>): string {
   return `<h3>Candidate from ${esc(candidate.source)}</h3><dl><dt>Active selection at acceptance</dt><dd>${esc(selection(baseline?.activeSelected, baseline?.activeMatchesCurrent))}</dd><dt>Saved selection at acceptance</dt><dd>${esc(selection(baseline?.desiredSelected, baseline?.desiredMatchesCurrent))}</dd><dt>Fixed verification goal</dt><dd>${esc(verification?.goal ?? "Verification observation unavailable")}</dd><dt>Capability</dt><dd>${esc(verification?.toolName ?? "Unavailable")}</dd><dt>Input summary</dt><dd><pre>${esc(verification?.inputSummary ?? "Unavailable")}</pre></dd><dt>Required checks</dt><dd>${Array.isArray(verification?.checkNames) ? verification.checkNames.map((name: string) => `<div>${esc(name)}</div>`).join("") : "Unavailable"}</dd><dt>Preparation / publication</dt><dd>${esc(preparation)} · ${operation(candidate.operationId, "Preparation operation")}</dd><dt>Candidate saved</dt><dd>${candidate.desired ? "Yes" : "No"}</dd><dt>Candidate active</dt><dd>${candidate.active ? "Yes" : "No"}</dd><dt>Loaded</dt><dd>${entry?.runtime?.availability !== "available" ? "Loading observation unavailable" : entry.runtime.loaded === true ? "Yes" : entry.runtime.loaded === false ? "No" : "Loading unconfirmed"}</dd><dt>Original Apply</dt><dd>${applyState}</dd><dt>SDK behavior</dt><dd>${esc(brainBehavior(candidate.adoption))}</dd></dl>${apply?.error ? feedback(`${esc(apply.error.code)}: ${esc(apply.error.message)}`, "warning") : ""}${btn("Original request", "pi-request-detail", "small", `data-id="${esc(candidate.requestId)}"`)}`;
 }
 
+function prepareSelectedEntry() {
+  const work = current();
+  if (!work || !adapter.state.signedIn || !adapter.project(work).usable || work.resourceErrors?.services) return;
+  if (route()[0] !== 'app' && (route()[2] === 'settings' || view.tab !== 'Services')) return;
+  const service = route()[0] === 'app' ? work.services.find(item => item.id === route()[2]) : activeService(work);
+  if (!service || service.observed !== 'Ready' || !service.enabled || !service.ports.includes(view.port)) return;
+  if (adapter.serviceEntryUrl(work.id, service.id, view.port) || adapter.serviceEntryError(work.id, service.id, view.port) || adapter.serviceEntryPending(work.id, service.id, view.port)) return;
+  void adapter.ensureServiceEntry(work.id, service.id, view.port).catch(() => undefined);
+}
+
 // Observe only confirmed Work/Service facts; preserve the current Session, form drafts and application DOM.
 let statusRefreshRunning = false;
 setInterval(() => {
@@ -2672,7 +2822,7 @@ setInterval(() => {
   void adapter.refreshVisibleWork(work.id).catch(() => undefined).finally(() => { statusRefreshRunning = false; });
 }, 5000);
 
-document.addEventListener('visibilitychange', () => { exportFlows.setVisible(document.visibilityState === 'visible'); observeCurrentPage(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && adapter.state.signedIn && route()[0] === 'works') void adapter.listWorks().catch(() => undefined); exportFlows.setVisible(document.visibilityState === 'visible'); observeCurrentPage(); });
 window.addEventListener('pagehide', () => { exportFlows.revoke('This page ended. Find the original snapshot to download explicitly.'); adapter.observePage('', false); });
 
 function consumeWebSelection(kind:string) {if(pendingWebCommand?.kind===kind){if(view.drafts[pendingWebCommand.key]===pendingWebCommand.text)view.drafts[pendingWebCommand.key]='';pendingWebCommand=undefined;}}

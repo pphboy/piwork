@@ -14,6 +14,8 @@ export interface WorkProjection {
   explanation: string;
   action: 'start' | 'stop' | 'retry' | 'check';
   usable: boolean;
+  /** Preserve the last confirmed workspace without granting new actions. */
+  retainWorkspace: boolean;
   exportable: boolean;
   operationIds: string[];
 }
@@ -46,8 +48,9 @@ export function projectWork(work: Work, operations: Operation[]): WorkProjection
   else if (['Ready', 'Degraded'].includes(work.status) && work.desired === 'running') action = 'stop';
   if (work.status === 'Failed' && !explanation) explanation = work.error || original?.error || 'Check related operations for confirmed failure details.';
   if (work.statusError && !stopping) { label = 'Work status not confirmed'; action = 'check'; }
-  const usable = !stopping && !starting && !work.statusError && work.desired === 'running' && ['Ready', 'Degraded'].includes(work.status);
-  return { label, explanation, action, usable,
-    exportable: !stopping && !starting && !work.statusError && work.desired === 'stopped' && work.status === 'Stopped' && !outstanding.length,
+  const retainWorkspace = !stopping && !starting && !work.accessRevoked && work.desired === 'running' && ['Ready', 'Degraded'].includes(work.status);
+  const usable = retainWorkspace && !work.statusError;
+  return { label, explanation, action, usable, retainWorkspace,
+    exportable: !stopping && !starting && !work.accessRevoked && !work.statusError && work.desired === 'stopped' && work.status === 'Stopped' && !outstanding.length,
     operationIds: ids };
 }

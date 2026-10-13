@@ -7,6 +7,7 @@ export class ImageDrafts {
   private owners=new Map<string,string>();
   constructor(private changed:()=>void) {}
   get(key:string) { return this.drafts.get(key) ?? []; }
+  groups(): readonly (readonly DraftImage[])[] { return [...this.drafts.values()]; }
   move(from:string,to:string) { if(from===to)return; const images=this.drafts.get(from); if(images?.length && !this.get(to).length){this.drafts.set(to,images);this.drafts.delete(from);for(const image of images)this.owners.set(image.id,to);} }
   remove(key:string,id:string) { key=this.owners.get(id) ?? key;const images=this.get(key); const image=images.find(i=>i.id===id);if(image)URL.revokeObjectURL(image.url);this.owners.delete(id);this.drafts.set(key,images.filter(i=>i.id!==id));this.changed(); }
   clear() {this.generation++;for(const images of this.drafts.values())for(const image of images)URL.revokeObjectURL(image.url);this.drafts.clear();this.owners.clear();}

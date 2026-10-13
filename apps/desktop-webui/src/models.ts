@@ -110,6 +110,8 @@ export interface Work {
   controlVersion?: number;
   checkedAt?: string;
   statusError?: string;
+  /** A trusted Work denial or unavailability is recovered only by a fresh matching Work read. */
+  accessRevoked?: boolean;
   lifecycleIntent?: { action: LifecycleAction; operationId: string; sequence: number; baseVersion?: number };
   updated: string;
   color: string;

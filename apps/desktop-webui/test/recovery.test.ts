@@ -13,7 +13,10 @@ const server = createServer(async (request, response) => {
   catch { response.writeHead(404); response.end(); }
 });
 before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, ...(process.env.PIWORK_TEST_BROWSER_BIN?{executablePath:process.env.PIWORK_TEST_BROWSER_BIN}:{channel:'chromium'}) }); });
-after(async () => { await browser.close(); await new Promise<void>(done => server.close(() => done())); });
+after(async () => {
+  try { await browser?.close(); }
+  finally { if (server.listening) await new Promise<void>(done => server.close(() => done())); }
+});
 
 type RequestRecord = { search: string; bytes?: Buffer | null; path: string; method: string; headers: Record<string, string>; body: string };
 type Reply = { status?: number; json?: unknown; body?: string; headers?: Record<string, string>; abort?: boolean };
@@ -2526,4 +2529,192 @@ test('Reconcile import: anonymous Inspect survives login, a name conflict and a 
   assert.equal(requests.filter(r => r.path === 'work-packages' && r.method === 'POST').length, 1);
   assert.equal(requests.filter(r => r.method === 'DELETE').length, 0);
   assert.equal(await api(page, 'return adapter.inspectionTransfer;'), transfer);
+});
+
+test('B continuity preserves a mounted application and composer through Work 503, but not accepted Stop', async t => {
+  let offline = false;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1' && offline) return { status: 503, json: { code: 'UNAVAILABLE', message: 'Temporary Work read failure' } };
+    if (r.path === 'works/work-1/stop') return { status: 202, json: { operationId: 'stop-original', workId: 'work-1' } };
+    return focusFixture(r);
+  });
+  await expect(page.locator('iframe')).toBeVisible();
+  await page.frameLocator('iframe').getByLabel('Application draft').fill('retained application input');
+  await page.locator('#composer').fill('retained Chat draft');
+  const original = await page.locator('iframe').elementHandle();
+  const composer = await page.locator('#composer').elementHandle();
+  const document = await page.frameLocator('iframe').locator('body').elementHandle();
+  offline = true; await api(page, "await adapter.refreshWorkStatus('work-1').catch(() => undefined);");
+  await expect(page.locator('.work-layout')).toBeVisible(); await expect(button(page, 'send-message')).toBeDisabled();
+  assert.equal(await original!.evaluate(node => node.isConnected), true);
+  assert.equal(await composer!.evaluate(node => node.isConnected), true);
+  assert.equal(await document!.evaluate(node => node.isConnected), true);
+  await expect(page.frameLocator('iframe').getByLabel('Application draft')).toHaveValue('retained application input');
+  offline = false; await api(page, "await adapter.refreshWorkStatus('work-1');");
+  assert.equal(await document!.evaluate(node => node.isConnected), true);
+  await expect(page.locator('#composer')).toHaveValue('retained Chat draft');
+  await button(page, 'stop-work').click(); await button(page, 'confirm-stop').click();
+  await expect(page.locator('iframe')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.path === 'works/work-1/stop').length, 1);
+});
+
+test('B selected Service Starting to Ready prepares exactly one entry without reselection', async t => {
+  let observed = 'starting';
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/services')) return { json: { services: [{ serviceId: 'service-a', name: 'Tool A', enabled: true, observedState: observed, access: { hostname: 'a.work.test', ports: [{ port: 80, url: 'http://a.work.test' }] } }] } };
+    return focusFixture(r);
+  });
+  await button(page, 'tab-Services').click();
+  assert.equal(requests.filter(r => r.path === 'service-entries' && r.method === 'POST').length, 0);
+  observed = 'ready'; await api(page, "await adapter.loadServices('work-1');");
+  await expect(page.locator('iframe')).toBeVisible();
+  await expect(page.frameLocator('iframe').getByLabel('Application draft')).toBeVisible();
+  for (let i = 0; i < 3; i++) await api(page, "await adapter.loadServices('work-1');");
+  assert.equal(requests.filter(r => r.path === 'service-entries' && r.method === 'POST').length, 1);
+});
+
+test('B accepted New Work defaults reset only on the next explicit New Work', async t => {
+  const { page, requests } = await fixture(t, r => r.path === 'works' && r.method === 'POST' ? { status: 202, json: { operationId: 'create-a', workId: 'new-a' } } : undefined);
+  await page.getByRole('link', { name: 'Piwork Works' }).click();
+  await button(page, 'new-work').click(); await page.locator('#create-name').fill('A');
+  await button(page, 'toggle-create-advanced').click(); await page.locator('#create-image').fill('synthetic/image');
+  await page.locator('#create-agents').fill('only A'); await button(page, 'create-work').click();
+  await expect(page.locator('#modal')).toContainText('create-a'); await button(page, 'close-modal').click();
+  await button(page, 'new-work').click(); await expect(page.locator('#create-name')).toHaveValue('');
+  await button(page, 'toggle-create-advanced').click(); await expect(page.locator('#create-image')).toHaveValue('');
+  await expect(page.locator('#create-agents')).toHaveValue('');
+  assert.equal(requests.filter(r => r.path === 'works' && r.method === 'POST').length, 1);
+});
+
+test('B Delete mixed 204 and real 207 retries only the explicitly selected failed path', async t => {
+  let retry = false;
+  const root = '/_desktop/files/works/work-1/files/';
+  const xml = `<d:multistatus xmlns:d="DAV:">${['a.txt', 'b.txt'].map(name => `<d:response><d:href>${root}${name}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>1</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`).join('')}</d:multistatus>`;
+  const { page, requests } = await fixture(t, r => {
+    if (r.method === 'PROPFIND') return { status: 207, body: xml, headers: { 'Content-Type': 'application/xml' } };
+    if (r.method === 'DELETE' && r.path === root + 'a.txt') return { status: 204 };
+    if (r.method === 'DELETE' && r.path === root + 'b.txt') return retry ? { status: 204 } : { status: 207, headers: { 'Content-Type': 'application/xml' }, body: `<d:multistatus xmlns:d="DAV:" xmlns:p="urn:piwork:files"><d:response><d:href>${root}b.txt</d:href><d:status>HTTP/1.1 403 Forbidden</d:status><d:error><p:code>PERMISSION_DENIED</p:code></d:error><d:responsedescription>Cannot delete B</d:responsedescription></d:response></d:multistatus>` };
+  });
+  await button(page, 'tab-Files').click(); await page.locator('[data-file-select="/a.txt"]').check(); await page.locator('[data-file-select="/b.txt"]').check();
+  await button(page, 'file-delete').click(); await button(page, 'confirm-file-delete').click();
+  await expect(page.locator('#modal')).toContainText('Cannot delete B'); await expect(page.locator('#modal')).toContainText('/b.txt');
+  await expect(button(page, 'confirm-file-delete')).toBeDisabled();
+  await expect(page.locator('[data-retry-source="/a.txt"]')).toHaveCount(0);
+  // A can be recreated externally: the original successful DELETE still must not replay.
+  retry = true; await page.locator('[data-retry-source="/b.txt"]').check(); await button(page, 'retry-selected-files').click();
+  await expect(page.locator('#modal')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.method === 'DELETE' && r.path === root + 'a.txt').length, 1);
+  assert.equal(requests.filter(r => r.method === 'DELETE' && r.path === root + 'b.txt').length, 2);
+});
+
+test('B Service details appear while their isolated log read is still pending', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  const { page } = await fixture(t, async r => {
+    if (r.path.endsWith('/services/service-a/logs')) { await gate; return { status: 503, json: { message: 'Only logs unavailable' } }; }
+    return focusFixture(r);
+  });
+  await button(page, 'manage-services').click(); await page.locator('[data-action="service-details"][data-id="service-a"]').click();
+  await expect(page.locator('#modal')).toContainText('Tool A'); await expect(page.locator('#modal .service-controls')).toBeVisible();
+  await expect(page.locator('#modal')).toContainText('Reading this Service'); release();
+  await expect(page.locator('#modal')).toContainText('Only logs unavailable'); await expect(button(page, 'refresh-logs')).toBeEnabled();
+});
+
+test('B a failed-only retry does not inherit another path unknown lock', async t => {
+  const root = '/_desktop/files/works/work-1/files/'; let b = 0;
+  const xml = `<d:multistatus xmlns:d="DAV:">${['a.txt', 'b.txt', 'c.txt'].map(name => `<d:response><d:href>${root}${name}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>1</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`).join('')}</d:multistatus>`;
+  const { page, requests } = await fixture(t, r => {
+    if (r.method === 'PROPFIND') return { status: 207, body: xml };
+    if (r.method !== 'DELETE') return;
+    if (r.path === root + 'a.txt') return { status: 204 };
+    if (r.path === root + 'b.txt') return ++b < 3 ? { status: 403, body: 'Known B denial' } : { status: 204 };
+    if (r.path === root + 'c.txt') return { status: 207, body: '<d:multistatus xmlns:d="DAV:"><incomplete' };
+  });
+  await button(page, 'tab-Files').click();
+  for (const path of ['/a.txt', '/b.txt', '/c.txt']) await page.locator(`[data-file-select="${path}"]`).check();
+  await button(page, 'file-delete').click(); await button(page, 'confirm-file-delete').click();
+  await expect(page.locator('#modal')).toContainText('unknown');
+  for (let retry = 0; retry < 2; retry++) {
+    await page.locator('[data-retry-source="/b.txt"]').check();
+    await expect(button(page, 'retry-selected-files')).toBeEnabled();
+    await button(page, 'retry-selected-files').click();
+    await expect.poll(() => b).toBe(retry + 2);
+  }
+  await expect(page.locator('#modal')).toContainText('2 paths confirmed; 1 need review');
+  await expect(page.locator('#modal')).not.toContainText('1 paths confirmed; 2 need review');
+  assert.equal(requests.filter(r => r.method === 'DELETE' && r.path === root + 'a.txt').length, 1);
+  assert.equal(requests.filter(r => r.method === 'DELETE' && r.path === root + 'c.txt').length, 1);
+});
+
+test('B unsent Chat text participates in native beforeunload and cancelling keeps the draft', async t => {
+  const { page, requests } = await fixture(t, () => undefined);
+  await page.locator('#composer').click();
+  await page.locator('#composer').fill('unsent text stays in this page');
+  const dialog = page.waitForEvent('dialog'); const navigation = page.reload({ waitUntil: 'commit' }).catch(() => null);
+  const confirmation = await dialog; assert.equal(confirmation.type(), 'beforeunload'); await confirmation.dismiss(); await navigation;
+  await expect(page.locator('#composer')).toHaveValue('unsent text stays in this page');
+  assert.equal(requests.filter(r => r.method === 'POST' && /\/(sessions|runs)$/.test(r.path)).length, 0);
+});
+
+test('B native beforeunload Settings positive control cancels without saving', async t => {
+  const { page, requests } = await fixture(t, () => undefined);
+  await button(page, 'settings').click();
+  await page.locator('[data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').click();
+  await page.locator('#agents-editor').fill('unsaved Settings positive control');
+  const dialog = page.waitForEvent('dialog', { timeout: 10000 });
+  const navigation = page.reload({ waitUntil: 'commit' }).catch(() => null);
+  const confirmation = await dialog; assert.equal(confirmation.type(), 'beforeunload');
+  await confirmation.dismiss(); await navigation;
+  await expect(page.locator('#agents-editor')).toHaveValue('unsaved Settings positive control');
+  assert.equal(requests.filter(r => r.method === 'PUT' || r.method === 'POST').length, 0);
+});
+
+test('B independent app preserves an invalid requested port instead of opening default 3000', async t => {
+  const { page, requests } = await fixture(t, r => r.path.endsWith('/services') ? { json: { services: [{ serviceId: 'service-a', name: 'Tool A', enabled: true, observedState: 'ready', access: { hostname: 'a.work.test', ports: [{ port: 3000, url: 'http://a.work.test' }] } }] } } : focusFixture(r));
+  await expect(page.locator('iframe')).toBeVisible();
+  const before = requests.filter(r => r.path === 'service-entries' && r.method === 'POST').length;
+  for (const port of ['0', 'bogus', '65536']) {
+    await page.goto(`${base}/#/app/work-1/service-a/${port}`);
+    await expect(page.locator('iframe')).toHaveCount(0);
+    await expect(page.getByText('The requested port is no longer declared', { exact: false })).toBeVisible();
+  }
+  assert.equal(requests.filter(r => r.path === 'service-entries' && r.method === 'POST').length, before);
+});
+
+test('B file chooser result cannot target a different directory than its original Upload click', async t => {
+  const { page, requests } = await fixture(t, r => r.method === 'PROPFIND' ? { status: 207, body: `<d:multistatus xmlns:d="DAV:"><d:response><d:href>/_desktop/files/works/work-1/files/dest/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>` } : undefined);
+  await button(page, 'tab-Files').click();
+  const chooser = page.waitForEvent('filechooser'); await button(page, 'upload').click(); const original = await chooser;
+  await page.locator('[data-action="open-file"][data-path="/dest"]').click();
+  const before = requests.filter(r => ['HEAD', 'PUT'].includes(r.method)).length;
+  await original.setFiles({ name: 'chosen.txt', mimeType: 'text/plain', buffer: Buffer.from('chosen for root') });
+  await expect(page.getByText('Upload not submitted:', { exact: false }).first()).toBeVisible();
+  assert.equal(requests.filter(r => ['HEAD', 'PUT'].includes(r.method)).length, before);
+});
+
+for (const scenario of ['dirty-discard', 'read-error-retry']) test(`B brain source ${scenario} commits its own new file path before leaving Settings`, async t => {
+  const source = '/.pi/packages/piwork-brain/brain.md', href = '/_desktop/files/works/work-1/files' + source;
+  let fail = scenario === 'read-error-retry';
+  const desired = { skills: [], packages: [{ name: 'piwork-brain', enabled: true }], agentsMd: 'original instructions' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1/configuration') return { json: { desired, active: desired, pendingApply: false } };
+    if (r.path === 'works/work-1/packages') return { json: { packages: [{ name: 'piwork-brain' }] } };
+    if (r.method === 'PROPFIND') return { status: 207, body: `<d:multistatus xmlns:d="DAV:"><d:response><d:href>${href}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>11</d:getcontentlength><d:getlastmodified>${mtime1}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>` };
+    if (r.method === 'GET' && r.path === href) return fail ? { status: 503, json: { message: 'Source temporarily unavailable' } } : { body: 'brain source', headers: { 'Last-Modified': mtime1 } };
+  });
+  await button(page, 'settings').click();
+  if (scenario === 'dirty-discard') { await page.locator('[data-tab="AGENTS.md"]').click(); await page.locator('#agents-editor').fill('keep until I discard'); }
+  await page.locator('[data-tab="Pi Packages"]').click(); await page.locator('[data-action="package-detail"][data-id="piwork-brain"]').click();
+  await button(page, 'open-source').click();
+  if (scenario === 'dirty-discard') {
+    await expect(page.locator('#modal')).toContainText('Save configuration changes?'); await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(page.locator('#modal')).toContainText('Editable source:'); assert.equal(requests.filter(r => r.path === href && r.method === 'GET').length, 0);
+    await button(page, 'open-source').click(); await button(page, 'dirty-config-discard').click();
+  } else {
+    await expect(page.locator('#modal')).toContainText('503'); fail = false; await button(page, 'open-source').click();
+  }
+  await expect(page.locator('#modal')).toHaveCount(0); await expect(page.locator('#file-editor')).toHaveValue('brain source');
+  assert.equal(new URL(page.url()).hash, '#/work/work-1');
+  assert.equal(requests.filter(r => r.method === 'PUT' || r.path.endsWith('/apply')).length, 0);
 });

@@ -7,6 +7,7 @@ export class ImageDrafts {
         this.changed = changed;
     }
     get(key) { return this.drafts.get(key) ?? []; }
+    groups() { return [...this.drafts.values()]; }
     move(from, to) { if (from === to)
         return; const images = this.drafts.get(from); if (images?.length && !this.get(to).length) {
         this.drafts.set(to, images);
