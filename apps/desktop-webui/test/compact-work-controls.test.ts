@@ -40,3 +40,16 @@ for (const kind of ['Apply Work configuration','apply-work-configuration']) test
  c.adapter.state.operations=[{id:'recovered-apply',workId:'work-a',kind,state:'running',created:'2026-10-13T15:00:00Z'}];
  const html=c.settingsPage(work);assert.match(html,/Applying/);assert.match(html,/Check Apply/);assert.match(html,/data-action="operation"[^>]*data-id="recovered-apply"/);assert.doesNotMatch(html,/data-action="apply-config"/);
 });
+
+test('Files toolbar renders one Refresh and Add control without literal template punctuation',()=>{
+ const {c,work}=fixture();work.files=[];c.adapter.directories=new Map();c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';
+ vm.runInContext(extract('files'),c);const html=c.files(work);
+ assert.equal((html.match(/data-action="refresh-files"/g)||[]).length,1);assert.equal((html.match(/data-action="file-add"/g)||[]).length,1);assert.doesNotMatch(html,/<\/button>}/);assert.match(html,/data-action="upload"/);assert.match(html,/data-action="webdav"/);
+});
+
+test('unknown Apply without an accepted ID never checks an unrelated old Operation',()=>{
+ const {c,work}=fixture();work.config.pendingApply=true;
+ c.adapter.state.operations=[{id:'old-finished',workId:'work-a',kind:'Apply Work configuration',state:'succeeded',created:'2026-10-13T14:00:00Z'}];
+ c.actions.records.set('apply',{work:'work-a',action:'apply-config',token:3,blocked:true,pending:false});
+ const html=c.settingsPage(work);assert.match(html,/Apply not confirmed/);assert.match(html,/data-action="refresh-config"/);assert.doesNotMatch(html,/old-finished|Check Apply|data-action="apply-config"/);
+});

@@ -3498,3 +3498,7 @@ dd > .button {
 @media(prefers-reduced-motion:reduce) {
  .modal[open],.modal[open]::backdrop,.modal[open].modal-closing,.modal[open].modal-closing::backdrop { animation:none; }
 }
+
+/* Retiring modal paint cannot keep the background inert or swallow a new intent. */
+.modal-exit-backdrop { position:fixed;inset:0;z-index:60;background:#182b4555;pointer-events:none;animation:modal-backdrop-out 140ms ease-in both; }
+@media(prefers-reduced-motion:reduce) { .modal-exit-backdrop { animation:none; } }

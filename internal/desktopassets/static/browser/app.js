@@ -663,14 +663,16 @@ function closeModal(animate = false) {
         restore();
         return;
     }
-    const copy = dialog.cloneNode(true);
+    const rect = dialog.getBoundingClientRect(), copy = dialog.cloneNode(true);
     copy.classList.add('modal-closing');
     copy.inert = true;
     copy.setAttribute('aria-hidden', 'true');
-    const closing = { choice: modalChoice, epoch: adapter.identityEpoch, route: location.hash, node: dialog, html: copy.outerHTML, nonmodal, focus: oldFocus, removeListener: () => { } };
+    // Exit is presentation only: release native modal blocking before the next pointer intent.
+    Object.assign(copy.style, { position: 'fixed', inset: 'auto', left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px`, margin: '0', zIndex: '61' });
+    const closing = { choice: modalChoice, epoch: adapter.identityEpoch, route: location.hash, node: dialog, html: (nonmodal ? '' : '<div class="modal-exit-backdrop" inert aria-hidden="true"></div>') + copy.outerHTML, nonmodal, focus: oldFocus, removeListener: () => { } };
     closingModal = closing;
     const valid = () => closingModal === closing && closing.choice === modalChoice && closing.epoch === adapter.identityEpoch && closing.route === location.hash && !view.modal && dialog === root.querySelector('#modal');
-    const complete = modalExit.start(valid, () => { const active = document.activeElement; const continuing = nonmodal && active instanceof HTMLElement && active !== document.body && active !== root && !dialog.contains(active) ? active : null; closing.removeListener(); closingModal = undefined; render(); restore(continuing); });
+    const complete = modalExit.start(valid, () => { const active = document.activeElement; const continuing = active instanceof HTMLElement && active !== document.body && active !== root && !dialog.contains(active) ? active : null; closing.removeListener(); closingModal = undefined; render(); restore(continuing); });
     const ended = (event) => { if (event.target === dialog && event.animationName === 'modal-out')
         complete(); };
     dialog.addEventListener('animationend', ended);
@@ -1147,7 +1149,7 @@ function files(w) {
         .split("/")
         .filter(Boolean)
         .map((p, i, a) => `${icon("chevron", 12)}<button data-action="file-path" data-path="/${esc(a.slice(0, i + 1).join("/"))}">${esc(p)}</button>`)
-        .join("")}</div><div class="actions file-toolbar-actions">${!f && view.selected.length ? `<span class="selection-count" role="status">${view.selected.length} selected</span>${btn(icon("copy", 16), "file-copy", "icon-button quiet", 'aria-label="Copy selected files" title="Copy selected files"')}${btn(icon("arrow", 16), "file-move", "icon-button quiet", 'aria-label="Move selected files" title="Move selected files"')}${btn(icon("trash", 16), "file-delete", "icon-button quiet danger", 'aria-label="Delete selected files" title="Delete selected files"')}${btn(icon("close", 16), "clear-selection", "icon-button quiet", 'aria-label="Clear selection" title="Clear selection"')}` : `${fileRefreshButton(w)}${btn(icon('plus', 16), 'file-add', 'icon-button quiet', 'aria-label="Add files or folder" title="Add files or folder" aria-haspopup="dialog"')}}`}</div></div>${f ? textEditor(f) : `${list.length ? `<div class="file-table"><div class="file-head"><span></span><span>NAME</span><span>SIZE</span><span>MODIFIED</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="Select ${esc(f.name)}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${icon(f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? "Special item" : f.kind === "directory" ? "Folder" : f.kind === "binary" ? "Binary file" : f.kind === "text" ? "UTF-8 text" : "File"}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="Actions for ${esc(f.name)}"`)}</div>`).join("")}</div>` : empty("folder", "This folder is empty", "Upload files or create a folder to get started.", btn("Upload files", "upload", "primary"))}`}<div class="file-scope"><span>Shared workspace · <code>/var/data/workspace</code></span><button data-action="webdav">Connect with WebDAV ${icon("external", 12)}</button></div>${transferResults()}`;
+        .join("")}</div><div class="actions file-toolbar-actions">${!f && view.selected.length ? `<span class="selection-count" role="status">${view.selected.length} selected</span>${btn(icon("copy", 16), "file-copy", "icon-button quiet", 'aria-label="Copy selected files" title="Copy selected files"')}${btn(icon("arrow", 16), "file-move", "icon-button quiet", 'aria-label="Move selected files" title="Move selected files"')}${btn(icon("trash", 16), "file-delete", "icon-button quiet danger", 'aria-label="Delete selected files" title="Delete selected files"')}${btn(icon("close", 16), "clear-selection", "icon-button quiet", 'aria-label="Clear selection" title="Clear selection"')}` : `${fileRefreshButton(w)}${btn(icon('plus', 16), 'file-add', 'icon-button quiet', 'aria-label="Add files or folder" title="Add files or folder" aria-haspopup="dialog"')}`}</div></div>${f ? textEditor(f) : `${list.length ? `<div class="file-table"><div class="file-head"><span></span><span>NAME</span><span>SIZE</span><span>MODIFIED</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="Select ${esc(f.name)}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${icon(f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? "Special item" : f.kind === "directory" ? "Folder" : f.kind === "binary" ? "Binary file" : f.kind === "text" ? "UTF-8 text" : "File"}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="Actions for ${esc(f.name)}"`)}</div>`).join("")}</div>` : empty("folder", "This folder is empty", "Upload files or create a folder to get started.", btn("Upload files", "upload", "primary"))}`}<div class="file-scope"><span>Shared workspace · <code>/var/data/workspace</code></span><button data-action="webdav">Connect with WebDAV ${icon("external", 12)}</button></div>${transferResults()}`;
 }
 const decodePaths = (value) => value ? JSON.parse(value) : [];
 const size = (n) => n >= 1048576
@@ -1174,7 +1176,7 @@ function settingsPage(w) {
     const c = view.config, pending = w.config.pendingApply === true;
     const applyRecord = [...actions.records.values()].filter(item => item.work === w.id && item.action === 'apply-config').sort((a, b) => b.token - a.token)[0];
     const applyOperations = adapter.state.operations.filter(item => item.workId === w.id && ['Apply configuration', 'Apply Work configuration', 'apply-work-configuration'].includes(item.kind));
-    const applyOperation = applyOperations.find(item => !!applyRecord?.businessId && item.id === applyRecord.businessId) || [...applyOperations].sort((a, b) => (Date.parse(b.created) || 0) - (Date.parse(a.created) || 0))[0];
+    const applyOperation = applyRecord ? applyOperations.find(item => !!applyRecord.businessId && item.id === applyRecord.businessId) : [...applyOperations].sort((a, b) => (Date.parse(b.created) || 0) - (Date.parse(a.created) || 0))[0];
     const applying = !!applyRecord?.pending || !!applyOperation && ['accepted', 'pending', 'preparing', 'running'].includes(applyOperation.state);
     const applyError = applyRecord?.error || (applyOperation?.state === 'failed' ? applyOperation.error || 'Apply failed' : '');
     const unknown = !!applyRecord?.blocked || applyOperation?.state === 'unknown';
@@ -3404,7 +3406,7 @@ function render() {
     applyWorkspaceSizing();
     const dialog = root.querySelector("#modal");
     if (dialog) {
-        syncDialogPresentation(dialog, closingModal?.nonmodal ?? nonmodalDialog());
+        syncDialogPresentation(dialog, !!closingModal || nonmodalDialog());
         if (!dialog.dataset.bound) {
             dialog.dataset.bound = "true";
             dialog.addEventListener("cancel", (e) => {

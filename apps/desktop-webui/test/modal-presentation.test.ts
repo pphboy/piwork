@@ -23,7 +23,7 @@ test('cancel removes exit eligibility even if a stale animation event arrives',t
 test('production dismissal has one focus owner and preserves modal versus Export presentation',()=>{
  const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
  assert.match(source,/copy\.inert = true/);assert.match(source,/closing\.choice === modalChoice/);assert.match(source,/closing\.epoch === adapter\.identityEpoch/);assert.match(source,/dialog === root\.querySelector\('#modal'\)/);
- assert.match(source,/closingModal\?\.html/);assert.match(source,/closingModal\?\.nonmodal \?\? nonmodalDialog\(\)/);
+ assert.match(source,/closingModal\?\.html/);assert.match(source,/!!closingModal \|\| nonmodalDialog\(\)/);assert.match(source,/modal-exit-backdrop/);
  assert.doesNotMatch(source,/const key = \['chat-response-settings', 'pi-requests', 'pi-request-detail'\]/);
  assert.match(source,/target !== document\.activeElement/);
 });
@@ -31,4 +31,9 @@ test('footer geometry and motion rules are scoped; Stop impact is text while Del
  const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8'),css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
  assert.match(css,/\.modal \.modal-footer > \.button \{ min-height:40px/);assert.match(css,/@keyframes modal-out/);assert.match(css,/modal-in 140ms/);assert.match(css,/prefers-reduced-motion:reduce/);
  assert.match(source,/<div class="impact-box">Entire Work · Services · Agent · Files<\/div>/);assert.doesNotMatch(source,/<div class="impact-box">\$\{icon\("stop"\)/);assert.match(source,/id="delete-confirm" type="checkbox"/);
+});
+
+test('the exit snapshot releases native modal blocking and keeps its old screen rectangle',()=>{
+ const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8'),css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
+ assert.match(source,/syncDialogPresentation\(dialog, !!closingModal \|\| nonmodalDialog\(\)\)/);assert.match(source,/dialog\.getBoundingClientRect\(\)/);assert.match(source,/left: `\$\{rect.left\}px`/);assert.match(css,/\.modal-exit-backdrop[^}]*pointer-events:none/);
 });
