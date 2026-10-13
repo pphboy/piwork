@@ -176,3 +176,27 @@ node scripts/check-web-base-core.mjs --main-only
 后两类入口先使用匹配的固定 NiceGUI base、兼容 Agent/helper 镜像及当前 Go 构建，按本页 Docker 隔离规则运行；本机私网访问仅对测试进程绕过环境代理。模板各运行实际 Python 检查，验证 CSS 前缀/局部范围和真实 refresh 函数的失败/恢复，再用真实页面验证草稿与状态。Core 主回路从实际 Desktop Service iframe 检查两个模板，注入框架样式隐藏、遮罩、bootstrap 资源失败以及可恢复的业务 Query 故障，分别核对 Ready/200 与页面可用、故障提示、草稿/焦点和恢复结果。
 
 可控故障仅写入隔离夹具副本，产品代码没有故障开关；共享断言位于 `scripts/check-application-awareness-page.mjs`。入口不新增平台工具或浏览器授权，不记录 ticket/token、私有 URL 参数或真实用户内容；页面证据置于忽略的 `dist/application-awareness/nicegui/`。此范围只检查受影响页面基本可用性，不评分美观或全量巡检。首轮失败与本轮实际结果继续追加到 [应用认知验收](application-awareness-acceptance.md)，不覆盖先前 14 项的历史事实。
+
+## Chat 停止并发送与 Service 请求入口
+
+本轮入口复用真实 Desktop 脚本的独立 Core 数据目录、合成模型与精确安装清理。先从当前源码构建 acceptance Agent、Desktop/Go CLI、Go Core，并准备兼容的原生 file/snapshot helper。`PIWORK_TEST_CHAT_CONTROLS=only` 只跑本功能的真实链路；`=1` 在原完整 Desktop 流程后追加同一组检查。不设置时保持既有流程。
+
+```sh
+docker build -f Dockerfile.agentd --target acceptance \
+  -t piwork-agentd:chat-controls-acceptance .
+make build-cli
+CGO_ENABLED=0 go build -mod=readonly -o dist/go/piwork-serve ./cmd/piwork-serve
+CGO_ENABLED=0 go build -mod=readonly -o dist/go/piwork-cli ./cmd/piwork-cli
+PIWORK_TEST_CHAT_CONTROLS=only \
+PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:chat-controls-acceptance \
+  npm run test:real-core -w @piwork/desktop-webui
+```
+
+`fixtures/pi-packages/chat-controls/` 只用于验收：在显式 marker 存在时阻塞 SDK shutdown，验证真实五秒取消超时、旧槽保留及迟到收尾不补发；脚本随后释放 marker，完成 Stop/Export/Import/Start 和原提交键核对。它不是生产脑包，也不改变生产执行器。构建 CLI 会重建 Desktop 的 dist，运行浏览器测试前应重新编译测试，构建和浏览器回归不要并行操作该目录。
+
+实际范围、各轮 Scenario 对照与未追加的环境见 [Chat 控制与 Service 请求入口验收](improve-chat-controls-and-service-visibility-acceptance.md)。
+
+
+Chat controls 的恢复回归还核对：关联回复成功后浏览器读取返回 503 时保留原文与最后确认时间；当前用户 Run 真实失败后同时存在后台 Service Run，原错误与原对象详情仍可见；列表 Cancel 在 SDK shutdown 尚未收尾时先呈现 cancelling，再通过只读轮询更新终态。Retry 使用真实 Core/Agentd 接受 POST 后，仅丢弃本地回执；随后用原 submissionKey 的 GET retry-submission 恢复同一新请求。核对前等待合法 Retry 阶段实际结束，再比对原请求集合和 runIds，避免把原 Retry 的正常执行误记为查询副作用。完整包往返还读取 imported Work 中原 Retry 键、原请求和 historical 新请求的关系。
+
+仅在浏览器边界注入 503/丢回执；业务状态、请求、Run、SDK 收尾及包导入均来自真实链路。独立安装及精确资源清理沿用上面的 real-core 夹具，不切换正在预览的 tmux 实例。

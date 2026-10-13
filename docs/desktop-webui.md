@@ -31,9 +31,13 @@ Work List 提供搜索、创建、导入、状态动作和按 ID 查询 Operatio
 
 **Manage Services** 保留禁用、失败和没有 Web 端口的 Service；详情可按状态执行 Start、Stop、Restart、Retry、Remove 并刷新有限日志。Stop 会把该 Service 持久设为禁用，Start 一个已停止 Work 里的 Service 不会自动启动 Work；移除 Service 不会删除共享 workspace 文件。日志是一次有界快照，遇到不可用或截断会显示原因。危险动作会确认目标并保留原 Operation ID 供检查。
 
-Agent 对话只在用户提交消息时启动 Run。Chat Box 的 Input options 可勾选 Service identity，只把选中 Service 的身份写入普通消息，不会自动传送页面 DOM、表单或登录状态。资源命令仅发送原命令及参数，不附加身份，并在入口说明原因；回到普通消息保留原开关。若希望 Agent 分析应用数据，请在消息中明确说明要读取哪些共享 workspace 文件或 Service API；实际可达范围取决于 Work 和 Service 的配置。
+用户 Chat 由明确发送启动 Run；Service 也可按既有 CoreFlow 协议发起 Agent 请求。Chat Box 的 Input options 可勾选 Service identity，只把选中 Service 的身份写入普通消息，不会自动传送页面 DOM、表单或登录状态。资源命令仅发送原命令及参数，不附加身份，并在入口说明原因；回到普通消息保留原开关。若希望 Agent 分析应用数据，请在消息中明确说明要读取哪些共享 workspace 文件或 Service API；实际可达范围取决于 Work 和 Service 的配置。
 
 例如在 Chat 里写“读取共享 workspace 的 `/note.txt` 和 Notes Service 的 `/api/data`，比较并注明每条结论的来源”。Agent 只有在这些路径实际可达且工具调用成功时才能引用内容；Service 页面里的未保存输入、浏览器 Cookie 和 localStorage 不随消息传递。若文件或 API 不可达，回复应说明无法读取，不能称页面数据已同步。
+
+当前 Work 有活跃 Run 且组件确认支持组合操作时，Chat 原发送按钮显示 **Stop and send**，并显示旧 Run 来自当前 Chat、其他 Session 或某个 Service。点击或按 Enter 会对显示中的那个 Run 请求取消，等它实际收尾后在当前用户 Session 发送已捕获的消息。取消等待最多五秒；超时会保留文字、图片和设置，请用 **Check status** 核对后再决定是否发送。旧 Run 随后结束不会补发消息；取消结束原处理，不是暂停，不能保证强停任意不响应取消的工具，也不会撤销已提交的业务 Job 或数据。
+
+接受响应丢失时用 **Check original submission** 按原提交键只读核对，避免重复发送；核对未发现记录也不代表网络中途的受理已经失败。等待期间新编辑的内容保持。未支持组合操作的旧 Agent 保留普通 Send、Cancel run 与 busy 提示；Shift+Enter、输入法组合和五个网页 slash 动作沿用原行为。Chat 正文不再显示 Run History ID 列表；**Run details** 可按原 Run 查看实际模型、Thinking、来源和错误，历史执行信息位于详情内，不切换当前 Session 或替换正在观察的 Run。
 
 ## Chat 图片
 
@@ -74,7 +78,13 @@ Settings 的 Skills、Pi Packages、AGENTS.md 和完整 JSON 都先保存为 Wor
 
 Chat Box 的 Model、Thinking 和 Send 在底部同一行等高居中，窄屏可换行；长模型名可从 tooltip 与选择菜单完整读取。点击或 `/model`、`/thinking` 打开同一个选择菜单，打开和取消不写入，明确选择后自动保存完整设置。Thinking 档位以固定 Pi SDK 的实际模型能力为准；不支持推理和能力未确认分别显示原因，不以 Off 代替未知。保存中、失败及未知在控件旁显示，确认前保留草稿并锁定 Send；**Check chat settings** 只读原 Session，丢响应不会自动重发 PATCH 或消息。选择只作用下一次手动 Run，当前 Run 的实际设置不变；Work/Session 与身份代际保持隔离。
 
-**Pi requests** lists Service/Chat goals with pagination. Details show the original request, Run/evidence IDs, wait reference and deadline; closing details does not cancel. Cancellation applies to the original request, and explicit Retry creates a new stable submission key only for an eligible live terminal request. Historical imported requests remain readonly. Pi Packages shows **Saved**, **Not applied**, **Loaded** and the actual behavior verification result independently; **Apply** remains the separate adoption action. The brain source is editable under `.pi/packages/piwork-brain/` in Files.
+Service 工具栏右侧、**Focus** 和独立打开动作之前，在确认当前 Service 有请求记录时显示 **Agent requests**。没有记录时不显示按钮或占位；已完成、已取消和导入的 historical 记录仍保留入口。当前 Service 可见时每五秒进行有界只读检查，使首条请求自动出现；隐藏页面或离开 Service 后停止周期检查，切换网页端口仍使用同一 Service 范围。读取失败保留此前已确认的入口和内容。
+
+**Agent requests** 复用现有分页列表，默认筛选当前 Work/Service。列表显示目标、来源、时间和真实状态；详情显示原请求、可取得的关联 Run 回复、请求结果与错误，证据和技术身份可展开阅读。某次 Run 完成不等于整个请求完成，无回复和读取失败分别说明。每个关联 Run 独立保留最后确认的回复、实际执行设置与读取时间；刷新部分失败时，成功部分更新，失败部分保留原文并标明读取失败。只显示原请求当前确认关联的 Run。只有未完成的 live 请求可 **Cancel request**；执行中先显示 cancelling，实际收尾后再显示终态。完成与取消竞争时保留真实完成结果；historical 只读，不新增回复输入框或重试流程。
+
+关闭详情返回原列表及其过滤、阅读位置；关闭列表返回发起入口并恢复焦点。查看、取消和状态刷新不切换 Main Chat、不消费草稿、不重载同一 Service iframe；关闭不取消执行。取消后的原列表或详情可见时，立即并通常每五秒只读核对原记录，直到实际终态；更新不会重置过滤、分页和阅读位置。隐藏页面、离开 Work 或关闭列表/详情停止本地周期读取，返回后恢复核对；远端取消仍继续。读取失败保留最后确认状态和错误，详情的 **Check status** 读取原记录，不自动重发取消或新建请求。
+
+Chat 原有 **Pi requests** 保留全 Work 列表和 Service 筛选；原有显式 **Retry with new request** 仅对可重试的 live 终态创建带新稳定提交键的请求，historical 不可重试。Retry 回执未知时，原身份、Work、原请求和本次提交键保留；原详情的 **Check status** 只读查询该键，确认后打开同一个新请求。未找到、读取失败或旧 Core/Agent 不支持时保持未知及对应锁，不重发 Retry、不更换提交键。Service 新入口只提供查看与取消。Pi Packages 仍分别显示 **Saved**、**Not applied**、**Loaded** 与实际行为验证结果；**Apply** 是独立采用动作。脑包源码可在 Files 的 `.pi/packages/piwork-brain/` 编辑。
 
 The existing brain **Details** view shows the accepted active/saved selection and whether it still matches, the fixed verification goal/capability, a safe input summary, required checks, preparation/publication and the original Apply ID/state. **Original request** and Operation links read those original IDs; **Refresh package** reads current facts and preserves the application iframe. **No matching Apply**, **Apply observation unavailable**, **Apply failed** and **Behavior checks failed** describe separate outcomes. Failed reads keep the last confirmed details with an observation error; a successful refresh clears that error. Internal context identities, artifact digests, credentials and host paths are excluded.
 
@@ -91,3 +101,7 @@ Activity 默认折叠，失败数量与首个错误直接显示；设置、slash
 Run 历史与 Submission details 按需展开技术身份，错误和可执行恢复始终直接可见。
 产品规则以 [Desktop 规范](../openspec/specs/desktop-webui/spec.md)
 与 [UI 语言规范](../openspec/specs/desktop-ui-language/spec.md) 为准。
+
+本轮 Service 请求入口和 Chat 控制的验证范围见 [Chat 控制与 Service 请求入口验收](improve-chat-controls-and-service-visibility-acceptance.md)。
+
+全 Work 活跃 Run 只决定 busy 和 **Stop and send** 的明确目标。当前用户 Session 原 Run 的失败或观察中断仍在输入区可见；**Check original Run** 按原 Run ID 读取详情，后台活动不会替换该目标。恢复原观察也绑定原 Run，不切换用户 Session。
