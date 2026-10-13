@@ -90,6 +90,26 @@
 
 本轮属于已授权变更的交互层级细化；原45项中的17项未测门槛不因这些局部改动变为完成。
 
+## 2026-10-13 后续确认：工作区与弹层统一整理
+
+用户已确认以下完整范围的规划与实施。此前“请求入口图标化”只完成了早期降噪，本轮进一步纠正对象归属；下表是新增实施目标，不表示已经实现或通过验收。截图中的 Back to Work、Configuration in use 属于 Work settings，工作区底部空白属于 Desktop 外壳，均不修改嵌入 Service 的业务内容。
+
+| 模块 | 修改 | 范围 |
+| --- | --- | --- |
+| Pi Requests | 全 Work 辅助入口移出 Chat 头部；列表和详情采用同一检查面板，目标/结果在前、执行与证据按需展开 | 保留全 Work 与当前 Service 两种来源范围、分页、返回与取消/重试规则，不新增请求 API 或计数 |
+| Run Details | 单次执行入口跟随真实 runId 对应的一轮消息/Activity；其他 Session/Service 占槽单独说明 | 不把最近 Run 错挂当前对话，不把 Run succeeded 当请求 completed，不改 Stop and send |
+| Service / Chat 布局 | 增加可拖动且键盘可操作的分隔线；普通折叠 Chat 与 Focus 分开，展开恢复比例 | 保留同一 iframe、Session、草稿和阅读位置；窄屏单面板，不增加跨重启偏好或持久聊天存储 |
+| Service selector | 名称、真实状态、声明端口与选中项对齐；单端口标签、多端口选择，管理入口归底部 | 不虚构缩略图，不因切换自动启动 Service，不扩大端口或访问权限 |
+| Files | Refresh 去重且反馈融入按钮；Upload/New folder 收进＋；去掉无独立作用的重复菜单 | WebDAV 原入口、空文件夹引导、选择/覆盖/未知写入保护保留，普通刷新不再增加状态行或重复 toast |
+| Settings | Back to Work 归左侧返回导航；正常配置状态缩成轻状态/详情 | 保留未保存、待 Apply、失败/未知及必要下一步，Save 与 Apply 分离 |
+| Works / Admin | 主页 Refresh/Import/New 三操作图标化且保持主次和提示；账号与角色不重复裸列 | 保留空列表文字引导、Core 信息、账号管理动作及确认规则 |
+| Modal 按钮 | 统一 footer 按钮几何、图标间距与角色顺序 | 保留危险/主次/禁用语义，菜单行、正文小按钮和头部关闭按钮按各自角色处理 |
+| Stop 确认 | 移除像 Checkbox 的空心 Stop 图标，范围文字改成明确非交互说明 | 原图标不是 input，不新增勾选门槛；真正的 Delete 确认框保留 |
+| 工作区高度 | 按真实剩余高度充满视口，移除底部额外留白，最多保留一条紧凑 StatusLine | 不改 iframe 内业务布局，不裁掉输入区或必要错误信息 |
+| Modal 动效与反馈 | 开关使用约120–160ms轻量透明度/微位移动效；警告/完成采用已有颜色角色、图标与短标签 | reduced-motion直接到终态；必要影响、错误原因和下一步仍清楚，不仅凭颜色传义、不以动画延迟提交保护 |
+
+这些界面调整服务于“打开 Work → 使用 Service → Chat 改进 → 继续使用”的主流程。Request 是跨执行的业务目标，Run 是一次执行，配置和技术细节是辅助信息。NoDocker、Core/API/依赖/安全边界不变，原17项未测保持；新增实现与验收按 tasks 的后续章节单独记录。
+
 ## Capabilities
 
 ### New Capabilities

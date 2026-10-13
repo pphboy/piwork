@@ -18,6 +18,8 @@ Desktop SHALL 落实 DUL-001—007、DUL-010、DUL-016 的对象、容器、英�
 
 Desktop SHALL 按主流程、对象管理、全局管理分层：Ready Work 优先直接 Open，Stopped 保留 Start；Stop 与 Work information 在所属 Work 更多菜单；About Piwork、Known operations 在账号下拉。Files 空选择提示不占独立行，批量动作在已有工具栏；Service/Agent请求入口使用有可访问名称的就近图标，分别保留当前Service与全Work作用域。账号下拉外侧关闭不受背景草稿/任务阻碍，不扩大其他确认窗规则。
 
+Service/Chat 工作区 SHALL 支持 DUL-002 的可拖动与键盘分隔、普通 Chat 折叠、专注返回及窄屏恢复；单纯布局变化不得切换 Session、清空文字/图片草稿、丢失 Desktop 阅读位置或重载同一授权 iframe。比例及显隐只在当前身份页面内按 Work 恢复；无有效记录或刷新使用默认布局。外壳 SHALL 使用真实剩余视口高度并按 DUL-007最多保留一条 StatusLine，不修改嵌入 Service 业务内容。Works三操作图标化及账号身份呈现 SHALL 仍提供完整操作目的和已有权限边界。
+
 #### Scenario: 从列表进入并切换区域
 - **WHEN** 用户打开有就绪 Service 的 Work，切到 Files、聚焦 Chat，再返回 Service
 - **THEN** 始终保留 Work 身份，Service 为原选择，对话使用同一 Session 和草稿，不产生额外 Run
@@ -42,6 +44,14 @@ Desktop SHALL 按主流程、对象管理、全局管理分层：Ready Work 优�
 - **WHEN** 显示旧应用期间取得 Stop accepted、stopped/deleted 或可信授权失效
 - **THEN** 执行原能力限制和撤销，显示对应对象与原因；旧可用快照不开放新的控制、文件或对话提交
 
+#### Scenario: 调整布局不产生执行副作用
+- **WHEN** 用户拖动/键盘调整、重置、折叠/展开Chat，经历Focus/Restore/Exit与窄屏往返
+- **THEN** 原Work/Service/端口/Session保持合法选择，文字图片草稿、阅读位置及iframe文档不变，无新Session/Run/控制提交；返回不被旧响应覆盖
+
+#### Scenario: 工作区高度不靠固定空白补偿
+- **WHEN** 头部、导航、降级提示和Chat显隐改变实际可用空间
+- **THEN** 主区域使用剩余高度，无额外外壳底边空白或被裁输入区；StatusLine不叠加，Service页面内部内容保持独立
+
 ### Requirement: Work 创建与生命周期使用真实控制结果
 
 **Identifier:** DWUI-003
@@ -55,6 +65,8 @@ New Work SHALL 提供必需名称与默认创建，以及高级镜像、Skills/P
 New Work SHALL 区分未完成的创建草稿与可靠受理后的下一次新建。明确拒绝、未发送或结果未知时保留原输入和对应恢复保护；可靠取得原 Work/Operation 后，下次 New Work 默认使用新名称空值和当前默认配置，不静默继承上次高级覆盖。新建期间不得因旧创建晚结果清空较新的草稿，原已受理对象仍可找回。
 
 Start/Retry 的进度 SHALL 留在所属 Work 上下文并保留原 Operation 详情入口。真实对象及相应能力确认可用后 SHALL 提供直接 Open Work；用户明确选择 Start and open 时才可在完成后衔接打开该 Work。普通 Start 不强制导航，不以 Operation succeeded 代替 Work Ready。
+
+Stop确认的影响范围 SHALL 以明确非交互说明呈现，不能把装饰图标表现为不可勾选的Checkbox，也不得增加原流程没有的确认勾选门槛。真正Delete确认框、Stop/Stop and export的原动作与一次提交保护保持。
 
 #### Scenario: 默认创建和显式空集合
 - **WHEN** 用户分别使用默认配置及显式空 Skills/Packages 创建
@@ -96,6 +108,10 @@ Start/Retry 的进度 SHALL 留在所属 Work 上下文并保留原 Operation �
 - **WHEN** 用户从 Works 显式 Start，原操作和 Work 相继确认成功及可用
 - **THEN** 原行或结果处直接提供 Open Work，不必关闭 Operation 再重新定位名称；Start 只提交一次
 
+#### Scenario: 停止范围没有假勾选控件
+- **WHEN** 用户打开Stop Work或Stop and export确认
+- **THEN** 可读到整个Work、Service、Agent和Files影响，范围说明不伪装可点选项；取消零提交，确认只提交原授权动作一次
+
 ### Requirement: Session 与 Run 的观察可恢复且不重复提交
 
 **Identifier:** DWUI-004
@@ -119,6 +135,8 @@ Chat 正文 SHALL 移除 Run History ID 列表，原 Session/Run 数据及实际
 事件入口返回 410 后，Desktop SHALL 真正读取原 Run 和对应 Session；只有历史读取成功后才能提示历史已恢复。SHALL 停止向事件入口重发同一失效游标，不擅自用 0 重播。原 Run 仍活跃时 SHALL 展示历史恢复模式，以串行只读查询观察原 Run 和已保存历史；查询到终态后 SHALL 停止自动观察并呈现最终结果，已有输出不得重复追加。读取失败 SHALL 保留已知内容、Run ID 和可恢复提示；鉴权失效或对象不存在 SHALL 停止自动读取并进入对应恢复状态，不能发送新的 Run。
 
 当前身份各 Work/Session 中未发送的非空文字或图片草稿 SHALL 纳入页面刷新、关闭和离开的未保存保护；浏览器支持且满足提示条件时请求原生离页确认，取消离开保留原草稿。不自动发送、上传或新建 Session，不承诺浏览器强制关闭、崩溃或不支持离页提示时能恢复。首版不新增跨关页草稿持久化；账号/Core 切换、注销和本地授权失效仍清理旧身份草稿及图片预览资源。可靠受理只消费本次提交快照，后续新编辑仍受保护。
+
+Run详情入口 SHALL 绑定实际Work/runId及Session上下文，并跟随对应一轮消息/Activity或明确活动执行状态；没有runId的历史消息不推测绑定当前最近Run，同一Run不因多段消息重复展示详情。全Work业务请求与Session对话、单次Run SHALL 分层，Request与Run各自显示真实状态；等待请求可没有活跃Run，某次Run成功不能推导目标完成。请求列表/详情展示调整 SHALL 保持分页、原过滤、取消竞争、historical只读及Retry新请求语义。
 
 #### Scenario: 忙碌时保留输入
 - **WHEN** 同一 Work 的另一 Session 正在执行而当前 Session 发送失败为 busy
@@ -188,6 +206,14 @@ Chat 正文 SHALL 移除 Run History ID 列表，原 Session/Run 数据及实际
 - **WHEN** 用户注销、切换账号/Core 或本地授权失效
 - **THEN** 按原安全规则清理文字、图片和预览资源，不因离页保护留下可被新身份读取的内容
 
+#### Scenario: 当前对话和其他来源的执行详情不混淆
+- **WHEN** 用户查看当前Session历史Run，同时Work由其他Session/Service运行或存在等待请求
+- **THEN** 各入口只打开精确原Run/Request，来源可辨，旧消息不绑定最新执行；关闭查看不停止Run或恢复等待目标
+
+#### Scenario: 多次执行的请求仍以目标状态为准
+- **WHEN** 请求关联多个Run，其中某次succeeded但目标waiting_result/waiting_apply/needs_attention
+- **THEN** 原请求状态与必要下一步直接可见，执行、回复与证据按真实关联呈现，不虚构整体完成或重放mutation
+
 ### Requirement: Service 管理与数据上下文清楚分离
 
 **Identifier:** DWUI-005
@@ -196,11 +222,13 @@ Desktop SHALL 实现 DUL-004、006、013：Service 列表/详情包含禁用、�
 
 所选 Service SHALL 只提供明确的身份上下文，不自动读取或上传页面 DOM、输入、截图和内存。用户请求分析时 SHALL 通过 Agent 的实际文件/API 能力取得数据，并要求回答说明来源；无来源时说明不可访问，不声称浏览器已同步数据。现有 Service 创建/定义更新仍由 Agent 工作流完成。
 
-Pi 开发且实现交互契约的 Service SHALL 可以主动记录页面路径和业务动作，并向 Agent 提交显式请求；这些事实由 Service 的事件/API 提供，不是 Desktop 对任意网页的监听。Service 详情和 Chat SHALL 能查询该 Service 的处理记录、事件来源和证据；仅有普通事件不启动自动 Run。未接入契约的外部 Service SHALL 只显示平台已经确认的状态、日志、可访问性以及 Agent 实际读取到的外部信息，不声称掌握其内部用户操作。
+Pi 开发且实现交互契约的 Service SHALL 可以主动记录页面路径和业务动作，并向 Agent 提交显式请求；这些事实由 Service 的事件/API 提供，不是 Desktop 对任意网页的监听。Service 详情和 Work 请求检查面板 SHALL 能查询该 Service 的处理记录、事件来源和证据；仅有普通事件不启动自动 Run。未接入契约的外部 Service SHALL 只显示平台已经确认的状态、日志、可访问性以及 Agent 实际读取到的外部信息，不声称掌握其内部用户操作。
 
 打开 Service 详情 SHALL 先呈现该对象已知身份、状态和按真实准入可用的控制，日志作为独立内容加载。日志慢响应或失败 SHALL 仅影响日志区域，提供日志重试及取得时间；不得阻止进入详情或把合法控制一并隐藏。旧 Service/身份的日志晚结果不能覆盖当前对象。
 
 Starting、Failed、Disabled 和无 Web 入口 SHALL 分别说明真实原因；仅已确认未启用才使用 Disabled 解释。用户 Start/Restart/Retry Service 后 SHALL 保留原 Service 上下文和原 Operation 入口，结果确认后可返回该 Service，并在真实浏览器入口可用时提供 Open Service。详情/处理记录关闭使用 Close，真正取消请求仍使用 Cancel request，不混淆关闭观察与业务取消。
+
+Service选择器 SHALL 使用已确认的名称、observed、enabled及声明Web端口，区分应用切换和Manage services。单端口轻显示，多端口独立选择；非Web/Removed对象不伪造应用入口。切换不可用Service仅选择并解释原因，不自动Start；其他Service/端口的晚准备结果不得覆盖当前选择，Chat上下文保持。
 
 #### Scenario: 非 Web 和禁用 Service
 - **WHEN** 服务没有可用 Web 端口或被禁用
@@ -234,6 +262,10 @@ Starting、Failed、Disabled 和无 Web 入口 SHALL 分别说明真实原因；
 - **WHEN** 用户在活跃 Pi request 详情点击 Close
 - **THEN** 只关闭详情，未发送取消请求；只有明确 Cancel request 才改变原请求
 
+#### Scenario: 紧凑选择器保留真实状态与端口
+- **WHEN** 多个Service具有长名称、不同状态或多个声明端口，用户快速切换及用键盘关闭选择器
+- **THEN** 名称/状态/端口与选中项对齐可读，焦点回触发器，只打开当前合法目标；无自动Start、未声明端口或Chat切换
+
 ### Requirement: 浏览器文件操作覆盖共享 workspace
 
 **Identifier:** DWUI-006
@@ -249,6 +281,8 @@ SHALL 遵守 Core 文件限额及单 Work mutation 并发限制；浏览器默�
 文本编辑器 SHALL 直接提供 Download saved version，下载真实已保存文件；未保存编辑保持且不自动 PUT，不以草稿内容冒充服务端版本。Copy/Move/Delete/Rename 的逐路径结果 SHALL 在仍打开的操作弹层内可读，分别显示成功、明确失败和未知及下一步；不要求关闭弹层才能查看错误原因。失败项输入保留；未知先核对原路径，成功项不因再次确认被盲目重做。
 
 New folder/Rename SHALL 在打开后将焦点置于命名字段；Rename 预填原 basename，文件名选择优先主名并保留扩展名，目录可全选。普通 Enter 仅对该字段合法且未 busy 的现有提交动作生效，输入法组合期间 Enter 不提交，危险/覆盖确认不继承通用 Enter 快捷提交。
+
+Files常规工具栏 SHALL 仅有一个Refresh，并以＋菜单承接Upload/New folder，不在Workspace options重复相同刷新或已有WebDAV入口。等待/成功按DWUI-019在原刷新控件呈现，不增加额外Status checked行或重复成功toast；列表选择、编辑草稿、未知写入及逐路径错误规则保持。
 
 #### Scenario: 文件读写全流程
 - **WHEN** 用户建目录、上传、编辑、重命名、复制、移动并下载文件
@@ -298,6 +332,10 @@ New folder/Rename SHALL 在打开后将焦点置于命名字段；Rename 预填�
 - **WHEN** 用户打开 New folder 或对中文、带点、无扩展名文件及目录 Rename
 - **THEN** 字段正确聚焦并预填适用名称，普通 Enter 最多提交一次，IME Enter 不提交，失败保留输入，取消不修改
 
+#### Scenario: 刷新菜单整理不影响文件保护
+- **WHEN** 用户通过唯一Refresh重读列表、通过＋上传/建目录，或在未知写入后核对
+- **THEN** 工具栏与文件行位置稳定，菜单键盘可达，仍使用原目录和条件保护；正常成功不插新行，未知只核对原目标
+
 ### Requirement: 配置、能力目录与应用形成独立步骤
 
 **Identifier:** DWUI-007
@@ -315,6 +353,8 @@ Skills、Packages、AGENTS.md 与 Advanced SHALL 展示同一份未保存配置�
 Core 目录读取状态 SHALL 与 Core 可达性/readiness 和 Work 草稿独立。刷新时 SHALL 保留已有数据并显示正在检查；部分失败保留成功目录及旧 Work 副本并定位失败目录，不能将失败当成空目录或全局离线。成功取得有效目录响应后 SHALL 清除该目录的不可用状态并按实际数据及动作准入恢复操作；有效空数组表示空目录。刷新 SHALL 不修改已选 Skills、Packages 或其他未保存配置。
 
 Open brain source SHALL 经既有脏配置/文件离开保护后导航到当前 Work 的 Files 并打开明确源文件，成功后关闭原详情且退出 Settings 路由。读取失败 SHALL 在目标上下文显示真实原因与重试，不虚构已经打开；取消离开确认保持原设置与草稿，不丢目标文件身份或擅自保存/Apply。
+
+Settings的Back to Work SHALL 作为左侧内容返回导航，恢复原有效区域/对象，并区别顶栏Back to Works；未保存保护保持。saved与active一致时 SHALL 使用轻量状态及按需配置详情，不占用大型正常状态卡或无意义的禁用Apply主动作；Unsaved、Not applied、Applying、失败/未知及安全下一步仍直接可辨。省略正常说明不得合并Save/Apply或把Loaded当成验证完成。
 
 #### Scenario: 安装与 Apply 分开
 - **WHEN** 用户从任一支持来源安装包成功但尚未 Apply
@@ -367,6 +407,10 @@ Open brain source SHALL 经既有脏配置/文件离开保护后导航到当前 
 #### Scenario: 脑包导航尊重未保存编辑
 - **WHEN** Settings 存在草稿时用户 Open brain source 并取消离开
 - **THEN** 仍在原 Settings/详情并保留草稿，没有隐式 Save、Apply 或文件写入；同意离开后才进入目标文件
+
+#### Scenario: 设置正常态简洁而异常仍明确
+- **WHEN** 配置分别为一致、未保存、已保存待Apply、Apply中、失败或未知，用户刷新并返回Work
+- **THEN** 仅一致状态降为轻提示，其余状态及合法动作明确；返回原区域并执行未保存保护，不自动Save/Apply或丢失后续草稿
 
 ### Requirement: 完整 Work 包可以本地检查和原子导入
 
@@ -703,6 +747,10 @@ Desktop SHALL 按 DUL-003、007 将反馈放在所属按钮、表单、列表行
 Work 列表、Work、Services、Files、Settings、Session、详情和深链接首屏 SHALL 按同一规则呈现；进入路径本身不要求用户先点击检查。已有内容更新 SHALL 保留可读内容和取得时间，首次读取无数据时显示真实骨架，成功空集合才进入空态。后台读取不得插入通用 pending 条；需要影响准入的真实降级或不可达 SHALL 仍在所属模块持续呈现。
 轻量状态、工具栏和选择反馈 SHALL 不让用户正在连续操作的命中目标无故移动；Files 从零选中到有选中及清空选择时，列表起点和对应行的选择目标位置保持稳定。同一服务的临时状态观察失败按 DWUI-002 保留实际视口，不能用整体替换状态页达到提示错误的目的。
 
+受影响界面的完成与警告 SHALL 使用既有语义色、图标和简短文字，不重复输出同一结果的标题、长说明、状态条和toast。必要风险、失败原因、未知结果与下一步仍可见且可被辅助技术识别，不仅凭颜色表达。Files刷新SHALL固定在原控件显示busy及一次短成功反馈，不增加主区域顶部行；错误反馈不能随正常成功提示定时消失。
+
+Modal footer SHALL 按DUL-007统一同类按钮几何与角色，正文按钮、菜单行保持各自职责。开关动效 SHALL 保持原模态/非模态、Escape/外部关闭白名单、dirty guard与提交保护；旧关闭/动画完成不得影响新对象、新身份或新弹层。减少动态效果及动画事件缺失时仍能完成关闭，焦点恢复一次，背景无遗留遮罩；状态刷新不反复播放入场。
+
 #### Scenario: 多目录正常读取后不堆积
 - **WHEN** 用户在同一 Work 依次打开根目录、apps、子目录，再返回根目录并切换 Services/Chat
 - **THEN** 等待有局部读取反馈，完成后内容正常展示，没有 Checked/Confirmed 加 ISO 时间的状态条，没有跨目录成功记录堆积或背景读取 toast
@@ -722,3 +770,11 @@ Work 列表、Work、Services、Files、Settings、Session、详情和深链接�
 #### Scenario: 文件多选反馈不推移目标
 - **WHEN** 用户连续勾选 Files 中多个文件并取消最后一个选择
 - **THEN** 操作反馈可辨且同一视口的列表起点/行选择目标不因工具栏出现消失而跳动，文件名打开与选择互不混用
+
+#### Scenario: 文件刷新不产生额外成功行
+- **WHEN** 文件刷新快速成功、慢响应、结果未变化或失败
+- **THEN** busy及成功在原按钮呈现且目标几何稳定，无重复成功toast；失败/未知仍有对象及安全下一步，不伪造成功
+
+#### Scenario: 弹层动画与异步结果竞争
+- **WHEN** 关闭时旧请求返回、立即重开另一弹层、切换身份/导航，或减少动态效果取消了动画
+- **THEN** 旧展示只清理原对象且不接受重复提交，新弹层和焦点不被旧回调清除；关闭最终无backdrop/inert残留，Export继续非模态交付

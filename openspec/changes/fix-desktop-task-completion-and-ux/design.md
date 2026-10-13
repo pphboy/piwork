@@ -139,7 +139,56 @@ Service详情先渲染身份/状态/合法控制，再独立readLogs，日志loa
 - 原 Export 处理器已经直接建立新意图，本轮不重做协调器。把展示降为右下非遮罩紧凑面板，默认只显示 Work、真实阶段、错误和必要恢复；原 Operation/snapshot/transfer、Pause/Check、旧快照放到 Details。成功不常驻另一个 Export 主按钮；需要新导出时从同一原入口明确触发。运行中仍使用原 Stop and export 影响确认。
 - 非遮罩导出不拦截背景输入、Tab 或动作目标；从背景选择新动作先收起展示，原交付继续。模态与非模态切换重新设置 dialog 展示模式，不能继承旧 Stop 窗的遮罩/焦点锁。
 - Admin 使用同一 dialog renderer 的紧凑右上样式；外侧 pointerdown/up 的同对象/身份校验和 Escape/焦点规则复用。它自身无草稿，背景文件/设置脏状态或后台任务不应阻止仅收起菜单。内部选择原动作仍受原确认/身份规则保护；不扩展其他危险/编辑弹窗白名单。
-- Files 取消空态选择条；选中数量与 Copy/Move/Delete/Clear 在原工具栏替换普通辅助动作，保留至少32px复选框命中和行高度。Service 与 Agent 请求使用已有 note 图标、aria-label/title；Service 仍仅可靠 hasRecords 时显示且过滤当前 Service，Agent 仍全 Work。
+- Files 取消空态选择条；选中数量与 Copy/Move/Delete/Clear 在原工具栏替换普通辅助动作，保留至少32px复选框命中和行高度。早期请求入口图标化保持了 Service 过滤与全 Work 范围；后续确认的入口归属及布局以以下第9—14节为准。
+
+### 9. Request 与 Run 按真实对象分层
+
+依据 `adapter.ts` 的 requests/requestDetails/runDetails、`models.ts` 的 Message.runId 和 WAF-005/007：请求属于 Work，来源可为 Service 或 Chat；一个请求关联多个 Run，等待时释放执行槽。普通 Chat 消息不保证存在业务 Request，Run succeeded 不证明请求完成。当前 Pi requests 已在 Agent 头部，继续在头部挪图标不能解决作用域问题。
+
+- 全 Work Pi Requests 放在 Work 模块导航右侧的轻量辅助动作，Services/Files/Chat仍是三个主区域。常态不使用抢主流程的实心主按钮。专注模式从可见的对象/Work 更多菜单保持该入口；Service工具栏继续仅在确认有记录时显示当前Service的过滤入口。
+- 复用读取与恢复数据，列表/详情在同一右侧检查面板切换，宽屏建议约480–560px，窄屏使用单一可关闭面板；不做第四个必经页面。保留同一Service与Chat，不新增输入上下文。可在背景操作的宽屏检查面板不冒充模态焦点锁；窄屏覆盖层按实际模态规则管理焦点。
+- 列表按 goal、source、state、updatedAt 排列，historical明确只读；只提供现有全Work/Service过滤，不在已分页数据上虚构“当前Session”或Chat-only全量过滤，也不新增未读计数。
+- 详情先显示目标、来源、请求状态和最后确认时间，再显示result、waitRef的类型/期限/等待说明或error；各次Executions按runIds紧凑折叠，展开实际模型、Thinking、时间、source.phase（存在时）、finalText。Evidence及ID后置；不生成无事实支持的阶段进度。返回恢复过滤、已读分页、滚动与焦点；取消/重试未知结果继续核对原身份。
+- Run Details入口放在真实runId对应的一轮消息/Activity末尾，同Run多段消息只显示一次；默认状态与Details短行，展开才呈现执行事实。无runId的旧消息不推测绑定；需要时从Session已知Run记录查看。Work级其他Session/Service占槽仍就地说明真实来源，并查看精确active Run。移除composer上方无上下文的常驻详情和不明确指向对象的泛化入口。
+
+备选：把所有请求当Session历史会丢失自动Service目标；永久执行大卡和每个Run完整dl会遮蔽用户结果，均不采用。
+
+### 10. 布局状态、分隔线与真实剩余高度
+
+改动集中在 `app.ts` 的 workPage/focus返回与阅读状态、`public/style.css` 的工作区尺寸；保留 `reconcileHTML` 的稳定iframe节点与祖先。当前service-only同时表示专注模式，直接用它处理普通Collapse会错误隐藏Work导航，因此Chat可见性与workspace/focus状态分开表达。
+
+- 保持Service左、Chat右，默认约70/30；建议Service最小400px、Chat最小320px，separator约8px命中区配细分隔线。比例按实际容器宽度夹取，拖动期间不反复重建DOM；跨iframe拖动用指针捕获或临时透明拖动层，结束/取消必清理，不修改iframe内部。
+- separator提供role、vertical方向、控制面板和当前比例；左右键16px，Shift左右64px，Home/End到边界，Escape撤销当前拖动；双击与可键盘到达的Reset split恢复默认。几何值是实现起点，最终按实际字体、边界和可读性验收。
+- Collapse Chat在常规模式只隐藏右栏，Service工具栏Show chat恢复；Focus chat、Restore layout、Exit focus原返回语义保持。按当前身份/Work在页面内保存比例与显隐，切换/返回及窄屏往返保留，刷新回默认；不引入跨重启存储。隐藏内容不进入Tab序列，但不卸载同一iframe、创建Session、清空文字/图片草稿或重启Run。
+- 小于900px或容器不满足最小宽度时使用单面板/覆盖层，隐藏separator，不用窄屏几何覆盖最后宽屏比例；500px与360px都回归。独立Service窗口不新增Chat，Files不顺手改成新的可拖分栏系统。
+- 底部空白的源码根因：常规Work header69px加tabs53px为122px，work-layout却减157px；窄屏64px加51px为115px，却减150px，均多减约35px。用可见头部/提示行加剩余空间的flex或grid布局替代固定减数；不是给iframe补35px。最多保留一条紧凑StatusLine，iframe与Chat内部滚动，正常、Degraded、错误提示、Focus及折叠均占满真实可用高度。不改Service业务页面自身留白。
+
+### 11. Service 切换与 Files 工具栏
+
+- `services()`将两个裸select组织成统一Service触发器和独立端口控制。触发器展示name、observed，列表按名称/状态/declared ports/选中标记对齐，底部Manage services；单port轻标签，多port选择。只用已有Service字段；Removed/无Web端口不混入应用切换，管理仍可查看适用对象。不可用项说明原因，选择不自动Start。长名称与键盘选择、Escape/焦点返回、旧入口晚响应一并验收。
+- `files()`只保留一个Refresh；Upload/New folder收进＋菜单。移除file-options内重复Refresh；若仅剩重复WebDAV则撤下该空余菜单，页底原WebDAV与空目录文字引导保留。多选动作仍替换原工具栏，不新增空选择行。
+- `action-state.ts`现在对refresh-files成功保留3秒Status checked，并由renderActionStates向main-panel prepend一行，另有Workspace reread toast。为Files增加原按钮内的busy/成功呈现而非全局禁掉读反馈；固定命中区与几何，成功短标签/图标及aria反馈，取消重复成功条/toast。失败或未知仍在所属对象明确显示原因/安全下一步，未知写入只重读不重放。
+
+### 12. Settings、Works 与身份菜单
+
+截图中的Back to Work和Configuration in use属于 `settingsPage()`。返回入口放在设置内容左侧导航、与标题对齐；顶栏Back to Works仍返回列表。沿既有区域记忆和dirty guard返回原对象，不强制去Services。
+
+saved/active一致时，把大配置卡改为标题旁轻状态及按需详情，Refresh status为就近图标；dirty、Not applied、Applying、失败/未知则保留明确状态和动作。无变更时不保留占位的禁用Apply主按钮；Save、Apply、候选加载与验证仍是不同事实，不自动执行。
+
+Works的Refresh/Import改quiet图标，＋New保持主动作角色；英文tooltip/aria-label和空列表文字CTA保留。账号菜单当前标题account=admin、正文裸role=admin形成重复；账号显示一次，角色必要时使用带标签的可读信息，Core地址保留。不得因省文字删除账号管理动作、影响确认或身份边界。
+
+### 13. Modal统一几何与安全开关动效
+
+`modalMarkup()`共用renderer，但footer混用默认40px与small34px；Pi Requests、Request detail、Package detail可出现混高。Stop的Cancel/Stop Work已同高，仅自然宽度不同；其“checkbox”实际是impact-box内stop SVG，无input/state/handler。移除误导空心框或换明确非交互符号，范围说明保留，不增加确认勾选，真正Delete checkbox不变。
+
+- 给footer直接动作统一尺寸角色，建议40px高、13px字、横向16px、8px图标/按钮间距、约96px最小宽；成对动作等宽，长文案可扩展、窄屏统一换行/堆叠，不能裁文字。Close/Cancel为次级，合法提交为主动作，危险提交保留danger，恢复动作在同组次级；DOM顺序与可见顺序一致。menu型弹层、正文小动作、头部关闭icon保留各自角色，不使用覆盖所有.button的粗放规则。
+- 开关约140ms（允许120–160ms）opacity和约4px微位移，无尺寸动画或重模糊。提交锁、busy和真实反馈立即生效；刷新内容不重播进场。reduced-motion同步完成，不等待不存在的animation事件。
+- 现closeModal即时清view并移除dialog，退场需共享展示状态；将逻辑关闭/失效与短暂视觉退场分开，关闭后不再接受旧窗提交。退场绑定modalChoice、identityEpoch和dialog实例，重开/切换/导航取消旧回调；完成事件与有界fallback均只对原对象生效。
+- reconcileHTML会移除不在markup中的临时class/data，closing状态必须来自展示state或明确保留，不能被轮询render抹掉。最终仅恢复一次合法来源焦点，彻底清除backdrop/inert；动态返回目标失效时落到可见安全入口。Export继续show()非模态，不因共用动画变成showModal()。
+
+### 14. 短反馈沿用已有颜色角色
+
+完成与警告默认采用已有语义色、图标和短标签，如Saved、Updated、Needs attention；同一结果不再重复标题、解释段和toast。颜色不能独立传义，图标需配可见短文字/可访问名称；停止影响、私有包风险、具体失败原因和安全下一步不能被省略或只放tooltip。正常细节按需展开，异常/未知持续可辨，自动消失不释放锁、不重放操作。限本轮受影响界面，不重写全应用文案或颜色令牌。
 
 ## Risks / Trade-offs
 
