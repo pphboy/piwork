@@ -12,7 +12,7 @@
 
 ## HTTP 调整后的当前复验
 
-`allow-http-core-connections` 已 **10/10** 完成并于 2026-10-06 归档。Linux 在隔离网络中补齐实际空根命令；经用户授权暂退并恢复原 Desktop 后，Windows 原生默认入口及偏好保存后无参数重启也已通过。本变更受影响八项的复验保持，完整结果和场景映射见 [HTTP 验证报告](../archive/2026-10-06-allow-http-core-connections/verification-progress.md)。
+`allow-http-core-connections` 已 **10/10** 完成并于 2026-10-06 归档。Linux 在隔离网络中补齐实际空根命令；经用户授权暂退并恢复原 Desktop 后，Windows 原生默认入口及偏好保存后无参数重启也已通过。本变更受影响八项的复验保持，完整结果和场景映射见 [HTTP 验证报告](../2026-10-06-allow-http-core-connections/verification-progress.md)。
 
 | 当前候选 | 字节数 | SHA-256 |
 | --- | --- | --- |
@@ -96,7 +96,7 @@ go test -mod=readonly -tags=integration -v -timeout=15m ./internal/coreapp \
 
 HTTP 调整前的 Linux 协调器报告与上述历史候选绑定，记录 18 项必需场景中的 **12 pass、6 unverified**。未验证的是 `other-user`、`preferences-browser`、`core-command-families`、`core-packages-snapshots`、`browser-isolation`、`tls-negative`。浏览器虽已另行实际执行，尚未作为该协调器运行的外部 fixture 绑定到报告；没有手工改写为通过。
 
-本次 HTTP 调整已重新生成绑定新候选的 `dist/cli/linux-amd64/native-evidence.json`，仍为 12 pass、0 fail、6 unverified；原报告保存在 `native-evidence.before-http.json`。新结果详见 [HTTP 验证报告](../archive/2026-10-06-allow-http-core-connections/verification-progress.md)。协调器、候选烟测、存储/凭证 fixture 和证据格式均已实现，但尚无任一完全合格的目标报告。Windows 的手工原生执行也不伪装成完整协调器证据。
+本次 HTTP 调整已重新生成绑定新候选的 `dist/cli/linux-amd64/native-evidence.json`，仍为 12 pass、0 fail、6 unverified；原报告保存在 `native-evidence.before-http.json`。新结果详见 [HTTP 验证报告](../2026-10-06-allow-http-core-connections/verification-progress.md)。协调器、候选烟测、存储/凭证 fixture 和证据格式均已实现，但尚无任一完全合格的目标报告。Windows 的手工原生执行也不伪装成完整协调器证据。
 
 已实际尝试用上述不完整 Linux 报告调用发布打包工具：工具以退出码 1 拒绝，未生成正式归档。现有 `dist/cli` 只保留候选二进制与构建元数据，没有已验收的 Windows ZIP/Linux tar.gz 发布物。
 

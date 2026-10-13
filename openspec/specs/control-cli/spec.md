@@ -8,27 +8,43 @@ Defines an executable local `piwork` command-line client that connects to Core, 
 
 ### Requirement: Resolve one Core endpoint consistently
 
-系统 SHALL 提供两个独立命令名：`piwork-serve` 用于 operator 控制面，`piwork-cli` 用于登录用户客户端。`piwork-cli` SHALL 按显式 `--core`、环境变量、保存凭证、默认 loopback 的顺序解析 Core；`piwork-serve` SHALL 按显式 `--core`、`--env-file` 中的控制面地址和文档化默认值解析，并使用 operator credential。
+系统 SHALL 提供独立的 operator 控制面和登录用户客户端命令；既有规范中的 `piwork-serve` operator 职责及配置保持，`piwork-cli` 用于用户客户端。业务 CLI SHALL 按显式 `--core`、`PIWORK_CORE_URL`、保存凭证中的 Core、默认 `http://127.0.0.1:7171` 的顺序解析。operator SHALL 按显式 `--core`、`--env-file` 中的控制面地址和文档化默认值解析，并使用 operator credential。
+
+默认或显式 Desktop 启动 SHALL 按显式 `--core`、`PIWORK_CORE_URL`、Desktop 默认 Core 配置、保存凭证中的 Core、相同 loopback 默认值的顺序解析。参数和环境变量 SHALL 仅影响本次启动，不自动保存。业务 CLI SHALL 不读取 Desktop 偏好；`desktop open/logout` SHALL 继续只选择既有本机实例，不重新解析 Core。
+
+Desktop 默认配置不存在 SHALL 回退到原凭证/默认值，不要求迁移旧凭证。需要读取的配置损坏、版本不支持、地址字段非法、超过大小限制或无法安全访问 SHALL 返回 exit 1 和安全恢复方向，保留原文件，不静默改连其他 Core；已由参数或环境选定地址时 SHALL 不读取无须使用的 Desktop 偏好。通过参数、环境或旧凭证选定的地址无效 SHALL 返回 exit 2，不继续尝试低优先级地址。凭证仅 SHALL 用于与其 Core origin 相同的请求。
 
 #### Scenario: Use the user client endpoint
-
-- **WHEN** 用户运行 `piwork-cli` 且未提供显式地址
-- **THEN** CLI 使用 `PIWORK_CORE_URL`、保存凭证中的地址或 loopback 默认值
+- **WHEN** 用户运行业务 CLI 且未提供显式地址
+- **THEN** 使用 `PIWORK_CORE_URL`、保存凭证中的地址或 loopback 默认值；Desktop 默认配置不影响该选择
 
 #### Scenario: Override the Core URL explicitly
-
-- **WHEN** a user invokes a networked command with `--core <url>` while another URL is stored or set in the environment
-- **THEN** the CLI sends the request to the explicit URL
+- **WHEN** 用户提供 `--core <url>`，另有环境、Desktop 配置或保存凭证地址
+- **THEN** 业务 CLI 或 Desktop 使用显式地址；Desktop 启动不覆盖持久配置，不把另一 Core 的 token 发给该地址
 
 #### Scenario: Reuse the saved endpoint
-
-- **WHEN** no explicit or environment URL is present and a saved credential contains its login endpoint
-- **THEN** the CLI sends the request to that saved Core URL
+- **WHEN** 没有显式或环境地址，业务 CLI 有保存凭证，或 Desktop 没有默认配置但有保存凭证
+- **THEN** 使用该凭证的 Core 地址，不重写或迁移凭证
 
 #### Scenario: Use the operator endpoint
+- **WHEN** 操作者运行既有 operator 管理或配置入口
+- **THEN** 使用 operator 配置和凭证，不读取 `piwork-cli` 用户 token 或 Desktop 偏好
 
-- **WHEN** 操作者运行 `piwork-serve admin` 或 `config`
-- **THEN** CLI 使用 operator 配置和凭证，不读取 `piwork-cli` 的用户 token
+#### Scenario: Desktop 默认地址和旧凭证并存
+- **WHEN** Desktop 配置 Core B，凭证属于 Core A，且没有参数或环境覆盖
+- **THEN** Desktop 连接 B 并呈现未登录状态，不发送 A 的 token；业务 CLI 仍解析为 A
+
+#### Scenario: 退出登录后保留 Desktop 默认配置
+- **WHEN** 用户保存 Desktop 默认 Core 后清理当前登录，随后重新启动
+- **THEN** 仍选择保存的 Core，不因凭证删除回到 loopback，不恢复已清理的 token
+
+#### Scenario: 缺失、损坏和被覆盖的配置
+- **WHEN** 默认配置不存在、需要读取的配置损坏，或参数/环境已经覆盖损坏配置
+- **THEN** 分别使用原有回退、返回 exit 1 且不监听、或按覆盖地址正常启动；损坏文件均不被自动删除
+
+#### Scenario: 无效高优先级地址
+- **WHEN** 参数、环境或保存配置给出不合法 Core origin
+- **THEN** 拒绝选定地址，不悄悄使用凭证或 loopback，不泄漏 token
 
 ### Requirement: Report Core and Work-runtime status
 
@@ -1088,3 +1104,37 @@ go run -mod=readonly scripts/package-cli-release.go --build dist/cli/linux-amd64
 # 在 Windows 原生验收后可在构建机打包其 PE：
 go run -mod=readonly scripts/package-cli-release.go --build dist/cli/windows-amd64 --evidence <Windows原生报告.json> --output dist/cli-release
 ```
+
+### Requirement: 无子命令时默认启动 Desktop 并保留显式命令契约
+
+**Identifier:** CLI-DEFAULT-001
+
+`piwork-cli` SHALL 在全局参数解析成功、没有子命令且没有 `--json` 时执行默认 `desktop` 启动；无参数和仅提供 `--core <url>` 均适用。该入口 SHALL 使用显式 `desktop` 的监听、授权、浏览器打开、失败和前台退出契约，不根据操作系统、终端是否存在或启动手势选择另一套流程。
+
+所有显式业务命令、`desktop`、`desktop open`、`desktop logout`、`proxy` 的参数语法、输出、退出码和等待/取消语义 SHALL 保持；默认路由不得吞掉未知命令或参数，不得自动启动后台进程、复用其他实例或自动换端口。自定义端口和禁止打开浏览器 SHALL 继续通过 `desktop --port ... --no-open` 设置，根级别不新增这些 flag。
+
+`help`、`--help`、`-h` 和既有子命令帮助 SHALL 输出帮助并退出 0，`version`、`--version` SHALL 保持版本输出；均不读取凭证或 Desktop 配置、不访问 Core、不创建监听。无子命令的 `--json` 或 `--core <url> --json` SHALL 保持帮助输出和 exit 0，不进入 Desktop。显式 `--json desktop` 和 `--json proxy` SHALL 仍返回 exit 2。参数或命令语法错误 SHALL 在本地状态和网络访问前返回 exit 2。
+
+#### Scenario: 无参数启动
+- **WHEN** 用户直接执行 `piwork-cli`，默认端口可用
+- **THEN** 前台启动默认 Desktop 并尝试打开浏览器，行为等同显式 `desktop`，不只输出帮助
+
+#### Scenario: 仅参数选择 Core
+- **WHEN** 用户执行 `piwork-cli --core https://core.example`
+- **THEN** 启动 Desktop 并使用该 Core；不修改默认配置或登录凭证，不运行 status 或 login
+
+#### Scenario: 显式命令和机器调用
+- **WHEN** 调用 `--json work list`、`chat`、`proxy`、`desktop --port 17901 --no-open` 或 `desktop open`
+- **THEN** 分别执行原命令，不额外启动默认 Desktop、不添加浏览器启动日志到业务 stdout
+
+#### Scenario: 帮助、版本和空机器调用
+- **WHEN** 调用帮助、版本，或只提供 `--json`，且本地配置损坏、Core 不可达
+- **THEN** 仍按原有成功契约结束，不读取配置、不监听、不打开浏览器；无子命令的 `--json` 输出帮助
+
+#### Scenario: 无效调用不能进入界面
+- **WHEN** 用户输入未知命令、重复全局参数、缺失参数值，或根级别的 `--port`、`--no-open`
+- **THEN** 返回 exit 2 和安全用法提示，不打开浏览器、不创建本地状态；显式 Desktop/proxy 的 `--json` 同样拒绝
+
+#### Scenario: 已有实例不改变默认启动语义
+- **WHEN** 默认 Desktop 端口已经被现有实例或其他程序占用，再执行无子命令入口
+- **THEN** 返回 exit 6，不复用、不切换既有 Core、不新建其他端口实例；用户可显式执行 `desktop open` 恢复自己的实例
