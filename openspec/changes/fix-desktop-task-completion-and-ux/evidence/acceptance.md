@@ -219,3 +219,34 @@ GUI使用的 `app.js` SHA-256为 `a8cf325f050e5911304222183944cfbd6de8e76319b55a
 - 1180px Settings标题、状态、Refresh、Details中心Y全部231px；Back独立在上行。500px状态组统一位于标题下，组内中心Y=257.5px，scrollWidth=500。
 - 首次500px Details展开发现左侧裁切，追加`1cba80bc`仅调整窄屏浮层定位并补CSS约束回归；最终浮层x=20/right=300、正文完整、scrollWidth=500，实际补验通过。失败原图不作为最终展示。
 - 最终368项纯测试再跑通过，0失败/跳过；typecheck、build、native boundary、diff检查通过。宽窄对齐和入口定向已执行；OS fullscreen、真实读屏、完整Playwright及原其余未测矩阵状态不变，任务仍38/67。
+
+
+## 2026-10-13 夜间小UX复核：Files按钮与键盘焦点
+
+限定检查代表页的对齐、按钮尺寸、窄屏溢出与键盘关闭/恢复，不扩展架构、执行协议、Core/API、依赖或安全配置。前两项缺陷先由只读检查定位，再用官方GUI重现：
+
+- Files在≤768px残留旧icon-button缩小规则：500px/768px Add为28×33，Refresh为112×40；500px Copy/Move/Delete/Clear也为28×33，顶部相差3.5px。首选前后文件行仍Y=251，不把原尺寸问题混同成行位移。
+- Works搜索框内Clear与无结果区Clear search，键盘Enter触发后旧按钮随render消失，activeElement落到BODY；立即输入字符没有进入搜索框。
+
+追加功能提交`bdda6a43ffd5f34167a0987d03472f669d63bbed`删除Files旧窄屏尺寸覆盖，回用同一40×40控件；Clear search在清空render后显式聚焦#search，两个入口共用。新增3项回归先失败，再修复后最终371 pass、0 fail/skip；build、typecheck与测试编译通过。文件行菜单、checkbox、Service/Composer按钮尺寸及业务请求协议不变。
+
+
+同轮代表页扫描又实际复现第三项：普通Work模式选择Files/Chat/Settings后，区域已切换，但焦点跳到Services；Files上再次Enter会误切回Services。根因是普通导航也调用exitWorkspaceFocus，未区分是否真实处于Focus布局，随后恢复逻辑选中DOM中的首个Services入口。
+
+追加`8f46406de4f7c6c04c503b7e9e85992a9841f6b9`：普通workspace且无当前root DOM fullscreen时直接返回，不执行虚假退出的焦点恢复；真实Focus/Fullscreen退出仍走原路径。新增Services/Files/Chat/Settings四入口与真实Focus退出回归，先复现Files/Chat/Settings三项失败，修复后最终376 pass、0 fail/skip。没有增加新导航状态、路由或协议。
+
+
+官方GUI复验`8f46406d`时确认错误的Services跳转已消失，Chat可连续Enter，但Files/Settings读取期间disabled会让真实浏览器失去按钮焦点，读取完成后仍落BODY。追加`2cd3ad3835f08672a886335f4ea8f7473a21a4cf`在读锁解除时恢复原导航按钮，只对开始时实际聚焦的原入口、仍选中且未disabled、同Work/identity/当前Action record、无新Modal且当前焦点仍为BODY/root生效；已移到新输入框、换tab/Work/身份/新record时不抢焦点。
+
+新增9项生产dispatchAction回归覆盖三个读取入口、读取失败和新焦点/tab/Work/identity/record边界。修复前4项失败，修复后最终385项纯状态/adapter/生产函数测试通过，0 fail/skip；Desktop build、typecheck、测试编译、native boundary、repository docs与OpenSpec strict通过。该测试层不替代真实浏览器焦点或原完整Playwright。
+
+### 夜间官方GUI定向收尾
+
+- 最终冻结`2cd3ad38`的实际HTTP资源22/22 SHA-256一致；只执行本节已记录三项缺陷的补验及代表页检查，无未解决的定向FAIL。
+- Files尺寸修复在`bdda6a43`实际验证500/768/1180px：Add及Copy/Move/Delete/Clear均40×40，与Refresh同顶/底；首项选择及清末项前后500/768px文件行Y=251、1180px Y=226不变，文档无横向溢出。后续导航焦点提交不改CSS。
+- 两个Clear search入口以Enter清空后均聚焦#search，紧接的q/w分别成为输入值；不需要额外鼠标点击。
+- 最终`2cd3ad38`在500/1180px以Enter选择Files、Chat、Settings并不重新定位再次Enter：12次记录中activeElement始终为对应BUTTON、activeAction为自身，未落BODY或误跳Services。
+- 人为延迟Files读取时将焦点移入composer并输入，释放读取后焦点及草稿原样保留；延迟Settings读取时按Tab移到Back to Work，释放后仍停留该按钮。恢复只弥补原入口被read lock禁用的失焦，不覆盖用户后来选择。
+- 代表Works/账户菜单宽窄、Copy对话框及500px New Work高级长表单已查看；观察到footer40px与body可滚动，未发现需要另改的可复现问题。此扫描不作为全部模态、真实读屏或完整浏览器矩阵的通过声明。
+
+证据按候选版本保留在本次恢复包的`night-ux-qa`中，包括Files前后geometry、两个Clear的键盘记录、导航历史失败与最终宽窄记录、慢读焦点持有/释放以及22项served hash。任务仍38/67；原17项未测及360px、真实reduced-motion、Core/Apply/完整Playwright等限制全部保持。

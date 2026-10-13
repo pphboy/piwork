@@ -63,10 +63,10 @@ Service选择器统一显示名称、状态、声明端口与当前选择。单�
 
 ### Files、设置与轻反馈
 
-Files的常规Refresh只保留一次入口。读取时原按钮显示Reading…，成功短暂显示Updated，不新增Status checked行或重复成功toast；失败原因与未知写入的核对入口仍可见。Upload files和New folder归入＋菜单，WebDAV与空目录上传入口保留。批选动作仍在原工具栏，不插入新的选择提示行。
+Files的常规Refresh只保留一次入口。读取时原按钮显示Reading…，成功短暂显示Updated，不新增Status checked行或重复成功toast；失败原因与未知写入的核对入口仍可见。Upload files和New folder归入＋菜单，WebDAV与空目录上传入口保留。批选动作仍在原工具栏，不插入新的选择提示行；常规＋与批量操作图标保持40px控件高度。
 
 Work settings内容左上角的Back to Work独立一行，返回进入设置前的Services、Chat或Files；其下标题与Configuration in use、Refresh、Details成组对齐，窄屏整组换行。正常配置以Configuration in use轻状态呈现；Unsaved changes、Not applied、Applying、Apply failed和Apply not confirmed继续显示相应保存、应用或核对动作。Save只保存，Apply才应用；正在应用和结果未知时不重复Apply，恢复的原Apply仍可Check。
 
-Works右上角Refresh、Import和New改用带名称/提示的图标组，New保留主动作样式，空列表仍有文字创建引导。账号菜单显示一次账号身份，Role与Core明确标注。
+Works右上角Refresh、Import和New改用带名称/提示的图标组，New保留主动作样式，空列表仍有文字创建引导。Clear search后焦点回到搜索框，可以立即继续输入。账号菜单显示一次账号身份，Role与Core明确标注。
 
 Modal底部动作统一高度、间距与主次角色；菜单行和正文小按钮保留各自用途。Stop影响范围不再使用像复选框的装饰，仍需明确确认；Delete的真实确认框保留。弹窗开关约140ms，减少动态效果偏好下直接显示终态；关闭立即撤销旧窗口的提交资格，快速重开不会被旧退出回调关闭。Export仍为非模态进度卡，不因关闭或动效中断原授权交付。完成与警告优先使用图标、语义颜色和短标签，具体错误、必要风险与下一步不会因精简被移除。
