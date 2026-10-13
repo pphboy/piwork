@@ -1,0 +1,218 @@
+{
+  "sourceCommit": "93a1ab3fcbfbcb255f6796b0816f7e18d4e49977",
+  "sourceModified": true,
+  "mainSpecsSha256": {
+    "openspec/specs/core-service-startup/spec.md": "2a06deb5ea692c72b57eeddbe04d7f3b1225198e74fe035e32236e3862addf57",
+    "openspec/specs/desktop-webui/spec.md": "9f5fe425ebe6ddc3d96fedce0aa324f5c763b8605c0d498d882d6659813f9077",
+    "openspec/specs/work-access/spec.md": "93a0074e51b66b90e215fa1682f5bdfe6330fbda4aa46b0a028d7d435469fe64"
+  },
+  "scopeRequirements": [
+    {
+      "capability": "desktop-webui",
+      "requirement": "连接与用户会话在本地入口内完整闭环",
+      "identifier": "DWUI-001",
+      "scenarios": 11,
+      "requirementBodySha256": "b22b0e1c89406923faa0a06c14b2cc411383809ad81177d4180297e181d5447e"
+    },
+    {
+      "capability": "work-access",
+      "requirement": "Desktop 浏览器授权不得泄漏平台身份",
+      "identifier": "WACC-DESKTOP-001",
+      "scenarios": 8,
+      "requirementBodySha256": "aeabd8c184f0bda60f2be9ae98aa0f2d63124fc419a0bfd601839d8bcfab1aae"
+    },
+    {
+      "capability": "desktop-webui",
+      "requirement": "Session 与 Run 的观察可恢复且不重复提交",
+      "identifier": "DWUI-004",
+      "scenarios": 15,
+      "requirementBodySha256": "f2fcd685b09971686c6bef3f76d3863a9047496ca5ad08bd3f67506eda64655f"
+    },
+    {
+      "capability": "desktop-webui",
+      "requirement": "配置、能力目录与应用形成独立步骤",
+      "identifier": "DWUI-007",
+      "scenarios": 11,
+      "requirementBodySha256": "21cf3d8a3fa31eadeb0761733649e95647170c26392a4dded6ba00a355c29bca"
+    },
+    {
+      "capability": "desktop-webui",
+      "requirement": "完整 Work 包可以本地检查和原子导入",
+      "identifier": "DWUI-008",
+      "scenarios": 13,
+      "requirementBodySha256": "491cebd454ff92a2fda5179896ca87432dcd4a82b118d7547d8101d7a21e9643"
+    },
+    {
+      "capability": "core-service-startup",
+      "requirement": "Shut down Core without destroying running Works",
+      "identifier": "Shut down Core without destroying running Works",
+      "scenarios": 5,
+      "requirementBodySha256": "0883cc220021589276082d9959230352e221b7a45fcd9e845833763a9201f7a8"
+    },
+    {
+      "capability": "core-service-startup",
+      "requirement": "初始化并核验 Go Core 持久存储",
+      "identifier": "CST-NATIVE-001",
+      "scenarios": 4,
+      "requirementBodySha256": "44dd1787a52c7dde0c6c2b82088eec03680a5a279cd004b78be4dd95b94f74ad"
+    }
+  ],
+  "reviewedFilesSha256": {
+    "apps/desktop-webui/src/adapter.ts": "d75e2e6403fb6ca3bb0b28ed7796fe1dfdbb76e5f9dc6fcd4f1ea1f3ab7161df",
+    "apps/desktop-webui/src/models.ts": "fff011e3ea4b271c47bef14b06dce7f45f60c942674180f06eb60a1a7c0f59ee",
+    "apps/desktop-webui/test/chat-controls-real-core.mjs": "d9956260dccb7a7cbe77323c7e6ac0f51ce4892b856d72ea45bf856ab291aefb",
+    "apps/desktop-webui/test/local-auth.test.ts": "f560ef402fa14782578b65527e1c507a822ebdd2e27f1423d566b28ce2ec7bdf",
+    "apps/desktop-webui/test/recovery.test.ts": "19d23a9ae192b2ff36df8325f25eb1df46d672c0307f265ad18e6c8248aa8f0b",
+    "internal/coreapp/application.go": "ef4667e7c3c1d70dd51e8f88818d9b13af125f9f5973b78cf09ee8ca49c0f643",
+    "internal/coreapp/process_integration_test.go": "4c3358cbea476a85bfa03773c311798cbda3a121b0cb5d6bb19e4f1e2ab308be",
+    "internal/coreapp/shutdown_contention_test.go": "5b1be84f76c9459c2cf93a7b62d88de803a769594d7c3721a6e79df342bc6324",
+    "internal/coreapp/shutdown_integration_test.go": "34ade7c308cdcb1e4cb1f44d840ebeeca3fe2ba8629930ecf8b3bf77afeae223",
+    "internal/desktopassets/static/browser/adapter.js": "491fff2e0693c4e1a6167fec6279958f5ea445e52da4ad26c9c7d140f2b85977"
+  },
+  "reviewedInputSha256": "657abefdc9b942ce2fa86218e1139a72d2599532f3f54adcaaacfb7b732012a1",
+  "binaries": {
+    "piwork-serve": "c3650515956901767661a15b07426c1c38029fb028c1e35c0de26729bcdb3112",
+    "piwork-cli": "d3a6bc5e3e1d4f7d5a60d2d661fe012f912bb8f0b0f4227497873f1d05b6c4c1",
+    "linux-amd64": {
+      "version": 1,
+      "program": "piwork-cli",
+      "releaseVersion": "0.0.5",
+      "commit": "93a1ab3fcbfbcb255f6796b0816f7e18d4e49977",
+      "modified": true,
+      "goVersion": "go1.25.5",
+      "target": "linux/amd64",
+      "binary": "piwork-cli",
+      "bytes": 14093534,
+      "sha256": "1f1c246d483e73741d0ce1966d3a15a14172a4a2225aad483bf84b85b43403a8",
+      "desktopUIHash": "81bbb48d779bb96569b38610cb5956f322efc28e3c4863b5ad9257e034215e64",
+      "releaseInfoHash": "722ad92f5e48770d832c7f4f0a01e688f1f60fe46ce7298e6a4fb4ec19e8f7d2"
+    },
+    "windows-amd64": {
+      "version": 1,
+      "program": "piwork-cli",
+      "releaseVersion": "0.0.5",
+      "commit": "93a1ab3fcbfbcb255f6796b0816f7e18d4e49977",
+      "modified": true,
+      "goVersion": "go1.25.5",
+      "target": "windows/amd64",
+      "binary": "piwork-cli.exe",
+      "bytes": 14522880,
+      "sha256": "bfe67138cc037c77e7db1d64423d29fc109211f1cb8f489662cb2f5d85b9fc1d",
+      "desktopUIHash": "81bbb48d779bb96569b38610cb5956f322efc28e3c4863b5ad9257e034215e64",
+      "releaseInfoHash": "722ad92f5e48770d832c7f4f0a01e688f1f60fe46ce7298e6a4fb4ec19e8f7d2"
+    }
+  },
+  "images": {
+    "piwork-agentd:merge-chat-interaction-2b439f8": "sha256:322c14ade508e9ff9f0defaab867a7aeba9d0a3207ba19089fcca22698f72c9c",
+    "piwork-file-helper:go-migration-acceptance": "sha256:a9483f153a618096c42ac74ecc455bf59d9260d2eaabf75f5ed3ad85571dd9d5",
+    "piwork-snapshot-helper:go-migration-acceptance": "sha256:a6956cdec4446cc7435ed77f982019151d8934c2fc905fde90bc31f0e21bd4b6"
+  },
+  "invariants": {
+    "protectedFiles": 521,
+    "protectedManifestSha256": "09398541fba3a13a0f45ff9dc350a0c6f3781c04a184cb3116cd1d470320d842",
+    "pendingTasks": {
+      "support-cross-platform-cli-and-default-desktop": 9,
+      "simplify-docker-release-and-quickstart": 1
+    },
+    "embeddedFiles": 13,
+    "mappedScenarios": 67
+  },
+  "executionLogsSha256": {
+    "browser-accepted.log": "bbfe53ec2617a1f00ec7ab4ffaef93918e2a748307589842f4cab1055c04dc18",
+    "auth-accepted.log": "436b7692cb326aaef15d73a7ab2a92ce101e49cf64fc3569f2dccb4a1ea49478",
+    "go-accepted.log": "537683252225038c05b735c37e8b01aebe3d5be05c10f0500bd75e9394ca213f",
+    "core-integration-accepted.log": "f47695c9371f503fa3506688f9d61ff968d30db13076f44e87d5fa7fee1b6e98",
+    "configuration-integration-accepted.log": "abbd45f88815aff5f1b383d168f1475c61c0d73aab3e7f52703b1fce4e420dc7",
+    "real-core-accepted.log": "58d8f96b285f0c4cc09120fa1ca5082885b995c8a7888f367c98bccd9258c310",
+    "compose-stop-accepted.log": "3a35eeaa199d0bbd49f6e9bcbfb897f24f8ee152ca610968d2db409bac3976a8",
+    "corestore-fresh.log": "ddba61f3232166f673a59a58da2dcd439a34aeb51821e0ced58dfbbc736a6f58",
+    "agent-neighbors.log": "cd06a96172222fa856d514bd0c740beeec6e653b6e2a1e283f33014e71b1aac1",
+    "console-r6-final.log": "5cd00d13837dc4d5dc3f4ee68b8fcd6159bdbdfbed494d99d01a1976946b538f",
+    "scripts-final.log": "6cea6e81a89739c2870761ea144642c0be9fe07dfa8b4a8647d7a9eb3a33dbb1",
+    "auth-csrf-before.log": "1d320b0f06c27556502f13d83139f64473196bc9ce62fe0e82af338bf54e9517",
+    "local-auth-required-before.log": "14b1d12cbd4f81447bacd67a0dfdfba6afadd040a84b953eca847d048bf7282a",
+    "history-execution-error-before.log": "825e5ac4da043510d1b329044bf885f853bb2f396fb8c01a3a5867482255294b",
+    "shutdown-contention-before.log": "622e46043c7292c888f328daa3657b1ed31e95c49be5167bbad6c743853fef69",
+    "shutdown-contention-after.log": "38418623c0b52442b6c74e7de7269221f69f333a7194258dbe3fdeec311a07a9"
+  },
+  "checkedInstallationCleanup": [
+    {
+      "installationId": "piwork-test-eb9be5a1-b335-4ee9-abbb-9d7c1227c01e",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-fb87ccba-50c2-44c6-bdb9-2a77bb9e323d",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-bf63eb27-c51d-428d-96f3-8481d5aa8f7b",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-0d651461-b43d-4562-900d-f71158a19c49",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-96f14f48-00b7-48c9-9abb-cb18e11c32c7",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-41c3d694-d684-4f79-ac9f-5dfe9880c7fe",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-8c73e407-cadd-4690-8cea-3c4167a8958c",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-6641f749-b781-468d-a4f6-d4e89b6cbbdb",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-51cd2f3d-9a5c-4efa-bda2-02a74f0a807a",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-9415de76-9aff-487f-8a64-1b6956c9da1b",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "piwork-test-8de5fc5c-1fb3-4674-812a-3e4650e09e3f",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "installation-0b55cc1bd3160b947ebd12015633bdc6",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    },
+    {
+      "installationId": "installation-bb159cf7422329294ab1847ce76532c7",
+      "containers": 0,
+      "networks": 0,
+      "volumes": 0
+    }
+  ]
+}
