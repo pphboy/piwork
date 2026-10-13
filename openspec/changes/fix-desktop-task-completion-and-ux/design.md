@@ -59,7 +59,7 @@
 
 - 不建立永久下载队列、跨关页/CLI重启自动续传、全局Operation发现或跨窗口一次性下载分布式锁。
 - 不持久保存聊天正文/图片，不声称能恢复浏览器崩溃或强制关页的草稿。
-- 不重构整个app、不新增设计系统或装饰动效、不触及About/模型执行；本轮不修改Core业务逻辑或API。若验证发现接口不足，先向用户报告证据与必要变更并等待新授权，不能借验收自动扩大为后端修复。Go/CLI既有契约测试及正常构建资源同步仍在验证范围。
+- 不重构整个app、不新增设计系统或装饰动效、不修改About内容/模型执行；本轮不修改Core业务逻辑或API。若验证发现接口不足，先向用户报告证据与必要变更并等待新授权，不能借验收自动扩大为后端修复。Go/CLI既有契约测试及正常构建资源同步仍在验证范围。
 - 不改文件权限、条件写入、包hash/格式校验、Core cold snapshot门禁、导入默认stopped或Save/Apply分离。
 
 ## Decisions
@@ -132,6 +132,14 @@ Service详情先渲染身份/状态/合法控制，再独立readLogs，日志loa
 - 外部关闭白名单仅Work options、Service options、Work information等无草稿只读入口，且非busy/unknown恢复。pointerdown/up均在外侧才关闭，保留Esc/Tab/触发焦点；不扩至Stop/Delete/Remove/Overwrite/dirty/Import。
 - Close用于关闭查看；Cancel request/run保留真实取消。Starting/Failed/Disabled按confirmed事实分支，缺错误文字时不伪造Disabled。
 - 09/11/19/20先测：自动暂停状态有确定性反例才修其投影；loading/motion无问题则只记录符合；live区域须真实辅助技术证明后再在原范围内修，不把DOM结构分析当读屏验收。
+
+### 8. 主流程与管理入口分层（2026-10-13反馈）
+
+- 直接进入 Work、使用 Service/Agent、修改 Files 是常驻主路径；Ready 行显示 Open Work，Stopped 保留 Start。Stop 与 Work information 归当前 Work 更多菜单；全局 About 与 Known operations 归 Admin，不互换作用域。只删除已有列表底部重复 CTA，保留空列表创建入口。
+- 原 Export 处理器已经直接建立新意图，本轮不重做协调器。把展示降为右下非遮罩紧凑面板，默认只显示 Work、真实阶段、错误和必要恢复；原 Operation/snapshot/transfer、Pause/Check、旧快照放到 Details。成功不常驻另一个 Export 主按钮；需要新导出时从同一原入口明确触发。运行中仍使用原 Stop and export 影响确认。
+- 非遮罩导出不拦截背景输入、Tab 或动作目标；从背景选择新动作先收起展示，原交付继续。模态与非模态切换重新设置 dialog 展示模式，不能继承旧 Stop 窗的遮罩/焦点锁。
+- Admin 使用同一 dialog renderer 的紧凑右上样式；外侧 pointerdown/up 的同对象/身份校验和 Escape/焦点规则复用。它自身无草稿，背景文件/设置脏状态或后台任务不应阻止仅收起菜单。内部选择原动作仍受原确认/身份规则保护；不扩展其他危险/编辑弹窗白名单。
+- Files 取消空态选择条；选中数量与 Copy/Move/Delete/Clear 在原工具栏替换普通辅助动作，保留至少32px复选框命中和行高度。Service 与 Agent 请求使用已有 note 图标、aria-label/title；Service 仍仅可靠 hasRecords 时显示且过滤当前 Service，Agent 仍全 Work。
 
 ## Risks / Trade-offs
 

@@ -16,6 +16,8 @@ Desktop SHALL 落实 DUL-001—007、DUL-010、DUL-016 的对象、容器、英�
 
 最后确认可用的 Work/Service 仅遇到状态观察网络错误、超时或暂时服务错误时，Desktop SHALL 保留同一已挂载应用视口与工作区，标记状态未确认及安全重查入口；不能因该读取错误卸载再创建 iframe、清除草稿或抢焦点。保留画面不表示刷新授权或确认 Ready，不扩大新动作准入；已确认停止/删除、停止目标接受、真实资格撤销及身份失效仍按原规则限制能力和撤销访问。
 
+Desktop SHALL 按主流程、对象管理、全局管理分层：Ready Work 优先直接 Open，Stopped 保留 Start；Stop 与 Work information 在所属 Work 更多菜单；About Piwork、Known operations 在账号下拉。Files 空选择提示不占独立行，批量动作在已有工具栏；Service/Agent请求入口使用有可访问名称的就近图标，分别保留当前Service与全Work作用域。账号下拉外侧关闭不受背景草稿/任务阻碍，不扩大其他确认窗规则。
+
 #### Scenario: 从列表进入并切换区域
 - **WHEN** 用户打开有就绪 Service 的 Work，切到 Files、聚焦 Chat，再返回 Service
 - **THEN** 始终保留 Work 身份，Service 为原选择，对话使用同一 Session 和草稿，不产生额外 Run

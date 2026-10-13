@@ -27,7 +27,7 @@ Session 选择器 SHALL 仅列当前 Work 的 Sessions，并在顶部提供 New 
 Service 工具栏 SHALL 提供 Focus 进入当前 Work 的专注布局。专注布局 SHALL 隐藏常规 Work 身份栏、模块导航及全局低频动作，以紧凑工具栏保留当前对象身份、真实状态、Exit focus 和布局切换入口；仅 Chat 时由 Agent 头部承接可见退出动作；默认保留同一当前 Chat，Hide chat 进入仅 Service 视图。此布局是常规导航规则的明确例外，返回 SHALL 恢复原 Work、模块及对象选择。仅改变布局 SHALL 不改变应用 origin、不重载同一 Service/端口的 iframe、不创建 Session、不停止观察或执行；任意应用自身刷新、跨窗口同步和网络故障仍不属于外壳保存保证。Settings、Files 或其他模块导航 SHALL 先恢复常规布局，再沿原返回规则打开。
 Focus chat SHALL 从常规或 Service 专注布局放大同一 Session，Restore layout 返回放大前区域或专注布局，Exit focus 直接恢复首次进入专注前常规区域。两者目标可辨且持续可见，不依赖被隐藏的 Service 工具栏，不将返回统一固定为 Services。返回保留用户在专注期间明确作出的对象选择；失效对象给真实原因与可用出口。
 
-当前 Service 存在已确认的请求记录时，Desktop SHALL 在现有 Service 工具栏右侧操作区、Focus/独立打开等访问动作之前显示 Agent requests 按钮。确认没有记录时 SHALL 隐藏该新增按钮，不预留空白区域；已完成、已取消和 historical 记录仍属于存在记录。该入口 SHALL 不附带计数、摘要条、最近状态卡或额外顶层导航；初次读取未确认及读取失败不得被表述为真正空集合，已确认存在记录时读取失败 SHALL 保留入口及既有错误恢复。
+当前 Service 存在已确认的请求记录时，Desktop SHALL 在现有 Service 工具栏右侧操作区、Focus/独立打开等访问动作之前显示带可访问名称和悬浮提示的 Agent requests 图标按钮。确认没有记录时 SHALL 隐藏该新增按钮，不预留空白区域；已完成、已取消和 historical 记录仍属于存在记录。该入口 SHALL 不附带计数、摘要条、最近状态卡或额外顶层导航；初次读取未确认及读取失败不得被表述为真正空集合，已确认存在记录时读取失败 SHALL 保留入口及既有错误恢复。
 
 Agent requests SHALL 复用既有请求列表与对象详情，默认范围为当前 Work 和当前 Service，不按网页端口拆分；Chat 中原有全 Work 请求入口保持可用。Service + Chat 和仅 Service 专注布局中，符合显示条件的按钮 SHALL 保持可达；仅 Chat 布局使用原 Agent 请求入口。打开、取消后的刷新及关闭 SHALL 保持同一 Service iframe、当前用户 Session、草稿和阅读位置；返回及键盘焦点按 DUL-007 恢复，不创建第二个输入上下文。
 
@@ -124,7 +124,7 @@ Desktop SHALL 沿用 Serve 浅色语义令牌，包括 `#F5F8FC` 画布、`#F8FB
 
 宽屏默认身份栏约 64–72px，Agent 辅助栏约占 28–34%；这些 SHALL 作为层级基线，允许随内容和宽度调整以保证可读与可操作，不能把 Service 缩成辅助预览卡。系统无衬线字体、4px 倍数间距、小圆角和细分隔 SHALL 保持一致；页面标题以 24–30px、正文 14–16px、辅助文字 12–13px 为基线。路径、域名、ID、日志与代码 SHALL 使用等宽字并能完整读取或复制。列表行不叠加重复大卡片；Agent 回复保持连贯，用户消息可用柔和浅底。
 
-每个当前任务 SHALL 只突出一个主动作，其余使用次级样式：文件区域突出 Upload，停止 Work 时突出 Start Work，快照就绪后突出 Download .work；Pop out 可作为 Service 工具栏主动作。同工具栏的输入和按钮 SHALL 等高、间隔一致，按钮文字居中；当前选择同时由位置、文字与柔和选中态表示，悬停弱于选中。状态、操作 ID、取得时间和恢复动作 SHALL 位于同一上下文，不能用旋转图标代替执行状态或在无关区域显示成功。
+每个当前任务 SHALL 只突出一个主动作，其余使用次级样式：文件未选择时突出 Upload，已选时就近提供批量动作，停止 Work 时突出 Start Work，快照就绪后突出 Download .work；Pop out 可作为 Service 工具栏主动作。同工具栏的输入和按钮 SHALL 等高、间隔一致，按钮文字居中；当前选择同时由位置、文字与柔和选中态表示，悬停弱于选中。状态、操作 ID、取得时间和恢复动作 SHALL 位于同一上下文，不能用旋转图标代替执行状态或在无关区域显示成功。
 
 键盘焦点 SHALL 有至少 2px 可见轮廓。模态弹层 SHALL 获得并限制焦点，非提交中的普通弹层可用 Escape 关闭，危险确认的 Escape 等于取消，关闭后焦点回到触发控件；未保存编辑离开须先处理 Save/Discard/Keep editing。可选过渡以 120–180ms 为基线并尊重 `prefers-reduced-motion`，不以动画伪装就绪。
 
@@ -133,6 +133,16 @@ Desktop SHALL 沿用 Serve 浅色语义令牌，包括 `#F5F8FC` 画布、`#F8FB
 Works 搜索和 Chat 输入 SHALL 保持至少 2px 的可见键盘焦点；使用容器焦点样式时同样能辨认输入位置。Pi Package Remove 等危险文本动作 SHALL 使用既有 danger 语义并在 hover/focus 保持，disabled 状态仍可辨，不受普通链接色覆盖。
 
 只有已明确列入轻量菜单/只读信息白名单、无草稿且非 busy 的弹层 SHALL 支持外部指针关闭；指针按下和抬起均在弹层外才关闭，拖选跨越边界不误关。危险确认、覆盖/丢弃、编辑、Inspect/Import 及提交/未知恢复流程不纳入该白名单；Escape、显式 Close/Cancel、焦点限制和返回规则保持。关闭观察的动作 SHALL 用 Close，Cancel request/run 保留真实执行对象。Files 选择命中区 SHALL 至少 32px 且与文件名的打开动作分离，选择工具栏不推移文件行。
+
+全局 About Piwork 与 Known operations SHALL 放在 Admin/账号下拉，不在 Work 顶栏常驻。Stop Work 与 Work information SHALL 放在所属 Work 更多菜单；Ready Work 列表主动作 SHALL 是 Open Work，Stopped 保留 Start。已有 Works 列表底部 SHALL 不重复展示 Create a Work，空列表创建引导仍保留。账号下拉自身无编辑草稿，外侧关闭 SHALL 不因背景草稿或后台任务被阻断；不扩大其他危险确认窗的外侧关闭范围。Files 无选择时 SHALL 不显示 Select files 提示条，选中后的批量动作 SHALL 使用现有工具栏，不推移文件行。Agent 全 Work 请求入口 SHALL 以 Pi requests 可访问图标放入 Agent 工具栏，保持与 Service 请求过滤入口不同的原范围。
+
+#### Scenario: 全局与Work管理分层
+- **WHEN** 用户查看Works或使用Work
+- **THEN** About/Known operations在Admin，Stop/Work information在当前Work更多菜单；Ready行可直接Open，Stopped可Start；已存在Work时没有底部重复创建CTA
+
+#### Scenario: 头像菜单仅收起展示
+- **WHEN** 用户打开Admin后在外侧按下并抬起或按Escape，包含背景存在草稿或任务的情况
+- **THEN** 账号菜单关闭且焦点回头像，内部点击不误触外侧关闭，不触发注销/停止/取消，不扩大其他确认窗规则
 
 #### Scenario: 宽屏 Service 与 Agent
 - **WHEN** 用户在宽屏打开有可用 Service 的 Work
@@ -182,9 +192,15 @@ Desktop SHALL 将 Export 表达为一次明确目标下连续完成的停止（�
 
 用户 SHALL 可仅在本地 Inspect 后关闭，不需登录 Core 或被迫导入；兼容性与权限仍由 Core 在导入时检查。上传未接受前 SHALL 不虚构 Operation，错误 SHALL 区分包损坏、名称、依赖/容量、运行时与未知结果。导入/下载前 SHALL 说明 Work 包可能包含代码、配置、共享数据、Session 与凭证；浏览器只能确认发起下载时，不得宣称文件已完整落盘。界面以 Export current Work and download、Stop and export、Download this snapshot 清楚区分新导出、必要停止确认和旧包下载；进度保留真实阶段，技术详情保留原 Operation/snapshot/transfer ID。
 
-已停止 Work 的显式导出 SHALL 在同一可收起的进度上下文连续完成；敏感内容提醒在交付前可见，停止确认不能被简化掉。成功快照不遮蔽导出当前内容入口；已有快照只表示其捕获时内容，不能被称为当前最新版。按明确 ID 找回 SHALL 不改选其他快照。
+已停止 Work 的显式导出 SHALL 在同一可收起、非遮罩的紧凑进度上下文连续完成；敏感内容提醒在交付前可见，停止确认不能被简化掉。成功快照不遮蔽导出当前内容入口；已有快照只表示其捕获时内容，不能被称为当前最新版。按明确 ID 找回 SHALL 不改选其他快照。
 
 关闭进度 SHALL 只收起展示，同一有效身份下原一次交付意图继续，未被用户手动暂停时，ready/恢复最多自动发起一次；明确 Pause 暂停后续交付推进，Check 仅核对而不解除手动暂停，Resume 核对原结果后才继续原授权目标；提供同一已验证文件的手动保存回退，不把浏览器发起当作落盘完成。账号/Core 切换、注销、本地授权失效撤销该自动交付，重载后只恢复查询和用户显式下载，不增加持久后台队列。
+
+原 Export 入口 SHALL 直接建立明确新导出意图，不先展示另一个必点 Export 按钮。默认进度/结果 SHALL 只展示当前 Work、阶段、错误及必要恢复动作；技术 ID、旧快照和诊断动作按需展开，长 ID 不覆盖标签。非遮罩面板 SHALL 不限制背景操作和 Tab；背景动作收起展示而不取消交付，切换模态窗口仍按原焦点与风险规则。
+
+#### Scenario: 导出结果不成为第二个主流程
+- **WHEN** 用户选择停止态Work的Export，随后查看结果或继续操作工作区
+- **THEN** 无第二次导出确认即可生成/校验/发起下载；紧凑进度不遮罩，成功只称Download started并保留同一文件手动下载，技术详情和旧包默认折叠
 
 #### Scenario: 运行中的 Work 申请导出
 - **WHEN** 用户在 ready 或正在停止的 Work 选择 Export

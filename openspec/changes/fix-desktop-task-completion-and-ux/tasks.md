@@ -76,3 +76,11 @@
 - [x] 10.2 通过现有Desktop build和Go宿主构建同步嵌入资源，执行源码/生成资源一致性、native boundary及git diff --check。验证：原生程序实际提供本次UI，生成副本不手改，无Core逻辑/API或项目依赖的无关改动；如发现接口不足暂停对应工作并向用户提交证据。
 - [ ] 10.3 在后续明确授权且具备隔离Engine/匹配helper的环境执行真实Core停止→导出→完整校验→浏览器下载→Inspect→Import→用户显式Start链路，含文件内容/hash及权限撤销。验证：真实数据结果、原ID、请求次数和安全清理可核验。当前NoDocker阶段此项保持未完成，不自动安装/启动Docker，不以mock/native合成协议替代。
 - [x] 10.4 汇总编号/规格场景覆盖及通过/失败/阻塞/未测证据，复查三个delta与在途变更兼容，并运行openspec validate fix-desktop-task-completion-and-ux --strict。验证：用户可区分前端修复完成和真实Core待验，所有已勾选项都有实际证据；未获授权不推送/发布/归档，必要的后续提交按功能、使用文档、规格归档分别组织。
+
+## 11. 用户反馈：主流程与管理入口分层
+
+- [ ] 11.1 更新本变更proposal/design/spec，明确原45项28完成、17未测不变；按模块限定本轮层级调整与NoDocker边界。
+- [ ] 11.2 精简Export展示为非遮罩进度/结果，原入口直接执行，详情按需；验证一次提交/交付、背景动作与键盘可用、running停止确认及精确旧快照恢复。
+- [ ] 11.3 全局动作归Admin，Stop/Work information归Work更多菜单，Ready行优先Open；修头像外侧关闭/Escape/焦点，去重复Create CTA，保留空列表引导。
+- [ ] 11.4 删除Files空选择条、在现有工具栏承接批量动作；Service/Agent请求图标化且保持原过滤范围与可访问标签。
+- [ ] 11.5 执行定向生产函数与状态回归、typecheck/build/embed及官方云浏览器截图，记录实际通过/限制；不将合成GUI记为真实Core或完整浏览器通过。

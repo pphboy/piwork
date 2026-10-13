@@ -78,6 +78,18 @@
 
 后续实施仍按“导出下载 → 工作连续性 → 交互细节”的依赖顺序推进，每组先复现、再修复、再验证。提案交付时仅有规划、全部实现任务未完成；此后已按明确请求启动Apply。当前完成状态按任务文件记录，不由本范围说明推断。
 
+## 2026-10-13 用户反馈：按主流程分层
+
+| 模块 | 修改 | 范围 |
+| --- | --- | --- |
+| Works / Work | Ready 主动作是打开；Stopped 保留 Start；Stop 与 Work information 收到所属 Work 的更多菜单；删除列表底部重复 Create a Work | 创建/导入 → 打开 → 使用/修改 → 导出；空列表引导保留 |
+| Export | 原入口直接执行；紧凑、非遮罩进度与结果；技术 ID、旧快照、诊断动作按需展开 | 复用原一次意图；running 仍明确 Stop and export；收起不取消 |
+| Admin | About Piwork、Known operations 收进右上账号下拉；外侧点击和 Escape 关闭并恢复焦点 | 仅修头像菜单，不统一扩大其他确认窗的外部关闭 |
+| Files | 删除空选择提示条，选中后在现有工具栏提供批量动作 | 复选框命中区、文件打开、覆盖/删除确认和行位置稳定保留 |
+| Service / Agent | Agent requests / Pi requests 分别使用就近工具栏图标与可访问名称、提示 | 原 Service 过滤和全 Work 范围不变；无新增 API、未读或计数 |
+
+本轮属于已授权变更的交互层级细化；原45项中的17项未测门槛不因这些局部改动变为完成。
+
 ## Capabilities
 
 ### New Capabilities
