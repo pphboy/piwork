@@ -16,17 +16,17 @@ function extract(...names: string[]) {
 function fixture() {
   const work: any = { id: 'work-a', name: 'A', desired: 'stopped', files: [], color: 'blue', icon: 'grid', resourceErrors: {} };
   const c: any = {
-    view: { modal: '', data: {}, path: '/', selected: [], file: '', modalError: '' },
+    view: { layout:'workspace', modal: '', data: {}, path: '/', selected: [], file: '', modalError: '' },
     adapter: { state: { browserAccess: 'authorized', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [] },
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
       getSnapshot: () => undefined, downloads: new Map(), directories: new Map() },
-    location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(),
+    document:{fullscreenElement:null},root:{},location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(),
     exportFlows: { forWork: () => undefined, get: () => undefined }, exportSnapshotAvailable: () => true,
     filesRestoreNotice: '', uploadProgressMarkup: () => '', transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
     downloadProgressMarkup: () => '', actions: { records: new Map() },
   };
   vm.createContext(c); vm.runInContext(helpers, c);
-  vm.runInContext(extract('isRequestInspector', 'brand', 'topbar', 'quickAction', 'workHeader', 'modalMarkup', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport'), c);
+  vm.runInContext(extract('isRequestInspector', 'brand', 'topbar', 'quickAction', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport'), c);
   return { c, work };
 }
 

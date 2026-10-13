@@ -64,6 +64,12 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
 }
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
 const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]:visible`).first();
+async function openFullscreenOptions(page: Page) {
+  if(await button(page,'service-fullscreen').isVisible())return;
+  const serviceMenu=page.locator('.service-toolbar [data-action="service-menu"]:visible').first();
+  if(await serviceMenu.isVisible())await serviceMenu.click();else await button(page,'agent-menu').click();
+  await expect(button(page,'service-fullscreen')).toBeVisible();
+}
 async function openResponseSettings(page: Page, kind?: 'model' | 'thinking') {
   if (!await page.locator('#modal').count()) await page.locator('#response-settings-trigger').click();
   await expect(page.locator('#modal')).toHaveClass(/chat-response-settings/);
@@ -578,7 +584,7 @@ test('UX Focus changes preserve Service document, Chat node, draft and expanded 
  await page.locator('.activity summary').first().click();await page.evaluate(()=>{(window as any).originalFrame=document.querySelector('iframe');(window as any).originalComposer=document.querySelector('#composer');(document.querySelector('iframe')!.contentDocument!.body as HTMLElement).dataset.unsaved='same';});
  await button(page,'service-focus').click();await button(page,'focus-toggle-chat').click();await expect(page.locator('#composer')).toBeHidden();await button(page,'focus-toggle-chat').click();await expect(page.locator('#composer')).toHaveValue('unsaved draft');assert.equal(await page.locator('.activity').evaluate((node:HTMLDetailsElement)=>node.open),true);
  await page.setViewportSize({width:360,height:800});await expect(button(page,'exit-service-focus')).toBeVisible();assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).originalFrame),true);assert.equal(await page.evaluate(()=>document.querySelector('#composer')===(window as any).originalComposer),true);assert.equal(await page.locator('iframe').evaluate((node:HTMLIFrameElement)=>node.contentDocument!.body.dataset.unsaved),'same');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
- await page.evaluate(()=>{Object.defineProperty(document.querySelector('#app'),'requestFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))});});await button(page,'service-fullscreen').click();await expect(page.locator('.service-toolbar')).toContainText('Focus remains available');await button(page,'exit-service-focus').click();await expect(button(page,'service-focus')).toBeVisible();
+ await page.evaluate(()=>{Object.defineProperty(document.querySelector('#app'),'requestFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))});});await openFullscreenOptions(page);await button(page,'service-fullscreen').click();await expect(page.locator('.service-toolbar')).toContainText('Focus remains available');await button(page,'exit-service-focus').click();await expect(button(page,'service-focus')).toBeVisible();
 });
 
 test('UX full screen is independent from Focus and browser exit keeps the original frame',async t=>{
@@ -586,8 +592,8 @@ test('UX full screen is independent from Focus and browser exit keeps the origin
   if(r.path.endsWith('/services'))return{json:{services:[{serviceId:'service-a',name:'Tool A',enabled:true,observedState:'ready',access:{hostname:'a.w-one.work',ports:[{port:80,url:'http://a.w-one.work',name:'web'}]}}]}};
   if(r.path==='service-entries')return{json:{entryId:'entry-a',origin:'http://service.test',entryUrl:'about:blank',embed:'allowed'}};if(r.path==='service-entries/entry-a')return{json:{embed:'allowed'}};
  });
- await button(page,'tab-Services').click();await expect(page.locator('iframe')).toBeVisible();await page.evaluate(()=>{(window as any).focusFrame=document.querySelector('iframe')});await button(page,'service-focus').click();assert.equal(await page.evaluate(()=>!!document.fullscreenElement),false);await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
- await page.evaluate(()=>document.exitFullscreen());await expect(button(page,'exit-service-focus')).toBeVisible();assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).focusFrame),true);await button(page,'service-fullscreen').click();await button(page,'exit-service-focus').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(false);await expect(button(page,'service-focus')).toBeVisible();
+ await button(page,'tab-Services').click();await expect(page.locator('iframe')).toBeVisible();await page.evaluate(()=>{(window as any).focusFrame=document.querySelector('iframe')});await button(page,'service-focus').click();assert.equal(await page.evaluate(()=>!!document.fullscreenElement),false);await openFullscreenOptions(page);await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
+ await page.evaluate(()=>document.exitFullscreen());await expect(button(page,'exit-service-focus')).toBeVisible();assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).focusFrame),true);await openFullscreenOptions(page);await button(page,'service-fullscreen').click();await button(page,'exit-service-focus').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(false);await expect(button(page,'service-focus')).toBeVisible();
 });
 
 function focusFixture(r: RequestRecord): Reply | undefined {
@@ -731,12 +737,13 @@ test('UX revision Focus icons use their toolbar roles and Escape closes exactly 
   await button(page,'service-focus').focus();await page.keyboard.press('Enter');
   await expect(button(page,'focus-toggle-chat')).toHaveAttribute('aria-pressed','true');
   await button(page,'focus-chat').click();
-  for(const action of ['restore-layout','exit-service-focus','service-fullscreen']) {
+  for(const action of ['restore-layout','exit-service-focus']) {
     assert.deepEqual(await shape(action),await shape('agent-menu'));
     await expect(button(page,action)).toHaveClass(/icon-button quiet/);
     await expect(button(page,action).locator('svg')).toHaveCount(1);
     assert.equal(await button(page,action).getAttribute('title'),await button(page,action).getAttribute('aria-label'));
   }
+  await expect(page.locator('.agent-header [data-action=service-fullscreen]')).toHaveCount(0);
   await openResponseSettings(page,'thinking');await page.keyboard.press('Escape');
   await expect(page.locator('#response-settings-trigger')).toBeFocused();await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
   assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
@@ -757,16 +764,16 @@ test('UX revision fullscreen failures keep Chat exits and browser exit preserves
   });
   await button(page,'service-focus').click();await button(page,'focus-chat').click();
   await page.evaluate(()=>{const root=document.querySelector('#app')!;(window as any).nativeFullscreen=root.requestFullscreen;Object.defineProperty(root,'requestFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))});});
-  await button(page,'service-fullscreen').click();await expect(page.locator('.agent-panel')).toContainText('Focus remains available');
+  await openFullscreenOptions(page);await button(page,'service-fullscreen').click();await expect(page.locator('.agent-panel')).toContainText('Focus remains available');
   await expect(button(page,'restore-layout')).toBeVisible();await expect(button(page,'exit-service-focus')).toBeVisible();
   await page.evaluate(()=>{Object.defineProperty(document.querySelector('#app'),'requestFullscreen',{configurable:true,value:(window as any).nativeFullscreen});});
-  await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
+  await openFullscreenOptions(page);await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
   await openResponseSettings(page,'model');await page.keyboard.press('Escape');
   await expect(page.locator('#modal')).toHaveCount(0);await expect(page.locator('#response-settings-trigger')).toBeFocused();
   assert.equal(await page.evaluate(()=>!!document.fullscreenElement),true);await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
-  await page.evaluate(()=>document.exitFullscreen());await expect(button(page,'service-fullscreen')).toHaveAttribute('aria-pressed','false');
+  await page.evaluate(()=>document.exitFullscreen());await openFullscreenOptions(page);await expect(button(page,'service-fullscreen')).toHaveAttribute('aria-pressed','false');await page.keyboard.press('Escape');
   await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
-  await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
+  await openFullscreenOptions(page);await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
   await page.evaluate(()=>{(window as any).nativeExit=document.exitFullscreen;Object.defineProperty(document,'exitFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))});});
   await button(page,'exit-service-focus').click();await expect(page.locator('.agent-panel')).toContainText('Full screen could not be closed');
   await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');assert.equal(await page.evaluate(()=>!!document.fullscreenElement),true);

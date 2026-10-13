@@ -915,7 +915,13 @@ function focusControls(w, showError = true) {
     const standalone = route()[0] === 'app', focused = view.layout !== 'workspace', chat = view.layout === 'chat-only';
     const service = activeService(w);
     const available = !!service && service.observed === 'Ready' && !!adapter.serviceEntryUrl(w.id, service.id, view.port) && adapter.serviceEmbed(w.id, service.id, view.port) !== 'denied';
-    return focused ? `${chat ? layoutButton('arrow', 'Restore layout', 'restore-layout') : !standalone ? layoutButton('chat', view.layout === 'service-chat' ? 'Hide chat' : 'Show chat', 'focus-toggle-chat', `aria-pressed="${view.layout === 'service-chat'}"`) : ''}${layoutButton('close', 'Exit focus', 'exit-service-focus')}${layoutButton('focus', document.fullscreenElement === root ? 'Exit full screen' : 'Full screen', 'service-fullscreen', `aria-pressed="${document.fullscreenElement === root}"`)}${view.layout === 'service-only' && w.run ? `<small class="focus-run-status">Run ${esc(w.run.status)}${w.run.error ? ' · needs attention' : ''}</small>` : ''}${showError && view.fullscreenError ? `<small class="fullscreen-error" role="status">${esc(view.fullscreenError)}</small>` : ''}` : layoutButton('focus', 'Focus', 'service-focus', `aria-pressed="false" ${available ? '' : 'disabled'}`);
+    return focused ? `${chat ? layoutButton('arrow', 'Restore layout', 'restore-layout') : !standalone ? layoutButton('chat', view.layout === 'service-chat' ? 'Hide chat' : 'Show chat', 'focus-toggle-chat', `aria-pressed="${view.layout === 'service-chat'}"`) : ''}${layoutButton('close', 'Exit focus', 'exit-service-focus')}${view.layout === 'service-only' && w.run ? `<small class="focus-run-status">Run ${esc(w.run.status)}${w.run.error ? ' · needs attention' : ''}</small>` : ''}${showError && view.fullscreenError ? `<small class="fullscreen-error" role="status">${esc(view.fullscreenError)}</small>` : ''}` : layoutButton('focus', 'Focus', 'service-focus', `aria-pressed="false" ${available ? '' : 'disabled'}`);
+}
+function browserFullscreenAction() {
+    if (view.layout === 'workspace' && document.fullscreenElement !== root)
+        return '';
+    const full = document.fullscreenElement === root, label = full ? 'Exit browser full screen' : 'Browser full screen';
+    return btn(`${icon('focus', 16)} ${label}`, 'service-fullscreen', '', `title="${label}" aria-label="${label}" aria-pressed="${full}"`);
 }
 function agentLayoutControls(w) {
     if (view.layout === 'chat-only')
@@ -1339,7 +1345,7 @@ function modalMarkup() {
             break;
         case "agent-menu":
             title = "Agent options";
-            body = `<div class="menu-list">${btn("Sessions", "sessions")}${btn("New session", "new-session")}${btn("Pi requests for this Work", "pi-requests")}${btn("Focus chat", "focus-chat")}</div>`;
+            body = `<div class="menu-list">${btn("Sessions", "sessions")}${btn("New session", "new-session")}${btn("Pi requests for this Work", "pi-requests")}${view.layout === 'chat-only' ? btn("Restore layout", "restore-layout") : btn("Focus chat", "focus-chat")}${browserFullscreenAction()}</div>`;
             break;
         case "about-piwork": {
             const info = adapter.about;
@@ -1374,7 +1380,7 @@ function modalMarkup() {
         }
         case "service-menu":
             title = "Service options";
-            body = `<div class="menu-list">${btn(`${icon("external")} Open in new tab`, "open-app")}${btn(`${icon("focus")} Open independent window`, "open-window")}${btn(`${icon("copy")} Copy domain`, "copy-domain")}${btn(`${icon("copy")} Copy local link`, "copy-local")}${btn(`${icon("settings")} Manage services`, "manage-services")}${btn(`${icon("note")} Pi requests for this Work`, "pi-requests")}${btn("Reset split", "reset-workspace-split")}${btn(`${icon("focus")} Focus chat`, "focus-chat")}</div><p class="muted">A local link works on this computer while Desktop CLI is running and signed in. It is not a public share link.</p>`;
+            body = `<div class="menu-list">${btn(`${icon("external")} Open in new tab`, "open-app")}${btn(`${icon("focus")} Open independent window`, "open-window")}${btn(`${icon("copy")} Copy domain`, "copy-domain")}${btn(`${icon("copy")} Copy local link`, "copy-local")}${btn(`${icon("settings")} Manage services`, "manage-services")}${btn(`${icon("note")} Pi requests for this Work`, "pi-requests")}${btn("Reset split", "reset-workspace-split")}${btn(`${icon("focus")} Focus chat`, "focus-chat")}${browserFullscreenAction()}</div><p class="muted">A local link works on this computer while Desktop CLI is running and signed in. It is not a public share link.</p>`;
             break;
         case "manage-services":
             title = "Manage services";
@@ -1926,12 +1932,16 @@ async function handleAction(action, el, record) {
             }
             break;
         case 'restore-layout':
+            if (view.modal === 'agent-menu')
+                closeModal();
             restoreChatLayout();
             break;
         case 'exit-service-focus':
             await exitWorkspaceFocus();
             break;
         case 'service-fullscreen':
+            if (['agent-menu', 'service-menu'].includes(view.modal))
+                closeModal();
             try {
                 if (document.fullscreenElement === root)
                     await document.exitFullscreen();

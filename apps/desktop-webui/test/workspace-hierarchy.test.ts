@@ -10,7 +10,7 @@ function fixture(){
  const work:any={id:'work-a',name:'Work A',sessions:[{id:'session-a',messages:[],runs:[]}],services:[],files:[],resourceChecked:{services:'now'},resourceErrors:{}};
  const c:any={innerWidth:1440,view:{modal:'',data:{},session:'session-a',tab:'Services',service:'',port:3000,layout:'workspace'},adapter:{identityEpoch:7,runDetails:new Map(),activeRuns:new Map(),cancelAndSendCapabilities:new Map(),requestReadErrors:new Map(),requestDetails:new Map(),requestResponses:new Map(),requestRetries:new Map(),getWork:()=>work,project:()=>({usable:true}),requestPage:()=>undefined,requestCancellation:()=>undefined},current:()=>work,route:()=>['work','work-a'],activityGroups,executionAnchors,expandedActivity:new Map(),historyImageMarkup:()=>'',requestNavigationCurrent:()=>false,requestCancellable:()=>false};
  vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);
- vm.runInContext(extract('isRequestInspector','nonmodalDialog','requestStateLabel','modelDisplayName','runFacts','executionMarkup','unmatchedExecutions','messageMarkup','modalMarkup','focusKey'),c);return {c,work};
+ vm.runInContext(extract('isRequestInspector','nonmodalDialog','requestStateLabel','modelDisplayName','runFacts','layoutButton','focusControls','agentLayoutControls','browserFullscreenAction','executionMarkup','unmatchedExecutions','messageMarkup','modalMarkup','focusKey'),c);return {c,work};
 }
 test('message execution details bind each true Run once and never attach the Work active Run to legacy text',()=>{
  const {c,work}=fixture();work.run={id:'external',sessionId:'other',status:'running'};work.sessions[0].runs=[{id:'a',sessionId:'session-a',status:'failed',error:'Original failure'},{id:'b',sessionId:'session-a',status:'succeeded'}];
@@ -57,4 +57,19 @@ test('confirmed empty active slot never exposes cancellation of a stale running 
 test('terminal Request does not present a retained wait reference as current waiting',()=>{
  const {c,work}=fixture();c.view.modal='pi-request-detail';c.view.data={requestId:'done'};c.adapter.requestDetails.set('work-a:done',{request:{requestId:'done',goal:'Done',source:{kind:'chat'},state:'cancelled',disposition:'live',updatedAt:'now',runIds:[],waitRef:{kind:'job',id:'old-job',deadlineAt:'yesterday'}},evidence:{items:[]}});
  const html=c.modalMarkup();assert.match(html,/Cancelled/);assert.doesNotMatch(html,/Waiting for job|Chat remains available/);assert.match(html,/Wait reference/);assert.match(html,/old-job/);
+});
+
+for(const width of [1180,500])for(const layout of ['workspace','service-chat','service-only','chat-only'])test(`Chat header has one layout affordance and no browser fullscreen at ${width}px ${layout}`,()=>{
+ const {c,work}=fixture();c.innerWidth=width;c.view.layout=layout;c.document={fullscreenElement:null};c.root={};c.activeService=()=>undefined;
+ const html=c.agentLayoutControls(work);
+ assert.doesNotMatch(html,/data-action="service-fullscreen"/);assert.equal((html.match(/data-action="focus-chat"/g)||[]).length,layout==='chat-only'?0:1);
+ if(layout==='chat-only')assert.match(html,/aria-label="Restore layout"/);
+ if(layout==='workspace') {assert.match(html,/data-action="toggle-workspace-chat"/);assert.match(html,/aria-label="Hide chat"/);}
+ if(layout==='service-chat' && width===500)assert.match(html,/aria-label="Exit focus"/);
+});
+for(const menu of ['agent-menu','service-menu'])test(`${menu} makes browser fullscreen a labelled secondary action`,()=>{
+ const {c}=fixture();c.view.modal=menu;c.view.layout='service-chat';c.document={fullscreenElement:null};c.root={};
+ let html=c.modalMarkup();assert.equal((html.match(/data-action="service-fullscreen"/g)||[]).length,1);assert.match(html,/aria-label="Browser full screen" aria-pressed="false"/);
+ c.document.fullscreenElement=c.root;html=c.modalMarkup();assert.match(html,/aria-label="Exit browser full screen" aria-pressed="true"/);
+ c.document.fullscreenElement=null;c.view.layout='workspace';assert.doesNotMatch(c.modalMarkup(),/data-action="service-fullscreen"/);
 });
