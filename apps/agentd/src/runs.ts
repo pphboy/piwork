@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { WorkStore, type AcceptedRun, type RunEventRecord, type RunRecord, type MemorySelection } from "@piwork/work-store";
+import { WorkStore, WorkBusyError, SubmitConflictError, type AcceptedRun, type RunEventRecord, type RunRecord, type MemorySelection } from "@piwork/work-store";
 import { AgentDaemonControl } from "./daemon.js";
 import { type AgentRunSource, type RunSubmissionSelector, type RunModelSnapshot, type ChatInputMode, type ThinkingLevel } from "@piwork/contracts";
 import { canonicalJson, type RequestPhase } from "@piwork/work-store";
@@ -32,9 +32,34 @@ interface ActiveExecution {
   readonly settled: Promise<void>;
 }
 
+export const CANCEL_AND_SEND_TIMEOUT_MS = 5_000;
+
+export class CancelAndSendError extends Error {
+  constructor(readonly cancellationCode: "CANCEL_TIMEOUT" | "INVALID_REQUEST" | "WORK_UNAVAILABLE", message: string) { super(message); }
+}
+
+interface ChatSubmission {
+  readonly workId: string;
+  readonly sessionId: string;
+  readonly submissionKey: string;
+  readonly prompt: string;
+  readonly modelRef?: string | null;
+  readonly inputMode?: ChatInputMode;
+  readonly images?: readonly ChatImageInput[];
+  readonly cancelRunId?: string;
+  readonly signal?: AbortSignal;
+}
+
+interface PreparedChat {
+  readonly selector: RunSubmissionSelector;
+  readonly actualModel?: RunModelSnapshot;
+}
+
 export class RunManager {
   private readonly active = new Map<string, ActiveExecution>();
   private readonly settledListeners = new Set<(run: RunRecord) => void>();
+  private readonly admissionGuards = new Map<string, { readonly token: symbol; readonly runId: string }>();
+  private readonly replacements = new Map<string, { readonly digest: string; readonly settled: Promise<AcceptedRun> }>();
 
   constructor(
     private readonly store: WorkStore,
@@ -64,11 +89,15 @@ export class RunManager {
     readonly selector?: RunSubmissionSelector;
     readonly actualModel?: RunModelSnapshot;
     readonly agentRequest?: { readonly requestId: string; readonly phase: RequestPhase };
-  }): AcceptedRun {
+    readonly cancelRunId?: string;
+  }, owner?: symbol): AcceptedRun {
     const selector = input.selector ?? { kind: "session-preference" };
-    const requestDigest = submissionDigest(input.sessionId, input.prompt, selector, input.images);
+    const requestDigest = submissionDigest(input.sessionId, input.prompt, selector, input.images, input.cancelRunId);
     const replay = this.store.findRunReplay(input.workId, input.submissionKey, requestDigest);
     if (replay) return { run: replay, reused: true };
+    const guard = this.admissionGuards.get(input.workId);
+    if (guard && guard.token !== owner) throw new WorkBusyError(guard.runId);
+    if (input.cancelRunId !== undefined && (!guard || guard.token !== owner)) throw new CancelAndSendError("INVALID_REQUEST", "Cancellation requires an explicit coordinated submission.");
     if (input.prompt.trim() === "" && !input.images?.length) throw new Error("prompt must not be empty");
     if (Buffer.byteLength(input.prompt)>65536) throw new ChatImageError("IMAGE_LIMIT_EXCEEDED", "Message text exceeds 64 KiB.");
     if (input.images?.length) { validateChatImages(input.images); if(selector.inputMode!=="text") throw new ChatImageError("IMAGE_INVALID","Images require Send as text."); }
@@ -98,11 +127,35 @@ export class RunManager {
     return accepted;
   }
 
-  async submitChat(input: { readonly workId: string; readonly sessionId: string; readonly submissionKey: string;
-    readonly prompt: string; readonly modelRef?: string | null; readonly inputMode?: ChatInputMode; readonly images?: readonly ChatImageInput[] }): Promise<AcceptedRun> {
+  async submitChat(input: ChatSubmission): Promise<AcceptedRun> {
     const selector: RunSubmissionSelector = { ...modelSelector(input.modelRef), ...(input.inputMode === undefined ? {} : { inputMode: input.inputMode }) };
-    const replay = this.store.findRunReplay(input.workId, input.submissionKey, submissionDigest(input.sessionId, input.prompt, selector, input.images));
+    const requestDigest = submissionDigest(input.sessionId, input.prompt, selector, input.images, input.cancelRunId);
+    const replay = this.store.findRunReplay(input.workId, input.submissionKey, requestDigest);
     if (replay) return { run: replay, reused: true };
+    if (input.cancelRunId !== undefined) {
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(input.cancelRunId)) throw new CancelAndSendError("INVALID_REQUEST", "Use an explicit valid Run to cancel.");
+      const key = JSON.stringify([input.workId, input.submissionKey]);
+      const pending = this.replacements.get(key);
+      if (pending) {
+        if (pending.digest !== requestDigest) throw new SubmitConflictError(input.submissionKey);
+        return pending.settled;
+      }
+      const snapshot = { ...input, images: input.images?.map(image => ({ ...image })) };
+      const settled = this.replaceAndSubmit(snapshot).finally(() => { if (this.replacements.get(key)?.settled === settled) this.replacements.delete(key); });
+      this.replacements.set(key, { digest: requestDigest, settled });
+      return settled;
+    }
+    return this.submit({ ...input, ...await this.prepareChat(input, selector) });
+  }
+
+  activeRun(workId: string): RunRecord | undefined { return this.store.activeRun(workId); }
+
+  isCancelAndSendPending(workId: string): boolean { return this.admissionGuards.has(workId); }
+
+  private async prepareChat(input: ChatSubmission, selector: RunSubmissionSelector): Promise<PreparedChat> {
+    if (!input.prompt.trim() && !input.images?.length) throw new Error("prompt must not be empty");
+    if (Buffer.byteLength(input.prompt) > 65536) throw new ChatImageError("IMAGE_LIMIT_EXCEEDED", "Message text exceeds 64 KiB.");
+    if (input.images?.length) { validateChatImages(input.images); if (selector.inputMode !== "text") throw new ChatImageError("IMAGE_INVALID", "Images require Send as text."); }
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
     const session = this.store.getSession(input.workId, input.sessionId);
     if (!session) throw Object.assign(new Error("Session not found"), {name: "SessionNotFoundError"});
@@ -113,7 +166,7 @@ export class RunManager {
     }
     if (!this.models) {
       if (selector.kind !== "session-preference") throw new RunModelError("RUN_MODEL_SELECTION_UNSUPPORTED", "This Work does not support model selection.");
-      return this.submit({ ...input, selector });
+      return { selector };
     }
     let reference: string | null = selector.kind === "model" ? selector.modelRef : null;
     const preference = session.modelPreferenceJson ? JSON.parse(session.modelPreferenceJson) as RunModelSnapshot & { availability?: string } : undefined;
@@ -135,7 +188,62 @@ export class RunManager {
     }
     if(!preference && !levels.length) thinkingLevel=null;
     if (!(thinkingLevel === null ? levels.length === 0 : levels.includes(thinkingLevel))) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Confirm a Thinking level supported by the selected model before sending.");
-    return this.submit({ ...input, selector, actualModel: { ...actualModel, thinkingLevel } });
+    return { selector, actualModel: { ...actualModel, thinkingLevel } };
+  }
+
+  private async replaceAndSubmit(input: ChatSubmission): Promise<AcceptedRun> {
+    const runtime = this.daemon.readiness();
+    const selector: RunSubmissionSelector = { ...modelSelector(input.modelRef), ...(input.inputMode === undefined ? {} : { inputMode: input.inputMode }) };
+    const prepared = await this.prepareChat(input, selector);
+    const target = this.store.getRun(input.cancelRunId!);
+    if (!target || target.workId !== input.workId) throw Object.assign(new Error("Run not found in this Work"), { name: "RunNotFoundError" });
+    const previous = this.admissionGuards.get(input.workId);
+    if (previous) throw new WorkBusyError(previous.runId);
+    const token = Symbol("cancel-and-send");
+    this.admissionGuards.set(input.workId, { token, runId: target.runId });
+    const assertRuntime = () => {
+      const current = this.daemon.readiness();
+      if (input.signal?.aborted || !current.acceptingRuns || current.generation !== runtime.generation || current.instanceId !== runtime.instanceId || current.contextIdentity !== runtime.contextIdentity) throw new CancelAndSendError("WORK_UNAVAILABLE", "The submission is no longer authorized or this Work is not accepting Runs.");
+    };
+    try {
+      assertRuntime();
+      const active = this.store.activeRun(input.workId);
+      if (active && active.runId !== target.runId) throw new WorkBusyError(active.runId);
+      if (active) {
+        this.cancel(target.runId);
+        let timer: NodeJS.Timeout | undefined;
+        let aborted: (() => void) | undefined;
+        try {
+          await Promise.race([
+            this.wait(target.runId),
+            new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new CancelAndSendError("CANCEL_TIMEOUT", "The previous Run has not stopped. Your message was not submitted.")), CANCEL_AND_SEND_TIMEOUT_MS); }),
+            new Promise<never>((_, reject) => {
+              if (!input.signal) return;
+              aborted = () => reject(new CancelAndSendError("WORK_UNAVAILABLE", "The submission disconnected before acceptance."));
+              input.signal.addEventListener("abort", aborted, { once: true });
+              if (input.signal.aborted) aborted();
+            }),
+          ]);
+        } finally { if (timer) clearTimeout(timer); if (aborted) input.signal?.removeEventListener("abort", aborted); }
+      }
+      assertRuntime();
+      if (prepared.actualModel && this.models) {
+        const current = await this.models.resolve(prepared.actualModel.modelRef);
+        for (const key of ["modelRef", "provider", "model", "api", "executionBindingId"] as const) {
+          if (current[key] !== prepared.actualModel[key]) throw new RunModelError("MODEL_UNAVAILABLE", "The selected model changed before the message could be submitted.");
+        }
+        if (this.models.thinking) {
+          const levels = (await this.models.thinking(current)).thinkingLevels;
+          const thinking = prepared.actualModel.thinkingLevel;
+          if (!(thinking === null ? levels.length === 0 : levels.includes(thinking ?? "off"))) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "The accepted Thinking setting is no longer available.");
+        }
+      }
+      assertRuntime();
+      if (input.inputMode === "command") this.validateCommand?.(input.prompt);
+      return this.submit({ ...input, ...prepared }, token);
+    } finally {
+      if (this.admissionGuards.get(input.workId)?.token === token) this.admissionGuards.delete(input.workId);
+    }
   }
 
   async submitAutomatic(input: { readonly workId: string; readonly sessionId: string; readonly submissionKey: string;
@@ -143,6 +251,8 @@ export class RunManager {
     const selector: RunSubmissionSelector = { kind: "work-default" };
     const replay = this.store.findRunReplay(input.workId, input.submissionKey, submissionDigest(input.sessionId, input.prompt, selector));
     if (replay) return { run: replay, reused: true };
+    const guard = this.admissionGuards.get(input.workId);
+    if (guard) throw new WorkBusyError(guard.runId);
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
     const model = await this.models?.resolve(null);
     let thinkingLevel: ThinkingLevel | null = "off";
@@ -258,8 +368,8 @@ export class RunManager {
 export function modelSelector(reference: string | null | undefined): RunSubmissionSelector {
   return reference === undefined ? { kind: "session-preference" } : reference === null || reference === "" ? { kind: "work-default" } : { kind: "model", modelRef: reference };
 }
-function submissionDigest(sessionId: string, prompt: string, selector: RunSubmissionSelector, images: readonly ChatImageInput[] = []): string {
-  return digest(canonicalJson({ sessionId, prompt, selector, ...(images.length ? {images:validateChatImages(images),imageProfile:CHAT_IMAGE_PROFILE} : {}) }));
+function submissionDigest(sessionId: string, prompt: string, selector: RunSubmissionSelector, images: readonly ChatImageInput[] = [], cancelRunId?: string): string {
+  return digest(canonicalJson({ sessionId, prompt, selector, ...(images.length ? {images:validateChatImages(images),imageProfile:CHAT_IMAGE_PROFILE} : {}), ...(cancelRunId === undefined ? {} : { cancelRunId }) }));
 }
 
 function digest(value: string): string {

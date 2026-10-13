@@ -223,6 +223,19 @@ type AgentRequestQuery struct {
 	Cursor      Field[string]                  `json:"cursor,omitzero"`
 }
 
+type AgentRequestRetryQuery struct {
+	SubmissionKey string `json:"submissionKey"`
+}
+
+type AgentRequestRetrySubmission struct {
+	WorkId        Identifier      `json:"workId"`
+	RequestId     Identifier      `json:"requestId"`
+	SubmissionKey string          `json:"submissionKey"`
+	Status        string          `json:"status"`
+	Request       json.RawMessage `json:"request"`
+	CheckedAt     Timestamp       `json:"checkedAt"`
+}
+
 type AgentRequest struct {
 	RequestId         Identifier              `json:"requestId"`
 	Source            AgentRunSource          `json:"source"`
@@ -371,7 +384,8 @@ type BrainVerificationTarget struct {
 type BusinessOperationState string
 
 type ChatCapabilities struct {
-	ContractVersion float64 `json:"contractVersion"`
+	ContractVersion              float64        `json:"contractVersion"`
+	CancelAndSendContractVersion Field[float64] `json:"cancelAndSendContractVersion,omitzero"`
 }
 
 type ChatImageCapabilities struct {
@@ -1446,6 +1460,7 @@ type SubmitRunInput struct {
 	Images        Field[[]ChatImageInput] `json:"images,omitzero"`
 	ModelRef      Field[json.RawMessage]  `json:"modelRef,omitzero"`
 	InputMode     Field[ChatInputMode]    `json:"inputMode,omitzero"`
+	CancelRunId   Field[Identifier]       `json:"cancelRunId,omitzero"`
 }
 
 type ThinkingLevel string

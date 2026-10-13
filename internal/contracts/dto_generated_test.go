@@ -233,6 +233,18 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "AgentRequestRetryQuerySchema":
+				value, err := Decode[AgentRequestRetryQuery](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AgentRequestRetrySubmissionSchema":
+				value, err := Decode[AgentRequestRetrySubmission](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "AgentRequestSchema":
 				value, err := Decode[AgentRequest](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {

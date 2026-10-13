@@ -124,7 +124,7 @@ export class BrainLoop {
         this.fail(goal, error instanceof FeedbackError ? error.code : "ACTION_RESULT_UNKNOWN", "Original effects cannot be proved; inspect the original objects before retry");
       }
     }
-    if (!authorityAvailable || this.store.activeRun(this.workId)) return;
+    if (!authorityAvailable || this.store.activeRun(this.workId) || this.runs.isCancelAndSendPending(this.workId)) return;
     if (this.now().getTime() < this.lastRelease + BRAIN_LIMITS.interactiveYieldMs) { this.scheduleYield(); return; }
     requests: for (let goal of this.store.feedback.pending(this.workId)) {
       if (this.stopped || !this.daemon.readiness().acceptingRuns) return;

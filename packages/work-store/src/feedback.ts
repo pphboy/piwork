@@ -319,6 +319,17 @@ export class FeedbackStore {
     });
   }
 
+  lookupRetrySubmission(workId: string, requestId: string, submissionKey: string): AgentRequest | undefined {
+    if (!submissionKey || submissionKey.length > 256) throw new FeedbackError("INVALID_SUBMISSION_KEY", "Invalid retry submission key");
+    const prior = this.db.prepare("SELECT request_id,request_digest FROM agent_requests WHERE work_id=? AND submission_key=?")
+      .get(workId, `retry:${submissionKey}`) as Row | undefined;
+    if (!prior) return undefined;
+    const request = this.getRequest(workId, String(prior.request_id));
+    if (prior.request_digest !== contentDigest({ requestId }) || !request || request.retryOf !== requestId || request.requestId === requestId)
+      throw new FeedbackError("SUBMIT_CONFLICT", "Retry key does not belong to the original request");
+    return request;
+  }
+
   retry(workId: string, requestId: string, submissionKey: string, now = new Date().toISOString()): AgentRequest {
     if (!submissionKey || submissionKey.length > 256) throw new FeedbackError("INVALID_SUBMISSION_KEY", "Invalid retry submission key");
     return this.transaction(() => {

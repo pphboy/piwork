@@ -30,6 +30,7 @@ const (
 	AgentService_ReadSessionImage_FullMethodName                  = "/piwork.agent.v1.AgentService/ReadSessionImage"
 	AgentService_SubmitRun_FullMethodName                         = "/piwork.agent.v1.AgentService/SubmitRun"
 	AgentService_GetRun_FullMethodName                            = "/piwork.agent.v1.AgentService/GetRun"
+	AgentService_GetActiveRun_FullMethodName                      = "/piwork.agent.v1.AgentService/GetActiveRun"
 	AgentService_WatchRun_FullMethodName                          = "/piwork.agent.v1.AgentService/WatchRun"
 	AgentService_CancelRun_FullMethodName                         = "/piwork.agent.v1.AgentService/CancelRun"
 	AgentService_ListRunModels_FullMethodName                     = "/piwork.agent.v1.AgentService/ListRunModels"
@@ -43,6 +44,7 @@ const (
 	AgentService_GetAgentRequest_FullMethodName                   = "/piwork.agent.v1.AgentService/GetAgentRequest"
 	AgentService_CancelAgentRequest_FullMethodName                = "/piwork.agent.v1.AgentService/CancelAgentRequest"
 	AgentService_RetryAgentRequest_FullMethodName                 = "/piwork.agent.v1.AgentService/RetryAgentRequest"
+	AgentService_LookupAgentRequestRetrySubmission_FullMethodName = "/piwork.agent.v1.AgentService/LookupAgentRequestRetrySubmission"
 	AgentService_GetAgentEvidence_FullMethodName                  = "/piwork.agent.v1.AgentService/GetAgentEvidence"
 )
 
@@ -61,6 +63,7 @@ type AgentServiceClient interface {
 	ReadSessionImage(ctx context.Context, in *ReadSessionImageRequest, opts ...grpc.CallOption) (*SessionImage, error)
 	SubmitRun(ctx context.Context, in *SubmitRunRequest, opts ...grpc.CallOption) (*SubmitRunResponse, error)
 	GetRun(ctx context.Context, in *GetRunRequest, opts ...grpc.CallOption) (*Run, error)
+	GetActiveRun(ctx context.Context, in *GetActiveRunRequest, opts ...grpc.CallOption) (*GetActiveRunResponse, error)
 	WatchRun(ctx context.Context, in *WatchRunRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RunEvent], error)
 	CancelRun(ctx context.Context, in *CancelRunRequest, opts ...grpc.CallOption) (*Run, error)
 	ListRunModels(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
@@ -74,6 +77,7 @@ type AgentServiceClient interface {
 	GetAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	CancelAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	RetryAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	LookupAgentRequestRetrySubmission(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	GetAgentEvidence(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 }
 
@@ -189,6 +193,16 @@ func (c *agentServiceClient) GetRun(ctx context.Context, in *GetRunRequest, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Run)
 	err := c.cc.Invoke(ctx, AgentService_GetRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) GetActiveRun(ctx context.Context, in *GetActiveRunRequest, opts ...grpc.CallOption) (*GetActiveRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetActiveRunResponse)
+	err := c.cc.Invoke(ctx, AgentService_GetActiveRun_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +348,16 @@ func (c *agentServiceClient) RetryAgentRequest(ctx context.Context, in *AgentCon
 	return out, nil
 }
 
+func (c *agentServiceClient) LookupAgentRequestRetrySubmission(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_LookupAgentRequestRetrySubmission_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentServiceClient) GetAgentEvidence(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AgentContentResponse)
@@ -359,6 +383,7 @@ type AgentServiceServer interface {
 	ReadSessionImage(context.Context, *ReadSessionImageRequest) (*SessionImage, error)
 	SubmitRun(context.Context, *SubmitRunRequest) (*SubmitRunResponse, error)
 	GetRun(context.Context, *GetRunRequest) (*Run, error)
+	GetActiveRun(context.Context, *GetActiveRunRequest) (*GetActiveRunResponse, error)
 	WatchRun(*WatchRunRequest, grpc.ServerStreamingServer[RunEvent]) error
 	CancelRun(context.Context, *CancelRunRequest) (*Run, error)
 	ListRunModels(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
@@ -372,6 +397,7 @@ type AgentServiceServer interface {
 	GetAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	CancelAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	RetryAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	LookupAgentRequestRetrySubmission(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	GetAgentEvidence(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
@@ -416,6 +442,9 @@ func (UnimplementedAgentServiceServer) SubmitRun(context.Context, *SubmitRunRequ
 func (UnimplementedAgentServiceServer) GetRun(context.Context, *GetRunRequest) (*Run, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetRun not implemented")
 }
+func (UnimplementedAgentServiceServer) GetActiveRun(context.Context, *GetActiveRunRequest) (*GetActiveRunResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetActiveRun not implemented")
+}
 func (UnimplementedAgentServiceServer) WatchRun(*WatchRunRequest, grpc.ServerStreamingServer[RunEvent]) error {
 	return status.Errorf(codes.Unimplemented, "method WatchRun not implemented")
 }
@@ -454,6 +483,9 @@ func (UnimplementedAgentServiceServer) CancelAgentRequest(context.Context, *Agen
 }
 func (UnimplementedAgentServiceServer) RetryAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RetryAgentRequest not implemented")
+}
+func (UnimplementedAgentServiceServer) LookupAgentRequestRetrySubmission(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LookupAgentRequestRetrySubmission not implemented")
 }
 func (UnimplementedAgentServiceServer) GetAgentEvidence(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAgentEvidence not implemented")
@@ -673,6 +705,24 @@ func _AgentService_GetRun_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AgentServiceServer).GetRun(ctx, req.(*GetRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_GetActiveRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetActiveRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetActiveRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetActiveRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetActiveRun(ctx, req.(*GetActiveRunRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -904,6 +954,24 @@ func _AgentService_RetryAgentRequest_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_LookupAgentRequestRetrySubmission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).LookupAgentRequestRetrySubmission(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_LookupAgentRequestRetrySubmission_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).LookupAgentRequestRetrySubmission(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AgentService_GetAgentEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AgentContentRequest)
 	if err := dec(in); err != nil {
@@ -974,6 +1042,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AgentService_GetRun_Handler,
 		},
 		{
+			MethodName: "GetActiveRun",
+			Handler:    _AgentService_GetActiveRun_Handler,
+		},
+		{
 			MethodName: "CancelRun",
 			Handler:    _AgentService_CancelRun_Handler,
 		},
@@ -1020,6 +1092,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RetryAgentRequest",
 			Handler:    _AgentService_RetryAgentRequest_Handler,
+		},
+		{
+			MethodName: "LookupAgentRequestRetrySubmission",
+			Handler:    _AgentService_LookupAgentRequestRetrySubmission_Handler,
 		},
 		{
 			MethodName: "GetAgentEvidence",

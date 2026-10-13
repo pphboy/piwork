@@ -21,6 +21,8 @@ import {
   type DrainRequest,
   type DrainResponse,
   type GetRunRequest,
+  type GetActiveRunRequest,
+  type GetActiveRunResponse,
   type ListSessionsRequest,
   type ListSessionsResponse,
   type ReadinessRequest,
@@ -41,18 +43,20 @@ import {
   AgentEvidenceQuerySchema,
   SetSessionModelSchema,
   CHAT_CONTROLS_CONTRACT_VERSION,
+  CANCEL_AND_SEND_CONTRACT_VERSION,
   ChatInputModeSchema,
   LookupChatSubmissionSchema,
   SetSessionChatOptionsSchema,
   type SlashCommand,
   RetryAgentRequestSchema,
+  AgentRequestRetryQuerySchema,
   publicRunModel,
   type RunModelSnapshot,
 } from "@piwork/contracts";
 import { FeedbackError, WorkStore, type RunEventRecord, type RunRecord, type SessionRecord } from "@piwork/work-store";
 import { AgentDaemonControl } from "./daemon.js";
 import { initializeChildAgentDirectory, initializeDefaultChildAgentModel, PiSdkRunExecutor } from "./pi-sdk-executor.js";
-import { RunManager } from "./runs.js";
+import { RunManager, CancelAndSendError } from "./runs.js";
 import { AgentSessionService } from "./sessions.js";
 import { loadConfiguredSkills, RequiredSkillError, type ConfiguredSkill } from "./skills.js";
 import { emitAgentDiagnostic } from "./diagnostics.js";
@@ -353,11 +357,11 @@ export class AgentApplication {
   }
 
   private handlers(): AgentServiceServer {
-    const unary = <Q, R>(handler: (request: Q) => Promise<R> | R) =>
+    const unary = <Q, R>(handler: (request: Q, call: ServerUnaryCall<Q, R>) => Promise<R> | R) =>
       async (call: ServerUnaryCall<Q, R>, callback: sendUnaryData<R>) => {
         try {
           this.authenticate(call);
-          callback(null, await handler(call.request));
+          callback(null, await handler(call.request, call));
         } catch (error) {
           callback(grpcError(error));
         }
@@ -424,6 +428,13 @@ export class AgentApplication {
         if (value.state === "cancelling") for (const id of value.runIds) if (["accepted", "running", "cancelling"].includes(this.runs.get(id)?.state ?? "")) this.runs.cancel(id);
         return { valueJson: JSON.stringify(this.store.feedback.getRequest(request.workId, request.objectId)) };
       }),
+      lookupAgentRequestRetrySubmission: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId); const input = parseContent(request);
+        if (!Check(AgentRequestRetryQuerySchema, input)) throw Object.assign(new Error("Invalid retry submission query"), { code: status.INVALID_ARGUMENT });
+        const value = this.store.feedback.lookupRetrySubmission(request.workId, request.objectId, input.submissionKey);
+        return { valueJson: JSON.stringify({ workId: request.workId, requestId: request.objectId, submissionKey: input.submissionKey,
+          status: value ? "accepted" : "not-found", request: value ?? null, checkedAt: new Date().toISOString() }) };
+      }),
       retryAgentRequest: unary((request: AgentContentRequest): AgentContentResponse => {
         this.verifyWork(request.workId); this.assertAcceptingRuns(); const input = parseContent(request);
         if (!Check(RetryAgentRequestSchema, input)) throw Object.assign(new Error("Invalid retry intent"), { code: status.INVALID_ARGUMENT });
@@ -461,6 +472,7 @@ export class AgentApplication {
           workFeedbackContractVersion: 1,
           workHistorySchemaVersion: this.store.schemaVersion,
           chatControlsContractVersion: CHAT_CONTROLS_CONTRACT_VERSION,
+          cancelAndSendContractVersion: CANCEL_AND_SEND_CONTRACT_VERSION,
           modelProviderContractVersion: 1,
         };
       }),
@@ -524,14 +536,24 @@ export class AgentApplication {
         const value=this.sessions.image(request.sessionId,request.runId,request.imageIndex);
         return {workId:request.workId,sessionId:request.sessionId,runId:request.runId,imageIndex:request.imageIndex,image:{...validateChatImages([value])[0]!,imageIndex:request.imageIndex},data:Buffer.from(value.data,"base64")};
       }),
-      submitRun: unary(async (request: SubmitRunRequest): Promise<SubmitRunResponse> => {
+      submitRun: unary(async (request: SubmitRunRequest, call): Promise<SubmitRunResponse> => {
         this.verifyWork(request.workId);
         if (request.inputMode !== undefined && !Check(ChatInputModeSchema, request.inputMode)) throw Object.assign(new Error("Invalid input mode"), { code: status.INVALID_ARGUMENT });
         const images=(request.images ?? []).map(i=>({mimeType:i.mimeType as ChatImageInput["mimeType"],data:Buffer.from(i.data).toString("base64")}));
-        const result = await this.runs.submitChat({ ...request, images, inputMode: request.inputMode as "text" | "command" | undefined, ...(request.modelRef === "" ? { modelRef: null } : {}) });
-        return { run: runMessage(result.run), reused: result.reused };
+        const controller = new AbortController();
+        const cancelled = () => controller.abort();
+        if (request.cancelRunId !== undefined) { call.on("cancelled", cancelled); if (call.cancelled) cancelled(); }
+        try {
+          const result = await this.runs.submitChat({ ...request, images, inputMode: request.inputMode as "text" | "command" | undefined, ...(request.modelRef === "" ? { modelRef: null } : {}), ...(request.cancelRunId === undefined ? {} : { signal: controller.signal }) });
+          return { run: runMessage(result.run), reused: result.reused };
+        } finally { call.removeListener("cancelled", cancelled); }
       }),
       getRun: unary((request: GetRunRequest): Run => runMessage(this.requireRun(request.workId, request.runId))),
+      getActiveRun: unary((request: GetActiveRunRequest): GetActiveRunResponse => {
+        this.verifyWork(request.workId);
+        const run = this.runs.activeRun(request.workId);
+        return { run: run ? runMessage(run) : undefined };
+      }),
       cancelRun: unary((request: CancelRunRequest): Run => {
         this.requireRun(request.workId, request.runId);
         return runMessage(this.runs.cancel(request.runId));
@@ -832,13 +854,14 @@ function isTerminal(run: RunRecord): boolean {
 }
 
 function grpcError(error: unknown): Error & { code: number } {
+  if (error instanceof CancelAndSendError) return Object.assign(new Error(`${error.cancellationCode}: ${error.message}`), { code: error.cancellationCode === "INVALID_REQUEST" ? status.INVALID_ARGUMENT : status.FAILED_PRECONDITION });
   if(error instanceof ChatImageError) return Object.assign(new Error(`${error.code}: ${error.message}`),{code:error.code==="IMAGE_LIMIT_EXCEEDED"?status.RESOURCE_EXHAUSTED:status.FAILED_PRECONDITION});
   if (error instanceof RunModelError) return Object.assign(new Error(`${error.modelErrorCode}: ${error.message}`), { code: status.FAILED_PRECONDITION });
   if (error instanceof FeedbackError) return Object.assign(new Error(`${error.code}: ${error.message}`), { code: error.code === "REQUEST_NOT_FOUND" ? status.NOT_FOUND : error.code === "INVALID_CURSOR" ? status.INVALID_ARGUMENT : status.FAILED_PRECONDITION });
   const item = error as { message?: string; code?: number; name?: string };
   const code = item.code ?? (item.name === "WorkBusyError" ? status.RESOURCE_EXHAUSTED
     : item.name === "SessionContextUnavailableError" ? status.FAILED_PRECONDITION
-      : item.name === "SessionNotFoundError" ? status.NOT_FOUND
+      : item.name === "SessionNotFoundError" || item.name === "RunNotFoundError" ? status.NOT_FOUND
       : item.name === "SubmitConflictError" ? status.ALREADY_EXISTS
       : item.name === "CursorExpiredError" ? status.OUT_OF_RANGE
       : item.name === "RuntimeIdentityError" ? status.PERMISSION_DENIED : status.INTERNAL);

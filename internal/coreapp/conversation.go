@@ -126,12 +126,16 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 		if r.URL.RawQuery != "" {
 			return true, contracts.NewError("INVALID_REQUEST", "")
 		}
-		version, err := agent.ChatControlsVersion(r.Context(), *work.ActiveContextID)
+		version, cancelAndSendVersion, err := agent.ChatControlCapabilities(r.Context(), *work.ActiveContextID)
 		if err != nil {
 			return true, conversationError(err)
 		}
 		if resource == "chat-capabilities" {
-			send(w, 200, map[string]any{"contractVersion": version})
+			capabilities := map[string]any{"contractVersion": version}
+			if cancelAndSendVersion == 1 {
+				capabilities["cancelAndSendContractVersion"] = cancelAndSendVersion
+			}
+			send(w, 200, capabilities)
 			return true, nil
 		}
 		if version != 1 && version != 2 && version != 3 {
@@ -309,7 +313,13 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			modes = append(modes, string(input.InputMode.Value))
 		}
 		var result *agentv1.SubmitRunResponse
-		if len(images) > 0 {
+		if input.CancelRunId.Present {
+			var mode *string
+			if len(modes) > 0 {
+				mode = &modes[0]
+			}
+			result, err = agent.SubmitRunWithCancel(r.Context(), *work.ActiveContextID, string(input.SessionId), input.SubmissionKey, input.Prompt, modelRef, mode, string(input.CancelRunId.Value), images)
+		} else if len(images) > 0 {
 			result, err = agent.SubmitImageRun(r.Context(), string(input.SessionId), input.SubmissionKey, input.Prompt, modelRef, "text", images)
 		} else {
 			result, err = agent.SubmitRun(r.Context(), string(input.SessionId), input.SubmissionKey, input.Prompt, modelRef, modes...)
@@ -345,6 +355,14 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	if action == "events" {
 		return true, serveRunEvents(w, r, agent, item)
 	}
+	if resource == "runs" && item == "active" {
+		result, err := agent.GetActiveRun(r.Context(), *work.ActiveContextID)
+		if err != nil {
+			return true, conversationError(err)
+		}
+		send(w, 200, map[string]any{"run": runView(result)})
+		return true, nil
+	}
 	result, err := agent.GetRun(r.Context(), item)
 	if err != nil {
 		return true, conversationError(err)
@@ -374,7 +392,7 @@ func conversationError(err error) error {
 			return contracts.NewError("WORK_BUSY", "")
 		}
 
-		for _, code := range []string{"IMAGE_INVALID", "IMAGE_LIMIT_EXCEEDED", "IMAGE_MODEL_UNSUPPORTED", "IMAGE_MODEL_UNCONFIRMED", "IMAGE_INPUT_UNSUPPORTED", "IMAGE_HISTORY_CORRUPT", "WORK_BUSY", "CHAT_OPTIONS_UNSUPPORTED", "THINKING_LEVEL_UNSUPPORTED", "SLASH_COMMAND_UNKNOWN", "SLASH_COMMAND_UNSUPPORTED", "SLASH_COMMAND_UNAVAILABLE", "MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
+		for _, code := range []string{"IMAGE_INVALID", "IMAGE_LIMIT_EXCEEDED", "IMAGE_MODEL_UNSUPPORTED", "IMAGE_MODEL_UNCONFIRMED", "IMAGE_INPUT_UNSUPPORTED", "IMAGE_HISTORY_CORRUPT", "WORK_BUSY", "CHAT_OPTIONS_UNSUPPORTED", "CANCEL_AND_SEND_UNSUPPORTED", "CANCEL_TIMEOUT", "THINKING_LEVEL_UNSUPPORTED", "SLASH_COMMAND_UNKNOWN", "SLASH_COMMAND_UNSUPPORTED", "SLASH_COMMAND_UNAVAILABLE", "MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
 			if strings.HasPrefix(state.Message(), code+":") {
 				return contracts.NewError(code, "")
 			}

@@ -4,6 +4,7 @@ import { AgentRunSourceSchema, RunModelDescriptionSchema } from "./work-feedback
 import { ChatImageDescriptorSchema } from "./chat-images.js";
 
 export const CHAT_CONTROLS_CONTRACT_VERSION = 3;
+export const CANCEL_AND_SEND_CONTRACT_VERSION = 1;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export const WEB_SLASH_COMMANDS = ["new", "resume", "model", "thinking", "settings"] as const;
 const strict = { additionalProperties: false } as const;
@@ -12,7 +13,7 @@ export const ThinkingLevelSchema = Type.Union([
   Type.Literal("high"), Type.Literal("xhigh"), Type.Literal("max"),
 ]);
 export const ChatInputModeSchema = Type.Union([Type.Literal("text"), Type.Literal("command")]);
-export const ChatCapabilitiesSchema = Type.Object({ contractVersion: Type.Union([Type.Literal(0), Type.Literal(1), Type.Literal(2), Type.Literal(3)]) }, strict);
+export const ChatCapabilitiesSchema = Type.Object({ contractVersion: Type.Union([Type.Literal(0), Type.Literal(1), Type.Literal(2), Type.Literal(3)]), cancelAndSendContractVersion: Type.Optional(Type.Union([Type.Literal(0), Type.Literal(1)])) }, strict);
 export const ThinkingSettingSchema = Type.Union([ThinkingLevelSchema,Type.Null()]);
 const KnownChatModelSchema = Type.Object({
   ...RunModelDescriptionSchema.properties,

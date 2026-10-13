@@ -10,6 +10,10 @@ func TestFeedbackReadQueryRejectsAmbiguousAndForeignFilters(t *testing.T) {
 		query, schema string
 		valid         bool
 	}{
+		{"?submissionKey=original-key", "AgentRequestRetryQuerySchema", true},
+		{"?submissionKey=", "AgentRequestRetryQuerySchema", false},
+		{"?submissionKey=a&submissionKey=b", "AgentRequestRetryQuerySchema", false},
+		{"?submissionKey=a&requestId=other", "AgentRequestRetryQuerySchema", false},
 		{"?limit=25&serviceName=workstation", "AgentRequestQuerySchema", true},
 		{"?limit=1&cursor=stable-cursor", "AgentEvidenceQuerySchema", true},
 		{"?limit=0", "AgentRequestQuerySchema", false},
