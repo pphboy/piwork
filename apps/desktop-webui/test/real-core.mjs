@@ -387,6 +387,7 @@ try {
   assert.equal(await page.locator('[data-action=prepare-export]').count(), 0);
   // This first cycle checks ordinary Stop/Start retention; do not authorize export yet.
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Work options' }).click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).first().click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).last().click();
   await expect(page.locator('#modal')).toContainText('Operation ID');
@@ -430,6 +431,7 @@ try {
   await page.getByRole('button', { name: /^Real Browser Work/ }).click();
   await expect(page.locator('.work-header')).toContainText('Real Browser Work');
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY !== '1') assert.equal(mainReloads, 0, 'lifecycle required a page reload');
+  await page.getByRole('button', { name: 'Work options' }).click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).first().click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).last().click();
   await expect(page.locator('#modal')).toContainText('Operation ID'); await page.getByRole('button', { name: 'Close dialog' }).click();

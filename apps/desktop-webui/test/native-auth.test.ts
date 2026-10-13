@@ -148,6 +148,7 @@ test('native auth: an accepted Import survives Core expiry and same-account logi
   assert.equal(localCookie(await f.context.cookies()), localCookie(cookies));
   const beforeLogin = f.calls.length;
   await f.login();
+  await f.page.locator('[data-action=account]').click();
   await f.page.getByRole('button', { name: 'Known operations', exact: true }).click();
   await f.page.locator(`[data-action="operation"][data-id="${recoveredImportID}"]`).click();
   await f.page.locator(`[data-action="check-operation"][data-id="${recoveredImportID}"]`).click();

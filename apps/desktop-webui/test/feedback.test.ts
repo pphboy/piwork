@@ -17,6 +17,16 @@ const server = createServer(async (request, response) => {
 before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, channel: 'chromium' }); });
 after(async () => { await browser.close(); await new Promise<void>(done => server.close(() => done())); });
 
+async function knownOperations(page: Page) {
+  if (await page.locator('#modal').count()) await button(page, 'close-modal').click();
+  if (await button(page, 'back-works').count()) await button(page, 'back-works').click();
+  await button(page, 'account').click();
+  await button(page, 'operations').click();
+}
+async function exportDetails(page: Page) {
+  if (!await page.locator('.export-details').evaluate(el => el.hasAttribute('open'))) await page.locator('.export-details > summary').click();
+}
+
 type RequestRecord = { bytes?: Buffer | null; path: string; search?:string; method: string; headers: Record<string, string>; body: string };
 type Reply = { passthrough?: boolean; status?: number; json?: unknown; body?: string | Buffer; headers?: Record<string, string>; abort?: boolean };
 const mtime1 = 'Sat, 03 Oct 2026 01:00:00 GMT';
@@ -123,7 +133,7 @@ test('About displays local version while Core is delayed and escapes embedded no
  const gate=deferred();t.after(()=>gate.resolve());
  const about=(program:string,version:string)=>({aboutApiVersion:1,build:{program,version,commit:'fixture',modified:true,os:'linux',architecture:'amd64'},releaseNotes:{version,title:'Update',sections:[{title:'Fixes',items:['<script>window.notesExecuted=true</script>']}]},releasesUrl:'https://github.com/pphboy/piwork/releases'});
  const {page,requests}=await fixture(t,async r=>{if(r.path==='about')return {json:about('piwork-cli','client-test')};if(r.path==='core-about'){await gate.promise;return {json:about('piwork-serve','core-test')};}});
- await button(page,'about-piwork').click();await expect(page.locator('#modal')).toContainText('client-test');await expect(page.locator('#modal')).not.toContainText('core-test');
+ await button(page,'back-works').click();await button(page,'account').click();await button(page,'about-piwork').click();await expect(page.locator('#modal')).toContainText('client-test');await expect(page.locator('#modal')).not.toContainText('core-test');
  gate.resolve();await expect(page.locator('#modal')).toContainText('core-test');await page.locator('#modal details').first().locator('summary').click();await expect(page.locator('#modal')).toContainText('<script>');assert.equal(await page.evaluate(()=>(window as any).notesExecuted),undefined);
  await expect(page.locator('#modal a').first()).toHaveAttribute('href','https://github.com/pphboy/piwork/releases');assert.equal(requests.filter(r=>r.method==='POST').length,0);
 });
@@ -191,7 +201,7 @@ for (const action of ['start', 'retry', 'stop', 'delete', 'create'] as const) te
     }
   });
   if (action === 'create') { await button(page, 'back-works').click(); await button(page, 'new-work').click(); await page.locator('#create-name').fill('New tool'); }
-  if (action === 'stop') await button(page, 'stop-work').click();
+  if (action === 'stop') { await button(page, 'work-menu').click(); await button(page, 'stop-work').click(); }
   if (action === 'delete') { await button(page, 'work-menu').click(); await button(page, 'delete-work').click(); await page.locator('#delete-confirm').check(); }
   armed = true;
   const trigger = action === 'create' ? 'create-work' : action === 'stop' ? 'confirm-stop' : action === 'delete' ? 'confirm-delete' : 'start-work';
@@ -241,13 +251,14 @@ test('D19 close preserves one automatic original download and a manual same-tran
     if (id && r.path === `downloads/${id}`) { reads++; return { json: { transferId: id, kind: 'download', phase: ready ? 'ready' : 'downloading', transferred: ready ? bytes.length : 400, total: bytes.length, ...(ready ? transfer() : {}) } }; }
   });
   page.on('download', () => { downloadEvents++; });
-  await button(page, 'work-menu').click(); await button(page, 'operations').click();
+  await knownOperations(page);
   await page.locator('#snapshot-query').fill('snap-1'); await button(page, 'lookup-snapshot').click();
   await expect(page.locator('.export-snapshot')).toContainText('snap-1');
-  await button(page, 'download-work').click();
+  await button(page, 'download-work').click(); await exportDetails(page);
   await expect(page.locator('#modal')).toContainText('400 / 1000 bytes'); assert.ok(reads > 0);
   assert.equal(downloadEvents, 0); assert.equal(requests.filter(r => r.path.endsWith('/content')).length, 0);
-  await expect(button(page, 'close-modal')).toBeEnabled(); await button(page, 'close-modal').click(); await button(page, 'back-works').click();
+  await expect(button(page, 'close-modal')).toBeEnabled(); await button(page, 'close-modal').click();
+  if (await button(page, 'back-works').count()) await button(page, 'back-works').click();
   const automaticDownload = page.waitForEvent('download'); preparation.resolve();
   const download = await automaticDownload;
   assert.equal(download.url(), `${base}/_desktop/api/downloads/${id}/content`);
@@ -258,8 +269,8 @@ test('D19 close preserves one automatic original download and a manual same-tran
   assert.equal(downloadEvents, 1);
   assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['work-snapshots/snap-1/downloads']);
   assert.deepEqual(requests.filter(r => r.path.endsWith('/content')).map(r => r.path), [`downloads/${id}/content`]);
-  await button(page, 'operations').click(); await page.locator('#snapshot-query').fill('snap-1'); await button(page, 'lookup-snapshot').click();
-  await button(page, 'check-download').click(); await expect(button(page, 'save-export-file')).toBeEnabled();
+  await knownOperations(page); await page.locator('#snapshot-query').fill('snap-1'); await button(page, 'lookup-snapshot').click();
+  await exportDetails(page); await button(page, 'check-download').click(); await expect(button(page, 'save-export-file')).toBeEnabled();
   assert.equal(downloadEvents, 1, 'reopening and checking the original transfer must not auto-download again');
   const manualDownload = page.waitForEvent('download'); await button(page, 'save-export-file').click();
   const again = await manualDownload;
@@ -288,7 +299,7 @@ test('stopped Export delivers current content once despite a known old snapshot,
     }
   });
   page.on('download', () => { downloadEvents++; });
-  await button(page, 'work-menu').click(); await button(page, 'operations').click();
+  await knownOperations(page);
   await page.locator('#snapshot-query').fill('snap-old'); await button(page, 'lookup-snapshot').click();
   await expect(page.locator('.export-snapshot')).toContainText('snap-old');
   assert.equal(requests.filter(r => r.method === 'POST').length, 0, 'looking up an old snapshot must be read-only');
@@ -299,9 +310,10 @@ test('stopped Export delivers current content once despite a known old snapshot,
   assert.equal(current.url(), `${base}/_desktop/api/downloads/${transfers.get('snap-new')}/content`);
   await expect(page.locator('.export-snapshot')).toContainText('snap-new');
   await expect(page.locator('.export-snapshot')).not.toContainText('snap-old');
-  await expect(button(page, 'prepare-export')).toBeEnabled();
+  await expect(button(page, 'prepare-export')).toHaveCount(0);
+  await exportDetails(page);
   await expect(button(page, 'save-export-file')).toHaveText('Download again');
-  await button(page, 'check-export-flow').click(); assert.equal(downloadEvents, 1);
+  await button(page, 'check-download').click(); assert.equal(downloadEvents, 1);
   await page.locator('[data-action="view-snapshot"][data-id="snap-old"]').click();
   await expect(page.locator('.export-snapshot')).toContainText('snap-old');
   await expect(page.locator('.export-snapshot')).not.toContainText('snap-new');
@@ -362,11 +374,11 @@ for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'set
   else if (entry==='sessions') trigger='sessions';
   else if (entry==='new-session') {await button(page,'agent-menu').click();trigger='new-session';}
   else if (entry==='select-session') {await button(page,'sessions').click();trigger='select-session';}
-  else if (entry==='known') { await button(page,'back-works').click(); trigger='operations'; }
+  else if (entry==='known') { await button(page,'back-works').click(); await button(page,'account').click(); trigger='operations'; }
   else {
     await button(page,'back-works').click();
     await api(page,`adapter.state.operations.push(${JSON.stringify({...operation,state:entry==='clear'?'succeeded':'running'})})`);
-    await button(page,'operations').click();
+    await knownOperations(page);
     if(entry==='lookup') {await page.locator('#operation-query').fill('op-read');trigger='lookup-operation';}
     else if(entry==='snapshot') {await page.locator('#snapshot-query').fill('snap-read');trigger='lookup-snapshot';}
     else if(entry==='clear') trigger='clear-operations';
@@ -405,7 +417,7 @@ test('D02 acceptance allows Stop to supersede Start while Work readback is still
     if(r.path==='operations/op-start')return{json:{state:'superseded',operationId:'op-start',workId:'work-1'}};
   });
   await button(page,'start-work').click();await expect(page.locator('.object-control-progress [data-action=operation][data-id="op-start"]')).toBeVisible();await expect(page.locator('#modal')).toHaveCount(0);
-  await button(page,'stop-work').click();await button(page,'confirm-stop').click();await expect(page.locator('#modal')).toContainText('op-stop');
+  await button(page,'work-menu').click(); await button(page,'stop-work').click();await button(page,'confirm-stop').click();await expect(page.locator('#modal')).toContainText('op-stop');
   assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,1);assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,1);readback.resolve();
 });
 
@@ -593,7 +605,7 @@ for(const action of ['inspect','import','query','cleanup','export'] as const)tes
       armed=true;await button(page,action==='query'?'check-inspection-import':'confirm-import').click();
     }
   }
-  if(action==='export'){await expect(page.locator('#modal')).toContainText('Submitting export');await expect(button(page,'prepare-export')).toBeDisabled();}
+  if(action==='export'){await expect(page.locator('#modal')).toContainText('Starting export');await expect(button(page,'prepare-export')).toHaveCount(0);}
   else await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
   gate.resolve();
   if(action==='export'||action==='import'){await expect(page.locator('#modal')).toContainText('op-'+action);assert.equal(requests.filter(r=>r.path==='work-imports'||r.path.endsWith('/exports')).length,1);read.resolve();}
@@ -650,17 +662,18 @@ test('W2 unrelated or unidentified Operations cannot unlock unknown Start; only 
   });
   await button(page, 'start-work').click(); await expect(button(page, 'start-work')).toBeDisabled();
   for (const id of ['other-work', 'same-work', 'no-work']) {
-    await button(page, 'work-menu').click(); await button(page, 'operations').click(); await page.locator('#operation-query').fill(id); await button(page, 'lookup-operation').click();
+    await knownOperations(page); await page.locator('#operation-query').fill(id); await button(page, 'lookup-operation').click();
     await expect(page.locator('#modal')).toContainText(id); await button(page, 'check-operation').click(); await expect(button(page, 'check-operation')).toBeEnabled(); await button(page, 'close-modal').click();
     await expect(button(page, 'start-work')).toBeDisabled();
     await button(page, 'start-work').evaluate((el: HTMLButtonElement) => el.click());
     assert.equal(requests.filter(r => r.path === 'works/work-1/start').length, 1);
   }
-  await button(page, 'work-menu').click(); await button(page, 'operations').click();
+  await knownOperations(page);
   await button(page, 'clear-operations').click(); await button(page, 'close-modal').click();
   await expect(button(page, 'start-work')).toBeDisabled();
   await button(page, 'start-work').evaluate((el: HTMLButtonElement) => el.click());
   assert.equal(requests.filter(r => r.path === 'works/work-1/start').length, 1);
+  await page.locator('.work-name[data-action="open-work"]').click();
   await button(page, 'work-menu').click(); await button(page, 'work-info').click();
   wrongWork = true; await button(page, 'check-work').click(); await expect(page.locator('#modal')).toContainText('does not match the original Work');
   wrongWork = false; await button(page, 'check-work').click(); await expect(button(page, 'check-work')).toBeEnabled();
@@ -709,7 +722,7 @@ test('DWUI-016/017 Create and Stop during preparation converge in list and detai
   await expect(page.locator('#modal')).toContainText('op-created'); await expect(page.locator('#modal')).toContainText('automatic recovery after reload is not guaranteed');
   await button(page, 'close-modal').click(); await expect(page.locator('.work-row')).toContainText('Preparing');
   await page.locator('[data-action="open-work"]').first().click(); await expect(page.locator('.work-state')).toContainText('Preparing');
-  await button(page, 'stop-work').click(); await button(page, 'confirm-stop').click(); await expect(page.locator('#modal')).toContainText('op-stop'); await button(page, 'close-modal').click();
+  await button(page, 'work-menu').click(); await button(page, 'stop-work').click(); await button(page, 'confirm-stop').click(); await expect(page.locator('#modal')).toContainText('op-stop'); await button(page, 'close-modal').click();
   await expect(page.locator('.work-header')).toContainText('Stop accepted'); assert.equal(await button(page, 'start-work').count(), 0);
   observed = 'stopping'; await api(page, "await adapter.refreshWorkStatus('work-1')"); await expect(page.locator('.work-header')).toContainText('Stopping');
   observed = 'stopped'; state = 'succeeded'; await api(page, "await adapter.checkOperation('op-stop'); await adapter.listWorks(); await adapter.refreshWorkStatus('work-1')");
@@ -825,14 +838,14 @@ test('DWUI-017 cleared Start history still recovers Ready and original lookup wi
   const navigations: string[] = []; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url()); });
   await button(page, 'start-work').click(); await page.locator('.object-control-progress [data-action=operation][data-id="cleared-start"]').click(); await expect(page.locator('#modal')).toContainText('cleared-start');
   await api(page, "await adapter.checkOperation('cleared-start'); await adapter.refreshWorkStatus('work-1').catch(() => {}); await adapter.listWorks().catch(() => {})");
-  await button(page, 'close-modal').click(); await button(page, 'work-menu').click(); await button(page, 'operations').click();
+  await button(page, 'close-modal').click(); await knownOperations(page);
   await button(page, 'clear-operations').click(); await expect(page.locator('#modal')).not.toContainText('cleared-start');
-  await button(page, 'close-modal').click(); await button(page, 'work-operations').click();
+  await button(page, 'close-modal').click(); await page.locator('.work-name[data-action="open-work"]').click(); await button(page, 'work-operations').click();
   await expect(page.locator('#modal')).toContainText('cleared-start'); await button(page, 'check-operation').click();
   await expect(page.locator('#modal')).toContainText('succeeded'); await button(page, 'close-modal').click();
   offline = false;
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 10000 });
-  await expect(page.locator('#composer')).toBeVisible(); await expect(button(page, 'stop-work')).toBeEnabled();
+  await expect(page.locator('#composer')).toBeVisible(); await button(page, 'work-menu').click(); await expect(button(page, 'stop-work')).toBeEnabled(); await button(page, 'close-modal').click();
   assert.equal(await api(page, "return adapter.getWork('work-1').lifecycleIntent"), undefined);
   assert.equal(requests.filter(r => r.path === 'works/work-1/start' && r.method === 'POST').length, 1);
   assert.deepEqual(navigations, []);
@@ -939,4 +952,23 @@ for (const exit of ['close', 'view', 'start'] as const) test(`C03 Import ${exit}
   }
   assert.equal(requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length, 1);
   assert.equal(requests.filter(r => r.path === 'works/imported/start' && r.method === 'POST').length, exit === 'start' ? 1 : 0);
+});
+
+for (const width of [360, 500]) test(`Action hierarchy: narrow Files controls remain visible without selection row shifts at ${width}px`, async t => {
+  const { page, requests } = await fixture(t, () => undefined);
+  await page.setViewportSize({ width, height: 800 });
+  await expect(button(page, 'work-menu')).toBeVisible();
+  await button(page, 'tab-Files').click();
+  await expect(page.getByText('Select files for actions', { exact: true })).toHaveCount(0);
+  const row = page.locator('.file-row').first(), select = row.locator('[data-file-select]');
+  const before = await row.boundingBox(); assert.ok(before);
+  for (const selected of [true, false]) {
+    await select.setChecked(selected);
+    const after = await row.boundingBox(); assert.ok(after); assert.ok(Math.abs(after.y - before.y) <= 1);
+    const toolbar = await page.locator('.files-toolbar').boundingBox(), actions = await page.locator('.file-toolbar-actions').boundingBox();
+    assert.ok(toolbar && actions); assert.ok(actions.y + actions.height <= toolbar.y + toolbar.height + 1, 'toolbar contains its actions');
+    for (const action of selected ? ['file-copy', 'file-move', 'file-delete', 'clear-selection'] : ['refresh-files', 'upload', 'new-folder', 'file-options']) await expect(button(page, action)).toBeVisible();
+  }
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  assert.equal(requests.filter(request => request.method !== 'GET' && request.path.startsWith('files/')).length, 0);
 });

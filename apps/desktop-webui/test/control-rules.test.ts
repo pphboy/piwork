@@ -163,3 +163,8 @@ test('light modal eligibility retains original target unknown actions across rou
   assert.equal(modalActionRelevant(record, '#/works', 'work-b'), true);
   assert.equal(modalActionRelevant({ view: '#/works' }, '#/work/work-a', 'work-a'), false);
 });
+
+test('account menu can close without discarding or waiting for background drafts and tasks', () => {
+  for (const busy of [false, true]) for (const dirty of [false, true]) for (const unknown of [false, true])
+    assert.equal(canDismissLightModal({ modal: 'account', busy, dirty, unknown }), true);
+});

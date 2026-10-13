@@ -335,6 +335,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     assert.equal(exportCalls, 0, 'running Work export submitted implicitly');
     await page.getByRole('button',{name:'Stop and export',exact:true}).click();
     await expect(page.locator('#modal')).toContainText('Stop failed');
+    await page.locator('#modal .export-details > summary').click();
     const originalStop = page.locator('#modal [data-action="operation"][data-id="stop-failed-1234"]');
     await expect(originalStop).toBeVisible();
     assert.equal(exportCalls, 0, 'failed original Stop must never advance to Export');
@@ -353,6 +354,8 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.getByText('succeeded',{exact:true}).waitFor();
     assert.deepEqual(submitted, ['start','stop','delete']);
     await page.getByRole('button',{name:'Close dialog'}).click();
+    if (await page.locator('[data-action=back-works]').count()) await page.locator('[data-action=back-works]').click();
+    await page.locator('[data-action=account]').click();
     await page.getByRole('button',{name:'Known operations',exact:true}).click();
     await page.getByText('delete-succeeded-1234',{exact:false}).first().waitFor();
     assert.equal(exportCalls, 0);

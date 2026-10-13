@@ -2011,7 +2011,7 @@ test('Controls Service presence is bounded, discovers the first record, preserve
  await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.confirmed")).toBe(true);
  await expect(button(page,'service-requests')).toHaveCount(0);present=true;await page.clock.runFor(5100);
  await expect(button(page,'service-requests')).toBeVisible();
- const actions=page.locator('.service-toolbar .actions');assert.equal(await actions.locator('button').first().textContent(),'Agent requests');
+ const actions=page.locator('.service-toolbar .actions');await expect(actions.locator('button').first()).toHaveAttribute('aria-label','Agent requests');await expect(actions.locator('button').first()).toHaveAttribute('title','Agent requests');
  fail=true;await page.clock.runFor(5100);await expect(button(page,'service-requests')).toBeVisible();
  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));});
  const reads=requests.filter(r=>r.path.endsWith('/agent-requests')).length;await page.clock.runFor(15000);assert.equal(requests.filter(r=>r.path.endsWith('/agent-requests')).length,reads);
@@ -2553,7 +2553,7 @@ test('B continuity preserves a mounted application and composer through Work 503
   offline = false; await api(page, "await adapter.refreshWorkStatus('work-1');");
   assert.equal(await document!.evaluate(node => node.isConnected), true);
   await expect(page.locator('#composer')).toHaveValue('retained Chat draft');
-  await button(page, 'stop-work').click(); await button(page, 'confirm-stop').click();
+  await button(page, 'work-menu').click(); await button(page, 'stop-work').click(); await button(page, 'confirm-stop').click();
   await expect(page.locator('iframe')).toHaveCount(0);
   assert.equal(requests.filter(r => r.path === 'works/work-1/stop').length, 1);
 });

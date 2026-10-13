@@ -1339,6 +1339,7 @@ pre,
 }
 .files-toolbar {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -1443,28 +1444,8 @@ pre,
   font-size: 10px;
   color: var(--accent);
 }
-.selection-bar {
-  min-height: 54px;
-  padding: 10px 20px;
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 7px;
-  background: var(--accent-soft);
-  font-size: 12px;
-}
-.selection-bar.empty-selection {
-  background: var(--surface-subtle);
-  color: var(--muted);
-}
-.selection-bar > span {
-  min-width: 0;
-  margin-right: auto;
-  overflow-wrap: anywhere;
-}
-.selection-bar > .button {
-  flex: none;
-}
+.selection-count { color: var(--muted); font-size: 12px; white-space: nowrap; margin-right: 5px; }
+.file-toolbar-actions { min-height: 40px; }
 .editor-toolbar {
   display: flex;
   align-items: center;
@@ -2576,8 +2557,8 @@ dd > .button {
   .work-header .work-icon {
     display: none;
   }
-  .header-actions > .button:first-child {
-    display: none;
+  .header-actions > .button[data-action="work-menu"] {
+    display: inline-flex;
   }
   .header-actions > .button:last-child {
     width: 33px;
@@ -2745,6 +2726,7 @@ dd > .button {
     flex-wrap: wrap;
     align-items: flex-start;
   }
+  .files-toolbar > .breadcrumbs { flex-basis: 100%; }
   .files-toolbar > .actions {
     margin-left: auto;
   }
@@ -2822,16 +2804,6 @@ dd > .button {
   }
   .file-scope button {
     font-size: 9px;
-  }
-  .selection-bar {
-    padding: 9px 12px;
-    gap: 3px;
-    flex-wrap: nowrap;
-    font-size: 10px;
-  }
-  .selection-bar .button {
-    font-size: 9px;
-    padding: 4px 7px;
   }
   .transfer-row {
     flex-wrap: wrap;
@@ -3357,3 +3329,37 @@ dd > .button {
 .object-control-progress .actions { flex-wrap: wrap; gap: 4px; }
 .object-control-progress small { color: var(--muted); }
 .work-header + .object-control-progress { margin: 8px 20px; }
+
+/* Keep management and progress subordinate to the current workspace. */
+.modal.account-menu { position: fixed; inset: 70px 24px auto auto; margin: 0; width: min(310px, calc(100vw - 32px)); box-shadow: 0 12px 40px #17345020; }
+.account-menu::backdrop { background: transparent; }
+.account-menu .modal-head { padding: 14px 18px 8px; border-bottom: 0; }
+.account-menu .modal-head h2 { font-size: 15px; }
+.account-menu .modal-body { padding: 0 10px 10px; }
+.account-context { display: flex; flex-direction: column; padding: 0 8px 10px; font-size: 11px; line-height: 1.6; }
+.account-context span { overflow-wrap: anywhere; }
+.account-menu .menu-list .button { justify-content: flex-start; min-height: 40px; }
+.account-management { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.modal.export-panel { position: fixed; inset: auto 24px 24px auto; margin: 0; width: min(390px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); z-index: 40; box-shadow: 0 10px 36px #17345024; }
+.export-panel .modal-head { padding: 14px 18px; }
+.export-panel .modal-head h2 { font-size: 17px; }
+.export-panel .modal-body { padding: 16px 18px; }
+.export-panel .modal-footer { padding: 12px 18px; }
+.export-panel .modal-body > p { margin: 0 0 10px; }
+.export-work-name { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.export-summary { font-size: 12px; }
+.export-privacy { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; line-height: 1.5; }
+.export-privacy svg { flex: none; margin-top: 1px; }
+.export-details { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 14px; font-size: 11px; }
+.export-details summary { color: var(--muted); cursor: pointer; }
+.export-details dl { display: grid; grid-template-columns: 65px minmax(0,1fr); gap: 8px 12px; margin: 14px 0; }
+.export-details dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.export-details dd .button, .export-details .menu-list .button { white-space: normal; overflow-wrap: anywhere; text-align: left; justify-content: flex-start; max-width: 100%; padding: 0; }
+.export-details .feedback { padding: 10px; }
+.export-details .feedback > div { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .modal.account-menu { right: 16px; top: 62px; }
+  .modal.export-panel { right: 16px; bottom: 16px; }
+  .file-toolbar-actions .selection-count { font-size: 10px; }
+  .files-toolbar > .file-toolbar-actions { min-height: 40px; }
+}

@@ -19,6 +19,8 @@ export function canSubmitName(context) {
 }
 /** Unknown or newly added modal names are deliberately ineligible. Recheck at pointerup. */
 export function canDismissLightModal(context) {
+    if (context.modal === 'account')
+        return true; // No local editor or submit action belongs to this menu.
     return (context.modal === 'work-menu' || context.modal === 'service-menu' || context.modal === 'work-info') &&
         !context.busy && !context.dirty && !context.unknown;
 }
