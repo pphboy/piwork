@@ -87,10 +87,12 @@
 - [x] 11.4 删除Files空选择条、在现有工具栏承接批量动作；Service/Agent请求图标化且保持原过滤范围与可访问标签。
 - [x] 11.5 执行定向生产函数与状态回归、typecheck/build/embed及官方云浏览器截图，记录实际通过/限制；不将合成GUI记为真实Core或完整浏览器通过。
 
+本轮实现已覆盖第12—15节全部模块；357项纯状态/adapter/生产函数测试及定向官方GUI事实见[本轮验收](evidence/acceptance.md#2026-10-13-后续完整界面范围工作区层级与一致控件)。复选框采用完整任务门槛的保守口径：包含未执行的360px、完整状态/分页/键盘/缩放或全Modal矩阵的任务仍保留未完成，不表示其实现被省略。原第1—11节50项的33完成/17未测逐项不变。
+
 ## 12. 工作区对象层级、布局与真实高度
 
 - [ ] 12.1 将全Work Pi Requests归Work辅助入口，Service快捷入口保持真实过滤与有记录条件；同一检查面板重组目标/结果、执行与证据，保留返回上下文。验证：全Work/Service范围、空/初次失败/保留旧回复、多Run及waiting/historical、分页返回/取消竞争/晚证据；不新增计数或Session过滤、不重载iframe；更新本变更使用与验收证据。（DUL-002、DWUI-004/005、BSA-005）
-- [ ] 12.2 将Run Details移至真实runId对应消息轮次/Activity或明确active执行状态，移除无上下文常驻入口。验证：同Run多段只一个入口、不同Run不串、缺runId不猜测、另一Session/Service占槽与当前失败并存；Run succeeded不当Request completed，Cancel/Stop and send原行为回归；记录实际证据。（DWUI-004）
+- [x] 12.2 将Run Details移至真实runId对应消息轮次/Activity或明确active执行状态，移除无上下文常驻入口。验证：同Run多段只一个入口、不同Run不串、缺runId不猜测、另一Session/Service占槽与当前失败并存；Run succeeded不当Request completed，Cancel/Stop and send原行为回归；记录实际证据。（DWUI-004）
 - [ ] 12.3 分离普通Chat显隐与workspace/focus状态，页面内按身份/Work记忆比例与显隐，维持Restore layout/Exit focus语义。验证：普通折叠保留导航、展开/重进/Files聚焦返回及身份清理，文字图片草稿/阅读位置/选区/焦点保持，同iframe document/load计数与Session/Run提交计数不变；独立Service不增Chat。（DUL-002、DWUI-002、BSA-005）
 - [ ] 12.4 增加可拖separator、最小宽度、重置与键盘操作，窄屏改单面板/覆盖层且保留原宽屏比例。验证：指针跨iframe、取消拖动/层清理、左右/Shift/Home/End/Escape、可访问比例、长内容、500px/360px往返、reduced-motion；比例按容器夹取，无全页横滚；补对应测试与证据。（DUL-002/007）
 - [ ] 12.5 重组Service选择器的名称/状态/声明端口/选中标记及管理出口，单端口轻显示、多端口选择。验证：长名称、Ready/Starting/Stopped/Failed/Disabled、非Web/Removed、多端口、快速切换晚响应、键盘关闭/焦点恢复，不自动Start或变更Chat；记录证据。（DWUI-005）
@@ -110,11 +112,11 @@
 ## 15. Modal控件、轻动效与短反馈
 
 - [ ] 15.1 统一所有Modal footer直接动作的几何、图标间距和角色顺序，限定覆盖范围。验证：请求/包/创建/文件/导入/会话/Run/Service/Operation/Export/危险确认的computed尺寸、长标签、窄屏换行和键盘次序；primary/danger/disabled保留，menu rows/正文小按钮/头部关闭不被误改；保存覆盖矩阵与证据。（DUL-007、DWUI-019）
-- [ ] 15.2 去掉Stop影响范围中像Checkbox的装饰，保持清楚非交互说明。验证：Stop/Stop and export不新增勾选门槛、取消零提交/确认单次提交，Delete等真实确认checkbox仍可操作；记录事实与截图。（DWUI-003）
+- [x] 15.2 去掉Stop影响范围中像Checkbox的装饰，保持清楚非交互说明。验证：Stop/Stop and export不新增勾选门槛、取消零提交/确认单次提交，Delete等真实确认checkbox仍可操作；记录事实与截图。（DWUI-003）
 - [ ] 15.3 增加共享120–160ms开关展示过渡和减少动态效果终态，安全处理退场。验证：快速开关/开A关A开B、轮询刷新、导航/身份切换、事件缺失fallback、reduced-motion、焦点只回合法来源一次，无backdrop/inert残留、无旧回调删新窗；Export仍非模态且交付不中断；提交锁立即生效，补状态/浏览器回归。（DUL-007、DWUI-019）
-- [ ] 15.4 将本轮完成/警告反馈收敛为既有语义色、图标和短标签，合并重复说明。验证：必要停止/导出隐私影响、具体错误/未知/恢复动作未被隐藏，非颜色线索与aria可辨，短提示到期不释放锁/重放操作；真实读屏无法执行仍标未测，不以DOM断言代替。（DUL-007、DWUI-019）
+- [x] 15.4 将本轮完成/警告反馈收敛为既有语义色、图标和短标签，合并重复说明。验证：必要停止/导出隐私影响、具体错误/未知/恢复动作未被隐藏，非颜色线索与aria可辨，短提示到期不释放锁/重放操作；真实读屏无法执行仍标未测，不以DOM断言代替。（DUL-007、DWUI-019）
 
 ## 16. 后续界面范围集成与交付
 
-- [ ] 16.1 各模块带本地回归后运行Desktop typecheck、适用完整测试与build/embed、原生边界和git diff --check。验证：对照最终源码记录逐命令通过/失败/未跑，保留原17项未测；全仓或真实Core门槛不被本轮定向合成通过替代，NoDocker不变。（DWUI-002/004/006/007/019）
-- [ ] 16.2 汇总11模块实际实现、场景证据与剩余限制，更新本change使用/验收并运行OpenSpec strict。验证：截图仅证明实际所见、任务仅按实际证据勾选，主规格/其他change不改、不归档；功能/测试/生成资源与文档按边界本地提交，未经明确授权不推送或发布。
+- [x] 16.1 各模块带本地回归后运行Desktop typecheck、适用完整测试与build/embed、原生边界和git diff --check。验证：对照最终源码记录逐命令通过/失败/未跑，保留原17项未测；全仓或真实Core门槛不被本轮定向合成通过替代，NoDocker不变。（DWUI-002/004/006/007/019）
+- [x] 16.2 汇总11模块实际实现、场景证据与剩余限制，更新本change使用/验收并运行OpenSpec strict。验证：截图仅证明实际所见、任务仅按实际证据勾选，主规格/其他change不改、不归档；功能/测试/生成资源与文档按边界本地提交，未经明确授权不推送或发布。

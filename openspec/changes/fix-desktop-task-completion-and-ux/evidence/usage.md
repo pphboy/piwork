@@ -49,4 +49,24 @@ Works保留顶部New Work和Import Work，Ready行直接Open Work，Stopped保�
 
 Export Work直接开始新导出，运行中仍先明确Stop and export。右下紧凑进度卡不会遮罩工作区；Details展开原操作、快照、传输和旧包，成功只显示Download started与同文件Download again。下载准备明确失败时，Retry download使用原快照，不重新导出；未知结果只核对。继续操作背景会收起卡片，原授权交付仍继续。
 
-Service工具栏的Agent requests图标只在已确认有记录时出现，并保持当前Service范围。Agent工具栏的Pi requests图标查看当前Work的请求；两者都有可访问名称和悬浮提示，没有未读计数。
+Service工具栏的Agent requests图标只在已确认有记录时出现，并保持当前Service范围。全Work的Pi requests移至Work导航右侧辅助入口，覆盖Chat与Service来源，不按当前Session筛选，也不显示未读计数。宽屏在右侧检查面板查看请求；窄屏使用单层对话框。列表先展示目标、来源与真实状态，详情先展示目标与结果，Executions和Technical details按需展开。Back返回原过滤、分页和列表位置；Close只关闭查看，不取消请求。
+
+### 工作区与执行详情
+
+Pi request是一项目标，可以跨多个Run继续；一个Run succeeded不表示请求已Completed。waiting_result等状态可能已经释放执行槽，此时Chat仍可使用。历史Run在对应消息轮次或Activity末尾提供Run details，同一真实runId只有一个入口；缺少runId的旧消息不会猜测执行身份。其他Session或Service占用当前Work执行槽时仍显示原执行上下文，Details与Cancel针对真实Run；只有可靠活动状态支持取消。
+
+Services采用左应用、右Chat的分栏。拖动中线可调整宽度，默认70/30；键盘左右箭头每次16px、Shift每次64px，Home/End到边界，Enter或双击中线恢复默认，Escape取消当前拖动。Service options里的Reset split也能恢复默认。普通Hide Chat保留Work导航，Show Chat恢复原聊天；Focus专注应用，Exit focus恢复布局，两者用途独立。窄屏使用Service/Chat单面板切换，回到宽屏恢复此前比例。比例、显隐和草稿仅在当前页面、身份及Work内记忆，不跨重载持久化。
+
+切换布局不会重建现有Service iframe或Chat祖先，保留其文档、文字图片草稿和阅读位置；这不等于保证业务应用崩溃、真实网络断开或浏览器强制关闭后的恢复。Work外壳按可用高度分配，不再为底部保留固定35px空白；Service自己的页面内容不被修改。
+
+Service选择器统一显示名称、状态、声明端口与当前选择。单端口直接显示，多端口单独选择；Starting、Stopped、Failed或Disabled说明当前不可用原因。选择Service不会自动Start，也不会更换Chat会话。
+
+### Files、设置与轻反馈
+
+Files的常规Refresh只保留一次入口。读取时原按钮显示Reading…，成功短暂显示Updated，不新增Status checked行或重复成功toast；失败原因与未知写入的核对入口仍可见。Upload files和New folder归入＋菜单，WebDAV与空目录上传入口保留。批选动作仍在原工具栏，不插入新的选择提示行。
+
+Work settings内容左上角的Back to Work返回进入设置前的Services、Chat或Files。正常配置以Configuration in use轻状态呈现；Unsaved changes、Not applied、Applying、Apply failed和Apply not confirmed继续显示相应保存、应用或核对动作。Save只保存，Apply才应用；正在应用和结果未知时不重复Apply，恢复的原Apply仍可Check。
+
+Works右上角Refresh、Import和New改用带名称/提示的图标组，New保留主动作样式，空列表仍有文字创建引导。账号菜单显示一次账号身份，Role与Core明确标注。
+
+Modal底部动作统一高度、间距与主次角色；菜单行和正文小按钮保留各自用途。Stop影响范围不再使用像复选框的装饰，仍需明确确认；Delete的真实确认框保留。弹窗开关约140ms，减少动态效果偏好下直接显示终态；关闭立即撤销旧窗口的提交资格，快速重开不会被旧退出回调关闭。Export仍为非模态进度卡，不因关闭或动效中断原授权交付。完成与警告优先使用图标、语义颜色和短标签，具体错误、必要风险与下一步不会因精简被移除。
