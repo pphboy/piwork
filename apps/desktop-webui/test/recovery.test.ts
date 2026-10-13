@@ -25,6 +25,9 @@ const mtime2 = 'Sat, 03 Oct 2026 01:00:02 GMT';
 const mtime3 = 'Sat, 03 Oct 2026 01:00:04 GMT';
 async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); t.after(() => page.close());
+  // These protocol/fake-clock tests use the supported immediate presentation path.
+  // Real motion/race behavior has its own modal-presentation and GUI acceptance coverage.
+  await page.emulateMedia({reducedMotion:'reduce'});
   const requests: RequestRecord[] = [];
   let generation = 1, signedIn = !anonymous, core = 'http://core.test';
   let desired: Record<string, any> = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents', modelRef: 'original', mcp: { servers: [] } };
@@ -2033,11 +2036,11 @@ test('Controls Service detail reads only associated replies, returns list focus 
  const loads=requests.filter(r=>r.path==='/_desktop/focus-app/').length;
  await button(page,'service-requests').click();await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');await expect(page.locator('#modal')).toContainText('job-original');
- await expect(page.locator('#modal')).toContainText('waiting_result');await expect(page.locator('#modal input, #modal textarea')).toHaveCount(0);await expect(button(page,'retry-pi-request')).toHaveCount(0);
+ await expect(page.locator('#modal')).toContainText('Waiting for result');await expect(page.locator('#modal input, #modal textarea')).toHaveCount(0);await expect(button(page,'retry-pi-request')).toHaveCount(0);
  await page.evaluate(()=>{(window as any).requestCheckButton=document.querySelector('#modal .modal-footer [data-action=pi-request-detail]');});
- await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelled');await expect(button(page,'cancel-pi-request')).toHaveCount(0);
+ await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);await expect(button(page,'cancel-pi-request')).toHaveCount(0);
  assert.equal(await page.evaluate(()=>document.querySelector('#modal .modal-footer [data-action=pi-request-detail]')===(window as any).requestCheckButton),true);await button(page,'pi-request-detail').click();await expect(page.locator('#modal h2')).toHaveText('Agent request');
- await button(page,'close-modal').click();await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');await expect(page.locator('[data-action=pi-request-detail]')).toBeFocused();
+ await button(page,'back-pi-requests').click();await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');await expect(page.locator('[data-action=pi-request-detail]')).toBeFocused();
  await button(page,'close-modal').click();await expect(button(page,'service-requests')).toBeFocused();await expect(page.locator('#composer')).toHaveValue('Keep this Main draft');
  assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).controlFrame),true);assert.equal(await page.evaluate(()=>document.querySelector('#composer')===(window as any).controlComposer),true);assert.equal(requests.filter(r=>r.path==='/_desktop/focus-app/').length,loads);
  assert.equal(requests.filter(r=>r.path.includes('/sessions/session-auto')).length,0);assert.equal(chatWrites(requests).length,0);
@@ -2056,7 +2059,7 @@ test('Controls cancelling request is observed to its actual terminal result; los
  });
  await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();
  await expect(page.locator('#modal')).toContainText('response was lost');await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('cancelling');await expect(button(page,'cancel-pi-request')).toBeDisabled();
- await page.clock.install();state='completed';await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('completed');await expect(button(page,'cancel-pi-request')).toHaveCount(0);
+ await page.clock.install();state='completed';await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText(/[Cc]ompleted/);await expect(button(page,'cancel-pi-request')).toHaveCount(0);
  assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
 });
 
@@ -2126,8 +2129,8 @@ for(const state of ['pending','waiting_result'])test(`Controls ${state} cancella
   if(r.path.endsWith('/agent-requests/request-a/cancel')){current='cancelled';return{json:{requestId:'request-a'}};}
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'close-modal').click();await button(page,'close-modal').click();assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
- await button(page,'service-requests').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelled');assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'back-pi-requests').click();await button(page,'close-modal').click();assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
+ await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
 });
 
 test('Controls active read failure stays unconfirmed; empty, unknown commands and IME cannot cancel',async t=>{
@@ -2151,7 +2154,7 @@ test('Controls request pagination, filter and exact list reading position surviv
  await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'next-pi-requests').click();await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
  await page.locator('#modal [data-action=pi-request-detail]').first().focus();await page.locator('.modal-body').evaluate(node=>node.scrollTop=135);
  const before=await page.locator('.modal-body').evaluate(node=>node.scrollTop);
- await page.locator('#modal [data-action=pi-request-detail]').first().evaluate(node=>(node as HTMLButtonElement).click());await button(page,'close-modal').click();
+ await page.locator('#modal [data-action=pi-request-detail]').first().evaluate(node=>(node as HTMLButtonElement).click());await button(page,'back-pi-requests').click();
  assert.equal(await page.locator('.modal-body').evaluate(node=>node.scrollTop),before);await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');await expect(page.locator('#modal [data-action=pi-request-detail]').first()).toBeFocused();
  assert.ok(requests.some(r=>new URLSearchParams(r.search).get('cursor')==='page-two'));assert.equal(chatWrites(requests).length,0);
 });
@@ -2186,8 +2189,8 @@ test('Controls recovery: cancellation from list follows its terminal state',asyn
   if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',state==='cancelling'?3:6)};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelling');
- await page.clock.install();state='cancelled';await page.clock.runFor(6000);await expect(page.locator('#modal')).toContainText('cancelled');
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelling');
+ await page.clock.install();state='cancelled';await page.clock.runFor(6000);await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);
 });
 
 test('Controls recovery: lost Retry receipt resolves only through the original read key',async t=>{
@@ -2277,7 +2280,7 @@ test('Controls recovery: closing or hiding cancellation list stops reads and reo
  fail=true;await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('Cancellation status not confirmed');await expect(page.locator('#modal')).toContainText('cancelling');
  await button(page,'close-modal').click();const reads=()=>requests.filter(r=>r.path.endsWith('/agent-requests/request-a')).length,closed=reads();
  await page.clock.runFor(15000);assert.equal(reads(),closed);
- fail=false;state='cancelled';await button(page,'service-requests').click();await expect(page.locator('#modal')).toContainText('cancelled');
+ fail=false;state='cancelled';await button(page,'service-requests').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);
  await expect(button(page,'cancel-pi-request')).toHaveCount(0);assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);
 });
 
@@ -2360,19 +2363,19 @@ test('Controls pagination: late evidence preserves the confirmed terminal and or
  const detail=page.locator('#modal [data-action=pi-request-detail][data-id=request-a]');
  await detail.focus();await page.locator('.modal-body').evaluate(node=>node.scrollTop=135);
  const listScroll=await page.locator('.modal-body').evaluate(node=>node.scrollTop);
- await detail.evaluate(node=>(node as HTMLButtonElement).click());await page.locator('#modal details').click();
+ await detail.evaluate(node=>(node as HTMLButtonElement).click());await page.locator('#modal .request-evidence > summary').click();
  const more=button(page,'next-pi-evidence').click();await expect.poll(()=>started).toBe(true);
  state='cancelled';await api(page,"await adapter.loadRequest('work-1','request-a',false,false)");
- await expect(page.locator('#modal')).toContainText('cancelled');await expect(page.locator('#modal')).toContainText('Original associated reply');
+ await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);await expect(page.locator('#modal')).toContainText('Original associated reply');
  const confirmed=await api(page,"const d=adapter.requestDetails.get('work-1:request-a');return {request:d.request,checkedAt:d.checkedAt}");
  release();await more;await expect(page.locator('#modal')).toContainText('Delayed second evidence page');
  assert.deepEqual(await api(page,"const d=adapter.requestDetails.get('work-1:request-a');return {request:d.request,checkedAt:d.checkedAt}"),confirmed);
- await expect(page.locator('#modal')).toContainText('cancelled');await expect(page.locator('#modal')).toContainText('Final checked result');await expect(page.locator('#modal')).toContainText('Final checked diagnostic');
+ await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);await expect(page.locator('#modal')).toContainText('Final checked result');await expect(page.locator('#modal')).toContainText('Final checked diagnostic');
  assert.deepEqual(await api(page,"const d=adapter.requestDetails.get('work-1:request-a');return {request:d.request,checkedAt:d.checkedAt}"),confirmed);
  assert.deepEqual(await api(page,"return adapter.requestDetails.get('work-1:request-a').evidence.items.map(e=>e.evidenceId)"),['first','second']);
  assert.equal(await api(page,"return adapter.requestDetails.get('work-1:request-a').evidence.nextCursor"),null);
  assert.equal(await api(page,"return adapter.cancellingRequests.has('work-1:request-a')"),false);
- await button(page,'close-modal').click();
+ await button(page,'back-pi-requests').click();
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);await expect(detail).toBeFocused();
  assert.equal(await page.locator('.modal-body').evaluate(node=>node.scrollTop),listScroll);
  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));});
@@ -2399,7 +2402,7 @@ test('Controls pagination: late evidence retains current replies, status errors 
   if(r.path.endsWith('/runs/run-current'))return{json:{...controlRun('run-current',5),finalText:'Latest associated reply'}};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await page.locator('#modal details').click();
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await page.locator('#modal .request-evidence > summary').click();
  const more=button(page,'next-pi-evidence').click();await expect.poll(()=>started).toBe(true);
  latest=true;await api(page,"await adapter.loadRequest('work-1','request-a',false,false)");
  await expect(page.locator('#modal')).toContainText('Latest associated reply');
@@ -2427,9 +2430,9 @@ for(const scope of ['view','identity'])test(`Controls pagination: late evidence 
   }
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await page.locator('#modal details').click();
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await page.locator('#modal .request-evidence > summary').click();
  const more=api(page,"try{await adapter.loadRequest('work-1','request-a',true);}catch{}");await expect.poll(()=>started).toBe(true);
- if(scope==='view'){await button(page,'close-modal').click();await expect(page.locator('#modal h2')).toHaveText('Agent requests');}
+ if(scope==='view'){await button(page,'back-pi-requests').click();await expect(page.locator('#modal h2')).toHaveText('Agent requests');}
  else await api(page,"await adapter.signOut()");
  release();await more;
  if(scope==='view')assert.deepEqual(await api(page,"return adapter.requestDetails.get('work-1:request-a').evidence.items"),[]);

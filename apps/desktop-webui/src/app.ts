@@ -1,3 +1,4 @@
+import { ModalExit } from './modal-presentation.js';
 import { WorkspacePanelsStore, splitGeometry, keyboardSplit, executionAnchors } from './workspace-layout.js';
 import { workCompletionReady, serviceCompletionReady, importCanStart } from './completion-exits.js';
 import { restoreSelection, parentDirectory, missingFileTarget, type WorkSelection } from './work-navigation.js';
@@ -479,9 +480,15 @@ function importNameFeedback(op: Operation) {
 }
 let requestNavigation: {epoch:number;workId:string;source:string;serviceName:string;entry:string;scroll:number;focus:string}|undefined;
 function requestNavigationCurrent() { return requestNavigation?.epoch===adapter.identityEpoch && requestNavigation.workId===current()?.id; }
+const modalExit = new ModalExit();
+let closingModal: {choice:number;epoch:number;route:string;node:HTMLDialogElement;html:string;nonmodal:boolean;focus:HTMLElement|null;removeListener:()=>void}|undefined;
+function discardModalExit() {
+  modalExit.cancel();closingModal?.removeListener();closingModal=undefined;
+}
 function openModal(name: string, data: Record<string, string> = {}) {
-  modalChoice++;
-  lastFocus = document.activeElement as HTMLElement;
+  const sourceFocus=closingModal?.focus || document.activeElement as HTMLElement;
+  discardModalExit();modalChoice++;
+  lastFocus = sourceFocus;
   view.modal = name;
   view.data = data;
   view.modalError = "";
@@ -493,36 +500,48 @@ function openModal(name: string, data: Record<string, string> = {}) {
   view.deleteConfirmed = false;
   render();
 }
-function closeModal() {
+function closeModal(animate = false) {
+  if(!view.modal)return;
   if (['dirty-file', 'dirty-settings'].includes(view.modal) && sourceGuardReturn) {
     const original = sourceGuardReturn; sourceGuardReturn = undefined; pendingNav = null;
     if (original.epoch === adapter.identityEpoch && original.route === location.hash) {
-      modalChoice++; view.modal = original.modal; view.data = { ...original.data }; view.modalError = '';
+      discardModalExit();modalChoice++; view.modal = original.modal; view.data = { ...original.data }; view.modalError = '';
       render(); root.querySelector<HTMLElement>(original.focus)?.focus({ preventScroll: true }); return;
     }
   }
-  modalChoice++;
-  if (view.modal === 'new-work' || view.modal === 'import') clearNameFieldError(false);
-  const requestEntry=['pi-requests','pi-request-detail'].includes(view.modal) && requestNavigationCurrent()?requestNavigation!.entry:'';
+  const dialog=root.querySelector<HTMLDialogElement>('#modal'),nonmodal=nonmodalDialog();
+  const requestEntry=isRequestInspector() && requestNavigationCurrent()?requestNavigation!.entry:'';
   const responseSettings = view.modal === 'chat-response-settings';
   const responseContext = responseSettings && chatSettingsContextCurrent();
-  const source = view.data.source;
+  const source = view.data.source, oldFocus=lastFocus;
+  const selector=requestEntry || (responseSettings && responseContext ? source==='command'?'#composer':'#response-settings-trigger' : focusReturn);
   const caret = [Number(view.data.caretStart), Number(view.data.caretEnd)];
   if (responseSettings && pendingWebCommand && ['model','thinking'].includes(pendingWebCommand.kind) && !pendingWebCommand.pair) pendingWebCommand=undefined;
+  if (view.modal === 'new-work' || view.modal === 'import') clearNameFieldError(false);
   if (view.modal === "import") void adapter.abandonInspection();
-  view.modal = "";
-  view.modalError = "";
-  view.modalNameError = null;
+  // Invalidate the logical dialog immediately. Its inert exit cannot submit or receive late results.
+  discardModalExit();modalChoice++;
+  view.modal = "";view.modalError = "";view.modalNameError = null;
+  if(requestEntry)requestNavigation=undefined;
+  if(responseSettings)focusReturn='';
+  const restore=(continuing?:HTMLElement|null)=>{
+    const visible=(node:HTMLElement|null)=>!!node?.isConnected && !!node.getClientRects().length && !node.closest('[inert]') && !(node as HTMLButtonElement).disabled;
+    let target=visible(continuing || null)?continuing!:(selector?root.querySelector<HTMLElement>(selector):null);
+    if(!visible(target) && visible(oldFocus))target=oldFocus;
+    if(!visible(target))target=[...root.querySelectorAll<HTMLElement>('[data-action=account],[data-action=work-menu],[data-action^=tab-],[data-action=exit-service-focus],[data-action=service-focus],#composer')].find(visible) || null;
+    if(target && target!==document.activeElement)target.focus({preventScroll:true});
+    if(responseSettings && responseContext && source==='command' && target instanceof HTMLTextAreaElement)target.setSelectionRange(caret[0],caret[1]);
+  };
+  if(!animate || !dialog?.open || matchMedia('(prefers-reduced-motion: reduce)').matches){render();restore();return;}
+  const copy=dialog.cloneNode(true) as HTMLDialogElement;
+  copy.classList.add('modal-closing');copy.inert=true;copy.setAttribute('aria-hidden','true');
+  const closing={choice:modalChoice,epoch:adapter.identityEpoch,route:location.hash,node:dialog,html:copy.outerHTML,nonmodal,focus:oldFocus,removeListener:()=>{}};
+  closingModal=closing;
+  const valid=()=>closingModal===closing && closing.choice===modalChoice && closing.epoch===adapter.identityEpoch && closing.route===location.hash && !view.modal && dialog===root.querySelector('#modal');
+  const complete=modalExit.start(valid,()=>{const active=document.activeElement;const continuing=nonmodal && active instanceof HTMLElement && active!==document.body && active!==root && !dialog.contains(active)?active:null;closing.removeListener();closingModal=undefined;render();restore(continuing);});
+  const ended=(event:AnimationEvent)=>{if(event.target===dialog && event.animationName==='modal-out')complete();};
+  dialog.addEventListener('animationend',ended);closing.removeListener=()=>dialog.removeEventListener('animationend',ended);
   render();
-  if (responseSettings) {
-    focusReturn = '';
-    if (responseContext) {
-      const target = root.querySelector<HTMLTextAreaElement>(source === 'command' ? '#composer' : '#response-settings-trigger');
-      target?.focus({ preventScroll: true });
-      if (source === 'command' && target) target.setSelectionRange(caret[0], caret[1]);
-    }
-  } else if(requestEntry){root.querySelector<HTMLElement>(requestEntry)?.focus({preventScroll:true});requestNavigation=undefined;}
-  else lastFocus?.focus();
 }
 const phase = (op: Operation) => `<div class="phase-track" role="status"><div><span>${op.state === "succeeded" ? icon("check", 14) : icon("clock", 14)}</span>Current phase: ${esc(op.phase || op.state)}</div></div>`;
 function scenarioBar() { return ""; }
@@ -633,7 +652,7 @@ function agent(w: Work, focus: boolean) {
   const draftImages=imageDrafts.get(draftKey(w,session?.id || ""));const imageWaiting=draftImages.length>0 && (!w.resourceChecked?.agent || session?.loading && !session.checkedAt || draftImages.some(image=>image.reading));
   const webDraft=!view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
   const stopAndSend=supported && active && !activeUnconfirmed && !webDraft;
-  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout==="chat-only" && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${session ? unmatchedExecutions(w,session.id,session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${activeUnconfirmed ? feedback(esc(observed?.error || "Checking the active Run…"), "warning", btn("Check status", "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? `A Run from Service ${esc(activeRun.source.serviceName || "")} is active.` : "A Run is active in another Session.", "warning", btn("View active Run", "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}<div class="composer-actions">${btn(icon("upload",16),"add-chat-images","icon-button quiet",'title="Add images" aria-label="Add images"')}${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${btn(stopAndSend ? "Stop and send" : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}`, `aria-label="${stopAndSend ? "Stop and send" : "Send message"}" ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
+  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${(view.layout==="chat-only" || view.layout==='service-chat' && innerWidth<900) && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${session ? unmatchedExecutions(w,session.id,session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${activeUnconfirmed ? feedback(esc(observed?.error || "Checking the active Run…"), "warning", btn("Check status", "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? `A Run from Service ${esc(activeRun.source.serviceName || "")} is active.` : "A Run is active in another Session.", "warning", btn("View active Run", "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}<div class="composer-actions">${btn(icon("upload",16),"add-chat-images","icon-button quiet",'title="Add images" aria-label="Add images"')}${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${btn(stopAndSend ? "Stop and send" : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}`, `aria-label="${stopAndSend ? "Stop and send" : "Send message"}" ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
 }
 function modelComposer(w:Work,sessionId:string) {
  const {name,thinking,state}=chatSettings(w,sessionId);
@@ -912,7 +931,8 @@ function settingsPage(w: Work) {
   const c = view.config,
     pending = w.config.pendingApply === true;
   const applyRecord=[...actions.records.values()].filter(item=>item.work===w.id && item.action==='apply-config').sort((a,b)=>b.token-a.token)[0];
-  const applyOperation=[...adapter.state.operations].reverse().find(item=>item.workId===w.id && item.kind==='Apply configuration');
+  const applyOperations=adapter.state.operations.filter(item=>item.workId===w.id && ['Apply configuration','Apply Work configuration','apply-work-configuration'].includes(item.kind));
+  const applyOperation=applyOperations.find(item=>!!applyRecord?.businessId && item.id===applyRecord.businessId) || [...applyOperations].sort((a,b)=>(Date.parse(b.created)||0)-(Date.parse(a.created)||0))[0];
   const applying=!!applyRecord?.pending || !!applyOperation && ['accepted','pending','preparing','running'].includes(applyOperation.state);
   const applyError=applyRecord?.error || (applyOperation?.state==='failed'?applyOperation.error || 'Apply failed':'');
   const unknown=!!applyRecord?.blocked || applyOperation?.state==='unknown';
@@ -1080,7 +1100,7 @@ function modalMarkup() {
       break;
     case "stop-work":
       title = `Stop ${esc(target?.name)}?`;
-      body = `<p>This stops the current Run, all running Services, and workspace file connections for this Work.</p><p>Your persistent workspace data is preserved. Enabled Services can resume the next time you start the Work.</p><div class="impact-box">${icon("stop")} Entire Work · Services · Agent · Files</div>`;
+      body = `<p>This stops the current Run, all running Services, and workspace file connections for this Work.</p><p>Your persistent workspace data is preserved. Enabled Services can resume the next time you start the Work.</p><div class="impact-box">Entire Work · Services · Agent · Files</div>`;
       body += view.data.exportAfterStop ? '<p>After the original stop is confirmed, this explicit choice generates a full .work package and starts its verified download. Packages may include private data and credentials.</p>' : '';
       footer = `${cancel()}${btn(view.data.exportAfterStop ? "Stop and export" : "Stop Work", "confirm-stop", "danger-solid", `data-id="${target?.id}" ${view.data.exportAfterStop ? 'data-export-stop="true"' : ''}`)}`;
       break;
@@ -1101,16 +1121,18 @@ function modalMarkup() {
     case "about-piwork": {
       const info=adapter.about;title="About Piwork";
       body=`${productInfoMarkup('Desktop (piwork-cli)',info.local,info.localLoading,info.localError)}${productInfoMarkup('Core',info.core,info.coreLoading,info.coreError)}${info.core && info.coreError?`<p class="muted">Last confirmed ${esc(info.coreChecked)}</p>`:''}`;
-      footer=`${btn('Refresh','refresh-about','quiet')}${close()}`;break;
+      footer=`${close()}${btn('Refresh','refresh-about','quiet')}`;break;
     }
     case "chat-image-preview":title="Image preview";body=`${target && !adapter.project(target).usable?'<p class="muted">Previously loaded image. Start this Work to read current history.</p>':''}<img class="chat-image-preview" src="${esc(view.data.url)}" alt="Sent image">`;footer=close();break;
     case "run-details": {
       title="Run details";
       const runId=view.data.runId,run=target?(adapter.runDetails.get(`${target.id}:${runId}`) || (target.run?.id===runId?target.run:target.sessions.flatMap(s=>s.runs || []).find(r=>r.id===runId))):undefined;
+      const observed=target && adapter.activeRuns.get(target.id),active=target && (adapter.cancelAndSendCapabilities.get(target.id)===1 ? observed?.confirmed && !observed.error ? observed.run : undefined : target.run);
+      const cancellable=!!run && active?.id===run.id && ['accepted','running','cancelling'].includes(active.status);
       const history=target?.sessions.find(s=>s.id===view.session)?.runs || [];
       body=run ? `${runFacts(run)}${run.error?feedback(esc(run.error),'warning'):''}<details><summary>Technical details</summary><dl><dt>Run ID</dt><dd><code>${esc(run.id)}</code></dd><dt>Session ID</dt><dd><code>${esc(run.sessionId)}</code></dd><dt>Event cursor</dt><dd>${run.cursor}</dd></dl></details><p class="muted">One active Run per Work. Closing details does not cancel execution.</p>` : '<p>Run details have not been confirmed.</p>';
       if(history.length)body+=`<details><summary>Earlier execution details</summary>${history.map(r=>`<p>${btn(`${esc(r.status)} · ${esc(r.created || 'Time unavailable')} · ${esc(modelDisplayName(r.actualModel))}`,'run-details','text-button',`data-run-id="${esc(r.id)}"`)}</p>`).join('')}</details>`;
-      footer=`${close()}${run && ['accepted','running','cancelling'].includes(run.status)?btn(run.cancellationRequested || run.status==='cancelling'?'Cancelling…':'Cancel run','cancel-run','danger',`data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status==='cancelling'?'disabled':''}`):''}`;
+      footer=`${close()}${run && cancellable?btn(run.cancellationRequested || run.status==='cancelling'?'Cancelling…':'Cancel run','cancel-run','danger',`data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status==='cancelling'?'disabled':''}`):''}`;
       break;
     }
     case 'service-picker': {
@@ -1134,7 +1156,7 @@ function modalMarkup() {
       body = s
         ? serviceDetails(s, target!)
         : `${target ? controlMarkup(serviceControls.get(`${target.id}:${view.data.serviceId}`)) : ""}<p>The Service definition was removed. Workspace files were not deleted.</p>`;
-      footer = `${btn("Back to services", "manage-services")}${close()}`;
+      footer = `${close()}${btn("Back to services", "manage-services")}`;
       break;
     }
     case "service-control": {
@@ -1158,10 +1180,11 @@ function modalMarkup() {
       if(!r){body='Reading the original request…';footer=close();break;}
       const retryIntent=target?adapter.requestRetries.get(`${target.id}:${r.requestId}`):undefined;
       const cancellation=target && adapter.requestCancellation(target.id,r.requestId);
+      const waiting=['waiting_result','waiting_apply'].includes(r.state);
       const live=r.disposition==='live',editable=live && !!target && adapter.project(target).usable,responses=target?adapter.requestResponses.get(`${target.id}:${r.requestId}`):undefined;
-      body=`<div class="request-overview"><h3>${esc(r.goal)}</h3><p>${esc(r.source.kind==='service'?`Service: ${r.source.serviceName}`:'Chat')}</p>${badge(requestStateLabel(r.state))}<small>${detail.checkedAt?'Last confirmed':'Updated'} ${esc(detail.checkedAt || r.updatedAt)}</small></div>${detail.readError?feedback(`Status not confirmed: ${esc(detail.readError)}`,'warning'):''}${!live?'<p class="muted">Historical · Read only</p>':''}<section class="request-result"><h3>Result &amp; next step</h3>${r.result?`<p class="request-text">${esc(r.result)}</p>`:''}${r.waitRef?feedback(`Waiting for ${esc(r.waitRef.kind)} · Chat remains available.<small>Deadline ${esc(r.waitRef.deadlineAt)}</small>`,'warning'):''}${r.error?feedback(esc(r.error.message),'warning'):''}${!r.result && !r.waitRef && !r.error?'<p>No result reported yet.</p>':''}${retryIntent?feedback(esc(retryIntent.error || 'Retry result unknown. Check status to verify the original submission.'),'warning'):''}</section><details class="request-executions"><summary>Executions <span>${r.runIds.length}</span></summary>${r.runIds.map((runId:string,index:number)=>{const run=responses?.runs.find(item=>item.id===runId);return `<details class="request-execution"><summary>Execution ${index+1} ${run?badge(run.status):'<span>Not confirmed</span>'}</summary>${run?`${runFacts(run)}${responses?.checked[run.id]?`<small>Last confirmed ${esc(responses.checked[run.id])}</small>`:''}${run.finalText?`<p class="request-text">${esc(run.finalText)}</p>`:'<p>No saved reply.</p>'}${run.error?feedback(esc(run.error),'warning'):''}`:`<p>${responses?.loading?'Reading execution…':'Execution has not been confirmed.'}</p>`}</details>`;}).join('') || '<p>No Run admitted.</p>'}<p class="muted">A successful Run does not mean the request is complete.</p></details>${responses?.errors.map(error=>feedback(esc(error),'warning')).join('') || ''}<details class="request-evidence"><summary>Evidence &amp; technical details</summary><p>Request ID <code>${esc(r.requestId)}</code></p>${r.waitRef?`<p>Waiting object <code>${esc(r.waitRef.id)}</code></p>`:''}${detail.evidence.items.map((e:Record<string,any>)=>`<article class="capability"><strong>${esc(e.kind)} · ${e.verified?'Verified':'Observed'}</strong><p>${esc(e.summary)}</p><small>${esc(e.observedAt)} · ${esc(e.objectRef)}${e.stateVersion?` · State ${esc(e.stateVersion)}`:''}${e.codeVersion?` · Code ${esc(e.codeVersion)}`:''}</small></article>`).join('') || '<p>No evidence yet.</p>'}${detail.evidence.nextCursor?btn('More evidence','next-pi-evidence','small'):''}</details>`;
+      body=`<div class="request-overview"><h3>${esc(r.goal)}</h3><p>${esc(r.source.kind==='service'?`Service: ${r.source.serviceName}`:'Chat')}</p>${badge(requestStateLabel(r.state))}<small>${detail.checkedAt?'Last confirmed':'Updated'} ${esc(detail.checkedAt || r.updatedAt)}</small></div>${detail.readError?feedback(`Status not confirmed: ${esc(detail.readError)}`,'warning'):''}${!live?'<p class="muted">Historical · Read only</p>':''}<section class="request-result"><h3>Result &amp; next step</h3>${r.result?`<p class="request-text">${esc(r.result)}</p>`:''}${waiting && r.waitRef?feedback(`Waiting for ${esc(r.waitRef.kind)} · Chat remains available.<small>Deadline ${esc(r.waitRef.deadlineAt)}</small>`,'warning'):''}${r.error?feedback(esc(r.error.message),'warning'):''}${!r.result && (!waiting || !r.waitRef) && !r.error?'<p>No result reported yet.</p>':''}${retryIntent?feedback(esc(retryIntent.error || 'Retry result unknown. Check status to verify the original submission.'),'warning'):''}</section><details class="request-executions"><summary>Executions <span>${r.runIds.length}</span></summary>${r.runIds.map((runId:string,index:number)=>{const run=responses?.runs.find(item=>item.id===runId);return `<details class="request-execution"><summary>Execution ${index+1} ${run?badge(run.status):'<span>Not confirmed</span>'}</summary>${run?`${runFacts(run)}${responses?.checked[run.id]?`<small>Last confirmed ${esc(responses.checked[run.id])}</small>`:''}${run.finalText?`<p class="request-text">${esc(run.finalText)}</p>`:'<p>No saved reply.</p>'}${run.error?feedback(esc(run.error),'warning'):''}`:`<p>${responses?.loading?'Reading execution…':'Execution has not been confirmed.'}</p>`}</details>`;}).join('') || '<p>No Run admitted.</p>'}<p class="muted">A successful Run does not mean the request is complete.</p></details>${responses?.errors.map(error=>feedback(esc(error),'warning')).join('') || ''}<details class="request-evidence"><summary>Evidence &amp; technical details</summary><p>Request ID <code>${esc(r.requestId)}</code></p>${r.waitRef?`<p>Wait reference <code>${esc(r.waitRef.id)}</code></p>`:''}${detail.evidence.items.map((e:Record<string,any>)=>`<article class="capability"><strong>${esc(e.kind)} · ${e.verified?'Verified':'Observed'}</strong><p>${esc(e.summary)}</p><small>${esc(e.observedAt)} · ${esc(e.objectRef)}${e.stateVersion?` · State ${esc(e.stateVersion)}`:''}${e.codeVersion?` · Code ${esc(e.codeVersion)}`:''}</small></article>`).join('') || '<p>No evidence yet.</p>'}${detail.evidence.nextCursor?btn('More evidence','next-pi-evidence','small'):''}</details>`;
       if (cancellation) body += feedback(cancellation.phase === 'accepted' ? `Cancellation requested. Refresh the original request to check its current state.${cancellation.error ? ` ${esc(cancellation.error)}` : ''}` : cancellation.phase === 'unknown' ? `Cancellation result is unknown. Refresh the original request; it will not be submitted again. ${esc(cancellation.error)}` : 'Requesting cancellation…', cancellation.phase === 'unknown' || cancellation.error ? 'warning' : 'info');
-      footer=`${editable && requestCancellable(r)?btn(r.state==='cancelling'?'Cancelling…':'Cancel request','cancel-pi-request','danger',r.state==='cancelling' || cancellation?'disabled':''):''}${view.data.source!=='service' && editable&&['failed','cancelled','needs_attention'].includes(r.state)?btn('Retry with new request','retry-pi-request','small',retryIntent?'disabled':''):''}${btn('Check status','pi-request-detail','small',`data-id="${esc(r.requestId)}"`)}${close()}`;break;
+      footer=`${close()}${btn('Check status','pi-request-detail','small',`data-id="${esc(r.requestId)}"`)}${view.data.source!=='service' && editable&&['failed','cancelled','needs_attention'].includes(r.state)?btn('Retry with new request','retry-pi-request','primary',retryIntent?'disabled':''):''}${editable && requestCancellable(r)?btn(r.state==='cancelling'?'Cancelling…':'Cancel request','cancel-pi-request','danger',r.state==='cancelling' || cancellation?'disabled':''):''}`;break;
     }
     case "file-add":
       title = "Add to workspace";
@@ -1244,7 +1267,7 @@ function modalMarkup() {
       const entry = target?.packageEntries?.find(p => p.name === view.data.id);
       title = esc(view.data.id);
       body = `${target?.resourceErrors?.packages ? feedback(`Package observation unavailable. Last confirmed details: ${esc(target.resourceErrors.packages)}`, "warning") : ""}${view.data.id === "piwork-brain" ? `<p>Editable source: <code>.pi/packages/piwork-brain/</code></p>${btn("Open brain source", "open-source", "small", 'data-path="/.pi/packages/piwork-brain/brain.md"')}${brainCandidateDetails(entry)}` : `<pre class="code-editor">${esc(JSON.stringify(entry ?? p ?? { name: view.data.id }, null, 2))}</pre>`}<p class="muted">Installed, selected, active, and loaded states are reported separately.</p>`;
-      footer = `${target ? btn("Refresh package", "refresh-package-detail", "small") : ""}${close()}`;
+      footer = `${close()}${target ? btn("Refresh package", "refresh-package-detail", "small") : ""}`;
       break;
     }
     case "install-package":
@@ -1282,7 +1305,7 @@ function modalMarkup() {
         (o) => o.scope === scope && (!view.data.workId || o.workId === view.data.workId),
       );
       body = `<p>Records known by this local CLI, for the current Core and account. This is not a global server history.</p><label class="field">Find an Operation by ID<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn("Check status", "lookup-operation")}</div></label><label class="field">Find an original snapshot ID<div class="input-action"><input id="snapshot-query" value="${esc(view.snapshotQuery)}" placeholder="snapshot-…">${btn("Find snapshot", "lookup-snapshot")}</div></label><div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${op.id}"><span>${icon("clock", 17)}<span><strong>${esc(op.kind)}</strong><small>${op.id} · ${op.updated}</small></span></span>${badge(op.state)}</button>`).join("") : '<p class="muted">No operations are known in this Desktop session.</p>'}</div><p class="muted">Records contain IDs and status only. The CLI stores minimal Operation IDs for the current Core and account. Clearing completed records does not cancel server work.</p>`;
-      footer = `${btn("Clear local records", "clear-operations", "quiet", operations.length ? "" : "disabled")}${close()}`;
+      footer = `${close()}${btn("Clear local records", "clear-operations", "quiet", operations.length ? "" : "disabled")}`;
       break;
     }
     case "operation": {
@@ -1533,12 +1556,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case 'toggle-slash-mode':view.literalSlash=!view.literalSlash;render();break;
     case 'check-chat-submission':if(currentWork){const result=await stay(adapter.recoverChatSubmission(currentWork.id));if(result){if(result.kind==='run'){const submitted=pendingImageSubmissions.get(currentWork.id);if(submitted&&submitted.epoch===adapter.identityEpoch){consumeImageSubmission(currentWork.id,submitted);}}if(result.kind==='session'){const original=view.drafts[draftKey(currentWork)] || '';view.session=result.session.sessionId;if(original && !view.drafts[draftKey(currentWork)])view.drafts[draftKey(currentWork)]=original;}for(const old of actions.records.values())if(old.blocked && old.work===currentWork.id && old.kind==='agent' && (result.kind==='session'?old.action==='new-session'||old.action==='send-message':old.action==='send-message'))actions.review(old);}render();}break;
 
-    case "close-modal": {
-      const key = ['chat-response-settings','pi-requests','pi-request-detail'].includes(view.modal)?'':focusReturn;
-      closeModal();
-      if (key) root.querySelector<HTMLElement>(key)?.focus();
-      break;
-    }
+    case "close-modal": closeModal(true); break;
     case "back-works":
       await guard(() => {
         rememberWork();
@@ -2467,6 +2485,7 @@ function observeCurrentPage() {
   adapter.observePage(id || '',document.visibilityState==='visible',showChat,showService&&w?activeService(w)?.name || '':'',view.modal==='pi-request-detail'?view.data.requestId || '':'',view.modal==='pi-requests',view.modal==='pi-requests'?view.data.serviceName || '':'');
 }
 function render() {
+  if(closingModal && (closingModal.choice!==modalChoice || closingModal.epoch!==adapter.identityEpoch || closingModal.route!==location.hash || closingModal.node!==root.querySelector('#modal') || view.modal || adapter.state.browserAccess!=='authorized'))discardModalExit();
   if (current()?.id === selectionWorkId) rememberWork();
   observeCurrentPage();
   if (view.config && !view.config.advancedDirty) synchronizeConfiguration(view.config);
@@ -2515,7 +2534,7 @@ function render() {
   }
   // Ephemeral status nodes must not displace existing iframe ancestors during reconciliation.
   root.querySelectorAll('[data-action-status]').forEach(node => node.remove());
-  reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal && adapter.state.browserAccess === "authorized" ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
+  reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal && adapter.state.browserAccess === "authorized" ? modalMarkup() : closingModal?.html || ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
   for (const frame of root.querySelectorAll<HTMLIFrameElement>('iframe[data-service-key]')) if (!frame.dataset.observed) { frame.dataset.observed = 'true'; frame.addEventListener('load', () => { const [workId, serviceId, port] = frame.dataset.serviceKey!.split(':'); void adapter.serviceFrameLoaded(workId, serviceId, Number(port)).catch(error => toast(error.message)); }); }
   renderActionStates(root, actions, location.hash, el => actionIntent(el), record => !record.resource?.startsWith('service:') || record.resource === `service:${view.data.serviceId || (current() ? activeService(current()!)?.id : view.service)}${record.kind === 'service' ? '' : `:${view.port}`}`);
   for(const el of root.querySelectorAll<HTMLElement>('[data-history-image]'))if(!el.dataset.imageObserved){el.dataset.imageObserved='true';imageObserver.observe(el);}
@@ -2526,18 +2545,16 @@ function render() {
   applyWorkspaceSizing();
   const dialog = root.querySelector<HTMLDialogElement>("#modal");
   if (dialog) {
-    syncDialogPresentation(dialog, nonmodalDialog());
+    syncDialogPresentation(dialog, closingModal?.nonmodal ?? nonmodalDialog());
     if (!dialog.dataset.bound) { dialog.dataset.bound = "true"; dialog.addEventListener("cancel", (e) => {
       e.preventDefault();
-      const key = ['chat-response-settings','pi-requests','pi-request-detail'].includes(view.modal)?'':focusReturn;
-      closeModal();
-      if (key) root.querySelector<HTMLElement>(key)?.focus();
+      closeModal(true);
     });
     }
     const body = dialog.querySelector<HTMLElement>(".modal-body");
     if (body) body.scrollTop = modalScroll;
   }
-  if (activeKey) {
+  if (activeKey && !closingModal) {
     const replacement = active?.isConnected ? active : root.querySelector<HTMLInputElement>(activeKey);
     if (replacement && replacement !== document.activeElement && (!dialog || nonmodalDialog() || dialog.contains(replacement))) {
       replacement.focus({ preventScroll: true });
@@ -2632,11 +2649,11 @@ root.addEventListener('pointerup', event => {
   if (!down || down.pointer !== event.pointerId || down.choice !== modalChoice || down.epoch !== adapter.identityEpoch ||
       !down.dialog.isConnected || !down.dialog.open || !lightModalDismissible() ||
       !pointOutsideDialog({ x: event.clientX, y: event.clientY }, down.dialog.getBoundingClientRect())) return;
-  const focus = focusReturn; closeModal(); if (focus) root.querySelector<HTMLElement>(focus)?.focus({ preventScroll: true });
+  closeModal(true);
 });
 root.addEventListener("click", (e) => {
   const el = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
-  if (!el || el.hasAttribute("disabled")) return;
+  if (!el || el.hasAttribute("disabled") || el.closest('[inert]')) return;
   if(["select-session","new-session"].includes(el.dataset.action || ""))imageSelection++;
   if (view.modal === 'export' && !el.closest('#modal')) { closeModal(); view.data = {}; }
   if (!view.modal) focusReturn = focusKey(el);
@@ -2895,7 +2912,8 @@ root.addEventListener("compositionend", () => {
   composition = false;
 });
 root.addEventListener("keydown", (e) => {
-  const dialog = root.querySelector<HTMLDialogElement>("#modal");
+  if(closingModal?.node.contains(e.target as Node)){e.preventDefault();return;}
+  const dialog = closingModal ? null : root.querySelector<HTMLDialogElement>("#modal");
   if (dialog?.open && (e.target as HTMLElement).id === 'form-name' && e.key === 'Enter' &&
       (view.modal === 'new-folder' || view.modal === 'file-transfer' && view.data.transfer === 'rename')) {
     e.preventDefault();
@@ -2908,7 +2926,7 @@ root.addEventListener("keydown", (e) => {
     return;
   }
   if (e.isComposing || composition) { if(e.key==='Enter')e.preventDefault();return; }
-  if(dialog?.open && (!nonmodalDialog() || dialog.contains(e.target as Node)) && e.key==='Escape') {e.preventDefault();e.stopPropagation();const key=['chat-response-settings','pi-requests','pi-request-detail'].includes(view.modal)?'':focusReturn;closeModal();if(key)root.querySelector<HTMLElement>(key)?.focus();return;}
+  if(dialog?.open && (!nonmodalDialog() || dialog.contains(e.target as Node)) && e.key==='Escape') {e.preventDefault();e.stopPropagation();closeModal(true);return;}
   if(dialog?.open && ['chat-response-settings','service-picker'].includes(view.modal) && (e.target as HTMLElement).getAttribute('role')==='menuitemradio' && ['ArrowDown','ArrowUp','Home','End'].includes(e.key)) {
     const options=[...dialog.querySelectorAll<HTMLElement>('[role=menuitemradio]:not([disabled])')];
     if(options.length){e.preventDefault();const index=options.indexOf(document.activeElement as HTMLElement);options[e.key==='Home'?0:e.key==='End'?options.length-1:(index+(e.key==='ArrowDown'?1:-1)+options.length)%options.length]?.focus();}return;

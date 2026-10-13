@@ -53,3 +53,8 @@ test('confirmed empty active slot never exposes cancellation of a stale running 
  const {c,work}=fixture();c.adapter.cancelAndSendCapabilities.set(work.id,1);work.run={id:'stale',sessionId:'session-a',status:'running'};c.adapter.activeRuns.set(work.id,{confirmed:true,run:null});
  assert.doesNotMatch(c.executionMarkup(work,'session-a','stale'),/data-action="cancel-run"/);assert.match(c.executionMarkup(work,'session-a','stale'),/data-action="run-details"/);
 });
+
+test('terminal Request does not present a retained wait reference as current waiting',()=>{
+ const {c,work}=fixture();c.view.modal='pi-request-detail';c.view.data={requestId:'done'};c.adapter.requestDetails.set('work-a:done',{request:{requestId:'done',goal:'Done',source:{kind:'chat'},state:'cancelled',disposition:'live',updatedAt:'now',runIds:[],waitRef:{kind:'job',id:'old-job',deadlineAt:'yesterday'}},evidence:{items:[]}});
+ const html=c.modalMarkup();assert.match(html,/Cancelled/);assert.doesNotMatch(html,/Waiting for job|Chat remains available/);assert.match(html,/Wait reference/);assert.match(html,/old-job/);
+});
