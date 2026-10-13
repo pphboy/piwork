@@ -9,7 +9,9 @@ const modal = app.slice(app.indexOf('function modalMarkup()'), app.indexOf('func
 const phase = app.slice(app.indexOf('const phase ='), app.indexOf('\n', app.indexOf('const phase =')));
 const importName = app.match(/^function importNameFeedback\([\s\S]*?^}/m)?.[0];
 assert.ok(importName, 'production import name projection exists');
-const renderOperation = new Function('adapter', 'id', `${helpers}\n${importName}\n${phase}\nconst view={modal:'operation',data:{id},modalError:''};const route=()=>[];const current=()=>undefined;${modal};return modalMarkup();`);
+const inspector = app.match(/^function isRequestInspector\([\s\S]*?^}/m)?.[0];
+assert.ok(inspector, 'production inspector projection exists');
+const renderOperation = new Function('adapter', 'id', `${helpers}\n${importName}\n${inspector}\n${phase}\nconst view={modal:'operation',data:{id},modalError:''};const route=()=>[];const current=()=>undefined;${modal};return modalMarkup();`);
 const id = 'original-operation';
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 function fixture(t: TestContext, status: number) {

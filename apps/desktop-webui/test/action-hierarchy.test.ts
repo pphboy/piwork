@@ -26,7 +26,7 @@ function fixture() {
     downloadProgressMarkup: () => '', actions: { records: new Map() },
   };
   vm.createContext(c); vm.runInContext(helpers, c);
-  vm.runInContext(extract('brand', 'topbar', 'quickAction', 'workHeader', 'modalMarkup', 'exportPanel', 'files', 'syncDialogPresentation', 'beginExport'), c);
+  vm.runInContext(extract('isRequestInspector', 'brand', 'topbar', 'quickAction', 'workHeader', 'modalMarkup', 'exportPanel', 'files', 'syncDialogPresentation', 'beginExport'), c);
   return { c, work };
 }
 
@@ -128,7 +128,8 @@ test('request entries are scoped icon actions and the duplicate footer creation 
   const service = extract('services'), agent = extract('agent'), works = extract('works');
   assert.match(service, /hasRecords[^\n]*btn\(icon\("note", 17\), "service-requests"/);
   assert.match(service, /aria-label="Agent requests" title="Agent requests"/);
-  assert.match(agent, /aria-label="Pi requests" title="Pi requests"/);
+  assert.doesNotMatch(agent, /"pi-requests"/);
+  assert.match(extract('workPage'), /Pi requests for this Work/);
   assert.doesNotMatch(agent.split('<div class="session-line">')[1]?.split('<div class="messages"')[0] || '', /pi-requests/);
   assert.doesNotMatch(works, /Create a Work", "new-work"/);
   assert.match(works, /Make room for your next idea/); assert.match(works, /New Work/);

@@ -851,7 +851,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     const roots = appRootLoads;
     await page.getByRole('button',{name:'Cancel run',exact:true}).click();
     releaseFinalRun();
-    await page.locator('.run-strip').filter({hasText:'succeeded'}).waitFor();
+    await page.locator('.message-execution').filter({hasText:'succeeded'}).waitFor();
     assert.equal(appRootLoads, roots, 'Run updates reloaded the Service iframe');
     assert.equal(submittedPrompt, 'Read shared workspace /note.txt and Notes Service API /api/data; summarize both and cite each source.');
     for (const width of [1440,390]) { await page.setViewportSize({width,height:900}); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); }

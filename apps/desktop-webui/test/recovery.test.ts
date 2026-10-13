@@ -634,12 +634,12 @@ test('UX revision late Work defaults retain a chosen Service and focused Files d
     if(r.path.startsWith('/_desktop/files/'))return r.method==='PROPFIND'?{status:207,body:listing('original file',mtime1),headers:{'Content-Type':'application/xml'}}:{body:'original file',headers:{'Last-Modified':mtime1}};
     return focusFixture(r);
   });
-  await page.locator('#service-select').selectOption('service-b');
+  await page.locator('#service-select').click();await page.locator('[data-action=select-service][data-id=service-b]').click();
   await button(page,'tab-Files').click();await button(page,'open-file').click();await page.locator('#file-editor').fill('edit made before Work finished opening');
   await button(page,'focus-chat').click();release();await expect(page.locator('#response-settings-trigger')).toBeEnabled();await page.waitForLoadState('networkidle');
   await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');await button(page,'restore-layout').click();
   await expect(button(page,'tab-Files')).toHaveClass(/active/);await expect(page.locator('#file-editor')).toHaveValue('edit made before Work finished opening');
-  await page.locator('#file-editor').fill('original file');await button(page,'tab-Services').click();await expect(page.locator('#service-select')).toHaveValue('service-b');
+  await page.locator('#file-editor').fill('original file');await button(page,'tab-Services').click();await expect(page.locator('#service-select')).toHaveAttribute('data-service-id','service-b');
 });
 
 test('UX revision Focus chat restores its prior layout or directly exits without reloading any ancestor', async t => {
@@ -704,10 +704,10 @@ test('UX revision Files and ordinary Chat remain distinct from Focus chat and pr
   assert.equal(await page.evaluate(()=>document.querySelector('#file-editor')===(window as any).originalFileEditor),true);
   await page.locator('#file-editor').fill('original file');await button(page,'tab-Chat').click();await expect(page.locator('.work-tabs')).toBeVisible();
   await button(page,'focus-chat').click();await button(page,'restore-layout').click();await expect(button(page,'tab-Chat')).toHaveClass(/active/);await expect(page.locator('.work-tabs')).toBeVisible();
-  await button(page,'tab-Services').click();await button(page,'service-focus').click();await page.locator('#service-select').selectOption('service-b');
+  await button(page,'tab-Services').click();await button(page,'service-focus').click();await page.locator('#service-select').click();await page.locator('[data-action=select-service][data-id=service-b]').click();
   await button(page,'sessions').click();await page.locator('[data-action=select-session][data-id=session-2]').click();
   await button(page,'focus-chat').click();await button(page,'exit-service-focus').click();
-  await expect(page.locator('#service-select')).toHaveValue('service-b');
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id','service-b');
   assert.equal(await api(page,"return adapter.getWork('work-1').sessions.find(s=>s.id==='session-2').messages[0].text"),'Other saved conversation');
   await expect(page.locator('.session-line')).toContainText('Session 2');
 });
@@ -2113,7 +2113,7 @@ test('Controls Service scopes discard late reads, share ports, retain list scrol
   return controlFixture(r);
  });
  await expect(page.locator('#service-select')).toBeVisible();await expect.poll(()=>requests.filter(r=>r.path.endsWith('/agent-requests')).length).toBeGreaterThan(0);
- await page.locator('#service-select').selectOption('service-b');await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool B')?.confirmed")).toBe(true);release();await page.waitForTimeout(100);await expect(button(page,'service-requests')).toHaveCount(0);
+ await page.locator('#service-select').click();await page.locator('[data-action=select-service][data-id=service-b]').click();await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool B')?.confirmed")).toBe(true);release();await page.waitForTimeout(100);await expect(button(page,'service-requests')).toHaveCount(0);
  assert.equal(await api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords || false"),false);
  delayed=false;await page.locator('#port-select').selectOption('81');assert.ok(requests.filter(r=>r.path.endsWith('/agent-requests')).every(r=>!new URLSearchParams(r.search).has('port')));
  await api(page,"await adapter.signOut()");assert.equal(await api(page,"return adapter.requestPresence.size"),0);await expect(button(page,'service-requests')).toHaveCount(0);
