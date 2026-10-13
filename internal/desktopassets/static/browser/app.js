@@ -139,7 +139,7 @@ const actionLabels = {
     'check-browser-access': 'Checking browser access', 'confirm-reset-browser-access': 'Resetting browser access', 'sign-in': 'Signing in', 'sign-out': 'Signing out', 'confirm-switch-core': 'Switching Core', 'check-connection': 'Checking connection',
     'retry-works': 'Loading Works', 'create-work': 'Creating Work', 'start-work': 'Starting Work', 'confirm-stop': 'Stopping Work', 'confirm-delete': 'Deleting Work',
     'retry-work-read': 'Loading Work', 'open-work': 'Loading Work', 'check-work': 'Checking Work', settings: 'Reading settings', 'tab-Services': 'Loading Services', 'tab-Files': 'Reading workspace',
-    'load-models': 'Reading models', 'save-model': 'Saving Session model', 'check-session-model': 'Reading Session model', 'pi-requests': 'Reading Pi requests', 'pi-request-detail': 'Reading Pi request', 'cancel-pi-request': 'Cancelling Pi request', 'retry-pi-request': 'Retrying Pi request', 'next-pi-requests': 'Reading more Pi requests', 'next-pi-evidence': 'Reading more evidence',
+    'load-models': 'Reading models', 'save-model': 'Saving Session model', 'check-session-model': 'Reading Session model', 'service-requests': 'Reading Agent requests', 'check-active-run': 'Checking active Run', 'pi-requests': 'Reading Pi requests', 'pi-request-detail': 'Reading Pi request', 'cancel-pi-request': 'Cancelling Pi request', 'retry-pi-request': 'Retrying Pi request', 'next-pi-requests': 'Reading more Pi requests', 'next-pi-evidence': 'Reading more evidence',
     'sessions': 'Reading Sessions', 'select-session': 'Reading Session', 'new-session': 'Creating Session', 'send-message': 'Submitting message', 'cancel-run': 'Requesting cancellation', 'resume-run': 'Reconnecting Run',
     'service-details': 'Reading logs', 'service-action': 'Submitting Service control', 'confirm-service-control': 'Submitting Service control', 'refresh-logs': 'Reading logs',
     'open-app': 'Opening application', 'open-window': 'Opening application', 'retry-service-entry': 'Preparing application', 'check-preview': 'Checking preview',
@@ -154,6 +154,8 @@ function actionIntent(el, action = el.dataset.action || '') {
     let label = actionLabels[action];
     if (!label)
         return;
+    if (action === 'send-message' && el.dataset.cancelRunId)
+        label = 'Stopping previous Run and sending';
     if (['service-action', 'confirm-service-control'].includes(action))
         label = `${el.dataset.control || view.data.control || "Control"} Service`;
     const w = targetWork(el);
@@ -179,15 +181,19 @@ function actionIntent(el, action = el.dataset.action || '') {
         kind = 'transfer';
     const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview'].includes(action);
     const serviceId = el.dataset.id || view.data.serviceId || view.service;
-    const resource = action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+    const resource = action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
     const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
     const chatAction = ['new-session', 'send-message', 'cancel-run', 'resume-run', 'check-session-model', 'save-model'].includes(action);
     return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || 'New Work' : chatAction ? w?.name || 'Chat' : `${w?.name || adapter.state.core.address || 'Local CLI'}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
         anchor: focusKey(el), view: location.hash };
 }
-async function dispatchAction(el, perform = record => handleAction(el.dataset.action, el, record), intent = actionIntent(el)) {
+async function dispatchAction(el, perform, intent = actionIntent(el)) {
+    // Publishing local feedback can reconcile this button before the action runs.
+    // Bind the clicked action and its explicit object IDs before that render.
+    const action = el.dataset.action || '', target = el.cloneNode(false);
+    const execute = perform ?? ((record) => handleAction(action, target, record));
     if (!intent) {
-        await perform();
+        await execute();
         return;
     }
     const conflict = actions.conflict(intent);
@@ -197,11 +203,11 @@ async function dispatchAction(el, perform = record => handleAction(el.dataset.ac
     }
     const record = actions.begin(intent);
     try {
-        await perform(record);
+        await execute(record);
         actions.finish(record);
-        if (['refresh-files'].includes(el.dataset.action || ''))
+        if (['refresh-files'].includes(action))
             actions.reviewed(record.work, ['files']);
-        if (['refresh-config'].includes(el.dataset.action || ''))
+        if (['refresh-config'].includes(action))
             actions.reviewed(record.work, ['configuration']);
     }
     catch (error) {
@@ -349,6 +355,8 @@ async function openWork(w, record) {
         render();
     });
 }
+let requestNavigation;
+function requestNavigationCurrent() { return requestNavigation?.epoch === adapter.identityEpoch && requestNavigation.workId === current()?.id; }
 function openModal(name, data = {}) {
     modalChoice++;
     lastFocus = document.activeElement;
@@ -363,6 +371,20 @@ function openModal(name, data = {}) {
 }
 function closeModal() {
     modalChoice++;
+    if (view.modal === 'pi-request-detail' && requestNavigationCurrent()) {
+        const nav = requestNavigation;
+        view.modal = 'pi-requests';
+        view.data = { serviceName: nav.serviceName, source: nav.source };
+        view.modalError = '';
+        render();
+        const body = root.querySelector('.modal-body');
+        if (body)
+            body.scrollTop = nav.scroll;
+        if (nav.focus)
+            root.querySelector(nav.focus)?.focus({ preventScroll: true });
+        return;
+    }
+    const requestEntry = view.modal === 'pi-requests' && requestNavigationCurrent() ? requestNavigation.entry : '';
     const responseSettings = view.modal === 'chat-response-settings';
     const responseContext = responseSettings && chatSettingsContextCurrent();
     const source = view.data.source;
@@ -384,6 +406,10 @@ function closeModal() {
             if (source === 'command' && target)
                 target.setSelectionRange(caret[0], caret[1]);
         }
+    }
+    else if (requestEntry) {
+        root.querySelector(requestEntry)?.focus({ preventScroll: true });
+        requestNavigation = undefined;
     }
     else
         lastFocus?.focus();
@@ -457,7 +483,7 @@ function services(w) {
     const keepStartingFrame = s.observed === 'Starting' && s.enabled && s.ports.includes(view.port) && w.desired === 'running'
         && (w.status === 'Ready' || w.status === 'Degraded')
         && [...root.querySelectorAll('iframe[data-service-key]')].some(frame => frame.dataset.serviceKey === serviceKey);
-    return `${w.resourceErrors?.services ? feedback(esc(w.resourceErrors.services), "warning", btn("Check connection", "check-connection", "small")) : ""}<div class="service-toolbar"><div class="service-selector"><span class="app-indicator">${icon("grid", 16)}</span><select id="service-select" aria-label="Service">${list.map((x) => `<option value="${x.id}" ${x.id === s.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select><select id="port-select" aria-label="Declared Web port">${s.ports.map((p) => `<option ${p === view.port ? "selected" : ""}>${p}</option>`).join("")}</select></div><div class="service-identity">${badge(s.observed)}<span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div><div class="actions focus-actions">${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn("Copy local link", "copy-local", "small")) : ""}${adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : s.observed !== "Ready" && !keepStartingFrame ? empty("grid", `${esc(s.name)} is ${s.observed.toLowerCase()}`, esc(s.error || "This Service is disabled. Starting the Work does not re-enable it."), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : empty("grid", "Opening application", `Preparing ${esc(s.name)} · port ${view.port}`)}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection ${w.resourceChecked?.services ? ` · Retrieved ${esc(new Date(w.resourceChecked.services).toLocaleTimeString())}` : ""}</span><span>Shared workspace ${icon("folder", 13)}</span></div>`;
+    return `${w.resourceErrors?.services ? feedback(esc(w.resourceErrors.services), "warning", btn("Check connection", "check-connection", "small")) : ""}<div class="service-toolbar"><div class="service-selector"><span class="app-indicator">${icon("grid", 16)}</span><select id="service-select" aria-label="Service">${list.map((x) => `<option value="${x.id}" ${x.id === s.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select><select id="port-select" aria-label="Declared Web port">${s.ports.map((p) => `<option ${p === view.port ? "selected" : ""}>${p}</option>`).join("")}</select></div><div class="service-identity">${badge(s.observed)}<span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div><div class="actions focus-actions">${adapter.requestPresence.get(`${w.id}:${s.name}`)?.hasRecords ? btn("Agent requests", "service-requests", "quiet small") : ""}${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn("Copy local link", "copy-local", "small")) : ""}${adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : s.observed !== "Ready" && !keepStartingFrame ? empty("grid", `${esc(s.name)} is ${s.observed.toLowerCase()}`, esc(s.error || "This Service is disabled. Starting the Work does not re-enable it."), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : empty("grid", "Opening application", `Preparing ${esc(s.name)} · port ${view.port}`)}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection ${w.resourceChecked?.services ? ` · Retrieved ${esc(new Date(w.resourceChecked.services).toLocaleTimeString())}` : ""}</span><span>Shared workspace ${icon("folder", 13)}</span></div>`;
 }
 function agent(w, focus) {
     const readingSessions = !w.resourceChecked?.agent && !w.resourceErrors?.agent;
@@ -475,9 +501,15 @@ function agent(w, focus) {
         imageDrafts.move(from, to);
         view.session = session.id;
     }
-    const run = w.run;
-    const active = run && ["accepted", "running", "cancelling"].includes(run.status);
-    const busy = active && run.sessionId !== session?.id;
+    const supported = adapter.cancelAndSendCapabilities.get(w.id) === 1, observed = adapter.activeRuns.get(w.id);
+    const observedRun = supported ? observed?.run : w.run;
+    const activeRun = observedRun && ["accepted", "running", "cancelling"].includes(observedRun.status) ? observedRun : null;
+    const run = activeRun && activeRun.id === w.run?.id ? { ...w.run, ...activeRun, cursor: w.run.cursor, error: w.run.error || activeRun.error, cancellationRequested: w.run.cancellationRequested || activeRun.cancellationRequested } : activeRun || w.run;
+    const latest = session?.runs?.at(-1);
+    const ownRun = w.run?.sessionId === session?.id && (!latest || latest.id === w.run.id || w.run.created >= latest.created) ? w.run : latest;
+    const active = !!activeRun;
+    const busy = active && activeRun.sessionId !== session?.id;
+    const activeUnconfirmed = supported && (!observed?.confirmed || !!observed.error);
     const draft = view.drafts[draftKey(w, session?.id || "")] || "";
     adapter.activateChat(w.id, session?.id || "");
     if (!adapter.imageCapabilities.has(w.id))
@@ -487,7 +519,8 @@ function agent(w, focus) {
     const draftImages = imageDrafts.get(draftKey(w, session?.id || ""));
     const imageWaiting = draftImages.length > 0 && (!w.resourceChecked?.agent || session?.loading && !session.checkedAt || draftImages.some(image => image.reading));
     const webDraft = !view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
-    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout === "chat-only" && view.fullscreenError ? feedback(esc(view.fullscreenError), "warning") : ""}<div class="session-line">${session?.loading && session.checkedAt ? `<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>` : ""}${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(sessionDisplayName(w, session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w, session?.id || ""))}">${session?.error ? feedback(esc(session.error), "warning") : ""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w, session.id, session.messages)}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}${session?.runs?.length ? `<details class="run-history"><summary>Run history · actual models and sources</summary>${session.runs.map(r => `<p><code>${esc(r.id)}</code> · ${esc(modelDisplayName(r.actualModel))} · ${esc(r.source?.kind === "service" ? `Service: ${r.source.serviceName || "automatic"}` : "Chat")} · Thinking ${esc(r.thinkingLevel === null ? "Normal (Thinking unconfirmed)" : r.thinkingLevel || "off")} · ${esc(r.status)}</p>`).join("")}</details>` : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${busy ? feedback("A Run is active in another Session. Your draft is kept.", "warning", btn("View active Run", "active-run", "small")) : ""}${run && (run.error || ["failed", "interrupted"].includes(run.status)) ? feedback(`${esc(run.error)}`, "warning", btn(["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "Resume original Run" : "Run details", ["interrupted", "accepted", "running", "cancelling"].includes(run.status) ? "resume-run" : "run-details", "small")) : ""}${run ? `<div class="run-strip"><button data-action="run-details"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(modelDisplayName(run.actualModel))} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", run.cancellationRequested || run.status === "cancelling" ? "disabled" : "") : ""}</div>` : ""}<div class="composer">${imageDraftMarkup(w, draftKey(w, session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w, session?.id || "")}<div class="composer-actions">${btn(icon("upload", 16), "add-chat-images", "icon-button quiet", 'title="Add images" aria-label="Add images"')}${btn(icon("settings", 16), "chat-input-options", "icon-button quiet chat-input-options", `title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${btn(icon("send", 18), "send-message", "send-button", `aria-label="Send message" ${imageWaiting || !webDraft && (active || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w, draft)}</div></div>${modelFeedback(w, session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/") ? btn(view.literalSlash ? "Command mode" : "Send as text", "toggle-slash-mode", "text-button", `aria-pressed="${view.literalSlash}"`) : ""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
+    const stopAndSend = supported && active && !activeUnconfirmed && !webDraft;
+    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${view.layout === "chat-only" && view.fullscreenError ? feedback(esc(view.fullscreenError), "warning") : ""}<div class="session-line">${session?.loading && session.checkedAt ? `<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>` : ""}${btn("Pi requests", "pi-requests", "text-button")}<button data-action="sessions">${esc(sessionDisplayName(w, session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w, session?.id || ""))}">${session?.error ? feedback(esc(session.error), "warning") : ""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w, session.id, session.messages)}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${activeUnconfirmed ? feedback(esc(observed?.error || "Checking the active Run…"), "warning", btn("Check status", "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? `A Run from Service ${esc(activeRun.source.serviceName || "")} is active.` : "A Run is active in another Session.", "warning", btn("View active Run", "active-run", "small")) : ""}${ownRun && (ownRun.error || ["failed", "interrupted"].includes(ownRun.status)) ? feedback(esc(ownRun.error || `Run ${ownRun.status}`), "warning", btn("Check original Run", "run-details", "small", `data-run-id="${esc(ownRun.id)}"`) + (ownRun.id === w.run?.id && ["interrupted", "accepted", "running", "cancelling"].includes(ownRun.status) ? btn("Resume original Run", "resume-run", "small", `data-run-id="${esc(ownRun.id)}"`) : '')) : ""}${run ? `<div class="run-strip"><button data-action="run-details" data-run-id="${esc(run.id)}"><i class="run-dot ${active ? "active" : ""}"></i>Run ${esc(run.status)} · ${esc(modelDisplayName(run.actualModel))} · ${esc(run.source?.kind === "service" ? `Service ${run.source.serviceName || ""}` : "Chat")} ${icon("chevron", 12)}</button>${active ? btn(run.cancellationRequested ? "Cancellation requested" : run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "text-button", `data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status === "cancelling" ? "disabled" : ""}`) : ""}</div>` : session?.runs?.length ? btn("Run details", "run-details", "text-button", `data-run-id="${esc(session.runs.at(-1).id)}"`) : ""}<div class="composer">${imageDraftMarkup(w, draftKey(w, session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w, session?.id || "")}<div class="composer-actions">${btn(icon("upload", 16), "add-chat-images", "icon-button quiet", 'title="Add images" aria-label="Add images"')}${btn(icon("settings", 16), "chat-input-options", "icon-button quiet chat-input-options", `title="Input options" aria-label="Input options" aria-pressed="${view.includeIdentity}"`)}${btn(stopAndSend ? "Stop and send" : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}`, `aria-label="${stopAndSend ? "Stop and send" : "Send message"}" ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}"` : ""} ${imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w, draft)}</div></div>${modelFeedback(w, session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/") ? btn(view.literalSlash ? "Command mode" : "Send as text", "toggle-slash-mode", "text-button", `aria-pressed="${view.literalSlash}"`) : ""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
 }
 function modelComposer(w, sessionId) {
     const { name, thinking, state } = chatSettings(w, sessionId);
@@ -592,7 +625,7 @@ function confirmPendingChatCommand() {
 }
 function submissionMarkup(w) {
     const intent = adapter.chatSubmissions.get(w.id);
-    return intent ? feedback(`${esc(intent.error || 'Waiting for acceptance…')}<details class="chat-submission-details"><summary>Submission details</summary><p>Original ${esc(intent.kind)} key <code>${esc(intent.key)}</code></p></details>`, 'warning', btn('Check original submission', 'check-chat-submission', 'small')) : '';
+    return intent ? feedback(`${esc(intent.error || (intent.cancelRunId ? 'Stopping the previous Run… Waiting up to 5 seconds before sending.' : 'Waiting for acceptance…'))}<details class="chat-submission-details"><summary>Submission details</summary><p>Original ${esc(intent.kind)} key <code>${esc(intent.key)}</code></p></details>`, 'warning', btn('Check original submission', 'check-chat-submission', 'small')) : '';
 }
 function layoutButton(symbol, label, action, extra = '') {
     return btn(icon(symbol, 16), action, 'icon-button quiet', `title="${esc(label)}" aria-label="${esc(label)}" ${extra}`);
@@ -782,6 +815,10 @@ function packagesSettings(w, c) {
         .map((p) => `<div class="catalog-row"><div><strong>${esc(p.name)}</strong><p>${esc(p.description || "Description not provided")} · ${p.version || "Version not provided"}</p></div>${btn("Select", "select-package", "small", `data-id="${esc(p.name)}" ${adapter.catalog.packages.error || !adapter.catalog.packages.confirmed ? "disabled" : ""}`)}</div>`)
         .join("")}</div>`;
 }
+function requestCancellable(request) { return request.disposition === 'live' && !['completed', 'failed', 'cancelled', 'needs_attention'].includes(request.state); }
+function runFacts(run) {
+    return `<dl><dt>Run status</dt><dd>${badge(run.status)}</dd><dt>Actual model</dt><dd>${esc(modelDisplayName(run.actualModel))}</dd><dt>Thinking</dt><dd>${esc(run.thinkingLevel === null ? 'Normal (Thinking unconfirmed)' : run.thinkingLevel || 'off')}</dd><dt>Source</dt><dd>${esc(run.source?.kind === 'service' ? `Service: ${run.source.serviceName || 'automatic'}` : run.source?.kind === 'chat' ? 'Chat' : 'Unknown')}${run.source?.requestId ? ` · Request <code>${esc(run.source.requestId)}</code>` : ''}${run.source?.phase ? ` · ${esc(run.source.phase)}` : ''}</dd><dt>Submitted</dt><dd>${esc(run.created || 'Unavailable')}</dd>${run.finished ? `<dt>Finished</dt><dd>${esc(run.finished)}</dd>` : ''}</dl>`;
+}
 function modalMarkup() {
     const w = adapter.getWork(view.data.workId || view.data.id || route()[1] || "");
     const target = w || current();
@@ -898,13 +935,16 @@ function modalMarkup() {
             body = `${target && !adapter.project(target).usable ? '<p class="muted">Previously loaded image. Start this Work to read current history.</p>' : ''}<img class="chat-image-preview" src="${esc(view.data.url)}" alt="Sent image">`;
             footer = close();
             break;
-        case "run-details":
+        case "run-details": {
             title = "Run details";
-            body = target?.run
-                ? `<dl><dt>Run ID</dt><dd><code>${esc(target.run.id)}</code></dd><dt>Status</dt><dd>${badge(target.run.status)}</dd><dt>Session</dt><dd>${esc(target.sessions.find((s) => s.id === target.run?.sessionId)?.title || target.run.sessionId)}</dd><dt>Event cursor</dt><dd>${target.run.cursor}</dd><dt>Submitted</dt><dd>${target.run.created}</dd></dl>${target.run.error ? feedback(esc(target.run.error), "warning") : ""}<p class="muted">One active Run per Work. Closing details or switching Sessions does not cancel execution.</p>`
-                : "<p>No Run has been submitted in this Work.</p>";
-            footer = `${close()}${target?.run?.status === "interrupted" ? btn("Resume original Run", "resume-run", "primary") : target?.run && ["accepted", "running", "cancelling"].includes(target.run.status) ? btn(target.run.cancellationRequested ? "Cancellation requested" : target.run.status === "cancelling" ? "Cancelling…" : "Cancel run", "cancel-run", "danger", target.run.cancellationRequested || target.run.status === "cancelling" ? "disabled" : "") : ""}`;
+            const runId = view.data.runId, run = target ? (adapter.runDetails.get(`${target.id}:${runId}`) || (target.run?.id === runId ? target.run : target.sessions.flatMap(s => s.runs || []).find(r => r.id === runId))) : undefined;
+            const history = target?.sessions.find(s => s.id === view.session)?.runs || [];
+            body = run ? `${runFacts(run)}${run.error ? feedback(esc(run.error), 'warning') : ''}<details><summary>Technical details</summary><dl><dt>Run ID</dt><dd><code>${esc(run.id)}</code></dd><dt>Session ID</dt><dd><code>${esc(run.sessionId)}</code></dd><dt>Event cursor</dt><dd>${run.cursor}</dd></dl></details><p class="muted">One active Run per Work. Closing details does not cancel execution.</p>` : '<p>Run details have not been confirmed.</p>';
+            if (history.length)
+                body += `<details><summary>Earlier execution details</summary>${history.map(r => `<p>${btn(`${esc(r.status)} · ${esc(r.created || 'Time unavailable')} · ${esc(modelDisplayName(r.actualModel))}`, 'run-details', 'text-button', `data-run-id="${esc(r.id)}"`)}</p>`).join('')}</details>`;
+            footer = `${close()}${run && ['accepted', 'running', 'cancelling'].includes(run.status) ? btn(run.cancellationRequested || run.status === 'cancelling' ? 'Cancelling…' : 'Cancel run', 'cancel-run', 'danger', `data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status === 'cancelling' ? 'disabled' : ''}`) : ''}`;
             break;
+        }
         case "service-menu":
             title = "Service options";
             body = `<div class="menu-list">${btn(`${icon("external")} Open in new tab`, "open-app")}${btn(`${icon("focus")} Open independent window`, "open-window")}${btn(`${icon("copy")} Copy domain`, "copy-domain")}${btn(`${icon("copy")} Copy local link`, "copy-local")}${btn(`${icon("settings")} Manage services`, "manage-services")}${btn(`${icon("focus")} Focus chat`, "focus-chat")}</div><p class="muted">A local link works on this computer while Desktop CLI is running and signed in. It is not a public share link.</p>`;
@@ -934,22 +974,25 @@ function modalMarkup() {
             break;
         }
         case "pi-requests": {
-            title = 'Pi requests';
+            const serviceContext = view.data.source === 'service';
+            title = serviceContext ? 'Agent requests' : 'Pi requests';
             const page = target ? adapter.requestPage(target.id, view.data.serviceName || '') : undefined;
-            body = `<label class="field">Service<select id="pi-service-filter"><option value="">All Services and Chat</option>${target?.services.map(s => `<option value="${esc(s.name)}" ${s.name === view.data.serviceName ? 'selected' : ''}>${esc(s.name)}</option>`).join('') || ''}</select></label><p class="muted">Instrumented Services report business events. External Services provide runtime observations. Ordinary facts do not start a Pi Run.</p>${page?.error ? feedback(esc(page.error), 'warning') : ''}${page?.items.map(r => `<article class="capability"><strong>${esc(r.goal)}</strong><p>${esc(r.source.kind === 'service' ? r.source.serviceName : 'Chat')} · ${esc(r.state)} · ${esc(r.disposition)}</p>${btn('Details', 'pi-request-detail', 'small', `data-id="${esc(r.requestId)}"`)}</article>`).join('') || (page?.loading ? 'Reading Pi requests…' : 'No requests in this view.')}`;
-            footer = `${btn('Refresh', 'pi-requests', 'small')}${page?.nextCursor ? btn('More requests', 'next-pi-requests', 'small') : ''}${cancel()}`;
+            body = `${serviceContext ? '' : '<p class="muted">Instrumented Services report business events. External Services provide runtime observations. Ordinary facts do not start a Pi Run.</p>'}<label class="field">Service<select id="pi-service-filter"><option value="">All Services and Chat</option>${target?.services.map(s => `<option value="${esc(s.name)}" ${s.name === view.data.serviceName ? 'selected' : ''}>${esc(s.name)}</option>`).join('') || ''}</select></label>${page?.error ? feedback(esc(page.error), 'warning') : ''}${page?.items.map(r => `<article class="capability"><strong>${esc(r.goal)}</strong><p>${esc(r.source.kind === 'service' ? r.source.serviceName : 'Chat')} · ${esc(r.state)} · ${esc(r.disposition)}</p><small>${esc(r.createdAt)} · Updated ${esc(r.updatedAt)}</small>${target && adapter.requestReadErrors.get(`${target.id}:${r.requestId}`) ? feedback(esc(adapter.requestReadErrors.get(`${target.id}:${r.requestId}`)), "warning") : ""}<p>${btn('Details', 'pi-request-detail', 'small', `data-id="${esc(r.requestId)}"`)}${serviceContext && requestCancellable(r) ? btn('Cancel request', 'cancel-pi-request', 'small danger', `data-id="${esc(r.requestId)}" ${r.state === 'cancelling' ? 'disabled' : ''}`) : ''}</p></article>`).join('') || (page?.loading ? 'Reading requests…' : 'No requests in this view.')}`;
+            footer = `${btn('Refresh', 'pi-requests', 'small')}${page?.nextCursor ? btn('More requests', 'next-pi-requests', 'small') : ''}${close()}`;
             break;
         }
         case "pi-request-detail": {
-            title = 'Pi request';
+            title = view.data.source === 'service' ? 'Agent request' : 'Pi request';
             const detail = target ? adapter.requestDetails.get(`${target.id}:${view.data.requestId}`) : undefined, r = detail?.request;
             if (!r) {
                 body = 'Reading the original request…';
+                footer = close();
                 break;
             }
-            const live = r.disposition === 'live', terminal = ['completed', 'failed', 'cancelled', 'needs_attention'].includes(r.state);
-            body = `<p><code>${esc(r.requestId)}</code></p><h3>${esc(r.goal)}</h3><p>${esc(r.source.kind === 'service' ? `Service: ${r.source.serviceName}` : 'Chat')} · ${esc(r.state)} · ${esc(r.disposition)}</p>${r.waitRef ? `<p>Waiting for ${esc(r.waitRef.kind)} · <code>${esc(r.waitRef.id)}</code> · Deadline ${esc(r.waitRef.deadlineAt)}</p><p class="muted">The waiting goal releases its Run. Chat remains available.</p>` : ''}${r.error ? feedback(esc(r.error.message), 'warning') : ''}${r.result ? `<p>${esc(r.result)}</p>` : ''}${!live ? '<p class="muted">Shared history is read only and does not execute or retry.</p>' : ''}<h3>Evidence</h3>${detail.evidence.items.map((e) => `<article class="capability"><strong>${esc(e.kind)} · ${e.verified ? 'Verified' : 'Observed'}</strong><p>${esc(e.summary)}</p><small>${esc(e.observedAt)} · ${esc(e.objectRef)}</small></article>`).join('') || '<p>No evidence yet.</p>'}${detail.evidence.nextCursor ? btn('More evidence', 'next-pi-evidence', 'small') : ''}<h3>Runs</h3>${r.runIds.map((id) => `<code>${esc(id)}</code>`).join(' · ') || 'No Run admitted.'}`;
-            footer = `${live && !terminal ? btn('Cancel request', 'cancel-pi-request', 'danger') : ''}${live && ['failed', 'cancelled', 'needs_attention'].includes(r.state) ? btn('Retry with new request', 'retry-pi-request', 'small') : ''}${btn('Refresh original request', 'pi-request-detail', 'small', `data-id="${esc(r.requestId)}"`)}${cancel()}`;
+            const retryIntent = target ? adapter.requestRetries.get(`${target.id}:${r.requestId}`) : undefined;
+            const live = r.disposition === 'live', responses = target ? adapter.requestResponses.get(`${target.id}:${r.requestId}`) : undefined;
+            body = `<h3>${esc(r.goal)}</h3><p>${esc(r.source.kind === 'service' ? `Service: ${r.source.serviceName}` : 'Chat')} · ${esc(r.state)} · ${esc(r.disposition)}</p><small>Updated ${esc(r.updatedAt)}</small>${detail.readError ? feedback(`Status not confirmed: ${esc(detail.readError)}`, 'warning') : ''}${r.waitRef ? `<p>Waiting for ${esc(r.waitRef.kind)} · <code>${esc(r.waitRef.id)}</code> · Deadline ${esc(r.waitRef.deadlineAt)}</p><p class="muted">The waiting goal releases its Run. Chat remains available.</p>` : ''}${r.error ? feedback(esc(r.error.message), 'warning') : ''}${r.result ? `<h3>Request result</h3><p class="request-text">${esc(r.result)}</p>` : ''}${!live ? '<p class="muted">Shared history is read only and does not execute or retry.</p>' : ''}${retryIntent ? feedback(esc(retryIntent.error || "Retry result unknown; Check status uses the original submission key."), "warning") : ""}<h3>Agent replies</h3>${responses?.runs.map(run => `<article class="capability">${runFacts(run)}${responses?.checked[run.id] ? `<small>Last confirmed ${esc(new Date(responses.checked[run.id]).toLocaleString())}</small>` : ""}${run.finalText ? `<p class="request-text">${esc(run.finalText)}</p>` : '<p>No saved Agent reply for this Run.</p>'}${run.error ? feedback(esc(run.error), 'warning') : ''}</article>`).join('') || (responses?.loading ? 'Reading associated replies…' : r.runIds.length ? 'Agent replies have not been confirmed.' : 'No Run admitted.')}${responses?.errors.map(error => feedback(esc(error), 'warning')).join('') || ''}<details><summary>Evidence and technical details</summary><p>Request ID <code>${esc(r.requestId)}</code></p>${detail.evidence.items.map((e) => `<article class="capability"><strong>${esc(e.kind)} · ${e.verified ? 'Verified' : 'Observed'}</strong><p>${esc(e.summary)}</p><small>${esc(e.observedAt)} · ${esc(e.objectRef)}${e.stateVersion ? ` · State ${esc(e.stateVersion)}` : ''}${e.codeVersion ? ` · Code ${esc(e.codeVersion)}` : ''}</small></article>`).join('') || '<p>No evidence yet.</p>'}${detail.evidence.nextCursor ? btn('More evidence', 'next-pi-evidence', 'small') : ''}</details>`;
+            footer = `${requestCancellable(r) ? btn(r.state === 'cancelling' ? 'Cancelling…' : 'Cancel request', 'cancel-pi-request', 'danger', r.state === 'cancelling' ? 'disabled' : '') : ''}${view.data.source !== 'service' && live && ['failed', 'cancelled', 'needs_attention'].includes(r.state) ? btn('Retry with new request', 'retry-pi-request', 'small', retryIntent ? 'disabled' : '') : ''}${btn('Check status', 'pi-request-detail', 'small', `data-id="${esc(r.requestId)}"`)}${btn('Back to requests', 'close-modal')}`;
             break;
         }
         case "file-options":
@@ -1358,7 +1401,7 @@ async function handleAction(action, el, record) {
             }
             break;
         case "close-modal": {
-            const key = view.modal === 'chat-response-settings' ? '' : focusReturn;
+            const key = ['chat-response-settings', 'pi-requests', 'pi-request-detail'].includes(view.modal) ? '' : focusReturn;
             closeModal();
             if (key)
                 root.querySelector(key)?.focus();
@@ -1401,7 +1444,6 @@ async function handleAction(action, el, record) {
         case "new-work":
         case "import":
         case "agent-menu":
-        case "run-details":
         case "manage-services":
         case "file-options":
         case "webdav":
@@ -1697,10 +1739,14 @@ async function handleAction(action, el, record) {
                 root.querySelector("#composer")?.focus();
             }
             break;
+        case "service-requests":
         case "pi-requests":
             if (currentWork) {
-                const serviceName = view.modal === 'pi-requests' ? view.data.serviceName || '' : '';
-                openModal('pi-requests', { serviceName });
+                const refreshing = view.modal === 'pi-requests', source = refreshing ? view.data.source || 'chat' : action === 'service-requests' ? 'service' : 'chat';
+                const serviceName = refreshing ? view.data.serviceName || '' : source === 'service' ? s?.name || '' : '';
+                if (!refreshing)
+                    requestNavigation = { epoch: adapter.identityEpoch, workId: currentWork.id, source, serviceName, entry: focusKey(el), scroll: 0, focus: '' };
+                openModal('pi-requests', { serviceName, source });
                 await stay(adapter.loadRequests(currentWork.id, serviceName));
             }
             break;
@@ -1710,9 +1756,27 @@ async function handleAction(action, el, record) {
             break;
         case "pi-request-detail":
             if (currentWork) {
-                const requestId = el.dataset.id || view.data.requestId;
-                openModal('pi-request-detail', { requestId });
+                const requestId = el.dataset.id || view.data.requestId, source = view.data.source || 'chat', serviceName = view.data.serviceName || '';
+                if (view.modal === 'pi-requests' && requestNavigationCurrent())
+                    Object.assign(requestNavigation, { serviceName, scroll: root.querySelector('.modal-body')?.scrollTop || 0, focus: focusKey(el) });
+                if (view.modal !== 'pi-request-detail')
+                    openModal('pi-request-detail', { requestId, source, serviceName });
+                const pendingRetry = source === 'chat' ? adapter.requestRetries.get(`${currentWork.id}:${requestId}`) : undefined;
+                if (pendingRetry) {
+                    const result = await stay(adapter.checkRequestRetry(currentWork.id, requestId));
+                    if (result) {
+                        for (const old of actions.records.values())
+                            if (old.blocked && old.work === currentWork.id && old.action === 'retry-pi-request' && old.resource === `request:${requestId}` && old.businessId === pendingRetry.submissionKey)
+                                actions.review(old);
+                        openModal('pi-request-detail', { requestId: result.requestId, source, serviceName });
+                        await stay(adapter.loadRequest(currentWork.id, result.requestId));
+                        break;
+                    }
+                }
                 await stay(adapter.loadRequest(currentWork.id, requestId));
+                for (const old of actions.records.values())
+                    if (old.blocked && old.work === currentWork.id && old.action === 'cancel-pi-request' && old.resource === `request:${requestId}`)
+                        actions.review(old);
             }
             break;
         case "next-pi-evidence":
@@ -1721,13 +1785,21 @@ async function handleAction(action, el, record) {
             break;
         case "cancel-pi-request":
             if (currentWork)
-                await stay(adapter.cancelRequest(currentWork.id, view.data.requestId));
+                await stay(adapter.cancelRequest(currentWork.id, el.dataset.id || view.data.requestId));
             break;
         case "retry-pi-request":
             if (currentWork) {
-                const result = await stay(adapter.retryRequest(currentWork.id, view.data.requestId));
-                openModal('pi-request-detail', { requestId: result.requestId });
-                await stay(adapter.loadRequest(currentWork.id, result.requestId));
+                const originalId = view.data.requestId, data = { ...view.data };
+                try {
+                    const result = await stay(adapter.retryRequest(currentWork.id, originalId));
+                    openModal('pi-request-detail', { ...data, requestId: result.requestId });
+                    await stay(adapter.loadRequest(currentWork.id, result.requestId));
+                }
+                catch (error) {
+                    if (record && actions.current(record))
+                        record.businessId = adapter.requestRetries.get(`${currentWork.id}:${originalId}`)?.submissionKey;
+                    throw error;
+                }
             }
             break;
         case "load-models":
@@ -1781,6 +1853,7 @@ async function handleAction(action, el, record) {
         }
         case "send-message":
             if (currentWork) {
+                const cancelRunId = el.dataset.cancelRunId;
                 const originalKey = draftKey(currentWork);
                 const text = view.drafts[originalKey] || "";
                 const images = imageDrafts.capture(originalKey), textRevision = textDraftRevisions.get(originalKey) || 0, error = imageDraftErrors.get(originalKey);
@@ -1834,12 +1907,10 @@ async function handleAction(action, el, record) {
                 }
                 adapter.selectedService = view.service;
                 const submission = { key: originalKey, destinationKey: draftKey(currentWork), text, textRevision, images, epoch: adapter.identityEpoch, error };
-                if (images.length)
-                    pendingImageSubmissions.set(currentWork.id, submission);
+                pendingImageSubmissions.set(currentWork.id, submission);
                 let submittedRunId = "";
                 try {
-                    submittedRunId = await stay(adapter.send(currentWork.id, view.session, text, view.includeIdentity, text.trimStart().startsWith("/") && !view.literalSlash ? "command" : images.length || (adapter.chatCapabilities.get(currentWork.id) ?? 0) >= 1 ? "text" : undefined, images.map(i => i.input)).then(result => { if (images.length)
-                        consumeImageSubmission(currentWork.id, submission); return result; }));
+                    submittedRunId = await stay(adapter.send(currentWork.id, view.session, text, view.includeIdentity, text.trimStart().startsWith("/") && !view.literalSlash ? "command" : images.length || (adapter.chatCapabilities.get(currentWork.id) ?? 0) >= 1 ? "text" : undefined, images.map(i => i.input), cancelRunId).then(result => { consumeImageSubmission(currentWork.id, submission); return result; }));
                 }
                 catch (error) {
                     if (!adapter.chatSubmissions.has(currentWork.id))
@@ -1851,12 +1922,6 @@ async function handleAction(action, el, record) {
                     record.businessId = submittedRunId;
                     actions.confirm(record, 'Message accepted');
                 }
-                if (!images.length) {
-                    if (view.drafts[draftKey(currentWork)] === text)
-                        view.drafts[draftKey(currentWork)] = "";
-                    if (view.drafts[originalKey] === text)
-                        view.drafts[originalKey] = "";
-                }
                 view.scrollPinned = true;
                 render();
                 const composer = root.querySelector("#composer");
@@ -1866,15 +1931,21 @@ async function handleAction(action, el, record) {
             break;
         case "cancel-run":
             if (currentWork) {
-                await stay(adapter.cancelRun(currentWork.id));
+                const targetRunId = el.dataset.runId || view.data.runId || currentWork.run?.id;
+                await stay(adapter.cancelRun(currentWork.id, targetRunId));
                 if (record) {
-                    record.businessId = currentWork.run?.id;
+                    record.businessId = targetRunId;
                     actions.confirm(record, 'Cancellation requested');
                 }
             }
             break;
         case "resume-run":
             if (currentWork) {
+                if (el.dataset.runId && el.dataset.runId !== currentWork.run?.id) {
+                    openModal('run-details', { runId: el.dataset.runId });
+                    await stay(adapter.loadRunDetails(currentWork.id, el.dataset.runId));
+                    break;
+                }
                 await stay(adapter.resumeRunConnection(currentWork.id));
                 if (record) {
                     record.businessId = currentWork.run?.id;
@@ -1883,10 +1954,18 @@ async function handleAction(action, el, record) {
             }
             break;
         case "active-run":
-            if (currentWork?.run) {
-                view.session = currentWork.run.sessionId;
-                openModal("run-details");
+        case "run-details": {
+            if (currentWork) {
+                const runId = el.dataset.runId || (action === 'active-run' ? adapter.activeRuns.get(currentWork.id)?.run?.id : undefined) || currentWork.run?.id;
+                openModal('run-details', runId ? { runId } : {});
+                if (runId)
+                    await stay(adapter.loadRunDetails(currentWork.id, runId));
             }
+            break;
+        }
+        case "check-active-run":
+            if (currentWork)
+                await stay(adapter.loadActiveRun(currentWork.id, true));
             break;
         case "scroll-bottom":
             view.scrollPinned = true;
@@ -2437,8 +2516,15 @@ async function copy(text) {
         toast(`Clipboard unavailable. Copy this value: ${text}`);
     }
 }
+function observeCurrentPage() {
+    const [area, id] = route(), w = adapter.getWork(id || '');
+    const settings = route()[2] === 'settings';
+    const showService = area === 'app' || area === 'work' && !settings && view.tab === 'Services' && view.layout !== 'chat-only';
+    const showChat = area === 'work' && !settings && view.layout !== 'service-only' && (innerWidth > 1050 || view.agentOpen || view.tab === 'Chat' || view.layout === 'chat-only' || view.layout === 'service-chat');
+    adapter.observePage(id || '', document.visibilityState === 'visible', showChat, showService && w ? activeService(w)?.name || '' : '', view.modal === 'pi-request-detail' ? view.data.requestId || '' : '', view.modal === 'pi-requests', view.modal === 'pi-requests' ? view.data.serviceName || '' : '');
+}
 function render() {
-    adapter.observePage(route()[1] || '', document.visibilityState === 'visible', route()[0] !== 'app');
+    observeCurrentPage();
     if (view.config && !view.config.advancedDirty)
         synchronizeConfiguration(view.config);
     const active = document.activeElement;
@@ -2513,7 +2599,7 @@ function render() {
             dialog.dataset.bound = "true";
             dialog.addEventListener("cancel", (e) => {
                 e.preventDefault();
-                const key = view.modal === 'chat-response-settings' ? '' : focusReturn;
+                const key = ['chat-response-settings', 'pi-requests', 'pi-request-detail'].includes(view.modal) ? '' : focusReturn;
                 closeModal();
                 if (key)
                     root.querySelector(key)?.focus();
@@ -2860,7 +2946,7 @@ root.addEventListener("keydown", (e) => {
     if (dialog?.open && e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        const key = view.modal === 'chat-response-settings' ? '' : focusReturn;
+        const key = ['chat-response-settings', 'pi-requests', 'pi-request-detail'].includes(view.modal) ? '' : focusReturn;
         closeModal();
         if (key)
             root.querySelector(key)?.focus();
@@ -3115,7 +3201,20 @@ window.addEventListener('popstate', () => { void loadRoute().catch(error => toas
 function reconcileHTML(parent, html) {
     const template = document.createElement('template');
     template.innerHTML = html;
-    const key = (node) => node instanceof Element ? node.getAttribute('data-message-key') ? `message:${node.getAttribute('data-message-key')}` : node.getAttribute('data-service-key') ? `frame:${node.getAttribute('data-service-key')}` : node.id ? `id:${node.id}` : `${node.tagName}:${node.getAttribute('class')?.split(' ')[0] ?? ''}` : node.nodeType === Node.TEXT_NODE ? '#text' : '#other';
+    const key = (node) => {
+        if (!(node instanceof Element))
+            return node.nodeType === Node.TEXT_NODE ? '#text' : '#other';
+        if (node.hasAttribute('data-message-key'))
+            return `message:${node.getAttribute('data-message-key')}`;
+        if (node.hasAttribute('data-service-key'))
+            return `frame:${node.getAttribute('data-service-key')}`;
+        if (node.id)
+            return `id:${node.id}`;
+        // Removing Cancel must not turn the original Check status node into Close.
+        if (node.matches('button[data-action]'))
+            return `action:${['action', 'id', 'path', 'run-id', 'cancel-run-id', 'run', 'session', 'index', 'tab', 'control', 'kind', 'option-value', 'command', 'copy'].map(name => node.getAttribute(`data-${name}`) ?? '').join(':')}`;
+        return `${node.tagName}:${node.getAttribute('class')?.split(' ')[0] ?? ''}`;
+    };
     const patch = (target, incoming) => {
         if (target instanceof Element && incoming instanceof Element) {
             if (target instanceof HTMLIFrameElement)
@@ -3214,7 +3313,7 @@ setInterval(() => {
     statusRefreshRunning = true;
     void adapter.refreshVisibleWork(work.id).catch(() => undefined).finally(() => { statusRefreshRunning = false; });
 }, 5000);
-document.addEventListener('visibilitychange', () => { adapter.observePage(route()[1] || '', document.visibilityState === 'visible', route()[0] !== 'app'); });
+document.addEventListener('visibilitychange', () => { observeCurrentPage(); });
 window.addEventListener('pagehide', () => { adapter.observePage('', false); });
 function consumeWebSelection(kind) { if (pendingWebCommand?.kind === kind) {
     if (view.drafts[pendingWebCommand.key] === pendingWebCommand.text)

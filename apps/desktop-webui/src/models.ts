@@ -77,6 +77,8 @@ export interface Run {
   cursor: number;
   historyRecovery?: boolean;
   created: string;
+  finished?: string;
+  finalText?: string;
   error?: string;
 }
 export interface Configuration {
