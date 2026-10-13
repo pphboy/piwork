@@ -314,6 +314,7 @@ async function dispatchAction(el: HTMLElement, perform?: (record?: ActionRecord)
   // Publishing local feedback can reconcile this button before the action runs.
   // Bind the clicked action and its explicit object IDs before that render.
   const action=el.dataset.action || '',target=el.cloneNode(false) as HTMLElement;
+  const navigationFocus=['tab-Services','tab-Files','settings'].includes(action) && document.activeElement===el,focusEpoch=adapter.identityEpoch;
   const execute=perform ?? ((record?:ActionRecord)=>handleAction(action,target,record));
   if (!intent) { await execute(); return; }
   if (intent.action === 'create-work' && createSubmissionBlocked(actions.records.values(), view.createName)) { toast('The original Create Work result is still pending or unknown. Check that original request before creating another Work.'); return; }
@@ -329,7 +330,14 @@ async function dispatchAction(el: HTMLElement, perform?: (record?: ActionRecord)
     if (record.action === 'create-work' && record.token < latestCreateToken) throw new ViewChanged();
     throw error;
   }
-  finally { if (record.work && ['files', 'configuration'].includes(record.kind)) adapter.uploadProgress.delete(record.work); }
+  finally {
+    if (record.work && ['files', 'configuration'].includes(record.kind)) adapter.uploadProgress.delete(record.work);
+    // A read lock can blur its button. Restore only the still-selected original navigation.
+    if(navigationFocus && focusEpoch===adapter.identityEpoch && actions.current(record) && current()?.id===record.work && !view.modal) {
+      const active=document.activeElement,button=root.querySelector<HTMLButtonElement>(`.work-tabs [data-action="${action}"].active`);
+      if(button && !button.disabled && (active===document.body || active===root))button.focus({preventScroll:true});
+    }
+  }
 }
 function progressText(progress: Record<string, any>) {
   const total = typeof progress.total === 'number' && Number.isFinite(progress.total) && progress.total > 0 ? progress.total : undefined;

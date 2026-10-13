@@ -358,6 +358,7 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
     // Publishing local feedback can reconcile this button before the action runs.
     // Bind the clicked action and its explicit object IDs before that render.
     const action = el.dataset.action || '', target = el.cloneNode(false);
+    const navigationFocus = ['tab-Services', 'tab-Files', 'settings'].includes(action) && document.activeElement === el, focusEpoch = adapter.identityEpoch;
     const execute = perform ?? ((record) => handleAction(action, target, record));
     if (!intent) {
         await execute();
@@ -402,6 +403,12 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
     finally {
         if (record.work && ['files', 'configuration'].includes(record.kind))
             adapter.uploadProgress.delete(record.work);
+        // A read lock can blur its button. Restore only the still-selected original navigation.
+        if (navigationFocus && focusEpoch === adapter.identityEpoch && actions.current(record) && current()?.id === record.work && !view.modal) {
+            const active = document.activeElement, button = root.querySelector(`.work-tabs [data-action="${action}"].active`);
+            if (button && !button.disabled && (active === document.body || active === root))
+                button.focus({ preventScroll: true });
+        }
     }
 }
 function progressText(progress) {
