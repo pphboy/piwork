@@ -144,6 +144,8 @@ Chat 正文 SHALL 移除 Run History ID 列表，原 Session/Run 数据及实际
 
 全 Work 活跃 Run 的投影 SHALL 只决定忙碌说明及明确的停止目标，不取代当前 Session 原 Run 的错误和观察恢复投影。当前 Chat 原错误、失败及未知反馈 SHALL 在其他来源占槽时继续可见；打开原 Run 详情或核对原状态 SHALL 不覆盖活动槽的观察对象、不改绑停止目标，也不提交执行。旧消息缺少可确认关联时保留原未知表达，不猜测另一个 Run 属于当前用户消息。
 
+事件入口返回 410 后，Desktop SHALL 真正读取原 Run 和对应 Session；只有历史读取成功后才能提示历史已恢复。SHALL 停止向事件入口重发同一失效游标，不擅自用 0 重播。原 Run 仍活跃时 SHALL 展示历史恢复模式，以串行只读查询观察原 Run 和已保存历史；查询到终态后 SHALL 停止自动观察并呈现最终结果，已有输出不得重复追加。读取失败 SHALL 保留已知内容、Run ID 和可恢复提示；鉴权失效或对象不存在 SHALL 停止自动读取并进入对应恢复状态，不能发送新的 Run。
+
 #### Scenario: 忙碌时保留输入
 - **WHEN** 同一 Work 的另一 Session 正在执行而当前 Session 发送失败为 busy
 - **THEN** 显示活动执行入口并保留草稿，不排队、不取消旧 Run
@@ -192,6 +194,18 @@ Chat 正文 SHALL 移除 Run History ID 列表，原 Session/Run 数据及实际
 - **WHEN** 当前 Session 有已确认失败或观察中断的原 Run，另一 Session 或 Service 随后占用活动槽
 - **THEN** 原错误与按原 Run 核对的入口继续可见，忙碌来源及 Stop and send 指向另一个真实活跃 Run，草稿、Session 和原观察关联保持
 
+#### Scenario: 410 后原 Run 已完成
+- **WHEN** 事件入口返回 410，原 Run 查询确认 succeeded 且 Session 保存了最终回答
+- **THEN** 实际读取 Session 并展示最终回答一次，停止自动读取，不重复 POST prompt 或请求失效事件游标
+
+#### Scenario: 410 后原 Run 仍运行
+- **WHEN** 事件入口返回 410，原 Run 先返回 running 后进入终态
+- **THEN** 通过同一 Run 的只读状态和 Session 历史查询看到运行中及终态，事件入口不收到同一失效游标的无限重试，终态后查询停止
+
+#### Scenario: 历史恢复失败或身份切换
+- **WHEN** Session 读取失败、鉴权失效，或用户在历史恢复期间切换身份
+- **THEN** 不显示虚假的恢复成功；读取失败保留已知内容和恢复入口，身份失效后停止旧观察且旧响应不写入新身份
+
 ### Requirement: Service 管理与数据上下文清楚分离
 
 **Identifier:** DWUI-005
@@ -228,6 +242,8 @@ Files SHALL 以当前 Work 的整个共享 workspace 为根（包含隐藏项）
 
 SHALL 遵守 Core 文件限额及单 Work mutation 并发限制；浏览器默认逐文件上传，无隐式写入重试。`207` 展示成功/失败路径，未知写入要求重读实际目录。普通下载不表示一致性备份，不提供目录 ZIP 或跨 Work 操作。文件能力缺失 SHALL 只局部降级。Connect with WebDAV SHALL 展示现有 proxy 命令、完整 Work URL 和终端临时密码获取方法，浏览器 Files 不依赖该流程。
 
+编辑保存 SHALL 将 `If-Unmodified-Since` 绑定到读取正文时已知的修改时间；后台目录刷新不得将脏编辑的读取版本偷偷升级。新文件上传 SHALL 使用 `If-None-Match: *`，防止 HEAD 确认不存在后出现的文件被覆盖。既有文件覆盖 SHALL 绑定用户确认的路径及已知修改时间，发送已有条件请求；读取失败不视为不存在。条件冲突 SHALL 保留本地编辑或待上传 File，展示先重读/比较的恢复入口，不能自动改成无条件 PUT。重读 SHALL 分别保留用户草稿和新保存版本；再次覆盖重读版本须用户明确同意。有可用条件时使用条件，无可用修改时间时 SHALL 明示不能进行版本保护并要求显式覆盖同意，不宣称具有文件锁或强一致保护。
+
 #### Scenario: 文件读写全流程
 - **WHEN** 用户建目录、上传、编辑、重命名、复制、移动并下载文件
 - **THEN** 相应 WebDAV 操作作用于同一 workspace，内容一致且浏览器不持有 Core token 或外部 WebDAV 密码
@@ -244,6 +260,22 @@ SHALL 遵守 Core 文件限额及单 Work mutation 并发限制；浏览器默�
 - **WHEN** 目录请求返回 207，或 Core 文件后端不可用
 - **THEN** 前者显示逐路径结果并刷新；后者只禁用 Files，仍允许可用 Service 与 Work 控制
 
+#### Scenario: 用户编辑期间 Agent 更新同一文件
+- **WHEN** 用户读取带修改时间的文件后编辑，Agent 在下一秒或更晚更新该文件，随后用户保存
+- **THEN** PUT 携带原修改时间，Core 的 412 被显示为冲突；Agent 的内容保留，本地草稿保留，没有无条件重试
+
+#### Scenario: 新建上传的 HEAD 与 PUT 之间出现同名文件
+- **WHEN** HEAD 返回 404 后另一写入者创建了同名目标，随后上传发送 PUT
+- **THEN** PUT 包含 `If-None-Match: *`，返回条件冲突，不覆盖新出现的文件；待上传文件保留，须重读并显式确认覆盖
+
+#### Scenario: 确认覆盖后目标再次变化
+- **WHEN** 用户确认覆盖的既有目标在 PUT 前以可辨别的新修改时间变化
+- **THEN** 原确认版本的条件请求失败；页面保留上传输入并要求重新核对，不自动以最新版本刷新覆盖同意
+
+#### Scenario: 重读不自动覆盖草稿或重复写入
+- **WHEN** 条件冲突或未知保存结果后用户重读文件
+- **THEN** 新保存版本与本地草稿分别可查看，重读本身仅 GET；用户明确接受新的覆盖基线并再次保存才允许下一次 PUT
+
 ### Requirement: 配置、能力目录与应用形成独立步骤
 
 **Identifier:** DWUI-007
@@ -255,6 +287,10 @@ Package SHALL 支持 Core/npm/Git/本地目录/ZIP 的安装与显式来源更�
 piwork-brain SHALL 使用现有 Pi Packages 与 Files 产品流程。Files 中 `.pi/packages/piwork-brain/` 是可编辑源；Settings 中 loaded/modelVisible 对应 active 捕获包，不能因文件已修改就宣称采用。候选详情 SHALL 展示来源摘要、受理基线、验证目标、准备/发布结果及真实 Apply 状态，区分包已加载与实际 SDK 行为已核验。用户显式 Apply 期间仍允许后续配置编辑；晚返回候选不得覆盖无关的新 desired。自动验证只能在有效加载之后运行，不能在 Apply 初始化中调用模型。
 
 候选详情 SHALL 在现有 Package Details 分项展示受理时 active/desired 选择与当前匹配摘要、固定目标及能力、安全输入摘要和必要 checks、准备发布结果、对应 Apply 原 ID/状态，并能按原 ID 打开既有请求/Operation 详情。内部 context identity、制品 digest、凭据和宿主路径 SHALL 不成为展示字段。没有匹配 Apply、观测不可用、加载失败与行为失败 SHALL 分开，不能用 Saved/Loaded 标签或缺字段 JSON 代替这些信息；打开或刷新详情不提交修改，也不重载 Service iframe。
+
+Skills、Packages、AGENTS.md 与 Advanced SHALL 展示同一份未保存配置；保存结果 SHALL 不取决于当前页签。有效 JSON 中的显式空集合和空 AGENTS 内容 SHALL 保留，未在普通表单编辑的其他公开字段 SHALL 保留；重复编辑同一字段采用最后一次有效显式编辑。非法 JSON SHALL 保留输入并定位错误，阻止配置提交与向其他配置页签转换，用户仍可修正或明确放弃草稿。保存失败或结果未知 SHALL 保留完整非敏感草稿，不触发 Apply。
+
+Core 目录读取状态 SHALL 与 Core 可达性/readiness 和 Work 草稿独立。刷新时 SHALL 保留已有数据并显示正在检查；部分失败保留成功目录及旧 Work 副本并定位失败目录，不能将失败当成空目录或全局离线。成功取得有效目录响应后 SHALL 清除该目录的不可用状态并按实际数据及动作准入恢复操作；有效空数组表示空目录。刷新 SHALL 不修改已选 Skills、Packages 或其他未保存配置。
 
 #### Scenario: 安装与 Apply 分开
 - **WHEN** 用户从任一支持来源安装包成功但尚未 Apply
@@ -280,6 +316,26 @@ piwork-brain SHALL 使用现有 Pi Packages 与 Files 产品流程。Files 中 `
 - **WHEN** 用户打开已准备候选详情，包括无关保存后 Apply 加载失败的候选
 - **THEN** 可读到原受理基线、固定能力/输入摘要/必要 checks、准备结果和实际对应的 Apply ID/状态；可按原 ID 查请求与回退依据，Service 页面及当前 Session 不被刷新或替换
 
+#### Scenario: Advanced 修改后从其他页签保存
+- **WHEN** 用户在 Advanced 修改 Skills、Packages、AGENTS.md 和其他公开字段，切到 Skills 或 AGENTS.md 后保存
+- **THEN** 相应页签展示新值，提交包含全部修改，不用原表单值覆盖 JSON；保存仅更新 desired
+
+#### Scenario: 普通表单修改后从 Advanced 保存
+- **WHEN** 用户先修改 Skills、Packages 或 AGENTS.md，再打开 Advanced 保存
+- **THEN** JSON 展示并提交普通表单的新值，显式空值保留，同一字段最后一次有效编辑生效
+
+#### Scenario: JSON 非法时尝试转换或保存
+- **WHEN** Advanced 存在无法解析的 JSON，用户切换配置页签或点击任一保存入口
+- **THEN** 保留原文及脏状态，显示定位错误，不转换到另一配置页签、不发配置 PUT；明确 Discard 可放弃该草稿
+
+#### Scenario: 目录失败后恢复
+- **WHEN** Skills 或 Packages 曾读取失败，随后用户刷新获得有效目录
+- **THEN** 清除对应不可用反馈并恢复合法动作，用户现有选择和草稿保持不变，不覆盖 Core 离线或运行环境未就绪的真实状态
+
+#### Scenario: 目录部分失败及空集合
+- **WHEN** Skills 成功而 Packages 失败，随后 Packages 成功返回空数组
+- **THEN** 首次只提示 Packages 错误且保留 Skills；后续显示真实空 Packages 目录并清除其错误，保留 Work 已保存副本和未保存选择
+
 ### Requirement: 完整 Work 包可以本地检查和原子导入
 
 **Identifier:** DWUI-008
@@ -295,6 +351,10 @@ Import 名称字段 SHALL 在提交前说明：留空使用包内源名称，名
 显式名称冲突 SHALL 在名称字段旁给出换名或主动留空的英文提示，保留名称、已检查包及其他输入；不得自动清空、修改名称或重新发送 Import。修改和后续提交仍遵守既有 transfer 准入、未知结果保护与用户显式提交规则。
 
 实际名称 SHALL 与状态一起准确表达：接受时为已选定的导入名称及准备中，只有 Operation 确认成功才称为导入完成。失败、响应丢失或恢复后尚无名称时不猜测名称或成功；可沿现有接受记录和 Work 读取显示已确认名称，不新增恢复接口或持久状态。
+
+同一本地浏览器会话在同一 Core 下从匿名检查进入首次登录时，SHALL 保留已完整验证且未提交的包和其本地传输身份；登录成功后可继续检查摘要并显式导入，无需重新选择文件或上传到本地 CLI。登录失败不丢弃合法匿名检查。此例外 SHALL 不保留已认证用户的 Core 内容，亦不适用于切换 Core、已认证用户切换账号、登出或本地会话失效。
+
+用户关闭未提交检查、替换所选包或取消仍在进行的本地检查时，SHALL 中止相应本地传输/观察并请求释放原暂存；晚到的进度和结果不得重新打开旧检查或覆盖新包。删除确认成功或已不存在后才显示清理完成，失败时保留可定位的清理信息与显式重试入口，不能以隐藏弹窗代替清理。为同一 Core 登录而暂离检查不属于放弃该包。Import 提交中、接受响应未知及已接受后 SHALL 保留该次身份及恢复信息，不按未提交检查重新提交、替换或取消远端操作；关闭仅停止本地观察。
 
 #### Scenario: 离线检查后关闭
 - **WHEN** 未登录用户选择合法或损坏的本地包
@@ -327,6 +387,26 @@ Import 名称字段 SHALL 在提交前说明：留空使用包内源名称，名
 #### Scenario: 名称与受理失败恢复分开
 - **WHEN** Import 已接受但仍在准备、随后失败，或恢复查询尚未取得实际名称
 - **THEN** 已确认名称只作为该次目标名称显示，状态保持真实；失败不显示导入完成，未确认名称不从源名称或列表推测，不产生新的 Import 请求
+
+#### Scenario: 匿名检查后登录同一 Core
+- **WHEN** 本地检查成功，用户通过 Sign in to import 登录原 Core 后继续导入
+- **THEN** 保留原传输及摘要，只使用原 transfer ID 提交 Import；本地检查上传不再执行，用户确认前不发送 Core 导入请求
+
+#### Scenario: 登录失败或切换 Core
+- **WHEN** 检查后登录原 Core 失败，或改为切换另一个 Core
+- **THEN** 前者保持匿名检查以便重新登录；后者清理旧检查且不向新 Core 提交旧包，身份内容仍按现有隔离规则处理
+
+#### Scenario: 检查期间取消或连续换包
+- **WHEN** 检查正在传输时用户取消，或选中另一个包替换旧检查
+- **THEN** 原本地传输/观察停止，原暂存被请求删除，旧响应不回填；新检查仅使用自己的 transfer ID 和结果
+
+#### Scenario: 暂存清理失败
+- **WHEN** 用户放弃未提交检查，但删除请求失败或响应丢失
+- **THEN** 保留旧 transfer ID 的清理提示及显式重试入口，不宣称磁盘已释放，不影响其他 Work 或删除 Core 快照
+
+#### Scenario: 导入接受后关闭观察
+- **WHEN** 已提交 Import 的响应未知或已取得 Operation ID，用户关闭检查或操作弹窗
+- **THEN** 保留该次导入及恢复身份，只停止本地观察，不调用远端取消、不发第二次 Import，也不以重新选择包替代核对原结果
 
 ### Requirement: 导出与下载保持显式阶段及原快照恢复
 
@@ -496,6 +576,7 @@ Desktop SHALL 在初始化期间立即显示中性的工作区外壳、Opening w
 初始化/手动检查的 GET SHALL 去重，检查结果有归属和确认反馈；初始化失败仍允许显式检查，不能依赖未启动的后台定时器恢复。本地 CSRF 拒绝后 SHALL 先只读核验当前会话：本地会话有效则更新 CSRF 并允许用户明确重新提交，不能自动重发原 mutation；无有效会话才转本地授权恢复。兑换响应丢失时先检查 Cookie/会话，不自动重放 ticket；有效票据兑换后 Cookie 未保存时显示具体恢复说明，不无限重试。
 
 初始化成功 SHALL 以真实登录页面或 Works 内容自然承接，不保留浏览器检查成功条。初始化超过十秒仍未确认时 SHALL 在原等待区说明仍在验证连接，不制造进度百分比或无限遮挡返回/恢复。初始化失败 SHALL 转入下述明确的授权或连接恢复状态；普通进入与用户显式 Check browser access 的确认反馈 SHALL 分开。
+
 #### Scenario: 旧链接与有效 Cookie 同时存在
 - **WHEN** 已授权浏览器再次打开含已使用、过期或上次进程 ticket 的链接
 - **THEN** 使用本次进程确认有效的本地会话，正常进入账号登录或 Works，旧 ticket 被移出地址栏，没有 bootstrap 重放
@@ -673,6 +754,7 @@ Desktop SHALL 按 DUL-003、007 将反馈放在所属按钮、表单、列表行
 失败、观察中断、未知修改及写入已确认但刷新失败 SHALL 有对象、可理解原因和安全下一步，不随成功提示到期被清除。提示消失不得释放未知锁、取消执行或丢失原 Operation。模块已有同一错误/进度时 SHALL 合并呈现，不再插入重复通用条；可恢复的错误在对应重查成功后清除。反馈更新不得移动或重载当前 Service iframe、覆盖编辑草稿，360px 及键盘操作仍可达。
 
 Work 列表、Work、Services、Files、Settings、Session、详情和深链接首屏 SHALL 按同一规则呈现；进入路径本身不要求用户先点击检查。已有内容更新 SHALL 保留可读内容和取得时间，首次读取无数据时显示真实骨架，成功空集合才进入空态。后台读取不得插入通用 pending 条；需要影响准入的真实降级或不可达 SHALL 仍在所属模块持续呈现。
+
 #### Scenario: 多目录正常读取后不堆积
 - **WHEN** 用户在同一 Work 依次打开根目录、apps、子目录，再返回根目录并切换 Services/Chat
 - **THEN** 等待有局部读取反馈，完成后内容正常展示，没有 Checked/Confirmed 加 ISO 时间的状态条，没有跨目录成功记录堆积或背景读取 toast
@@ -693,7 +775,7 @@ Work 列表、Work、Services、Files、Settings、Session、详情和深链接�
 
 **Identifier:** DWUI-MODEL-001
 
-Desktop SHALL 在现有 Chat Box 输入框底部提供当前 Session 的下一次手动 Run Model 与 Thinking 紧凑选择，来源为 Go Core 与实际 SDK 共同确认的可用模型，包含 Use Work default。模型与 Thinking SHALL 作为完整设置对自动保存，不要求另按 Save model；保存 Session 偏好 SHALL 不触发 Apply、重建 Session、取消 Run 或立即发送消息。已受理 Run 的实际模型与 Thinking SHALL 保持不变；自动请求 SHALL 使用该 Run 受理时 Work active 默认模型及其兼容旧行为的 Thinking，不继承手动 Session 偏好。选择器及详情 SHALL 不公开密钥、私有路径或绑定凭证。
+Desktop SHALL 在现有 Chat Box 输入框底部用一个轻量摘要呈现当前 Session 的下一次手动 Run Model 与 Thinking，点击摘要在同一 Response settings 面板中编辑两项，来源为 Go Core 与实际 SDK 共同确认的可用模型，包含 Use Work default。模型与 Thinking SHALL 作为完整设置对自动保存，不要求另按 Save model；保存 Session 偏好 SHALL 不触发 Apply、重建 Session、取消 Run 或立即发送消息。已受理 Run 的实际模型与 Thinking SHALL 保持不变；自动请求 SHALL 使用该 Run 受理时 Work active 默认模型及其兼容旧行为的 Thinking，不继承手动 Session 偏好。选择器及详情 SHALL 不公开密钥、私有路径或绑定凭证。
 
 加载、保存、发送、错误和恢复 SHALL 沿用 DWUI-011、012、014、017、018、019 的对象归属、即时反馈、身份隔离及原 ID 规则。偏好保存尚未确认时 SHALL 不受理依赖该新选择的发送；失败保留草稿与已确认偏好，不将 UI 临时选项当作服务端事实。失效模型 SHALL 明确阻止新受理并提示选择可用项，不静默换模型。模型或偏好读取晚返回 SHALL 不覆盖切换后的 Work/Session；已受理的提交即使刷新失败也 SHALL 保留 Run ID 和 submissionKey，不重发 prompt。
 
@@ -706,9 +788,21 @@ Thinking 可选档位 SHALL 仅来自当前真实模型的能力，不显示硬�
 尚无 Session 时 SHALL 允许在 Work 的输入草稿上选择设置，说明用于新 Session；用户显式 Send 或 New session 才创建一次 Session并确认设置对。创建或保存结果未知时保留原身份、提交键和草稿，按原结果只读核对，不再次创建或发送。当前 Run 占用期间下一条设置可变更，但发送仍遵守单 Work 单活跃 Run。
 
 打开选择器 SHALL 不立即改变设置；只有明确选择才触发保存。控件、菜单和错误恢复 SHALL 支持键盘且保持输入草稿。新聊天能力缺失时 SHALL 保留既有基础聊天与模型能力，Thinking 入口说明此 Work 不支持，不将缺失能力等同于 Off 已保存。
-Model、Thinking 与 Enter/Send SHALL 组成输入框内同一底栏，宽度足够时同行、等高并垂直居中；长名称不挤走发送，360px 允许合理换行且选择器、弹层与错误恢复可达。打开选择器不修改，Esc 取消并返回触发控件；/model 与 /thinking 打开同一真实选择入口，不只停在未打开或不可用控件。
+合并摘要、Input options 与 Send SHALL 组成输入框内同一底栏；Model 与 Thinking 不再作为两个独立字段常驻 Composer。摘要 SHALL 按内容占宽，宽度足够时所有底栏动作同行、等高并垂直居中；长名称在摘要中截断且不能挤走发送，完整名称在设置面板内可读取。360px 下所有必要动作和错误恢复 SHALL 可达且无整页横向滚动，局部空间不足时可让摘要整组换行，不能恢复两个平铺字段。打开面板不修改，Esc 或 Close 只关闭面板并返回来源；/model 与 /thinking SHALL 打开同一面板并直接展开对应的真实选项，不能只停在一个未展开按钮。
 
 模型和档位 SHALL 以固定 Pi SDK 的已确认能力结合 Core 准入为准，不为让 Thinking 可点击而补通用档位。能力未确认、真正不支持、新契约缺失分别说明；已确认支持多个档位时必须可直接选择、保存并用于下一次真实请求，SDK/配置修订不成为默认模型标签。
+
+Response settings SHALL 持续显示相邻的 Model 与 Thinking 当前值行，一次只展开其中一项的选项列表；点击当前展开行可收起列表，切换另一行只改变展开目标，不保存。摘要直接打开时 SHALL 先显示两行当前值，不默认展开长选项列表。模型选项 SHALL 包含 Use Work default 及其真实模型名称；Thinking 档位仅来自当前所选模型的已确认能力。
+
+明确选择不同值后 SHALL 自动保存完整设置对、收起该选项列表并保留面板，焦点返回对应当前值行；选中值与保存中状态立即可辨。选择与当前完整设置相同的值 SHALL 不产生重复保存；由 /model 或 /thinking 发起且原设置已经确认时，这种明确确认可完成对应网页命令。Close 或 Esc 在选择之后 SHALL 不撤销、取消或重新提交已经发出的保存，面板不提供暗示撤销自动保存的 Cancel 动作。保存期间仍允许按原协调规则继续选择不同值。
+
+摘要在模型目录加载、读取失败、偏好保存中或结果未知时 SHALL 仍可打开，以查看当前值、限制及恢复入口；能力和确认状态只限制实际修改与发送。首次未确认目录不得展示虚构选项或将错误当成空模型列表，已有旧值 SHALL 标为未确认或最后已知；已确认只有 Work default 的目录仍可正常选择和发送。结果未知时面板中两项修改 SHALL 禁用，原 Session 的 Check chat settings 仍可用。目录失败提供 Retry models，明确保存失败提供 Retry settings，所有恢复只作用于原上下文，不自动发送消息。
+
+摘要与面板 SHALL 显示同一设置状态。正常状态使用已确认值；保存中、明确未保存和结果未知时可展示保留的最新选择，但 SHALL 同时明确其未确认状态，不能据此声称下一条消息已经可以使用该值。保存中、失败、未知、模型不可用、Thinking 真正不支持或能力未确认的必要状态与原因 SHALL 在面板关闭后仍留于 Composer 附近；尚无 Session 时显示 For new session。正常已确认状态不保留永久 Saved 条。
+
+面板 SHALL 将当前展开列表的已选项作为初始焦点，未选中时使用首个可用项；从摘要直接打开时焦点进入 Model 当前值行，若该行不可编辑则进入可用的恢复入口或 Close。上下键及 Home/End 只移动当前列表的焦点，不改变设置；Enter/Space 明确选择，Tab/Shift+Tab 按面板焦点顺序导航。不可编辑项 SHALL 紧邻说明原因，不构造通用 Thinking 档位。直接摘要打开的面板关闭后焦点返回摘要，网页命令打开的面板关闭后返回 Composer；输入法组合期间 Enter 不选择或发送，Esc 只关闭面板而不同时退出专注布局。
+
+面板状态 SHALL 归属打开时的 Core/账号、Work 和 Session。切换身份、Work、Session 或离开相应 Chat 时 SHALL 关闭原面板；晚结果只更新原对象，不重开旧面板或覆盖新对象草稿。/model 与 /thinking 保留 DWUI-COMMAND-001 的成功消费、取消/失败保留与原草稿比对规则；不接收额外参数，不提交 Run。Input options、Service identity 与资源命令参数边界继续遵循原规则。
 
 #### Scenario: 当前执行中修改下一次模型
 - **WHEN** 当前 Run 使用模型 A，用户保存当前 Session 的模型 B 偏好
@@ -744,15 +838,55 @@ Model、Thinking 与 Enter/Send SHALL 组成输入框内同一底栏，宽度足
 
 #### Scenario: 输入底栏对齐
 - **WHEN** 用户在宽屏输入，或在 360px 选择长名称模型
-- **THEN** 宽屏选择器与 Enter/Send 同行等高并垂直居中，窄屏所有必要控件与状态可达且无整页横向滚动
+- **THEN** 宽屏合并摘要、Input options 与 Send 同行等高并垂直居中，摘要按内容占宽；窄屏长名称仅在摘要内截断，完整名称在面板可读，所有必要控件与状态可达且无整页横向滚动
 
 #### Scenario: Thinking 直接调整与网页命令一致
-- **WHEN** 当前模型支持多个 SDK 档位，用户点击 Thinking 或执行 /thinking
-- **THEN** 同一实际选择入口打开，能选择并保存受支持值，取消保留草稿，选择不立即发送 Run
+- **WHEN** 当前模型支持多个 SDK 档位，用户在设置面板展开 Thinking 或执行 /thinking
+- **THEN** 同一面板中的实际档位列表打开，能选择并保存受支持值，关闭而未选择保留草稿，选择不立即发送 Run
 
 #### Scenario: 设置菜单优先关闭
-- **WHEN** 用户在 Focus chat 打开 Model/Thinking 菜单并按 Esc
-- **THEN** 仅关闭菜单并恢复焦点，不同时退出 Focus，未知与保存中的提交保护仍成立
+- **WHEN** 用户在 Focus chat 打开 Response settings 的 Model 或 Thinking 选项并按 Esc
+- **THEN** 仅关闭设置面板并按打开来源恢复焦点，不同时退出 Focus，未知与保存中的提交保护仍成立
+
+#### Scenario: 摘要打开与关闭不改变设置
+- **WHEN** 用户有未发送草稿，点击配置摘要查看两行当前值后直接 Close 或 Esc
+- **THEN** 不创建 Session、不 PATCH 偏好、不提交或取消 Run；草稿、光标、布局和阅读位置保持，焦点返回摘要
+
+#### Scenario: 同一面板内调整两项
+- **WHEN** 用户打开面板、展开 Model 选择另一模型，再展开 Thinking 选择该模型支持的档位
+- **THEN** 两行当前值始终同组可见，一次只有一个列表展开；每次明确选择自动协调完整设置对，列表收起后面板保留，发送等待最新设置可靠确认
+
+#### Scenario: 已确认值重复选择
+- **WHEN** 当前完整设置已确认，用户再次明确选择相同的 Model 或 Thinking
+- **THEN** 不发送新的偏好保存；从对应网页命令进入时可消费仍与原输入相同的命令草稿，没有 Run，用户新编辑的草稿不被清除
+
+#### Scenario: 保存期间关闭并重新打开
+- **WHEN** 选择模型后的保存响应被延迟，用户关闭面板、继续编辑消息并再次打开摘要
+- **THEN** 保存仍属于原 Session，仅提交一次；摘要和面板都说明最新选择仍在 Saving，输入草稿不丢失，面板不重新提交选择或提前允许发送
+
+#### Scenario: 目录首次读取与失败恢复
+- **WHEN** 首次模型目录尚在读取或读取失败，用户打开摘要
+- **THEN** 面板分别显示 Loading models 或读取原因与 Retry models，不显示虚构空列表；用户能关闭面板继续编辑，读恢复成功后显示真实选择，不自动发送或保存
+
+#### Scenario: 无 Thinking 能力的命令入口
+- **WHEN** 当前 Work 不支持新聊天能力、模型仅支持 Off 或 Thinking 能力未确认，用户执行 /thinking
+- **THEN** 统一面板打开并显示对应禁用原因，真正不支持时显示 Off，缺失或未确认能力不伪装成已保存 Off；命令和草稿保持，没有偏好修改或 Run，关闭后仍能看到必要原因
+
+#### Scenario: 未知结果的统一入口
+- **WHEN** 保存结果未知，用户关闭并重开面板，然后执行 Check chat settings
+- **THEN** 摘要仍可打开，两项修改与发送仍受限；Composer 与面板提供原 Session 的只读核对，成功后显示实际完整设置，不重复 PATCH、不自动应用保留选择、不发消息
+
+#### Scenario: 命令直接展开与焦点返回
+- **WHEN** 用户从 Composer 明确执行 /model 或 /thinking，使用上下键、Home/End 导航后关闭面板
+- **THEN** 对应真实列表已展开且选项可操作，键盘移动不保存；未选择时保留原命令，关闭返回 Composer，输入法 Enter 不触发选择或发送
+
+#### Scenario: 切换上下文与晚到保存
+- **WHEN** 旧面板的设置正在保存，用户关闭面板后切换 Session、Work 或账号，旧结果随后返回
+- **THEN** 旧面板不重开，当前摘要、草稿和界面状态属于新上下文；同身份的旧结果只归属原 Session，不产生另一个保存或 Run
+
+#### Scenario: 新 Session 的草稿配置
+- **WHEN** 尚无 Session，用户从摘要选择模型或 Thinking 后关闭面板
+- **THEN** 摘要与附近状态说明 For new session，只有本地草稿选择改变；明确 Send 或 New session 才按原规则创建并确认一次 Session，没有后台创建或立即发送
 
 ### Requirement: Service 处理记录与证据在现有工作区闭环
 
@@ -972,7 +1106,7 @@ Desktop SHALL 由前台 CLI 提供 127.0.0.1:17891 的本机浏览器入口，�
 
 Service 预览/独立页 SHALL 仅路由声明 HTTP/ws 端口，隔离各应用本机 origin，保留 CSP/X-Frame-Options、应用认证、SSE/WebSocket，不改响应正文或自动批准跨 Service 跳转。嵌入拒绝提供独立页回退；平台身份不交应用。Focus/Full screen、Chat、草稿、阅读位置及 iframe 沿有效 browser-service-access/desktop-ui-language 保持，不以换布局重建业务视图。
 
-关闭浏览器或退出本机入口 SHALL 不停止 Work 或重发写入；平台过期确认后登录并按原 ID 恢复。导入仅浏览器选取/Inspect 不登录执行，真正 Import 需授权且保持 stopped；下载开始不等于落盘。图像粘贴/拖拽/选择、限额、模型能力与 About 版本日志沿 improve-desktop-chat-and-release-info 的有效 delta，技术身份按需展开，错误和恢复保持可见。
+关闭浏览器或退出本机入口 SHALL 不停止 Work 或重发写入；平台过期确认后登录并按原 ID 恢复。导入仅浏览器选取/Inspect 不登录执行，真正 Import 需授权且保持 stopped；下载开始不等于落盘。图像粘贴/拖拽/选择、限额及模型能力遵循本规范的 DWUI-IMAGE-001 至 DWUI-IMAGE-003 与 agent-conversation，About 版本日志遵循 product-release-info；技术身份按需展开，错误和恢复保持可见。
 
 #### Scenario: 按现行契约操作与核对
 - **WHEN** 用户或维护者使用上述现行入口，并满足对应身份、平台与运行条件
@@ -1052,3 +1186,99 @@ Desktop SHALL 在登录/连接页面和切换 Core 的配置入口提供默认 C
 #### Scenario: 损坏配置的显式恢复
 - **WHEN** 用户用参数覆盖格式损坏的偏好启动，读取显示损坏后选择恢复自动选择
 - **THEN** 在目标安全校验通过后只清除偏好，再读确认为未设置；凭证、当前 Core 和 Inspect 保持，不能删除不安全目标
+
+### Requirement: Chat 图片草稿支持三种添加方式与显式发送
+
+**Identifier:** DWUI-IMAGE-001
+
+Desktop SHALL 在常规 Chat、Agent 辅助栏及 Focus chat 共用图片草稿，允许在输入区域粘贴剪贴板图片、拖入图片文件及通过英文 `Add images` 文件选择入口添加图片。添加后 SHALL 显示缩略图、可访问名称及移除动作；纯图片和图文组合均可显式 Enter/Send 发送，添加、预览和移除本身不创建 Session/Run、不调用模型或上传到 Work。
+
+第一版 SHALL 支持 PNG、JPEG、WebP，每条最多 4 张、每张原始字节最多 5 MiB、图片总量最多 10 MiB；单图宽高各最多 8192 像素、总像素最多 40,000,000。超限、不支持、容器结构非法/截断或无法生成预览的图片 SHALL 给出就地原因，保留此前合法草稿。添加混合批次时 SHALL 明确逐项结果，不能静默丢弃非法项。普通文字粘贴保留原行为，不从 HTML、文件路径或远端链接暗中抓取图片。
+
+同一 Work/Session 的图片及文字 SHALL 随布局切换保持；切换 Session/Work 不串用草稿，切换账号/Core、注销或本地授权失效 SHALL 清理旧身份草稿和预览资源。文件读取/校验的晚结果不得加入新上下文。图片添加、移除和查看 SHALL 支持键盘、明确英文名称与 360px 窄屏，不挤走 Send 或既有配置摘要。
+
+#### Scenario: 三种方式进入同一草稿
+- **WHEN** 用户依次粘贴截图、拖入图片和选择图片，并切换到 Focus chat
+- **THEN** 同一草稿显示已添加图片，顺序保持，可逐张移除，没有上传、Session 创建或 Run 提交
+
+#### Scenario: 纯图片与图文发送
+- **WHEN** 用户有合法图片且无文字，或同时输入文字，明确点击 Send/Enter
+- **THEN** 分别提交一条纯图片或图文消息，图片与文字属于同一 Run；Shift+Enter 和输入法组合仍遵守原规则
+
+#### Scenario: 类型、容量与混合批次
+- **WHEN** 用户添加 SVG、结构损坏或无法预览的图片、超限图片或含合法/非法项的文件批次
+- **THEN** 逐项说明未接受项及原因，合法已有草稿不丢失，未通过检查的内容不发送
+
+#### Scenario: 异步选择与身份变化
+- **WHEN** 图片读取期间用户切换 Session、Work 或账号，旧读取随后完成
+- **THEN** 不加入新对象草稿；同身份原草稿按归属保留，旧身份资源清理，其他 Service 和 Chat 内容不被覆盖
+
+### Requirement: 图片发送按能力与原受理身份恢复
+
+**Identifier:** DWUI-IMAGE-002
+
+Desktop SHALL 区分 Work 不支持图片、模型已支持、已不支持及图片能力未确认；不可用原因 SHALL 留在输入附近，保留图片/文字草稿，并提供既有选择模型或升级方向。不得静默删图、自动切换模型、扩大权限或自动 Apply。纯文本基础聊天 SHALL 保留既有能力。
+
+有图片时 SHALL 按字面图文消息发送；网页动作及资源命令不消费图片草稿，需明确提示选择普通文本发送方式或先移除图片，不能执行命令后悄悄丢图。图片仍在读取/校验或最新模型设置尚未确认时 SHALL 不提交未完成草稿。
+
+发送 SHALL 固定本次文字、图片顺序及内容和原 submissionKey，显示提交中并阻止重复提交；用户后续编辑属于新草稿。可靠受理后只消费与本次快照一致的内容，新添加/修改的内容保留。明确拒绝、busy、受理前模型准入错误及结果未知 SHALL 保留输入；未知结果仅按原键只读核对，不自动重发。成功核对后合并原 Run 与用户消息，不重复显示图片或再次执行。已经受理后模型执行失败 SHALL 保留原消息、图片与 Run 的失败事实，不自动恢复为未发送草稿或重新提交。
+
+#### Scenario: 旧 Agent 与模型不可用
+- **WHEN** Work 缺少图片能力，或当前模型不支持/未确认图片
+- **THEN** 输入区域显示对应原因，图片草稿保留，没有隐式升级、删图或换模型，原支持的文本聊天继续按既有规则使用
+
+#### Scenario: 图片与 slash 命令
+- **WHEN** 用户附图后以命令模式发送 /new、/model 或资源命令
+- **THEN** 保留完整草稿并说明图片需普通消息发送，不执行命令或清除图片；明确选择字面方式后才可提交图文 Run
+
+#### Scenario: 接受响应丢失
+- **WHEN** 图文 Run 已接受但响应丢失，用户执行原提交键核对
+- **THEN** 返回同一 Run 后继续原观察，完整草稿在核对前保留，没有第二次提交或重复历史消息
+
+#### Scenario: 在途发送后继续编辑
+- **WHEN** 图片消息提交中用户新增图片或改写文字，原接受响应随后返回
+- **THEN** 只确认原内容，新增草稿保留，原图片/文字只显示一次，不能由旧清理回调清空新输入
+
+#### Scenario: 受理后执行失败
+- **WHEN** 图文 Run 已确认接受，随后模型请求失败
+- **THEN** 原图文消息和失败 Run 可查，新草稿不变，不自动把已接受内容还原为未发送消息或重发
+
+### Requirement: 历史图片可以再次查看且保持私有归属
+
+**Identifier:** DWUI-IMAGE-003
+
+Chat SHALL 按真实消息顺序展示已发送图片及正文，纯图片消息不得消失或被误归入工具 Activity。历史图片 SHALL 可在应用内查看较大预览；读取中、失败和图片缺失分别表达，失败只影响该图片并提供只读恢复，不重发原 prompt。
+
+重新打开会话、重连、Agent 替换以及终态 Work 完整导出导入后 SHALL 能查看保留的原图。历史列表不一次加载全部图片正文，图片访问 SHALL 经过当前本地与 Core/Work 所有者授权；不生成公开分享 URL、不从其他 Work/Session 取图。停止 Work 时沿用已有历史准入，仅将已加载内容标为最后已知，不暗中 Start 获取图片。
+
+#### Scenario: 重开纯图片会话
+- **WHEN** 用户发送纯图片消息后离开，再重新打开同一可读 Session
+- **THEN** 该用户消息与图片仍存在，按需取得原图，不出现空工具段或重复用户消息
+
+#### Scenario: 历史图片局部失败
+- **WHEN** 一张历史图片读取失败而文字及其他图片可用
+- **THEN** 其他内容继续可读，失败图片显示原因和只读重试，没有新的 Run、模型调用或整个历史清空
+
+#### Scenario: 导出导入与停止边界
+- **WHEN** 含图片的终态 Work 停止后导出导入，并由用户显式 Start 后打开原会话
+- **THEN** 图片和消息对应关系保持，导入本身不执行原图文请求；停止状态不为查看图片自动启动 Work
+
+### Requirement: 创建弹窗状态变化不拉伸操作按钮
+
+**Identifier:** DWUI-CREATE-LAYOUT-001
+
+Create Work SHALL 在提交中、超过十秒等待、明确拒绝与未知结果时保持 Create Work 及 Cancel/Close 按钮的宽高和排列稳定；动态提示 SHALL 在独立状态区域换行/滚动，不能把按钮拉高、挤出可见区域或覆盖输入。长 Work 名称及错误文本在 360px 下仍完整可访问，无整页横向溢出。
+
+等待状态、可访问 busy/状态播报、同对象防重复及未知修改保护 SHALL 继续遵守 DWUI-011、012、016、019；不能仅删除等待提示以达到尺寸稳定。Close/Back 的既有语义及键盘焦点保持，受理后仍展示原 Operation，不提前宣称 Ready。
+
+#### Scenario: 延迟创建与长等待
+- **WHEN** 用户提交长名称 Work，响应延迟至出现 Still waiting
+- **THEN** 首个可绘制机会已有创建状态，按钮宽高与状态变化前一致、位置稳定，重复入口只产生一次创建请求
+
+#### Scenario: 窄屏拒绝和未知结果
+- **WHEN** 用户在 360px 下创建，收到长拒绝消息或未知结果
+- **THEN** 提示完整可阅读，输入保留，按钮不被拉伸或挤出，明确拒绝恢复合法重试、未知结果继续只读核对而不盲目重提
+
+#### Scenario: 关闭等待弹窗
+- **WHEN** 用户在创建等待期间按既有规则关闭弹窗
+- **THEN** 焦点与可用导航正常，关闭只结束展示，不取消远端已受理操作，不重新提交创建
