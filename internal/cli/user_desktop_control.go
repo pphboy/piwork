@@ -220,7 +220,7 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			return desktopControl{}, false, nil
 		}
 	}
-	feedbackRead := r.Method == http.MethodGet && len(parts) >= 3 && len(parts) <= 4 && parts[0] == "works" && parts[2] == "agent-requests"
+	feedbackRead := r.Method == http.MethodGet && len(parts) >= 3 && (len(parts) <= 4 || len(parts) == 5 && parts[4] == "retry-submission") && parts[0] == "works" && parts[2] == "agent-requests"
 	imageHistory := r.Method == http.MethodGet && len(parts) == 4 && parts[0] == "works" && parts[2] == "sessions"
 	if r.URL.RawQuery != "" && !feedbackRead && !imageHistory && !(len(parts) == 5 && parts[0] == "works" && parts[2] == "services" && parts[4] == "logs") {
 		return desktopControl{}, true, errors.New("INVALID_INPUT")
@@ -456,16 +456,24 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			}
 			path += "/" + id
 		}
-		if method == http.MethodGet && len(parts) <= 4 && (resource == "agent-requests" || len(parts) == 4) {
+		if method == http.MethodGet && (len(parts) <= 4 || resource == "agent-requests" && len(parts) == 5 && parts[4] == "retry-submission") && (resource == "agent-requests" || len(parts) == 4) {
 			schema := "AgentRequestQuerySchema"
 			if len(parts) == 4 {
 				schema = "AgentEvidenceQuerySchema"
+			}
+			if len(parts) == 5 {
+				schema = "AgentRequestRetryQuerySchema"
+				path += "/retry-submission"
 			}
 			if resource == "evidence" && r.URL.RawQuery != "" {
 				return desktopControl{}, true, errors.New("INVALID_INPUT")
 			}
 			input := map[string]any{}
-			for key, values := range r.URL.Query() {
+			parsed, err := url.ParseQuery(r.URL.RawQuery)
+			if err != nil {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			for key, values := range parsed {
 				if len(values) != 1 || values[0] == "" {
 					return desktopControl{}, true, errors.New("INVALID_INPUT")
 				}
@@ -587,7 +595,7 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 	if parts[2] == "runs" {
 		path := base + "/runs"
 		if len(parts) == 3 && method == http.MethodPost {
-			input, err := desktopControlInputLimit(r, chatimages.MaxRequestBytes, "sessionId", "prompt", "modelRef", "submissionKey", "inputMode", "images")
+			input, err := desktopControlInputLimit(r, chatimages.MaxRequestBytes, "sessionId", "prompt", "modelRef", "submissionKey", "inputMode", "images", "cancelRunId")
 			if err != nil {
 				return desktopControl{}, true, err
 			}
@@ -620,6 +628,12 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			if mode, exists := input["inputMode"]; exists {
 				var value any
 				if json.Unmarshal(mode, &value) != nil || contracts.Validate("ChatInputModeSchema", value) != nil {
+					return desktopControl{}, true, errors.New("INVALID_INPUT")
+				}
+			}
+			if raw, exists := input["cancelRunId"]; exists {
+				var target any
+				if json.Unmarshal(raw, &target) != nil || contracts.Validate("IdentifierSchema", target) != nil {
 					return desktopControl{}, true, errors.New("INVALID_INPUT")
 				}
 			}

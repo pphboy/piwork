@@ -100,6 +100,8 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 	for _, item := range []struct {
 		method, path, payload, forwarded string
 	}{
+		{"GET", "/_desktop/api/works/work-1/runs/active", "", "/api/v1/works/work-1/runs/active"},
+		{"POST", "/_desktop/api/works/work-1/runs", `{"sessionId":"session-1","prompt":"next","submissionKey":"replace-1","inputMode":"text","cancelRunId":"run-old"}`, "/api/v1/works/work-1/runs"},
 		{"GET", "/_desktop/api/works", "", "/api/v1/works"},
 		{"POST", "/_desktop/api/works", `{"name":"中文 Work"}`, "/api/v1/works"},
 		{"POST", "/_desktop/api/works/work-1/start", "", "/api/v1/works/work-1/start"},
@@ -116,6 +118,7 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		{"GET", "/_desktop/api/works/work-1/sessions/submissions/original-key", "", "/api/v1/works/work-1/sessions/submissions/original-key"},
 		{"GET", "/_desktop/api/works/work-1/runs/submissions/original-key", "", "/api/v1/works/work-1/runs/submissions/original-key"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null}`, "/api/v1/works/work-1/sessions/session-1/model"},
+		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1/retry-submission?submissionKey=original", "", "/api/v1/works/work-1/agent-requests/request-1/retry-submission?submissionKey=original"},
 		{"GET", "/_desktop/api/works/work-1/agent-requests?serviceName=todo&limit=5", "", "/api/v1/works/work-1/agent-requests?limit=5&serviceName=todo"},
 		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1?cursor=page-1", "", "/api/v1/works/work-1/agent-requests/request-1?cursor=page-1"},
 		{"GET", "/_desktop/api/works/work-1/evidence/evidence-1", "", "/api/v1/works/work-1/evidence/evidence-1"},
@@ -142,7 +145,12 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 			}
 		}
 		if strings.HasSuffix(item.path, "/runs") {
-			if key, _ := last.body["submissionKey"].(string); !strings.HasPrefix(key, "desktop-") {
+			key, _ := last.body["submissionKey"].(string)
+			if target, present := last.body["cancelRunId"]; present {
+				if target != "run-old" || key != "replace-1" {
+					t.Fatal("explicit replacement identity changed", last.body)
+				}
+			} else if !strings.HasPrefix(key, "desktop-") {
 				t.Fatalf("run has no submission key: %+v", last)
 			}
 		}
@@ -155,8 +163,15 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"invalid"}`, "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"off","credential":"private"}`, "csrf"},
 		{"POST", "/_desktop/api/works/work-1/runs", `{"sessionId":"session-1","prompt":"hello","inputMode":"extension"}`, "csrf"},
+		{"POST", "/_desktop/api/works/work-1/runs", `{"sessionId":"session-1","prompt":"next","cancelRunId":""}`, "csrf"},
+		{"POST", "/_desktop/api/works/work-1/runs", `{"sessionId":"session-1","prompt":"next","cancelRunId":"../other"}`, "csrf"},
+		{"POST", "/_desktop/api/works/work-1/runs", `{"sessionId":"session-1","prompt":"next","cancelRunId":null}`, "csrf"},
 		{"POST", "/_desktop/api/works/work-1/sessions", `{"idempotencyKey":"../invalid"}`, "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null}`, "wrong"},
+		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1/retry-submission?submissionKey=a&%broken", "", ""},
+		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1/retry-submission", "", ""},
+		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1/retry-submission?submissionKey=", "", ""},
+		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1/retry-submission?submissionKey=a&submissionKey=b", "", ""},
 		{"GET", "/_desktop/api/works/work-1/agent-requests?limit=101", "", ""},
 		{"GET", "/_desktop/api/works/work-1/agent-requests?limit=1&limit=2", "", ""},
 		{"GET", "/_desktop/api/works/work-1/agent-requests/request-1?serviceName=todo", "", ""},

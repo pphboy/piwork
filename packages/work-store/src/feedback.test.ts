@@ -409,3 +409,30 @@ test("evidence uses bounded SQLite pages with equal-time cursors and excludes ot
   assert.throws(()=>feedback.listEvidence(workId,other,11,scoped),error("INVALID_CURSOR"));
  }finally{t.mock.restoreAll();db.close();f.cleanup();}
 });
+
+test("Retry original-key lookup is scoped, read only and survives cold historical reads", () => {
+  const f=fixture();
+  try {
+    const original=f.store.feedback.receiveEvent(event("retry-readback"),["review"],now).requestId!;
+    f.store.feedback.cancel(workId,original,undefined,now);
+    const retry=f.store.feedback.retry(workId,original,"original-key",now);
+    const db=new DatabaseSync(f.path);
+    const snapshot=()=>db.prepare("SELECT * FROM agent_requests ORDER BY request_id").all();
+    const before=snapshot(),dataVersion=db.prepare("PRAGMA data_version").get();
+    for(let n=0;n<3;n++)assert.equal(f.store.feedback.lookupRetrySubmission(workId,original,"original-key")?.requestId,retry.requestId);
+    assert.equal(f.store.feedback.lookupRetrySubmission("work-other",original,"original-key"),undefined);
+    assert.equal(f.store.feedback.lookupRetrySubmission(workId,original,"missing"),undefined);
+    assert.throws(()=>f.store.feedback.lookupRetrySubmission(workId,"wrong-original","original-key"),error("SUBMIT_CONFLICT"));
+    for(const key of ["","x".repeat(257)])assert.throws(()=>f.store.feedback.lookupRetrySubmission(workId,original,key),error("INVALID_SUBMISSION_KEY"));
+    assert.deepEqual(snapshot(),before);assert.deepEqual(db.prepare("PRAGMA data_version").get(),dataVersion);
+    db.prepare("UPDATE agent_requests SET disposition='historical'").run();
+    db.close();f.store.close();
+    const reopened=WorkStore.open(f.path);
+    try {
+      const result=reopened.feedback.lookupRetrySubmission(workId,original,"original-key")!;
+      assert.equal(result.requestId,retry.requestId);assert.equal(result.retryOf,original);assert.equal(result.disposition,"historical");
+      assert.throws(()=>reopened.feedback.retry(workId,original,"new-key"),error("REQUEST_RETRY_NOT_ALLOWED"));
+      assert.equal(reopened.feedback.listRequests(workId).items.length,2);
+    } finally {reopened.close();}
+  } finally {f.cleanup();}
+});

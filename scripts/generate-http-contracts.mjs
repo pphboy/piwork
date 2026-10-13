@@ -8,7 +8,7 @@ import { modelManagementSchemas } from "../packages/contracts/dist/ai-model-mana
 import * as chatSchemas from "../packages/contracts/dist/chat-controls.js";
 import * as imageSchemas from "../packages/contracts/dist/chat-images.js";
 import * as productSchemas from "../packages/contracts/dist/product-info.js";
-import { SubmitRunInputSchema } from "../packages/contracts/dist/work-feedback.js";
+import { SubmitRunInputSchema, AgentRequestRetryQuerySchema, AgentRequestRetrySubmissionSchema } from "../packages/contracts/dist/work-feedback.js";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 
 const root = resolve(import.meta.dirname, "..");
@@ -20,6 +20,8 @@ Object.assign(schemas, Object.fromEntries(Object.entries(chatSchemas).filter(([n
 Object.assign(schemas, Object.fromEntries(Object.entries(imageSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(productSchemas).filter(([name])=>name.endsWith("Schema"))));
 schemas.SubmitRunInputSchema = SubmitRunInputSchema;
+schemas.AgentRequestRetryQuerySchema = AgentRequestRetryQuerySchema;
+schemas.AgentRequestRetrySubmissionSchema = AgentRequestRetrySubmissionSchema;
 schemas.AgentRuntimeConfigSchema.properties.model.properties.api = schemas.ModelApiSchema;
 schemas.AgentRuntimeConfigSchema.properties.model.properties.capabilities = schemas.ModelCapabilitiesSchema;
 schemas.AdminRuntimeLegacyInputSchema ??= schemas.AdminRuntimeInputSchema;

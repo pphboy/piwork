@@ -130,6 +130,7 @@ export interface ReadinessResponse {
   workHistorySchemaVersion: number;
   chatControlsContractVersion: number;
   modelProviderContractVersion?: number | undefined;
+  cancelAndSendContractVersion?: number | undefined;
 }
 
 export interface LoadedPackage {
@@ -307,6 +308,7 @@ export interface SubmitRunRequest {
   modelRef?: string | undefined;
   inputMode?: string | undefined;
   images: ImageInput[];
+  cancelRunId?: string | undefined;
 }
 
 export interface SubmitRunResponse {
@@ -317,6 +319,14 @@ export interface SubmitRunResponse {
 export interface GetRunRequest {
   workId: string;
   runId: string;
+}
+
+export interface GetActiveRunRequest {
+  workId: string;
+}
+
+export interface GetActiveRunResponse {
+  run?: Run | undefined;
 }
 
 export interface WatchRunRequest {
@@ -686,6 +696,7 @@ function createBaseReadinessResponse(): ReadinessResponse {
     workHistorySchemaVersion: 0,
     chatControlsContractVersion: 0,
     modelProviderContractVersion: undefined,
+    cancelAndSendContractVersion: undefined,
   };
 }
 
@@ -756,6 +767,9 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     }
     if (message.modelProviderContractVersion !== undefined) {
       writer.uint32(168).uint32(message.modelProviderContractVersion);
+    }
+    if (message.cancelAndSendContractVersion !== undefined) {
+      writer.uint32(176).uint32(message.cancelAndSendContractVersion);
     }
     return writer;
   },
@@ -941,6 +955,14 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
             message.modelProviderContractVersion = reader.uint32();
             continue;
           }
+          case 22: {
+            if (tag !== 176) {
+              break;
+            }
+
+            message.cancelAndSendContractVersion = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -1052,6 +1074,11 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
         : isSet(object.model_provider_contract_version)
         ? globalThis.Number(object.model_provider_contract_version)
         : undefined,
+      cancelAndSendContractVersion: isSet(object.cancelAndSendContractVersion)
+        ? globalThis.Number(object.cancelAndSendContractVersion)
+        : isSet(object.cancel_and_send_contract_version)
+        ? globalThis.Number(object.cancel_and_send_contract_version)
+        : undefined,
     };
   },
 
@@ -1120,6 +1147,9 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     if (message.modelProviderContractVersion !== undefined) {
       obj.modelProviderContractVersion = Math.round(message.modelProviderContractVersion);
     }
+    if (message.cancelAndSendContractVersion !== undefined) {
+      obj.cancelAndSendContractVersion = Math.round(message.cancelAndSendContractVersion);
+    }
     return obj;
   },
 
@@ -1151,6 +1181,7 @@ export const ReadinessResponse: MessageFns<ReadinessResponse> = {
     message.workHistorySchemaVersion = object.workHistorySchemaVersion ?? 0;
     message.chatControlsContractVersion = object.chatControlsContractVersion ?? 0;
     message.modelProviderContractVersion = object.modelProviderContractVersion ?? undefined;
+    message.cancelAndSendContractVersion = object.cancelAndSendContractVersion ?? undefined;
     return message;
   },
 };
@@ -4248,6 +4279,7 @@ function createBaseSubmitRunRequest(): SubmitRunRequest {
     modelRef: undefined,
     inputMode: undefined,
     images: [],
+    cancelRunId: undefined,
   };
 }
 
@@ -4273,6 +4305,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     }
     for (const v of message.images) {
       ImageInput.encode(v!, writer.uint32(58).fork()).join();
+    }
+    if (message.cancelRunId !== undefined) {
+      writer.uint32(66).string(message.cancelRunId);
     }
     return writer;
   },
@@ -4346,6 +4381,14 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
             message.images.push(ImageInput.decode(reader, reader.uint32()));
             continue;
           }
+          case 8: {
+            if (tag !== 66) {
+              break;
+            }
+
+            message.cancelRunId = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -4389,6 +4432,11 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
       images: globalThis.Array.isArray(object?.images)
         ? object.images.map((e: any) => ImageInput.fromJSON(e))
         : [],
+      cancelRunId: isSet(object.cancelRunId)
+        ? globalThis.String(object.cancelRunId)
+        : isSet(object.cancel_run_id)
+        ? globalThis.String(object.cancel_run_id)
+        : undefined,
     };
   },
 
@@ -4415,6 +4463,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     if (message.images?.length) {
       obj.images = message.images.map((e) => ImageInput.toJSON(e));
     }
+    if (message.cancelRunId !== undefined) {
+      obj.cancelRunId = message.cancelRunId;
+    }
     return obj;
   },
 
@@ -4430,6 +4481,7 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     message.modelRef = object.modelRef ?? undefined;
     message.inputMode = object.inputMode ?? undefined;
     message.images = object.images?.map((e) => ImageInput.fromPartial(e)) || [];
+    message.cancelRunId = object.cancelRunId ?? undefined;
     return message;
   },
 };
@@ -4608,6 +4660,146 @@ export const GetRunRequest: MessageFns<GetRunRequest> = {
     const message = createBaseGetRunRequest();
     message.workId = object.workId ?? "";
     message.runId = object.runId ?? "";
+    return message;
+  },
+};
+
+function createBaseGetActiveRunRequest(): GetActiveRunRequest {
+  return { workId: "" };
+}
+
+export const GetActiveRunRequest: MessageFns<GetActiveRunRequest> = {
+  encode(message: GetActiveRunRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.workId !== "") {
+      writer.uint32(10).string(message.workId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetActiveRunRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseGetActiveRunRequest();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.workId = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): GetActiveRunRequest {
+    return {
+      workId: isSet(object.workId)
+        ? globalThis.String(object.workId)
+        : isSet(object.work_id)
+        ? globalThis.String(object.work_id)
+        : "",
+    };
+  },
+
+  toJSON(message: GetActiveRunRequest): unknown {
+    const obj: any = {};
+    if (message.workId !== "") {
+      obj.workId = message.workId;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<GetActiveRunRequest>): GetActiveRunRequest {
+    return GetActiveRunRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<GetActiveRunRequest>): GetActiveRunRequest {
+    const message = createBaseGetActiveRunRequest();
+    message.workId = object.workId ?? "";
+    return message;
+  },
+};
+
+function createBaseGetActiveRunResponse(): GetActiveRunResponse {
+  return { run: undefined };
+}
+
+export const GetActiveRunResponse: MessageFns<GetActiveRunResponse> = {
+  encode(message: GetActiveRunResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.run !== undefined) {
+      Run.encode(message.run, writer.uint32(10).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetActiveRunResponse {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseGetActiveRunResponse();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.run = Run.decode(reader, reader.uint32());
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): GetActiveRunResponse {
+    return { run: isSet(object.run) ? Run.fromJSON(object.run) : undefined };
+  },
+
+  toJSON(message: GetActiveRunResponse): unknown {
+    const obj: any = {};
+    if (message.run !== undefined) {
+      obj.run = Run.toJSON(message.run);
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<GetActiveRunResponse>): GetActiveRunResponse {
+    return GetActiveRunResponse.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<GetActiveRunResponse>): GetActiveRunResponse {
+    const message = createBaseGetActiveRunResponse();
+    message.run = (object.run !== undefined && object.run !== null) ? Run.fromPartial(object.run) : undefined;
     return message;
   },
 };
@@ -5516,6 +5708,16 @@ export const AgentServiceService = {
     responseSerialize: (value: Run): Buffer => Buffer.from(Run.encode(value).finish()),
     responseDeserialize: (value: Buffer): Run => Run.decode(value),
   },
+  getActiveRun: {
+    path: "/piwork.agent.v1.AgentService/GetActiveRun" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: GetActiveRunRequest): Buffer => Buffer.from(GetActiveRunRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): GetActiveRunRequest => GetActiveRunRequest.decode(value),
+    responseSerialize: (value: GetActiveRunResponse): Buffer =>
+      Buffer.from(GetActiveRunResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): GetActiveRunResponse => GetActiveRunResponse.decode(value),
+  },
   watchRun: {
     path: "/piwork.agent.v1.AgentService/WatchRun" as const,
     requestStream: false as const,
@@ -5643,6 +5845,16 @@ export const AgentServiceService = {
       Buffer.from(AgentContentResponse.encode(value).finish()),
     responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
   },
+  lookupAgentRequestRetrySubmission: {
+    path: "/piwork.agent.v1.AgentService/LookupAgentRequestRetrySubmission" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
   getAgentEvidence: {
     path: "/piwork.agent.v1.AgentService/GetAgentEvidence" as const,
     requestStream: false as const,
@@ -5667,6 +5879,7 @@ export interface AgentServiceServer extends UntypedServiceImplementation {
   readSessionImage: handleUnaryCall<ReadSessionImageRequest, SessionImage>;
   submitRun: handleUnaryCall<SubmitRunRequest, SubmitRunResponse>;
   getRun: handleUnaryCall<GetRunRequest, Run>;
+  getActiveRun: handleUnaryCall<GetActiveRunRequest, GetActiveRunResponse>;
   watchRun: handleServerStreamingCall<WatchRunRequest, RunEvent>;
   cancelRun: handleUnaryCall<CancelRunRequest, Run>;
   listRunModels: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
@@ -5680,6 +5893,7 @@ export interface AgentServiceServer extends UntypedServiceImplementation {
   getAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   cancelAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   retryAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  lookupAgentRequestRetrySubmission: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   getAgentEvidence: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
 }
 
@@ -5845,6 +6059,21 @@ export interface AgentServiceClient extends Client {
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: Run) => void,
+  ): ClientUnaryCall;
+  getActiveRun(
+    request: GetActiveRunRequest,
+    callback: (error: ServiceError | null, response: GetActiveRunResponse) => void,
+  ): ClientUnaryCall;
+  getActiveRun(
+    request: GetActiveRunRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: GetActiveRunResponse) => void,
+  ): ClientUnaryCall;
+  getActiveRun(
+    request: GetActiveRunRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: GetActiveRunResponse) => void,
   ): ClientUnaryCall;
   watchRun(request: WatchRunRequest, options?: Partial<CallOptions>): ClientReadableStream<RunEvent>;
   watchRun(
@@ -6024,6 +6253,21 @@ export interface AgentServiceClient extends Client {
     callback: (error: ServiceError | null, response: AgentContentResponse) => void,
   ): ClientUnaryCall;
   retryAgentRequest(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  lookupAgentRequestRetrySubmission(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  lookupAgentRequestRetrySubmission(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  lookupAgentRequestRetrySubmission(
     request: AgentContentRequest,
     metadata: Metadata,
     options: Partial<CallOptions>,

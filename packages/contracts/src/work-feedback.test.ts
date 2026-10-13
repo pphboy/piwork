@@ -4,6 +4,7 @@ import { Check } from "typebox/value";
 import {
   BrainCandidateSubmissionSchema, SetSessionModelSchema, AgentRequestStateSchema, AgentRequestedPayloadSchema, AgentWaitRefSchema, RunModelDescriptionSchema,
   RunModelSelectorSchema, ServiceConnectionSchema, ServiceEventSchema, ReadinessResponse, SubmitRunRequest, isBrainVerificationTarget,
+  SubmitRunInputSchema, ChatCapabilitiesSchema, AgentRequestRetryQuerySchema, AgentRequestRetrySubmissionSchema, AgentContentRequest, AgentContentResponse,
 } from "./index.js";
 
 test("model selection preserves omitted, explicit default, and explicit reference on protobuf wire", () => {
@@ -34,6 +35,19 @@ test("missing readiness fields cannot advertise brain or model support", () => {
   assert.equal(value.workFeedbackContractVersion, 0);
   assert.equal(value.workHistorySchemaVersion, 0);
   assert.equal(value.chatControlsContractVersion, 0);
+  assert.equal(value.cancelAndSendContractVersion, undefined);
+});
+
+test("cancel-and-send is an optional explicit target without changing legacy chat capabilities", () => {
+  const input = { sessionId: "session-1", submissionKey: "key", prompt: "hello" };
+  assert.equal(Check(SubmitRunInputSchema, input), true);
+  assert.equal(Check(SubmitRunInputSchema, { ...input, cancelRunId: "run-1" }), true);
+  for (const cancelRunId of ["", null, 1, "x".repeat(129)]) assert.equal(Check(SubmitRunInputSchema, { ...input, cancelRunId }), false);
+  for (const contractVersion of [0, 1, 2, 3]) {
+    assert.equal(Check(ChatCapabilitiesSchema, { contractVersion }), true);
+    assert.equal(Check(ChatCapabilitiesSchema, { contractVersion, cancelAndSendContractVersion: 1 }), true);
+  }
+  assert.equal(Check(ChatCapabilitiesSchema, { contractVersion: 3, cancelAndSendContractVersion: 2 }), false);
 });
 
 test("feedback contract rejects unknown state, unsafe connections, invalid scopes and unsupported fields", () => {
@@ -59,4 +73,18 @@ test("current candidate requires a fixed target and preference requires an expli
   assert.equal(Check(SetSessionModelSchema, {}), false);
   assert.equal(Check(SetSessionModelSchema, { modelRef: null }), true);
   assert.equal(Check(SetSessionModelSchema, { modelRef: "model-0000000000000001" }), true);
+});
+
+test("Retry readback uses the original bounded key and safe generic RPC envelope",()=>{
+ const input={submissionKey:"original-key"};
+ assert.equal(Check(AgentRequestRetryQuerySchema,input),true);
+ for(const invalid of [{},{submissionKey:""},{submissionKey:"x".repeat(257)},{...input,requestId:"other"}])
+  assert.equal(Check(AgentRequestRetryQuerySchema,invalid),false);
+ const query=AgentContentRequest.create({workId:"work-a",objectId:"request-original",inputJson:JSON.stringify(input)});
+ assert.deepEqual(AgentContentRequest.decode(AgentContentRequest.encode(query).finish()),query);
+ const result={workId:"work-a",requestId:"request-original",submissionKey:input.submissionKey,status:"not-found",request:null,checkedAt:"2026-10-12T00:00:00Z"};
+ assert.equal(Check(AgentRequestRetrySubmissionSchema,result),true);
+ assert.equal(Check(AgentRequestRetrySubmissionSchema,{...result,privateDigest:"secret"}),false);
+ const response=AgentContentResponse.create({valueJson:JSON.stringify(result)});
+ assert.deepEqual(AgentContentResponse.decode(AgentContentResponse.encode(response).finish()),response);
 });

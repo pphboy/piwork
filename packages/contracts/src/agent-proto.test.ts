@@ -9,6 +9,8 @@ import {
   Run,
   RunEvent,
   RunState,
+  GetActiveRunRequest,
+  GetActiveRunResponse,
   Session,
   SubmitRunRequest,
   WatchRunRequest,
@@ -22,6 +24,20 @@ test("incremental image RPC fields preserve bytes and explicit history negotiati
  assert.deepEqual(SubmitRunRequest.decode(SubmitRunRequest.encode(value).finish()),value);
  const history=ReadSessionRequest.fromPartial({workId:"w",sessionId:"s",imageProfile:"chat-images-v1"});assert.equal(ReadSessionRequest.decode(ReadSessionRequest.encode(history).finish()).imageProfile,"chat-images-v1");
  const block=SessionContentBlock.fromPartial({blockId:"run-image-0",type:"image",image:{mimeType:"image/png",byteSize:6,sha256:"a".repeat(64),imageIndex:0}});assert.deepEqual(SessionContentBlock.decode(SessionContentBlock.encode(block).finish()),block);
+});
+
+test("explicit cancel target and optional active Run survive the incremental wire contract", () => {
+  const legacy = SubmitRunRequest.create({ workId: "work-a", sessionId: "session-a", submissionKey: "key", prompt: "hello" });
+  assert.equal(SubmitRunRequest.decode(SubmitRunRequest.encode(legacy).finish()).cancelRunId, undefined);
+  const replacement = SubmitRunRequest.create({ ...legacy, cancelRunId: "run-old" });
+  assert.deepEqual(SubmitRunRequest.decode(SubmitRunRequest.encode(replacement).finish()), replacement);
+  const request = GetActiveRunRequest.create({ workId: "work-a" });
+  assert.deepEqual(GetActiveRunRequest.decode(GetActiveRunRequest.encode(request).finish()), request);
+  assert.equal(GetActiveRunResponse.decode(new Uint8Array()).run, undefined);
+  const response = GetActiveRunResponse.create({ run: { workId: "work-a", sessionId: "session-a", runId: "run-old", state: RunState.RUN_STATE_RUNNING } });
+  assert.deepEqual(GetActiveRunResponse.decode(GetActiveRunResponse.encode(response).finish()), response);
+  const ready = ReadinessResponse.create({ cancelAndSendContractVersion: 1 });
+  assert.equal(ReadinessResponse.decode(ReadinessResponse.encode(ready).finish()).cancelAndSendContractVersion, 1);
 });
 
 test("session and run messages survive binary serialization", () => {
@@ -109,6 +125,7 @@ test("generated grpc-js service exposes the durable Agent API", () => {
     "readSession", "getChatImageCapabilities", "readSessionImage",
     "submitRun",
     "getRun",
+    "getActiveRun",
     "watchRun",
     "cancelRun",
     "listRunModels",
@@ -122,6 +139,7 @@ test("generated grpc-js service exposes the durable Agent API", () => {
     "getAgentRequest",
     "cancelAgentRequest",
     "retryAgentRequest",
+    "lookupAgentRequestRetrySubmission",
     "getAgentEvidence",
   ]);
   assert.equal(AgentServiceService.watchRun.responseStream, true);

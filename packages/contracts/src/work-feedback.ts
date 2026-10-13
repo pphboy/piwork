@@ -36,6 +36,7 @@ export const SubmitRunInputSchema = Type.Object({
   images: Type.Optional(Type.Array(ChatImageInputSchema, { maxItems: 4 })),
   modelRef: Type.Optional(Type.Union([ResourceIdSchema, Type.Null()])),
   inputMode: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("command")])),
+  cancelRunId: Type.Optional(IdentifierSchema),
 }, strict);
 export const SetSessionModelSchema = Type.Object({
   modelRef: Type.Union([ResourceIdSchema, Type.Null()]),
@@ -152,6 +153,13 @@ export const AgentRequestQuerySchema = Type.Object({
   cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })),
 }, strict);
 export const RetryAgentRequestSchema = Type.Object({ submissionKey: Type.String({ minLength: 1, maxLength: 256 }) }, strict);
+export const AgentRequestRetryQuerySchema = Type.Object({ submissionKey: Type.String({ minLength: 1, maxLength: 256 }) }, strict);
+export const AgentRequestRetrySubmissionSchema = Type.Object({
+  workId: IdentifierSchema, requestId: IdentifierSchema, submissionKey: Type.String({ minLength: 1, maxLength: 256 }),
+  status: Type.Union([Type.Literal("accepted"), Type.Literal("not-found")]),
+  request: Type.Union([AgentRequestSchema, Type.Null()]), checkedAt: TimestampSchema,
+}, strict);
+export type AgentRequestRetrySubmission = Type.Static<typeof AgentRequestRetrySubmissionSchema>;
 export const AgentEvidenceQuerySchema = Type.Object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })) }, strict);
 export const AgentRequestPageSchema = Type.Object({ items: Type.Array(AgentRequestSchema, { maxItems: 100 }),
   nextCursor: Type.Union([Type.String(), Type.Null()]), checkedAt: TimestampSchema, availability: Type.Literal("available") }, strict);

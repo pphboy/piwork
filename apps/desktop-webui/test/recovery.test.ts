@@ -15,7 +15,7 @@ const server = createServer(async (request, response) => {
 before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, ...(process.env.PIWORK_TEST_BROWSER_BIN?{executablePath:process.env.PIWORK_TEST_BROWSER_BIN}:{channel:'chromium'}) }); });
 after(async () => { await browser.close(); await new Promise<void>(done => server.close(() => done())); });
 
-type RequestRecord = { bytes?: Buffer | null; path: string; method: string; headers: Record<string, string>; body: string };
+type RequestRecord = { search: string; bytes?: Buffer | null; path: string; method: string; headers: Record<string, string>; body: string };
 type Reply = { status?: number; json?: unknown; body?: string; headers?: Record<string, string>; abort?: boolean };
 const mtime1 = 'Sat, 03 Oct 2026 01:00:00 GMT';
 const mtime2 = 'Sat, 03 Oct 2026 01:00:02 GMT';
@@ -27,7 +27,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
   let desired: Record<string, any> = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents', modelRef: 'original', mcp: { servers: [] } };
   const session = () => ({ state: signedIn ? 'authenticated' : 'signed-out', generation, csrf: 'local-session-csrf', coreUrl: core, ...(signedIn ? { user: { account: 'owner', role: 'user' } } : {}) });
   await page.route('**/_desktop/**', async (route: Route) => {
-    const r: RequestRecord = { path: new URL(route.request().url()).pathname.replace('/_desktop/api/', ''), method: route.request().method(), bytes: route.request().postDataBuffer(), headers: route.request().headers(), body: route.request().postData() ?? '' }; requests.push(r);
+    const r: RequestRecord = { search: new URL(route.request().url()).search, path: new URL(route.request().url()).pathname.replace('/_desktop/api/', ''), method: route.request().method(), bytes: route.request().postDataBuffer(), headers: route.request().headers(), body: route.request().postData() ?? '' }; requests.push(r);
     let reply = await handler(r);
     if (!reply) {
       if (r.path === 'session') reply = { json: session() };
@@ -347,17 +347,24 @@ test('Brain rejected preference preserves confirmed value and message; foreign S
  foreign=true;await button(page,'save-model').click();await expect(button(page,'check-session-model')).toBeVisible();assert.equal(requests.filter(r=>r.method==='PATCH').length,2);
 });
 
-test('Brain request pages use original IDs, historical retry stays readonly and lost live retry keeps one new key',async t=>{
- const request={requestId:'req-original',goal:'Fix completed review',source:{kind:'service',serviceName:'workstation'},state:'needs_attention',disposition:'historical'};
- let historical=true,lost=true;
+test('Brain request pages use original IDs, historical retry stays readonly and lost live Retry uses one original-key GET',async t=>{
+ const request={requestId:'req-original',goal:'Fix completed review',source:{kind:'service',serviceName:'workstation'},state:'needs_attention',disposition:'historical',runIds:[]};
+ let historical=true,originalKey='';
  const {page,requests}=await fixture(t,r=>{
-  if(r.path.endsWith('/agent-requests/req-original'))return{json:{request:{...request,disposition:historical?'historical':'live'},evidence:{items:[],nextCursor:null},runs:[]}};
-  if(r.path.endsWith('/agent-requests/req-original/retry'))return lost?{abort:true}:{json:{requestId:'req-new',retryOf:'req-original'}};
+  if(r.path.endsWith('/agent-requests/req-original'))return{json:{request:{...request,disposition:historical?'historical':'live'},evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/agent-requests/req-original/retry')){originalKey=JSON.parse(r.body).submissionKey;return{abort:true};}
+  if(r.path.endsWith('/retry-submission')){
+   assert.equal(new URLSearchParams(r.search).get('submissionKey'),originalKey);
+   return{json:{workId:'work-1',requestId:'req-original',submissionKey:originalKey,status:'accepted',request:{...request,requestId:'req-new',retryOf:'req-original',disposition:'live'}}};
+  }
  });
  await assert.rejects(api(page,"await adapter.retryRequest('work-1','req-original')"));assert.equal(requests.filter(r=>r.method==='POST').length,0);
- historical=false;await assert.rejects(api(page,"await adapter.retryRequest('work-1','req-original')"));const first=requests.filter(r=>r.method==='POST').at(-1)!;
- await page.waitForTimeout(100);assert.equal(requests.filter(r=>r.method==='POST').length,1);lost=false;const result=await api(page,"return adapter.retryRequest('work-1','req-original')");
- assert.equal(result.requestId,'req-new');assert.equal(requests.filter(r=>r.method==='POST').at(-1)!.body,first.body);
+ historical=false;await assert.rejects(api(page,"await adapter.retryRequest('work-1','req-original')"));
+ await assert.rejects(api(page,"await adapter.retryRequest('work-1','req-original')"));
+ assert.equal(requests.filter(r=>r.method==='POST').length,1);
+ const result=await api(page,"return adapter.checkRequestRetry('work-1','req-original')");
+ assert.equal(result.requestId,'req-new');assert.equal(requests.filter(r=>r.method==='POST').length,1);
+ assert.equal(requests.filter(r=>r.path.endsWith('/retry-submission')).length,1);
 });
 
 test('Brain request details keep imported history readonly and closing does not cancel',async t=>{
@@ -907,7 +914,7 @@ test('UX revision Activity failures remain visible and secondary Service identit
   await expect(page.locator('.composer-caption')).toContainText('Service identity is not added');await button(page,'chat-input-options').click();
   await expect(page.locator('#include-identity')).toBeChecked();await expect(page.locator('#modal')).toContainText('Only command arguments are sent');await button(page,'close-modal').click();
   await page.locator('#composer').fill('ordinary text');await expect(button(page,'chat-input-options')).toHaveAttribute('aria-pressed','true');
-  await page.locator('.run-history summary').click();await expect(page.locator('.run-history')).toContainText('technical-run-id');
+  await expect(page.locator('.run-history')).toHaveCount(0);await button(page,'run-details').click();await expect(page.locator('#modal')).toContainText('deepseek-flash');await expect(page.locator('#modal details').first()).toContainText('technical-run-id');
 });
 
 test('UX commands preserve existing parameters and IME/Shift Enter do not execute',async t=>{
@@ -1979,4 +1986,450 @@ test('Work naming: Import uses the actual Core name and preserves it across stag
       assert.equal(requests.filter(r => r.path === 'work-packages' && r.method === 'POST').length, 0);
     });
   }
+});
+
+const controlRun=(id='run-background',state=2,sessionId='session-auto',source:any={kind:'service',serviceName:'Tool A',requestId:'request-a'})=>({workId:'work-1',sessionId,runId:id,submissionKey:'original-key',state,acceptedAt:'2026-10-12T00:00:00Z',actualModel:chatModel,thinkingLevel:'high',source,finalText:state===4?'Original associated reply':''});
+const controlRequest=(state='waiting_result',disposition='live')=>({requestId:'request-a',goal:'Build the requested report',source:{kind:'service',serviceName:'Tool A'},state,disposition,createdAt:'2026-10-12T00:00:00Z',updatedAt:'2026-10-12T00:01:00Z',runIds:['run-background'],result:null,error:null,waitRef:state==='waiting_result'?{kind:'job',id:'job-original',deadlineAt:'2026-10-12T00:05:00Z'}:null});
+function controlFixture(r:RequestRecord):Reply|undefined {
+ if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3,cancelAndSendContractVersion:1}};
+ if(r.path.endsWith('/chat-models'))return{json:chatModels()};
+ if(r.path.endsWith('/sessions/session-1/chat-options'))return{json:{workId:'work-1',sessionId:'session-1',modelRef:null,model:chatModel,availability:'available',thinkingLevel:'off',source:{kind:'chat'}}};
+ if(r.path.endsWith('/runs/active'))return{json:{run:null}};
+ return focusFixture(r);
+}
+
+test('Controls Service presence is bounded, discovers the first record, preserves terminal history and stops when hidden',async t=>{
+ let present=false,fail=false;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return fail?{status:503,json:{message:'Request status unavailable'}}:{json:{items:present?[controlRequest('completed','historical')]:[],nextCursor:null}};
+  return controlFixture(r);
+ });
+ await expect(page.locator('iframe')).toBeVisible();await page.clock.install();
+ await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.confirmed")).toBe(true);
+ await expect(button(page,'service-requests')).toHaveCount(0);present=true;await page.clock.runFor(5100);
+ await expect(button(page,'service-requests')).toBeVisible();
+ const actions=page.locator('.service-toolbar .actions');assert.equal(await actions.locator('button').first().textContent(),'Agent requests');
+ fail=true;await page.clock.runFor(5100);await expect(button(page,'service-requests')).toBeVisible();
+ await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));});
+ const reads=requests.filter(r=>r.path.endsWith('/agent-requests')).length;await page.clock.runFor(15000);assert.equal(requests.filter(r=>r.path.endsWith('/agent-requests')).length,reads);
+ for(const r of requests.filter(r=>r.path.endsWith('/agent-requests'))){const q=new URLSearchParams(r.search);assert.equal(q.get('limit'),'1');assert.equal(q.get('serviceName'),'Tool A');}
+ assert.equal(chatWrites(requests).length,0);
+});
+
+test('Controls Service detail reads only associated replies, returns list focus and preserves iframe, Main draft and reading position',async t=>{
+ let state='waiting_result';
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[controlRequest(state)],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a/cancel')){state='cancelled';return{json:{requestId:'request-a',state}};}
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request:controlRequest(state),evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',4)};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await expect(page.locator('iframe')).toBeVisible();await page.locator('#composer').fill('Keep this Main draft');
+ await page.evaluate(()=>{(window as any).controlFrame=document.querySelector('iframe');(window as any).controlComposer=document.querySelector('#composer');});
+ const loads=requests.filter(r=>r.path==='/_desktop/focus-app/').length;
+ await button(page,'service-requests').click();await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');await expect(page.locator('#modal')).toContainText('job-original');
+ await expect(page.locator('#modal')).toContainText('waiting_result');await expect(page.locator('#modal input, #modal textarea')).toHaveCount(0);await expect(button(page,'retry-pi-request')).toHaveCount(0);
+ await page.evaluate(()=>{(window as any).requestCheckButton=document.querySelector('#modal .modal-footer [data-action=pi-request-detail]');});
+ await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelled');await expect(button(page,'cancel-pi-request')).toHaveCount(0);
+ assert.equal(await page.evaluate(()=>document.querySelector('#modal .modal-footer [data-action=pi-request-detail]')===(window as any).requestCheckButton),true);await button(page,'pi-request-detail').click();await expect(page.locator('#modal h2')).toHaveText('Agent request');
+ await button(page,'close-modal').click();await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');await expect(page.locator('[data-action=pi-request-detail]')).toBeFocused();
+ await button(page,'close-modal').click();await expect(button(page,'service-requests')).toBeFocused();await expect(page.locator('#composer')).toHaveValue('Keep this Main draft');
+ assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).controlFrame),true);assert.equal(await page.evaluate(()=>document.querySelector('#composer')===(window as any).controlComposer),true);assert.equal(requests.filter(r=>r.path==='/_desktop/focus-app/').length,loads);
+ assert.equal(requests.filter(r=>r.path.includes('/sessions/session-auto')).length,0);assert.equal(chatWrites(requests).length,0);
+ assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);
+ await button(page,'service-focus').click();await button(page,'focus-toggle-chat').click();await page.setViewportSize({width:360,height:800});await expect(button(page,'service-requests')).toBeVisible();await expect(button(page,'exit-service-focus')).toBeVisible();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+});
+
+test('Controls cancelling request is observed to its actual terminal result; lost cancel receipt is checked without retry',async t=>{
+ let state='running',lose=true;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[controlRequest(state)],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a/cancel')){state='cancelling';return lose?{abort:true}:{json:{requestId:'request-a'}};}
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request:controlRequest(state),evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',state==='running'?2:state==='cancelling'?3:6)};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();
+ await expect(page.locator('#modal')).toContainText('response was lost');await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('cancelling');await expect(button(page,'cancel-pi-request')).toBeDisabled();
+ await page.clock.install();state='completed';await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('completed');await expect(button(page,'cancel-pi-request')).toHaveCount(0);
+ assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
+});
+
+for(const target of [{session:'session-1',source:{kind:'chat'}},{session:'session-other',source:{kind:'chat'}},{session:'session-auto',source:{kind:'service',serviceName:'Tool A'}}])test(`Controls Stop and send binds ${target.session} and keeps the user Session and later edits`,async t=>{
+ let active:any=controlRun('old-run',2,target.session,target.source),release!:()=>void,submitted=false;
+ const gate=new Promise<void>(resolve=>release=resolve);
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path.endsWith('/runs/active'))return{json:{run:active}};
+  if(r.path.endsWith('/runs')&&r.method==='POST'){submitted=true;await gate;const input=JSON.parse(r.body);active=null;return{status:202,json:{run:{...controlRun('new-run',4,'session-1',{kind:'chat'}),submissionKey:input.submissionKey}}};}
+  if(r.path.endsWith('/runs/new-run/events'))return{body:'',headers:{'Content-Type':'application/x-ndjson'}};
+  if(r.path.endsWith('/runs/new-run'))return{json:controlRun('new-run',4,'session-1',{kind:'chat'})};
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();await expect(page.getByRole('button',{name:'Stop and send',exact:true})).toBeEnabled();
+ await page.locator('#composer').fill('First message');await page.locator('#composer').press('Shift+Enter');assert.equal(chatWrites(requests).length,0);await page.locator('#composer').fill('First message');
+ await button(page,'send-message').click();await expect.poll(()=>submitted).toBe(true);await expect(page.locator('#app')).toContainText('Stopping the previous Run');
+ await page.locator('#composer').fill('Later edit');release();await expect.poll(()=>api(page,"return adapter.getWork('work-1').run?.id")).toBe('new-run');await expect(page.locator('#composer')).toHaveValue('Later edit');
+ const posts=requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST');assert.equal(posts.length,1);assert.equal(JSON.parse(posts[0]!.body).cancelRunId,'old-run');assert.equal(JSON.parse(posts[0]!.body).sessionId,'session-1');assert.equal(JSON.parse(posts[0]!.body).prompt,'First message');assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
+ assert.equal(requests.filter(r=>r.path.endsWith(`/sessions/${target.session}`)&&target.session!=='session-1').length,0);
+});
+
+test('Controls timeout preserves draft and late old completion cannot send; unknown acceptance uses original key GET',async t=>{
+ let mode='timeout',active:any=controlRun(),originalKey='';
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/runs/active'))return{json:{run:active}};
+  if(r.path.endsWith('/runs')&&r.method==='POST'){originalKey=JSON.parse(r.body).submissionKey;return mode==='timeout'?{status:409,json:{code:'CANCEL_TIMEOUT',message:'The previous Run has not stopped; your message was not sent. Check its status'}}:{abort:true};}
+  if(r.path.includes('/runs/submissions/'))return{json:{kind:'run',status:'accepted',key:originalKey,run:{...controlRun('recovered-run',4,'session-1',{kind:'chat'}),submissionKey:originalKey}}};
+  if(r.path.endsWith('/runs/recovered-run/events'))return{body:'',headers:{'Content-Type':'application/x-ndjson'}};
+  if(r.path.endsWith('/runs/recovered-run'))return{json:controlRun('recovered-run',4,'session-1',{kind:'chat'})};
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('Keep original');await button(page,'send-message').click();await expect(page.locator('#app')).toContainText('your message was not sent');await expect(page.locator('#composer')).toHaveValue('Keep original');
+ active=null;await api(page,"await adapter.loadActiveRun('work-1',true)");assert.equal(requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST').length,1);await expect(button(page,'send-message')).toHaveAttribute('aria-label','Send message');
+ mode='lost';active=controlRun();await api(page,"await adapter.loadActiveRun('work-1',true)");await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await page.locator('#composer').fill('Next draft');await button(page,'check-chat-submission').click();await expect(page.locator('#composer')).toHaveValue('Next draft');
+ assert.equal(requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST').length,2);assert.equal(requests.filter(r=>r.path.includes('/runs/submissions/')).length,1);assert.ok(requests.some(r=>r.path.endsWith(`/runs/submissions/${originalKey}`)));
+});
+
+test('Controls historical Run information is on demand and never replaces the current observation or shows IDs in the body',async t=>{
+ const old=controlRun('historical-run',4,'session-1',{kind:'chat'});
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/sessions/session-1'))return{json:{session:{sessionId:'session-1',workId:'work-1',modelPreference:null},messages:[{role:'user',text:'Original prompt'}],runs:[old]}};
+  if(r.path.endsWith('/runs/historical-run'))return{json:old};
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();await expect(page.locator('#messages .run-history')).toHaveCount(0);assert.ok(!(await page.locator('#messages').textContent())!.includes('historical-run'));
+ const current=await api(page,"return adapter.getWork('work-1').run?.id || null");await button(page,'run-details').click();await expect(page.locator('#modal')).toContainText('Actual model');await expect(page.locator('#modal')).toContainText('high');assert.equal(await api(page,"return adapter.getWork('work-1').run?.id || null"),current);assert.equal(chatWrites(requests).length,0);
+});
+
+test('Controls Service scopes discard late reads, share ports, retain list scroll and clear prior identity',async t=>{
+ let release!:()=>void,delayed=true;const gate=new Promise<void>(resolve=>release=resolve);t.after(async()=>release());
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path.endsWith('/services'))return{json:{services:['a','b'].map(id=>({serviceId:`service-${id}`,name:`Tool ${id.toUpperCase()}`,enabled:true,observedState:'ready',access:{hostname:`${id}.work.test`,ports:[{port:80,url:`http://${id}.work.test`,name:'web'},{port:81,url:`http://${id}.work.test`,name:'extra'}]}}))}};
+  if(r.path.endsWith('/agent-requests')){const q=new URLSearchParams(r.search);if(q.get('serviceName')==='Tool A'&&delayed){await gate;return{json:{items:[controlRequest()],nextCursor:null}};}return{json:{items:[],nextCursor:null}};}
+  return controlFixture(r);
+ });
+ await expect(page.locator('#service-select')).toBeVisible();await expect.poll(()=>requests.filter(r=>r.path.endsWith('/agent-requests')).length).toBeGreaterThan(0);
+ await page.locator('#service-select').selectOption('service-b');await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool B')?.confirmed")).toBe(true);release();await page.waitForTimeout(100);await expect(button(page,'service-requests')).toHaveCount(0);
+ assert.equal(await api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords || false"),false);
+ delayed=false;await page.locator('#port-select').selectOption('81');assert.ok(requests.filter(r=>r.path.endsWith('/agent-requests')).every(r=>!new URLSearchParams(r.search).has('port')));
+ await api(page,"await adapter.signOut()");assert.equal(await api(page,"return adapter.requestPresence.size"),0);await expect(button(page,'service-requests')).toHaveCount(0);
+});
+
+for(const state of ['pending','waiting_result'])test(`Controls ${state} cancellation completes original record and Close never cancels`,async t=>{
+ let current=state;const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[{...controlRequest(current),runIds:[]}],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request:{...controlRequest(current),runIds:[]},evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/agent-requests/request-a/cancel')){current='cancelled';return{json:{requestId:'request-a'}};}
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'close-modal').click();await button(page,'close-modal').click();assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
+ await button(page,'service-requests').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelled');assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
+});
+
+test('Controls active read failure stays unconfirmed; empty, unknown commands and IME cannot cancel',async t=>{
+ let fail=true;const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/runs/active'))return fail?{status:503,json:{message:'Active status unavailable'}}:{json:{run:controlRun()}};
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeDisabled();await expect(button(page,'check-active-run')).toBeVisible();fail=false;await button(page,'check-active-run').click();await expect(button(page,'send-message')).toHaveAttribute('aria-label','Stop and send');
+ await page.locator('#composer').fill('');await button(page,'send-message').click();await page.locator('#composer').fill('/unknown');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
+ await page.locator('#composer').fill('A valid message');await page.locator('#composer').evaluate(input=>{input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true}));});assert.equal(chatWrites(requests).length,0);assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
+ for(const command of ['model','thinking','resume','settings']){await page.locator('#composer').fill('/'+command);await page.locator('#composer').press('Escape');await expect(button(page,'send-message')).toHaveAttribute('aria-label','Send message');}
+});
+
+test('Controls request pagination, filter and exact list reading position survive details and cancellation',async t=>{
+ const rows=Array.from({length:25},(_,i)=>({...controlRequest('pending'),requestId:`request-${i}`,goal:`Request ${i} ${'report details '.repeat(8)}`,runIds:[]}));
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests')){const more=new URLSearchParams(r.search).get('cursor')==='page-two';return{json:{items:more?[{...controlRequest('pending'),requestId:'request-25',runIds:[]}]:rows,nextCursor:more?null:'page-two'}};}
+  if(r.path.includes('/agent-requests/request-')){const id=r.path.split('/').at(-1);return{json:{request:{...controlRequest('completed'),requestId:id,runIds:[]},evidence:{items:[],nextCursor:null}}};}
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'next-pi-requests').click();await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
+ await page.locator('#modal [data-action=pi-request-detail]').first().focus();await page.locator('.modal-body').evaluate(node=>node.scrollTop=135);
+ const before=await page.locator('.modal-body').evaluate(node=>node.scrollTop);
+ await page.locator('#modal [data-action=pi-request-detail]').first().evaluate(node=>(node as HTMLButtonElement).click());await button(page,'close-modal').click();
+ assert.equal(await page.locator('.modal-body').evaluate(node=>node.scrollTop),before);await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');await expect(page.locator('#modal [data-action=pi-request-detail]').first()).toBeFocused();
+ assert.ok(requests.some(r=>new URLSearchParams(r.search).get('cursor')==='page-two'));assert.equal(chatWrites(requests).length,0);
+});
+
+test('Controls recovery: failed reread retains a confirmed Agent reply',async t=>{
+ let fail=false;
+ const {page}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[controlRequest('completed')],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request:controlRequest('completed'),evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/runs/run-background'))return fail?{status:503,json:{message:'Run read temporarily unavailable'}}:{json:controlRun('run-background',4)};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');
+ fail=true;await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('reply refresh failed');
+ await expect(page.locator('#modal')).toContainText('Original associated reply');
+});
+test('Controls recovery: another active Run does not hide the current Chat failure',async t=>{
+ const {page}=await fixture(t,r=>{
+  if(r.path.endsWith('/runs/active'))return{json:{run:controlRun('background-active',2)}};
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toHaveAttribute('aria-label','Stop and send');
+ await api(page,"const w=adapter.getWork('work-1');w.run={id:'failed-manual',sessionId:'session-1',status:'failed',created:'2026-10-12T00:00:00Z',cursor:0,error:'The manual answer failed',source:{kind:'chat'}};w.sessions[0].runs=[w.run];await adapter.loadModels('work-1');");
+ await expect(page.locator('.composer-wrap')).toContainText('The manual answer failed');
+});
+test('Controls recovery: cancellation from list follows its terminal state',async t=>{
+ let state='running';
+ const {page}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[controlRequest(state)],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a/cancel')){state='cancelling';return{json:{requestId:'request-a'}};}
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request:controlRequest(state),evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',state==='cancelling'?3:6)};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelling');
+ await page.clock.install();state='cancelled';await page.clock.runFor(6000);await expect(page.locator('#modal')).toContainText('cancelled');
+});
+
+test('Controls recovery: lost Retry receipt resolves only through the original read key',async t=>{
+ const original={...controlRequest('failed'),source:{kind:'chat'},runIds:[]};
+ const retried={...original,requestId:'request-retried',retryOf:'request-a',state:'completed',result:'Retried once'};
+ let originalKey='',lookupMode='not-found';
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[original],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a/retry')){originalKey=JSON.parse(r.body).submissionKey;return{abort:true};}
+  if(r.path.endsWith('/retry-submission')){
+   assert.equal(new URLSearchParams(r.search).get('submissionKey'),originalKey);
+   if(lookupMode==='unsupported')return{status:501,json:{code:'RETRY_SUBMISSION_LOOKUP_UNSUPPORTED',message:'Lookup unsupported'}};
+   if(lookupMode==='old-core')return{status:404,json:{code:'NOT_FOUND',message:'Old Core has no lookup route'}};
+   if(lookupMode==='foreign-work')return{json:{workId:'foreign-work',requestId:'request-a',submissionKey:originalKey,status:'accepted',request:retried}};
+   return{json:{workId:'work-1',requestId:'request-a',submissionKey:originalKey,status:lookupMode==='foreign'?'accepted':lookupMode,request:lookupMode==='accepted'?retried:lookupMode==='foreign'?{...retried,retryOf:'wrong-original'}:null}};
+  }
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request:original,evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/agent-requests/request-retried'))return{json:{request:retried,evidence:{items:[],nextCursor:null}}};
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();await button(page,'pi-requests').click();await button(page,'pi-request-detail').click();
+ await button(page,'retry-pi-request').click();await expect(page.locator('#modal')).toContainText('response was lost');
+ const key=await api(page,"return adapter.requestRetries.get('work-1:request-a').submissionKey");
+ await api(page,"adapter.requestRetries.set('work-1:unrelated',{submissionKey:'unrelated-key',error:'unknown',unknown:true})");
+ for(const mode of ['not-found','unsupported','old-core','foreign-work','foreign']){
+  lookupMode=mode;await button(page,'pi-request-detail').click();
+  await expect(button(page,'retry-pi-request')).toBeDisabled();
+  assert.equal(await api(page,"return adapter.requestRetries.get('work-1:request-a').submissionKey"),key);
+ }
+ lookupMode='accepted';await button(page,'pi-request-detail').click();
+ await expect(page.locator('#modal')).toContainText('Retried once');
+ assert.equal(await api(page,"return adapter.requestRetries.has('work-1:request-a')"),false);
+ assert.equal(requests.filter(r=>r.path.endsWith('/retry')&&r.method==='POST').length,1);
+ assert.equal(requests.filter(r=>r.path.endsWith('/retry-submission')&&r.method==='GET').length,6);
+ assert.equal(await api(page,"return adapter.requestRetries.get('work-1:unrelated').submissionKey"),'unrelated-key');
+});
+
+test('Controls recovery: partial reply reads retain independent values and exclude removed associations',async t=>{
+ let failed=false,version=1,ids=['run-background','run-second'];
+ const {page}=await fixture(t,r=>{
+  const request={...controlRequest('completed'),runIds:ids};
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[request],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request,evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/runs/run-background'))return failed?{status:503,json:{message:'Temporarily offline'}}:{json:{...controlRun('run-background',4),finalText:'First reply '+version}};
+  if(r.path.endsWith('/runs/run-second'))return{json:{...controlRun('run-second',4),finalText:'Second reply '+version}};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();
+ await expect(page.locator('#modal')).toContainText('First reply 1');await expect(page.locator('#modal')).toContainText('Second reply 1');
+ failed=true;version=2;await button(page,'pi-request-detail').click();
+ await expect(page.locator('#modal')).toContainText('reply refresh failed');await expect(page.locator('#modal')).toContainText('First reply 1');await expect(page.locator('#modal')).toContainText('Second reply 2');await expect(page.locator('#modal')).toContainText('Last confirmed');
+ failed=false;version=3;await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('First reply 3');await expect(page.locator('#modal')).not.toContainText('reply refresh failed');
+ ids=['run-second'];await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).not.toContainText('First reply');
+});
+
+test('Controls recovery: original interrupted observer actions stay bound while another Session is active',async t=>{
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/runs/active'))return{json:{run:controlRun('background-active',2)}};
+  if(r.path.endsWith('/runs/interrupted-manual'))return{json:{...controlRun('interrupted-manual',2,'session-1',{kind:'chat'}),error:{message:'Observer interrupted'}}};
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toHaveAttribute('data-cancel-run-id','background-active');
+ await api(page,"const w=adapter.getWork('work-1');w.run={id:'interrupted-manual',sessionId:'session-1',status:'running',created:'2026-10-12T00:00:00Z',cursor:7,error:'Observer interrupted',source:{kind:'chat'}};w.sessions[0].runs=[w.run];await adapter.loadModels('work-1');");
+ await expect(page.locator('.composer-wrap')).toContainText('Observer interrupted');
+ const original=page.getByRole('button',{name:'Check original Run',exact:true});await expect(original).toHaveAttribute('data-run-id','interrupted-manual');await original.click();
+ await expect(page.locator('#modal')).toContainText('interrupted-manual');
+ assert.ok(requests.some(r=>r.path.endsWith('/runs/interrupted-manual')&&r.method==='GET'));
+ assert.equal(await api(page,"return adapter.activeRuns.get('work-1').run.id"),'background-active');
+ assert.equal(await api(page,"return adapter.getWork('work-1').run.id"),'interrupted-manual');
+ assert.equal(requests.filter(r=>r.method==='POST'&&r.path.endsWith('/runs')).length,0);
+});
+
+test('Controls recovery: closing or hiding cancellation list stops reads and reopening checks original once',async t=>{
+ let state='running',fail=false;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[controlRequest(state)],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a/cancel')){state='cancelling';return{abort:true};}
+  if(r.path.endsWith('/agent-requests/request-a'))return fail?{status:503,json:{message:'Read temporarily failed'}}:{json:{request:controlRequest(state),evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',state==='cancelled'?6:3)};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();
+ await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('response was lost');
+ await page.clock.install();
+ await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));});
+ await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('cancelling');
+ fail=true;await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('Cancellation status not confirmed');await expect(page.locator('#modal')).toContainText('cancelling');
+ await button(page,'close-modal').click();const reads=()=>requests.filter(r=>r.path.endsWith('/agent-requests/request-a')).length,closed=reads();
+ await page.clock.runFor(15000);assert.equal(reads(),closed);
+ fail=false;state='cancelled';await button(page,'service-requests').click();await expect(page.locator('#modal')).toContainText('cancelled');
+ await expect(button(page,'cancel-pi-request')).toHaveCount(0);assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);
+});
+
+test('Controls recovery: late reply and Retry lookups cannot repopulate a new identity',async t=>{
+ let releaseReply!:()=>void,releaseLookup!:()=>void;
+ const replyGate=new Promise<void>(resolve=>releaseReply=resolve),lookupGate=new Promise<void>(resolve=>releaseLookup=resolve);
+ t.after(()=>{releaseReply();releaseLookup();});
+ let delayed=false,lookupStarted=false;
+ const original={...controlRequest('failed'),source:{kind:'chat'}};
+ const {page}=await fixture(t,async r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[original],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request:original,evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/runs/run-background')){if(delayed)await replyGate;return{json:controlRun('run-background',4)};}
+  if(r.path.endsWith('/retry-submission')){lookupStarted=true;await lookupGate;return{json:{workId:'work-1',requestId:'request-a',submissionKey:'original-key',status:'accepted',request:{...original,requestId:'retried',retryOf:'request-a'}}};}
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();await button(page,'pi-requests').click();await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');
+ delayed=true;
+ const pending=api(page,"void adapter.loadRequest('work-1','request-a');adapter.requestRetries.set('work-1:request-a',{submissionKey:'original-key',error:'unknown',unknown:true});try{await adapter.checkRequestRetry('work-1','request-a');}catch{}");
+ await expect.poll(()=>lookupStarted).toBe(true);await api(page,"await adapter.signOut()");releaseReply();releaseLookup();await pending;
+ assert.equal(await api(page,"return adapter.requestResponses.size"),0);assert.equal(await api(page,"return adapter.requestRetries.size"),0);
+ await expect(page.locator('#app')).not.toContainText('Original associated reply');
+});
+
+test('Controls recovery: first unconfirmed reply differs from a failed refresh and recovers',async t=>{
+ let fail=true;
+ const {page}=await fixture(t,r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[controlRequest('completed')],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request:controlRequest('completed'),evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/runs/run-background'))return fail?{status:503,json:{message:'Not yet readable'}}:{json:controlRun('run-background',4)};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();
+ await expect(page.locator('#modal')).toContainText('reply has not been confirmed');await expect(page.locator('#modal')).not.toContainText('last confirmed content retained');await expect(page.locator('#modal')).not.toContainText('Last confirmed');
+ fail=false;await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');await expect(page.locator('#modal')).toContainText('Last confirmed');await expect(page.locator('#modal')).not.toContainText('reply refresh failed');
+});
+
+test('Controls recovery: a changed association during an in-flight read loads only its current replies',async t=>{
+ let ids=['run-background'],started=false,release!:()=>void;
+ const gate=new Promise<void>(resolve=>release=resolve);t.after(()=>release());
+ const {page}=await fixture(t,async r=>{
+  const request={...controlRequest('completed'),runIds:ids};
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[request],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a'))return{json:{request,evidence:{items:[],nextCursor:null}}};
+  if(r.path.endsWith('/runs/run-background')){started=true;await gate;return{json:{...controlRun('run-background',4),finalText:'Removed reply'}};}
+  if(r.path.endsWith('/runs/run-current'))return{json:{...controlRun('run-current',4),finalText:'Current associated reply'}};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await expect.poll(()=>started).toBe(true);
+ ids=['run-current'];await button(page,'pi-request-detail').click();release();
+ await expect(page.locator('#modal')).toContainText('Current associated reply');await expect(page.locator('#modal')).not.toContainText('Removed reply');
+});
+
+test('Controls pagination: late evidence preserves the confirmed terminal and original list context',async t=>{
+ let state='running',started=false,release!:()=>void;
+ const gate=new Promise<void>(resolve=>release=resolve);t.after(()=>release());
+ const record=()=>({...controlRequest(state),updatedAt:state==='cancelled'?'2026-10-13T00:02:00Z':'2026-10-13T00:01:00Z',
+  result:state==='cancelled'?'Final checked result':null,error:state==='cancelled'?{code:'FINAL_DIAGNOSTIC',message:'Final checked diagnostic'}:null});
+ const filler=Array.from({length:24},(_,i)=>({...controlRequest('completed'),requestId:`other-${i}`,goal:`Other report ${i}`,runIds:[]}));
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path.endsWith('/agent-requests')){
+   const q=new URLSearchParams(r.search);
+   return{json:{items:q.get('limit')==='1'?[record()]:q.get('cursor')?[{...filler[0],requestId:'second-list-page'}]:[record(),...filler],nextCursor:q.get('cursor')?null:'list-page-two'}};
+  }
+  if(r.path.endsWith('/agent-requests/request-a/cancel')){state='cancelling';return{json:{requestId:'request-a'}};}
+  if(r.path.endsWith('/agent-requests/request-a')){
+   const captured=record();
+   if(new URLSearchParams(r.search).has('cursor')){started=true;await gate;return{json:{request:captured,checkedAt:'2026-10-13T00:01:00Z',evidence:{items:[{evidenceId:'second',kind:'query',summary:'Delayed second evidence page'}],nextCursor:null}}};}
+   return{json:{request:captured,checkedAt:state==='cancelled'?'2026-10-13T00:02:00Z':'2026-10-13T00:01:00Z',evidence:{items:[{evidenceId:'first',kind:'query',summary:'First evidence page'}],nextCursor:'evidence-page-two'}}};
+  }
+  if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',4)};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await expect(page.locator('iframe')).toBeVisible();
+ await page.locator('#composer').fill('Keep draft during evidence pagination');
+ await page.evaluate(()=>{(window as any).paginationFrame=document.querySelector('iframe');(window as any).paginationFrameLoads=0;document.querySelector('iframe')!.addEventListener('load',()=>{(window as any).paginationFrameLoads++;});});
+ await page.clock.install();await button(page,'service-requests').click();await button(page,'next-pi-requests').click();
+ await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
+ await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelling');
+ const detail=page.locator('#modal [data-action=pi-request-detail][data-id=request-a]');
+ await detail.focus();await page.locator('.modal-body').evaluate(node=>node.scrollTop=135);
+ const listScroll=await page.locator('.modal-body').evaluate(node=>node.scrollTop);
+ await detail.evaluate(node=>(node as HTMLButtonElement).click());await page.locator('#modal details').click();
+ const more=button(page,'next-pi-evidence').click();await expect.poll(()=>started).toBe(true);
+ state='cancelled';await api(page,"await adapter.loadRequest('work-1','request-a',false,false)");
+ await expect(page.locator('#modal')).toContainText('cancelled');await expect(page.locator('#modal')).toContainText('Original associated reply');
+ const confirmed=await api(page,"const d=adapter.requestDetails.get('work-1:request-a');return {request:d.request,checkedAt:d.checkedAt}");
+ release();await more;await expect(page.locator('#modal')).toContainText('Delayed second evidence page');
+ assert.deepEqual(await api(page,"const d=adapter.requestDetails.get('work-1:request-a');return {request:d.request,checkedAt:d.checkedAt}"),confirmed);
+ await expect(page.locator('#modal')).toContainText('cancelled');await expect(page.locator('#modal')).toContainText('Final checked result');await expect(page.locator('#modal')).toContainText('Final checked diagnostic');
+ assert.deepEqual(await api(page,"const d=adapter.requestDetails.get('work-1:request-a');return {request:d.request,checkedAt:d.checkedAt}"),confirmed);
+ assert.deepEqual(await api(page,"return adapter.requestDetails.get('work-1:request-a').evidence.items.map(e=>e.evidenceId)"),['first','second']);
+ assert.equal(await api(page,"return adapter.requestDetails.get('work-1:request-a').evidence.nextCursor"),null);
+ assert.equal(await api(page,"return adapter.cancellingRequests.has('work-1:request-a')"),false);
+ await button(page,'close-modal').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);await expect(detail).toBeFocused();
+ assert.equal(await page.locator('.modal-body').evaluate(node=>node.scrollTop),listScroll);
+ await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));});
+ const readbacks=()=>requests.filter(r=>r.path.endsWith('/agent-requests/request-a')).length,before=readbacks();
+ await page.clock.runFor(6000);
+ assert.equal(await api(page,"return adapter.requestPage('work-1','Tool A').items.find(r=>r.requestId==='request-a').state"),'cancelled');
+ assert.equal(readbacks(),before);await expect(button(page,'cancel-pi-request')).toHaveCount(0);
+ await button(page,'close-modal').click();await expect(button(page,'service-requests')).toBeFocused();await expect(page.locator('#composer')).toHaveValue('Keep draft during evidence pagination');
+ assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).paginationFrame && (window as any).paginationFrameLoads===0),true);
+ assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
+});
+
+test('Controls pagination: late evidence retains current replies, status errors and newly confirmed evidence',async t=>{
+ let latest=false,started=false,release!:()=>void;
+ const gate=new Promise<void>(resolve=>release=resolve);t.after(()=>release());
+ const record=()=>({...controlRequest(latest?'failed':'pending'),runIds:latest?['run-current']:[],result:latest?'Latest result':null,error:latest?{code:'LATEST_ERROR',message:'Latest execution error'}:null});
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[record()],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a')){
+   const captured=record();
+   if(new URLSearchParams(r.search).has('cursor')){started=true;await gate;return{json:{request:captured,checkedAt:'2026-10-13T00:01:00Z',evidence:{items:[{evidenceId:'current',kind:'query',summary:'Stale proof copy'},{evidenceId:'second',kind:'query',summary:'Delayed proof'}],nextCursor:null}}};}
+   return{json:{request:captured,checkedAt:latest?'2026-10-13T00:02:00Z':'2026-10-13T00:01:00Z',evidence:{items:[{evidenceId:'first',kind:'query',summary:'Initial proof'},...(latest?[{evidenceId:'current',kind:'query',summary:'Newly confirmed proof'}]:[])],nextCursor:'evidence-page-two'}}};
+  }
+  if(r.path.endsWith('/runs/run-current'))return{json:{...controlRun('run-current',5),finalText:'Latest associated reply'}};
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await page.locator('#modal details').click();
+ const more=button(page,'next-pi-evidence').click();await expect.poll(()=>started).toBe(true);
+ latest=true;await api(page,"await adapter.loadRequest('work-1','request-a',false,false)");
+ await expect(page.locator('#modal')).toContainText('Latest associated reply');
+ await expect.poll(()=>api(page,"return adapter.requestResponses.get('work-1:request-a').loading")).toBe(false);
+ // Seed the existing status-observation error; evidence success cannot confirm status.
+ await api(page,"adapter.requestDetails.get('work-1:request-a').readError='Original status read is unconfirmed';adapter.requestReadErrors.set('work-1:request-a','Original status read is unconfirmed');");
+ const confirmed=await api(page,"return {reply:adapter.requestResponses.get('work-1:request-a'),request:adapter.requestDetails.get('work-1:request-a').request}");
+ release();await more;await expect(page.locator('#modal')).toContainText('Delayed proof');
+ for(const text of ['Latest associated reply','Newly confirmed proof','Latest result','Latest execution error','Original status read is unconfirmed'])await expect(page.locator('#modal')).toContainText(text);
+ assert.deepEqual(await api(page,"return {reply:adapter.requestResponses.get('work-1:request-a'),request:adapter.requestDetails.get('work-1:request-a').request}"),confirmed);
+ assert.equal(await api(page,"return adapter.requestReadErrors.get('work-1:request-a')"),'Original status read is unconfirmed');
+ await expect(page.locator('#modal')).not.toContainText('Stale proof copy');
+ assert.deepEqual(await api(page,"return adapter.requestDetails.get('work-1:request-a').evidence.items.map(e=>e.evidenceId)"),['first','current','second']);
+ assert.equal(requests.filter(r=>r.path.endsWith('/runs/run-current')).length,1);assert.equal(chatWrites(requests).length,0);
+});
+
+for(const scope of ['view','identity'])test(`Controls pagination: late evidence is discarded after ${scope} changes`,async t=>{
+ let started=false,release!:()=>void;
+ const gate=new Promise<void>(resolve=>release=resolve);t.after(()=>release());
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path.endsWith('/agent-requests'))return{json:{items:[{...controlRequest('completed'),runIds:[]}],nextCursor:null}};
+  if(r.path.endsWith('/agent-requests/request-a')){
+   if(new URLSearchParams(r.search).has('cursor')){started=true;await gate;return{json:{request:{...controlRequest('completed'),runIds:[]},evidence:{items:[{evidenceId:'late',kind:'query',summary:'Abandoned evidence'}],nextCursor:null}}};}
+   return{json:{request:{...controlRequest('completed'),runIds:[]},evidence:{items:[],nextCursor:'more'}}};
+  }
+  return controlFixture(r);
+ });
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await page.locator('#modal details').click();
+ const more=api(page,"try{await adapter.loadRequest('work-1','request-a',true);}catch{}");await expect.poll(()=>started).toBe(true);
+ if(scope==='view'){await button(page,'close-modal').click();await expect(page.locator('#modal h2')).toHaveText('Agent requests');}
+ else await api(page,"await adapter.signOut()");
+ release();await more;
+ if(scope==='view')assert.deepEqual(await api(page,"return adapter.requestDetails.get('work-1:request-a').evidence.items"),[]);
+ else assert.equal(await api(page,"return adapter.requestDetails.size"),0);
+ await expect(page.locator('#app')).not.toContainText('Abandoned evidence');assert.equal(chatWrites(requests).length,0);
 });

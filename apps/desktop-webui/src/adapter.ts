@@ -1,5 +1,5 @@
 import { historyMessages, resultText, upsertTool } from './chat-projection.js';
-import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, RunStatus, RunModel, Session } from './models.js';
+import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, RunStatus, RunModel, Session, Run } from './models.js';
 import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
@@ -75,12 +75,20 @@ export class DesktopAdapter {
     core: { address: '', name: 'Core', account: '', role: '', proxyPort: '', username: '' }, transfers: [] as TransferResult[], lastChecked: '' };
   requests = new Map<string, { loading: boolean; error: string; items: Data[]; nextCursor: string|null; checkedAt?: string }>();
   requestDetails = new Map<string, Data>();
-  private requestRetries = new Map<string,string>();
+  requestPresence = new Map<string, { confirmed: boolean; loading: boolean; hasRecords: boolean; error: string }>();
+  requestResponses = new Map<string, { loading: boolean; runs: Run[]; errors: string[]; checked: Record<string,string>; errorsByRun: Record<string,string> }>();
+  runDetails = new Map<string, Run>();
+  requestRetries = new Map<string,{submissionKey:string; error:string; unknown:boolean}>();
+  private cancellingRequests = new Set<string>();
+  requestReadErrors = new Map<string,string>();
   models = new Map<string, { loading: boolean; confirmed: boolean; error: string; models: RunModel[]; defaultModel?: RunModel; defaultUnavailableReason?:string; unavailableModels?:Array<{label:string;reason:string;recovery:string}>; checkedAt?: string }>();
   modelSelections = new Map<string, { phase: 'clean' | 'dirty' | 'saving' | 'unknown'; ref: string | null; thinking: string|null; error: string; revision: number; confirmedRevision?: number }>();
   chatCapabilities = new Map<string, 0|1|2|3>();
+  cancelAndSendCapabilities = new Map<string, 0|1>();
+  activeRuns = new Map<string, { confirmed: boolean; loading: boolean; run: Run|null; error: string }>();
+  private activeRevisions = new Map<string,number>();
   commands = new Map<string,{loading:boolean;confirmed:boolean;error:string;items:Data[];checkedAt?:string}>();
-  chatSubmissions = new Map<string,{kind:'session'|'run';key:string;sessionId?:string;error:string;pair?:{ref:string|null;thinking:string|null;revision:number}}>();
+  chatSubmissions = new Map<string,{kind:'session'|'run';key:string;sessionId?:string;cancelRunId?:string;error:string;pair?:{ref:string|null;thinking:string|null;revision:number}}>();
   private pairSaves = new Map<string,Promise<void>>();
   private chatSelection='';
   private sessionVersions=new Map<string,number>();
@@ -132,6 +140,9 @@ export class DesktopAdapter {
   private observationVisible = true;
   private visibleWorkId = '';
   private visibleChat = true;
+  private interactionScope = '';
+  private interactionVersion = 0;
+  private interactionTimer?: ReturnType<typeof setInterval>;
   private capabilityReads = new Map<string, Promise<void>>();
   private sessionTimer?: ReturnType<typeof setTimeout>;
   private authCheck?: { epoch: number; sequence: number; pending: Promise<Data> };
@@ -218,11 +229,13 @@ export class DesktopAdapter {
     const inspection = preserveInspection ? { context: this.inspectionContext, summary: this.inspection, transfer: this.inspectionTransfer, progress: this.transferProgress } : null;
     if (!preserveInspection) { this.inspectionSelection++; this.inspectionNonce++; this.inspectionContext?.xhr?.abort(); this.inspectionContext = null; this.transferProgress = null; this.cleanupPending.clear(); }
     this.epoch++; this.worksLoading = false; this.worksChecked = ''; this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
+    clearInterval(this.interactionTimer); this.interactionTimer=undefined;this.interactionScope='';this.interactionVersion++;
+    this.requestPresence.clear();this.requestResponses.clear();this.runDetails.clear();this.activeRuns.clear();this.activeRevisions.clear();this.cancelAndSendCapabilities.clear();
     this.terminalEvidence.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
     this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear();
     Object.assign(this.about,{core:null,coreError:'',coreLoading:false,coreChecked:''});
     this.stopImageReads();for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();this.imageCapabilities.clear();
-    this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();
+    this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();this.cancellingRequests.clear();this.requestReadErrors.clear();
     for (const status of Object.values(this.catalog)) Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });
     this.uploadIntents.clear(); this.skills = []; this.packages = []; this.entries.clear(); this.entryErrors.clear(); this.entryPromises.clear(); this.entryChecks.clear(); this.logs.clear(); this.inspection = null; this.inspectionTransfer = '';
     if (inspection) { this.inspectionContext = inspection.context; this.inspection = inspection.summary; this.inspectionTransfer = inspection.transfer; this.transferProgress = inspection.progress; }
@@ -533,34 +546,134 @@ export class DesktopAdapter {
   } catch (error) { (work.resourceErrors ??= {}).configuration = errorText(error); throw error; } finally { work.resourceLoading.configuration = false; this.emit(); }}
   async loadPackages(id: string) { const work = this.getWork(id)!; (work.resourceLoading ??= {}).packages = true; this.emit(); try { const value = await this.request(`works/${part(id)}/packages`); if (!Array.isArray(value.packages)) throw new DesktopError('INVALID_RESPONSE', 'Package listing is incomplete.'); (work.resourceChecked ??= {}).packages = new Date().toISOString(); work.packageEntries = value.packages; delete work.resourceErrors?.packages; } catch (error) { (work.resourceErrors ??= {}).packages = errorText(error); throw error; } finally { work.resourceLoading.packages = false; this.emit(); }}
   requestPage(id: string,serviceName='') { return this.requests.get(`${id}:${serviceName}`); }
+  async loadRequestPresence(id: string, serviceName: string, explicit=false) {
+    const key=`${id}:${serviceName}`,epoch=this.epoch,version=this.interactionVersion;
+    const state=this.requestPresence.get(key) ?? {confirmed:false,loading:false,hasRecords:false,error:''};
+    if(state.loading)return;this.requestPresence.set(key,state);state.loading=true;
+    try {
+      const {value}=await this.readMetadata(`works/${part(id)}/agent-requests?${new URLSearchParams({serviceName,limit:'1'})}`,explicit);
+      if(epoch!==this.epoch || version!==this.interactionVersion)return;
+      if(!Array.isArray(value.items) || value.items.some((r:Data)=>r.source?.kind!=='service'||r.source.serviceName!==serviceName))throw new DesktopError('INVALID_RESPONSE','The Service request scope could not be confirmed.');
+      Object.assign(state,{confirmed:true,hasRecords:value.items.length>0,error:''});
+    }catch(error){if(epoch===this.epoch && version===this.interactionVersion && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred))state.error=errorText(error);}
+    finally{if(epoch===this.epoch){state.loading=false;this.emit();}}
+  }
+  async loadActiveRun(id: string, explicit=false) {
+    if(this.cancelAndSendCapabilities.get(id)!==1)return;
+    const epoch=this.epoch,version=this.interactionVersion,revision=this.activeRevisions.get(id) || 0;
+    const state=this.activeRuns.get(id) ?? {confirmed:false,loading:false,run:null,error:''};
+    if(state.loading)return;this.activeRuns.set(id,state);state.loading=true;
+    try {
+      const {value}=await this.readMetadata(`works/${part(id)}/runs/active`,explicit);
+      if(epoch!==this.epoch || version!==this.interactionVersion || revision!==(this.activeRevisions.get(id) || 0))return;
+      const raw=value.run;
+      if(raw!==null && (!raw?.runId || !raw.sessionId || raw.workId!==id || ![1,2,3].includes(raw.state)))throw new DesktopError('INVALID_RESPONSE','The active Run could not be confirmed.');
+      Object.assign(state,{confirmed:true,error:'',run:raw===null?null:this.runRecord(raw,raw.sessionId)});
+    }catch(error){if(epoch===this.epoch && version===this.interactionVersion && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred))state.error=errorText(error);}
+    finally{if(epoch===this.epoch){state.loading=false;this.emit();}}
+  }
+  async loadRunDetails(id: string, runId: string, explicit=true) {
+    const epoch=this.epoch,{value}=await this.readMetadata(`works/${part(id)}/runs/${part(runId)}`,explicit),raw=value.run ?? value;
+    if(raw.runId!==runId || raw.workId!==id || !raw.sessionId)throw new DesktopError('INVALID_RESPONSE','Run details do not match the original Run.');
+    if(epoch!==this.epoch)return;
+    const run=this.runRecord(raw,raw.sessionId);this.runDetails.set(`${id}:${runId}`,run);this.emit();return run;
+  }
   async loadRequests(id: string,serviceName='',more=false) {
     const key=`${id}:${serviceName}`,state=this.requests.get(key) ?? {loading:false,error:'',items:[],nextCursor:null},epoch=this.epoch;
     if(state.loading)return;this.requests.set(key,state);state.loading=true;state.error='';this.emit();
     const query=new URLSearchParams({limit:'25',...(serviceName?{serviceName}:{}),...(more && state.nextCursor?{cursor:state.nextCursor}:{})});
-    try {const value=await this.request(`works/${part(id)}/agent-requests?${query}`);if(!Array.isArray(value.items))throw new DesktopError('INVALID_RESPONSE','Pi request page is incomplete.');if(epoch!==this.epoch)return;state.items=more?[...state.items,...value.items]:value.items;state.nextCursor=value.nextCursor;state.checkedAt=value.checkedAt;
+    try {const {value}=await this.readMetadata(`works/${part(id)}/agent-requests?${query}`,true);if(!Array.isArray(value.items))throw new DesktopError('INVALID_RESPONSE','Pi request page is incomplete.');if(epoch!==this.epoch)return;state.items=more?[...state.items,...value.items]:value.items;state.nextCursor=value.nextCursor;state.checkedAt=value.checkedAt;
+      if(serviceName&&!more)this.requestPresence.set(key,{confirmed:true,loading:false,hasRecords:value.items.length>0,error:''});
     }catch(error){if(epoch===this.epoch)state.error=errorText(error);throw error;}finally{if(epoch===this.epoch){state.loading=false;this.emit();}}
   }
-  async loadRequest(id: string,requestId: string,more=false) {
+  async loadRequest(id: string,requestId: string,more=false,explicit=true) {
     const key=`${id}:${requestId}`,previous=this.requestDetails.get(key),cursor=more?previous?.evidence?.nextCursor:null;
+    if(more && !cursor)return previous;
+    const epoch=this.epoch,version=this.interactionVersion;
     const query=new URLSearchParams({limit:'25',...(cursor?{cursor}:{})});
-    const value=await this.request(`works/${part(id)}/agent-requests/${part(requestId)}?${query}`);
-    if(value.request?.requestId!==requestId || !Array.isArray(value.evidence?.items))throw new DesktopError('INVALID_RESPONSE','Pi request detail does not match the original ID.');
-    if(more && previous)value.evidence.items=[...previous.evidence.items,...value.evidence.items];this.requestDetails.set(key,value);this.emit();return value;
+    const {value}=await this.readMetadata(`works/${part(id)}/agent-requests/${part(requestId)}?${query}`,explicit);
+    if(value.request?.requestId!==requestId || !Array.isArray(value.request.runIds) || !Array.isArray(value.evidence?.items))throw new DesktopError('INVALID_RESPONSE','Pi request detail does not match the original ID.');
+    if(epoch!==this.epoch || version!==this.interactionVersion)return;
+    if(more){
+      // A delayed evidence page cannot confirm status or replace newer request facts.
+      const current=this.requestDetails.get(key);if(!current)return;
+      const seen=new Set(current.evidence.items.map((item:Data)=>item.evidenceId)),items=[...current.evidence.items];
+      for(const item of value.evidence.items)if(!seen.has(item.evidenceId)){seen.add(item.evidenceId);items.push(item);}
+      const merged:Data={...current,evidence:{...current.evidence,items,nextCursor:value.evidence.nextCursor}};
+      this.requestDetails.set(key,merged);this.emit();return merged;
+    }
+    // A status refresh preserves evidence pages the user has already read.
+    if(!explicit && previous && previous.evidence.items.length>value.evidence.items.length)value.evidence=previous.evidence;
+    this.requestDetails.set(key,value);this.requestReadErrors.delete(key);
+    const replies=this.requestResponses.get(key);if(replies){
+      replies.runs=replies.runs.filter(run=>value.request.runIds.includes(run.id));
+      replies.errors=value.request.runIds.flatMap((runId:string)=>replies.errorsByRun[runId]?[replies.errorsByRun[runId]]:[]);
+    }
+    if(["completed","failed","cancelled","needs_attention"].includes(value.request.state))this.cancellingRequests.delete(key);
+    for(const [pageKey,page] of this.requests)if(pageKey.startsWith(`${id}:`)){page.items=page.items.map(r=>r.requestId===requestId?value.request:r);}
+    this.emit();void this.loadRequestResponses(id,requestId,value.request.runIds,explicit);return value;
+  }
+  private async loadRequestResponses(id: string,requestId: string,runIds: string[],explicit: boolean) {
+    const key=`${id}:${requestId}`,epoch=this.epoch,version=this.interactionVersion;
+    const state=this.requestResponses.get(key) ?? {loading:false,runs:[],errors:[],checked:{},errorsByRun:{}};if(state.loading)return;
+    this.requestResponses.set(key,state);state.loading=true;
+    const results=await Promise.allSettled(runIds.map(runId=>this.loadRunDetails(id,runId,explicit)));
+    if(epoch!==this.epoch)return;state.loading=false;
+    if(version!==this.interactionVersion)return;
+    const currentIds=this.requestDetails.get(key)?.request.runIds as string[] | undefined;
+    const allowed=new Set(currentIds ?? runIds),prior=new Map(state.runs.map(run=>[run.id,run]));
+    results.forEach((result,index)=>{
+      const runId=runIds[index];if(!allowed.has(runId))return;
+      if(result.status==='fulfilled' && result.value){prior.set(runId,result.value);state.checked[runId]=new Date().toISOString();delete state.errorsByRun[runId];}
+      else if(result.status==='rejected')state.errorsByRun[runId]=`Run ${runId}: reply refresh failed; ${prior.has(runId)?'last confirmed content retained':'reply has not been confirmed'}. ${errorText(result.reason)}`;
+    });
+    state.runs=[...allowed].flatMap(runId=>prior.has(runId)?[prior.get(runId)!]:[]);
+    state.errors=[...allowed].flatMap(runId=>state.errorsByRun[runId]?[state.errorsByRun[runId]]:[]);this.emit();
+    if(currentIds && (currentIds.length!==runIds.length || currentIds.some(runId=>!runIds.includes(runId))))
+      void this.loadRequestResponses(id,requestId,currentIds,explicit);
   }
   async cancelRequest(id: string,requestId: string) {
+    this.cancellingRequests.add(`${id}:${requestId}`);
     const value=await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/cancel`,'POST',{});
     if(value.requestId!==requestId)throw new DesktopError('INVALID_RESPONSE','Cancellation needs original request readback.');
     await this.loadRequest(id,requestId);return value;
   }
   async retryRequest(id: string,requestId: string) {
     const original=await this.loadRequest(id,requestId);
+    if(!original)throw new DesktopError('CONNECTION_CHANGED','The original request belongs to a previous view.');
     if(original.request.disposition!=='live' || !['failed','cancelled','needs_attention'].includes(original.request.state))throw new DesktopError('REQUEST_RETRY_NOT_ALLOWED','Only an eligible live terminal request can be retried.');
-    const key=`${id}:${requestId}`;let submissionKey=this.requestRetries.get(key);if(!submissionKey){submissionKey=crypto.randomUUID();this.requestRetries.set(key,submissionKey);}
-    const value=await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/retry`,'POST',{submissionKey});
-    if(value.retryOf!==requestId || typeof value.requestId!=='string')throw new DesktopError('INVALID_RESPONSE','Retry receipt needs original submission readback.');
-    this.requestRetries.delete(key);this.emit();return value;
+    const key=`${id}:${requestId}`,epoch=this.epoch;
+    if(this.requestRetries.get(key)?.unknown)throw new DesktopError('RESULT_UNKNOWN','Previous Retry is unknown. Check status using the original key.');
+    const intent={submissionKey:crypto.randomUUID(),error:'',unknown:true};this.requestRetries.set(key,intent);this.emit();
+    try {
+      const value=await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/retry`,'POST',{submissionKey:intent.submissionKey});
+      if(epoch!==this.epoch)throw new DesktopError('CONNECTION_CHANGED','The Retry belongs to the previous identity.');
+      if(value.retryOf!==requestId || typeof value.requestId!=='string' || value.requestId===requestId)throw new DesktopError('INVALID_RESPONSE','Retry receipt needs original submission readback.');
+      if(this.requestRetries.get(key)===intent)this.requestRetries.delete(key);this.emit();return value;
+    } catch(error) {
+      if(epoch===this.epoch && this.requestRetries.get(key)===intent){
+        intent.error=errorText(error);
+        if(!['RESULT_UNKNOWN','INVALID_RESPONSE','CORE_UNAVAILABLE','RUNTIME_UNAVAILABLE','REQUEST_TIMEOUT'].includes((error as DesktopError).code))this.requestRetries.delete(key);
+        this.emit();
+      }
+      throw error;
+    }
   }
-  private runRecord(raw: Data,sessionId: string) { return { id:raw.runId,sessionId,status:runStates[raw.state] ?? 'interrupted' as RunStatus,cursor:0,created:raw.acceptedAt ?? '',actualModel:raw.actualModel ?? null,thinkingLevel:raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel,source:raw.source,adoptedExperienceVersion:raw.adoptedExperienceVersion }; }
+  async checkRequestRetry(id:string,requestId:string) {
+    const key=`${id}:${requestId}`,intent=this.requestRetries.get(key),epoch=this.epoch,version=this.interactionVersion;
+    if(!intent?.unknown)return;
+    try {
+      const {value}=await this.readMetadata(`works/${part(id)}/agent-requests/${part(requestId)}/retry-submission?submissionKey=${part(intent.submissionKey)}`,true);
+      if(epoch!==this.epoch || version!==this.interactionVersion || this.requestRetries.get(key)!==intent)return;
+      if(value.workId!==id || value.requestId!==requestId || value.submissionKey!==intent.submissionKey ||
+        !['accepted','not-found'].includes(value.status) || value.status==='not-found' && value.request!==null ||
+        value.status==='accepted' && (!value.request || value.request.retryOf!==requestId || typeof value.request.requestId!=='string' || value.request.requestId===requestId))
+        throw new DesktopError('INVALID_RESPONSE','Retry lookup does not match the original request and key.');
+      if(value.status==='accepted'){this.requestRetries.delete(key);this.emit();return value.request;}
+      intent.error='Retry result remains unknown: no mapping confirmed for the original key.';this.emit();
+    } catch(error){if(epoch===this.epoch && this.requestRetries.get(key)===intent){intent.error=`Retry result remains unknown: ${errorText(error)}`;this.emit();}throw error;}
+  }
+  private runRecord(raw: Data,sessionId: string): Run { return { id:raw.runId,sessionId,status:runStates[raw.state] ?? 'interrupted',cursor:0,created:raw.acceptedAt ?? '',finished:raw.finishedAt,finalText:raw.finalText,error:raw.error?.message,actualModel:raw.actualModel ?? null,thinkingLevel:raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel,source:raw.source,adoptedExperienceVersion:raw.adoptedExperienceVersion }; }
   modelSelection(id: string,sessionId: string) {
     const key=`${id}:${sessionId}`;let state=this.modelSelections.get(key);
     if(!state){const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);state={phase:'clean',ref:session?.modelPreference?.modelRef ?? null,thinking:session?.thinkingLevel === undefined ? (sessionId ? 'off' : this.models.get(id)?.defaultModel?.defaultThinkingLevel ?? (this.models.get(id)?.defaultModel?.thinkingAvailability==='unknown'?null:'off')) : session.thinkingLevel,error:'',revision:0};this.modelSelections.set(key,state);}return state;
@@ -574,8 +687,8 @@ export class DesktopAdapter {
   async loadModels(id: string) {
     const epoch=this.epoch,state={loading:true,confirmed:false,error:'',models:[] as RunModel[],...this.models.get(id)};state.loading=true;this.models.set(id,state);this.emit();
     try {
-      try {const capabilities=await this.request(`works/${part(id)}/chat-capabilities`);if(epoch!==this.epoch)return;this.chatCapabilities.set(id,capabilities.contractVersion===3?3:capabilities.contractVersion===2?2:capabilities.contractVersion===1?1:0);}
-      catch(error) {if((error as DesktopError).code==='CONNECTION_CHANGED')throw error;if(epoch!==this.epoch)return;this.chatCapabilities.set(id,0);}
+      try {const capabilities=await this.request(`works/${part(id)}/chat-capabilities`);if(epoch!==this.epoch)return;this.chatCapabilities.set(id,capabilities.contractVersion===3?3:capabilities.contractVersion===2?2:capabilities.contractVersion===1?1:0);this.cancelAndSendCapabilities.set(id,capabilities.cancelAndSendContractVersion===1?1:0);if(this.visibleWorkId===id && this.visibleChat)void this.loadActiveRun(id,true);}
+      catch(error) {if((error as DesktopError).code==='CONNECTION_CHANGED')throw error;if(epoch!==this.epoch)return;this.chatCapabilities.set(id,0);if(!this.cancelAndSendCapabilities.has(id))this.cancelAndSendCapabilities.set(id,0);}
       const value=await this.request(`works/${part(id)}/${(this.chatCapabilities.get(id) ?? 0)>=1?'chat-models':'models'}`);
       if(value.availability==='unavailable')throw new DesktopError('MODEL_LIST_UNAVAILABLE','Available models could not be confirmed.');
       if(!Array.isArray(value.models) || !value.defaultModel && value.contractVersion!==2 && value.contractVersion!==3)throw new DesktopError('INVALID_RESPONSE','Model list is incomplete.');
@@ -818,7 +931,7 @@ export class DesktopAdapter {
     this.scheduleOperationPoll();
     await Promise.allSettled(pending);
   }
-  observePage(workId: string, visible: boolean, includeChat = true) {
+  observePage(workId: string, visible: boolean, includeChat = true, serviceName='',requestId='',requestList=false,listService='') {
     const entering = this.visibleWorkId !== workId || !this.observationVisible && visible;
     this.visibleWorkId = workId;
     this.visibleChat = includeChat;
@@ -827,6 +940,32 @@ export class DesktopAdapter {
       if (!visible) { clearTimeout(this.pollTimer); this.pollTimer = undefined; this.metadata.cancel(); }
     }
     if (visible && entering) { this.metadata.rearm(); this.scheduleOperationPoll(); }
+    const scope=visible && workId && this.getWork(workId) && this.project(this.getWork(workId)!).usable ? `${this.epoch}:${workId}:${includeChat}:${serviceName}:${requestId}:${requestList}:${listService}` : '';
+    if(scope!==this.interactionScope){
+      clearInterval(this.interactionTimer);this.interactionTimer=undefined;this.interactionScope=scope;this.interactionVersion++;
+      if(scope){
+        const version=this.interactionVersion;
+        const refresh=(entering=false)=>{
+          if(version!==this.interactionVersion)return;
+          if(serviceName)void this.loadRequestPresence(workId,serviceName,entering);
+          if(includeChat)void this.loadActiveRun(workId,entering);
+          const ids=new Set<string>();
+          if(requestId)ids.add(requestId);
+          if(requestList)for(const record of this.requests.get(`${workId}:${listService}`)?.items ?? [])if(this.cancellingRequests.has(`${workId}:${record.requestId}`))ids.add(record.requestId);
+          for(const originalId of ids){
+            const detail=this.requestDetails.get(`${workId}:${originalId}`);
+            if(detail && ['completed','failed','cancelled','needs_attention'].includes(detail.request.state)){this.cancellingRequests.delete(`${workId}:${originalId}`);continue;}
+            void this.loadRequest(workId,originalId,false,entering).catch(error=>{
+              if(version!==this.interactionVersion || error instanceof ObservationStopped || error instanceof ObservationDeferred)return;
+              if(detail)detail.readError=errorText(error);
+              this.requestReadErrors.set(`${workId}:${originalId}`,`Cancellation status not confirmed: ${errorText(error)}`);
+              this.emit();
+            });
+          }
+        };
+        queueMicrotask(()=>refresh(true));this.interactionTimer=setInterval(refresh,5000);
+      }
+    }
   }
   async refreshVisibleWork(id: string) {
     const work = await this.refreshWorkStatus(id, false);
@@ -879,22 +1018,33 @@ export class DesktopAdapter {
     else {if(value.run?.workId!==id || value.run?.sessionId!==intent.sessionId || value.run?.submissionKey!==intent.key)throw new DesktopError('INVALID_RESPONSE','The original Run identity could not be confirmed.');const work=this.getWork(id)!;work.run=this.runRecord(value.run,value.run.sessionId);await this.loadSession(id,value.run.sessionId);void this.resumeRun(id);}
     if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();return value;
   }
-  async send(id:string,sessionId:string,text:string,includeIdentity:boolean,inputMode?:'text'|'command',images:ImageInput[]=[]) {
+  async send(id:string,sessionId:string,text:string,includeIdentity:boolean,inputMode?:'text'|'command',images:ImageInput[]=[],cancelRunId?:string) {
     if(!text.trim()&&!images.length)throw new Error('Write a message or add an image first.');const work=this.getWork(id)!;
     if(images.length){const reason=this.imageInputReason(id,sessionId);if(reason)throw new Error(reason);if(inputMode!=='text')throw new Error('Images require Send as text.');}
     if(!this.modelReady(id,sessionId))throw new DesktopError('MODEL_NOT_CONFIRMED','Confirm the Session model and Thinking settings before sending.');
     const prompt=includeIdentity && inputMode!=='command'?`${text}\n\nSelected Service: ${work.services.find(s=>s.id===this.selectedService)?.domain ?? ''}`:text;
-    const epoch=this.epoch;const intent={kind:'run' as const,key:crypto.randomUUID(),sessionId,error:''};this.chatSubmissions.set(id,intent);this.emit();
+    if(cancelRunId && this.cancelAndSendCapabilities.get(id)!==1)throw new DesktopError('CANCEL_AND_SEND_UNSUPPORTED','Stop and send is unavailable in this Work.');
+    const epoch=this.epoch;const intent={kind:'run' as const,key:crypto.randomUUID(),sessionId,cancelRunId,error:''};this.chatSubmissions.set(id,intent);this.emit();
     try {const descriptors=await Promise.all(images.map(async(image,imageIndex)=>{const bytes=Uint8Array.from(atob(image.data),c=>c.charCodeAt(0));const sha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');return {imageIndex,mimeType:image.mimeType,byteSize:bytes.length,sha256};}));
       if(epoch!==this.epoch||this.chatSubmissions.get(id)!==intent)throw new DesktopError('CONNECTION_CHANGED','The image submission belongs to a previous identity.');
-      const value=await this.request(`works/${part(id)}/runs`,'POST',{sessionId,prompt,submissionKey:intent.key,...(inputMode?{inputMode}:{}),...(images.length?{images}:{})});const raw=value.run;
+      const value=await this.request(`works/${part(id)}/runs`,'POST',{sessionId,prompt,submissionKey:intent.key,...(inputMode?{inputMode}:{}),...(images.length?{images}:{}),...(cancelRunId?{cancelRunId}:{})});const raw=value.run;
+      if(epoch!==this.epoch || this.chatSubmissions.get(id)!==intent)throw new DesktopError('CONNECTION_CHANGED','This submission belongs to a previous identity.');
       if(!raw?.runId || raw.sessionId!==sessionId)throw new DesktopError('INVALID_RESPONSE','Run acceptance has no original ID.');
       const acceptedWork=this.getWork(id) ?? work;const acceptedSession=acceptedWork.sessions.find(s=>s.id===sessionId) ?? work.sessions.find(s=>s.id===sessionId)!;if(!acceptedWork.sessions.includes(acceptedSession))acceptedWork.sessions.push(acceptedSession);acceptedWork.run=this.runRecord(raw,sessionId);(acceptedSession.runs ??=[]).push(acceptedWork.run);
+      this.activeRevisions.set(id,(this.activeRevisions.get(id) || 0)+1);
+      if(this.cancelAndSendCapabilities.get(id)===1)this.activeRuns.set(id,{confirmed:true,loading:false,run:acceptedWork.run,error:''});
       acceptedSession.messages.push({id:`${raw.runId}-user`,runId:raw.runId,role:'user',text,...(descriptors.length?{images:descriptors}:{})});if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();void this.resumeRun(id);return raw.runId as string;
-    }catch(error){const code=(error as DesktopError).code;if(this.chatSubmissions.get(id)===intent&&!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(code==='WORK_BUSY'||code==='RATE_LIMITED'){await this.loadSessions(id).catch(()=>undefined);const active=this.getWork(id)?.run;if(code==='WORK_BUSY'||active&&['accepted','running','cancelling'].includes(active.status))error=new DesktopError('WORK_BUSY','A Run is already active in this Work. Wait for it to finish or use Cancel run.');}intent.error=errorText(error);throw error;}finally{this.emit();}
+    }catch(error){const code=(error as DesktopError).code;if(this.chatSubmissions.get(id)===intent&&!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(epoch===this.epoch&&(code==='WORK_BUSY'||code==='RATE_LIMITED'||code==='CANCEL_TIMEOUT')){if(this.cancelAndSendCapabilities.get(id)===1)await this.loadActiveRun(id,true);else await this.loadSessions(id).catch(()=>undefined);const active=this.cancelAndSendCapabilities.get(id)===1?this.activeRuns.get(id)?.run:this.getWork(id)?.run;if(code==='WORK_BUSY'||code==='RATE_LIMITED' && active && ['accepted','running','cancelling'].includes(active.status))error=new DesktopError('WORK_BUSY',this.cancelAndSendCapabilities.get(id)===1?'A Run is already active in this Work. Check its status and choose Stop and send again.':'A Run is already active in this Work. Wait for it to finish or use Cancel run.');}intent.error=errorText(error);throw error;}finally{this.emit();}
   }
   selectedService = '';
-  async cancelRun(id: string) { const work = this.getWork(id)!; const run = work.run; if (run && !run.cancellationRequested) { await this.request(`works/${part(id)}/runs/${part(run.id)}/cancel`, 'POST'); run.cancellationRequested = true; this.emit(); void this.request(`works/${part(id)}/runs/${part(run.id)}`).then(value => { if (work.run === run) { run.status = runStates[(value.run ?? value).state] ?? 'interrupted'; this.emit(); } }).catch(error => { if (work.run === run) { run.error = `Cancellation requested; status not confirmed: ${errorText(error)}`; this.emit(); } }); } }
+  async cancelRun(id: string,runId=this.getWork(id)?.run?.id) {
+    if(!runId)return;const epoch=this.epoch;
+    await this.request(`works/${part(id)}/runs/${part(runId)}/cancel`, 'POST');if(epoch!==this.epoch)return;
+    const candidates=[this.getWork(id)?.run,this.activeRuns.get(id)?.run,this.runDetails.get(`${id}:${runId}`)];
+    for(const run of candidates)if(run?.id===runId)run.cancellationRequested=true;this.emit();
+    void this.loadRunDetails(id,runId).then(value=>{if(epoch!==this.epoch||!value)return;for(const run of candidates)if(run?.id===runId)run.status=value.status;this.emit();}).catch(()=>undefined);
+    void this.loadActiveRun(id,true);
+  }
   stopRunObservers() {
     for (const controller of this.streams.values()) controller.abort(); this.streams.clear();
     for (const observer of this.historyObservers.values()) observer.controller.abort(); this.historyObservers.clear();

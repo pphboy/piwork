@@ -14,6 +14,7 @@ service AgentService {
   rpc ReadSessionImage(ReadSessionImageRequest) returns (SessionImage);
   rpc SubmitRun(SubmitRunRequest) returns (SubmitRunResponse);
   rpc GetRun(GetRunRequest) returns (Run);
+  rpc GetActiveRun(GetActiveRunRequest) returns (GetActiveRunResponse);
   rpc WatchRun(WatchRunRequest) returns (stream RunEvent);
   rpc CancelRun(CancelRunRequest) returns (Run);
   rpc ListRunModels(AgentContentRequest) returns (AgentContentResponse);
@@ -27,6 +28,7 @@ service AgentService {
   rpc GetAgentRequest(AgentContentRequest) returns (AgentContentResponse);
   rpc CancelAgentRequest(AgentContentRequest) returns (AgentContentResponse);
   rpc RetryAgentRequest(AgentContentRequest) returns (AgentContentResponse);
+  rpc LookupAgentRequestRetrySubmission(AgentContentRequest) returns (AgentContentResponse);
   rpc GetAgentEvidence(AgentContentRequest) returns (AgentContentResponse);
 }
 
@@ -65,6 +67,7 @@ message ReadinessResponse {
   uint32 work_history_schema_version = 19;
   uint32 chat_controls_contract_version = 20;
   optional uint32 model_provider_contract_version = 21;
+  optional uint32 cancel_and_send_contract_version = 22;
 }
 
 message LoadedPackage {
@@ -228,6 +231,7 @@ message SubmitRunRequest {
   optional string model_ref = 5;
   optional string input_mode = 6;
   repeated ImageInput images = 7;
+  optional string cancel_run_id = 8;
 }
 
 message SubmitRunResponse {
@@ -239,6 +243,9 @@ message GetRunRequest {
   string work_id = 1;
   string run_id = 2;
 }
+
+message GetActiveRunRequest { string work_id = 1; }
+message GetActiveRunResponse { Run run = 1; }
 
 message WatchRunRequest {
   string work_id = 1;

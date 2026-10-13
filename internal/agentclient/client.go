@@ -114,14 +114,22 @@ func VerifyObservation(scope internaltls.Scope, contextID string, response *agen
 
 // Chat controls are negotiated after the unchanged mandatory runtime handshake.
 func (c *Client) ChatControlsVersion(ctx context.Context, contextID string) (uint32, error) {
+	version, _, err := c.ChatControlCapabilities(ctx, contextID)
+	return version, err
+}
+
+func (c *Client) ChatControlCapabilities(ctx context.Context, contextID string) (chat, cancelAndSend uint32, err error) {
 	response, err := c.Readiness(ctx, contextID, false)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if version := response.GetChatControlsContractVersion(); version == 1 || version == 2 || version == 3 {
-		return version, nil
+		chat = version
 	}
-	return 0, nil
+	if response.GetCancelAndSendContractVersion() == 1 {
+		cancelAndSend = 1
+	}
+	return chat, cancelAndSend, nil
 }
 
 func (c *Client) PrepareConfigurationChange(ctx context.Context) (*agentv1.PrepareConfigurationChangeResponse, error) {

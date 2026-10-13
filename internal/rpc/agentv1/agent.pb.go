@@ -272,6 +272,7 @@ type ReadinessResponse struct {
 	WorkHistorySchemaVersion     uint32                 `protobuf:"varint,19,opt,name=work_history_schema_version,json=workHistorySchemaVersion,proto3" json:"work_history_schema_version,omitempty"`
 	ChatControlsContractVersion  uint32                 `protobuf:"varint,20,opt,name=chat_controls_contract_version,json=chatControlsContractVersion,proto3" json:"chat_controls_contract_version,omitempty"`
 	ModelProviderContractVersion *uint32                `protobuf:"varint,21,opt,name=model_provider_contract_version,json=modelProviderContractVersion,proto3,oneof" json:"model_provider_contract_version,omitempty"`
+	CancelAndSendContractVersion *uint32                `protobuf:"varint,22,opt,name=cancel_and_send_contract_version,json=cancelAndSendContractVersion,proto3,oneof" json:"cancel_and_send_contract_version,omitempty"`
 	unknownFields                protoimpl.UnknownFields
 	sizeCache                    protoimpl.SizeCache
 }
@@ -449,6 +450,13 @@ func (x *ReadinessResponse) GetChatControlsContractVersion() uint32 {
 func (x *ReadinessResponse) GetModelProviderContractVersion() uint32 {
 	if x != nil && x.ModelProviderContractVersion != nil {
 		return *x.ModelProviderContractVersion
+	}
+	return 0
+}
+
+func (x *ReadinessResponse) GetCancelAndSendContractVersion() uint32 {
+	if x != nil && x.CancelAndSendContractVersion != nil {
+		return *x.CancelAndSendContractVersion
 	}
 	return 0
 }
@@ -2055,6 +2063,7 @@ type SubmitRunRequest struct {
 	ModelRef      *string       `protobuf:"bytes,5,opt,name=model_ref,json=modelRef,proto3,oneof" json:"model_ref,omitempty"`
 	InputMode     *string       `protobuf:"bytes,6,opt,name=input_mode,json=inputMode,proto3,oneof" json:"input_mode,omitempty"`
 	Images        []*ImageInput `protobuf:"bytes,7,rep,name=images,proto3" json:"images,omitempty"`
+	CancelRunId   *string       `protobuf:"bytes,8,opt,name=cancel_run_id,json=cancelRunId,proto3,oneof" json:"cancel_run_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2136,6 +2145,13 @@ func (x *SubmitRunRequest) GetImages() []*ImageInput {
 		return x.Images
 	}
 	return nil
+}
+
+func (x *SubmitRunRequest) GetCancelRunId() string {
+	if x != nil && x.CancelRunId != nil {
+		return *x.CancelRunId
+	}
+	return ""
 }
 
 type SubmitRunResponse struct {
@@ -2242,6 +2258,94 @@ func (x *GetRunRequest) GetRunId() string {
 	return ""
 }
 
+type GetActiveRunRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkId        string                 `protobuf:"bytes,1,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetActiveRunRequest) Reset() {
+	*x = GetActiveRunRequest{}
+	mi := &file_agent_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetActiveRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetActiveRunRequest) ProtoMessage() {}
+
+func (x *GetActiveRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetActiveRunRequest.ProtoReflect.Descriptor instead.
+func (*GetActiveRunRequest) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *GetActiveRunRequest) GetWorkId() string {
+	if x != nil {
+		return x.WorkId
+	}
+	return ""
+}
+
+type GetActiveRunResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Run           *Run                   `protobuf:"bytes,1,opt,name=run,proto3" json:"run,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetActiveRunResponse) Reset() {
+	*x = GetActiveRunResponse{}
+	mi := &file_agent_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetActiveRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetActiveRunResponse) ProtoMessage() {}
+
+func (x *GetActiveRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetActiveRunResponse.ProtoReflect.Descriptor instead.
+func (*GetActiveRunResponse) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *GetActiveRunResponse) GetRun() *Run {
+	if x != nil {
+		return x.Run
+	}
+	return nil
+}
+
 type WatchRunRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	WorkId        string                 `protobuf:"bytes,1,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
@@ -2253,7 +2357,7 @@ type WatchRunRequest struct {
 
 func (x *WatchRunRequest) Reset() {
 	*x = WatchRunRequest{}
-	mi := &file_agent_proto_msgTypes[29]
+	mi := &file_agent_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2265,7 +2369,7 @@ func (x *WatchRunRequest) String() string {
 func (*WatchRunRequest) ProtoMessage() {}
 
 func (x *WatchRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[29]
+	mi := &file_agent_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2278,7 +2382,7 @@ func (x *WatchRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchRunRequest.ProtoReflect.Descriptor instead.
 func (*WatchRunRequest) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{29}
+	return file_agent_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *WatchRunRequest) GetWorkId() string {
@@ -2313,7 +2417,7 @@ type CancelRunRequest struct {
 
 func (x *CancelRunRequest) Reset() {
 	*x = CancelRunRequest{}
-	mi := &file_agent_proto_msgTypes[30]
+	mi := &file_agent_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2325,7 +2429,7 @@ func (x *CancelRunRequest) String() string {
 func (*CancelRunRequest) ProtoMessage() {}
 
 func (x *CancelRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[30]
+	mi := &file_agent_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2338,7 +2442,7 @@ func (x *CancelRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRunRequest.ProtoReflect.Descriptor instead.
 func (*CancelRunRequest) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{30}
+	return file_agent_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *CancelRunRequest) GetWorkId() string {
@@ -2371,7 +2475,7 @@ type TextEvent struct {
 
 func (x *TextEvent) Reset() {
 	*x = TextEvent{}
-	mi := &file_agent_proto_msgTypes[31]
+	mi := &file_agent_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2383,7 +2487,7 @@ func (x *TextEvent) String() string {
 func (*TextEvent) ProtoMessage() {}
 
 func (x *TextEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[31]
+	mi := &file_agent_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2396,7 +2500,7 @@ func (x *TextEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextEvent.ProtoReflect.Descriptor instead.
 func (*TextEvent) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{31}
+	return file_agent_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *TextEvent) GetDelta() string {
@@ -2420,7 +2524,7 @@ type ToolEvent struct {
 
 func (x *ToolEvent) Reset() {
 	*x = ToolEvent{}
-	mi := &file_agent_proto_msgTypes[32]
+	mi := &file_agent_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2432,7 +2536,7 @@ func (x *ToolEvent) String() string {
 func (*ToolEvent) ProtoMessage() {}
 
 func (x *ToolEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[32]
+	mi := &file_agent_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2445,7 +2549,7 @@ func (x *ToolEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolEvent.ProtoReflect.Descriptor instead.
 func (*ToolEvent) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{32}
+	return file_agent_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ToolEvent) GetServerId() string {
@@ -2501,7 +2605,7 @@ type StateEvent struct {
 
 func (x *StateEvent) Reset() {
 	*x = StateEvent{}
-	mi := &file_agent_proto_msgTypes[33]
+	mi := &file_agent_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2513,7 +2617,7 @@ func (x *StateEvent) String() string {
 func (*StateEvent) ProtoMessage() {}
 
 func (x *StateEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[33]
+	mi := &file_agent_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2526,7 +2630,7 @@ func (x *StateEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateEvent.ProtoReflect.Descriptor instead.
 func (*StateEvent) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{33}
+	return file_agent_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *StateEvent) GetState() RunState {
@@ -2569,7 +2673,7 @@ type RunEvent struct {
 
 func (x *RunEvent) Reset() {
 	*x = RunEvent{}
-	mi := &file_agent_proto_msgTypes[34]
+	mi := &file_agent_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2581,7 +2685,7 @@ func (x *RunEvent) String() string {
 func (*RunEvent) ProtoMessage() {}
 
 func (x *RunEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[34]
+	mi := &file_agent_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2594,7 +2698,7 @@ func (x *RunEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunEvent.ProtoReflect.Descriptor instead.
 func (*RunEvent) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{34}
+	return file_agent_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *RunEvent) GetWorkId() string {
@@ -2707,7 +2811,8 @@ const file_agent_proto_rawDesc = "" +
 	"generation\x18\x02 \x01(\x04R\n" +
 	"generation\x12\x1f\n" +
 	"\vinstance_id\x18\x03 \x01(\tR\n" +
-	"instanceId\"\xaa\t\n" +
+	"instanceId\"\x9c\n" +
+	"\n" +
 	"\x11ReadinessResponse\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1e\n" +
 	"\n" +
@@ -2733,8 +2838,10 @@ const file_agent_proto_rawDesc = "" +
 	"\x1ework_feedback_contract_version\x18\x12 \x01(\rR\x1bworkFeedbackContractVersion\x12=\n" +
 	"\x1bwork_history_schema_version\x18\x13 \x01(\rR\x18workHistorySchemaVersion\x12C\n" +
 	"\x1echat_controls_contract_version\x18\x14 \x01(\rR\x1bchatControlsContractVersion\x12J\n" +
-	"\x1fmodel_provider_contract_version\x18\x15 \x01(\rH\x00R\x1cmodelProviderContractVersion\x88\x01\x01B\"\n" +
-	" _model_provider_contract_version\"\xb4\x01\n" +
+	"\x1fmodel_provider_contract_version\x18\x15 \x01(\rH\x00R\x1cmodelProviderContractVersion\x88\x01\x01\x12K\n" +
+	" cancel_and_send_contract_version\x18\x16 \x01(\rH\x01R\x1ccancelAndSendContractVersion\x88\x01\x01B\"\n" +
+	" _model_provider_contract_versionB#\n" +
+	"!_cancel_and_send_contract_version\"\xb4\x01\n" +
 	"\rLoadedPackage\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
 	"\x0econtent_digest\x18\x02 \x01(\tR\rcontentDigest\x12\x1e\n" +
@@ -2887,7 +2994,7 @@ const file_agent_proto_rawDesc = "" +
 	"sourceJson\x12<\n" +
 	"\x1aadopted_experience_version\x18\x10 \x01(\rR\x18adoptedExperienceVersion\x12%\n" +
 	"\x0ethinking_level\x18\x11 \x01(\tR\rthinkingLevel\x121\n" +
-	"\x14thinking_unrequested\x18\x12 \x01(\bR\x13thinkingUnrequested\"\xa1\x02\n" +
+	"\x14thinking_unrequested\x18\x12 \x01(\bR\x13thinkingUnrequested\"\xdc\x02\n" +
 	"\x10SubmitRunRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
@@ -2897,16 +3004,22 @@ const file_agent_proto_rawDesc = "" +
 	"\tmodel_ref\x18\x05 \x01(\tH\x00R\bmodelRef\x88\x01\x01\x12\"\n" +
 	"\n" +
 	"input_mode\x18\x06 \x01(\tH\x01R\tinputMode\x88\x01\x01\x123\n" +
-	"\x06images\x18\a \x03(\v2\x1b.piwork.agent.v1.ImageInputR\x06imagesB\f\n" +
+	"\x06images\x18\a \x03(\v2\x1b.piwork.agent.v1.ImageInputR\x06images\x12'\n" +
+	"\rcancel_run_id\x18\b \x01(\tH\x02R\vcancelRunId\x88\x01\x01B\f\n" +
 	"\n" +
 	"_model_refB\r\n" +
-	"\v_input_mode\"S\n" +
+	"\v_input_modeB\x10\n" +
+	"\x0e_cancel_run_id\"S\n" +
 	"\x11SubmitRunResponse\x12&\n" +
 	"\x03run\x18\x01 \x01(\v2\x14.piwork.agent.v1.RunR\x03run\x12\x16\n" +
 	"\x06reused\x18\x02 \x01(\bR\x06reused\"?\n" +
 	"\rGetRunRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x15\n" +
-	"\x06run_id\x18\x02 \x01(\tR\x05runId\"\x80\x01\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\".\n" +
+	"\x13GetActiveRunRequest\x12\x17\n" +
+	"\awork_id\x18\x01 \x01(\tR\x06workId\">\n" +
+	"\x14GetActiveRunResponse\x12&\n" +
+	"\x03run\x18\x01 \x01(\v2\x14.piwork.agent.v1.RunR\x03run\"\x80\x01\n" +
 	"\x0fWatchRunRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12*\n" +
@@ -2952,7 +3065,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x13RUN_STATE_SUCCEEDED\x10\x04\x12\x14\n" +
 	"\x10RUN_STATE_FAILED\x10\x05\x12\x17\n" +
 	"\x13RUN_STATE_CANCELLED\x10\x06\x12\x19\n" +
-	"\x15RUN_STATE_INTERRUPTED\x10\a2\x9e\x12\n" +
+	"\x15RUN_STATE_INTERRUPTED\x10\a2\xed\x13\n" +
 	"\fAgentService\x12p\n" +
 	"!RefreshServiceInteractionBindings\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12R\n" +
 	"\tReadiness\x12!.piwork.agent.v1.ReadinessRequest\x1a\".piwork.agent.v1.ReadinessResponse\x12\x85\x01\n" +
@@ -2964,7 +3077,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x18GetChatImageCapabilities\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12[\n" +
 	"\x10ReadSessionImage\x12(.piwork.agent.v1.ReadSessionImageRequest\x1a\x1d.piwork.agent.v1.SessionImage\x12R\n" +
 	"\tSubmitRun\x12!.piwork.agent.v1.SubmitRunRequest\x1a\".piwork.agent.v1.SubmitRunResponse\x12>\n" +
-	"\x06GetRun\x12\x1e.piwork.agent.v1.GetRunRequest\x1a\x14.piwork.agent.v1.Run\x12I\n" +
+	"\x06GetRun\x12\x1e.piwork.agent.v1.GetRunRequest\x1a\x14.piwork.agent.v1.Run\x12[\n" +
+	"\fGetActiveRun\x12$.piwork.agent.v1.GetActiveRunRequest\x1a%.piwork.agent.v1.GetActiveRunResponse\x12I\n" +
 	"\bWatchRun\x12 .piwork.agent.v1.WatchRunRequest\x1a\x19.piwork.agent.v1.RunEvent0\x01\x12D\n" +
 	"\tCancelRun\x12!.piwork.agent.v1.CancelRunRequest\x1a\x14.piwork.agent.v1.Run\x12\\\n" +
 	"\rListRunModels\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12Q\n" +
@@ -2977,7 +3091,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x11ListAgentRequests\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12^\n" +
 	"\x0fGetAgentRequest\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12a\n" +
 	"\x12CancelAgentRequest\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12`\n" +
-	"\x11RetryAgentRequest\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12_\n" +
+	"\x11RetryAgentRequest\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12p\n" +
+	"!LookupAgentRequestRetrySubmission\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12_\n" +
 	"\x10GetAgentEvidence\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponseb\x06proto3"
 
 var (
@@ -2993,7 +3108,7 @@ func file_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_agent_proto_goTypes = []any{
 	(RunState)(0),                              // 0: piwork.agent.v1.RunState
 	(*AgentContentRequest)(nil),                // 1: piwork.agent.v1.AgentContentRequest
@@ -3025,12 +3140,14 @@ var file_agent_proto_goTypes = []any{
 	(*SubmitRunRequest)(nil),                   // 27: piwork.agent.v1.SubmitRunRequest
 	(*SubmitRunResponse)(nil),                  // 28: piwork.agent.v1.SubmitRunResponse
 	(*GetRunRequest)(nil),                      // 29: piwork.agent.v1.GetRunRequest
-	(*WatchRunRequest)(nil),                    // 30: piwork.agent.v1.WatchRunRequest
-	(*CancelRunRequest)(nil),                   // 31: piwork.agent.v1.CancelRunRequest
-	(*TextEvent)(nil),                          // 32: piwork.agent.v1.TextEvent
-	(*ToolEvent)(nil),                          // 33: piwork.agent.v1.ToolEvent
-	(*StateEvent)(nil),                         // 34: piwork.agent.v1.StateEvent
-	(*RunEvent)(nil),                           // 35: piwork.agent.v1.RunEvent
+	(*GetActiveRunRequest)(nil),                // 30: piwork.agent.v1.GetActiveRunRequest
+	(*GetActiveRunResponse)(nil),               // 31: piwork.agent.v1.GetActiveRunResponse
+	(*WatchRunRequest)(nil),                    // 32: piwork.agent.v1.WatchRunRequest
+	(*CancelRunRequest)(nil),                   // 33: piwork.agent.v1.CancelRunRequest
+	(*TextEvent)(nil),                          // 34: piwork.agent.v1.TextEvent
+	(*ToolEvent)(nil),                          // 35: piwork.agent.v1.ToolEvent
+	(*StateEvent)(nil),                         // 36: piwork.agent.v1.StateEvent
+	(*RunEvent)(nil),                           // 37: piwork.agent.v1.RunEvent
 }
 var file_agent_proto_depIdxs = []int32{
 	8,  // 0: piwork.agent.v1.ReadinessResponse.loaded_skills:type_name -> piwork.agent.v1.LoadedSkill
@@ -3048,66 +3165,71 @@ var file_agent_proto_depIdxs = []int32{
 	25, // 12: piwork.agent.v1.Run.error:type_name -> piwork.agent.v1.RunError
 	18, // 13: piwork.agent.v1.SubmitRunRequest.images:type_name -> piwork.agent.v1.ImageInput
 	26, // 14: piwork.agent.v1.SubmitRunResponse.run:type_name -> piwork.agent.v1.Run
-	0,  // 15: piwork.agent.v1.StateEvent.state:type_name -> piwork.agent.v1.RunState
-	25, // 16: piwork.agent.v1.StateEvent.error:type_name -> piwork.agent.v1.RunError
-	32, // 17: piwork.agent.v1.RunEvent.text:type_name -> piwork.agent.v1.TextEvent
-	33, // 18: piwork.agent.v1.RunEvent.tool:type_name -> piwork.agent.v1.ToolEvent
-	34, // 19: piwork.agent.v1.RunEvent.state:type_name -> piwork.agent.v1.StateEvent
-	1,  // 20: piwork.agent.v1.AgentService.RefreshServiceInteractionBindings:input_type -> piwork.agent.v1.AgentContentRequest
-	3,  // 21: piwork.agent.v1.AgentService.Readiness:input_type -> piwork.agent.v1.ReadinessRequest
-	9,  // 22: piwork.agent.v1.AgentService.PrepareConfigurationChange:input_type -> piwork.agent.v1.PrepareConfigurationChangeRequest
-	11, // 23: piwork.agent.v1.AgentService.Drain:input_type -> piwork.agent.v1.DrainRequest
-	14, // 24: piwork.agent.v1.AgentService.CreateSession:input_type -> piwork.agent.v1.CreateSessionRequest
-	15, // 25: piwork.agent.v1.AgentService.ListSessions:input_type -> piwork.agent.v1.ListSessionsRequest
-	17, // 26: piwork.agent.v1.AgentService.ReadSession:input_type -> piwork.agent.v1.ReadSessionRequest
-	1,  // 27: piwork.agent.v1.AgentService.GetChatImageCapabilities:input_type -> piwork.agent.v1.AgentContentRequest
-	20, // 28: piwork.agent.v1.AgentService.ReadSessionImage:input_type -> piwork.agent.v1.ReadSessionImageRequest
-	27, // 29: piwork.agent.v1.AgentService.SubmitRun:input_type -> piwork.agent.v1.SubmitRunRequest
-	29, // 30: piwork.agent.v1.AgentService.GetRun:input_type -> piwork.agent.v1.GetRunRequest
-	30, // 31: piwork.agent.v1.AgentService.WatchRun:input_type -> piwork.agent.v1.WatchRunRequest
-	31, // 32: piwork.agent.v1.AgentService.CancelRun:input_type -> piwork.agent.v1.CancelRunRequest
-	1,  // 33: piwork.agent.v1.AgentService.ListRunModels:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 34: piwork.agent.v1.AgentService.SetSessionModel:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 35: piwork.agent.v1.AgentService.ListChatModels:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 36: piwork.agent.v1.AgentService.ListSlashCommands:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 37: piwork.agent.v1.AgentService.GetSessionChatOptions:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 38: piwork.agent.v1.AgentService.SetSessionChatOptions:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 39: piwork.agent.v1.AgentService.LookupChatSubmission:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 40: piwork.agent.v1.AgentService.ListAgentRequests:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 41: piwork.agent.v1.AgentService.GetAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 42: piwork.agent.v1.AgentService.CancelAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 43: piwork.agent.v1.AgentService.RetryAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 44: piwork.agent.v1.AgentService.GetAgentEvidence:input_type -> piwork.agent.v1.AgentContentRequest
-	2,  // 45: piwork.agent.v1.AgentService.RefreshServiceInteractionBindings:output_type -> piwork.agent.v1.AgentContentResponse
-	4,  // 46: piwork.agent.v1.AgentService.Readiness:output_type -> piwork.agent.v1.ReadinessResponse
-	10, // 47: piwork.agent.v1.AgentService.PrepareConfigurationChange:output_type -> piwork.agent.v1.PrepareConfigurationChangeResponse
-	12, // 48: piwork.agent.v1.AgentService.Drain:output_type -> piwork.agent.v1.DrainResponse
-	13, // 49: piwork.agent.v1.AgentService.CreateSession:output_type -> piwork.agent.v1.Session
-	16, // 50: piwork.agent.v1.AgentService.ListSessions:output_type -> piwork.agent.v1.ListSessionsResponse
-	22, // 51: piwork.agent.v1.AgentService.ReadSession:output_type -> piwork.agent.v1.SessionHistory
-	2,  // 52: piwork.agent.v1.AgentService.GetChatImageCapabilities:output_type -> piwork.agent.v1.AgentContentResponse
-	21, // 53: piwork.agent.v1.AgentService.ReadSessionImage:output_type -> piwork.agent.v1.SessionImage
-	28, // 54: piwork.agent.v1.AgentService.SubmitRun:output_type -> piwork.agent.v1.SubmitRunResponse
-	26, // 55: piwork.agent.v1.AgentService.GetRun:output_type -> piwork.agent.v1.Run
-	35, // 56: piwork.agent.v1.AgentService.WatchRun:output_type -> piwork.agent.v1.RunEvent
-	26, // 57: piwork.agent.v1.AgentService.CancelRun:output_type -> piwork.agent.v1.Run
-	2,  // 58: piwork.agent.v1.AgentService.ListRunModels:output_type -> piwork.agent.v1.AgentContentResponse
-	13, // 59: piwork.agent.v1.AgentService.SetSessionModel:output_type -> piwork.agent.v1.Session
-	2,  // 60: piwork.agent.v1.AgentService.ListChatModels:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 61: piwork.agent.v1.AgentService.ListSlashCommands:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 62: piwork.agent.v1.AgentService.GetSessionChatOptions:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 63: piwork.agent.v1.AgentService.SetSessionChatOptions:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 64: piwork.agent.v1.AgentService.LookupChatSubmission:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 65: piwork.agent.v1.AgentService.ListAgentRequests:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 66: piwork.agent.v1.AgentService.GetAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 67: piwork.agent.v1.AgentService.CancelAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 68: piwork.agent.v1.AgentService.RetryAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 69: piwork.agent.v1.AgentService.GetAgentEvidence:output_type -> piwork.agent.v1.AgentContentResponse
-	45, // [45:70] is the sub-list for method output_type
-	20, // [20:45] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	26, // 15: piwork.agent.v1.GetActiveRunResponse.run:type_name -> piwork.agent.v1.Run
+	0,  // 16: piwork.agent.v1.StateEvent.state:type_name -> piwork.agent.v1.RunState
+	25, // 17: piwork.agent.v1.StateEvent.error:type_name -> piwork.agent.v1.RunError
+	34, // 18: piwork.agent.v1.RunEvent.text:type_name -> piwork.agent.v1.TextEvent
+	35, // 19: piwork.agent.v1.RunEvent.tool:type_name -> piwork.agent.v1.ToolEvent
+	36, // 20: piwork.agent.v1.RunEvent.state:type_name -> piwork.agent.v1.StateEvent
+	1,  // 21: piwork.agent.v1.AgentService.RefreshServiceInteractionBindings:input_type -> piwork.agent.v1.AgentContentRequest
+	3,  // 22: piwork.agent.v1.AgentService.Readiness:input_type -> piwork.agent.v1.ReadinessRequest
+	9,  // 23: piwork.agent.v1.AgentService.PrepareConfigurationChange:input_type -> piwork.agent.v1.PrepareConfigurationChangeRequest
+	11, // 24: piwork.agent.v1.AgentService.Drain:input_type -> piwork.agent.v1.DrainRequest
+	14, // 25: piwork.agent.v1.AgentService.CreateSession:input_type -> piwork.agent.v1.CreateSessionRequest
+	15, // 26: piwork.agent.v1.AgentService.ListSessions:input_type -> piwork.agent.v1.ListSessionsRequest
+	17, // 27: piwork.agent.v1.AgentService.ReadSession:input_type -> piwork.agent.v1.ReadSessionRequest
+	1,  // 28: piwork.agent.v1.AgentService.GetChatImageCapabilities:input_type -> piwork.agent.v1.AgentContentRequest
+	20, // 29: piwork.agent.v1.AgentService.ReadSessionImage:input_type -> piwork.agent.v1.ReadSessionImageRequest
+	27, // 30: piwork.agent.v1.AgentService.SubmitRun:input_type -> piwork.agent.v1.SubmitRunRequest
+	29, // 31: piwork.agent.v1.AgentService.GetRun:input_type -> piwork.agent.v1.GetRunRequest
+	30, // 32: piwork.agent.v1.AgentService.GetActiveRun:input_type -> piwork.agent.v1.GetActiveRunRequest
+	32, // 33: piwork.agent.v1.AgentService.WatchRun:input_type -> piwork.agent.v1.WatchRunRequest
+	33, // 34: piwork.agent.v1.AgentService.CancelRun:input_type -> piwork.agent.v1.CancelRunRequest
+	1,  // 35: piwork.agent.v1.AgentService.ListRunModels:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 36: piwork.agent.v1.AgentService.SetSessionModel:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 37: piwork.agent.v1.AgentService.ListChatModels:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 38: piwork.agent.v1.AgentService.ListSlashCommands:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 39: piwork.agent.v1.AgentService.GetSessionChatOptions:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 40: piwork.agent.v1.AgentService.SetSessionChatOptions:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 41: piwork.agent.v1.AgentService.LookupChatSubmission:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 42: piwork.agent.v1.AgentService.ListAgentRequests:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 43: piwork.agent.v1.AgentService.GetAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 44: piwork.agent.v1.AgentService.CancelAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 45: piwork.agent.v1.AgentService.RetryAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 46: piwork.agent.v1.AgentService.LookupAgentRequestRetrySubmission:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 47: piwork.agent.v1.AgentService.GetAgentEvidence:input_type -> piwork.agent.v1.AgentContentRequest
+	2,  // 48: piwork.agent.v1.AgentService.RefreshServiceInteractionBindings:output_type -> piwork.agent.v1.AgentContentResponse
+	4,  // 49: piwork.agent.v1.AgentService.Readiness:output_type -> piwork.agent.v1.ReadinessResponse
+	10, // 50: piwork.agent.v1.AgentService.PrepareConfigurationChange:output_type -> piwork.agent.v1.PrepareConfigurationChangeResponse
+	12, // 51: piwork.agent.v1.AgentService.Drain:output_type -> piwork.agent.v1.DrainResponse
+	13, // 52: piwork.agent.v1.AgentService.CreateSession:output_type -> piwork.agent.v1.Session
+	16, // 53: piwork.agent.v1.AgentService.ListSessions:output_type -> piwork.agent.v1.ListSessionsResponse
+	22, // 54: piwork.agent.v1.AgentService.ReadSession:output_type -> piwork.agent.v1.SessionHistory
+	2,  // 55: piwork.agent.v1.AgentService.GetChatImageCapabilities:output_type -> piwork.agent.v1.AgentContentResponse
+	21, // 56: piwork.agent.v1.AgentService.ReadSessionImage:output_type -> piwork.agent.v1.SessionImage
+	28, // 57: piwork.agent.v1.AgentService.SubmitRun:output_type -> piwork.agent.v1.SubmitRunResponse
+	26, // 58: piwork.agent.v1.AgentService.GetRun:output_type -> piwork.agent.v1.Run
+	31, // 59: piwork.agent.v1.AgentService.GetActiveRun:output_type -> piwork.agent.v1.GetActiveRunResponse
+	37, // 60: piwork.agent.v1.AgentService.WatchRun:output_type -> piwork.agent.v1.RunEvent
+	26, // 61: piwork.agent.v1.AgentService.CancelRun:output_type -> piwork.agent.v1.Run
+	2,  // 62: piwork.agent.v1.AgentService.ListRunModels:output_type -> piwork.agent.v1.AgentContentResponse
+	13, // 63: piwork.agent.v1.AgentService.SetSessionModel:output_type -> piwork.agent.v1.Session
+	2,  // 64: piwork.agent.v1.AgentService.ListChatModels:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 65: piwork.agent.v1.AgentService.ListSlashCommands:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 66: piwork.agent.v1.AgentService.GetSessionChatOptions:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 67: piwork.agent.v1.AgentService.SetSessionChatOptions:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 68: piwork.agent.v1.AgentService.LookupChatSubmission:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 69: piwork.agent.v1.AgentService.ListAgentRequests:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 70: piwork.agent.v1.AgentService.GetAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 71: piwork.agent.v1.AgentService.CancelAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 72: piwork.agent.v1.AgentService.RetryAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 73: piwork.agent.v1.AgentService.LookupAgentRequestRetrySubmission:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 74: piwork.agent.v1.AgentService.GetAgentEvidence:output_type -> piwork.agent.v1.AgentContentResponse
+	48, // [48:75] is the sub-list for method output_type
+	21, // [21:48] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -3118,8 +3240,8 @@ func file_agent_proto_init() {
 	file_agent_proto_msgTypes[3].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[16].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[26].OneofWrappers = []any{}
-	file_agent_proto_msgTypes[29].OneofWrappers = []any{}
-	file_agent_proto_msgTypes[34].OneofWrappers = []any{
+	file_agent_proto_msgTypes[31].OneofWrappers = []any{}
+	file_agent_proto_msgTypes[36].OneofWrappers = []any{
 		(*RunEvent_Text)(nil),
 		(*RunEvent_Tool)(nil),
 		(*RunEvent_State)(nil),
@@ -3130,7 +3252,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   35,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

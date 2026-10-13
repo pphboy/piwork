@@ -66,21 +66,24 @@ function listing(body: string, modified: string) { return `<d:multistatus xmlns:
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
-for(const method of ['picker','paste','drop'])test(`Chat images: ${method} adds without side effects and sends a pure image`,async t=>{
+for(const method of ['picker','paste','drop','stop-and-send'])test(`Chat images: ${method} adds without side effects and sends a pure image`,async t=>{
  const bytes=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url));
  let accepted=false,submitted:any;
  const {page,requests}=await fixture(t,r=>{
+  if(method==='stop-and-send' && r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:0,cancelAndSendContractVersion:1}};
+  if(method==='stop-and-send' && r.path.endsWith('/runs/active'))return{json:{run:{runId:'old-image-run',workId:'work-1',sessionId:'another-session',state:2}}};
   if(r.path.endsWith('/chat-image-capabilities'))return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};
   if(r.path==='works/work-1/runs' && r.method==='POST'){submitted=JSON.parse(r.body);accepted=true;return {json:{run:{workId:'work-1',sessionId:'session-1',runId:'run-images',submissionKey:submitted.submissionKey,state:4,finalText:'Seen'}}};}
   if(r.path==='works/work-1/runs/run-images')return {json:{run:{workId:'work-1',sessionId:'session-1',runId:'run-images',submissionKey:submitted?.submissionKey,state:4,finalText:'Seen'}}};
   if(r.path.endsWith('/sessions/session-1') && accepted)return {json:{session:{workId:'work-1',sessionId:'session-1'},messages:[{entryId:'accepted',role:'user',runId:'run-images',blocks:[{blockId:'image',type:'image',image:{imageIndex:0,mimeType:'image/png',byteSize:bytes.length,sha256:'unused'}}]}],runs:[]}};
  });
  await page.locator('#composer').waitFor();const before=requests.filter(r=>r.method==='POST').length;
- if(method==='picker')await page.locator('#chat-image-input').setInputFiles({name:'image.png',mimeType:'image/png',buffer:bytes});
+ if(method==='picker'||method==='stop-and-send')await page.locator('#chat-image-input').setInputFiles({name:'image.png',mimeType:'image/png',buffer:bytes});
  else await page.evaluate(({data,method})=>{const file=new File([Uint8Array.from(atob(data),c=>c.charCodeAt(0))],'image.png',{type:'image/png'}),transfer=new DataTransfer();transfer.items.add(file);if(method==='paste')document.querySelector('#composer')!.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));else document.querySelector('.composer')!.dispatchEvent(new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));},{data:bytes.toString('base64'),method});
  await expect(page.locator('.chat-image-draft')).toHaveCount(1);await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');
  assert.equal(requests.filter(r=>r.method==='POST').length,before);
  await button(page,'send-message').click();await expect.poll(()=>submitted?.images?.length).toBe(1);
+ if(method==='stop-and-send')assert.equal(submitted.cancelRunId,'old-image-run');
  assert.equal(submitted.prompt,'');assert.equal(submitted.inputMode,'text');assert.equal(submitted.images[0].data,bytes.toString('base64'));
  await expect(page.locator('.chat-image-draft')).toHaveCount(0);assert.equal(requests.filter(r=>r.path==='works/work-1/runs' && r.method==='POST').length,1);
 });

@@ -18,7 +18,7 @@ func feedbackRoute(method, resource, item, action string) bool {
 	if resource != "agent-requests" {
 		return false
 	}
-	return method == "GET" && action == "" || method == "POST" && item != "" && (action == "cancel" || action == "retry")
+	return method == "GET" && (action == "" || item != "" && action == "retry-submission") || method == "POST" && item != "" && (action == "cancel" || action == "retry")
 }
 func feedbackQuery(r *http.Request, schema string) ([]byte, error) {
 	query := map[string]any{}
@@ -68,6 +68,20 @@ func (a *Application) feedbackHTTP(w http.ResponseWriter, r *http.Request, agent
 			var query contracts.AgentRequestQuery
 			_ = json.Unmarshal(raw, &query)
 			value, err := agent.ListAgentRequests(r.Context(), query)
+			if err != nil {
+				return true, conversationError(err)
+			}
+			send(w, 200, value)
+			return true, nil
+		}
+		if action == "retry-submission" {
+			raw, err := feedbackQuery(r, "AgentRequestRetryQuerySchema")
+			if err != nil {
+				return true, err
+			}
+			var query contracts.AgentRequestRetryQuery
+			_ = json.Unmarshal(raw, &query)
+			value, err := agent.LookupAgentRequestRetrySubmission(r.Context(), item, query)
 			if err != nil {
 				return true, conversationError(err)
 			}

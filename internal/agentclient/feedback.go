@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"piwork/internal/contracts"
 	"piwork/internal/rpc/agentv1"
 )
@@ -61,6 +63,33 @@ func (c *Client) RetryAgentRequest(ctx context.Context, id string, input contrac
 	var previous string
 	if json.Unmarshal(value.RetryOf, &previous) != nil || previous != id || string(value.RequestId) == id {
 		return nil, ErrResponse
+	}
+	return value, nil
+}
+func (c *Client) LookupAgentRequestRetrySubmission(ctx context.Context, id string, input contracts.AgentRequestRetryQuery) (*contracts.AgentRequestRetrySubmission, error) {
+	if contracts.Validate("AgentRequestRetryQuerySchema", input) != nil {
+		return nil, contracts.NewError("INVALID_REQUEST", "submissionKey")
+	}
+	value, err := contentValue[contracts.AgentRequestRetrySubmission](ctx, c, c.rpc.LookupAgentRequestRetrySubmission, id, input, "AgentRequestRetrySubmissionSchema")
+	if status.Code(err) == codes.Unimplemented {
+		return nil, contracts.NewError("RETRY_SUBMISSION_LOOKUP_UNSUPPORTED", "")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if string(value.WorkId) != c.scope.WorkID || string(value.RequestId) != id || value.SubmissionKey != input.SubmissionKey {
+		return nil, ErrResponse
+	}
+	if value.Status == "not-found" {
+		if string(value.Request) != "null" {
+			return nil, ErrResponse
+		}
+	} else {
+		request, err := contracts.Decode[contracts.AgentRequest](strings.NewReader(string(value.Request)), "AgentRequestSchema", 2<<20)
+		var original string
+		if err != nil || json.Unmarshal(request.RetryOf, &original) != nil || original != id || string(request.RequestId) == id {
+			return nil, ErrResponse
+		}
 	}
 	return value, nil
 }

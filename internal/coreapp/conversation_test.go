@@ -29,14 +29,16 @@ func TestConversationAccessPrecedesAgentRoute(t *testing.T) {
 	ownerLogin, _ := a.Identity.Login(ctx, "owner", "development-fixture-pass", "fixture")
 	otherLogin, _ := a.Identity.Login(ctx, "other", "development-fixture-pass", "fixture")
 	adminLogin, _ := a.Identity.Login(ctx, "admin", "development-fixture-pass", "fixture")
-	path := "/api/v1/works/work-conversation-1/sessions"
-	if status, body := httpCall(t, base, path, "GET", "Bearer "+otherLogin.Token, nil); status != 404 || body["code"] != "NOT_FOUND" {
-		t.Fatal("foreign Work metadata leaked", status, body)
-	}
-	if status, body := httpCall(t, base, path, "GET", "Bearer "+adminLogin.Token, nil); status != 403 || body["code"] != "PERMISSION_DENIED" {
-		t.Fatal("administrator gained conversation content", status, body)
-	}
-	if status, body := httpCall(t, base, path, "GET", "Bearer "+ownerLogin.Token, nil); status != 503 || body["code"] != "WORK_UNAVAILABLE" {
-		t.Fatal("owner reached an unvalidated Agent route", status, body)
+	for _, resource := range []string{"sessions", "runs/active", "agent-requests/original/retry-submission?submissionKey=key"} {
+		path := "/api/v1/works/work-conversation-1/" + resource
+		if status, body := httpCall(t, base, path, "GET", "Bearer "+otherLogin.Token, nil); status != 404 || body["code"] != "NOT_FOUND" {
+			t.Fatal("foreign Work metadata leaked", status, body)
+		}
+		if status, body := httpCall(t, base, path, "GET", "Bearer "+adminLogin.Token, nil); status != 403 || body["code"] != "PERMISSION_DENIED" {
+			t.Fatal("administrator gained conversation content", status, body)
+		}
+		if status, body := httpCall(t, base, path, "GET", "Bearer "+ownerLogin.Token, nil); status != 503 || body["code"] != "WORK_UNAVAILABLE" {
+			t.Fatal("owner reached an unvalidated Agent route", status, body)
+		}
 	}
 }
