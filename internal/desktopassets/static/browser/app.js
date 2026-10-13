@@ -655,7 +655,7 @@ function closeModal(animate = false) {
             target = [...root.querySelectorAll('[data-action=account],[data-action=work-menu],[data-action^=tab-],[data-action=exit-service-focus],[data-action=service-focus],#composer')].find(visible) || null;
         if (target && target !== document.activeElement)
             target.focus({ preventScroll: true });
-        if (responseSettings && responseContext && source === 'command' && target instanceof HTMLTextAreaElement)
+        if (!continuing && responseSettings && responseContext && source === 'command' && target instanceof HTMLTextAreaElement)
             target.setSelectionRange(caret[0], caret[1]);
     };
     if (!animate || !dialog?.open || matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -1792,12 +1792,13 @@ async function handleAction(action, el, record) {
     const ownedView = () => record?.kind === 'identity' ? location.hash : record && ['lifecycle', 'transfer'].includes(record.kind) ? `${location.hash}:${modalChoice}` : viewKey();
     const stay = async (pending) => { const key = ownedView(), modal = view.modal; const value = await pending; if (key !== ownedView() || record?.kind === 'identity' && !!view.modal && view.modal !== modal)
         throw new ViewChanged(); return value; };
-    const show = (op) => { if (record) {
+    const accept = (op) => { if (record) {
         record.businessId = op.id;
         actions.confirm(record, `Accepted · ${op.id}`);
         if (op.workId)
             void actions.refresh(record, () => op.kind === 'Delete Work' ? adapter.listWorks() : adapter.loadWork(op.workId));
-    } runAndShow(op); };
+    } };
+    const show = (op) => { accept(op); runAndShow(op); };
     const filesConfirmed = (results) => {
         const succeeded = results.filter(result => result.status === 'succeeded').length;
         if (record) {
@@ -3023,8 +3024,17 @@ async function handleAction(action, el, record) {
             }
             break;
         case "apply-config":
-            if (currentWork)
-                show(await stay(adapter.applyConfiguration(currentWork.id)));
+            if (currentWork) {
+                const origin = ownedView(), epoch = adapter.identityEpoch;
+                const op = await adapter.applyConfiguration(currentWork.id);
+                if (epoch !== adapter.identityEpoch || record && !actions.current(record))
+                    throw new ViewChanged();
+                // The accepted object survives navigation; only opening its view is conditional.
+                accept(op);
+                if (origin !== ownedView())
+                    throw new ViewChanged();
+                runAndShow(op);
+            }
             break;
         case "refresh-config":
             if (currentWork) {

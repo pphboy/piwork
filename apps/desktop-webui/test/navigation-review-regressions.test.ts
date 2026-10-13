@@ -129,3 +129,13 @@ for (const abandon of ['', 'close', 'new selection']) test(`C review: Import Sta
   started.state = 'succeeded'; c.advanceImportStarts(); c.advanceImportStarts(); await Promise.resolve();
   assert.deepEqual(opened, abandon ? [] : ['one']); assert.equal(starts, 1);
 });
+
+for(const boundary of ['route','modal','identity'])test(`Apply receipt keeps exact operation before ${boundary} presentation invalidation`,async()=>{
+ const {c,work}=fixture();let resolve!:(op:any)=>void;const pending=new Promise<any>(done=>{resolve=done;});let opened=0,confirmed=0;
+ c.adapter.applyConfiguration=()=>pending;c.adapter.loadWork=async()=>work;c.actions.confirm=()=>confirmed++;c.actions.refresh=async()=>{};c.runAndShow=()=>opened++;
+ vm.runInContext(extract(['handleAction']),c);const record:any={kind:'configuration',work:'one',action:'apply-config'};
+ const request=c.handleAction('apply-config',{dataset:{}},record);
+ if(boundary==='route')c.location.hash='#/work/two';else if(boundary==='modal')c.modalChoice++;else c.adapter.identityEpoch++;
+ resolve({id:'accepted-exact',workId:'one',kind:'Apply configuration',state:'running'});
+ await assert.rejects(request,c.ViewChanged);assert.equal(opened,0);assert.equal(record.businessId,boundary==='identity'?undefined:'accepted-exact');assert.equal(confirmed,boundary==='identity'?0:1);
+});

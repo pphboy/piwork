@@ -530,7 +530,7 @@ function closeModal(animate = false) {
     if(!visible(target) && visible(oldFocus))target=oldFocus;
     if(!visible(target))target=[...root.querySelectorAll<HTMLElement>('[data-action=account],[data-action=work-menu],[data-action^=tab-],[data-action=exit-service-focus],[data-action=service-focus],#composer')].find(visible) || null;
     if(target && target!==document.activeElement)target.focus({preventScroll:true});
-    if(responseSettings && responseContext && source==='command' && target instanceof HTMLTextAreaElement)target.setSelectionRange(caret[0],caret[1]);
+    if(!continuing && responseSettings && responseContext && source==='command' && target instanceof HTMLTextAreaElement)target.setSelectionRange(caret[0],caret[1]);
   };
   if(!animate || !dialog?.open || matchMedia('(prefers-reduced-motion: reduce)').matches){render();restore();return;}
   const rect=dialog.getBoundingClientRect(),copy=dialog.cloneNode(true) as HTMLDialogElement;
@@ -1494,7 +1494,8 @@ function downloadBlob(name: string, contents: string, type = "text/plain") {
 async function handleAction(action: string, el: HTMLElement, record?: ActionRecord) {
   const ownedView = () => record?.kind === 'identity' ? location.hash : record && ['lifecycle', 'transfer'].includes(record.kind) ? `${location.hash}:${modalChoice}` : viewKey();
   const stay = async <T>(pending: Promise<T>): Promise<T> => { const key = ownedView(), modal = view.modal; const value = await pending; if (key !== ownedView() || record?.kind === 'identity' && !!view.modal && view.modal !== modal) throw new ViewChanged(); return value; };
-  const show = (op: Operation) => { if (record) { record.businessId = op.id; actions.confirm(record, `Accepted · ${op.id}`); if (op.workId) void actions.refresh(record, () => op.kind === 'Delete Work' ? adapter.listWorks() : adapter.loadWork(op.workId)); } runAndShow(op); };
+  const accept = (op: Operation) => { if (record) { record.businessId = op.id; actions.confirm(record, `Accepted · ${op.id}`); if (op.workId) void actions.refresh(record, () => op.kind === 'Delete Work' ? adapter.listWorks() : adapter.loadWork(op.workId)); } };
+  const show = (op: Operation) => { accept(op); runAndShow(op); };
   const filesConfirmed = (results: TransferResult[]) => {
     const succeeded = results.filter(result => result.status === 'succeeded').length;
     if (record) { actions.confirm(record, `${succeeded} paths confirmed; ${results.length - succeeded} need review`); record.blocked = results.some(result => result.status === 'unknown'); if (currentWork) void actions.refresh(record, () => adapter.loadDirectory(currentWork.id, view.path)); }
@@ -2223,7 +2224,15 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       }
       break;
     case "apply-config":
-      if (currentWork) show(await stay(adapter.applyConfiguration(currentWork.id)));
+      if (currentWork) {
+        const origin=ownedView(),epoch=adapter.identityEpoch;
+        const op=await adapter.applyConfiguration(currentWork.id);
+        if(epoch!==adapter.identityEpoch || record && !actions.current(record))throw new ViewChanged();
+        // The accepted object survives navigation; only opening its view is conditional.
+        accept(op);
+        if(origin!==ownedView())throw new ViewChanged();
+        runAndShow(op);
+      }
       break;
     case "refresh-config":
       if (currentWork) {

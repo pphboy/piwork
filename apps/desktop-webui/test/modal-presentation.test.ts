@@ -37,3 +37,8 @@ test('the exit snapshot releases native modal blocking and keeps its old screen 
  const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8'),css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
  assert.match(source,/syncDialogPresentation\(dialog, !!closingModal \|\| nonmodalDialog\(\)\)/);assert.match(source,/dialog\.getBoundingClientRect\(\)/);assert.match(source,/left: `\$\{rect.left\}px`/);assert.match(css,/\.modal-exit-backdrop[^}]*pointer-events:none/);
 });
+
+test('exit completion never rewinds the caret of an already resumed composer',()=>{
+ const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
+ assert.match(source,/if \(!continuing && responseSettings && responseContext && source === 'command' && target instanceof HTMLTextAreaElement\)/);
+});
