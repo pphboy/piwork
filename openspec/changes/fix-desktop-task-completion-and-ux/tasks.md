@@ -79,8 +79,8 @@
 
 ## 11. 用户反馈：主流程与管理入口分层
 
-- [ ] 11.1 更新本变更proposal/design/spec，明确原45项28完成、17未测不变；按模块限定本轮层级调整与NoDocker边界。
-- [ ] 11.2 精简Export展示为非遮罩进度/结果，原入口直接执行，详情按需；验证一次提交/交付、背景动作与键盘可用、running停止确认及精确旧快照恢复。
-- [ ] 11.3 全局动作归Admin，Stop/Work information归Work更多菜单，Ready行优先Open；修头像外侧关闭/Escape/焦点，去重复Create CTA，保留空列表引导。
-- [ ] 11.4 删除Files空选择条、在现有工具栏承接批量动作；Service/Agent请求图标化且保持原过滤范围与可访问标签。
-- [ ] 11.5 执行定向生产函数与状态回归、typecheck/build/embed及官方云浏览器截图，记录实际通过/限制；不将合成GUI记为真实Core或完整浏览器通过。
+- [x] 11.1 更新本变更proposal/design/spec，明确原45项28完成、17未测不变；按模块限定本轮层级调整与NoDocker边界。
+- [x] 11.2 精简Export展示为非遮罩进度/结果，原入口直接执行，详情按需；验证一次提交/交付、背景动作与键盘可用、running停止确认及精确旧快照恢复。
+- [x] 11.3 全局动作归Admin，Stop/Work information归Work更多菜单，Ready行优先Open；修头像外侧关闭/Escape/焦点，去重复Create CTA，保留空列表引导。
+- [x] 11.4 删除Files空选择条、在现有工具栏承接批量动作；Service/Agent请求图标化且保持原过滤范围与可访问标签。
+- [x] 11.5 执行定向生产函数与状态回归、typecheck/build/embed及官方云浏览器截图，记录实际通过/限制；不将合成GUI记为真实Core或完整浏览器通过。

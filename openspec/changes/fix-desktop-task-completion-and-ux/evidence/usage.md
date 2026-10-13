@@ -39,6 +39,14 @@ Import完成且确认stopped时显示Imported · Not started。View Work或Close
 
 ### 局部键盘、选择和关闭
 
-Files选择栏保留固定位置，复选框有独立命中区；点击文件名仍是打开。Rename预填原basename并选择主名（目录选择全名）；New folder与Rename打开时聚焦输入。只有合法、可提交、非繁忙的命名表单响应普通Enter；输入法候选确认、229及覆盖确认不自动提交。
+Files没有空选择提示条；选中后在原工具栏显示数量与Copy/Move/Delete/Clear图标，文件行位置保持稳定，复选框有独立命中区；点击文件名仍是打开。Rename预填原basename并选择主名（目录选择全名）；New folder与Rename打开时聚焦输入。只有合法、可提交、非繁忙的命名表单响应普通Enter；输入法候选确认、229及覆盖确认不自动提交。
 
-只有干净、空闲的Work options、Service options和Work information允许同一主指针在弹窗外按下并释放后关闭。未知恢复、危险确认、Import和编辑表单不适用。Pi request的Close只收起查看；Cancel request只面向当前可用Work中的原live请求。取消受理或结果未知后保持原对象锁，Check status只读核对，不因旧running状态或读回失败再次提交。
+Admin账号下拉允许外侧关闭和Escape，关闭不影响后台任务或文件草稿。其他只有干净、空闲的Work options、Service options和Work information允许同一主指针在弹窗外按下并释放后关闭。未知恢复、危险确认、Import和编辑表单不适用。Pi request的Close只收起查看；Cancel request只面向当前可用Work中的原live请求。取消受理或结果未知后保持原对象锁，Check status只读核对，不因旧running状态或读回失败再次提交。
+
+### 主流程与辅助入口
+
+Works保留顶部New Work和Import Work，Ready行直接Open Work，Stopped保留Start。Stop与Work information在所属Work的更多菜单；About Piwork和Known operations在Works右上Admin账号下拉。列表底部不再重复Create a Work；空列表仍有创建引导。
+
+Export Work直接开始新导出，运行中仍先明确Stop and export。右下紧凑进度卡不会遮罩工作区；Details展开原操作、快照、传输和旧包，成功只显示Download started与同文件Download again。下载准备明确失败时，Retry download使用原快照，不重新导出；未知结果只核对。继续操作背景会收起卡片，原授权交付仍继续。
+
+Service工具栏的Agent requests图标只在已确认有记录时出现，并保持当前Service范围。Agent工具栏的Pi requests图标查看当前Work的请求；两者都有可访问名称和悬浮提示，没有未读计数。
