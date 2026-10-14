@@ -255,7 +255,7 @@ Chat显隐控件移至Service工具栏；窄屏Chat显示时仍保留Service Hea
 - 仅非空且全部路径succeeded的Files批次标记为Toast展示，复用3秒自动消退通知；不清除结果账本或未知路径锁。混合/失败/unknown及回读失败保留原恢复入口。全部成功不再重复常驻Transfer results。旧身份文件保存回调不得改新身份编辑器或通知。
 - 删除Files底部Shared workspace宿主路径说明；WebDAV移至More file actions的分隔次级命令，当前Workspace面包屑不变。
 - Packages使用独立图标/文字/动作列，状态文字与名称起点一致；Catalog动作成组，768px以下换行。Skills复选框缩进不变。Work/Service属性列表仅局部对齐，不改配置/Apply/unknown准入。
-- Works已有确认列表（包括空集合）时刷新只在固定按钮busy；首次未确认才骨架，失败保留缓存与重试。Service/Chat首次未确认使用静态局部结构占位；Ready Service entry尚未发出请求的首帧也不显示错误空态。实际iframe首次导航期间在稳定viewport内叠骨架，load只撤去展示遮层，不代表业务就绪；已显示iframe及祖先继续保留。
+- Works已有确认列表（包括空集合）时刷新只在固定按钮busy；首次未确认才骨架，失败保留缓存与重试。Service/Chat首次未确认使用静态局部结构占位；Ready Service entry尚未发出请求的首帧也不显示错误空态。应用入口取得后直接在稳定viewport显示iframe，不叠加等待window.load的骨架；票据入口经检查归一到origin后也不得遮挡已显示内容；load仅触发既有嵌入检查，不代表业务就绪；已显示iframe及祖先继续保留。
 - 仅assistant正文经安全GFM解析，用户文字、工具输出、source chip、鉴权图片管道保持原行为。原生HTML转义、链接只允许明确http/https/mailto导航且noopener/noreferrer、Markdown图片仅显示alt不自动联网。代码/表格局部滚动；历史与流式增量均走同一纯renderer。超64KiB、4096行或4096分隔符回退完整转义文字，不截断、不缓存跨身份内容。
 
 最终截图进一步确认：open-work/retry-work-read普通pending不再与区域骨架重复显示状态条；首次未确认Session/模型使用中性Loading标签，不显示假空会话或Retry models，真实错误与未知设置恢复保持。
@@ -271,3 +271,13 @@ Chat显隐控件移至Service工具栏；窄屏Chat显示时仍保留Service Hea
 
 - initialize失败时，以启动捕获的epoch和hash核验归属；仅当前精确Work且routeLoad=0、无对象时写既有workReadErrors（missing=false）。借原toast同步render错误与Retry，toast结束不清持久恢复；拒绝旧身份/路由晚失败，不创建额外加载框架。
 - ticket reopen与首启均使用相同异常出口；调用initialize后立即捕获epoch和已同步规范化的hash，允许正常去ticket但拒绝之后导航/身份变化的晚失败。
+
+## 2026-10-14 Service 遮挡回归修复
+
+- 确认根因：真实入口可由票据 bootstrap URL 转为 origin `/`，adapter 的预览检查会归一 entryUrl，而 DOM reconciliation 按 Work/Service/端口保留 iframe 原始 src。旧展示条件同时要求 navigationLoaded 与 src 等于最新 entryUrl，导致真实入口正常加载后骨架仍覆盖应用；此前夹具将两个 URL 设为相同，遗漏此路径。
+- 移除 iframe 上方的骨架和 navigationLoaded 展示状态；保留 Services 列表及取得入口之前的首次轻量占位、真实失败及显式恢复入口。页面子资源未结束也不得挡住已可交互应用，不以超时隐藏或伪造业务成功处理。
+- 契约回归覆盖票据 URL 归一、load 尚未触发、身份变化及断开 iframe 的迟到 load；不改 Core/API、安全边界、票据协议或稳定 iframe reconciliation。
+
+验证：480 项纯回归全部通过；Desktop 构建/typecheck、25 个嵌入文件逐字节同步、正常 linux/amd64 CLI 构建及 `TestNativeDesktopEmbeddedBrowserAndLocalIdentity` 通过。OpenSpec strict、文档边界与 native boundary 通过。完整 test:browser 在环境浏览器启动矩阵失败后停止，未把其余矩阵或真实 Core、读屏宣称通过。宿主构建身份为 666329b + dirty，不回写成后续提交。
+
+定向 Chrome 对照：旧冻结版本在票据 `/bootstrap-ticket` 已触发 load、navigationLoaded=true 时仍保留一层覆盖；另以悬挂图片复现正文已渲染而 window.load 未触发、骨架持续挡住应用。新冻结版本两条路径均无覆盖，悬挂资源时可输入草稿并操作计数；Chat 显隐保持 iframe instance、草稿及计数。前后截图与冻结 manifest 位于被忽略的 `dist/services-stall-qa/`，属于合成 HTTP fixture 与真实产品构建资源实证，不等同真实 Core 集成。

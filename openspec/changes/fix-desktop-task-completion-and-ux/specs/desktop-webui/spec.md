@@ -800,3 +800,7 @@ Modal footer SHALL 按DUL-007统一同类按钮几何与角色，正文按钮、
 #### Scenario: 首次骨架不显示普通加载文字
 - **WHEN** Works、Work、Services、Files 或 Chat 首次内容尚未确认且没有真实错误
 - **THEN** 骨架只呈现贴合内容区域的静态形状，区域名称与busy由辅助属性表达；未取得的Session/模型名称可使用对应字段占位，已有名称、真实错误和unknown设置恢复不被隐藏；仅延迟占位显现，不延迟可用内容，缓存刷新不换回骨架
+
+#### Scenario: Service 入口归一与未完成导航不遮挡应用
+- **WHEN** 已取得合法 Service entry，票据 bootstrap URL 经预览检查归一为 origin 路径，或 iframe 的子资源尚未结束而应用已开始显示
+- **THEN** Desktop SHALL 直接显示并保留同一 Service iframe，不以原始 src 等于最新 entryUrl 或 window.load 作为内容展示条件，不覆盖等待骨架；入口取得前可保留首次占位，真实 entry/预览失败与显式恢复入口仍可见，load 不表示业务就绪
