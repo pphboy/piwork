@@ -157,6 +157,9 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
         const intent = intentFor(button);
         if (!intent)
             continue;
+        // Only the read-only Files refresh retains keyboard focus while locked.
+        if (button.dataset.action === 'refresh-files' && intent.kind === 'read' && button.dataset.readBusy && button.getAttribute('aria-disabled') === 'true')
+            continue;
         if (actions.conflict(intent)) {
             button.dataset.actionBaseDisabled = String(button.disabled);
             button.dataset.actionLocked = 'true';

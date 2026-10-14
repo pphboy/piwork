@@ -320,6 +320,7 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
     anchor: focusKey(el), view: location.hash, origin: view.file || view.path, sourceContext: `${view.tab}:${view.session}:${view.modal}` };
 }
 async function dispatchAction(el: HTMLElement, perform?: (record?: ActionRecord) => Promise<void>, intent = actionIntent(el)) {
+  if (el.getAttribute?.('aria-disabled') === 'true') return;
   // Publishing local feedback can reconcile this button before the action runs.
   // Bind the clicked action and its explicit object IDs before that render.
   const action=el.dataset.action || '',target=el.cloneNode(false) as HTMLElement;
@@ -935,7 +936,7 @@ function fileRefreshButton(w: Work) {
   const record=[...actions.records.values()].filter(item=>item.action==='refresh-files' && item.work===w.id && item.resource===(view.file || view.path) && item.view===location.hash).sort((a,b)=>b.token-a.token)[0];
   const pending=!!record?.pending || !!adapter.directories.get(`${w.id}:${view.path}`)?.loading;
   const label=pending?(record && Date.now()-record.started>=10000?'Still reading files…':'Reading files…'):'Refresh files';
-  return btn(icon('refresh',16),'refresh-files',`icon-button quiet file-refresh ${pending?'is-reading':''}`,`aria-label="${label}" title="${label}" ${pending?'disabled aria-busy="true" data-read-busy="true"':''}`);
+  return btn(icon('refresh',16),'refresh-files',`icon-button quiet file-refresh ${pending?'is-reading':''}`,`aria-label="${label}" title="${label}" ${pending?'aria-disabled="true" aria-busy="true" data-read-busy="true"':''}`);
 }
 function files(w: Work) {
   const directory = adapter.directories.get(`${w.id}:${view.path}`);
@@ -2827,7 +2828,7 @@ root.addEventListener('keydown', event => {
 });
 root.addEventListener("click", (e) => {
   const el = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
-  if (!el || el.hasAttribute("disabled") || el.closest('[inert]')) return;
+  if (!el || el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true" || el.closest('[inert]')) return;
   if(el instanceof HTMLAnchorElement && el.dataset.action==='open-work') {
     if(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button!==0)return;
     e.preventDefault();

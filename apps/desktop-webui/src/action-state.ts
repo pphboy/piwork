@@ -103,6 +103,8 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
   for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
     if (button.dataset.actionLocked) { button.disabled = button.dataset.actionBaseDisabled === 'true'; delete button.dataset.actionLocked; delete button.dataset.actionBaseDisabled; if (!button.dataset.readBusy) button.removeAttribute('aria-busy'); }
     const intent = intentFor(button); if (!intent) continue;
+    // Only the read-only Files refresh retains keyboard focus while locked.
+    if (button.dataset.action === 'refresh-files' && intent.kind === 'read' && button.dataset.readBusy && button.getAttribute('aria-disabled') === 'true') continue;
     if (actions.conflict(intent)) { button.dataset.actionBaseDisabled = String(button.disabled); button.dataset.actionLocked = 'true'; button.disabled = true; button.setAttribute('aria-busy', 'true'); }
   }
   for (const record of actions.records.values()) {

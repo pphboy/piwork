@@ -10,9 +10,9 @@ function fixture(){
 }
 test('Files refresh keeps a fixed icon with scoped busy feedback and no success text',()=>{
  const {c,work}=fixture();let html=c.fileRefreshButton(work);assert.match(html,/icon-button quiet file-refresh/);assert.doesNotMatch(html,/>Refresh<|Updated|aria-busy|<span>/);
- const record={action:'refresh-files',work:'work-a',resource:'/',view:c.location.hash,token:1,started:Date.now(),pending:true};c.actions.records.set('read',record);html=c.fileRefreshButton(work);assert.match(html,/disabled aria-busy="true"/);assert.match(html,/Reading files/);
+ const record={action:'refresh-files',work:'work-a',resource:'/',view:c.location.hash,token:1,started:Date.now(),pending:true};c.actions.records.set('read',record);html=c.fileRefreshButton(work);assert.match(html,/aria-disabled="true" aria-busy="true"/);assert.match(html,/Reading files/);
  record.started-=11000;assert.match(c.fileRefreshButton(work),/Still reading files/);
- record.pending=false;html=c.fileRefreshButton(work);assert.doesNotMatch(html,/Updated|Status checked|aria-busy/);
+ record.pending=false;html=c.fileRefreshButton(work);assert.doesNotMatch(html,/Updated|Status checked|aria-busy|aria-disabled/);
  record.pending=true;c.view.path='/different';assert.doesNotMatch(c.fileRefreshButton(work),/aria-busy/);
  c.adapter.directories.set('work-a:/different',{loading:true,checkedAt:'now',error:''});assert.match(c.fileRefreshButton(work),/aria-busy="true"/);
 });
@@ -165,4 +165,9 @@ test('Works first load uses skeleton, first failure is never an empty list, and 
  const loading=c.works().match(/<div class="loading-list"[\s\S]*?<\/div><div class="works-footer"/)?.[0];assert.ok(loading);assert.match(loading,/aria-label="Loading your Works" aria-busy="true"/);assert.equal(loading.replace(/<div class="works-footer"$/,'').replace(/<[^>]*>/g,''),'');assert.doesNotMatch(loading,/data-action="check-connection"/);
  c.adapter.worksLoading=false;c.adapter.worksError='No response';c.adapter.state.scenario='list-error';let html=c.works();assert.match(html,/Works could not be loaded/);assert.doesNotMatch(html,/Make room for your next idea|No matching Works/);
  c.adapter.state.works=[work];c.adapter.worksLoading=true;c.view.search='missing';html=c.works();assert.match(html,/value="missing"/);assert.match(html,/No matching Works/);assert.doesNotMatch(html,/loading-list/);
+});
+
+test('aria-disabled read refresh rejects direct dispatch before action submission',async()=>{
+ const c:any={actionIntent:()=>undefined};vm.createContext(c);vm.runInContext(extract('dispatchAction'),c);let calls=0;await c.dispatchAction({getAttribute:()=> 'true'},async()=>calls++);assert.equal(calls,0);
+ assert.match(source,/el.getAttribute\("aria-disabled"\) === "true"/);
 });

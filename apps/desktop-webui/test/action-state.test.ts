@@ -144,3 +144,11 @@ test('confirmed file toast presentation never hides pending, unknown, failed or 
     record.blocked=false;record.error='Write failed';renderActionStates(root,actions,'',()=>undefined);assert.match(nodes.pop().textContent,/Write failed/);
   } finally {actions.clear();Object.assign(globalThis,{document:oldDocument,getComputedStyle:oldStyle});}
 });
+
+test('only aria-disabled read refresh avoids native disabling while the action lock remains',async()=>{
+ const {renderActionStates}=await import(moduleURL);const actions=new ActionState();
+ for(const kind of ['read','files']){
+  const request={...intent('refresh-files',kind),action:'refresh-files'};const record=actions.begin(request);const attrs:any={'aria-disabled':'true'};const button:any={dataset:{action:'refresh-files',readBusy:'true'},disabled:false,getAttribute:(name:string)=>attrs[name],setAttribute:(name:string,value:string)=>attrs[name]=value};
+  const root:any={querySelectorAll:(selector:string)=>selector==='button[data-action]'?[button]:[]};record.view='different';renderActionStates(root,actions,'current',()=>request);assert.equal(button.disabled,kind!=='read');assert.ok(actions.conflict(request));actions.clear();
+ }
+});
