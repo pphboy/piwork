@@ -1183,7 +1183,7 @@ const size = (n) => n >= 1048576
         : `${n} B`;
 function transferResults() {
     const results = current() ? adapter.transfersByWork.get(current().id) || [] : [];
-    return results.length
+    return results.some(result => result.status !== "succeeded")
         ? `<section class="transfer-results"><h3>Transfer results <span>${results.some((r) => r.status !== "succeeded") ? "Some paths need attention" : ""}</span></h3>${results.map((r) => `<div class="transfer-row">${icon(r.status === "succeeded" ? "check" : "info", 14)}<code>${esc(r.path)}</code><span>${esc(r.message)}</span></div>`).join("")}${results.some((r) => r.status === "unknown") ? btn("Refresh to verify target", "refresh-files", "small") : ""}</section>`
         : "";
 }
@@ -1698,6 +1698,7 @@ function confirmFileAttempt(record, results) {
         return;
     // Only retainFileResults binds a lock to an actually submitted unknown path.
     // A cumulative summary must not copy an earlier unknown into a later retry.
+    record.successFeedback = results.length && results.every(result => result.status === 'succeeded') ? 'toast' : undefined;
     actions.confirm(record, `${results.filter(result => result.status === 'succeeded').length} paths confirmed; ${results.filter(result => result.status !== 'succeeded').length} need review`);
 }
 async function performFileAttempt(attempt, targets, record) {
@@ -1731,9 +1732,10 @@ async function performFileAttempt(attempt, targets, record) {
     confirm(results);
     if (record)
         void actions.refresh(record, () => adapter.loadDirectory(attempt.workId, view.path));
-    if (results.every(result => result.status === 'succeeded')) {
+    if (results.length && results.every(result => result.status === 'succeeded')) {
         view.selected = [];
         closeModal();
+        toast('File changes saved.');
     }
     else {
         view.modalError = 'Review each path below. Select only confirmed failures to retry; unknown results require a read-only refresh.';
@@ -1863,9 +1865,8 @@ async function handleAction(action, el, record) {
     } };
     const show = (op) => { accept(op); runAndShow(op); };
     const filesConfirmed = (results) => {
-        const succeeded = results.filter(result => result.status === 'succeeded').length;
         if (record) {
-            actions.confirm(record, `${succeeded} paths confirmed; ${results.length - succeeded} need review`);
+            confirmFileAttempt(record, results);
             record.blocked = results.some(result => result.status === 'unknown');
             if (currentWork)
                 void actions.refresh(record, () => adapter.loadDirectory(currentWork.id, view.path));
@@ -2982,8 +2983,10 @@ async function handleAction(action, el, record) {
                     throw new ViewChanged();
                 modalTransfers = [...modalTransfers.filter(row => !targets.some(target => target.source === row.path)), ...results];
                 pendingUploadFiles = pendingUploadFiles.filter(file => modalTransfers.some(row => row.path === joinPath(directory, file.name) && row.status !== 'succeeded'));
-                if (!pendingUploadFiles.length)
+                if (!pendingUploadFiles.length && modalTransfers.length && modalTransfers.every(row => row.status === 'succeeded')) {
                     closeModal();
+                    toast('Upload complete.');
+                }
                 else {
                     view.modalError = 'Some uploads need review. Successful paths will not be submitted again.';
                     render();
@@ -3003,8 +3006,10 @@ async function handleAction(action, el, record) {
                 if (origin !== viewKey())
                     throw new ViewChanged();
                 modalTransfers = retained;
-                if (filesConfirmed(retained))
+                if (filesConfirmed(retained)) {
                     closeModal();
+                    toast('Folder created.');
+                }
             }
             break;
         case "file-rename":
@@ -4043,6 +4048,8 @@ async function handleFiles(input, record) {
             openModal("upload-overwrite");
             modalTransfers = results;
         }
+        else if (results.length && results.every(row => row.status === "succeeded"))
+            toast("Upload complete.");
         render();
     }
     else if (input.id === "work-file-input") {

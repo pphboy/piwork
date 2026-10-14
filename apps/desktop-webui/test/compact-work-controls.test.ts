@@ -100,3 +100,30 @@ test('Files first reads preserve toolbar and never mistake another cached direct
  c.view.path='/other';c.adapter.directories.set('work-a:/other',{loading:true,checkedAt:'now',error:''});work.resourceErrors.files='Unrelated root error';html=c.files(work);assert.match(html,/old.txt/);assert.doesNotMatch(html,/Unrelated root error|read-placeholder/);
  c.view.selected=['/other/old.txt'];html=c.files(work);assert.match(html,/checked/);assert.match(html,/1 selected/);assert.match(html,/old.txt/);
 });
+
+test('Files keeps mixed/unknown path evidence but removes all-success result clutter',()=>{
+ const {c,work}=fixture();c.current=()=>work;c.adapter.transfersByWork=new Map();
+ vm.runInContext(extract('transferResults'),c);
+ for(const rows of [[],[{path:'/done',status:'succeeded',message:'Confirmed'}]]) {
+  c.adapter.transfersByWork.set(work.id,rows);assert.equal(c.transferResults(),'');
+ }
+ c.adapter.transfersByWork.set(work.id,[{path:'/done',status:'succeeded',message:'Confirmed'},{path:'/unknown',status:'unknown',message:'Check original target'}]);
+ const html=c.transferResults();assert.match(html,/\/done/);assert.match(html,/\/unknown/);assert.match(html,/Refresh to verify target/);
+});
+
+test('file success marker requires nonempty all-confirmed results and leaves original unknown lock intact',()=>{
+ const {c}=fixture();const record:any={blocked:true};c.actions.current=(r:any)=>r===record;c.actions.confirm=()=>{};
+ vm.runInContext(extract('confirmFileAttempt'),c);
+ for(const results of [[],[{status:'failed'}],[{status:'succeeded'},{status:'unknown'}]]) {
+  c.confirmFileAttempt(record,results);assert.equal(record.successFeedback,undefined);assert.equal(record.blocked,true);
+ }
+ c.confirmFileAttempt(record,[{status:'succeeded'}]);assert.equal(record.successFeedback,'toast');assert.equal(record.blocked,true);
+});
+
+test('success Toast really auto-dismisses after three seconds and replacement clears the previous timer',()=>{
+ const {c}=fixture();let tick:()=>void=()=>{},delay=0,cleared=0,renders=0;
+ c.render=()=>renders++;c.clearTimeout=()=>cleared++;c.setTimeout=(fn:()=>void,ms:number)=>{tick=fn;delay=ms;return 1;};
+ vm.runInContext('let toastTimer;'+extract('toast'),c);
+ c.toast('Folder created.');assert.equal(c.view.toast,'Folder created.');assert.equal(delay,3000);
+ c.toast('Upload complete.');assert.equal(cleared,2);assert.equal(c.view.toast,'Upload complete.');tick();assert.equal(c.view.toast,'');assert.equal(renders,3);
+});
