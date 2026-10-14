@@ -2125,7 +2125,7 @@ test('Controls Service scopes discard late reads, share ports, retain list scrol
  await expect(page.locator('#service-select')).toBeVisible();await expect.poll(()=>requests.filter(r=>r.path.endsWith('/agent-requests')).length).toBeGreaterThan(0);
  await page.locator('#service-select').click();await page.locator('[data-action=select-service][data-id=service-b]').click();await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool B')?.confirmed")).toBe(true);release();await page.waitForTimeout(100);await expect(button(page,'service-requests')).toHaveCount(0);
  assert.equal(await api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords || false"),false);
- delayed=false;await page.locator('#port-select').selectOption('81');assert.ok(requests.filter(r=>r.path.endsWith('/agent-requests')).every(r=>!new URLSearchParams(r.search).has('port')));
+ delayed=false;await button(page,'service-menu').click();await button(page,'manage-services').click();await page.locator('[data-action=service-details][data-id=service-b]').click();await page.getByRole('combobox',{name:'Web entry',exact:true}).selectOption('81');await button(page,'close-modal').click();assert.ok(requests.filter(r=>r.path.endsWith('/agent-requests')).every(r=>!new URLSearchParams(r.search).has('port')));
  await api(page,"await adapter.signOut()");assert.equal(await api(page,"return adapter.requestPresence.size"),0);await expect(button(page,'service-requests')).toHaveCount(0);
 });
 

@@ -639,7 +639,7 @@ test('W1 Service control stays locked across port changes while another Service 
   const details = async (id: string) => { await button(page, 'service-menu').click(); await button(page, 'manage-services').click(); await page.locator(`[data-action="service-details"][data-id="${id}"]`).click(); };
   await details('a'); await page.locator('[data-control="restart"]').click();
   await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('service:a');
-  await button(page, 'close-modal').click(); await page.locator('#port-select').selectOption('8080'); await details('a');
+  await button(page, 'close-modal').click(); await details('a'); await page.getByRole('combobox', { name: 'Web entry', exact: true }).selectOption('8080'); await button(page, 'close-modal').click(); await details('a');
   await expect(page.locator('[data-control="restart"]')).toBeDisabled();
   await page.locator('[data-control="restart"]').evaluate((el: HTMLButtonElement) => el.click());
   assert.equal(requests.filter(r => r.path === 'works/work-1/services/a/restart').length, 1);

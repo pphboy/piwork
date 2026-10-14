@@ -8,6 +8,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { chromium, expect, type Page } from "@playwright/test";
+async function selectService(page: Page, id: string) {
+  await page.getByRole('button', {name: /^Service: /}).click();
+  await page.locator(`[role=option][data-action=select-service][data-id="${id}"]`).click();
+}
 const nativeCli = process.env.PIWORK_TEST_NATIVE_CLI || fileURLToPath(new URL("../../../../dist/go/piwork-cli", import.meta.url));
 const workPackagePath = fileURLToPath(new URL("../../../../internal/workpackage/testdata/golden-native-pi-package.work", import.meta.url));
 const WORK_PACKAGE_MIME = "application/vnd.piwork.work-package";
@@ -778,8 +782,12 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await page.goto(launchUrl);
     await page.getByRole('heading',{name:'Works',exact:true}).waitFor();
     await page.locator('[data-action=open-work]').filter({hasText:'笔记工作'}).click();
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('notes');
-    assert.equal(await page.getByRole('combobox',{name:'Declared Web port'}).inputValue(), '80');
+    await selectService(page, 'notes');
+    await page.getByRole('button', {name: 'Service options', exact: true}).click();
+    await page.locator('[data-action=manage-services]').click();
+    await page.locator('[data-action=service-details][data-id=notes]').click();
+    assert.equal(await page.getByRole('combobox',{name:'Web entry',exact:true}).inputValue(), '80');
+    await page.locator('[data-action=close-modal]').click();
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();
     await page.locator('[data-action-status]').filter({hasText:'Loading Work'}).waitFor({state:'detached'});
     await page.frameLocator('iframe').locator('body[data-ready="yes"]').waitFor();
@@ -821,20 +829,20 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     assert.deepEqual(await page.frameLocator("iframe").locator("body").evaluate(async () =>
       await (await fetch("/api/data")).json()), { record: serviceRecord });
 
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('boards');
+    await selectService(page, 'boards');
     await page.frameLocator('iframe').getByRole('heading',{name:'Boards app'}).waitFor();
     assert.equal(await page.frameLocator('iframe').locator('body').evaluate(() => localStorage.getItem('service-state')), null);
     assert.equal(await page.frameLocator('iframe').locator('body').evaluate(() => { try { return !!parent.document; } catch { return false; } }), false);
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('notes');
+    await selectService(page, 'notes');
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();
     assert.equal(await page.frameLocator('iframe').locator('body').evaluate(() => localStorage.getItem('service-state')), 'notes');
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('blocked');
+    await selectService(page, 'blocked');
     await page.getByRole('heading',{name:'This app opens in its own tab'}).waitFor();
     const opening = context.waitForEvent('page'); await page.getByRole('button',{name:'Open application tab',exact:true}).click();
     const separate = await opening; await separate.getByRole('heading',{name:'Blocked app'}).waitFor();
     await capture('service-embedding-denied');
     assert.match(new URL(separate.url()).hostname, /^s-[a-f0-9]+\.desktop\.localhost$/); await separate.close();
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('notes');
+    await selectService(page, 'notes');
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();
     await page.getByRole('button',{name:'Files',exact:true}).click();
     await page.getByRole('button',{name:/^note.txt/}).click();
