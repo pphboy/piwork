@@ -406,3 +406,9 @@ GUI使用的 `app.js` SHA-256为 `a8cf325f050e5911304222183944cfbd6de8e76319b55a
 
 - 4f6c946补齐初始化异常出口：initialize失败若仍属启动时的身份及精确hash，且首次Work路由未开始、对象仍缺失，则用既有workReadErrors保留真实原因/Retry；原toast驱动render但到期不清持续错误。旧身份/旧路由不得写入或通知，既有对象和已开始route读不被改写。新增生产函数回归通过。
 - 4f6c946最终官方Chrome复验：Works成功空列表+known-operations合成失败的冷开Work显示持久Work unavailable、具体错误、Retry和Back to Works，read-placeholder=0；恢复健康后Retry实际进入Ready Work、Service iframe及Chat历史。没有把此两张针对异常出口的复拍扩称为全部矩阵重跑。
+
+### 2026-10-14 同一初始化恢复入口补齐
+
+- 4f19d32将已有tab的ticket reopen入口接入相同初始化错误helper。两个入口均在initialize同步去除ticket后捕获epoch/hash，避免正常规范化被当成过期路由；初始化请求/身份行为不变。生产绑定测试覆盖同步清ticket后的失败归属；不扩GUI矩阵，之前4f6c946的helper GUI验证仍明确标原版本。
+- 最终480项纯回归通过，Desktop build/typecheck、嵌入资源、宿主构建及目标测试通过。最终app.js SHA256 `7b6135525666ef8e31af0c79d0bb931025d84e6456b86aa707b8d764cc555755`，style.css不变；此前7ea910…为4f6c946冻结资产，不冒称最新字节。
+- 最终build.json记录4f19d32、modified=false，binary SHA256 `bd674b801888f7878d0f5ad3d55e66db59cda1efc00c75018ad5c48f9f27049f`；此补充文档晚于构建且不改其真实身份。

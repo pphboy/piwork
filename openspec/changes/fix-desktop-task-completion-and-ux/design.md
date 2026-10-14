@@ -270,3 +270,4 @@ Chat显隐控件移至Service工具栏；窄屏Chat显示时仍保留Service Hea
 - 冷开Work深链接：bootstrap在loadRoute前先读全局列表，原无对象分支曾误报Unavailable。复用routeLoad=0和既有错误/连接状态判断初次占位，不改变初始化请求顺序、身份或真实404；路由已读或真正失败仍提供恢复入口。
 
 - initialize失败时，以启动捕获的epoch和hash核验归属；仅当前精确Work且routeLoad=0、无对象时写既有workReadErrors（missing=false）。借原toast同步render错误与Retry，toast结束不清持久恢复；拒绝旧身份/路由晚失败，不创建额外加载框架。
+- ticket reopen与首启均使用相同异常出口；调用initialize后立即捕获epoch和已同步规范化的hash，允许正常去ticket但拒绝之后导航/身份变化的晚失败。
