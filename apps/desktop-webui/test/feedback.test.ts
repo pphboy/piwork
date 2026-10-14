@@ -1033,11 +1033,11 @@ for (const outcome of ['failed', 'observation-unknown', 'submission-unknown'] as
     await expect(page.locator('#modal .object-control-progress')).toContainText(outcome === 'failed' ? 'failed' : 'Original Start observation temporarily unavailable');
     await expect(page).toHaveURL(/#\/works$/);
     await expect(page.locator('#modal')).toContainText(importId); await expect(page.locator('#modal')).toContainText(startId);
-    await expect(page.locator('#modal [data-action="open-work"]')).toHaveCount(0);
+    await expect(page.locator('#modal').getByRole('button', { name: 'Open Work', exact: true })).toHaveCount(0);
     if (outcome === 'observation-unknown') {
       observationUnavailable = false; startState = 'succeeded';
       await progress.click(); await expect(progress).toBeEnabled(); await expect(page).toHaveURL(/#\/works$/);
-      await expect(page.locator('#modal [data-action="open-work"]')).toHaveCount(0);
+      await expect(page.locator('#modal').getByRole('button', { name: 'Open Work', exact: true })).toHaveCount(0);
       assert.equal(await api(page, `return adapter.getOperation('${startId}').state`), 'succeeded');
       assert.equal(await api(page, "return adapter.getWork('imported').status"), 'Starting');
       observed = 'ready'; await progress.click();
