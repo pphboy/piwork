@@ -402,7 +402,7 @@ test('Brain request details keep imported history readonly and closing does not 
   if(r.path.endsWith('/agent-requests/request-historical'))return{json:{request,evidence:{items:[{evidenceId:'proof-original',kind:'query',objectRef:'review',stateVersion:'2',verified:true}],nextCursor:null},runs:[]}};
  });
  await button(page,'tab-Chat').click();await button(page,'pi-requests').click();await expect(page.locator('#modal')).toContainText('Historical · Read only');await button(page,'pi-request-detail').click();
- await expect(page.locator('#modal')).toContainText('job-original');await expect(page.locator('#modal')).toContainText('Shared history is read only');await expect(page.locator('[data-action="retry-pi-request"]')).toHaveCount(0);await expect(page.locator('[data-action="cancel-pi-request"]')).toHaveCount(0);
+ await expect(page.locator('#modal')).toContainText('job-original');await expect(page.locator('#modal')).toContainText('Historical · Read only');await expect(page.locator('[data-action="retry-pi-request"]')).toHaveCount(0);await expect(page.locator('[data-action="cancel-pi-request"]')).toHaveCount(0);
  await button(page,'close-modal').click();assert.equal(requests.filter(r=>r.method==='POST').length,0);
 });
 
@@ -1475,7 +1475,8 @@ test('Compact settings keyboard keeps list navigation, IME, Tab, focus return an
   await page.keyboard.press('Tab');
   await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.locator('#modal .modal-head .button')).toBeFocused();
+  await expect(page.locator('#modal')).toHaveAttribute('aria-modal','false');
+  assert.equal(await page.locator('#modal').evaluate(node=>node.contains(document.activeElement)),false,'Popover must not trap Tab at its footer');
   await page.keyboard.press('Shift+Tab');
   await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
   await page.keyboard.press('Escape');
@@ -2201,7 +2202,7 @@ test('Controls recovery: another active Run does not hide the current Chat failu
  });
  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toHaveAttribute('aria-label','Stop and send');
  await api(page,"const w=adapter.getWork('work-1');w.run={id:'failed-manual',sessionId:'session-1',status:'failed',created:'2026-10-12T00:00:00Z',cursor:0,error:'The manual answer failed',source:{kind:'chat'}};w.sessions[0].runs=[w.run];await adapter.loadModels('work-1');");
- await expect(page.locator('.composer-wrap')).toContainText('The manual answer failed');
+ await expect(page.locator('.message-execution').filter({has:page.locator('[data-run-id=failed-manual]')})).toContainText('The manual answer failed');
 });
 test('Controls recovery: cancellation from list follows its terminal state',async t=>{
  let state='running';
@@ -2796,4 +2797,21 @@ test('C Download saved version returns server bytes without saving or changing e
   const downloaded = await pending, path = await downloaded.path(); assert.ok(path); assert.equal(await readFile(path, 'utf8'), 'saved version\n');
   await expect(editor).toHaveValue('different unsaved draft'); assert.deepEqual(await editor.evaluate((element: HTMLTextAreaElement) => [element.selectionStart, element.selectionEnd]), selection);
   assert.equal(requests.filter(r => r.method === 'PUT').length, 0); assert.equal(requests.filter(r => r.method === 'GET' && r.path === cFileRoot + 'note.txt').length, before + 1);
+});
+
+for (const ending of ['success','failure','focus-moved'] as const) test(`Files slow refresh ${ending} preserves keyboard intent and rejects duplicate reads`,async t=>{
+ let armed=false,release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.method==='PROPFIND' && armed){await gate;if(ending==='failure')return{status:503,json:{message:'Original directory temporarily unavailable'}};}
+  return cFilesReply(r);
+ });
+ await button(page,'tab-Files').click();await expect(page.locator('[data-action=open-file][data-path="/note.txt"]')).toBeVisible();await page.clock.install();
+ const refresh=button(page,'refresh-files'),before=requests.filter(r=>r.method==='PROPFIND').length;armed=true;await refresh.focus();await refresh.press('Enter');
+ await expect(refresh).toHaveAttribute('aria-disabled','true');await expect(refresh).toBeFocused();await expect.poll(()=>requests.filter(r=>r.method==='PROPFIND').length).toBe(before+1);
+ await refresh.press('Enter');await refresh.evaluate((node:HTMLButtonElement)=>node.click());await page.clock.runFor(10001);
+ await expect(refresh).toHaveAttribute('aria-label','Still reading files…');await expect(refresh).toBeFocused();assert.equal(requests.filter(r=>r.method==='PROPFIND').length,before+1);
+ if(ending==='focus-moved')await page.locator('#composer').focus();release();await expect(refresh).not.toHaveAttribute('aria-disabled','true');await expect(refresh).toBeEnabled();
+ await expect(ending==='focus-moved'?page.locator('#composer'):refresh).toBeFocused();assert.equal(requests.filter(r=>r.method==='PROPFIND').length,before+1);
+ if(ending==='failure')await expect(page.locator('#app')).toContainText('Original directory temporarily unavailable');
+ assert.equal(requests.filter(r=>['PUT','DELETE','MOVE','COPY','MKCOL'].includes(r.method)).length,0);
 });
