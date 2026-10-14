@@ -3551,7 +3551,7 @@ function render() {
             html = `${workHeader(w, true)}<div class="standalone-label">Independent application window · Closing this tab does not stop the Service</div><main class="standalone-app">${!adapter.project(w).retainWorkspace ? `${view.layout !== 'workspace' ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ''}${workState(w)}` : services(w)}</main>`;
         }
         else
-            html = works();
+            html = standaloneWorkUnavailable(r);
     }
     else if (r[0] === "work") {
         const w = adapter.getWork(r[1]);
@@ -4427,9 +4427,15 @@ function reportInitializationFailure(error, epoch, origin) {
     if (epoch !== adapter.identityEpoch || origin !== location.hash)
         return;
     const r = route(), message = error instanceof Error ? error.message : String(error);
-    if (routeLoad === 0 && r[0] === 'work' && r[1] && !adapter.getWork(r[1]))
+    if (routeLoad === 0 && ['work', 'app'].includes(r[0]) && r[1] && !adapter.getWork(r[1]))
         workReadErrors.set(r[1], { message, missing: false });
     toast(message); // The existing toast render also exposes persistent Work recovery.
+}
+function standaloneWorkUnavailable(r) {
+    const error = workReadErrors.get(r[1]);
+    const identity = `Work ${r[1]} · Service ${r[2]} · Port ${r[3]}`;
+    const exits = workLink('Back to Work', r[1]) + btn('Back to Works', 'back-works');
+    return `${topbar()}<main class="standalone-app"><p>${esc(identity)}</p>${workReadPending(r[1]) ? readPlaceholder('Loading Work…', 'service') + exits : empty('grid', error?.missing ? 'Work not found' : 'Work unavailable', esc(error?.message || adapter.worksError || 'Read this Work again to confirm its current availability.'), btn('Retry', 'retry-work-read', 'primary') + exits)}</main>`;
 }
 function workReadPending(workId) {
     if ([...actions.records.values()].some(record => record.work === workId && record.pending))

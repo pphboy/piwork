@@ -221,3 +221,17 @@ test('both initialization entries bind failure recovery after synchronous ticket
  assert.match(source,/reportInitializationFailure\(error, initializationContext.epoch, initializationContext.route\)/);
  assert.doesNotMatch(extract('handleRouteNavigation'),/initialize\(\).then.*toast/);
 });
+
+
+test('independent application preserves exact target, recovery and real read state without a Work',()=>{
+ const c:any={workReadErrors:new Map(),adapter:{worksError:''},esc:(s:string)=>s.replace(/</g,'&lt;'),topbar:()=>'',workLink:(label:string,id:string)=>`<a href="#/work/${encodeURIComponent(id)}">${label}</a>`,btn:(label:string,action:string)=>`<button data-action="${action}">${label}</button>`,readPlaceholder:()=>'<div aria-busy="true">skeleton</div>',empty:(_icon:string,title:string,description:string,actions:string)=>`${title} ${description} ${actions}`,workReadPending:()=>true};
+ vm.createContext(c);vm.runInContext(extract('standaloneWorkUnavailable'),c);
+ const route=['app','work-a','service-b','8080'];let html=c.standaloneWorkUnavailable(route);
+ assert.match(html,/Work work-a · Service service-b · Port 8080/);assert.match(html,/aria-busy="true"/);assert.match(html,/#\/work\/work-a/);assert.doesNotMatch(html,/Work unavailable|retry-work-read|iframe/);
+ c.workReadPending=()=>false;for(const [missing,message] of [[true,'404 not found'],[false,'403 access denied'],[false,'Read timed out']]){c.workReadErrors.set('work-a',{missing,message});html=c.standaloneWorkUnavailable(route);assert.ok(html.includes(message));assert.match(html,missing?/Work not found/:/Work unavailable/);assert.match(html,/retry-work-read/);assert.match(html,/Back to Work/);assert.doesNotMatch(html,/iframe|data-action="start/);}
+ assert.match(extract('render'),/else\s+html = standaloneWorkUnavailable\(r\)/);
+});
+test('independent cold bootstrap errors are scoped to the original identity and route',()=>{
+ const c:any={Error,routeLoad:0,location:{hash:'#/app/a/s/80'},route:()=>['app','a','s','80'],workReadErrors:new Map(),adapter:{identityEpoch:2,getWork:()=>undefined},toast:()=>{}};vm.createContext(c);vm.runInContext(extract('reportInitializationFailure'),c);
+ c.reportInitializationFailure(new Error('Metadata unavailable'),2,c.location.hash);assert.equal(c.workReadErrors.get('a').message,'Metadata unavailable');c.workReadErrors.clear();c.reportInitializationFailure(new Error('Stale'),1,c.location.hash);c.reportInitializationFailure(new Error('Stale'),2,'#/app/a/s/81');assert.equal(c.workReadErrors.size,0);
+});
