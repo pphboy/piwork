@@ -4302,7 +4302,9 @@ function handleRouteNavigation() {
     if (new URLSearchParams(location.hash.slice(1)).has('ticket')) {
         // A reopen link can navigate an existing tab without a document reload.
         // Use the same Cookie-first initialization and remove the ticket at once.
-        void adapter.initialize().then(() => loadRoute()).catch(error => toast(error.message));
+        const initialization = adapter.initialize();
+        const context = { epoch: adapter.identityEpoch, route: location.hash };
+        void initialization.then(() => loadRoute()).catch(error => reportInitializationFailure(error, context.epoch, context.route));
         return;
     }
     if ((dirty() || view.configDirty) && location.hash !== lastRoute) {
@@ -4412,8 +4414,9 @@ adapter.subscribe(() => {
 });
 lastRoute = location.hash;
 render();
+const initialization = adapter.initialize();
 const initializationContext = { epoch: adapter.identityEpoch, route: location.hash };
-void adapter.initialize().then(async () => { view.coreAddress = adapter.state.core.address; if (adapter.state.browserAccess === 'authorized')
+void initialization.then(async () => { view.coreAddress = adapter.state.core.address; if (adapter.state.browserAccess === 'authorized')
     void adapter.loadPreferences(); await loadRoute(); }).catch(error => reportInitializationFailure(error, initializationContext.epoch, initializationContext.route));
 let packageFiles = [];
 let pendingUploadFiles = [];

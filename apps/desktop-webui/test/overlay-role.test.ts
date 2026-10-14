@@ -206,3 +206,12 @@ test('bootstrap failure exits a cold Work skeleton only for its original identit
  c.routeLoad=1;c.reportInitializationFailure(new Error('Later failure'),1,'#/work/a');assert.equal(c.workReadErrors.size,0);
  c.routeLoad=0;c.adapter.getWork=()=>({id:'a'});c.reportInitializationFailure(new Error('Retain known Work'),1,'#/work/a');assert.equal(c.workReadErrors.size,0);
 });
+
+
+test('both initialization entries bind failure recovery after synchronous ticket normalization',async()=>{
+ const calls:any[]=[],c:any={URLSearchParams,location:{hash:'#ticket=synthetic'},adapter:{identityEpoch:3,initialize:()=>{c.location.hash='';return Promise.reject(new Error('Bootstrap failed'));}},loadRoute:()=>{},reportInitializationFailure:(...args:any[])=>calls.push(args)};vm.createContext(c);vm.runInContext(extract('handleRouteNavigation'),c);c.handleRouteNavigation();await Promise.resolve();await Promise.resolve();
+ assert.equal(calls.length,1);assert.equal(calls[0][1],3);assert.equal(calls[0][2],'');
+ assert.match(source,/const initialization = adapter.initialize\(\);\nconst initializationContext = \{ epoch: adapter.identityEpoch, route: location.hash \};\nvoid initialization.then/);
+ assert.match(source,/reportInitializationFailure\(error, initializationContext.epoch, initializationContext.route\)/);
+ assert.doesNotMatch(extract('handleRouteNavigation'),/initialize\(\).then.*toast/);
+});
