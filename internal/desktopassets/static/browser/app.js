@@ -32,6 +32,7 @@ const icon = (name, size = 18) => {
         arrow: '<path d="m10 5-7 7 7 7M3 12h18"/>',
         reset: '<path d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6"/>',
         'panel-right': '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
+        edit: '<path d="m16 3 5 5M4 20l4-1L21 6l-5-5L3 14l-1 8Z"/>',
         move: '<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v3M3 7v12a2 2 0 0 0 2 2h7M14 17h8m-3-3 3 3-3 3"/>',
         chevron: '<path d="m9 5 7 7-7 7"/>',
         down: '<path d="m6 9 6 6 6-6"/>',
@@ -1395,7 +1396,7 @@ function modalMarkup() {
             break;
         case "agent-menu":
             title = "Agent options";
-            body = `<div class="menu-list">${btn("Sessions", "sessions")}${btn("New session", "new-session")}${btn("Pi requests for this Work", "pi-requests")}${view.layout === 'chat-only' ? btn("Restore layout", "restore-layout") : btn("Focus chat", "focus-chat")}${browserFullscreenAction()}</div>`;
+            body = `<div class="menu-list">${btn(`${icon("clock")} Sessions`, "sessions")}${btn(`${icon("plus")} New session`, "new-session")}${btn(`${icon("note")} Pi requests for this Work`, "pi-requests")}${view.layout === 'chat-only' ? btn(`${icon("arrow")} Restore layout`, "restore-layout") : btn(`${icon("focus")} Focus chat`, "focus-chat")}${browserFullscreenAction()}</div>`;
             break;
         case "about-piwork": {
             const info = adapter.about;
@@ -1485,7 +1486,7 @@ function modalMarkup() {
         case "file-menu": {
             const f = target?.files.find((f) => f.path === view.data.path);
             title = esc(f?.name || "File");
-            body = `<div class="menu-list">${btn("Open", "open-file", "", `data-path="${esc(f?.path)}"`)}${btn("Download file", "download-file", "", `data-path="${esc(f?.path)}" ${f?.kind === "directory" || f?.kind === "special" ? "disabled" : ""}`)}${btn("Rename", "file-rename", "", `data-path="${esc(f?.path)}"`)}${btn("Move", "file-move", "", `data-path="${esc(f?.path)}"`)}${btn("Copy", "file-copy", "", `data-path="${esc(f?.path)}"`)}${btn("Delete", "file-delete", "danger", `data-path="${esc(f?.path)}"`)}</div>`;
+            body = `<div class="menu-list">${btn(`${icon(f?.kind === 'directory' ? 'folder' : 'file')} Open`, "open-file", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("download")} Download file`, "download-file", "", `data-path="${esc(f?.path)}" ${f?.kind === "directory" || f?.kind === "special" ? "disabled" : ""}`)}${btn(`${icon("edit")} Rename`, "file-rename", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("move")} Move`, "file-move", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("copy")} Copy`, "file-copy", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("trash")} Delete`, "file-delete", "danger", `data-path="${esc(f?.path)}"`)}</div>`;
             break;
         }
         case "upload-overwrite": {

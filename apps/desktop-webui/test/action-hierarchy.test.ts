@@ -156,3 +156,37 @@ test('account title treats a Core-provided identity as text', () => {
   const html = c.modalMarkup(); assert.match(html, /&lt;img src=x onerror=bad\(\)&gt;/);
   assert.doesNotMatch(html, /<img src=x/);
 });
+
+
+// Only actual command dropdowns have a leading icon contract. Value lists,
+// headings, descriptive text and dialog footers are deliberately excluded.
+for (const menu of ['account', 'work-menu', 'agent-menu', 'service-menu', 'file-menu']) {
+  for (const layout of ['workspace', 'service-chat', 'service-only', 'chat-only']) {
+    for (const fullscreen of [false, true]) test(`${menu} commands retain labelled icons in ${layout}, fullscreen=${fullscreen}`, () => {
+      const { c, work } = fixture();
+      c.view.modal = menu; c.view.layout = layout;
+      c.document.fullscreenElement = fullscreen ? c.root : null;
+      c.adapter.project = () => ({ action: 'stop', label: 'Ready' });
+      work.files = [{ path: '/notes.txt', name: 'notes.txt', kind: 'file' }]; c.view.data.path = '/notes.txt';
+      const html = c.modalMarkup();
+      const rows = [...html.matchAll(/<button\b[^>]*role="menuitem"[^>]*data-action="([^"]+)"[^>]*>([\s\S]*?)<\/button>/g)];
+      assert.ok(rows.length, menu);
+      for (const [, action, content] of rows) {
+        assert.match(content, /^<svg\b[^>]*aria-hidden="true"[^>]*>/, `${menu}: ${action} has a leading decorative icon`);
+        assert.equal((content.match(/<svg\b/g) || []).length, 1, `${action}: one icon`);
+        assert.ok(content.replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]*>/g, '').trim(), `${action}: visible text retained`);
+      }
+      if (menu === 'agent-menu') {
+        assert.deepEqual(rows.map(row => row[1]), ['sessions', 'new-session', 'pi-requests', layout === 'chat-only' ? 'restore-layout' : 'focus-chat', ...(layout !== 'workspace' || fullscreen ? ['service-fullscreen'] : [])]);
+        for (const label of ['Sessions', 'New session', 'Pi requests for this Work', layout === 'chat-only' ? 'Restore layout' : 'Focus chat']) assert.ok(html.includes(label));
+      }
+      if (menu === 'file-menu') {
+        assert.deepEqual(rows.map(row => row[1]), ['open-file', 'download-file', 'file-rename', 'file-move', 'file-copy', 'file-delete']);
+        assert.equal((html.match(/data-path="\/notes.txt"/g) || []).length, 6);
+        assert.match(html, /class="button danger"[^>]*data-action="file-delete"/);
+        work.files[0].kind = 'directory';
+        assert.match(c.modalMarkup(), /data-action="download-file"[^>]*disabled/);
+      }
+    });
+  }
+}
