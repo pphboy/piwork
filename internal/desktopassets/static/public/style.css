@@ -3545,3 +3545,12 @@ a.button.primary { color:var(--on-accent,#fff); }
   .package-list .catalog-heading h3 { flex-basis:100%; }
   .modal-body .property-list { grid-template-columns:minmax(80px,30%) minmax(0,1fr);gap:10px 12px; }
 }
+
+/* Static first-read shapes only; confirmed content stays mounted during refresh. */
+.read-placeholder-service { min-height:260px; }
+.read-placeholder-service .read-placeholder-line:first-of-type { height:32px;max-width:45%; }
+.read-placeholder-service .read-placeholder-line:last-child { height:144px;max-width:100%; }
+.read-placeholder-conversation { min-height:220px; }
+.read-placeholder-conversation .read-placeholder-line { height:40px;max-width:78%; }
+.read-placeholder-conversation .read-placeholder-line:nth-child(3) { margin-left:auto;max-width:58%; }
+.work-loading { padding:24px; }

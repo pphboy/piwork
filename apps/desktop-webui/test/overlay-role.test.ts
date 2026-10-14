@@ -51,7 +51,7 @@ test('file deletion states irreversible UI consequences with exact selected path
 test('empty, pending and failed Services always retain the local header while failure is not presented as empty',()=>{
  const {c,work}=rendererFixture();assert.match(c.services(work),/No Web Service is ready/);assert.match(c.services(work),/Show chat/);
  work.resourceErrors.services='503 Unavailable';let html=c.services(work);assert.match(html,/503 Unavailable/);assert.match(html,/Retry Services/);assert.doesNotMatch(html,/No Web Service is ready|Ask the Agent to build/);assert.match(html,/Show chat/);
- delete work.resourceErrors.services;delete work.resourceChecked.services;html=c.services(work);assert.match(html,/Loading Services/);assert.match(html,/Show chat/);
+ delete work.resourceErrors.services;delete work.resourceChecked.services;html=c.services(work);assert.match(html,/Loading Services/);assert.match(html,/read-placeholder-service/);assert.match(html,/aria-hidden="true"/);assert.match(html,/Show chat/);
 });
 test('failed first conversation reads do not show starter welcome while model-only failure keeps confirmed empty state',()=>{
  const {c,work}=rendererFixture();work.sessions=[{id:'s',messages:[],error:'History failed'}];let html=c.agent(work,false);assert.doesNotMatch(html,/chat-welcome/);assert.match(html,/History failed|Retry conversation/);
@@ -121,4 +121,20 @@ test('successful file refresh also retires the original tab read error without w
  c.adapter.directories.set('a:/',{checkedAt:'',error:'Files denied'});assert.equal(c.visibleActionRecord(old),true);
  c.adapter.directories.set('a:/',{checkedAt:'now',error:''});assert.equal(c.visibleActionRecord(old),false);
  assert.equal(c.visibleActionRecord({...old,kind:'files',action:'save-file',blocked:true}),true);
+});
+
+
+test('Ready Service first entry and pending entry use skeleton, then retain iframe or show actual failure',()=>{
+ const {c,work}=rendererFixture();const service={id:'s',name:'Notes',ports:[3000],enabled:true,observed:'Ready'};work.services=[service];work.desired='running';work.status='Ready';c.view.port=3000;c.activeService=()=>service;c.root={querySelectorAll:()=>[]};
+ Object.assign(c.adapter,{requestPresence:new Map(),serviceEmbed:()=>'',serviceEntryError:()=>'',serviceEntryUrl:()=>null,serviceEntryPending:()=>false,servicePreviewUnconfirmed:()=>false});
+ let html=c.services(work);assert.match(html,/read-placeholder-service/);assert.doesNotMatch(html,/Application entry not confirmed|No Web Service/);
+ c.adapter.serviceEntryPending=()=>true;html=c.services(work);assert.match(html,/read-placeholder-service/);
+ c.adapter.serviceEntryUrl=()=> 'https://service.test/';html=c.services(work);assert.match(html,/<iframe/);assert.doesNotMatch(html,/read-placeholder/);
+ c.adapter.serviceEntryUrl=()=>null;c.adapter.serviceEntryPending=()=>false;c.adapter.serviceEntryError=()=> 'Access denied';html=c.services(work);assert.match(html,/Access denied/);assert.doesNotMatch(html,/read-placeholder/);
+});
+
+test('Chat skeleton belongs only to unconfirmed history and preserves cached messages on refresh',()=>{
+ const {c,work}=rendererFixture();delete work.resourceChecked.agent;let html=c.agent(work,false);assert.match(html,/read-placeholder-conversation/);assert.doesNotMatch(html,/chat-welcome/);
+ work.resourceChecked.agent='now';work.sessions=[{id:'s',checkedAt:'now',messages:[{}],loading:true}];html=c.agent(work,false);assert.match(html,/Preserved history/);assert.doesNotMatch(html,/read-placeholder-conversation/);
+ work.sessions[0].messages=[];html=c.agent(work,false);assert.match(html,/chat-welcome/);assert.doesNotMatch(html,/read-placeholder-conversation/);
 });

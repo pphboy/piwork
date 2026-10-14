@@ -171,3 +171,10 @@ for(const scenario of ['tab-Files','settings','tab-Services','new focus','new ta
  pending.resolve();if(scenario==='read failure')await assert.rejects(request,/Read failed/);else await request;
  assert.equal(focusCount,['new focus','new tab','new Work','new identity','new record'].includes(scenario)?0:1);if(scenario==='new focus')assert.equal(c.document.activeElement,otherInput);
 });
+
+
+test('late confirmed save callback after identity change cannot mutate editor or announce success',async()=>{
+ const {c}=fixture();c.view.file='/draft';c.view.fileDraft='new';c.view.fileOriginal='old';c.assertFileAdmission=()=>{};let notices=0;c.toast=()=>notices++;
+ c.adapter.saveFile=async(_work:any,_path:any,_text:any,_baseline:any,_unprotected:any,confirmed:any)=>{c.adapter.identityEpoch++;confirmed({modified:'new-version'});return {status:'succeeded',message:'Confirmed'};};
+ vm.runInContext(extract(['saveFile']),c);await assert.rejects(c.saveFile());assert.equal(c.view.fileOriginal,'old');assert.equal(notices,0);
+});
