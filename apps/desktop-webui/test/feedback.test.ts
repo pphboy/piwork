@@ -268,7 +268,7 @@ test('DWUI-004 image-only drafts in another Session or Work trigger native befor
   await auditPersistence(); await addImage('identity-private-draft.png');
   await api(page, "await adapter.switchCore('http://other-core.test')"); await expect(page.getByRole('heading', { name: 'Connect to your Core', exact: true })).toBeVisible();
   await expect(page.locator('.chat-image-draft')).toHaveCount(0); await expect(page.locator('#app')).not.toContainText('identity-private-draft.png');
-  await page.locator('#auth-account').fill('owner'); await page.locator('#auth-password').fill('synthetic-password'); await button(page, 'sign-in').click();
+  await page.locator('#auth-core').fill('http://other-core.test'); await page.locator('#auth-account').fill('owner'); await page.locator('#auth-password').fill('synthetic-password'); await button(page, 'sign-in').click();
   await expect(page.getByRole('heading', { name: 'Recovery Work', exact: true })).toBeVisible();
   await button(page, 'back-works').click(); await page.locator('.work-name[data-id="work-1"]').click();
   await expect(page.locator('#composer')).toHaveValue(''); await expect(page.locator('.chat-image-draft')).toHaveCount(0);
@@ -447,7 +447,11 @@ for (const race of ['close-switch-work', 'lost-preparation', 'ready-before-post'
   await expect.poll(() => transferId).toMatch(/^[0-9a-f-]{36}$/);
   await expect(page.locator('.export-snapshot')).toContainText(snapshotId);
   if (race === 'ready-before-post') await api(page, `await adapter.fetchSnapshot('${oldSnapshotId}')`);
+  // Acceptance prepends the current snapshot. Also exercise a reversed presentation
+  // order after both real metadata responses, without changing either original ID.
+  if (race !== 'ready-before-post') await api(page, 'adapter.state.snapshots.reverse(); adapter.emit();');
   assert.deepEqual(await api(page, "return adapter.state.snapshots.map(snapshot => snapshot.id)"), race === 'ready-before-post' ? [snapshotId, oldSnapshotId] : [oldSnapshotId, snapshotId]);
+  await expect(page.locator('.export-snapshot')).toContainText(snapshotId);
   assert.equal(downloadEvents, 0); assert.equal(requests.filter(r => r.path.endsWith('/content')).length, 0);
   const delivered = page.waitForEvent('download');
   if (race === 'close-switch-work') {
