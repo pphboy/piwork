@@ -340,7 +340,10 @@ for (const change of ['path', 'identity'] as const) test(`Final 13.2/17.2 Files 
   await trigger.click();
   const stale = await page.getByRole('menuitem', { name: 'New folder' }).elementHandle(); assert.ok(stale);
   if (change === 'path') {
-    await page.locator('[data-action="open-file"][data-path="/tree"]').click();
+    // At 360px the anchored menu covers the first row. Dispatch the existing
+    // button's click without an outside pointer/focus dismissal, so this checks
+    // path-context invalidation itself rather than the already-tested close path.
+    await page.locator('[data-action="open-file"][data-path="/tree"]').evaluate(node => (node as HTMLButtonElement).click());
     await expect(page.locator('.breadcrumbs')).toContainText('tree');
   } else {
     await api(page, 'await adapter.signOut();');
