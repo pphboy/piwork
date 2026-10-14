@@ -25,7 +25,7 @@ function fixture() {
     filesRestoreNotice: '', uploadProgressMarkup: () => '', transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
     downloadProgressMarkup: () => '', actions: { records: new Map() },
   };
-  vm.createContext(c); vm.runInContext(helpers, c);
+  c.fileActionsContext="";vm.createContext(c); vm.runInContext(helpers, c);
   vm.runInContext(extract('isRequestInspector', 'brand', 'topbar', 'quickAction', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport'), c);
   return { c, work };
 }

@@ -64,7 +64,7 @@ for(const width of [1180,500])for(const layout of ['workspace','service-chat','s
  const html=c.agentLayoutControls(work);
  assert.doesNotMatch(html,/data-action="service-fullscreen"/);assert.equal((html.match(/data-action="focus-chat"/g)||[]).length,layout==='chat-only'?0:1);
  if(layout==='chat-only')assert.match(html,/aria-label="Restore layout"/);
- if(layout==='workspace') {assert.match(html,/data-action="toggle-workspace-chat"/);assert.match(html,/aria-label="Hide chat"/);}
+ if(layout==='workspace') assert.doesNotMatch(html,/data-action="toggle-workspace-chat"/);
  if(layout==='service-chat' && width===500)assert.match(html,/aria-label="Exit focus"/);
 });
 for(const menu of ['agent-menu','service-menu'])test(`${menu} makes browser fullscreen a labelled secondary action`,()=>{
