@@ -990,6 +990,65 @@ for (const exit of ['close', 'view', 'start'] as const) test(`C03 Import ${exit}
   assert.equal(requests.filter(r => r.path === 'works/imported/start' && r.method === 'POST').length, exit === 'start' ? 1 : 0);
 });
 
+for (const outcome of ['failed', 'observation-unknown', 'submission-unknown'] as const) test(`C03 Import Start ${outcome} preserves the original request and never opens before confirmed completion`, async t => {
+  let imported = false, started = false, observed = 'stopped', startState = 'running', observationUnavailable = false;
+  const importId = `c03-import-${outcome}`, startId = `c03-start-${outcome}`;
+  const original = { id: 'work-1', name: 'Recovery Work', observedState: 'ready', desiredState: 'running' };
+  const restored = () => ({ id: 'imported', name: 'Imported recovery', observedState: observed, desiredState: started ? 'running' : 'stopped', controlVersion: started ? 2 : 1 });
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works') return { json: { works: imported ? [original, restored()] : [original] } };
+    if (r.path === 'works/imported') return { json: restored() };
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { name: 'recovery package' } } };
+    if (r.path === 'work-imports' && r.method === 'POST') { imported = true; return { json: { operationId: importId, workId: 'imported' } }; }
+    if (r.path === `operations/${importId}`) return { json: { operationId: importId, workId: 'imported', kind: 'import-work', state: 'succeeded' } };
+    if (r.path === 'works/imported/start' && r.method === 'POST') { started = true; observed = 'starting'; return outcome === 'submission-unknown' ? { abort: true } : { json: { operationId: startId, workId: 'imported' } }; }
+    if (r.path === `operations/${startId}`) return observationUnavailable ? { status: 503, json: { message: 'Original Start observation temporarily unavailable' } } : { json: { operationId: startId, workId: 'imported', kind: 'start-work', state: startState } };
+  });
+  const submissions = () => requests.filter(r => r.method === 'POST' && ['work-imports', 'works/imported/start'].includes(r.path)).map(r => r.path);
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'recovery.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('synthetic recovery package') });
+  await expect(page.locator('.inspection-summary')).toContainText('recovery package');
+  await button(page, 'confirm-import').click(); await button(page, 'check-operation').click();
+  await expect(page.locator('#modal-title')).toHaveText('Imported · Not started');
+  assert.deepEqual(submissions(), ['work-imports']);
+  await button(page, 'start-import-open').click();
+  await expect(page.locator('#modal')).toContainText(importId); await expect(button(page, 'start-import-open')).toHaveCount(0);
+  await expect(page).toHaveURL(/#\/works$/);
+  const progress = page.locator('#modal [data-action="check-work-progress"][data-id="imported"]');
+  if (outcome === 'submission-unknown') {
+    await expect(page.locator('#modal .object-control-progress')).toContainText('Result unknown');
+    await expect(page.locator('#modal .object-control-progress [data-action="operation"]')).toHaveCount(0);
+    await progress.click(); await expect(page).toHaveURL(/#\/works$/);
+    observed = 'ready'; await progress.click();
+    await expect(page.locator('#modal .object-control-progress')).toContainText('Original outcome unknown · current target checked');
+    await expect(page).toHaveURL(/#\/works$/);
+    assert.equal(requests.filter(r => r.path === `operations/${startId}`).length, 0, 'a lost acceptance must not invent a Start Operation ID');
+    await page.getByRole('link', { name: 'View Work', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Imported recovery', exact: true })).toBeVisible();
+  } else {
+    await expect(page.locator('#modal')).toContainText(startId);
+    if (outcome === 'failed') { startState = 'failed'; observed = 'failed'; }
+    else observationUnavailable = true;
+    await progress.click();
+    await expect(page.locator('#modal .object-control-progress')).toContainText(outcome === 'failed' ? 'failed' : 'Original Start observation temporarily unavailable');
+    await expect(page).toHaveURL(/#\/works$/);
+    await expect(page.locator('#modal')).toContainText(importId); await expect(page.locator('#modal')).toContainText(startId);
+    await expect(page.locator('#modal [data-action="open-work"]')).toHaveCount(0);
+    if (outcome === 'observation-unknown') {
+      observationUnavailable = false; startState = 'succeeded';
+      await progress.click(); await expect(page).toHaveURL(/#\/works$/);
+      await expect(page.locator('#modal [data-action="open-work"]')).toHaveCount(0);
+      observed = 'ready'; await progress.click();
+      await expect(page.getByRole('heading', { name: 'Imported recovery', exact: true })).toBeVisible();
+      await expect(page).toHaveURL(/#\/work\/imported$/);
+    } else {
+      observed = 'ready'; await progress.click(); await expect(page).toHaveURL(/#\/works$/);
+      await expect(page.locator('#modal')).toContainText(startId);
+    }
+  }
+  assert.deepEqual(submissions(), ['work-imports', 'works/imported/start']);
+});
+
 for (const width of [360, 500]) test(`Action hierarchy: narrow Files controls remain visible without selection row shifts at ${width}px`, async t => {
   const { page, requests } = await fixture(t, r => r.method === 'PROPFIND' ? { status: 207, body: listing('original', mtime1) } : undefined);
   await page.setViewportSize({ width, height: 800 });
