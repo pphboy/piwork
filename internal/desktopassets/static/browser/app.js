@@ -3557,7 +3557,7 @@ function render() {
         const w = adapter.getWork(r[1]);
         html = w
             ? workPage(w)
-            : [...actions.records.values()].some(record => record.work === r[1] && record.pending) ? `${topbar()}<main class="work-loading">${readPlaceholder('Loading Work…', 'service')}${btn('Back to Works', 'back-works')}</main>` : `${topbar()}${empty("grid", workReadErrors.get(r[1])?.missing ? "Work not found" : "Work unavailable", esc(workReadErrors.get(r[1])?.message || "Read this Work again to confirm its current availability."), btn("Retry", "retry-work-read", "primary") + btn("Back to Works", "back-works"))}`;
+            : workReadPending(r[1]) ? `${topbar()}<main class="work-loading">${readPlaceholder('Loading Work…', 'service')}${btn('Back to Works', 'back-works')}</main>` : `${topbar()}${empty("grid", workReadErrors.get(r[1])?.missing ? "Work not found" : "Work unavailable", esc(workReadErrors.get(r[1])?.message || "Read this Work again to confirm its current availability."), btn("Retry", "retry-work-read", "primary") + btn("Back to Works", "back-works"))}`;
     }
     else
         html = works();
@@ -4419,6 +4419,13 @@ let pendingUploadFiles = [];
 function downloadURL(url, workName = '') { const link = document.createElement('a'); link.href = url; link.download = ''; link.click(); toast(`${workName ? workName + ' · ' : ''}Download started. Check your browser to confirm it was saved.`); }
 let routeLoad = 0;
 const workReadErrors = new Map();
+function workReadPending(workId) {
+    if ([...actions.records.values()].some(record => record.work === workId && record.pending))
+        return true;
+    // Bootstrap confirms connection/list metadata before the first route read starts.
+    return routeLoad === 0 && !workReadErrors.has(workId) && !adapter.worksError &&
+        ['loading', 'normal', 'empty'].includes(adapter.state.scenario);
+}
 async function loadRoute() {
     if (!adapter.state.signedIn)
         return;

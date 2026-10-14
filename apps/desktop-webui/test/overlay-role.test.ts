@@ -185,3 +185,15 @@ test('first-read reveal is CSS-only, static, and does not reintroduce modal anim
  assert.match(css,/@keyframes read-placeholder-reveal \{ from \{ opacity:0; \} to \{ opacity:1; \} \}/);
  assert.doesNotMatch(css,/modal-in|modal-out|modal-exit-|animation:[^;]*(?:shimmer|pulse)/);
 });
+
+
+test('cold Work deep link stays pending through bootstrap, but real failures and completed route reads do not',()=>{
+ const c:any={routeLoad:0,workReadErrors:new Map(),actions:{records:new Map()},adapter:{worksError:'',state:{scenario:'normal'}}};vm.createContext(c);vm.runInContext(extract('workReadPending'),c);
+ for(const scenario of ['loading','normal','empty']){c.adapter.state.scenario=scenario;assert.equal(c.workReadPending('a'),true);}
+ for(const scenario of ['core-offline','env-not-ready','list-error']){c.adapter.state.scenario=scenario;assert.equal(c.workReadPending('a'),false);}
+ c.adapter.state.scenario='normal';c.adapter.worksError='List timed out';assert.equal(c.workReadPending('a'),false);c.adapter.worksError='';
+ c.workReadErrors.set('a',{missing:true,message:'Not found'});assert.equal(c.workReadPending('a'),false);c.workReadErrors.clear();
+ c.routeLoad=1;assert.equal(c.workReadPending('a'),false);c.actions.records.set('other',{work:'b',pending:true});assert.equal(c.workReadPending('a'),false);
+ c.actions.records.set('route',{work:'a',pending:true});assert.equal(c.workReadPending('a'),true);
+ assert.match(extract('render'),/workReadPending\(r\[1\]\)/);
+});
