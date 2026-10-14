@@ -1981,14 +1981,19 @@ async function handleAction(action, el, record) {
             const service = currentWork?.services.find(item => item.id === el.dataset.id && item.ports.length && item.observed !== 'Removed');
             if (!currentWork || !service)
                 break;
+            const port = service.ports[0];
             serviceChoice++;
             view.serviceOpenError = '';
             view.service = service.id;
-            view.port = service.ports[0];
+            view.port = port;
+            if (route()[0] === 'app') {
+                history.replaceState(null, '', `#/app/${encodeURIComponent(currentWork.id)}/${encodeURIComponent(service.id)}/${port}`);
+                lastRoute = location.hash;
+            }
             closeModal();
             render();
             if (service.enabled && service.observed === 'Ready')
-                await stay(adapter.ensureServiceEntry(currentWork.id, service.id, view.port));
+                await stay(adapter.ensureServiceEntry(currentWork.id, service.id, port));
             break;
         }
         case 'toggle-workspace-chat': {
@@ -2329,6 +2334,10 @@ async function handleAction(action, el, record) {
                 view.tab = 'Services';
                 view.service = serviceId;
                 view.port = port;
+                if (route()[0] === 'app') {
+                    history.replaceState(null, '', `#/app/${encodeURIComponent(currentWork.id)}/${encodeURIComponent(serviceId)}/${port}`);
+                    lastRoute = location.hash;
+                }
                 closeModal();
                 await adapter.ensureServiceEntry(currentWork.id, serviceId, port);
                 render();

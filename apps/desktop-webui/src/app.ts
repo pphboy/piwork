@@ -1613,8 +1613,14 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case 'select-service': {
       const service = currentWork?.services.find(item => item.id === el.dataset.id && item.ports.length && item.observed !== 'Removed');
       if (!currentWork || !service) break;
-      serviceChoice++; view.serviceOpenError = ''; view.service = service.id; view.port = service.ports[0]; closeModal(); render();
-      if (service.enabled && service.observed === 'Ready') await stay(adapter.ensureServiceEntry(currentWork.id, service.id, view.port));
+      const port = service.ports[0];
+      serviceChoice++; view.serviceOpenError = ''; view.service = service.id; view.port = port;
+      if (route()[0] === 'app') {
+        history.replaceState(null, '', `#/app/${encodeURIComponent(currentWork.id)}/${encodeURIComponent(service.id)}/${port}`);
+        lastRoute = location.hash;
+      }
+      closeModal(); render();
+      if (service.enabled && service.observed === 'Ready') await stay(adapter.ensureServiceEntry(currentWork.id, service.id, port));
       break;
     }
     case 'toggle-workspace-chat': {
@@ -1770,7 +1776,12 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       const control = serviceControls.get(`${currentWork.id}:${serviceId}`), op = control?.operationId && adapter.getOperation(control.operationId), port = Number(el.dataset.port);
       if (!serviceCompletionReady(op || undefined, currentWork.id, adapter.project(currentWork).usable, service, port)) throw new Error('Check this Service’s current readiness before opening.');
       await guard(async () => {
-        areaChoice++; serviceChoice++; view.tab = 'Services'; view.service = serviceId; view.port = port; closeModal();
+        areaChoice++; serviceChoice++; view.tab = 'Services'; view.service = serviceId; view.port = port;
+        if (route()[0] === 'app') {
+          history.replaceState(null, '', `#/app/${encodeURIComponent(currentWork.id)}/${encodeURIComponent(serviceId)}/${port}`);
+          lastRoute = location.hash;
+        }
+        closeModal();
         await adapter.ensureServiceEntry(currentWork.id, serviceId, port); render();
       }); break;
     }

@@ -185,3 +185,10 @@ test('first route chooses Chat only after confirmed reads and never overrides a 
   vm.runInContext(extract(['loadRoute']),c);const loading=c.loadRoute();if(chooseLater){c.areaChoice++;c.view.tab='Files';}gate.resolve();await loading;assert.equal(c.view.tab,chooseLater?'Files':'Chat');
  }
 });
+
+for(const action of ['select-service','open-controlled-service'])test(`independent ${action} updates exact Service and port before rendering`,async()=>{
+ const {c,work}=fixture();work.services=[{id:'first',enabled:true,observed:'Ready',ports:[80]},{id:'second',enabled:true,observed:'Ready',ports:[90]}];c.location.hash='#/app/one/first/80';c.view.service='first';c.view.port=80;c.view.layout='workspace';c.serviceCompletionReady=()=>true;
+ const calls:any[]=[];c.adapter.ensureServiceEntry=async(...args:any[])=>calls.push(args);c.history={replaceState:(_a:any,_b:any,hash:string)=>c.location.hash=hash};c.render=()=>{const r=c.route();c.view.service=r[2];c.view.port=Number(r[3]);};c.closeModal=c.render;
+ vm.runInContext(extract(['handleAction']),c);await c.handleAction(action,{dataset:{id:'second',serviceId:'second',port:'90'}});
+ assert.equal(c.location.hash,'#/app/one/second/90');assert.equal(c.lastRoute,c.location.hash);assert.equal(c.view.service,'second');assert.equal(c.view.port,90);assert.deepEqual(calls,[['one','second',90]]);
+});
