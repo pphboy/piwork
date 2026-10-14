@@ -913,11 +913,11 @@ test('C02 list Start keeps original local progress and gates Open Work on real r
   await expect(page.locator('.work-row .object-control-progress [data-id="c02-start"]')).toBeVisible();
   await expect(page.locator('#modal')).toHaveCount(0); await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
   terminal = true; await button(page, 'check-work-progress').click();
-  await expect(page.getByRole('button', { name: 'Open Work', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toHaveCount(0);
   ready = true; await button(page, 'check-work-progress').click();
-  await expect(page.getByRole('button', { name: 'Open Work', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Open Work', exact: true }).click();
+  await page.getByRole('link', { name: 'Open Work', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Recovery Work', exact: true })).toBeVisible();
   assert.equal(requests.filter(r => r.path === 'works/work-1/start' && r.method === 'POST').length, 1);
 });
@@ -942,7 +942,7 @@ for (const exit of ['close', 'view', 'start'] as const) test(`C03 Import ${exit}
   await expect(page.locator('#modal-title')).toHaveText('Imported · Not started');
   assert.equal(requests.filter(r => r.path.endsWith('/start') && r.method === 'POST').length, 0);
   if (exit === 'close') await button(page, 'close-modal').click();
-  if (exit === 'view') { await page.getByRole('button', { name: 'View Work', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Imported sample', exact: true })).toBeVisible(); }
+  if (exit === 'view') { await page.getByRole('link', { name: 'View Work', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Imported sample', exact: true })).toBeVisible(); }
   if (exit === 'start') {
     await button(page, 'start-import-open').click();
     await expect(page.locator('#modal')).toContainText('c03-import'); await expect(page.locator('#modal')).toContainText('c03-start');

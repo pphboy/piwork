@@ -174,3 +174,12 @@ export class UnknownFileLocks {
 
   clear(): void { this.identity++; this.locks.clear(); }
 }
+
+/** An unresolved write is never an overwrite target or a retry. Consent is path-specific. */
+export function uploadReview(rows: readonly FilePathResult[]) {
+  return {
+    overwrite: rows.filter(row=>row.status==='failed' && row.needsConsent===true),
+    retry: rows.filter(row=>row.status==='failed' && !row.needsConsent),
+    unknown: rows.filter(row=>row.status==='unknown'),
+  };
+}

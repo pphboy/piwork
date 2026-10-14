@@ -10,7 +10,7 @@ export class WorkspacePanelsStore {
     }
     clear() { this.values.clear(); }
 }
-export const SPLIT_GUTTER = 8;
+export const SPLIT_GUTTER = 12;
 export function splitGeometry(width, ratio) {
     const available = Math.max(0, width - SPLIT_GUTTER), minimum = 400, maximum = available - 320;
     const narrow = width < 900 || maximum < minimum;

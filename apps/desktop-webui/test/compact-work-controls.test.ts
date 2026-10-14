@@ -80,8 +80,8 @@ for(const width of [500,1440])for(const visible of [false,true])test(`Chat toggl
  const {c,work}=fixture();c.view.tab='Services';c.view.layout='workspace';c.route=()=>['work'];c.innerWidth=width;c.workspacePanels={get:()=>({narrowChat:visible,collapsed:!visible})};
  vm.runInContext(extract('layoutButton','workspaceChatToggle'),c);const html=c.workspaceChatToggle(work);assert.match(html,/class="button icon-button quiet"/);assert.match(html,new RegExp('aria-label="'+(visible?'Hide':'Show')+' chat"'));assert.match(html,new RegExp('aria-expanded="'+visible+'"'));assert.match(html,/aria-controls="workspace-chat"/);assert.doesNotMatch(html,/m10 5-7 7 7 7/);
 });
-test('Chat toggle has one stable Work toolbar slot and no Agent or Service duplicate',()=>{
- assert.equal((extract('workPage').match(/workspaceChatToggle\(w\)/g)||[]).length,1);assert.doesNotMatch(extract('services','agentLayoutControls'),/workspaceChatToggle|toggle-workspace-chat/);
+test('Chat toggle has one stable Service header slot and no Work navigation or Agent duplicate',()=>{
+ assert.equal((extract('services').match(/workspaceChatToggle\(w\)/g)||[]).length,1);assert.doesNotMatch(extract('workPage','agentLayoutControls'),/workspaceChatToggle|toggle-workspace-chat/);
 });
 test('Input options launches a dialog while its checkbox owns the actual option state',()=>{
  const agent=extract('agent');assert.match(agent,/aria-label="Input options" aria-haspopup="dialog" aria-expanded=/);assert.doesNotMatch(agent,/aria-label="Input options" aria-pressed=/);assert.match(extract('modalMarkup'),/id="include-identity" type="checkbox"/);

@@ -7,16 +7,16 @@ test('page-local panels isolate Work preferences and clear at identity changes',
  store.clear();assert.deepEqual(store.get('a'),{ratio:.7,collapsed:false,narrowChat:false});
 });
 test('split preserves readable minimum widths without replacing stored wide ratio',()=>{
- const width=1200,ratio=.7,g=splitGeometry(width,ratio);assert.equal(g.service,1192*.7);
- assert.equal(splitGeometry(width,0).service,400);assert.equal(splitGeometry(width,1).service,872);
+ const width=1200,ratio=.7,g=splitGeometry(width,ratio);assert.equal(g.service,1188*.7);
+ assert.equal(splitGeometry(width,0).service,400);assert.equal(splitGeometry(width,1).service,868);
  for(const width of [500,360,899])assert.equal(splitGeometry(width,ratio).narrow,true);
  assert.equal(splitGeometry(1440,ratio).ratio,ratio);assert.equal(splitGeometry(1200,NaN).ratio,.7);
 });
 test('separator keys use pixel steps, bounds, and explicit reset',()=>{
- const width=1200,available=1192;
+ const width=1200,available=1188;
  assert.equal(keyboardSplit('ArrowLeft',false,width,.7),(.7*available-16)/available);
- assert.equal(keyboardSplit('ArrowRight',true,width,.7),Math.min(872,.7*available+64)/available);
- assert.equal(keyboardSplit('Home',false,width,.7),400/available);assert.equal(keyboardSplit('End',false,width,.7),872/available);
+ assert.equal(keyboardSplit('ArrowRight',true,width,.7),Math.min(868,.7*available+64)/available);
+ assert.equal(keyboardSplit('Home',false,width,.7),400/available);assert.equal(keyboardSplit('End',false,width,.7),868/available);
  assert.equal(keyboardSplit('Enter',false,width,.5),.7);assert.equal(keyboardSplit('Escape',false,width,.7),undefined);
  assert.equal(keyboardSplit('ArrowLeft',false,500,.7),undefined);
 });

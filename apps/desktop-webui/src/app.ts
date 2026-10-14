@@ -1,9 +1,10 @@
+import { overlayRole, anchoredOverlay, overlayPlacement, menuDestination, overlayForAction } from './overlay-role.js';
 import { WorkspacePanelsStore, splitGeometry, keyboardSplit, executionAnchors } from './workspace-layout.js';
 import { workCompletionReady, serviceCompletionReady, importCanStart } from './completion-exits.js';
 import { restoreSelection, parentDirectory, missingFileTarget, type WorkSelection } from './work-navigation.js';
 import { renameField, validLocalName, canSubmitName, canDismissLightModal, pointOutsideDialog, canCancelPiRequest, modalActionRelevant } from './control-rules.js';
 import { NewWorkDraftRevision, hasUnsentDrafts, createSubmissionBlocked } from './draft-revision.js';
-import { FileMutationResults, UnknownFileLocks, type FileMutationTarget } from './file-results.js';
+import { FileMutationResults, UnknownFileLocks, uploadReview, type FileMutationTarget } from './file-results.js';
 import { exportWorkConflict, exportSnapshotAvailable } from './export-admission.js';
 import { ExportFlows, type ExportFlow } from './export-flow.js';
 import { activityGroups } from './chat-projection.js';
@@ -81,6 +82,8 @@ const icon = (name: string, size = 18) => {
 };
 const btn = (label: string, action: string, cls = "", extra = "") =>
   `<button class="button ${cls}" data-action="${action}" ${extra}>${label}</button>`;
+const workLink = (label: string, id: string, cls = '') =>
+  `<a class="button ${cls}" data-action="open-work" data-id="${esc(id)}" href="#/work/${encodeURIComponent(id)}">${label}</a>`;
 const badge = (status: string) =>
   `<span class="status ${status.toLowerCase().replaceAll(" ", "-")}"><i></i>${esc(status)}</span>`;
 const feedback = (text: string, tone = "info", action = "") =>
@@ -487,11 +490,18 @@ function importNameFeedback(op: Operation) {
   const renamed = op.importSourceName && op.importSourceName !== name;
   return `<div class="import-name-feedback">${feedback(`${title}: <strong>${esc(name)}</strong>${renamed ? `<p>Core selected this name instead of <strong>${esc(op.importSourceName)}</strong> because the source name was unavailable.</p>` : ''}`)}</div>`;
 }
+let overlayAnchor = "";
+let overlayContext = "";
+let overlayOpening = false;
 let requestNavigation: {epoch:number;workId:string;source:string;serviceName:string;entry:string;scroll:number;focus:string}|undefined;
 function requestNavigationCurrent() { return requestNavigation?.epoch===adapter.identityEpoch && requestNavigation.workId===current()?.id; }
 function openModal(name: string, data: Record<string, string> = {}) {
   fileActionsContext='';
   const sourceFocus=document.activeElement instanceof HTMLElement && document.activeElement!==document.body ? document.activeElement : null;
+  const existing = root.querySelector('#modal');
+  if (!existing?.contains(sourceFocus)) overlayAnchor = focusKey(sourceFocus) || focusReturn;
+  if (name === 'chat-response-settings') overlayAnchor = '#response-settings-trigger';
+  overlayContext = `${adapter.identityEpoch}:${location.hash}:${view.tab}:${view.path}`;
   modalChoice++;
   lastFocus = sourceFocus;
   view.modal = name;
@@ -503,9 +513,14 @@ function openModal(name: string, data: Record<string, string> = {}) {
   view.formOverwrite = false;
   fileAttempt = undefined; modalTransfers = [];
   view.deleteConfirmed = false;
-  render();
+  overlayOpening = true;
+  try { render(); } finally { overlayOpening = false; }
+  const panel=root.querySelector<HTMLElement>('#modal');
+  if (overlayRole(name)==='menu') panel?.querySelector<HTMLElement>('[role=menuitem]:not([disabled])')?.focus({preventScroll:true});
+  else if (overlayRole(name)==='drawer') panel?.querySelector<HTMLElement>('[data-action=close-modal]')?.focus({preventScroll:true});
+  else if (anchoredOverlay(name)) panel?.querySelector<HTMLElement>('[aria-selected=true],button:not([disabled]),input:not([disabled]),summary')?.focus({preventScroll:true});
 }
-function closeModal() {
+function closeModal(restoreFocus = true) {
   if(!view.modal)return;
   if (['dirty-file', 'dirty-settings'].includes(view.modal) && sourceGuardReturn) {
     const original = sourceGuardReturn; sourceGuardReturn = undefined; pendingNav = null;
@@ -538,7 +553,7 @@ function closeModal() {
     if(!continuing && responseSettings && responseContext && source==='command' && target instanceof HTMLTextAreaElement)target.setSelectionRange(caret[0],caret[1]);
   };
   if(dialog?.open)dialog.close();
-  render();restore();
+  render();if(restoreFocus)restore();
 }
 const phase = (op: Operation) => `<div class="phase-track" role="status"><div><span>${op.state === "succeeded" ? icon("check", 14) : icon("clock", 14)}</span>Current phase: ${esc(op.phase || op.state)}</div></div>`;
 function scenarioBar() { return ""; }
@@ -571,12 +586,12 @@ function works() {
   const all = adapter.state.works.filter((w) =>
     w.name.toLowerCase().includes(view.search.toLowerCase()),
   );
-  return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${btn(icon("refresh"), "retry-works", "icon-button quiet", 'title="Refresh Works" aria-label="Refresh Works"')}${btn(icon("upload"), "import", "icon-button quiet", 'title="Import Work" aria-label="Import Work"')}${btn(icon("plus"), "new-work", "icon-button primary", 'title="New Work" aria-label="New Work"')}</div></div>${adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(s === "loading" || adapter.worksLoading && !adapter.worksChecked) ? `<div class="loading-list">${[1, 2, 3].map(() => '<div class="skeleton"></div>').join("")}<p>Loading your Works…</p>${btn("Check connection", "check-connection")}</div>` : s === "list-error" ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "retry-works", "primary")) : s === "empty" ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><button class="work-name" data-action="open-work" data-id="${w.id}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></button><div class="work-status">${workStatus(w)}${controlMarkup(workControls.get(w.id))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${adapter.state.works.length} Works <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div></div></main>`;
+  return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${btn(icon("refresh"), "retry-works", "icon-button quiet", 'title="Refresh Works" aria-label="Refresh Works"')}${btn(icon("upload"), "import", "icon-button quiet", 'title="Import Work" aria-label="Import Work"')}${btn(icon("plus"), "new-work", "icon-button primary", 'title="New Work" aria-label="New Work"')}</div></div>${adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(s === "loading" || adapter.worksLoading && !adapter.worksChecked) ? `<div class="loading-list">${[1, 2, 3].map(() => '<div class="skeleton"></div>').join("")}<p>Loading your Works…</p>${btn("Check connection", "check-connection")}</div>` : s === "list-error" ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "retry-works", "primary")) : s === "empty" ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><a class="work-name" data-action="open-work" data-id="${esc(w.id)}" href="#/work/${encodeURIComponent(w.id)}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></a><div class="work-status">${workStatus(w)}${controlMarkup(workControls.get(w.id))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${adapter.state.works.length} Works <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div></div></main>`;
 }
 function quickAction(w: Work) {
-  if (route()[0] === 'works' && controlReady(workControls.get(w.id), w)) return btn('Open Work', 'open-work', 'primary small', `data-id="${esc(w.id)}"`);
+  if (route()[0] === 'works' && controlReady(workControls.get(w.id), w)) return workLink('Open Work', w.id, 'primary small');
   const action = adapter.project(w).action;
-  if (action === 'stop') return route()[0] === 'works' ? btn('Open Work', 'open-work', 'quiet small', `data-id="${esc(w.id)}"`) : '';
+  if (action === 'stop') return route()[0] === 'works' ? workLink('Open Work', w.id, 'quiet small') : '';
   const label = { start: 'Start Work', retry: 'Retry Work', check: 'Check status' }[action];
   return btn(`${icon(action === 'start' ? 'play' : 'refresh', 15)} ${label}`,
     action === 'check' ? 'check-work' : 'start-work', 'quiet small', `data-id="${esc(w.id)}"`);
@@ -593,7 +608,7 @@ function workPage(w: Work) {
   const serviceArea = view.tab === 'Services', narrow = innerWidth < 900;
   const hiddenChat = view.layout === 'service-only' || serviceArea && view.layout === 'workspace' && (narrow ? !panels.narrowChat : panels.collapsed);
   const narrowChat = serviceArea && narrow && !hiddenChat && view.layout !== 'chat-only';
-  return `${workHeader(w)}${controlMarkup(workControls.get(w.id))}<nav class="work-tabs" aria-label="Work areas"><div>${["Services", "Files", "Chat"].map((t) => btn(`${icon(t === "Services" ? "grid" : t === "Files" ? "folder" : "chat", 17)} ${t}`, `tab-${t}`, !settings && view.tab === t ? "tab active" : "tab")).join("")}</div><div class="work-tools">${!settings ? workspaceChatToggle(w) : ""}${btn(`${icon('note', 17)} <span>Pi Requests</span>`, 'pi-requests', 'tab work-requests', 'aria-label="Pi requests for this Work" title="Pi requests for this Work"')}${btn(`${icon("settings", 17)} Settings`, "settings", settings ? "tab active" : "tab")}</div></nav>${w.status === "Degraded" ? `<div class="work-notice">${icon("info", 15)} Some capabilities need attention. Available Services remain usable. ${btn("View details", "manage-services", "text-button")}</div>` : ""}${!settings && adapter.project(w).retainWorkspace && !adapter.project(w).usable ? feedback("Current Work status is not confirmed. Your open workspace is retained; new runtime and file changes are unavailable until checked.", "warning", btn("Check Work", "check-work", "small", `data-id="${esc(w.id)}"`)) : ""}${settings ? settingsPage(w) : !adapter.project(w).retainWorkspace ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${hiddenChat ? "chat-hidden" : ""} ${serviceArea ? "service-workspace" : ""} ${narrowChat ? "narrow-chat" : ""}"><section id="workspace-main" class="main-panel" ${narrowChat || view.layout === "chat-only" ? "inert" : ""}>${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="vertical" aria-label="Resize Service and Chat" aria-controls="workspace-main workspace-chat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" title="Drag or use arrow keys. Enter resets split." tabindex="${serviceArea && !narrow && !hiddenChat && view.layout !== 'chat-only' ? 0 : -1}"></div><aside id="workspace-chat" class="agent-side" ${hiddenChat ? "inert" : ""}>${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
+  return `${workHeader(w)}${controlMarkup(workControls.get(w.id))}<nav class="work-tabs" aria-label="Work areas"><div>${["Services", "Files", "Chat"].map((t) => btn(`${icon(t === "Services" ? "grid" : t === "Files" ? "folder" : "chat", 17)} ${t}`, `tab-${t}`, !settings && view.tab === t ? "tab active" : "tab")).join("")}</div><div class="work-tools">${btn(`${icon('note', 17)} <span>Pi Requests</span>`, 'pi-requests', 'tab work-requests', 'aria-label="Pi requests for this Work" title="Pi requests for this Work"')}${btn(`${icon("settings", 17)} Settings`, "settings", settings ? "tab active" : "tab")}</div></nav>${w.status === "Degraded" ? `<div class="work-notice">${icon("info", 15)} Some capabilities need attention. Available Services remain usable. ${btn("View details", "manage-services", "text-button")}</div>` : ""}${!settings && adapter.project(w).retainWorkspace && !adapter.project(w).usable ? feedback("Current Work status is not confirmed. Your open workspace is retained; new runtime and file changes are unavailable until checked.", "warning", btn("Check Work", "check-work", "small", `data-id="${esc(w.id)}"`)) : ""}${settings ? settingsPage(w) : !adapter.project(w).retainWorkspace ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${hiddenChat ? "chat-hidden" : ""} ${serviceArea ? "service-workspace" : ""} ${narrowChat ? "narrow-chat" : ""}"><section id="workspace-main" class="main-panel" ${view.layout === "chat-only" ? "inert" : ""}>${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="vertical" aria-label="Resize Service and Chat" aria-controls="workspace-main workspace-chat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" title="Drag or use arrow keys. Enter resets split." tabindex="${serviceArea && !narrow && !hiddenChat && view.layout !== 'chat-only' ? 0 : -1}"></div><aside id="workspace-chat" class="agent-side" ${hiddenChat ? "inert" : ""}>${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
 }
 function workState(w: Work) {
   const state = adapter.project(w);
@@ -612,13 +627,17 @@ function serviceUnavailableReason(service: Service) {
   if (service.observed === 'Stopped') return 'This Service is stopped. Check its current details before starting it.';
   return 'This Service state is not confirmed. Check its current details; an application entry is not available yet.';
 }
+function serviceFallbackHeader(w: Work) {
+  return `<div class="service-toolbar"><span class="service-selector">Services</span><div class="actions focus-actions">${workspaceChatToggle(w)}${focusControls(w)}</div></div>`;
+}
 function services(w: Work) {
-  if (!w.resourceChecked?.services && !w.resourceErrors?.services) return `<div class="local-loading" role="status" aria-busy="true">Loading Services…</div>`;
+  if (!w.resourceChecked?.services && !w.resourceErrors?.services) return `${serviceFallbackHeader(w)}<div class="local-loading" role="status" aria-busy="true">Loading Services…</div>`;
   const s = route()[0] === "app" ? w.services.find(service => service.id === route()[2]) : activeService(w);
   if (s && route()[0] !== "app" && !s.ports.includes(view.port)) view.port = s.ports[0] || 0;
-  if (w.resourceErrors?.services && !w.resourceChecked?.services) return feedback(esc(w.resourceErrors.services), "warning", btn("Check connection", "check-connection"));
+  if (w.resourceErrors?.services && !w.resourceChecked?.services) return serviceFallbackHeader(w) + feedback(esc(w.resourceErrors.services), "warning", btn("Retry Services", "retry-services"));
+  if ((!s || !s.ports.length) && w.resourceErrors?.services) return serviceFallbackHeader(w) + feedback(`Service availability could not be confirmed. ${esc(w.resourceErrors.services)}`, 'warning', btn('Retry Services', 'retry-services', 'small'));
   if (!s || !s.ports.length)
-    return empty(
+    return serviceFallbackHeader(w) + empty(
       "grid",
       "No Web Service is ready",
       "Ask the Agent to build a tool. Service definitions are created by the Agent workflow.",
@@ -628,7 +647,7 @@ function services(w: Work) {
   const keepStartingFrame = s.observed === 'Starting' && s.enabled && s.ports.includes(view.port) && w.desired === 'running'
     && (w.status === 'Ready' || w.status === 'Degraded')
     && [...root.querySelectorAll<HTMLIFrameElement>('iframe[data-service-key]')].some(frame => frame.dataset.serviceKey === serviceKey);
-  return `${w.resourceErrors?.services?feedback(esc(w.resourceErrors.services),"warning",btn("Check connection","check-connection","small")):""}<div class="service-toolbar"><div class="service-selector">${btn(`${icon('grid', 16)}<span class="service-name">${esc(s.name)}</span>${badge(s.enabled ? s.observed : 'Disabled')}${icon('down', 13)}`, 'service-picker', 'quiet service-trigger', `id="service-select" data-service-id="${esc(s.id)}" aria-label="Service: ${esc(s.name)}" aria-haspopup="dialog" title="Switch service"`)}${s.ports.length === 1 ? `<span class="port-label" aria-label="Declared Web port ${s.ports[0]}">${s.ports[0]}</span>` : `<select id="port-select" aria-label="Declared Web port">${s.ports.map(p => `<option ${p === view.port ? 'selected' : ''}>${p}</option>`).join('')}</select>`}</div><div class="actions focus-actions">${adapter.requestPresence.get(`${w.id}:${s.name}`)?.hasRecords ? btn(icon("note", 17), "service-requests", "icon-button quiet", 'aria-label="Agent requests" title="Agent requests"') : ""}${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn("Copy local link", "copy-local", "small")) : ""}${s.enabled && s.observed === "Ready" && adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : (!s.enabled || s.observed !== "Ready") && !keepStartingFrame ? empty("grid", `${esc(s.name)} is ${s.enabled ? esc(s.observed.toLowerCase()) : "disabled"}`, esc(s.error || serviceUnavailableReason(s)), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : adapter.serviceEntryPending(w.id, s.id, view.port) ? empty("grid", "Opening application", `Preparing ${esc(s.name)} · port ${view.port}`) : empty("grid", "Application entry not confirmed", s.ports.includes(view.port) ? "Check the current Work and Service status, then retry this entry." : "The requested port is no longer declared by this Service. Select a declared port or return to the Work.", btn("Retry", "retry-service-entry", "primary", s.ports.includes(view.port) ? "" : "disabled"))}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection ${w.resourceChecked?.services?` · Retrieved ${esc(new Date(w.resourceChecked.services).toLocaleTimeString())}`:""}</span><span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div>`;
+  return `${w.resourceErrors?.services?feedback(esc(w.resourceErrors.services),"warning",btn("Retry Services","retry-services","small")):""}<div class="service-toolbar"><div class="service-selector">${btn(`${icon('grid', 16)}<span class="service-name">${esc(s.name)}</span>${badge(s.enabled ? s.observed : 'Disabled')}${icon('down', 13)}`, 'service-picker', 'quiet service-trigger', `id="service-select" data-service-id="${esc(s.id)}" aria-label="Service: ${esc(s.name)}" aria-haspopup="dialog" title="Switch service"`)}${s.ports.length === 1 ? `<span class="port-label" aria-label="Declared Web port ${s.ports[0]}">${s.ports[0]}</span>` : `<select id="port-select" aria-label="Declared Web port">${s.ports.map(p => `<option ${p === view.port ? 'selected' : ''}>${p}</option>`).join('')}</select>`}</div><div class="actions focus-actions">${adapter.requestPresence.get(`${w.id}:${s.name}`)?.hasRecords ? btn(icon("note", 17), "service-requests", "icon-button quiet", 'aria-label="Agent requests" title="Agent requests"') : ""}${workspaceChatToggle(w)}${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn("Copy local link", "copy-local", "small")) : ""}${s.enabled && s.observed === "Ready" && adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : (!s.enabled || s.observed !== "Ready") && !keepStartingFrame ? empty("grid", `${esc(s.name)} is ${s.enabled ? esc(s.observed.toLowerCase()) : "disabled"}`, esc(s.error || serviceUnavailableReason(s)), btn("Manage services", "manage-services", "primary")) : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? `<iframe data-service-key="${esc(`${w.id}:${s.id}:${view.port}`)}" class="real-service-frame" title="${esc(s.name)} application" src="${esc(adapter.serviceEntryUrl(w.id, s.id, view.port))}"></iframe>` : adapter.serviceEntryPending(w.id, s.id, view.port) ? empty("grid", "Opening application", `Preparing ${esc(s.name)} · port ${view.port}`) : empty("grid", "Application entry not confirmed", s.ports.includes(view.port) ? "Check the current Work and Service status, then retry this entry." : "The requested port is no longer declared by this Service. Select a declared port or return to the Work.", btn("Retry", "retry-service-entry", "primary", s.ports.includes(view.port) ? "" : "disabled"))}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection ${w.resourceChecked?.services?` · Retrieved ${esc(new Date(w.resourceChecked.services).toLocaleTimeString())}`:""}</span><span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div>`;
 }
 function agent(w: Work, focus: boolean) {
   const readingSessions = !w.resourceChecked?.agent && !w.resourceErrors?.agent;
@@ -649,7 +668,7 @@ function agent(w: Work, focus: boolean) {
   const draftImages=imageDrafts.get(draftKey(w,session?.id || ""));const imageWaiting=draftImages.length>0 && (!w.resourceChecked?.agent || session?.loading && !session.checkedAt || draftImages.some(image=>image.reading));
   const webDraft=!view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
   const stopAndSend=supported && active && !activeUnconfirmed && !webDraft;
-  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${(view.layout==="chat-only" || view.layout==='service-chat' && innerWidth<900) && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${session ? unmatchedExecutions(w,session.id,session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${activeUnconfirmed ? feedback(esc(observed?.error || "Checking the active Run…"), "warning", btn("Check status", "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? `A Run from Service ${esc(activeRun.source.serviceName || "")} is active.` : "A Run is active in another Session.", "warning", btn("View active Run", "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}<div class="composer-actions">${btn(icon("upload",16),"add-chat-images","icon-button quiet",'title="Add images" aria-label="Add images"')}${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-haspopup="dialog" aria-expanded="${view.modal==='chat-input-options'}"`)}${btn(stopAndSend ? "Stop and send" : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}`, `aria-label="${stopAndSend ? "Stop and send" : "Send message"}" ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
+  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", 'aria-label="Sessions"')}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${(view.layout==="chat-only" || view.layout==='service-chat' && innerWidth<900) && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line">${session?.loading && session.checkedAt?`<small>Saved conversation · retrieved ${esc(new Date(session.checkedAt).toLocaleTimeString())}</small>`:""}<button data-action="sessions">${esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${session?.error?feedback(esc(session.error),"warning"):""}${readingSessions ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : session?.loading && !session.checkedAt ? `<div class="local-loading" role="status" aria-busy="true">Loading conversation…</div>` : !session?.messages.length && (session?.error || agentError) ? feedback('Conversation could not be confirmed. Your draft is preserved.', 'warning', btn('Retry conversation','retry-conversation','small')) : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages)}${session ? unmatchedExecutions(w,session.id,session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${agentError ? feedback(esc(agentError), "warning", btn("Check connection", "check-connection", "small")) : ""}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${activeUnconfirmed ? feedback(esc(observed?.error || "Checking the active Run…"), "warning", btn("Check status", "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? `A Run from Service ${esc(activeRun.source.serviceName || "")} is active.` : "A Run is active in another Session.", "warning", btn("View active Run", "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w,session?.id || "")}<div class="composer-actions">${btn(icon("upload",16),"add-chat-images","icon-button quiet",'title="Add images" aria-label="Add images"')}${btn(icon("settings",16),"chat-input-options","icon-button quiet chat-input-options",`title="Input options" aria-label="Input options" aria-haspopup="dialog" aria-expanded="${view.modal==='chat-input-options'}"`)}${btn(stopAndSend ? "Stop and send" : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}`, `aria-label="${stopAndSend ? "Stop and send" : "Send message"}" ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?"Command mode":"Send as text","toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
 }
 function modelComposer(w:Work,sessionId:string) {
  const {name,thinking,state}=chatSettings(w,sessionId);
@@ -710,7 +729,7 @@ function chatSettingsContextCurrent() {
 function focusChatSettings(kind?:string) {
   const dialog=root.querySelector<HTMLDialogElement>('#modal'); if(!dialog) return;
   const row=dialog.querySelector<HTMLButtonElement>(kind==='thinking'?'#thinking-select':'#model-select');
-  const option=view.data.expanded?(dialog.querySelector<HTMLElement>('[role=menuitemradio][aria-checked=true]:not([disabled])') || dialog.querySelector<HTMLElement>('[role=menuitemradio]:not([disabled])')):null;
+  const option=view.data.expanded?(dialog.querySelector<HTMLElement>('[role=option][aria-selected=true]:not([disabled])') || dialog.querySelector<HTMLElement>('[role=option]:not([disabled])')):null;
   const recovery=dialog.querySelector<HTMLElement>('.options-status .button:not([disabled]),.modal-footer .button');
   (option || (row && !row.disabled?row:recovery))?.focus({preventScroll:true});
 }
@@ -790,7 +809,7 @@ async function exitWorkspaceFocus() {
   resetWorkspaceFocus(); render(); restoreLayoutFocus(target); return true;
 }
 function isRequestInspector() { return ['pi-requests', 'pi-request-detail'].includes(view.modal); }
-function nonmodalDialog() { return view.modal === 'export' || isRequestInspector() && innerWidth >= 900; }
+function nonmodalDialog() { return overlayRole(view.modal)!=='modal' || view.modal === 'export' || isRequestInspector() && innerWidth >= 900; }
 function backToRequests() {
   if (!requestNavigationCurrent()) return;
   const nav=requestNavigation!; modalChoice++; view.modal='pi-requests'; view.data={source:nav.source,serviceName:nav.serviceName}; view.modalError=''; render();
@@ -971,6 +990,24 @@ function requestCancellable(request: Record<string,any>) { return canCancelPiReq
 function runFacts(run: Run) {
   return `<dl><dt>Run status</dt><dd>${badge(run.status)}</dd><dt>Actual model</dt><dd>${esc(modelDisplayName(run.actualModel))}</dd><dt>Thinking</dt><dd>${esc(run.thinkingLevel===null?'Normal (Thinking unconfirmed)':run.thinkingLevel || 'off')}</dd><dt>Source</dt><dd>${esc(run.source?.kind==='service'?`Service: ${run.source.serviceName || 'automatic'}`:run.source?.kind==='chat'?'Chat':'Unknown')}${run.source?.requestId?` · Request <code>${esc(run.source.requestId)}</code>`:''}${run.source?.phase?` · ${esc(run.source.phase)}`:''}</dd><dt>Submitted</dt><dd>${esc(run.created || 'Unavailable')}</dd>${run.finished?`<dt>Finished</dt><dd>${esc(run.finished)}</dd>`:''}</dl>`;
 }
+function dismissAnchoredOverlay() {
+  if(!anchoredOverlay(view.modal))return;
+  if(view.modal==='chat-response-settings' && pendingWebCommand && ['model','thinking'].includes(pendingWebCommand.kind) && !pendingWebCommand.pair)pendingWebCommand=undefined;
+  const trigger=overlayAnchor?root.querySelector<HTMLElement>(overlayAnchor):null;
+  trigger?.setAttribute('aria-expanded','false');trigger?.removeAttribute('aria-controls');
+  const dialog=root.querySelector<HTMLDialogElement>('#modal');
+  modalChoice++;view.modal='';view.modalError='';view.modalNameError=null;
+  dialog?.close();dialog?.remove();
+}
+function positionOverlay(dialog: HTMLDialogElement) {
+  const anchor=overlayAnchor?root.querySelector<HTMLElement>(overlayAnchor):null;
+  if(!anchor?.getClientRects().length || overlayContext!==`${adapter.identityEpoch}:${location.hash}:${view.tab}:${view.path}`){dismissAnchoredOverlay();return;}
+  dialog.style.maxHeight='calc(100dvh - 16px)';
+  const rect=anchor.getBoundingClientRect();
+  if(rect.bottom<0 || rect.top>innerHeight || rect.right<0 || rect.left>innerWidth){dismissAnchoredOverlay();return;}
+  const placed=overlayPlacement(rect,dialog.getBoundingClientRect(),{width:innerWidth,height:innerHeight});
+  dialog.style.left=`${placed.left}px`;dialog.style.top=`${placed.top}px`;dialog.style.maxHeight=`${placed.maxHeight}px`;
+}
 function syncDialogPresentation(dialog: HTMLDialogElement, nonmodal: boolean) {
   if (dialog.open && dialog.matches(':modal') === nonmodal) dialog.close();
   if (!dialog.open) { if (nonmodal) dialog.show(); else dialog.showModal(); }
@@ -1015,8 +1052,8 @@ function modalMarkup() {
       title='Response settings';
       const options=!editable || levels && !thinkingEditable?[]:levels?(model?.thinkingAvailability==='unknown'?[{value:'normal',name:'Normal',note:'No additional Thinking requested; capability unconfirmed.',selected:state.thinking===null}]:(model?.thinkingLevels || []).map(level=>({value:level,name:thinkingName(level),note:'',selected:level===state.thinking}))) :
         [...(catalog?.defaultModel?[catalog.defaultModel]:[]),...(catalog?.models || []).filter(m=>m.modelRef!==null)].map(m=>({value:m.modelRef || '',name:m.modelRef===null?capturedDefaultName(m):modelDisplayName(m),note:m.modelRef===null?'Use Work default':m.model+' · '+m.provider+' · '+m.modelRef.slice(-8),selected:m.modelRef===state.ref}));
-      const row=(kind:string,label:string,value:string,enabled:boolean,note='')=>btn(`<span class="response-setting-label">${label}</span><span class="response-setting-value">${esc(value)}${note?`<small>${note}</small>`:''}</span>${icon('down',14)}`,'toggle-chat-setting','quiet response-setting-row',`id="${kind}-select" data-kind="${kind}" value="${esc(kind==='model'?state.ref || '':state.thinking ?? 'normal')}" aria-label="${label}: ${esc(value)}" aria-expanded="${expanded===kind}" aria-controls="response-${kind}-options" aria-describedby="response-settings-status" ${enabled?'':'disabled'}`);
-      body=`<p class="muted response-settings-subtitle">For your next message${view.data.sessionId?'': ' · For new session'}</p><div class="response-setting-group">${row('model','Model',name,editable,state.ref===null?'Work default':'')}${row('thinking','Thinking',thinking,thinkingEditable)}</div>${modelFeedback(target,view.data.sessionId || '',true)}${expanded && options.length?`<div class="response-setting-options"><p class="muted">${levels?'Thinking':'Model'}</p><div id="response-${expanded}-options" class="menu-list chat-picker-menu" role="menu" aria-label="${levels?'Thinking levels':'Models'}">${options.map(option=>btn(`<span>${esc(option.name)}${option.note?`<small>${esc(option.note)}</small>`:''}</span>${option.selected?icon('check',16):''}`,'choose-chat-setting','',`role="menuitemradio" aria-checked="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${expanded}"`)).join('')}</div></div>`:''}`;
+      const row=(kind:string,label:string,value:string,enabled:boolean,note='')=>btn(`<span class="response-setting-label">${label}</span><span class="response-setting-value">${esc(value)}${note?`<small>${note}</small>`:''}</span>${icon('down',14)}`,'toggle-chat-setting','quiet response-setting-row',`id="${kind}-select" data-kind="${kind}" value="${esc(kind==='model'?state.ref || '':state.thinking ?? 'normal')}" aria-label="${label}: ${esc(value)}" aria-expanded="${expanded===kind}" aria-haspopup="listbox" aria-controls="response-${kind}-options" aria-describedby="response-settings-status" ${enabled?'':'disabled'}`);
+      body=`<p class="muted response-settings-subtitle">For your next message${view.data.sessionId?'': ' · For new session'}</p><div class="response-setting-group">${row('model','Model',name,editable,state.ref===null?'Work default':'')}${row('thinking','Thinking',thinking,thinkingEditable)}</div>${modelFeedback(target,view.data.sessionId || '',true)}${expanded && options.length?`<div class="response-setting-options"><p class="muted">${levels?'Thinking':'Model'}</p><div id="response-${expanded}-options" class="menu-list chat-picker-menu" role="listbox" aria-label="${levels?'Thinking levels':'Models'}">${options.map(option=>btn(`<span>${esc(option.name)}${option.note?`<small>${esc(option.note)}</small>`:''}</span>${option.selected?icon('check',16):''}`,'choose-chat-setting','',`role="option" aria-selected="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${expanded}"`)).join('')}</div></div>`:''}`;
       footer=close();
       break;
     }
@@ -1114,7 +1151,7 @@ function modalMarkup() {
       break;
     case "sessions":
       title = "Sessions";
-      body = `<p>Conversations within ${esc(target?.name)}. Switching Sessions does not stop an active Run.</p><div class="session-list">${target?.sessions.map((s) => `<button data-action="select-session" data-id="${s.id}" class="${s.id === view.session ? "selected" : ""}"><span>${icon("chat", 17)}${esc(sessionDisplayName(target!,s))}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : s.id === view.session ? icon("check", 16) : ""}</button>`).join("") || "<p>No Sessions yet.</p>"}</div>`;
+      body = `<p>Conversations within ${esc(target?.name)}. Switching Sessions does not stop an active Run.</p><div class="session-list" role="listbox" aria-label="Sessions">${target?.sessions.map((s) => `<button role="option" aria-selected="${s.id === view.session}" data-action="select-session" data-id="${s.id}" class="${s.id === view.session ? "selected" : ""}"><span>${icon("chat", 17)}${esc(sessionDisplayName(target!,s))}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : s.id === view.session ? icon("check", 16) : ""}</button>`).join("") || "<p>No Sessions yet.</p>"}</div>`;
       footer = `${close()}${btn(`${icon("plus")} New session`, "new-session", "primary")}`;
       break;
     case "agent-menu":
@@ -1141,7 +1178,7 @@ function modalMarkup() {
     case 'service-picker': {
       title='Switch service';
       const selected=target && activeService(target);
-      body=`<div class="service-picker-list" role="menu" aria-label="Services">${target?.services.filter(item=>item.ports.length && item.observed!=='Removed').map(item=>btn(`<span class="service-choice-copy"><strong>${esc(item.name)}</strong><small>Declared Web ports · ${item.ports.join(', ')}</small>${!item.enabled || item.observed!=='Ready'?`<small>${esc(item.error || (!item.enabled?'Disabled · use Manage services':item.observed==='Starting'?'Starting · waiting for readiness':item.observed==='Failed'?'Failed · check details and logs':'Stopped · use Manage services'))}</small>`:''}</span>${badge(item.enabled?item.observed:'Disabled')}<span class="choice-check">${item.id===selected?.id?icon('check',16):''}</span>`,'select-service','quiet service-choice',`role="menuitemradio" aria-checked="${item.id===selected?.id}" data-id="${esc(item.id)}"`)).join('') || '<p>No Web Services.</p>'}</div>`;
+      body=`<div class="service-picker-list" role="listbox" aria-label="Services">${target?.services.filter(item=>item.ports.length && item.observed!=='Removed').map(item=>btn(`<span class="service-choice-copy"><strong>${esc(item.name)}</strong><small>Declared Web ports · ${item.ports.join(', ')}</small>${!item.enabled || item.observed!=='Ready'?`<small>${esc(item.error || (!item.enabled?'Disabled · use Manage services':item.observed==='Starting'?'Starting · waiting for readiness':item.observed==='Failed'?'Failed · check details and logs':'Stopped · use Manage services'))}</small>`:''}</span>${badge(item.enabled?item.observed:'Disabled')}<span class="choice-check">${item.id===selected?.id?icon('check',16):''}</span>`,'select-service','quiet service-choice',`role="option" aria-selected="${item.id===selected?.id}" data-id="${esc(item.id)}"`)).join('') || '<p>No Web Services.</p>'}</div>`;
       footer=btn(`${icon('settings',16)} Manage services`,'manage-services','quiet');break;
     }
     case "service-menu":
@@ -1195,8 +1232,12 @@ function modalMarkup() {
       body = `<div class="menu-list">${btn("Open", "open-file", "", `data-path="${esc(f?.path)}"`)}${btn("Download file", "download-file", "", `data-path="${esc(f?.path)}" ${f?.kind === "directory" || f?.kind === "special" ? "disabled" : ""}`)}${btn("Rename", "file-rename", "", `data-path="${esc(f?.path)}"`)}${btn("Move", "file-move", "", `data-path="${esc(f?.path)}"`)}${btn("Copy", "file-copy", "", `data-path="${esc(f?.path)}"`)}${btn("Delete", "file-delete", "danger", `data-path="${esc(f?.path)}"`)}</div>`;
       break;
     }
-    case "upload-overwrite":
-      title = "Overwrite workspace files"; body = `<p>Replace existing files with ${pendingUploadFiles.map(file => esc(file.name)).join(", ")}? The checked versions are listed in Transfer results. Targets without modification times cannot protect against concurrent changes.</p>`; footer = `${cancel()}${btn("Overwrite files", "confirm-upload-overwrite", "danger")}`; break;
+    case "upload-overwrite": {
+      const review=uploadReview(modalTransfers),paths=(rows:readonly TransferResult[])=>rows.map(row=>`<code>${esc(row.path)}</code>`).join(', ');
+      title='Review uploads';
+      body=`${review.overwrite.length?`<p>Replace these confirmed existing files: ${paths(review.overwrite)}? The checked versions are listed below. Targets without modification times cannot protect against concurrent changes.</p>`:''}${review.retry.length?`<p>These uploads failed and can be checked again: ${paths(review.retry)}. Retrying does not authorize replacing an existing file.</p>`:''}${review.unknown.length?'<p>The original upload result is unknown. Refresh the original paths before choosing files again; no unknown upload will be repeated here.</p>':''}`;
+      footer=`${cancel()}${review.retry.length?btn('Retry failed uploads','confirm-upload-overwrite','primary','data-upload-mode="retry"'):''}${review.overwrite.length?btn('Overwrite confirmed files','confirm-upload-overwrite','danger','data-upload-mode="overwrite"'):''}`;break;
+    }
     case "new-folder":
       title = "New folder";
       body = `<p>Create inside <code>${esc(view.path)}</code></p><label class="field">Folder name<input id="form-name" value="${esc(view.formName)}" placeholder="e.g. research"></label>`;
@@ -1227,7 +1268,7 @@ function modalMarkup() {
         .map((p) => `<code>${esc(p)}</code>`)
         .join(
           "",
-        )}</div><p class="danger-text">Folders are deleted recursively, including every child path. The workspace root cannot be deleted.</p>`;
+        )}</div><p class="danger-text">Folders are deleted recursively, including every child path. Deleted files and folders cannot be restored from this UI. The workspace root cannot be deleted.</p>`;
       footer = `${cancel()}${btn("Delete paths", "confirm-file-delete", "danger-solid", fileAttempt?.ledger.hasResults ? "disabled" : "")}`;
       break;
     case "dirty-file":
@@ -1311,7 +1352,7 @@ function modalMarkup() {
       const op = adapter.getOperation(view.data.id);
       title = op ? esc(op.kind) : "Operation not found";
       body = op
-        ? `${phase(op)}${importNameFeedback(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">Work: ${workStatus(adapter.getWork(op.workId)!)}${quickAction(adapter.getWork(op.workId)!)}</div>` : ""}${feedback(`${esc(op.phase)}. ${op.state === "accepted" || op.state === "preparing" ? "Accepted does not mean completed. Closing this dialog will not cancel it." : op.state === "unknown" ? "Check this original Operation; do not repeat the request." : op.state === "succeeded" ? "The original Operation reached a confirmed result." : ""}`, op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>Operation ID</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="Copy Operation ID"`)}</dd><dt>Work ID</dt><dd><code>${op.workId}</code></dd><dt>State</dt><dd>${badge(op.state)}</dd><dt>Last confirmed</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>Snapshot ID</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}${op.observationError ? feedback(`Observation interrupted. ${esc(op.observationError)}`, "warning") : ""}${op.localRecordSaved === false ? feedback("Accepted, but the local record could not be saved. Copy the Operation ID; automatic recovery after reload is not guaranteed.", "warning") : ""}`
+        ? `${phase(op)}${importNameFeedback(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">Work: ${workStatus(adapter.getWork(op.workId)!)}${quickAction(adapter.getWork(op.workId)!)}</div>` : ""}${feedback(`${esc(op.phase)}. ${op.state === "accepted" || op.state === "preparing" ? "Accepted does not mean completed. Closing this panel will not cancel it." : op.state === "unknown" ? "Check this original Operation; do not repeat the request." : op.state === "succeeded" ? "The original Operation reached a confirmed result." : ""}`, op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>Operation ID</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="Copy Operation ID"`)}</dd><dt>Work ID</dt><dd><code>${op.workId}</code></dd><dt>State</dt><dd>${badge(op.state)}</dd><dt>Last confirmed</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>Snapshot ID</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}${op.observationError ? feedback(`Observation interrupted. ${esc(op.observationError)}`, "warning") : ""}${op.localRecordSaved === false ? feedback("Accepted, but the local record could not be saved. Copy the Operation ID; automatic recovery after reload is not guaranteed.", "warning") : ""}`
         : "<p>This Operation is not known for the current Core and user. Verify the ID or check the original Work.</p>";
       if (op?.kind === 'Import Work' && op.state === 'succeeded') {
         const imported = adapter.getWork(op.workId), start = importStarts.get(op.id);
@@ -1319,16 +1360,21 @@ function modalMarkup() {
         title = start ? 'Imported Work · Start progress' : stopped ? 'Imported · Not started' : 'Imported Work';
         body = `<p>${start ? 'Your explicit Start request remains bound to this imported Work.' : stopped ? 'The package was imported successfully. Start it when you are ready, or view the stopped Work.' : 'Import completed. Check the Work’s current status before starting or opening it.'}</p>${start ? `<dl><dt>Original import</dt><dd><code>${esc(op.id)}</code></dd><dt>Original Start</dt><dd>${start.startId ? `<code>${esc(start.startId)}</code>` : esc(start.phase)}</dd></dl>${controlMarkup(workControls.get(op.workId))}` : ''}${body}`;
       }
-      footer = `${close()}${op ? btn("Check status", "check-operation", "", `data-id="${op.id}"`) : ""}${op && !["succeeded","failed","superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? "Resume checking" : "Pause checking", adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${op.id}"`) : ""}${op?.state === "succeeded" && op.kind === "Import Work" ? importExitButtons(op) : op?.state === "succeeded" && op.kind === "Create Work" ? btn("Open Work", "open-work", "primary", `data-id="${op.workId}"`) : op?.snapshotId ? btn("View original snapshot", "view-snapshot", "primary", `data-id="${esc(op.snapshotId)}" data-work-id="${esc(op.workId)}"`) : ""}`;
+      footer = `${close()}${op ? btn("Check status", "check-operation", "", `data-id="${op.id}"`) : ""}${op && !["succeeded","failed","superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? "Resume checking" : "Pause checking", adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${op.id}"`) : ""}${op?.state === "succeeded" && op.kind === "Import Work" ? importExitButtons(op) : op?.state === "succeeded" && op.kind === "Create Work" ? workLink('Open Work', op.workId, 'primary') : op?.snapshotId ? btn("View original snapshot", "view-snapshot", "primary", `data-id="${esc(op.snapshotId)}" data-work-id="${esc(op.workId)}"`) : ""}`;
       break;
     }
   }
-  return `<dialog id="modal" aria-labelledby="modal-title" class="modal ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal==='new-folder' || view.modal==='file-transfer' && view.data.transfer==='rename' ? 'modal-name' : ''} ${view.modal==="new-work"?"modal-create":""} ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow',16)} Requests`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", 'aria-label="Close dialog"')}</div><div class="modal-body">${view.modalError && view.modal!=="new-work" ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal==="new-work"?"create-action-status":""}" data-action-status-slot>${view.modal==="new-work" && view.modalError?feedback(esc(view.modalError),"warning"):""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
+  const role=overlayRole(view.modal);
+  if(role==='menu') {
+    body=body.replaceAll('<div class="menu-list', '<div role="group" class="menu-list').replaceAll('<button ', '<button role="menuitem" tabindex="-1" ');
+    return `<dialog id="modal" role="menu" aria-label="${title}" class="modal anchored-overlay command-dropdown"><div class="dropdown-title">${title}</div><div class="modal-body">${view.modalError?feedback(esc(view.modalError),'warning'):''}${body}</div></dialog>`;
+  }
+  return `<dialog id="modal" aria-modal="${role!=='modal' || view.modal==='export' || isRequestInspector() && innerWidth>=900 ? 'false':'true'}" aria-labelledby="modal-title" class="modal ${role==='popover'?'anchored-overlay selection-popover':role==='drawer'?'inspector-drawer':''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal==='new-folder' || view.modal==='file-transfer' && view.data.transfer==='rename' ? 'modal-name' : ''} ${view.modal==="new-work"?"modal-create":""} ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow',16)} Requests`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", 'aria-label="Close dialog"')}</div><div class="modal-body">${view.modalError && view.modal!=="new-work" ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal==="new-work"?"create-action-status":""}" data-action-status-slot>${view.modal==="new-work" && view.modalError?feedback(esc(view.modalError),"warning"):""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
 function importExitButtons(op: Operation) {
   const work = adapter.getWork(op.workId), start = importStarts.get(op.id);
   const allow = importCanStart(op, work, work ? adapter.project(work).action : '', !!start);
-  return `${work ? btn('View Work', 'open-work', '', `data-id="${esc(work.id)}"`) : ''}${allow ? btn('Start and open', 'start-import-open', 'primary', `data-id="${esc(op.workId)}" data-import-id="${esc(op.id)}"`) : start && work && controlReady(workControls.get(work.id), work) ? btn('Open Work', 'open-work', 'primary', `data-id="${esc(work.id)}"`) : ''}`;
+  return `${work ? workLink('View Work', work.id) : ''}${allow ? btn('Start and open', 'start-import-open', 'primary', `data-id="${esc(op.workId)}" data-import-id="${esc(op.id)}"`) : start && work && controlReady(workControls.get(work.id), work) ? btn('Open Work', 'open-work', 'primary', `data-id="${esc(work.id)}"`) : ''}`;
 }
 function serviceDetails(s: Service, w: Work) {
   const logs = adapter.serviceLogs(w.id, s.id), control = serviceControls.get(`${w.id}:${s.id}`);
@@ -1530,7 +1576,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       if(pendingWebCommand && pendingWebCommand.kind===kind){const state=adapter.modelSelection(currentWork.id,view.session);Object.assign(pendingWebCommand,{workId:currentWork.id,sessionId:view.session,pair:{ref:state.ref,thinking:state.thinking}});}
       confirmPendingChatCommand();render();focusChatSettings(kind);break;
     }
-    case 'service-picker': openModal('service-picker'); root.querySelector<HTMLElement>('#modal [aria-checked=true]')?.focus(); break;
+    case 'service-picker': openModal('service-picker'); root.querySelector<HTMLElement>('#modal [aria-selected=true]')?.focus(); break;
     case 'select-service': {
       const service = currentWork?.services.find(item => item.id === el.dataset.id && item.ports.length && item.observed !== 'Removed');
       if (!currentWork || !service) break;
@@ -1634,6 +1680,12 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "reconnect": toast("Start piwork-cli desktop and open the fresh launch address."); break;
     case "confirm-switch-core": await stay(adapter.switchCore(view.coreAddress)); view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();imageDraftErrors.clear(); view.config = null; view.configDirty = false; closeModal(); break;
     case "retry-works": await stay(adapter.listWorks()); break;
+    case 'retry-services':
+      if(currentWork)await stay(adapter.loadServices(currentWork.id));
+      break;
+    case 'retry-conversation':
+      if(currentWork){const selected=view.session;await stay(adapter.loadSessions(currentWork.id));if(selected && selected!==currentWork.sessions[0]?.id && currentWork.sessions.some(session=>session.id===selected))await stay(adapter.loadSession(currentWork.id,selected));}
+      break;
     case "check-connection": await stay(adapter.checkConnection()); toast("Connection checked."); break;
     case "start-work":
       if (w) await submitWorkStart(w, record);
@@ -2109,13 +2161,15 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "confirm-upload-overwrite":
       if (currentWork) {
         if (!pendingUploadTarget || pendingUploadTarget.epoch !== adapter.identityEpoch || pendingUploadTarget.workId !== currentWork.id || pendingUploadTarget.directory !== view.path) throw new Error('The upload target changed. Choose these files again in the intended Work and directory.');
-        const files = [...pendingUploadFiles], directory = pendingUploadTarget.directory, targets = files.map(file => ({ source: joinPath(directory, file.name) }));
+        const overwrite=el.dataset.uploadMode==='overwrite',review=uploadReview(modalTransfers),eligible=overwrite?review.overwrite:review.retry;
+        const directory=pendingUploadTarget.directory,files=pendingUploadFiles.filter(file=>eligible.some(row=>row.path===joinPath(directory,file.name))),targets=files.map(file=>({source:joinPath(directory,file.name)}));
+        if(!files.length)throw new Error('No confirmed eligible upload remains. Refresh the original paths.');
         const epoch = adapter.identityEpoch, origin = viewKey(); assertFileAdmission(currentWork.id, targets);
-        const rows = await adapter.upload(currentWork.id, directory, files, true);
+        const rows = await adapter.upload(currentWork.id, directory, files, overwrite);
         if (epoch !== adapter.identityEpoch) throw new ViewChanged();
         const results = retainFileResults(currentWork.id, targets, rows, record); confirmFileAttempt(record, results);
-        if (origin !== viewKey()) throw new ViewChanged(); modalTransfers = results;
-        pendingUploadFiles = files.filter(file => results.some(row => row.path === joinPath(directory, file.name) && row.status !== 'succeeded'));
+        if (origin !== viewKey()) throw new ViewChanged(); modalTransfers = [...modalTransfers.filter(row=>!targets.some(target=>target.source===row.path)),...results];
+        pendingUploadFiles = pendingUploadFiles.filter(file => modalTransfers.some(row => row.path === joinPath(directory, file.name) && row.status !== 'succeeded'));
         if (!pendingUploadFiles.length) closeModal(); else { view.modalError = 'Some uploads need review. Successful paths will not be submitted again.'; render(); }
       }
       break;
@@ -2562,9 +2616,18 @@ function render() {
     queueMicrotask(() => { servicePreparationScheduled = false; prepareSelectedEntry(); });
   }
   applyWorkspaceSizing();
+  for(const trigger of root.querySelectorAll<HTMLElement>('[data-action]')) {
+    const name=overlayForAction(trigger.dataset.action || '');
+    if(!anchoredOverlay(name) || trigger.closest('#modal'))continue;
+    trigger.setAttribute('aria-haspopup',overlayRole(name)==='menu'?'menu':'dialog');
+    trigger.setAttribute('aria-expanded',String(view.modal===name && focusKey(trigger)===overlayAnchor));
+    if(view.modal===name && focusKey(trigger)===overlayAnchor)trigger.setAttribute('aria-controls','modal');
+    else trigger.removeAttribute('aria-controls');
+  }
   const dialog = root.querySelector<HTMLDialogElement>("#modal");
   if (dialog) {
     syncDialogPresentation(dialog, nonmodalDialog());
+    if(anchoredOverlay(view.modal))positionOverlay(dialog);
     if (!dialog.dataset.bound) { dialog.dataset.bound = "true"; dialog.addEventListener("cancel", (e) => {
       e.preventDefault();
       closeModal();
@@ -2587,7 +2650,7 @@ function render() {
         } catch {}
     }
   }
-  if(dialog && view.modal==='chat-response-settings' && (!dialog.contains(document.activeElement) || (document.activeElement as HTMLButtonElement)?.disabled)) focusChatSettings(view.data.expanded || active?.dataset.kind);
+  if(dialog && view.modal==='chat-response-settings' && (overlayOpening || dialog.contains(document.activeElement) && (document.activeElement as HTMLButtonElement)?.disabled)) focusChatSettings(view.data.expanded || active?.dataset.kind);
   const next = root.querySelector<HTMLElement>("#messages");
   if (next) {
     const position = chatReading.get(next.dataset.readingKey || '');
@@ -2658,7 +2721,7 @@ function lightModalDismissible() {
 root.addEventListener('pointerdown', event => {
   outsideModalPointer = undefined;
   const dialog = root.querySelector<HTMLDialogElement>('#modal');
-  if (event.button !== 0 || !event.isPrimary || !dialog?.open || !lightModalDismissible() ||
+  if (anchoredOverlay(view.modal) || event.button !== 0 || !event.isPrimary || !dialog?.open || !lightModalDismissible() ||
       !pointOutsideDialog({ x: event.clientX, y: event.clientY }, dialog.getBoundingClientRect())) return;
   outsideModalPointer = { pointer: event.pointerId, choice: modalChoice, epoch: adapter.identityEpoch, dialog };
 });
@@ -2670,6 +2733,14 @@ root.addEventListener('pointerup', event => {
       !pointOutsideDialog({ x: event.clientX, y: event.clientY }, down.dialog.getBoundingClientRect())) return;
   closeModal();
 });
+root.addEventListener('pointerdown', event => {
+  if(anchoredOverlay(view.modal) && !(event.target as HTMLElement).closest('#modal') && !(event.target as HTMLElement).closest(overlayAnchor || '#modal')) dismissAnchoredOverlay();
+});
+root.addEventListener('focusin', event => {
+  if(!overlayOpening && anchoredOverlay(view.modal) && !(event.target as HTMLElement).closest('#modal') && !(event.target as HTMLElement).closest(overlayAnchor || '#modal')) dismissAnchoredOverlay();
+});
+window.addEventListener('blur',()=>{ if(anchoredOverlay(view.modal) && document.activeElement instanceof HTMLIFrameElement)dismissAnchoredOverlay(); });
+root.addEventListener('scroll',()=>{ const dialog=root.querySelector<HTMLDialogElement>('#modal');if(dialog && anchoredOverlay(view.modal))positionOverlay(dialog); },true);
 root.addEventListener('pointerdown', event => {
   if(fileActionsContext && !(event.target as HTMLElement).closest('.file-add-anchor')) closeFileActions();
 });
@@ -2688,6 +2759,14 @@ root.addEventListener('keydown', event => {
 root.addEventListener("click", (e) => {
   const el = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
   if (!el || el.hasAttribute("disabled") || el.closest('[inert]')) return;
+  if(el instanceof HTMLAnchorElement && el.dataset.action==='open-work') {
+    if(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button!==0)return;
+    e.preventDefault();
+  }
+  if(anchoredOverlay(view.modal) && !el.closest('#modal') && focusKey(el)===overlayAnchor && overlayForAction(el.dataset.action || '')===view.modal) {closeModal();return;}
+  const menuCommand=overlayRole(view.modal)==='menu' && !!el.closest('#modal');
+  const menuChoice=modalChoice;
+  let menuFailed=false;
   if(el.closest('#file-actions')) {fileActionsContext='';root.querySelector<HTMLElement>('#file-add-trigger')?.focus({preventScroll:true});}
   if(["select-session","new-session"].includes(el.dataset.action || ""))imageSelection++;
   if (view.modal === 'export' && !el.closest('#modal')) { closeModal(); view.data = {}; }
@@ -2697,6 +2776,7 @@ root.addEventListener("click", (e) => {
     : view.modal === 'import' && el.dataset.action === 'confirm-import' ? view.importName.trim() : undefined;
   void dispatchAction(el).catch((error) => {
     if (error instanceof ViewChanged || origin !== viewKey()) return;
+    menuFailed=menuCommand;
     if (view.modal) {
       const nameConflict = submittedName !== undefined && error instanceof DesktopError && error.code === 'WORK_NAME_CONFLICT';
       view.modalNameError = nameConflict ? { name: submittedName, message: error.message } : null;
@@ -2705,7 +2785,7 @@ root.addEventListener("click", (e) => {
       render();
       if (currentNameError()) root.querySelector(`#${view.modal === 'import' ? 'import-name-error' : 'create-name-error'}`)?.scrollIntoView({ block: 'nearest' });
     } else if(el.dataset.action!=='refresh-files') toast(error instanceof Error ? error.message : String(error));
-  }).finally(() => { render(); });
+  }).finally(() => { if(menuCommand && !menuFailed && modalChoice===menuChoice && overlayRole(view.modal)==='menu')closeModal();else render(); });
 });
 root.addEventListener("input", (e) => {
   const input = e.target as HTMLInputElement | HTMLTextAreaElement;
@@ -2959,10 +3039,25 @@ root.addEventListener("keydown", (e) => {
       busy: button.getAttribute('aria-busy') === 'true', blocked: !!intent && !!actions.conflict(intent), overwrite: view.formOverwrite })) button.click();
     return;
   }
+  const launcher=(e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+  if(!dialog?.open && launcher && overlayRole(launcher.dataset.action || '')==='menu' && ['ArrowDown','ArrowUp'].includes(e.key)) {
+    e.preventDefault();launcher.click();if(e.key==='ArrowUp')root.querySelector<HTMLElement>('#modal [role=menuitem]:last-child')?.focus();return;
+  }
   if (e.isComposing || composition) { if(e.key==='Enter')e.preventDefault();return; }
-  if(dialog?.open && (!nonmodalDialog() || dialog.contains(e.target as Node)) && e.key==='Escape') {e.preventDefault();e.stopPropagation();closeModal();return;}
-  if(dialog?.open && ['chat-response-settings','service-picker'].includes(view.modal) && (e.target as HTMLElement).getAttribute('role')==='menuitemradio' && ['ArrowDown','ArrowUp','Home','End'].includes(e.key)) {
-    const options=[...dialog.querySelectorAll<HTMLElement>('[role=menuitemradio]:not([disabled])')];
+  if(dialog?.open && (anchoredOverlay(view.modal) || !nonmodalDialog() || dialog.contains(e.target as Node)) && e.key==='Escape') {e.preventDefault();e.stopPropagation();closeModal();return;}
+  if(dialog?.open && overlayRole(view.modal)==='menu' && dialog.contains(e.target as Node)) {
+    const options=[...dialog.querySelectorAll<HTMLElement>('[role=menuitem]:not([disabled])')];
+    const index=options.indexOf(document.activeElement as HTMLElement),next=menuDestination(e.key,index,options.length);
+    if(next>=0){e.preventDefault();options[next]?.focus();return;}
+    if(e.key==='Tab'){const trigger=root.querySelector<HTMLElement>(overlayAnchor);dismissAnchoredOverlay();trigger?.focus({preventScroll:true});return;}
+    if(e.key.length===1 && !e.ctrlKey && !e.metaKey && !e.altKey){const ordered=[...options.slice(index+1),...options.slice(0,index+1)];const found=ordered.find(node=>node.textContent?.trim().toLowerCase().startsWith(e.key.toLowerCase()));if(found){e.preventDefault();found.focus();return;}}
+  }
+  if(dialog?.open && (e.target as HTMLElement).getAttribute('role')==='option' && e.key.length===1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key!==' ') {
+    const options=[...dialog.querySelectorAll<HTMLElement>('[role=option]:not([disabled])')],index=options.indexOf(document.activeElement as HTMLElement);
+    const match=[...options.slice(index+1),...options.slice(0,index+1)].find(node=>node.textContent?.trim().toLowerCase().startsWith(e.key.toLowerCase()));if(match){e.preventDefault();match.focus();return;}
+  }
+  if(dialog?.open && ['chat-response-settings','service-picker','sessions'].includes(view.modal) && (e.target as HTMLElement).getAttribute('role')==='option' && ['ArrowDown','ArrowUp','Home','End'].includes(e.key)) {
+    const options=[...dialog.querySelectorAll<HTMLElement>('[role=option]:not([disabled])')];
     if(options.length){e.preventDefault();const index=options.indexOf(document.activeElement as HTMLElement);options[e.key==='Home'?0:e.key==='End'?options.length-1:(index+(e.key==='ArrowDown'?1:-1)+options.length)%options.length]?.focus();}return;
   }
   const work=current(),draft=work?view.drafts[draftKey(work)] || '':'';

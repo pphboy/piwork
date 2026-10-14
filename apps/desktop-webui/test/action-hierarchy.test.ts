@@ -1,3 +1,4 @@
+const { overlayRole } = await import(new URL('../browser/overlay-role.js',import.meta.url).href);
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -25,7 +26,7 @@ function fixture() {
     filesRestoreNotice: '', uploadProgressMarkup: () => '', transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
     downloadProgressMarkup: () => '', actions: { records: new Map() },
   };
-  c.fileActionsContext="";vm.createContext(c); vm.runInContext(helpers, c);
+  c.fileActionsContext="";c.overlayRole=overlayRole;vm.createContext(c); vm.runInContext(helpers, c);
   vm.runInContext(extract('isRequestInspector', 'brand', 'topbar', 'quickAction', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport'), c);
   return { c, work };
 }
@@ -36,7 +37,7 @@ test('global controls live in Admin, not the topbar or Work header', () => {
   assert.match(c.topbar(), /aria-label="admin account menu"/);
   assert.doesNotMatch(c.workHeader(work), /data-action="about-piwork"/);
   c.view.modal = 'account'; const html = c.modalMarkup();
-  assert.match(html, /account-menu/);
+  assert.match(html, /command-dropdown/);
   for (const action of ['about-piwork', 'operations', 'switch-core', 'reset-browser-access', 'sign-out']) assert.match(html, new RegExp(`data-action="${action}"`));
   assert.doesNotMatch(html, /data-action="stop-work"/);
 });

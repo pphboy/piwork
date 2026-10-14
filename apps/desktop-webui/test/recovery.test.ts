@@ -833,10 +833,10 @@ test('UX revision composer geometry aligns all controls and long model names rem
   assert.ok(boxes[0]!.width<=320);
   await expect(page.locator('#response-settings-trigger')).toHaveAttribute('title',label+' (one) · Work default · Thinking Off');
   await page.setViewportSize({width:360,height:800});await openResponseSettings(page,'model');
-  await expect(page.locator('#modal [role=menuitemradio]')).toHaveText(label+' (one)Use Work default');
+  await expect(page.locator('#modal [role=option]')).toHaveText(label+' (one)Use Work default');
   await expect(page.locator('#modal .response-setting-value').first()).toHaveText(label+' (one)Work default');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-  assert.ok(await page.locator('#modal [role=menuitemradio]').evaluate(node=>node.scrollWidth<=node.clientWidth));
+  assert.ok(await page.locator('#modal [role=option]').evaluate(node=>node.scrollWidth<=node.clientWidth));
   await page.keyboard.press('Escape');await expect(button(page,'send-message')).toBeVisible();
   await api(page,"const state=adapter.modelSelection('work-1','session-1');state.phase='unknown';state.error='Chat settings could not be confirmed. Your draft is kept.';await adapter.loadModels('work-1');");
   await expect(button(page,'check-session-model')).toBeVisible();await expect(page.locator('.options-status')).toContainText('could not be confirmed');
@@ -857,9 +857,9 @@ test('UX revision slash Thinking opens the actual SDK choices and consumes only 
   await expectThinkingEditable(page);await button(page,'service-focus').click();await button(page,'focus-chat').click();
   await api(page,"adapter.getWork('work-1').run={id:'current-run',sessionId:'session-1',status:'running',actualModel:{label:'Previous model',model:'one'},thinkingLevel:'off'};await adapter.loadModels('work-1');");
   const actual=await api(page,"return JSON.stringify(adapter.getWork('work-1').run);");
-  await openResponseSettings(page,'thinking');const direct=await page.locator('#modal [role=menuitemradio]').allTextContents();await page.keyboard.press('Escape');
+  await openResponseSettings(page,'thinking');const direct=await page.locator('#modal [role=option]').allTextContents();await page.keyboard.press('Escape');
   await page.locator('#composer').fill('/thinking');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
-  assert.deepEqual(await page.locator('#modal [role=menuitemradio]').allTextContents(),direct);assert.deepEqual(direct,['Off','Low','High','Max']);
+  assert.deepEqual(await page.locator('#modal [role=option]').allTextContents(),direct);assert.deepEqual(direct,['Off','Low','High','Max']);
   assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
   await page.keyboard.press('End');await expect(page.locator('#modal [data-option-value=max]')).toBeFocused();
   await page.locator('#modal [data-option-value=max]').evaluate(node=>{node.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true}));});
@@ -884,7 +884,7 @@ test('UX revision truly nonreasoning and unavailable capabilities show distinct 
   await expect(page.locator('.options-status')).toContainText('Thinking is not supported by this model');await expect(button(page,'send-message')).toBeEnabled();
   mode='unknown';await api(page,"await adapter.loadModels('work-1').catch(()=>undefined);");await expect(page.locator('.options-status')).toContainText('could not be confirmed');
   await expect(button(page,'send-message')).toBeDisabled();await openResponseSettings(page);await expect(page.locator('#thinking-select')).toBeDisabled();await closeResponseSettings(page);
-  assert.equal(await page.locator('#modal [role=menuitemradio]').count(),0);assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
+  assert.equal(await page.locator('#modal [role=option]').count(),0);assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
 });
 
 test('UX revision lost slash settings preserve edited drafts and recover with one readonly check', async t => {
@@ -1201,7 +1201,7 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
   await openResponseSettings(page);
   await expect(page.locator('#model-select')).toBeDisabled();
   await expect(page.locator('#thinking-select')).toBeDisabled();
-  await expect(page.locator('#modal [role=menuitemradio]')).toHaveCount(0);
+  await expect(page.locator('#modal [role=option]')).toHaveCount(0);
   await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
   await closeResponseSettings(page);
   await page.locator('#composer').fill('typing continues while models are read');
@@ -1212,7 +1212,7 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
   await uiuxEvidence(page, '12-models-unconfirmed-closed');
   await openResponseSettings(page);
   await expect(page.locator('#modal [data-action=load-models]')).toBeFocused();
-  await expect(page.locator('#modal [role=menuitemradio]')).toHaveCount(0);
+  await expect(page.locator('#modal [role=option]')).toHaveCount(0);
   available = true;
   await page.locator('#modal [data-action=load-models]').click();
   await expect(page.locator('#thinking-select')).toBeEnabled();
@@ -1221,7 +1221,7 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
   await expect(page.locator('#composer')).toHaveValue('typing continues while models are read');
   await expect(button(page, 'send-message')).toBeEnabled();
   await openResponseSettings(page, 'model');
-  await expect(page.locator('#modal [role=menuitemradio]')).toHaveText('Default chat model (one)Use Work default');
+  await expect(page.locator('#modal [role=option]')).toHaveText('Default chat model (one)Use Work default');
   await closeResponseSettings(page);
   assert.equal(chatWrites(requests).length, 0);
 });
@@ -1246,7 +1246,7 @@ test('Compact settings unsupported Thinking commands distinguish Off, missing co
       await expect(page.locator('#thinking-select')).toBeDisabled();
       await expect(page.locator('#thinking-select')).toContainText(value);
       await expect(page.locator('#modal .options-status')).toContainText(reason);
-      await expect(page.locator('#modal [role=menuitemradio]')).toHaveCount(0);
+      await expect(page.locator('#modal [role=option]')).toHaveCount(0);
       await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
       await page.keyboard.press('Escape');
       await expect(page.locator('#composer')).toBeFocused();
@@ -1538,8 +1538,8 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   await uiuxEvidence(page, '08-long-model-360');
   await openResponseSettings(page, 'model');
   await expect(page.locator('#modal .response-setting-value').first()).toHaveText(label + ' (one)Work default');
-  await expect(page.locator('#modal [role=menuitemradio]').first()).toHaveText(label + ' (one)Use Work default');
-  assert.ok(await page.locator('#modal [role=menuitemradio]').first().evaluate(node => node.scrollHeight <= node.clientHeight));
+  await expect(page.locator('#modal [role=option]').first()).toHaveText(label + ' (one)Use Work default');
+  assert.ok(await page.locator('#modal [role=option]').first().evaluate(node => node.scrollHeight <= node.clientHeight));
   assert.ok(await page.locator('#modal [role=menu]').evaluate(node => node.scrollHeight > node.clientHeight && node.clientHeight <= 240));
   await uiuxEvidence(page, '09-long-model-panel-360');
   await page.setViewportSize({ width: 800, height: 300 });
@@ -1548,8 +1548,8 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   assert.ok(await page.locator('#modal .modal-body').evaluate(node => node.scrollHeight > node.clientHeight));
   await uiuxEvidence(page, '10-settings-low-height');
   await page.keyboard.press('End');
-  await expect(page.locator('#modal [role=menuitemradio]').last()).toBeFocused();
-  await expect(page.locator('#modal [role=menuitemradio]').last()).toBeInViewport();
+  await expect(page.locator('#modal [role=option]').last()).toBeFocused();
+  await expect(page.locator('#modal [role=option]').last()).toBeInViewport();
   await uiuxEvidence(page, '10b-settings-low-height-scrolled');
   await page.keyboard.press('Escape');
   assert.equal(chatWrites(requests).length, 0);
@@ -1581,7 +1581,7 @@ test('Compact settings both fields adjust in one panel and serialize the latest 
   await expect(page.locator('#model-select')).toBeFocused();
   await expect(page.locator('#thinking-select')).toContainText('Balanced');
   await openResponseSettings(page, 'thinking');
-  await expect(page.locator('#modal [role=menuitemradio]')).toHaveText(['Off', 'Balanced', 'Deep']);
+  await expect(page.locator('#modal [role=option]')).toHaveText(['Off', 'Balanced', 'Deep']);
   await page.locator('#modal [data-option-value=deep]').click();
   await expect(page.locator('#thinking-select')).toBeFocused();
   await expect(page.locator('#modal [role=menu]')).toHaveCount(0);

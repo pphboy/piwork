@@ -1639,7 +1639,7 @@ export class DesktopAdapter {
                 throw new DesktopError('INVALID_RESPONSE', 'Session listing is incomplete.');
             (work.resourceChecked ??= {}).agent = new Date().toISOString();
             const existing = new Map(work.sessions.map(session => [session.id, session]));
-            work.sessions = value.sessions.map((raw) => ({ id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: existing.get(raw.sessionId)?.messages ?? [], modelPreference: raw.modelPreference ?? null, thinkingLevel: raw.thinkingLevel === undefined ? 'off' : raw.thinkingLevel, source: raw.source, runs: existing.get(raw.sessionId)?.runs ?? [] }));
+            work.sessions = value.sessions.map((raw) => ({ id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: existing.get(raw.sessionId)?.messages ?? [], checkedAt: existing.get(raw.sessionId)?.checkedAt, imageProfile: existing.get(raw.sessionId)?.imageProfile, error: existing.get(raw.sessionId)?.error, modelPreference: raw.modelPreference ?? null, thinkingLevel: raw.thinkingLevel === undefined ? 'off' : raw.thinkingLevel, source: raw.source, runs: existing.get(raw.sessionId)?.runs ?? [] }));
             if (version !== (this.sessionVersions.get(id) || 0))
                 for (const previous of existing.values()) {
                     const current = work.sessions.find(s => s.id === previous.id);

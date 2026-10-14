@@ -255,3 +255,17 @@ test('continuity: observed deleted 200 removes only the exact Work and revokes i
   assert.equal(f.adapter.getWork('one'), undefined); assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000), null);
   assert.equal(f.adapter.getWork('two'), other); assert.equal(f.adapter.project(other).usable, true); assert.equal(f.adapter.state.operations.length, 0);
 });
+
+test('continuity: refreshing Session list keeps confirmed history metadata while the new history read is pending',async t=>{
+ const f=await fixture(t),history=deferred<Reply>(),w=f.adapter.getWork('one');
+ w.sessions=[{id:'s',title:'Saved',messages:[{role:'assistant',text:'kept'}],runs:[],checkedAt:'2026-10-13T00:00:00Z',imageProfile:true}];
+ f.adapter.loadImageCapabilities=async()=>undefined;f.adapter.readSessionOptions=async()=>undefined;
+ f.respond(r=>r.path==='works/one/sessions'?{json:{sessions:[{sessionId:'s',title:'Saved'}]}}:history.promise);
+ const pending=f.adapter.loadSessions('one');for(let i=0;i<20;i++)await Promise.resolve();
+ const cached=f.adapter.getWork('one').sessions[0];assert.equal(cached.loading,true);assert.equal(cached.checkedAt,'2026-10-13T00:00:00Z');assert.equal(cached.imageProfile,true);assert.equal(cached.messages[0].text,'kept');
+ history.resolve({json:{session:{sessionId:'s',workId:'one',modelPreference:null,thinkingLevel:'off'},messages:[],runs:[]}});await pending;assert.equal(f.adapter.getWork('one').sessions[0].loading,false);
+});
+
+test('continuity: late Session refresh after identity clearing cannot repopulate the new identity',async t=>{
+ const f=await fixture(t),listing=deferred<Reply>();f.respond(()=>listing.promise);const pending=f.adapter.loadSessions('one');f.adapter.clearIdentity();listing.resolve({json:{sessions:[{sessionId:'old'}]}});await assert.rejects(pending);assert.equal(f.adapter.state.works.length,0);
+});
