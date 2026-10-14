@@ -1350,7 +1350,14 @@ export class DesktopAdapter {
       try { return mutationResults(await response.text(), this.fileURL(id, '/')).results; }
       catch { return [{ path, status: 'unknown', message: 'The per-path result could not be verified. Refresh affected paths before trying again.' }]; }
     }
-    if (!response.ok) { const value = await response.json().catch(() => ({})); return [{ path, status: 'failed', httpStatus: response.status, message: response.status === 412 ? 'The target changed. Your input is kept. Reread the target and explicitly confirm its version before retrying.' : value.message ?? response.headers.get('X-Piwork-File-Error') ?? `Request failed (${response.status}).` }]; }
+    if (!response.ok) {
+      const value = await response.json().catch(() => ({}));
+      const uncertain = response.status === 408 || response.status >= 500;
+      const reason = value.message ?? response.headers.get('X-Piwork-File-Error') ?? `Request failed (${response.status}).`;
+      return [{ path, status: uncertain ? 'unknown' : 'failed', httpStatus: response.status, message: uncertain
+        ? `${reason} The write result is unknown. Refresh source and destination before trying again.`
+        : response.status === 412 ? 'The target changed. Your input is kept. Reread the target and explicitly confirm its version before retrying.' : reason }];
+    }
     return [{ path, status: 'succeeded', message: 'Confirmed', modified: fileVersion(response.headers.get('Last-Modified')) }];
   }
   async saveFile(id: string, path: string, content: string, baseline: string, unprotectedConsent = false, confirmed?: (result: TransferResult) => void) {

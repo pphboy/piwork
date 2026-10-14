@@ -103,3 +103,14 @@ for (const href of ['/_desktop/files/works/other/files/a', '/_desktop/files/work
   const rows = await f.adapter.transfer('one', 'delete', ['/original']);
   assert.equal(rows.length, 1); assert.equal(rows[0].path, '/original'); assert.equal(rows[0].status, 'unknown');
 });
+
+for(const status of [408,500,502,503,504])test(`single-path HTTP ${status} write remains unknown and cannot be replayed`,async t=>{
+ const f=await fixture(t);f.respond(async()=>new Response(JSON.stringify({message:'Upstream did not confirm'}),{status}));
+ const rows=await f.adapter.transfer('one','delete',['/important']);assert.equal(rows[0].status,'unknown');assert.equal(rows[0].httpStatus,status);assert.match(rows[0].message,/unknown.*Refresh source and destination/);
+ const {FileMutationResults,UnknownFileLocks}=await import(new URL('../browser/file-results.js',import.meta.url).href);
+ const targets=[{source:'/important'}],ledger=new FileMutationResults(targets);ledger.record(targets,rows);assert.deepEqual(ledger.retryTargets(['/important']),[]);
+ const locks=new UnknownFileLocks();for(const row of rows)if(row.status==='unknown')locks.add('one',targets[0]);assert.ok(locks.conflict('one',targets));assert.equal(f.requests.filter(r=>r.method==='DELETE').length,1);
+});
+for(const status of [403,409,412])test(`single-path definitive HTTP ${status} rejection remains failed`,async t=>{
+ const f=await fixture(t);f.respond(async()=>new Response('{}',{status}));const rows=await f.adapter.transfer('one','delete',['/important']);assert.equal(rows[0].status,'failed');assert.equal(rows[0].httpStatus,status);
+});

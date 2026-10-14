@@ -2710,7 +2710,11 @@ export class DesktopAdapter {
         }
         if (!response.ok) {
             const value = await response.json().catch(() => ({}));
-            return [{ path, status: 'failed', httpStatus: response.status, message: response.status === 412 ? 'The target changed. Your input is kept. Reread the target and explicitly confirm its version before retrying.' : value.message ?? response.headers.get('X-Piwork-File-Error') ?? `Request failed (${response.status}).` }];
+            const uncertain = response.status === 408 || response.status >= 500;
+            const reason = value.message ?? response.headers.get('X-Piwork-File-Error') ?? `Request failed (${response.status}).`;
+            return [{ path, status: uncertain ? 'unknown' : 'failed', httpStatus: response.status, message: uncertain
+                        ? `${reason} The write result is unknown. Refresh source and destination before trying again.`
+                        : response.status === 412 ? 'The target changed. Your input is kept. Reread the target and explicitly confirm its version before retrying.' : reason }];
         }
         return [{ path, status: 'succeeded', message: 'Confirmed', modified: fileVersion(response.headers.get('Last-Modified')) }];
     }
