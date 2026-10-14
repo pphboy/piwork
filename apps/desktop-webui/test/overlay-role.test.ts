@@ -241,3 +241,8 @@ for(const width of [1440,360])test(`default Chat retains Service explanation at 
  const {c,work}=rendererFixture();c.innerWidth=width;c.view.tab='Chat';c.workspacePanels=new Map([['a',{collapsed:false}]]);c.workControls=new Map();c.controlMarkup=()=>'';c.workHeader=()=>'';c.adapter.project=()=>({usable:true,retainWorkspace:true});vm.runInContext(extract('workPage'),c);
  const html=c.workPage(work);assert.match(html,/chat-main/);assert.match(html,/This Work has no Services/);assert.match(html,/data-action="manage-services"/);assert.doesNotMatch(html,/chat-hidden|service-workspace/);
 });
+
+test('Sessions offers one New session before the scoped list',()=>{
+ const {c,work}=rendererFixture();c.view.modal='sessions';work.sessions=[{id:'one',messages:[]}];const html=c.modalMarkup();
+ assert.equal((html.match(/data-action="new-session"/g)||[]).length,1);assert.ok(html.indexOf('data-action="new-session"')<html.indexOf('class="session-list"'));assert.match(html,/data-action="select-session" data-id="one"/);
+});

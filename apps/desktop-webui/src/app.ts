@@ -1180,8 +1180,8 @@ function modalMarkup() {
       break;
     case "sessions":
       title = "Sessions";
-      body = `<p>Conversations within ${esc(target?.name)}. Switching Sessions does not stop an active Run.</p><div class="session-list" role="listbox" aria-label="Sessions">${target?.sessions.map((s) => `<button role="option" aria-selected="${s.id === view.session}" data-action="select-session" data-id="${s.id}" class="${s.id === view.session ? "selected" : ""}"><span>${icon("chat", 17)}${esc(sessionDisplayName(target!,s))}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : s.id === view.session ? icon("check", 16) : ""}</button>`).join("") || (target?.resourceLoading?.agent ? readPlaceholder("Loading conversations…") : target?.resourceErrors?.agent ? "" : "<p>No Sessions yet.</p>")}</div>${target?.resourceErrors?.agent?readFailure("Conversations could not be read",target.resourceErrors.agent,"retry-conversation",!!target.resourceLoading?.agent):""}`;
-      footer = `${close()}${btn(`${icon("plus")} New session`, "new-session", "primary")}`;
+      body = `<p>Conversations within ${esc(target?.name)}. Switching Sessions does not stop an active Run.</p>${btn(`${icon("plus")} New session`, "new-session", "primary")}<div class="session-list" role="listbox" aria-label="Sessions">${target?.sessions.map((s) => `<button role="option" aria-selected="${s.id === view.session}" data-action="select-session" data-id="${s.id}" class="${s.id === view.session ? "selected" : ""}"><span>${icon("chat", 17)}${esc(sessionDisplayName(target!,s))}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : s.id === view.session ? icon("check", 16) : ""}</button>`).join("") || (target?.resourceLoading?.agent ? readPlaceholder("Loading conversations…") : target?.resourceErrors?.agent ? "" : "<p>No Sessions yet.</p>")}</div>${target?.resourceErrors?.agent?readFailure("Conversations could not be read",target.resourceErrors.agent,"retry-conversation",!!target.resourceLoading?.agent):""}`;
+      footer = close();
       break;
     case "agent-menu":
       title = "Agent options";
