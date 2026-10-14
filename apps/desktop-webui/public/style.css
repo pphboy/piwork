@@ -3463,4 +3463,3 @@ a.button.primary { color:var(--on-accent,#fff); }
 
 .service-viewport { position:relative;display:flex;flex:1;min-height:0;overflow:hidden; }
 .service-viewport > .real-service-frame { min-height:0;width:100%;height:100%; }
-.service-frame-loading { position:absolute;inset:0;background:var(--surface);overflow:auto;pointer-events:none; }

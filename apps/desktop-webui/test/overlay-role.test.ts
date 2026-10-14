@@ -129,7 +129,7 @@ test('Ready Service first entry and pending entry use skeleton, then retain ifra
  Object.assign(c.adapter,{requestPresence:new Map(),serviceEmbed:()=>'',serviceEntryError:()=>'',serviceEntryUrl:()=>null,serviceEntryPending:()=>false,servicePreviewUnconfirmed:()=>false});
  let html=c.services(work);assert.match(html,/read-placeholder-service/);assert.doesNotMatch(html,/Application entry not confirmed|No Web Service/);
  c.adapter.serviceEntryPending=()=>true;html=c.services(work);assert.match(html,/read-placeholder-service/);
- c.adapter.serviceEntryUrl=()=> 'https://service.test/';html=c.services(work);assert.match(html,/<iframe/);assert.match(html,/service-frame-loading/);
+ c.adapter.serviceEntryUrl=()=> 'https://service.test/';html=c.services(work);assert.match(html,/<iframe/);assert.doesNotMatch(html,/service-frame-loading|read-placeholder/);
  c.adapter.serviceEntryUrl=()=>null;c.adapter.serviceEntryPending=()=>false;c.adapter.serviceEntryError=()=> 'Access denied';html=c.services(work);assert.match(html,/Access denied/);assert.doesNotMatch(html,/read-placeholder/);
 });
 
@@ -140,11 +140,17 @@ test('Chat skeleton belongs only to unconfirmed history and preserves cached mes
 });
 
 
-test('Service navigation skeleton clears only for its same loaded iframe and late disconnected loads are ignored',()=>{
- const {c,work}=rendererFixture();const service={id:'s',name:'Notes'};c.view.port=3000;c.adapter.identityEpoch=1;c.adapter.serviceEntryUrl=()=> 'https://service.test/';
- let onLoad=()=>{},renders=0,checks=0;const frame:any={dataset:{serviceKey:'a:s:3000'},isConnected:true,getAttribute:()=> 'https://service.test/',addEventListener:(_event:string,handler:()=>void)=>onLoad=handler};
- c.root={querySelectorAll:()=>[frame]};c.render=()=>renders++;c.adapter.serviceFrameLoaded=async()=>checks++;c.toast=()=>{};vm.runInContext(extract('observeServiceFrames'),c);
- assert.match(c.serviceViewport(work,service),/service-frame-loading/);c.observeServiceFrames();onLoad();assert.equal(renders,1);assert.equal(checks,1);assert.doesNotMatch(c.serviceViewport(work,service),/service-frame-loading/);
+test('Service ticket URL normalization and unfinished navigation never cover the application',()=>{
+ const {c,work}=rendererFixture();const service={id:'s',name:'Notes'};c.view.port=3000;c.adapter.identityEpoch=1;
+ let url='https://service.test/_bootstrap?ticket=synthetic';c.adapter.serviceEntryUrl=()=>url;
+ let onLoad=()=>{},checks=0;const frame:any={dataset:{serviceKey:'a:s:3000'},isConnected:true,getAttribute:()=> 'https://service.test/_bootstrap?ticket=synthetic',addEventListener:(_event:string,handler:()=>void)=>onLoad=handler};
+ c.root={querySelectorAll:()=>[frame]};c.adapter.serviceFrameLoaded=async()=>checks++;c.toast=()=>{};vm.runInContext(extract('observeServiceFrames'),c);
+ // No load event is necessary to reveal real content, including during a slow subresource.
+ assert.doesNotMatch(c.serviceViewport(work,service),/service-frame-loading|read-placeholder/);
+ c.observeServiceFrames();url='https://service.test/';
+ // The real entry probe normalizes the URL but the retained iframe keeps its ticket src.
+ assert.doesNotMatch(c.serviceViewport(work,service),/service-frame-loading|read-placeholder/);
+ onLoad();assert.equal(checks,1);assert.doesNotMatch(c.serviceViewport(work,service),/service-frame-loading|read-placeholder/);
  frame.isConnected=false;onLoad();assert.equal(checks,1);frame.isConnected=true;c.adapter.identityEpoch=2;onLoad();assert.equal(checks,1);
 });
 

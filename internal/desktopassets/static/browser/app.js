@@ -777,8 +777,10 @@ function serviceFallbackHeader(w) {
 }
 function serviceViewport(w, service) {
     const key = `${w.id}:${service.id}:${view.port}`, url = adapter.serviceEntryUrl(w.id, service.id, view.port);
-    const loaded = [...root.querySelectorAll('iframe[data-service-key]')].some(frame => frame.dataset.serviceKey === key && frame.dataset.navigationLoaded === 'true' && frame.getAttribute('src') === url);
-    return `<div class="service-viewport"><iframe data-service-key="${esc(key)}" class="real-service-frame" title="${esc(service.name)} application" src="${esc(url)}"></iframe>${loaded ? '' : `<div class="service-frame-loading">${readPlaceholder(`Loading ${service.name}…`, 'service')}</div>`}</div>`;
+    // The entry probe normalizes ticket URLs while reconciliation retains the live
+    // iframe. Never gate application visibility on src equality or window.load:
+    // a usable application may still have unfinished subresources.
+    return `<div class="service-viewport"><iframe data-service-key="${esc(key)}" class="real-service-frame" title="${esc(service.name)} application" src="${esc(url)}"></iframe></div>`;
 }
 function observeServiceFrames() {
     for (const frame of root.querySelectorAll('iframe[data-service-key]'))
@@ -788,9 +790,7 @@ function observeServiceFrames() {
             frame.addEventListener('load', () => {
                 if (!frame.isConnected || epoch !== adapter.identityEpoch)
                     return;
-                // Navigation loaded is only a presentation signal, not application readiness.
-                frame.dataset.navigationLoaded = 'true';
-                render();
+                // Navigation is a reason to recheck embedding, not a visibility gate.
                 const [workId, serviceId, port] = frame.dataset.serviceKey.split(':');
                 void adapter.serviceFrameLoaded(workId, serviceId, Number(port)).catch(error => { if (frame.isConnected && epoch === adapter.identityEpoch)
                     toast(error.message); });
