@@ -197,3 +197,12 @@ test('cold Work deep link stays pending through bootstrap, but real failures and
  c.actions.records.set('route',{work:'a',pending:true});assert.equal(c.workReadPending('a'),true);
  assert.match(extract('render'),/workReadPending\(r\[1\]\)/);
 });
+
+
+test('bootstrap failure exits a cold Work skeleton only for its original identity and exact route',()=>{
+ const messages:string[]=[],c:any={Error,routeLoad:0,location:{hash:'#/work/a'},route:()=>['work','a'],workReadErrors:new Map(),adapter:{identityEpoch:1,getWork:()=>undefined},toast:(text:string)=>messages.push(text)};vm.createContext(c);vm.runInContext(extract('reportInitializationFailure'),c);
+ c.reportInitializationFailure(new Error('Known operations unavailable'),1,'#/work/a');assert.equal(c.workReadErrors.get('a').message,'Known operations unavailable');assert.equal(c.workReadErrors.get('a').missing,false);assert.equal(messages.length,1);
+ c.workReadErrors.clear();c.reportInitializationFailure(new Error('Old identity'),0,'#/work/a');c.reportInitializationFailure(new Error('Old route'),1,'#/work/b');assert.equal(c.workReadErrors.size,0);assert.equal(messages.length,1);
+ c.routeLoad=1;c.reportInitializationFailure(new Error('Later failure'),1,'#/work/a');assert.equal(c.workReadErrors.size,0);
+ c.routeLoad=0;c.adapter.getWork=()=>({id:'a'});c.reportInitializationFailure(new Error('Retain known Work'),1,'#/work/a');assert.equal(c.workReadErrors.size,0);
+});

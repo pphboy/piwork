@@ -4412,13 +4412,22 @@ adapter.subscribe(() => {
 });
 lastRoute = location.hash;
 render();
+const initializationContext = { epoch: adapter.identityEpoch, route: location.hash };
 void adapter.initialize().then(async () => { view.coreAddress = adapter.state.core.address; if (adapter.state.browserAccess === 'authorized')
-    void adapter.loadPreferences(); await loadRoute(); }).catch(error => toast(error.message));
+    void adapter.loadPreferences(); await loadRoute(); }).catch(error => reportInitializationFailure(error, initializationContext.epoch, initializationContext.route));
 let packageFiles = [];
 let pendingUploadFiles = [];
 function downloadURL(url, workName = '') { const link = document.createElement('a'); link.href = url; link.download = ''; link.click(); toast(`${workName ? workName + ' · ' : ''}Download started. Check your browser to confirm it was saved.`); }
 let routeLoad = 0;
 const workReadErrors = new Map();
+function reportInitializationFailure(error, epoch, origin) {
+    if (epoch !== adapter.identityEpoch || origin !== location.hash)
+        return;
+    const r = route(), message = error instanceof Error ? error.message : String(error);
+    if (routeLoad === 0 && r[0] === 'work' && r[1] && !adapter.getWork(r[1]))
+        workReadErrors.set(r[1], { message, missing: false });
+    toast(message); // The existing toast render also exposes persistent Work recovery.
+}
 function workReadPending(workId) {
     if ([...actions.records.values()].some(record => record.work === workId && record.pending))
         return true;
