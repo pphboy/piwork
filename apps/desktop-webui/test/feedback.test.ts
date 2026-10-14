@@ -422,6 +422,7 @@ for (const race of ['close-switch-work', 'lost-preparation', 'ready-before-post'
   const bytes = Buffer.from(`verified original package for ${race}`), digest = createHash('sha256').update(bytes).digest('hex');
   const snapshotId = 'snap-current-race', oldSnapshotId = 'snap-older-race', operationId = 'export-original-race';
   let transferId = '', ready = false, downloadEvents = 0, observationFailure = race === 'lost-preparation';
+  const snapshotResponses: string[] = [];
   const stopped = { id: 'work-1', name: 'Recovery Work', observedState: 'stopped', desiredState: 'stopped' };
   const other = { id: 'work-2', name: 'Other Work', observedState: 'stopped', desiredState: 'stopped' };
   const packageMetadata = (id: string) => ({ snapshotId: id, operationId: id === snapshotId ? operationId : 'export-older-race', workId: 'work-1', state: 'succeeded', size: bytes.length, digest, expiresAt: '2099-01-01T00:00:00Z' });
@@ -442,15 +443,17 @@ for (const race of ['close-switch-work', 'lost-preparation', 'ready-before-post'
     if (transferId && r.path === `downloads/${transferId}/content`) return { body: bytes, headers: { 'content-type': 'application/vnd.piwork.work-package', 'content-disposition': 'attachment; filename="original-race.work"', 'content-length': String(bytes.length) } };
   });
   page.on('download', () => { downloadEvents++; });
+  page.on('response', response => { const match = /^\/_desktop\/api\/work-snapshots\/([^/]+)$/.exec(new URL(response.url()).pathname); if (match) snapshotResponses.push(match[1]!); });
   if (race !== 'ready-before-post') await api(page, `await adapter.fetchSnapshot('${oldSnapshotId}')`);
   await button(page, 'work-menu').click(); await button(page, 'export').click(); await exportDetails(page);
   await expect.poll(() => transferId).toMatch(/^[0-9a-f-]{36}$/);
   await expect(page.locator('.export-snapshot')).toContainText(snapshotId);
   if (race === 'ready-before-post') await api(page, `await adapter.fetchSnapshot('${oldSnapshotId}')`);
-  // Acceptance prepends the current snapshot. Also exercise a reversed presentation
-  // order after both real metadata responses, without changing either original ID.
-  if (race !== 'ready-before-post') await api(page, 'adapter.state.snapshots.reverse(); adapter.emit();');
-  assert.deepEqual(await api(page, "return adapter.state.snapshots.map(snapshot => snapshot.id)"), race === 'ready-before-post' ? [snapshotId, oldSnapshotId] : [oldSnapshotId, snapshotId]);
+  // Assert actual browser response arrival, not the adapter's presentation order:
+  // accepted Export may prepend its snapshot even when old metadata arrived first.
+  assert.ok(snapshotResponses.includes(snapshotId)); assert.ok(snapshotResponses.includes(oldSnapshotId));
+  assert.equal(snapshotResponses.indexOf(oldSnapshotId) < snapshotResponses.indexOf(snapshotId), race !== 'ready-before-post');
+  assert.deepEqual(new Set(await api(page, "return adapter.state.snapshots.map(snapshot => snapshot.id)")), new Set([snapshotId, oldSnapshotId]));
   await expect(page.locator('.export-snapshot')).toContainText(snapshotId);
   assert.equal(downloadEvents, 0); assert.equal(requests.filter(r => r.path.endsWith('/content')).length, 0);
   const delivered = page.waitForEvent('download');
@@ -492,7 +495,7 @@ for (const race of ['close-switch-work', 'lost-preparation', 'ready-before-post'
     assert.equal(downloadEvents, 1, 'selecting the late old snapshot is read-only');
     assert.equal(requests.filter(r => r.method === 'POST').length, 2);
   }
-  t.diagnostic(JSON.stringify({ race, export: operationId, snapshotId, transferId, requests: requests.filter(r => r.path.endsWith('/exports') || r.path.startsWith('work-snapshots/') || r.path.startsWith('downloads/')).map(r => `${r.method} ${r.path}`) }));
+  t.diagnostic(JSON.stringify({ race, export: operationId, snapshotId, transferId, snapshotResponseOrder: snapshotResponses, requests: requests.filter(r => r.path.endsWith('/exports') || r.path.startsWith('work-snapshots/') || r.path.startsWith('downloads/')).map(r => `${r.method} ${r.path}`) }));
 });
 
 test('D10 unknown preview preserves iframe; popup blocking offers protected link and entry failure allows retry', async t => {
