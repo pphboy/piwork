@@ -106,7 +106,7 @@ test('module-owned read presentation suppresses only ordinary feedback, retainin
   const root:any={textContent:'',querySelectorAll:(selector:string)=>selector==='main, .main-panel, .agent-panel'?[region]:[]};
   Object.assign(globalThis,{document:{createElement:()=>({dataset:{},setAttribute:()=>{},append:()=>{}})},getComputedStyle:()=>({visibility:'visible'})});
   try {
-    for(const action of ['retry-works','tab-Files','refresh-files','file-path','open-file','open-source','sessions','select-session','retry-conversation','check-active-run']) {
+    for(const action of ['open-work','retry-work-read','retry-works','tab-Files','refresh-files','file-path','open-file','open-source','sessions','select-session','retry-conversation','check-active-run']) {
       const actions=new ActionState();const record=actions.begin({...intent(action,'read'),action});renderActionStates(root,actions,'',()=>undefined);assert.equal(nodes.length,0,action);
       actions.fail(record,new Error('Read failed'));renderActionStates(root,actions,'',()=>undefined);assert.equal(nodes.pop().textContent.includes('Read failed'),true);actions.clear();
     }

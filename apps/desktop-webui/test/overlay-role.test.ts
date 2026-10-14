@@ -147,3 +147,13 @@ test('Service navigation skeleton clears only for its same loaded iframe and lat
  assert.match(c.serviceViewport(work,service),/service-frame-loading/);c.observeServiceFrames();onLoad();assert.equal(renders,1);assert.equal(checks,1);assert.doesNotMatch(c.serviceViewport(work,service),/service-frame-loading/);
  frame.isConnected=false;onLoad();assert.equal(checks,1);frame.isConnected=true;c.adapter.identityEpoch=2;onLoad();assert.equal(checks,1);
 });
+
+
+test('first Chat read uses neutral Session/model labels while real errors and unknown model writes retain recovery',()=>{
+ const {c,work}=rendererFixture();vm.runInContext(extract('sessionDisplayName'),c);vm.runInContext(extract('chatSettings'),c);
+ delete work.resourceChecked.agent;c.adapter.modelSelection=()=>({ref:null,thinking:null,phase:'clean'});c.adapter.chatCapabilities=new Map();
+ assert.equal(c.sessionDisplayName(work),'Loading conversations…');let settings=c.chatSettings(work,'');assert.equal(settings.name,'Loading models…');assert.equal(settings.recovery,undefined);assert.doesNotMatch(settings.status,/unconfirmed|last known/i);
+ work.resourceChecked.agent='now';assert.equal(c.sessionDisplayName(work),'No Session yet');c.adapter.models.set('a',{loading:true,confirmed:false,error:'',models:[]});assert.equal(c.chatSettings(work,'').recovery,undefined);
+ c.adapter.models.set('a',{loading:false,confirmed:false,error:'Offline',models:[]});settings=c.chatSettings(work,'');assert.match(settings.status,/Offline/);assert.equal(settings.recovery.action,'load-models');
+ c.adapter.models.set('a',{loading:true,confirmed:false,error:'',models:[]});c.adapter.modelSelection=()=>({ref:null,thinking:null,phase:'unknown'});settings=c.chatSettings(work,'');assert.equal(settings.recovery.action,'check-session-model');
+});

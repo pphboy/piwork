@@ -709,7 +709,7 @@ function modelComposer(w:Work,sessionId:string) {
  return btn(`<span class="response-model-name">${esc(name)}</span><span class="response-thinking">· ${esc(thinking)}</span>${icon('down',12)}`,'open-chat-settings','quiet response-settings-trigger',`id="response-settings-trigger" title="${esc(name)}${state.ref===null?' · Work default':''} · Thinking ${esc(thinking)}" aria-label="Response settings: ${esc(name)}; Thinking ${esc(thinking)}. For your next message${sessionId?'':'. For new session'}" aria-haspopup="dialog"`);
 }
 function sessionDisplayName(w: Work, session?: Work['sessions'][number]): string {
-  if (!session) return 'No Session yet';
+  if (!session) return w.resourceErrors?.agent ? 'Sessions unavailable' : !w.resourceChecked?.agent ? 'Loading conversations…' : 'No Session yet';
   return session.title === `Session ${session.id}` ? `Session ${w.sessions.indexOf(session)+1}` : session.title;
 }
 function modelDisplayName(model?: { label?:string;model?:string } | null): string {
@@ -724,6 +724,7 @@ function thinkingName(level:string|null):string { return level===null?'Normal':l
 function chatSettings(w: Work, sessionId: string) {
   const catalog=adapter.models.get(w.id),state=adapter.modelSelection(w.id,sessionId),session=w.sessions.find(s=>s.id===sessionId);
   const model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
+  if (!catalog?.confirmed && !catalog?.error && (catalog?.loading || !w.resourceChecked?.agent) && state.phase==='clean') return {catalog,state,model,name:'Loading models…',thinking:'Loading…',editable:false,thinkingEditable:false,status:'Loading models…',recovery:undefined};
   const name=model?(state.ref===null?capturedDefaultName(model):modelDisplayName(model)):session?.modelPreference?.modelRef===state.ref?(state.ref===null && session.modelPreference?capturedDefaultName(session.modelPreference):modelDisplayName(session.modelPreference)):state.ref===null?'Work default':'Unavailable model';
   const capability=adapter.chatCapabilities.get(w.id),levels=model?.thinkingLevels;
   const canThink=(capability ?? 0)>=1 && (!!levels?.length || model?.thinkingAvailability==='unknown');

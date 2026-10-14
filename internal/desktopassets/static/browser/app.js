@@ -859,7 +859,7 @@ function modelComposer(w, sessionId) {
 }
 function sessionDisplayName(w, session) {
     if (!session)
-        return 'No Session yet';
+        return w.resourceErrors?.agent ? 'Sessions unavailable' : !w.resourceChecked?.agent ? 'Loading conversations…' : 'No Session yet';
     return session.title === `Session ${session.id}` ? `Session ${w.sessions.indexOf(session) + 1}` : session.title;
 }
 function modelDisplayName(model) {
@@ -875,6 +875,8 @@ function thinkingName(level) { return level === null ? 'Normal' : level ? level[
 function chatSettings(w, sessionId) {
     const catalog = adapter.models.get(w.id), state = adapter.modelSelection(w.id, sessionId), session = w.sessions.find(s => s.id === sessionId);
     const model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+    if (!catalog?.confirmed && !catalog?.error && (catalog?.loading || !w.resourceChecked?.agent) && state.phase === 'clean')
+        return { catalog, state, model, name: 'Loading models…', thinking: 'Loading…', editable: false, thinkingEditable: false, status: 'Loading models…', recovery: undefined };
     const name = model ? (state.ref === null ? capturedDefaultName(model) : modelDisplayName(model)) : session?.modelPreference?.modelRef === state.ref ? (state.ref === null && session.modelPreference ? capturedDefaultName(session.modelPreference) : modelDisplayName(session.modelPreference)) : state.ref === null ? 'Work default' : 'Unavailable model';
     const capability = adapter.chatCapabilities.get(w.id), levels = model?.thinkingLevels;
     const canThink = (capability ?? 0) >= 1 && (!!levels?.length || model?.thinkingAvailability === 'unknown');
