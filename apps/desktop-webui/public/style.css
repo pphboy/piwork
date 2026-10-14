@@ -3443,3 +3443,26 @@ a.button.primary { color:var(--on-accent,#fff); }
 .read-placeholder-conversation .read-placeholder-line { height:40px;max-width:78%; }
 .read-placeholder-conversation .read-placeholder-line:nth-child(3) { margin-left:auto;max-width:58%; }
 .work-loading { padding:24px; }
+
+/* Markdown is scoped to assistant prose; tool output and user text stay literal. */
+.message-text.chat-markdown { white-space:normal;min-width:0; }
+.chat-markdown > :first-child { margin-top:0; }
+.chat-markdown > :last-child { margin-bottom:0; }
+.chat-markdown p { margin:0 0 12px; }
+.chat-markdown h1,.chat-markdown h2,.chat-markdown h3,.chat-markdown h4,.chat-markdown h5,.chat-markdown h6 { margin:18px 0 8px;line-height:1.4;font-size:1.1em; }
+.chat-markdown h1 { font-size:1.4em; }
+.chat-markdown h2 { font-size:1.25em; }
+.chat-markdown ul,.chat-markdown ol { padding-left:22px;margin:8px 0 12px; }
+.chat-markdown li > p { margin:4px 0; }
+.chat-markdown blockquote { margin:12px 0;padding:4px 12px;border-left:3px solid var(--border);color:var(--muted); }
+.chat-markdown code { background:var(--surface-subtle);border-radius:4px;padding:2px 4px;font-size:.95em; }
+.chat-markdown-code { overflow:auto;max-width:100%;padding:12px;background:var(--surface-subtle);border:1px solid var(--border);border-radius:6px;white-space:pre; }
+.chat-markdown-code code { padding:0;background:none;white-space:pre;overflow-wrap:normal; }
+.chat-markdown-table { max-width:100%;overflow:auto;margin:12px 0; }
+.chat-markdown table { border-collapse:collapse;width:max-content;min-width:100%;font-size:inherit; }
+.chat-markdown th,.chat-markdown td { padding:7px 10px;border:1px solid var(--border);text-align:left;vertical-align:top;max-width:320px;overflow-wrap:anywhere; }
+.chat-markdown th { background:var(--surface-subtle);font-weight:600; }
+.chat-markdown a { color:var(--accent);text-decoration:underline; }
+.chat-markdown hr { border:0;border-top:1px solid var(--border);margin:16px 0; }
+.chat-markdown .chat-markdown-plain { white-space:pre-wrap;overflow-wrap:anywhere; }
+.chat-markdown-image { color:var(--muted); }

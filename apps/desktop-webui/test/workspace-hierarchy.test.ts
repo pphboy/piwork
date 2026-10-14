@@ -1,3 +1,4 @@
+const { renderChatMarkdown } = await import(new URL('../browser/chat-markdown.js',import.meta.url).href);
 const { overlayRole } = await import(new URL('../browser/overlay-role.js',import.meta.url).href);
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +10,7 @@ const {executionAnchors}=await import(new URL('../browser/workspace-layout.js',i
 function extract(...names:string[]){return names.map(name=>{const value=source.match(new RegExp('^(?:async )?function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];}).join('\n');}
 function fixture(){
  const work:any={id:'work-a',name:'Work A',sessions:[{id:'session-a',messages:[],runs:[]}],services:[],files:[],resourceChecked:{services:'now'},resourceErrors:{}};
- const c:any={innerWidth:1440,view:{modal:'',data:{},session:'session-a',tab:'Services',service:'',port:3000,layout:'workspace'},adapter:{identityEpoch:7,runDetails:new Map(),activeRuns:new Map(),cancelAndSendCapabilities:new Map(),requestReadErrors:new Map(),requestDetails:new Map(),requestResponses:new Map(),requestRetries:new Map(),getWork:()=>work,project:()=>({usable:true}),requestPage:()=>undefined,requestCancellation:()=>undefined},current:()=>work,route:()=>['work','work-a'],activityGroups,executionAnchors,expandedActivity:new Map(),historyImageMarkup:()=>'',requestNavigationCurrent:()=>false,requestCancellable:()=>false};
+ const c:any={renderChatMarkdown,innerWidth:1440,view:{modal:'',data:{},session:'session-a',tab:'Services',service:'',port:3000,layout:'workspace'},adapter:{identityEpoch:7,runDetails:new Map(),activeRuns:new Map(),cancelAndSendCapabilities:new Map(),requestReadErrors:new Map(),requestDetails:new Map(),requestResponses:new Map(),requestRetries:new Map(),getWork:()=>work,project:()=>({usable:true}),requestPage:()=>undefined,requestCancellation:()=>undefined},current:()=>work,route:()=>['work','work-a'],activityGroups,executionAnchors,expandedActivity:new Map(),historyImageMarkup:()=>'',requestNavigationCurrent:()=>false,requestCancellable:()=>false};
  c.overlayRole=overlayRole;vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);
  vm.runInContext(extract('isRequestInspector','nonmodalDialog','requestStateLabel','modelDisplayName','runFacts','layoutButton','focusControls','agentLayoutControls','browserFullscreenAction','executionMarkup','unmatchedExecutions','messageMarkup','modalMarkup','focusKey'),c);return {c,work};
 }
@@ -73,4 +74,13 @@ for(const menu of ['agent-menu','service-menu'])test(`${menu} makes browser full
  let html=c.modalMarkup();assert.equal((html.match(/data-action="service-fullscreen"/g)||[]).length,1);assert.match(html,/aria-label="Browser full screen" aria-pressed="false"/);
  c.document.fullscreenElement=c.root;html=c.modalMarkup();assert.match(html,/aria-label="Exit browser full screen" aria-pressed="true"/);
  c.document.fullscreenElement=null;c.view.layout='workspace';assert.doesNotMatch(c.modalMarkup(),/data-action="service-fullscreen"/);
+});
+
+
+test('assistant history and appended streaming prose render Markdown while users and tools stay literal',()=>{
+ const {c,work}=fixture();
+ const messages=[{id:'u',role:'user',text:'**literal user**'},{id:'a',role:'assistant',text:'## Heading\n\n| A | B |\n| --- | --- |\n| one | two |',source:'/notes.md'}];
+ let html=c.messageMarkup(work,'session-a',messages);assert.match(html,/<h2>Heading<\/h2>/);assert.match(html,/<table>/);assert.match(html,/class="message-text">\*\*literal user\*\*/);assert.match(html,/data-action="open-source" data-path="\/notes.md"/);
+ messages[1]!.text+='\n| three | four |';html=c.messageMarkup(work,'session-a',messages);assert.match(html,/<td>three<\/td>/);
+ const toolHtml=c.messageMarkup(work,'session-a',[{id:'tool',role:'assistant',tool:{id:'t',name:'Read',status:'Completed',content:'<script>bad()</script> **literal**'}}]);assert.match(toolHtml,/&lt;script&gt;/);assert.doesNotMatch(toolHtml,/<script>|<strong>/);
 });
