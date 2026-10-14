@@ -43,7 +43,7 @@ Pi Requests SHALL 区分业务目标、一次 Run 和当前 Session：列表按�
 
 Service 选择器 SHALL 将名称、真实状态及选中标记按一致列表结构呈现；主Header与选择器不展示技术端口，声明端口与合法多入口选择归Service详情，Manage services 为管理出口。切换不自动启动不可用 Service，不切换当前 Chat Session，不猜测未声明端口；不可用项给真实原因，长名称与键盘/窄屏可操作。独立 Service 窗口不因布局改进新增 Chat。
 
-Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时使用局部静态骨架；已有确认列表、空集合、消息及Service iframe在背景读取时保留，手动刷新等待回到原控件。失败与未知保留原对象恢复入口，不闪现假空列表或欢迎。Service首次iframe导航等待 SHALL 有局部占位，导航load不等同于业务就绪，不因后续读取重建已显示iframe。Packages及Work/Service属性行 SHALL 保持名称、说明、状态和动作的对齐与分组，长内容与窄屏可换行。
+Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时使用局部静态骨架；已有确认列表、空集合、消息及Service iframe在背景读取时保留，手动刷新等待回到原控件。失败与未知保留原对象恢复入口，不闪现假空列表或欢迎。Service首次信息或合法入口尚未取得时 SHALL 有局部占位；取得入口后直接显示iframe，不以等待导航load遮挡已可交互内容。导航load不等同于业务就绪，不因后续读取重建已显示iframe。Packages及Work/Service属性行 SHALL 保持名称、说明、状态和动作的对齐与分组，长内容与窄屏可换行。
 
 #### Scenario: 缓存刷新与首次读取分开呈现
 - **WHEN** 用户刷新确认过的Works列表，或首次打开未读取的Service/Chat

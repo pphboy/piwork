@@ -51,7 +51,7 @@
 
 ## 7. C批：区域恢复与操作完成出口（06/22/23）
 
-- [ ] 7.1 为重进Work恢复Chat/Files及路径、失效目录、不同Work/身份隔离添加测试，并扩展页面内选择记忆与openWork/loadRoute。验证：首次默认Services、再次恢复有效区域，加载无先切Services闪跳，晚读取不覆盖新选择，dirty guard保持。（DWUI-002、DUL-002）
+- [ ] 7.1 为重进Work恢复Chat/Files及路径、失效目录、不同Work/身份隔离添加测试，并扩展页面内选择记忆与openWork/loadRoute。验证：首次有可访问Service时默认Services；已确认无可访问Service且对话准入成功时默认Chat并解释原因；再次恢复有效区域，加载无先切Services闪跳，晚读取不覆盖新选择，dirty guard保持。（DWUI-002、DUL-002）
 - [x] 7.2 将Start/Retry与Service控制进度保留在所属对象，原Operation为可查次级详情；真实能力确认后提供Open Work/Open Service。验证：从列表启动成功直接可打开，未确认/failed/superseded无假入口，普通Start不强制导航，POST一次。（DWUI-003/005/016、DUL-002）
 - [ ] 7.3 调整Import成功出口为Imported · Not started，提供显式Start and open和仅查看/暂不启动。验证：完成Import、查看或关闭0Start；明确选择后一次Start、真实可用才打开，失败/未知保留原导入与启动ID、不二次Import。（DWUI-008、DUL-009）
 - [x] 7.4 在文本编辑器增加Download saved version并复用现有文件下载路径。验证：有未保存草稿时实际下载服务端保存字节，0PUT，原草稿/光标保留，界面只确认下载发起。（DWUI-006、DUL-015）

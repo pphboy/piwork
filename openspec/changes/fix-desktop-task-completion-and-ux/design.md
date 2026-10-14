@@ -281,3 +281,15 @@ Chat显隐控件移至Service工具栏；窄屏Chat显示时仍保留Service Hea
 验证：480 项纯回归全部通过；Desktop 构建/typecheck、25 个嵌入文件逐字节同步、正常 linux/amd64 CLI 构建及 `TestNativeDesktopEmbeddedBrowserAndLocalIdentity` 通过。OpenSpec strict、文档边界与 native boundary 通过。完整 test:browser 在环境浏览器启动矩阵失败后停止，未把其余矩阵或真实 Core、读屏宣称通过。宿主构建身份为 666329b + dirty，不回写成后续提交。
 
 定向 Chrome 对照：旧冻结版本在票据 `/bootstrap-ticket` 已触发 load、navigationLoaded=true 时仍保留一层覆盖；另以悬挂图片复现正文已渲染而 window.load 未触发、骨架持续挡住应用。新冻结版本两条路径均无覆盖，悬挂资源时可输入草稿并操作计数；Chat 显隐保持 iframe instance、草稿及计数。前后截图与冻结 manifest 位于被忽略的 `dist/services-stall-qa/`，属于合成 HTTP fixture 与真实产品构建资源实证，不等同真实 Core 集成。
+
+
+## 2026-10-14 冻结需求后的 Verify 与 Review 修复
+
+- 独立应用路由缺少Work对象时保留路由中的Work、Service和端口，区分首次读取、真实404及不可读原因，提供原目标Retry、Back to Work及列表出口。启动元数据失败同样按原身份和精确路由写恢复状态；不创建业务成功、授权或iframe。
+- 首次无有效区域记录时，仅在Work可用、Services/会话读取已确认且对话模型准入成功后，已确认无Ready且enabled的Web入口才选Chat；原Services/Files/Chat选择、较新的区域操作和独立窗口不受此默认规则覆盖。Chat说明Service为空、状态不可用或无声明Web入口，并保留管理出口。
+- Sessions的New session位于当前Work列表之前。独立应用选择Service及控制完成后的Open Service在渲染前同步精确路由和捕获的声明端口；原端口选择、就绪准入与稳定iframe规则不变。
+- 文件写请求非207的408/5xx与逐路径结果采用一致的unknown分类，不把可能已提交的DELETE/MOVE/COPY/PUT变成可直接重放的failed。403/409/412等明确拒绝仍保留失败及原恢复；unknown账本/路径锁只沿原只读核对释放。
+- 完整browser/feedback/recovery测试按真实Service按钮、Popover和详情Web entry控件进入，保留原iframe、授权、锁及计数断言。真实Core脚本使用实际Work链接与原runId对应的message-execution；语法/编译成功不代表实际浏览器或真实Core验收通过。
+- 本轮仅纠正当前delta的旧＋菜单、Files读取成功反馈与iframe导航占位措辞，按已确认More file actions、成功恢复原图标及不遮挡iframe的契约统一。没有删Scenario或降低任务完成门槛。
+
+产品冻结输入为 `912fa289ce2f28016d451e2a448ef2c6ab80286c`；Desktop资源已按Node24构建同步，独立应用恢复32项、默认区域及导航77项、Sessions35项、独立Service路由31项、文件结果31项定向纯回归分别通过（集合重叠，不累加为总数）。最终完整矩阵、Go宿主构建、官方Chrome合成界面、真实Core与读屏验证以各自实际结果单独记账，未验条件不标完成。
