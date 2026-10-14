@@ -350,3 +350,31 @@ GUI使用的 `app.js` SHA-256为 `a8cf325f050e5911304222183944cfbd6de8e76319b55a
 - 52行Files刷新前后scrollTop2961保持2961、等待期间选择保留在v3实际执行；最终版本相关布局没有再改动，但不将其标为最终全滚动矩阵。
 
 最终GUI没有剩余定向产品阻断。真实Core、读屏、完整Chat滚动/身份切换/unknown写入矩阵仍遵守上节限制。交付包含REPORT、检查记录及最终截图，旧证据不替代最终代表图。
+
+## 2026-10-14 连续截图修正、首次骨架与安全Markdown
+
+### 基线与代码边界
+
+远端基线 `6c5f9ad15845f0e938167b0179e7634c7b622586` 与本地 `e2affd3cf44926ea93df86fa3d2d017864698ad5` 共同tree `25279ec8f8398c1de20a718efc03fba2b62a6739`。本轮按Agent/文件菜单、Files成功反馈、Files底栏、Packages对齐、Works刷新、首次骨架、Markdown及iframe首次导航拆为9个功能提交（含最终截图发现的首读重复状态修正）；最终代码 `e840990675542af805621d48a0ddfc072bd0f60f`。不修改Core/API/契约、安全路由或Modal动画。Markdown仅将已有依赖链marked18.0.11显式声明给Desktop，固定版本、上游平面ESM及MIT许可证随原构建嵌入。
+
+### 最终自动检查
+
+- 475项纯函数/adapter/生产renderer与handler回归通过，0失败/跳过；较上一轮新增五菜单40个layout/fullscreen组合、Files成功/混合/unknown/readback保护、3秒Toast、Packages目标与禁用、Works确认空/缓存/首次失败、Service entry和iframe首次导航、Chat初次/缓存、晚身份保存及安全Markdown历史/增量等断言。
+- 全7workspace typecheck通过；Desktop正常build通过。25资源逐文件与嵌入副本字节一致，包含新增chat-markdown.js、marked.js和marked-LICENSE.txt；app.js SHA256 `cb3f56aa22c5fc6d8eefdc9d4385ee6e73eee9b36876aafe2b8577c93d8d70e5`，style.css `c6b529997249851f0b6d9a0e148d6729925d1cad47720c4ccfc7a5de6d894e25`，chat-markdown.js `4682f0c9a4befc5f6b805c6216b19390369a3adc57f00cda0fcfbc5626443d40`。
+- Go1.25.5、Node24.19.0 linux/amd64宿主构建成功；最终代码构建时OpenSpec文档尚未提交，build.json按真实状态记录modified=true；此前0a0d85d的clean构建仅为中间结果，不冒充最终clean身份，后续文档提交不改写已有构建记录。`go test ./internal/cli -run '^TestNativeDesktopEmbeddedBrowserAndLocalIdentity$' -count=1`通过。
+- 文档边界、原生边界及对应测试、OpenSpec strict和git diff --check通过。早期针对默认只读Go缓存或无Git作者的环境调用未成功，使用已存在可写缓存和原Codex提交作者后成功；未规避权限限制。
+- 首次仅离线读取npm缓存因ENOTCACHED未取得索引，随后官方registry正常安装同一固定marked版本成功；未升级其他包。仅针对回归编译失配/断言fixture作修正并在最终代码重跑，不将中间失败计作通过。
+
+### 验证范围
+
+纯回归排除browser、recovery、feedback、preferences、native-auth、local-auth六组完整浏览器/宿主入口，本轮不宣称完整test:browser通过。未重跑已知含环境问题的完整CLI集合；目标嵌入测试不代替全CLI。真实Core/Docker、生产文件修改/Run发送、读屏与历史完整身份/滚动/unknown矩阵仍未测；原17项及所有历史未测任务不改变。iframe load只移除首次导航骨架，不作为应用业务就绪证据；Markdown超预算回退完整转义文字，不承诺无限复杂语法解析。
+
+### 官方Chrome定向事实与边界
+
+- Agent菜单宽屏和窄屏、Focus→Restore及关闭通过；文件对象6条命令均有一个SVG和原标签。Files成功Toast后原列表不再显示上方成功条、全部成功结果区或Shared workspace底栏；WebDAV仍在更多菜单。未知结果保留逐路径与核对入口。
+- Packages在宽屏与390/700px对齐检查通过，名称/来源/状态一致起点，Catalog动作成组；长内容和操作换行不产生全页横滚。最终Packages及Files代表图重新截取。
+- 已确认Works刷新前后y=370.5、高105保持，busy回到按钮，无额外读取状态行；第一次Services/Chat局部骨架可见。实际延迟Service HTML时显示viewport骨架，真实load后撤去且navigationLoaded=true，后续刷新保留同一iframe实例1791947105910。
+- Markdown标题、列表、表格、代码及安全外链可见，原HTML仅为文字，没有自动Markdown图片或javascript链接；390px消息clientWidth/scrollWidth同为336，代码块715宽内容在334宽容器内独立滚动。浏览器实际模型流式发送未执行，流式文本增量由生产renderer回归证明。
+- 最后截图复核发现普通open-work读取状态条与局部骨架重复，以及首读Session/Model出现假空/未确认文案；已在最终e840990修正并重跑475项纯回归。上述完整GUI初次使用0a0d85d；最终仅这两个展示分支及其直接复拍更新，不将先前截图冒称再次跑过全套。
+
+最终e840990直接复拍通过：`final-work-initial-skeleton.jpg`与`final-service-html-loading.jpg`均无通用Loading Work/Still waiting重复条，无提前No Session yet/Retry/Unconfirmed；延迟iframe仍有正确局部骨架。最终推荐六图与browser-qa检查记录随交付包提供，不以截图推导未执行的真实Core或完整浏览器矩阵。

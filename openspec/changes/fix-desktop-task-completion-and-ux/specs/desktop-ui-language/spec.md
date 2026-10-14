@@ -43,6 +43,12 @@ Pi Requests SHALL 区分业务目标、一次 Run 和当前 Session：列表按�
 
 Service 选择器 SHALL 将名称、真实状态及选中标记按一致列表结构呈现；主Header与选择器不展示技术端口，声明端口与合法多入口选择归Service详情，Manage services 为管理出口。切换不自动启动不可用 Service，不切换当前 Chat Session，不猜测未声明端口；不可用项给真实原因，长名称与键盘/窄屏可操作。独立 Service 窗口不因布局改进新增 Chat。
 
+Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时使用局部静态骨架；已有确认列表、空集合、消息及Service iframe在背景读取时保留，手动刷新等待回到原控件。失败与未知保留原对象恢复入口，不闪现假空列表或欢迎。Service首次iframe导航等待 SHALL 有局部占位，导航load不等同于业务就绪，不因后续读取重建已显示iframe。Packages及Work/Service属性行 SHALL 保持名称、说明、状态和动作的对齐与分组，长内容与窄屏可换行。
+
+#### Scenario: 缓存刷新与首次读取分开呈现
+- **WHEN** 用户刷新确认过的Works列表，或首次打开未读取的Service/Chat
+- **THEN** 前者保留列表与搜索、按钮原位busy；后者局部骨架，确认后才展示内容或真实空态，失败提供原位置恢复
+
 #### Scenario: 有可用 Service 的 Work
 - **WHEN** 用户首次或没有可恢复区域时，从 Work 列表打开已运行、拥有可访问 Service 的 Work
 - **THEN** 直接看到 Service 真实页面和可输入的 Agent 对话；可切换 Service、聚焦聊天或打开文件，其他 Work 不在侧边
@@ -345,6 +351,8 @@ Files 的 Upload/New folder SHALL 收入可键盘访问的更多命令菜单，�
 - **WHEN** 文件操作明确失败、部分成功或未知而弹层仍打开
 - **THEN** 结果与具体原因就在弹层内可读，恢复指向原路径，不要求先关闭才能找错误且不自动重复成功项
 
+Files全部成功的非空路径批次 SHALL 使用短暂自动消退Toast，不在列表上下重复常驻成功Alert或Transfer results；混合、失败、unknown与回读失败保留必要逐路径证据和恢复。Files SHALL 移除常驻Shared workspace宿主路径说明行，WebDAV功能归现有更多菜单的次级命令，当前路径面包屑保留。
+
 #### Scenario: 文件工具栏压缩且刷新原位反馈
 - **WHEN** 用户刷新已有文件列表、打开更多命令菜单上传/新建，或连续多选后清空
 - **THEN** 仅一个常规Refresh，等待/成功不增加行或推移文件目标，Upload/New folder和WebDAV仍可达；失败与未知仍有安全下一步
@@ -360,6 +368,8 @@ Desktop SHALL 使用Dropdown承载一组命令、Popover承载Service/模型选�
 #### Scenario: 选择Service不打断工作区
 - **WHEN** 用户点击Service Header名称选择Service
 - **THEN** 在该名称旁打开Popover，保留真实状态和选中项，技术端口归详情；外侧导航一次即可生效，草稿及同一Service iframe保留，不自动启动Service
+
+账号、Work、Agent、Service及文件对象Dropdown的明确命令行 SHALL 使用一致的前置装饰图标与可读文字，包括Agent布局和浏览器全屏分支；属性值列表、提示文字及普通Dialog footer不适用此图标要求。
 
 #### Scenario: 更多命令与持续管理使用正确容器
 - **WHEN** 用户打开账号/Work/Agent/Service/文件更多操作，或进入Service详情

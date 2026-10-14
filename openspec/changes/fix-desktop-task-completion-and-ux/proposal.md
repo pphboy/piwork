@@ -143,3 +143,7 @@
 ## 2026-10-14 已授权补充：读取反馈与入口语义
 
 用户已确认 Files/Chat 读取方案：首次局部静态占位、缓存内容不被背景刷新替换、手动操作原位紧凑反馈、失败就近单处与重试、不保留成功/读取时间状态条；真实执行、断连、未知写入及锁保持。同期修正 Reset split 的重置图标、Files 更多命令入口、Service Header/选择器移除技术端口（详情保留合法多入口），Desktop favicon复用已嵌入Piwork标志。范围仅现有Desktop展示/前端状态及其测试、资产；不改Core/API/依赖，不恢复Modal动画。
+
+## 2026-10-14 连续截图反馈：命令、反馈、对齐与首次读取
+
+用户继续明确要求补齐Agent菜单图标、移除Files重复成功Alert及底部Shared workspace行、对齐Packages和同类Work/Service属性行，并统一Works→Open Work→Services/Chat的首次骨架与缓存原位刷新；随后要求Chat支持Markdown表格等正文。范围限定这些已存在入口，不扩展Core/API或全局组件库。Markdown复用已存在依赖链中的marked 18.0.11，明确声明Desktop依赖并随原资源流程嵌入官方ESM及许可证；不修改其他依赖版本。

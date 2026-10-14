@@ -138,6 +138,12 @@ Chat 正文 SHALL 移除 Run History ID 列表，原 Session/Run 数据及实际
 
 Run详情入口 SHALL 绑定实际Work/runId及Session上下文，并跟随对应一轮消息/Activity或明确活动执行状态；没有runId的历史消息不推测绑定当前最近Run，同一Run不因多段消息重复展示详情。全Work业务请求与Session对话、单次Run SHALL 分层，Request与Run各自显示真实状态；等待请求可没有活跃Run，某次Run成功不能推导目标完成。请求列表/详情展示调整 SHALL 保持分页、原过滤、取消竞争、historical只读及Retry新请求语义。
 
+Assistant消息正文 SHALL 支持GFM标题、强调、列表、链接、代码块及表格，历史与流式增量采用同一renderer；用户文字与工具输出保持原义。原始HTML不得执行，危险/相对链接不得导航本地授权页面，外链隔离opener，Markdown图片不自动读取外部资源。超出解析预算或解析失败时 SHALL 保留完整转义文字；表格和代码在消息内横向滚动，不撑开Chat或覆盖输入区。现有source入口、鉴权图片、Session/Run身份与阅读位置规则保持。
+
+#### Scenario: 历史与新回复含表格或代码
+- **WHEN** 打开已有assistant历史或接收增量Markdown表格、未闭合代码围栏
+- **THEN** 正文安全解析或完整转义回退，表格/代码可局部滚动，危险HTML与URL不执行，用户/工具文字及原附件入口不改变
+
 #### Scenario: 忙碌时保留输入
 - **WHEN** 同一 Work 的另一 Session 正在执行而当前 Session 发送失败为 busy
 - **THEN** 显示活动执行入口并保留草稿，不排队、不取消旧 Run

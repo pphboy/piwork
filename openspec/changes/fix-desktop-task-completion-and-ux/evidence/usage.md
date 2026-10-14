@@ -63,7 +63,7 @@ Service选择器统一显示名称、状态、声明端口与当前选择。单�
 
 ### Files、设置与轻反馈
 
-Files的常规Refresh只保留一次入口。读取时原按钮显示Reading…，成功短暂显示Updated，不新增Status checked行或重复成功toast；失败原因与未知写入的核对入口仍可见。Upload files和New folder归入＋旁的非模态动作菜单，方向键选择、Escape回到＋，Tab或点外部关闭；Upload files打开文件选择，New folder才打开名称输入窗。WebDAV与空目录上传入口保留。批选动作仍在原工具栏，不插入新的选择提示行；常规＋与批量操作图标保持40px控件高度。
+Files的常规Refresh只保留一次入口。读取时原按钮显示Reading…，成功恢复普通图标，不新增Status checked行或重复成功toast；失败原因与未知写入的核对入口仍可见。Upload files和New folder归入More file actions的非模态动作菜单，方向键选择、Escape回到更多按钮，Tab或点外部关闭；Upload files打开文件选择，New folder才打开名称输入窗。WebDAV归该菜单的分隔次级命令，空目录上传入口保留；Shared workspace宿主路径说明行已移除。批选动作仍在原工具栏，不插入新的选择提示行；常规更多入口与批量操作图标保持40px控件高度。
 
 Work settings内容左上角的Back to Work独立一行，返回进入设置前的Services、Chat或Files；其下标题与Configuration in use、Refresh成组对齐，窄屏整组换行；正常已对齐配置不再提供重复解释的Details。正常配置以Configuration in use轻状态呈现；Unsaved changes、Not applied、Applying、Apply failed和Apply not confirmed继续显示相应保存、应用或核对动作。Save只保存，Apply才应用；正在应用和结果未知时不重复Apply，恢复的原Apply仍可Check。
 
@@ -90,3 +90,8 @@ Files工具栏的Refresh为固定图标：读取时原位等待，完成恢复�
 Chat普通读取不再插入“Saved conversation / retrieved”时间戳或独立读取条。已有消息和草稿保留；首次读取用局部占位，失败提供一次局部重试。发送处的中性检查图标表示正在核对当前Run，尚未确认仍不能提交依赖该状态的消息；真正错误、断连、生成和未知提交继续显示原恢复动作。
 
 Service Header及切换列表不再显示端口。Manage services → 当前Service详情仍能检查声明端口；多入口服务可在那里选择已声明Web entry，独立应用窗口同步其合法端口路由。Reset split带重置箭头。Desktop标签页图标复用Piwork标志，无需新增资源。全部Modal仍无开关动画。
+
+
+## 2026-10-14 最新补充
+
+Agent及文件对象菜单保留文字并配套图标。Files全部成功只显示3秒Toast，不保留重复上下成功条；需要处理的失败、部分成功、unknown和回读失败继续提供原证据。Packages名称/来源/状态对齐，Details及修改动作独立成组。首页和工作区有缓存时原位读取，第一次读取才显示局部骨架。Chat的assistant正文支持Markdown表格、代码、列表和安全外链；原HTML按文字显示，Markdown图片显示说明而不自动加载，原聊天附件不受影响。
