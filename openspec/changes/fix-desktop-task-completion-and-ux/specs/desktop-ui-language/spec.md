@@ -348,3 +348,23 @@ Files 的 Upload/New folder SHALL 收入可键盘访问的＋菜单，常规 Ref
 #### Scenario: 文件工具栏压缩且刷新原位反馈
 - **WHEN** 用户刷新已有文件列表、打开＋菜单上传/新建，或连续多选后清空
 - **THEN** 仅一个常规Refresh，等待/成功不增加行或推移文件目标，Upload/New folder和WebDAV仍可达；失败与未知仍有安全下一步
+
+## ADDED Requirements
+
+### Requirement: 浮层按交互职责选择容器
+
+**Identifier:** DUL-OVERLAY-ROLE-001
+
+Desktop SHALL 使用Dropdown承载一组命令、Popover承载Service/模型选择与简单设置、Modal承载必要阻断决策或独立子任务、Drawer承载持续Service管理与详情。Tooltip只解释元素。Dropdown/Popover SHALL 锚定实际触发控件、适配视口、无背景遮罩或焦点陷阱；外侧点击保持原目标动作，Escape恢复合法触发器，Dropdown支持方向键/Home/End和Tab离开。身份/上下文失效不得保留旧对象动作，现有危险确认和写入保护不变。Modal SHALL 继续立即开关，不引入动画。
+
+#### Scenario: 选择Service不打断工作区
+- **WHEN** 用户点击Service Header名称选择Service
+- **THEN** 在该名称旁打开Popover，保留真实状态/端口和选中项；外侧导航一次即可生效，草稿及同一Service iframe保留，不自动启动Service
+
+#### Scenario: 更多命令与持续管理使用正确容器
+- **WHEN** 用户打开账号/Work/Agent/Service/文件更多操作，或进入Service详情
+- **THEN** 分别使用键盘可操作的Dropdown或持续侧栏；删除/停止确认仍阻断且不继承轻触关闭
+
+#### Scenario: Service Header原位切换Chat
+- **WHEN** 用户在宽屏或窄屏切换Show/Hide Chat
+- **THEN** 同一个Service Header控件原位显示正确状态，Work导航不重复该按钮，窄屏可恢复Service且不重建iframe或丢草稿

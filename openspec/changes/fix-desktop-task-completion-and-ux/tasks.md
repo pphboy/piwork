@@ -129,3 +129,16 @@
 - [x] 17.4 运行完整纯回归、typecheck/build/embed及官方云浏览器定向检查，按事实更新证据；原17项及其他完整矩阵未测保持，不同步主Spec或归档。
 
 本轮17.1/17.4完成（388纯回归与官方Chrome1440/500px定向GUI）；17.2/17.3实现完成，因完整路径/身份/修改与关闭竞争矩阵未逐项运行保持未勾选。最新任务40/71；前述38/67为上一轮记录，原33/50与17未测不变。详见验收记录2026-10-14节。
+
+## 18. 明确浮层职责与Service Header显隐
+
+- [x] 18.1 校正命令Dropdown、Service/模型/简单设置Popover及Service管理Drawer；保留真正Modal与无动画，补生产分类/几何/键盘及上下文回归。
+- [x] 18.2 Show/Hide Chat移到Service Header同一位置，窄屏保留可达出口，验证同iframe与草稿、无Work导航重复入口。
+- [x] 18.3 执行最终纯回归/typecheck/build/宿主构建/embed与官方Chrome1440/500px定向验证，记录实际通过及未测，不替代历史完整矩阵。
+
+- [x] 18.4 将Operations/Operation、Run、Package持续详情改非模态Inspector，回归原恢复身份/写锁/完成出口及配置dirty guard；保留真正独立Dialog例外。
+- [x] 18.5 原文保存用户组件Spec并建立稳定采用入口，记录完整入口分类与实际验收；清单不当作全量合规承诺。
+
+- [x] 18.6 完成有限实证修正：split握柄、Service/Chat失败与重试、Session缓存、Work导航Link、删除恢复说明、Upload review真假覆盖；运行生产handler/renderer与adapter回归，不引入业务能力。
+
+本轮第18节6项完成，当前46/77；第1—17节40/71与全部历史未测项保持不变。403项纯回归、22资源一致性与官方Chrome1440/500px定向证据见最新验收；不等于全自动浏览器、真实Core或全量无障碍通过。

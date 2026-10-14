@@ -133,3 +133,9 @@
 ## 2026-10-14 直接反馈：控件语义与关闭残影
 
 本轮纠正已授权实现：Show/Hide Chat 在同一固定工具栏位置使用一致面板图标按钮；Files 的＋是锚定非模态动作菜单，New folder 才打开输入确认窗；正常配置只显示状态与刷新，不保留无有效详情的 Details；彻底移除Modal动画、退场快照与延迟清理，立即释放背景交互。相邻 Input options 入口不冒充开关，Move 不使用返回箭头。保留身份、草稿、iframe、危险确认及 Save/Apply 分离；不修改 Service 业务页面、Core/API/依赖。
+
+## 2026-10-14 浮层职责与Service局部控件
+
+按用户明确规则修正已有入口：账号/Work/Agent/Service/文件更多操作为锚定Dropdown；Service选择、模型与简单输入设置为非阻断Popover；持续Service管理/详情为Drawer；删除/停止/覆盖确认、导入及独立长表单继续Modal。信息提示只解释所属元素，不承接操作。Show/Hide Chat从Work导航下移到Service Header同一控件，窄屏保留可见的同层恢复出口。保留无Modal动画、原安全/身份/草稿/iframe/写锁，不修改Service业务内容、Core/API或依赖。
+
+本次随后按用户“全部已确认不合规范项完成”的要求，加入Operations/Run/Package持续Inspector、分隔线常驻握柄与12px抓取区，并修复审计实证的错误空态、会话缓存闪退、真实导航链接、删除恢复说明及上传结果分类。只改现有界面/浏览器adapter表达和原动作入口，不新增业务能力或全局设计系统。

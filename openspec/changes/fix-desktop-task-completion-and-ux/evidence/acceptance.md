@@ -288,3 +288,34 @@ GUI使用的 `app.js` SHA-256为 `a8cf325f050e5911304222183944cfbd6de8e76319b55a
 - GUI未执行真实Core/生产Service、实际上传/创建/移动/删除/发送、完整身份/修改矩阵、异常配置的浏览器矩阵或所有Modal类型；配置异常为纯renderer回归而非本轮GUI。没有未解决的定向产品FAIL。
 
 本轮要求的界面修正均已实现并通过上述定向检查；新17.1/17.4完成，17.2/17.3保留未勾选是因为其中完整路径/身份/修改与全部关闭竞争矩阵未逐项实跑，不表示仍保留旧Modal动作菜单或动画。当前任务40/71；原33/50与17项未测不变。
+
+
+## 2026-10-14 浮层职责、局部控件与规范采用
+
+### 范围与基线
+
+远端PR#2读取基线 `e9b6081e8ed5e7fe4692e5010f6713a3a011ed49`，本地等价 `d19506a2919c179acf578fe0368318080e9b5aca`，共同tree `47c36d824360a151a522f67a710f2eb89beddbe7`。实现提交 `3c69257773bf84d93e5e5b55dae8931f12a0a84d`，tree `d123f415f0315575185fd494ebdc4c79875c155a`。完整[入口分类](overlay-classification.md)同时列已修与合理保留，既有独立表单/危险确认没有为了视觉统一降级。
+
+用户原文Spec逐字保存到[稳定规范入口](../../../specs/desktop-ui-language/ui-component-adoption.md)，26944字节及来源SHA256见分类记录；原文没有复制多份。AGENTS链接此入口。其采用不表示新增设计系统、强制linter或完整无障碍合规工程。用户本轮也明确全部已确认误用在本次修完；实现包括持续Operations/Run/Package Inspector，未将这些已确认项推迟。
+
+### 自动检查
+
+- 最终403项纯函数/adapter/生产renderer与handler回归全部通过，无失败/跳过。新增分类、碰撞翻转、菜单键盘/非吞点击、值列表语义、Header窄屏、File Delete恢复性、Upload review、假空态、实际局部retry、真实Link、Drawer焦点、缓存metadata与身份晚结果断言。原未知写入、覆盖版本、身份/草稿/iframe、Stop and send、导出原ID等回归保留。
+- 全7个workspace typecheck通过；Desktop正常build并同步Go嵌入，22个资源（19个browser模块、3个public文件），新增overlay-role模块。所有22个嵌入文件SHA256与冻结final-v3一致。
+- repository-docs、native-boundary检查及其5项测试通过；OpenSpec strict与git diff --check通过。新增规范Requirement使用ADDED delta，未同步主Spec其他段落或归档任何change。
+- Go1.25.5、Node24.19.0正常 `build-cli --target linux/amd64` 通过。首次构建包含尚未提交的规范/证据，真实modified=true；最终clean构建身份与资产清单保存在交付包，不伪改已有构建身份。
+- 纯回归明确排除browser、recovery、feedback、preferences、native-auth、local-auth这6组需要浏览器/原生宿主的入口。本轮包含浏览器组的尝试未形成完整验收；定向recovery自动入口无输出等待后中止，不记为通过。官方Chrome单独执行下列合成GUI，不把它冒充整套自动test:browser或真实Core。
+
+### 官方Chrome定向事实
+
+使用真实构建文件与官方Chrome，合成fixture不修改产品assets；宽1440×900、窄500×900。本轮构建序列的修复与最终快照在交付包browser-qa报告中区分，不把早期失败截图当最终通过。
+
+- Service选择为锚定Popover，列表box/option表示选中值，保留真实状态/端口；五类更多命令改Dropdown，外侧导航不吞click；模型/输入选项不阻断背景。
+- Manage services→Service details原先复用dialog导致focus落BODY，实测发现后改显式进入时聚焦Close；最终Drawer与Run/Operation/Package Inspector非模态、Close/Escape恢复通过，真正Stop仍打开原阻断确认。
+- Show/Hide移到Service Header同一位置，窄屏Chat显示时Header仍可达；读取失败和真正空Services也有同层出口。分隔线有常驻握柄与12px独立gutter，保留原键盘/双击重置，无动画。
+- 首次Service读取失败显示错误；首次会话读取失败没有假欢迎。Retry conversation实际恢复读并保留已输入草稿；生产handler测试证明对应services/sessions/history读取而非通用health检查。
+- 最终Dropdown的正文clientWidth/scrollWidth均278，没有横向滚动条，最后命令焦点轮廓与说明完整。早期1px横滚来自继承的负margin，修复限定于Dropdown布局，未用overflow隐藏内容。
+
+### 未测边界
+
+本轮没有真实Core、Docker、生产Service写入、实际上传/删除/Run发送、真实系统全屏或读屏验证。合成夹具只接受必要入口授权和只读资源，其他业务写入拒绝；File Delete/Upload真假覆盖与链接modifier主要由生产代码/adapter回归证明，不宣称全部真实业务GUI通过。原17项历史未测、360px完整矩阵、身份/权限浏览器全链路与此前未完成项继续保留。所有Modal仍无开关动画。

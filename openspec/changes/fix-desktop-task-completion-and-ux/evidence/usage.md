@@ -72,3 +72,13 @@ Works右上角Refresh、Import和New改用带名称/提示的图标组，New保�
 Modal底部动作统一高度、间距与主次角色；菜单行和正文小按钮保留各自用途。Stop影响范围不再使用像复选框的装饰，仍需明确确认；Delete的真实确认框保留。依2026-10-14要求，所有Modal开关动画、退场快照与延迟清理已移除，普通和减少动态效果设置均立即显示/关闭；关闭先撤销旧窗口提交资格，再释放原生遮罩并恢复合法焦点一次。Export仍为非模态进度卡，不因关闭中断原授权交付。完成与警告优先使用图标、语义颜色和短标签，具体错误、必要风险与下一步不会因精简被移除。
 
 Input options按钮只打开设置对话框，以展开语义表达；内部Include Service identity复选框仍是实际开关。文件Move使用专用移动图标，返回箭头仅用于导航。
+
+## 2026-10-14 组件职责与局部操作
+
+- Service名称、Session与模型/Thinking在原控件旁选择，简单输入选项也是Popover；背景可继续操作。模型值使用选择列表，不是命令菜单。
+- 账号、Work、Agent、Service、File的更多操作是Dropdown；方向键/Home/End选择命令、Enter/Space执行，Escape返回入口，Tab离开。点击外部导航只需一次；执行失败保留原因。
+- Service管理/详情、Operation、Run与Package诊断是非模态Inspector；关闭不取消原任务。停止/删除、覆盖、导入和独立表单仍保留原确认。Modal没有开关动画。
+- Show/Hide Chat归Service Header，同一个位置切换；窄屏显示Chat时Header仍在。分隔线有常驻短握柄，可拖动，原方向键与双击重置保持。
+- Service/会话读取失败显示原资源重试；缓存对话在重读期间仍在。Works名称/Open Work为真实链接，普通点击仍保护未保存内容。
+- 删除文件确认明确UI不能恢复。上传失败不再一律称覆盖：只对已确认存在的目标请求替换；普通失败可重新检查，未知写入先刷新核对且不会直接重复提交。
+- 后续开发按[稳定组件规范](../../../specs/desktop-ui-language/ui-component-adoption.md)选型；不以此要求全量重写或过度设计。

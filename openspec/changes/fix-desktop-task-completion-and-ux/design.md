@@ -216,3 +216,24 @@ Files＋使用带可访问名称的锚定动作菜单；Escape恢复＋焦点、
 2026-10-14用户明确取消所有Modal动画：删除入场/退场keyframes、快照、展示层、动画事件和fallback timer。关闭立即失效modalChoice、退出原生top layer、渲染并恢复合法焦点一次；不存在旧退场callback。模态/非模态、安全确认与原身份/异步结果保护不变。
 
 Input options是打开设置的入口，以haspopup/expanded表达，不将内部includeIdentity状态放到入口pressed；Files Move用专用移动图标，不与Back混同。
+
+## 2026-10-14 浮层职责修正
+
+共享展示分类只改变前端容器，不改变原动作准入。Dropdown使用menu/menuitem、方向键/Home/End及键盘字符查找；Popover保留dialog及选择组语义，可Tab离开，锚定触发控件并在窄屏/视口底部夹取翻转。外侧指针关闭不得preventDefault或抢焦点，不吞下一个导航点击；Escape返回精确触发器。非阻断层没有backdrop/inert/focus trap。打开子任务时保留原来源，普通命令执行后收起。Service管理/详情为持续侧栏，必要控制仍打开原危险确认。身份/路径变更不得复活旧浮层。
+
+Chat显隐控件移至Service工具栏；窄屏Chat显示时仍保留Service Header，主体Service内容暂隐藏且不可聚焦，同一按钮可恢复Service。所有布局只改容器，不能销毁Service iframe。Files/Chat自己的局部布局出口保留。
+
+## 全量入口分类复核与本次继续范围
+
+用户随后明确要求本次继续完成已确认不合规范项。Operations列表/Operation恢复详情、Run详情、Package详情含持续观察、诊断或长配置内容，改为非模态Inspector Drawer；保留原ID、Cancel/Retry准入、导入完成出口和源码dirty guard，不新增业务能力。独立导入/创建/文件目标表单与高风险确认仍是Modal；About、图片预览、WebDAV是可独立退出的短时阅读任务，保留Dialog为合理例外。
+
+稳定规范采用入口：`openspec/specs/desktop-ui-language/ui-component-adoption.md`；原文只存一份，不复制到本change。
+
+### 收尾实证与最小修正
+
+- 分隔线保持原键盘/双击重置逻辑，加入常驻短握柄、hover/focus高亮及12px独立gutter；抓取区不覆盖相邻内容/滚动条，不加动画。
+- Service已确认空列表后的失败读取保留错误与精确Retry Services；加载/错误/无Web分支都保留真实Services Header和Show/Hide出口。
+- 首次Session/历史读取失败不展示新会话欢迎；正常模型候选失败不误抹掉已确认空态。重建同Work/Session时保留checkedAt/imageProfile，挂起重读仍展示缓存历史；显式Retry只读原资源，选择和身份保护不变。
+- Work名称/Open Work是可复制真实hash目的地的Link；普通点击仍走原dirty guard，Ctrl/Meta/中键保留浏览器行为。
+- File Delete补充UI不可恢复说明。Upload review只将needsConsent已确认目标列作Overwrite；普通失败重试不带overwrite授权；unknown只读核对且成功项不重传，原版本与路径锁保留。
+- Dropdown失败保留可见错误；模型summary重复点击关闭；Drawer列表换详情只在显式打开时聚焦Close，背景异步更新不抢焦点。旧菜单负margin引起1px横滚，限定Dropdown重置margin和长命令换行，不裁掉内容。
