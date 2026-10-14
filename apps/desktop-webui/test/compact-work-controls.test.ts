@@ -6,13 +6,15 @@ const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
 function extract(...names:string[]){return names.map(name=>{const value=source.match(new RegExp('^(?:async )?function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];}).join('\n');}
 function fixture(){
  const work:any={id:'work-a',name:'A',config:{pendingApply:false,skills:[],packages:[]},resourceChecked:{configuration:'now'},resourceErrors:{}};
- const c:any={structuredClone,location:{hash:'#/work/work-a'},Date,view:{file:'',path:'/',modal:'',data:{},settingsTab:'Skills',config:null,configDirty:false},actions:{records:new Map(),visible:()=>true},adapter:{state:{operations:[]},project:()=>({usable:true})},skillsSettings:()=>'<p>Skills</p>'};c.fileActionsContext="";vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);vm.runInContext(extract('fileRefreshButton','settingsPage'),c);return{c,work};
+ const c:any={structuredClone,location:{hash:'#/work/work-a'},Date,view:{file:'',path:'/',modal:'',data:{},settingsTab:'Skills',config:null,configDirty:false},actions:{records:new Map(),visible:()=>true},adapter:{directories:new Map(),state:{operations:[]},project:()=>({usable:true})},skillsSettings:()=>'<p>Skills</p>'};c.fileActionsContext="";vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);vm.runInContext(extract('fileRefreshButton','settingsPage'),c);return{c,work};
 }
-test('Files refresh uses a fixed button for busy and one Updated feedback; unrelated paths do not leak status',()=>{
- const {c,work}=fixture();let html=c.fileRefreshButton(work);assert.match(html,/>Refresh</);assert.doesNotMatch(html,/Updated|aria-busy/);
- const record={action:'refresh-files',work:'work-a',resource:'/',view:c.location.hash,token:1,started:Date.now(),pending:true};c.actions.records.set('read',record);html=c.fileRefreshButton(work);assert.match(html,/aria-busy="true"/);assert.match(html,/Reading…/);
- record.pending=false;html=c.fileRefreshButton(work);assert.match(html,/Updated/);assert.doesNotMatch(html,/Status checked/);
- c.view.path='/different';assert.doesNotMatch(c.fileRefreshButton(work),/Updated/);
+test('Files refresh keeps a fixed icon with scoped busy feedback and no success text',()=>{
+ const {c,work}=fixture();let html=c.fileRefreshButton(work);assert.match(html,/icon-button quiet file-refresh/);assert.doesNotMatch(html,/>Refresh<|Updated|aria-busy|<span>/);
+ const record={action:'refresh-files',work:'work-a',resource:'/',view:c.location.hash,token:1,started:Date.now(),pending:true};c.actions.records.set('read',record);html=c.fileRefreshButton(work);assert.match(html,/disabled aria-busy="true"/);assert.match(html,/Reading files/);
+ record.started-=11000;assert.match(c.fileRefreshButton(work),/Still reading files/);
+ record.pending=false;html=c.fileRefreshButton(work);assert.doesNotMatch(html,/Updated|Status checked|aria-busy/);
+ record.pending=true;c.view.path='/different';assert.doesNotMatch(c.fileRefreshButton(work),/aria-busy/);
+ c.adapter.directories.set('work-a:/different',{loading:true,checkedAt:'now',error:''});assert.match(c.fileRefreshButton(work),/aria-busy="true"/);
 });
 test('normal settings are compact; dirty, pending Apply, Applying and errors retain actual actions',()=>{
  const {c,work}=fixture();let html=c.settingsPage(work);assert.match(html,/configuration-compact/);assert.doesNotMatch(html,/class="configuration-state"|data-action="apply-config"/);assert.ok(html.indexOf('Back to Work')<html.indexOf('<h1>Work settings'));
@@ -42,7 +44,7 @@ for (const kind of ['Apply Work configuration','apply-work-configuration']) test
 });
 
 test('Files toolbar renders one Refresh and Add control without literal template punctuation',()=>{
- const {c,work}=fixture();work.files=[];c.adapter.directories=new Map();c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';
+ const {c,work}=fixture();work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';
  vm.runInContext(extract('files'),c);const html=c.files(work);
  assert.equal((html.match(/data-action="refresh-files"/g)||[]).length,1);assert.equal((html.match(/data-action="file-add"/g)||[]).length,1);assert.doesNotMatch(html,/<\/button>}/);assert.match(html,/data-action="upload"/);assert.match(html,/data-action="webdav"/);
 });
@@ -67,14 +69,14 @@ test('Files toolbar retains 40px actions at the narrow breakpoint in either sele
  const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
  assert.match(css,/\.icon-button \{\s+width: 40px;\s+height: 40px;/);
  assert.doesNotMatch(css,/\.files-toolbar \.icon-button\s*\{/);
- const {c,work}=fixture();work.files=[];c.adapter.directories=new Map();c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';vm.runInContext(extract('files'),c);
+ const {c,work}=fixture();work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';vm.runInContext(extract('files'),c);
  assert.match(c.files(work),/data-action="file-add"/);c.view.selected=['/A.txt'];const selected=c.files(work);for(const action of ['file-copy','file-move','file-delete','clear-selection'])assert.match(selected,new RegExp('data-action="'+action+'"'));assert.doesNotMatch(selected,/data-action="file-add"/);
 });
 
 for(const open of [false,true])test(`Files add is a nonmodal two-action menu: open=${open}`,()=>{
- const {c,work}=fixture();c.fileActionsContext=open?'context':'';work.files=[];c.adapter.directories=new Map();c.view.selected=[];c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';
+ const {c,work}=fixture();c.fileActionsContext=open?'context':'';work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';
  vm.runInContext(extract('files'),c);const html=c.files(work);assert.match(html,/aria-haspopup="menu"/);assert.match(html,new RegExp('aria-expanded="'+open+'"'));assert.doesNotMatch(html,/<dialog/);
- if(open){assert.match(html,/role="menu" aria-label="Add to workspace"/);assert.equal((html.match(/role="menuitem"/g)||[]).length,2);assert.match(html,/New folder/);assert.match(html,/Upload files/);}else assert.doesNotMatch(html,/role="menu"/);
+ if(open){assert.match(html,/role="menu" aria-label="File actions"/);assert.equal((html.match(/role="menuitem"/g)||[]).length,2);assert.match(html,/New folder/);assert.match(html,/Upload files/);}else assert.doesNotMatch(html,/role="menu"/);
 });
 for(const width of [500,1440])for(const visible of [false,true])test(`Chat toggle is the same panel button at ${width}px visible=${visible}`,()=>{
  const {c,work}=fixture();c.view.tab='Services';c.view.layout='workspace';c.route=()=>['work'];c.innerWidth=width;c.workspacePanels={get:()=>({narrowChat:visible,collapsed:!visible})};
@@ -88,4 +90,13 @@ test('Input options launches a dialog while its checkbox owns the actual option 
 });
 test('Move selected files uses a dedicated folder move symbol instead of Back',()=>{
  assert.match(extract('files'),/icon\("move", 16\), "file-move"/);assert.doesNotMatch(extract('files'),/icon\("arrow", 16\), "file-move"/);
+});
+
+test('Files first reads preserve toolbar and never mistake another cached directory for confirmed empty',()=>{
+ const {c,work}=fixture();work.files=[{path:'/other/old.txt',name:'old.txt',kind:'directory'}];c.view.selected=[];c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';vm.runInContext(extract('files'),c);
+ c.adapter.directories.set('work-a:/',{loading:true,checkedAt:'',error:''});let html=c.files(work);assert.match(html,/files-toolbar/);assert.match(html,/read-placeholder/);assert.doesNotMatch(html,/This folder is empty|old.txt/);
+ c.adapter.directories.set('work-a:/',{loading:false,checkedAt:'',error:'Forbidden'});html=c.files(work);assert.match(html,/Could not read \/|Forbidden/);assert.doesNotMatch(html,/This folder is empty|read-placeholder/);assert.equal((html.match(/read-failure/g)||[]).length,1);
+ c.adapter.directories.set('work-a:/',{loading:true,checkedAt:'now',error:''});html=c.files(work);assert.match(html,/This folder is empty/);assert.doesNotMatch(html,/read-placeholder/);
+ c.view.path='/other';c.adapter.directories.set('work-a:/other',{loading:true,checkedAt:'now',error:''});work.resourceErrors.files='Unrelated root error';html=c.files(work);assert.match(html,/old.txt/);assert.doesNotMatch(html,/Unrelated root error|read-placeholder/);
+ c.view.selected=['/other/old.txt'];html=c.files(work);assert.match(html,/checked/);assert.match(html,/1 selected/);assert.match(html,/old.txt/);
 });

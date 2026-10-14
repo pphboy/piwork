@@ -97,3 +97,30 @@ test('DWUI-019 successful navigation disappears; brief confirmation expiry prese
   now = 100000; assert.equal(actions.visible(unknown), true);
   assert.ok(actions.conflict(intent('lost', 'lifecycle'))); assert.equal(unknown.businessId, 'original-id'); actions.clear();
 });
+
+test('module-owned read presentation suppresses only ordinary feedback, retaining error and unknown mutation regions', async () => {
+  const {renderActionStates}=await import(moduleURL);
+  const oldDocument=globalThis.document,oldStyle=globalThis.getComputedStyle;
+  const nodes:any[]=[];
+  const region:any={getClientRects:()=>[{}],querySelector:()=>null,prepend:(node:any)=>nodes.push(node),append:(node:any)=>nodes.push(node)};
+  const root:any={textContent:'',querySelectorAll:(selector:string)=>selector==='main, .main-panel, .agent-panel'?[region]:[]};
+  Object.assign(globalThis,{document:{createElement:()=>({dataset:{},setAttribute:()=>{},append:()=>{}})},getComputedStyle:()=>({visibility:'visible'})});
+  try {
+    for(const action of ['tab-Files','refresh-files','file-path','open-file','open-source','sessions','select-session','retry-conversation','check-active-run']) {
+      const actions=new ActionState();const record=actions.begin({...intent(action,'read'),action});renderActionStates(root,actions,'',()=>undefined);assert.equal(nodes.length,0,action);
+      actions.fail(record,new Error('Read failed'));renderActionStates(root,actions,'',()=>undefined);assert.equal(nodes.pop().textContent.includes('Read failed'),true);actions.clear();
+    }
+    const actions=new ActionState();const record=actions.begin({...intent('save','files'),action:'save-file'});actions.fail(record,Object.assign(new Error('Unknown write'),{code:'RESULT_UNKNOWN'}));
+    renderActionStates(root,actions,'',()=>undefined);assert.equal(nodes.pop().textContent.includes('Unknown write'),true);assert.ok(actions.conflict(intent('save','files')));actions.clear();
+  } finally {Object.assign(globalThis,{document:oldDocument,getComputedStyle:oldStyle});}
+});
+
+test('generic lock cleanup preserves module-owned read busy and still restores ordinary buttons',async()=>{
+ const {renderActionStates}=await import(moduleURL);const actions=new ActionState();
+ for(const moduleBusy of [true,false]) {
+   const removed:string[]=[];const button:any={dataset:{actionLocked:'true',actionBaseDisabled:'true',...(moduleBusy?{readBusy:'true'}:{})},disabled:true,removeAttribute:(name:string)=>removed.push(name)};
+   const root:any={querySelectorAll:(selector:string)=>selector==='button[data-action]'?[button]:[]};
+   renderActionStates(root,actions,'',()=>undefined);assert.equal(button.disabled,true);assert.equal(removed.includes('aria-busy'),!moduleBusy);assert.equal(button.dataset.actionLocked,undefined);
+ }
+ actions.clear();
+});

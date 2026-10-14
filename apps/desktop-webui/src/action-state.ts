@@ -1,7 +1,7 @@
 export type ActionKind = 'identity' | 'lifecycle' | 'files' | 'configuration' | 'service' | 'agent' | 'transfer' | 'read';
 export interface ActionIntent {
   key: string; kind: ActionKind; work?: string; resource?: string; action?: string;
-  label: string; target: string; anchor?: string; view?: string;
+  label: string; target: string; anchor?: string; view?: string; origin?: string; sourceContext?: string;
 }
 export interface ActionRecord extends ActionIntent {
   token: number; generation: number; started: number; checkedAt?: string;
@@ -100,14 +100,14 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
   const shown = (node: HTMLElement | null): node is HTMLElement => !!node && !!node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
   const regions = [...root.querySelectorAll<HTMLElement>('main, .main-panel, .agent-panel')];
   for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
-    if (button.dataset.actionLocked) { button.disabled = button.dataset.actionBaseDisabled === 'true'; delete button.dataset.actionLocked; delete button.dataset.actionBaseDisabled; button.removeAttribute('aria-busy'); }
+    if (button.dataset.actionLocked) { button.disabled = button.dataset.actionBaseDisabled === 'true'; delete button.dataset.actionLocked; delete button.dataset.actionBaseDisabled; if (!button.dataset.readBusy) button.removeAttribute('aria-busy'); }
     const intent = intentFor(button); if (!intent) continue;
     if (actions.conflict(intent)) { button.dataset.actionBaseDisabled = String(button.disabled); button.dataset.actionLocked = 'true'; button.disabled = true; button.setAttribute('aria-busy', 'true'); }
   }
   for (const record of actions.records.values()) {
     if(record.key.startsWith('route:') && !record.error)continue;
     // Files owns busy/success in its fixed refresh button; errors and unknowns still use the local region.
-    if(record.action==='refresh-files' && !record.error && !record.blocked && record.refresh!=='failed')continue;
+    if(record.kind==='read' && ['tab-Files','refresh-files','file-path','open-file','open-source','sessions','select-session','retry-conversation','check-active-run'].includes(record.action || '') && !record.error && !record.blocked && record.refresh!=='failed')continue;
     if (!actions.visible(record) || record.view && record.view !== view || !visibleRecord(record)) continue;
     if (!record.pending && record.error && root.textContent?.includes(record.error) && !record.blocked && record.refresh !== 'failed') continue;
     if (!record.pending && record.result && root.textContent?.includes(record.result) && !record.error && !record.blocked && record.refresh === '') continue;

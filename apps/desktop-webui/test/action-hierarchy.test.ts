@@ -20,7 +20,7 @@ function fixture() {
     view: { layout:'workspace', modal: '', data: {}, path: '/', selected: [], file: '', modalError: '' },
     adapter: { state: { browserAccess: 'authorized', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [] },
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
-      getSnapshot: () => undefined, downloads: new Map(), directories: new Map() },
+      getSnapshot: () => undefined, downloads: new Map(), directories: new Map([["work-a:/", {checkedAt:"now",loading:false,error:""}]]) },
     document:{fullscreenElement:null},root:{},location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(),
     exportFlows: { forWork: () => undefined, get: () => undefined }, exportSnapshotAvailable: () => true,
     filesRestoreNotice: '', uploadProgressMarkup: () => '', transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,

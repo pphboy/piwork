@@ -36,7 +36,7 @@ test('narrow chat preserves the same Service header and its original iframe ance
 const {uploadReview}=await import(new URL('../browser/file-results.js',import.meta.url).href);
 function rendererFixture(){
  const work:any={id:'a',name:'A',services:[],sessions:[],resourceChecked:{services:'now',agent:'now'},resourceErrors:{}};
- const c:any={overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
+ const c:any={overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
  vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);for(const name of ['modalMarkup','serviceFallbackHeader','services','agent'])vm.runInContext(extract(name),c);return{c,work};
 }
 test('upload review separates proven overwrites, failed checks and unknown writes without false destructive consent',()=>{
@@ -66,10 +66,59 @@ test('drawer transitions explicitly focus their new Close only during open; menu
  assert.match(extract('openModal'),/overlayRole\(name\) === 'drawer'/);assert.match(extract('openModal'),/data-action=close-modal/);assert.match(source,/menuCommand && !menuFailed/);assert.match(extract('modalMarkup'),/view.modalError \? feedback/);
 });
 test('local retry actions actually reload their failed resource and preserve a selected later Session',async()=>{
- const calls:string[]=[],adapter={loadServices:async(id:string)=>calls.push(`services:${id}`),loadSessions:async(id:string)=>calls.push(`sessions:${id}`),loadSession:async(id:string,session:string)=>calls.push(`history:${id}:${session}`)},currentWork={id:'work',sessions:[{id:'first'},{id:'selected'}]},view={session:'selected'};
+ const calls:string[]=[],adapter={loadServices:async(id:string)=>calls.push(`services:${id}`),loadSessions:async(id:string)=>calls.push(`sessions:${id}`),loadSession:async(id:string,session:string)=>calls.push(`history:${id}:${session}`)},currentWork={id:'work',sessions:[{id:'first'},{id:'selected'}],resourceErrors:{agent:'Earlier read failed'}},view={session:'selected',modal:'sessions',modalError:'Earlier read failed'};
  for(const action of ['retry-services','retry-conversation']){
   const part=source.match(new RegExp("case '"+action+"':([\\s\\S]*?)break;"))?.[1];assert.ok(part);
   const run=new Function('adapter','currentWork','view','stay',`return (async()=>{${part}})()`);await run(adapter,currentWork,view,(p:Promise<unknown>)=>p);
  }
- assert.deepEqual(calls,['services:work','sessions:work','history:work:selected']);assert.equal(view.session,'selected');
+ assert.deepEqual(calls,['services:work','sessions:work','history:work:selected']);assert.equal(view.modalError,'');assert.equal(view.session,'selected');
+});
+
+test('cached Chat reads are silent and failures have exactly one scoped retry without losing history',()=>{
+ const {c,work}=rendererFixture();work.sessions=[{id:'s',messages:[{}],checkedAt:'now',loading:true}];work.resourceLoading={agent:true};let html=c.agent(work,false);
+ assert.match(html,/Preserved history/);assert.doesNotMatch(html,/Saved conversation|retrieved|read-placeholder|read-failure/);
+ work.sessions[0].loading=false;work.resourceLoading.agent=false;work.sessions[0].error='Read denied';work.resourceErrors.agent='Read denied';html=c.agent(work,false);
+ assert.equal((html.match(/class="feedback warning read-failure"/g)||[]).length,1);assert.equal((html.match(/data-action="retry-conversation"/g)||[]).length,1);assert.match(html,/Preserved history/);assert.doesNotMatch(html,/chat-welcome/);
+ work.sessions[0].messages=[];work.sessions[0].checkedAt='';work.sessions[0].error='';work.resourceErrors.agent='';work.sessions[0].loading=true;html=c.agent(work,false);assert.match(html,/read-placeholder/);assert.doesNotMatch(html,/chat-welcome/);
+ work.sessions[0].checkedAt='now';html=c.agent(work,false);assert.match(html,/chat-welcome/);assert.doesNotMatch(html,/read-placeholder/);
+});
+test('active Run initial checking is neutral and send stays locked; idle unknown and errors retain Check status',()=>{
+ const {c,work}=rendererFixture();c.adapter.cancelAndSendCapabilities.set('a',1);c.adapter.activeRuns.set('a',{confirmed:false,loading:true,error:''});let html=c.agent(work,false);
+ assert.match(html,/aria-label="Checking conversation status" aria-busy="true"/);assert.match(html,/data-action="send-message"[^>]*disabled/);assert.doesNotMatch(html,/Checking the active Run|data-action="check-active-run"/);
+ c.adapter.activeRuns.set('a',{confirmed:false,loading:false,error:''});html=c.agent(work,false);assert.match(html,/Conversation status is not confirmed/);assert.match(html,/data-action="check-active-run"/);assert.doesNotMatch(html,/aria-label="Checking conversation status"/);
+ c.adapter.activeRuns.set('a',{confirmed:false,loading:false,error:'Observation lost'});html=c.agent(work,false);assert.match(html,/Observation lost/);assert.match(html,/data-action="check-active-run"/);
+ c.adapter.activeRuns.set('a',{confirmed:true,loading:true,error:'',run:null});html=c.agent(work,false);assert.doesNotMatch(html,/Checking conversation status|Conversation status is not confirmed|data-action="check-active-run"/);assert.doesNotMatch(html,/data-action="send-message"[^>]*disabled/);
+});
+test('read feedback is bound to directory, navigation origin and Session; unknown writes stay visible',()=>{
+ const {c,work}=rendererFixture();c.view.tab='Files';c.view.path='/current';c.view.file='';vm.runInContext(extract('visibleActionRecord'),c);
+ assert.equal(c.visibleActionRecord({kind:'read',action:'refresh-files',work:'a',resource:'/old'}),false);
+ assert.equal(c.visibleActionRecord({kind:'read',action:'file-path',work:'a',resource:'/denied',origin:'/current'}),true);
+ c.view.path='/new';assert.equal(c.visibleActionRecord({kind:'read',action:'file-path',work:'a',resource:'/denied',origin:'/current'}),false);
+ c.view.tab='Chat';c.view.session='old';assert.equal(c.visibleActionRecord({kind:'read',action:'open-source',work:'a',resource:'/source.txt',sourceContext:'Chat:old:'}),true);c.view.session='new';assert.equal(c.visibleActionRecord({kind:'read',action:'open-source',work:'a',resource:'/source.txt',sourceContext:'Chat:old:'}),false);assert.equal(c.visibleActionRecord({kind:'read',action:'select-session',work:'a',resource:'old'}),false);
+ assert.equal(c.visibleActionRecord({kind:'files',action:'save-file',work:'a',resource:'/old',blocked:true}),true);
+});
+test('Service header never exposes ports while the actual iframe target stays selected',()=>{
+ const {c,work}=rendererFixture();const s={id:'notes',name:'Notes',ports:[8080,9090],enabled:true,observed:'Ready',domain:'notes.test'};work.services=[s];c.activeService=()=>s;c.view.port=9090;c.root={querySelectorAll:()=>[]};c.adapter.requestPresence=new Map();c.adapter.serviceEmbed=()=>'';c.adapter.serviceEntryError=()=>'';c.adapter.serviceEntryUrl=(_w:string,_s:string,p:number)=>`https://notes.test:${p}/`;c.adapter.servicePreviewUnconfirmed=()=>false;const html=c.services(work);assert.doesNotMatch(html,/port-label|port-select|Declared Web port/);assert.match(html,/src="https:\/\/notes.test:9090\/"/);
+});
+
+test('Sessions retry keeps one error region even when the generic modal catch records the same failure',()=>{
+ const {c,work}=rendererFixture();c.view.modal='sessions';c.view.modalError='Session list denied';work.resourceErrors.agent='Session list denied';const html=c.modalMarkup();assert.equal((html.match(/Session list denied/g)||[]).length,1);assert.match(html,/data-action="retry-conversation"/);assert.doesNotMatch(html,/No Sessions yet/);
+});
+
+test('model metadata failure cannot turn an unconfirmed first conversation into a welcome state',()=>{
+ const {c,work}=rendererFixture();delete work.resourceChecked.agent;work.resourceErrors.agent='Model options unavailable';c.adapter.models.set('a',{error:'Model options unavailable'});const html=c.agent(work,false);assert.match(html,/Loading conversation/);assert.doesNotMatch(html,/chat-welcome/);
+});
+
+test('successful conversation retry cannot revive an older Sessions action error after inline feedback clears',()=>{
+ const {c,work}=rendererFixture();c.view.session='s';work.sessions=[{id:'s',messages:[{}],checkedAt:'now'}];vm.runInContext(extract('visibleActionRecord'),c);
+ const old={kind:'read',action:'sessions',work:'a',resource:'/',error:'Session list denied'};work.resourceErrors.agent=old.error;assert.equal(c.visibleActionRecord(old),true);
+ delete work.resourceErrors.agent;assert.equal(c.visibleActionRecord(old),false);
+ const retry={...old,action:'retry-conversation',resource:'s'};work.sessions[0].error=old.error;assert.equal(c.visibleActionRecord(retry),true);work.sessions[0].error='';assert.equal(c.visibleActionRecord(retry),false);
+});
+
+test('successful file refresh also retires the original tab read error without weakening write recovery',()=>{
+ const {c,work}=rendererFixture();c.view.tab='Files';c.view.file='';c.view.path='/';vm.runInContext(extract('visibleActionRecord'),c);const old={kind:'read',action:'tab-Files',work:'a',resource:'/',error:'Files denied'};
+ c.adapter.directories.set('a:/',{checkedAt:'',error:'Files denied'});assert.equal(c.visibleActionRecord(old),true);
+ c.adapter.directories.set('a:/',{checkedAt:'now',error:''});assert.equal(c.visibleActionRecord(old),false);
+ assert.equal(c.visibleActionRecord({...old,kind:'files',action:'save-file',blocked:true}),true);
 });

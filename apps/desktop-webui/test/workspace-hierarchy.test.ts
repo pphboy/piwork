@@ -38,9 +38,9 @@ test('request inspector is nonmodal only on a wide viewport; Export stays nonmod
 test('precise run focus selectors include run identity',()=>{
  const {c}=fixture();c.CSS={escape:(text:string)=>text};assert.equal(c.focusKey({dataset:{action:'run-details',runId:'old'}}),'[data-action="run-details"][data-run-id="old"]');
 });
-test('Service selection lists real state and ports without Start mutation controls',()=>{
+test('Service selection lists real state without technical ports or Start mutation controls',()=>{
  const {c,work}=fixture();work.services=[{id:'ready',name:'Notes',ports:[3000,3001],enabled:true,observed:'Ready'},{id:'failed',name:'Reports',ports:[4100],enabled:true,observed:'Failed',error:'Start failed'},{id:'disabled',name:'Closed',ports:[5000],enabled:false,observed:'Stopped'},{id:'no-web',name:'Worker',ports:[],observed:'Ready'},{id:'removed',name:'Gone',ports:[80],observed:'Removed'}];c.activeService=()=>work.services[0];c.view.modal='service-picker';const html=c.modalMarkup();
- assert.match(html,/Declared Web ports · 3000, 3001/);assert.match(html,/aria-selected="true" data-id="ready"/);assert.match(html,/Start failed/);assert.match(html,/Disabled/);assert.doesNotMatch(html,/Worker|Gone|data-action="service-action"/);assert.match(html,/Manage services/);
+ assert.doesNotMatch(html,/Declared Web ports|3000|3001|4100|5000/);assert.match(html,/aria-selected="true" data-id="ready"/);assert.match(html,/Start failed/);assert.match(html,/Disabled/);assert.doesNotMatch(html,/Worker|Gone|data-action="service-action"/);assert.match(html,/Manage services/);
 });
 
 test('confirmed externally started active Run in the selected Session has its own explicit controls',()=>{

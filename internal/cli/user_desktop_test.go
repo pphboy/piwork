@@ -77,6 +77,9 @@ func TestNativeDesktopEmbeddedBrowserAndLocalIdentity(t *testing.T) {
 			t.Fatal("embedded Desktop asset", path, response.Code)
 		}
 	}
+	if page := serve("GET", "/", nil, "", "", ""); !strings.Contains(page.Body.String(), `<link rel="icon" type="image/png" href="/desktop/piwork-logo.png">`) {
+		t.Fatal("Desktop favicon must use the embedded project Logo")
+	}
 	logoSource, err := os.ReadFile(filepath.Join("..", "..", "apps", "ui-shared", "assets", "piwork-logo.png"))
 	if err != nil {
 		t.Fatal(err)
