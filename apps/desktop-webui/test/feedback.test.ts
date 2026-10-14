@@ -1018,8 +1018,8 @@ for (const outcome of ['failed', 'observation-unknown', 'submission-unknown'] as
   if (outcome === 'submission-unknown') {
     await expect(page.locator('#modal .object-control-progress')).toContainText('Result unknown');
     await expect(page.locator('#modal .object-control-progress [data-action="operation"]')).toHaveCount(0);
-    await progress.click(); await expect(page).toHaveURL(/#\/works$/);
-    observed = 'ready'; await progress.click();
+    await progress.click(); await expect(progress).toBeEnabled(); await expect(page).toHaveURL(/#\/works$/);
+    observed = 'ready'; await progress.click(); await expect(progress).toBeEnabled();
     await expect(page.locator('#modal .object-control-progress')).toContainText('Original outcome unknown · current target checked');
     await expect(page).toHaveURL(/#\/works$/);
     assert.equal(requests.filter(r => r.path === `operations/${startId}`).length, 0, 'a lost acceptance must not invent a Start Operation ID');
@@ -1029,20 +1029,22 @@ for (const outcome of ['failed', 'observation-unknown', 'submission-unknown'] as
     await expect(page.locator('#modal')).toContainText(startId);
     if (outcome === 'failed') { startState = 'failed'; observed = 'failed'; }
     else observationUnavailable = true;
-    await progress.click();
+    await progress.click(); await expect(progress).toBeEnabled();
     await expect(page.locator('#modal .object-control-progress')).toContainText(outcome === 'failed' ? 'failed' : 'Original Start observation temporarily unavailable');
     await expect(page).toHaveURL(/#\/works$/);
     await expect(page.locator('#modal')).toContainText(importId); await expect(page.locator('#modal')).toContainText(startId);
     await expect(page.locator('#modal [data-action="open-work"]')).toHaveCount(0);
     if (outcome === 'observation-unknown') {
       observationUnavailable = false; startState = 'succeeded';
-      await progress.click(); await expect(page).toHaveURL(/#\/works$/);
+      await progress.click(); await expect(progress).toBeEnabled(); await expect(page).toHaveURL(/#\/works$/);
       await expect(page.locator('#modal [data-action="open-work"]')).toHaveCount(0);
+      assert.equal(await api(page, `return adapter.getOperation('${startId}').state`), 'succeeded');
+      assert.equal(await api(page, "return adapter.getWork('imported').status"), 'Starting');
       observed = 'ready'; await progress.click();
       await expect(page.getByRole('heading', { name: 'Imported recovery', exact: true })).toBeVisible();
       await expect(page).toHaveURL(/#\/work\/imported$/);
     } else {
-      observed = 'ready'; await progress.click(); await expect(page).toHaveURL(/#\/works$/);
+      observed = 'ready'; await progress.click(); await expect(progress).toBeEnabled(); await expect(page).toHaveURL(/#\/works$/);
       await expect(page.locator('#modal')).toContainText(startId);
     }
   }
