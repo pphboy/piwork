@@ -2085,7 +2085,7 @@ test('Controls cancelling request is observed to its actual terminal result; los
   return controlFixture(r);
  });
  await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();
- await expect(page.locator('#modal')).toContainText('response was lost');await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('cancelling');await expect(button(page,'cancel-pi-request')).toBeDisabled();
+ await expect(page.locator('#modal')).toContainText('response was lost');await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);await expect(button(page,'cancel-pi-request')).toBeDisabled();
  await page.clock.install();state='completed';await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText(/[Cc]ompleted/);await expect(button(page,'cancel-pi-request')).toHaveCount(0);
  assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
 });
@@ -2216,7 +2216,7 @@ test('Controls recovery: cancellation from list follows its terminal state',asyn
   if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',state==='cancelling'?3:6)};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelling');
+ await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);
  await page.clock.install();state='cancelled';await page.clock.runFor(6000);await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);
 });
 
@@ -2303,8 +2303,8 @@ test('Controls recovery: closing or hiding cancellation list stops reads and reo
  await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('response was lost');await button(page,'back-pi-requests').click();
  await page.clock.install();
  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));});
- await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('cancelling');
- fail=true;await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('Cancellation status not confirmed');await expect(page.locator('#modal')).toContainText('cancelling');
+ await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);
+ fail=true;await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('Cancellation status not confirmed');await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);
  await button(page,'close-modal').click();const reads=()=>requests.filter(r=>r.path.endsWith('/agent-requests/request-a')).length,closed=reads();
  await page.clock.runFor(15000);assert.equal(reads(),closed);
  fail=false;state='cancelled';await button(page,'service-requests').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);
@@ -2386,7 +2386,7 @@ test('Controls pagination: late evidence preserves the confirmed terminal and or
  await page.evaluate(()=>{(window as any).paginationFrame=document.querySelector('iframe');(window as any).paginationFrameLoads=0;document.querySelector('iframe')!.addEventListener('load',()=>{(window as any).paginationFrameLoads++;});});
  await page.clock.install();await button(page,'service-requests').click();await button(page,'next-pi-requests').click();
  await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
- await page.locator('#modal [data-action=pi-request-detail][data-id=request-a]').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelling');await button(page,'back-pi-requests').click();
+ await page.locator('#modal [data-action=pi-request-detail][data-id=request-a]').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);await button(page,'back-pi-requests').click();
  const detail=page.locator('#modal [data-action=pi-request-detail][data-id=request-a]');
  await detail.focus();await page.locator('.modal-body').evaluate(node=>node.scrollTop=135);
  const listScroll=await page.locator('.modal-body').evaluate(node=>node.scrollTop);
@@ -2669,6 +2669,7 @@ test('B a failed-only retry does not inherit another path unknown lock', async t
     await expect(button(page, 'retry-selected-files')).toBeEnabled();
     await button(page, 'retry-selected-files').click();
     await expect.poll(() => b).toBe(retry + 2);
+    if(retry===0)await expect(page.locator('[data-retry-source="/b.txt"]')).not.toBeChecked();
   }
   await expect(page.locator('#modal')).toContainText('2 paths confirmed; 1 need review');
   await expect(page.locator('#modal')).not.toContainText('1 paths confirmed; 2 need review');
@@ -2810,14 +2811,28 @@ for (const ending of ['success','failure','focus-moved'] as const) test(`Files s
   return cFilesReply(r);
  });
  await page.setViewportSize({width:ending==='focus-moved'?1440:360,height:900});await button(page,'tab-Files').click();await expect(page.locator('[data-action=open-file][data-path="/note.txt"]')).toBeVisible();await page.clock.install();
- const refresh=button(page,'refresh-files'),before=requests.filter(r=>r.method==='PROPFIND').length;armed=true;await refresh.focus();await refresh.press('Enter');
+ const refresh=page.locator('.file-refresh[data-action=refresh-files]'),before=requests.filter(r=>r.method==='PROPFIND').length;armed=true;await refresh.focus();await refresh.press('Enter');
  await expect(refresh).toHaveAttribute('aria-disabled','true');await expect(refresh).toBeFocused();await expect.poll(()=>requests.filter(r=>r.method==='PROPFIND').length).toBe(before+1);
  await refresh.press('Enter');await refresh.evaluate((node:HTMLButtonElement)=>node.click());await page.clock.runFor(10001);
  await expect(refresh).toHaveAttribute('aria-label','Still reading files…');await expect(refresh).toBeFocused();assert.equal(requests.filter(r=>r.method==='PROPFIND').length,before+1);
  if(ending==='focus-moved')await page.locator('#composer').focus();release();await expect(refresh).not.toHaveAttribute('aria-disabled','true');await expect(refresh).toBeEnabled();
  await expect(ending==='focus-moved'?page.locator('#composer'):refresh).toBeFocused();assert.equal(requests.filter(r=>r.method==='PROPFIND').length,before+1);
- if(ending==='failure')await expect(page.locator('#app')).toContainText('Original directory temporarily unavailable');
+ if(ending==='failure')await expect(page.locator('.read-failure')).toContainText('Workspace cannot be read (503)');
  assert.equal(requests.filter(r=>['PUT','DELETE','MOVE','COPY','MKCOL'].includes(r.method)).length,0);
+});
+
+for(const gesture of ['double-click','enter-then-click'] as const)test(`C New folder ${gesture} submits exactly once while its first write is pending`,async t=>{
+ let release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());
+ const {page,requests}=await fixture(t,async r=>r.method==='MKCOL'?(await gate,{status:201}):cFilesReply(r));
+ await button(page,'tab-Files').click();await button(page,'file-add').click();await button(page,'new-folder').click();await page.locator('#form-name').fill('single-request');
+ const create=button(page,'confirm-folder'),box=await create.boundingBox();assert.ok(box);
+ if(gesture==='double-click')await create.dblclick();else{await page.locator('#form-name').press('Enter');await page.mouse.click(box.x+box.width/2,box.y+box.height/2);}
+ await expect.poll(()=>requests.filter(r=>r.method==='MKCOL').length).toBe(1);await expect(create).toBeDisabled();release();await expect(page.locator('#modal')).toHaveCount(0);assert.equal(requests.filter(r=>r.method==='MKCOL').length,1);
+});
+test('C dangerous Work deletion never treats generic Enter as confirmation',async t=>{
+ const {page,requests}=await fixture(t,()=>undefined);await button(page,'work-menu').click();await button(page,'delete-work').click();
+ await page.locator('#delete-confirm').check();await expect(button(page,'confirm-delete')).toBeEnabled();await page.locator('#delete-confirm').press('Enter');
+ await expect(page.locator('#modal')).toBeVisible();await expect(page.locator('#delete-confirm')).toBeChecked();assert.equal(requests.filter(r=>r.method==='DELETE').length,0);
 });
 
 test('Focused Chat stays visible during the narrow breakpoint before resize reconciliation',async t=>{
