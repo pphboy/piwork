@@ -7,9 +7,15 @@ import { createHash } from 'node:crypto';
 
 let browser: Awaited<ReturnType<typeof chromium.launch>>;
 let base = '';
+let nativeDownloadHandler: ((request: IncomingMessage, response: ServerResponse) => Promise<void>) | undefined;
 let nativeUploadHandler: ((request: IncomingMessage, response: ServerResponse) => Promise<void>) | undefined;
 const server = createServer(async (request, response) => {
   if (nativeUploadHandler && request.method === 'PUT' && request.url?.startsWith('/_desktop/files/')) { await nativeUploadHandler(request, response); return; }
+  if (request.method === 'GET' && /^\/_desktop\/api\/downloads\/[^/]+\/content$/.test(request.url || '')) {
+    if (nativeDownloadHandler) await nativeDownloadHandler(request, response);
+    else { response.writeHead(404); response.end(); }
+    return;
+  }
   const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : 'index.html');
   try { response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html'); response.end(await readFile(new URL(path, import.meta.url))); }
   catch { response.writeHead(404); response.end(); }
@@ -32,13 +38,27 @@ type Reply = { passthrough?: boolean; status?: number; json?: unknown; body?: st
 const mtime1 = 'Sat, 03 Oct 2026 01:00:00 GMT';
 const mtime2 = 'Sat, 03 Oct 2026 01:00:02 GMT';
 const mtime3 = 'Sat, 03 Oct 2026 01:00:04 GMT';
-async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false) {
+async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialWork = true) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); t.after(() => page.close()); page.setDefaultTimeout(5000);
   const requests: RequestRecord[] = [];
+  // Browser-managed attachment downloads do not reliably pass through page.route.
+  // Serve content over HTTP and record it once at the server, never as the SPA fallback.
+  nativeDownloadHandler = async (request, response) => {
+    const url = new URL(request.url!, base);
+    const r: RequestRecord = { path: url.pathname.replace('/_desktop/api/', ''), search: url.search, method: request.method!, headers: Object.fromEntries(Object.entries(request.headers).map(([name, value]) => [name, Array.isArray(value) ? value.join(', ') : value || ''])), body: '' };
+    requests.push(r);
+    const reply = await handler(r);
+    if (!reply || reply.passthrough) { response.writeHead(404); response.end(); return; }
+    if (reply.abort) { response.destroy(); return; }
+    response.writeHead(reply.status ?? 200, reply.headers);
+    response.end(reply.json !== undefined ? JSON.stringify(reply.json) : reply.body ?? '');
+  };
+  t.after(async () => { nativeDownloadHandler = undefined; });
   let generation = 1, signedIn = !anonymous, core = 'http://core.test';
   let desired: Record<string, any> = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents', modelRef: 'original', mcp: { servers: [] } };
   const session = () => ({ state: signedIn ? 'authenticated' : 'signed-out', generation, csrf: 'local-session-csrf', coreUrl: core, ...(signedIn ? { user: { account: 'owner', role: 'user' } } : {}) });
   await page.route('**/_desktop/**', async (route: Route) => {
+    if (/\/_desktop\/api\/downloads\/[^/]+\/content$/.test(new URL(route.request().url()).pathname)) { await route.continue(); return; }
     const r: RequestRecord = { path: new URL(route.request().url()).pathname.replace('/_desktop/api/', ''), search:new URL(route.request().url()).search, method: route.request().method(), bytes: route.request().postDataBuffer(), headers: route.request().headers(), body: route.request().postData() ?? '' }; requests.push(r);
     let reply = await handler(r);
     if (!reply) {
@@ -67,7 +87,15 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
   });
   await page.goto(base + (anonymous ? '/' : '/#/work/work-1'));
   await expect(page.getByRole('heading', { name: anonymous ? 'Connect to your Core' : 'Recovery Work', exact: true })).toBeVisible();
-  if (!anonymous) await expect(page.locator('[data-action-status]').filter({ hasText: 'Loading Work' })).toHaveCount(0);
+  if (!anonymous && waitForInitialWork) await expect.poll(() => api(page, `
+    const work = adapter.getWork('work-1');
+    if (!work || ['services', 'configuration', 'packages'].some(key => !work.resourceChecked?.[key] && !work.resourceErrors?.[key]) || Object.values(work.resourceLoading || {}).some(Boolean)) return false;
+    if (['Ready', 'Degraded'].includes(work.status)) {
+      const models = adapter.models.get(work.id), session = work.sessions[0];
+      if (!work.resourceChecked?.agent || !models || models.loading || session && (!session.checkedAt && !session.error || session.loading)) return false;
+    }
+    return true;
+  `)).toBe(true);
   return { page, requests };
 }
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
@@ -105,7 +133,7 @@ test('a pending picked image follows automatic initial Session discovery and fin
   if(r.path==='works/work-1/sessions'){await sessions.promise;return {json:{sessions:[{sessionId:'session-1'}]}};}
   if(r.path.endsWith('/chat-image-capabilities'))return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};
   if(r.path==='works/work-1/runs'&&r.method==='POST'){submitted=JSON.parse(r.body);return {json:{run:{workId:'work-1',sessionId:'session-1',runId:'run-discovered',submissionKey:submitted.submissionKey,state:4}}};}
- });
+ }, false, false);
  await page.evaluate(()=>{const original=File.prototype.arrayBuffer;File.prototype.arrayBuffer=function(){const file=this;return new Promise<ArrayBuffer>(resolve=>{(window as any).releaseImageRead=()=>{File.prototype.arrayBuffer=original;resolve(original.call(file));};});};});
  await page.locator('#chat-image-input').setInputFiles({name:'early.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-draft')).toContainText('Checking');sessions.resolve();await expect(page.locator('.messages')).toContainText('original prompt');await page.evaluate(()=>(window as any).releaseImageRead());await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await button(page,'send-message').click();await expect.poll(()=>submitted?.sessionId).toBe('session-1');assert.equal(requests.filter(r=>r.path==='works/work-1/sessions'&&r.method==='POST').length,0);
 });
@@ -185,7 +213,7 @@ test('accepted image cleanup after navigation preserves the new modal and consum
  const {page,requests}=await fixture(t,async r=>{if(r.path.endsWith('/chat-image-capabilities'))return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};if(r.path==='works/work-1/runs'&&r.method==='POST'){submitted=JSON.parse(r.body);await gate.promise;return {json:{run:run()}};}if(r.path.endsWith('/runs/run-left-view'))return {json:run()};});
  await page.locator('#chat-image-input').setInputFiles({name:'original.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await page.locator('#composer').fill('Original image caption');await button(page,'send-message').click();await expect.poll(()=>submitted?.images?.length).toBe(1);
  await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Keep this new form');gate.resolve();await expect.poll(()=>api(page,"return adapter.chatSubmissions.has('work-1');")).toBe(false);await expect(page.locator('#create-name')).toHaveValue('Keep this new form');
- await button(page,'close-modal').click();await page.locator('[data-action="open-work"][data-id="work-1"]').click();await expect(page.locator('.chat-image-draft')).toHaveCount(0);await expect(page.locator('#composer')).toHaveValue('');assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,1);
+ await button(page,'close-modal').click();await page.locator('.work-name[data-action="open-work"][data-id="work-1"]').click();await expect(page.locator('.chat-image-draft')).toHaveCount(0);await expect(page.locator('#composer')).toHaveValue('');assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,1);
 });
 
 for (const action of ['start', 'retry', 'stop', 'delete', 'create'] as const) test(`D02/D03 ${action}: first paint, duplicate prevention and acceptance before readback`, async t => {
@@ -262,7 +290,7 @@ test('D19 close preserves one automatic original download and a manual same-tran
   const automaticDownload = page.waitForEvent('download'); preparation.resolve();
   const download = await automaticDownload;
   assert.equal(download.url(), `${base}/_desktop/api/downloads/${id}/content`);
-  assert.equal(await download.failure(), null); assert.deepEqual(await readFile((await download.path())!), bytes);
+  assert.equal(await download.failure(), null); assert.deepEqual(await readFile((await download.path())!), bytes); assert.equal(createHash('sha256').update(await readFile((await download.path())!)).digest('hex'), digest); assert.equal(download.suggestedFilename(), 'original.work');
   await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
   assert.match(id, /^[0-9a-f-]{36}$/);
@@ -275,7 +303,7 @@ test('D19 close preserves one automatic original download and a manual same-tran
   const manualDownload = page.waitForEvent('download'); await button(page, 'save-export-file').click();
   const again = await manualDownload;
   assert.equal(again.url(), download.url()); assert.equal(await again.failure(), null);
-  assert.deepEqual(await readFile((await again.path())!), bytes);
+  assert.deepEqual(await readFile((await again.path())!), bytes); assert.equal(createHash('sha256').update(await readFile((await again.path())!)).digest('hex'), digest);
   assert.equal(downloadEvents, 2);
   assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['work-snapshots/snap-1/downloads']);
   assert.deepEqual(requests.filter(r => r.path.endsWith('/content')).map(r => r.path), [`downloads/${id}/content`, `downloads/${id}/content`]);
@@ -308,6 +336,7 @@ test('stopped Export delivers current content once despite a known old snapshot,
   const current = await currentDownload;
   assert.equal(await current.failure(), null); assert.deepEqual(await readFile((await current.path())!), packages['snap-new']);
   assert.equal(current.url(), `${base}/_desktop/api/downloads/${transfers.get('snap-new')}/content`);
+  assert.equal(current.suggestedFilename(), 'snap-new.work'); assert.equal(createHash('sha256').update(await readFile((await current.path())!)).digest('hex'), metadata('snap-new').digest);
   await expect(page.locator('.export-snapshot')).toContainText('snap-new');
   await expect(page.locator('.export-snapshot')).not.toContainText('snap-old');
   await expect(button(page, 'prepare-export')).toHaveCount(0);
@@ -322,6 +351,7 @@ test('stopped Export delivers current content once despite a known old snapshot,
   const old = await oldDownload;
   assert.equal(await old.failure(), null); assert.deepEqual(await readFile((await old.path())!), packages['snap-old']);
   assert.equal(old.url(), `${base}/_desktop/api/downloads/${transfers.get('snap-old')}/content`);
+  assert.equal(old.suggestedFilename(), 'snap-old.work'); assert.equal(createHash('sha256').update(await readFile((await old.path())!)).digest('hex'), metadata('snap-old').digest);
   assert.notEqual(transfers.get('snap-old'), transfers.get('snap-new')); assert.equal(downloadEvents, 2);
   assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['works/work-1/exports', 'work-snapshots/snap-new/downloads', 'work-snapshots/snap-old/downloads']);
   assert.deepEqual(requests.filter(r => r.path.endsWith('/content')).map(r => r.path), [`downloads/${transfers.get('snap-new')}/content`, `downloads/${transfers.get('snap-old')}/content`]);
@@ -386,10 +416,14 @@ for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'set
   }
   armed = true; const before = requests.filter(r=>r.path===endpoint[entry]).length;
   await button(page,trigger).click();
-  await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
+  if (entry==='retry-works') { await expect(page.locator('.page-heading [data-action="retry-works"]')).toHaveAttribute('aria-busy','true'); await expect(page.locator('.page-heading [data-action="retry-works"]')).toBeDisabled(); }
+  else if (entry==='open-work') { await expect(page.locator('.work-header .work-read-feedback[role="status"][aria-busy="true"]')).toBeVisible(); await expect(page.getByRole('heading',{name:'Recovery Work',exact:true})).toBeVisible(); }
+  else if (entry==='files') { await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true'); await expect(page.locator('.main-panel .read-placeholder[aria-busy="true"]')).toBeVisible(); }
+  else if (entry==='sessions'||entry==='select-session') await expect(page.locator('.agent-header [data-action="sessions"]')).toHaveAttribute('aria-busy','true');
+  else await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
   await expect.poll(()=>requests.filter(r=>r.path===endpoint[entry]).length-before).toBe(1);
   // Input/keyboard paths share the same in-flight action, while closing remains legal.
-  if (await button(page,trigger).count()) { await expect(button(page,trigger)).toBeDisabled(); await page.evaluate(action=>document.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)?.click(),trigger); }
+  if (await button(page,trigger).count()) { if(entry!=='open-work') await expect(button(page,trigger)).toBeDisabled(); await page.evaluate(action=>document.querySelector<HTMLElement>(`[data-action="${action}"]`)?.click(),trigger); }
   assert.equal(requests.filter(r=>r.path===endpoint[entry]).length-before,1);
   gate.resolve();
 });
@@ -455,7 +489,7 @@ for (const action of ['read','path','refresh','save','folder','rename','move','c
   else if(action==='path')trigger='file-path';
   else if(action==='refresh')trigger='refresh-files';
   else if(action==='save'){await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();await page.locator('#file-editor').fill('submitted');trigger='save-file';}
-  else if(action==='folder'){await button(page,'new-folder').click();await page.locator('#form-name').fill('research');trigger='confirm-folder';}
+  else if(action==='folder'){await button(page,'file-add').click();await button(page,'new-folder').click();await page.locator('#form-name').fill('research');trigger='confirm-folder';}
   else if(action!=='upload'){
     await page.locator('[data-action="file-menu"][data-path="/note.txt"]').click();await button(page,'file-'+action).click();
     if(action==='rename')await page.locator('#form-name').fill('renamed.txt');
@@ -463,13 +497,15 @@ for (const action of ['read','path','refresh','save','folder','rename','move','c
     trigger=action==='delete'?'confirm-file-delete':'confirm-transfer';
   }
   armed=true;const before=requests.filter(r=>r.method===method&&r.path.startsWith('/_desktop/files/')).length;
-  if(action==='upload'){await page.locator('[data-action=upload]').click();await page.locator('#upload-input').setInputFiles({name:'binary.dat',mimeType:'application/octet-stream',buffer:Buffer.from([0,255,1,128])});}
+  if(action==='upload'){await button(page,'file-add').click();await page.locator('[data-action=upload]').click();await page.locator('#upload-input').setInputFiles({name:'binary.dat',mimeType:'application/octet-stream',buffer:Buffer.from([0,255,1,128])});}
   else if(action==='read')await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();else await button(page,trigger).click();
-  await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
+  if(action==='read') { await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toHaveAttribute('aria-busy','true'); await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toBeDisabled(); }
+  else if(action==='path'||action==='refresh') { await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true'); await expect(button(page,'refresh-files')).toHaveAccessibleName('Reading files…'); }
+  else await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
   if(action==='upload'){await expect(page.locator('#app')).toContainText('File 1 of 1');await expect(page.locator('#app')).toContainText('Waiting for confirmation');}
   await expect.poll(()=>requests.filter(r=>r.method===method&&r.path.startsWith('/_desktop/files/')).length-before).toBe(1);
   if(action==='save'){await page.locator('#file-editor').fill('newer unsaved');operation.resolve();await expect(page.locator('#file-editor')).toHaveValue('newer unsaved');await expect(page.locator('#app')).toContainText('Unsaved');}
-  else {operation.resolve();if(['folder','rename','move','copy','delete','upload'].includes(action))await expect(page.locator('[data-action-status]').filter({hasText:'confirmed'}).first()).toContainText(/confirmed/);}
+  else {operation.resolve();if(['folder','rename','move','copy','delete','upload'].includes(action)){await expect(page.locator('.toast')).toContainText(action==='folder'?'Folder created.':action==='upload'?'Upload complete.':'File changes saved.');await expect.poll(()=>confirmed).toBe(true);await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true');}}
   if(action==='upload'){const put=requests.find(r=>r.method==='PUT')!;assert.deepEqual(uploadedBytes,Buffer.from([0,255,1,128]));assert.equal(put.headers['if-none-match'],'*');}
   refresh.resolve();
 });
@@ -576,9 +612,9 @@ for(const action of ['cancel','resume'] as const)test(`D07 ${action} original Ru
     if(r.path.endsWith('/events')){await gate.promise;return{body:'',headers:{'Content-Type':'application/x-ndjson'}};}
     if(r.path==='works/work-1/runs/run-original')return{json:{run:{runId:'run-original',sessionId:'session-1',state:2}}};
   });
-  await api(page,`adapter.getWork('work-1').run={id:'run-original',sessionId:'session-1',status:'${action==='cancel'?'running':'interrupted'}',cursor:3,created:'',error:'Check the original Run'};`);await button(page,'agent-menu').click();await button(page,'close-modal').click();
+  await api(page,`adapter.getWork('work-1').run={id:'run-original',sessionId:'session-1',status:'${action==='cancel'?'running':'interrupted'}',cursor:3,created:'',error:'Check the original Run'};`);await button(page,'agent-menu').click();await page.keyboard.press('Escape');
   await button(page,action==='cancel'?'cancel-run':'resume-run').click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText(action==='cancel'?'Requesting cancellation':'Reconnecting Run');gate.resolve();
-  if(action==='cancel')await expect(button(page,'cancel-run')).toHaveText('Cancellation requested');else await expect(page.locator('[data-action-status]').filter({hasText:'Reconnected'})).toBeVisible();assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,0);
+  if(action==='cancel')await expect(button(page,'cancel-run')).toHaveText('Cancelling…');else await expect(page.locator('[data-action-status]').filter({hasText:'Reconnected'})).toBeVisible();assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,0);
   if(action==='cancel'){await expect(button(page,'cancel-run')).toBeDisabled();assert.equal(await api(page,"return adapter.getWork('work-1').run.status"),'running');}
 });
 
@@ -689,7 +725,7 @@ test('DWUI-012 readonly file callback after Core switch cannot reopen a file or 
   const {page}=await fixture(t,async r=>{
     if(r.path.startsWith('/_desktop/files/')){if(r.method==='GET'){await gate.promise;return{body:'original private file'};}return{status:207,body:listing('original private file',mtime1)};}
   });
-  await button(page,'tab-Files').click();await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toBeVisible();
+  await button(page,'tab-Files').click();await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toHaveAttribute('aria-busy','true');
   await api(page,"await adapter.switchCore('http://new-core.test')");gate.resolve();await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();await expect(page.locator('#app')).not.toContainText('original private file');await expect(page.locator('#file-editor')).toHaveCount(0);
 });
 
@@ -845,7 +881,7 @@ test('DWUI-017 cleared Start history still recovers Ready and original lookup wi
   await expect(page.locator('#modal')).toContainText('succeeded'); await button(page, 'close-modal').click();
   offline = false;
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 10000 });
-  await expect(page.locator('#composer')).toBeVisible(); await button(page, 'work-menu').click(); await expect(button(page, 'stop-work')).toBeEnabled(); await button(page, 'close-modal').click();
+  await expect(page.locator('#composer')).toBeVisible(); await button(page, 'work-menu').click(); await expect(button(page, 'stop-work')).toBeEnabled(); await page.keyboard.press('Escape');
   assert.equal(await api(page, "return adapter.getWork('work-1').lifecycleIntent"), undefined);
   assert.equal(requests.filter(r => r.path === 'works/work-1/start' && r.method === 'POST').length, 1);
   assert.deepEqual(navigations, []);
@@ -874,9 +910,9 @@ test('DWUI-017 browser B publishes multiple two-second updates while A response 
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
 
-test('C01 Work reentry restores Chat instead of the first-visit Services area', async t => {
+test('C01 Work with no Services opens Chat and preserves it on reentry', async t => {
   const { page, requests } = await fixture(t, () => undefined);
-  await expect(button(page, 'tab-Services')).toHaveClass(/active/);
+  await expect(button(page, 'tab-Chat')).toHaveClass(/active/);
   await button(page, 'tab-Chat').click(); await expect(button(page, 'tab-Chat')).toHaveClass(/active/);
   await button(page, 'back-works').click(); await page.locator('.work-name[data-id="work-1"]').click();
   await expect(button(page, 'tab-Chat')).toHaveClass(/active/);
@@ -955,7 +991,7 @@ for (const exit of ['close', 'view', 'start'] as const) test(`C03 Import ${exit}
 });
 
 for (const width of [360, 500]) test(`Action hierarchy: narrow Files controls remain visible without selection row shifts at ${width}px`, async t => {
-  const { page, requests } = await fixture(t, () => undefined);
+  const { page, requests } = await fixture(t, r => r.method === 'PROPFIND' ? { status: 207, body: listing('original', mtime1) } : undefined);
   await page.setViewportSize({ width, height: 800 });
   await expect(button(page, 'work-menu')).toBeVisible();
   await button(page, 'tab-Files').click();
@@ -967,8 +1003,9 @@ for (const width of [360, 500]) test(`Action hierarchy: narrow Files controls re
     const after = await row.boundingBox(); assert.ok(after); assert.ok(Math.abs(after.y - before.y) <= 1);
     const toolbar = await page.locator('.files-toolbar').boundingBox(), actions = await page.locator('.file-toolbar-actions').boundingBox();
     assert.ok(toolbar && actions); assert.ok(actions.y + actions.height <= toolbar.y + toolbar.height + 1, 'toolbar contains its actions');
-    for (const action of selected ? ['file-copy', 'file-move', 'file-delete', 'clear-selection'] : ['refresh-files', 'upload', 'new-folder', 'file-options']) await expect(button(page, action)).toBeVisible();
+    for (const action of selected ? ['file-copy', 'file-move', 'file-delete', 'clear-selection'] : ['refresh-files', 'file-add']) await expect(button(page, action)).toBeVisible();
+    if (!selected) { await button(page,'file-add').click(); for (const action of ['upload','new-folder','webdav']) await expect(button(page,action)).toBeVisible(); await page.keyboard.press('Escape'); }
   }
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  assert.equal(requests.filter(request => request.method !== 'GET' && request.path.startsWith('files/')).length, 0);
+  assert.equal(requests.filter(request => request.method !== 'GET' && request.path.startsWith('/_desktop/files/') && !['PROPFIND','HEAD'].includes(request.method)).length, 0);
 });
