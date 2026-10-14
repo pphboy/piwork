@@ -84,3 +84,7 @@ test('assistant history and appended streaming prose render Markdown while users
  messages[1]!.text+='\n| three | four |';html=c.messageMarkup(work,'session-a',messages);assert.match(html,/<td>three<\/td>/);
  const toolHtml=c.messageMarkup(work,'session-a',[{id:'tool',role:'assistant',tool:{id:'t',name:'Read',status:'Completed',content:'<script>bad()</script> **literal**'}}]);assert.match(toolHtml,/&lt;script&gt;/);assert.doesNotMatch(toolHtml,/<script>|<strong>/);
 });
+
+test('independent Service options omit Chat and split commands',()=>{
+ const {c}=fixture();c.view.modal='service-menu';c.route=()=>['app','work-a','service-a','80'];c.document={fullscreenElement:null};c.root={};const html=c.modalMarkup();assert.doesNotMatch(html,/data-action="(?:focus-chat|reset-workspace-split)"/);assert.match(html,/data-action="manage-services"/);
+});

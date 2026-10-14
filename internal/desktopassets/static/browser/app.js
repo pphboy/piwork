@@ -1466,7 +1466,7 @@ function modalMarkup() {
         }
         case "service-menu":
             title = "Service options";
-            body = `<div class="menu-list">${btn(`${icon("external")} Open in new tab`, "open-app")}${btn(`${icon("focus")} Open independent window`, "open-window")}${btn(`${icon("copy")} Copy domain`, "copy-domain")}${btn(`${icon("copy")} Copy local link`, "copy-local")}${btn(`${icon("settings")} Manage services`, "manage-services")}${btn(`${icon("note")} Pi requests for this Work`, "pi-requests")}${btn(`${icon("reset")} Reset split`, "reset-workspace-split")}${btn(`${icon("focus")} Focus chat`, "focus-chat")}${browserFullscreenAction()}</div><p class="muted">A local link works on this computer while Desktop CLI is running and signed in. It is not a public share link.</p>`;
+            body = `<div class="menu-list">${btn(`${icon("external")} Open in new tab`, "open-app")}${btn(`${icon("focus")} Open independent window`, "open-window")}${btn(`${icon("copy")} Copy domain`, "copy-domain")}${btn(`${icon("copy")} Copy local link`, "copy-local")}${btn(`${icon("settings")} Manage services`, "manage-services")}${btn(`${icon("note")} Pi requests for this Work`, "pi-requests")}${route()[0] === 'work' ? btn(`${icon("reset")} Reset split`, "reset-workspace-split") + btn(`${icon("focus")} Focus chat`, "focus-chat") : ''}${browserFullscreenAction()}</div><p class="muted">A local link works on this computer while Desktop CLI is running and signed in. It is not a public share link.</p>`;
             break;
         case "manage-services":
             title = "Manage services";
@@ -2009,7 +2009,7 @@ async function handleAction(action, el, record) {
             break;
         }
         case 'reset-workspace-split':
-            if (currentWork) {
+            if (currentWork && route()[0] === 'work' && route()[2] !== 'settings') {
                 workspacePanels.get(currentWork.id).ratio = .7;
                 closeModal();
                 render();
@@ -2511,7 +2511,8 @@ async function handleAction(action, el, record) {
             });
             break;
         case "focus-chat":
-            enterWorkspaceFocus('chat-only', el);
+            if (route()[0] === 'work' && route()[2] !== 'settings')
+                enterWorkspaceFocus('chat-only', el);
             break;
         case "toggle-agent":
             view.agentOpen = !view.agentOpen;
@@ -4484,7 +4485,7 @@ async function loadRoute() {
         view.session = previous.session;
         view.noteLoaded = '';
     }
-    const choices = { area: areaChoice, service: serviceChoice, session: sessionChoice, file: fileChoice };
+    const choices = { area: areaChoice, service: serviceChoice, session: sessionChoice, file: fileChoice, modal: modalChoice };
     const record = actions.begin({ key: `route:${r[1]}:${version}`, kind: 'read', work: r[1], label: 'Loading Work', target: r[1], view: location.hash });
     render();
     try {
@@ -4505,7 +4506,7 @@ async function loadRoute() {
             await adapter.loadSession(work.id, view.session);
         if (!valid())
             return;
-        if (entering && r[0] === 'work' && r[2] !== 'settings' && choices.area === areaChoice)
+        if (entering && r[0] === 'work' && r[2] !== 'settings' && choices.area === areaChoice && choices.modal === modalChoice)
             view.tab = initialWorkArea(savedSelection, work, adapter.project(work).usable, adapter.modelReady(work.id, view.session));
         if (r[2] === 'settings' && !view.configDirty)
             view.config = structuredClone(work.config);

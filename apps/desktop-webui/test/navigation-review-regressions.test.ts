@@ -192,3 +192,12 @@ for(const action of ['select-service','open-controlled-service'])test(`independe
  vm.runInContext(extract(['handleAction']),c);await c.handleAction(action,{dataset:{id:'second',serviceId:'second',port:'90'}});
  assert.equal(c.location.hash,'#/app/one/second/90');assert.equal(c.lastRoute,c.location.hash);assert.equal(c.view.service,'second');assert.equal(c.view.port,90);assert.deepEqual(calls,[['one','second',90]]);
 });
+
+test('late first route cannot change area under a newly opened overlay',async()=>{
+ const {c,work}=fixture(),gate=deferred();c.selectionWorkId='';work.services=[];work.sessions=[];work.resourceChecked={services:'now',agent:'now'};c.workReadErrors=new Map();c.adapter.modelReady=()=>true;c.adapter.loadWork=async()=>{await gate.promise;return work;};
+ vm.runInContext(extract(['loadRoute']),c);const loading=c.loadRoute();c.modalChoice++;c.view.modal='work-menu';gate.resolve();await loading;assert.equal(c.view.tab,'Services');assert.equal(c.view.modal,'work-menu');
+});
+for(const action of ['focus-chat','reset-workspace-split'])test(`independent window rejects inapplicable ${action} dispatch`,async()=>{
+ const {c}=fixture();c.location.hash='#/app/one/first/80';c.view.layout='workspace';c.enterWorkspaceFocus=()=>assert.fail('No Chat focus in independent application');c.workspacePanels={get:()=>assert.fail('No split in independent application')};
+ vm.runInContext(extract(['handleAction']),c);await c.handleAction(action,{dataset:{}});assert.equal(c.view.layout,'workspace');
+});
