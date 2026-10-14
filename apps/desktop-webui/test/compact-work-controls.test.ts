@@ -127,3 +127,23 @@ test('success Toast really auto-dismisses after three seconds and replacement cl
  c.toast('Folder created.');assert.equal(c.view.toast,'Folder created.');assert.equal(delay,3000);
  c.toast('Upload complete.');assert.equal(cleared,2);assert.equal(c.view.toast,'Upload complete.');tick();assert.equal(c.view.toast,'');assert.equal(renders,3);
 });
+
+test('Packages aligns identity/status separately from commands and groups catalog actions',()=>{
+ const {c,work}=fixture();c.catalogFeedback=()=>'';c.packageStatus=()=> 'Saved · Loaded';
+ c.adapter.catalog={packages:{error:'',confirmed:true}};c.adapter.getPackages=()=>[{name:'catalog-package',description:'A long package description',version:'1.0'}];
+ vm.runInContext(extract('packagesSettings'),c);
+ const config={packages:[{name:'a-very-long-package-name',source:'https://example.test/'+ 'long/'.repeat(30),enabled:true}]};
+ const html=c.packagesSettings(work,config);
+ assert.match(html,/class="capability package-capability"/);assert.match(html,/class="package-copy"/);
+ assert.match(html,/class="package-status">[\s\S]*?Saved · Loaded<\/span><\/div><div class="package-actions">/);
+ assert.match(html,/<h3>Available from Core<\/h3><div class="catalog-actions">/);
+ for(const action of ['package-detail','toggle-package','update-package','remove-package']) assert.match(html,new RegExp(`data-action="${action}"[^>]*data-id="a-very-long-package-name"`));
+ assert.match(html,/class="button small danger"[^>]*data-action="remove-package"/);
+ assert.match(html,/data-action="select-package"[^>]*data-id="catalog-package"/);
+ c.adapter.catalog.packages.confirmed=false;assert.match(c.packagesSettings(work,config),/data-action="select-package"[^>]*disabled/);
+ config.packages[0]!.enabled=false;assert.match(c.packagesSettings(work,config),/>Enable<\/button>/);
+ const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
+ assert.match(css,/\.package-capability \{ display:grid;grid-template-columns:36px minmax\(0,1fr\) auto/);
+ assert.match(css,/\.package-copy \{ min-width:0;flex:1;overflow-wrap:anywhere/);
+ assert.match(css,/\.package-status,.package-actions \{ grid-column:2; \}/);
+});

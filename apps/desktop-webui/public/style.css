@@ -3402,3 +3402,35 @@ a.button.primary { color:var(--on-accent,#fff); }
 .read-failure details p { margin:6px 0 0; }
 
 .file-actions-separator { height:1px;background:var(--border);margin:5px 0; }
+
+/* Package identity and status share the same text column; Skills keeps its checkbox column. */
+.package-capability { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:10px 12px;align-items:start; }
+.package-identity { grid-column:1 / 3;min-width:0;flex-wrap:nowrap;align-items:flex-start; }
+.package-copy { min-width:0;flex:1;overflow-wrap:anywhere; }
+.package-copy strong,.package-copy small { overflow-wrap:anywhere; }
+.package-details { grid-column:3; }
+.package-status { grid-column:2 / -1;display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;font-size:11px;color:var(--muted);line-height:1.5;min-width:0;overflow-wrap:anywhere; }
+.package-actions { grid-column:2 / -1;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap; }
+.package-list .catalog-heading { gap:12px;flex-wrap:wrap; }
+.package-list .catalog-heading h3 { flex:1;min-width:0; }
+.catalog-actions { display:flex;gap:8px;flex-wrap:wrap; }
+.package-catalog-row { display:grid;grid-template-columns:36px minmax(0,1fr) auto;align-items:start;gap:12px; }
+.package-catalog-row > .button { align-self:center; }
+.package-capability .button,.package-list .catalog-heading .button,.package-catalog-row .button,.service-controls .button { min-height:32px; }
+.modal-body .property-list { align-items:start;gap:12px 16px;line-height:1.6; }
+.property-list dt,.property-list dd { min-width:0;padding:3px 0; }
+.property-value-action { display:flex;align-items:center;gap:8px; }
+.property-value-action code { min-width:0;overflow-wrap:anywhere; }
+.property-value-action > .button { flex:none;margin:0; }
+@media(max-width:768px) {
+  .package-capability { grid-template-columns:31px minmax(0,1fr);gap:10px 8px; }
+  .package-identity { grid-column:1 / -1;gap:8px; }
+  .package-identity > .package-copy { min-width:0; }
+  .package-details { grid-column:2;justify-self:start; }
+  .package-status,.package-actions { grid-column:2; }
+  .package-actions { justify-content:flex-start; }
+  .package-catalog-row { grid-template-columns:31px minmax(0,1fr);gap:8px; }
+  .package-catalog-row > .button { grid-column:2;justify-self:start; }
+  .package-list .catalog-heading h3 { flex-basis:100%; }
+  .modal-body .property-list { grid-template-columns:minmax(80px,30%) minmax(0,1fr);gap:10px 12px; }
+}
