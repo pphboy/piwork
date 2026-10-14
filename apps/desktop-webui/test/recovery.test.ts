@@ -766,7 +766,10 @@ test('UX revision Focus icons use their toolbar roles and Escape closes exactly 
   await page.locator('#composer').fill('/mo');await expect(page.locator('.command-palette')).toBeVisible();await page.locator('#composer').press('Escape');
   await expect(page.locator('.command-palette')).toHaveCount(0);await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
   await page.keyboard.press('Escape');await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');
-  await page.setViewportSize({width:360,height:800});await page.keyboard.press('Escape');
+  await expect(button(page,'focus-chat')).toBeFocused();
+  await page.setViewportSize({width:360,height:800});
+  await expect(button(page,'focus-chat')).toBeFocused();
+  await page.keyboard.press('Escape');
   await expect(page.locator('#app')).toHaveAttribute('data-layout','service-only');await expect(page.locator('#composer')).toBeHidden();
   await page.keyboard.press('Escape');await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace');
   await expect(button(page,'service-focus')).toBeFocused();
@@ -2815,4 +2818,18 @@ for (const ending of ['success','failure','focus-moved'] as const) test(`Files s
  await expect(ending==='focus-moved'?page.locator('#composer'):refresh).toBeFocused();assert.equal(requests.filter(r=>r.method==='PROPFIND').length,before+1);
  if(ending==='failure')await expect(page.locator('#app')).toContainText('Original directory temporarily unavailable');
  assert.equal(requests.filter(r=>['PUT','DELETE','MOVE','COPY','MKCOL'].includes(r.method)).length,0);
+});
+
+test('Focused Chat stays visible during the narrow breakpoint before resize reconciliation',async t=>{
+ const page=await browser.newPage({viewport:{width:1440,height:900}});t.after(()=>page.close());
+ // The confirmed layout exists before the resize listener can add narrow-chat.
+ // Use the real stylesheet without the app listener to observe that exact interval.
+ await page.setContent('<main class="service-focused" data-layout="service-chat"><div class="work-layout service-workspace"><section class="main-panel"></section><aside class="agent-side"><button id="focus-return">Focus chat</button></aside></div></main>');
+ await page.addStyleTag({url:base+'/style.css'});
+ const anchor=page.locator('#focus-return');await anchor.focus();await expect(anchor).toBeFocused();
+ await page.setViewportSize({width:360,height:900});
+ await expect(page.locator('.agent-side')).toHaveCSS('display','block');await expect(anchor).toBeFocused();
+ await expect(page.locator('.work-layout')).not.toHaveClass(/narrow-chat/);
+ await page.locator('main').evaluate(node=>node.dataset.layout='service-only');
+ await expect(page.locator('.agent-side')).toHaveCSS('display','none');
 });

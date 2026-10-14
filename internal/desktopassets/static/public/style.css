@@ -3408,6 +3408,8 @@ dd > .button {
  .work-layout.service-workspace > .main-panel { height:100%;grid-column:1; }
  .work-layout.service-workspace > .workspace-splitter,.work-layout.service-workspace > .agent-side { display:none; }
  .work-layout.service-workspace.narrow-chat > .main-panel { display:none; }
+ /* The layout is already confirmed before resize renders narrow-chat; never transiently hide its focused Agent. */
+ .service-focused[data-layout="service-chat"] .work-layout.service-workspace > .agent-side,
  .work-layout.service-workspace.narrow-chat > .agent-side,.work-layout.service-workspace.chat-main > .agent-side { display:block;position:static;grid-column:1;width:100%;height:100%; }
  .service-focused .service-toolbar .actions { width:auto; }
  .modal.request-inspector { width:100%;border-radius:0; }

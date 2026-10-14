@@ -88,3 +88,7 @@ test('assistant history and appended streaming prose render Markdown while users
 test('independent Service options omit Chat and split commands',()=>{
  const {c}=fixture();c.view.modal='service-menu';c.route=()=>['app','work-a','service-a','80'];c.document={fullscreenElement:null};c.root={};const html=c.modalMarkup();assert.doesNotMatch(html,/data-action="(?:focus-chat|reset-workspace-split)"/);assert.match(html,/data-action="manage-services"/);
 });
+
+test('narrow service-chat remains visible before resize can add the local narrow-chat class',()=>{
+ const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');assert.match(css,/\.service-focused\[data-layout="service-chat"\] \.work-layout\.service-workspace > \.agent-side,[\s\S]*?display:block/);assert.doesNotMatch(css,/\.service-focused\[data-layout="service-only"\][^}]*display:block/);
+});
