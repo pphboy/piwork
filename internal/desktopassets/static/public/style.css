@@ -1321,22 +1321,12 @@ pre,
   line-height: 1.8;
   margin-bottom: 25px;
 }
-.loading-list {
-  padding: 30px;
-  background: white;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  text-align: center;
-}
-.skeleton {
-  height: 46px;
-  margin: 20px 0;
-  border-radius: 6px;
-  background: #eef2f6;
-}
-.loading-list p {
-  font-size: 13px;
-}
+.loading-list { padding:12px 20px;background:var(--surface);border:1px solid var(--border);border-radius:8px; }
+.loading-list .skeleton { display:grid;grid-template-columns:40px minmax(0,1fr) 96px;gap:16px;align-items:center;min-height:76px;border-bottom:1px solid var(--border); }
+.loading-list .skeleton:last-child { border-bottom:0; }
+.loading-list .skeleton i { height:40px;border-radius:8px;background:var(--surface-subtle); }
+.loading-list .skeleton span { height:14px;max-width:60%;border-radius:4px;background:var(--surface-subtle); }
+.loading-list .skeleton span:last-child { max-width:100%; }
 .files-toolbar {
   display: flex;
   flex: none;
@@ -3504,9 +3494,13 @@ a.work-name,a.button { text-decoration:none;color:inherit; }
 a.button.primary { color:var(--on-accent,#fff); }
 
 /* First reads use static structure; background reads never replace loaded content. */
-.read-placeholder { padding:16px;color:var(--muted);font-size:13px; }
-.read-placeholder-line { height:16px;margin-top:18px;background:var(--surface-subtle);border-radius:4px;max-width:80%; }
-.read-placeholder-line:nth-child(3) { max-width:65%; }
+.read-placeholder { padding:24px; }
+.read-placeholder-line { height:16px;margin-bottom:18px;background:var(--surface-subtle);border-radius:4px;max-width:80%; }
+.read-placeholder-line:last-child { max-width:65%; }
+.read-placeholder-field { display:inline-block;width:112px;height:14px;border-radius:4px;background:var(--surface-subtle);vertical-align:middle; }
+/* A one-step reveal suppresses fast-read flashes without delaying real content. */
+.read-placeholder-line,.read-placeholder-field,.loading-list .skeleton { animation:read-placeholder-reveal 0s 150ms both; }
+@keyframes read-placeholder-reveal { from { opacity:0; } to { opacity:1; } }
 .read-failure { align-items:flex-start; }
 .read-failure > div { flex:1;min-width:0; }
 .read-failure details { margin-top:4px;font-size:12px;overflow-wrap:anywhere; }
@@ -3548,11 +3542,11 @@ a.button.primary { color:var(--on-accent,#fff); }
 
 /* Static first-read shapes only; confirmed content stays mounted during refresh. */
 .read-placeholder-service { min-height:260px; }
-.read-placeholder-service .read-placeholder-line:first-of-type { height:32px;max-width:45%; }
+.read-placeholder-service .read-placeholder-line:first-child { height:24px;max-width:38%; }
 .read-placeholder-service .read-placeholder-line:last-child { height:144px;max-width:100%; }
 .read-placeholder-conversation { min-height:220px; }
-.read-placeholder-conversation .read-placeholder-line { height:40px;max-width:78%; }
-.read-placeholder-conversation .read-placeholder-line:nth-child(3) { margin-left:auto;max-width:58%; }
+.read-placeholder-conversation .read-placeholder-line { height:56px;max-width:78%;border-radius:12px; }
+.read-placeholder-conversation .read-placeholder-line:nth-child(2) { height:40px;margin-left:auto;max-width:58%; }
 .work-loading { padding:24px; }
 
 /* Markdown is scoped to assistant prose; tool output and user text stay literal. */

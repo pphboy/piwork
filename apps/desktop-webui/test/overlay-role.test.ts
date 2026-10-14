@@ -157,3 +157,31 @@ test('first Chat read uses neutral Session/model labels while real errors and un
  c.adapter.models.set('a',{loading:false,confirmed:false,error:'Offline',models:[]});settings=c.chatSettings(work,'');assert.match(settings.status,/Offline/);assert.equal(settings.recovery.action,'load-models');
  c.adapter.models.set('a',{loading:true,confirmed:false,error:'',models:[]});c.adapter.modelSelection=()=>({ref:null,thinking:null,phase:'unknown'});settings=c.chatSettings(work,'');assert.equal(settings.recovery.action,'check-session-model');
 });
+
+test('first-read shapes contain no visible text while Chat fields and input keep their controls',()=>{
+ const {c,work}=rendererFixture();
+ for(const shape of ['rows','conversation','service']) {
+  const html=vm.runInContext(`readPlaceholder('Loading content…', '${shape}')`,c);
+  assert.match(html,/role="status" aria-label="Loading content…" aria-busy="true"/);
+  assert.equal(html.replace(/<[^>]*>/g,''),'');
+  assert.equal((html.match(/aria-hidden="true"/g)||[]).length,3);
+ }
+ delete work.resourceChecked.agent;
+ const html=c.agent(work,false);
+ assert.match(html,/data-action="sessions" aria-label="Loading conversations" aria-busy="true"/);
+ assert.match(html,/read-placeholder-field/);assert.match(html,/id="composer"/);
+ assert.doesNotMatch(html.replace(/<[^>]*>/g,''),/Loading|No Session yet/);
+ vm.runInContext(extract('modelComposer'),c);vm.runInContext(extract('modelFeedback'),c);
+ c.chatSettings=()=>({name:'Loading models…',thinking:'Loading…',state:{ref:null},initialLoading:true,status:'Loading models…'});
+ assert.match(c.modelComposer(work,''),/aria-label="Loading response settings" aria-busy="true"/);
+ assert.equal(c.modelComposer(work,'').replace(/<[^>]*>/g,''),'');assert.equal(c.modelFeedback(work,''),'');
+ c.chatSettings=()=>({name:'Saved model',thinking:'Off',state:{ref:null},status:'Models unavailable',recovery:{label:'Retry models',action:'load-models'}});
+ assert.match(c.modelComposer(work,''),/Saved model/);assert.match(c.modelFeedback(work,''),/Models unavailable/);assert.match(c.modelFeedback(work,''),/Retry models/);
+});
+
+test('first-read reveal is CSS-only, static, and does not reintroduce modal animations',()=>{
+ const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
+ assert.match(css,/animation:read-placeholder-reveal 0s 150ms both/);
+ assert.match(css,/@keyframes read-placeholder-reveal \{ from \{ opacity:0; \} to \{ opacity:1; \} \}/);
+ assert.doesNotMatch(css,/modal-in|modal-out|modal-exit-|animation:[^;]*(?:shimmer|pulse)/);
+});
