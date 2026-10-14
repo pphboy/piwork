@@ -25,7 +25,7 @@ function fixture() {
     actions: { records: new Map(), begin: () => undefined, current: () => true, review: (r: any) => { r.blocked = false; } },
     render: () => {}, toast: () => {}, openModal: () => {}, activeService: () => work.services[0], current: () => work, targetWork: () => work,
     ViewChanged: class extends Error {}, URLSearchParams,
-    restoreSelection: navigation.restoreSelection, exitWorkspaceFocus: async () => true,
+    restoreSelection: navigation.restoreSelection, initialWorkArea: navigation.initialWorkArea, exitWorkspaceFocus: async () => true,
   };
   c.route = () => c.location.hash.replace(/^#\/?/, '').split('/');
   c.viewKey = () => `${c.location.hash}:${c.modalChoice}:${c.view.tab}:${c.view.path}:${c.view.file}`;
@@ -177,4 +177,11 @@ test('late confirmed save callback after identity change cannot mutate editor or
  const {c}=fixture();c.view.file='/draft';c.view.fileDraft='new';c.view.fileOriginal='old';c.assertFileAdmission=()=>{};let notices=0;c.toast=()=>notices++;
  c.adapter.saveFile=async(_work:any,_path:any,_text:any,_baseline:any,_unprotected:any,confirmed:any)=>{c.adapter.identityEpoch++;confirmed({modified:'new-version'});return {status:'succeeded',message:'Confirmed'};};
  vm.runInContext(extract(['saveFile']),c);await assert.rejects(c.saveFile());assert.equal(c.view.fileOriginal,'old');assert.equal(notices,0);
+});
+
+test('first route chooses Chat only after confirmed reads and never overrides a newer area choice',async()=>{
+ for(const chooseLater of [false,true]){
+  const {c,work}=fixture(),gate=deferred();c.selectionWorkId='';work.services=[];work.sessions=[];work.resourceChecked={services:'now',agent:'now'};c.workReadErrors=new Map();c.adapter.modelReady=()=>true;c.adapter.loadWork=async()=>{await gate.promise;return work;};
+  vm.runInContext(extract(['loadRoute']),c);const loading=c.loadRoute();if(chooseLater){c.areaChoice++;c.view.tab='Files';}gate.resolve();await loading;assert.equal(c.view.tab,chooseLater?'Files':'Chat');
+ }
 });
