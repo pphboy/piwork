@@ -319,3 +319,34 @@ GUI使用的 `app.js` SHA-256为 `a8cf325f050e5911304222183944cfbd6de8e76319b55a
 ### 未测边界
 
 本轮没有真实Core、Docker、生产Service写入、实际上传/删除/Run发送、真实系统全屏或读屏验证。合成夹具只接受必要入口授权和只读资源，其他业务写入拒绝；File Delete/Upload真假覆盖与链接modifier主要由生产代码/adapter回归证明，不宣称全部真实业务GUI通过。原17项历史未测、360px完整矩阵、身份/权限浏览器全链路与此前未完成项继续保留。所有Modal仍无开关动画。
+
+## 2026-10-14 Files/Chat读取状态与轻量入口
+
+### 基线、实现与冻结
+
+读取远端PR#2基线 `d0d476b6410ca827f9e5a625614990c2377f714d`；本地等价 `5b783757c84801e28dfa17ec8d2d3bec12b27e31`，共同tree `87efc82cab7f56a694392093f42e18139f941eff`。本轮实现提交 `d042ad49a4dc05e71cc914ada94ac9af0a1234cc`，tree `dd30382f4643ac70eb7ccf7180504aa2cccf59fa`。最终候选22资源已冻结；app.js SHA256 `26d91d3c0344f4c0046dc47b4d21b687bc8d015936956ac12bd88cf65953a082`。冻结/嵌入/构建的逐资源hash同包交付。
+
+### 自动检查的实际结果
+
+- 414项纯函数/adapter/生产renderer及handler回归通过，0失败/跳过。包含目录首次/缓存空/其他目录缓存/局部失败、Chat静默背景读/单处错误/真正空、activeRun loading/idle未确认/error、导航origin与Session读错误作用域、原unknown锁及Service真实iframe端口。旧夹具没有checkedAt的断言按当前目录真实已确认状态更新，未降低保护。
+- 全7workspace typecheck通过。首次运行缺少既有work-store/pi-adapter声明，按原build入口生成后重跑通过；没有改依赖。最终Desktop build/typecheck通过并同步22嵌入资源。
+- Go1.25.5、Node24.19.0宿主linux/amd64构建通过；构建实际身份与modified标志按原build.json保存，不改写。
+- 改动相关 `go test ./internal/cli -run '^TestNativeDesktopEmbeddedBrowserAndLocalIdentity$' -count=1` 通过，新增favicon link断言及原PNG字节/MIME/Host限制检查均执行。
+- 完整 `go test ./internal/cli ./internal/desktopassets` 未通过：23项失败包含netlink权限、容器/宿主进程启动及控制通道不可用；该环境结果不冒充全CLI通过，且未在基线逐项证明皆为既有失败。desktopassets无独立测试文件。
+- 文档/原生边界检查、对应5项测试、OpenSpec strict、git diff --check通过。无Core/API/contracts/依赖改动，无Modal动画。
+
+### 验证边界
+
+本轮没有执行完整test:browser六组真实浏览器/原生宿主入口，不将414纯回归当作该完整命令通过；真实Core/Docker、生产文件修改、真实系统读屏及完整身份中途切换/未知写状态GUI矩阵仍未测。原17项及所有历史完整矩阵限制保留；源码保留安全逻辑不等于逐项浏览器验收。
+
+### 官方Chrome最终v4b定向事实
+
+最终候选app.js为上述 `26d91d3c…`，fixture启动清单逐项匹配22冻结资源。最终代表图全部以final-*命名重拍；早期v2/v3/v4截图不冒充最终截图。fixture启动字节比对不等于独立逐HTTP响应hash巡检。
+
+- Files刷新固定40×40、原位aria-busy，保留已加载行，额外action-status/local-read-status为0；ellipsis菜单准确给Upload files/New folder。500px最终宽度/滚动宽度同为500，无横向溢出；失败保留内容，重试恢复健康且无旧错误。
+- Chat缓存读保留历史及草稿，无时间戳或替换式加载。QA确实复现过“失败Sessions记录在成功重试后复活”的缺陷；已修后最终重复picker失败→原地成功重试的warning/generic均为0，从picker关闭后panel重试也为0，同一草稿保留。
+- 首次Sessions未返回且模型读取失败时仍为Loading conversation静态占位，无假欢迎且Send disabled。初次activeRun的中性busy/disabled/aria-busy在v4实际验证，v4b只补同scope读错误清理；真正超时仍有Check status与发送限制（该超时为v3事实，不称为最终全状态矩阵）。
+- 最终Service主Header/选择列表不展示端口，Reset split有明确SVG重置图标；详情选择9090实际更新独立route与iframe到第二合成origin，不只是改标签。最终顶层浏览器页可见Piwork favicon，PNG自然尺寸1254×1254。
+- 52行Files刷新前后scrollTop2961保持2961、等待期间选择保留在v3实际执行；最终版本相关布局没有再改动，但不将其标为最终全滚动矩阵。
+
+最终GUI没有剩余定向产品阻断。真实Core、读屏、完整Chat滚动/身份切换/unknown写入矩阵仍遵守上节限制。交付包含REPORT、检查记录及最终截图，旧证据不替代最终代表图。

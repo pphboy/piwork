@@ -82,3 +82,11 @@ Input options按钮只打开设置对话框，以展开语义表达；内部Incl
 - Service/会话读取失败显示原资源重试；缓存对话在重读期间仍在。Works名称/Open Work为真实链接，普通点击仍保护未保存内容。
 - 删除文件确认明确UI不能恢复。上传失败不再一律称覆盖：只对已确认存在的目标请求替换；普通失败可重新检查，未知写入先刷新核对且不会直接重复提交。
 - 后续开发按[稳定组件规范](../../../specs/desktop-ui-language/ui-component-adoption.md)选型；不以此要求全量重写或过度设计。
+
+## 2026-10-14：读取反馈、更多命令与Service详情
+
+Files工具栏的Refresh为固定图标：读取时原位等待，完成恢复普通图标。后台读取保留当前内容、选择及滚动；首次目录用静态占位，失败就近显示简短原因，Details展开具体错误并可Retry。Upload files与New folder在More file actions（省略号）菜单，键盘关闭与原创建/上传确认保持。
+
+Chat普通读取不再插入“Saved conversation / retrieved”时间戳或独立读取条。已有消息和草稿保留；首次读取用局部占位，失败提供一次局部重试。发送处的中性检查图标表示正在核对当前Run，尚未确认仍不能提交依赖该状态的消息；真正错误、断连、生成和未知提交继续显示原恢复动作。
+
+Service Header及切换列表不再显示端口。Manage services → 当前Service详情仍能检查声明端口；多入口服务可在那里选择已声明Web entry，独立应用窗口同步其合法端口路由。Reset split带重置箭头。Desktop标签页图标复用Piwork标志，无需新增资源。全部Modal仍无开关动画。

@@ -139,3 +139,7 @@
 按用户明确规则修正已有入口：账号/Work/Agent/Service/文件更多操作为锚定Dropdown；Service选择、模型与简单输入设置为非阻断Popover；持续Service管理/详情为Drawer；删除/停止/覆盖确认、导入及独立长表单继续Modal。信息提示只解释所属元素，不承接操作。Show/Hide Chat从Work导航下移到Service Header同一控件，窄屏保留可见的同层恢复出口。保留无Modal动画、原安全/身份/草稿/iframe/写锁，不修改Service业务内容、Core/API或依赖。
 
 本次随后按用户“全部已确认不合规范项完成”的要求，加入Operations/Run/Package持续Inspector、分隔线常驻握柄与12px抓取区，并修复审计实证的错误空态、会话缓存闪退、真实导航链接、删除恢复说明及上传结果分类。只改现有界面/浏览器adapter表达和原动作入口，不新增业务能力或全局设计系统。
+
+## 2026-10-14 已授权补充：读取反馈与入口语义
+
+用户已确认 Files/Chat 读取方案：首次局部静态占位、缓存内容不被背景刷新替换、手动操作原位紧凑反馈、失败就近单处与重试、不保留成功/读取时间状态条；真实执行、断连、未知写入及锁保持。同期修正 Reset split 的重置图标、Files 更多命令入口、Service Header/选择器移除技术端口（详情保留合法多入口），Desktop favicon复用已嵌入Piwork标志。范围仅现有Desktop展示/前端状态及其测试、资产；不改Core/API/依赖，不恢复Modal动画。

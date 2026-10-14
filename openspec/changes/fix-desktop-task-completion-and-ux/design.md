@@ -6,6 +6,8 @@
 
 当前主要问题模型是“领域任务、页面展示和观察请求共用同一种结束条件”：`app.ts` 的 `stay()` 绑定 hash/modalChoice，关闭导出面板会跳过 await 后的下载；`show(operation)` 把多个简单动作都落到技术详情；`projectWork().usable` 又把一次 statusError 当作整个工作区不可用。已有对象锁、幂等恢复和增量 iframe 保留机制仍有价值，修复应分离这些生命周期，而不是删掉保护。
 
+最新增量设计以文末2026-10-14读取反馈与次级信息为准；前轮＋、端口标签和Updated方案已由该增量取代，历史验收不改写。
+
 ### 证据账本与范围判定
 
 证据分为“源码确认”“合成状态执行”“合成浏览器复现”“真实后端/人工待验”。Bug 指行为错误或既有契约不满足；用户目标与设计改善不包装成 Bug。编号沿用交付的26项清单，其中20为风险脚注，03含A/B/C子场景。
@@ -237,3 +239,12 @@ Chat显隐控件移至Service工具栏；窄屏Chat显示时仍保留Service Hea
 - Work名称/Open Work是可复制真实hash目的地的Link；普通点击仍走原dirty guard，Ctrl/Meta/中键保留浏览器行为。
 - File Delete补充UI不可恢复说明。Upload review只将needsConsent已确认目标列作Overwrite；普通失败重试不带overwrite授权；unknown只读核对且成功项不重传，原版本与路径锁保留。
 - Dropdown失败保留可见错误；模型summary重复点击关闭；Drawer列表换详情只在显式打开时聚焦Close，背景异步更新不抢焦点。旧菜单负margin引起1px横滚，限定Dropdown重置margin和长命令换行，不裁掉内容。
+
+## 2026-10-14 读取反馈收敛与次级信息
+
+- Files 的刷新为40px icon button，等待在原位并保持真实操作锁；完成恢复普通图标，无Updated字样、成功toast或额外行。目录以 `(Work,path)` 的checkedAt/error判断初次/缓存/失败，不能以其他目录文件判断当前目录已读。首次占位保留工具栏；缓存空目录也是真正已确认空态。
+- Chat保留原消息、草稿及阅读锚点。后台Session读取不再插入时间戳；首次未确认内容使用静态占位，不提前显示欢迎。会话错误汇成一次局部说明、可展开详情与重试；原模型专属错误仍由原模型区域管理。
+- activeRun初次真实loading只在发送图标表示中性检查，发送准入不放宽。未确认但未实际读取仍有Check status，真实读取失败保持持续警告；chatSubmissions unknown、stream断连及Run状态不是普通刷新，完全保留。
+- ActionState仍协调锁/生命周期；仅Files/Chat白名单纯read的普通等待/成功由模块承接。read错误绑定Work/path/Session，导航失败保留原位置到目标的上下文；unknown mutation不得被展示过滤或到期解除。
+- Files的Upload files/New folder为混合命令集合，用ellipsis及More file actions而非创建＋；保持role=menu、键盘和路径身份校验。Reset split用回转箭头图标。Service主Header及选择器只保留名称/状态；详情保留声明端口，当前多入口服务可选择已声明端口。独立窗口同步已验证路由，不改变实际入口或越过就绪保护。
+- favicon直接引用现有 `/desktop/piwork-logo.png`，复用现有PNG/MIME/Host边界及嵌入流程，不另造图标资产。

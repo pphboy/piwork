@@ -95,13 +95,13 @@
 - [x] 12.2 将Run Details移至真实runId对应消息轮次/Activity或明确active执行状态，移除无上下文常驻入口。验证：同Run多段只一个入口、不同Run不串、缺runId不猜测、另一Session/Service占槽与当前失败并存；Run succeeded不当Request completed，Cancel/Stop and send原行为回归；记录实际证据。（DWUI-004）
 - [ ] 12.3 分离普通Chat显隐与workspace/focus状态，页面内按身份/Work记忆比例与显隐，维持Restore layout/Exit focus语义。验证：普通折叠保留导航、展开/重进/Files聚焦返回及身份清理，文字图片草稿/阅读位置/选区/焦点保持，同iframe document/load计数与Session/Run提交计数不变；独立Service不增Chat。（DUL-002、DWUI-002、BSA-005）
 - [ ] 12.4 增加可拖separator、最小宽度、重置与键盘操作，窄屏改单面板/覆盖层且保留原宽屏比例。验证：指针跨iframe、取消拖动/层清理、左右/Shift/Home/End/Escape、可访问比例、长内容、500px/360px往返、reduced-motion；比例按容器夹取，无全页横滚；补对应测试与证据。（DUL-002/007）
-- [ ] 12.5 重组Service选择器的名称/状态/声明端口/选中标记及管理出口，单端口轻显示、多端口选择。验证：长名称、Ready/Starting/Stopped/Failed/Disabled、非Web/Removed、多端口、快速切换晚响应、键盘关闭/焦点恢复，不自动Start或变更Chat；记录证据。（DWUI-005）
+- [ ] 12.5 重组Service选择器的名称/状态/选中标记及管理出口；按最新反馈端口归详情、多入口仍可选择。验证：长名称、Ready/Starting/Stopped/Failed/Disabled、非Web/Removed、多端口、快速切换晚响应、键盘关闭/焦点恢复，不自动Start或变更Chat；记录证据。（DWUI-005）
 - [ ] 12.6 以真实剩余高度替代工作区固定减数，移除底部约35px外壳余白，最多一条StatusLine。验证：常规/专注/独立窗口、Chat显隐、Degraded/错误提示出现消失、窗口宽高变化和浏览器缩放，底边贴合、输入/必要错误可达、内层滚动正确；不改iframe业务DOM，不用固定35px补偿；记录几何与截图。（DWUI-002、DUL-007、BSA-005）
 
 ## 13. Files与Settings减重
 
 - [ ] 13.1 Files只保留一个Refresh，将等待/成功反馈放回原控件，去重复Status checked行和成功toast。验证：快/慢/十秒等待、成功未变、失败/未知、连续刷新、文件多选几何/焦点，错误与安全下一步仍可见、未知写入不重放；定向修改读反馈而不删除全局必要状态，更新证据。（DWUI-006/019）
-- [ ] 13.2 Upload/New folder收进＋菜单，去重复刷新及无独立作用的Workspace options，保留WebDAV与空目录引导。验证：键盘/窄屏菜单、路径目标、上传覆盖、命名Enter/IME、菜单关闭焦点和批量动作稳定；能力不丢失，补测试与使用说明。（DUL-015、DWUI-006）
+- [ ] 13.2 Upload/New folder收进更多命令菜单，去重复刷新及无独立作用的Workspace options，保留WebDAV与空目录引导。验证：键盘/窄屏菜单、路径目标、上传覆盖、命名Enter/IME、菜单关闭焦点和批量动作稳定；能力不丢失，补测试与使用说明。（DUL-015、DWUI-006）
 - [ ] 13.3 Settings左侧返回导航及正常配置轻状态，异常/待应用仍明确。验证：原Services/Files/Chat返回、dirty guard、一致/dirty/Not applied/Applying/failed/unknown、晚结果与后续编辑、配置刷新不改草稿，Save/Apply仍分离；补定向回归与截图。（DWUI-007）
 
 ## 14. Works主页与Admin身份
@@ -124,7 +124,7 @@
 ## 17. 截图反馈的组件语义修正
 
 - [x] 17.1 固定同一Chat显隐按钮和面板图标，正常Settings移除空Details，Input options与Move纠正语义；生产renderer测试及宽/500px实际操作。
-- [ ] 17.2 Files＋改锚定非模态菜单，验证外侧/Escape/Tab/方向键/快速切换、路径身份变化、Upload和New folder出口与原安全保护。
+- [ ] 17.2 Files更多命令菜单改锚定非模态菜单，验证外侧/Escape/Tab/方向键/快速切换、路径身份变化、Upload和New folder出口与原安全保护。
 - [ ] 17.3 按最新要求完全移除Modal动画与退场层，验证快开关/重开/轮询/导航/身份/减少动态效果；无遗留遮罩、点击拦截或旧焦点覆盖。
 - [x] 17.4 运行完整纯回归、typecheck/build/embed及官方云浏览器定向检查，按事实更新证据；原17项及其他完整矩阵未测保持，不同步主Spec或归档。
 
@@ -142,3 +142,11 @@
 - [x] 18.6 完成有限实证修正：split握柄、Service/Chat失败与重试、Session缓存、Work导航Link、删除恢复说明、Upload review真假覆盖；运行生产handler/renderer与adapter回归，不引入业务能力。
 
 本轮第18节6项完成，当前46/77；第1—17节40/71与全部历史未测项保持不变。403项纯回归、22资源一致性与官方Chrome1440/500px定向证据见最新验收；不等于全自动浏览器、真实Core或全量无障碍通过。
+
+## 19. 读取状态与截图反馈（2026-10-14）
+
+- [x] 19.1 将Files/Chat普通读取收敛至原位控件与首次静态占位，保留缓存内容、错误恢复、身份/路径/Session归属及unknown锁；验证空缓存、首次失败、背景读取、真正未确认Run与安全边界。
+- [x] 19.2 修正Reset split图标、Files更多命令入口、Service技术端口层级与合法多入口，复用Piwork标志为Desktop favicon；验证真实renderer/handler和资源路由。
+- [x] 19.3 执行回归、typecheck、build/embed/宿主及定向浏览器截图，记录冻结资产、实际通过与限制；代码/测试/嵌入和OpenSpec分别提交，历史未测矩阵不冒充完成。
+
+本轮19.1—19.3按实际定向验证完成，当前49/80；前46/77及所有历史未测项不变。414纯回归、最终v4b定向Chrome与明确未通过/未测边界见验收记录。

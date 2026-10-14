@@ -41,7 +41,7 @@ Pi Requests SHALL 区分业务目标、一次 Run 和当前 Session：列表按�
 
 宽屏 Service/Chat SHALL 保持左应用右对话，并提供可拖动及键盘可操作的分隔线、最小可读宽度和重置默认布局入口。普通 Collapse Chat SHALL 只收起辅助栏，保留 Work 导航；Show chat 恢复当前身份页面内该 Work 的比例、Session、草稿和阅读位置。Focus chat、Restore layout、Exit focus 与普通折叠 SHALL 是不同动作。窄屏 SHALL 使用单面板或可关闭覆盖层，隐藏不可用的分隔线；返回宽屏恢复上次比例并按可用宽度限制，不新增跨重启恢复承诺。
 
-Service 选择器 SHALL 将名称、真实状态、声明 Web 端口及选中标记按一致列表结构呈现；单端口采用轻标签，多端口提供独立选择，Manage services 为管理出口。切换不自动启动不可用 Service，不切换当前 Chat Session，不猜测未声明端口；不可用项给真实原因，长名称与键盘/窄屏可操作。独立 Service 窗口不因布局改进新增 Chat。
+Service 选择器 SHALL 将名称、真实状态及选中标记按一致列表结构呈现；主Header与选择器不展示技术端口，声明端口与合法多入口选择归Service详情，Manage services 为管理出口。切换不自动启动不可用 Service，不切换当前 Chat Session，不猜测未声明端口；不可用项给真实原因，长名称与键盘/窄屏可操作。独立 Service 窗口不因布局改进新增 Chat。
 
 #### Scenario: 有可用 Service 的 Work
 - **WHEN** 用户首次或没有可恢复区域时，从 Work 列表打开已运行、拥有可访问 Service 的 Work
@@ -150,7 +150,7 @@ Desktop SHALL 沿用 Serve 浅色语义令牌，包括 `#F5F8FC` 画布、`#F8FB
 
 宽屏默认身份栏约 64–72px，Agent 辅助栏约占 28–34%；这些 SHALL 作为层级基线，允许随内容和宽度调整以保证可读与可操作，不能把 Service 缩成辅助预览卡。系统无衬线字体、4px 倍数间距、小圆角和细分隔 SHALL 保持一致；页面标题以 24–30px、正文 14–16px、辅助文字 12–13px 为基线。路径、域名、ID、日志与代码 SHALL 使用等宽字并能完整读取或复制。列表行不叠加重复大卡片；Agent 回复保持连贯，用户消息可用柔和浅底。
 
-每个当前任务 SHALL 只突出一个主动作，其余使用次级样式：文件未选择时由紧凑＋菜单承接 Upload/New folder，空目录可保留文字引导，已选时就近提供批量动作，停止 Work 时突出 Start Work，快照就绪后突出 Download .work；Pop out 可作为 Service 工具栏主动作。同工具栏的输入和按钮 SHALL 等高、间隔一致，按钮文字居中；当前选择同时由位置、文字与柔和选中态表示，悬停弱于选中。状态、操作 ID、取得时间和恢复动作 SHALL 位于同一上下文，不能用旋转图标代替执行状态或在无关区域显示成功。
+每个当前任务 SHALL 只突出一个主动作，其余使用次级样式：文件未选择时由紧凑更多命令菜单承接 Upload/New folder，空目录可保留文字引导，已选时就近提供批量动作，停止 Work 时突出 Start Work，快照就绪后突出 Download .work；Pop out 可作为 Service 工具栏主动作。同工具栏的输入和按钮 SHALL 等高、间隔一致，按钮文字居中；当前选择同时由位置、文字与柔和选中态表示，悬停弱于选中。状态、操作 ID、取得时间和恢复动作 SHALL 位于同一上下文，不能用旋转图标代替执行状态或在无关区域显示成功。
 
 键盘焦点 SHALL 有至少 2px 可见轮廓。模态弹层 SHALL 获得并限制焦点，非提交中的普通弹层可用 Escape 关闭，危险确认的 Escape 等于取消，关闭后焦点回到触发控件；未保存编辑离开须先处理 Save/Discard/Keep editing。弹层开关 SHALL 立即到终态，不使用入场/退场动画、快照、展示层或延迟清理；普通与 `prefers-reduced-motion` 设置行为一致，不改变提交保护或业务完成条件。
 
@@ -245,8 +245,8 @@ Works 的 Refresh/Import/New SHALL 使用一致的图标动作组，前两者为
 - **THEN** 正常结果用图标和短标签，警告保留理解影响与下一步所需内容；关闭颜色或使用辅助技术仍能分辨，未知锁不因提示收起释放
 
 #### Scenario: 工具栏动作与弹层语义一致
-- **WHEN** 用户切换Chat显隐、打开Files＋或查看已对齐的配置
-- **THEN** Chat使用同一固定工具栏面板按钮；Files＋展开锚定非模态动作菜单，New folder才打开输入窗；正常配置不显示只有重复解释的Details，异常与待Apply动作保留；打开设置的入口不得以pressed冒充内部开关，文件移动不得使用返回箭头
+- **WHEN** 用户切换Chat显隐、打开Files更多命令菜单或查看已对齐的配置
+- **THEN** Chat使用同一固定工具栏面板按钮；Files更多命令菜单展开锚定非模态动作菜单，New folder才打开输入窗；正常配置不显示只有重复解释的Details，异常与待Apply动作保留；打开设置的入口不得以pressed冒充内部开关，文件移动不得使用返回箭头
 
 #### Scenario: 退场视觉不再拥有逻辑弹层
 - **WHEN** 关闭后刷新、快速重开、切换导航或身份
@@ -313,13 +313,13 @@ Desktop SHALL 将 Export 表达为一次明确目标下连续完成的停止（�
 
 在 DUL-005 基础上，原型 SHALL 展示 New folder、Rename、同 Work Move/Copy 目的地、文本 Save/Discard、上传逐文件结果、Download、覆盖和递归删除确认、`207 Multi-Status` 部分失败路径与未知写入重读。二进制/超出编辑限额文本 SHALL 提供下载替代，特殊项 SHALL 按真实类型说明限制，workspace 根 SHALL 受保护；无锁/ETag 时不得承诺自动合并，不暗示目录 ZIP 下载或跨 Work 修改。具体编辑限额 SHALL 在后续实现设计中确定并作为可见拒绝原因。
 
-文件主区域 SHALL 先展示 Work 归属和当前位置，以紧凑＋菜单提供 Upload/New folder，再按名称、类型、大小与状态组织列表；常规工具栏只保留一个 Refresh，选中项动作紧邻目标。目录操作的成功与失败路径 SHALL 分别呈现；符号链接/特殊项不得作为普通文件直接编辑，根目录不得删除、移动或重命名。文本离开确认提供 Save file、Discard、Keep editing，取消不写入；外部客户端连接放在辅助区域。
+文件主区域 SHALL 先展示 Work 归属和当前位置，以紧凑更多命令菜单提供 Upload/New folder，再按名称、类型、大小与状态组织列表；常规工具栏只保留一个 Refresh，选中项动作紧邻目标。目录操作的成功与失败路径 SHALL 分别呈现；符号链接/特殊项不得作为普通文件直接编辑，根目录不得删除、移动或重命名。文本离开确认提供 Save file、Discard、Keep editing，取消不写入；外部客户端连接放在辅助区域。
 
 Connect with WebDAV SHALL 是独立客户端的可选辅助流程，使用现有 CLI proxy、完整 Work ID URL 和临时 Basic，展示启动方式、用户名、端口和临时密码获取/有效期说明。密码从启动终端一次获取，SHALL 不进入普通文件页面、URL、页面脚本或持久记录；浏览器 Files SHALL 无需执行此手工连接流程。文件能力缺失 SHALL 局部反馈，不把仍可用 Service 一并禁用。
 
 New folder/Rename SHALL 可直接在名称字段输入并用普通 Enter 提交合法非 busy 动作；输入法组合不提交，Rename 预填原名并保留扩展名，取消不修改。上述快捷键不扩展到危险/覆盖确认。文本编辑工具栏 SHALL 可直接下载已保存版本，不自动保存草稿。文件失败/未知/部分成功结果 SHALL 在当前操作弹层内显示到具体路径并给出安全下一步，不能只提示查看被弹层遮挡的结果；成功项不盲目重复，未知先核对。
 
-Files 的 Upload/New folder SHALL 收入可键盘访问的＋菜单，常规 Refresh 不在更多菜单重复；已有 WebDAV 与空文件夹引导保持可达。刷新等待/成功 SHALL 融入原刷新控件并保持工具栏、文件行几何稳定，不新增成功状态行或重复toast。刷新失败/未知 SHALL 保留所属对象可理解的原因与恢复，不删除必要错误或自动重放写入。
+Files 的 Upload/New folder SHALL 收入可键盘访问的更多命令菜单，常规 Refresh 不在更多菜单重复；已有 WebDAV 与空文件夹引导保持可达。刷新等待 SHALL 融入原图标控件、成功恢复普通图标并保持工具栏、文件行几何稳定，不新增成功状态行或重复toast。刷新失败/未知 SHALL 保留所属对象可理解的原因与恢复，不删除必要错误或自动重放写入。
 
 #### Scenario: 编辑与覆盖
 - **WHEN** 用户编辑文件、选择离开或覆盖已有目的文件
@@ -346,7 +346,7 @@ Files 的 Upload/New folder SHALL 收入可键盘访问的＋菜单，常规 Ref
 - **THEN** 结果与具体原因就在弹层内可读，恢复指向原路径，不要求先关闭才能找错误且不自动重复成功项
 
 #### Scenario: 文件工具栏压缩且刷新原位反馈
-- **WHEN** 用户刷新已有文件列表、打开＋菜单上传/新建，或连续多选后清空
+- **WHEN** 用户刷新已有文件列表、打开更多命令菜单上传/新建，或连续多选后清空
 - **THEN** 仅一个常规Refresh，等待/成功不增加行或推移文件目标，Upload/New folder和WebDAV仍可达；失败与未知仍有安全下一步
 
 ## ADDED Requirements
@@ -359,7 +359,7 @@ Desktop SHALL 使用Dropdown承载一组命令、Popover承载Service/模型选�
 
 #### Scenario: 选择Service不打断工作区
 - **WHEN** 用户点击Service Header名称选择Service
-- **THEN** 在该名称旁打开Popover，保留真实状态/端口和选中项；外侧导航一次即可生效，草稿及同一Service iframe保留，不自动启动Service
+- **THEN** 在该名称旁打开Popover，保留真实状态和选中项，技术端口归详情；外侧导航一次即可生效，草稿及同一Service iframe保留，不自动启动Service
 
 #### Scenario: 更多命令与持续管理使用正确容器
 - **WHEN** 用户打开账号/Work/Agent/Service/文件更多操作，或进入Service详情
