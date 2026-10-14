@@ -201,3 +201,9 @@ for(const action of ['focus-chat','reset-workspace-split'])test(`independent win
  const {c}=fixture();c.location.hash='#/app/one/first/80';c.view.layout='workspace';c.enterWorkspaceFocus=()=>assert.fail('No Chat focus in independent application');c.workspacePanels={get:()=>assert.fail('No split in independent application')};
  vm.runInContext(extract(['handleAction']),c);await c.handleAction(action,{dataset:{}});assert.equal(c.view.layout,'workspace');
 });
+
+test('confirmed folder creation starts one original-directory reread without replaying mkdir',async()=>{
+ const {c,work}=fixture();c.view.formName='new';c.view.path='/original';c.view.modal='new-folder';const calls:string[]=[];const record={};
+ Object.assign(c,{joinPath:(a:string,b:string)=>a+'/'+b,validateName:(s:string)=>s,assertFileAdmission:()=>{},retainFileResults:(_w:any,_t:any,r:any)=>r,confirmFileAttempt:()=>{},filesConfirmed:()=>true,closeModal:()=>{c.view.modal='';},modalTransfers:[]});c.adapter.transfer=async()=>{calls.push('mkdir');return[{status:'succeeded'}];};c.adapter.loadDirectory=async(_id:string,path:string)=>calls.push('read:'+path);c.actions.refresh=async(_r:any,load:()=>Promise<void>)=>load();
+ vm.runInContext(extract(['handleAction']),c);await c.handleAction('confirm-folder',{dataset:{}},record);assert.deepEqual(calls,['mkdir','read:/original']);
+});

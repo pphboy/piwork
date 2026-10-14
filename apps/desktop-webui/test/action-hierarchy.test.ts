@@ -43,7 +43,7 @@ test('global controls live in Admin, not the topbar or Work header', () => {
 });
 
 test('Ready uses Open in the list; Stop and information stay with the original Work menu', () => {
-  const { c, work } = fixture(); c.adapter.project = () => ({ action: 'stop', label: 'Ready' });
+  const { c, work } = fixture(); c.adapter.project = () => ({ action: 'stop', label: 'Ready', usable: true });
   assert.match(c.quickAction(work), /data-action="open-work"/);
   c.route = () => ['work', 'work-a']; assert.equal(c.quickAction(work), '');
   c.view.modal = 'work-menu'; c.view.data.id = work.id;
@@ -166,7 +166,7 @@ for (const menu of ['account', 'work-menu', 'agent-menu', 'service-menu', 'file-
       const { c, work } = fixture();
       c.view.modal = menu; c.view.layout = layout;
       c.document.fullscreenElement = fullscreen ? c.root : null;
-      c.adapter.project = () => ({ action: 'stop', label: 'Ready' });
+      c.adapter.project = () => ({ action: 'stop', label: 'Ready', usable: true });
       work.files = [{ path: '/notes.txt', name: 'notes.txt', kind: 'file' }]; c.view.data.path = '/notes.txt';
       const html = c.modalMarkup();
       const rows = [...html.matchAll(/<button\b[^>]*role="menuitem"[^>]*data-action="([^"]+)"[^>]*>([\s\S]*?)<\/button>/g)];
@@ -194,4 +194,8 @@ for (const menu of ['account', 'work-menu', 'agent-menu', 'service-menu', 'file-
 test('cached Work header owns route reading and ten-second feedback without replacing its content',()=>{
  const {c,work}=fixture();c.actions.records.set('route',{key:'route:work-a:1',work:'work-a',view:c.location.hash,pending:true,started:Date.now()});let html=c.workHeader(work);assert.match(html,/work-read-feedback.*aria-busy="true"/);assert.match(html,/Reading Work/);assert.match(html,/<h1[^>]*>A<\/h1>/);
  c.actions.records.get('route').started-=11000;assert.match(c.workHeader(work),/Still reading Work/);c.actions.records.get('route').view='#/work/other';assert.doesNotMatch(c.workHeader(work),/work-read-feedback/);c.actions.records.get('route').view=c.location.hash;c.actions.records.get('route').pending=false;assert.doesNotMatch(c.workHeader(work),/work-read-feedback/);
+});
+
+for(const label of ['Preparing','Starting','Start accepted','Work status not confirmed'])test(`unconfirmed ${label} never offers the ready Open shortcut`,()=>{
+ const {c,work}=fixture();c.adapter.project=()=>({action:'stop',label,usable:false});const html=c.quickAction(work);assert.doesNotMatch(html,/data-action="open-work"/);assert.match(html,/data-action="check-work"/);
 });

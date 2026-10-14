@@ -735,9 +735,9 @@ function works() {
 function quickAction(w) {
     if (route()[0] === 'works' && controlReady(workControls.get(w.id), w))
         return workLink('Open Work', w.id, 'primary small');
-    const action = adapter.project(w).action;
+    const state = adapter.project(w), action = state.action;
     if (action === 'stop')
-        return route()[0] === 'works' ? workLink('Open Work', w.id, 'quiet small') : '';
+        return route()[0] === 'works' ? state.usable ? workLink('Open Work', w.id, 'quiet small') : btn(`${icon('refresh', 15)} Check status`, 'check-work', 'quiet small', `data-id="${esc(w.id)}"`) : '';
     const label = { start: 'Start Work', retry: 'Retry Work', check: 'Check status' }[action];
     return btn(`${icon(action === 'start' ? 'play' : 'refresh', 15)} ${label}`, action === 'check' ? 'check-work' : 'start-work', 'quiet small', `data-id="${esc(w.id)}"`);
 }
