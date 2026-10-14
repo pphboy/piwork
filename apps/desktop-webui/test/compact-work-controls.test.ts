@@ -46,7 +46,7 @@ for (const kind of ['Apply Work configuration','apply-work-configuration']) test
 test('Files toolbar renders one Refresh and Add control without literal template punctuation',()=>{
  const {c,work}=fixture();work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';
  vm.runInContext(extract('files'),c);const html=c.files(work);
- assert.equal((html.match(/data-action="refresh-files"/g)||[]).length,1);assert.equal((html.match(/data-action="file-add"/g)||[]).length,1);assert.doesNotMatch(html,/<\/button>}/);assert.match(html,/data-action="upload"/);assert.match(html,/data-action="webdav"/);
+ assert.equal((html.match(/data-action="refresh-files"/g)||[]).length,1);assert.equal((html.match(/data-action="file-add"/g)||[]).length,1);assert.doesNotMatch(html,/<\/button>}/);assert.match(html,/data-action="upload"/);assert.doesNotMatch(html,/file-scope|Shared workspace|\/var\/data\/workspace/);
 });
 
 test('unknown Apply without an accepted ID never checks an unrelated old Operation',()=>{
@@ -73,10 +73,10 @@ test('Files toolbar retains 40px actions at the narrow breakpoint in either sele
  assert.match(c.files(work),/data-action="file-add"/);c.view.selected=['/A.txt'];const selected=c.files(work);for(const action of ['file-copy','file-move','file-delete','clear-selection'])assert.match(selected,new RegExp('data-action="'+action+'"'));assert.doesNotMatch(selected,/data-action="file-add"/);
 });
 
-for(const open of [false,true])test(`Files add is a nonmodal two-action menu: open=${open}`,()=>{
+for(const open of [false,true])test(`Files add is a nonmodal command menu: open=${open}`,()=>{
  const {c,work}=fixture();c.fileActionsContext=open?'context':'';work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';
  vm.runInContext(extract('files'),c);const html=c.files(work);assert.match(html,/aria-haspopup="menu"/);assert.match(html,new RegExp('aria-expanded="'+open+'"'));assert.doesNotMatch(html,/<dialog/);
- if(open){assert.match(html,/role="menu" aria-label="File actions"/);assert.equal((html.match(/role="menuitem"/g)||[]).length,2);assert.match(html,/New folder/);assert.match(html,/Upload files/);}else assert.doesNotMatch(html,/role="menu"/);
+ if(open){assert.match(html,/role="menu" aria-label="File actions"/);assert.equal((html.match(/role="menuitem"/g)||[]).length,3);assert.match(html,/data-action="webdav"/);assert.match(html,/role="separator"/);assert.match(html,/New folder/);assert.match(html,/Upload files/);}else assert.doesNotMatch(html,/role="menu"/);
 });
 for(const width of [500,1440])for(const visible of [false,true])test(`Chat toggle is the same panel button at ${width}px visible=${visible}`,()=>{
  const {c,work}=fixture();c.view.tab='Services';c.view.layout='workspace';c.route=()=>['work'];c.innerWidth=width;c.workspacePanels={get:()=>({narrowChat:visible,collapsed:!visible})};
