@@ -250,3 +250,41 @@ GUI使用的 `app.js` SHA-256为 `a8cf325f050e5911304222183944cfbd6de8e76319b55a
 - 代表Works/账户菜单宽窄、Copy对话框及500px New Work高级长表单已查看；观察到footer40px与body可滚动，未发现需要另改的可复现问题。此扫描不作为全部模态、真实读屏或完整浏览器矩阵的通过声明。
 
 证据按候选版本保留在本次恢复包的`night-ux-qa`中，包括Files前后geometry、两个Clear的键盘记录、导航历史失败与最终宽窄记录、慢读焦点持有/释放以及22项served hash。任务仍38/67；原17项未测及360px、真实reduced-motion、Core/Apply/完整Playwright等限制全部保持。
+
+## 2026-10-14 截图反馈：组件语义与移除Modal动画
+
+用户本轮先反馈Chat显隐位置/按钮语义、Files两项动作被错误放入Modal、正常配置Details重复说明及Modal残影；随后明确要求全部取消Modal动画。本轮按最后要求删除动画，而不是继续修饰退场效果。未在真实用户环境复现原残影，不将源码推断称为该截图的实测根因。
+
+### 实现与回归
+
+- Show/Hide chat共用Work工具栏同一面板图标按钮，始终保留同一action、aria-controls、动态名称与expanded；Agent/Service工具栏不再放重复的普通显隐入口，Focus独立。
+- Files＋使用锚定非模态动作菜单；Upload/New folder保留文字，New folder才打开原名称输入Modal。菜单可方向键移动、Escape回触发按钮、Tab/外侧离开关闭；原文件写入/覆盖/未知保护不变。
+- 正常Configuration in use只保留轻状态和刷新，删除无有效详情的重复Details；既有dirty/Not applied/Applying/failed/unknown生产renderer回归仍通过，Save与Apply分离。
+- 移除ModalExit模块、生成副本、快照/视觉层/动画事件/timer以及全部Modal入场退场keyframes。关闭同步失效modalChoice、native close、render并恢复合法焦点；Export继续非模态。新的入口使用当前launcher，不继承旧关闭来源。
+- Input options入口从错误的pressed状态改为dialog disclosure；真正Include Service identity checkbox不变。Files Move使用独立folder-move图标，不再和Back共用箭头。
+
+针对原Files Add Modal、空Details、宽/窄Agent Hide旧位置的4个生产renderer断言先失败（29项中25通过/4失败），修复后通过。旧12项动画相关测试按新需求替换为6项即时关闭/合法焦点/无动画机制回归，另外新增9项控件语义用例；其余状态/adapter/生产函数回归保留。最终纯测试388/388通过，0 fail/skip。
+
+命令与范围：
+
+- Desktop build、typecheck、测试TypeScript编译通过。
+- 纯测试以不含Playwright/chromium导入的全部编译后test文件运行；不是完整test:browser GUI矩阵。初次尝试全入口时6组需要浏览器/宿主的测试不具备本轮自动入口，失败日志保留，未将其记为产品回归或全套通过；官方云Chrome单独执行下面的定向GUI。
+- native-boundary、repository-docs、OpenSpec strict与git diff --check通过。
+- 官方Go1.25.5与Node24.19.0正常build-cli --target linux/amd64通过，21个嵌入资源（18个browser模块、3个public文件）；删掉modal-presentation后的数量不沿用此前22。功能提交c3e76aab174db6ba3d8596a6959d47ac0d46e571，第一次宿主build modified=true因为同期OpenSpec/证据尚未提交，未伪改构建身份；最终clean build身份随交付包保存。Desktop input hash：776fff73dc9c77b3bc93a0f35826abd6794b41bfeef32b60adbfc63fc80ac7e7。
+- 独立只读生命周期审查确认同步关闭顺序与合法焦点检查，无延迟回调或旧退场层；不替代浏览器验收。
+
+原第1—11节33/50、17项未测及先前360px/真实Core/Docker/真实读屏/完整状态与Modal矩阵不因本轮变为通过。未修改Core/API/依赖/锁/安全配置/Service业务UI，不同步主Spec、不归档、不合并。
+
+### 官方云Chrome定向验收（合成fixture，不是真实Core）
+
+- 最终冻结app.js SHA-256为a8db6b84bbcb334dddfab81be61512332c187bbf363dae36df48761cdd4fd620，style.css为ac27022cc0661615035faeb0404b1db54df59741c07e5db1c3216aebed81134d；清单含21个实际资源。
+- New Work和New folder的computed animation为none、duration为0s，仍为native modal；关闭后立即零dialog/ghost节点，快速关闭再打开可用。旧baseline关闭检查未捕获永久残影，用户要求取消动画后不再保留任何视觉退场状态。
+- 宽屏Show/Hide共用同一40×40锚点和class，Service内合成草稿/counter/iframe instance及Chat草稿均保留。
+- Files＋动作菜单右边缘与＋对齐、位于其下6px，无dialog或背景遮罩；Escape恢复＋焦点，New folder进入真正名称输入modal。
+- Input options具有haspopup=dialog、不带pressed，可键盘打开；正常配置无空Details。
+- 500×900下Show/Hide按钮均为x321.656/y69、40×40，合成Service实例/counter/输入及Chat草稿保留。Files菜单右边缘490、top205（触发器下6px），无横向越界；Tab关闭菜单，外侧Services点击既关闭又完成导航，没有吞掉目标动作。
+- Upload files实际打开multiple文件选择器且菜单关闭，未选择或上传文件。New folder窄屏边界x17..483，Escape回到＋。选择文件后的Move图标正确，但未执行移动。
+- 证据来自官方Chrome1440×900与500×900的定向测量记录及合成截图；来源为交付包browser-qa的REPORT.md/checks.json。fixture启动时固定资源字节，startup manifest与上述hash相符；浏览器直接打开JSON manifest被客户端拦截，未绕过，也不声明独立逐HTTP响应hash巡检。
+- GUI未执行真实Core/生产Service、实际上传/创建/移动/删除/发送、完整身份/修改矩阵、异常配置的浏览器矩阵或所有Modal类型；配置异常为纯renderer回归而非本轮GUI。没有未解决的定向产品FAIL。
+
+本轮要求的界面修正均已实现并通过上述定向检查；新17.1/17.4完成，17.2/17.3保留未勾选是因为其中完整路径/身份/修改与全部关闭竞争矩阵未逐项实跑，不表示仍保留旧Modal动作菜单或动画。当前任务40/71；原33/50与17项未测不变。

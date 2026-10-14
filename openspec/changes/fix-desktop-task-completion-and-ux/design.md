@@ -159,7 +159,7 @@ Service详情先渲染身份/状态/合法控制，再独立readLogs，日志loa
 
 - 保持Service左、Chat右，默认约70/30；建议Service最小400px、Chat最小320px，separator约8px命中区配细分隔线。比例按实际容器宽度夹取，拖动期间不反复重建DOM；跨iframe拖动用指针捕获或临时透明拖动层，结束/取消必清理，不修改iframe内部。
 - separator提供role、vertical方向、控制面板和当前比例；左右键16px，Shift左右64px，Home/End到边界，Escape撤销当前拖动；双击与可键盘到达的Reset split恢复默认。几何值是实现起点，最终按实际字体、边界和可读性验收。
-- Collapse Chat在常规模式只隐藏右栏，Service工具栏Show chat恢复；Focus chat、Restore layout、Exit focus原返回语义保持。按当前身份/Work在页面内保存比例与显隐，切换/返回及窄屏往返保留，刷新回默认；不引入跨重启存储。隐藏内容不进入Tab序列，但不卸载同一iframe、创建Session、清空文字/图片草稿或重启Run。
+- Collapse Chat在常规模式只隐藏右栏，Work工具栏同一固定面板按钮切换Show/Hide chat，窄屏仍可见；Focus chat、Restore layout、Exit focus原返回语义保持。按当前身份/Work在页面内保存比例与显隐，切换/返回及窄屏往返保留，刷新回默认；不引入跨重启存储。隐藏内容不进入Tab序列，但不卸载同一iframe、创建Session、清空文字/图片草稿或重启Run。
 - 小于900px或容器不满足最小宽度时使用单面板/覆盖层，隐藏separator，不用窄屏几何覆盖最后宽屏比例；500px与360px都回归。独立Service窗口不新增Chat，Files不顺手改成新的可拖分栏系统。
 - 底部空白的源码根因：常规Work header69px加tabs53px为122px，work-layout却减157px；窄屏64px加51px为115px，却减150px，均多减约35px。用可见头部/提示行加剩余空间的flex或grid布局替代固定减数；不是给iframe补35px。最多保留一条紧凑StatusLine，iframe与Chat内部滚动，正常、Degraded、错误提示、Focus及折叠均占满真实可用高度。不改Service业务页面自身留白。
 
@@ -173,18 +173,18 @@ Service详情先渲染身份/状态/合法控制，再独立readLogs，日志loa
 
 截图中的Back to Work和Configuration in use属于 `settingsPage()`。返回入口放在设置内容左侧导航、与标题对齐；顶栏Back to Works仍返回列表。沿既有区域记忆和dirty guard返回原对象，不强制去Services。
 
-saved/active一致时，把大配置卡改为标题旁轻状态及按需详情，Refresh status为就近图标；dirty、Not applied、Applying、失败/未知则保留明确状态和动作。无变更时不保留占位的禁用Apply主按钮；Save、Apply、候选加载与验证仍是不同事实，不自动执行。
+saved/active一致时，仅保留标题旁轻状态及就近Refresh status图标，不提供重复解释的Details；dirty、Not applied、Applying、失败/未知则保留明确状态和动作。无变更时不保留占位的禁用Apply主按钮；Save、Apply、候选加载与验证仍是不同事实，不自动执行。
 
 Works的Refresh/Import改quiet图标，＋New保持主动作角色；英文tooltip/aria-label和空列表文字CTA保留。账号菜单当前标题account=admin、正文裸role=admin形成重复；账号显示一次，角色必要时使用带标签的可读信息，Core地址保留。不得因省文字删除账号管理动作、影响确认或身份边界。
 
-### 13. Modal统一几何与安全开关动效
+### 13. Modal统一几何与即时安全开关
 
 `modalMarkup()`共用renderer，但footer混用默认40px与small34px；Pi Requests、Request detail、Package detail可出现混高。Stop的Cancel/Stop Work已同高，仅自然宽度不同；其“checkbox”实际是impact-box内stop SVG，无input/state/handler。移除误导空心框或换明确非交互符号，范围说明保留，不增加确认勾选，真正Delete checkbox不变。
 
 - 给footer直接动作统一尺寸角色，建议40px高、13px字、横向16px、8px图标/按钮间距、约96px最小宽；成对动作等宽，长文案可扩展、窄屏统一换行/堆叠，不能裁文字。Close/Cancel为次级，合法提交为主动作，危险提交保留danger，恢复动作在同组次级；DOM顺序与可见顺序一致。menu型弹层、正文小动作、头部关闭icon保留各自角色，不使用覆盖所有.button的粗放规则。
-- 开关约140ms（允许120–160ms）opacity和约4px微位移，无尺寸动画或重模糊。提交锁、busy和真实反馈立即生效；刷新内容不重播进场。reduced-motion同步完成，不等待不存在的animation事件。
-- 现closeModal即时清view并移除dialog，退场需共享展示状态；将逻辑关闭/失效与短暂视觉退场分开，关闭后不再接受旧窗提交。退场绑定modalChoice、identityEpoch和dialog实例，重开/切换/导航取消旧回调；完成事件与有界fallback均只对原对象生效。
-- reconcileHTML会移除不在markup中的临时class/data，closing状态必须来自展示state或明确保留，不能被轮询render抹掉。最终仅恢复一次合法来源焦点，彻底清除backdrop/inert；动态返回目标失效时落到可见安全入口。Export继续show()非模态，不因共用动画变成showModal()。
+- 2026-10-14用户取消全部Modal动画：开关立即完成，不保留keyframes、视觉快照、退场状态、动画事件或fallback timer。
+- closeModal先失效modalChoice和逻辑状态，再关闭原生dialog并渲染、恢复合法焦点一次。新入口使用当前launcher，不继承旧窗来源；旧异步结果仍受原身份/对象/视图校验。
+- Modal与Export继续分别使用showModal()/show()，即时关闭释放原生backdrop/inert，不以去动画改变危险确认、dirty guard或非模态背景操作。
 
 ### 14. 短反馈沿用已有颜色角色
 
@@ -208,3 +208,11 @@ Works的Refresh/Import改quiet图标，＋New保持主动作角色；英文toolt
 4. 每批先跑相关状态/浏览器/Go契约，再跑完整Desktop测试、构建/embed与原生边界；文档单独整理。纯TS测试不替代browser.test/native-auth，合成原生HTTP不替代真实Core。
 5. NoDocker环境完成可运行层后，真实Core/Docker停止→导出→校验→下载→检查→导入→显式启动作为明确待验收项保留；取得用户授权的合适隔离环境后才执行。不安装/启动Docker作为本轮默认动作。
 6. 回滚按功能恢复对应源码、测试和生成资源，不删除用户Work/快照/数据。仅前端页面内意图，无存储schema迁移。发布/推送、规格同步与归档均另按明确授权和全部验收结果处理。
+
+### 15. 组件语义纠正与即时关闭
+
+Files＋使用带可访问名称的锚定动作菜单；Escape恢复＋焦点、外侧与Tab离开关闭而不锁背景。选择Upload直接启动文件选择，New folder进入原输入窗，路径/身份改变清理旧菜单。真正编辑与危险确认保留原Modal。
+
+2026-10-14用户明确取消所有Modal动画：删除入场/退场keyframes、快照、展示层、动画事件和fallback timer。关闭立即失效modalChoice、退出原生top layer、渲染并恢复合法焦点一次；不存在旧退场callback。模态/非模态、安全确认与原身份/异步结果保护不变。
+
+Input options是打开设置的入口，以haspopup/expanded表达，不将内部includeIdentity状态放到入口pressed；Files Move用专用移动图标，不与Back混同。

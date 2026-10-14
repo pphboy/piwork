@@ -55,7 +55,7 @@ Service工具栏的Agent requests图标只在已确认有记录时出现，并�
 
 Pi request是一项目标，可以跨多个Run继续；一个Run succeeded不表示请求已Completed。waiting_result等状态可能已经释放执行槽，此时Chat仍可使用。历史Run在对应消息轮次或Activity末尾提供Run details，同一真实runId只有一个入口；缺少runId的旧消息不会猜测执行身份。其他Session或Service占用当前Work执行槽时仍显示原执行上下文，Details与Cancel针对真实Run；只有可靠活动状态支持取消。
 
-Services采用左应用、右Chat的分栏。拖动中线可调整宽度，默认70/30；键盘左右箭头每次16px、Shift每次64px，Home/End到边界，Enter或双击中线恢复默认，Escape取消当前拖动。Service options里的Reset split也能恢复默认。普通Hide Chat保留Work导航，Show Chat恢复原聊天；Focus专注应用，Exit focus恢复布局，两者用途独立。Chat头部只提供布局Focus/Restore；浏览器全屏归专注状态下Agent或Service的⋯菜单，标为Browser full screen/Exit browser full screen，不与Focus并列显示同形图标。窄屏使用Service/Chat单面板切换，回到宽屏恢复此前比例。比例、显隐和草稿仅在当前页面、身份及Work内记忆，不跨重载持久化。
+Services采用左应用、右Chat的分栏。拖动中线可调整宽度，默认70/30；键盘左右箭头每次16px、Shift每次64px，Home/End到边界，Enter或双击中线恢复默认，Escape取消当前拖动。Service options里的Reset split也能恢复默认。Work工具栏同一个面板按钮在原位切换Show chat/Hide chat；普通Hide Chat保留Work导航，Show Chat恢复原聊天；Focus专注应用，Exit focus恢复布局，两者用途独立。Chat头部只提供布局Focus/Restore；浏览器全屏归专注状态下Agent或Service的⋯菜单，标为Browser full screen/Exit browser full screen，不与Focus并列显示同形图标。窄屏使用Service/Chat单面板切换，回到宽屏恢复此前比例。比例、显隐和草稿仅在当前页面、身份及Work内记忆，不跨重载持久化。
 
 切换布局不会重建现有Service iframe或Chat祖先，保留其文档、文字图片草稿和阅读位置；这不等于保证业务应用崩溃、真实网络断开或浏览器强制关闭后的恢复。Work外壳按可用高度分配，不再为底部保留固定35px空白；Service自己的页面内容不被修改。
 
@@ -63,10 +63,12 @@ Service选择器统一显示名称、状态、声明端口与当前选择。单�
 
 ### Files、设置与轻反馈
 
-Files的常规Refresh只保留一次入口。读取时原按钮显示Reading…，成功短暂显示Updated，不新增Status checked行或重复成功toast；失败原因与未知写入的核对入口仍可见。Upload files和New folder归入＋菜单，WebDAV与空目录上传入口保留。批选动作仍在原工具栏，不插入新的选择提示行；常规＋与批量操作图标保持40px控件高度。
+Files的常规Refresh只保留一次入口。读取时原按钮显示Reading…，成功短暂显示Updated，不新增Status checked行或重复成功toast；失败原因与未知写入的核对入口仍可见。Upload files和New folder归入＋旁的非模态动作菜单，方向键选择、Escape回到＋，Tab或点外部关闭；Upload files打开文件选择，New folder才打开名称输入窗。WebDAV与空目录上传入口保留。批选动作仍在原工具栏，不插入新的选择提示行；常规＋与批量操作图标保持40px控件高度。
 
-Work settings内容左上角的Back to Work独立一行，返回进入设置前的Services、Chat或Files；其下标题与Configuration in use、Refresh、Details成组对齐，窄屏整组换行。正常配置以Configuration in use轻状态呈现；Unsaved changes、Not applied、Applying、Apply failed和Apply not confirmed继续显示相应保存、应用或核对动作。Save只保存，Apply才应用；正在应用和结果未知时不重复Apply，恢复的原Apply仍可Check。
+Work settings内容左上角的Back to Work独立一行，返回进入设置前的Services、Chat或Files；其下标题与Configuration in use、Refresh成组对齐，窄屏整组换行；正常已对齐配置不再提供重复解释的Details。正常配置以Configuration in use轻状态呈现；Unsaved changes、Not applied、Applying、Apply failed和Apply not confirmed继续显示相应保存、应用或核对动作。Save只保存，Apply才应用；正在应用和结果未知时不重复Apply，恢复的原Apply仍可Check。
 
 Works右上角Refresh、Import和New改用带名称/提示的图标组，New保留主动作样式，空列表仍有文字创建引导。Clear search后焦点回到搜索框，可以立即继续输入。账号菜单显示一次账号身份，Role与Core明确标注。
 
-Modal底部动作统一高度、间距与主次角色；菜单行和正文小按钮保留各自用途。Stop影响范围不再使用像复选框的装饰，仍需明确确认；Delete的真实确认框保留。弹窗开关约140ms，减少动态效果偏好下直接显示终态；关闭立即撤销旧窗口的提交资格，快速重开不会被旧退出回调关闭。Export仍为非模态进度卡，不因关闭或动效中断原授权交付。完成与警告优先使用图标、语义颜色和短标签，具体错误、必要风险与下一步不会因精简被移除。
+Modal底部动作统一高度、间距与主次角色；菜单行和正文小按钮保留各自用途。Stop影响范围不再使用像复选框的装饰，仍需明确确认；Delete的真实确认框保留。依2026-10-14要求，所有Modal开关动画、退场快照与延迟清理已移除，普通和减少动态效果设置均立即显示/关闭；关闭先撤销旧窗口提交资格，再释放原生遮罩并恢复合法焦点一次。Export仍为非模态进度卡，不因关闭中断原授权交付。完成与警告优先使用图标、语义颜色和短标签，具体错误、必要风险与下一步不会因精简被移除。
+
+Input options按钮只打开设置对话框，以展开语义表达；内部Include Service identity复选框仍是实际开关。文件Move使用专用移动图标，返回箭头仅用于导航。
