@@ -37,7 +37,7 @@ const {uploadReview}=await import(new URL('../browser/file-results.js',import.me
 function rendererFixture(){
  const work:any={id:'a',name:'A',services:[],sessions:[],resourceChecked:{services:'now',agent:'now'},resourceErrors:{}};
  const c:any={overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
- vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);for(const name of ['modalMarkup','serviceFallbackHeader','services','agent'])vm.runInContext(extract(name),c);return{c,work};
+ vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);for(const name of ['modalMarkup','serviceFallbackHeader','serviceViewport','services','agent'])vm.runInContext(extract(name),c);return{c,work};
 }
 test('upload review separates proven overwrites, failed checks and unknown writes without false destructive consent',()=>{
  const {c}=rendererFixture();c.view.modal='upload-overwrite';
@@ -129,7 +129,7 @@ test('Ready Service first entry and pending entry use skeleton, then retain ifra
  Object.assign(c.adapter,{requestPresence:new Map(),serviceEmbed:()=>'',serviceEntryError:()=>'',serviceEntryUrl:()=>null,serviceEntryPending:()=>false,servicePreviewUnconfirmed:()=>false});
  let html=c.services(work);assert.match(html,/read-placeholder-service/);assert.doesNotMatch(html,/Application entry not confirmed|No Web Service/);
  c.adapter.serviceEntryPending=()=>true;html=c.services(work);assert.match(html,/read-placeholder-service/);
- c.adapter.serviceEntryUrl=()=> 'https://service.test/';html=c.services(work);assert.match(html,/<iframe/);assert.doesNotMatch(html,/read-placeholder/);
+ c.adapter.serviceEntryUrl=()=> 'https://service.test/';html=c.services(work);assert.match(html,/<iframe/);assert.match(html,/service-frame-loading/);
  c.adapter.serviceEntryUrl=()=>null;c.adapter.serviceEntryPending=()=>false;c.adapter.serviceEntryError=()=> 'Access denied';html=c.services(work);assert.match(html,/Access denied/);assert.doesNotMatch(html,/read-placeholder/);
 });
 
@@ -137,4 +137,13 @@ test('Chat skeleton belongs only to unconfirmed history and preserves cached mes
  const {c,work}=rendererFixture();delete work.resourceChecked.agent;let html=c.agent(work,false);assert.match(html,/read-placeholder-conversation/);assert.doesNotMatch(html,/chat-welcome/);
  work.resourceChecked.agent='now';work.sessions=[{id:'s',checkedAt:'now',messages:[{}],loading:true}];html=c.agent(work,false);assert.match(html,/Preserved history/);assert.doesNotMatch(html,/read-placeholder-conversation/);
  work.sessions[0].messages=[];html=c.agent(work,false);assert.match(html,/chat-welcome/);assert.doesNotMatch(html,/read-placeholder-conversation/);
+});
+
+
+test('Service navigation skeleton clears only for its same loaded iframe and late disconnected loads are ignored',()=>{
+ const {c,work}=rendererFixture();const service={id:'s',name:'Notes'};c.view.port=3000;c.adapter.identityEpoch=1;c.adapter.serviceEntryUrl=()=> 'https://service.test/';
+ let onLoad=()=>{},renders=0,checks=0;const frame:any={dataset:{serviceKey:'a:s:3000'},isConnected:true,getAttribute:()=> 'https://service.test/',addEventListener:(_event:string,handler:()=>void)=>onLoad=handler};
+ c.root={querySelectorAll:()=>[frame]};c.render=()=>renders++;c.adapter.serviceFrameLoaded=async()=>checks++;c.toast=()=>{};vm.runInContext(extract('observeServiceFrames'),c);
+ assert.match(c.serviceViewport(work,service),/service-frame-loading/);c.observeServiceFrames();onLoad();assert.equal(renders,1);assert.equal(checks,1);assert.doesNotMatch(c.serviceViewport(work,service),/service-frame-loading/);
+ frame.isConnected=false;onLoad();assert.equal(checks,1);frame.isConnected=true;c.adapter.identityEpoch=2;onLoad();assert.equal(checks,1);
 });
