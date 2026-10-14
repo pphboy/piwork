@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import test, { before, after } from 'node:test';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { mkdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium, expect, type Page, type Route } from '@playwright/test';
 
 let browser: Awaited<ReturnType<typeof chromium.launch>>;
 let base = '';
+let nativeDownloadHandler: ((request: IncomingMessage, response: ServerResponse) => Promise<boolean>) | undefined;
 const server = createServer(async (request, response) => {
+  if (nativeDownloadHandler && await nativeDownloadHandler(request, response)) return;
   const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : 'index.html');
   try { response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html'); response.end(await readFile(new URL(path, import.meta.url))); }
   catch { response.writeHead(404); response.end(); }
@@ -23,12 +25,22 @@ type Reply = { status?: number; json?: unknown; body?: string; headers?: Record<
 const mtime1 = 'Sat, 03 Oct 2026 01:00:00 GMT';
 const mtime2 = 'Sat, 03 Oct 2026 01:00:02 GMT';
 const mtime3 = 'Sat, 03 Oct 2026 01:00:04 GMT';
-async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false) {
+async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialRead = true) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); t.after(() => page.close());
   // These protocol/fake-clock tests use the supported immediate presentation path.
   // Real motion/race behavior has its own modal-presentation and GUI acceptance coverage.
   await page.emulateMedia({reducedMotion:'reduce'});
   const requests: RequestRecord[] = [];
+  nativeDownloadHandler = async (request, response) => {
+    const url = new URL(request.url || '/', base);
+    if (request.method !== 'GET' || !url.pathname.startsWith('/_desktop/files/')) return false;
+    const r: RequestRecord = {search:url.search,path:url.pathname,method:'GET',headers:request.headers as Record<string,string>,body:''};
+    requests.push(r);const reply=await handler(r);
+    if(!reply || reply.abort){response.writeHead(404);response.end();return true;}
+    response.writeHead(reply.status ?? 200,reply.headers);response.end(reply.json === undefined ? reply.body ?? '' : JSON.stringify(reply.json));return true;
+  };
+  t.after(async()=>{nativeDownloadHandler=undefined;});
+
   let generation = 1, signedIn = !anonymous, core = 'http://core.test';
   let desired: Record<string, any> = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents', modelRef: 'original', mcp: { servers: [] } };
   const session = () => ({ state: signedIn ? 'authenticated' : 'signed-out', generation, csrf: 'local-session-csrf', coreUrl: core, ...(signedIn ? { user: { account: 'owner', role: 'user' } } : {}) });
@@ -60,6 +72,10 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
   });
   await page.goto(base + (anonymous ? '/' : '/#/work/work-1'));
   await expect(page.getByRole('heading', { name: anonymous ? 'Connect to your Core' : 'Recovery Work', exact: true })).toBeVisible();
+  if (!anonymous && waitForInitialRead) {
+    await expect.poll(()=>api(page, "const w=adapter.getWork('work-1');return !!(w?.resourceChecked?.services || w?.resourceErrors?.services);")).toBe(true);
+    await expect(page.locator('.work-read-feedback')).toHaveCount(0);
+  }
   return { page, requests };
 }
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
@@ -87,13 +103,13 @@ async function expectThinkingEditable(page: Page) {
 async function chooseThinking(page: Page, level: string, keepOpen = false) {
   await openResponseSettings(page, 'thinking');
   await page.locator(`#modal [data-action=choose-chat-setting][data-kind=thinking][data-option-value="${level}"]`).click();
-  await expect(page.locator('#modal [role=menu]')).toHaveCount(0);
+  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
   if (!keepOpen) await closeResponseSettings(page);
 }
 async function chooseModel(page: Page, ref: string, keepOpen = false) {
   await openResponseSettings(page, 'model');
   await page.locator(`#modal [data-action=choose-chat-setting][data-kind=model][data-option-value="${ref}"]`).click();
-  await expect(page.locator('#modal [role=menu]')).toHaveCount(0);
+  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
   if (!keepOpen) await closeResponseSettings(page);
 }
 async function uiuxEvidence(page: Page, name: string) {
@@ -141,7 +157,7 @@ test('R1 missing time requires consent; lost save response retains input without
   });
   await button(page, 'tab-Files').click(); await button(page, 'open-file').click(); await page.locator('#file-editor').fill('keep me'); await button(page, 'save-file').click(); assert.equal(requests.filter(r => r.method === 'PUT').length, 0);
   await button(page, 'allow-unprotected-file').click(); await button(page, 'save-file').click(); await expect(page.locator('#file-editor')).toHaveValue('keep me');
-  await button(page, 'save-file').click(); assert.equal(requests.filter(r => r.method === 'PUT').length, 1); fail = false;
+  await expect(button(page, 'save-file')).toBeDisabled(); await button(page, 'save-file').evaluate((el: HTMLButtonElement)=>el.click()); assert.equal(requests.filter(r => r.method === 'PUT').length, 1); await expect(page.locator('#file-editor')).toHaveValue('keep me'); fail = false;
 });
 
 test('R1 serial upload preserves File bytes and confirmation version across creation/overwrite races and HEAD errors', async t => {
@@ -385,7 +401,7 @@ test('Brain request details keep imported history readonly and closing does not 
   if(r.path.endsWith('/agent-requests'))return{json:{items:[request],nextCursor:null}};
   if(r.path.endsWith('/agent-requests/request-historical'))return{json:{request,evidence:{items:[{evidenceId:'proof-original',kind:'query',objectRef:'review',stateVersion:'2',verified:true}],nextCursor:null},runs:[]}};
  });
- await button(page,'tab-Chat').click();await button(page,'pi-requests').click();await expect(page.locator('#modal')).toContainText('runtime observations');await button(page,'pi-request-detail').click();
+ await button(page,'tab-Chat').click();await button(page,'pi-requests').click();await expect(page.locator('#modal')).toContainText('Historical · Read only');await button(page,'pi-request-detail').click();
  await expect(page.locator('#modal')).toContainText('job-original');await expect(page.locator('#modal')).toContainText('Shared history is read only');await expect(page.locator('[data-action="retry-pi-request"]')).toHaveCount(0);await expect(page.locator('[data-action="cancel-pi-request"]')).toHaveCount(0);
  await button(page,'close-modal').click();assert.equal(requests.filter(r=>r.method==='POST').length,0);
 });
@@ -616,7 +632,7 @@ test('an opened application survives temporary Service Starting without retainin
   await page.frameLocator('iframe').getByLabel('Application draft').fill('keep this open input');
   await page.evaluate(() => { (window as any).startingFrame = document.querySelector('iframe'); });
   observed = 'starting'; await api(page, "await adapter.refreshVisibleWork('work-1');");
-  await expect(page.locator('.service-identity')).toContainText('Starting');
+  await expect(page.locator('.service-trigger')).toContainText('Starting');
   assert.equal(await page.evaluate(() => document.querySelector('iframe') === (window as any).startingFrame), true);
   await expect(page.frameLocator('iframe').getByLabel('Application draft')).toHaveValue('keep this open input');
   observed = 'ready'; await api(page, "await adapter.refreshVisibleWork('work-1');");
@@ -642,7 +658,7 @@ test('UX revision late Work defaults retain a chosen Service and focused Files d
     if(r.path.endsWith('/configuration'))await gate;
     if(r.path.startsWith('/_desktop/files/'))return r.method==='PROPFIND'?{status:207,body:listing('original file',mtime1),headers:{'Content-Type':'application/xml'}}:{body:'original file',headers:{'Last-Modified':mtime1}};
     return focusFixture(r);
-  });
+  }, false, false);
   await page.locator('#service-select').click();await page.locator('[data-action=select-service][data-id=service-b]').click();
   await button(page,'tab-Files').click();await button(page,'open-file').click();await page.locator('#file-editor').fill('edit made before Work finished opening');
   await button(page,'focus-chat').click();release();await expect(page.locator('#response-settings-trigger')).toBeEnabled();await page.waitForLoadState('networkidle');
@@ -684,7 +700,7 @@ test('UX revision Focus chat restores its prior layout or directly exits without
   await expect(page.getByRole('button',{name:'Exit focus',exact:true})).toBeVisible();
   await expect(page.locator('iframe')).toBeHidden();
   await assertKept();
-  await button(page,'agent-menu').click(); await page.getByRole('button',{name:'Focus chat',exact:true}).click();
+  await button(page,'agent-menu').click(); await expect(page.getByRole('menuitem',{name:'Restore layout',exact:true})).toBeVisible(); await expect(page.getByRole('menuitem',{name:'Focus chat',exact:true})).toHaveCount(0); await page.keyboard.press('Escape');
   await expect(page.locator('#modal')).toHaveCount(0);
   await button(page,'restore-layout').click(); await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');
   await assertKept();
@@ -694,7 +710,7 @@ test('UX revision Focus chat restores its prior layout or directly exits without
   await button(page,'service-focus').click(); await button(page,'focus-chat').click(); await button(page,'exit-service-focus').click();
   await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace'); await expect(page.locator('.work-tabs')).toBeVisible(); await assertKept();
   await button(page,'service-focus').click(); await button(page,'focus-toggle-chat').click();
-  await button(page,'service-menu').click(); await page.getByRole('button',{name:'Focus chat',exact:true}).click();
+  await button(page,'service-menu').click(); await page.getByRole('menuitem',{name:'Focus chat',exact:true}).click();
   await button(page,'restore-layout').click(); await expect(page.locator('#app')).toHaveAttribute('data-layout','service-only'); await expect(page.locator('#composer')).toBeHidden();
   await button(page,'exit-service-focus').click(); await assertKept();
 });
@@ -921,12 +937,12 @@ test('UX revision Activity failures remain visible and secondary Service identit
   await expect(page.locator('.tool-event pre')).toBeHidden();assert.equal(await page.locator('.activity').evaluate((node:HTMLDetailsElement)=>node.open),false);
   const visible=await page.locator('#messages').innerText();assert.ok(!visible.includes('technical-run-id') && !visible.includes('Runtime revision'));
   await button(page,'chat-input-options').click();await page.locator('#include-identity').check();await button(page,'close-modal').click();
-  await expect(button(page,'chat-input-options')).toHaveAttribute('aria-pressed','true');assert.equal(await page.locator('#include-identity').count(),0);
+  await expect(button(page,'chat-input-options')).toHaveAttribute('aria-expanded','false');assert.equal(await page.locator('#include-identity').count(),0);
   await page.locator('#composer').fill('/rev');await expect(page.locator('.command-palette')).toHaveClass(/menu-list/);await page.locator('#composer').press('Tab');
   await page.locator('#composer').fill('/review "unchanged argument"');await page.locator('#composer').press('Escape');
   await expect(page.locator('.composer-caption')).toContainText('Service identity is not added');await button(page,'chat-input-options').click();
   await expect(page.locator('#include-identity')).toBeChecked();await expect(page.locator('#modal')).toContainText('Only command arguments are sent');await button(page,'close-modal').click();
-  await page.locator('#composer').fill('ordinary text');await expect(button(page,'chat-input-options')).toHaveAttribute('aria-pressed','true');
+  await page.locator('#composer').fill('ordinary text');await expect(button(page,'chat-input-options')).toHaveAttribute('aria-expanded','false');await button(page,'chat-input-options').click();await expect(page.locator('#include-identity')).toBeChecked();await page.keyboard.press('Escape');
   await expect(page.locator('.run-history')).toHaveCount(0);await button(page,'run-details').click();await expect(page.locator('#modal')).toContainText('deepseek-flash');await expect(page.locator('#modal details').first()).toContainText('technical-run-id');
 });
 
@@ -1002,16 +1018,16 @@ test('Compact settings summary shares the confirmed pair across containers; insp
     await openResponseSettings(page);
     await expect(page.locator('#model-select')).toBeFocused();
     await expect(page.locator('.response-setting-group .response-setting-label')).toHaveText(['Model', 'Thinking']);
-    await expect(page.locator('#modal [role=menu]')).toHaveCount(0);
+    await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
     await expect(page.locator('#modal .modal-footer')).toHaveText('Close');
     await page.locator('#model-select').click();
-    await expect(page.locator('#modal [role=menu]')).toHaveCount(1);
+    await expect(page.locator('#modal [role=listbox]')).toHaveCount(1);
     await page.locator('#thinking-select').click();
     await expect(page.locator('#model-select')).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('#thinking-select')).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.locator('#modal [role=menu]')).toHaveAccessibleName('Thinking levels');
+    await expect(page.locator('#modal [role=listbox]')).toHaveAccessibleName('Thinking levels');
     await page.locator('#thinking-select').click();
-    await expect(page.locator('#modal [role=menu]')).toHaveCount(0);
+    await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(page.locator('#response-settings-trigger')).toBeFocused();
     assert.equal(chatWrites(requests).length, writes);
@@ -1046,10 +1062,10 @@ test('Compact settings confirmed repeats consume matching web commands without P
     await page.locator('#composer').press('Escape');
     await button(page, 'send-message').click();
     await expect(page.locator(`#${kind}-select`)).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.locator('#modal [aria-checked=true]')).toBeFocused();
+    await expect(page.locator('#modal [aria-selected=true]')).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('#composer')).toHaveValue('');
-    await expect(page.locator('#modal [role=menu]')).toHaveCount(0);
+    await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
     await closeResponseSettings(page);
     await expect(page.locator('#composer')).toBeFocused();
   }
@@ -1093,7 +1109,7 @@ test('Compact settings saving survives close, reopen and same pending selection 
   await expect(page.locator('.composer-wrap > .options-status')).toBeEmpty();
   await expect(page.locator('#composer')).toHaveValue('draft revised during saving');
   await openResponseSettings(page, 'thinking');
-  await expect(page.locator('#modal [aria-checked=true]')).toHaveText('Low');
+  await expect(page.locator('#modal [aria-selected=true]')).toHaveText('Low');
   await closeResponseSettings(page);
   assert.equal(requests.filter(r => r.method === 'PATCH').length, 1);
   assert.equal(requests.filter(r => r.method === 'POST' && /\/(runs|sessions)$/.test(r.path)).length, 0);
@@ -1158,7 +1174,7 @@ test('Compact settings unknown recovery reads only the original Session, includi
   await openResponseSettings(page);
   for (const kind of ['model', 'thinking']) await expect(page.locator(`#${kind}-select`)).toBeDisabled();
   await expect(page.locator('#modal [data-action=check-session-model]')).toBeFocused();
-  await expect(page.locator('#modal [role=menu]')).toHaveCount(0);
+  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
   await expect(page.locator('.options-status[role=status]')).toHaveCount(1);
   assert.equal(requests.filter(r => r.method === 'GET' && r.path.endsWith('/chat-options')).length, reads);
   failCheck = true;
@@ -1193,9 +1209,9 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
       return { json: chatModels() };
     }
     if (r.path.endsWith('/chat-options')) return { json: chatOptions() };
-  });
+  }, false, false);
   await button(page, 'tab-Chat').click();
-  await expect(page.locator('.options-status')).toContainText('Loading models');
+  await expect(page.locator('#response-settings-trigger')).toHaveAttribute('aria-busy','true');await expect(page.locator('#response-settings-trigger .read-placeholder-field')).toBeVisible();
   await expect(button(page, 'send-message')).toBeDisabled();
   await uiuxEvidence(page, '11-loading-models-closed');
   await openResponseSettings(page);
@@ -1425,10 +1441,10 @@ test('Compact settings keyboard keeps list navigation, IME, Tab, focus return an
   await page.keyboard.press('ArrowDown');
   await expect(page.locator('#model-select')).toBeFocused();
   await page.keyboard.press('Space');
-  await expect(page.locator('#modal [aria-checked=true]')).toBeFocused();
+  await expect(page.locator('#modal [aria-selected=true]')).toBeFocused();
   await page.keyboard.press('Space');
   await expect(page.locator('#model-select')).toBeFocused();
-  await expect(page.locator('#modal [role=menu]')).toHaveCount(0);
+  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
   await page.keyboard.press('Tab');
   await expect(page.locator('#thinking-select')).toBeFocused();
   const outline = await page.locator('#thinking-select').evaluate(node => { const css = getComputedStyle(node); return { style: css.outlineStyle, width: css.outlineWidth }; });
@@ -1447,7 +1463,7 @@ test('Compact settings keyboard keeps list navigation, IME, Tab, focus return an
   await page.locator('#modal [data-option-value=high]').evaluate(node => node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })));
   await page.keyboard.press('Enter');
   assert.equal(requests.filter(r => r.method === 'PATCH').length, 0);
-  await expect(page.locator('#modal [role=menu]')).toHaveCount(1);
+  await expect(page.locator('#modal [role=listbox]')).toHaveCount(1);
   await page.locator('#modal [data-option-value=high]').evaluate(node => node.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
   await page.keyboard.press('ArrowUp');
   await expect(page.locator('#modal [data-option-value=low]')).toBeFocused();
@@ -1516,10 +1532,10 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   await button(page, 'focus-chat').click();
   await uiuxEvidence(page, '03-focus-chat');
   await openResponseSettings(page);
-  await expect(page.locator('#modal [role=menu]')).toHaveCount(0);
+  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
   await uiuxEvidence(page, '04-response-settings');
   await page.locator('#thinking-select').click();
-  await expect(page.locator('#modal [role=menu]')).toHaveAccessibleName('Thinking levels');
+  await expect(page.locator('#modal [role=listbox]')).toHaveAccessibleName('Thinking levels');
   await uiuxEvidence(page, '05-thinking-options');
   await closeResponseSettings(page);
   await page.setViewportSize({ width: 360, height: 800 });
@@ -1540,7 +1556,7 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   await expect(page.locator('#modal .response-setting-value').first()).toHaveText(label + ' (one)Work default');
   await expect(page.locator('#modal [role=option]').first()).toHaveText(label + ' (one)Use Work default');
   assert.ok(await page.locator('#modal [role=option]').first().evaluate(node => node.scrollHeight <= node.clientHeight));
-  assert.ok(await page.locator('#modal [role=menu]').evaluate(node => node.scrollHeight > node.clientHeight && node.clientHeight <= 240));
+  assert.ok(await page.locator('#modal [role=listbox]').evaluate(node => node.scrollHeight > node.clientHeight && node.clientHeight <= 240));
   await uiuxEvidence(page, '09-long-model-panel-360');
   await page.setViewportSize({ width: 800, height: 300 });
   await expect(page.locator('#modal .modal-footer .button')).toBeInViewport();
@@ -1584,7 +1600,7 @@ test('Compact settings both fields adjust in one panel and serialize the latest 
   await expect(page.locator('#modal [role=option]')).toHaveText(['Off', 'Balanced', 'Deep']);
   await page.locator('#modal [data-option-value=deep]').click();
   await expect(page.locator('#thinking-select')).toBeFocused();
-  await expect(page.locator('#modal [role=menu]')).toHaveCount(0);
+  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
   await expect(page.locator('.response-setting-group .response-setting-label')).toHaveText(['Model', 'Thinking']);
   await expect(page.locator('#modal .options-status')).toContainText('Saving');
   assert.deepEqual(pairs, [{ modelRef: other.modelRef, thinkingLevel: 'balanced' }]);
@@ -1695,7 +1711,7 @@ test('late known default capabilities initialize only the untouched new-session 
   if(r.path.endsWith('/sessions'))return{json:{sessions:[]}};
   if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
   if(r.path.endsWith('/chat-models')){await gate;return{json:{contractVersion:1,models:[],defaultModel:model,checkedAt:new Date().toISOString(),availability:'available'}};}
- });
+ }, false, false);
  await button(page,'tab-Chat').click();await page.locator('#composer').fill('new session draft');await api(page,"adapter.modelSelection('work-1','');");release();
  await expect.poll(async()=>api(page,"return adapter.modelSelection('work-1','').thinking;")).toBe('minimal');await openResponseSettings(page);await expect(page.locator('#thinking-select')).toContainText('Minimal');await closeResponseSettings(page);await expect(page.locator('#composer')).toHaveValue('new session draft');assert.equal(chatWrites(requests).length,0);
 });
@@ -2072,7 +2088,7 @@ test('Controls cancelling request is observed to its actual terminal result; los
 
 for(const target of [{session:'session-1',source:{kind:'chat'}},{session:'session-other',source:{kind:'chat'}},{session:'session-auto',source:{kind:'service',serviceName:'Tool A'}}])test(`Controls Stop and send binds ${target.session} and keeps the user Session and later edits`,async t=>{
  let active:any=controlRun('old-run',2,target.session,target.source),release!:()=>void,submitted=false;
- const gate=new Promise<void>(resolve=>release=resolve);
+ const gate=new Promise<void>(resolve=>release=resolve);t.after(()=>release());
  const {page,requests}=await fixture(t,async r=>{
   if(r.path.endsWith('/runs/active'))return{json:{run:active}};
   if(r.path.endsWith('/runs')&&r.method==='POST'){submitted=true;await gate;const input=JSON.parse(r.body);active=null;return{status:202,json:{run:{...controlRun('new-run',4,'session-1',{kind:'chat'}),submissionKey:input.submissionKey}}};}
@@ -2112,7 +2128,7 @@ test('Controls historical Run information is on demand and never replaces the cu
   return controlFixture(r);
  });
  await button(page,'tab-Chat').click();await expect(page.locator('#messages .run-history')).toHaveCount(0);assert.ok(!(await page.locator('#messages').textContent())!.includes('historical-run'));
- const current=await api(page,"return adapter.getWork('work-1').run?.id || null");await button(page,'run-details').click();await expect(page.locator('#modal')).toContainText('Actual model');await expect(page.locator('#modal')).toContainText('high');assert.equal(await api(page,"return adapter.getWork('work-1').run?.id || null"),current);assert.equal(chatWrites(requests).length,0);
+ const current=await api(page,"return adapter.getWork('work-1').run?.id || null");await page.locator('.unmatched-executions > details > summary').click();await page.locator('[data-action=run-details][data-run-id=historical-run]').click();await expect(page.locator('#modal')).toContainText('Actual model');await expect(page.locator('#modal')).toContainText('high');assert.equal(await api(page,"return adapter.getWork('work-1').run?.id || null"),current);assert.equal(chatWrites(requests).length,0);
 });
 
 test('Controls Service scopes discard late reads, share ports, retain list scroll and clear prior identity',async t=>{
@@ -2261,8 +2277,8 @@ test('Controls recovery: original interrupted observer actions stay bound while 
  });
  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toHaveAttribute('data-cancel-run-id','background-active');
  await api(page,"const w=adapter.getWork('work-1');w.run={id:'interrupted-manual',sessionId:'session-1',status:'running',created:'2026-10-12T00:00:00Z',cursor:7,error:'Observer interrupted',source:{kind:'chat'}};w.sessions[0].runs=[w.run];await adapter.loadModels('work-1');");
- await expect(page.locator('.composer-wrap')).toContainText('Observer interrupted');
- const original=page.getByRole('button',{name:'Check original Run',exact:true});await expect(original).toHaveAttribute('data-run-id','interrupted-manual');await original.click();
+ await expect(page.locator('.message-execution').filter({has:page.locator('[data-run-id=interrupted-manual]')})).toContainText('Observer interrupted');
+ const original=page.locator('[data-action=run-details][data-run-id=interrupted-manual]');await expect(original).toHaveAttribute('data-run-id','interrupted-manual');await original.click();
  await expect(page.locator('#modal')).toContainText('interrupted-manual');
  assert.ok(requests.some(r=>r.path.endsWith('/runs/interrupted-manual')&&r.method==='GET'));
  assert.equal(await api(page,"return adapter.activeRuns.get('work-1').run.id"),'background-active');
@@ -2280,7 +2296,7 @@ test('Controls recovery: closing or hiding cancellation list stops reads and reo
   return controlFixture(r);
  });
  await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();
- await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('response was lost');
+ await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('response was lost');await button(page,'back-pi-requests').click();
  await page.clock.install();
  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));});
  await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('cancelling');
@@ -2366,7 +2382,7 @@ test('Controls pagination: late evidence preserves the confirmed terminal and or
  await page.evaluate(()=>{(window as any).paginationFrame=document.querySelector('iframe');(window as any).paginationFrameLoads=0;document.querySelector('iframe')!.addEventListener('load',()=>{(window as any).paginationFrameLoads++;});});
  await page.clock.install();await button(page,'service-requests').click();await button(page,'next-pi-requests').click();
  await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
- await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelling');
+ await page.locator('#modal [data-action=pi-request-detail][data-id=request-a]').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('cancelling');await button(page,'back-pi-requests').click();
  const detail=page.locator('#modal [data-action=pi-request-detail][data-id=request-a]');
  await detail.focus();await page.locator('.modal-body').evaluate(node=>node.scrollTop=135);
  const listScroll=await page.locator('.modal-body').evaluate(node=>node.scrollTop);
@@ -2468,18 +2484,18 @@ test('Reconcile history: 410 readback remains bound to the original Run beside a
   await expect.poll(() => entered).toBe(true);
   await api(page, "await adapter.loadActiveRun('work-1',true);");
   release(); await api(page, 'await window.reconcileRecovery;');
-  await expect(page.locator('.composer-wrap')).toContainText('History recovery failed');
-  await expect(page.locator('.composer-wrap')).toContainText('Original execution failed');
-  await expect(page.getByRole('button', { name: 'Check original Run', exact: true })).toHaveAttribute('data-run-id', 'run-original');
+  await expect(page.locator('.message-execution').filter({has:page.locator('[data-run-id=run-original]')})).toContainText('History recovery failed');
+  await expect(page.locator('.message-execution').filter({has:page.locator('[data-run-id=run-original]')})).toContainText('Original execution failed');
+  await expect(page.locator('[data-action=run-details][data-run-id=run-original]')).toHaveAttribute('data-run-id', 'run-original');
   await expect(button(page, 'send-message')).toHaveAttribute('data-cancel-run-id', 'run-background');
   failRunRead = true; await api(page, "await adapter.resumeRun('work-1');");
-  await expect(page.locator('.composer-wrap')).toContainText('Original execution failed');
-  await expect(page.locator('.composer-wrap')).toContainText('History recovery failed');
+  await expect(page.locator('.message-execution').filter({has:page.locator('[data-run-id=run-original]')})).toContainText('Original execution failed');
+  await expect(page.locator('.message-execution').filter({has:page.locator('[data-run-id=run-original]')})).toContainText('History recovery failed');
   failRunRead = false;
   await api(page, "await adapter.resumeRun('work-1');");
   const facts = await api(page, "const w=adapter.getWork('work-1');return {run:w.run.id,status:w.run.status,error:w.run.error,replies:w.sessions[0].messages.filter(m=>m.text==='Original recovered reply').length,active:adapter.activeRuns.get('work-1').run.id,frame:window.reconcileFrame===document.querySelector('iframe')};");
   assert.deepEqual(facts, { run: 'run-original', status: 'failed', error: 'Original execution failed', replies: 1, active: 'run-background', frame: true });
-  await expect(page.locator('.composer-wrap')).toContainText('Original execution failed');
+  await expect(page.locator('.message-execution').filter({has:page.locator('[data-run-id=run-original]')})).toContainText('Original execution failed');
   await expect(page.locator('#composer')).toHaveValue('Preserve next message');
   assert.equal(requests.filter(r => r.path.endsWith('/runs/run-original/events')).length, 1);
   assert.equal(requests.filter(r => r.path.endsWith('/sessions/session-auto')).length, 0);
@@ -2585,7 +2601,7 @@ test('B selected Service Starting to Ready prepares exactly one entry without re
 
 test('B accepted New Work defaults reset only on the next explicit New Work', async t => {
   const { page, requests } = await fixture(t, r => r.path === 'works' && r.method === 'POST' ? { status: 202, json: { operationId: 'create-a', workId: 'new-a' } } : undefined);
-  await page.getByRole('link', { name: 'Piwork Works' }).click();
+  await button(page, 'back-works').click();
   await button(page, 'new-work').click(); await page.locator('#create-name').fill('A');
   await button(page, 'toggle-create-advanced').click(); await page.locator('#create-image').fill('synthetic/image');
   await page.locator('#create-agents').fill('only A'); await button(page, 'create-work').click();
@@ -2607,7 +2623,7 @@ test('B Delete mixed 204 and real 207 retries only the explicitly selected faile
   });
   await button(page, 'tab-Files').click(); await page.locator('[data-file-select="/a.txt"]').check(); await page.locator('[data-file-select="/b.txt"]').check();
   await button(page, 'file-delete').click(); await button(page, 'confirm-file-delete').click();
-  await expect(page.locator('#modal')).toContainText('Cannot delete B'); await expect(page.locator('#modal')).toContainText('/b.txt');
+  await expect(page.locator('#modal')).toContainText('PERMISSION_DENIED');await expect(page.locator('#modal')).toContainText('/b.txt'); await expect(page.locator('#modal')).toContainText('/b.txt');
   await expect(button(page, 'confirm-file-delete')).toBeDisabled();
   await expect(page.locator('[data-retry-source="/a.txt"]')).toHaveCount(0);
   // A can be recreated externally: the original successful DELETE still must not replay.
@@ -2624,7 +2640,7 @@ test('B Service details appear while their isolated log read is still pending', 
     if (r.path.endsWith('/services/service-a/logs')) { await gate; return { status: 503, json: { message: 'Only logs unavailable' } }; }
     return focusFixture(r);
   });
-  await button(page, 'manage-services').click(); await page.locator('[data-action="service-details"][data-id="service-a"]').click();
+  await button(page, 'service-menu').click(); await button(page, 'manage-services').click(); await page.locator('[data-action="service-details"][data-id="service-a"]').click();
   await expect(page.locator('#modal')).toContainText('Tool A'); await expect(page.locator('#modal .service-controls')).toBeVisible();
   await expect(page.locator('#modal')).toContainText('Reading this Service'); release();
   await expect(page.locator('#modal')).toContainText('Only logs unavailable'); await expect(button(page, 'refresh-logs')).toBeEnabled();
@@ -2695,7 +2711,7 @@ test('B independent app preserves an invalid requested port instead of opening d
 test('B file chooser result cannot target a different directory than its original Upload click', async t => {
   const { page, requests } = await fixture(t, r => r.method === 'PROPFIND' ? { status: 207, body: `<d:multistatus xmlns:d="DAV:"><d:response><d:href>/_desktop/files/works/work-1/files/dest/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>` } : undefined);
   await button(page, 'tab-Files').click();
-  const chooser = page.waitForEvent('filechooser'); await button(page, 'upload').click(); const original = await chooser;
+  await button(page, 'file-add').click(); const chooser = page.waitForEvent('filechooser'); await button(page, 'upload').click(); const original = await chooser;
   await page.locator('[data-action="open-file"][data-path="/dest"]').click();
   const before = requests.filter(r => ['HEAD', 'PUT'].includes(r.method)).length;
   await original.setFiles({ name: 'chosen.txt', mimeType: 'text/plain', buffer: Buffer.from('chosen for root') });
@@ -2739,7 +2755,7 @@ function cFilesReply(r: RequestRecord): Reply | undefined {
 test('C New folder focuses the field and local Enter submits only once while pending', async t => {
   let release!: () => void; const held = new Promise<void>(done => release = done); t.after(() => release());
   const { page, requests } = await fixture(t, async r => r.method === 'MKCOL' ? (await held, { status: 201 }) : cFilesReply(r));
-  await button(page, 'tab-Files').click(); await button(page, 'new-folder').click();
+  await button(page, 'tab-Files').click(); await button(page, 'file-add').click(); await button(page, 'new-folder').click();
   await expect(page.locator('#form-name')).toBeFocused(); await page.locator('#form-name').fill('中文 folder');
   const before = await button(page, 'confirm-folder').boundingBox();
   await page.locator('#form-name').press('Enter');
