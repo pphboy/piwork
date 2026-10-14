@@ -2805,7 +2805,7 @@ for (const ending of ['success','failure','focus-moved'] as const) test(`Files s
   if(r.method==='PROPFIND' && armed){await gate;if(ending==='failure')return{status:503,json:{message:'Original directory temporarily unavailable'}};}
   return cFilesReply(r);
  });
- await button(page,'tab-Files').click();await expect(page.locator('[data-action=open-file][data-path="/note.txt"]')).toBeVisible();await page.clock.install();
+ await page.setViewportSize({width:ending==='focus-moved'?1440:360,height:900});await button(page,'tab-Files').click();await expect(page.locator('[data-action=open-file][data-path="/note.txt"]')).toBeVisible();await page.clock.install();
  const refresh=button(page,'refresh-files'),before=requests.filter(r=>r.method==='PROPFIND').length;armed=true;await refresh.focus();await refresh.press('Enter');
  await expect(refresh).toHaveAttribute('aria-disabled','true');await expect(refresh).toBeFocused();await expect.poll(()=>requests.filter(r=>r.method==='PROPFIND').length).toBe(before+1);
  await refresh.press('Enter');await refresh.evaluate((node:HTMLButtonElement)=>node.click());await page.clock.runFor(10001);
