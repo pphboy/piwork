@@ -1,4 +1,92 @@
-# 最新 main 整合验收
+# UI 最终 Review 与 Verify 验收
+
+## 2026-10-14 冻结需求后的最终验证
+
+变更：`fix-desktop-task-completion-and-ux`。本节是当前结果，下方较早结果保留为历史，不能混算通过数。
+
+### 输入、范围与结论
+
+- 最终源码与测试输入：`4205172815ff0204d097eb1eadf4032c32a6d909`，工作树干净；代码树 `f12ddba6c0b8635609fcd99d5c520ae30c6b5f82`。正常 Node 24 构建、Go CLI 宿主构建使用同一输入，不回写构建身份。
+- 实际 linux/amd64 CLI：Go 1.25.5，`modified=false`，DesktopUIHash `9f64f9b7983e160ec4f72a98699c54bc1f90cd8f6b4189a9aa63e88c6dacf798`，二进制 SHA-256 `9ac3c2b76a61980a8ebc42123e853c89091e3631560bcd15d5301be87da8d341`。
+- 只处理当前 UI、Desktop adapter、测试与嵌入资源；不修改 Core 业务/API、权限协议或安全边界。没有启动 Docker，没有修改系统网络/安全设置。
+- 通过官方云端终端启动已安装 Chromium 154.0.8037.57 与原测试入口；此前执行环境的 UNIX socket/浏览器启动限制与本轮实际可用入口分别记录，不把旧启动失败计为产品失败。
+- 独立代码 Review 覆盖 `28bfdfa` 到本轮最终实现；已证实问题均修复，当前无剩余代码 finding。全部测试源码并非每行逐字审阅；安全断言、原 ID、请求计数及失败恢复未因迁移 UI 而删除或降低。
+- **UI 完整浏览器矩阵与原生契约已通过。整个 OpenSpec change 仍不宣称全部验收完成：真实 NVDA/VoiceOver、隔离真实 Core/Engine/helper 链路仍未验证。** 不合并、不归档，也不将不存在的远端 CI 检查称为绿色。
+
+### 实际命令与结果
+
+| 验证层 | 最终结果 | 证据边界 |
+| --- | --- | --- |
+| Desktop 完整 `npm run test:browser -w @piwork/desktop-webui` | **837 pass / 0 fail / 0 skip**，退出码 0 | Node 24.19.0；`PIWORK_TEST_BROWSER_BIN=/usr/bin/chromium`，`PIWORK_TEST_TICKET_EXPIRY=1`；真实等待 300250ms 的未使用票据过期用例通过，不缩短产品 TTL |
+| 原生 Go 契约矩阵 | **407 pass / 0 fail / 1 skip**，退出码 0 | `go test -p 1 -count=1 -mod=readonly -json -timeout=8m`；CLI、assets、file/helper/protocol、snapshot/tree、workfiles、clientfs/client、workpackage；仅真实 SELinux 宿主条件用例不适用 |
+| 补证浏览器矩阵 | 18/18 通过 | 导出交错、仅图片草稿、导航/菜单/设置/布局及焦点；这是完整矩阵的子集，不能另加成总数 |
+| 焦点与重复提交定向 | 7/7 通过 | 慢刷新成功/失败/主动移焦、双击、Enter 后点击、危险确认不接受泛 Enter、逐层退出；完整矩阵包含它们 |
+| Desktop typecheck、正常 build/宿主构建 | 通过 | 实际构建身份如上；25 个嵌入资产逐字节一致 |
+| native boundary、repository docs、`git diff --check` | 通过 | 没有将 UI 修复扩成后端修改 |
+
+原生测试在隔离测试子进程使用 umask 022，未改变全局权限配置。较早并行候选发生一次磁盘可用量采样时序失败；保留该失败，原断言 20 次复验及最终 `-p 1` 全矩阵通过，不修改生产容量判断或降低断言。较早浏览器 62/7 项失败的诊断也保留，不冒称第一轮已通过。
+
+### 按模块核验
+
+| 模块 | 本轮纠正及验收 | 范围 |
+| --- | --- | --- |
+| 导出/导入 | 原 Operation→snapshot→transfer 精确绑定；Close/换 Work 不取消一次交付；丢准备回复、GET 先 ready、晚 POST/重复 GET 不重放；真实浏览器 download、全部字节/hash/文件名及各一次 Export/prepare/content；Import 后显式 Start 的 failed/unknown/真实 Ready 门槛 | UI/adapter 与合成 HTTP、原生包契约；不冒充真实 Core 整链路 |
+| Work/Chat/Service | 独立窗口保留缺失对象与合法端口恢复；无可用 Service 首入 Chat 不覆盖新选择/弹层；Starting 不误给快捷 Open；普通显隐保留 iframe、文本/图片及布局；仅图片草稿真实 beforeunload 取消/清除/身份隔离 | UI 与当前会话内状态，不新增自动业务操作 |
+| Files/设置 | 非 207 的 408/5xx 写入保持 unknown；原路径只读核对、不重复写；慢刷新保留原按钮焦点，主动移焦后不抢回；命名 selection/IME 事件 guard、双击和 Enter-click 单次写；三来源设置返回、Save/Apply 分离、晚结果不改新草稿 | Desktop 交互/恢复，既有安全锁不放宽 |
+| 菜单/布局 | 独立 app 移除无意义的 Chat/split 命令；Late read 不关闭新菜单；Service picker 按真实状态解释不可用且不自动 Start；窄断点切换时 Agent 不先隐藏丢焦点；Modal 无动画 | 现行组件语义，不新建设计系统 |
+
+快/慢读取都采用原位反馈，缓存内容不卸载；首次数据使用无文字的局部占位。失败保留原因及显式恢复，不显示虚假的完成状态。独立 app 不增加 Chat，也不新增首屏 iframe load 遮挡。
+
+### 基线红例与当前绿色证据分层
+
+- 旧 snapshot 选择最小复现抽取 `28bfdfa` 的原 find 表达式，两种排列确定性选错原目标；停止态多段接力的既有基线失败记录继续保留。
+- 旧导出交错最小复现忠实编译/抽取原 handleAction/checkDownload/downloadSnapshot：Close/换 Work、丢准备回复后 Check、GET 先 ready 等出现原交付 0 次；同时保留成功直返与不抹 ready 的对照，不谎称旧实现每种交错都重复下载。
+- 这些旧版复现采用合成 observer/DOM 状态，不是运行旧完整浏览器。当前绿色证据来自实际 Chromium/真实 HTTP download，明确验证原 ID、次数及文件内容。
+- 窄断点 CSS 因果对照采用真实样式及独立 DOM：在 resize 渲染尚未加 narrow-chat 的状态，旧样式隐藏 Agent 并丢焦点，新样式保留可见/焦点；service-only 两者仍隐藏。它不是对全应用竞速的稳定重现声明；完整应用逐层 Escape 和跨宽度焦点测试另行通过。
+
+### 使用与限制
+
+- 无已知 Operation 的外部 Work 变化仍可读取更新；刷新失败保留旧内容与搜索。页面内离开与原生 beforeunload 均保护有效文字/图片草稿，取消留在原页面；浏览器进程崩溃、系统强制关闭不保证草稿持久化。
+- 下载成功的 UI 边界是 Download started，不等于用户已保存到硬盘；显式再次下载使用同一原 transfer，未知写入不可盲重放。
+- 原统一配置读取、匿名 Inspect、原生授权/到期、隐藏与取消观察、晚身份回复隔离均保留在最终完整套件。
+- 真正读屏、真实 OS 中文输入法的人工行为不由合成 composition/229 事件代替；真实 Core/Engine/helper 验收依任务 10.3 继续未测。当前 NoDocker 约束不变。
+
+### 最终实际图形几何
+
+- 最新冻结资源实际跨 iframe 拖动，比例 70→49，主区宽度 785.39→548.03px；拖动中遮层存在且 iframe pointer-events=none，真实 Escape 取消后遮层 0、pointer-events=auto，释放后仍无残留。
+- 实际键盘方向键、Shift、Home/End/Enter，以及 1440→500→360→1440 往返，宽屏比例 60 与主区 855.59px 恢复，无页面横向溢出。窄屏全宽显示不改写宽屏比例。
+- 普通、Chat 隐藏、Service/Chat 聚焦、独立 app、Degraded/错误条和高度变化代表组合均检查内层滚动与底边；原生 Chrome 125% 缩放（devicePixelRatio=1.25、907×564）时底边贴合、composer 可达，无全页横滚。
+- 真实正常/减少动态参数化测试与无动画样式证据共同覆盖对应要求；不绕过浏览器被组织禁用的 DevTools，不假称手动切换了该浏览器的减少动态设置。
+
+### Modal 适用范围验收
+
+当前适用 family 的 21 条实际观察结合共享页脚生产契约与完整浏览器矩阵通过：窄屏 Requests、Package Install、New Work、Files 命名/删除、Import、Service Stop 和危险确认均覆盖宽/360px。直接页脚为 min-height 40px、13px 字体、8×16px padding，主/次/危险角色及 disabled/Tab 保持；长 Reset browser access 标签窄屏换行到 51.78px，不为一行文本强压点击区域。
+
+Session 选择是 Popover，Run/Operation/Package 详情是 Drawer，Export 是明确非模态进度面板；不将这些控件强行作为阻断 Modal 验收。矩阵按现行适用 family 加生产契约组合，不声称手动打开了每种 payload、每个 Copy/Move/Overwrite 内容或每个 Import 阶段。
+
+最终任务为 **90/92**；仅 9.3 真实 NVDA/VoiceOver 和 10.3 真实 Core/Engine/helper 链路仍未完成。OpenSpec strict/schema 通过不能替代这两项实测。
+
+### 最终截图（合成数据）
+
+宽屏 Service + Chat 与可拖动分隔线；Service 内容为测试草稿板，不代表用户 Work。
+
+<p align="center"><img src="screenshots/final-workspace-wide.png" alt="最新宽屏 Service 与 Chat 实际截图" width="1100"></p>
+
+360px 新建 Work：表单、直接页脚及 40px 按钮。
+
+<p align="center"><img src="screenshots/final-create-360.png" alt="360px 新建 Work Modal 实际截图" width="360"></p>
+
+原生 Chrome 125% 缩放及合成读取错误：错误恢复可达、Chat 内部滚动、底边贴合。
+
+<p align="center"><img src="screenshots/final-workspace-125zoom.png" alt="125% 缩放与错误状态实际截图" width="1000"></p>
+
+### 原始证据
+
+完整命令日志、837 项 TAP、Go JSONL、构建身份、实际截图/几何、独立 Review 及逐场景 Verify 表随本轮恢复包保留；临时材料位于忽略目录，不向源码提交凭据、用户数据或工具链。所有图形验证均使用明确标注的合成数据与冻结产品资源。
+
+---
+
+# 2026-10-13 main 整合验收（历史）
 
 日期：2026-10-13 UTC。变更：`fix-desktop-task-completion-and-ux`。本记录只列本次恢复环境重跑结果；[旧候选验收](previous-candidate-acceptance.md)中的通过数、截图及构建身份均不转移到本候选。
 
