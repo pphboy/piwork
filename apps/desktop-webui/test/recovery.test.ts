@@ -2714,6 +2714,7 @@ test('B file chooser result cannot target a different directory than its origina
   await button(page, 'tab-Files').click();
   await button(page, 'file-add').click(); const chooser = page.waitForEvent('filechooser'); await button(page, 'upload').click(); const original = await chooser;
   await page.locator('[data-action="open-file"][data-path="/dest"]').click();
+  await expect(page.locator('.breadcrumbs [data-path="/dest"]')).toBeVisible();
   const before = requests.filter(r => ['HEAD', 'PUT'].includes(r.method)).length;
   await original.setFiles({ name: 'chosen.txt', mimeType: 'text/plain', buffer: Buffer.from('chosen for root') });
   await expect(page.getByText('Upload not submitted:', { exact: false }).first()).toBeVisible();
