@@ -168,7 +168,7 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
         if (record.key.startsWith('route:') && !record.error)
             continue;
         // Files owns busy/success in its fixed refresh button; errors and unknowns still use the local region.
-        if (record.kind === 'read' && ['tab-Files', 'refresh-files', 'file-path', 'open-file', 'open-source', 'sessions', 'select-session', 'retry-conversation', 'check-active-run'].includes(record.action || '') && !record.error && !record.blocked && record.refresh !== 'failed')
+        if (record.kind === 'read' && ['retry-works', 'tab-Files', 'refresh-files', 'file-path', 'open-file', 'open-source', 'sessions', 'select-session', 'retry-conversation', 'check-active-run'].includes(record.action || '') && !record.error && !record.blocked && record.refresh !== 'failed')
             continue;
         // A confirmed file batch has a short toast; pending, unknown and readback failures remain local.
         if (record.kind === 'files' && record.successFeedback === 'toast' && !record.pending && !record.error && !record.blocked && record.refresh !== 'failed')

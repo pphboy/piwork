@@ -25,7 +25,7 @@ test('normal settings are compact; dirty, pending Apply, Applying and errors ret
  c.adapter.state.operations[0].state='unknown';html=c.settingsPage(work);assert.match(html,/Apply not confirmed/);assert.doesNotMatch(html,/data-action="apply-config"/);
 });
 test('Works icon actions retain labels; Files add menu and Admin role keep explicit context',()=>{
- const works=extract('works'),modal=extract('modalMarkup');assert.match(works,/title="Refresh Works" aria-label="Refresh Works"/);assert.match(works,/title="Import Work" aria-label="Import Work"/);assert.match(works,/title="New Work" aria-label="New Work"/);assert.match(works,/Make room for your next idea/);
+ const works=extract('works'),modal=extract('modalMarkup');assert.match(works,/worksRefreshButton\(\)/);assert.match(extract('worksRefreshButton'),/Refresh Works/);assert.match(works,/title="Import Work" aria-label="Import Work"/);assert.match(works,/title="New Work" aria-label="New Work"/);assert.match(works,/Make room for your next idea/);
  assert.doesNotMatch(modal,/case "file-add"/);assert.doesNotMatch(modal,/case "file-options"/);assert.match(modal,/Role: /);assert.match(modal,/Administrator/);assert.match(modal,/Core: /);
 });
 
@@ -146,4 +146,22 @@ test('Packages aligns identity/status separately from commands and groups catalo
  assert.match(css,/\.package-capability \{ display:grid;grid-template-columns:36px minmax\(0,1fr\) auto/);
  assert.match(css,/\.package-copy \{ min-width:0;flex:1;overflow-wrap:anywhere/);
  assert.match(css,/\.package-status,.package-actions \{ grid-column:2; \}/);
+});
+
+for(const hasRows of [true,false]) test(`Works refresh preserves confirmed ${hasRows?'rows':'empty list'} with only in-place busy`,()=>{
+ const {c,work}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workControls=new Map();
+ Object.assign(c.adapter,{worksLoading:true,worksChecked:'now',worksError:'',state:{scenario:'loading',works:hasRows?[work]:[],core:{account:'user'}}});
+ vm.runInContext(extract('worksRefreshButton','works'),c);
+ let html=c.works();assert.doesNotMatch(html,/loading-list|Loading your Works/);assert.match(html,/data-read-busy="true"/);assert.match(html,hasRows?/work-table/:/Make room for your next idea/);
+ c.adapter.worksLoading=false;c.adapter.state.scenario='normal';html=c.works();assert.doesNotMatch(html,/aria-busy|Updated|Status checked/);
+ c.adapter.worksError='Read failed';c.adapter.state.scenario='list-error';html=c.works();assert.match(html,/Read failed/);assert.match(html,hasRows?/work-table/:/Make room for your next idea/);
+});
+
+test('Works first load uses skeleton, first failure is never an empty list, and cached search is retained',()=>{
+ const {c,work}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workControls=new Map();
+ Object.assign(c.adapter,{worksLoading:true,worksChecked:'',worksError:'',state:{scenario:'loading',works:[],core:{account:'user'}}});
+ vm.runInContext(extract('worksRefreshButton','works'),c);
+ assert.match(c.works(),/loading-list/);
+ c.adapter.worksLoading=false;c.adapter.worksError='No response';c.adapter.state.scenario='list-error';let html=c.works();assert.match(html,/Works could not be loaded/);assert.doesNotMatch(html,/Make room for your next idea|No matching Works/);
+ c.adapter.state.works=[work];c.adapter.worksLoading=true;c.view.search='missing';html=c.works();assert.match(html,/value="missing"/);assert.match(html,/No matching Works/);assert.doesNotMatch(html,/loading-list/);
 });
