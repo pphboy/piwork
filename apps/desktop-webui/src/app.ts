@@ -612,8 +612,15 @@ function workStatus(w: Work) {
   const state = adapter.project(w);
   return `${badge(state.label)}${state.explanation ? `<small>${esc(state.explanation)}</small>` : w.status === 'Degraded' ? '<small>A capability needs attention</small>' : ''}`;
 }
+function workRouteFeedback(w: Work): string {
+  const pending = [...actions.records.values()].filter(record => record.work === w.id && record.view === location.hash && record.pending && (record.key.startsWith('route:') || ['open-work', 'retry-work-read'].includes(record.action || '')));
+  if (!pending.length) return '';
+  const slow = pending.some(record => Date.now() - record.started >= 10000);
+  const label = slow ? 'Still reading Work…' : 'Reading Work…';
+  return `<span class="work-read-feedback" role="status" aria-busy="true" aria-label="${label}">${icon('refresh', 14)}${slow ? `<small>${label}</small>` : ''}</span>`;
+}
 function workHeader(w: Work, standalone = false) {
-  return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), standalone ? "back-work" : "back-works", "icon-button quiet", `aria-label="${standalone ? "Back to Work" : "Back to Works"}"`)}<span class="header-divider"></span><span class="work-icon small ${w.color}">${icon(w.icon, 19)}</span><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}</div><div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="Work options"`)}</div></header>`;
+  return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), standalone ? "back-work" : "back-works", "icon-button quiet", `aria-label="${standalone ? "Back to Work" : "Back to Works"}"`)}<span class="header-divider"></span><span class="work-icon small ${w.color}">${icon(w.icon, 19)}</span><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}${workRouteFeedback(w)}</div><div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="Work options"`)}</div></header>`;
 }
 function workPage(w: Work) {
   const settings = route()[2] === "settings", panels = workspacePanels.get(w.id);

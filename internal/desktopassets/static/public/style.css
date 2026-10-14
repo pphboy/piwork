@@ -3577,3 +3577,5 @@ a.button.primary { color:var(--on-accent,#fff); }
 
 /* A read-only refresh stays focusable while its existing action lock rejects repeats. */
 .file-refresh[aria-disabled="true"] { cursor: not-allowed; opacity: 0.48; }
+
+.work-read-feedback { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); }
