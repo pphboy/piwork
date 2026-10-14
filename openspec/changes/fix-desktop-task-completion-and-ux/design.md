@@ -259,3 +259,14 @@ Chat显隐控件移至Service工具栏；窄屏Chat显示时仍保留Service Hea
 - 仅assistant正文经安全GFM解析，用户文字、工具输出、source chip、鉴权图片管道保持原行为。原生HTML转义、链接只允许明确http/https/mailto导航且noopener/noreferrer、Markdown图片仅显示alt不自动联网。代码/表格局部滚动；历史与流式增量均走同一纯renderer。超64KiB、4096行或4096分隔符回退完整转义文字，不截断、不缓存跨身份内容。
 
 最终截图进一步确认：open-work/retry-work-read普通pending不再与区域骨架重复显示状态条；首次未确认Session/模型使用中性Loading标签，不显示假空会话或Retry models，真实错误与未知设置恢复保持。
+
+## 2026-10-14 首次骨架去文字
+
+- 按最新反馈移除局部骨架可见加载文字；保留所属区域的 aria-label、status 和 busy。Works 以图标/名称/状态三列行占位，Services 以标题/正文块占位，Chat 以交错消息块占位；不替换真实工具栏或输入区。
+- 初次 Session 未取得名称时，同一选择控件内用小型静态字段占位；模型初次读取且配置为 clean 时，同一设置控件内占位、移除主输入区重复正常 Loading 文案。已确认值、模型失败和 unknown 设置恢复原样保留。
+- 仅通过 CSS 零时长、150ms 延迟的单次显现抑制快速读取的骨架闪现。没有 shimmer/pulse、JS timer、最短等待或内容延迟；正常/减少动态效果下均为静态形状，不恢复 Modal 动画。
+- 缓存刷新、实际业务状态、发送禁用及iframe保留逻辑不变。不新增统一超时状态；既有ActionState/Files等十秒等待提示保持，Service iframe本身仍没有新增独立十秒提示，此边界不冒充已完成的全域慢请求处理。
+
+- 冷开Work深链接：bootstrap在loadRoute前先读全局列表，原无对象分支曾误报Unavailable。复用routeLoad=0和既有错误/连接状态判断初次占位，不改变初始化请求顺序、身份或真实404；路由已读或真正失败仍提供恢复入口。
+
+- initialize失败时，以启动捕获的epoch和hash核验归属；仅当前精确Work且routeLoad=0、无对象时写既有workReadErrors（missing=false）。借原toast同步render错误与Retry，toast结束不清持久恢复；拒绝旧身份/路由晚失败，不创建额外加载框架。

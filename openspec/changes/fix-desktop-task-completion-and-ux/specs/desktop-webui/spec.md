@@ -796,3 +796,7 @@ Modal footer SHALL 按DUL-007统一同类按钮几何与角色，正文按钮、
 #### Scenario: 合法多入口与Desktop图标
 - **WHEN** 用户切换服务、在详情选择多入口，或打开Desktop页面
 - **THEN** Service主Header与选择器不展示端口，详情保留技术信息和合法入口选择；iframe及独立窗口路由与所选真实端口一致，favicon使用既有Piwork PNG并通过嵌入资源交付
+
+#### Scenario: 首次骨架不显示普通加载文字
+- **WHEN** Works、Work、Services、Files 或 Chat 首次内容尚未确认且没有真实错误
+- **THEN** 骨架只呈现贴合内容区域的静态形状，区域名称与busy由辅助属性表达；未取得的Session/模型名称可使用对应字段占位，已有名称、真实错误和unknown设置恢复不被隐藏；仅延迟占位显现，不延迟可用内容，缓存刷新不换回骨架

@@ -378,3 +378,31 @@ GUI使用的 `app.js` SHA-256为 `a8cf325f050e5911304222183944cfbd6de8e76319b55a
 - 最后截图复核发现普通open-work读取状态条与局部骨架重复，以及首读Session/Model出现假空/未确认文案；已在最终e840990修正并重跑475项纯回归。上述完整GUI初次使用0a0d85d；最终仅这两个展示分支及其直接复拍更新，不将先前截图冒称再次跑过全套。
 
 最终e840990直接复拍通过：`final-work-initial-skeleton.jpg`与`final-service-html-loading.jpg`均无通用Loading Work/Still waiting重复条，无提前No Session yet/Retry/Unconfirmed；延迟iframe仍有正确局部骨架。最终推荐六图与browser-qa检查记录随交付包提供，不以截图推导未执行的真实Core或完整浏览器矩阵。
+
+## 2026-10-14 首次骨架去文字（本轮增量）
+
+### 实现与验证
+
+- 功能提交 `5296cb67306e01d2be88ff5950fc6626f38c9a90`：Works/Work/Services/Files/Chat区域占位不含可见文字，保留aria名称与busy；Session/模型首次正常读取用原控件小型占位，Chat输入框及既有缓存刷新不重写。Services/Chat采用内容对应的静态几何，CSS仅150ms后一次显现，真实响应不等待。
+- 初轮54项定向renderer/组件回归通过；冷开与初始化失败出口修正后479项全部纯回归通过，0失败/跳过。新增断言检查骨架textContent为空、装饰aria-hidden、Session/模型原控件、模型错误与Retry保留、CSS零时长单次显现；现有失败/unknown、缓存空集合、发送禁用、iframe同身份加载与失效回调回归继续通过。
+- Desktop typecheck、正常build通过，25个嵌入资源与dist逐字节一致。最终app.js SHA256 `7ea9100ef505d656bdebb0591c9d4a306287f3da449af602eae56ae58b0fccd3`；style.css `ba7581fb67fc3365f31ccf15122be4ca158ae30df8072e1cf5b7cfd61738e6c6`。
+- Go1.25.5/Node24 Linux/amd64正常宿主构建成功。初轮5296cb6构建modified=false；初始化失败出口修正后最终build.json为4f6c946且modified=true（待提交的本change文档），binary SHA256 `08d1ffc9eb93f4907b4be4af9e3e6e0a7dafb10f0f9a6bcfa921507dd15db918`；后续文档提交不改写该构建身份。目标宿主测试 `TestNativeDesktopEmbeddedBrowserAndLocalIdentity` 通过；desktopassets包编译通过但该包没有测试用例。
+- 原生边界、文档边界、git diff --check及OpenSpec strict通过。首次默认Go缓存因只读不可用，改用dist任务缓存后成功；Git提交沿用既有Codex作者。OpenSpec只读上下文调用曾被取消，取得原授权证据后同参重试一次成功，未切换路径绕过。
+
+### 保持的边界
+
+- 不改Core/API/依赖，不新增JS计时或全局加载状态，不恢复Modal动画。减少动态效果下仍是静态形状；DOM/CSS断言不代替真实读屏验证。
+- 原ActionState与Files已有十秒等待反馈保留；Service iframe本身未新增独立十秒提示。此处不声称实现全区域慢请求超时恢复。
+- 本轮纯回归不等于完整test:browser、全CLI、真实Core或读屏验证；历史31项未完成任务及其他未测矩阵不因本轮骨架修正改为通过。
+
+### 官方云端Chrome定向实证
+
+- 5296cb6冻结资源：1440px Home三行骨架、Services/Chat区域骨架及Session/模型字段均无可见文字且composer保留；390px Chat无横向溢出（clientWidth=scrollWidth=390）。
+- 缓存Home刷新不出现loading-list，内容保留；列表行刷新前后矩形一致（x161/y370.5/width1118/height105）。该结论不扩展到任意最终结果条数的高度或累计布局偏移。
+- 合成HTTP真实失败保留Services、会话、模型及activeRun的Retry/Check入口与发送禁用；Home读取超时也保留Retry loading。unknown模型写入恢复只做纯回归，没有浏览器写入。
+- 减少动态效果未在GUI仿真；本轮没有真实Core/Docker/凭证/上传/安装/模型执行。截图只证明上述冻结版本实际画面。
+- GUI发现冷开直接Work路由在全局bootstrap读取期间误报Work unavailable；52d59a2只在原首次routeLoad=0且无真实读取错误、无offline/env-not-ready时保留骨架。既有404、Work错误、列表失败、后续无对象及其他Work的pending不被当作首次loading；已补生产函数回归。
+- 52d59a2冷开修正定向复拍：12秒Works/Work延迟下新tab直接打开Work深链接即显示无字骨架，不再误报Unavailable；合成Works HTTP失败仍退出骨架显示Work unavailable/Retry/Back to Works，恢复fixture后Retry进入Ready Work并显示Service iframe和Chat历史。最终仅复跑该修正分支，不把5296cb6全部截图说成新提交再全测。
+
+- 4f6c946补齐初始化异常出口：initialize失败若仍属启动时的身份及精确hash，且首次Work路由未开始、对象仍缺失，则用既有workReadErrors保留真实原因/Retry；原toast驱动render但到期不清持续错误。旧身份/旧路由不得写入或通知，既有对象和已开始route读不被改写。新增生产函数回归通过。
+- 4f6c946最终官方Chrome复验：Works成功空列表+known-operations合成失败的冷开Work显示持久Work unavailable、具体错误、Retry和Back to Works，read-placeholder=0；恢复健康后Retry实际进入Ready Work、Service iframe及Chat历史。没有把此两张针对异常出口的复拍扩称为全部矩阵重跑。
