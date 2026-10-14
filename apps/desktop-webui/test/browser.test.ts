@@ -205,10 +205,6 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     await expect(page.locator('#modal')).toContainText('Observation interrupted. OPERATION_NOT_FOUND');
     await page.waitForTimeout(2400); assert.equal(missingOperationReads, 1, '404 operation was automatically polled again');
     await page.getByRole('button',{name:'Close dialog'}).click();
-    await create('No ID Work');
-    await page.getByText('The acceptance response has no Operation ID. Check known operations.',{exact:true}).waitFor();
-    assert.equal(createPayloads.filter(p => p.name === 'No ID Work').length, 1);
-    await page.getByRole('button',{name:'Close dialog'}).click();
     await create('Superseded Work');
     await page.getByText('superseded',{exact:true}).waitFor();
     assert.equal(await page.getByRole('button',{name:'Pause checking',exact:true}).count(), 0);
@@ -219,9 +215,21 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     await page.getByText('Package format and contents verified locally.',{exact:true}).waitFor().catch(async error => { throw new Error(`${error}\nLocal inspection view: ${await page.locator('#modal').innerText()}`); });
     assert.equal(importRequests, 0, 'inspection submitted import without consent');
     await page.getByRole('button',{name:'Close dialog'}).click();
+    await create('No ID Work');
+    await page.getByText('The acceptance response has no Operation ID. Check known operations.',{exact:true}).waitFor();
+    assert.equal(createPayloads.filter(p => p.name === 'No ID Work').length, 1);
+    await page.getByRole('button',{name:'Close dialog'}).click();
+    const beforeUnknownRetry = createPayloads.length;
+    await page.getByRole('button', {name:'New Work',exact:true}).first().click();
+    await page.locator('#create-name').fill('Another name cannot bypass the unknown Create');
+    await expect(page.getByRole('button',{name:'Create Work',exact:true})).toBeDisabled();
+    await page.locator('#create-name').press('Enter');
+    assert.equal(createPayloads.length, beforeUnknownRetry, 'an unknown Create must prevent another POST across names');
+    await page.getByRole('button',{name:'Close dialog'}).click();
     await page.locator('[data-action=account]').click();
-    await page.getByRole('button',{name:'Sign out',exact:true}).click();
+    await page.locator('#modal [data-action=sign-out]').click();
     await page.getByRole('heading',{name:'Connect to your Core'}).waitFor();
+    assert.equal(createPayloads.length, beforeUnknownRetry, 'unknown Create remained blocked through dismissal and sign out');
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
   } finally {
     await browser?.close();
@@ -335,7 +343,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.getByText('pending',{exact:true}).waitFor();
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.getByRole('button',{name:'Work options'}).click();
-    await page.getByRole('button',{name:'Export Work',exact:true}).last().click();
+    await page.locator('#modal [data-action=export]').click();
     assert.equal(exportCalls, 0, 'running Work export submitted implicitly');
     await page.getByRole('button',{name:'Stop and export',exact:true}).click();
     await expect(page.locator('#modal')).toContainText('Stop failed');
@@ -352,7 +360,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     assert.equal(await page.getByRole('button',{name:'Retry Work',exact:true}).count(), 0, 'failed Stop offered a Start retry');
     assert.deepEqual(submitted, ['start','stop']);
     await page.getByRole('button',{name:'Work options'}).click();
-    await page.getByRole('button',{name:'Delete Work',exact:true}).click();
+    await page.locator('#modal [data-action=delete-work]').click();
     await page.locator('#delete-confirm').check();
     await page.getByRole('button',{name:'Delete Work',exact:true}).last().click();
     await page.getByText('succeeded',{exact:true}).waitFor();
@@ -360,7 +368,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.getByRole('button',{name:'Close dialog'}).click();
     if (await page.locator('[data-action=back-works]').count()) await page.locator('[data-action=back-works]').click();
     await page.locator('[data-action=account]').click();
-    await page.getByRole('button',{name:'Known operations',exact:true}).click();
+    await page.locator('#modal [data-action=operations]').click();
     await page.getByText('delete-succeeded-1234',{exact:false}).first().waitFor();
     assert.equal(exportCalls, 0);
   } finally {
@@ -787,7 +795,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await page.locator('[data-action=manage-services]').click();
     await page.locator('[data-action=service-details][data-id=notes]').click();
     assert.equal(await page.getByRole('combobox',{name:'Web entry',exact:true}).inputValue(), '80');
-    await page.locator('[data-action=close-modal]').click();
+    await page.getByRole('button',{name:'Close dialog',exact:true}).click();
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();
     await page.locator('[data-action-status]').filter({hasText:'Loading Work'}).waitFor({state:'detached'});
     await page.frameLocator('iframe').locator('body[data-ready="yes"]').waitFor();
@@ -859,7 +867,10 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     const roots = appRootLoads;
     await page.getByRole('button',{name:'Cancel run',exact:true}).click();
     releaseFinalRun();
-    await page.locator('.message-execution').filter({hasText:'succeeded'}).waitFor();
+    const completedExecution = page.locator('.message-execution').filter({hasText:'succeeded'});
+    await expect(completedExecution).toHaveCount(1);
+    if (!await completedExecution.isVisible()) await page.locator('.unmatched-executions > details > summary').click();
+    await expect(completedExecution).toBeVisible();
     assert.equal(appRootLoads, roots, 'Run updates reloaded the Service iframe');
     assert.equal(submittedPrompt, 'Read shared workspace /note.txt and Notes Service API /api/data; summarize both and cite each source.');
     for (const width of [1440,390]) { await page.setViewportSize({width,height:900}); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); }

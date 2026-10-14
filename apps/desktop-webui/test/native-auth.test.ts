@@ -100,13 +100,13 @@ test('native auth: reset revokes all Cookies and tickets, retains Core session; 
   const f = await fixture(t); await f.page.goto(f.launch); await f.login();
   const other = await f.browser.newContext(); const tab = await other.newPage(); await tab.goto(f.reopen()); await tab.getByRole('heading', { name: 'Works', exact: true }).waitFor();
   const pendingTicket = f.reopen(); const before = [...f.tokens];
-  await f.page.locator('[data-action="account"]').click(); await f.page.getByRole('button', { name: 'Reset browser access', exact: true }).click();
-  await f.page.getByRole('button', { name: 'Reset browser access', exact: true }).click();
+  await f.page.locator('[data-action="account"]').click(); await f.page.locator('#modal [data-action="reset-browser-access"]').click();
+  await f.page.locator('#modal [data-action="confirm-reset-browser-access"]').click();
   await expect(f.page.getByRole('heading', { name: 'Browser access required' })).toBeVisible();
   await tab.reload(); await expect(tab.getByRole('heading', { name: 'Browser access required' })).toBeVisible();
   await tab.goto(pendingTicket); await expect(tab.getByRole('heading', { name: 'Browser access required' })).toBeVisible();
   assert.deepEqual([...f.tokens], before); await f.page.goto(f.reopen()); await expect(f.page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
-  await f.page.locator('[data-action="account"]').click(); await f.page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await f.page.locator('[data-action="account"]').click(); await f.page.locator('#modal [data-action="sign-out"]').click();
   await f.login(); assert.equal(f.calls.filter(call => call === 'POST /api/v1/login').length, 2); await other.close();
 });
 test('native auth: daemon restart rejects old authorization, Core revocation retains local login, offline logout is honest', async t => {
@@ -149,7 +149,7 @@ test('native auth: an accepted Import survives Core expiry and same-account logi
   const beforeLogin = f.calls.length;
   await f.login();
   await f.page.locator('[data-action=account]').click();
-  await f.page.getByRole('button', { name: 'Known operations', exact: true }).click();
+  await f.page.locator('#modal [data-action="operations"]').click();
   await f.page.locator(`[data-action="operation"][data-id="${recoveredImportID}"]`).click();
   await f.page.locator(`[data-action="check-operation"][data-id="${recoveredImportID}"]`).click();
   await expect(f.page.locator('dd code').filter({ hasText: recoveredImportID })).toBeVisible();
