@@ -167,7 +167,7 @@ try {
   await page.screenshot({ path: join(screenshotDir, '00-create-name-conflict.png'), fullPage: true });
   await page.getByRole('button', { name: 'Close dialog' }).click();
   assert.equal((await api(coreUrl, token, 'GET', '/api/v1/works')).data.works.length, 1);
-  await page.getByRole('button', { name: /^Real Browser Work/ }).click();
+  await page.getByRole('link', { name: /^Real Browser Work/ }).click();
   await expect(page.locator('.work-header')).toContainText('Real Browser Work');
   await expect(page.locator('.work-header')).toContainText('Ready');
   const script = "const http=require('node:http');http.createServer((req,res)=>{if(req.url==='/health'){res.end('ok');return;}res.setHeader('Content-Type','text/html');res.end('<h1>Real Service</h1><input aria-label=\"Service draft\"><button onclick=\"this.textContent=Number(this.textContent)+1\">0</button>');}).listen(8099,'0.0.0.0')";
@@ -211,8 +211,8 @@ try {
   assert.equal(accepted.status(), 202, await accepted.text());
   assert.equal(accepted.request().postDataJSON().inputMode, 'command');
   assert.equal(accepted.request().postDataJSON().prompt, '/skill:workspace-review "preserved argument"');
-  await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
   const acceptedRun = (await accepted.json()).run;
+  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${acceptedRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
   let originalSessionId = acceptedRun.sessionId;
   const options = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/sessions/${originalSessionId}/chat-options`);
   assert.equal(options.status, 200); assert.equal(options.data.thinkingLevel, 'off');
@@ -330,8 +330,9 @@ try {
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   const currentResponse = await currentAcceptance;
   assert.equal(currentResponse.status(), 202, await currentResponse.text());
-  originalSessionId = (await currentResponse.json()).run.sessionId;
-  await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  const currentRun = (await currentResponse.json()).run;
+  originalSessionId = currentRun.sessionId;
+  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${currentRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY === '1') {
     const localOrigin = new URL(launchUrl).origin;
     const readAdapter = (code) => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
@@ -372,12 +373,12 @@ try {
     assert.equal(desktop.pid, pid); assert.equal((await api(coreUrl, token, 'GET', `/api/v1/works/${workId}`)).data.observedState, 'ready');
     assert.equal((await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/services/${service.data.serviceId}`)).data.service?.observedState ?? (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/services`)).data.services?.[0]?.observedState, 'ready');
     assert.equal(await readFileThroughCore(), fileBefore); assert.equal(businessWrites, 0);
-    await page.getByRole('button', { name: /^Real Browser Work/ }).click(); await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
+    await page.getByRole('link', { name: /^Real Browser Work/ }).click(); await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
     const savedRun = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/runs/${runBefore}`); assert.equal(savedRun.status, 200); assert.equal((savedRun.data.run ?? savedRun.data).runId, runBefore);
     await waitFor(async () => (await page.locator('#messages').innerText()).includes('skill-read:'), 'original accepted Run history after auth recovery');
     await secondContext.close();
     // Existing independent application window must also obtain new browser access.
-    await app.goto(reopen()); await app.getByRole('heading', { name: 'Works', exact: true }).waitFor(); await app.getByRole('button', { name: /^Real Browser Work/ }).click();
+    await app.goto(reopen()); await app.getByRole('heading', { name: 'Works', exact: true }).waitFor(); await app.getByRole('link', { name: /^Real Browser Work/ }).click();
     await page.screenshot({ path: join(screenshotDir, '06-auth-recovered.png'), fullPage: true });
     console.log(JSON.stringify({ result: 'local auth recovery: real Core login/reuse/reopen/logout/reset/revocation/offline, original PID/Work/Service/files/Run retained, no business replay', browserVersion: browser.version(), bootstrapPosts, resetPosts, businessWrites }));
   }
@@ -428,7 +429,7 @@ try {
   await page.screenshot({ path: join(screenshotDir, '08-work-restarted.png'), fullPage: true });
   await page.getByRole('button', { name: 'Back to Works' }).click();
   await expect(page.locator('.work-row').filter({ hasText: 'Real Browser Work' })).toContainText('Ready');
-  await page.getByRole('button', { name: /^Real Browser Work/ }).click();
+  await page.getByRole('link', { name: /^Real Browser Work/ }).click();
   await expect(page.locator('.work-header')).toContainText('Real Browser Work');
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY !== '1') assert.equal(mainReloads, 0, 'lifecycle required a page reload');
   await page.getByRole('button', { name: 'Work options' }).click();
@@ -505,7 +506,7 @@ try {
   assert.notEqual(imported.id, workId); assert.equal(imported.observedState, 'stopped');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.locator('.work-row').filter({ hasText: 'Real Browser Work-2' })).toContainText('Stopped', { timeout: 180000 });
-  await page.getByRole('button', { name: /^Real Browser Work-2/ }).click();
+  await page.getByRole('link', { name: /^Real Browser Work-2/ }).click();
   await page.getByRole('heading', { name: 'Real Browser Work-2', exact: true }).waitFor();
   const start = page.getByRole('button', { name: 'Start Work', exact: true }).first();
   assert.equal(await start.getAttribute('data-id'), imported.id, 'Start must target the opened Work');
@@ -530,7 +531,8 @@ try {
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   const continuedResponse = await continuedAcceptance;
   assert.equal(continuedResponse.status(), 202, await continuedResponse.text());
-  await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  const continuedRun = (await continuedResponse.json()).run;
+  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${continuedRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
   await expect(page.locator('.activity')).toHaveCount(2);
   console.log(JSON.stringify({ result: 'workspace UX: active Skill directory, complete settings pair, command parameters, ordered tool history, stable Focus/fullscreen, exported/imported Thinking and continued original Session', browserVersion: browser.version(), originalSessionId }));
   await page.screenshot({ path: join(screenshotDir, '04-restored-work.png'), fullPage: true });
