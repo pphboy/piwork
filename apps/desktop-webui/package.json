@@ -12,5 +12,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1"
+  },
+  "dependencies": {
+    "marked": "18.0.11"
   }
 }

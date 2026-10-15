@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -166,7 +167,7 @@ try {
   await page.screenshot({ path: join(screenshotDir, '00-create-name-conflict.png'), fullPage: true });
   await page.getByRole('button', { name: 'Close dialog' }).click();
   assert.equal((await api(coreUrl, token, 'GET', '/api/v1/works')).data.works.length, 1);
-  await page.getByRole('button', { name: /^Real Browser Work/ }).click();
+  await page.getByRole('link', { name: /^Real Browser Work/ }).click();
   await expect(page.locator('.work-header')).toContainText('Real Browser Work');
   await expect(page.locator('.work-header')).toContainText('Ready');
   const script = "const http=require('node:http');http.createServer((req,res)=>{if(req.url==='/health'){res.end('ok');return;}res.setHeader('Content-Type','text/html');res.end('<h1>Real Service</h1><input aria-label=\"Service draft\"><button onclick=\"this.textContent=Number(this.textContent)+1\">0</button>');}).listen(8099,'0.0.0.0')";
@@ -210,8 +211,8 @@ try {
   assert.equal(accepted.status(), 202, await accepted.text());
   assert.equal(accepted.request().postDataJSON().inputMode, 'command');
   assert.equal(accepted.request().postDataJSON().prompt, '/skill:workspace-review "preserved argument"');
-  await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
   const acceptedRun = (await accepted.json()).run;
+  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${acceptedRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
   let originalSessionId = acceptedRun.sessionId;
   const options = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/sessions/${originalSessionId}/chat-options`);
   assert.equal(options.status, 200); assert.equal(options.data.thinkingLevel, 'off');
@@ -329,8 +330,9 @@ try {
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   const currentResponse = await currentAcceptance;
   assert.equal(currentResponse.status(), 202, await currentResponse.text());
-  originalSessionId = (await currentResponse.json()).run.sessionId;
-  await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  const currentRun = (await currentResponse.json()).run;
+  originalSessionId = currentRun.sessionId;
+  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${currentRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY === '1') {
     const localOrigin = new URL(launchUrl).origin;
     const readAdapter = (code) => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
@@ -371,20 +373,23 @@ try {
     assert.equal(desktop.pid, pid); assert.equal((await api(coreUrl, token, 'GET', `/api/v1/works/${workId}`)).data.observedState, 'ready');
     assert.equal((await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/services/${service.data.serviceId}`)).data.service?.observedState ?? (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/services`)).data.services?.[0]?.observedState, 'ready');
     assert.equal(await readFileThroughCore(), fileBefore); assert.equal(businessWrites, 0);
-    await page.getByRole('button', { name: /^Real Browser Work/ }).click(); await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
+    await page.getByRole('link', { name: /^Real Browser Work/ }).click(); await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
     const savedRun = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/runs/${runBefore}`); assert.equal(savedRun.status, 200); assert.equal((savedRun.data.run ?? savedRun.data).runId, runBefore);
     await waitFor(async () => (await page.locator('#messages').innerText()).includes('skill-read:'), 'original accepted Run history after auth recovery');
     await secondContext.close();
     // Existing independent application window must also obtain new browser access.
-    await app.goto(reopen()); await app.getByRole('heading', { name: 'Works', exact: true }).waitFor(); await app.getByRole('button', { name: /^Real Browser Work/ }).click();
+    await app.goto(reopen()); await app.getByRole('heading', { name: 'Works', exact: true }).waitFor(); await app.getByRole('link', { name: /^Real Browser Work/ }).click();
     await page.screenshot({ path: join(screenshotDir, '06-auth-recovered.png'), fullPage: true });
     console.log(JSON.stringify({ result: 'local auth recovery: real Core login/reuse/reopen/logout/reset/revocation/offline, original PID/Work/Service/files/Run retained, no business replay', browserVersion: browser.version(), bootstrapPosts, resetPosts, businessWrites }));
   }
   await page.getByRole('button', { name: 'Work options' }).click();
   await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
-  await page.getByText(/Stop this Work explicitly/).waitFor();
+  await expect(page.getByRole('button', { name: 'Stop and export', exact: true })).toBeVisible();
   assert.equal(await page.locator('[data-action=prepare-export]').count(), 0);
-  await page.getByRole('button', { name: 'Stop Work first', exact: true }).click();
+  // This first cycle checks ordinary Stop/Start retention; do not authorize export yet.
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Work options' }).click();
+  await page.getByRole('button', { name: 'Stop Work', exact: true }).first().click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).last().click();
   await expect(page.locator('#modal')).toContainText('Operation ID');
   await page.getByRole('button', { name: 'Close dialog' }).click();
@@ -409,7 +414,8 @@ try {
   assert.equal((await stoppedGateway.json()).code, 'SERVICE_UNAVAILABLE');
   await page.screenshot({ path: join(screenshotDir, '07-work-stopped.png'), fullPage: true });
   await page.getByRole('button', { name: 'Start Work', exact: true }).first().click();
-  await expect(page.locator('#modal')).toContainText('Operation ID'); await page.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.locator('.object-control-progress [data-action=operation]')).toBeVisible();
+  await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 180000 });
   await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor({ timeout: 20000 });
   await waitState(workId, 'ready');
@@ -423,26 +429,52 @@ try {
   await page.screenshot({ path: join(screenshotDir, '08-work-restarted.png'), fullPage: true });
   await page.getByRole('button', { name: 'Back to Works' }).click();
   await expect(page.locator('.work-row').filter({ hasText: 'Real Browser Work' })).toContainText('Ready');
-  await page.getByRole('button', { name: /^Real Browser Work/ }).click();
+  await page.getByRole('link', { name: /^Real Browser Work/ }).click();
   await expect(page.locator('.work-header')).toContainText('Real Browser Work');
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY !== '1') assert.equal(mainReloads, 0, 'lifecycle required a page reload');
+  await page.getByRole('button', { name: 'Work options' }).click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).first().click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).last().click();
   await expect(page.locator('#modal')).toContainText('Operation ID'); await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.getByRole('heading', { name: 'This Work is stopped', exact: true })).toBeVisible({ timeout: 180000 });
   await page.getByRole('button', { name: 'Work options' }).click();
-  await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
-  console.log('Real Desktop: second Stop confirmed; preparing snapshot');
-  await page.getByRole('button', { name: 'Prepare .work package', exact: true }).click();
-  await page.getByRole('button', { name: 'View package', exact: true }).waitFor({ timeout: 180_000 });
-  await page.getByRole('button', { name: 'View package', exact: true }).click();
-  console.log('Real Desktop: snapshot prepared');
+  console.log('Real Desktop: second Stop confirmed; exporting current content and downloading');
+  const exportRequests = [];
+  const recordExportRequest = request => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'POST' && path === `/_desktop/api/works/${workId}/exports` ||
+        request.method() === 'POST' && /^\/_desktop\/api\/work-snapshots\/[^/]+\/downloads$/.test(path) ||
+        request.method() === 'GET' && /^\/_desktop\/api\/downloads\/[^/]+\/content$/.test(path)) exportRequests.push({ path, method: request.method() });
+  };
+  page.on('request', recordExportRequest);
+  const exportResponse = page.waitForResponse(response => new URL(response.url()).pathname === `/_desktop/api/works/${workId}/exports` && response.request().method() === 'POST', { timeout: 180_000 });
+  const preparationResponse = page.waitForResponse(response => /^\/_desktop\/api\/work-snapshots\/[^/]+\/downloads$/.test(new URL(response.url()).pathname) && response.request().method() === 'POST', { timeout: 180_000 });
   const downloadEvent = page.waitForEvent('download', { timeout: 180_000 });
-  void downloadEvent.catch(() => undefined); // Keep early rejection handled until the click/wait joins it, so fixture cleanup always runs.
-  await page.getByRole('button', { name: 'Download .work', exact: true }).waitFor({timeout:180_000});
-  await page.getByRole('button', { name: 'Download .work', exact: true }).click();
+  // Arm every observer before the single Export action, and keep fixture cleanup reachable on early timeout.
+  void exportResponse.catch(() => undefined); void preparationResponse.catch(() => undefined); void downloadEvent.catch(() => undefined);
+  await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
+  const acceptanceResponse = await exportResponse;
+  assert.equal(acceptanceResponse.status(), 202, `Export acceptance: ${await acceptanceResponse.text()}`);
+  const acceptance = await acceptanceResponse.json(); assert.equal(acceptance.workId, workId); assert.ok(acceptance.operationId); assert.ok(acceptance.snapshotId);
   const download = await downloadEvent; const exportedPath = join(root, 'browser-export.work'); await download.saveAs(exportedPath); assert.equal(await download.failure(), null);
-  assert.equal((await readFile(exportedPath)).subarray(0,8).toString(), 'PIWORK1\n', 'export is not a real archive');
+  const exportedBytes = await readFile(exportedPath);
+  assert.equal(exportedBytes.subarray(0,8).toString(), 'PIWORK1\n', 'export is not a real archive');
+  const readyResponse = await preparationResponse; assert.equal(readyResponse.status(), 200);
+  const ready = await readyResponse.json();
+  assert.equal(ready.ready, true); assert.equal(ready.workId, workId); assert.equal(ready.snapshotId, acceptance.snapshotId);
+  assert.equal(ready.size, exportedBytes.length); assert.equal(ready.digest, createHash('sha256').update(exportedBytes).digest('hex'));
+  assert.equal(new URL(download.url()).pathname, `/_desktop/api/downloads/${ready.transferId}/content`);
+  const snapshot = (await api(coreUrl, token, 'GET', `/api/v1/work-snapshots/${acceptance.snapshotId}`)).data;
+  assert.equal(snapshot.workId, workId); assert.equal(snapshot.operationId, acceptance.operationId);
+  assert.equal(snapshot.state, 'succeeded'); assert.equal(snapshot.size, ready.size); assert.equal(snapshot.digest, ready.digest);
+  assert.deepEqual(exportRequests, [
+    { method: 'POST', path: `/_desktop/api/works/${workId}/exports` },
+    { method: 'POST', path: `/_desktop/api/work-snapshots/${acceptance.snapshotId}/downloads` },
+    { method: 'GET', path: `/_desktop/api/downloads/${ready.transferId}/content` },
+  ]);
+  page.off('request', recordExportRequest);
+  await expect(page.locator('#modal')).toContainText('Download started');
+  await expect(page.getByRole('button', { name: 'Download again', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Close dialog' }).click({ noWaitAfter: true });
   await expect(page.locator('#modal')).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to Works' }).click();
@@ -474,13 +506,13 @@ try {
   assert.notEqual(imported.id, workId); assert.equal(imported.observedState, 'stopped');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.locator('.work-row').filter({ hasText: 'Real Browser Work-2' })).toContainText('Stopped', { timeout: 180000 });
-  await page.getByRole('button', { name: /^Real Browser Work-2/ }).click();
+  await page.getByRole('link', { name: /^Real Browser Work-2/ }).click();
   await page.getByRole('heading', { name: 'Real Browser Work-2', exact: true }).waitFor();
   const start = page.getByRole('button', { name: 'Start Work', exact: true }).first();
   assert.equal(await start.getAttribute('data-id'), imported.id, 'Start must target the opened Work');
   await start.click();
-  await page.getByRole('heading', {name:'Start Work', exact:true}).waitFor();
-  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.locator('.object-control-progress [data-action=operation]')).toBeVisible();
+  await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 180000 });
   await waitState(imported.id, 'ready');
   await page.getByRole('button', { name: 'Services', exact: true }).click();
@@ -499,7 +531,8 @@ try {
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   const continuedResponse = await continuedAcceptance;
   assert.equal(continuedResponse.status(), 202, await continuedResponse.text());
-  await page.locator('.run-strip').filter({ hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  const continuedRun = (await continuedResponse.json()).run;
+  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${continuedRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
   await expect(page.locator('.activity')).toHaveCount(2);
   console.log(JSON.stringify({ result: 'workspace UX: active Skill directory, complete settings pair, command parameters, ordered tool history, stable Focus/fullscreen, exported/imported Thinking and continued original Session', browserVersion: browser.version(), originalSessionId }));
   await page.screenshot({ path: join(screenshotDir, '04-restored-work.png'), fullPage: true });

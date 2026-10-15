@@ -10,7 +10,7 @@ const server = createServer(async (request, response) => {
   try { response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html'); response.end(await readFile(new URL(path, import.meta.url))); }
   catch { response.writeHead(404); response.end(); }
 });
-before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, channel: 'chromium' }); });
+before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch(process.env.PIWORK_TEST_BROWSER_BIN ? { headless: true, executablePath: process.env.PIWORK_TEST_BROWSER_BIN } : { headless: true, channel: 'chromium' }); });
 after(async () => { await browser.close(); await new Promise<void>(done => server.close(() => done())); });
 type Record = { path: string; method: string; body: string; headers: { [key: string]: string } };
 type Reply = { status?: number; json?: any; abort?: boolean };
@@ -201,7 +201,11 @@ test('local auth: a delayed business 401 readback cannot abandon a newer reopen 
     if (r.path === 'status') return { json: { health: { available: false } } };
     if (r.path === 'works' && armed) return { status: 401, json: { code: 'AUTH_REQUIRED' } };
   });
-  await expect(page.locator('body')).toContainText('Core is unreachable'); armed = true;
+  await expect(page.locator('body')).toContainText('Core is unreachable');
+  await expect.poll(() => api(page, 'return !!adapter.worksChecked')).toBe(true);
+  const initialWorksReads = records.filter(r => r.path === 'works').length;
+  assert.equal(initialWorksReads, 1, 'initial authenticated list must finish before the delayed 401 is armed');
+  armed = true;
   const epoch = await api(page, 'return adapter.identityEpoch');
   const originalRead = api(page, `return adapter.request('works').catch(error => error.code)`);
   await expect.poll(() => readbacks).toBe(1);
@@ -212,7 +216,7 @@ test('local auth: a delayed business 401 readback cannot abandon a newer reopen 
   freshSession.resolve(); await reopen;
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
   assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
-  assert.equal(records.filter(r => r.path === 'works').length, 1);
+  assert.equal(records.filter(r => r.path === 'works').length, initialWorksReads + 1, 'only the explicit business read may run; stale/reopen initialization must not add a list read');
   assert.equal(records.filter(r => r.method !== 'GET').length, 0);
 });
 

@@ -8,6 +8,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { chromium, expect, type Page } from "@playwright/test";
+async function selectService(page: Page, id: string) {
+  await page.getByRole('button', {name: /^Service: /}).click();
+  await page.locator(`[role=option][data-action=select-service][data-id="${id}"]`).click();
+}
 const nativeCli = process.env.PIWORK_TEST_NATIVE_CLI || fileURLToPath(new URL("../../../../dist/go/piwork-cli", import.meta.url));
 const workPackagePath = fileURLToPath(new URL("../../../../internal/workpackage/testdata/golden-native-pi-package.work", import.meta.url));
 const WORK_PACKAGE_MIME = "application/vnd.piwork.work-package";
@@ -201,10 +205,6 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     await expect(page.locator('#modal')).toContainText('Observation interrupted. OPERATION_NOT_FOUND');
     await page.waitForTimeout(2400); assert.equal(missingOperationReads, 1, '404 operation was automatically polled again');
     await page.getByRole('button',{name:'Close dialog'}).click();
-    await create('No ID Work');
-    await page.getByText('The acceptance response has no Operation ID. Check known operations.',{exact:true}).waitFor();
-    assert.equal(createPayloads.filter(p => p.name === 'No ID Work').length, 1);
-    await page.getByRole('button',{name:'Close dialog'}).click();
     await create('Superseded Work');
     await page.getByText('superseded',{exact:true}).waitFor();
     assert.equal(await page.getByRole('button',{name:'Pause checking',exact:true}).count(), 0);
@@ -215,9 +215,21 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     await page.getByText('Package format and contents verified locally.',{exact:true}).waitFor().catch(async error => { throw new Error(`${error}\nLocal inspection view: ${await page.locator('#modal').innerText()}`); });
     assert.equal(importRequests, 0, 'inspection submitted import without consent');
     await page.getByRole('button',{name:'Close dialog'}).click();
+    await create('No ID Work');
+    await page.getByText('The acceptance response has no Operation ID. Check known operations.',{exact:true}).waitFor();
+    assert.equal(createPayloads.filter(p => p.name === 'No ID Work').length, 1);
+    await page.getByRole('button',{name:'Close dialog'}).click();
+    const beforeUnknownRetry = createPayloads.length;
+    await page.getByRole('button', {name:'New Work',exact:true}).first().click();
+    await page.locator('#create-name').fill('Another name cannot bypass the unknown Create');
+    await expect(page.getByRole('button',{name:'Create Work',exact:true})).toBeDisabled();
+    await page.locator('#create-name').press('Enter');
+    assert.equal(createPayloads.length, beforeUnknownRetry, 'an unknown Create must prevent another POST across names');
+    await page.getByRole('button',{name:'Close dialog'}).click();
     await page.locator('[data-action=account]').click();
-    await page.getByRole('button',{name:'Sign out',exact:true}).click();
+    await page.locator('#modal [data-action=sign-out]').click();
     await page.getByRole('heading',{name:'Connect to your Core'}).waitFor();
+    assert.equal(createPayloads.length, beforeUnknownRetry, 'unknown Create remained blocked through dismissal and sign out');
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
   } finally {
     await browser?.close();
@@ -232,7 +244,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
   const workId = "work-lifecycle-12345678";
   const workPackage = await readFile(workPackagePath);
   const workPackageDigest = createHash("sha256").update(workPackage).digest("hex");
-  const work = { id: workId, name: "Lifecycle Work", desiredState: "stopped", observedState: "stopped" };
+  const work = { id: workId, name: "Lifecycle Work", desiredState: "stopped", observedState: "stopped", controlVersion: 1 };
   const longWork = { id: "work-long-name-12345678", name: "A very long Work name that should wrap cleanly across lines without hiding its current state or actions in a narrow browser window", desiredState: "running", observedState: "ready" };
   let deleted = false;
   let showLong = false;
@@ -252,7 +264,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
       response.writeHead(202); return response.end(JSON.stringify({ workId, operationId: "operation-export-browser-1234", snapshotId: "snapshot-export-browser-1234" }));
     }
     if (request.url === "/api/v1/operations/operation-export-browser-1234")
-      return response.end(JSON.stringify({ operationId: "operation-export-browser-1234", state: "succeeded", error: null }));
+      return response.end(JSON.stringify({ operationId: "operation-export-browser-1234", workId, state: "succeeded", result: { snapshotId: "snapshot-export-browser-1234" }, error: null }));
     if (request.url === "/api/v1/work-snapshots/snapshot-export-browser-1234")
       return response.end(JSON.stringify({ workId, snapshotId: "snapshot-export-browser-1234", operationId: "operation-export-browser-1234",
         state: "succeeded", digest: workPackageDigest, size: workPackage.length, expiresAt: "2099-01-01T00:00:00Z", error: null }));
@@ -276,22 +288,22 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
       return response.end(JSON.stringify({ workId, snapshotId: "full-snapshot-1234", operationId: "operation-export-browser-1234",
         state: "succeeded", digest: workPackageDigest, size: 6 * 1024 ** 3, expiresAt: "2099-01-01T00:00:00Z", error: null }));
     if (request.url === `/api/v1/works/${workId}/start` && request.method === "POST") {
-      submitted.push("start"); work.desiredState = "running"; work.observedState = "starting";
+      submitted.push("start"); work.controlVersion++; work.desiredState = "running"; work.observedState = "starting";
       response.writeHead(202); return response.end(JSON.stringify({ workId, operationId: "start-superseded-1234" }));
     }
     if (request.url === `/api/v1/works/${workId}/stop` && request.method === "POST") {
-      submitted.push("stop"); work.desiredState = "stopped"; work.observedState = "failed";
+      submitted.push("stop"); work.controlVersion++; work.desiredState = "stopped"; work.observedState = "failed";
       response.writeHead(202); return response.end(JSON.stringify({ workId, operationId: "stop-failed-1234" }));
     }
     if (request.url === `/api/v1/works/${workId}/delete` && request.method === "POST") {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk as Buffer);
       assert.equal("purgeData" in (JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>), false);
-      submitted.push("delete"); deleted = true;
+      submitted.push("delete"); work.controlVersion++; deleted = true;
       response.writeHead(202); return response.end(JSON.stringify({ workId, operationId: "delete-succeeded-1234" }));
     }
     if (request.url === "/api/v1/operations/stop-failed-1234")
-      return response.end(JSON.stringify({ operationId: "stop-failed-1234", state: "failed", error: { message: "Stop failed" } }));
+      return response.end(JSON.stringify({ operationId: "stop-failed-1234", workId, state: "failed", error: { message: "Stop failed" } }));
     if (request.url === "/api/v1/operations/start-superseded-1234")
       return response.end(JSON.stringify({ operationId: "start-superseded-1234", state: submitted.includes("stop") ? "superseded" : "pending", error: null }));
     if (request.url === "/api/v1/operations/delete-succeeded-1234")
@@ -327,25 +339,36 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.locator('[data-action=open-work]').filter({hasText:'Lifecycle Work'}).click();
     await page.getByRole('heading', {name: 'Lifecycle Work', exact: true}).waitFor();
     await page.getByRole('button',{name:'Start Work',exact:true}).first().click();
+    await page.locator('.object-control-progress [data-action=operation]').click();
     await page.getByText('pending',{exact:true}).waitFor();
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.getByRole('button',{name:'Work options'}).click();
-    await page.getByRole('button',{name:'Export Work',exact:true}).last().click();
+    await page.locator('#modal [data-action=export]').click();
     assert.equal(exportCalls, 0, 'running Work export submitted implicitly');
-    await page.getByRole('button',{name:'Stop Work first',exact:true}).click();
-    await page.getByRole('button',{name:'Stop Work',exact:true}).last().click();
+    await page.getByRole('button',{name:'Stop and export',exact:true}).click();
+    await expect(page.locator('#modal')).toContainText('Stop failed');
+    await page.locator('#modal .export-details > summary').click();
+    const originalStop = page.locator('#modal [data-action="operation"][data-id="stop-failed-1234"]');
+    await expect(originalStop).toBeVisible();
+    assert.equal(exportCalls, 0, 'failed original Stop must never advance to Export');
+    assert.equal(snapshotDownloads, 0, 'failed original Stop must never download a snapshot');
+    await originalStop.click();
     await page.getByText('failed',{exact:true}).waitFor();
+    await expect(page.locator('#modal')).toContainText('Stop failed');
+    await expect(page.locator('#modal')).toContainText('stop-failed-1234');
     await page.getByRole('button',{name:'Close dialog'}).click();
     assert.equal(await page.getByRole('button',{name:'Retry Work',exact:true}).count(), 0, 'failed Stop offered a Start retry');
     assert.deepEqual(submitted, ['start','stop']);
     await page.getByRole('button',{name:'Work options'}).click();
-    await page.getByRole('button',{name:'Delete Work',exact:true}).click();
+    await page.locator('#modal [data-action=delete-work]').click();
     await page.locator('#delete-confirm').check();
     await page.getByRole('button',{name:'Delete Work',exact:true}).last().click();
     await page.getByText('succeeded',{exact:true}).waitFor();
     assert.deepEqual(submitted, ['start','stop','delete']);
     await page.getByRole('button',{name:'Close dialog'}).click();
-    await page.getByRole('button',{name:'Known operations',exact:true}).click();
+    if (await page.locator('[data-action=back-works]').count()) await page.locator('[data-action=back-works]').click();
+    await page.locator('[data-action=account]').click();
+    await page.locator('#modal [data-action=operations]').click();
     await page.getByText('delete-succeeded-1234',{exact:false}).first().waitFor();
     assert.equal(exportCalls, 0);
   } finally {
@@ -767,8 +790,12 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await page.goto(launchUrl);
     await page.getByRole('heading',{name:'Works',exact:true}).waitFor();
     await page.locator('[data-action=open-work]').filter({hasText:'笔记工作'}).click();
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('notes');
-    assert.equal(await page.getByRole('combobox',{name:'Declared Web port'}).inputValue(), '80');
+    await selectService(page, 'notes');
+    await page.getByRole('button', {name: 'Service options', exact: true}).click();
+    await page.locator('[data-action=manage-services]').click();
+    await page.locator('[data-action=service-details][data-id=notes]').click();
+    assert.equal(await page.getByRole('combobox',{name:'Web entry',exact:true}).inputValue(), '80');
+    await page.getByRole('button',{name:'Close dialog',exact:true}).click();
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();
     await page.locator('[data-action-status]').filter({hasText:'Loading Work'}).waitFor({state:'detached'});
     await page.frameLocator('iframe').locator('body[data-ready="yes"]').waitFor();
@@ -810,20 +837,20 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     assert.deepEqual(await page.frameLocator("iframe").locator("body").evaluate(async () =>
       await (await fetch("/api/data")).json()), { record: serviceRecord });
 
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('boards');
+    await selectService(page, 'boards');
     await page.frameLocator('iframe').getByRole('heading',{name:'Boards app'}).waitFor();
     assert.equal(await page.frameLocator('iframe').locator('body').evaluate(() => localStorage.getItem('service-state')), null);
     assert.equal(await page.frameLocator('iframe').locator('body').evaluate(() => { try { return !!parent.document; } catch { return false; } }), false);
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('notes');
+    await selectService(page, 'notes');
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();
     assert.equal(await page.frameLocator('iframe').locator('body').evaluate(() => localStorage.getItem('service-state')), 'notes');
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('blocked');
+    await selectService(page, 'blocked');
     await page.getByRole('heading',{name:'This app opens in its own tab'}).waitFor();
     const opening = context.waitForEvent('page'); await page.getByRole('button',{name:'Open application tab',exact:true}).click();
     const separate = await opening; await separate.getByRole('heading',{name:'Blocked app'}).waitFor();
     await capture('service-embedding-denied');
     assert.match(new URL(separate.url()).hostname, /^s-[a-f0-9]+\.desktop\.localhost$/); await separate.close();
-    await page.getByRole('combobox',{name:'Service',exact:true}).selectOption('notes');
+    await selectService(page, 'notes');
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();
     await page.getByRole('button',{name:'Files',exact:true}).click();
     await page.getByRole('button',{name:/^note.txt/}).click();
@@ -840,7 +867,10 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     const roots = appRootLoads;
     await page.getByRole('button',{name:'Cancel run',exact:true}).click();
     releaseFinalRun();
-    await page.locator('.run-strip').filter({hasText:'succeeded'}).waitFor();
+    const completedExecution = page.locator('.message-execution').filter({hasText:'succeeded'});
+    await expect(completedExecution).toHaveCount(1);
+    if (!await completedExecution.isVisible()) await page.locator('.unmatched-executions > details > summary').click();
+    await expect(completedExecution).toBeVisible();
     assert.equal(appRootLoads, roots, 'Run updates reloaded the Service iframe');
     assert.equal(submittedPrompt, 'Read shared workspace /note.txt and Notes Service API /api/data; summarize both and cite each source.');
     for (const width of [1440,390]) { await page.setViewportSize({width,height:900}); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); }

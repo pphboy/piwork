@@ -47,9 +47,10 @@ export function projectWork(work, operations) {
         label = 'Work status not confirmed';
         action = 'check';
     }
-    const usable = !stopping && !starting && !work.statusError && work.desired === 'running' && ['Ready', 'Degraded'].includes(work.status);
-    return { label, explanation, action, usable,
-        exportable: !stopping && !starting && !work.statusError && work.desired === 'stopped' && work.status === 'Stopped' && !outstanding.length,
+    const retainWorkspace = !stopping && !starting && !work.accessRevoked && work.desired === 'running' && ['Ready', 'Degraded'].includes(work.status);
+    const usable = retainWorkspace && !work.statusError;
+    return { label, explanation, action, usable, retainWorkspace,
+        exportable: !stopping && !starting && !work.accessRevoked && !work.statusError && work.desired === 'stopped' && work.status === 'Stopped' && !outstanding.length,
         operationIds: ids };
 }
 //# sourceMappingURL=lifecycle.js.map

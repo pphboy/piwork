@@ -52,26 +52,41 @@ export function parseEntries(xml: string, base: string): FileEntry[] {
   return entries;
 }
 
-export function mutationResults(xml: string): { succeeded: string[]; failed: string[] } {
-  if (xml.length > 16_777_216 || /<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error("WebDAV result contains unsupported XML.");
-  const documentXml = new DOMParser().parseFromString(xml, "application/xml");
-  if (documentXml.querySelector("parsererror")) throw new Error("WebDAV result is malformed.");
-  const succeeded: string[] = [];
-  const failed: string[] = [];
-  for (const response of Array.from(documentXml.getElementsByTagNameNS(dav, "response"))) {
-    const path = value(response, "href") ?? "unknown path";
-    const direct = value(response, "status");
-    const states = direct ? [direct] : Array.from(response.getElementsByTagNameNS(dav, "propstat"))
-      .map((item) => value(item, "status") ?? "");
-    if (!states.length) throw new Error("WebDAV result is missing a path status.");
-    for (const state of states) {
+export interface FileMutationResult { path: string; status: 'succeeded' | 'failed' | 'unknown'; message: string; httpStatus: number }
+/** Normalize an href only inside the exact Work root; never decode a separator. */
+function mutationPath(href: string | undefined, base: string): string {
+  if (!href || !href.startsWith(base) || href.includes('?') || href.includes('#')) throw new Error('WebDAV result contains an invalid Work path.');
+  const relative = href.slice(base.length).replace(/\/$/, '');
+  const segments = relative ? relative.split('/').map(segment => {
+    let decoded: string; try { decoded = decodeURIComponent(segment); } catch { throw new Error('WebDAV result path encoding is invalid.'); }
+    if (!decoded || decoded === '.' || decoded === '..' || /[\\/\x00-\x1f\x7f]/.test(decoded)) throw new Error('WebDAV result path is unsafe.');
+    return decoded;
+  }) : [];
+  return '/' + segments.join('/');
+}
+export function mutationResults(xml: string, base: string): { succeeded: string[]; failed: string[]; results: FileMutationResult[] } {
+  if (xml.length > 16_777_216 || /<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('WebDAV result contains unsupported XML.');
+  const documentXml = new DOMParser().parseFromString(xml, 'application/xml');
+  if (documentXml.querySelector('parsererror')) throw new Error('WebDAV result is malformed.');
+  const results: FileMutationResult[] = [];
+  for (const response of Array.from(documentXml.getElementsByTagNameNS(dav, 'response'))) {
+    const path = mutationPath(value(response, 'href'), base);
+    const direct = value(response, 'status');
+    const states = direct ? [direct] : Array.from(response.getElementsByTagNameNS(dav, 'propstat')).map(item => value(item, 'status') ?? '');
+    if (!states.length) throw new Error('WebDAV result is missing a path status.');
+    const statuses = states.map(state => {
       const match = /^HTTP\/(?:1\.[01]|2) (\d{3})\b/.exec(state);
-      if (!match) throw new Error("WebDAV result contains an invalid path status.");
-      (Number(match[1]) >= 200 && Number(match[1]) < 300 ? succeeded : failed).push(`${path}: ${state}`);
-    }
+      if (!match || Number(match[1]) < 100 || Number(match[1]) > 599) throw new Error('WebDAV result contains an invalid path status.');
+      return Number(match[1]);
+    });
+    const httpStatus = statuses.find(status => status >= 500 || status < 200 || status === 408) ?? statuses.find(status => status >= 300) ?? statuses[0]!;
+    const status = httpStatus >= 500 || httpStatus < 200 || httpStatus === 408 ? 'unknown' : httpStatus < 300 ? 'succeeded' : 'failed';
+    const code = response.getElementsByTagNameNS(piwork, 'code')[0]?.textContent?.trim();
+    const description = value(response, 'responsedescription')?.trim();
+    results.push({ path, status, httpStatus, message: code || description || (status === 'succeeded' ? 'Confirmed' : status === 'unknown' ? `Result not confirmed (${httpStatus}). Check the original path before trying again.` : `Request failed (${httpStatus}).`) });
   }
-  if (!succeeded.length && !failed.length) throw new Error("WebDAV result contains no paths.");
-  return { succeeded, failed };
+  if (!results.length) throw new Error('WebDAV result contains no paths.');
+  return { results, succeeded: results.filter(row => row.status === 'succeeded').map(row => row.path), failed: results.filter(row => row.status !== 'succeeded').map(row => `${row.path}: ${row.message}`) };
 }
 
 function childPath(base: string, name: string, directory = false): string {
@@ -151,7 +166,7 @@ export function mountFiles(root: HTMLElement, workId: string, getCsrf: () => str
   };
   const reportMutation = async (result: Response, success: string): Promise<{ message: string; failed: boolean }> => {
     if (result.status !== 207) return { message: success, failed: false };
-    const paths = mutationResults(await result.text());
+    const paths = mutationResults(await result.text(), base);
     return { message: `WebDAV result · ${paths.succeeded.length} succeeded${paths.succeeded.length ? `: ${paths.succeeded.join("; ")}` : ""}`
       + ` · ${paths.failed.length} failed${paths.failed.length ? `: ${paths.failed.join("; ")}` : ""}. Refresh to confirm the current state.`,
       failed: paths.failed.length > 0 };

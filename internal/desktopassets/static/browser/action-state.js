@@ -151,10 +151,14 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
             button.disabled = button.dataset.actionBaseDisabled === 'true';
             delete button.dataset.actionLocked;
             delete button.dataset.actionBaseDisabled;
-            button.removeAttribute('aria-busy');
+            if (!button.dataset.readBusy)
+                button.removeAttribute('aria-busy');
         }
         const intent = intentFor(button);
         if (!intent)
+            continue;
+        // Only the read-only Files refresh retains keyboard focus while locked.
+        if (button.dataset.action === 'refresh-files' && intent.kind === 'read' && button.dataset.readBusy && button.getAttribute('aria-disabled') === 'true')
             continue;
         if (actions.conflict(intent)) {
             button.dataset.actionBaseDisabled = String(button.disabled);
@@ -165,6 +169,12 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
     }
     for (const record of actions.records.values()) {
         if (record.key.startsWith('route:') && !record.error)
+            continue;
+        // Files owns busy/success in its fixed refresh button; errors and unknowns still use the local region.
+        if (record.kind === 'read' && ['open-work', 'retry-work-read', 'retry-works', 'tab-Files', 'refresh-files', 'file-path', 'open-file', 'open-source', 'sessions', 'select-session', 'retry-conversation', 'check-active-run'].includes(record.action || '') && !record.error && !record.blocked && record.refresh !== 'failed')
+            continue;
+        // A confirmed file batch has a short toast; pending, unknown and readback failures remain local.
+        if (record.kind === 'files' && record.successFeedback === 'toast' && !record.pending && !record.error && !record.blocked && record.refresh !== 'failed')
             continue;
         if (!actions.visible(record) || record.view && record.view !== view || !visibleRecord(record))
             continue;

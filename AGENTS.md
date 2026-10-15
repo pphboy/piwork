@@ -13,6 +13,10 @@
 - 仓库根不再建立 docs/，也不以其他目录承接 AI 自建开发文档。用户明确要求的既有 README/安装说明维护、源码注释和测试夹具按原职责处理；随产品交付的 brain.md、SKILL.md、Reference、模板 README、SPEC.md 属于实现，不能按开发文档清理。该规则不向产品 Work 新增 OpenSpec 审批阶段。
 - 历史设计和验收记录不能作为当前实现的依据，核对现行源码、规格和实际执行结果。
 
+## UI组件选型
+
+后续UI开发遵循[UI组件规范采用说明](openspec/specs/desktop-ui-language/ui-component-adoption.md)与[Piwork UI Component Specification v1.0原文](openspec/specs/desktop-ui-language/ui-component-spec-v1.0.md)。它是组件选型与基本行为依据，不要求过度设计、全量重写或把无障碍合规作为独立扩项；具体修改与未测事实仍归所属OpenSpec change。
+
 ## Git 提交组织
 
 - 默认按功能边界和依赖顺序拆分 commit，使每个提交有明确目的、便于独立审阅和回退；不把多个功能、使用文档、发布材料及 OpenSpec 归档全部塞进一个提交。拆分数量随实际改动确定，不固定为某个数量。
