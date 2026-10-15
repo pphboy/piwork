@@ -512,6 +512,12 @@ Export SHALL 按 DUL-009 清楚呈现停止（需要时）、生成、传输校�
 
 用户对导出流程明确 Pause 时 SHALL 暂停尚未开始的下一阶段和自动内容交付；已经接受的远端操作不被取消，晚结果可按原身份记录但不推进。Check status/Check transfer SHALL 仅核对原结果，不解除手动 Pause；只有明确 Resume 并核对原结果后，仍有效的意图才可继续尚未提交的下一阶段或单次交付，不重放原未知修改。关闭进度不是 Pause。
 
+本变更交付验证 SHALL 使用真实Docker Engine、Core、Agent及匹配helper完成停止、快照生成、完整校验、真实浏览器下载、本地Inspect、Import为stopped及用户显式Start；以实际字节/hash、原Operation/snapshot/transfer、请求次数、权限撤销和限定安装清理作为证据，不以合成Core响应替代真实链路。
+
+#### Scenario: 真实Docker导出导入闭环
+- **WHEN** 在独立真实Core安装中创建合成Work数据并由Desktop完成停止、导出、下载、检查、导入和显式启动
+- **THEN** 实际Docker Agent/helper参与执行，下载包与原snapshot的长度/hash一致，Import后未自动启动且显式Start后数据逐字节一致，原ID及单次提交/交付可核验；撤销测试权限后旧访问被真实服务端拒绝，清理仅作用于本次installation ID
+
 #### Scenario: 运行中请求导出
 - **WHEN** Work ready 或 stopping 时用户进入 Export
 - **THEN** running 状态提供目标和 Run/Service/文件影响明确的 Stop and export 确认；确认前无 Stop/Export，确认后只 Stop 一次并待真实停止再导出。已在 stopping 时说明等待原停止，未确认前无 Export，不重复 Stop

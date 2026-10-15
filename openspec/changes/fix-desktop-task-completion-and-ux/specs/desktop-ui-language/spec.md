@@ -160,6 +160,10 @@ Desktop SHALL 沿用 Serve 浅色语义令牌，包括 `#F5F8FC` 画布、`#F8FB
 
 键盘焦点 SHALL 有至少 2px 可见轮廓。模态弹层 SHALL 获得并限制焦点，非提交中的普通弹层可用 Escape 关闭，危险确认的 Escape 等于取消，关闭后焦点回到触发控件；未保存编辑离开须先处理 Save/Discard/Keep editing。弹层开关 SHALL 立即到终态，不使用入场/退场动画、快照、展示层或延迟清理；普通与 `prefers-reduced-motion` 设置行为一致，不改变提交保护或业务完成条件。
 
+本变更的交互验收 SHALL 保留基本键盘、焦点与可访问名称，不以真实NVDA/VoiceOver运行或认证作为交付前提；移除该人工实测范围不表示已取得真实读屏通过证据。
+
+Response settings的背景能力更新导致原聚焦控件变为禁用或不可聚焦时，若仍属同一Work/Session、身份和浮层，且用户没有主动移到其他位置，Desktop SHALL 将因该更新丢失的焦点恢复到该浮层现有的合法控件；Thinking不可用时提供恢复动作或Close等可操作回退，不将焦点遗留在BODY。原控件仍可用时保持焦点；用户已移焦、浮层已关闭/更换或对象/身份变化时 SHALL 不恢复旧焦点。该保护不改变Popover的非模态Tab行为、不触发设置保存或Run提交。
+
 窄屏 SHALL 保留 Work 身份、返回、主要动作与 Pop out；文件树可收进可关闭面板，表格和代码只在局部滚动。Import 可全宽滚动，底部动作不能遮住私有包提醒；Export 步骤纵向排列。详情先目标与结果，再影响/恢复，最后技术 ID；错误不得通过缩小正文或挤掉名称容纳。
 
 Works 搜索和 Chat 输入 SHALL 保持至少 2px 的可见键盘焦点；使用容器焦点样式时同样能辨认输入位置。Pi Package Remove 等危险文本动作 SHALL 使用既有 danger 语义并在 hover/focus 保持，disabled 状态仍可辨，不受普通链接色覆盖。
@@ -257,6 +261,14 @@ Works 的 Refresh/Import/New SHALL 使用一致的图标动作组，前两者为
 #### Scenario: 退场视觉不再拥有逻辑弹层
 - **WHEN** 关闭后刷新、快速重开、切换导航或身份
 - **THEN** Modal立即释放背景交互，无入场/退场动画、快照、展示层或延迟清理；不关闭新弹层或覆盖新焦点，不残留遮罩
+
+#### Scenario: Thinking能力更新禁用原聚焦控件
+- **WHEN** 用户聚焦Response settings的Thinking控件，后台能力更新使该控件禁用且焦点因此丢失
+- **THEN** 同一有效上下文中焦点恢复到现有恢复动作或Close等合法控件，Tab/Escape仍可用，草稿及选区保持，没有额外设置PATCH或Run提交
+
+#### Scenario: 能力晚结果不覆盖用户后续焦点选择
+- **WHEN** 能力读取尚未返回时用户主动移焦、关闭或更换浮层、切换Work/Session或身份
+- **THEN** 晚结果不把焦点拉回原Thinking或原浮层；仍可用控件不因普通背景刷新失焦，不新增焦点陷阱、延迟恢复或业务请求
 
 
 ### Requirement: Work 导入导出是可恢复的分步传输

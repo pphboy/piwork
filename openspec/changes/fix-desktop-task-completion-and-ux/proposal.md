@@ -71,7 +71,7 @@
 **修改内容**
 - 检查快速、缓慢和长时间等待时，加载提示是否清楚、按钮位置和焦点是否稳定。
 - 复核自动检查暂停后的状态与按钮是否一致。
-- 验证现有“减少动态效果”设置，以及真实屏幕阅读器中的聊天和状态播报。
+- 验证现有“减少动态效果”、键盘焦点及可访问名称；按所有者最新要求，本次不包含NVDA/VoiceOver实测。
 - 只有复现具体问题后才做对应的小范围修正；符合现有规则的部分保留。
 
 **范围**：这是验证门槛，不是已经确认的整套缺陷，也不承诺新增装饰动效或重做无障碍系统。无法实际验证的项目明确保留为未测。
@@ -108,7 +108,7 @@
 | 工作区高度 | 按真实剩余高度充满视口，移除底部额外留白，最多保留一条紧凑 StatusLine | 不改 iframe 内业务布局，不裁掉输入区或必要错误信息 |
 | Modal 动效与反馈 | 开关立即完成，不使用任何Modal动画（2026-10-14用户最新要求）；警告/完成采用已有颜色角色、图标与短标签 | reduced-motion直接到终态；必要影响、错误原因和下一步仍清楚，不仅凭颜色传义、不以动画延迟提交保护 |
 
-这些界面调整服务于“打开 Work → 使用 Service → Chat 改进 → 继续使用”的主流程。Request 是跨执行的业务目标，Run 是一次执行，配置和技术细节是辅助信息。NoDocker、Core/API/依赖/安全边界不变，原17项未测保持；新增实现与验收按 tasks 的后续章节单独记录。
+这些界面调整服务于“打开 Work → 使用 Service → Chat 改进 → 继续使用”的主流程。Request 是跨执行的业务目标，Run 是一次执行，配置和技术细节是辅助信息。此处NoDocker和原17项未测属于前轮历史范围；当前执行条件按文末2026-10-14最新授权，Core/API/依赖/安全边界保持，任务按后续章节实际更新。
 
 ## Capabilities
 
@@ -127,7 +127,7 @@
 - 主要模块：`apps/desktop-webui/src/{app,adapter,models,lifecycle,action-state,observation,images}.ts`、`public/style.css` 和相应状态/浏览器测试；仅必要时为原传输恢复补充 Go CLI 契约测试，复用现有 Core/CLI/WebDAV 接口。构建时同步 Desktop Go 嵌入资源，不手改生成副本。
 - 使用与验收说明：维护本变更 `evidence/usage.md` 和 `evidence/acceptance.md`，不重建根 `docs/`；若触及用户入口 README，两种语言一起维护。保留本次审查编号/证据等级，不把源码推导、合成 fixture、真实后端结果合并成一个“通过”。
 - 在途变更：以现行主规格为底，保留 `fix-webui-data-integrity-and-recovery` 的条件写入、统一配置草稿、匿名 Inspect 恢复，以及 `compact-chat-composer-settings` / `improve-desktop-chat-and-release-info` 已实现的设置/图片契约；不重复实施或代为归档，不让较旧 delta 覆盖现行规则。
-- 环境边界：当前采用 NoDocker 开发。提案阶段要求Apply前准备仓库要求的Go1.25.5、原生CLI和合法浏览器验收环境；现有构建及分层执行结果见验收记录。真实 Core/Docker 包生成、校验与停止链路仍为未验门槛，不自动启动 Docker，不以合成下载事件冒充真实端到端验收。
+- 环境边界：当前已明确解除NoDocker限制，必须用真实Docker Engine、Core和匹配helper完成包生成、校验、浏览器下载及导入启动链路。Fedora已有Engine，测试使用独立安装/账号/数据目录与合成数据；按精确installation ID清理，不改现有用户Work。提案阶段及前轮NoDocker结果保留为历史，不冒充真实端到端验收。
 - 本轮不修改 Core 业务逻辑或 API；若验证发现现有接口不足，先另行提交证据和必要变更供用户确认，不自动扩大。既有 Go/CLI 契约测试与正常资源构建同步可执行。其余不新增宿主运行时依赖、Core API、永久传输队列或跨进程自动续传；不自动启动导入 Work、不合并 Save/Apply、不删除停止/覆盖/删除确认、不绕过权限或完整性校验，不修改其他在途 change 的文件。
 
 ## 2026-10-14 直接反馈：控件语义与关闭残影
@@ -147,3 +147,20 @@
 ## 2026-10-14 连续截图反馈：命令、反馈、对齐与首次读取
 
 用户继续明确要求补齐Agent菜单图标、移除Files重复成功Alert及底部Shared workspace行、对齐Packages和同类Work/Service属性行，并统一Works→Open Work→Services/Chat的首次骨架与缓存原位刷新；随后要求Chat支持Markdown表格等正文。范围限定这些已存在入口，不扩展Core/API或全局组件库。Markdown复用已存在依赖链中的marked 18.0.11，明确声明Desktop依赖并随原资源流程嵌入官方ESM及许可证；不修改其他依赖版本。
+
+## 2026-10-14 本机 Verify 后的修复范围
+
+以 `9262b89abf580fc5244a919aabd5059ab7b8abe8` 为核验输入，本机完整浏览器矩阵为835通过、2失败；两项在Chromium140和145中均可定向复现。此前837全通过及原生矩阵记录保留其原环境和输入身份，不转记为本轮通过。
+
+- 修复Response settings内原聚焦Thinking控件因能力更新而禁用后焦点落到BODY的问题；按原Work/Session/身份及浮层归属恢复至合法控件，用户已主动移焦时不抢焦点，保留非模态Tab、草稿和原设置提交保护。
+- 修正取消请求终态观察用例的测试时钟安装时机。本机在轮询创建后安装虚拟时钟未触发预期GET，真实等待对照能够达到cancelled；先修测试确定性，不据此修改产品轮询或取消协议。回归仍核对原请求、一次取消和终态后停止观察。
+- 完成定向回归及完整浏览器矩阵重跑后再更新当前验收结论。原NVDA/VoiceOver实测已按所有者最新要求移出本次范围；真实Core/Engine/helper链路必须按10.3完成，前端修复和合成测试不代替它。
+
+本次增量延续已有交互与测试范围，只在后续Apply中修改必要Desktop实现、测试及正常生成的嵌入资源；不扩展Core/API、依赖、安全配置或部署范围。本次Update只调整现有规划产物，不代表上述修复已经实现。
+
+
+## 2026-10-14 最新授权：移除读屏门槛并执行真实Docker验收
+
+所有者明确不需要Windows NVDA，本次移除原9.3真实NVDA/VoiceOver验收任务；已实现的基本键盘、焦点和可访问名称保护保持。本次同时解除NoDocker限制，明确要求完成真实Core链路。允许在Fedora创建独立测试安装、账号和临时Work，使用实际Docker Engine、Agent及配套helper进行停止、导出、完整校验、浏览器下载、Inspect、Import和显式Start，并验证文件字节/hash及权限撤销。验收后只清理本次精确installation ID的资源；既有安装、用户Work与真实凭据保持隔离。旧记录中的NoDocker和读屏待验只陈述当时事实，不能继续作为当前阻碍。
+
+当前完成状态：真实Docker链路与限定清理已实际通过，任务94/94；原NVDA/VoiceOver实测已从本次范围删除，NoDocker不再是当前限制。真实结果、请求次数、hash与原安装保护见evidence/acceptance.md最新节。

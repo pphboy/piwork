@@ -2,11 +2,11 @@
 
 ## Context
 
-动机和三批范围见 `proposal.md`。提案基线为 `8b49c2cec1c6708a601d1809a97f81491525d81d`，整合基线为 `28bfdfa56b4c84b10ade9a63fedb7c2b75c04a90`，以下问题分析与证据账本保留提案时背景；A/B/C前端实现已按最新main整合，当前可执行验收与保留门槛单列，环境/工具门槛单列，真实Core仍未验。当前结果见[验收记录](evidence/acceptance.md)和 `tasks.md`。
+动机和三批范围见 `proposal.md`。提案基线为 `8b49c2cec1c6708a601d1809a97f81491525d81d`，整合基线为 `28bfdfa56b4c84b10ade9a63fedb7c2b75c04a90`，以下问题分析与证据账本保留提案时背景；A/B/C前端实现已按最新main整合，当前可执行验收与范围单列；该历史阶段真实Core未验，当前真实Docker验收已完成，见文末及最新验收附件。当前结果见[验收记录](evidence/acceptance.md)和 `tasks.md`。
 
 当前主要问题模型是“领域任务、页面展示和观察请求共用同一种结束条件”：`app.ts` 的 `stay()` 绑定 hash/modalChoice，关闭导出面板会跳过 await 后的下载；`show(operation)` 把多个简单动作都落到技术详情；`projectWork().usable` 又把一次 statusError 当作整个工作区不可用。已有对象锁、幂等恢复和增量 iframe 保留机制仍有价值，修复应分离这些生命周期，而不是删掉保护。
 
-最新增量设计以文末2026-10-14读取反馈与次级信息为准；前轮＋、端口标签和Updated方案已由该增量取代，历史验收不改写。
+最新增量设计以文末各节为准，包含2026-10-14解除NoDocker并移除读屏门槛的最新授权；前轮＋、端口标签和Updated方案已由后续增量取代，历史验收不改写。当前待办及验收状态以tasks.md首部为准。
 
 ### 证据账本与范围判定
 
@@ -199,7 +199,7 @@ Works的Refresh/Import改quiet图标，＋New保持主动作角色；英文toolt
 - [连续导出被通用视图校验打断，或为修复而放宽身份] → 对view、identity epoch、对象ID、draft revision分别注入晚响应，交付仅脱离view而不脱离身份。
 - [在途delta归档覆盖较新需求] → 本案保留合并文本，后续Apply/归档重新核对；本轮不修改其他change、不同步主规格。
 - [beforeunload不能保证所有关页场景] → 明确提示能力范围，不承诺图片重开恢复；不引入不必要持久存储。
-- [NoDocker误被记为端到端通过] → 分层验收记通过/失败/阻塞/未测；真实Core门槛保持未完成，不用skip或fixture替代。
+- [合成协议被记为真实端到端通过] → 必须实际运行Core、Docker Engine和匹配helper，验证字节/hash、原ID、请求次数及权限撤销；完成前不勾选10.3。
 - [任务范围膨胀] → 未编号目录选择候选、全局视觉重设和后端重写不纳入；09/11/19/20只有当前范围内证据才落修复，重大新问题另提案。
 
 ## Migration Plan
@@ -208,7 +208,7 @@ Works的Refresh/Import改quiet图标，＋New保持主动作角色；英文toolt
 2. A按“导出意图/精确快照与单次交付”功能提交；先有自动化失败证据，再实现与同transfer恢复回归。
 3. B按工作区连续性、列表/导航/草稿、Service/文件局部恢复等功能边界提交；C按控件、文案与完成出口提交。数量由实际改动决定，相关测试与生成资源随所属实现，不把所有改动塞一个commit。
 4. 每批先跑相关状态/浏览器/Go契约，再跑完整Desktop测试、构建/embed与原生边界；文档单独整理。纯TS测试不替代browser.test/native-auth，合成原生HTTP不替代真实Core。
-5. NoDocker环境完成可运行层后，真实Core/Docker停止→导出→校验→下载→检查→导入→显式启动作为明确待验收项保留；取得用户授权的合适隔离环境后才执行。不安装/启动Docker作为本轮默认动作。
+5. 当前已授权使用Fedora现有Docker Engine，在隔离安装中完成真实Core停止→导出→校验→浏览器下载→检查→导入→显式启动与权限撤销；记录数据结果及精确资源清理，当前不再受NoDocker限制。
 6. 回滚按功能恢复对应源码、测试和生成资源，不删除用户Work/快照/数据。仅前端页面内意图，无存储schema迁移。发布/推送、规格同步与归档均另按明确授权和全部验收结果处理。
 
 ### 15. 组件语义纠正与即时关闭
@@ -293,3 +293,46 @@ Chat显隐控件移至Service工具栏；窄屏Chat显示时仍保留Service Hea
 - 本轮仅纠正当前delta的旧＋菜单、Files读取成功反馈与iframe导航占位措辞，按已确认More file actions、成功恢复原图标及不遮挡iframe的契约统一。没有删Scenario或降低任务完成门槛。
 
 产品冻结输入为 `912fa289ce2f28016d451e2a448ef2c6ab80286c`；Desktop资源已按Node24构建同步，独立应用恢复32项、默认区域及导航77项、Sessions35项、独立Service路由31项、文件结果31项定向纯回归分别通过（集合重叠，不累加为总数）。最终完整矩阵、Go宿主构建、官方Chrome合成界面、真实Core与读屏验证以各自实际结果单独记账，未验条件不标完成。
+
+## 2026-10-14 本机 Verify 后的焦点与测试时钟修复计划
+
+### 已确认输入与失败边界
+
+核验输入为 `9262b89abf580fc5244a919aabd5059ab7b8abe8`，工作树干净。完整 `test:browser` 实测835通过、2失败、0跳过，包含实际五分钟的票据过期用例。Chromium140.0.7339.186与145.0.7632.6定向重跑均复现这两项；构建、25项嵌入资源字节一致性、相关Go包、OpenSpec strict及边界检查通过。日志位于本机忽略目录 `dist/verify-desktop/`，不覆盖验收附件中原环境837通过及407项原生矩阵的历史事实。
+
+### Response settings焦点归属
+
+现有 `render()` 在DOM协调前已捕获active/activeKey，但后续恢复只依据协调后的 `document.activeElement` 是否仍在dialog内且disabled。原Thinking控件被禁用时浏览器已将焦点移到BODY，条件无法成立；尝试再次focus禁用控件也不会恢复焦点。现有键盘回归在能力从off/low/high变为仅off后期待Close获得焦点，诊断实测activeElement为BODY。
+
+后续实现应复用协调前的焦点快照，确认其属于同一Response settings、Work/Session和身份，再在原控件变为不可聚焦且当前焦点仍为BODY/root时调用已有合法回退；Thinking不可用时回到现有恢复动作或页脚Close。原控件仍可用时保持原焦点；用户已移到其他控件或背景输入、关闭/更换浮层、切Work/Session/身份时不得恢复旧焦点。不引入全局focus trap、延迟focus timer、新设置提交或Modal动画。
+
+验证包括能力更新禁用的真实键盘路径、连续后台更新不重复夺焦、用户主动移焦、浮层关闭及对象/身份切换的晚结果；保留草稿、选区、IME、非模态Tab/Escape与原PATCH/Run请求次数断言。
+
+### 取消请求观察测试的时钟生命周期
+
+现有 `Controls recovery: cancellation from list follows its terminal state` 在应用已创建五秒轮询后才安装 `page.clock`。本机推进六秒虚拟时间后没有预期详情GET，界面保持cancelling；只将该用例改为真实等待六秒的临时诊断对照可达到cancelled。该证据定位为测试时钟覆盖缺口，不证明产品在真实时间下停止轮询。
+
+后续测试应在受测页面创建应用定时器之前安装虚拟时钟，并明确等待初始读取及取消接受后再推进；用原requestId的GET、可见终态和一次取消POST证明实际观察，不能只直接改adapter状态或按次数猜测完成。保留真实时间对照，并验证终态后停止观察、关闭观察及身份失效的原边界。先修夹具，不为通过此用例修改生产轮询间隔、取消协议或放宽对象/身份保护。
+
+### 回归与环境门槛
+
+两个问题定向通过后，运行Desktop typecheck、正常构建/嵌入、相关Go契约及完整 `test:browser`，如实记录浏览器版本、输入、通过/失败/跳过与日志；不升级依赖或删除断言来复现原837绿色结果。补齐实际证据后再勾选新增任务。原9.3按所有者最新要求移出本次范围；10.3已授权并要求使用真实Docker执行。此前Update阶段本身未实施代码或运行Docker，该历史条件不限制当前验收。
+
+### 本轮Apply实施结果
+
+后续Apply已实现上述焦点归属保护；取消测试增加页面导航前时钟hook、接受后读回完成门槛及虚拟/真实时间对照，生产轮询保持原样。Chromium140模型设置26项、取消观察4项通过，Chromium145修复定向9项通过；这些集合重叠，不累加为完整矩阵总数。最终完整浏览器矩阵844通过、0失败/跳过，实际五分钟票据过期通过；相关Go契约、typecheck、正常Linux/Windows构建及25项嵌入资源一致性通过。首轮完整命令的原生控制通道启动失败与后续成功重跑分开记于[本机验收](evidence/acceptance.md)，未更改平台安全代码来消除该环境结果。Review未发现本次修改引入新的焦点争用或取消协议偏差。该轮结束时为93/95；所有者随后移除读屏任务并要求真实Docker实测，最新完成状态见末节。生成副本由正常构建同步，宿主记录真实modified=true。
+
+
+## 2026-10-14 当前执行设计：真实Core与Docker链路
+
+- 原9.3真实NVDA/VoiceOver实测按所有者要求移出验收范围，保留基本键盘/焦点/ARIA语义；历史未测不改写为已测。当前NoDocker限制解除，以下实测是必须完成的10.3。
+- Fedora root@192.168.14.134已有Docker Engine与发布Agent/file/snapshot helper镜像。创建独立installation/data目录与测试账号，Core与helper通过真实Engine API工作；Desktop使用本次构建。真实模型调用不是此链路的前提，可用合成模型凭据且不向生产模型发请求。
+- 使用合成UTF-8/二进制文件核对停止前后的文件内容；真实停止后生成新snapshot，以原Operation/snapshot/transfer绑定完成CLI校验与真实浏览器download，再本地Inspect、Import为新stopped Work，由显式Start启动后逐字节/hash比较。核对Export/prepare/content以及Start等实际请求次数。
+- 在已准备内容/文件访问路径上撤销测试用户权限或凭据，验证旧访问实际拒绝，随后用测试管理员核查；不以UI禁用按钮代替服务端撤权。
+- 操作前后核对既有安装与容器状态。测试清理仅匹配本次installation ID/标签及明确测试目录；停止测试Core，确认本次容器、网络和卷清理，无全局prune。日志、合成包与截图放忽略的dist/，验收摘要归原evidence/acceptance.md，实际执行通过后才勾选10.3。
+
+### 真实Docker执行完成
+
+10.3已在Fedora独立安装实际通过：Engine29.6.2，Core/CLI使用本次Go1.25.5构建，匹配的0.0.6生产Agent和三类helper真实参与。完整验证Stop and export、609783482字节包的长度/hash与原ID、一次自动下载、真实本地Inspect、stopped Import和显式Start后的文本/二进制数据恢复；禁用测试账号后Core文件/快照401、旧本机内容404。以专用Desktop端口的真实HTTP请求行、当前浏览器bootstrap范围和实时Docker事件核对次数与参与者，保留前期夹具采集失败及最终成功结果。
+
+测试使用独立Docker配置/用户凭据目录；Fedora可执行文件采用标准bin_t标签，测试共享数据目录采用container_file_t，SELinux始终Enforcing。测试Core正常退出后，仅按本次installation标签移除剩余2容器、2网络、18卷；所有本次资源清零，原4个容器ID/运行状态、原Core完整ready均保持；精确测试目录、测试二进制、观察进程及SSH转发已移除。当前94/94，原NVDA/VoiceOver任务依所有者要求删除且不伪记为通过。详见最新验收附件。

@@ -1,8 +1,77 @@
 # UI 最终 Review 与 Verify 验收
 
-## 2026-10-14 冻结需求后的最终验证
+## 2026-10-14 Fedora真实Docker链路与范围收尾（当前结果）
 
-变更：`fix-desktop-task-completion-and-ux`。本节是当前结果，下方较早结果保留为历史，不能混算通过数。
+所有者明确移除原9.3真实NVDA/VoiceOver实测任务，同时要求解除NoDocker限制并完成真实Core链路。原读屏项从范围及计数中删除，不伪记为已测；键盘、焦点和可访问名称保护保持。**当前任务94/94，10.3已实际通过并完成限定安装清理。** 下方NoDocker与真实Core未测均是此前阶段的历史条件，不再约束当前工作。
+
+### 实际环境和参与者
+
+- 主机：`root@192.168.14.134`，Fedora，Docker Engine29.6.2，SELinux Enforcing。使用独立Core安装 `installation-4b1aab13b35966b392d4ad1288e632be`、专用端口、私有数据目录及合成账号；既有Core/Work保持隔离。
+- Core和Desktop CLI使用本次Go1.25.5原生构建；基线 `9262b89`，含本次本地修复，真实 `modified=true`。Core二进制SHA-256 `8298c3bb0f9ff14efd5ac7700a9a1fd3f3a00b89b6a7d3c2b6896f95efea30d5`；CLI二进制SHA-256 `9fa57eff92da27e724cc73b9de69e8081c023d021d9000afa8d2e37f6086a510`，DesktopUIHash `d3f4d1e6bbb0bc754945eb7d51e089ecf692713f36e20160a9a65c85c122f145`。
+- 真实生产镜像版本 `0.0.6-ff37c45b7093-1b352aec0357`：Agent/package-helper镜像ID前缀 `9665f2b5b274`，file-helper `2af75c7a80dc`，snapshot-helper `52f3dd1c7d1d`。实时Engine事件记录实际start：package-helper5、Agent2、file-helper6、snapshot-helper8；不是合成Core响应或仅镜像标签检查。另有合成只读Pi Package经真实package helper安装成功。
+- Chromium140.0.7339.186运行真实Desktop；Core/CLI位于Fedora，测试端口经SSH转发。使用合成文件和模型凭据，本链路未发送模型Run。Core完整delivery readiness六项均ready。
+
+### 链路、身份和请求次数
+
+| 阶段 | 实际结果 |
+| --- | --- |
+| 创建与文件 | 原Work `work-0513555e-58fa-4660-b596-6af9aaa57598`真实ready；85字节UTF-8文件和8193字节二进制经Core/file helper写入、读回一致 |
+| Stop and export | UI确认后Stop、Export实际成功；原Stop `operation-d0dbf803fee2869164e47b69931e98c8`，Export `operation-edcaa243b64cd3b4d292742c631317da` |
+| 原快照与下载 | snapshot `snapshot-1584555a-7645-4a98-9644-8525b033c0d4`与transfer `ea3399be-da7d-4f6a-af9d-8a3da5630a0b`精确绑定原Work/Export；Core、准备结果和真实浏览器下载均为609783482字节，SHA-256一致 |
+| Inspect与Import | 浏览器选择实际下载的包，Native CLI完整Inspect通过；Import `operation-2c3e1cff79148a84241a73b3f3572615`发布新Work `work-27ce5a16-a46a-4cfe-b05b-7d7c0e9adbf9`为stopped，用户确认启动前Start请求为0 |
+| 显式Start与恢复 | UI选择Start and open一次，Start `operation-40b0b7c46485718d2072db33c1604223`成功，Work真实ready；两份文件逐字节及SHA-256与原数据一致 |
+| 撤权 | 通过测试安装的operator禁用合成用户后，原token访问Core文件及snapshot content均401；浏览器同源fetch原已准备下载内容为404，旧内容不交付 |
+| 次数 | 最终浏览器bootstrap范围内Stop/Export/prepare/自动content各1，Import及显式Start各1；撤权后的拒绝探测单列，不计作第二次自动交付 |
+
+完整下载包SHA-256：`8b004184f49c1b7ebfce88a461dc14cc9fcc4a3b08659b8be03a6f317c36cbc7`。`验收笔记 100%.txt` SHA-256为 `a7194c9394b2955b86c909b238c92595d86358512650b9e23b1c8909a1f8cad7`；`payload.bin`为 `7e3691790cd64b19d4edb1a80e988214515abeb53aa0f34ffbfe4b4bf405d120`。
+
+### 环境准备、观测和清理边界
+
+- 原生服务可执行文件放标准可执行目录并恢复默认bin_t标签；测试共享数据目录使用container_file_t，独立DOCKER_CONFIG及用户凭据目录。SELinux始终Enforcing，未关闭系统安全策略或修改生产安装配置。
+- 前期夹具问题包括私有凭据目录模式、命令菜单的menuitem语义、凭据复用、Node不解析desktop.localhost以及Docker仅保留有界历史事件；均保留失败结果。最终用真实浏览器同源请求、当前bootstrap范围、专用Desktop端口HTTP请求行及实时Engine事件核对；不将前期失败记为通过。下载导航不依赖Chromium普通page request事件来计数；数据传输保持真实Core/CLI路径。
+- 实际测试脚本、最终退出码0日志、完整结果/请求行/Engine事件、源构建信息及清理摘要保存在忽略的 `dist/real-core-fedora/`。临时流量采集仅限定本次专用端口；原始捕获含测试会话数据，仅保存在私有测试目录并随精确目录删除，公开证据仅保留合成身份、路径、状态和hash。
+- 测试Core正常退出后，逐项核验installation标签再移除剩余2容器、2网络、18卷；本次容器/网络/卷均为0。原4个容器ID和running状态保持，原Core完整ready；精确测试目录、测试二进制、观察进程及SSH转发已清理。没有全局prune或清理其他安装。
+- 本次完成真实10.3，不将其扩大为所有模型/Service业务组合或未要求的读屏认证。既有844项UI矩阵与本节真实Docker结果分层记录，未合并/发布/归档。
+
+真实停止态导出与显式启动后的新Work（仅合成数据）：
+
+<p align="center"><img src="screenshots/fedora-real-export.png" alt="Fedora真实Work停止并导出后完成浏览器下载" width="1100"></p>
+<p align="center"><img src="screenshots/fedora-real-import-start.png" alt="Fedora真实导入Work经用户显式启动后Ready" width="1100"></p>
+
+原图SHA-256：`fedora-real-export.png`为 `1e6ded8311074b658c00268ade347ed2600cdc7bedaca017ed61529b05a3d92f`；`fedora-real-import-start.png`为 `324713b1dac6486fecc45d4625a14a21480f0435c3834e9635c2a548d785b37b`。
+
+## 2026-10-14 本机 Apply：焦点归属与取消观察测试
+
+本节记录本机后续修复结果；下节837项浏览器及407项原生矩阵保留原环境、原输入和原构建身份，不转记为本轮通过。
+
+### 输入与修复
+
+- 修复基线 `9262b89abf580fc5244a919aabd5059ab7b8abe8`；修复源码、测试和规划尚未提交。修复前完整浏览器实测835通过、2失败、0跳过；Chromium140与145定向均复现原键盘焦点失败及晚装测试时钟的取消观察失败。日志位于忽略目录 `dist/verify-desktop/`。
+- `app.ts`复用DOM协调前的焦点归属与modalChoice，在同一有效Response settings上下文内原控件因禁用/移除而失焦时调用已有合法回退；当前已有用户焦点时不抢回。没有新增focus timer、焦点陷阱、设置提交或Modal动画。
+- 原取消观察用例在应用创建轮询前安装虚拟时钟，并等待取消接受及其立即读回结束后再改变服务端合成状态；增加真实时间对照、原requestId实际GET、取消POST一次和终态后停止详情GET的断言。生产取消和轮询逻辑未修改。
+- 新增composer/关闭/另一浮层/Session/Work/身份六类晚能力读取焦点对照，并保留原IME、Tab/Escape、草稿/选区及PATCH/Run计数。早期新增composer夹具误预期移焦后Popover仍打开，按既有非模态移焦关闭行为修正断言；未改变产品关闭规则。
+
+### 本轮实际检查
+
+| 层次 | 结果 | 边界 |
+| --- | --- | --- |
+| Chromium140模型设置组 | 26通过、0失败/跳过 | 包含原失败键盘路径、控件仍可用/重复更新及六类晚结果焦点对照 |
+| Chromium140取消观察组 | 4通过、0失败/跳过 | 虚拟/真实时间，关闭观察及身份隔离；真实时间覆盖终态后一个以上轮询间隔 |
+| Chromium145两项修复定向 | 9通过、0失败/跳过 | 与修复前同版本对照，不等于第二浏览器的完整矩阵 |
+| 完整test:browser | 844通过、0失败/跳过，退出码0 | Node24.20.0、Chromium140.0.7339.186、本次Linux CLI；真实五分钟票据过期用例300850.737ms，完整命令311782.692ms |
+| Go相关契约 | CLI、client、clientfs、workpackage通过 | desktopassets编译通过但没有测试文件，不沿用前轮407项总数 |
+| typecheck/build/嵌入 | 通过，25项字节一致 | 正常make build-cli构建Linux/Windows；Windows本轮只编译，未执行完整原生浏览器矩阵 |
+| 边界/格式 | native boundary、repository docs、OpenSpec strict及diff检查通过 | 无Core/API、依赖、系统安全配置修改 |
+
+本轮首个完整命令为843通过、1失败、0跳过：真实票据过期用例在创建Desktop时收到 `Desktop control channel is unavailable or incompatible`，尚未执行到等待/到期断言。失败夹具保留了监听server而未退出，仅终止本次已核实PID/命令行的卡住测试进程后命令结束；原日志保存为 `dist/apply-desktop/browser-attempt1.log`。后续以相同源码、测试和宿主输入，在Go契约测试结束后独立重跑完整入口，实际844项全部通过；不将首轮失败改写为通过，不清理其他安装的控制通道。未定位首轮控制通道失败的具体系统调用，不据一次重跑成功宣称该夹具永不波动。
+
+宿主构建如实记录基线commit及 `modified=true`，Go1.25.5；DesktopUIHash为 `d3f4d1e6bbb0bc754945eb7d51e089ecf692713f36e20160a9a65c85c122f145`，Linux二进制SHA-256为 `9fa57eff92da27e724cc73b9de69e8081c023d021d9000afa8d2e37f6086a510`。实际源码/测试hash和命令日志在 `dist/apply-desktop/`；后续文档更新不改写该构建身份。
+
+本轮Review核对焦点所有权、禁用/移除回退、非模态退出、主动移焦和对象/身份晚结果，以及测试时钟安装、受理后读回、原ID/请求计数与终态停止观察。23.1—23.3完成，当前93/95；任务9.3真实NVDA/VoiceOver和10.3真实Core/Engine/helper链路继续未验。本轮使用合成HTTP及原生CLI契约，不执行Docker、部署、推送或归档。
+
+## 2026-10-14 冻结需求后的最终验证（前轮环境记录）
+
+变更：`fix-desktop-task-completion-and-ux`。本节保留前轮环境结果，后续本机修复状态以上节和tasks.md首部为准；下方更早结果继续保留，不能混算通过数。
 
 ### 输入、范围与结论
 
