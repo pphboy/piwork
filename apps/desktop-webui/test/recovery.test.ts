@@ -25,7 +25,7 @@ type Reply = { status?: number; json?: unknown; body?: string; headers?: Record<
 const mtime1 = 'Sat, 03 Oct 2026 01:00:00 GMT';
 const mtime2 = 'Sat, 03 Oct 2026 01:00:02 GMT';
 const mtime3 = 'Sat, 03 Oct 2026 01:00:04 GMT';
-async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialRead = true) {
+async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialRead = true, beforeNavigation?: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); t.after(() => page.close());
   // These protocol/fake-clock tests use the supported immediate presentation path.
   // Real motion/race behavior has its own modal-presentation and GUI acceptance coverage.
@@ -70,6 +70,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
     if (reply.abort) await route.abort('failed');
     else await route.fulfill({ status: reply.status ?? 200, headers: reply.headers, ...(reply.json !== undefined ? { contentType: 'application/json', body: JSON.stringify(reply.json) } : { body: reply.body ?? '' }) });
   });
+  await beforeNavigation?.(page);
   await page.goto(base + (anonymous ? '/' : '/#/work/work-1'));
   await expect(page.getByRole('heading', { name: anonymous ? 'Connect to your Core' : 'Recovery Work', exact: true })).toBeVisible();
   if (!anonymous && waitForInitialRead) {
@@ -2258,17 +2259,29 @@ test('Controls recovery: another active Run does not hide the current Chat failu
  await api(page,"const w=adapter.getWork('work-1');w.run={id:'failed-manual',sessionId:'session-1',status:'failed',created:'2026-10-12T00:00:00Z',cursor:0,error:'The manual answer failed',source:{kind:'chat'}};w.sessions[0].runs=[w.run];await adapter.loadModels('work-1');");
  await expect(page.locator('.message-execution').filter({has:page.locator('[data-run-id=failed-manual]')})).toContainText('The manual answer failed');
 });
-test('Controls recovery: cancellation from list follows its terminal state',async t=>{
+for (const timing of ['virtual', 'real'] as const) test(`Controls recovery: cancellation from list follows its terminal state (${timing} time)`,async t=>{
  let state='running';
- const {page}=await fixture(t,r=>{
+ const {page,requests}=await fixture(t,r=>{
   if(r.path.endsWith('/agent-requests'))return{json:{items:[controlRequest(state)],nextCursor:null}};
   if(r.path.endsWith('/agent-requests/request-a/cancel')){state='cancelling';return{json:{requestId:'request-a'}};}
   if(r.path.endsWith('/agent-requests/request-a'))return{json:{request:controlRequest(state),evidence:{items:[],nextCursor:null}}};
   if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',state==='cancelling'?3:6)};
   return controlFixture(r);
- });
+ }, false, true, timing === 'virtual' ? page => page.clock.install() : undefined);
  await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);
- await page.clock.install();state='cancelled';await page.clock.runFor(6000);await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);
+ await expect.poll(()=>api(page,"return adapter.requestCancellation('work-1','request-a')?.phase;")).toBe('accepted');
+ await expect(button(page,'cancel-pi-request')).not.toHaveAttribute('aria-busy','true');
+ const reads=()=>requests.filter(r=>r.path.endsWith('/agent-requests/request-a') && r.method==='GET').length;
+ const before=reads();state='cancelled';
+ if(timing==='virtual')await page.clock.runFor(6000);
+ await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/,{timeout:10000});
+ assert.ok(reads()>before,'the original request must actually be reread to confirm cancellation');
+ await expect(button(page,'cancel-pi-request')).toHaveCount(0);
+ const terminal=reads();
+ if(timing==='virtual')await page.clock.runFor(15000);else await page.waitForTimeout(5500);
+ assert.equal(reads(),terminal,'a terminal request must stop automatic detail reads');
+ assert.equal(requests.filter(r=>r.path.endsWith('/cancel') && r.method==='POST').length,1);
+ assert.equal(chatWrites(requests).length,0);
 });
 
 test('Controls recovery: lost Retry receipt resolves only through the original read key',async t=>{
