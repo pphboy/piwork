@@ -1497,14 +1497,65 @@ test('Compact settings keyboard keeps list navigation, IME, Tab, focus return an
   await page.locator('#composer').fill('draft remains after capability change');
   await openResponseSettings(page);
   await page.locator('#thinking-select').focus();
+  await api(page, "await adapter.loadModels('work-1');");
+  await expect(page.locator('#thinking-select')).toBeFocused();
   levels = ['off']; saved = 'off';
   await api(page, "await adapter.loadModels('work-1');");
   await expect(page.locator('#thinking-select')).toBeDisabled();
+  await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
+  await api(page, "await adapter.loadModels('work-1');");
   await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.locator('#composer')).toHaveValue('draft remains after capability change');
   assert.equal(requests.filter(r => r.method === 'PATCH').length, 1);
   assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/runs')).length, 0);
+});
+
+for (const destination of ['composer', 'close', 'replace', 'session', 'work', 'identity']) test(`Compact settings late capability update preserves ${destination} focus ownership`, async t => {
+  let delayed = false, release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works') return { json: { works: ['1', '2'].map(id => ({ id: `work-${id}`, name: id === '1' ? 'Recovery Work' : 'Other Work', observedState: 'ready', desiredState: 'running' })) } };
+    if (r.path === 'works/work-2') return { json: { id: 'work-2', name: 'Other Work', observedState: 'ready', desiredState: 'running' } };
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
+    if (r.path.endsWith('/chat-models')) {
+      if (delayed && r.path.includes('work-1')) await gate;
+      return { json: { ...chatModels(), defaultModel: { ...chatModel, thinkingLevels: delayed && r.path.includes('work-1') ? ['off'] : ['off', 'low', 'high'] } } };
+    }
+    if (r.path.endsWith('/sessions')) return { json: { sessions: [{ sessionId: 'session-1' }, { sessionId: 'session-2' }] } };
+    if (/\/sessions\/session-[12]$/.test(r.path)) return { json: { session: { workId: r.path.split('/')[1], sessionId: r.path.split('/')[3], modelPreference: null, thinkingLevel: 'off' }, messages: [], runs: [] } };
+    if (r.path.endsWith('/chat-options')) return { json: { ...chatOptions('off'), workId: r.path.split('/')[1], sessionId: r.path.split('/')[3] } };
+    return focusFixture(r);
+  });
+  await button(page, 'focus-chat').click();
+  await page.locator('#composer').fill('draft kept across a capability read');
+  await openResponseSettings(page); await page.locator('#thinking-select').focus();
+  delayed = true;
+  const request = page.waitForRequest(r => new URL(r.url()).pathname.endsWith('/works/work-1/chat-models'));
+  const pending = api(page, "try { await adapter.loadModels('work-1'); return ''; } catch (error) { return error.code; }");
+  await request;
+  if (destination === 'close' || destination === 'replace') await closeResponseSettings(page);
+  if (destination === 'replace') { await button(page, 'agent-menu').click(); await expect(page.locator('#modal')).toHaveAttribute('role', 'menu'); }
+  if (destination === 'session') {
+    await closeResponseSettings(page); await button(page, 'sessions').click();
+    await page.locator('[data-action=select-session][data-id=session-2]').click();
+    await expect(page.locator('#modal')).toHaveCount(0);
+  }
+  if (destination === 'work') {
+    await closeResponseSettings(page); await page.evaluate(() => { location.hash = '/work/work-2'; });
+    await expect(page.getByRole('heading', { name: 'Other Work', exact: true })).toBeVisible();
+    await expect(page.locator('.work-read-feedback')).toHaveCount(0);
+  }
+  if (destination === 'identity') { await api(page, 'await adapter.signOut();'); await page.getByLabel('Account', { exact: true }).focus(); }
+  else if (!['close', 'replace'].includes(destination)) await page.locator('#composer').focus();
+  await page.evaluate(() => { (window as any).capabilityFocus = document.activeElement; });
+  release(); const error = await pending;
+  if (destination !== 'identity') assert.equal(error, '');
+  assert.equal(await page.evaluate(() => document.activeElement === (window as any).capabilityFocus), true);
+  if (destination === 'composer') { await expect(page.locator('#modal')).toHaveCount(0); await expect(page.locator('#composer')).toHaveValue('draft kept across a capability read'); }
+  else if (destination === 'replace') await expect(page.locator('#modal')).toHaveAttribute('role', 'menu');
+  else await expect(page.locator('#modal')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.method === 'PATCH' || r.method === 'POST' && r.path.endsWith('/runs')).length, 0);
 });
 
 test('Compact settings UIUX evidence covers content width, container roles, long names, 360px and low height', async t => {

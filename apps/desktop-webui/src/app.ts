@@ -2641,6 +2641,7 @@ function render() {
   if (view.config && !view.config.advancedDirty) synchronizeConfiguration(view.config);
   const active = document.activeElement as HTMLInputElement | null;
   const activeKey = focusKey(active);
+  const settingsFocusChoice = chatSettingsContextCurrent() && active?.closest('#modal') ? modalChoice : undefined;
   const selection =
     active && "selectionStart" in active ? active.selectionStart : null;
   const selectionEnd = active && 'selectionEnd' in active ? active.selectionEnd : selection;
@@ -2727,7 +2728,12 @@ function render() {
         } catch {}
     }
   }
-  if(dialog && view.modal==='chat-response-settings' && (overlayOpening || dialog.contains(document.activeElement) && (document.activeElement as HTMLButtonElement)?.disabled)) focusChatSettings(view.data.expanded || active?.dataset.kind);
+  // Disabling a focused control can move focus to BODY during reconciliation.
+  // Use its prior owner; a later user focus or a different panel never belongs here.
+  const settingsFocusLost = settingsFocusChoice === modalChoice && chatSettingsContextCurrent() && !!active &&
+    (!active.isConnected || active.matches(':disabled') || !active.getClientRects().length) &&
+    (document.activeElement === document.body || document.activeElement === root || document.activeElement === active);
+  if(dialog && view.modal==='chat-response-settings' && (overlayOpening || settingsFocusLost)) focusChatSettings(view.data.expanded || active?.dataset.kind);
   const next = root.querySelector<HTMLElement>("#messages");
   if (next) {
     const position = chatReading.get(next.dataset.readingKey || '');
