@@ -2,6 +2,40 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.7",
+      "component": "core",
+      "title": "Piwork 0.0.7 Preview",
+      "sections": [
+        {
+          "title": "Desktop workflows and recovery",
+          "items": [
+            "Ship matching release components for the updated Desktop workspace and export workflows.",
+            "Keep existing Core APIs, storage format, authorization and managed Work runtime behavior unchanged in this preview."
+          ]
+        }
+      ],
+      "publishedAt": "2026-10-15"
+    },
+    {
+      "version": "0.0.7",
+      "component": "desktop",
+      "title": "Piwork 0.0.7 Preview",
+      "sections": [
+        {
+          "title": "Desktop workflows and recovery",
+          "items": [
+            "Continue one explicit export through the original Operation, snapshot and transfer to a verified browser download, including close/navigation and lost-response recovery.",
+            "Preserve the current Service, Chat drafts and per-file editing context through transient reads and workspace navigation; open imported Works only after explicit Start reaches readiness.",
+            "Use anchored command menus, local popovers and persistent inspectors with consistent actions, keyboard focus and immediate modal opening and closing.",
+            "Resize and restore Service/Chat panels across wide and narrow layouts without replacing the Service iframe or losing composer context.",
+            "Render safe Markdown in assistant messages, including tables and code, while escaping HTML and blocking unsafe links and automatic Markdown image requests.",
+            "Keep confirmed content during refresh, use local first-read placeholders, and show real errors and explicit recovery without covering usable Service content."
+          ]
+        }
+      ],
+      "publishedAt": "2026-10-15"
+    },
+    {
       "version": "0.0.6",
       "component": "core",
       "title": "Piwork 0.0.6 Preview",
