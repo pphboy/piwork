@@ -45,12 +45,13 @@ http.createServer((req,res)=>{
   await waitFor(async()=>(await call('GET',path+'/agent-requests/'+requestId)).request.state==='running','Service Run');
   await page.locator('[data-action=service-requests]').click();await expect(page.locator('#pi-service-filter')).toHaveValue('controls-service');await page.locator('[data-action=pi-request-detail]').click();await expect(page.locator('#modal h2')).toHaveText('Agent request');
   await expect(page.locator('#modal')).toContainText('wait for abort: requested report 1');
-  await page.locator('#modal .modal-footer [data-action=close-modal]').click();await file('chat-controls-hold','PUT','hold');
-  await page.locator('#modal [data-action=cancel-pi-request]').click();await expect(page.locator('#modal')).toContainText('cancelling');
-  await waitFor(async()=>{const r=await fetch(coreUrl+path+'/files/chat-controls-shutdown',{headers:{Authorization:'Bearer '+token}});return r.ok;},'list cancellation SDK shutdown held');
+  await page.locator('[data-action=back-pi-requests]').click();await expect(page.locator('#pi-service-filter')).toHaveValue('controls-service');
+  await page.locator(`[data-action=pi-request-detail][data-id="${requestId}"]`).click();await file('chat-controls-hold','PUT','hold');
+  await page.locator('#modal [data-action=cancel-pi-request]').click();await expect(page.locator('#modal')).toContainText(/cancelling/i);
+  await waitFor(async()=>{const r=await fetch(coreUrl+path+'/files/chat-controls-shutdown',{headers:{Authorization:'Bearer '+token}});return r.ok;},'original request cancellation SDK shutdown held');
   await file('chat-controls-hold','DELETE');
   await waitFor(async()=>(await call('GET',path+'/agent-requests/'+requestId)).request.state==='cancelled','cancelled Service request');
-  await expect(page.locator('#modal')).toContainText('cancelled',{timeout:15000});
+  await expect(page.locator('#modal')).toContainText(/cancelled/i,{timeout:15000});
   await page.locator('#modal .modal-footer [data-action=close-modal]').click();await file('chat-controls-shutdown','DELETE');
   await expect(page.locator('#composer')).toHaveValue('Keep Main draft');assert.equal(await page.evaluate(()=>window.controlsFrame===document.querySelector('iframe') && window.controlsLoads===0),true);await expect(frame.getByLabel('Service draft')).toHaveValue('Keep Service state');
   console.log('Chat controls: Service visibility and cancellation passed');
@@ -77,12 +78,12 @@ http.createServer((req,res)=>{
   await page.locator('#modal .modal-footer [data-action=pi-request-detail]').click();
   await expect(page.locator('#modal')).toContainText('reply refresh failed');await expect(page.locator('#modal')).toContainText(answeredRun.finalText);await expect(page.locator('#modal')).toContainText('Last confirmed');
   await page.unroute(replyPath);await page.locator('#modal .modal-footer [data-action=pi-request-detail]').click();await expect(page.locator('#modal')).not.toContainText('reply refresh failed');
-  await page.locator('#modal .modal-footer [data-action=close-modal]').click();await page.locator('#modal .modal-footer [data-action=close-modal]').click();
+  await page.locator('[data-action=back-pi-requests]').click();await page.locator('#modal .modal-footer [data-action=close-modal]').click();
   console.log('Chat controls recovery: real reply retained across browser 503');
 
   // The Retry is accepted by the real Core/Agentd; only its local receipt is lost.
   assert.ok(['failed','needs_attention'].includes(answered.state));
-  await page.locator('[data-action=pi-requests]').click();await page.locator(`[data-action=pi-request-detail][data-id="${answered.requestId}"]`).click();
+  await page.getByRole('button',{name:'Pi requests for this Work',exact:true}).click();await page.locator(`[data-action=pi-request-detail][data-id="${answered.requestId}"]`).click();
   let retryKey='',retryPosts=0,retryGets=0;
   const retryPath=`**/_desktop/api/works/${id}/agent-requests/${answered.requestId}/retry`;
   page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/retry-submission'))retryGets++;});
@@ -101,7 +102,7 @@ http.createServer((req,res)=>{
   await page.locator('[data-action=retry-pi-request]').click();await expect(page.locator('#modal')).toContainText('response was lost');assert.equal(retryReceiptError,'');
   const retried=await waitFor(async()=>{const items=(await call('GET',path+'/agent-requests?serviceName=controls-service&limit=25')).items;return items.find(r=>r.retryOf===answered.requestId&&['completed','failed','cancelled','needs_attention'].includes(r.state));},'legitimate Retry phases finished',30000);
   const beforeLookup=(await call('GET',path+'/agent-requests?serviceName=controls-service&limit=25')).items;
-  await page.locator('#modal .modal-footer [data-action=pi-request-detail]').click();await expect(page.locator('#modal details')).toContainText(retried.requestId);
+  await page.locator('#modal .modal-footer [data-action=pi-request-detail]').click();await expect(page.locator('#modal .request-evidence')).toContainText(retried.requestId);
   const lookup=await call('GET',path+'/agent-requests/'+answered.requestId+'/retry-submission?submissionKey='+retryKey);
   assert.equal(lookup.status,'accepted');assert.equal(lookup.request.requestId,retried.requestId);assert.equal(lookup.request.retryOf,answered.requestId);
   assert.equal(retryPosts,1);assert.equal(retryGets,1);
@@ -109,7 +110,7 @@ http.createServer((req,res)=>{
   assert.equal((await call('GET',path+'/agent-requests/'+answered.requestId+'/retry-submission?submissionKey=missing')).status,'not-found');
   await call('GET',path+'/agent-requests/'+requestId+'/retry-submission?submissionKey='+retryKey,undefined,409);
   await page.unroute(retryPath);
-  await page.locator('#modal .modal-footer [data-action=close-modal]').click();await page.locator('#modal .modal-footer [data-action=close-modal]').click();
+  await page.locator('[data-action=back-pi-requests]').click();await page.locator('#modal .modal-footer [data-action=close-modal]').click();
   console.log('Chat controls recovery: accepted lost Retry located by original key without new writes');
 
   const failedManual=await submit(main,'chat-controls-fail-manual','chat-controls-failed-manual');
@@ -118,9 +119,9 @@ http.createServer((req,res)=>{
   await frame.getByRole('button',{name:'Request Agent'}).click();
   const background=await waitFor(async()=>{const items=(await call('GET',path+'/agent-requests?serviceName=controls-service&limit=25')).items;return items.find(r=>r.state==='running');},'background while manual failure');
   await expect(page.locator('[data-action=send-message]')).toHaveAttribute('data-cancel-run-id',background.runIds.at(-1),{timeout:15000});
-  await expect(page.locator('.composer-wrap')).toContainText(failedResult.error.message);
-  await expect(page.getByRole('button',{name:'Check original Run',exact:true})).toHaveAttribute('data-run-id',failedManual.runId);
-  await page.getByRole('button',{name:'Check original Run',exact:true}).click();await expect(page.locator('#modal')).toContainText(failedManual.runId);
+  await expect(page.locator('.message-execution').filter({has:page.locator(`[data-action=run-details][data-run-id="${failedManual.runId}"]`)})).toContainText(failedResult.error.message);
+  await expect(page.locator(`[data-action=run-details][data-run-id="${failedManual.runId}"]`)).toHaveAttribute('data-run-id',failedManual.runId);
+  await page.locator(`[data-action=run-details][data-run-id="${failedManual.runId}"]`).click();await expect(page.locator('#modal')).toContainText(failedManual.runId);
   await page.locator('#modal .modal-footer [data-action=close-modal]').click();
   // Expire only the browser event read. Original Run/Session data still comes
   // from the real Core/Agentd, including the actual execution failure.
@@ -147,8 +148,8 @@ http.createServer((req,res)=>{
       return{runId:run.id,error:run.error,activeId:adapter.activeRuns.get(id)?.run?.id};
     },{id,runId:failedManual.runId});
     assert.deepEqual(recovered,{runId:failedManual.runId,error:failedResult.error.message,activeId:background.runIds.at(-1)});
-    await expect(page.locator('.composer-wrap')).toContainText(failedResult.error.message);
-    await expect(page.getByRole('button',{name:'Check original Run',exact:true})).toHaveAttribute('data-run-id',failedManual.runId);
+    await expect(page.locator('.message-execution').filter({has:page.locator(`[data-action=run-details][data-run-id="${failedManual.runId}"]`)})).toContainText(failedResult.error.message);
+    await expect(page.locator(`[data-action=run-details][data-run-id="${failedManual.runId}"]`)).toHaveAttribute('data-run-id',failedManual.runId);
     await expect(page.locator('[data-action=send-message]')).toHaveAttribute('data-cancel-run-id',background.runIds.at(-1));
     assert.equal(expiredReads,1);assert.equal(historyWrites,0);
     assert.ok(originalRunReads>=2,'Original Run was not read again after 410');

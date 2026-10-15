@@ -244,7 +244,8 @@ try {
   await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');
   await page.locator('[data-action=focus-toggle-chat]').click();
   await page.locator('[data-action=focus-toggle-chat]').click();
-  await page.locator('[data-action=service-fullscreen]').click();
+  await page.getByRole('button', { name: 'Service options', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Browser full screen', exact: true }).click();
   await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
   await page.evaluate(() => document.exitFullscreen());
   await page.locator('[data-action=exit-service-focus]').click();
@@ -263,7 +264,7 @@ try {
   assert.equal(await page.locator('.activity').evaluate(node => node.open), true);
   assert.equal(await frame.getByLabel('Service draft').inputValue(), 'do not lose this', 'chat rerender reloaded the Service iframe');
   await page.getByRole('button', { name: 'Service options', exact: true }).click();
-  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.keyboard.press('Escape');
   assert.equal(await frame.getByLabel('Service draft').inputValue(), 'do not lose this', 'modal rerender reloaded the Service iframe');
   await page.screenshot({ path: join(screenshotDir, '02-service-and-chat.png'), fullPage: true });
   const newPage = context.waitForEvent('page');
@@ -297,21 +298,25 @@ try {
   await page.getByRole('button', { name: 'Back to files' }).click();
   await page.locator('#file-editor').waitFor({state:'hidden'});
   const binary = Buffer.from([0,1,2,128,255,42]);
-  await page.locator('#upload-input').setInputFiles({ name: 'binary.dat', mimeType: 'application/octet-stream', buffer: binary });
+  await page.getByRole('button', { name: 'More file actions', exact: true }).click();
+  const uploadChooser = page.waitForEvent('filechooser');
+  await page.getByRole('menuitem', { name: 'Upload files', exact: true }).click();
+  await (await uploadChooser).setFiles({ name: 'binary.dat', mimeType: 'application/octet-stream', buffer: binary });
   await page.getByRole('button', { name: /^binary.dat/ }).waitFor();
   const rawBinary = await fetch(`${coreUrl}/api/v1/works/${workId}/files/binary.dat`, { headers: { Authorization: `Bearer ${token}` } });
   assert.deepEqual(Buffer.from(await rawBinary.arrayBuffer()), binary);
-  await page.getByRole('button', { name: 'New folder' }).click();
+  await page.getByRole('button', { name: 'More file actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New folder', exact: true }).click();
   await page.locator('#form-name').fill('folder');
   await page.getByRole('button', { name: 'Create folder', exact: true }).click();
   await page.getByRole('button', { name: /^folder/ }).waitFor();
   await page.screenshot({ path: join(screenshotDir, '03-files.png'), fullPage: true });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByText('Saved and active configuration are aligned', { exact: true }).waitFor();
+  await page.locator('.configuration-compact').getByText('Configuration in use', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'AGENTS.md', exact: true }).click();
   await page.locator('#agents-editor').fill('# Real browser Work\nUse the shared workspace.\n');
   await page.getByRole('button', { name: 'Save changes', exact: true }).first().click();
-  await page.getByText('Not applied · Your running configuration is unchanged.', { exact: true }).waitFor();
+  await page.locator('.configuration-state').getByText('Saved changes are not active yet.', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
   await waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/configuration`)).data.pendingApply === false, 'configuration apply', 180_000);
   console.log('Real Desktop: configuration applied');
@@ -353,12 +358,12 @@ try {
     await page.goto(reopen()); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor(); assert.equal(desktop.pid, pid);
     const secondContext = await browser.newContext(); const second = await secondContext.newPage(); await second.goto(reopen()); await second.getByRole('heading', { name: 'Works', exact: true }).waitFor();
     const oldPending = reopen();
-    await page.locator('[data-action=account]').click(); await page.getByRole('button', { name: 'Reset browser access', exact: true }).click(); await page.getByRole('button', { name: 'Reset browser access', exact: true }).click();
+    await page.locator('[data-action=account]').click(); await page.getByRole('menuitem', { name: 'Reset browser access', exact: true }).click(); await page.getByRole('button', { name: 'Reset browser access', exact: true }).click();
     await page.getByRole('heading', { name: 'Browser access required' }).waitFor(); assert.equal(resetPosts, 1);
     await second.reload(); await second.getByRole('heading', { name: 'Browser access required' }).waitFor(); await second.goto(oldPending); await second.getByRole('heading', { name: 'Browser access required' }).waitFor();
     assert.equal(JSON.parse(await readFile(join(root, 'client.json'), 'utf8')).token, identityBefore.token);
     await page.goto(reopen()); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
-    await page.locator('[data-action=account]').click(); await page.getByRole('button', { name: 'Sign out', exact: true }).click(); await loginAgain(page);
+    await page.locator('[data-action=account]').click(); await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click(); await loginAgain(page);
     let result = helper('logout'); assert.equal(result.status, 0, result.stderr);
     await page.goto(reopen()); await loginAgain(page);
     const captured = JSON.parse(await readFile(join(root, 'client.json'), 'utf8'));
@@ -383,13 +388,13 @@ try {
     console.log(JSON.stringify({ result: 'local auth recovery: real Core login/reuse/reopen/logout/reset/revocation/offline, original PID/Work/Service/files/Run retained, no business replay', browserVersion: browser.version(), bootstrapPosts, resetPosts, businessWrites }));
   }
   await page.getByRole('button', { name: 'Work options' }).click();
-  await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
+  await page.getByRole('menuitem', { name: 'Export Work', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Stop and export', exact: true })).toBeVisible();
   assert.equal(await page.locator('[data-action=prepare-export]').count(), 0);
   // This first cycle checks ordinary Stop/Start retention; do not authorize export yet.
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.getByRole('button', { name: 'Work options' }).click();
-  await page.getByRole('button', { name: 'Stop Work', exact: true }).first().click();
+  await page.getByRole('menuitem', { name: 'Stop Work', exact: true }).click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).last().click();
   await expect(page.locator('#modal')).toContainText('Operation ID');
   await page.getByRole('button', { name: 'Close dialog' }).click();
@@ -433,26 +438,30 @@ try {
   await expect(page.locator('.work-header')).toContainText('Real Browser Work');
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY !== '1') assert.equal(mainReloads, 0, 'lifecycle required a page reload');
   await page.getByRole('button', { name: 'Work options' }).click();
-  await page.getByRole('button', { name: 'Stop Work', exact: true }).first().click();
+  await page.getByRole('menuitem', { name: 'Stop Work', exact: true }).click();
   await page.getByRole('button', { name: 'Stop Work', exact: true }).last().click();
   await expect(page.locator('#modal')).toContainText('Operation ID'); await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.getByRole('heading', { name: 'This Work is stopped', exact: true })).toBeVisible({ timeout: 180000 });
   await page.getByRole('button', { name: 'Work options' }).click();
   console.log('Real Desktop: second Stop confirmed; exporting current content and downloading');
   const exportRequests = [];
+  const exportDownloads = [];
+  const recordExportDownload = download => exportDownloads.push(new URL(download.url()).pathname);
   const recordExportRequest = request => {
     const path = new URL(request.url()).pathname;
     if (request.method() === 'POST' && path === `/_desktop/api/works/${workId}/exports` ||
-        request.method() === 'POST' && /^\/_desktop\/api\/work-snapshots\/[^/]+\/downloads$/.test(path) ||
-        request.method() === 'GET' && /^\/_desktop\/api\/downloads\/[^/]+\/content$/.test(path)) exportRequests.push({ path, method: request.method() });
+        request.method() === 'POST' && /^\/_desktop\/api\/work-snapshots\/[^/]+\/downloads$/.test(path)) exportRequests.push({ path, method: request.method() });
   };
   page.on('request', recordExportRequest);
+  // Chromium's anchor-download request is absent from request/route events.
+  // Count its actual download event and verify the saved bytes below.
+  page.on('download', recordExportDownload);
   const exportResponse = page.waitForResponse(response => new URL(response.url()).pathname === `/_desktop/api/works/${workId}/exports` && response.request().method() === 'POST', { timeout: 180_000 });
   const preparationResponse = page.waitForResponse(response => /^\/_desktop\/api\/work-snapshots\/[^/]+\/downloads$/.test(new URL(response.url()).pathname) && response.request().method() === 'POST', { timeout: 180_000 });
   const downloadEvent = page.waitForEvent('download', { timeout: 180_000 });
   // Arm every observer before the single Export action, and keep fixture cleanup reachable on early timeout.
   void exportResponse.catch(() => undefined); void preparationResponse.catch(() => undefined); void downloadEvent.catch(() => undefined);
-  await page.getByRole('button', { name: 'Export Work', exact: true }).last().click();
+  await page.getByRole('menuitem', { name: 'Export Work', exact: true }).click();
   const acceptanceResponse = await exportResponse;
   assert.equal(acceptanceResponse.status(), 202, `Export acceptance: ${await acceptanceResponse.text()}`);
   const acceptance = await acceptanceResponse.json(); assert.equal(acceptance.workId, workId); assert.ok(acceptance.operationId); assert.ok(acceptance.snapshotId);
@@ -470,9 +479,11 @@ try {
   assert.deepEqual(exportRequests, [
     { method: 'POST', path: `/_desktop/api/works/${workId}/exports` },
     { method: 'POST', path: `/_desktop/api/work-snapshots/${acceptance.snapshotId}/downloads` },
-    { method: 'GET', path: `/_desktop/api/downloads/${ready.transferId}/content` },
   ]);
+  assert.deepEqual(exportDownloads, [`/_desktop/api/downloads/${ready.transferId}/content`]);
   page.off('request', recordExportRequest);
+  page.off('download', recordExportDownload);
+  console.log(JSON.stringify({ result: 'single browser export/download verified', exportPosts: 1, preparationPosts: 1, downloads: exportDownloads.length, bytes: exportedBytes.length }));
   await expect(page.locator('#modal')).toContainText('Download started');
   await expect(page.getByRole('button', { name: 'Download again', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Close dialog' }).click({ noWaitAfter: true });
@@ -522,7 +533,7 @@ try {
   assert.equal(importedOptions.status, 200, JSON.stringify(importedOptions.data));
   assert.equal(importedOptions.data.thinkingLevel, 'off');
   assert.equal(importedOptions.data.availability, 'available', JSON.stringify(importedOptions.data));
-  await page.locator('[data-action=sessions]').first().click();
+  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
   await page.locator(`[data-action=select-session][data-id="${originalSessionId}"]`).click();
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
   await page.locator('#composer').fill('/skill:workspace-review "after import"');
@@ -537,7 +548,7 @@ try {
   console.log(JSON.stringify({ result: 'workspace UX: active Skill directory, complete settings pair, command parameters, ordered tool history, stable Focus/fullscreen, exported/imported Thinking and continued original Session', browserVersion: browser.version(), originalSessionId }));
   await page.screenshot({ path: join(screenshotDir, '04-restored-work.png'), fullPage: true });
   for (const width of [1440,1024,390]) { await page.setViewportSize({ width, height: 900 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `horizontal overflow at ${width}px`); await page.screenshot({ path: join(screenshotDir, `05-responsive-${width}.png`), fullPage: true }); }
-  await page.getByRole('button', { name: 'Work options' }).click(); await page.getByRole('button', { name: 'Delete Work', exact: true }).click(); await page.locator('#delete-confirm').check(); await page.getByRole('button', { name: 'Delete Work', exact: true }).last().click();
+  await page.getByRole('button', { name: 'Work options' }).click(); await page.getByRole('menuitem', { name: 'Delete Work', exact: true }).click(); await page.locator('#delete-confirm').check(); await page.getByRole('button', { name: 'Delete Work', exact: true }).last().click();
   await expect(page.locator('#modal')).toContainText('Operation ID');
   const deleteId = await page.locator('#modal dd code').first().innerText();
   await page.getByRole('button', { name: 'Close dialog' }).click();
