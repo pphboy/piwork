@@ -2,7 +2,7 @@ name: piwork-single-host
 # Readiness includes current default Work preparation; recheck after changing defaults.
 services:
   core:
-    image: docker.io/pphboy/piwork-core:0.0.6-ff37c45b7093-1b352aec0357
+    image: docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a
     init: true
     user: "0:0"
     network_mode: host
@@ -28,7 +28,7 @@ services:
     stop_grace_period: 60s
     restart: unless-stopped
   cli:
-    image: docker.io/pphboy/piwork-cli:0.0.6-ff37c45b7093-1b352aec0357
+    image: docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
     profiles: [cli]
     init: true
     user: "0:0"

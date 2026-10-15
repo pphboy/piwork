@@ -30,7 +30,7 @@ docker run --detach --init \
     --env PIWORK_MODEL_BASE_URL \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.6-ff37c45b7093-1b352aec0357
+    docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a
 ```
 
 Core 也可用 [Core-only docker-compose.yml](docker-compose.yml) 单独部署（Compose 2.24+），CLI 仍使用自己的 Docker 命令。切换 Core 部署方式前先停止原容器，保留同一数据目录。Core 与 CLI 合并的可选方式见 [单机部署示例](../../examples/single-host/README.zh-CN.md)。
@@ -46,7 +46,7 @@ docker run --rm --init --interactive --tty \
     --add-host host.docker.internal:host-gateway \
     --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.6-ff37c45b7093-1b352aec0357
+    docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
 ```
 
 下面的命令在 **CLI 容器内**执行。将 `ACCOUNT` 替换为你的账号；登录时隐藏密码输入。创建 Work 会自动启动它：
@@ -73,7 +73,7 @@ piwork-cli chat WORK_ID --message 'Hello, Piwork!'
 这是可选的高级 Core-only Demo，使用独立的 `/var/lib/piwork/core`，CLI 仍用同版 Docker 终端。与默认示例共用 7171/7172 端口，切换前先正常停止原 Core。宿主仍使用上面的初始化环境；新空目录由挂载和安全初始化创建，已有目录保留原所有者和权限。
 
 ```sh
-PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.6-ff37c45b7093-1b352aec0357 \
+PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a \
     docker compose -f compose.core.yaml up --detach --wait --wait-timeout 600 core
 ```
 
@@ -84,7 +84,7 @@ docker run --rm --init --interactive --tty \
     --add-host host.docker.internal:host-gateway \
     --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.6-ff37c45b7093-1b352aec0357
+    docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
 ```
 
 <!-- core-compose-demo:end -->
@@ -144,7 +144,7 @@ Windows Docker Desktop 使用 Linux 容器，终端 CLI 连接可达的 Linux Co
 docker run --rm --init --interactive --tty `
     --env PIWORK_CORE_URL=CORE_URL `
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client `
-    docker.io/pphboy/piwork-cli:0.0.6-ff37c45b7093-1b352aec0357
+    docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
 if ($LASTEXITCODE -ne 0) { throw 'CLI container failed' }
 ```
 

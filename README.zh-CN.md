@@ -47,15 +47,15 @@ Core 负责资源管理与控制，Harness 执行模型和工具，Service 提�
 
 当前源码对新应用 Service 默认采用 Python + NiceGUI + SQLite，预装标准依赖并支持追加 Python 包。NiceGUI base 已取得匿名验证的固定发行引用；平台 Docker 引用保留各自记录的发行身份。源码、维护、依赖安装、sqlite3 及应用自动更新见 [Web base 手册](deploy/images/web-base/README.zh-CN.md)。
 
-Core 0.0.6 内置 piwork-brain 1.2.2，并采用已发布的 NiceGUI 默认环境。[发行记录](deploy/docker/releases/0.0.6-ff37c45b7093-1b352aec0357.json)列出已发布镜像的固定身份。
+Core 0.0.7 内置 piwork-brain 1.2.2，并采用已发布的 NiceGUI 默认环境。[发行记录](deploy/docker/releases/0.0.7-19fc33907232-3ab753f8a90a.json)列出已发布镜像的固定身份。
 
-0.0.6 内置 piwork-brain 1.2.2，提供独立 `application-awareness` Skill，承载产品、UI/UX、状态同步与工程取舍认知。Brain 直接路由应用开发任务，部署 Skill 保持平级职责，不增加设计或审批阶段。NiceGUI 专项指导按需读取；页面验证使用实际 Desktop Service 入口及可用、获准的浏览器，后端就绪不替代界面可用，浏览器访问能力不足时明确说明。加载与采用见 [Brain 说明](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包)。
+0.0.7 内置 piwork-brain 1.2.2，提供独立 `application-awareness` Skill，承载产品、UI/UX、状态同步与工程取舍认知。Brain 直接路由应用开发任务，部署 Skill 保持平级职责，不增加设计或审批阶段。NiceGUI 专项指导按需读取；页面验证使用实际 Desktop Service 入口及可用、获准的浏览器，后端就绪不替代界面可用，浏览器访问能力不足时明确说明。加载与采用见 [Brain 说明](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包)。
 
-0.0.6 复用成功的镜像检查与包环境探测，并在 Core 就绪前准备默认 Work 环境。源码构建与检查见[构建与验证入口](AGENTS.md#构建与验证)。
+0.0.7 复用成功的镜像检查与包环境探测，并在 Core 就绪前准备默认 Work 环境。源码构建与检查见[构建与验证入口](AGENTS.md#构建与验证)。
 
 默认模板自动采用成功部署的更新，并保留支持恢复的草稿与路径。应用 Service 不设置 Piwork 内存上限；CPU/数量限制和 Agent/helper 内存政策仍有效。既有 Work 通过显式 Update/Apply 采用新包与 Agent 镜像。详见[官网指南](https://pphboy.github.io/piwork/zh/guide/web-development.html)和 [Brain 工作流程](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包)。
 
-0.0.6 提供跨 Chat Session / Service 的 **Stop and send**、请求与回复查看、原提交恢复，并改进授权、历史和正常关闭后的恢复。下载见 [0.0.6 Preview](https://github.com/pphboy/piwork/releases/tag/v0.0.6)。
+0.0.7 改进 Desktop 的导出与下载闭环、草稿和文件操作连续性、菜单与分栏键盘交互，并安全显示助手 Markdown。下载见 [0.0.7 Preview](https://github.com/pphboy/piwork/releases/tag/v0.0.7)。
 
 ## Demo GIF / Video
 
@@ -63,7 +63,7 @@ Core 0.0.6 内置 piwork-brain 1.2.2，并采用已发布的 NiceGUI 默认环�
 
 Desktop 聊天界面的预览截图，来自界面验证 fixture。
 
-0.0.6 的 Chat 支持粘贴、拖拽或选择图片，也可只发送图片。**About Piwork** 分别显示 Desktop/Core 版本及内置更新日志，并提供完整 Releases 链接。需要匹配的 Desktop、Core 和 Agent；已知限制和图片限额见 [Desktop 使用说明](openspec/specs/desktop-webui/spec.md)。
+0.0.7 的 Chat 支持粘贴、拖拽或选择图片，也可只发送图片。**About Piwork** 分别显示 Desktop/Core 版本及内置更新日志，并提供完整 Releases 链接。需要匹配的 Desktop、Core 和 Agent；已知限制和图片限额见 [Desktop 使用说明](openspec/specs/desktop-webui/spec.md)。
 
 ## Quick Start
 
@@ -91,7 +91,7 @@ docker run --detach --init \
     --env PIWORK_MODEL_BASE_URL \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.6-ff37c45b7093-1b352aec0357
+    docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a
 ```
 
 Core 也可用 [Core-only docker-compose.yml](deploy/docker/docker-compose.yml) 单独部署（Compose 2.24+），CLI 仍使用自己的 Docker 命令。切换 Core 部署方式前先停止原容器，保留同一数据目录。Core 与 CLI 合并的可选方式见 [单机部署示例](examples/single-host/README.zh-CN.md)。
@@ -107,7 +107,7 @@ docker run --rm --init --interactive --tty \
     --add-host host.docker.internal:host-gateway \
     --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.6-ff37c45b7093-1b352aec0357
+    docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
 ```
 
 下面的命令在 **CLI 容器内**执行。将 `ACCOUNT` 替换为你的账号；登录时隐藏密码输入。创建 Work 会自动启动它：
@@ -134,7 +134,7 @@ Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 
 
 <!-- native-quickstart:start -->
 
-下载 [Linux Core / Console / CLI 包](https://github.com/pphboy/piwork/releases/download/v0.0.3/piwork-linux-amd64-0.0.3.tar.gz)或 [Windows CLI 实验性程序](https://github.com/pphboy/piwork/releases/download/v0.0.3/piwork-cli-windows-amd64-0.0.3.exe)。先核对发行 SHA256；Linux 包解压后 CLI 位于 `bin/`，Windows 程序保存为 `piwork-cli.exe` 即可。Windows 完整原生验收仍未完成。
+下载 [Linux Core / Console / CLI 包](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz)或 [Windows CLI 0.0.5 实验性程序](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe)。先核对发行 SHA256；Linux 包解压后 CLI 位于 `bin/`，Windows 程序保存为 `piwork-cli.exe` 即可。Windows 完整原生验收仍未完成。
 
 连接已经配置完成且就绪的 Core，并与原生 CLI 版本兼容的 Core。在可执行文件所在目录，将 `CORE_URL` 替换为其地址（同机 Linux 为 `http://127.0.0.1:7171`），将 `ACCOUNT` 替换为账号；登录时隐藏输入密码。Windows PowerShell 将 `./piwork-cli` 替换为 `.\piwork-cli.exe`。
 
@@ -179,7 +179,7 @@ Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 
 
 ## Current Status / Limitations
 
-- **0.0.3 Preview**：用于试用与反馈。Windows 原生 CLI 为实验性附件，尚未完成全部正式验收。
+- **0.0.7 Preview**：用于试用与反馈。Windows 原生 CLI 为实验性附件，尚未完成全部正式验收。
 - **Core**：当前为单机 Linux 部署，使用本机 Docker Engine Unix socket。
 - **客户端**：原生 CLI 面向 Windows 和 Linux，提供命令行与 Desktop；Windows 原生正式验收尚未全部完成，[CLI 要求](openspec/specs/control-cli/spec.md)说明受支持的行为。
 - **Docker 交付**：当前验收范围为 `linux/amd64`、Linux Core，以及 Linux / Windows Docker Desktop 的 Linux CLI 容器；要求 Docker Engine 28+；选择 Core Compose、单机部署示例或高级 Compose 部署时另需 Compose 2.24+。详情见 [交付要求](openspec/specs/docker-delivery/spec.md)。

@@ -47,15 +47,15 @@ Each Work has its own Harness. The Harness executes tasks, Services provide appl
 
 The current source defaults new application Services to Python + NiceGUI + SQLite, with standard dependencies preinstalled and support for additional Python packages. The NiceGUI base now has an anonymously verified fixed release; platform Docker references retain their recorded release identities. See the [Web base guide](deploy/images/web-base/README.md) for source, maintenance, dependency installation, sqlite3 and automatic application updates.
 
-Core 0.0.6 ships piwork-brain 1.2.2 with the published NiceGUI default. The [release record](deploy/docker/releases/0.0.6-ff37c45b7093-1b352aec0357.json) lists the published image identities.
+Core 0.0.7 ships piwork-brain 1.2.2 with the published NiceGUI default. The [release record](deploy/docker/releases/0.0.7-19fc33907232-3ab753f8a90a.json) lists the published image identities.
 
-Release 0.0.6 embeds piwork-brain 1.2.2 with an independent `application-awareness` Skill for product, UI/UX, state synchronization and engineering judgment. Brain routes application work to it directly; the deployment Skill remains separate. It adds no design or approval stage. NiceGUI-specific guidance is read only when relevant. Page verification uses the actual Desktop Service entry with an available, authorized browser; backend readiness alone does not prove UI usability, and unavailable browser access is reported explicitly. See [Brain loading and adoption](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包).
+Release 0.0.7 embeds piwork-brain 1.2.2 with an independent `application-awareness` Skill for product, UI/UX, state synchronization and engineering judgment. Brain routes application work to it directly; the deployment Skill remains separate. It adds no design or approval stage. NiceGUI-specific guidance is read only when relevant. Page verification uses the actual Desktop Service entry with an available, authorized browser; backend readiness alone does not prove UI usability, and unavailable browser access is reported explicitly. See [Brain loading and adoption](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包).
 
-Release 0.0.6 reuses successful image checks and package-environment probes, and prepares the default Work environment before Core becomes ready. See [build and verification entry points](AGENTS.md#构建与验证) for building and checking the source.
+Release 0.0.7 reuses successful image checks and package-environment probes, and prepares the default Work environment before Core becomes ready. See [build and verification entry points](AGENTS.md#构建与验证) for building and checking the source.
 
 The default templates adopt successfully deployed updates automatically and preserve supported drafts and paths. Application Services have no Piwork memory cap; CPU/count limits and Agent/helper memory policies still apply. Existing Works adopt new packages and Agent images through explicit Update/Apply. See the [website guide](https://pphboy.github.io/piwork/guide/web-development.html) and [Brain workflow](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包).
 
-Release 0.0.6 provides **Stop and send** across Chat Sessions and Services, request/reply visibility and original-submission recovery, with improved authorization, history and shutdown recovery. Downloads are available in [0.0.6 Preview](https://github.com/pphboy/piwork/releases/tag/v0.0.6).
+Release 0.0.7 improves Desktop export and download completion, draft and file-operation continuity, menus and split-pane keyboard interaction, and safe assistant Markdown rendering. Downloads are available in [0.0.7 Preview](https://github.com/pphboy/piwork/releases/tag/v0.0.7).
 
 ## Demo GIF / Video
 
@@ -63,7 +63,7 @@ Release 0.0.6 provides **Stop and send** across Chat Sessions and Services, requ
 
 Desktop chat interface preview, captured from a UI verification fixture.
 
-Release 0.0.6 accepts pasted, dropped or selected images in Chat, including image-only messages. **About Piwork** shows Desktop/Core versions and embedded release notes, with a link to all releases. Use matching Desktop, Core and Agent components; known limitations and image limits are listed in the [Desktop guide](openspec/specs/desktop-webui/spec.md).
+Release 0.0.7 accepts pasted, dropped or selected images in Chat, including image-only messages. **About Piwork** shows Desktop/Core versions and embedded release notes, with a link to all releases. Use matching Desktop, Core and Agent components; known limitations and image limits are listed in the [Desktop guide](openspec/specs/desktop-webui/spec.md).
 
 ## Quick Start
 
@@ -91,7 +91,7 @@ docker run --detach --init \
     --env PIWORK_MODEL_BASE_URL \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.6-ff37c45b7093-1b352aec0357
+    docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a
 ```
 
 Core can also be deployed alone with [Core-only docker-compose.yml](deploy/docker/docker-compose.yml) (Compose 2.24+); CLI keeps its independent Docker command. Stop the previous Core before switching deployment methods, retaining the same data directory. For an optional combined setup, see [Single-host deployment](examples/single-host/README.md).
@@ -107,7 +107,7 @@ docker run --rm --init --interactive --tty \
     --add-host host.docker.internal:host-gateway \
     --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.6-ff37c45b7093-1b352aec0357
+    docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
 ```
 
 Run the following **inside the CLI container**. Replace `ACCOUNT` with your account; login prompts for a hidden password. Creating a Work starts it automatically:
@@ -134,7 +134,7 @@ For Windows Docker clients, remote Linux Core addresses, or the advanced Core-on
 
 <!-- native-quickstart:start -->
 
-Download the [Linux Core / Console / CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.3/piwork-linux-amd64-0.0.3.tar.gz) or [experimental Windows CLI executable](https://github.com/pphboy/piwork/releases/download/v0.0.3/piwork-cli-windows-amd64-0.0.3.exe). Verify the release SHA256. Extract the Linux bundle to find the CLI in `bin/`; save the Windows executable as `piwork-cli.exe`. Full Windows native acceptance remains pending.
+Download the [Linux Core / Console / CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz) or [experimental Windows CLI 0.0.5 executable](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe). Verify the release SHA256. Extract the Linux bundle to find the CLI in `bin/`; save the Windows executable as `piwork-cli.exe`. Full Windows native acceptance remains pending.
 
 Use an already configured, ready Core, compatible with your native CLI version. In the directory containing the executable, replace `CORE_URL` with its address (`http://127.0.0.1:7171` for the same Linux computer) and `ACCOUNT` with your account. Login prompts for a hidden password. On Windows PowerShell, replace `./piwork-cli` with `.\piwork-cli.exe`.
 
@@ -179,7 +179,7 @@ Configure matching model credentials on the target Core separately. Platform-man
 
 ## Current Status / Limitations
 
-- **0.0.3 Preview**: Intended for evaluation and feedback. The native Windows CLI is experimental and has not completed all formal acceptance checks.
+- **0.0.7 Preview**: Intended for evaluation and feedback. The native Windows CLI is experimental and has not completed all formal acceptance checks.
 - **Core**: A single Linux installation using the local Docker Engine Unix socket.
 - **Clients**: The native CLI targets Windows and Linux, with command-line and Desktop interfaces. Native Windows acceptance remains incomplete; [CLI requirements](openspec/specs/control-cli/spec.md) describe supported behavior.
 - **Docker delivery**: The verified scope is `linux/amd64`, Linux Core, and Linux CLI containers on Linux or Windows Docker Desktop. Docker Engine 28+ is required; Compose 2.24+ is needed when choosing the Core-only deployment, the single-host example or advanced Compose setups. See [delivery requirements](openspec/specs/docker-delivery/spec.md).
