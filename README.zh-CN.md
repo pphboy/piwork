@@ -59,6 +59,10 @@ Core 0.0.7 内置 piwork-brain 1.2.2，并采用已发布的 NiceGUI 默认环�
 
 ## Demo GIF / Video
 
+[![观看 Piwork 产品演示：创造、进化、迁移整个工作空间](https://i.ytimg.com/vi/ll1MS091gPU/maxresdefault.jpg)](https://www.youtube.com/watch?v=ll1MS091gPU)
+
+[在 YouTube 观看 70 秒产品演示](https://www.youtube.com/watch?v=ll1MS091gPU)：AI 创建内容工作室，在保留已有灵感的基础上加入发布日历，再将整个 Work 导出、导入另一套 Piwork 环境并重新启动。
+
 ![Piwork Desktop](apps/ui-shared/assets/desktop-preview.png)
 
 Desktop 聊天界面的预览截图，来自界面验证 fixture。

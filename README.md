@@ -59,6 +59,10 @@ Release 0.0.7 improves Desktop export and download completion, draft and file-op
 
 ## Demo GIF / Video
 
+[![Watch the Piwork product demo: Create. Evolve. Take it anywhere.](https://i.ytimg.com/vi/ll1MS091gPU/maxresdefault.jpg)](https://www.youtube.com/watch?v=ll1MS091gPU)
+
+[Watch the 70-second product demo on YouTube](https://www.youtube.com/watch?v=ll1MS091gPU): AI creates a content studio, adds a publishing calendar while preserving existing ideas, and the entire Work is exported, imported into another Piwork environment, and started again.
+
 ![Piwork Desktop](apps/ui-shared/assets/desktop-preview.png)
 
 Desktop chat interface preview, captured from a UI verification fixture.
