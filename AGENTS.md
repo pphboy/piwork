@@ -5,8 +5,8 @@
 ## 语言与文档
 
 - OpenSpec 规格使用中文，保留已有 Requirement、Scenario 和标识符约定。
-- README.md 是默认英文入口，README.zh-CN.md 提供中文版本；两份文档顶部互链，章节、命令、架构图及当前限制保持同步。缺少材料的章节继续留空。
-- README 面向首次使用者，保留项目介绍、使用入口、构建命令和文档导航。
+- README.md 是默认英文入口，README.zh-CN.md 提供中文版本；两份文档顶部互链，章节、产品含义、徽章、平台边界与文档导航保持对应。不新增空栏目。
+- README 是精简项目首页，保留简短介绍、核心概念、演示与文档/社区入口；安装、配置、操作和构建教程由既有官网、部署手册及本文件承接，不在根 README 内嵌或折叠重复说明。发布同步不改写根 README。
 - 开发约定与实现边界放在本文件；当前需求与行为约束放在 OpenSpec Spec；设计、原型和必要验收事实归属对应 OpenSpec 变更。
 - AI 不自行创建开发笔记、长期计划、设计报告、验收汇总或替代文档目录。发现需要持久化的新需求、设计决策或开发知识时，先在对话中说明，由项目所有者发起或明确授权 OpenSpec 变更，形成必要 Spec 与规划后再通过 apply 执行；讨论、回答设计问题或继续调查不是落盘授权。
 - 已授权变更内可维护必要 proposal、design、specs、tasks 和验收附件，不逐文件重复确认。新范围仍遵循所有者授权；临时日志、截图、生成清单和报告默认放在被忽略的 dist/。
@@ -24,7 +24,7 @@
 - 按实际作用判断文件归属，不仅看扩展名。随脑包交付并影响 Agent 行为的 brain.md、SKILL.md、Reference、模板 README 和 SPEC.md 属于功能实现，跟对应脑包或模板修改一起提交。
 - 对应单元/契约测试、必要夹具、锁文件和生成产物跟实现一起提交，不能拆出缺少契约或资源的代码提交；例如 proto 与生成代码、Desktop 源码与嵌入资源保持同步。跨组件验收与验收驱动的修改可单独提交。
 - 镜像发布记录、固定版本引用、Quick Start 镜像命令及 Compose 等相互绑定的发布材料集中提交，保留发布时真实的 commit、dirty 状态、输入 hash 和 digest；不能为匹配后续 Git 提交而改写已发布制品的身份。
-- 同一文件包含不同目的的改动时按 diff 分段暂存，例如 README 的使用说明与发行镜像引用、Makefile 的构建入口与验收夹具入口。避免用整目录或全量暂存把无关改动带入提交。
+- 同一文件包含不同目的的改动时按 diff 分段暂存，例如部署手册的使用说明与发行镜像引用、Makefile 的构建入口与验收夹具入口。避免用整目录或全量暂存把无关改动带入提交。
 - 提交前说明拆分范围与顺序，按每个提交的影响执行相关检查，并在完整序列完成后核对集成与发布材料的一致性。提交标题沿用 type(scope): purpose，如 feat、fix、test、docs、chore，明确本次目的。
 
 ## 当前架构
@@ -81,7 +81,7 @@ make test
 - 平台源码边界：node scripts/check-native-boundary.mjs；镜像边界使用对应 image 检查入口。
 - 文档归属与路径：node scripts/check-repository-docs.mjs；检查根目录缺失、当前链接、生成输出和迁移清单，不把历史路径文字、外部官网或用户 Work 的同名目录当作本仓库依赖。
 - 纯文档整理：检查链接、命令与源码的一致性以及 git diff --check，无需为此重跑完整模型或 Docker 验收。
-- Docker 镜像、初始化环境变量、网络、数据目录、CLI 状态存储、就绪等待或关闭预算变化时，同步中英文 README 默认 Docker run 命令、Core-only Compose、examples/single-host/ 单机部署示例及其双语说明、安装手册、模板和打包清单；执行 node scripts/check-docker-quickstart.mjs 与 node --test scripts/check-docker-quickstart.test.mjs。检查使用合成值，不输出真实秘密；后续材料维护不能只依赖人工记忆。
+- Docker 镜像、初始化环境变量、网络、数据目录、CLI 状态存储、就绪等待或关闭预算变化时，同步双语部署手册的默认 Docker run 命令、Core-only Compose、examples/single-host/ 单机部署示例及其双语说明、官网生成内容、模板和打包清单；根 README 只维护对应的平台短说明与有效导航，不回写教程。执行 node scripts/check-docker-quickstart.mjs 与 node --test scripts/check-docker-quickstart.test.mjs。检查使用合成值，不输出真实秘密；后续材料维护不能只依赖人工记忆。
 
 proto、HTTP DTO 和 Work history 的生成入口为 make generate；变更契约时同步生成产物和相关跨语言测试。历史场景索引和跳过项不能替代实际测试通过。
 
