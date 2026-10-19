@@ -2,8 +2,6 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**Local candidate: images have not been pushed.**
-
 Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. The default starts only the unified application container; initialize in the browser without business environment variables. CLI uses an explicit optional profile.
 
 Uses its own `/var/lib/piwork/examples/single-host/core` directory. Stop conflicting installations first, preserving their data.

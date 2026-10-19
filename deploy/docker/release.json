@@ -1,10 +1,12 @@
 {
   "manifestVersion": 2,
+  "application": "unified-linux",
   "releaseVersion": "0.0.7",
-  "sourceCommit": "19fc339072324a417ea71ce06e92111a9ab22c1b",
-  "sourceModified": false,
-  "sourceInputHash": "3ab753f8a90af222a6e383082c71f8b236230cb267ff614a5db59111fce98cec",
-  "desktopUIHash": "856fa044ee55708e27f72af8ff19b2499313c63d96f619fa4ec5ae17eb7a1950",
+  "sourceCommit": "62f2868cb8e24da3d08db7a7d6c00aabd6226cd4",
+  "sourceModified": true,
+  "sourceInputHash": "d69916b5282972c9a336745e4efc30b749fad531a42ed5aac3c8b4dcad4c38ff",
+  "desktopUIHash": "66f4c18757a92e617256969fd4c13f3c3929349819cb3d2a23667bfe50f4f76a",
+  "consoleUIHash": "61eb64298d65416d5204ced8a056be74aa3dd7513da370737c47403425c926bd",
   "registry": "docker.io/pphboy",
   "platform": "linux/amd64",
   "runtimeImage": "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8",
@@ -13,14 +15,14 @@
     "schemaVersion": 1
   },
   "clientCredentialVersion": 1,
-  "releaseId": "0.0.7-19fc33907232-3ab753f8a90a",
+  "releaseId": "0.0.7-62f2868cb8e2-d69916b52829-dirty",
   "images": {
-    "core": "docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a",
-    "cli": "docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a",
-    "agent": "docker.io/pphboy/piwork-agentd:0.0.7-19fc33907232-3ab753f8a90a",
-    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.7-19fc33907232-3ab753f8a90a",
-    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.7-19fc33907232-3ab753f8a90a",
-    "packageHelper": "docker.io/pphboy/piwork-agentd:0.0.7-19fc33907232-3ab753f8a90a"
+    "core": "docker.io/pphboy/piwork-core:0.0.7-62f2868cb8e2-d69916b52829-dirty",
+    "cli": "docker.io/pphboy/piwork-cli:0.0.7-62f2868cb8e2-d69916b52829-dirty",
+    "agent": "docker.io/pphboy/piwork-agentd:0.0.7-62f2868cb8e2-d69916b52829-dirty",
+    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.7-62f2868cb8e2-d69916b52829-dirty",
+    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.7-62f2868cb8e2-d69916b52829-dirty",
+    "packageHelper": "docker.io/pphboy/piwork-agentd:0.0.7-62f2868cb8e2-d69916b52829-dirty"
   },
   "state": "published",
   "compatiblePreviousReleaseVersions": [],

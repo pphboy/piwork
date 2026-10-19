@@ -10,8 +10,6 @@
 
 <!-- docker-quickstart:start -->
 
-**本地候选：镜像尚未推送。** 以下命令对应待验证候选，不能用旧版镜像代替统一入口。
-
 Linux x86-64、rootful Docker Engine 28+。运行一个容器即可提供工作台、管理和首次设置，无需环境变量或客户端 CLI：
 
 ```sh

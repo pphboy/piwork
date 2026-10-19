@@ -49,7 +49,7 @@ Each Work has its own Harness. The Harness executes tasks, Services provide appl
 
 The current source defaults new application Services to Python + NiceGUI + SQLite, with standard dependencies preinstalled and support for additional Python packages. The NiceGUI base now has an anonymously verified fixed release; platform Docker references retain their recorded release identities. See the [Web base guide](deploy/images/web-base/README.md) for source, maintenance, dependency installation, sqlite3 and automatic application updates.
 
-Core 0.0.7 ships piwork-brain 1.2.2 with the published NiceGUI default. The [release record](deploy/docker/releases/0.0.7-19fc33907232-3ab753f8a90a.json) lists the published image identities.
+Core 0.0.7 ships piwork-brain 1.2.2 with the published NiceGUI default. The [release record](deploy/docker/releases/0.0.7-62f2868cb8e2-d69916b52829-dirty.json) lists the published image identities.
 
 Release 0.0.7 embeds piwork-brain 1.2.2 with an independent `application-awareness` Skill for product, UI/UX, state synchronization and engineering judgment. Brain routes application work to it directly; the deployment Skill remains separate. It adds no design or approval stage. NiceGUI-specific guidance is read only when relevant. Page verification uses the actual Desktop Service entry with an available, authorized browser; backend readiness alone does not prove UI usability, and unavailable browser access is reported explicitly. See [Brain loading and adoption](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包).
 
@@ -76,8 +76,6 @@ Release 0.0.7 accepts pasted, dropped or selected images in Chat, including imag
 ### Start Piwork with one command
 
 <!-- docker-quickstart:start -->
-
-**Local candidate: images have not been pushed.** These commands describe the pending candidate; older images do not contain the unified entry.
 
 Use Linux x86-64 and rootful Docker Engine 28+. One container serves the workbench, administration and first-time setup, with no environment variables or client CLI required:
 
@@ -117,11 +115,11 @@ Optional [Compose](deploy/docker/docker-compose.yml) (2.24+) and the [single-hos
 For Windows Docker clients, remote Linux Core addresses, or the advanced Core-only Demo, see the [Docker guide](deploy/docker/README.md#terminal-operations).
 
 <details>
-<summary>Use the native Linux application (source candidate)</summary>
+<summary>Build and use the native Linux application</summary>
 
 <!-- native-quickstart:start -->
 
-The unified entry is a source candidate; the published 0.0.7 bundle retains its previous behavior. After building below, start the Linux program (the executable also works outside the checkout):
+The Docker images above include the unified entry. Build the current source, then start the native Linux program (the executable also works outside the checkout):
 
 ```sh
 ./dist/go/piwork --no-open
@@ -137,7 +135,7 @@ Data defaults to `piwork/server` in the user configuration directory and the lis
 
 To deploy Core from source, see [Core startup and initialization](openspec/specs/core-service-startup/spec.md); administrator access is described in the [Console guide](openspec/specs/serve-control-plane/spec.md).
 
-Model connections can be managed in Console **AI models**: independent Responses / Messages models, advisory message Test and lifecycle actions, without Provider or capability JSON setup. Work Chat keeps its existing model and Thinking selection. This flow requires matching current Core, Console, Agent and CLI builds; existing Works explicitly Apply a compatible Agent. See [AI models](openspec/specs/ai-model-management/spec.md).
+Model connections can be managed in Console **AI models**: independent Responses / Messages models, advisory message Test and lifecycle actions, without Provider or capability JSON setup. Work Chat keeps its existing model and Thinking selection. The unified application supplies administration and the release Agent; optional standalone Console/CLI clients need compatible versions. Existing Works explicitly Apply a compatible Agent. See [AI models](openspec/specs/ai-model-management/spec.md).
 
 ## .work Import / Export
 
@@ -159,7 +157,7 @@ Configure matching model credentials on the target Core separately. Platform-man
 
 ## Current Status / Limitations
 
-- **Unified entry candidate**: Current source supports a Linux server with one-command browser workbench, administration and onboarding. Windows/Linux browsers connect remotely. The unified image is not published; historical releases do not identify this candidate.
+- **Unified Linux application**: The published images provide one-command startup for the browser workbench, administration and onboarding. Windows/Linux browsers connect remotely. Fixed image identities and registry digests are recorded for this delivery; older release archives retain their original behavior.
 - **0.0.7 Preview**: Intended for evaluation and feedback. The native Windows CLI is experimental and has not completed all formal acceptance checks.
 - **Core**: A single Linux installation using the local Docker Engine Unix socket.
 - **Clients**: The native CLI targets Windows and Linux, with command-line and Desktop interfaces. Native Windows acceptance remains incomplete; [CLI requirements](openspec/specs/control-cli/spec.md) describe supported behavior.

@@ -49,7 +49,7 @@ Core 负责资源管理与控制，Harness 执行模型和工具，Service 提�
 
 当前源码对新应用 Service 默认采用 Python + NiceGUI + SQLite，预装标准依赖并支持追加 Python 包。NiceGUI base 已取得匿名验证的固定发行引用；平台 Docker 引用保留各自记录的发行身份。源码、维护、依赖安装、sqlite3 及应用自动更新见 [Web base 手册](deploy/images/web-base/README.zh-CN.md)。
 
-Core 0.0.7 内置 piwork-brain 1.2.2，并采用已发布的 NiceGUI 默认环境。[发行记录](deploy/docker/releases/0.0.7-19fc33907232-3ab753f8a90a.json)列出已发布镜像的固定身份。
+Core 0.0.7 内置 piwork-brain 1.2.2，并采用已发布的 NiceGUI 默认环境。[发行记录](deploy/docker/releases/0.0.7-62f2868cb8e2-d69916b52829-dirty.json)列出已发布镜像的固定身份。
 
 0.0.7 内置 piwork-brain 1.2.2，提供独立 `application-awareness` Skill，承载产品、UI/UX、状态同步与工程取舍认知。Brain 直接路由应用开发任务，部署 Skill 保持平级职责，不增加设计或审批阶段。NiceGUI 专项指导按需读取；页面验证使用实际 Desktop Service 入口及可用、获准的浏览器，后端就绪不替代界面可用，浏览器访问能力不足时明确说明。加载与采用见 [Brain 说明](openspec/specs/piwork-brain/spec.md#requirement-安装并实际加载-work-自有的大脑包)。
 
@@ -76,8 +76,6 @@ Desktop 聊天界面的预览截图，来自界面验证 fixture。
 ### 一键启动 Piwork
 
 <!-- docker-quickstart:start -->
-
-**本地候选：镜像尚未推送。** 以下命令对应待验证候选，不能用旧版镜像代替统一入口。
 
 Linux x86-64、rootful Docker Engine 28+。运行一个容器即可提供工作台、管理和首次设置，无需环境变量或客户端 CLI：
 
@@ -117,11 +115,11 @@ Service 支持响应 Cookie 的服务端登录、Basic/Bearer、HTTP、SSE 和 W
 Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 [Docker 手册](deploy/docker/README.zh-CN.md#terminal-operations)。
 
 <details>
-<summary>使用原生 Linux 应用（源码候选）</summary>
+<summary>构建并使用原生 Linux 应用</summary>
 
 <!-- native-quickstart:start -->
 
-本次统一入口是源码候选，旧 0.0.7 发布包仍保留原行为。完成下方构建后，从任意目录启动 Linux 程序：
+上方 Docker 镜像已包含统一入口。完成下方源码构建后，从任意目录启动 Linux 程序：
 
 ```sh
 ./dist/go/piwork --no-open
@@ -137,7 +135,7 @@ Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 
 
 从源码部署 Core 见 [Core 启动与初始化](openspec/specs/core-service-startup/spec.md)；管理员入口见 [Console 手册](openspec/specs/serve-control-plane/spec.md)。
 
-可在 Console **AI models** 直接添加 Responses / Messages 模型，无需 Provider 或能力 JSON 配置，执行独立 HTTP Test 并管理生命周期；Work Chat 保留模型和 Thinking 选择。此流程需要配套的当前 Core、Console、Agent 与 CLI；旧 Work 采用兼容 Agent 仍须显式 Apply。见 [AI 模型](openspec/specs/ai-model-management/spec.md)。
+可在 Console **AI models** 直接添加 Responses / Messages 模型，无需 Provider 或能力 JSON 配置，执行独立 HTTP Test 并管理生命周期；Work Chat 保留模型和 Thinking 选择。统一应用已提供管理界面与发行 Agent，独立可选 Console/CLI 需使用兼容版本；旧 Work 采用兼容 Agent 仍须显式 Apply。见 [AI 模型](openspec/specs/ai-model-management/spec.md)。
 
 ## .work Import / Export
 
@@ -159,7 +157,7 @@ Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 
 
 ## Current Status / Limitations
 
-- **统一入口候选**：当前源码仅支持 Linux 服务端，一条命令启动网页工作台、管理和引导；Windows/Linux 浏览器可远程连接。统一镜像尚未推送，历史发行记录不代表本次候选。
+- **统一 Linux 应用**：已发布镜像支持一条命令启动网页工作台、管理和引导，Windows/Linux 浏览器可远程连接。固定镜像身份和 registry digest 见本次发行记录，历史发布包保留其原有行为。
 - **0.0.7 Preview**：用于试用与反馈。Windows 原生 CLI 为实验性附件，尚未完成全部正式验收。
 - **Core**：当前为单机 Linux 部署，使用本机 Docker Engine Unix socket。
 - **客户端**：原生 CLI 面向 Windows 和 Linux，提供命令行与 Desktop；Windows 原生正式验收尚未全部完成，[CLI 要求](openspec/specs/control-cli/spec.md)说明受支持的行为。

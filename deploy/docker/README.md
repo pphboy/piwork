@@ -10,8 +10,6 @@ This release runs application Services without a Piwork memory cap or Service me
 
 <!-- docker-quickstart:start -->
 
-**Local candidate: images have not been pushed.** These commands describe the pending candidate; older images do not contain the unified entry.
-
 Use Linux x86-64 and rootful Docker Engine 28+. One container serves the workbench, administration and first-time setup, with no environment variables or client CLI required:
 
 ```sh
