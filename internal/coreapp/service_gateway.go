@@ -3,7 +3,10 @@ package coreapp
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -28,6 +31,7 @@ var gatewayPathPattern = regexp.MustCompile(`^/api/v1/service-gateway/([^/?]+)/(
 
 type gatewayTarget struct {
 	Hostname, WorkID, ServiceID, UserID, Token, Address string
+	Generation                                          string
 	Port                                                int64
 }
 type serviceGateway struct {
@@ -100,7 +104,69 @@ func (g *serviceGateway) authorize(ctx context.Context, r *http.Request, hostnam
 		return target, contracts.NewError("SERVICE_UPSTREAM_UNAVAILABLE", "")
 	}
 	normalized, _ := normalizeServiceHostname(hostname)
-	return gatewayTarget{Hostname: normalized, WorkID: work.ID, ServiceID: service.ServiceID, Port: port, Address: address, Token: tokens[0], UserID: session.User.ID}, nil
+	var generation string
+	if err := g.app.Store.Read(ctx, func(tx *sql.Tx) error {
+		var err error
+		work, err = corestore.ReadWork(tx, work.ID, false)
+		if err != nil {
+			return err
+		}
+		service, err = corestore.ReadService(tx, work.ID, service.ServiceID, false)
+		if err != nil {
+			return err
+		}
+		if work.OwnerUserID != session.User.ID || !serviceEligible(work, service) {
+			return contracts.NewError("SERVICE_UNAVAILABLE", "")
+		}
+		port, err = selectedServicePort(service, requested)
+		if err != nil {
+			return err
+		}
+		generation, err = gatewayGeneration(tx, work, service, address)
+		return err
+	}); err != nil {
+		return target, err
+	}
+	if supplied := r.Header.Values("X-Piwork-Gateway-Generation"); len(supplied) > 1 || len(supplied) == 1 && supplied[0] != generation {
+		return target, contracts.NewError("SERVICE_UNAVAILABLE", "")
+	}
+	return gatewayTarget{Hostname: normalized, WorkID: work.ID, ServiceID: service.ServiceID, Port: port, Address: address, Token: tokens[0], UserID: session.User.ID, Generation: generation}, nil
+}
+
+func gatewayGenerationKey(workID, serviceID string) string {
+	digest := sha256.Sum256([]byte(workID + "\x00" + serviceID))
+	return "service_gateway_" + hex.EncodeToString(digest[:])
+}
+
+// Acceptance advances the authorization epoch in the same transaction as the
+// control intent. A fast stop/start must not revive a grant at the same IP.
+func advanceGatewayGeneration(tx *sql.Tx, workID, serviceID, operationID string) error {
+	raw, _ := json.Marshal(operationID)
+	_, err := tx.Exec(`INSERT INTO control_metadata(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`, gatewayGenerationKey(workID, serviceID), string(raw), packageNow())
+	return err
+}
+func gatewayGeneration(tx *sql.Tx, work corestore.WorkRecord, service corestore.ServiceRecord, address string) (string, error) {
+	var raw, epoch string
+	err := tx.QueryRow(`SELECT value_json FROM control_metadata WHERE key=?`, gatewayGenerationKey(work.ID, service.ServiceID)).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if err == nil && (json.Unmarshal([]byte(raw), &epoch) != nil || epoch == "" || len(epoch) > 128) {
+		return "", corestore.ErrStorage
+	}
+	instance, ready := "", ""
+	binding, err := corestore.ReadServiceRuntimeBinding(tx, work.ID, service.ServiceID)
+	if err != nil && !errors.Is(err, corestore.ErrNotFound) {
+		return "", err
+	}
+	if binding.ContainerID != nil {
+		instance = *binding.ContainerID
+	}
+	if binding.ReadySince != nil {
+		ready = *binding.ReadySince
+	}
+	value := sha256.Sum256([]byte(strconv.FormatInt(work.ControlVersion, 10) + "\x00" + strconv.FormatInt(service.DesiredRevision, 10) + "\x00" + address + "\x00" + epoch + "\x00" + instance + "\x00" + ready))
+	return hex.EncodeToString(value[:]), nil
 }
 func (g *serviceGateway) quickCheck(ctx context.Context, target gatewayTarget) bool {
 	if !g.accepting() {
@@ -121,6 +187,15 @@ func (g *serviceGateway) quickCheck(ctx context.Context, target gatewayTarget) b
 			return err
 		}
 		valid = work.OwnerUserID == target.UserID && serviceEligible(work, service)
+		if target.Generation != "" {
+			generation, err := gatewayGeneration(tx, work, service, target.Address)
+			if err != nil {
+				return err
+			}
+			if generation != target.Generation {
+				valid = false
+			}
+		}
 		if !valid {
 			return nil
 		}
@@ -267,7 +342,7 @@ func (g *serviceGateway) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resolve {
-		send(w, 200, map[string]any{"hostname": target.Hostname, "workId": target.WorkID, "serviceId": target.ServiceID, "port": target.Port})
+		send(w, 200, map[string]any{"hostname": target.Hostname, "workId": target.WorkID, "serviceId": target.ServiceID, "port": target.Port, "generation": target.Generation})
 		return
 	}
 	if r.Method == http.MethodConnect || r.Header.Get("Upgrade") != "" && !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {

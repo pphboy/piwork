@@ -292,3 +292,92 @@ func TestServiceGatewayConnectionReservationsAreBounded(t *testing.T) {
 		t.Fatal("connection counts leaked")
 	}
 }
+
+func TestServiceGatewayFencesStoppedAndRestartedGeneration(t *testing.T) {
+	a, base, token, path := gatewayFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "owned content") }))
+	hostname := strings.Split(strings.TrimPrefix(path, "/api/v1/service-gateway/"), "/")[0]
+	request, _ := http.NewRequest("GET", base+"/api/v1/service-access/resolve?hostname="+hostname+"&port=80", nil)
+	request.Header.Set(gatewayCredential, token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolution struct{ Generation, WorkID string }
+	if json.NewDecoder(response.Body).Decode(&resolution) != nil || resolution.Generation == "" {
+		t.Fatal("missing authorization generation")
+	}
+	response.Body.Close()
+	accepted := gatewayRequest(t, base, token, path+"/", nil, http.Header{"X-Piwork-Gateway-Generation": {resolution.Generation}})
+	if accepted.StatusCode != 200 {
+		t.Fatal("current generation denied", accepted.StatusCode)
+	}
+	accepted.Body.Close()
+	if err := a.Store.Write(context.Background(), func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE works SET control_version=control_version+2 WHERE id=?`, resolution.WorkID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	old := gatewayRequest(t, base, token, path+"/", nil, http.Header{"X-Piwork-Gateway-Generation": {resolution.Generation}})
+	if old.StatusCode == 200 {
+		t.Fatal("old entry revived after stop/start")
+	}
+	old.Body.Close()
+	// Independent CLI clients without the optional fencing header retain their
+	// normal current-owner authorization contract.
+	current := gatewayRequest(t, base, token, path+"/", nil, nil)
+	if current.StatusCode != 200 {
+		t.Fatal("normal owner client regressed", current.StatusCode)
+	}
+}
+
+func TestServiceGatewayControlAcceptanceFencesUnchangedAddressAndRevision(t *testing.T) {
+	for _, actions := range [][]string{{"restart"}, {"disable", "enable"}} {
+		t.Run(strings.Join(actions, "-"), func(t *testing.T) {
+			a, base, token, path := gatewayFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "current app") }))
+			hostname := strings.Split(strings.TrimPrefix(path, "/api/v1/service-gateway/"), "/")[0]
+			resolve := func() struct{ Generation, WorkID, ServiceID string } {
+				r, _ := http.NewRequest("GET", base+"/api/v1/service-access/resolve?hostname="+hostname+"&port=80", nil)
+				r.Header.Set(gatewayCredential, token)
+				response, err := http.DefaultClient.Do(r)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer response.Body.Close()
+				var value struct{ Generation, WorkID, ServiceID string }
+				if response.StatusCode != 200 || json.NewDecoder(response.Body).Decode(&value) != nil || value.Generation == "" {
+					t.Fatal("resolution failed", response.StatusCode)
+				}
+				return value
+			}
+			prior := resolve()
+			session, err := a.Identity.Authenticate(context.Background(), token)
+			if err != nil {
+				t.Fatal(err)
+			}
+			principal := session.Principal()
+			for _, action := range actions {
+				if _, err := a.acceptServiceAction(context.Background(), serviceActor{User: &principal}, prior.WorkID, prior.ServiceID, action, "gateway-control-"+action); err != nil {
+					t.Fatal(err)
+				}
+			}
+			current := resolve()
+			if current.Generation == prior.Generation {
+				t.Fatal("control intent retained stale authorization epoch")
+			}
+			stale := gatewayRequest(t, base, token, path+"/", nil, http.Header{"X-Piwork-Gateway-Generation": {prior.Generation}})
+			if stale.StatusCode == 200 {
+				t.Fatal("old entry survived fast control acceptance")
+			}
+			stale.Body.Close()
+			// Replaying the accepted command must not rotate again or cause another stop.
+			last := actions[len(actions)-1]
+			if _, err := a.acceptServiceAction(context.Background(), serviceActor{User: &principal}, prior.WorkID, prior.ServiceID, last, "gateway-control-"+last); err != nil {
+				t.Fatal(err)
+			}
+			if repeated := resolve(); repeated.Generation != current.Generation {
+				t.Fatal("idempotent replay advanced the epoch")
+			}
+		})
+	}
+}

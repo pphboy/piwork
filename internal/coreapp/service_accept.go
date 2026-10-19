@@ -222,6 +222,9 @@ func (a *Application) acceptServiceDefinition(ctx context.Context, actor service
 		if _, err := tx.Exec(`UPDATE operations SET state='superseded',updated_at=? WHERE work_id=? AND service_id=? AND id!=? AND state IN ('pending','running')`, now, workID, serviceID, operationID); err != nil {
 			return corestore.MutationEffect{}, err
 		}
+		if err := advanceGatewayGeneration(tx, workID, serviceID, operationID); err != nil {
+			return corestore.MutationEffect{}, err
+		}
 		result := serviceAcceptanceDiagnostics(operationID, serviceID)
 		return corestore.MutationEffect{ResourceID: serviceID, ResultJSON: &result}, nil
 	})
@@ -309,6 +312,9 @@ func (a *Application) acceptServiceAction(ctx context.Context, actor serviceActo
 			}
 		}
 		if _, err := tx.Exec(`UPDATE operations SET state='superseded',updated_at=? WHERE work_id=? AND service_id=? AND id!=? AND state IN ('pending','running')`, packageNow(), workID, serviceID, operationID); err != nil {
+			return corestore.MutationEffect{}, err
+		}
+		if err := advanceGatewayGeneration(tx, workID, serviceID, operationID); err != nil {
 			return corestore.MutationEffect{}, err
 		}
 		result := serviceAcceptanceDiagnostics(operationID, serviceID)
