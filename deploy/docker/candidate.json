@@ -2,11 +2,11 @@
   "manifestVersion": 2,
   "application": "unified-linux",
   "releaseVersion": "0.0.7",
-  "sourceCommit": "7aa5f944fc2a56850a667de3b60fa26c8e4d378b",
+  "sourceCommit": "6fc7e50df2c9a03de94a10a6517248d6152acb70",
   "sourceModified": true,
-  "sourceInputHash": "ee65124bec72081db71d08343d949a55568897d0edd369796ab4eab426ab8ff2",
-  "desktopUIHash": "9fd518b160ca4b9938280fa2c38a3410081e96bb3c634daadd971bf5d18e08e9",
-  "consoleUIHash": "259e6cc5f9b6464d9f1d280b560e51305679cac143ceb700ce971592f8f4ab8a",
+  "sourceInputHash": "400a55fd56a1e7ee687d4d5de7635e53b8d2d79839a483c7f5a59c2f88760d20",
+  "desktopUIHash": "66f4c18757a92e617256969fd4c13f3c3929349819cb3d2a23667bfe50f4f76a",
+  "consoleUIHash": "d17a42188dbe8fec2c84bc8381b2009a82591177eecdcb8bfdbfcb8853e7d5f2",
   "registry": "docker.io/pphboy",
   "platform": "linux/amd64",
   "runtimeImage": "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8",
@@ -15,13 +15,13 @@
     "schemaVersion": 1
   },
   "clientCredentialVersion": 1,
-  "releaseId": "0.0.7-7aa5f944fc2a-ee65124bec72-dirty",
+  "releaseId": "0.0.7-6fc7e50df2c9-400a55fd56a1-dirty",
   "images": {
-    "core": "docker.io/pphboy/piwork-core:0.0.7-7aa5f944fc2a-ee65124bec72-dirty",
-    "cli": "docker.io/pphboy/piwork-cli:0.0.7-7aa5f944fc2a-ee65124bec72-dirty",
-    "agent": "docker.io/pphboy/piwork-agentd:0.0.7-7aa5f944fc2a-ee65124bec72-dirty",
-    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.7-7aa5f944fc2a-ee65124bec72-dirty",
-    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.7-7aa5f944fc2a-ee65124bec72-dirty"
+    "core": "docker.io/pphboy/piwork-core:0.0.7-6fc7e50df2c9-400a55fd56a1-dirty",
+    "cli": "docker.io/pphboy/piwork-cli:0.0.7-6fc7e50df2c9-400a55fd56a1-dirty",
+    "agent": "docker.io/pphboy/piwork-agentd:0.0.7-6fc7e50df2c9-400a55fd56a1-dirty",
+    "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.7-6fc7e50df2c9-400a55fd56a1-dirty",
+    "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.7-6fc7e50df2c9-400a55fd56a1-dirty"
   },
   "state": "candidate"
 }
