@@ -89,7 +89,7 @@ docker run --detach --init \
     --stop-timeout 60 \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.7-6fc7e50df2c9-400a55fd56a1-dirty
+    docker.io/pphboy/piwork-core:0.0.7-62f2868cb8e2-d69916b52829-dirty
 ```
 
 打开终端输出中的访问地址。后台启动时，在服务器查看首次设置链接；该链接授权创建首管理员，十分钟后过期，请勿分享：
