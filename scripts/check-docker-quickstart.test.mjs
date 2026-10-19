@@ -8,14 +8,14 @@ import { spawnSync } from 'node:child_process';
 import { checkQuickStart, checkPackageMaterials, installerFiles, codeBlocks, section, projectRoot } from './check-docker-quickstart.mjs';
 import { syncWebsite } from './sync-docker-website.mjs';
 import { sourceInputHash, currentRelease } from './build-docker-release.mjs';
-import { singleHostReadme } from './docker-quickstart-content.mjs';
+import { singleHostReadme, nativeQuickStart } from './docker-quickstart-content.mjs';
 
-const docs = ['README.md', 'README.zh-CN.md', 'deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
+const docs = ['deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
 function fixture(t) {
   const base = mkdtempSync(join(tmpdir(), 'piwork-quickstart-contract-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   for (const path of ['cmd', 'internal', 'proto', 'apps', 'packages', 'scripts', 'config', 'deploy', 'examples']) cpSync(join(projectRoot, path), join(base, path), { recursive: true, filter: path => !/\/(?:node_modules|dist)(?:\/|$)/.test(path) });
-  for (const name of ['README.md', 'README.zh-CN.md', '.dockerignore', 'go.mod', 'go.sum', 'package.json', 'package-lock.json', 'tsconfig.base.json', 'Dockerfile.core', 'Dockerfile.cli', 'Dockerfile.core.dockerignore', 'Dockerfile.cli.dockerignore', 'Dockerfile.agentd', 'Dockerfile.file-helper.native', 'Dockerfile.snapshot-helper.native', 'Dockerfile.docker-release']) copyFileSync(join(projectRoot, name), join(base, name));
+  for (const name of ['README.md', 'README.zh-CN.md', 'AGENTS.md', 'LICENSE', '.dockerignore', 'go.mod', 'go.sum', 'package.json', 'package-lock.json', 'tsconfig.base.json', 'Dockerfile.core', 'Dockerfile.cli', 'Dockerfile.core.dockerignore', 'Dockerfile.cli.dockerignore', 'Dockerfile.agentd', 'Dockerfile.file-helper.native', 'Dockerfile.snapshot-helper.native', 'Dockerfile.docker-release']) copyFileSync(join(projectRoot, name), join(base, name));
   mkdirSync(join(base, 'apps/ui-shared/assets'), { recursive: true });
   copyFileSync(join(projectRoot, 'apps/ui-shared/assets/piwork-logo.png'), join(base, 'apps/ui-shared/assets/piwork-logo.png'));
   const candidate={...currentRelease(base),state:'candidate',sourceInputHash:sourceInputHash(base)};
@@ -48,6 +48,44 @@ test('paired default commands are standalone, browser-first and parse as shell',
     const blocks = codeBlocks(section(readFileSync(join(projectRoot, name), 'utf8'), 'docker-quickstart'));
     assert.deepEqual(blocks, baseline);
     for (const block of blocks) assert.equal(spawnSync('sh', ['-n'], { input: block.code }).status, 0);
+  }
+});
+
+test('native Linux instructions retain startup, data, setup and historical client boundaries', () => {
+  const baseline = codeBlocks(nativeQuickStart('en'));
+  assert.deepEqual(baseline, [{ language: 'sh', code: './dist/go/piwork --no-open' }]);
+  for (const [language, name] of [['en', 'README.md'], ['zh', 'README.zh-CN.md']]) {
+    const native = section(readFileSync(join(projectRoot, 'deploy/docker', name), 'utf8'), 'native-quickstart');
+    assert.equal(native.trim(), nativeQuickStart(language, { buildLink: '../../AGENTS.md#构建与验证' }).trim());
+    assert.deepEqual(codeBlocks(native), baseline);
+    for (const value of ['piwork/server', '0.0.0.0:7171', 'piwork setup link', '--data-dir', 'piwork-cli', 'piwork-console', 'releases/download/v0.0.7/', 'releases/download/v0.0.5/']) assert(native.includes(value), value);
+    for (const block of codeBlocks(native)) assert.equal(spawnSync('sh', ['-n'], { input: block.code }).status, 0);
+  }
+});
+
+test('material synchronization leaves short READMEs and published history untouched across releases', t => {
+  const base = fixture(t);
+  const roots = ['README.md', 'README.zh-CN.md'];
+  const texts = roots.map(name => `# Piwork\n\n[Documentation](deploy/docker/${name})\n`);
+  roots.forEach((name, index) => writeFileSync(join(base, name), texts[index]));
+  const published = readFileSync(join(base, 'deploy/docker/release.json'));
+  const legacy = docs.filter(name => name.startsWith('deploy/')).map(name => readFileSync(join(base, name), 'utf8').split('## Legacy 0.0.1 installer')[1]);
+  const original = currentRelease(base);
+  for (const next of [false, false, true]) {
+    const metadata = next ? { ...original, releaseId: original.releaseId + '-next', images: Object.fromEntries(Object.entries(original.images).map(([role, reference]) => [role, reference + '-next'])) } : original;
+    const input = join(base, 'dist/sync-input.json'); mkdirSync(dirname(input), { recursive: true });
+    writeFileSync(input, JSON.stringify(metadata));
+    const result = spawnSync(process.execPath, [join(base, 'scripts/sync-docker-quickstart.mjs'), input], { cwd: base, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    roots.forEach((name, index) => assert.equal(readFileSync(join(base, name), 'utf8'), texts[index]));
+    assert.deepEqual(readFileSync(join(base, 'deploy/docker/release.json')), published);
+    docs.filter(name => name.startsWith('deploy/')).forEach((name, index) => {
+      const text = readFileSync(join(base, name), 'utf8');
+      assert.equal(text.split('## Legacy 0.0.1 installer')[1], legacy[index]);
+      assert(section(text, 'docker-quickstart').includes(metadata.images.core));
+      if (next) assert(!section(text, 'docker-quickstart').includes(original.images.core + '\n'));
+      assert(section(text, 'native-quickstart').includes('./dist/go/piwork --no-open'));
+    });
   }
 });
 
@@ -95,8 +133,14 @@ test('semantic deployment drift fails with safe diagnostics', async t => {
   const cases = [
     ['Core bind', base => docs.forEach(name => replace(base, name, '--volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core', '--volume /var/lib/piwork/quickstart/core:/wrong')), 'complete startup'],
     ['Core secret leaked to CLI', base => replace(base, 'examples/single-host/docker-compose.yml.template', '      PIWORK_CORE_URL:', '      PIWORK_API_KEY: synthetic-canary-must-not-print\n      PIWORK_CORE_URL:'), 'CLI must not receive'],
-    ['language mismatch', base => replace(base, 'README.zh-CN.md', 'docker logs piwork-core-quickstart', 'docker logs another-container'), 'paired browser'],
-    ['Arch moved back', base => replace(base, 'README.md', '## Architecture', '## Hidden Architecture'), 'Architecture'],
+    ['language mismatch', base => replace(base, 'deploy/docker/README.zh-CN.md', 'docker logs piwork-core-quickstart', 'docker logs another-container'), 'paired browser'],
+    ['tutorial returned', base => writeFileSync(join(base, 'README.md'), readFileSync(join(base, 'README.md'), 'utf8') + '\n```sh\ndocker run old:tag\n```\n'), 'usage tutorials'],
+    ['preview omitted', base => replace(base, 'README.md', '?include_prereleases', ''), 'release badge'],
+    ['preview disabled', base => replace(base, 'README.md', '?include_prereleases', '?include_prereleases=false'), 'release badge'],
+    ['wrong badge repository', base => replace(base, 'README.zh-CN.md', '/github/stars/pphboy/piwork', '/github/stars/example/other'), 'stars badge'],
+    ['wrong release target', base => replace(base, 'README.md', '](https://github.com/pphboy/piwork/releases)', '](https://github.com/pphboy/piwork/releases/latest)'), 'release badge'],
+    ['missing manual navigation', base => replace(base, 'README.md', '](deploy/docker/README.md)', '](deploy/docker/missing.md)'), 'documentation navigation'],
+    ['missing native data guidance', base => replace(base, 'deploy/docker/README.md', 'Data defaults to `piwork/server`', 'Data defaults elsewhere'), 'native Linux'],
     ['Logo alignment', base => replace(base, 'README.md', '<p align="center">', '<p align="left">'), 'Logo'],
     ['image state path', base => replace(base, 'Dockerfile.cli', 'PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json', 'PIWORK_CONFIG_PATH=/wrong'), 'private persistent'],
     ['old Docker build context', base => writeFileSync(join(base, 'Dockerfile.core.dockerignore'), '**\n!dist/\n'), 'source/secret'],
@@ -154,9 +198,19 @@ test('website command and download drift is checked without a sibling-repository
     writeFileSync(join(website, 'docs', prefix, 'spec/index.md'), '# Spec\n');
   }
   writeFileSync(join(website, 'README.md'), '## Content maintenance\n\n## Build and deployment\n');
+  const rootTexts = ['README.md', 'README.zh-CN.md'].map(name => [name, readFileSync(join(base, name))]);
+  for (const [name] of rootTexts) writeFileSync(join(base, name), '# Piwork\n');
   syncWebsite(website, release, base);
+  for (const [name, bytes] of rootTexts) writeFileSync(join(base, name), bytes);
   const publicPath = join(website, 'docs/public/install', release.releaseId);
   for (const prefix of ['', 'zh/']) {
+    const quickStart = readFileSync(join(website, 'docs', prefix, 'guide/quick-start.md'), 'utf8');
+    assert(!quickStart.includes('undefined'));
+    const native = section(quickStart, 'native-quickstart');
+    assert.deepEqual(codeBlocks(native), codeBlocks(nativeQuickStart('en')));
+    assert(native.includes(`](/${prefix}guide/source-installation.html)`));
+    assert(native.includes('piwork/server') && native.includes('piwork setup link'));
+    assert(native.includes(prefix ? '停止受管 Work' : 'stops managed Works'));
     const source = readFileSync(join(website, 'docs', prefix, 'guide/source-installation.md'), 'utf8');
     assert(source.includes('blob/main/openspec/specs/docker-delivery/spec.md'));
     for (const name of ['quick-start.md', 'installation.md', 'source-installation.md']) {
@@ -189,6 +243,8 @@ test('website command and download drift is checked without a sibling-repository
   }
   replace(website, 'docs/zh/guide/quick-start.md', 'docker logs piwork-core-quickstart', 'docker logs another-container');
   assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website zh/Quick Start')));
+  replace(website, 'docs/guide/quick-start.md', 'piwork setup link', 'incorrect setup command');
+  assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('native Linux instructions')));
   writeFileSync(join(publicPath, 'docker-compose.yml'), 'different material');
   assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website download')));
 });

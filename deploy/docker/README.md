@@ -45,6 +45,26 @@ Optional [Compose](docker-compose.yml) (2.24+) and the [single-host example](../
 
 <!-- docker-quickstart:end -->
 
+## Native Linux application
+
+<!-- native-quickstart:start -->
+
+The Docker images already include the unified entry. To run it natively, [build the current source](../../AGENTS.md#构建与验证), then start the Linux program from the repository root; the built executable also works outside the checkout:
+
+```sh
+./dist/go/piwork --no-open
+```
+
+Data defaults to `piwork/server` in the user configuration directory and the listener to `0.0.0.0:7171`; use the actual IP link printed in the terminal. See `--help` for `--data-dir`, `--listen`, `--public-origin`, `--service-ports` and TLS options.
+
+Keep the first-time setup link private. The Agent image is embedded with the server release and used automatically, with no image input or override; create the administrator and configure the model in the browser.
+
+`piwork setup link` rotates an expired proof; retain the same `--data-dir` when using a custom data directory. Exiting this program stops managed Works under the Core shutdown contract; closing a browser does not.
+
+`piwork-cli` retains its independent Windows/Linux terminal and local Desktop modes; `piwork-console` is a standalone administrator entry and is not required for default startup. The historical [0.0.7 Linux bundle](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz) and [experimental Windows CLI 0.0.5](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe) do not contain the unified server entry.
+
+<!-- native-quickstart:end -->
+
 ## Core Compose Demo
 
 <!-- core-compose-demo:start -->

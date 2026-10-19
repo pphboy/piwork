@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { sourceInputHash, renderCompose, roles, currentRelease } from './build-docker-release.mjs';
-import { coreRun, cliRun, composeCommands, firstWorkCommands, firstChatCommand, cliFileRun, singleHostReadme } from './docker-quickstart-content.mjs';
+import { coreRun, cliRun, composeCommands, firstWorkCommands, firstChatCommand, cliFileRun, singleHostReadme, nativeQuickStart } from './docker-quickstart-content.mjs';
 
 export const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 export const installerFiles = ['docker-compose.yml', 'single-host-compose.yml', 'single-host-README.md', 'single-host-README.zh-CN.md', 'release-manifest.json', 'README.txt', 'push-commands.sh', 'SHA256SUMS'];
@@ -45,7 +45,29 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   for (const role of roles) check(typeof release.images[role] === 'string' && release.images[role].endsWith(`:${release.releaseId}`) && !release.images[role].endsWith(':latest'), `deploy/docker/release.json: ${role} fixed release reference`);
 
   const expected = [coreRun(release.images.core), "docker logs piwork-core-quickstart", "docker exec piwork-core-quickstart piwork-serve --data-dir /var/lib/piwork/quickstart/core setup link"];
-  const docs = ['README.md', 'README.zh-CN.md', 'deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
+  for (const [name, counterpart, prefix] of [['README.md', 'README.zh-CN.md', ''], ['README.zh-CN.md', 'README.md', 'zh/']]) {
+    const text = read(name);
+    const manual = `deploy/docker/${name}`;
+    const repository = 'https://github.com/pphboy/piwork';
+    const links = new Set([...text.matchAll(/\]\(([^\s)]+)\)/g)].map(match => match[1]));
+    const navigation = [counterpart, manual, 'AGENTS.md', 'LICENSE', `https://pphboy.github.io/piwork/${prefix}`, `https://pphboy.github.io/piwork/${prefix}guide/quick-start.html`, ...['releases', 'issues', 'discussions'].map(path => `${repository}/${path}`)];
+    check(navigation.every(link => links.has(link) && (/^https:/.test(link) || existsSync(join(base, link)))), `${name}: documentation navigation is missing or invalid`);
+    check(/^<p align="center">\s*<img[^>]*width="160"[^>]*height="160"[^>]*>\s*<\/p>/m.test(text) && text.includes('src="apps/ui-shared/assets/piwork-logo.png"'), `${name}: centered Logo dimensions`);
+    check(['apps/ui-shared/assets/piwork-logo.png', 'apps/ui-shared/assets/desktop-preview.png'].every(path => existsSync(join(base, path)))
+      && /!\[[^\]]+\]\(apps\/ui-shared\/assets\/desktop-preview\.png\)/.test(text)
+      && links.has('https://www.youtube.com/watch?v=ll1MS091gPU'), `${name}: product demo resources are missing`);
+    check(['Work', 'Service', 'Harness'].every(concept => text.includes(`**${concept}**`)), `${name}: core concepts are missing`);
+    check(!/^\s*(?:```|~~~)|<(?:details|pre)\b|<!--\s*(?:docker|native)-quickstart:|\bdocker (?:run|exec|logs)\b|\bnpm ci\b|\bmake (?:build|test)\b|\bPIWORK_[A-Z_]+\s*=/mi.test(text), `${name}: usage tutorials belong in the deployment guide`);
+    const badges = [...text.matchAll(/\[!\[([^\]]+)\]\((https:\/\/img\.shields\.io\/[^\s)]+)\)\]\(([^\s)]+)\)/g)].map(match => ({ alt: match[1], image: new URL(match[2]), target: match[3], position: match.index }));
+    check(badges.length === 4 && badges.every(badge => badge.position < text.indexOf('\n## ')), `${name}: four project badges must appear at the top`);
+    const badgeMatches = (path, target, alt, query = () => true) => badges.some(badge => badge.image.origin === 'https://img.shields.io' && badge.image.pathname === path && badge.target === target && alt.test(badge.alt) && query(badge.image.searchParams));
+    check(badgeMatches('/github/v/release/pphboy/piwork', `${repository}/releases`, /release|版本/i, query => ['', 'true'].includes(query.get('include_prereleases'))), `${name}: release badge must include previews and link to Releases`);
+    check(badgeMatches('/github/license/pphboy/piwork', 'LICENSE', /Apache-2\.0/i), `${name}: license badge must describe Apache-2.0`);
+    check(badgeMatches('/github/stars/pphboy/piwork', `${repository}/stargazers`, /stars/i), `${name}: stars badge must use the project repository`);
+    check(badgeMatches('/badge/server-Linux-blue', manual, /(?:server|服务端).*Linux/i), `${name}: platform badge must identify the Linux server`);
+  }
+
+  const docs = ['deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
   const trials = [];
   for (const name of docs) {
     const text = read(name);
@@ -62,17 +84,12 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
       }
       check(!/Download and verify the installer|Configure and start Core|下载并校验安装包|配置并启动 Core/.test(trial), `${name}: old download/configuration steps returned`);
       check(release.state !== 'candidate' || /Local candidate|本地候选/.test(trial), `${name}: unpublished candidate must be identified`);
-      if (!name.startsWith('deploy/')) {
-        check(/^<p align="center">\s*<img[^>]*width="160"[^>]*height="160"[^>]*>\s*<\/p>/m.test(text), `${name}: centered Logo dimensions`);
-        check(text.indexOf('## Architecture') >= 0 && text.indexOf('## Architecture') < text.indexOf('## Problem'), `${name}: Architecture must precede Problem`);
-        const native = section(text, 'native-quickstart');
-        const before = text.slice(0, text.indexOf('<!-- native-quickstart:start -->'));
-        check(/<details>\s*<summary>[^<]+<\/summary>\s*$/.test(before), `${name}: native CLI must stay folded`);
-        check(codeBlocks(native).some(block => /(?:bin|go)\/piwork(?:-serve)?(?:\s|$)/.test(block.code)), `${name}: native unified startup missing`);
-      }
+      const native = section(text, 'native-quickstart');
+      check(normalize(native) === normalize(nativeQuickStart(name.includes('zh-CN') ? 'zh' : 'en', { buildLink: '../../AGENTS.md#构建与验证' })), `${name}: native Linux instructions differ from source`);
+      for (const block of codeBlocks(native)) check(block.language === 'sh' && spawnSync('sh', ['-n'], { input: block.code }).status === 0, `${name}: native shell syntax is invalid`);
     } catch { check(false, `${name}: missing required document sections`); }
   }
-  for (const trial of trials) check(sameCode(trial, trials[0]), 'paired browser startup commands differ between README/manual languages');
+  for (const trial of trials) check(sameCode(trial, trials[0]), 'paired browser startup commands differ between deployment manual languages');
 
   const core = read('Dockerfile.core'), cli = read('Dockerfile.cli');
   check(/FROM \$\{GO_BUILDER_IMAGE\} AS build/.test(core) && /COPY --from=build/.test(core) && !/COPY[^\n]*dist\//.test(core), 'Dockerfile.core: source build must not require host dist');
@@ -117,7 +134,12 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   if (websiteRoot) {
     const siteRead = name => { try { return readFileSync(join(websiteRoot, name), 'utf8'); } catch { errors.push(`website ${name}: missing material`); return ''; } };
     for (const prefix of ['', 'zh/']) {
-      try { check(sameCode(section(siteRead(`docs/${prefix}guide/quick-start.md`), 'docker-quickstart'), trials[0]), `website ${prefix}Quick Start: startup commands differ`); }
+      try {
+        const text = siteRead(`docs/${prefix}guide/quick-start.md`);
+        check(sameCode(section(text, 'docker-quickstart'), trials[0]), `website ${prefix}Quick Start: startup commands differ`);
+        check(normalize(section(text, 'native-quickstart')) === normalize(nativeQuickStart(prefix ? 'zh' : 'en', { buildLink: `/${prefix}guide/source-installation.html` })), `website ${prefix}Quick Start: native Linux instructions differ`);
+        check(!text.includes('undefined'), `website ${prefix}Quick Start: undefined generated content`);
+      }
       catch { check(false, `website ${prefix}Quick Start: missing trial marker`); }
       for (const marker of ['core-compose-demo', 'terminal-operations']) {
         try { check(sameCode(section(siteRead(`docs/${prefix}guide/installation.md`), marker), section(read('deploy/docker/README.md'), marker)), `website ${prefix}installation: ${marker} commands differ`); }

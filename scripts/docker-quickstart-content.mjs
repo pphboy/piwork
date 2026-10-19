@@ -53,6 +53,28 @@ export function quickStart(metadata, language, { composeLink, operationsLink, ex
   ].filter(Boolean).join('\n\n')+'\n';
 }
 
+export function nativeQuickStart(language, { buildLink = 'https://github.com/pphboy/piwork/blob/main/AGENTS.md#构建与验证' } = {}) {
+  const zh = language === 'zh';
+  return [
+    zh
+      ? `Docker 镜像已包含统一入口。如需原生运行，先[构建当前源码](${buildLink})，再从仓库根目录启动 Linux 程序；构建后的可执行文件也可在源码目录外使用：`
+      : `The Docker images already include the unified entry. To run it natively, [build the current source](${buildLink}), then start the Linux program from the repository root; the built executable also works outside the checkout:`,
+    code('./dist/go/piwork --no-open'),
+    zh
+      ? '默认数据目录为用户配置目录下 `piwork/server`，监听 `0.0.0.0:7171`；使用终端给出的实际 IP 链接。`--data-dir`、`--listen`、`--public-origin`、`--service-ports` 和 TLS 参数见 `--help`。'
+      : 'Data defaults to `piwork/server` in the user configuration directory and the listener to `0.0.0.0:7171`; use the actual IP link printed in the terminal. See `--help` for `--data-dir`, `--listen`, `--public-origin`, `--service-ports` and TLS options.',
+    zh
+      ? '首次设置链接只给安装维护者。Agent 镜像随服务端版本内置并自动使用，不提供手填或覆盖；网页创建管理员后配置模型。'
+      : 'Keep the first-time setup link private. The Agent image is embedded with the server release and used automatically, with no image input or override; create the administrator and configure the model in the browser.',
+    zh
+      ? '`piwork setup link` 可轮换过期证明；使用自定义数据目录时保留相同的 `--data-dir`。退出主程序会按 Core 关闭契约停止受管 Work；关闭网页不会。'
+      : '`piwork setup link` rotates an expired proof; retain the same `--data-dir` when using a custom data directory. Exiting this program stops managed Works under the Core shutdown contract; closing a browser does not.',
+    zh
+      ? '`piwork-cli` 保留独立 Windows/Linux 命令行与本机 Desktop；`piwork-console` 是独立管理入口，不属于默认启动依赖。历史 [0.0.7 Linux 发布包](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz) 与 [实验性 Windows CLI 0.0.5](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe) 不包含统一服务端入口。'
+      : '`piwork-cli` retains its independent Windows/Linux terminal and local Desktop modes; `piwork-console` is a standalone administrator entry and is not required for default startup. The historical [0.0.7 Linux bundle](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz) and [experimental Windows CLI 0.0.5](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe) do not contain the unified server entry.',
+  ].join('\n\n') + '\n';
+}
+
 export function serviceNetworkNote(zh) {
   return zh
     ? '服务端默认监听 `0.0.0.0:7171`；本机或远程电脑通过实际非回环 IP 打开 `http://服务器IP:7171`。局域网即可使用，无需公网地址。主站放行 TCP 7171，Service 入口另需 TCP 17891–17954（可用 `--service-ports` 修改）；7172 是内部 Agent RPC，不向浏览器开放。端口由 Piwork 代理，不是用户容器直出。只开放主站时工作台仍可使用，Service 入口会不可达。无需域名、DNS 或本机代理。HTTP 不加密；不可信网络请显式配置 HTTPS，并同时放行/代理主站与全部 Service 端口。'

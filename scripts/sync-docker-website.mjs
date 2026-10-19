@@ -1,7 +1,7 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { quickStart, coreDemo, terminalOperations, cliRun, cliFileRun } from './docker-quickstart-content.mjs';
+import { quickStart, coreDemo, terminalOperations, cliRun, cliFileRun, nativeQuickStart } from './docker-quickstart-content.mjs';
 import { renderCompose, root, currentRelease } from './build-docker-release.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -12,11 +12,10 @@ const write = (name, contents) => writeFileSync(join(website, name), contents);
 const read = name => readFileSync(join(website, name), 'utf8');
 const block = (marker, body) => `<!-- ${marker}:start -->\n\n${body}\n<!-- ${marker}:end -->`;
 
-for (const [prefix, language, readme] of [['', 'en', 'README.md'], ['zh/', 'zh', 'README.zh-CN.md']]) {
+for (const [prefix, language] of [['', 'en'], ['zh/', 'zh']]) {
   const zh = language === 'zh';
-  const upstream = readFileSync(join(base, readme), 'utf8');
-  const nativeDetails = upstream.match(/<details>\n<summary>[\s\S]*?<!-- native-quickstart:end -->\n\n<\/details>/)?.[0];
-  const native = nativeDetails?.replaceAll('](openspec/', '](https://github.com/pphboy/piwork/blob/main/openspec/');
+  const native = '<details>\n<summary>' + (zh ? '构建并使用原生 Linux 应用' : 'Build and use the native Linux application') + '</summary>\n\n'
+    + block('native-quickstart', nativeQuickStart(language, { buildLink: `/${prefix}guide/source-installation.html` })) + '\n\n</details>';
   const trial = quickStart(metadata, language, { composeLink: download, exampleLink: `https://github.com/pphboy/piwork/blob/main/examples/single-host/README${zh ? '.zh-CN' : ''}.md`, operationsLink: `/${prefix}guide/installation.html#terminal-operations` });
   write(`docs/${prefix}guide/quick-start.md`, '# Quick Start\n\n## ' + (zh ? '一键启动 Piwork' : 'Start Piwork with one command') + '\n\n' + block('docker-quickstart', trial) + '\n\n' + native + '\n');
   const installation = [zh ? '# 安装与部署' : '# Installation and Deployment', zh

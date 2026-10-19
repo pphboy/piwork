@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { quickStart, coreDemo, terminalOperations, singleHostReadme } from './docker-quickstart-content.mjs';
+import { quickStart, coreDemo, terminalOperations, singleHostReadme, nativeQuickStart } from './docker-quickstart-content.mjs';
 import { renderCompose, root } from './build-docker-release.mjs';
 
 const input = resolve(process.argv[2] || 'dist/docker/inputs/metadata.json');
@@ -12,32 +12,6 @@ writeFileSync(join(root, 'deploy/docker/docker-compose.yml'), renderCompose(meta
 mkdirSync(join(root, 'examples/single-host'), { recursive: true });
 writeFileSync(join(root, 'examples/single-host/docker-compose.yml'), renderCompose(metadata, root, { singleHost: true }));
 for (const [language, name] of [['en', 'README.md'], ['zh', 'README.zh-CN.md']]) writeFileSync(join(root, 'examples/single-host', name), singleHostReadme(metadata, language));
-
-for (const [name, language] of [['README.md', 'en'], ['README.zh-CN.md', 'zh']]) {
-  const path = join(root, name);
-  let contents = readFileSync(path, 'utf8');
-  const pattern = /<!-- docker-quickstart:start -->[\s\S]*?<!-- docker-quickstart:end -->/;
-  if (!pattern.test(contents)) throw new Error(`Missing Quick Start marker in ${name}`);
-  const body = quickStart(metadata, language, { composeLink: 'deploy/docker/docker-compose.yml', exampleLink: `examples/single-host/README${language === 'zh' ? '.zh-CN' : ''}.md`, operationsLink: `deploy/docker/README${language === 'zh' ? '.zh-CN' : ''}.md#terminal-operations` });
-  contents = contents.replace(pattern, '<!-- docker-quickstart:start -->\n\n' + body + '\n<!-- docker-quickstart:end -->');
-  const architecture = contents.match(/^## Architecture[^\n]*\n[\s\S]*?(?=^## |$(?![\s\S]))/m)?.[0];
-  if (!architecture) throw new Error(`Missing Architecture in ${name}`);
-  contents = contents.replace(architecture, '');
-  contents = contents.replace(/^## Problem/m, architecture.trimEnd() + '\n\n## Problem');
-  const oldNavigation = language === 'en'
-    ? /Prefer Compose for Core deployment\?[\s\S]*?(?=\n\n<details>)/
-    : /(?:想使用|使用) Compose 部署 Core[\s\S]*?(?=\n\n<details>)/;
-  const navigation = language === 'en'
-    ? 'For Windows Docker clients, remote Linux Core addresses, or the advanced Core-only Demo, see the [Docker guide](deploy/docker/README.md#terminal-operations).'
-    : 'Windows Docker 客户端、远端 Linux Core 地址和高级 Core-only Demo 见 [Docker 手册](deploy/docker/README.zh-CN.md#terminal-operations)。';
-  contents = contents.replace(oldNavigation, navigation);
-  contents = contents.replace('such as the Core started above.', 'compatible with your native CLI version.');
-  contents = contents.replace('例如上面启动的 Core。', '并与原生 CLI 版本兼容的 Core。');
-  contents = contents.replace('Compose 2.24+ is additionally needed for the Core Demo or advanced Compose setups.', 'Compose 2.24+ is needed when choosing the Core-only deployment, the single-host example or advanced Compose setups.');
-  contents = contents.replace('Core Demo 或高级 Compose 部署另需 Compose 2.24+。', '选择 Core Compose、单机部署示例或高级 Compose 部署时另需 Compose 2.24+。');
-  contents = contents.replace('single-file alternative or advanced Compose setups', 'Core-only deployment, the single-host example or advanced Compose setups').replace('选择单文件 Compose 或高级 Compose 部署', '选择 Core Compose、单机部署示例或高级 Compose 部署');
-  writeFileSync(path, contents);
-}
 
 for (const [name, language] of [['README.md', 'en'], ['README.zh-CN.md', 'zh']]) {
   const path = join(root, 'deploy/docker', name);
@@ -64,7 +38,8 @@ for (const [name, language] of [['README.md', 'en'], ['README.zh-CN.md', 'zh']])
     : 'This release runs application Services without a Piwork memory cap or Service memory reservation. CPU, service/volume counts and Agent/helper memory policy still apply. Legacy Service memoryBytes values remain compatibility history; memoryLimitMode / serviceMemoryPolicy explicitly report unlimited, and zero is not a zero-byte allowance. A normal Core upgrade replaces older capped Service containers through managed recovery and retains workspace data. See [resource and upgrade details](../../openspec/specs/core-service-startup/spec.md) and the [Web base guide](../images/web-base/README.md).';
   const block = (marker, body) => `<!-- ${marker}:start -->\n\n${body}\n<!-- ${marker}:end -->`;
   const trial = quickStart(metadata, language, { composeLink: 'docker-compose.yml', exampleLink: `../../examples/single-host/README${zh ? '.zh-CN' : ''}.md`, operationsLink: '#terminal-operations' });
-  const contents = [title, languages, intro, resources, '## Docker Quick Start', block('docker-quickstart', trial), '## Core Compose Demo', block('core-compose-demo', coreDemo(metadata, language)), '## Terminal operations', block('terminal-operations', terminalOperations(metadata, language)), legacy].join('\n\n');
+  const native = nativeQuickStart(language, { buildLink: '../../AGENTS.md#构建与验证' });
+  const contents = [title, languages, intro, resources, '## Docker Quick Start', block('docker-quickstart', trial), '## Native Linux application', block('native-quickstart', native), '## Core Compose Demo', block('core-compose-demo', coreDemo(metadata, language)), '## Terminal operations', block('terminal-operations', terminalOperations(metadata, language)), legacy].join('\n\n');
   writeFileSync(path, contents);
 }
-process.stdout.write('Updated paired README commands and Core-only Compose and the single-host example.\n');
+process.stdout.write('Updated bilingual deployment manuals, Core-only Compose and the single-host example.\n');

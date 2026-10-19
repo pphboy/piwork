@@ -45,6 +45,26 @@ Service 支持响应 Cookie 的服务端登录、Basic/Bearer、HTTP、SSE 和 W
 
 <!-- docker-quickstart:end -->
 
+## Native Linux application
+
+<!-- native-quickstart:start -->
+
+Docker 镜像已包含统一入口。如需原生运行，先[构建当前源码](../../AGENTS.md#构建与验证)，再从仓库根目录启动 Linux 程序；构建后的可执行文件也可在源码目录外使用：
+
+```sh
+./dist/go/piwork --no-open
+```
+
+默认数据目录为用户配置目录下 `piwork/server`，监听 `0.0.0.0:7171`；使用终端给出的实际 IP 链接。`--data-dir`、`--listen`、`--public-origin`、`--service-ports` 和 TLS 参数见 `--help`。
+
+首次设置链接只给安装维护者。Agent 镜像随服务端版本内置并自动使用，不提供手填或覆盖；网页创建管理员后配置模型。
+
+`piwork setup link` 可轮换过期证明；使用自定义数据目录时保留相同的 `--data-dir`。退出主程序会按 Core 关闭契约停止受管 Work；关闭网页不会。
+
+`piwork-cli` 保留独立 Windows/Linux 命令行与本机 Desktop；`piwork-console` 是独立管理入口，不属于默认启动依赖。历史 [0.0.7 Linux 发布包](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz) 与 [实验性 Windows CLI 0.0.5](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe) 不包含统一服务端入口。
+
+<!-- native-quickstart:end -->
+
 ## Core Compose Demo
 
 <!-- core-compose-demo:start -->
