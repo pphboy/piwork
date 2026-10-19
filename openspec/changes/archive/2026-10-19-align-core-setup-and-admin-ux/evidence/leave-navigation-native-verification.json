@@ -1,0 +1,43 @@
+{
+  "program": "piwork-serve",
+  "version": "0.0.7",
+  "commit": "6fc7e50df2c9a03de94a10a6517248d6152acb70",
+  "modified": true,
+  "goVersion": "go1.25.5",
+  "os": "linux",
+  "architecture": "amd64",
+  "desktopUIHash": "66f4c18757a92e617256969fd4c13f3c3929349819cb3d2a23667bfe50f4f76a",
+  "consoleUIHash": "d17a42188dbe8fec2c84bc8381b2009a82591177eecdcb8bfdbfcb8853e7d5f2",
+  "sha256": "dab9363063cd1ffaa3d5b643a6956fbab1ad528e8a2cf6c44a1f929509a46d12",
+  "releaseId": "0.0.7-6fc7e50df2c9-400a55fd56a1-dirty",
+  "sourceInputHash": "400a55fd56a1e7ee687d4d5de7635e53b8d2d79839a483c7f5a59c2f88760d20",
+  "embeddedResourcesMatch": true,
+  "servedResourceCount": 35,
+  "embeddedReleaseDependenciesMatch": true,
+  "publishedReleaseUnchanged": true,
+  "packageMaterialsVerified": true,
+  "onboarding": {
+    "standardPassed": 29,
+    "enginePassed": 1,
+    "distinctPassed": 30
+  },
+  "leaveNavigationRegression": {
+    "beforeFailed": 2,
+    "afterPassed": 2,
+    "cases": [
+      "preserve newer User access route",
+      "preserve re-entered Quick setup draft, focus and selection"
+    ]
+  },
+  "consoleBrowserPassed": 79,
+  "desktopTargeted": {
+    "passed": 9,
+    "skipped": 1,
+    "skipReason": "five-minute unused-ticket expiry opt-in"
+  },
+  "scriptTests": {
+    "buildAndFixturesPassed": 10,
+    "quickstartPassed": 30
+  },
+  "setupNavigationLabel": "Quick setup"
+}

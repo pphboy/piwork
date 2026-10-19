@@ -1,0 +1,18 @@
+{
+  "program": "piwork-serve",
+  "version": "0.0.7",
+  "commit": "6fc7e50df2c9a03de94a10a6517248d6152acb70",
+  "modified": true,
+  "goVersion": "go1.25.5",
+  "os": "linux",
+  "architecture": "amd64",
+  "desktopUIHash": "3b831a81b434f2b06199ad35cd3401fe07e044cc36b4df282b0d51b0a6054d8f",
+  "consoleUIHash": "5972c25d0adebc619c4c9bcd67d06e0e272464fc85c8a87de3f6ff9b9ab04524",
+  "sha256": "6ac42c5472f6f595dee7b0bb355f46f6bab7a252be4489bad515ca3deff357d2",
+  "releaseId": "0.0.7-6fc7e50df2c9-5b565fb47977-dirty",
+  "sourceInputHash": "5b565fb47977d6a3bdcfca663128060c4d49d1642572f0941f369ca4cada8080",
+  "embeddedResourcesMatch": true,
+  "embeddedReleaseDependenciesMatch": true,
+  "publishedReleaseUnchanged": true,
+  "packageMaterialsVerified": true
+}

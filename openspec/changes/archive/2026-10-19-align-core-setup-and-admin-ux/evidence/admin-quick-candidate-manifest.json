@@ -1,0 +1,78 @@
+{
+  "manifestVersion": 2,
+  "application": "unified-linux",
+  "releaseVersion": "0.0.7",
+  "sourceCommit": "6fc7e50df2c9a03de94a10a6517248d6152acb70",
+  "sourceModified": true,
+  "sourceInputHash": "be81cd61b334b78533b48844fe4fc22eb282c812814c7629a4e9bc9c4259e04f",
+  "desktopUIHash": "da3e8dc466822538d45318e8aaf4ad63deeb110cc7ef451f2da7fea271989311",
+  "consoleUIHash": "6d88a530b8dce2f59b2d64d3f31050df1d0d4f7880e6306b5e99ef173bd3a025",
+  "registry": "docker.io/pphboy",
+  "platform": "linux/amd64",
+  "runtimeImage": "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8",
+  "core": {
+    "format": "piwork-go-core",
+    "schemaVersion": 1
+  },
+  "clientCredentialVersion": 1,
+  "releaseId": "0.0.7-6fc7e50df2c9-be81cd61b334-dirty",
+  "images": {
+    "core": {
+      "reference": "docker.io/pphboy/piwork-core:0.0.7-6fc7e50df2c9-be81cd61b334-dirty",
+      "imageId": "sha256:94631ccee2d2e4d6fa98f588d55969fe49705e8896656fc9b475ff74d26888d3",
+      "platform": "linux/amd64",
+      "protocolLabels": {}
+    },
+    "cli": {
+      "reference": "docker.io/pphboy/piwork-cli:0.0.7-6fc7e50df2c9-be81cd61b334-dirty",
+      "imageId": "sha256:4691f3fbfee89a6ded837cee281f027837b5641d35ba42a0445c04dcea50ccf6",
+      "platform": "linux/amd64",
+      "protocolLabels": {}
+    },
+    "agent": {
+      "reference": "docker.io/pphboy/piwork-agentd:0.0.7-6fc7e50df2c9-be81cd61b334-dirty",
+      "imageId": "sha256:aad01f8bd14a9f0961518b3488dca76f8550f26d6e5763f257d9c07c67f49b76",
+      "platform": "linux/amd64",
+      "protocolLabels": {
+        "io.piwork.agent.protocol": "v2",
+        "io.piwork.package-helper.contract": "2",
+        "io.piwork.service-mcp.contract": "1",
+        "io.piwork.work-history.schema": "5",
+        "io.piwork.run-model.contract": "1",
+        "io.piwork.work-feedback.contract": "1"
+      }
+    },
+    "fileHelper": {
+      "reference": "docker.io/pphboy/piwork-file-helper:0.0.7-6fc7e50df2c9-be81cd61b334-dirty",
+      "imageId": "sha256:b2aa02e845ceb50e14a5dad0362423491401e35982b94de19e526d9156afd843",
+      "platform": "linux/amd64",
+      "protocolLabels": {
+        "piwork.file_protocol": "1"
+      }
+    },
+    "snapshotHelper": {
+      "reference": "docker.io/pphboy/piwork-snapshot-helper:0.0.7-6fc7e50df2c9-be81cd61b334-dirty",
+      "imageId": "sha256:958a70da3d7147161b90ae4681ecd187a2b06910b23fa3d7872e9e29f323bd8c",
+      "platform": "linux/amd64",
+      "protocolLabels": {
+        "piwork.snapshot_protocol": "1"
+      }
+    },
+    "packageHelper": {
+      "reference": "docker.io/pphboy/piwork-agentd:0.0.7-6fc7e50df2c9-be81cd61b334-dirty",
+      "imageId": "sha256:aad01f8bd14a9f0961518b3488dca76f8550f26d6e5763f257d9c07c67f49b76",
+      "platform": "linux/amd64",
+      "protocolLabels": {
+        "io.piwork.agent.protocol": "v2",
+        "io.piwork.package-helper.contract": "2",
+        "io.piwork.service-mcp.contract": "1",
+        "io.piwork.work-history.schema": "5",
+        "io.piwork.run-model.contract": "1",
+        "io.piwork.work-feedback.contract": "1"
+      }
+    }
+  },
+  "state": "candidate",
+  "compatiblePreviousReleaseVersions": [],
+  "directlyRollbackablePreviousVersions": []
+}

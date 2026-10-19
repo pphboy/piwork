@@ -1,0 +1,24 @@
+{
+  "platform": "linux",
+  "listen": "0.0.0.0",
+  "access": "non-loopback IPv4",
+  "engineVersion": "26.1.5+dfsg1",
+  "engineApi": "1.45",
+  "ready": true,
+  "deliveryReady": true,
+  "agentImage": "docker.io/pphboy/piwork-agentd:0.0.7-19fc33907232-3ab753f8a90a",
+  "modelRef": "model-config-50e4ad33-90c1-4434-8e57-28cb55153be0",
+  "explicitWorkCreates": 1,
+  "modelTests": 0,
+  "build": {
+    "program": "piwork-serve",
+    "version": "0.1.0-dev",
+    "commit": "6fc7e50df2c9a03de94a10a6517248d6152acb70",
+    "modified": true,
+    "goVersion": "go1.25.5",
+    "os": "linux",
+    "architecture": "amd64",
+    "desktopUIHash": "4bd5d2c3ad2be351af8f7f58acc57a179abb0efc8ceca76037e4cd603d5f14d5",
+    "consoleUIHash": "882da3c819bbf17005f3a4ec6ab5513a94099dea79b8f7135c13f8e5fd645611"
+  }
+}

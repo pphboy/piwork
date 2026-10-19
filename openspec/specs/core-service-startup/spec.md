@@ -46,27 +46,30 @@ Core SHALL 允许空安装通过受首次设置授权保护的网页创建、显
 
 ### Requirement: Configure a usable local runtime profile
 
-Core SHALL 保留离线 runtime 配置命令，并提供受保护的在线全局默认配置 API。全局配置 SHALL 仅作为之后新建 Work 的默认值；已有 Work 的独立配置、模型引用和运行实例 MUST NOT 因全局配置变化而修改、重启或切换模型。
+Core SHALL 保留离线 runtime 配置命令，并提供受保护的在线全局默认配置 API。全局 CoreRuntime 的 Agent 镜像 SHALL 固定使用执行保存的服务端程序随版本内嵌的发行引用，模型配置命令/API 不要求操作者选择镜像；operator 的旧镜像参数按 SERVE-RUNTIME-RELEASE-001 移除，管理员和旧 HTTP 字段按 CADM-004 处理。内嵌发行引用无效时安全拒绝，不将手填镜像作为恢复方案。
+
+全局配置 SHALL 仅作为之后新建 Work 的默认值；已有 Work 的独立配置、模型引用和运行实例 MUST NOT 因全局配置变化而修改、重启或切换模型。读取、启动和升级 SHALL 如实保留已持久 Runtime，不自动替换其中镜像；用户显式保存时才采用当前发行引用。确认保存后后台准备与 readiness 继续分别表达。
 
 #### Scenario: Configure the global default online
-
-- **WHEN** 管理员通过 `piwork-serve config set` 提供兼容镜像、模型、endpoint 和 secret
-- **THEN** Core 持久化全局默认配置，查询只返回非敏感字段和 secret 可用性
+- **WHEN** 管理员通过 piwork-serve config set 提供合法模型、endpoint 和 secret，未指定镜像
+- **THEN** Core 使用自身内嵌发行镜像持久化全局默认，查询只返回非敏感字段和 secret 可用性
 
 #### Scenario: Configure an installation from standard input
-
-- **WHEN** an operator selects an agent image and model and supplies the model credential through standard input
-- **THEN** Core stores a usable default runtime profile without placing the credential in command arguments, normal output, logs, or public API responses
+- **WHEN** operator 在既有离线条件下提供模型并通过标准输入提交 credential
+- **THEN** 本地服务端用内嵌发行镜像保存默认 Runtime，credential 不进入命令参数、普通输出、日志或公开响应
 
 #### Scenario: Change defaults without changing existing Works
-
 - **WHEN** 全局默认模型配置从 model-a 改为 model-b
 - **THEN** 新 Work 使用 model-b，已有 Work 保留原独立配置且不发生隐式重启
 
 #### Scenario: Detect an incomplete runtime profile
+- **WHEN** Core 启动时缺少可用的 Runtime 模型或发行依赖
+- **THEN** 健康和网页引导保持可用，readiness 显示具体未配置或不可用原因，Work 创建返回可操作错误
 
-- **WHEN** Core starts without a usable agent image or model profile
-- **THEN** health remains available, readiness reports the missing runtime configuration, and Work creation returns an actionable configuration error
+#### Scenario: 保留已有 Runtime 的捕获镜像
+- **WHEN** 服务端程序发行镜像发生变化而用户仅启动或读取旧安装
+- **THEN** 原 Runtime 和 Work 继续保留捕获引用，不因固定发行默认而静默迁移；明确重新保存时才更新全局新 Work 默认
+
 ### Requirement: Start one durable Core application
 
 统一服务端无参数或 `serve` SHALL 启动同一持久 Core 及浏览器入口，在管理员和运行时配置缺失时仍打开健康 HTTP listener，初始化完成后再报告相应 readiness；配置存在时继续执行 Docker 验证和 Work recovery。它 MUST NOT 因缺少管理员或默认 runtime 而退出，也 MUST NOT 在启动过程中创建默认 Work。
@@ -353,6 +356,8 @@ Engine 目标 SHALL 按非空 DOCKER_CONTEXT、非空 DOCKER_HOST、Docker confi
 
 health 与 ready SHALL 分离；管理员、runtime、默认准备或恢复缺失时不能称 ready。运维参数按对应命令契约解析；统一服务端仅保留可选 ADMIN env 补充首次身份，模型和镜像不再由业务 env 初始化；通过页面/API 保存的可选 Base URL 仍区分缺省与空值。operator 与用户凭据 SHALL 分离；密码/Key 通过隐藏输入或 stdin/file 输入，不作为命令参数。保留的高级 operator env-file 解析不执行 shell。只有未显式选 Core 且默认 loopback 明确拒绝连接时才允许持同一目录锁离线初始化，超时或未知结果不授权本地回退。
 
+全局 Runtime 的 Agent 引用 SHALL 在服务端固定解析，config set 不再提供 --agent-image；在线取目标 Core 的发行信息，离线取本地服务端发行信息，错误提示不包含旧参数值。镜像身份仍可在非敏感配置读取或按需诊断中核对；已有 Runtime 与 Work 的捕获引用遵守保留及显式保存语义。独立 Work/default-Work 的既有高级配置和 helper 参数范围保持。
+
 Core 正常退出 SHALL 停止本安装受管 Work 容器并保留 desired、数据和历史；重启协调原 journal/epoch/标签，未知创建和清理失败保留占用，不全局 prune。Service memoryBytes 的旧正数只作为历史兼容，应用 Service 不设有效内存限制/预留，投影明确 unlimited；CPU/数量和 Agent/helper 政策仍有效。旧受限 Service 由受管恢复替换并保留身份、固定镜像和 workspace。
 
 #### Scenario: 按现行契约操作与核对
@@ -366,10 +371,10 @@ npm ci
 make build
 make native-agent-images native-helper-images
 export PIWORK_DATA_DIR="$PWD/.piwork-go-core"
-export PIWORK_PACKAGE_HELPER_IMAGE=piwork-agentd:go-migration-production
-export PIWORK_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance
-export PIWORK_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance
-./dist/go/piwork-serve serve --data-dir "$PIWORK_DATA_DIR" --listen 127.0.0.1:7171
+./dist/go/piwork-serve serve --data-dir "$PIWORK_DATA_DIR" --listen 127.0.0.1:7171 \
+  --package-helper-image piwork-agentd:go-migration-production \
+  --file-helper-image piwork-file-helper:go-migration-acceptance \
+  --snapshot-helper-image piwork-snapshot-helper:go-migration-acceptance
 ```
 
 ```sh
@@ -380,8 +385,7 @@ export PIWORK_CORE_URL=http://127.0.0.1:7171
 read -r -p '模型提供方: ' PIWORK_MODEL_PROVIDER
 read -r -p '模型 ID: ' PIWORK_MODEL_ID
 ./dist/go/piwork-serve --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
-  config set --agent-image piwork-agentd:go-migration-production \
-  --model-provider "$PIWORK_MODEL_PROVIDER" --model "$PIWORK_MODEL_ID"
+  config set --model-provider "$PIWORK_MODEL_PROVIDER" --model "$PIWORK_MODEL_ID"
 ./dist/go/piwork-serve --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" status
 ```
 

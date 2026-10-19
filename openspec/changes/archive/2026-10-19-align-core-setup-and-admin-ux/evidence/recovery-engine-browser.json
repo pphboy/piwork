@@ -1,0 +1,13 @@
+{
+  "platform": "linux",
+  "listen": "0.0.0.0",
+  "access": "non-loopback IPv4",
+  "engineVersion": "26.1.5+dfsg1",
+  "engineApi": "1.45",
+  "ready": true,
+  "deliveryReady": true,
+  "agentImage": "docker.io/pphboy/piwork-agentd:0.0.7-6fc7e50df2c9-94183e076941-dirty",
+  "modelRef": "model-config-1726fc12-c599-449e-a315-0f37faeedf3c",
+  "explicitWorkCreates": 1,
+  "modelTests": 0
+}

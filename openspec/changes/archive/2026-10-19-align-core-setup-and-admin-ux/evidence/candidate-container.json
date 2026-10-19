@@ -1,0 +1,11 @@
+{
+  "releaseId": "0.0.7-6fc7e50df2c9-a0d67ef3e10b-dirty",
+  "agentImage": "docker.io/pphboy/piwork-agentd:0.0.7-6fc7e50df2c9-a0d67ef3e10b-dirty",
+  "desktopUIHash": "4bd5d2c3ad2be351af8f7f58acc57a179abb0efc8ceca76037e4cd603d5f14d5",
+  "consoleUIHash": "882da3c819bbf17005f3a4ec6ab5513a94099dea79b8f7135c13f8e5fd645611",
+  "setupAssets": true,
+  "adminAssets": true,
+  "desktopAssets": true,
+  "missingEngineStillServesSetup": true,
+  "packageMaterials": true
+}

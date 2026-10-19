@@ -44,7 +44,7 @@ Core SHALL 提供下表中的 API；name 和 userId/operationId 均为经过单�
 | POST /users/:id/enable 或 disable | 空正文或 `{}` | 200 `{userId,enabled}` |
 | POST /users/:id/reset-credential | `{password}` | 200 `{userId,credentialReset:true}` |
 | GET /runtime | 无 | 200 `RuntimeView` |
-| PUT /runtime | `{agentImage,provider,model,baseUrl?,credential}` | 200 `{runtime:RuntimeView,status:AdminStatus}` |
+| PUT /runtime | `{modelRef}` 或 `{provider,model,baseUrl?,credential}`；旧 agentImage 字段仅按 CADM-004 验证同版固定值 | 200 `{runtime:RuntimeView,status:AdminStatus}` |
 | GET /default-work | 无 | 200 `{configuration:PublicWorkConfig|null,baseImage:string|null}` |
 | PATCH /default-work | `{baseImage?,skills?,packages?,agentsMd?}` | 200 与 GET 相同 |
 | GET /skills | 无 | 200 `{skills:ManagedSkill[]}` |
@@ -100,11 +100,13 @@ Core package source SHALL 为 `{kind:"npm",spec}`、`{kind:"git",spec}` 或 `{ki
 
 **Identifier:** CADM-004
 
-PUT runtime SHALL 接受两种互斥完整输入：引用式 `{agentImage,modelRef}`，或既有 `{agentImage,provider,model,baseUrl?,credential}`。引用式解析完整模型配置，不要求重填 Key或创建 Provider；自定义 Model ID/Thinking 未确认本身不构成无效引用。既有输入继续完整提供 credential，provider 仅保留协议逻辑语义，转为稳定模型配置；省略 baseUrl 不设自定义地址，空 credential 不表示保留。混合输入和真实不可用引用在持久化前拒绝。
+PUT runtime SHALL 接受两种互斥完整模型输入：引用式 `{modelRef}`，或既有 `{provider,model,baseUrl?,credential}`，均不要求镜像参数。引用式解析完整模型配置，不要求重填 Key 或创建 Provider；自定义 Model ID/Thinking 未确认本身不构成无效引用。既有模型输入继续完整提供 credential，provider 仅保留协议逻辑语义，转为稳定模型配置；省略 baseUrl 不设自定义地址，空 credential 不表示保留。混合输入和真实不可用引用在持久化前拒绝。
 
-有效配置持久化后 SHALL 同步新 Work 默认 runtime 字段并刷新 readiness；依赖或旧执行环境不兼容时仍返回 200、已保存 runtime 和真实非 ready 状态，不掩盖提交事实。未知持久化结果返回安全错误，可 GET runtime 核实，不假装回滚。GET 保留原字段与安全模型引用，不公开 credential、credentialRef 或内部 revision。
+全局 Runtime 的 Agent 引用 SHALL 在 Core 写入边界由该服务端同版内嵌发行配置取得，管理员 API、operator 在线/离线和 Console 适配遵守同一规则。兼容旧输入中的 agentImage 字段时，省略或等于内嵌值均采用内嵌引用；不同值 SHALL 返回 400 INVALID_REQUEST、field=agentImage，原子保留 Runtime、模型及默认配置。发行引用缺失/无效 SHALL 返回安全的 RELEASE_DEFAULTS_UNAVAILABLE 错误且不修改配置，不回退客户端、旧 Runtime、业务 env 或手填值。新网页客户端只发送模型引用。
 
-已有 Work 捕获模型、镜像及实例 SHALL 不因全局默认改变而更新。模型 Key/准入独立遵守 AIM-002/AIM-004；operator 既有调用形式和公开字段含义保持。新版兼容环境须能初始化自定义模型普通模式，不能因缺少模板拒绝。
+有效配置持久化后 SHALL 同步新 Work 默认 runtime 字段并刷新 readiness；依赖或旧执行环境不兼容时仍返回 200、已保存 runtime 和真实非 ready 状态，不掩盖提交事实。未知持久化结果返回安全错误，可 GET runtime 核实，不假装回滚。GET 保留原字段与安全模型引用，如实返回已保存镜像，不公开 credential、credentialRef 或内部 revision；服务端升级或读取不自动改写 Runtime，显式保存才采用当前发行引用。
+
+已有 Work 捕获模型、镜像及实例 SHALL 不因全局默认改变而更新。模型 Key/准入独立遵守 AIM-002/AIM-004，operator 凭证与公开结果含义保持；其镜像参数收紧遵守 SERVE-RUNTIME-RELEASE-001。新版兼容环境须能初始化自定义模型普通模式，不能因缺少模板拒绝。
 
 #### Scenario: 保存成功但环境不可用
 - **WHEN** 配置已持久化后检查 Docker、镜像或兼容性失败
@@ -115,8 +117,20 @@ PUT runtime SHALL 接受两种互斥完整输入：引用式 `{agentImage,modelR
 - **THEN** 返回 400 与公开 field，旧配置及默认不变；仅 SDK 未收录不能当作这种字段错误
 
 #### Scenario: 引用自定义模型
-- **WHEN** 管理员引用已启用、有凭据但 SDK 未收录的模型及兼容 Agent image
-- **THEN** 保存/准备完整运行配置，无 Key 重填或 Provider/模板步骤，普通消息初始化可完成
+- **WHEN** 管理员引用已启用、有凭据但 SDK 未收录的模型
+- **THEN** Core 使用自身发行 Agent 引用保存/准备完整配置，无镜像填写、Key 重填或 Provider/模板步骤，普通消息初始化可完成
+
+#### Scenario: 省略或携带旧同值字段
+- **WHEN** 管理员以无镜像参数输入保存，或旧客户端携带与服务端内嵌引用相同的 agentImage
+- **THEN** 两者均使用服务端固定引用，不以客户端提交字段作为镜像选择来源
+
+#### Scenario: 自定义镜像或发行损坏
+- **WHEN** 管理员携带不同 agentImage，或 Core 无法解析内嵌发行引用
+- **THEN** 分别返回字段错误或发行错误，任何 Runtime/default/新模型写入均不发生，不能只在 Console 拒绝而让直接 API 绕过
+
+#### Scenario: 升级后的读取与显式保存
+- **WHEN** 已保存旧 Runtime 的安装换用新发行程序，先读取再显式保存相同模型
+- **THEN** 读取保留旧镜像及现有 Work；显式保存才使用新发行引用，只影响后续新 Work
 
 ### Requirement: 原子合并默认 Work 管理字段
 

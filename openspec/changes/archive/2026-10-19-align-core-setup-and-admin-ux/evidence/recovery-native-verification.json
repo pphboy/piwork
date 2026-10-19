@@ -1,0 +1,31 @@
+{
+  "program": "piwork-serve",
+  "version": "0.0.7",
+  "commit": "6fc7e50df2c9a03de94a10a6517248d6152acb70",
+  "modified": true,
+  "goVersion": "go1.25.5",
+  "os": "linux",
+  "architecture": "amd64",
+  "desktopUIHash": "3b831a81b434f2b06199ad35cd3401fe07e044cc36b4df282b0d51b0a6054d8f",
+  "consoleUIHash": "7bd05ebd3d48e6c0b7b40ed2d87c5b245c598389fc7af1e37012850191be41f4",
+  "sha256": "8735e81508ab8dc8adafb936d9c423f566b63080bfe6dde5720201c75b304e89",
+  "releaseId": "0.0.7-6fc7e50df2c9-94183e076941-dirty",
+  "sourceInputHash": "94183e076941716d594bcff856a698e6db1b258c136d115455b4bb0ee4df64ee",
+  "embeddedResourcesMatch": true,
+  "embeddedReleaseDependenciesMatch": true,
+  "publishedReleaseUnchanged": true,
+  "packageMaterialsVerified": true,
+  "onboarding": {
+    "standardPassed": 21,
+    "enginePassed": 1,
+    "distinctPassed": 22,
+    "newRecoveryCases": [
+      "rejected model save after rejected binding",
+      "lost model response after rejected binding with failed then successful readback"
+    ]
+  },
+  "scriptTests": {
+    "buildAndFixturesPassed": 10,
+    "quickstartPassed": 30
+  }
+}

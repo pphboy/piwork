@@ -1,0 +1,34 @@
+{
+  "program": "piwork-serve",
+  "version": "0.0.7",
+  "commit": "6fc7e50df2c9a03de94a10a6517248d6152acb70",
+  "modified": true,
+  "goVersion": "go1.25.5",
+  "os": "linux",
+  "architecture": "amd64",
+  "desktopUIHash": "da3e8dc466822538d45318e8aaf4ad63deeb110cc7ef451f2da7fea271989311",
+  "consoleUIHash": "6d88a530b8dce2f59b2d64d3f31050df1d0d4f7880e6306b5e99ef173bd3a025",
+  "sha256": "15d32e72b91a983d96e7b175387aeb4b788f646004e923d577e84772bfa73195",
+  "releaseId": "0.0.7-6fc7e50df2c9-be81cd61b334-dirty",
+  "sourceInputHash": "be81cd61b334b78533b48844fe4fc22eb282c812814c7629a4e9bc9c4259e04f",
+  "embeddedResourcesMatch": true,
+  "servedResourceCount": 35,
+  "embeddedReleaseDependenciesMatch": true,
+  "publishedReleaseUnchanged": true,
+  "packageMaterialsVerified": true,
+  "onboarding": {
+    "standardPassed": 27,
+    "enginePassed": 1,
+    "distinctPassed": 28
+  },
+  "consoleBrowserPassed": 79,
+  "desktopTargeted": {
+    "passed": 9,
+    "skipped": 1,
+    "skipReason": "five-minute unused-ticket expiry opt-in"
+  },
+  "scriptTests": {
+    "buildAndFixturesPassed": 10,
+    "quickstartPassed": 30
+  }
+}
