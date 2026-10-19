@@ -10,6 +10,8 @@
 
 **Identifier:** DWUI-001
 
+本需求中的本机授权、CLI 实例/凭证、Switch Core 及默认 Core 偏好条款适用于独立 piwork-cli desktop 模式。统一服务端工作台使用 DWUI-HOSTED-001 的服务器浏览器会话与固定所属 Core，不要求这些本机入口；两模式共同的业务反馈、恢复和身份隔离约束保持。
+
 Desktop SHALL 展示当前 Core、用户身份、Core 可达性、运行环境及各能力状态，区分可达与可创建/可对话/可访问文件。用户 SHALL 可登录、查看身份、登出及切换 Core。复用凭证前 SHALL 验证所属 Core 和当前用户，错误不得展示其他身份的旧内容。无登录仍 SHALL 能检查本地 `.work`，但不取得任何 Core 内容。
 
 确认的 Core 会话失效 SHALL 清除该平台身份派生的内容授权、关闭相关内容流并进入登录恢复页面；仍有效的浏览器本地控制会话 SHALL 保留用于重新登录，不要求重启 Desktop。普通网络失败保留最后已知状态与取得时间，不推断为登出。重新登录同一 Core/用户 SHALL 可查询已知 Operation，不能重发原提交。切换身份 SHALL 清空内容缓存和草稿，已知操作记录按 Core/用户隔离。登出在 Core 可达时 SHALL 撤销平台会话；不可达时仍立即撤销该平台身份的本地内容访问并说明未确认远端撤销，禁止显示远端撤销成功。
@@ -569,6 +571,8 @@ Pi Package 本地目录/ZIP SHALL 在安装弹层展示浏览器到 CLI 的真�
 
 **Identifier:** DWUI-014
 
+本需求中的本机授权、CLI 实例/凭证、Switch Core 及默认 Core 偏好条款适用于独立 piwork-cli desktop 模式。统一服务端工作台使用 DWUI-HOSTED-001 的服务器浏览器会话与固定所属 Core，不要求这些本机入口；两模式共同的业务反馈、恢复和身份隔离约束保持。
+
 Desktop SHALL 在初始化期间立即显示中性的工作区外壳、Opening workspace… 与可访问的等待状态，并核验已有浏览器本地会话；核验未完成前不得展示私有 Work 内容、保存的 Core 身份或可执行的账号表单；已有会话有效时使用真实的会话/CSRF，忽略失效或已使用的启动 ticket，不再次兑换、不清理有效登录。无有效会话时才能兑换本次启动 ticket，并在提交前移除地址栏中的票据；兑换后以实际会话核验结果进入账号登录或 Works。不得持久保存票据、通过复制普通链接携带票据或仅凭成功兑换响应宣称账号已登录。
 
 本地授权缺失、过期、票据失效和 Cookie 无法保留 SHALL 显示 Browser access required；说明本地浏览器尚未获准连接 CLI，提供 Check browser access、Copy reopen command 和当前端口的 `piwork-cli desktop open --port <port> --no-open`。还 SHALL 说明 `piwork-cli desktop logout --port <port>` 可以从同一系统用户的终端清理该实例平台登录。恢复页不指示在已占用端口直接再启动 Desktop。CLI 确认不可达时显示 Desktop connection unavailable、只读重试及启动方向，区别于 Core 不可达。
@@ -600,6 +604,8 @@ Desktop SHALL 在初始化期间立即显示中性的工作区外壳、Opening w
 ### Requirement: 注销平台身份与重置浏览器访问有明确影响
 
 **Identifier:** DWUI-015
+
+本需求中的本机授权、CLI 实例/凭证、Switch Core 及默认 Core 偏好条款适用于独立 piwork-cli desktop 模式。统一服务端工作台使用 DWUI-HOSTED-001 的服务器浏览器会话与固定所属 Core，不要求这些本机入口；两模式共同的业务反馈、恢复和身份隔离约束保持。
 
 已获本地授权的 Desktop SHALL 分开提供 Sign out 和经影响确认的 Reset browser access。Sign out 清理该实例当前 Core 登录及其内容授权，保留本地控制会话，显示平台注销是否已确认；Reset browser access 结束该实例全部浏览器本地会话、派生 Service/文件/观察访问和本地敏感缓存，但不撤销或删除保存的 Core 会话，随后进入 Browser access required。二者均不得停止 Work、Service 或取消已接受的 Run/Operation。
 
@@ -1102,6 +1108,8 @@ Full screen SHALL 是专注工具栏中的额外、明确用户动作，使用�
 
 **Identifier:** DWEB-USAGE-001
 
+本需求中的本机授权、CLI 实例/凭证、Switch Core 及默认 Core 偏好条款适用于独立 piwork-cli desktop 模式。统一服务端工作台使用 DWUI-HOSTED-001 的服务器浏览器会话与固定所属 Core，不要求这些本机入口；两模式共同的业务反馈、恢复和身份隔离约束保持。
+
 Desktop SHALL 由前台 CLI 提供 127.0.0.1:17891 的本机浏览器入口，可显式 port/no-open；端口占用不自动更换，help 不读取状态或连 Core。启动票据一次显示、五分钟且使用后从地址移除，浏览器使用 HttpOnly 本地会话，平台 token 不交给网页。Copy local link 仅当前电脑且需 CLI/会话持续有效；.work domain 不是同一 URL，外部 DAV 使用 proxy 的随机 Basic 密码。
 
 Service 预览/独立页 SHALL 仅路由声明 HTTP/ws 端口，隔离各应用本机 origin，保留 CSP/X-Frame-Options、应用认证、SSE/WebSocket，不改响应正文或自动批准跨 Service 跳转。嵌入拒绝提供独立页回退；平台身份不交应用。Focus/Full screen、Chat、草稿、阅读位置及 iframe 沿有效 browser-service-access/desktop-ui-language 保持，不以换布局重建业务视图。
@@ -1124,6 +1132,8 @@ piwork-cli --core https://core.example.com desktop
 ### Requirement: 在连接配置中管理下次启动使用的默认 Core
 
 **Identifier:** DWUI-DEFAULT-CORE-001
+
+本需求中的本机授权、CLI 实例/凭证、Switch Core 及默认 Core 偏好条款适用于独立 piwork-cli desktop 模式。统一服务端工作台使用 DWUI-HOSTED-001 的服务器浏览器会话与固定所属 Core，不要求这些本机入口；两模式共同的业务反馈、恢复和身份隔离约束保持。
 
 Desktop SHALL 在登录/连接页面和切换 Core 的配置入口提供默认 Core 的读取、保存及恢复自动选择操作；仅有有效本地浏览器授权即可使用，不要求 Core 可达或账号已登录。界面 SHALL 区分当前连接的 Core、编辑中的地址和已保存的默认 Core，并说明参数/环境覆盖及保存仅影响之后的启动。
 
@@ -1154,6 +1164,8 @@ Desktop SHALL 在登录/连接页面和切换 Core 的配置入口提供默认 C
 ### Requirement: 默认 Core 配置读写有明确反馈和本地安全边界
 
 **Identifier:** DWUI-DEFAULT-CORE-002
+
+本需求中的本机授权、CLI 实例/凭证、Switch Core 及默认 Core 偏好条款适用于独立 piwork-cli desktop 模式。统一服务端工作台使用 DWUI-HOSTED-001 的服务器浏览器会话与固定所属 Core，不要求这些本机入口；两模式共同的业务反馈、恢复和身份隔离约束保持。
 
 默认配置 SHALL 作为当前系统用户的独立、受保护、版本化本地状态保存；相同配置位置的多个 Desktop 实例共享该偏好，不同系统用户相互隔离。完整提交 SHALL 原子发布，并发修改 SHALL 序列化，最终值为最后成功提交的值；读取不得观察到半个文件。配置大小上限 SHALL 为 64 KiB，未知版本、额外或重复字段、错误类型、非法地址及不安全目标 SHALL 被拒绝，原文件保持可供恢复。
 
@@ -1282,3 +1294,31 @@ Create Work SHALL 在提交中、超过十秒等待、明确拒绝与未知结�
 #### Scenario: 关闭等待弹窗
 - **WHEN** 用户在创建等待期间按既有规则关闭弹窗
 - **THEN** 焦点与可用导航正常，关闭只结束展示，不取消远端已受理操作，不重新提交创建
+
+### Requirement: 统一服务端提供完整远程工作台
+
+**Identifier:** DWUI-HOSTED-001
+
+统一应用 SHALL 提供仅凭服务器 IP 即可在另一台电脑浏览器使用的完整工作台，不要求该电脑安装 CLI/Docker、设置代理/DNS/hosts 或使用本机启动票据。托管模式 SHALL 复用既有 Work、Service、Files、Chat、模型/Thinking/图片、设置、包、导入导出和原 ID 恢复能力；页面绑定所属 Core，不提供修改服务器实例所属 Core 或读取宿主 CLI 凭证的入口。
+
+托管 Service SHALL 遵守 browser-service-access 的独立入口、服务端响应 Cookie 分区及首版脚本 Cookie 限制；Service 说明明确依赖 document.cookie/Cookie Store 的应用可能不可用，脚本自行写入 Cookie 不保证跨 Service 隔离。该已知限制不阻塞一键启动或其他工作台功能，不能由“完整工作台”推导为任意应用 Cookie 均兼容且隔离；CLI 本机 Service 模式保持原契约。
+
+身份 SHALL 按独立浏览器会话解析，传输/暂存、缓存、已知操作及 Service 授权均绑定用户/会话。管理员只能以自己的用户身份访问 Work 内容；注销当前浏览器不清理其他独立登录，禁用/密码重置按 Core 撤销语义生效。托管 Inspect 使用已认证会话私有暂存，保持完整格式校验与不执行内容；独立 CLI 的匿名离线 Inspect 保留。
+
+其他 DWUI 业务条款中的“本地/CLI 传输资源”在托管模式 SHALL 对应会话私有服务器资源，并保持原容量、流式进度、条件写入、取消、未知结果与清理语义；不得把上传换成服务器任意路径或绕过 Core。浏览器关闭、导航和断线不改变远端 Work/Run/Operation 生命周期。
+
+#### Scenario: 远程完成完整工作流
+- **WHEN** 用户从另一台电脑只用浏览器登录服务器 IP
+- **THEN** 可以创建 Work、收到模型回复、访问受支持的独立 Service、使用 Files、修改配置并完成 Stop/Export/Inspect/Import/Start，Service 兼容限制明确可见，不出现客户端 localhost 或 desktop open 前置步骤
+
+#### Scenario: 两账号并发使用
+- **WHEN** 两个独立浏览器账号同时使用 Service、Chat、Files 和传输
+- **THEN** 各自只获得自己的内容、临时资源和原 ID，另一账号的晚响应、退出和上传不能覆盖或清理当前身份
+
+#### Scenario: 会话失效和未知修改恢复
+- **WHEN** 原 Run/Operation 观察中断或托管会话被撤销，随后同账号重新登录
+- **THEN** 旧内容连接失效，按原身份及 ID 核对，不自动重发 prompt、导入、包安装或文件修改
+
+#### Scenario: 托管与本机客户端并存
+- **WHEN** 同一 Core 同时被托管浏览器和原生 piwork-cli desktop 使用
+- **THEN** 两种入口独立认证，CLI 凭证、偏好、本机 open/logout 和匿名 Inspect 不被服务器浏览器登录修改

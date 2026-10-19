@@ -8,7 +8,21 @@ Defines how a local piwork installation is initialized and run as a durable Core
 
 ### Requirement: Bootstrap the first administrator explicitly
 
-Core SHALL 保留显式的离线首管理员 bootstrap 命令，并额外提供受保护的在线控制面 bootstrap。`serve` 本身 MUST NOT 创建默认账号或默认密码；空安装可由显式 env 文件初始化或由 `piwork-serve admin bootstrap` 完成。管理员存在后，所有 bootstrap 入口 MUST 拒绝覆盖现有身份。
+Core SHALL 允许空安装通过受首次设置授权保护的网页创建、显式 operator bootstrap，或成对可选的 ADMIN 环境变量创建首管理员。网页和 env 的初始化语义遵守 web-onboarding 与 CORE-DOCKER-INIT-001，所有入口 MUST 原子核验持久用户集合为空，不能因为管理员被禁用而重新开放。不得生成默认账号/密码，不覆盖任何已有身份。
+
+原 operator 在线/离线 bootstrap 的凭证、数据目录锁和未知结果不回退规则 SHALL 保留。网页首次设置证明不等于 operator credential，也不授予一般管理员或 Work 操作权限。
+
+#### Scenario: 网页创建空安装管理员
+- **WHEN** 安装者持有效首次设置授权提交合法账号密码
+- **THEN** 原子创建持久首管理员并失效首次设置授权，不需要停启 Core
+
+#### Scenario: Operator 离线或在线初始化
+- **WHEN** 有权限操作者按原契约执行 admin bootstrap
+- **THEN** 原目录锁、凭证及退出语义保持，不输出密码或摘要
+
+#### Scenario: 重复及并发 bootstrap
+- **WHEN** 已有用户时再次调用任一入口，或多个入口并发初始化
+- **THEN** 已有身份不变，并发最多一个创建成功，其余返回安全冲突
 
 #### Scenario: Bootstrap an empty installation
 
@@ -29,6 +43,7 @@ Core SHALL 保留显式的离线首管理员 bootstrap 命令，并额外提供�
 
 - **WHEN** an operator invokes bootstrap after an administrator already exists
 - **THEN** Core exits nonzero with a concise diagnostic and leaves the existing identity data unchanged
+
 ### Requirement: Configure a usable local runtime profile
 
 Core SHALL 保留离线 runtime 配置命令，并提供受保护的在线全局默认配置 API。全局配置 SHALL 仅作为之后新建 Work 的默认值；已有 Work 的独立配置、模型引用和运行实例 MUST NOT 因全局配置变化而修改、重启或切换模型。
@@ -54,7 +69,9 @@ Core SHALL 保留离线 runtime 配置命令，并提供受保护的在线全局
 - **THEN** health remains available, readiness reports the missing runtime configuration, and Work creation returns an actionable configuration error
 ### Requirement: Start one durable Core application
 
-`serve` SHALL 在管理员和运行时配置缺失时仍打开健康 HTTP listener，初始化完成后再报告相应 readiness；配置存在时继续执行 Docker 验证和 Work recovery。它 MUST NOT 因缺少管理员或默认 runtime 而退出，也 MUST NOT 在启动过程中创建默认 Work。
+统一服务端无参数或 `serve` SHALL 启动同一持久 Core 及浏览器入口，在管理员和运行时配置缺失时仍打开健康 HTTP listener，初始化完成后再报告相应 readiness；配置存在时继续执行 Docker 验证和 Work recovery。它 MUST NOT 因缺少管理员或默认 runtime 而退出，也 MUST NOT 在启动过程中创建默认 Work。
+
+网络必做验收 SHALL 在局域网或独立客户端网络验证通配监听加实际 IP 路径，不要求公网地址或公网连通性实测。多网卡/NAT/受信代理仍可显式配置 `--public-origin`；此高级覆盖不替代基础默认路径验收。IPv6 URL 括号、来源解析保留相应单元/契约覆盖，实际 IPv6 网络实测不作为本变更完成前提。
 
 #### Scenario: Start before initialization
 
@@ -78,11 +95,20 @@ Core SHALL 保留离线 runtime 配置命令，并提供受保护的在线全局
 
 #### Scenario: Refuse accidental remote plaintext binding
 
-- **WHEN** an operator requests a non-loopback listen address without the insecure-remote opt-in
+- **WHEN** 操作者使用仍受原明文 opt-in 约束的独立控制面调用请求非 loopback listener，且没有对应 opt-in
 - **THEN** Core rejects startup with a diagnostic identifying the required opt-in
+
+#### Scenario: 默认统一入口允许远程浏览器
+- **WHEN** 在 Linux 使用默认统一服务端入口启动
+- **THEN** 按文档化远程监听提供网页、健康及业务入口，输出实际可用 IP/URL，浏览器不需要客户端 Desktop；旧受保护监听解析不被全局放宽
+
+#### Scenario: 通配监听后经实际 IP 访问
+- **WHEN** 统一程序监听 `0.0.0.0:7171` 或相同通配地址的测试端口，另一电脑或独立客户端网络使用服务器实际非回环 IPv4 访问
+- **THEN** 默认访问地址和对应 Host 可用于初始化、登录、管理及工作台，无须在基础场景预填 `--public-origin`；输出不将通配地址或客户端 localhost 作为目标，仍执行精确 Host、Origin 和 CSRF 校验
+
 ### Requirement: Expose distinct health and readiness probes
 
-Core SHALL 在能够响应时提供无认证 `GET /healthz`，并在存储初始化及启动恢复完成后通过无认证 `GET /readyz` 报告基础 Work 就绪；关闭时 readiness MUST 失效，runtime/Docker 阻断 Work 操作时 MUST 给出安全原因。未提供 profile 时 SHALL 保持既有 JSON 和基础 readiness 语义，包括 file/snapshot helper 缺失的原有功能降级。
+统一应用 SHALL 在能够响应引导/健康时提供无认证 `GET /healthz`，并在存储初始化及启动恢复完成后通过无认证 `GET /readyz` 报告基础 Work 就绪；关闭时 readiness MUST 失效，runtime/Docker 阻断 Work 操作时 MUST 给出安全原因。未提供 profile 时 SHALL 保持既有 JSON 和基础 readiness 语义，包括 file/snapshot helper 缺失的原有功能降级。
 
 `GET /readyz?profile=docker-delivery` SHALL 复用此入口，仅在基础 ready 且 CORE-DOCKER-STATUS-001 的全部交付组件 ready 时返回 200；其他情况返回 503。此 profile SHALL 保留原 status/reason/state/ready/checks 字段，并附加 preparation；ready/status 是完整交付的布尔值/名称，state/checks 仍反映基础状态，基础 ready 但准备未完成时 reason 为 `DEPENDENCIES_PREPARING` 或 `DEPENDENCY_FAILED`。未知/重复 profile SHALL 返回 400 `INVALID_REQUEST` 和安全 field=`profile`，不原样回显输入。探针不执行模型真实调用，也不保证某用户网络、凭证或具体 Work 已 ready。
 
@@ -105,6 +131,10 @@ Core SHALL 在能够响应时提供无认证 `GET /healthz`，并在存储初始
 #### Scenario: 停机与非法 profile
 - **WHEN** Core 正在关闭，或请求携带未知/重复 profile
 - **THEN** 分别返回非 ready 的 503 或安全的 400，不暴露秘密、不等待镜像准备
+
+#### Scenario: 未初始化安装的容器健康
+- **WHEN** 网页可访问但首管理员或模型尚未配置
+- **THEN** 应用 liveness 成功，Work readiness 按实际缺项失败，默认镜像不把等待用户配置作为应用存活失败
 
 ### Requirement: Authenticate HTTP clients with durable sessions
 Core SHALL expose public login and protected logout and current-identity endpoints. A successful login MUST return an opaque bearer token, expiration, and public identity; Core MUST store only a non-reversible token digest. Missing, invalid, expired, or revoked tokens MUST receive stable authentication errors without revealing whether an account exists.
@@ -197,41 +227,43 @@ Core 收到 SIGINT、SIGTERM，或因 Docker Compose stop/down/重建进入正�
 
 **Identifier:** CORE-DOCKER-INIT-001
 
-Core SHALL 接受部署者显式提供的进程环境变量，复用 PIWORK_ADMIN_ACCOUNT/PIWORK_ADMIN_PASSWORD、PIWORK_MODEL_PROVIDER、PIWORK_MODEL、PIWORK_API_KEY 及可选 PIWORK_MODEL_BASE_URL 初始化缺失的管理员和默认 runtime；既有模型名称与 key 的兼容别名保持。PIWORK_AGENT_IMAGE 及 package/file/snapshot helper 引用 SHALL 可显式提供，或从 Core 发行镜像携带的非敏感配置取得，用户无需为了默认试用另行提供依赖引用。
+统一服务端 SHALL 仅保留 PIWORK_ADMIN_ACCOUNT 和 PIWORK_ADMIN_PASSWORD 作为可选业务初始化环境变量，供测试/自动部署在空安装创建持久管理员。两项均未设置时走网页初始化；必须成对且满足原账号/密码校验，不提供默认值，不在日志或响应中输出值。已有身份 SHALL 不被重启时合法 env 改变覆盖；显式部分、空或非法 ADMIN 输入 SHALL 安全拒绝。
 
-发行默认配置 SHALL 只包含可核查的非敏感发行信息和依赖引用，不包含账号、密码、模型 key、用户 token 或持久用户配置。显式有效的部署输入优先于发行默认值；显式非法输入 SHALL 安全拒绝，不静默回退。发行默认依赖存在但用户未提供初始化字段时 SHALL 保持原有健康可访问、具体状态非就绪的行为，不把非敏感依赖默认值误判为用户提交了不完整模型初始化。用户实际提供的部分或格式非法输入 SHALL 继续按既有校验拒绝，不放宽成自动账号或默认凭据。
+服务端 SHALL 移除 PIWORK_MODEL_PROVIDER、PIWORK_MODEL、PIWORK_MODEL_ID、PIWORK_API_KEY、PIWORK_MODEL_API_KEY、PIWORK_MODEL_BASE_URL 及镜像 env 的业务初始化入口，不读取、解析、校验或采用其值。检测废弃配置只可提示变量名称，不得形成旧初始化兼容分支或泄漏值；已有持久模型/runtime/Key SHALL 保留。标准 Engine/系统环境、独立 CLI 与用户 Service 环境不因此全局删除。
 
-已有管理员、模型与默认配置 SHALL 不被重启时的合法环境值或新发行默认值覆盖；格式非法的已提供输入 SHALL 在使用之前安全拒绝，即使已有持久值也不忽略。首次初始化不得创建默认 Work；未配置发行默认值的原生或高级部署保留现有显式初始化方式。
-
-默认上下文 SHALL 保持一次性 seed 语义，管理员已经禁用、移除或选择的默认值不被启动重置。模型 Base URL 的既有限制 SHALL 保持：HTTPS 可用；HTTP 仅允许 loopback，Agent 中 loopback 指向 Agent 自身。未设置可选 Base URL SHALL 保持未设置，显式空值继续非法。
-
-#### Scenario: 空数据首次启动
-- **WHEN** 空目录收到完整合法的管理员与模型环境值，Core 镜像携带匹配发行依赖
-- **THEN** 不需要环境文件或额外镜像配置即可保存首管理员及默认 runtime、自动准备依赖，完整就绪后允许创建 Work；不输出秘密或预建 Work
-
-#### Scenario: 重建容器时 env 与持久值不同
-- **WHEN** 已有安装以不同合法管理员密码、模型环境或新的发行默认依赖重建
-- **THEN** 既有持久管理员、默认 runtime 和 Work 配置保持，修改仍使用既有管理入口
-
-#### Scenario: 试图使用宿主 HTTP 模型地址
-- **WHEN** 提供 http://host.docker.internal:8000 作为模型 Base URL
-- **THEN** 按既有非法输入契约拒绝，不将 CLI 宿主别名或容器模式作为放开模型限制的依据
+发行默认镜像引用 SHALL 为非敏感、同版可核查配置，随统一程序提供；其中 Agent 引用作为发行默认值由服务端自动使用，统一启动不得提供 `--agent-image` 等手填或高级覆盖入口。端口/数据目录等部署参数通过默认值和显式参数提供，默认使用不需要环境文件。启动不得自动创建 Work，默认上下文仍保持原一次性 seed 规则。网页保存模型的协议/Base URL/secret 校验继续按现有模型契约执行。
 
 #### Scenario: 非敏感默认值不构成用户初始化
-- **WHEN** Core 携带发行依赖配置但用户没有提交管理员或模型初始化值
-- **THEN** Core 仍打开健康 listener 并报告缺项，不因依赖默认值而触发部分模型字段错误，不生成默认账号或密码
+- **WHEN** 空安装以默认命令启动
+- **THEN** 网页初始化可用，不因模型或镜像 env 缺失退出，不生成默认账号、密码或 Work
 
-#### Scenario: 显式部署覆盖发行默认值
-- **WHEN** 首次部署显式传入合法 Agent 或 helper 引用，或传入非法值
-- **THEN** 合法输入优先于发行默认值，非法输入安全拒绝且不回退；原生部署仍可使用现有完整显式输入
+#### Scenario: 空数据首次启动
+- **WHEN** 空安装收到成对有效 ADMIN 值
+- **THEN** 创建与网页同性质的持久管理员并进入普通登录，runtime 仍由网页配置
+
+#### Scenario: 重建容器时 env 与持久值不同
+- **WHEN** 已有安装以不同合法 ADMIN 值和包含旧模型变量的环境重启
+- **THEN** 已有用户、模型、Key、runtime 与 Work 保留，旧模型变量不作为配置来源
 
 #### Scenario: 已有安装收到非法输入
-- **WHEN** 已有持久配置的 Core 收到格式非法的初始化字段
-- **THEN** 在使用之前安全拒绝，不因已有配置或发行默认值而忽略非法输入，不修改原数据
+- **WHEN** 只提供一项、显式空值或非法账号/密码
+- **THEN** 在初始化前安全拒绝并标识相关字段名称，不修改原安装，不回显秘密
+
+#### Scenario: 试图使用宿主 HTTP 模型地址
+- **WHEN** 管理员在网页模型表单提供 http://host.docker.internal:8000 为 Base URL
+- **THEN** 继续按既有模型 URL 契约安全拒绝，不因托管入口放宽；旧模型 env 不参与配置
+
+#### Scenario: 显式部署覆盖发行默认值
+- **WHEN** 管理员通过既有高级配置提供合法或非法 helper 镜像引用
+- **THEN** 合法显式配置只覆盖对应 helper 默认，非法值拒绝且不回退；Agent 仍绑定服务端发行默认，不恢复镜像 env 初始化
+
+#### Scenario: Agent 发行默认值不可手填覆盖
+- **WHEN** 安装者启动统一程序或通过引导/管理页保存 runtime
+- **THEN** Agent 引用来自服务端同版内嵌元数据，不接受启动参数或网页的自定义 Agent 引用；原高级 helper 显式配置仍按其契约校验，不恢复镜像 env 初始化
 
 #### Scenario: 可选模型地址的省略与空值
-- **WHEN** 用户未设置 PIWORK_MODEL_BASE_URL 或显式设置为空
-- **THEN** 分别保持未指定状态或按既有非法输入契约拒绝，不把 CLI 的宿主别名或容器模式当成放开限制的依据
+- **WHEN** 网页或管理 API 保存模型时省略可选地址或显式提交空值
+- **THEN** 按既有模型输入契约区分省略与非法空值，不从旧 env 自动补值
 
 ### Requirement: 自动准备运行依赖并允许失败后恢复
 
@@ -313,11 +345,13 @@ Core SHALL 将当前实际默认 Work 配置所选 Agent 镜像的能力检查�
 
 **Identifier:** CST-OPS-001
 
+统一服务端的默认安装/业务初始化入口遵守 NATIVE-001、CORE-DOCKER-INIT-001 和 web-onboarding：默认网页引导不要求下列高级运维示例中的环境变量或独立 Desktop。下述显式 operator/开发示例仅属于其高级使用场景；模型变量名称作为 shell 交互输入的局部变量不代表保留服务端模型 env 解析。
+
 Core SHALL 作为 Linux 上的 Go daemon/operator 入口直接使用本机 Docker Engine Unix API，CLI 和 Console 分别交付。新安装采用空的 piwork-go-core/schema 1 数据目录，目录 0700、私有文件 0600，固定 owner 并拒绝链接及多进程并发占用；未知格式、无 marker 的非空目录和身份不一致 SHALL 在开放业务及创建 Docker 资源前拒绝，不自动转换或清空旧 TS 数据。备份 SHALL 在 Core 停止后保留整个数据目录以及受管 Docker 卷，不能把仅复制 SQLite 主文件称为完整备份。
 
 Engine 目标 SHALL 按非空 DOCKER_CONTEXT、非空 DOCKER_HOST、Docker config currentContext、默认本机 Unix socket 选择，只接受本机 Unix endpoint；显式目标失败不切换 Engine。固定镜像 ID 已存在时无需读取 registry 凭据，拉取只使用对应 registry 的静态凭据或匿名访问，不调用宿主 Docker CLI/credential helper。Agent/helper 标签、静态能力和镜像 ID SHALL 先核验，缺能力不回退旧 TS/Python 程序。
 
-health 与 ready SHALL 分离；管理员、runtime、默认准备或恢复缺失时不能称 ready。显式参数/环境优先，初始化仅补缺失持久配置；可选 Base URL 缺省与空值区分。operator 与用户凭据 SHALL 分离；密码/Key 通过隐藏输入或 stdin/file 输入，不作为命令参数。env-file 解析不执行 shell。只有未显式选 Core 且默认 loopback 明确拒绝连接时才允许持同一目录锁离线初始化，超时或未知结果不授权本地回退。
+health 与 ready SHALL 分离；管理员、runtime、默认准备或恢复缺失时不能称 ready。运维参数按对应命令契约解析；统一服务端仅保留可选 ADMIN env 补充首次身份，模型和镜像不再由业务 env 初始化；通过页面/API 保存的可选 Base URL 仍区分缺省与空值。operator 与用户凭据 SHALL 分离；密码/Key 通过隐藏输入或 stdin/file 输入，不作为命令参数。保留的高级 operator env-file 解析不执行 shell。只有未显式选 Core 且默认 loopback 明确拒绝连接时才允许持同一目录锁离线初始化，超时或未知结果不授权本地回退。
 
 Core 正常退出 SHALL 停止本安装受管 Work 容器并保留 desired、数据和历史；重启协调原 journal/epoch/标签，未知创建和清理失败保留占用，不全局 prune。Service memoryBytes 的旧正数只作为历史兼容，应用 Service 不设有效内存限制/预留，投影明确 unlimited；CPU/数量和 Agent/helper 政策仍有效。旧受限 Service 由受管恢复替换并保留身份、固定镜像和 workspace。
 

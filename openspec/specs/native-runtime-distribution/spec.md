@@ -10,21 +10,27 @@
 
 **Identifier:** NATIVE-001
 
-系统 SHALL 为 Linux 部署环境交付 Go 构建的 `piwork-serve` 和 `piwork-console`，并按 `cli-runtime-portability` 为 Windows 和 Linux 交付完整的原生 `piwork-cli`；各目标的实际验收状态遵循 CLI-PORT-007，不以交叉编译代替原生运行证据。Core 的正常启动、初始化、控制面和业务执行 SHALL 不依赖宿主机 Node、npm、Python、Go 工具链、Docker CLI 或 openssl 可执行程序；用户 CLI 和 Console 同样 SHALL 不依赖这些程序。`piwork` SHALL 仅作为 `piwork-serve` 的 operator 别名，不接受用户登录或对话命令。
+系统 SHALL 为 Linux 交付同一个 Go 服务端程序，通过 `piwork` 或 `piwork-serve` 名称运行，内含 Core、管理页面、工作台和首次引导；无参数或 serve 启动完整应用。默认发行不得要求分别安装/启动 Console 或客户端 Desktop；保留显式 operator 子命令及其身份边界，用户 login/chat 仍属于 piwork-cli。新入口默认监听允许远程浏览器访问，具体状态与初始化遵守 core-service-startup 和 web-onboarding。
 
-原生程序 SHALL 保持 `control-cli`、`serve-control-plane`、`serve-ui` 和 `desktop-webui` 定义的命令职责、默认端口、凭证位置、输入输出及退出语义。系统 CA、可写数据目录、网络和 Core 所需 Docker Engine 属于部署设施；远程用户 CLI 不要求本机 Docker。浏览器打开器为可选设施，不可用时 SHALL 输出手动入口并保持本地服务运行。
+系统 SHALL 按 cli-runtime-portability 继续为 Windows/Linux 交付完整原生 piwork-cli；其本机 Desktop、proxy、凭证、输出/退出契约保持。统一服务端的 Windows 原生 Core 不属于本次平台支持，浏览器所在操作系统不决定 Core 平台。
+
+正常运行 SHALL 不依赖宿主 Node、npm、Python、Go、Docker CLI 或 openssl；系统 CA、可写私有数据目录、网络及 Linux 本机 Docker Engine 属于设施。浏览器打开器可选，不可用时 SHALL 输出可手动访问的 URL并保持服务运行。
 
 #### Scenario: 在无解释器宿主上完成初始化
-- **WHEN** 操作者仅安装发布程序、必要系统设施和可用 Docker Engine，PATH 中没有 Node、npm、Python、Go、docker、openssl
-- **THEN** 可以启动 Core、显式 bootstrap 管理员、保存 runtime、创建并启动 Work，平台宿主进程不尝试调用上述程序
+- **WHEN** Linux 安装者仅取得服务端程序和必要设施，从无源码目录运行
+- **THEN** 一次启动即可打开本机或远程网页并完成管理员/runtime 引导，没有三个宿主服务进程或运行时前端构建
+
+#### Scenario: Windows 用户只访问服务器
+- **WHEN** Windows 浏览器或已有 piwork-cli 连接 Linux 统一服务端
+- **THEN** 浏览器无需安装 CLI/Docker 即可使用完整托管工作台，CLI 保留自己的既有能力，不宣称 Windows Core 已支持
+
+#### Scenario: 保留命令身份边界
+- **WHEN** 执行 piwork-cli login、piwork-serve status 或 piwork chat
+- **THEN** 前两者使用用户/operator 契约，最后一个仍拒绝为错误入口，不因网页整合读取客户端凭证
 
 #### Scenario: 仅安装用户 CLI
 - **WHEN** 用户机器没有 Docker 或开发工具链，运行 CLI 连接已配置的 Core
 - **THEN** 用户能够登录、管理自己的 Work、观察对话并启动 proxy 或 desktop
-
-#### Scenario: 保留命令身份边界
-- **WHEN** 调用者分别执行 `piwork-cli login`、`piwork-serve status` 和 `piwork chat`
-- **THEN** 前两者使用对应用户与 operator 契约，最后一个命令作为错误入口以 usage 错误拒绝
 
 ### Requirement: 直接使用有明确目标的 Docker Engine
 
@@ -54,21 +60,29 @@ Core SHALL 直接通过 Docker Engine API 管理容器、网络、卷、镜像�
 
 **Identifier:** NATIVE-003
 
-发布的 `piwork-cli desktop` 和 `piwork-console serve` SHALL 包含各自全部构建后浏览器资源，不要求旁置 TS 源文件、node_modules、前端开发服务器或运行时构建。复用界面 SHALL 继续满足 `desktop-ui-language`、`ui-language`、各 Desktop/Console 能力及其 API 契约；迁移本身不引入新的导航、产品文案或功能裁减。
+统一服务端 SHALL 内嵌管理界面、工作台、引导及其全部资源，并携带同版非敏感 Agent/helper 默认引用；Agent 引用 SHALL 与本二进制的发行元数据绑定，是程序默认值，不依赖用户手填、镜像选择或高级覆盖。从任意工作目录运行不要求旁置 WebUI、发行配置文件或源码。复用页面 SHALL 满足既有 desktop-ui-language/ui-language、任务反馈与组件选型约束，不以整合为由裁减 Work、Chat、Files、Service、配置、包和迁移能力。
 
-Desktop SHALL 保持用户会话、独立 Service 本机 origin、Files 和 Chat 的隔离；Console SHALL 保持独立 HTTPS 管理入口及管理员会话。平台凭据仍只保存在相应服务端，不交给 Service 应用。无登录、Core 不可达、加载中、结果未知和登录失效 SHALL 保留既有界面状态及恢复入口。
+托管页面 SHALL 按浏览器会话隔离用户，Service 独立来源、服务端响应 Cookie 分区及首版脚本 Cookie 限制遵守 browser-service-access；完整工作台不代表任意网页应用的 Cookie 透明兼容。管理区和工作台共用应用入口，页面关闭不影响 Core。独立 piwork-cli desktop SHALL 继续内嵌自己的资源并保持原有本机授权、Service origin 和连接恢复语义。平台凭据不得交给页面或 Service。
 
 #### Scenario: 从任意工作目录打开 Desktop
-- **WHEN** 用户仅拷贝发布的 CLI 程序到新目录，并在无源码或静态文件目录处执行 desktop
-- **THEN** 本地登录页面及全部资源可加载；连接 Core 后既有 Work、Service、Files、Chat 和 Settings 可用
+- **WHEN** 在无源码/静态目录的位置启动统一程序
+- **THEN** 登录、管理、引导和工作台资源全部可加载，无需独立 Console 或前端开发服务器
+
+#### Scenario: Agent 默认值随发行交付
+- **WHEN** 原生二进制或统一 Docker 镜像从空安装创建 CoreRuntime
+- **THEN** 保存后的 Agent 引用与该制品内嵌的同版发行元数据一致；无旁置引用文件、Agent 启动覆盖参数或网页镜像输入步骤
+
+#### Scenario: CLI 本机模式继续可用
+- **WHEN** 用户从任意目录运行原生 piwork-cli desktop
+- **THEN** 本机资源、授权恢复及已配置 Core 的 Work/Service/Files/Chat/Settings 继续可用
+
+#### Scenario: Console 独立退出
+- **WHEN** 管理员关闭浏览器管理页面
+- **THEN** Core、Work 和已接受 Operation 继续，只有显式停止统一进程才执行 Core 关闭流程
 
 #### Scenario: 无代理配置访问 Service
 - **WHEN** 用户在桌面 Chrome 或 Edge 中登录 Desktop，预览服务并打开独立应用标签页
-- **THEN** 浏览器无须配置 proxy/PAC/hosts 即可交互，应用认证、SSE、WebSocket 和受限嵌入回退保持原行为
-
-#### Scenario: Console 独立退出
-- **WHEN** 操作者使用发布的 Console 程序提供现有管理页面后停止 Console
-- **THEN** Console 会话及本地连接结束，Core、Work 和已接受 Operation 不因此停止或取消
+- **THEN** 浏览器无须配置 proxy/PAC/hosts 即可交互，受支持应用的认证、SSE、WebSocket 和受限嵌入回退可用；托管 IP 模式按 browser-service-access 明确脚本 Cookie 限制，CLI 本机模式保持原行为
 
 ### Requirement: 保持与容器内 Pi 生态的当前契约
 
@@ -168,9 +182,9 @@ Core SHALL 独立复核固定 Agent 镜像能力，并在 package 标记可导�
 
 **Identifier:** NATIVE-007
 
-最终发布与默认启动入口 SHALL 只使用 Go 平台程序；被替换的 TS Core、用户 CLI、Desktop/Console 服务端、Service MCP 服务端、旧文件/快照/包 helper 以及仅供它们使用的生产依赖 SHALL 从当前源码与构建入口移除，不能以包装器、备用后端或静默 fallback 留存。保留的生产 TS SHALL 限于完整 pi-agentd harness 及其可证明必要的依赖、复用浏览器 UI；开发或测试工具可继续使用 TS/JS，但不得作为独立 TS 平台服务交付。
+最终发布与默认启动入口 SHALL 只使用 Go 平台程序，默认 Linux 服务端使用 NATIVE-001 的统一程序，并核对管理/工作台两套内嵌资源及发行默认引用；被替换的 TS Core、用户 CLI、Desktop/Console 服务端、Service MCP 服务端、旧文件/快照/包 helper 以及仅供它们使用的生产依赖 SHALL 从当前源码与构建入口移除，不能以包装器、备用后端或静默 fallback 留存。保留的生产 TS SHALL 限于完整 pi-agentd harness 及其可证明必要的依赖、复用浏览器 UI；开发或测试工具可继续使用 TS/JS，但不得作为独立 TS 平台服务交付。
 
-最终构建与发布 SHALL 提供可核对的 TS 保留模块/依赖及其消费者清单，以及三种宿主和四种镜像内 Go 程序的构建身份。核验 SHALL 同时检查源码 import graph、构建/发布入口、镜像内容/入口及实际进程；不能仅以宿主 PATH 无 Node 判断迁移完成。共享 TS 包 SHALL 裁剪仅供平台准备、上传、归档或旧后端使用的生产代码，同时保留 harness 的 RPC、Session/Run/history 和包加载依赖。
+最终构建与发布 SHALL 提供可核对的 TS 保留模块/依赖及其消费者清单，以及统一服务端、独立用户 CLI 和四种镜像内 Go 程序的构建身份。核验 SHALL 同时检查源码 import graph、构建/发布入口、镜像内容/入口及实际进程；不能仅以宿主 PATH 无 Node 判断迁移完成。共享 TS 包 SHALL 裁剪仅供平台准备、上传、归档或旧后端使用的生产代码，同时保留 harness 的 RPC、Session/Run/history 和包加载依赖。
 
 发布包 SHALL 提供版本、校验摘要、程序及配套镜像的构建标识；文档 SHALL 区分宿主运行依赖、开发构建依赖和镜像内依赖。当前部署、诊断和验收命令 SHALL 使用实际 Go 入口。历史资料可保留，但 SHALL 标明其适用实现，不能作为当前 Go 验收通过的证据。
 
@@ -187,7 +201,7 @@ Core SHALL 独立复核固定 Agent 镜像能力，并在 package 标记可导�
 - **THEN** 不支持的目录被明确拒绝；新安装只处理自身身份资源，不删除旧目录、容器或卷
 
 #### Scenario: 源码与镜像内平台程序一致
-- **WHEN** 核对最终源码、npm 依赖、七种 Go 程序构建身份、Agent/helper 镜像和实际执行进程
+- **WHEN** 核对最终源码、npm 依赖、所有实际交付的 Go 程序构建身份、Agent/helper 镜像和实际执行进程
 - **THEN** 完整 TS harness 及浏览器的依赖与保留清单一致，独立平台程序全部为 Go，没有旧 TS helper/dist/shebang 或未登记 TS 服务端
 
 #### Scenario: 镜像内 Pi 生态继续可用
