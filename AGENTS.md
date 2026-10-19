@@ -29,14 +29,14 @@
 
 ## 当前架构
 
-- Go Core 负责用户与权限、Work 生命周期、Docker 编排、Service、文件、包和快照。入口为 cmd/piwork-serve/，operator 命令由 internal/coreoperator/ 实现；piwork 是该程序的别名。
-- Go CLI 负责用户命令、本机代理和 Desktop；Go Console 提供独立的管理员 HTTPS 界面。入口分别为 cmd/piwork-cli/ 和 cmd/piwork-console/。
+- Go 统一 Linux 应用负责 Core、托管网页工作台、管理与首次引导；Core 保留用户与权限、Work 生命周期、Docker 编排、Service、文件、包和快照职责。入口为 cmd/piwork-serve/，无参数或 serve 由 internal/app/ 协调启动；operator 命令由 internal/coreoperator/ 实现，piwork 是同一程序的别名。
+- Go CLI 继续独立提供用户命令、本机代理与 Desktop；cmd/piwork-console/ 保留高级独立管理员 HTTPS 入口。默认统一应用不依赖第二个宿主程序或 CLI 容器。托管浏览器会话不读取 CLI 凭证。
 - Service MCP、package-helper、file-helper、snapshot-helper 均由 cmd/ 中对应的 Go 程序实现，随 Agent 或 helper 镜像交付。
 - apps/agentd/ 是容器内完整的 TypeScript Pi Agent SDK harness，包含 RPC、Session/Run、历史、模型/工具执行与资源加载。
 - packages/contracts/、pi-adapter/、pi-package/、work-store/ 保留 Agent 所需的契约、SDK 适配、包加载和私有历史依赖，不能按“Core 已改 Go”整体删除。
 - apps/desktop-webui/、console-webui/ 保留浏览器 TypeScript；构建后的资源嵌入 Go 程序。
 - Core、CLI、Console 和 Go helper 关闭 CGo。宿主平台运行时不依赖 Node、npm、Python、Go 工具链、Docker CLI 或 OpenSSL；镜像内 harness/Pi 生态及用户 Service 的语言依赖按各自职责保留。
-- Core 使用本机 Docker Engine Unix API。当前 Core 部署在 Linux；客户端覆盖 Windows 和 Linux。构建工具依赖与用户运行依赖分开描述。
+- Core 使用本机 Docker Engine Unix API，仅部署在 Linux；Windows/Linux 浏览器可通过服务器 IP 直接使用，原生 CLI 仍覆盖 Windows/Linux。默认无业务环境变量，仅可选成对 ADMIN 测试初始化；模型及 Agent/helper 的旧初始化环境变量不再读取。托管 Service 使用独立受控端口与服务端响应 Cookie 分区，脚本 Cookie 限制归当前变更。构建工具依赖与用户运行依赖分开描述。
 - 当前生产入口使用 Go 平台。旧 TS Core 分支和提交历史保持现状，除非用户另有明确要求，不改写历史或继续处理旧分支。
 
 ## 目录约定
