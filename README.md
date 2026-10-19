@@ -12,9 +12,11 @@ Piwork is an AI work environment that groups conversations, files, and container
 
 ```mermaid
 flowchart LR
-    Browser[Browser] --> CLI[CLI / Desktop]
-    Console[Console] --> Core[Core]
-    CLI --> Core
+    Browser[Browser] --> Web[Workbench / Administration / Setup]
+    CLI[Optional CLI / local Desktop] --> Core
+    subgraph App[piwork - one Linux binary]
+        Web --> Core[Core]
+    end
     Core --> Engine[Docker Engine]
     Core <--> Harness
     Engine --> Harness
@@ -43,7 +45,7 @@ An AI task often involves conversation history, project files, and running servi
 | **Service** | An application service inside a Work. Core manages its lifecycle; it communicates over the Work's private network and can share the workspace when authorized. |
 | **Harness** | The agent execution layer inside a Work. It uses the Pi Agent SDK to run conversations, models, and tools, and load Skills and Pi Packages. |
 
-Each Work has its own Harness. The Harness executes tasks, Services provide application capabilities, and both operate within the Work. Core manages these resources, while CLI / Desktop provides the user interface.
+Each Work has its own Harness. The Harness executes tasks, Services provide application capabilities, and both operate within the Work. Core manages these resources. The unified application provides the browser workbench; CLI / local Desktop remains optional.
 
 The current source defaults new application Services to Python + NiceGUI + SQLite, with standard dependencies preinstalled and support for additional Python packages. The NiceGUI base now has an anonymously verified fixed release; platform Docker references retain their recorded release identities. See the [Web base guide](deploy/images/web-base/README.md) for source, maintenance, dependency installation, sqlite3 and automatic application updates.
 
@@ -71,15 +73,13 @@ Release 0.0.7 accepts pasted, dropped or selected images in Chat, including imag
 
 ## Quick Start
 
-### Try Core and CLI with Docker
+### Start Piwork with one command
 
 <!-- docker-quickstart:start -->
 
-### Core
+**Local candidate: images have not been pushed.** These commands describe the pending candidate; older images do not contain the unified entry.
 
-Use Linux x86-64 with Docker Engine 28+. The host environment must already contain `PIWORK_ADMIN_ACCOUNT`, `PIWORK_ADMIN_PASSWORD` (at least 12 characters), `PIWORK_MODEL_PROVIDER`, `PIWORK_MODEL`, and `PIWORK_API_KEY`. Optional `PIWORK_MODEL_BASE_URL` uses HTTPS reachable from Work containers; leave it unset when unused.
-
-Run Core in the host terminal. The image includes release defaults and automatically prepares the Agent and helpers:
+Use Linux x86-64 and rootful Docker Engine 28+. One container serves the workbench, administration and first-time setup, with no environment variables or client CLI required:
 
 ```sh
 docker run --detach --init \
@@ -87,73 +87,49 @@ docker run --detach --init \
     --network host \
     --restart unless-stopped \
     --stop-timeout 60 \
-    --env PIWORK_ADMIN_ACCOUNT \
-    --env PIWORK_ADMIN_PASSWORD \
-    --env PIWORK_MODEL_PROVIDER \
-    --env PIWORK_MODEL \
-    --env PIWORK_API_KEY \
-    --env PIWORK_MODEL_BASE_URL \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a
+    docker.io/pphboy/piwork-core:0.0.7-7aa5f944fc2a-ee65124bec72-dirty
 ```
 
-Core can also be deployed alone with [Core-only docker-compose.yml](deploy/docker/docker-compose.yml) (Compose 2.24+); CLI keeps its independent Docker command. Stop the previous Core before switching deployment methods, retaining the same data directory. For an optional combined setup, see [Single-host deployment](examples/single-host/README.md).
-
-Core readiness includes preparation and recovery of the current default Work runtime. After changing the default image or package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.
-
-### CLI
-
-Run CLI independently against an existing Core; no Core initialization variables are needed. This command connects to Core on the same host; replace `PIWORK_CORE_URL` for another Core. It waits for full readiness and opens a terminal:
+Open the reported access address. For a detached container, retrieve the first-time setup link on the server. It authorizes creation of the first administrator and expires after ten minutes; keep it private:
 
 ```sh
-docker run --rm --init --interactive --tty \
-    --add-host host.docker.internal:host-gateway \
-    --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
-    --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
+docker logs piwork-core-quickstart
 ```
 
-Run the following **inside the CLI container**. Replace `ACCOUNT` with your account; login prompts for a hidden password. Creating a Work starts it automatically:
+If it expires, retrieve a new link as the installation operator:
 
 ```sh
-piwork-cli login --account ACCOUNT
-piwork-cli work create --name 'My Work' --wait
+docker exec piwork-core-quickstart piwork-serve --data-dir /var/lib/piwork/quickstart/core setup link
 ```
 
-Replace `WORK_ID` with the actual `workId` returned by creation, then send your first message:
+Create the administrator, sign in, and follow the browser guide: save the model ID, API type, Base URL and API Key, then save CoreRuntime and wait for dependency preparation. The Agent image is embedded with the server release and supplied automatically; it has no input, selector or advanced override. Model Test is explicit and optional; saving does not call the model. Open the workbench to create a Work, chat, manage files or open Services. Saved accounts, models and Works survive restart.
 
-```sh
-piwork-cli chat WORK_ID --message 'Hello, Piwork!'
-```
+The server listens on `0.0.0.0:7171` by default. Local or remote computers open `http://SERVER_IP:7171` using its actual non-loopback IP. A local network is sufficient; no public IP is required. Allow TCP 7171 for the main site and TCP 17891–17954 for Service entries (override with `--service-ports`); 7172 is internal Agent RPC, not a browser port. Piwork proxies these ports; user containers are not published directly. Opening only the main port leaves the workbench usable but Services unreachable. No domain, DNS or local proxy is required. HTTP is unencrypted; configure HTTPS explicitly for untrusted networks and expose/proxy both the main site and every Service entry port.
 
-The reply appears in the terminal. Use `exit` to leave; the same CLI startup command reuses credentials and exiting the CLI does not stop Work. For failed readiness or interrupted observation, use the [terminal operations guide](deploy/docker/README.md#terminal-operations) to inspect status or recover the original Operation/Run without resubmitting.
+Services support server-side login using response Cookies, Basic/Bearer, HTTP, SSE and WebSocket. Response Cookies stay on the server, partitioned by browser session and Service; Secure Cookies are sent only through HTTPS entries. Apps that read/write document.cookie or Cookie Store (including script-read CSRF Cookies) are not guaranteed to work transparently. Script-written browser Cookies are not isolated across Services on the same IP and are never forwarded upstream. Hard-coded .work URLs, cross-site SSO and upstream HTTPS are outside transparent support. Application CSP/X-Frame-Options remain intact; open an application tab when embedding is denied.
+
+Optional [Compose](deploy/docker/docker-compose.yml) (2.24+) and the [single-host example](examples/single-host/README.md) open the same web application. CLI is an optional advanced tool. See the [operations guide](deploy/docker/README.md#terminal-operations) for recovery.
 
 <!-- docker-quickstart:end -->
 
 For Windows Docker clients, remote Linux Core addresses, or the advanced Core-only Demo, see the [Docker guide](deploy/docker/README.md#terminal-operations).
 
 <details>
-<summary>Use the native CLI (connect to an existing Core)</summary>
+<summary>Use the native Linux application (source candidate)</summary>
 
 <!-- native-quickstart:start -->
 
-Download the [Linux Core / Console / CLI bundle](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz) or [experimental Windows CLI 0.0.5 executable](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe). Verify the release SHA256. Extract the Linux bundle to find the CLI in `bin/`; save the Windows executable as `piwork-cli.exe`. Full Windows native acceptance remains pending.
-
-Use an already configured, ready Core, compatible with your native CLI version. In the directory containing the executable, replace `CORE_URL` with its address (`http://127.0.0.1:7171` for the same Linux computer) and `ACCOUNT` with your account. Login prompts for a hidden password. On Windows PowerShell, replace `./piwork-cli` with `.\piwork-cli.exe`.
+The unified entry is a source candidate; the published 0.0.7 bundle retains its previous behavior. After building below, start the Linux program (the executable also works outside the checkout):
 
 ```sh
-./piwork-cli --core CORE_URL login --account ACCOUNT
-./piwork-cli work create --name 'My Work' --wait
+./dist/go/piwork --no-open
 ```
 
-Use the actual `workId` returned by creation:
+Data defaults to `piwork/server` in the user configuration directory and the listener to `0.0.0.0:7171`; use the actual IP link printed in the terminal. See `--help` for `--data-dir`, `--listen`, `--public-origin`, `--service-ports` and TLS options. Keep the first-time setup link private. The Agent image is embedded with the server release and used automatically, with no image input or override. Create the administrator and configure the model in the browser; `piwork setup link` rotates an expired proof. Exiting this program stops managed Works under the Core shutdown contract; closing a browser does not.
 
-```sh
-./piwork-cli chat WORK_ID --message 'Hello, Piwork!'
-```
-
-More commands are in the [CLI guide](openspec/specs/control-cli/spec.md); see [CLI delivery](openspec/specs/control-cli/spec.md) for platform details.
+`piwork-cli` retains its independent Windows/Linux terminal and local Desktop modes. `piwork-console` remains the older standalone administrator entry and is not required for default startup. The historical [0.0.7 Linux bundle](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz) and [experimental Windows CLI 0.0.5](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe) do not contain this unified server entry.
 
 <!-- native-quickstart:end -->
 
@@ -183,11 +159,12 @@ Configure matching model credentials on the target Core separately. Platform-man
 
 ## Current Status / Limitations
 
+- **Unified entry candidate**: Current source supports a Linux server with one-command browser workbench, administration and onboarding. Windows/Linux browsers connect remotely. The unified image is not published; historical releases do not identify this candidate.
 - **0.0.7 Preview**: Intended for evaluation and feedback. The native Windows CLI is experimental and has not completed all formal acceptance checks.
 - **Core**: A single Linux installation using the local Docker Engine Unix socket.
 - **Clients**: The native CLI targets Windows and Linux, with command-line and Desktop interfaces. Native Windows acceptance remains incomplete; [CLI requirements](openspec/specs/control-cli/spec.md) describe supported behavior.
 - **Docker delivery**: The verified scope is `linux/amd64`, Linux Core, and Linux CLI containers on Linux or Windows Docker Desktop. Docker Engine 28+ is required; Compose 2.24+ is needed when choosing the Core-only deployment, the single-host example or advanced Compose setups. See [delivery requirements](openspec/specs/docker-delivery/spec.md).
-- **Runtime requirements**: Running a Work requires an available Docker Engine, model configuration, and credentials. A normal Core shutdown stops managed Work containers and preserves persistent data. Exiting the CLI does not stop Works.
+- **Runtime requirements**: Running a Work requires an available Docker Engine, model configuration, and credentials. A normal Core shutdown stops managed Work containers and preserves persistent data. Closing a browser or exiting CLI does not stop Works.
 - **Verification**: See [build and test entry points](AGENTS.md#构建与验证) for prerequisites and checks. Platform and real-interaction coverage is reported with the corresponding execution results; skipped checks do not count as passing.
 
 ## Roadmap

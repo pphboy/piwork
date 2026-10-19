@@ -5,9 +5,9 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { checkQuickStart, codeBlocks, section, projectRoot } from './check-docker-quickstart.mjs';
+import { checkQuickStart, checkPackageMaterials, installerFiles, codeBlocks, section, projectRoot } from './check-docker-quickstart.mjs';
 import { syncWebsite } from './sync-docker-website.mjs';
-import { sourceInputHash } from './build-docker-release.mjs';
+import { sourceInputHash, currentRelease } from './build-docker-release.mjs';
 import { singleHostReadme } from './docker-quickstart-content.mjs';
 
 const docs = ['README.md', 'README.zh-CN.md', 'deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
@@ -22,7 +22,7 @@ function fixture(t) {
   return base;
 }
 function refresh(base) {
-  const path = join(base, 'deploy/docker/release.json');
+  const path = join(base, 'deploy/docker/candidate.json');
   const metadata = JSON.parse(readFileSync(path, 'utf8'));
   if (metadata.state === 'candidate') metadata.sourceInputHash = sourceInputHash(base);
   writeFileSync(path, JSON.stringify(metadata, null, 2) + '\n');
@@ -33,7 +33,7 @@ function replace(base, name, from, to) {
   writeFileSync(path, text.replaceAll(from, to));
 }
 
-test('paired default commands are standalone, terminal-only and parse as shell', () => {
+test('paired default commands are standalone, browser-first and parse as shell', () => {
   const baseline = codeBlocks(section(readFileSync(join(projectRoot, docs[0]), 'utf8'), 'docker-quickstart'));
   for (const name of docs) {
     const blocks = codeBlocks(section(readFileSync(join(projectRoot, name), 'utf8'), 'docker-quickstart'));
@@ -42,21 +42,31 @@ test('paired default commands are standalone, terminal-only and parse as shell',
   }
 });
 
-test('published material retains its recorded identity as source development continues', t => {
-  const base = fixture(t);
-  const original = readFileSync(join(base, 'deploy/docker/release.json'), 'utf8');
-  writeFileSync(join(base, 'cmd/new-development-input.go'), '// New source does not rewrite a published artifact.\n');
-  assert.deepEqual(checkQuickStart(base), []);
-  assert.equal(readFileSync(join(base, 'deploy/docker/release.json'), 'utf8'), original);
-  const metadata = JSON.parse(original);
-  metadata.sourceInputHash = sourceInputHash(base);
-  writeFileSync(join(base, 'deploy/docker/release.json'), JSON.stringify(metadata));
-  assert(checkQuickStart(base).some(error => error.includes('published source identity')));
+test('candidate synchronization preserves the last published artifact identity', t => {
+ const base=fixture(t);
+ const path=join(base,'deploy/docker/release.json');const original=readFileSync(path,'utf8');
+ writeFileSync(join(base,'cmd/new-development-input.go'),'// New candidate input.\n');
+ assert(checkQuickStart(base).some(message=>message.includes('source inputs changed')));
+ refresh(base);assert.deepEqual(checkQuickStart(base),[]);
+ assert.equal(readFileSync(path,'utf8'),original);
+});
+
+test('packaged candidate is checked against current review inputs while published provenance stays unchanged', t => {
+  const base=fixture(t), release=currentRelease(base), output=join(base,'dist/installer');
+  mkdirSync(output,{recursive:true});
+  const manifest={...release,images:Object.fromEntries(Object.entries(release.images).map(([role,reference])=>[role,{reference,imageId:'sha256:'+'a'.repeat(64)}]))};
+  for(const name of installerFiles.filter(name=>name!=='SHA256SUMS'))writeFileSync(join(output,name),name==='release-manifest.json'?JSON.stringify(manifest):name);
+  copyFileSync(join(base,'deploy/docker/docker-compose.yml'),join(output,'docker-compose.yml'));
+  copyFileSync(join(base,'examples/single-host/docker-compose.yml'),join(output,'single-host-compose.yml'));
+  writeFileSync(join(output,'SHA256SUMS'),installerFiles.filter(name=>name!=='SHA256SUMS').map(name=>createHash('sha256').update(readFileSync(join(output,name))).digest('hex')+'  '+name+'\n').join(''));
+  assert.deepEqual(checkPackageMaterials(output,base),[]);
+  manifest.sourceInputHash='b'.repeat(64);writeFileSync(join(output,'release-manifest.json'),JSON.stringify(manifest));
+  assert(checkPackageMaterials(output,base).includes('candidate source identity differs'));
 });
 
 test('a consistent local candidate requires current inputs and an explicit candidate label', t => {
   const base = fixture(t);
-  const path = join(base, 'deploy/docker/release.json');
+  const path = join(base, 'deploy/docker/candidate.json');
   const metadata = JSON.parse(readFileSync(path, 'utf8'));
   metadata.state = 'candidate';
   writeFileSync(path, JSON.stringify(metadata));
@@ -75,16 +85,16 @@ test('a consistent local candidate requires current inputs and an explicit candi
 test('semantic deployment drift fails with safe diagnostics', async t => {
   const cases = [
     ['Core bind', base => docs.forEach(name => replace(base, name, '--volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core', '--volume /var/lib/piwork/quickstart/core:/wrong')), 'complete startup'],
-    ['Core secret leaked to CLI', base => docs.forEach(name => replace(base, name, '--add-host host.docker.internal:host-gateway', '--env PIWORK_API_KEY=synthetic-canary-must-not-print --add-host host.docker.internal:host-gateway')), 'complete startup'],
-    ['language mismatch', base => replace(base, 'README.zh-CN.md', 'Hello, Piwork!', 'Different message'), 'paired terminal'],
+    ['Core secret leaked to CLI', base => replace(base, 'examples/single-host/docker-compose.yml.template', '      PIWORK_CORE_URL:', '      PIWORK_API_KEY: synthetic-canary-must-not-print\n      PIWORK_CORE_URL:'), 'CLI must not receive'],
+    ['language mismatch', base => replace(base, 'README.zh-CN.md', 'docker logs piwork-core-quickstart', 'docker logs another-container'), 'paired browser'],
     ['Arch moved back', base => replace(base, 'README.md', '## Architecture', '## Hidden Architecture'), 'Architecture'],
     ['Logo alignment', base => replace(base, 'README.md', '<p align="center">', '<p align="left">'), 'Logo'],
     ['image state path', base => replace(base, 'Dockerfile.cli', 'PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json', 'PIWORK_CONFIG_PATH=/wrong'), 'private persistent'],
     ['old Docker build context', base => writeFileSync(join(base, 'Dockerfile.core.dockerignore'), '**\n!dist/\n'), 'source/secret'],
     ['missing readiness', base => replace(base, 'deploy/docker/wait-core.sh', 'readyz?profile=docker-delivery', 'healthz'), 'exact full-readiness'],
     ['Compose host network', base => replace(base, 'deploy/docker/docker-compose.yml.template', 'network_mode: host', 'network_mode: bridge'), 'Core host'],
-    ['Compose env file', base => replace(base, 'deploy/docker/docker-compose.yml.template', '    environment:', '    env_file: ./core.env\n    environment:'), 'single-file'],
-    ['optional address empty', base => replace(base, 'deploy/docker/docker-compose.yml.template', '      PIWORK_MODEL_BASE_URL:', '      PIWORK_MODEL_BASE_URL: ""'), 'pass through by name'],
+    ['Compose env file', base => replace(base, 'deploy/docker/docker-compose.yml.template', '    volumes:', '    env_file: ./core.env\n    volumes:'), 'single-file'],
+    ['legacy model init returned', base => replace(base, 'deploy/docker/docker-compose.yml.template', '    volumes:', '    environment:\n      PIWORK_MODEL: synthetic\n    volumes:'), 'no business environment'],
     ['CLI gets socket', base => replace(base, 'examples/single-host/docker-compose.yml.template', '      - client-state:/var/lib/piwork/client', '      - /var/run/docker.sock:/var/run/docker.sock'), 'CLI must not receive'],
     ['Core file includes CLI', base => replace(base, 'deploy/docker/docker-compose.yml.template', 'services:', 'services:\n  cli:\n    image: unexpected'), 'Core only'],
     ['example dependency', base => replace(base, 'examples/single-host/docker-compose.yml.template', '    profiles: [cli]', '    profiles: [cli]\n    depends_on: [core]'), 'lifecycle dependencies'],
@@ -92,7 +102,7 @@ test('semantic deployment drift fails with safe diagnostics', async t => {
     ['generated material changed', base => replace(base, 'deploy/docker/docker-compose.yml', 'name: piwork-quickstart', 'name: another'), 'generated file'],
     ['candidate warning removed', base => {
       // This negative case must remain a candidate even when the checkout is published.
-      const path = join(base, 'deploy/docker/release.json');
+      const path = join(base, 'deploy/docker/candidate.json');
       const metadata = JSON.parse(readFileSync(path, 'utf8'));
       metadata.state = 'candidate';
       writeFileSync(path, JSON.stringify(metadata, null, 2) + '\n');
@@ -112,7 +122,7 @@ test('semantic deployment drift fails with safe diagnostics', async t => {
 
 test('CLI gate reports source drift without displaying configured values', t => {
   const base = fixture(t);
-  const path = join(base, 'deploy/docker/release.json');
+  const path = join(base, 'deploy/docker/candidate.json');
   const metadata = JSON.parse(readFileSync(path, 'utf8'));
   metadata.state = 'candidate';
   writeFileSync(path, JSON.stringify(metadata));
@@ -126,7 +136,7 @@ test('CLI gate reports source drift without displaying configured values', t => 
 
 test('website command and download drift is checked without a sibling-repository dependency', t => {
   const base = fixture(t), website = join(base, 'website');
-  const release = JSON.parse(readFileSync(join(base, 'deploy/docker/release.json'), 'utf8'));
+  const release = JSON.parse(readFileSync(join(base, 'deploy/docker/candidate.json'), 'utf8'));
   for (const prefix of ['', 'zh/']) {
     const guide = join(website, 'docs', prefix, 'guide'); mkdirSync(guide, { recursive: true });
     mkdirSync(join(website, 'docs', prefix, 'spec'), { recursive: true });
@@ -149,7 +159,7 @@ test('website command and download drift is checked without a sibling-repository
   const historical = join(website, 'docs/public/install/0.0.1'); mkdirSync(historical, { recursive: true });
   writeFileSync(join(historical, 'frozen.txt'), 'old-release');
   syncWebsite(website, next, base);
-  for (const prefix of ['', 'zh/']) assert(readFileSync(join(website, 'docs', prefix, 'guide/first-work.md'), 'utf8').includes(next.images.cli));
+  for (const prefix of ['', 'zh/']) assert(readFileSync(join(website, 'docs', prefix, 'index.md'), 'utf8').includes(next.releaseId));
   assert.equal(readFileSync(join(historical, 'frozen.txt'), 'utf8'), 'old-release');
   syncWebsite(website, release, base);
   for (const prefix of ['', 'zh/']) for (const name of ['index.md', 'guide/first-work.md', 'guide/installation.md', 'guide/source-installation.md', 'guide/index.md', 'spec/index.md']) {
@@ -158,7 +168,7 @@ test('website command and download drift is checked without a sibling-repository
     assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('stale current image')), name);
     writeFileSync(path, original);
   }
-  replace(website, 'docs/zh/guide/quick-start.md', 'Hello, Piwork!', 'A different message');
+  replace(website, 'docs/zh/guide/quick-start.md', 'docker logs piwork-core-quickstart', 'docker logs another-container');
   assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website zh/Quick Start')));
   writeFileSync(join(publicPath, 'docker-compose.yml'), 'different material');
   assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website download')));

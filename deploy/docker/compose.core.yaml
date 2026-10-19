@@ -5,18 +5,7 @@ services:
     init: true
     user: "0:0"
     network_mode: host
-    command: ["serve", "--allow-insecure-remote"]
-    environment:
-      PIWORK_ADMIN_ACCOUNT:
-      PIWORK_ADMIN_PASSWORD:
-      PIWORK_MODEL_PROVIDER:
-      PIWORK_MODEL:
-      PIWORK_API_KEY:
-      PIWORK_MODEL_BASE_URL:
-      DOCKER_HOST: unix:///var/run/docker.sock
-      DOCKER_CONTEXT: ""
-      PIWORK_DATA_DIR: /var/lib/piwork/core
-      PIWORK_CORE_URL: http://127.0.0.1:7171
+    command: ["serve", "--data-dir", "/var/lib/piwork/core", "--no-open"]
     volumes:
       - type: bind
         source: /var/run/docker.sock
@@ -36,7 +25,7 @@ services:
     stop_grace_period: 60s
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:7171/readyz?profile=docker-delivery"]
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:7171/healthz"]
       interval: 5s
       timeout: 4s
       retries: 120

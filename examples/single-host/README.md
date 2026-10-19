@@ -2,27 +2,35 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Run Core and CLI as two separate containers on one Linux host with Compose. See [Quick Start](../../README.md#quick-start) for independent usage. Core is the background service; CLI is the terminal client. Exiting or reopening CLI leaves Core and its tasks running.
+**Local candidate: images have not been pushed.**
 
-Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. Exported host inputs: `PIWORK_ADMIN_ACCOUNT`, `PIWORK_ADMIN_PASSWORD` (at least 12 characters), `PIWORK_MODEL_PROVIDER`, `PIWORK_MODEL`, `PIWORK_API_KEY`; leave optional `PIWORK_MODEL_BASE_URL` unset when unused. Initialization inputs go only to Core.
+Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. The default starts only the unified application container; initialize in the browser without business environment variables. CLI uses an explicit optional profile.
 
-Uses a separate `/var/lib/piwork/examples/single-host/core` directory and `piwork-single-host-client-state` volume, retaining permission checks. Ports 7171/7172 cannot be shared with another Core: stop conflicting services normally first, retaining their data. This example does not stop another installation automatically.
-
-Obtain this directory’s `docker-compose.yml` and run from its directory. No clone, environment file or second YAML is needed. Start Core first:
+Uses its own `/var/lib/piwork/examples/single-host/core` directory. Stop conflicting installations first, preserving their data.
 
 ```sh
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 ```
 
-Core readiness includes preparation and recovery of the current default Work runtime. After changing the default image or package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.
+```sh
+docker compose -f docker-compose.yml logs core
+```
 
-Open CLI; repeat only this command to return, without initialization inputs. If Core is absent or unready, CLI waits up to 600 seconds and fails safely without starting Core:
+Open the private setup link from the logs, create the administrator, sign in and configure the model/CoreRuntime. The release supplies the Agent image automatically, with no image input or advanced override. If the link expires:
+
+```sh
+docker compose -f docker-compose.yml exec -T core piwork-serve --data-dir /var/lib/piwork/examples/single-host/core setup link
+```
+
+The server listens on `0.0.0.0:7171` by default. Local or remote computers open `http://SERVER_IP:7171` using its actual non-loopback IP. A local network is sufficient; no public IP is required. Allow TCP 7171 for the main site and TCP 17891–17954 for Service entries (override with `--service-ports`); 7172 is internal Agent RPC, not a browser port. Piwork proxies these ports; user containers are not published directly. Opening only the main port leaves the workbench usable but Services unreachable. No domain, DNS or local proxy is required. HTTP is unencrypted; configure HTTPS explicitly for untrusted networks and expose/proxy both the main site and every Service entry port.
+
+Services support server-side login using response Cookies, Basic/Bearer, HTTP, SSE and WebSocket. Response Cookies stay on the server, partitioned by browser session and Service; Secure Cookies are sent only through HTTPS entries. Apps that read/write document.cookie or Cookie Store (including script-read CSRF Cookies) are not guaranteed to work transparently. Script-written browser Cookies are not isolated across Services on the same IP and are never forwarded upstream. Hard-coded .work URLs, cross-site SSO and upstream HTTPS are outside transparent support. Application CSP/X-Frame-Options remain intact; open an application tab when embedding is denied.
+
+Optional CLI: run after Core is fully ready; its own volume retains credentials. Exiting CLI does not stop Works.
 
 ```sh
 docker compose -f docker-compose.yml run --rm --no-deps cli
 ```
-
-Inside CLI, replace ACCOUNT with your account; login prompts for a hidden password. WORK_ID comes from creation:
 
 ```sh
 piwork-cli login --account ACCOUNT
@@ -33,15 +41,9 @@ piwork-cli work create --name 'My Work' --wait
 piwork-cli chat WORK_ID --message 'Hello, Piwork!'
 ```
 
-Use `exit` to leave; credentials persist and Work continues. Inspect status/logs and stop/restart Core (normal shutdown stops managed Works; restart restores their desired state):
-
 ```sh
-docker compose -f docker-compose.yml exec -T core piwork-serve --json status
-docker compose -f docker-compose.yml logs --tail 100 core
 docker compose -f docker-compose.yml stop core
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 ```
 
-Verify successful Core exit and retain its data, client volume and Work volumes; do not use `down -v` or global prune. Recover interrupted observation using original Operation/Run IDs without resubmitting. See the [Docker guide](../../deploy/docker/README.md#terminal-operations).
-
-Maintenance: update the template, both language guides and referring documentation when images, environment, network, storage or readiness/shutdown rules change; run the Docker Quick Start checks.
+Normal shutdown preserves users, models, Work IDs, history and volumes. Do not use down -v or global prune. See the [installation guide](../../deploy/docker/README.md#terminal-operations).

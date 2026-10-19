@@ -1,19 +1,12 @@
 name: piwork-single-host
-# Readiness includes current default Work preparation; recheck after changing defaults.
+# Liveness keeps first-time setup accessible; /readyz tracks runtime preparation.
 services:
   core:
-    image: docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a
+    image: docker.io/pphboy/piwork-core:0.0.7-7aa5f944fc2a-ee65124bec72-dirty
     init: true
     user: "0:0"
     network_mode: host
-    environment:
-      PIWORK_ADMIN_ACCOUNT:
-      PIWORK_ADMIN_PASSWORD:
-      PIWORK_MODEL_PROVIDER:
-      PIWORK_MODEL:
-      PIWORK_API_KEY:
-      PIWORK_MODEL_BASE_URL:
-      PIWORK_DATA_DIR: /var/lib/piwork/examples/single-host/core
+    command: ["serve", "--data-dir", "/var/lib/piwork/examples/single-host/core", "--no-open"]
     volumes:
       - type: bind
         source: /var/run/docker.sock
@@ -28,7 +21,7 @@ services:
     stop_grace_period: 60s
     restart: unless-stopped
   cli:
-    image: docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
+    image: docker.io/pphboy/piwork-cli:0.0.7-7aa5f944fc2a-ee65124bec72-dirty
     profiles: [cli]
     init: true
     user: "0:0"

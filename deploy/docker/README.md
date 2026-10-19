@@ -2,19 +2,17 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Start Core and CLI separately; Core manages the Agent, helpers, Services and Work storage. Native CLI delivery remains independent.
+One Linux application serves Core, the full web workbench, administration and first-time setup. CLI remains an independent optional tool.
 
 This release runs application Services without a Piwork memory cap or Service memory reservation. CPU, service/volume counts and Agent/helper memory policy still apply. Legacy Service memoryBytes values remain compatibility history; memoryLimitMode / serviceMemoryPolicy explicitly report unlimited, and zero is not a zero-byte allowance. A normal Core upgrade replaces older capped Service containers through managed recovery and retains workspace data. See [resource and upgrade details](../../openspec/specs/core-service-startup/spec.md) and the [Web base guide](../images/web-base/README.md).
 
-## Terminal Docker Quick Start
+## Docker Quick Start
 
 <!-- docker-quickstart:start -->
 
-### Core
+**Local candidate: images have not been pushed.** These commands describe the pending candidate; older images do not contain the unified entry.
 
-Use Linux x86-64 with Docker Engine 28+. The host environment must already contain `PIWORK_ADMIN_ACCOUNT`, `PIWORK_ADMIN_PASSWORD` (at least 12 characters), `PIWORK_MODEL_PROVIDER`, `PIWORK_MODEL`, and `PIWORK_API_KEY`. Optional `PIWORK_MODEL_BASE_URL` uses HTTPS reachable from Work containers; leave it unset when unused.
-
-Run Core in the host terminal. The image includes release defaults and automatically prepares the Agent and helpers:
+Use Linux x86-64 and rootful Docker Engine 28+. One container serves the workbench, administration and first-time setup, with no environment variables or client CLI required:
 
 ```sh
 docker run --detach --init \
@@ -22,47 +20,30 @@ docker run --detach --init \
     --network host \
     --restart unless-stopped \
     --stop-timeout 60 \
-    --env PIWORK_ADMIN_ACCOUNT \
-    --env PIWORK_ADMIN_PASSWORD \
-    --env PIWORK_MODEL_PROVIDER \
-    --env PIWORK_MODEL \
-    --env PIWORK_API_KEY \
-    --env PIWORK_MODEL_BASE_URL \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a
+    docker.io/pphboy/piwork-core:0.0.7-7aa5f944fc2a-ee65124bec72-dirty
 ```
 
-Core can also be deployed alone with [Core-only docker-compose.yml](docker-compose.yml) (Compose 2.24+); CLI keeps its independent Docker command. Stop the previous Core before switching deployment methods, retaining the same data directory. For an optional combined setup, see [Single-host deployment](../../examples/single-host/README.md).
-
-Core readiness includes preparation and recovery of the current default Work runtime. After changing the default image or package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.
-
-### CLI
-
-Run CLI independently against an existing Core; no Core initialization variables are needed. This command connects to Core on the same host; replace `PIWORK_CORE_URL` for another Core. It waits for full readiness and opens a terminal:
+Open the reported access address. For a detached container, retrieve the first-time setup link on the server. It authorizes creation of the first administrator and expires after ten minutes; keep it private:
 
 ```sh
-docker run --rm --init --interactive --tty \
-    --add-host host.docker.internal:host-gateway \
-    --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
-    --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
+docker logs piwork-core-quickstart
 ```
 
-Run the following **inside the CLI container**. Replace `ACCOUNT` with your account; login prompts for a hidden password. Creating a Work starts it automatically:
+If it expires, retrieve a new link as the installation operator:
 
 ```sh
-piwork-cli login --account ACCOUNT
-piwork-cli work create --name 'My Work' --wait
+docker exec piwork-core-quickstart piwork-serve --data-dir /var/lib/piwork/quickstart/core setup link
 ```
 
-Replace `WORK_ID` with the actual `workId` returned by creation, then send your first message:
+Create the administrator, sign in, and follow the browser guide: save the model ID, API type, Base URL and API Key, then save CoreRuntime and wait for dependency preparation. The Agent image is embedded with the server release and supplied automatically; it has no input, selector or advanced override. Model Test is explicit and optional; saving does not call the model. Open the workbench to create a Work, chat, manage files or open Services. Saved accounts, models and Works survive restart.
 
-```sh
-piwork-cli chat WORK_ID --message 'Hello, Piwork!'
-```
+The server listens on `0.0.0.0:7171` by default. Local or remote computers open `http://SERVER_IP:7171` using its actual non-loopback IP. A local network is sufficient; no public IP is required. Allow TCP 7171 for the main site and TCP 17891–17954 for Service entries (override with `--service-ports`); 7172 is internal Agent RPC, not a browser port. Piwork proxies these ports; user containers are not published directly. Opening only the main port leaves the workbench usable but Services unreachable. No domain, DNS or local proxy is required. HTTP is unencrypted; configure HTTPS explicitly for untrusted networks and expose/proxy both the main site and every Service entry port.
 
-The reply appears in the terminal. Use `exit` to leave; the same CLI startup command reuses credentials and exiting the CLI does not stop Work. For failed readiness or interrupted observation, use the [terminal operations guide](#terminal-operations) to inspect status or recover the original Operation/Run without resubmitting.
+Services support server-side login using response Cookies, Basic/Bearer, HTTP, SSE and WebSocket. Response Cookies stay on the server, partitioned by browser session and Service; Secure Cookies are sent only through HTTPS entries. Apps that read/write document.cookie or Cookie Store (including script-read CSRF Cookies) are not guaranteed to work transparently. Script-written browser Cookies are not isolated across Services on the same IP and are never forwarded upstream. Hard-coded .work URLs, cross-site SSO and upstream HTTPS are outside transparent support. Application CSP/X-Frame-Options remain intact; open an application tab when embedding is denied.
+
+Optional [Compose](docker-compose.yml) (2.24+) and the [single-host example](../../examples/single-host/README.md) open the same web application. CLI is an optional advanced tool. See the [operations guide](#terminal-operations) for recovery.
 
 <!-- docker-quickstart:end -->
 
@@ -70,21 +51,11 @@ The reply appears in the terminal. Use `exit` to leave; the same CLI startup com
 
 <!-- core-compose-demo:start -->
 
-This optional advanced Core-only Demo uses a separate `/var/lib/piwork/core` installation and the same Docker terminal CLI. It shares ports 7171/7172 with the default examples; stop the previous Core normally before switching. Use the existing initialization environment above. Mounting and safe initialization create a new empty directory; retain existing ownership and permissions.
+The optional Compose demo uses its own `/var/lib/piwork/core` directory. Stop an installation using the same ports normally before starting. Set up the administrator and model in the browser.
 
 ```sh
-PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.7-19fc33907232-3ab753f8a90a \
+PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.7-7aa5f944fc2a-ee65124bec72-dirty \
     docker compose -f compose.core.yaml up --detach --wait --wait-timeout 600 core
-```
-
-Run this CLI command on the same host, then follow Quick Start inside the container to log in to this Demo, create a Work and chat. Readiness waiting is built into the image entrypoint:
-
-```sh
-docker run --rm --init --interactive --tty \
-    --add-host host.docker.internal:host-gateway \
-    --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
-    --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
 ```
 
 <!-- core-compose-demo:end -->
@@ -93,62 +64,62 @@ docker run --rm --init --interactive --tty \
 
 <!-- terminal-operations:start -->
 
-Inspect the default Docker run Core in the host terminal. Full readiness is different from process health; fix environment, socket, image or port failures before retrying the CLI:
+Process health and runtime readiness are separate: the web pages and /healthz work before administrator/model setup, while /readyz remains unready.
 
 ```sh
-docker exec piwork-core-quickstart piwork-serve --json status
-docker logs --tail 100 piwork-core-quickstart
+docker exec piwork-core-quickstart piwork-serve --data-dir /var/lib/piwork/quickstart/core --json status
 ```
 
-For Core-only Compose, use:
+The server listens on `0.0.0.0:7171` by default. Local or remote computers open `http://SERVER_IP:7171` using its actual non-loopback IP. A local network is sufficient; no public IP is required. Allow TCP 7171 for the main site and TCP 17891–17954 for Service entries (override with `--service-ports`); 7172 is internal Agent RPC, not a browser port. Piwork proxies these ports; user containers are not published directly. Opening only the main port leaves the workbench usable but Services unreachable. No domain, DNS or local proxy is required. HTTP is unencrypted; configure HTTPS explicitly for untrusted networks and expose/proxy both the main site and every Service entry port.
+
+Services support server-side login using response Cookies, Basic/Bearer, HTTP, SSE and WebSocket. Response Cookies stay on the server, partitioned by browser session and Service; Secure Cookies are sent only through HTTPS entries. Apps that read/write document.cookie or Cookie Store (including script-read CSRF Cookies) are not guaranteed to work transparently. Script-written browser Cookies are not isolated across Services on the same IP and are never forwarded upstream. Hard-coded .work URLs, cross-site SSO and upstream HTTPS are outside transparent support. Application CSP/X-Frame-Options remain intact; open an application tab when embedding is denied.
+
+Ports remain pinned to their Service identities across restart, so another application cannot inherit an old origin. If the pool is full, the operator must explicitly enlarge the range and allow those ports. Grants expire on restart.
+
+Advanced deployment: `--public-origin` sets the exact public origin (client Forwarded headers are ignored); `--tls-cert` / `--tls-key` serve TLS on all entries. The key must be private. A trusted reverse proxy must forward the main site and every independent Service port. HTTPS certificates must be trusted on each entry; proxying only the main site is insufficient. Model endpoints must be reachable from Work networks.
+
+Optional test bootstrap: only the paired `PIWORK_ADMIN_ACCOUNT` and `PIWORK_ADMIN_PASSWORD` create the first administrator on an empty installation. Synthetic example values: `admin` / `synthetic-test-password`. Existing accounts are retained. Former model and Agent/helper initialization variables are removed; saved models remain usable.
+
+Optional CLI connects to a ready Core and retains its separate credential volume. Windows/Linux browsers use the web application directly without CLI.
 
 ```sh
-docker compose -f docker-compose.yml exec -T core piwork-serve --json status
-docker compose -f docker-compose.yml logs --tail 100 core
+docker run --rm --init --interactive --tty \
+    --add-host host.docker.internal:host-gateway \
+    --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
+    --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
+    docker.io/pphboy/piwork-cli:0.0.7-7aa5f944fc2a-ee65124bec72-dirty
 ```
 
-Core readiness includes preparation and recovery of the current default Work runtime. After changing the default image or package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.
+```sh
+piwork-cli login --account ACCOUNT
+piwork-cli work create --name 'My Work' --wait
+```
 
-Inside the CLI container, use the original returned IDs to recover an accepted Operation/Run without creating or sending again:
+```sh
+piwork-cli chat WORK_ID --message 'Hello, Piwork!'
+```
+
+Read back an unknown write before retrying. Recover the original Operation/Run IDs without creating or sending again:
 
 ```sh
 piwork-cli operation show OPERATION_ID
 piwork-cli run watch WORK_ID RUN_ID --after SEQUENCE
 ```
 
-`--wait` observes for up to 120 seconds. Ctrl+C during chat requests cancellation under the existing contract; continue a conversation using its original `SESSION_ID`. Credentials live in the separate volume. Exiting or rebuilding the CLI does not stop Work; repeat its startup command to return. Changed valid initialization values do not replace saved administrator/model settings; use existing operator commands for changes.
-
-Stop the default Core normally and verify successful exit. Managed Works stop while IDs, history, volumes and desired state remain. Retain logs on failure; do not report confirmed shutdown:
+Normal shutdown stops this installation’s managed Works and retains IDs, history, volumes and desired state. Closing the browser or CLI does not stop Works.
 
 ```sh
 docker stop --time 60 piwork-core-quickstart
 test "$(docker inspect --format '{{.State.ExitCode}}' piwork-core-quickstart)" = 0
-```
-
-Restart with the retained data:
-
-```sh
 docker start piwork-core-quickstart
 ```
-
-Use the following for Compose stop/restart. Normal operation does not use `down -v` or global prune. Back up the consistent Core directory and matching Work volumes; SQLite or an image alone cannot recover a complete Work. Pin release references for upgrade/rollback, retain the old Compose and manifest, and check format compatibility first. File exchange and custom CAs are optional advanced steps; the first chat needs no exchange volume.
 
 ```sh
 docker compose -f docker-compose.yml stop core
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 ```
 
-Windows Docker Desktop uses Linux containers; the terminal CLI connects to a reachable Linux Core. Replace `CORE_URL` with the actual address in PowerShell; login still prompts for a hidden password inside the container:
-
-```powershell
-docker run --rm --init --interactive --tty `
-    --env PIWORK_CORE_URL=CORE_URL `
-    --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client `
-    docker.io/pphboy/piwork-cli:0.0.7-19fc33907232-3ab753f8a90a
-if ($LASTEXITCODE -ne 0) { throw 'CLI container failed' }
-```
-
-Remote Linux clients likewise replace the Core URL. HTTPS retains certificate verification. Model/MCP endpoints must be reachable from Core Work networks; the client host alias does not replace them.
+Retain the data directory and matching Work volumes; do not use down -v or global prune. Stop the old Core normally before upgrading and reuse `--data-dir`; users and saved models do not need re-entry. Backups need a consistent Core directory and matching Work volumes.
 
 <!-- terminal-operations:end -->
 

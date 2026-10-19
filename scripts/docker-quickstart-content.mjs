@@ -5,12 +5,6 @@ export function coreRun(reference) {
     '    --network host \\',
     '    --restart unless-stopped \\',
     '    --stop-timeout 60 \\',
-    '    --env PIWORK_ADMIN_ACCOUNT \\',
-    '    --env PIWORK_ADMIN_PASSWORD \\',
-    '    --env PIWORK_MODEL_PROVIDER \\',
-    '    --env PIWORK_MODEL \\',
-    '    --env PIWORK_API_KEY \\',
-    '    --env PIWORK_MODEL_BASE_URL \\',
     '    --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \\',
     '    --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \\',
     `    ${reference}`,
@@ -35,8 +29,8 @@ export function cliFileRun(reference) {
 
 const code = (text, language = 'sh') => '```' + language + '\n' + text + '\n```';
 const preparationNote = (zh) => zh
-  ? 'Core 就绪包括当前默认 Work 运行环境的准备和恢复。修改默认镜像或包选择后，创建 Work 前再次确认就绪；配置保存成功不表示后台准备已经结束。首次准备与普通创建的等待时间分别计算。'
-  : 'Core readiness includes preparation and recovery of the current default Work runtime. After changing the default image or package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.';
+  ? 'Core 就绪包括当前默认 Work 运行环境的准备和恢复。升级发行 Agent 或修改包选择后，创建 Work 前再次确认就绪；配置保存成功不表示后台准备已经结束。首次准备与普通创建的等待时间分别计算。'
+  : 'Core readiness includes preparation and recovery of the current default Work runtime. After upgrading the release Agent or changing package selection, confirm readiness again before creating a Work; saving configuration does not wait for background preparation. Initial preparation and ordinary creation have separate wait times.';
 export const composeCommands = 'docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core';
 export const singleHostCommands = composeCommands + '\ndocker compose -f docker-compose.yml run --rm --no-deps cli';
 export const firstWorkCommands = "piwork-cli login --account ACCOUNT\npiwork-cli work create --name 'My Work' --wait";
@@ -44,80 +38,67 @@ export const firstChatCommand = "piwork-cli chat WORK_ID --message 'Hello, Piwor
 
 export function quickStart(metadata, language, { composeLink, operationsLink, exampleLink }) {
   const zh = language === 'zh';
-  const refs = Object.fromEntries(Object.entries(metadata.images).map(([role, image]) => [role, typeof image === 'string' ? image : image.reference]));
-  const candidate = metadata.state !== 'published';
-  const notice = candidate ? (zh
-    ? '**本地候选：镜像尚未推送。** 以下命令和 Compose 文件对应本次候选，公开使用入口将在发行核对完成后启用。\n\n'
-    : '**Local candidate: images have not been pushed.** These commands and the Compose file match this candidate; the public entry becomes available after release verification.\n\n') : '';
-  const prerequisite = zh
-    ? '使用 Linux x86-64 和 Docker Engine 28+。宿主环境中应已有 `PIWORK_ADMIN_ACCOUNT`、`PIWORK_ADMIN_PASSWORD`（至少 12 位）、`PIWORK_MODEL_PROVIDER`、`PIWORK_MODEL`、`PIWORK_API_KEY`。可选 `PIWORK_MODEL_BASE_URL` 使用 Work 可达的 HTTPS 地址；不用时保持未设置。'
-    : 'Use Linux x86-64 with Docker Engine 28+. The host environment must already contain `PIWORK_ADMIN_ACCOUNT`, `PIWORK_ADMIN_PASSWORD` (at least 12 characters), `PIWORK_MODEL_PROVIDER`, `PIWORK_MODEL`, and `PIWORK_API_KEY`. Optional `PIWORK_MODEL_BASE_URL` uses HTTPS reachable from Work containers; leave it unset when unused.';
-  const core = zh ? '在宿主终端运行 Core。镜像自带发行默认值，并自动准备 Agent 和 helper：' : 'Run Core in the host terminal. The image includes release defaults and automatically prepares the Agent and helpers:';
-  const cli = zh ? 'CLI 独立运行，只需已有且可达的 Core，不需要 Core 初始化变量。下面连接同机 Core；连接其他 Core 时替换 `PIWORK_CORE_URL`。它等待完整就绪后进入终端：' : 'Run CLI independently against an existing Core; no Core initialization variables are needed. This command connects to Core on the same host; replace `PIWORK_CORE_URL` for another Core. It waits for full readiness and opens a terminal:';
-  const compose = zh
-    ? `Core 也可用 [Core-only docker-compose.yml](${composeLink}) 单独部署（Compose 2.24+），CLI 仍使用自己的 Docker 命令。切换 Core 部署方式前先停止原容器，保留同一数据目录。Core 与 CLI 合并的可选方式见 [单机部署示例](${exampleLink})。`
-    : `Core can also be deployed alone with [Core-only docker-compose.yml](${composeLink}) (Compose 2.24+); CLI keeps its independent Docker command. Stop the previous Core before switching deployment methods, retaining the same data directory. For an optional combined setup, see [Single-host deployment](${exampleLink}).`;
-  const login = zh ? '下面的命令在 **CLI 容器内**执行。将 `ACCOUNT` 替换为你的账号；登录时隐藏密码输入。创建 Work 会自动启动它：' : 'Run the following **inside the CLI container**. Replace `ACCOUNT` with your account; login prompts for a hidden password. Creating a Work starts it automatically:';
-  const chat = zh ? '使用创建结果中的实际 `workId` 替换 `WORK_ID`，发送第一条消息：' : 'Replace `WORK_ID` with the actual `workId` returned by creation, then send your first message:';
-  const finish = zh
-    ? `回复直接显示在终端。用 \`exit\` 离开；同样的 CLI 启动命令会复用凭证，Work 不因 CLI 退出而停止。等待失败或观察中断时，按 [终端操作说明](${operationsLink}) 查询状态或恢复原 Operation/Run，不重复提交。`
-    : `The reply appears in the terminal. Use \`exit\` to leave; the same CLI startup command reuses credentials and exiting the CLI does not stop Work. For failed readiness or interrupted observation, use the [terminal operations guide](${operationsLink}) to inspect status or recover the original Operation/Run without resubmitting.`;
-  return notice + ['### Core', prerequisite, core, code(coreRun(refs.core)), compose, preparationNote(zh), '### CLI', cli, code(cliRun(refs.cli)), login, code(firstWorkCommands), chat, code(firstChatCommand), finish].join('\n\n') + '\n';
-}
-
-export function coreDemo(metadata, language) {
-  const zh = language === 'zh';
   const core = typeof metadata.images.core === 'string' ? metadata.images.core : metadata.images.core.reference;
-  const cli = typeof metadata.images.cli === 'string' ? metadata.images.cli : metadata.images.cli.reference;
-  const explanation = zh
-    ? '这是可选的高级 Core-only Demo，使用独立的 `/var/lib/piwork/core`，CLI 仍用同版 Docker 终端。与默认示例共用 7171/7172 端口，切换前先正常停止原 Core。宿主仍使用上面的初始化环境；新空目录由挂载和安全初始化创建，已有目录保留原所有者和权限。'
-    : 'This optional advanced Core-only Demo uses a separate `/var/lib/piwork/core` installation and the same Docker terminal CLI. It shares ports 7171/7172 with the default examples; stop the previous Core normally before switching. Use the existing initialization environment above. Mounting and safe initialization create a new empty directory; retain existing ownership and permissions.';
-  const startup = [`PIWORK_CORE_IMAGE=${core} \\`, '    docker compose -f compose.core.yaml up --detach --wait --wait-timeout 600 core'].join('\n');
-  const continueText = zh
-    ? '在同一宿主运行下列 CLI 命令，然后在容器内按 Quick Start 登录这个 Demo 的账号、创建 Work 并聊天。就绪等待在镜像入口内完成：'
-    : 'Run this CLI command on the same host, then follow Quick Start inside the container to log in to this Demo, create a Work and chat. Readiness waiting is built into the image entrypoint:';
-  return [explanation, code(startup), continueText, code(cliRun(cli))].join('\n\n') + '\n';
+  return [
+    metadata.state === 'published' ? '' : (zh ? '**本地候选：镜像尚未推送。** 以下命令对应待验证候选，不能用旧版镜像代替统一入口。' : '**Local candidate: images have not been pushed.** These commands describe the pending candidate; older images do not contain the unified entry.'),
+    zh ? 'Linux x86-64、rootful Docker Engine 28+。运行一个容器即可提供工作台、管理和首次设置，无需环境变量或客户端 CLI：' : 'Use Linux x86-64 and rootful Docker Engine 28+. One container serves the workbench, administration and first-time setup, with no environment variables or client CLI required:',
+    code(coreRun(core)),
+    zh ? '打开终端输出中的访问地址。后台启动时，在服务器查看首次设置链接；该链接授权创建首管理员，十分钟后过期，请勿分享：' : 'Open the reported access address. For a detached container, retrieve the first-time setup link on the server. It authorizes creation of the first administrator and expires after ten minutes; keep it private:',
+    code('docker logs piwork-core-quickstart'),
+    zh ? '链接过期时取得新链接（仅安装维护者可执行）：' : 'If it expires, retrieve a new link as the installation operator:',
+    code('docker exec piwork-core-quickstart piwork-serve --data-dir /var/lib/piwork/quickstart/core setup link'),
+    zh ? '浏览器创建管理员并登录，按引导保存模型 ID、API 类型、Base URL 和 API Key，再保存 CoreRuntime，等待依赖准备完成。Agent 镜像随服务端版本内置并自动使用，无需也不能手填、选择或高级覆盖。模型 Test 是显式可选操作；保存不自动调用模型。打开工作台创建 Work，然后聊天、管理文件或打开 Service。已保存的账号、模型和 Work 在重启后保留。' : 'Create the administrator, sign in, and follow the browser guide: save the model ID, API type, Base URL and API Key, then save CoreRuntime and wait for dependency preparation. The Agent image is embedded with the server release and supplied automatically; it has no input, selector or advanced override. Model Test is explicit and optional; saving does not call the model. Open the workbench to create a Work, chat, manage files or open Services. Saved accounts, models and Works survive restart.',
+    serviceNetworkNote(zh), serviceCompatibilityNote(zh),
+    zh ? `可选 [Compose](${composeLink})（2.24+）和 [单机示例](${exampleLink}) 同样直接进入网页；CLI 是高级可选工具。运行与恢复见 [安装手册](${operationsLink})。` : `Optional [Compose](${composeLink}) (2.24+) and the [single-host example](${exampleLink}) open the same web application. CLI is an optional advanced tool. See the [operations guide](${operationsLink}) for recovery.`,
+  ].filter(Boolean).join('\n\n')+'\n';
 }
 
+export function serviceNetworkNote(zh) {
+  return zh
+    ? '服务端默认监听 `0.0.0.0:7171`；本机或远程电脑通过实际非回环 IP 打开 `http://服务器IP:7171`。局域网即可使用，无需公网地址。主站放行 TCP 7171，Service 入口另需 TCP 17891–17954（可用 `--service-ports` 修改）；7172 是内部 Agent RPC，不向浏览器开放。端口由 Piwork 代理，不是用户容器直出。只开放主站时工作台仍可使用，Service 入口会不可达。无需域名、DNS 或本机代理。HTTP 不加密；不可信网络请显式配置 HTTPS，并同时放行/代理主站与全部 Service 端口。'
+    : 'The server listens on `0.0.0.0:7171` by default. Local or remote computers open `http://SERVER_IP:7171` using its actual non-loopback IP. A local network is sufficient; no public IP is required. Allow TCP 7171 for the main site and TCP 17891–17954 for Service entries (override with `--service-ports`); 7172 is internal Agent RPC, not a browser port. Piwork proxies these ports; user containers are not published directly. Opening only the main port leaves the workbench usable but Services unreachable. No domain, DNS or local proxy is required. HTTP is unencrypted; configure HTTPS explicitly for untrusted networks and expose/proxy both the main site and every Service entry port.';
+}
+export function serviceCompatibilityNote(zh) {
+  return zh
+    ? 'Service 支持响应 Cookie 的服务端登录、Basic/Bearer、HTTP、SSE 和 WebSocket。响应 Cookie 按浏览器会话及 Service 保存在服务器，Secure Cookie 仅通过 HTTPS 入口发送。依赖 document.cookie/Cookie Store 读写（如脚本读取 CSRF Cookie）的应用不保证透明兼容；脚本写入浏览器 Cookie 也不保证同 IP 跨 Service 隔离，且不会转发上游。不支持硬编码 .work URL、跨站 SSO 或上游 HTTPS 的透明适配。应用 CSP/X-Frame-Options 保留；禁止嵌入时使用新标签页。'
+    : 'Services support server-side login using response Cookies, Basic/Bearer, HTTP, SSE and WebSocket. Response Cookies stay on the server, partitioned by browser session and Service; Secure Cookies are sent only through HTTPS entries. Apps that read/write document.cookie or Cookie Store (including script-read CSRF Cookies) are not guaranteed to work transparently. Script-written browser Cookies are not isolated across Services on the same IP and are never forwarded upstream. Hard-coded .work URLs, cross-site SSO and upstream HTTPS are outside transparent support. Application CSP/X-Frame-Options remain intact; open an application tab when embedding is denied.';
+}
+export function coreDemo(metadata, language) {
+ const zh=language==='zh';const core=typeof metadata.images.core==='string'?metadata.images.core:metadata.images.core.reference;
+ return [zh?'可选 Compose Demo 使用独立数据目录 `/var/lib/piwork/core`，正常停止占用相同端口的安装后再启动。模型和管理员仍在网页设置。':'The optional Compose demo uses its own `/var/lib/piwork/core` directory. Stop an installation using the same ports normally before starting. Set up the administrator and model in the browser.',
+ code('PIWORK_CORE_IMAGE='+core+' \\\n    docker compose -f compose.core.yaml up --detach --wait --wait-timeout 600 core')].join('\n\n')+'\n';
+}
 export function terminalOperations(metadata, language) {
-  const zh = language === 'zh';
-  const cli = typeof metadata.images.cli === 'string' ? metadata.images.cli : metadata.images.cli.reference;
-  const intro = zh ? '宿主终端中检查默认 Docker run Core。完整就绪不同于进程健康；修正环境、socket、镜像或端口问题后重试 CLI：' : 'Inspect the default Docker run Core in the host terminal. Full readiness is different from process health; fix environment, socket, image or port failures before retrying the CLI:';
-  const status = 'docker exec piwork-core-quickstart piwork-serve --json status\ndocker logs --tail 100 piwork-core-quickstart';
-  const composeStatus = 'docker compose -f docker-compose.yml exec -T core piwork-serve --json status\ndocker compose -f docker-compose.yml logs --tail 100 core';
-  const recovering = zh ? 'Core 使用单独的 Compose 部署时改用：' : 'For Core-only Compose, use:';
-  const observe = zh ? '下面在 CLI 容器内使用原返回值，恢复已经接受的 Operation/Run，不重复创建或发送消息：' : 'Inside the CLI container, use the original returned IDs to recover an accepted Operation/Run without creating or sending again:';
-  const observeCode = 'piwork-cli operation show OPERATION_ID\npiwork-cli run watch WORK_ID RUN_ID --after SEQUENCE';
-  const bounds = zh ? '`--wait` 观察预算为 120 秒。聊天的 Ctrl+C 按既有规则请求取消；继续会话使用原 `SESSION_ID`。登录凭证保存在独立卷，`exit` 和重建 CLI 不停止 Work；同样的 CLI 启动命令可以重新进入。合法初始化值变化不覆盖已保存的管理员或模型，修改使用既有 operator 命令。' : '`--wait` observes for up to 120 seconds. Ctrl+C during chat requests cancellation under the existing contract; continue a conversation using its original `SESSION_ID`. Credentials live in the separate volume. Exiting or rebuilding the CLI does not stop Work; repeat its startup command to return. Changed valid initialization values do not replace saved administrator/model settings; use existing operator commands for changes.';
-  const stop = zh ? '正常停止默认 Core，并核对退出成功。受管 Work 停止，原 ID、历史、卷和运行意图保留；失败时保留日志，不宣称已确认关闭：' : 'Stop the default Core normally and verify successful exit. Managed Works stop while IDs, history, volumes and desired state remain. Retain logs on failure; do not report confirmed shutdown:';
-  const stopCode = 'docker stop --time 60 piwork-core-quickstart\ntest "$(docker inspect --format \'{{.State.ExitCode}}\' piwork-core-quickstart)" = 0';
-  const restart = zh ? '复用数据重新启动：' : 'Restart with the retained data:';
-  const composeStop = 'docker compose -f docker-compose.yml stop core\ndocker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core';
-  const preserve = zh ? 'Compose 的停止/重启使用下面命令。常规操作不使用 `down -v` 或全局 prune。备份包括一致的 Core 目录和匹配的 Work 卷；只备份 SQLite 或镜像不能恢复完整 Work。升级/回退固定发行引用，保留旧 Compose 与清单，并先核对格式兼容。文件交换与自定义 CA 是可选高级步骤，首次聊天不需要交换卷。' : 'Use the following for Compose stop/restart. Normal operation does not use `down -v` or global prune. Back up the consistent Core directory and matching Work volumes; SQLite or an image alone cannot recover a complete Work. Pin release references for upgrade/rollback, retain the old Compose and manifest, and check format compatibility first. File exchange and custom CAs are optional advanced steps; the first chat needs no exchange volume.';
-  const windowsIntro = zh ? 'Windows Docker Desktop 使用 Linux 容器，终端 CLI 连接可达的 Linux Core。PowerShell 中 `CORE_URL` 替换为实际地址；密码仍在容器内隐藏输入：' : 'Windows Docker Desktop uses Linux containers; the terminal CLI connects to a reachable Linux Core. Replace `CORE_URL` with the actual address in PowerShell; login still prompts for a hidden password inside the container:';
-  const windows = ['docker run --rm --init --interactive --tty `', '    --env PIWORK_CORE_URL=CORE_URL `', '    --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client `', `    ${cli}`, "if ($LASTEXITCODE -ne 0) { throw 'CLI container failed' }"].join('\n');
-  const remote = zh ? '远端 Linux 客户端同样替换 Core URL。HTTPS 保持证书验证；模型/MCP 地址须从 Core 的 Work 网络可达，CLI 的宿主别名不能替代它。' : 'Remote Linux clients likewise replace the Core URL. HTTPS retains certificate verification. Model/MCP endpoints must be reachable from Core Work networks; the client host alias does not replace them.';
-  return [intro, code(status), recovering, code(composeStatus), preparationNote(zh), observe, code(observeCode), bounds, stop, code(stopCode), restart, code('docker start piwork-core-quickstart'), preserve, code(composeStop), windowsIntro, code(windows, 'powershell'), remote].join('\n\n') + '\n';
+ const zh=language==='zh';const cli=typeof metadata.images.cli==='string'?metadata.images.cli:metadata.images.cli.reference;
+ return [zh?'进程健康与运行环境就绪分开：未创建管理员或模型时网页和 /healthz 正常，/readyz 尚未就绪。':'Process health and runtime readiness are separate: the web pages and /healthz work before administrator/model setup, while /readyz remains unready.',
+ code('docker exec piwork-core-quickstart piwork-serve --data-dir /var/lib/piwork/quickstart/core --json status'),
+ serviceNetworkNote(zh), serviceCompatibilityNote(zh),
+ zh?'端口与 Service 身份持久绑定，重启不把旧 origin 分配给另一个应用。入口池耗尽时维护者显式扩大范围并放行端口；旧授权不跨重启保留。':'Ports remain pinned to their Service identities across restart, so another application cannot inherit an old origin. If the pool is full, the operator must explicitly enlarge the range and allow those ports. Grants expire on restart.',
+ zh?'高级部署：`--public-origin` 指定精确公开来源（忽略客户端 Forwarded 头），`--tls-cert` / `--tls-key` 为所有入口提供 TLS。Key 文件须为私有权限。受信反向代理必须完整转发主站和每个独立 Service 端口，HTTPS 各入口须证书可信；只代理主站不足以使用 Service。模型端点须从 Work 网络可达。':'Advanced deployment: `--public-origin` sets the exact public origin (client Forwarded headers are ignored); `--tls-cert` / `--tls-key` serve TLS on all entries. The key must be private. A trusted reverse proxy must forward the main site and every independent Service port. HTTPS certificates must be trusted on each entry; proxying only the main site is insufficient. Model endpoints must be reachable from Work networks.',
+ zh?'可选测试初始化：仅 `PIWORK_ADMIN_ACCOUNT` 与 `PIWORK_ADMIN_PASSWORD` 成对有效时创建空安装的首管理员。示例合成值：`admin` / `synthetic-test-password`。已有账号不被覆盖；模型及 Agent/helper 的旧初始化环境变量已移除，持久模型继续使用。':'Optional test bootstrap: only the paired `PIWORK_ADMIN_ACCOUNT` and `PIWORK_ADMIN_PASSWORD` create the first administrator on an empty installation. Synthetic example values: `admin` / `synthetic-test-password`. Existing accounts are retained. Former model and Agent/helper initialization variables are removed; saved models remain usable.',
+ zh?'可选 CLI 连接已经就绪的 Core，保留独立凭证卷；Windows/Linux 浏览器直接使用网页，无需 CLI。':'Optional CLI connects to a ready Core and retains its separate credential volume. Windows/Linux browsers use the web application directly without CLI.',
+ code(cliRun(cli)),code(firstWorkCommands),code(firstChatCommand),
+ zh?'未知修改先读回状态，使用原 Operation/Run ID 恢复，不重复创建或发消息：':'Read back an unknown write before retrying. Recover the original Operation/Run IDs without creating or sending again:',
+ code('piwork-cli operation show OPERATION_ID\npiwork-cli run watch WORK_ID RUN_ID --after SEQUENCE'),
+ zh?'正常停止会停止本安装受管 Work，保留 ID、历史、卷和运行意图；关闭网页或 CLI 不停止 Work。':'Normal shutdown stops this installation’s managed Works and retains IDs, history, volumes and desired state. Closing the browser or CLI does not stop Works.',
+ code('docker stop --time 60 piwork-core-quickstart\ntest "$(docker inspect --format \'{{.State.ExitCode}}\' piwork-core-quickstart)" = 0\ndocker start piwork-core-quickstart'),
+ code('docker compose -f docker-compose.yml stop core\n'+composeCommands),
+ zh?'保留原数据目录及匹配 Work 卷，不使用 down -v 或全局 prune。升级前正常停止旧 Core，复用 `--data-dir`，用户和模型不要求重新输入。备份需要一致的 Core 数据及 Work 卷。':'Retain the data directory and matching Work volumes; do not use down -v or global prune. Stop the old Core normally before upgrading and reuse `--data-dir`; users and saved models do not need re-entry. Backups need a consistent Core directory and matching Work volumes.'
+ ].join('\n\n')+'\n';
 }
-
 export function singleHostReadme(metadata, language) {
-  const zh = language === 'zh';
-  return [zh ? '# 单机部署示例' : '# Single-host deployment',
-    zh ? '[English](README.md) | **简体中文**' : '**English** | [简体中文](README.zh-CN.md)',
-    metadata.state === 'published' ? '' : (zh ? '**本地候选：镜像尚未推送。**' : '**Local candidate: images have not been pushed.**'),
-    zh ? '在一台 Linux 主机上用 Compose 运行 Core 和 CLI 两个独立容器。默认独立使用见 [Quick Start](../../README.zh-CN.md#quick-start)。Core 是后台服务；CLI 是终端客户端，退出或重新打开 CLI 都不影响 Core 和任务。' : 'Run Core and CLI as two separate containers on one Linux host with Compose. See [Quick Start](../../README.md#quick-start) for independent usage. Core is the background service; CLI is the terminal client. Exiting or reopening CLI leaves Core and its tasks running.',
-    zh ? '要求 Linux x86-64、rootful Docker Engine 28+、Compose 2.24+。宿主已导出 `PIWORK_ADMIN_ACCOUNT`、`PIWORK_ADMIN_PASSWORD`（至少 12 位）、`PIWORK_MODEL_PROVIDER`、`PIWORK_MODEL`、`PIWORK_API_KEY`；可选 `PIWORK_MODEL_BASE_URL` 不用时保持未设置。初始化变量只传给 Core。' : 'Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. Exported host inputs: `PIWORK_ADMIN_ACCOUNT`, `PIWORK_ADMIN_PASSWORD` (at least 12 characters), `PIWORK_MODEL_PROVIDER`, `PIWORK_MODEL`, `PIWORK_API_KEY`; leave optional `PIWORK_MODEL_BASE_URL` unset when unused. Initialization inputs go only to Core.',
-    zh ? '示例使用独立的 `/var/lib/piwork/examples/single-host/core` 和 `piwork-single-host-client-state` 卷，保留原有权限检查。7171/7172 不能与其他 Core 同时占用；运行前正常停止冲突服务，不删除其数据。本示例不会自动停止其他安装。' : 'Uses a separate `/var/lib/piwork/examples/single-host/core` directory and `piwork-single-host-client-state` volume, retaining permission checks. Ports 7171/7172 cannot be shared with another Core: stop conflicting services normally first, retaining their data. This example does not stop another installation automatically.',
-    zh ? '取得本目录的 `docker-compose.yml`，在文件所在目录运行；无需 clone、环境文件或第二份 YAML。先启动 Core：' : 'Obtain this directory’s `docker-compose.yml` and run from its directory. No clone, environment file or second YAML is needed. Start Core first:',
-    code(composeCommands),
-    preparationNote(zh),
-    zh ? '打开 CLI；以后重新进入只需这一条命令，无需初始化变量。Core 不存在或未就绪时，CLI 等待至多 600 秒后安全失败，不自动启动 Core：' : 'Open CLI; repeat only this command to return, without initialization inputs. If Core is absent or unready, CLI waits up to 600 seconds and fails safely without starting Core:',
-    code('docker compose -f docker-compose.yml run --rm --no-deps cli'),
-    zh ? '在 CLI 容器内执行；ACCOUNT 为账号，登录隐藏输入密码，WORK_ID 来自创建结果：' : 'Inside CLI, replace ACCOUNT with your account; login prompts for a hidden password. WORK_ID comes from creation:',
-    code(firstWorkCommands), code(firstChatCommand),
-    zh ? '用 `exit` 退出；凭证保留，Work 继续运行。查看状态、日志和停止/重启 Core（正常停止会停止受管 Work，重启按原意图恢复）：' : 'Use `exit` to leave; credentials persist and Work continues. Inspect status/logs and stop/restart Core (normal shutdown stops managed Works; restart restores their desired state):',
-    code('docker compose -f docker-compose.yml exec -T core piwork-serve --json status\ndocker compose -f docker-compose.yml logs --tail 100 core\ndocker compose -f docker-compose.yml stop core\n' + composeCommands),
-    zh ? '核对 Core 正常退出成功，保留数据目录、客户端卷和 Work 卷；不使用 `down -v` 或全局 prune。观察中断按原 Operation/Run ID 恢复，不重复提交。更多操作见 [Docker 手册](../../deploy/docker/README.zh-CN.md#terminal-operations)。' : 'Verify successful Core exit and retain its data, client volume and Work volumes; do not use `down -v` or global prune. Recover interrupted observation using original Operation/Run IDs without resubmitting. See the [Docker guide](../../deploy/docker/README.md#terminal-operations).',
-    zh ? '维护：镜像版本、环境、网络、存储或就绪/关闭规则变更时，同步模板、双语说明及引用文档，并执行 Docker Quick Start 检查。' : 'Maintenance: update the template, both language guides and referring documentation when images, environment, network, storage or readiness/shutdown rules change; run the Docker Quick Start checks.',
-  ].filter(Boolean).join('\n\n') + '\n';
+ const zh=language==='zh';
+ return [zh?'# 单机部署示例':'# Single-host deployment',zh?'[English](README.md) | **简体中文**':'**English** | [简体中文](README.zh-CN.md)',
+ metadata.state==='published'?'':zh?'**本地候选：镜像尚未推送。**':'**Local candidate: images have not been pushed.**',
+ zh?'Linux x86-64、rootful Docker Engine 28+、Compose 2.24+。默认只运行统一应用容器，网页完成初始化；无需业务环境变量。CLI 使用显式可选 profile。':'Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. The default starts only the unified application container; initialize in the browser without business environment variables. CLI uses an explicit optional profile.',
+ zh?'使用独立目录 `/var/lib/piwork/examples/single-host/core`。先停止端口冲突的安装，不删除它的数据。':'Uses its own `/var/lib/piwork/examples/single-host/core` directory. Stop conflicting installations first, preserving their data.',
+ code(composeCommands), code('docker compose -f docker-compose.yml logs core'),
+ zh?'打开日志中私有设置链接，创建管理员、登录并配置模型/CoreRuntime；Agent 镜像随版本内置、自动使用，不提供手填或高级覆盖。链接过期时：':'Open the private setup link from the logs, create the administrator, sign in and configure the model/CoreRuntime. The release supplies the Agent image automatically, with no image input or advanced override. If the link expires:',
+ code('docker compose -f docker-compose.yml exec -T core piwork-serve --data-dir /var/lib/piwork/examples/single-host/core setup link'),
+ serviceNetworkNote(zh),serviceCompatibilityNote(zh),
+ zh?'可选 CLI：待 Core 完整就绪后运行；其独立卷保留登录凭证。退出 CLI 不停止 Work。':'Optional CLI: run after Core is fully ready; its own volume retains credentials. Exiting CLI does not stop Works.',
+ code('docker compose -f docker-compose.yml run --rm --no-deps cli'),code(firstWorkCommands),code(firstChatCommand),
+ code('docker compose -f docker-compose.yml stop core\n'+composeCommands),
+ zh?'正常关闭保留用户、模型、Work ID、历史及卷。不要使用 down -v 或全局 prune。详见 [安装手册](../../deploy/docker/README.zh-CN.md#terminal-operations)。':'Normal shutdown preserves users, models, Work IDs, history and volumes. Do not use down -v or global prune. See the [installation guide](../../deploy/docker/README.md#terminal-operations).'
+ ].filter(Boolean).join('\n\n')+'\n';
 }

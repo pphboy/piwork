@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { sourceInputHash, renderCompose, roles } from './build-docker-release.mjs';
+import { sourceInputHash, renderCompose, roles, currentRelease } from './build-docker-release.mjs';
 import { coreRun, cliRun, composeCommands, firstWorkCommands, firstChatCommand, cliFileRun, singleHostReadme } from './docker-quickstart-content.mjs';
 
 export const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -28,7 +28,7 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
     catch { errors.push(`${name}: missing material`); return ''; }
   };
   let release;
-  try { release = JSON.parse(read('deploy/docker/release.json')); }
+  try { release = currentRelease(base); }
   catch { return [...errors, 'deploy/docker/release.json: invalid metadata']; }
   if (!release || !['candidate', 'published'].includes(release.state) || !release.images?.core || !release.images?.cli) return [...errors, 'deploy/docker/release.json: incomplete release identity'];
   if (release.state === 'candidate') {
@@ -44,7 +44,7 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   }
   for (const role of roles) check(typeof release.images[role] === 'string' && release.images[role].endsWith(`:${release.releaseId}`) && !release.images[role].endsWith(':latest'), `deploy/docker/release.json: ${role} fixed release reference`);
 
-  const expected = [coreRun(release.images.core), cliRun(release.images.cli), firstWorkCommands, firstChatCommand];
+  const expected = [coreRun(release.images.core), "docker logs piwork-core-quickstart", "docker exec piwork-core-quickstart piwork-serve --data-dir /var/lib/piwork/quickstart/core setup link"];
   const docs = ['README.md', 'README.zh-CN.md', 'deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
   const trials = [];
   for (const name of docs) {
@@ -54,10 +54,10 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
       const blocks = codeBlocks(trial);
       check(/examples\/single-host\//.test(trial), `${name}: single-host example reference missing`);
       check(!/docker compose[^\n]*run/.test(trial), `${name}: default CLI must be independent of Compose`);
-      for (const command of expected) check(blocks.some(block => normalize(block.code) === normalize(command)), `${name}: complete startup and conversation commands must match the release`);
+      for (const command of expected) check(blocks.some(block => normalize(block.code) === normalize(command)), `${name}: complete startup and setup commands must match the release`);
       for (const block of blocks) {
         check(block.language === 'sh', `${name}: default code uses shell language`);
-        check(!/--env-file|release\.env|--entrypoint|\bdesktop\b|make build|npm ci|tar -|core\.run\.env/.test(block.code), `${name}: default trial must use direct images and terminal commands`);
+        check(!/--env-file|release\.env|--entrypoint|\bdesktop\b|make build|npm ci|tar -|core\.run\.env/.test(block.code), `${name}: default trial must use direct images and browser setup`);
         check(spawnSync('sh', ['-n'], { input: block.code, encoding: 'utf8' }).status === 0, `${name}: shell syntax is invalid`);
       }
       check(!/Download and verify the installer|Configure and start Core|下载并校验安装包|配置并启动 Core/.test(trial), `${name}: old download/configuration steps returned`);
@@ -68,16 +68,17 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
         const native = section(text, 'native-quickstart');
         const before = text.slice(0, text.indexOf('<!-- native-quickstart:start -->'));
         check(/<details>\s*<summary>[^<]+<\/summary>\s*$/.test(before), `${name}: native CLI must stay folded`);
-        check(!/\bdesktop\b/.test(codeBlocks(native).map(block => block.code).join('\n')), `${name}: native trial stays in the terminal`);
+        check(codeBlocks(native).some(block => /(?:bin|go)\/piwork(?:-serve)?(?:\s|$)/.test(block.code)), `${name}: native unified startup missing`);
       }
     } catch { check(false, `${name}: missing required document sections`); }
   }
-  for (const trial of trials) check(sameCode(trial, trials[0]), 'paired terminal commands differ between README/manual languages');
+  for (const trial of trials) check(sameCode(trial, trials[0]), 'paired browser startup commands differ between README/manual languages');
 
   const core = read('Dockerfile.core'), cli = read('Dockerfile.cli');
   check(/FROM \$\{GO_BUILDER_IMAGE\} AS build/.test(core) && /COPY --from=build/.test(core) && !/COPY[^\n]*dist\//.test(core), 'Dockerfile.core: source build must not require host dist');
-  check(/PIWORK_RELEASE_CONFIG_PATH=\/etc\/piwork\/docker-release\.json/.test(core) && /PIWORK_DATA_DIR=\/var\/lib\/piwork\/quickstart\/core/.test(core) && /DOCKER_HOST=unix:\/\/\/var\/run\/docker\.sock/.test(core), 'Dockerfile.core: nonsecret release defaults and same-path data');
-  check(/HEALTHCHECK/.test(core) && /readyz\?profile=docker-delivery/.test(core), 'Dockerfile.core: complete delivery healthcheck');
+  check(/--data-dir", "\/var\/lib\/piwork\/quickstart\/core/.test(core) && /DOCKER_HOST=unix:\/\/\/var\/run\/docker\.sock/.test(core) && !/ENV PIWORK_/.test(core), 'Dockerfile.core: embedded defaults and same-path data');
+  check(/HEALTHCHECK/.test(core) && /7171\/healthz/.test(core), 'Dockerfile.core: setup-accessible liveness');
+  check(/COPY --from=metadata[^\n]*desktopassets/.test(core) && /COPY --from=metadata[^\n]*consoleassets/.test(core) && /npm run build -w @piwork\/desktop-webui -w @piwork\/console-webui/.test(core), 'Dockerfile.core: both fresh browser resources');
   check(/ENTRYPOINT \["\/usr\/local\/bin\/piwork-cli-entrypoint"\]/.test(cli) && /CMD \[\]/.test(cli) && !/HEALTHCHECK/.test(cli), 'Dockerfile.cli: default terminal and explicit command entrypoint');
   check(/PIWORK_CONFIG_PATH=\/var\/lib\/piwork\/client\/credentials\.json/.test(cli), 'Dockerfile.cli: private persistent state');
   check(/COPY --from=desktop/.test(cli) && /npm run build -w @piwork\/desktop-webui/.test(cli), 'Dockerfile.cli: fresh embedded resources');
@@ -98,18 +99,18 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   const cliService = singleHost.split('  cli:\n')[1] || '';
   check(/network_mode: host/.test(singleHost) && /host\.docker\.internal:host-gateway/.test(singleHost), 'single-host: Core host and CLI gateway networking');
   check(!/env_file:|include:|extends:|depends_on:/.test(singleHost), 'single-host: no external files or lifecycle dependencies');
-  check(/PIWORK_DATA_DIR: \/var\/lib\/piwork\/examples\/single-host\/core/.test(singleHost) && /source: \/var\/lib\/piwork\/examples\/single-host\/core\n\s+target: \/var\/lib\/piwork\/examples\/single-host\/core/.test(singleHost), 'single-host: isolated same-path data');
+  check(/--data-dir", "\/var\/lib\/piwork\/examples\/single-host\/core/.test(singleHost) && /source: \/var\/lib\/piwork\/examples\/single-host\/core\n\s+target: \/var\/lib\/piwork\/examples\/single-host\/core/.test(singleHost), 'single-host: isolated same-path data');
   check(/name: piwork-single-host-client-state/.test(singleHost) && /stop_grace_period: 60s/.test(singleHost), 'single-host: independent client state and shutdown budget');
   check(/profiles: \[cli\]/.test(cliService) && /stdin_open: true/.test(cliService) && /tty: true/.test(cliService), 'single-host: interactive CLI');
   check(!/ports:|docker\.sock|PIWORK_API_KEY|PIWORK_ADMIN_PASSWORD/.test(cliService), 'single-host: CLI must not receive Core secrets or resources');
   for (const [language, name] of [['en', 'README.md'], ['zh', 'README.zh-CN.md']]) check(read('examples/single-host/' + name) === singleHostReadme(release, language), 'single-host: bilingual instructions differ from source');
   try { check(read('examples/single-host/docker-compose.yml') === renderCompose(release, base, { singleHost: true }), 'single-host: generated file differs'); }
   catch { check(false, 'single-host: rendering failed'); }
-  for (const key of ['PIWORK_ADMIN_ACCOUNT', 'PIWORK_ADMIN_PASSWORD', 'PIWORK_MODEL_PROVIDER', 'PIWORK_MODEL', 'PIWORK_API_KEY', 'PIWORK_MODEL_BASE_URL']) check(new RegExp(`^      ${key}:$`, 'm').test(template), `Compose: ${key} must pass through by name`);
+  check(!/PIWORK_(?:ADMIN|MODEL|API_KEY|AGENT|PACKAGE_HELPER|FILE_HELPER|SNAPSHOT_HELPER)/.test(template+singleHost.split('  cli:')[0]), 'Compose: default startup must require no business environment');
   try { check(read('deploy/docker/docker-compose.yml') === renderCompose(release, base), 'Compose: generated file differs from its release template'); }
   catch { check(false, 'Compose: candidate rendering failed'); }
   const demo = read('deploy/docker/compose.core.yaml');
-  check(/network_mode: host/.test(demo) && /PIWORK_DATA_DIR: \/var\/lib\/piwork\/core/.test(demo) && /stop_grace_period: 60s/.test(demo) && !/env_file|release\.env/.test(demo), 'Core Demo: independent data, image defaults and shutdown');
+  check(/network_mode: host/.test(demo) && /--data-dir", "\/var\/lib\/piwork\/core/.test(demo) && /stop_grace_period: 60s/.test(demo) && !/env_file|release\.env/.test(demo), 'Core Demo: independent data, image defaults and shutdown');
   const builder = read('scripts/build-docker-release.mjs');
   check(/scripts\/check-docker-quickstart\.mjs/.test(builder) && /writeMaterials/.test(builder), 'materials: executable consistency gate must run before exporting');
 
@@ -125,7 +126,7 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
     }
     for (const prefix of ['', 'zh/']) {
       const first = siteRead(`docs/${prefix}guide/first-work.md`);
-      check(codeBlocks(first).some(block => normalize(block.code) === normalize(cliFileRun(release.images.cli))), `website ${prefix}First Work: CLI reference or exchange command differs`);
+      check(first.includes('Open workbench') && first.includes('Service'), `website ${prefix}First Work: browser flow missing`);
       for (const name of ['index.md', 'guide/quick-start.md', 'guide/installation.md', 'guide/first-work.md', 'guide/source-installation.md', 'guide/index.md', 'spec/index.md']) {
         const text = siteRead(`docs/${prefix}${name}`);
         const refs = text.match(/(?:docker\.io\/)?pphboy\/piwork-[a-z-]+:[A-Za-z0-9_.-]+/g) || [];
@@ -147,7 +148,7 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
 export function checkPackageMaterials(directory, base = projectRoot) {
   const errors = [];
   try {
-    const release = JSON.parse(readFileSync(join(base, 'deploy/docker/release.json'), 'utf8'));
+    const release = currentRelease(base);
     const manifest = JSON.parse(readFileSync(join(directory, 'release-manifest.json'), 'utf8'));
     for (const name of installerFiles) if (!existsSync(join(directory, name))) errors.push('candidate material is missing');
     if (manifest.sourceInputHash !== release.sourceInputHash || manifest.releaseId !== release.releaseId || !['candidate', 'published'].includes(manifest.state)) errors.push('candidate source identity differs');
