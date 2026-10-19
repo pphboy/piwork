@@ -6,6 +6,7 @@ import { renderCompose, root, currentRelease } from './build-docker-release.mjs'
 import { fileURLToPath } from 'node:url';
 
 export function syncWebsite(website, metadata, base = root) {
+const published = metadata.state === 'published';
 const download = `/piwork/install/${metadata.releaseId}/docker-compose.yml`;
 const write = (name, contents) => writeFileSync(join(website, name), contents);
 const read = name => readFileSync(join(website, name), 'utf8');
@@ -36,8 +37,8 @@ for (const [prefix, language, readme] of [['', 'en', 'README.md'], ['zh/', 'zh',
   const at = home.indexOf(start);
   if (at < 0) throw new Error('Homepage startup slot is missing.');
   home = home.slice(0, at) + start + '\n\n' + (zh
-    ? `[一键启动 Piwork](/zh/guide/quick-start.html)：一个 Docker 容器，打开服务器 IP 的网页完成管理员、模型与 CoreRuntime 配置，直接使用完整工作台。无需 CLI、域名或初始化环境。可选 [docker-compose.yml](${download})。当前状态 ${metadata.state}；候选镜像尚未公开发布。\n`
-    : `[Start Piwork with one command](/guide/quick-start.html): one Docker container, then open the server IP to configure the administrator, model and CoreRuntime and use the full workbench. No CLI, domain or initialization environment is required. Optional [docker-compose.yml](${download}). State: ${metadata.state}; candidate images have not been published.\n`);
+    ? `[一键启动 Piwork](/zh/guide/quick-start.html)：一个 Docker 容器，打开服务器 IP 的网页完成管理员、模型与 CoreRuntime 配置，直接使用完整工作台。无需 CLI、域名或初始化环境。可选 [docker-compose.yml](${download})。当前状态 ${metadata.state}；${published ? '镜像已发布并完成匿名核验。' : '候选镜像尚未公开发布。'}\n`
+    : `[Start Piwork with one command](/guide/quick-start.html): one Docker container, then open the server IP to configure the administrator, model and CoreRuntime and use the full workbench. No CLI, domain or initialization environment is required. Optional [docker-compose.yml](${download}). State: ${metadata.state}. ${published ? 'Images are published and anonymously verified.' : 'Candidate images have not been published.'}\n`);
   write(`docs/${prefix}index.md`, home);
 
   write(`docs/${prefix}guide/first-work.md`, (zh
@@ -62,13 +63,13 @@ mkdirSync(output, { recursive: true });
 writeFileSync(join(output, 'docker-compose.yml'), renderCompose(metadata, base));
 writeFileSync(join(output, 'single-host-compose.yml'), renderCompose(metadata, base, { singleHost: true }));
 writeFileSync(join(output, 'release-metadata.json'), JSON.stringify(metadata, null, 2) + '\n');
-writeFileSync(join(output, 'README.txt'), `Piwork ${metadata.releaseId}\nState: ${metadata.state}\nSource: ${metadata.sourceCommit}\nInput SHA256: ${metadata.sourceInputHash}\nLocal documentation material; public image/download availability requires release verification.\n`);
+writeFileSync(join(output, 'README.txt'), `Piwork ${metadata.releaseId}\nState: ${metadata.state}\nSource: ${metadata.sourceCommit}\nInput SHA256: ${metadata.sourceInputHash}\n${published ? 'Registry identities and anonymous image readability verified.' : 'Local documentation material; public image/download availability requires release verification.'}\n`);
 const files = ['README.txt', 'docker-compose.yml', 'single-host-compose.yml', 'release-metadata.json'];
 writeFileSync(join(output, 'SHA256SUMS'), files.map(name => `${createHash('sha256').update(readFileSync(join(output, name))).digest('hex')}  ${name}\n`).join(''));
 const siteReadme = read('README.md');
 const from = siteReadme.indexOf('## Content maintenance');
 const to = siteReadme.indexOf('## Build and deployment');
-write('README.md', siteReadme.slice(0, from) + `## Content maintenance\n\nDocker Quick Start starts one unified Linux application with browser onboarding and the full workbench. Default startup requires no business environment variables; only an optional paired ADMIN test bootstrap remains. CLI is optional. Service ports and script Cookie limitations are documented alongside the main entry. The single-host example has separate data. Published provenance is preserved.\n\nKeep both locales aligned with upstream commands and image defaults. Source: ${metadata.sourceCommit}; input SHA256: ${metadata.sourceInputHash}; state: ${metadata.state}. Candidate image/download availability is not public until release verification. Existing install/0.0.1 and install/0.1.0 files retain their provenance.\n\nRun upstream check-docker-quickstart.mjs with --website-root pointing at this directory after synchronizing. No real credentials or initialization env belongs in static files. Website synchronization does not push images or publish pages.\n\n` + siteReadme.slice(to));
+write('README.md', siteReadme.slice(0, from) + `## Content maintenance\n\nDocker Quick Start starts one unified Linux application with browser onboarding and the full workbench. Default startup requires no business environment variables; only an optional paired ADMIN test bootstrap remains. CLI is optional. Service ports and script Cookie limitations are documented alongside the main entry. The single-host example has separate data. Published provenance is preserved.\n\nKeep both locales aligned with upstream commands and image defaults. Source: ${metadata.sourceCommit}; input SHA256: ${metadata.sourceInputHash}; state: ${metadata.state}. ${published ? 'Image identities and anonymous readability have been verified; the versioned downloads match this release.' : 'Candidate image/download availability is not public until release verification.'} Existing install/0.0.1 and install/0.1.0 files retain their provenance.\n\nRun upstream check-docker-quickstart.mjs with --website-root pointing at this directory after synchronizing. No real credentials or initialization env belongs in static files. Website synchronization does not push images or publish pages.\n\n` + siteReadme.slice(to));
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (!process.argv[2]) throw new Error('usage: sync-docker-website.mjs REVIEW_OUTPUT_DIRECTORY');

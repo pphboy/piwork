@@ -18,6 +18,14 @@ function fixture(t) {
   for (const name of ['README.md', 'README.zh-CN.md', '.dockerignore', 'go.mod', 'go.sum', 'package.json', 'package-lock.json', 'tsconfig.base.json', 'Dockerfile.core', 'Dockerfile.cli', 'Dockerfile.core.dockerignore', 'Dockerfile.cli.dockerignore', 'Dockerfile.agentd', 'Dockerfile.file-helper.native', 'Dockerfile.snapshot-helper.native', 'Dockerfile.docker-release']) copyFileSync(join(projectRoot, name), join(base, name));
   mkdirSync(join(base, 'apps/ui-shared/assets'), { recursive: true });
   copyFileSync(join(projectRoot, 'apps/ui-shared/assets/piwork-logo.png'), join(base, 'apps/ui-shared/assets/piwork-logo.png'));
+  const candidate={...currentRelease(base),state:'candidate',sourceInputHash:sourceInputHash(base)};
+  writeFileSync(join(base,'deploy/docker/candidate.json'),JSON.stringify(candidate,null,2)+'\n');
+  for(const name of docs){
+    const path=join(base,name);
+    const text=readFileSync(path,'utf8');
+    if(!/Local candidate|本地候选/.test(section(text,'docker-quickstart')))writeFileSync(path,text.replace('<!-- docker-quickstart:start -->','<!-- docker-quickstart:start -->\n'+(name.includes('zh-CN')?'本地候选':'Local candidate')+'\n'));
+  }
+  for(const [language,name] of [['en','README.md'],['zh','README.zh-CN.md']])writeFileSync(join(base,'examples/single-host',name),singleHostReadme(candidate,language));
   refresh(base);
   return base;
 }
@@ -161,6 +169,16 @@ test('website command and download drift is checked without a sibling-repository
   writeFileSync(join(historical, 'frozen.txt'), 'old-release');
   syncWebsite(website, next, base);
   for (const prefix of ['', 'zh/']) assert(readFileSync(join(website, 'docs', prefix, 'index.md'), 'utf8').includes(next.releaseId));
+  assert.equal(readFileSync(join(historical, 'frozen.txt'), 'utf8'), 'old-release');
+  syncWebsite(website, {...release,state:'published'}, base);
+  for(const prefix of ['', 'zh/']) {
+    const home=readFileSync(join(website,'docs',prefix,'index.md'),'utf8');
+    assert(!home.includes('Candidate images have not been published.'));
+    assert(!home.includes('候选镜像尚未公开发布'));
+    assert(home.includes(prefix?'镜像已发布并完成匿名核验':'Images are published and anonymously verified'));
+  }
+  assert(readFileSync(join(publicPath,'README.txt'),'utf8').includes('anonymous image readability verified'));
+  assert(!readFileSync(join(website,'README.md'),'utf8').includes('Candidate image/download availability is not public'));
   assert.equal(readFileSync(join(historical, 'frozen.txt'), 'utf8'), 'old-release');
   syncWebsite(website, release, base);
   for (const prefix of ['', 'zh/']) for (const name of ['index.md', 'guide/first-work.md', 'guide/installation.md', 'guide/source-installation.md', 'guide/index.md', 'spec/index.md']) {
