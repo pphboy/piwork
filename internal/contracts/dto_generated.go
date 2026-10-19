@@ -127,7 +127,7 @@ type AdminResetCredentialRequest struct {
 type AdminRuntimeInput = json.RawMessage
 
 type AdminRuntimeLegacyInput struct {
-	AgentImage string        `json:"agentImage"`
+	AgentImage Field[string] `json:"agentImage,omitzero"`
 	Provider   string        `json:"provider"`
 	Model      string        `json:"model"`
 	BaseUrl    Field[string] `json:"baseUrl,omitzero"`
@@ -140,8 +140,8 @@ type AdminRuntimeResult struct {
 }
 
 type AdminRuntimeSelection struct {
-	AgentImage string     `json:"agentImage"`
-	ModelRef   ResourceId `json:"modelRef"`
+	AgentImage Field[string] `json:"agentImage,omitzero"`
+	ModelRef   ResourceId    `json:"modelRef"`
 }
 
 type AdminRuntimeView = json.RawMessage

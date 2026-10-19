@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Check } from "typebox/value";
-import { CreateModelProviderSchema, PatchModelProviderSchema, ModelTestInputSchema, ModelTestResultSchema, AdminRuntimeSelectionSchema, ModelCapabilitiesSchema } from "./ai-model-management.js";
+import { CreateModelProviderSchema, PatchModelProviderSchema, ModelTestInputSchema, ModelTestResultSchema, AdminRuntimeSelectionSchema, AdminRuntimeLegacyInputSchema, ModelCapabilitiesSchema } from "./ai-model-management.js";
+import {WebCredentialsInputSchema} from './web-onboarding.js';
 
 test("model management accepts exactly Responses and Messages with write-only nonempty keys", () => {
   const input = { name: "Synthetic gateway", api: "openai-responses", baseUrl: "https://fixture.invalid/v1", credential: "synthetic-key" };
@@ -31,9 +32,21 @@ test("Test targets and runtime selection cannot mix authority or credential inpu
   assert.equal(Check(ModelTestInputSchema, { api: "openai-responses", baseUrl: "https://fixture.invalid/v1", model: "one", credential: "synthetic" }), true);
   assert.equal(Check(ModelTestInputSchema,{modelId:id,providerId:id,credential:"synthetic"}),false);
   assert.equal(Check(AdminRuntimeSelectionSchema, { agentImage: "fixture/native", modelRef: id }), true);
+  assert.equal(Check(AdminRuntimeSelectionSchema, { modelRef: id }), true);
+  for (const agentImage of ['',null,42]) assert.equal(Check(AdminRuntimeSelectionSchema, {modelRef:id,agentImage}),false);
   assert.equal(Check(AdminRuntimeSelectionSchema, { agentImage: "fixture/native", modelRef: id, credential: "synthetic" }), false);
   assert.equal(Check(ModelCapabilitiesSchema, { kind: "sdk", provider: "openai", model: "fixture-model" }), true);
   assert.equal(Check(ModelCapabilitiesSchema, { kind: "sdk", provider: "openai", model: "fixture-model", defaultThinking: "high" }), false);
+});
+
+test('runtime model inputs omit release images and password confirmation stays in the browser',()=>{
+ const input={provider:'fixture',model:'synthetic-model',credential:'synthetic-key'};
+ assert.equal(Check(AdminRuntimeLegacyInputSchema,input),true);
+ assert.equal(Check(AdminRuntimeLegacyInputSchema,{...input,agentImage:'fixture/release:1'}),true);
+ assert.equal(Check(AdminRuntimeLegacyInputSchema,{...input,modelRef:'model-fixture-0001'}),false);
+ for(const agentImage of ['',null,42])assert.equal(Check(AdminRuntimeLegacyInputSchema,{...input,agentImage}),false);
+ assert.equal(Check(WebCredentialsInputSchema,{account:'admin',password:'synthetic-password'}),true);
+ assert.equal(Check(WebCredentialsInputSchema,{account:'admin',password:'synthetic-password',confirmPassword:'synthetic-password'}),false);
 });
 
 test('flat model names accept the full model ID boundary without relaxing legacy names',async()=>{

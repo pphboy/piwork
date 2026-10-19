@@ -127,7 +127,7 @@ func TestManagedModelRuntimeSelectionAndDefaultPatchStayIndependent(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, view := httpCall(t, base, "/api/v1/admin/runtime", "PUT", auth, map[string]any{"agentImage": "fixture/native", "modelRef": first.ModelRef})
+	code, view := httpCall(t, base, "/api/v1/admin/runtime", "PUT", auth, map[string]any{"modelRef": first.ModelRef})
 	if code != 200 || view["runtime"].(map[string]any)["modelRef"] != string(first.ModelRef) {
 		t.Fatal(code, view)
 	}
@@ -146,7 +146,7 @@ func TestManagedModelRuntimeSelectionAndDefaultPatchStayIndependent(t *testing.T
 	if err != nil || profile.ModelRef != string(second.ModelRef) || profile.Model.ID != "gpt-5.1" {
 		t.Fatal("effective runtime disagrees", err)
 	}
-	code, _ = httpCall(t, base, "/api/v1/admin/runtime", "PUT", auth, map[string]any{"agentImage": "fixture/native", "modelRef": first.ModelRef, "credential": "must-not-mix"})
+	code, _ = httpCall(t, base, "/api/v1/admin/runtime", "PUT", auth, map[string]any{"modelRef": first.ModelRef, "credential": "must-not-mix"})
 	if code != 400 {
 		t.Fatal("mixed runtime input accepted", code)
 	}

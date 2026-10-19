@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"piwork/internal/coreapp"
+	"piwork/internal/distribution"
 	"piwork/internal/identity"
 
 	"golang.org/x/sys/unix"
@@ -93,8 +94,8 @@ func TestHelpAndInvalidCommandsDoNoFileSecretOrNetworkIO(t *testing.T) {
 		{"admin", "bootstrap", "--account", "admin", "--account", "other"},
 		{"admin", "users", "create", "--account", "admin", "--role", "root"},
 		{"admin", "users", "disable", "../other"},
-		{"config", "set", "--agent-image", "fixture", "--model-provider", "fixture", "--model", "one", "--api-key-stdin", "--api-key-file", "missing"},
-		{"config", "set", "--agent-image", "fixture", "--model-provider", "fixture", "--model", "one", "--model-base-url", "http://remote.example", "--api-key-stdin"},
+		{"config", "set", "--model-provider", "fixture", "--model", "one", "--api-key-stdin", "--api-key-file", "missing"},
+		{"config", "set", "--model-provider", "fixture", "--model", "one", "--model-base-url", "http://remote.example", "--api-key-stdin"},
 		{"config", "default-work", "set", "--package", "a", "--no-packages"},
 		{"config", "default-work", "set", "--skill", "a", "--skill", "a"},
 		{"config", "default-work", "set", "--package", "A"},
@@ -123,7 +124,7 @@ func TestOfflineBootstrapConfigurationRepeatAndLockProtection(t *testing.T) {
 	if code != 6 || stdout != "" || !strings.Contains(stderr, "CONFLICT") {
 		t.Fatal(code, stdout, stderr)
 	}
-	config := []string{"--data-dir", directory, "--json", "config", "set", "--agent-image", "fixture/native", "--model-provider", "fixture", "--model", "first", "--api-key-stdin"}
+	config := []string{"--data-dir", directory, "--json", "config", "set", "--model-provider", "fixture", "--model", "first", "--api-key-stdin"}
 	code, stdout, stderr = call(t, config, strings.NewReader("private-model-key\n"), fallback)
 	if code != 0 || stderr != "" || singleJSON(t, stdout)["configured"] != true || strings.Contains(stdout, "private-model-key") {
 		t.Fatal(code, stdout, stderr)
@@ -141,7 +142,8 @@ func TestOfflineBootstrapConfigurationRepeatAndLockProtection(t *testing.T) {
 		t.Fatal("password was overwritten", err)
 	}
 	first, _, err := a.Settings.LoadRuntime()
-	if err != nil || first.Model.ID != "first" {
+	defaults, defaultsErr := a.RuntimeDefaults()
+	if err != nil || defaultsErr != nil || first.Model.ID != "first" || first.AgentImage != defaults.AgentImage {
 		t.Fatal(first, err)
 	}
 	code, stdout, stderr = call(t, config, strings.NewReader("changed-key"), fallback)
@@ -151,6 +153,44 @@ func TestOfflineBootstrapConfigurationRepeatAndLockProtection(t *testing.T) {
 	second, _, err := a.Settings.LoadRuntime()
 	if err != nil || second.Revision != first.Revision || second.Model.CredentialRef != first.Model.CredentialRef {
 		t.Fatal("offline writer modified locked defaults", err)
+	}
+}
+
+func TestRemovedRuntimeImageOptionFailsBeforeSecretOrFileAccess(t *testing.T) {
+	directory := t.TempDir()
+	args := []string{"--env-file", filepath.Join(directory, "missing.env"), "config", "set", "--agent-image", "private-rejected-reference", "--model-provider", "fixture", "--model", "one", "--api-key-stdin"}
+	code, out, stderr := call(t, args, forbiddenReader{}, "http://invalid")
+	if code != 2 || out != "" || !strings.Contains(stderr, "remove --agent-image") || strings.Contains(stderr, "private-rejected-reference") {
+		t.Fatal("removed image option did not fail safely", code)
+	}
+}
+
+func TestOnlineRuntimeUsesRemoteReleaseWithoutLoadingClientDefaults(t *testing.T) {
+	var writes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writes.Add(1)
+		var input map[string]any
+		if r.Method != "PUT" || r.URL.Path != "/control/runtime" || json.NewDecoder(r.Body).Decode(&input) != nil || input["agentImage"] != nil {
+			t.Error("operator supplied an image or used the wrong route")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"configured":true,"agentImage":"fixture/remote-release:1"}`)
+	}))
+	defer server.Close()
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	credential := filepath.Join(directory, "operator.key")
+	if err := os.WriteFile(credential, []byte(strings.Repeat("e", 64)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	original := distribution.EncodedImages
+	distribution.EncodedImages = "invalid-client-metadata!"
+	t.Cleanup(func() { distribution.EncodedImages = original })
+	code, out, stderr := call(t, []string{"--core", server.URL, "--operator-credential-file", credential, "--json", "config", "set", "--model-provider", "fixture", "--model", "one", "--api-key-stdin"}, strings.NewReader("synthetic-key"), "http://invalid")
+	if code != 0 || stderr != "" || writes.Load() != 1 || singleJSON(t, out)["agentImage"] != "fixture/remote-release:1" {
+		t.Fatal("operator substituted its local release", code, writes.Load(), stderr)
 	}
 }
 func closeApp(t *testing.T, a *coreapp.Application) {
@@ -195,7 +235,7 @@ func TestOnlineOperatorUsesSeparateCredentialAndPublicOutput(t *testing.T) {
 	if code, body, stderr := invoke([]string{"admin", "bootstrap", "--account", "admin", "--password-stdin"}, fixturePassword); code != 0 || body["account"] != "admin" || stderr != "" {
 		t.Fatal(code, body, stderr)
 	}
-	if code, body, stderr := invoke([]string{"config", "set", "--agent-image", "fixture/native", "--model-provider", "fixture", "--model", "first", "--api-key-stdin"}, "private-api-key"); code != 0 || body["configured"] != true || stderr != "" {
+	if code, body, stderr := invoke([]string{"config", "set", "--model-provider", "fixture", "--model", "first", "--api-key-stdin"}, "private-api-key"); code != 0 || body["configured"] != true || stderr != "" {
 		t.Fatal(code, body, stderr)
 	}
 	if code, body, stderr := invoke([]string{"config", "default-work", "set", "--no-packages"}, ""); code != 0 || stderr != "" {
@@ -269,7 +309,7 @@ func TestUnknownMutationOutcomeDoesNotReplayOrWriteOffline(t *testing.T) {
 	os.Chmod(directory, 0700)
 	credential := filepath.Join(directory, "operator.credential")
 	os.WriteFile(credential, []byte(strings.Repeat("e", 64)+"\n"), 0600)
-	args := []string{"--data-dir", directory, "--json", "config", "set", "--agent-image", "fixture/native", "--model-provider", "fixture", "--model", "first", "--api-key-stdin"}
+	args := []string{"--data-dir", directory, "--json", "config", "set", "--model-provider", "fixture", "--model", "first", "--api-key-stdin"}
 	code, stdout, stderr := call(t, args, strings.NewReader("private-api-key"), server.URL)
 	if code != 5 || stdout != "" || mutations.Load() != 1 || strings.Contains(stderr, "private-api-key") {
 		t.Fatal(code, stdout, stderr, mutations.Load())

@@ -24,6 +24,7 @@ type errorDefinition struct {
 }
 
 var publicErrors = map[string]errorDefinition{
+	"RELEASE_DEFAULTS_UNAVAILABLE":        {503, "The server release dependencies are unavailable; repair the server release", false},
 	"RETRY_SUBMISSION_LOOKUP_UNSUPPORTED": {501, "Retry submission lookup is not supported", false},
 	"CANCEL_AND_SEND_UNSUPPORTED":         {501, "This Work does not support Stop and send", false},
 	"CANCEL_TIMEOUT":                      {409, "The previous Run has not stopped; your message was not sent. Check its status", false},

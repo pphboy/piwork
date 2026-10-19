@@ -46,6 +46,10 @@ func (a *Application) configureRuntimeSelection(ctx context.Context, actor ident
 	if err := contracts.Validate("AdminRuntimeSelectionSchema", input); err != nil {
 		return RuntimeView{}, err
 	}
+	image, err := a.runtimeImage(input.AgentImage.Value)
+	if err != nil {
+		return RuntimeView{}, err
+	}
 	a.Settings.mu.Lock()
 	defer a.Settings.mu.Unlock()
 	current, _, err := a.Settings.LoadRuntime()
@@ -66,7 +70,7 @@ func (a *Application) configureRuntimeSelection(ctx context.Context, actor ident
 		if base.Revision >= contracts.MaxSafeInteger {
 			return contracts.NewError("CONFLICT", "")
 		}
-		profile := RuntimeProfile{Version: 1, Revision: base.Revision + 1, AgentImage: input.AgentImage, UpdatedAt: modelNow()}
+		profile := RuntimeProfile{Version: 1, Revision: base.Revision + 1, AgentImage: image, UpdatedAt: modelNow()}
 		metadata, _, _, err := a.catalogModelTx(tx, string(input.ModelRef), true)
 		if err != nil {
 			return err

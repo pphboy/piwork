@@ -150,10 +150,16 @@ type RuntimeView struct {
 var providerPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,255}$`)
 
 func ValidateRuntime(input RuntimeInput) error {
-	length := func(s string) int { return len(utf16.Encode([]rune(s))) }
-	if trimJS(input.AgentImage) == "" || length(input.AgentImage) > 4096 {
+	if trimJS(input.AgentImage) == "" || len(utf16.Encode([]rune(input.AgentImage))) > 4096 {
 		return contracts.NewError("INVALID_REQUEST", "agentImage")
 	}
+	return ValidateRuntimeModel(input)
+}
+
+// ValidateRuntimeModel checks operator fields without selecting an image,
+// reading release metadata or opening secret files and network connections.
+func ValidateRuntimeModel(input RuntimeInput) error {
+	length := func(s string) int { return len(utf16.Encode([]rune(s))) }
 	if !providerPattern.MatchString(input.Provider) {
 		return contracts.NewError("INVALID_REQUEST", "provider")
 	}

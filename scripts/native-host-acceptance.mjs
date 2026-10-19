@@ -1,3 +1,4 @@
+import {buildNativeTestServer} from './native-test-server.mjs';
 // The driver runs on the development machine. Product processes run in scratch,
 // with only the release binaries, data, and an independent Engine Unix socket.
 import assert from 'node:assert/strict';
@@ -80,6 +81,7 @@ try {
   for (const program of ['piwork-serve', 'piwork-cli', 'piwork-console']) {
     await copyFile(join(binaries, program), join(root, 'bin', program));
   }
+  if(!process.env.PIWORK_TEST_RELEASE_BIN)buildNativeTestServer(join(root,'bin'),{agent:agentImage,packageHelper:agentImage,fileHelper:fileImage,snapshotHelper:snapshotImage});
   await symlink('piwork-serve', join(root, 'bin', 'piwork'));
   await writeFile(join(root, 'Dockerfile'), 'FROM scratch\nCOPY bin/ /bin/\n');
   // Fixture preparation only; openssl is absent from the product host.
@@ -97,18 +99,16 @@ try {
   await loadImages();
   console.log('Independent Engine ready; fixture images loaded.');
   const core = await startHost('core', 'piwork-serve', ['serve', '--data-dir', '/data/core',
-    '--listen', '0.0.0.0:7171', '--allow-insecure-remote', '--agent-grpc-listen', '0.0.0.0:7172'], [
-    `PIWORK_PACKAGE_HELPER_IMAGE=${agentImage}`, `PIWORK_FILE_HELPER_IMAGE=${fileImage}`,
-    `PIWORK_SNAPSHOT_HELPER_IMAGE=${snapshotImage}`,
-  ]);
+    '--listen', '0.0.0.0:7171', '--allow-insecure-remote', '--agent-grpc-listen', '0.0.0.0:7172']);
   const address = await docker(['port', engine, '7171/tcp']);
   const base = `http://${address}`;
   await waitFor(async () => (await fetch(`${base}/healthz`)).ok, 'scratch Core health');
   const operator = (args, input) => docker(['exec', '-i', core, '/bin/piwork-serve',
     '--core', 'http://127.0.0.1:7171', '--data-dir', '/data/core', ...args], { input });
   await operator(['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], 'native-host-fixture-password\n');
-  await operator(['config', 'set', '--agent-image', agentImage, '--model-provider', 'piwork-deterministic',
+  await operator(['config', 'set', '--model-provider', 'piwork-deterministic',
     '--model', 'fixture-v1', '--api-key-stdin'], 'fixture-key\n');
+  assert.equal(JSON.parse(await operator(['config','show'])).agentImage,agentImage,'The supplied server must embed the fixture Agent image');
   await waitFor(async () => (await fetch(`${base}/readyz?profile=docker-delivery`)).ok, 'scratch Core and helper readiness');
   console.log('Scratch Core initialized and ready.');
   const cli = async (args, input) => {
@@ -246,7 +246,8 @@ try {
     assert(done.evidence.items.some(e=>e.kind==='sdk' && e.verified),'Each environment needs its actual SDK behavior proof');
   };
   await candidateProof(workId,'scratch-original');
-  await operator(['config','set','--agent-image',agentImage,'--model-provider','piwork-deterministic','--model','fixture-v2','--api-key-stdin'],'fixture-two-key\n');
+  await operator(['config','set','--model-provider','piwork-deterministic','--model','fixture-v2','--api-key-stdin'],'fixture-two-key\n');
+  assert.equal(JSON.parse(await operator(['config','show'])).agentImage,agentImage,'The supplied server must embed the fixture Agent image');
   await waitFor(async () => (await fetch(`${base}/readyz?profile=docker-delivery`)).ok, 'updated default runtime and helper readiness');
   const models=await api(`/works/${workId}/models`);
   assert.equal(models.models.length,2);

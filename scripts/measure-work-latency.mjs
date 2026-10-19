@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { sourceInputHash } from './build-docker-release.mjs';
 
-const options = { core: 'dist/go/piwork-serve', cli: 'dist/go/piwork-cli', image: 'piwork-agentd:go-migration-production', mode: 'api', samples: 20, output: 'dist/work-latency/result.json', baseline: false, smoke: false };
+const options = { core: 'dist/go/piwork-serve', cli: 'dist/go/piwork-cli', image: '', mode: 'api', samples: 20, output: 'dist/work-latency/result.json', baseline: false, smoke: false };
 for (let i = 2; i < process.argv.length; i++) {
   const flag = process.argv[i].replace(/^--/, '');
   assert.ok(Object.hasOwn(options, flag), 'Unknown measurement option');
@@ -61,6 +61,7 @@ async function api(method, path, body) {
 function operator(args, input) {
   const result = spawnSync(coreBinary, ['--core', coreUrl, '--data-dir', dataDir, ...args], { input, encoding: 'utf8', env: { ...childEnvironment, PATH: '/nonexistent' } });
   assert.equal(result.status, 0, 'Operator fixture setup failed');
+  return result.stdout;
 }
 function collectPerformance(child) {
   let pending = '';
@@ -124,8 +125,6 @@ async function cleanup() {
 }
 
 try {
-  const image = JSON.parse(docker(['image', 'inspect', options.image, '--format', '{{json .}}']));
-  assert.equal(image.Config.Labels['io.piwork.agent.variant'], 'production', 'Performance measurement requires the production Agent');
   const engine = JSON.parse(docker(['info', '--format', '{{json .}}']));
   const build = spawnSync('go', ['version', '-m', coreBinary], { encoding: 'utf8' });
   const buildSettings = Object.fromEntries([...build.stdout.matchAll(/build\s+(vcs\.[a-z]+|CGO_ENABLED|GOARCH|GOOS)=([^\n]+)/g)].map(m => [m[1], m[2].trim()]));
@@ -134,17 +133,22 @@ try {
   const sourceStatus = spawnSync('git', ['-C', sourceRoot, 'status', '--porcelain'], { encoding: 'utf8' });
   assert.equal(sourceCommit.status, 0, 'Source commit metadata unavailable'); assert.equal(sourceStatus.status, 0, 'Source status metadata unavailable');
   report.environment = { os: platform(), kernel: release(), cpuCount: cpus().length, cpuModel: cpus()[0]?.model, memoryBytes: totalmem(), dockerDriver: engine.Driver, dockerCpuCount: engine.NCPU, dockerMemoryBytes: engine.MemTotal,
-    agentVariant: 'production', imageBytes: image.Size, imageVersion: image.Config.Labels['io.piwork.agent.version'], historySchema: image.Config.Labels['io.piwork.work-history.schema'], agentCpuMillis: 1000, agentMemoryBytes: 768 * 1024 * 1024, concurrentSamples: 1, buildSettings,
+    agentVariant: 'production', agentCpuMillis: 1000, agentMemoryBytes: 768 * 1024 * 1024, concurrentSamples: 1, buildSettings,
     checkoutAtMeasurement: { commit: sourceCommit.stdout.trim(), modified: sourceStatus.stdout.trim() !== '', sourceInputHash: sourceInputHash(sourceRoot) },
     sourceNote: 'Checkout metadata describes the measurement workspace; a baseline binary may have different compiler inputs. Binary VCS settings are retained separately when embedded.' };
   const [corePort, grpcPort] = await Promise.all([freePort(), freePort()]);
   coreUrl = `http://127.0.0.1:${corePort}`;
   const coldStart = performance.now();
-  core = spawn(coreBinary, ['serve', '--data-dir', dataDir, '--listen', `127.0.0.1:${corePort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...childEnvironment, PATH: '/nonexistent', DOCKER_HOST: dockerHost, PIWORK_PACKAGE_HELPER_IMAGE: options.image } });
+  core = spawn(coreBinary, ['serve', '--data-dir', dataDir, '--listen', `127.0.0.1:${corePort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`, '--docker-host', dockerHost], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...childEnvironment, PATH: '/nonexistent' } });
   children.push(core); collectPerformance(core);
   await waitFor(async () => { try { return (await fetch(coreUrl + '/healthz')).ok; } catch { return false; } }, 'Core health timeout');
   operator(['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], password + '\n');
-  operator(['config', 'set', '--agent-image', options.image, '--model-provider', 'openai', '--model', 'gpt-4.1-mini', '--api-key-stdin'], 'latency-fixture-key\n');
+  operator(['config', 'set', '--model-provider', 'openai', '--model', 'gpt-4.1-mini', '--api-key-stdin'], 'latency-fixture-key\n');
+  const fixedImage=JSON.parse(operator(['config','show'])).agentImage;
+  if(options.image)assert.equal(fixedImage,options.image,'--image asserts the measured server dependency; it cannot override it');
+  const image=JSON.parse(docker(['image','inspect',fixedImage,'--format','{{json .}}']));
+  assert.equal(image.Config.Labels['io.piwork.agent.variant'],'production','Performance measurement requires the production Agent');
+  Object.assign(report.environment,{agentImage:fixedImage,imageBytes:image.Size,imageVersion:image.Config.Labels['io.piwork.agent.version'],historySchema:image.Config.Labels['io.piwork.work-history.schema']});
   await waitFor(async () => (await fetch(coreUrl + '/readyz')).ok, 'Core prewarm timeout', 600_000);
   report.coldCorePreparationMs = performance.now() - coldStart;
   installationId = JSON.parse(await readFile(join(dataDir, 'core-format.json'), 'utf8')).installationId;

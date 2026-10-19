@@ -22,7 +22,7 @@ func TestAdminRuntimeReturnsSavedConfigurationWithUnavailableStatus(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, body := httpCall(t, base, "/api/v1/admin/runtime", "PUT", "Bearer "+login.Token, map[string]any{"agentImage": "fixture/native", "provider": "fixture", "model": "saved", "credential": "private-api-key"})
+	status, body := httpCall(t, base, "/api/v1/admin/runtime", "PUT", "Bearer "+login.Token, map[string]any{"provider": "fixture", "model": "saved", "credential": "private-api-key"})
 	if status != 200 || body["status"].(map[string]any)["ready"] != false {
 		t.Fatal("saved runtime was reported as a failed save", status, body)
 	}
@@ -60,7 +60,7 @@ func TestAdminRevokedDuringBodyReadCannotPublishRuntimeOrCreateUser(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			method, raw := "PUT", `{"agentImage":"fixture/native","provider":"fixture","model":"one","credential":"private-api-key"}`
+			method, raw := "PUT", `{"provider":"fixture","model":"one","credential":"private-api-key"}`
 			if strings.HasSuffix(path, "/users") {
 				method, raw = "POST", `{"account":"new-user","password":"development-fixture-pass"}`
 			}

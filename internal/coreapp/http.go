@@ -612,11 +612,11 @@ func (a *Application) control(w http.ResponseWriter, r *http.Request, actor iden
 		if json.Unmarshal(raw, &body) != nil {
 			return contracts.NewError("INVALID_REQUEST", "")
 		}
-		input := RuntimeInput{AgentImage: body.AgentImage, Provider: body.Provider, Model: body.Model, Credential: body.Credential}
+		input := RuntimeInput{AgentImage: body.AgentImage.Value, Provider: body.Provider, Model: body.Model, Credential: body.Credential}
 		if body.BaseUrl.Present {
 			input.BaseURL = &body.BaseUrl.Value
 		}
-		view, err := a.Settings.ConfigureRuntimeAuthorized(input, func() error {
+		view, err := a.ConfigureRuntime(input, func() error {
 			if err := a.Identity.AuthorizeAdministrator(r.Context(), actor); err != nil {
 				return err
 			}

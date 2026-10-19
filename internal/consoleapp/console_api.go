@@ -465,21 +465,12 @@ func (c *nativeConsole) admin(w http.ResponseWriter, r *http.Request, sessionID 
 			consoleFailure(w, 400, "INVALID_REQUEST")
 			return
 		}
-		var defaults contracts.WebRuntimeDefaults
-		if err := api.Request(ctx, http.MethodGet, "/api/v1/admin/runtime-defaults", nil, &defaults); err != nil || contracts.Validate("WebRuntimeDefaultsSchema", defaults) != nil {
-			consoleFailure(w, 503, "RELEASE_DEFAULTS_UNAVAILABLE")
-			return
-		}
-		if input.AgentImage.Present && input.AgentImage.Value != defaults.AgentImage {
-			consoleJSON(w, 400, map[string]string{"code": "INVALID_REQUEST", "field": "agentImage"})
-			return
-		}
-		// The user selects a model. Only this trusted adapter supplies the
-		// running Core's version-bound Agent reference to the legacy API.
+		// Core resolves the image at its write boundary. Keep a supplied legacy
+		// field for Core to validate, never substitute the Console's defaults.
 		var value json.RawMessage
-		if err := api.Request(ctx, http.MethodPut, "/api/v1/admin/runtime", contracts.AdminRuntimeSelection{AgentImage: defaults.AgentImage, ModelRef: input.ModelRef}, &value); err != nil {
+		if err := api.Request(ctx, http.MethodPut, "/api/v1/admin/runtime", contracts.AdminRuntimeSelection{AgentImage: input.AgentImage, ModelRef: input.ModelRef}, &value); err != nil {
 			var apiErr *client.APIError
-			if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 {
+			if errors.As(err, &apiErr) && (apiErr.Status >= 400 && apiErr.Status < 500 || apiErr.Code == "RELEASE_DEFAULTS_UNAVAILABLE") {
 				consoleJSON(w, apiErr.Status, apiErr.Details)
 			} else {
 				consoleFailure(w, 502, "RUNTIME_RESULT_UNKNOWN")

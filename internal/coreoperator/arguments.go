@@ -22,7 +22,7 @@ const Usage = `usage: piwork-serve [--core URL] [--env-file FILE] [--data-dir DI
   admin users disable USER_ID
   admin users reset-credential USER_ID [--password-stdin]
   config show
-  config set --agent-image IMAGE --model-provider PROVIDER --model ID [--model-base-url URL] [--api-key-stdin | --api-key-file FILE]
+  config set --model-provider PROVIDER --model ID [--model-base-url URL] [--api-key-stdin | --api-key-file FILE]
   config default-work show
   config default-work set [--base-image IMAGE] [--skill NAME]... [--no-skills] [--package NAME]... [--no-packages] [--agents-md-file FILE]
   skills list|show NAME
@@ -37,6 +37,7 @@ const Usage = `usage: piwork-serve [--core URL] [--env-file FILE] [--data-dir DI
   --version
 
 piwork is an alias of this operator program; user commands use piwork-cli.
+CoreRuntime uses the server release image; no image option is needed.
 Secrets are read without echo or with the explicit stdin/file option.
 Bootstrap and config set may initialize an unlocked local data directory when
 no explicit Core URL is selected and the default loopback Core is not running.
@@ -205,7 +206,7 @@ func parse(args []string) (invocation, error) {
 			v.command, options = "runtime-show", rest[2:]
 		case "set":
 			v.command, options = "runtime-set", rest[2:]
-			for _, n := range []string{"--agent-image", "--model-provider", "--model", "--model-base-url", "--api-key-file"} {
+			for _, n := range []string{"--model-provider", "--model", "--model-base-url", "--api-key-file"} {
 				values[n] = true
 			}
 			flags["--api-key-stdin"] = true
@@ -232,6 +233,9 @@ func parse(args []string) (invocation, error) {
 	}
 	for i := 0; i < len(options); i++ {
 		n := options[i]
+		if v.command == "runtime-set" && n == "--agent-image" {
+			return v, usage("CoreRuntime uses the server release image; remove --agent-image")
+		}
 		if !values[n] && !flags[n] {
 			return v, usage("unknown command option")
 		}
@@ -257,7 +261,7 @@ func parse(args []string) (invocation, error) {
 		}
 	}
 	if v.command == "runtime-set" {
-		for _, n := range []string{"--agent-image", "--model-provider", "--model"} {
+		for _, n := range []string{"--model-provider", "--model"} {
 			if v.one(n) == "" {
 				return v, usage(fmt.Sprintf("%s is required", n))
 			}

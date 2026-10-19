@@ -45,7 +45,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	// Complete local field checks before reading environment, secret files,
 	// stdin, credentials, or network. A placeholder validates public fields only.
 	if v.command == "runtime-set" {
-		if err := coreapp.ValidateRuntime(runtimeInput(v, "validation-placeholder")); err != nil {
+		if err := coreapp.ValidateRuntimeModel(runtimeInput(v, "validation-placeholder")); err != nil {
 			return failure(usage("invalid runtime configuration fields"), stderr)
 		}
 	}
@@ -200,10 +200,10 @@ func prepare(ctx context.Context, v invocation, input io.Reader, stderr io.Write
 			return nil, "", "", err
 		}
 		runtime := runtimeInput(v, key)
-		if err := coreapp.ValidateRuntime(runtime); err != nil {
+		if err := coreapp.ValidateRuntimeModel(runtime); err != nil {
 			return nil, "", "", err
 		}
-		body := map[string]any{"agentImage": runtime.AgentImage, "provider": runtime.Provider, "model": runtime.Model, "credential": runtime.Credential}
+		body := map[string]any{"provider": runtime.Provider, "model": runtime.Model, "credential": runtime.Credential}
 		if runtime.BaseURL != nil {
 			body["baseUrl"] = *runtime.BaseURL
 		}
@@ -246,7 +246,7 @@ func prepare(ctx context.Context, v invocation, input io.Reader, stderr io.Write
 	return nil, "", "", usage("unknown operator command")
 }
 func runtimeInput(v invocation, key string) coreapp.RuntimeInput {
-	runtime := coreapp.RuntimeInput{AgentImage: v.one("--agent-image"), Provider: v.one("--model-provider"), Model: v.one("--model"), Credential: key}
+	runtime := coreapp.RuntimeInput{Provider: v.one("--model-provider"), Model: v.one("--model"), Credential: key}
 	if v.has("--model-base-url") {
 		base := v.one("--model-base-url")
 		runtime.BaseURL = &base
@@ -271,7 +271,7 @@ func initializeOffline(ctx context.Context, directory, credential string, v invo
 		}
 		return map[string]any{"userId": user.Id, "account": user.Account}, nil
 	}
-	return a.Settings.ConfigureRuntime(runtimeInput(v, body["credential"].(string)))
+	return a.ConfigureRuntime(runtimeInput(v, body["credential"].(string)), nil)
 }
 func output(writer io.Writer, value any, compact bool) int {
 	encoder := json.NewEncoder(writer)

@@ -56,10 +56,17 @@ export const ModelTestFailureSchema = Type.Object({
   message: Type.String({minLength:1,maxLength:512}), recovery: Type.String({minLength:1,maxLength:512}),
 }, strict);
 export const ModelTestResultSchema = Type.Union([ModelTestSuccessSchema, ModelTestFailureSchema]);
-export const AdminRuntimeSelectionSchema = Type.Object({ agentImage: Type.String({ minLength: 1, maxLength: 4096 }), modelRef: ResourceIdSchema }, strict);
+// The running Core supplies the release image. The old field is accepted only
+// for same-release clients; its value is checked at the Core write boundary.
+const releaseImage = Type.Optional(Type.String({ minLength: 1, maxLength: 4096 }));
+export const AdminRuntimeSelectionSchema = Type.Object({ agentImage: releaseImage, modelRef: ResourceIdSchema }, strict);
+export const AdminRuntimeLegacyInputSchema = Type.Object({
+  agentImage: releaseImage, provider: Type.String({ minLength: 1, maxLength: 256 }),
+  model: Type.String({ minLength: 1, maxLength: 512 }), baseUrl: Type.Optional(endpoint), credential,
+}, strict);
 
 export type ModelConfig = Type.Static<typeof ModelConfigSchema>;
-export const modelManagementSchemas = { CreateModelConfigSchema, PatchModelConfigSchema, ModelConfigSchema, ModelConfigListSchema, ModelApiSchema, ModelDefinitionSchema, ModelCapabilitiesSchema, CreateModelProviderSchema, PatchModelProviderSchema, ModelProviderSchema, ModelProviderListSchema, CreateManagedModelSchema, PatchManagedModelSchema, ManagedModelSchema, ManagedModelListSchema, SavedModelTestInputSchema, ProviderModelTestInputSchema, DraftModelTestInputSchema, ModelTestInputSchema, ModelTestSuccessSchema, ModelTestFailureSchema, ModelTestResultSchema, AdminRuntimeSelectionSchema };
+export const modelManagementSchemas = { CreateModelConfigSchema, PatchModelConfigSchema, ModelConfigSchema, ModelConfigListSchema, ModelApiSchema, ModelDefinitionSchema, ModelCapabilitiesSchema, CreateModelProviderSchema, PatchModelProviderSchema, ModelProviderSchema, ModelProviderListSchema, CreateManagedModelSchema, PatchManagedModelSchema, ManagedModelSchema, ManagedModelListSchema, SavedModelTestInputSchema, ProviderModelTestInputSchema, DraftModelTestInputSchema, ModelTestInputSchema, ModelTestSuccessSchema, ModelTestFailureSchema, ModelTestResultSchema, AdminRuntimeSelectionSchema, AdminRuntimeLegacyInputSchema };
 export type ModelApi = Type.Static<typeof ModelApiSchema>;
 export type ModelCapabilities = Type.Static<typeof ModelCapabilitiesSchema>;
 export type ModelDefinition = Type.Static<typeof ModelDefinitionSchema>;

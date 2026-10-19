@@ -1,3 +1,4 @@
+import {buildNativeTestServer} from './native-test-server.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -13,13 +14,14 @@ import { pythonDependencyRegistryProgram } from './python-dependency-fixture.mjs
 
 export async function runCoreDependencyChecks() {
   const root = resolve(import.meta.dirname, '..');
-  const coreBinary = join(root, 'dist/go/piwork-serve'), cliBinary = join(root, 'dist/go/piwork-cli');
+  const cliBinary = join(root, 'dist/go/piwork-cli');
   const agent = process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE || 'piwork-agentd:go-migration-acceptance';
   const file = process.env.PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE || 'piwork-file-helper:go-migration-acceptance';
   const snapshot = process.env.PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE || 'piwork-snapshot-helper:go-migration-acceptance';
   await mkdir(join(root, 'dist/web-base'), { recursive: true });
   const temporary = await mkdtemp(join(root, 'dist/web-base/core-check-'));
   const data = join(temporary, 'core');
+  const coreBinary = buildNativeTestServer(join(temporary,'bin'),{agent,packageHelper:agent,fileHelper:file,snapshotHelper:snapshot});
   const docker = args => {
     const result = spawnSync('docker', args, { encoding: 'utf8', maxBuffer: 8 << 20 });
     assert.equal(result.status, 0, `Docker ${args[0]} failed: ${result.stderr}`);
@@ -78,7 +80,7 @@ export async function runCoreDependencyChecks() {
     const [httpPort, grpcPort, desktopPort] = await Promise.all([port(), port(), port()]);
     coreUrl = `http://127.0.0.1:${httpPort}`;
     core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
-      { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent', PIWORK_PACKAGE_HELPER_IMAGE: agent, PIWORK_FILE_HELPER_IMAGE: file, PIWORK_SNAPSHOT_HELPER_IMAGE: snapshot } });
+      { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent' } });
     coreOutput = output(core);
     await wait(async () => (await fetch(coreUrl + '/healthz')).ok, 'Core health');
     const operator = (args, input) => {
@@ -86,7 +88,7 @@ export async function runCoreDependencyChecks() {
       assert.equal(result.status, 0, `Operator ${args[0]} failed: ${result.stderr}`);
     };
     operator(['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], 'web-base-synthetic-password\n');
-    operator(['config', 'set', '--agent-image', agent, '--model-provider', 'piwork-deterministic', '--model', 'fixture-v1', '--api-key-stdin'], 'synthetic-fixture-key\n');
+    operator(['config', 'set', '--model-provider', 'piwork-deterministic', '--model', 'fixture-v1', '--api-key-stdin'], 'synthetic-fixture-key\n');
     await wait(async () => (await fetch(coreUrl + '/readyz')).ok, 'Core readiness');
     token = (await api('POST', '/login', { account: 'admin', password: 'web-base-synthetic-password' })).token;
     const created = await api('POST', '/works', { name: 'NiceGUI dependency validation', idempotencyKey: 'web-base-validation' });

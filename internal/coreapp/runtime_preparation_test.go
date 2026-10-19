@@ -187,7 +187,7 @@ func TestPreparationConfigurationSaveCancelsOldGenerationAndKeepsAdminDTO(t *tes
 		}
 	})
 	waitPreparation(t, a, func(p Preparation) bool { return p.Components["agent"].State == "preparing" })
-	input := map[string]string{"agentImage": "fixture/new", "provider": "fixture", "model": "saved", "credential": "private-new-key"}
+	input := map[string]string{"provider": "fixture", "model": "saved", "credential": "private-new-key"}
 	started := time.Now()
 	code, body := httpCall(t, base, "/control/runtime", "PUT", operator, input)
 	if code != 200 || body["revision"] != float64(2) || time.Since(started) > time.Second {

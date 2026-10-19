@@ -3350,7 +3350,7 @@
   {
     "schema": "AdminRuntimeInputSchema",
     "case": "baseline",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
@@ -3374,13 +3374,13 @@
   {
     "schema": "AdminRuntimeInputSchema",
     "case": "unknown-field",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"unexpected\":\"private-test-value\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"unexpected\":\"private-test-value\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "baseline",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
@@ -3404,337 +3404,337 @@
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unknown-field",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"unexpected\":\"private-test-value\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"unexpected\":\"private-test-value\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "absent-agentImage",
     "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
-    "valid": false
+    "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "null-agentImage",
-    "json": "{\"agentImage\":null,\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":null}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "empty-agentImage",
-    "json": "{\"agentImage\":\"\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":\"\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-agentImage-571",
-    "json": "{\"agentImage\":\"中文\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":\"中文\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-agentImage-572",
-    "json": "{\"agentImage\":\"😀\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":\"😀\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-agentImage-573",
-    "json": "{\"agentImage\":\"é\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":\"é\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-agentImage-574",
-    "json": "{\"agentImage\":\"e\\\\u0301\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":\"e\\\\u0301\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-agentImage-575",
-    "json": "{\"agentImage\":\" \",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":\" \"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-agentImage-576",
-    "json": "{\"agentImage\":\"a\\n\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":\"a\\n\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-agentImage-577",
-    "json": "{\"agentImage\":\"a \",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":\"a \"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-agentImage-578",
-    "json": "{\"agentImage\":\"\\u0000\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"agentImage\":\"\\u0000\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "absent-provider",
-    "json": "{\"agentImage\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"model\":\"a\",\"credential\":\"a\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "null-provider",
-    "json": "{\"agentImage\":\"a\",\"provider\":null,\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":null,\"model\":\"a\",\"credential\":\"a\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "empty-provider",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-provider-582",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"中文\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"中文\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-provider-583",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"😀\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"😀\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-provider-584",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"é\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"é\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-provider-585",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"e\\\\u0301\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"e\\\\u0301\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-provider-586",
-    "json": "{\"agentImage\":\"a\",\"provider\":\" \",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\" \",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-provider-587",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\\n\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\\n\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-provider-588",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a \",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a \",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-provider-589",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"\\u0000\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"\\u0000\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "absent-model",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"credential\":\"a\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "null-model",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":null,\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":null,\"credential\":\"a\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "empty-model",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"\",\"credential\":\"a\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-model-593",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"中文\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"中文\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-model-594",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"😀\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"😀\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-model-595",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"é\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"é\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-model-596",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"e\\\\u0301\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"e\\\\u0301\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-model-597",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\" \",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\" \",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-model-598",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\\n\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\\n\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-model-599",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a \",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a \",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-model-600",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"\\u0000\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"\\u0000\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "absent-baseUrl",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "null-baseUrl",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":null}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":null}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "empty-baseUrl",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-baseUrl-604",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"中文\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"中文\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-baseUrl-605",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"😀\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"😀\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-baseUrl-606",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"é\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"é\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-baseUrl-607",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"e\\\\u0301\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"e\\\\u0301\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-baseUrl-608",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\" \"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\" \"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-baseUrl-609",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"a\\n\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"a\\n\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-baseUrl-610",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"a \"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"a \"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-baseUrl-611",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"\\u0000\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\",\"baseUrl\":\"\\u0000\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "absent-credential",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "null-credential",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":null}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":null}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "empty-credential",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-credential-615",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"中文\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"中文\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-credential-616",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"😀\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"😀\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-credential-617",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"é\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"é\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-credential-618",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"e\\\\u0301\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"e\\\\u0301\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-credential-619",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\" \"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\" \"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-credential-620",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\\n\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a\\n\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-credential-621",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a \"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"a \"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeLegacyInputSchema",
     "case": "unicode-credential-622",
-    "json": "{\"agentImage\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"credential\":\"\\u0000\"}",
+    "json": "{\"provider\":\"a\",\"model\":\"a\",\"credential\":\"\\u0000\"}",
     "valid": true
   },
   {
@@ -3806,7 +3806,7 @@
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "baseline",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
     "valid": true
   },
   {
@@ -3830,139 +3830,139 @@
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unknown-field",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"unexpected\":\"private-test-value\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"unexpected\":\"private-test-value\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "absent-agentImage",
     "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
-    "valid": false
+    "valid": true
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "null-agentImage",
-    "json": "{\"agentImage\":null,\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":null}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "empty-agentImage",
-    "json": "{\"agentImage\":\"\",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":\"\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-agentImage-642",
-    "json": "{\"agentImage\":\"中文\",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":\"中文\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-agentImage-643",
-    "json": "{\"agentImage\":\"😀\",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":\"😀\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-agentImage-644",
-    "json": "{\"agentImage\":\"é\",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":\"é\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-agentImage-645",
-    "json": "{\"agentImage\":\"e\\\\u0301\",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":\"e\\\\u0301\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-agentImage-646",
-    "json": "{\"agentImage\":\" \",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":\" \"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-agentImage-647",
-    "json": "{\"agentImage\":\"a\\n\",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":\"a\\n\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-agentImage-648",
-    "json": "{\"agentImage\":\"a \",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":\"a \"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-agentImage-649",
-    "json": "{\"agentImage\":\"\\u0000\",\"modelRef\":\"aaaaaaaaaaaaaaaa\"}",
+    "json": "{\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"agentImage\":\"\\u0000\"}",
     "valid": true
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "absent-modelRef",
-    "json": "{\"agentImage\":\"a\"}",
+    "json": "{}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "null-modelRef",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":null}",
+    "json": "{\"modelRef\":null}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "empty-modelRef",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"\"}",
+    "json": "{\"modelRef\":\"\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-modelRef-653",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"中文\"}",
+    "json": "{\"modelRef\":\"中文\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-modelRef-654",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"😀\"}",
+    "json": "{\"modelRef\":\"😀\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-modelRef-655",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"é\"}",
+    "json": "{\"modelRef\":\"é\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-modelRef-656",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"e\\\\u0301\"}",
+    "json": "{\"modelRef\":\"e\\\\u0301\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-modelRef-657",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\" \"}",
+    "json": "{\"modelRef\":\" \"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-modelRef-658",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"a\\n\"}",
+    "json": "{\"modelRef\":\"a\\n\"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-modelRef-659",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"a \"}",
+    "json": "{\"modelRef\":\"a \"}",
     "valid": false
   },
   {
     "schema": "AdminRuntimeSelectionSchema",
     "case": "unicode-modelRef-660",
-    "json": "{\"agentImage\":\"a\",\"modelRef\":\"\\u0000\"}",
+    "json": "{\"modelRef\":\"\\u0000\"}",
     "valid": false
   },
   {
