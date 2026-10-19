@@ -23,9 +23,20 @@ export function desktopInputHash(base = root) {
     if (entry.isDirectory()) visit(child); else if (entry.isFile()) files.push(child); else throw new Error(`unsupported build input: ${child}`);
   } };
   for (const name of ['apps/desktop-webui/src', 'apps/desktop-webui/public', 'apps/desktop-webui/scripts']) visit(name);
-  files.push('apps/desktop-webui/tsconfig.json', 'apps/desktop-webui/package.json', 'scripts/sync-desktop-assets.mjs', 'package-lock.json', 'apps/ui-shared/assets/piwork-logo.png');
+  files.push('apps/desktop-webui/tsconfig.json', 'apps/desktop-webui/package.json', 'scripts/sync-desktop-assets.mjs', 'package-lock.json', 'apps/ui-shared/assets/piwork-logo.png', 'apps/ui-shared/browser-crypto.js', 'apps/ui-shared/tokens.css');
   const hash = createHash('sha256');
   for (const name of files.sort()) { const data = readFileSync(join(base,name)); hash.update(`${name}\0${data.length}\0`); hash.update(data); }
+  return hash.digest('hex');
+}
+export function consoleInputHash(base = root) {
+  const hash = createHash('sha256');
+  const files = ['apps/console-webui/package.json', 'apps/console-webui/tsconfig.json', 'scripts/sync-console-assets.mjs', 'package-lock.json', 'apps/ui-shared/assets/piwork-logo.png', 'apps/ui-shared/browser-crypto.js', 'apps/ui-shared/tokens.css'];
+  const visit = name => { for (const entry of readdirSync(join(base,name), {withFileTypes:true})) {
+    const child = `${name}/${entry.name}`;
+    if (entry.isDirectory()) visit(child); else if (entry.isFile()) files.push(child); else throw new Error(`unsupported build input: ${child}`);
+  } };
+  for (const name of ['apps/console-webui/src','apps/console-webui/public','apps/console-webui/scripts']) visit(name);
+  for (const name of files.sort()) { const bytes=readFileSync(join(base,name)); hash.update(`${name}\0${bytes.length}\0`); hash.update(bytes); }
   return hash.digest('hex');
 }
 export function buildCLI(args, { base = root, run = (command, argv, options) => spawnSync(command, argv, options), nodeVersion = process.versions.node } = {}) {

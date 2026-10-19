@@ -8,11 +8,15 @@ ARG PIWORK_VERSION
 ARG PIWORK_COMMIT
 ARG PIWORK_MODIFIED
 ARG PIWORK_SOURCE_INPUT_HASH
+ARG PIWORK_DESKTOP_UI_HASH
+ARG PIWORK_CONSOLE_UI_HASH
 ARG PIWORK_RELEASE_REGISTRY=docker.io/pphboy
 RUN PIWORK_VERSION="$PIWORK_VERSION" PIWORK_COMMIT="$PIWORK_COMMIT" \
     PIWORK_MODIFIED="$PIWORK_MODIFIED" PIWORK_SOURCE_INPUT_HASH="$PIWORK_SOURCE_INPUT_HASH" \
     PIWORK_RELEASE_REGISTRY="$PIWORK_RELEASE_REGISTRY" \
     node scripts/build-docker-release.mjs image /out
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --include-workspace-root -w @piwork/desktop-webui -w @piwork/console-webui \
+ && npm run build -w @piwork/desktop-webui -w @piwork/console-webui
 
 FROM ${GO_BUILDER_IMAGE} AS build
 ARG GOPROXY=https://proxy.golang.org,direct
@@ -22,6 +26,8 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY internal ./internal
 COPY cmd/piwork-serve ./cmd/piwork-serve
+COPY --from=metadata /source/internal/desktopassets/static/ ./internal/desktopassets/static/
+COPY --from=metadata /source/internal/consoleassets/static/ ./internal/consoleassets/static/
 COPY --from=metadata /out/core.ldflags /build.ldflags
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -buildvcs=false \
@@ -33,22 +39,20 @@ ARG PIWORK_VERSION
 ARG PIWORK_COMMIT
 ARG PIWORK_MODIFIED
 ARG PIWORK_SOURCE_INPUT_HASH
+ARG PIWORK_DESKTOP_UI_HASH
+ARG PIWORK_CONSOLE_UI_HASH
 LABEL org.opencontainers.image.title="piwork-core" \
       org.opencontainers.image.version="${PIWORK_VERSION}" \
       org.opencontainers.image.revision="${PIWORK_COMMIT}" \
       io.piwork.source.modified="${PIWORK_MODIFIED}" \
-      io.piwork.source.input-sha256="${PIWORK_SOURCE_INPUT_HASH}"
+      io.piwork.source.input-sha256="${PIWORK_SOURCE_INPUT_HASH}" \
+      io.piwork.desktop.input-sha256="${PIWORK_DESKTOP_UI_HASH}" \
+      io.piwork.console.input-sha256="${PIWORK_CONSOLE_UI_HASH}"
 COPY --from=build --chmod=0555 /out/piwork-serve /usr/local/bin/piwork-serve
 COPY --from=metadata --chmod=0444 /out/docker-release.json /etc/piwork/docker-release.json
-ENV PIWORK_RELEASE_CONFIG_PATH=/etc/piwork/docker-release.json \
-    PIWORK_DATA_DIR=/var/lib/piwork/quickstart/core \
-    PIWORK_LISTEN=0.0.0.0:7171 \
-    PIWORK_CORE_URL=http://127.0.0.1:7171 \
-    PIWORK_AGENT_GRPC_LISTEN=0.0.0.0:7172 \
-    PIWORK_AGENT_GRPC_ADVERTISE=piwork-core:7172 \
-    DOCKER_HOST=unix:///var/run/docker.sock \
+ENV DOCKER_HOST=unix:///var/run/docker.sock \
     DOCKER_CONTEXT=""
 HEALTHCHECK --interval=5s --timeout=4s --start-period=10s --retries=120 \
-    CMD curl --fail --silent --output /dev/null --max-time 3 'http://127.0.0.1:7171/readyz?profile=docker-delivery' || exit 1
+    CMD curl --fail --silent --output /dev/null --max-time 3 'http://127.0.0.1:7171/healthz' || exit 1
 ENTRYPOINT ["/usr/local/bin/piwork-serve"]
-CMD ["serve", "--allow-insecure-remote"]
+CMD ["serve", "--data-dir", "/var/lib/piwork/quickstart/core", "--no-open"]

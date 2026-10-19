@@ -22,7 +22,20 @@ if [[ ! "$piwork_build_version" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
   echo "Native build version is invalid." >&2
   exit 1
 fi
+piwork_desktop_hash=$(node --input-type=module -e "import {desktopInputHash} from './scripts/build-cli.mjs'; console.log(desktopInputHash())")
+piwork_console_hash=$(node --input-type=module -e "import {consoleInputHash} from './scripts/build-cli.mjs'; console.log(consoleInputHash())")
+piwork_server_defaults=""
+if [[ -n "${PIWORK_RELEASE_METADATA:-}" ]]; then
+  piwork_server_defaults="$(node scripts/native-server-defaults.mjs "$PIWORK_RELEASE_METADATA")"
+  piwork_release_version=$(node -p "require('./package.json').version")
+  if [[ -n "${PIWORK_BUILD_VERSION:-}" && "$PIWORK_BUILD_VERSION" != "$piwork_release_version" ]]; then
+    echo "Native release version differs from reviewed metadata." >&2
+    exit 1
+  fi
+  piwork_build_version=$piwork_release_version
+  piwork_server_defaults="-X piwork/internal/distribution.EncodedImages=$piwork_server_defaults"
+fi
 go build -mod=readonly -trimpath -buildvcs=true \
-  -ldflags "-X piwork/internal/buildinfo.Version=$piwork_build_version -X piwork/internal/buildinfo.Commit=$piwork_build_commit -X piwork/internal/buildinfo.Modified=$piwork_build_modified" \
+  -ldflags "-X piwork/internal/buildinfo.Version=$piwork_build_version -X piwork/internal/buildinfo.Commit=$piwork_build_commit -X piwork/internal/buildinfo.Modified=$piwork_build_modified -X piwork/internal/buildinfo.DesktopUIHash=$piwork_desktop_hash -X piwork/internal/buildinfo.ConsoleUIHash=$piwork_console_hash $piwork_server_defaults" \
   -o "$piwork_build_dir/" ./cmd/...
 ln -sfn piwork-serve "$piwork_build_dir/piwork"

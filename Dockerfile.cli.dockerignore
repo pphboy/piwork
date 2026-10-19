@@ -1,4 +1,7 @@
 **/dist
+**/coverage
+**/test-results
+**/playwright-report
 **/.tsbuildinfo
 .git
 .piwork*
@@ -23,3 +26,6 @@ demo
 .idea
 
 # Shared UI product assets are included under apps/; development evidence stays excluded.
+
+# Unrelated local presentation work is outside the application source snapshot.
+promo

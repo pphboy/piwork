@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { desktopInputHash } from './build-cli.mjs';
+import { desktopInputHash, consoleInputHash } from './build-cli.mjs';
 import { releaseInfoInputHash } from './release-info.mjs';
 import { singleHostReadme } from './docker-quickstart-content.mjs';
 import { renderPublishScript } from './docker-publish-preflight.mjs';
@@ -23,11 +23,16 @@ const hashPattern = /^[a-f0-9]{64}$/;
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
 const canonical = reference => reference.replace(/^docker\.io\//, '');
 
+// Published provenance remains immutable while an unpublished change is reviewed.
+export function currentRelease(base = root) {
+  return readJSON(join(base, existsSync(join(base, 'deploy/docker/candidate.json')) ? 'deploy/docker/candidate.json' : 'deploy/docker/release.json'));
+}
+
 export function sourceInputHash(base = root) {
   const files = [];
   const walk = name => {
     for (const entry of readdirSync(join(base, name), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
-      if (['dist', 'node_modules', '.git', '.cache'].includes(entry.name)) continue;
+      if (['dist', 'node_modules', '.git', '.cache', 'coverage', 'test-results', 'playwright-report'].includes(entry.name)) continue;
       const child = `${name}/${entry.name}`;
       if (entry.isDirectory()) walk(child);
       else if (entry.isFile() && !/(?:^|\/)\.env|\.(?:env(?:\..*)?|pem|key|sqlite(?:-.*)?|db(?:-.*)?|work|log|tsbuildinfo)$/.test(child) && !/README(?:\.[^/]*)?$/.test(child)) files.push(child);
@@ -68,10 +73,11 @@ export function identity(base = root, environment = process.env) {
   const sourceHash = sourceInputHash(base);
   releaseInfoInputHash(base);
   const desktopUIHash = desktopInputHash(base);
-  const metadata = { manifestVersion: 2, releaseVersion, sourceCommit, sourceModified: modified === 'true', sourceInputHash: sourceHash, desktopUIHash, registry, platform: config.platform, runtimeImage: config.runtimeImage, core: { format: config.coreFormat, schemaVersion: config.coreSchemaVersion }, clientCredentialVersion: config.clientCredentialVersion };
+  const consoleUIHash = consoleInputHash(base);
+  const metadata = { manifestVersion: 2, application: 'unified-linux', releaseVersion, sourceCommit, sourceModified: modified === 'true', sourceInputHash: sourceHash, desktopUIHash, consoleUIHash, registry, platform: config.platform, runtimeImage: config.runtimeImage, core: { format: config.coreFormat, schemaVersion: config.coreSchemaVersion }, clientCredentialVersion: config.clientCredentialVersion };
   metadata.releaseId = `${releaseVersion}-${sourceCommit.slice(0, 12)}-${sourceHash.slice(0, 12)}${metadata.sourceModified ? '-dirty' : ''}`;
   metadata.images = Object.fromEntries(roles.map(role => [role, `${registry}/${names[role]}:${metadata.releaseId}`]));
-  for (const [key, value] of [['PIWORK_VERSION', releaseVersion], ['PIWORK_SOURCE_INPUT_HASH', sourceHash], ['PIWORK_DESKTOP_UI_HASH', desktopUIHash]]) {
+  for (const [key, value] of [['PIWORK_VERSION', releaseVersion], ['PIWORK_SOURCE_INPUT_HASH', sourceHash], ['PIWORK_DESKTOP_UI_HASH', desktopUIHash], ['PIWORK_CONSOLE_UI_HASH', consoleUIHash]]) {
     if (environment[key] !== undefined && environment[key] !== value) throw new Error(`Build input changed (${key}); regenerate metadata.`);
   }
   const store = readFileSync(join(base, 'internal/corestore/store.go'), 'utf8');
@@ -89,9 +95,10 @@ export function writeMetadata(metadata, output) {
   writeFileSync(join(output, 'docker-release.json'), JSON.stringify(coreReleaseConfig(metadata), null, 2) + '\n');
   const clientIdentity = JSON.stringify({ releaseVersion: metadata.releaseVersion, commit: metadata.sourceCommit, modified: metadata.sourceModified, desktopUIHash: metadata.desktopUIHash, target: metadata.platform, goVersion: 'go1.25.5' });
   const common = `-s -w -X piwork/internal/buildinfo.Version=${metadata.releaseVersion} -X piwork/internal/buildinfo.Commit=${metadata.sourceCommit} -X piwork/internal/buildinfo.Modified=${metadata.sourceModified}`;
-  writeFileSync(join(output, 'core.ldflags'), common);
+  const encodedImages = Buffer.from(JSON.stringify(coreReleaseConfig(metadata).images)).toString('base64').replace(/=+$/, '');
+  writeFileSync(join(output, 'core.ldflags'), `${common} -X piwork/internal/buildinfo.DesktopUIHash=${metadata.desktopUIHash} -X piwork/internal/buildinfo.ConsoleUIHash=${metadata.consoleUIHash} -X piwork/internal/distribution.EncodedImages=${encodedImages}`);
   writeFileSync(join(output, 'cli.ldflags'), `${common} -X piwork/internal/buildinfo.DesktopUIHash=${metadata.desktopUIHash} -X 'piwork/internal/buildinfo.ClientReleaseIdentity=piwork-cli-release-v1:${clientIdentity}'`);
-  for (const [key, value] of Object.entries({ version: metadata.releaseVersion, commit: metadata.sourceCommit, modified: String(metadata.sourceModified), sourceInputHash: metadata.sourceInputHash, desktopUIHash: metadata.desktopUIHash, releaseId: metadata.releaseId, registry: metadata.registry, runtimeImage: metadata.runtimeImage, ...metadata.images })) writeFileSync(join(output, key), value + '\n');
+  for (const [key, value] of Object.entries({ version: metadata.releaseVersion, commit: metadata.sourceCommit, modified: String(metadata.sourceModified), sourceInputHash: metadata.sourceInputHash, desktopUIHash: metadata.desktopUIHash, consoleUIHash: metadata.consoleUIHash, releaseId: metadata.releaseId, registry: metadata.registry, runtimeImage: metadata.runtimeImage, ...metadata.images })) writeFileSync(join(output, key), value + '\n');
 }
 
 export function verifyImageRecords(metadata, records, { published = false } = {}) {
@@ -110,8 +117,10 @@ export function verifyImageRecords(metadata, records, { published = false } = {}
       const version = record.versions?.[program];
       if (!version || version.program !== program || version.version !== metadata.releaseVersion || version.commit !== metadata.sourceCommit || version.modified !== metadata.sourceModified || `${version.os}/${version.architecture}` !== metadata.platform || version.goVersion !== 'go1.25.5') throw new Error(`${role}: binary identity mismatch.`);
       if (role === 'cli' && version.desktopUIHash !== metadata.desktopUIHash) throw new Error('cli: embedded Desktop input mismatch.');
+      if (role === 'core' && (version.desktopUIHash !== metadata.desktopUIHash || version.consoleUIHash !== metadata.consoleUIHash)) throw new Error('core: embedded browser inputs mismatch.');
     }
     if (role === 'cli' && (image.Config.Healthcheck || labels['io.piwork.desktop.input-sha256'] !== metadata.desktopUIHash)) throw new Error('cli: image defaults/resource identity mismatch.');
+    if (role === 'core' && (labels['io.piwork.desktop.input-sha256'] !== metadata.desktopUIHash || labels['io.piwork.console.input-sha256'] !== metadata.consoleUIHash)) throw new Error('core: browser resource labels mismatch.');
     if ((role === 'core' || role === 'cli') && record.runtimeBoundary !== true) throw new Error(`${role}: runtime boundary check missing.`);
     if (role === 'core' && JSON.stringify(record.releaseConfig) !== JSON.stringify(coreReleaseConfig(metadata))) throw new Error('core: embedded release defaults mismatch.');
     const result = { reference: metadata.images[role], imageId: image.Id, platform: metadata.platform, protocolLabels: protocols[role] };
@@ -143,7 +152,7 @@ export function writeMaterials(metadata, records, output, { published = false, b
   writeFileSync(join(output, 'single-host-compose.yml'), renderCompose(metadata, base, { singleHost: true }));
   for (const [language, name] of [['en', 'single-host-README.md'], ['zh', 'single-host-README.zh-CN.md']]) writeFileSync(join(output, name), singleHostReadme(manifest, language));
   writeFileSync(join(output, 'release-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-  writeFileSync(join(output, 'README.txt'), `Piwork ${metadata.releaseId}\nState: ${manifest.state}\nSource: ${metadata.sourceCommit}\nInput SHA256: ${metadata.sourceInputHash}\n${published ? 'Registry identity and anonymous readability verified.' : 'Local candidate only. Public push and download have not been approved or verified.'}\ndocker-compose.yml deploys only Core; CLI uses an independent Docker command. single-host-compose.yml is the optional combined example. Core initialization requires existing host environment variables. Review before running push-commands.sh; it defaults to a no-push preflight. An authorized push requires --push.\n`);
+  writeFileSync(join(output, 'README.txt'), `Piwork ${metadata.releaseId}\nState: ${manifest.state}\nSource: ${metadata.sourceCommit}\nInput SHA256: ${metadata.sourceInputHash}\n${published ? 'Registry identity and anonymous readability verified.' : 'Local candidate only. Public push and download have not been approved or verified.'}\ndocker-compose.yml deploys only Core; CLI uses an independent Docker command. single-host-compose.yml is the optional combined example. The unified Core includes both browser interfaces and setup. No business initialization environment is required; CLI is optional. Review before running push-commands.sh; it defaults to a no-push preflight. An authorized push requires --push.\n`);
   writeFileSync(join(output, 'push-commands.sh'), renderPublishScript(manifest), { mode: 0o755 });
   const files = ['README.txt', 'docker-compose.yml', 'single-host-compose.yml', 'single-host-README.md', 'single-host-README.zh-CN.md', 'push-commands.sh', 'release-manifest.json'];
   writeFileSync(join(output, 'SHA256SUMS'), files.map(name => `${sha(readFileSync(join(output, name)))}  ${name}\n`).join(''));

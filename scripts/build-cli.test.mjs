@@ -17,6 +17,8 @@ test('CLI build prepares fresh Desktop once and builds only the requested client
  try {
   for (const directory of ['apps/desktop-webui/src','apps/desktop-webui/public','apps/desktop-webui/scripts','apps/desktop-webui/dist','scripts','apps/ui-shared/assets','internal/releaseinfo']) mkdirSync(join(base,directory),{recursive:true});
   for (const name of ['apps/desktop-webui/tsconfig.json','apps/desktop-webui/package.json','scripts/sync-desktop-assets.mjs','package-lock.json']) writeFileSync(join(base,name),'{}');
+  writeFileSync(join(base,'apps/ui-shared/browser-crypto.js'),'synthetic browser crypto');
+  writeFileSync(join(base,'apps/ui-shared/tokens.css'),'synthetic shared tokens');
   writeFileSync(join(base,'package.json'),'{"version":"0.1.0"}');
   writeFileSync(join(base,'apps/ui-shared/assets/piwork-logo.png'),'fixture logo');
   writeFileSync(join(base,'apps/desktop-webui/dist/stale.js'),'old UI');

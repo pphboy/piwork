@@ -15,6 +15,10 @@ for release_asset in \
   internal/desktopassets/static/browser/app.js \
   internal/desktopassets/static/public/style.css \
   internal/consoleassets/static/browser/app.js \
+  internal/consoleassets/static/browser/onboarding.js \
+  internal/consoleassets/static/public/setup.html \
+  internal/consoleassets/static/browser/browser-crypto.js \
+  internal/desktopassets/static/browser/browser-crypto.js \
   internal/consoleassets/static/public/style.css; do
   test -s "$release_asset" || { echo "Missing compiled browser asset: $release_asset" >&2; exit 1; }
 done
@@ -36,21 +40,45 @@ for release_program in piwork-serve piwork-cli piwork-console piwork-file-helper
 done
 test "$(wc -l < "$release_stage/programs.ndjson")" -eq 7
 test "$(rg -c "$release_commit" "$release_stage/programs.ndjson")" -eq 7
+node --input-type=module - "$release_stage" <<'NODE'
+import {readFileSync,writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {desktopInputHash,consoleInputHash} from './scripts/build-cli.mjs';
+const stage=process.argv[2], programs=readFileSync(stage+'/programs.ndjson','utf8').trim().split('\n').map(line=>JSON.parse(line));
+const server=programs.find(program=>program.program==='piwork-serve');
+if(server?.desktopUIHash!==desktopInputHash()||server?.consoleUIHash!==consoleInputHash())throw new Error('Native server browser inputs do not match packaged resources.');
+writeFileSync(stage+'/server-build.json',JSON.stringify({application:'unified-linux',build:server,binarySHA256:createHash('sha256').update(readFileSync(stage+'/bin/piwork-serve')).digest('hex'),optionalPrograms:['piwork-cli','piwork-console']},null,2)+'\n');
+NODE
 
 agent_protocol_sha="$(sha256sum proto/agent.proto | cut -d' ' -f1)"
 service_protocol_sha="$(sha256sum proto/work-services.proto | cut -d' ' -f1)"
 printf '{"commit":"%s","agentProtoSha256":"%s","workServicesProtoSha256":"%s"}\n' \
   "$release_commit" "$agent_protocol_sha" "$service_protocol_sha" > "$release_stage/build-manifest.json"
 
-for release_image in \
-  piwork-agentd:go-migration-production \
-  piwork-agentd:go-migration-acceptance \
-  piwork-file-helper:go-migration-acceptance \
-  piwork-snapshot-helper:go-migration-acceptance; do
+release_agent=piwork-agentd:go-migration-production
+release_acceptance_agent=piwork-agentd:go-migration-acceptance
+release_file_helper=piwork-file-helper:go-migration-acceptance
+release_snapshot_helper=piwork-snapshot-helper:go-migration-acceptance
+if [[ -n "${PIWORK_RELEASE_METADATA:-}" ]]; then
+  # Validate the same reviewed inputs used by build-go before selecting images.
+  release_encoded_defaults=$(node scripts/native-server-defaults.mjs "$PIWORK_RELEASE_METADATA")
+  # Go's trimpath build metadata omits linker flags. The linked string itself
+  # must be present in the binary; do not infer it from an adjacent JSON file.
+  LC_ALL=C rg --text --fixed-strings --quiet -- "$release_encoded_defaults" "$release_build_dir/piwork-serve" || {
+    echo "Native server does not embed the reviewed dependency set." >&2
+    exit 1
+  }
+  release_agent=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).images.agent' "$PIWORK_RELEASE_METADATA")
+  release_acceptance_agent=$release_agent
+  release_file_helper=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).images.fileHelper' "$PIWORK_RELEASE_METADATA")
+  release_snapshot_helper=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).images.snapshotHelper' "$PIWORK_RELEASE_METADATA")
+  install -m 0444 "$PIWORK_RELEASE_METADATA" "$release_stage/release-inputs.json"
+fi
+for release_image in "$release_agent" "$release_acceptance_agent" "$release_file_helper" "$release_snapshot_helper"; do
   release_id="$(docker image inspect --format '{{.Id}}' "$release_image")"
   release_labels="$(docker image inspect --format '{{json .Config.Labels}}' "$release_image")"
   case "$release_image" in
-    piwork-agentd:*)
+    "$release_agent"|"$release_acceptance_agent")
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.agent.protocol"}}' "$release_image")" = v2
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.package-helper.contract"}}' "$release_image")" = 2
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.work-history.schema"}}' "$release_image")" = 5
@@ -58,10 +86,10 @@ for release_image in \
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.work-feedback.contract"}}' "$release_image")" = 1
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.service-mcp.contract"}}' "$release_image")" = 1
       ;;
-    piwork-file-helper:*)
+    "$release_file_helper")
       test "$(docker image inspect --format '{{index .Config.Labels "piwork.file_protocol"}}' "$release_image")" = 1
       ;;
-    piwork-snapshot-helper:*)
+    "$release_snapshot_helper")
       test "$(docker image inspect --format '{{index .Config.Labels "piwork.snapshot_protocol"}}' "$release_image")" = 1
       ;;
   esac
@@ -69,12 +97,12 @@ for release_image in \
 done
 
 for release_probe in \
-  'piwork-agentd:go-migration-production piwork-service-mcp' \
-  'piwork-agentd:go-migration-production piwork-package-helper' \
-  'piwork-agentd:go-migration-acceptance piwork-service-mcp' \
-  'piwork-agentd:go-migration-acceptance piwork-package-helper' \
-  'piwork-file-helper:go-migration-acceptance piwork-file-helper' \
-  'piwork-snapshot-helper:go-migration-acceptance piwork-snapshot-helper'; do
+  "$release_agent piwork-service-mcp" \
+  "$release_agent piwork-package-helper" \
+  "$release_acceptance_agent piwork-service-mcp" \
+  "$release_acceptance_agent piwork-package-helper" \
+  "$release_file_helper piwork-file-helper" \
+  "$release_snapshot_helper piwork-snapshot-helper"; do
   read -r release_image release_program <<< "$release_probe"
   docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
     --entrypoint "/usr/local/bin/$release_program" "$release_image" --version \
