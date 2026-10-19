@@ -1,3 +1,4 @@
+import { mountQuickSetup } from './quick-setup.js';
 import { randomUUID } from './browser-crypto.js';
 import { packagePhaseView, packageSteps } from './package-phase.js';
 import { ModelManagement } from './model-management.js';
@@ -13,12 +14,17 @@ const modules = [
     ["About Piwork", "/about"],
     ["Users", "/users"],
     ["Runtime", "/runtime"],
+    ["Quick setup", "/setup"],
     ["AI models", "/models"],
     ["Default Work", "/default-work"],
     ["Skills", "/skills"],
     ["Packages", "/packages"],
     ["Find Operation", "/operations"],
 ];
+if (hosted && location.hash)
+    history.replaceState(null, '', location.pathname + location.search);
+let quickSetup = null;
+let pageURL = location.pathname + location.search;
 let path = routePath(location.pathname), loadId = 0, feedback = "", health = null, statusError = "", users = [], skills = [], packages = [], runtime = null, defaults = null, defaultDraft = null, runtimeDraft = { agentImage: "", provider: "", modelId: "", baseUrl: "", modelRef: "" }, operation = null;
 let dirty = false, saving = false, readbackRequired = false, expandedUser = "", pollTimer, statusTimer, toastTimer;
 let dialog = null, dialogOrigin = null, dialogAction = null, dialogDirty = false, upload = null, uploadKind = "npm", uploadTarget, uploadType = "skill", packageIntent = null, packageSourceDraft = "", intentLocked = false, rateUntil = 0, loginAccount = "";
@@ -36,6 +42,8 @@ let releaseAgentImage = '', runtimeDefaultsError = '';
 let actionIdentity = adapter.identityEpoch;
 const manualLabels = { 'save-defaults': 'Saving defaults', refresh: 'Reading current page', 'verify-runtime': 'Verifying runtime', 'refresh-status': 'Checking status', 'refresh-operation': 'Checking Operation', 'resume-observation': 'Resuming observation', readback: 'Reading configuration', 'sign-out': 'Signing out', 'retry-connection': 'Checking connection' };
 function consoleIntent(button) {
+    if (button.closest('#quick-setup'))
+        return;
     const name = button.dataset.action || '', label = manualLabels[name];
     if (!label || name === 'refresh' && dirty)
         return;
@@ -135,25 +143,19 @@ async function refreshConfirmed(message, read, destination = path) {
     }
 }
 function shell(body) {
+    closeAccountMenu();
     const login = path === "/login", workSetup = ["/default-work", "/skills", "/packages"].some((p) => path === p || path.startsWith(p + "/"));
     const nav = [
-        ["Overview", "/", path === "/" || path === "/runtime"],
+        ["Overview", "/", path === "/" || path === "/runtime" || hosted && path === "/setup"],
         ["User access", "/users", path === "/users"],
         ["Work setup", "/default-work", workSetup],
         ["AI models", "/models", path === '/models' || path.startsWith('/models/')],
     ];
-    app.innerHTML = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="Piwork overview"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">Serve</span></a>${login ? "" : `<nav class="nav" aria-label="Main navigation">${nav.map(([name, url, active]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${name}</a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}">${icon("search", 14)} Find operation</a><button class="btn ghost mobile-menu" data-action="menu" aria-label="Open navigation" aria-expanded="false">Menu ${icon("down", 14)}</button><details class="account-menu"><summary aria-label="Administrator account"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</summary><div class="account-popover"><p><strong>${esc(adapter.account)}</strong></p><p class="muted">Administrator</p>${NavLink("About Piwork", "/about", "btn secondary")}${Button("Sign out", "sign-out", "secondary")}</div></details>`}</div></header>${login ? "" : `<div class="context-strip">${icon("server", 15)}<span>Core</span><span class="context-tag">Administrator</span><span class="context-end">${path === "/runtime" ? "Core setup" : path === "/models" || path.startsWith("/models/") ? "AI models" : workSetup ? "Work setup" : path === "/users" ? "User access" : path.startsWith("/operations") ? "Package recovery" : "Overview"}</span></div>`}<main id="main" class="main task-main" tabindex="-1">${body}</main><footer class="footer"><span>${icon("shield", 13)} Core runs independently from this console</span><span>PiWork Serve </span></footer><div id="toast-root" aria-live="polite"></div>`;
+    app.innerHTML = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="Piwork overview"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">Serve</span></a>${login ? "" : `<nav class="nav" aria-label="Main navigation">${nav.map(([name, url, active]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${name}</a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}">${icon("search", 14)} Find operation</a><button class="btn ghost mobile-menu" data-action="menu" aria-label="Open navigation" aria-expanded="false">Menu ${icon("down", 14)}</button><div class="topbar-account">${hosted ? `<a class="btn ghost small workbench-link" href="/" data-workbench>${icon('grid', 16)}<span>Workbench</span></a>` : ''}<div class="account-menu"><button type="button" id="account-trigger" class="btn ghost account-button" aria-label="Administrator account" aria-haspopup="menu" aria-expanded="false" aria-controls="account-dropdown"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</button><div id="account-dropdown" class="admin-account-dropdown command-dropdown" role="menu" aria-label="Administrator account" hidden><div class="dropdown-title">${esc(adapter.account)}</div><div class="modal-body"><p class="account-context"><span>Role: Administrator</span><span title="${esc(adapter.coreUrl)}">Core: ${esc(adapter.coreUrl || 'Unavailable')}</span></p><div class="menu-list"><a class="btn" href="/about" data-nav role="menuitem" tabindex="-1">${icon('info', 18)} About Piwork</a><button class="btn danger quiet" type="button" data-action="sign-out" role="menuitem" tabindex="-1">${icon('logout', 18)} Sign out</button></div></div></div></div></div>`}</div></header>${login ? "" : `<div class="context-strip">${icon("server", 15)}<span>Core</span><span class="context-tag">Administrator</span><span class="context-end">${path === "/setup" && hosted ? "Quick setup" : path === "/runtime" ? "Core setup" : path === "/models" || path.startsWith("/models/") ? "AI models" : workSetup ? "Work setup" : path === "/users" ? "User access" : path.startsWith("/operations") ? "Package recovery" : "Overview"}</span></div>`}<main id="main" class="main task-main" tabindex="-1">${body}</main><footer class="footer"><span>${icon("shield", 13)} Core runs independently from this console</span><span>PiWork Serve </span></footer><div id="toast-root" aria-live="polite"></div>`;
     if (hosted) {
         app.querySelectorAll('a[data-nav]').forEach(link => { const value = link.getAttribute('href') || ''; if (value.startsWith('/') && !value.startsWith('/admin'))
             link.setAttribute('href', publicPath(value)); });
         app.querySelectorAll('img[src="/piwork-logo.png"]').forEach(image => { image.src = '/admin/piwork-logo.png'; });
-        if (!login) {
-            const link = document.createElement('a');
-            link.href = '/';
-            link.className = 'btn secondary';
-            link.textContent = 'Workbench';
-            app.querySelector('.topbar-inner')?.append(link);
-        }
         const footer = app.querySelector('.footer span');
         if (footer)
             footer.textContent = 'Closing this page keeps Core and Works running';
@@ -161,6 +163,107 @@ function shell(body) {
     document.title = `${login ? "Sign in" : path === "/" ? "Overview" : modules.find(([, p]) => p === path)?.[0] || "Details"} · PiWork Serve`;
     startStatusTimer();
 }
+function disposeQuickSetup() { quickSetup?.dispose(); quickSetup = null; }
+function renderQuickSetup() {
+    // Background errors and sign-out failures must not replace the active form.
+    if (quickSetup && document.querySelector('#quick-setup')) {
+        document.querySelector('#quick-feedback').innerHTML = feedback;
+        renderConsoleActions();
+        return;
+    }
+    shell(PageHeader('Quick setup', 'Choose an AI model and prepare this Core for Work.') +
+        `<div id="quick-feedback">${feedback}</div><section class="section quick-setup-section" aria-label="Quick setup"><div id="quick-setup" class="setup-main quick-setup"></div></section>`);
+    const epoch = adapter.identityEpoch, ticket = loadId;
+    quickSetup = mountQuickSetup(document.querySelector('#quick-setup'), {
+        csrf: () => adapter.csrfToken,
+        current: () => adapter.session && epoch === adapter.identityEpoch && path === '/setup' && ticket === loadId,
+        expired: () => { dirty = false; location.assign('/login'); },
+        dirty: value => { dirty = value; },
+        preparation: new URLSearchParams(location.search).get('step') === 'prepare',
+        step: step => {
+            const url = publicPath('/setup') + (step === 'preparation' ? '?step=prepare' : '');
+            history.replaceState({ path }, '', url);
+            pageURL = url;
+        },
+        navigate: href => {
+            const url = new URL(href, location.origin);
+            if (url.origin === location.origin && (url.pathname === '/admin' || url.pathname.startsWith('/admin/')))
+                navigate(url.pathname + url.search);
+            else
+                leaveForWorkbench(url.href);
+        },
+    });
+}
+function leaveForWorkbench(href = '/') {
+    const leave = () => { dirty = false; disposeQuickSetup(); location.assign(href); };
+    if (quickSetup)
+        quickSetup.requestLeave(leave);
+    else if (dirty || dialogDirty)
+        confirmDiscard(leave);
+    else
+        leave();
+}
+function closeAccountMenu(restore = false) {
+    const menu = document.querySelector('#account-dropdown');
+    if (menu)
+        menu.hidden = true;
+    const trigger = document.querySelector('#account-trigger');
+    trigger?.setAttribute('aria-expanded', 'false');
+    if (restore)
+        trigger?.focus({ preventScroll: true });
+}
+function openAccountMenu(last = false) {
+    const menu = document.querySelector('#account-dropdown'), trigger = document.querySelector('#account-trigger');
+    if (!menu || !trigger)
+        return;
+    menu.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    const box = trigger.getBoundingClientRect();
+    menu.style.right = `${Math.min(Math.max(8, innerWidth - box.right), innerWidth - menu.offsetWidth - 8)}px`;
+    menu.style.top = `${Math.min(box.bottom + 6, Math.max(8, innerHeight - menu.offsetHeight - 8))}px`;
+    const items = menu.querySelectorAll('[role=menuitem]:not([disabled])');
+    (last ? items[items.length - 1] : items[0])?.focus({ preventScroll: true });
+}
+let accountPointerOutside = false;
+document.addEventListener('pointerdown', event => {
+    accountPointerOutside = !event.target.closest('#account-dropdown,#account-trigger');
+});
+document.addEventListener('pointerup', event => {
+    if (accountPointerOutside && !event.target.closest('#account-dropdown,#account-trigger'))
+        closeAccountMenu();
+    accountPointerOutside = false;
+});
+document.addEventListener('pointercancel', () => { accountPointerOutside = false; });
+window.addEventListener('resize', () => closeAccountMenu());
+document.addEventListener('keydown', event => {
+    const target = event.target, menu = document.querySelector('#account-dropdown');
+    if (target.closest('#account-trigger') && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+        event.preventDefault();
+        openAccountMenu(event.key === 'ArrowUp');
+        return;
+    }
+    if (!menu || menu.hidden)
+        return;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        closeAccountMenu(true);
+        return;
+    }
+    if (!menu.contains(target))
+        return;
+    const items = [...menu.querySelectorAll('[role=menuitem]:not([disabled])')], index = items.indexOf(target);
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault();
+        items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+    }
+    else if (event.key === 'Tab') {
+        closeAccountMenu(true);
+    }
+    else if (event.key === ' ' && target instanceof HTMLAnchorElement) {
+        event.preventDefault();
+        target.click();
+    }
+});
 function showToast(message) {
     const el = document.querySelector("#toast-root");
     if (el) {
@@ -181,10 +284,23 @@ function startStatusTimer() {
         statusTimer = setInterval(() => {
             if (document.visibilityState !== "visible")
                 return;
-            void adapter.guard().then(() => { if (path === "/" && !dialog)
-                return refreshHealth(false); }).catch(error => { if (!isSessionError(error) && path === "/")
+            void guardIdentity().then(() => { if (path === "/" && !dialog)
+                return refreshHealth(false); }).catch(error => { if (!(error instanceof ConsoleViewChanged) && !isSessionError(error) && path === "/")
                 showError(error); });
         }, 15000);
+}
+async function guardIdentity() {
+    const epoch = adapter.identityEpoch;
+    await adapter.guard();
+    if (epoch !== adapter.identityEpoch) {
+        closeAccountMenu();
+        disposeQuickSetup();
+        dirty = false;
+        actions.clear();
+        actionIdentity = adapter.identityEpoch;
+        void loadPage();
+        throw new ConsoleViewChanged();
+    }
 }
 function err(e) {
     if (e instanceof ConsoleError && e.correlationId)
@@ -195,12 +311,18 @@ function err(e) {
 }
 function isSessionError(e) {
     if (e instanceof ConsoleError && e.code === "SESSION_EXPIRED") {
+        disposeQuickSetup();
+        closeAccountMenu();
         clearPolling();
         upload = null;
         packageIntent = null;
         intentLocked = false;
         closeDialog(true);
         dirty = false;
+        if (hosted) {
+            location.assign('/login');
+            return true;
+        }
         path = "/login";
         history.pushState({ path }, "", publicPath(path));
         feedback = Feedback(e.message, "warning");
@@ -244,10 +366,12 @@ function routeId() {
     }
 }
 function navigate(next, force = false) {
-    next = routePath(next);
-    if (next === path && !force)
+    const destination = new URL(next, location.origin);
+    next = routePath(destination.pathname);
+    if (next === path && destination.search === location.search && !force)
         return;
     const execute = () => {
+        disposeQuickSetup();
         clearPolling();
         dirty = false;
         feedback = "";
@@ -260,10 +384,15 @@ function navigate(next, force = false) {
         intentLocked = false;
         closeDialog(true);
         path = next;
-        history.pushState({ path }, "", publicPath(next));
+        history.pushState({ path }, "", publicPath(next) + destination.search);
+        pageURL = location.pathname + location.search;
         void loadPage();
         window.scrollTo(0, 0);
     };
+    if (quickSetup && !force) {
+        quickSetup.requestLeave(execute);
+        return;
+    }
     if ((dirty || dialogDirty) && !force) {
         confirmDiscard(execute);
         return;
@@ -329,13 +458,19 @@ function confirmDiscard(action) {
     confirm.querySelector("button")?.focus();
 }
 window.addEventListener("popstate", () => {
-    const next = routePath(location.pathname);
+    closeAccountMenu();
+    const destination = location.pathname + location.search;
     if (dirty || dialogDirty) {
-        history.pushState({ path }, "", publicPath(path));
-        confirmDiscard(() => navigate(next, true));
+        history.pushState({ path }, "", pageURL);
+        if (quickSetup)
+            quickSetup.requestLeave(() => navigate(destination, true));
+        else
+            confirmDiscard(() => navigate(destination, true));
     }
     else {
-        path = next;
+        disposeQuickSetup();
+        path = routePath(location.pathname);
+        pageURL = destination;
         clearPolling();
         feedback = "";
         void loadPage();
@@ -349,8 +484,8 @@ window.addEventListener("beforeunload", (e) => {
 });
 window.addEventListener("focus", () => {
     if (adapter.session && path !== "/login") {
-        void adapter.guard().catch((e) => {
-            if (!isSessionError(e) && path === "/")
+        void guardIdentity().catch((e) => {
+            if (!(e instanceof ConsoleViewChanged) && !isSessionError(e) && path === "/")
                 void refreshHealth(false);
         });
         if (path === "/")
@@ -360,11 +495,21 @@ window.addEventListener("focus", () => {
 async function loadPage() {
     const ticket = ++loadId;
     clearPolling();
+    disposeQuickSetup();
     if (path !== "/login" && !adapter.session) {
+        if (hosted) {
+            dirty = false;
+            location.replace('/login');
+            return;
+        }
         path = "/login";
         history.replaceState({ path }, "", publicPath(path));
     }
     if (path === "/login") {
+        renderPage();
+        return;
+    }
+    if (hosted && path === "/setup") {
         renderPage();
         return;
     }
@@ -517,6 +662,11 @@ async function loadPage() {
     }
 }
 function renderPage() {
+    if (hosted && path === '/setup' && adapter.session) {
+        renderQuickSetup();
+        return;
+    }
+    disposeQuickSetup();
     let body = "";
     if (path === "/login") {
         modelManagement.reset();
@@ -581,7 +731,7 @@ function statusPage() {
     const stale = !!statusError, ready = !!health?.ready && !stale, hasRuntime = !!runtime, known = rememberedOperation && rememberedOperation.state !== "succeeded"
         ? rememberedOperation
         : null;
-    let title = "Your Core is ready", description = "The runtime is configured and readiness is confirmed. Choose what you want to do next.", label = "READY TO USE", tone = "ready", action = NavLink("Review Core setup", "/runtime", "btn secondary"), next = "People can create Work using the current runtime.";
+    let title = "Your Core is ready", description = "The runtime is configured and readiness is confirmed. Choose what you want to do next.", label = "READY TO USE", tone = "ready", action = hosted ? NavLink("Quick setup", "/setup", "btn secondary") : NavLink("Review runtime", "/runtime", "btn secondary"), next = "People can create Work using the current runtime.";
     if (stale || !health) {
         title = "Confirm the Core connection";
         description =
@@ -598,6 +748,8 @@ function statusPage() {
         label = "START HERE";
         tone = "setup";
         action = NavLink("Configure runtime " + icon("arrow", 15), "/runtime", "btn primary");
+        if (hosted)
+            action = NavLink('Quick setup ' + icon('arrow', 15), '/setup', 'btn primary');
         next = "Creating user accounts and choosing default capabilities can wait.";
     }
     else if (!ready) {
@@ -626,7 +778,7 @@ function statusPage() {
     const progress = stale || ready
         ? ""
         : `<div class="setup-progress" aria-label="Core setup progress"><span class="${hasRuntime ? "done" : "active"}"><i>${hasRuntime ? icon("check", 12) : "1"}</i> Runtime saved</span><span class="progress-connector"></span><span class="${ready ? "done" : hasRuntime ? "active" : ""}"><i>${ready ? icon("check", 12) : "2"}</i> Readiness confirmed</span></div>`;
-    return `<div class="overview-heading"><div><p class="eyebrow">CORE OPERATIONS</p><h1>What’s next for your Core?</h1><p>Prepare the platform, open access, and shape how new Work begins.</p></div><div class="overview-check"><span>${health ? "Checked " + date(health.checkedAt) : "No confirmed check"}</span>${Button(icon("refresh", 14), "refresh-status", "icon-button", 'aria-label="Refresh Core status"')}</div></div>${feedback}<section class="task-lead ${tone}" data-testid="overview-next-task"><div class="task-lead-content"><p class="eyebrow">${label}</p><h2>${esc(title)}</h2><p class="task-lead-description">${esc(description)}</p>${progress}<div class="task-lead-actions">${action}${!ready && hasRuntime ? NavLink("Review runtime", "/runtime", "text-link") : ""}</div></div><div class="task-lead-aside"><span class="lead-symbol">${icon(ready ? "check" : stale ? "warning" : "server", 29)}</span><p>${esc(next)}</p>${known && ready ? `<code>${esc(known.id)}</code>` : ""}</div></section><div class="task-section-label"><h2>${ready ? "Choose a task" : "You can also prepare"}</h2><span>${ready ? "Start with the outcome you need" : "Optional · these do not block Core readiness"}</span></div><section class="task-actions" aria-label="Administrator tasks">${taskAction("users", "Give someone access", "Create an account, or change an existing account’s access.", overviewDataConfirmed ? `${users.filter((u) => u.enabled).length} enabled accounts` : "Manage accounts", "/users")}${taskAction("settings", "Shape new Work", "Choose default Skills, Packages, and working instructions.", defaults ? `${defaults.skills.length} ${defaults.skills.length === 1 ? "Skill" : "Skills"} · ${defaults.packages.length} ${defaults.packages.length === 1 ? "Package" : "Packages"}` : "Choose a starting point", "/default-work")}${taskAction("box", "Add a capability", "Add a Skill or install a Package, then select it for future Work.", "Open capability library", "/skills")}${taskAction("search", "Find a package operation", "Resume a known installation or investigate a result using its ID.", "Operation ID required", "/operations")}</section><details class="core-diagnostics" id="core-checks"><summary><span>${icon("server", 16)} Core state and diagnostics</span><span>${StatusLabel(stale ? "Unconfirmed" : ready ? "Ready" : "Not ready", stale || !ready ? "warning" : "success")}${icon("down", 14)}</span></summary><div class="diagnostics-body"><div class="diagnostic-facts"><div><span>Core connection</span><strong>${stale ? "Unreachable" : health ? "Reachable" : "Unknown"}</strong></div><div><span>Process health</span><strong>${health ? (stale ? "Last known: healthy" : "Healthy") : "Unknown"}</strong></div><div><span>Runtime readiness</span><strong>${health ? (stale ? "Last known: " : "") + (health.ready ? "Ready" : "Not ready") : "Unknown"}</strong></div></div>${stale ? Feedback(statusError + " Last confirmed data is marked above.", "warning") : ""}${health ? health.checks.map((c) => `<div class="check-row">${icon(c.state === "Passed" ? "check" : "warning", 15)}<span class="check-name">${esc(c.name)}</span><span class="check-note">${esc(c.detail)}</span>${StatusLabel(stale ? "Stale" : c.state, stale ? "neutral" : c.state === "Passed" ? "success" : "warning")}</div>`).join("") : Empty("No confirmed checks", "Recheck the connection to obtain current health and readiness.")}<div class="section-footer"><span>Administrator: ${esc(adapter.account)}</span><span>Refreshes every 15 seconds while this page is visible</span></div>${Disclosure("Public technical fields", `<pre>${esc(JSON.stringify({ core: "piwork-core", connection: "Console to Core loopback", health: health?.healthy ?? null, ready: health?.ready ?? null, reason: health?.reason ?? null, lastChecked: health?.checkedAt ?? null }, null, 2))}</pre>`)}</div></details>`;
+    return `<div class="overview-heading"><div><p class="eyebrow">CORE OPERATIONS</p><h1>What’s next for your Core?</h1><p>Prepare the platform, open access, and shape how new Work begins.</p></div><div class="overview-check"><span>${health ? "Checked " + date(health.checkedAt) : "No confirmed check"}</span>${Button(icon("refresh", 14), "refresh-status", "icon-button", 'aria-label="Refresh Core status"')}</div></div>${feedback}<section class="task-lead ${tone}" data-testid="overview-next-task"><div class="task-lead-content"><p class="eyebrow">${label}</p><h2>${esc(title)}</h2><p class="task-lead-description">${esc(description)}</p>${progress}<div class="task-lead-actions">${action}${!ready && hasRuntime ? NavLink("Review runtime", "/runtime", "text-link") : ""}</div></div><div class="task-lead-aside"><span class="lead-symbol">${icon(ready ? "check" : stale ? "warning" : "server", 29)}</span><p>${esc(next)}</p>${known && ready ? `<code>${esc(known.id)}</code>` : ""}</div></section><div class="task-section-label"><h2>${ready ? "Choose a task" : "You can also prepare"}</h2><span>${ready ? "Start with the outcome you need" : "Optional · these do not block Core readiness"}</span></div><section class="task-actions" aria-label="Administrator tasks">${hosted ? taskAction('settings', 'Quick setup', 'Choose a model and prepare Piwork in one guided flow.', 'Model · Preparation', '/setup') : ''}${taskAction("users", "Give someone access", "Create an account, or change an existing account’s access.", overviewDataConfirmed ? `${users.filter((u) => u.enabled).length} enabled accounts` : "Manage accounts", "/users")}${taskAction("settings", "Shape new Work", "Choose default Skills, Packages, and working instructions.", defaults ? `${defaults.skills.length} ${defaults.skills.length === 1 ? "Skill" : "Skills"} · ${defaults.packages.length} ${defaults.packages.length === 1 ? "Package" : "Packages"}` : "Choose a starting point", "/default-work")}${taskAction("box", "Add a capability", "Add a Skill or install a Package, then select it for future Work.", "Open capability library", "/skills")}${taskAction("search", "Find a package operation", "Resume a known installation or investigate a result using its ID.", "Operation ID required", "/operations")}</section><details class="core-diagnostics" id="core-checks"><summary><span>${icon("server", 16)} Core state and diagnostics</span><span>${StatusLabel(stale ? "Unconfirmed" : ready ? "Ready" : "Not ready", stale || !ready ? "warning" : "success")}${icon("down", 14)}</span></summary><div class="diagnostics-body"><div class="diagnostic-facts"><div><span>Core connection</span><strong>${stale ? "Unreachable" : health ? "Reachable" : "Unknown"}</strong></div><div><span>Process health</span><strong>${health ? (stale ? "Last known: healthy" : "Healthy") : "Unknown"}</strong></div><div><span>Runtime readiness</span><strong>${health ? (stale ? "Last known: " : "") + (health.ready ? "Ready" : "Not ready") : "Unknown"}</strong></div></div>${stale ? Feedback(statusError + " Last confirmed data is marked above.", "warning") : ""}${health ? health.checks.map((c) => `<div class="check-row">${icon(c.state === "Passed" ? "check" : "warning", 15)}<span class="check-name">${esc(c.name)}</span><span class="check-note">${esc(c.detail)}</span>${StatusLabel(stale ? "Stale" : c.state, stale ? "neutral" : c.state === "Passed" ? "success" : "warning")}</div>`).join("") : Empty("No confirmed checks", "Recheck the connection to obtain current health and readiness.")}<div class="section-footer"><span>Administrator: ${esc(adapter.account)}</span><span>Refreshes every 15 seconds while this page is visible</span></div>${Disclosure("Public technical fields", `<pre>${esc(JSON.stringify({ core: "piwork-core", connection: "Console to Core loopback", health: health?.healthy ?? null, ready: health?.ready ?? null, reason: health?.reason ?? null, lastChecked: health?.checkedAt ?? null }, null, 2))}</pre>`)}</div></details>`;
 }
 function runtimePage() {
     const ready = !!health?.ready && !statusError;
@@ -654,15 +806,15 @@ function runtimePage() {
         },
     ], `<p class="rail-label">SCOPE</p><p>Changes affect only future Work. Existing Work keeps its current runtime.</p><p class="rail-label">AFTER SETUP</p>${NavLink("Give someone access", "/users")}${NavLink("Shape new Work", "/default-work")}`);
     const summary = runtime
-        ? `<dl class="summary-list"><dt>Agent image</dt><dd><code>${esc(runtime.agentImage)}</code></dd><dt>Model provider</dt><dd>${esc(runtime.provider)}</dd><dt>Model ID</dt><dd><code>${esc(runtime.modelId)}</code></dd><dt>Custom Base URL</dt><dd>${runtime.baseUrl ? `<code>${esc(runtime.baseUrl)}</code>` : "Provider default"}</dd><dt>Credential</dt><dd>${StatusLabel(runtime.credentialAvailable ? "Available" : "Unavailable", runtime.credentialAvailable ? "success" : "warning")}</dd><dt>Updated</dt><dd>${date(runtime.updatedAt)}</dd></dl>`
+        ? `<dl class="summary-list"><dt>Model provider</dt><dd>${esc(runtime.provider)}</dd><dt>Model ID</dt><dd><code>${esc(runtime.modelId)}</code></dd><dt>Custom Base URL</dt><dd>${runtime.baseUrl ? `<code>${esc(runtime.baseUrl)}</code>` : "Provider default"}</dd><dt>Credential</dt><dd>${StatusLabel(runtime.credentialAvailable ? "Available" : "Unavailable", runtime.credentialAvailable ? "success" : "warning")}</dd><dt>Updated</dt><dd>${date(runtime.updatedAt)}</dd></dl>`
         : Empty("No runtime saved yet", "Choose a saved model to continue. The Agent image is supplied by this release.");
     const body = runtimeEditing
-        ? Section(configured ? "Edit runtime" : "Configure runtime", "Select a configured AI model. The Agent image is supplied by the server release.", `<div class="section-body"><form id="runtime-form" class="form-grid"><div><span class="field-label">Release Agent image</span><p><code data-runtime-agent-image>${esc(releaseAgentImage || "Unavailable")}</code></p><p class="help">Supplied by the server release.</p></div>${runtimeDefaultsError ? Feedback(runtimeDefaultsError, "warning") : ""}${Field("modelRef", "AI model", `<select id="modelRef" name="modelRef" required><option value="">Choose a model</option>${modelManagement.models.map(m => `<option ${!m.enabled || !m.credentialAvailable ? 'disabled' : ''} value="${esc(m.modelRef)}" ${m.modelRef === runtimeDraft.modelRef ? 'selected' : ''}>${esc(m.api + ' / ' + m.name + ' (' + m.model + ') · ' + m.id.slice(-8) + (!m.enabled ? ' · Disabled' : !m.credentialAvailable ? ' · Key unavailable' : ''))}</option>`).join('')}${runtimeDraft.modelRef && !modelManagement.models.some(m => m.modelRef === runtimeDraft.modelRef) ? `<option selected disabled value="${esc(runtimeDraft.modelRef)}">Saved model configuration · select an available model</option>` : ''}</select>`, "Select a configured model. The model Key is kept by Core.")}${NavLink("Manage AI models", "/models")}${modelCatalogError ? Feedback("Model list could not be loaded. " + modelCatalogError, "warning") : !modelManagement.models.length ? Feedback("No models configured. Add a model in AI models first.", "info") : ''}<div class="form-actions"><button type="submit" class="btn primary" ${saving || readbackRequired || !releaseAgentImage ? "disabled" : ""}>${saving ? "Saving…" : "Save runtime"}</button>${Button("Cancel editing", "cancel-runtime-edit", "secondary")}</div><p class="help form-notice">After saving, check readiness separately. No existing Work is changed.</p></form></div>${configured ? Disclosure("Compare with saved configuration", summary) : ""}`)
+        ? Section(configured ? "Edit runtime" : "Configure runtime", "Select a configured AI model. The Agent image is supplied by the server release.", `<div class="section-body"><form id="runtime-form" class="form-grid">${runtimeDefaultsError ? Feedback(runtimeDefaultsError, "warning") : ""}${Field("modelRef", "AI model", `<select id="modelRef" name="modelRef" required><option value="">Choose a model</option>${modelManagement.models.map(m => `<option ${!m.enabled || !m.credentialAvailable ? 'disabled' : ''} value="${esc(m.modelRef)}" ${m.modelRef === runtimeDraft.modelRef ? 'selected' : ''}>${esc(m.api + ' / ' + m.name + ' (' + m.model + ') · ' + m.id.slice(-8) + (!m.enabled ? ' · Disabled' : !m.credentialAvailable ? ' · Key unavailable' : ''))}</option>`).join('')}${runtimeDraft.modelRef && !modelManagement.models.some(m => m.modelRef === runtimeDraft.modelRef) ? `<option selected disabled value="${esc(runtimeDraft.modelRef)}">Saved model configuration · select an available model</option>` : ''}</select>`, "Select a configured model. The model Key is kept by Core.")}${NavLink("Manage AI models", "/models")}${modelCatalogError ? Feedback("Model list could not be loaded. " + modelCatalogError, "warning") : !modelManagement.models.length ? Feedback("No models configured. Add a model in AI models first.", "info") : ''}<div class="form-actions"><button type="submit" class="btn primary" ${saving || readbackRequired || !releaseAgentImage ? "disabled" : ""}>${saving ? "Saving…" : "Save runtime"}</button>${Button("Cancel editing", "cancel-runtime-edit", "secondary")}</div><p class="help form-notice">After saving, check readiness separately. No existing Work is changed.</p></form></div>${configured ? Disclosure("Compare with saved configuration", summary) : ""}`)
         : Section("Runtime configuration", "The configuration currently saved on Core.", `<div class="section-body">${summary}</div><div class="section-footer"><span>The stored API Key is never shown.</span>${Button("Edit runtime", "edit-runtime", "secondary")}</div>`) +
             Section("Readiness", "Confirm that Core can use the saved runtime.", `<div class="section-body"><div class="readiness-answer"><span class="system-icon ${ready ? "" : "warning"}">${icon(ready ? "check" : "warning", 19)}</span><div><h3>${ready ? "Core is ready for new Work" : statusError ? "Readiness is unconfirmed" : "Runtime saved. Core is not ready yet."}</h3><p>${esc(statusError || health?.reason || "A current readiness check is needed.")}</p><small>${health ? "Last checked " + date(health.checkedAt) : "Not checked yet"}</small></div></div></div><div class="section-footer"><span>${ready ? "Required setup is complete." : "Configuration remains saved while readiness is checked."}</span>${ready ? NavLink("Back to overview", "/", "btn primary") : Button("Check readiness", "verify-runtime", "primary")}</div>`);
     return (PageHeader("Make this Core ready", "Save the runtime. Confirm readiness. Then let people create Work.", Button(icon("refresh", 15) + " Refresh", "refresh"), NavLink("Overview", "/") + " / Core setup") +
         feedback +
-        taskFrame(rail, body));
+        taskFrame(rail, body + Disclosure("Runtime diagnostics", `<dl class="summary-list"><dt>Release Agent image</dt><dd><code data-runtime-agent-image>${esc(releaseAgentImage || "Unavailable")}</code></dd><dt>Saved Agent image</dt><dd><code>${esc(runtime?.agentImage || "Not configured")}</code></dd></dl><p class="help">Explicitly saving Runtime uses the current server release for future Work. Existing Work stays unchanged.</p>`)));
 }
 function defaultsSelection(kind, d) {
     if (kind === "skills")
@@ -718,12 +870,6 @@ function defaultsPage() {
     const d = defaultDraft, changes = defaultChangedFields(), changed = (key) => changes.includes(key) ? '<span class="draft-tag">Edited</span>' : "";
     const rows = [
         [
-            "agentImage",
-            "Agent image",
-            "The environment new Work starts in",
-            `<code>${esc(d.agentImage)}</code>`,
-        ],
-        [
             "skills",
             "Skills",
             "Selected capabilities, in order",
@@ -750,7 +896,7 @@ function defaultsPage() {
             `<span>${d.agentsMd ? new TextEncoder().encode(d.agentsMd).length.toLocaleString() + " bytes" : "No instructions"}</span>${d.agentsMd ? `<p class="instruction-preview">${esc(d.agentsMd.split("\n").filter(Boolean).slice(0, 2).join(" · "))}</p>` : ""}`,
         ],
     ];
-    const summary = `<section class="starting-point"><div class="starting-point-heading"><div><h2>${dirty ? "Your draft starting point" : "Current starting point"}</h2><p>${dirty ? "Changes below have not been saved." : "Used only when a new Work is created."}</p></div>${StatusLabel(dirty ? "Unsaved draft" : "Saved", dirty ? "warning" : "success")}</div>${rows.map(([key, title, description, value]) => `<div class="setup-config-row" data-testid="default-summary-${key}"><div class="setup-config-label"><h3>${title} ${changed(key)}</h3><p>${description}</p></div><div class="setup-config-value">${value}</div>${key === "agentImage" ? '<span class="help">Managed by the server release</span>' : Button("Edit " + (key === "agentsMd" ? "instructions" : title), "edit-defaults", "ghost small", `data-section="${key}"`)}</div>`).join("")}</section>`;
+    const summary = `<section class="starting-point"><div class="starting-point-heading"><div><h2>${dirty ? "Your draft starting point" : "Current starting point"}</h2><p>${dirty ? "Changes below have not been saved." : "Used only when a new Work is created."}</p></div>${StatusLabel(dirty ? "Unsaved draft" : "Saved", dirty ? "warning" : "success")}</div>${rows.map(([key, title, description, value]) => `<div class="setup-config-row" data-testid="default-summary-${key}"><div class="setup-config-label"><h3>${title} ${changed(key)}</h3><p>${description}</p></div><div class="setup-config-value">${value}</div>${Button("Edit " + (key === "agentsMd" ? "instructions" : title), "edit-defaults", "ghost small", `data-section="${key}"`)}</div>`).join("")}</section>`;
     const rail = !defaultEditSection && !dirty && !defaultLastSaved
         ? `<aside class="task-rail summary-context"><p class="rail-label">CURRENT STARTING POINT</p><div class="saved-context">${icon("check", 16)}<strong>Saved on Core</strong></div><p class="help">New Work uses this configuration. Edit only the part you want to change.</p><div class="task-context"><p class="rail-label">NEED A CAPABILITY?</p>${Button("Add or update a Skill", "open-capability-library", "ghost", `data-kind="skills"`)}${Button("Install or update a Package", "open-capability-library", "ghost", `data-kind="packages"`)}<p class="rail-note">Catalog entries and default selections are managed separately.</p></div></aside>`
         : taskRail([
@@ -780,6 +926,7 @@ function defaultsPage() {
         defaultConflictNotice() +
         taskFrame(rail, (defaultEditSection ? defaultsEditor(defaultEditSection, d) : summary) +
             commit +
+            Disclosure("Runtime diagnostics", `<dl class="summary-list"><dt>Default Work image</dt><dd><code>${esc(d.agentImage)}</code></dd><dt>Release Agent image</dt><dd><code>${esc(releaseAgentImage || "Unavailable")}</code></dd></dl>`) +
             Disclosure("Complete public configuration", `<pre>${esc(JSON.stringify(defaults?.publicConfiguration ?? null, null, 2))}</pre>`)));
 }
 function defaultConflictNotice() {
@@ -1842,7 +1989,27 @@ document.addEventListener("submit", async (event) => {
 });
 document.addEventListener("click", async (event) => {
     const element = event.target;
+    const plain = event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+    if (element.closest('#account-trigger')) {
+        const menu = document.querySelector('#account-dropdown');
+        if (menu?.hidden)
+            openAccountMenu();
+        else
+            closeAccountMenu();
+        return;
+    }
+    const workbench = element.closest('a[data-workbench]');
+    if (workbench) {
+        if (plain) {
+            event.preventDefault();
+            closeAccountMenu();
+            leaveForWorkbench(workbench.href);
+        }
+        return;
+    }
     const link = element.closest("a[data-nav]");
+    if (link && !plain)
+        return;
     if (link) {
         event.preventDefault();
         const target = link.getAttribute("href");
@@ -1977,7 +2144,13 @@ async function handleConsoleAction(button) {
         const signOut = async () => {
             try {
                 await adapter.signOut();
+                disposeQuickSetup();
+                closeAccountMenu();
                 dirty = false;
+                if (hosted) {
+                    location.assign('/login');
+                    return;
+                }
                 upload = null;
                 packageIntent = null;
                 path = "/login";
@@ -1989,7 +2162,9 @@ async function handleConsoleAction(button) {
                 showError(new ConsoleError("SIGNOUT_FAILED", "Sign out was not completed because Core could not be reached. Retry sign out."));
             }
         };
-        if (dirty)
+        if (quickSetup && dirty)
+            quickSetup.requestLeave(() => void tracked({ key: `manual:${path}:sign-out`, kind: 'identity', label: 'Signing out', target: adapter.account, view: path, anchor: '[data-action=sign-out]' }, async () => { await signOut(); }));
+        else if (dirty)
             confirmDiscard(() => void signOut());
         else
             await signOut();
@@ -2119,14 +2294,17 @@ async function handleConsoleAction(button) {
         }
     }
 }
-history.replaceState({ path }, "", publicPath(path));
+history.replaceState({ path }, "", publicPath(path) + location.search);
+pageURL = location.pathname + location.search;
 void adapter.initialize().then(async () => { await adapter.connection().catch(() => undefined); await loadPage(); }).catch(async () => { path = "/login"; history.replaceState({ path }, "", publicPath(path)); try {
     await adapter.initialize();
 }
 catch { /* availability shown by login */ } await loadPage(); });
-window.addEventListener('pagehide', () => { actions.clear(); clearPolling(); selectionVersion++; preflightPending = false; });
+window.addEventListener('pagehide', () => { disposeQuickSetup(); closeAccountMenu(); actions.clear(); clearPolling(); selectionVersion++; preflightPending = false; });
 function productInfoPage() {
     const info = productInfo, build = info?.build, notes = info?.releaseNotes;
     return PageHeader('About Piwork', 'The version of your connected Core.') + (build ? `<section class="section"><div class="section-body"><dl class="summary-list"><dt>Core version</dt><dd>${esc(build.version)}</dd><dt>Build</dt><dd><code>${esc(build.commit)}</code>${build.modified ? ' · Modified' : ''}</dd><dt>Platform</dt><dd>${esc(build.os)} / ${esc(build.architecture)}</dd></dl><h2>Release notes</h2>${notes ? `<h3>${esc(notes.title)} · ${esc(notes.version)}</h3>${notes.publishedAt ? `<p>${esc(notes.publishedAt)}</p>` : ''}${notes.sections.map((section) => `<h3>${esc(section.title)}</h3><ul>${section.items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>`).join('')}` : '<p>Release notes are not available for this build.</p>'}<p><a href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">All releases</a></p></div></section>` : '<p>Core version is unavailable.</p>');
 }
+window.addEventListener('pageshow', event => { if (event.persisted)
+    void loadPage(); });
 //# sourceMappingURL=app.js.map

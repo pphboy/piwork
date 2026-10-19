@@ -8,6 +8,9 @@ export const esc = (s: unknown) =>
   );
 export const icon = (name: string, size = 18) => {
   const paths: Record<string, string> = {
+    grid: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
+    logout: '<path d="M9 3H3v18h6M10 12h11m-5-5 5 5-5 5"/>',
     check: '<path d="m5 12 4 4L19 6"/>',
     arrow: '<path d="M5 12h14m-5-5 5 5-5 5"/>',
     refresh:

@@ -127,7 +127,7 @@ func (s *Server) serveAuthentication(w http.ResponseWriter, r *http.Request) boo
 func (s *Server) sessionView(ss *session) map[string]any {
 	next := "/"
 	if ss.credential.User.Role == "admin" && !s.options.Core.Status().Checks.RuntimeConfigured {
-		next = "/setup"
+		next = "/admin/setup"
 	}
 	return map[string]any{"authenticated": true, "state": "authenticated", "mode": "hosted", "user": ss.credential.User,
 		"expiresAt": ss.credential.ExpiresAt, "csrf": ss.csrf, "csrfToken": ss.csrf, "generation": 1, "coreUrl": s.options.Origin, "next": next}

@@ -1,3 +1,4 @@
+import {modelErrors} from './model-form.js';
 import type { Defaults, Operation, Package, Runtime, Skill, Store, User } from "./models.js";
 
 type Data = Record<string, any>;
@@ -92,12 +93,14 @@ export class ConsoleAdapter {
   session = false;
   currentUserId = "";
   account = "";
+  coreUrl = "";
   lastHealth: Health | null = null;
   availability: Data | null = null;
   store: Store = { users: [], skills: [], packages: [], runtime: null, defaults: null, operations: [] };
   private csrf = "";
   private epoch = 0;
   get identityEpoch() { return this.epoch; }
+  get csrfToken() { return this.csrf; }
   private reads = new Map<string, Promise<Data>>();
   private intents = new Map<string, { source: Data; intent: PackageIntent }>();
 
@@ -130,7 +133,7 @@ export class ConsoleAdapter {
     return value;
   }
   private clearIdentity() {
-    this.epoch++; this.session = false; this.currentUserId = ""; this.account = ""; this.intents.clear();
+    this.epoch++; this.session = false; this.currentUserId = ""; this.account = ""; this.coreUrl = ""; this.intents.clear();
     this.store = { users: [], skills: [], packages: [], runtime: null, defaults: null, operations: [] };
   }
   async initialize() {
@@ -140,6 +143,7 @@ export class ConsoleAdapter {
     this.session = value.authenticated === true;
     this.currentUserId = value.user?.id ?? "";
     this.account = value.user?.account ?? "";
+    this.coreUrl = typeof value.coreUrl === 'string' ? value.coreUrl : "";
     return this.session;
   }
   async guard(_write = false) {
@@ -150,6 +154,7 @@ export class ConsoleAdapter {
     if (!this.csrf) await this.initialize();
     const value = await this.request("login", "POST", { account, password }, true);
     this.csrf = value.csrfToken; this.session = true; this.currentUserId = value.user.id; this.account = value.user.account;
+    this.coreUrl = typeof value.coreUrl === 'string' ? value.coreUrl : "";
   }
   async connection() {
     const value = await this.request("availability"); this.availability = value;
@@ -184,7 +189,7 @@ export class ConsoleAdapter {
   }
   async modelRequest(resource:string,method='GET',body?:unknown) {
     try{return await this.request(`admin/${resource}`,method,body);}
-    catch(error){if((resource==='models'||resource.startsWith('models/'))&&error instanceof ConsoleError&&error.code==='INVALID_REQUEST'&&error.field.split('.')[0]==='name')throw new ConsoleError('INVALID_REQUEST','Display name is invalid. Use at most 256 characters, or leave blank to use the Model ID.',error.retryAfterMs,error.correlationId,error.field);if(resource==='model-tests'&&error instanceof ConsoleError&&error.code==='RESULT_UNKNOWN')throw new ConsoleError('TEST_RESULT_UNAVAILABLE','The Test result could not be confirmed. Check the Core connection and explicitly test again. No configuration was saved.',error.retryAfterMs,error.correlationId);throw error;}
+    catch(error){if((resource==='models'||resource.startsWith('models/')||resource==='model-tests')&&error instanceof ConsoleError&&error.code==='INVALID_REQUEST'&&modelErrors[error.field.split('.')[0]])throw new ConsoleError('INVALID_REQUEST',modelErrors[error.field.split('.')[0]],error.retryAfterMs,error.correlationId,error.field);if(resource==='model-tests'&&error instanceof ConsoleError&&error.code==='RESULT_UNKNOWN')throw new ConsoleError('TEST_RESULT_UNAVAILABLE','The Test result could not be confirmed. Check the Core connection and explicitly test again. No configuration was saved.',error.retryAfterMs,error.correlationId);throw error;}
   }
   async saveRuntimeSelection(modelRef:string) {
     const value=await this.request('admin/runtime','PUT',{modelRef});
@@ -192,7 +197,7 @@ export class ConsoleAdapter {
     return this.store.runtime;
   }
   async saveRuntime(input: Omit<Runtime, "updatedAt" | "credentialAvailable">, apiKey: string) {
-    const value = await this.request("admin/runtime", "PUT", { agentImage: input.agentImage, provider: input.provider, model: input.modelId,
+    const value = await this.request("admin/runtime", "PUT", { provider: input.provider, model: input.modelId,
       ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}), credential: apiKey });
     try { this.store.runtime = runtimeView(value.runtime); } catch { throw new ConsoleError("RESULT_UNKNOWN", "The runtime acceptance response is incomplete. Read current runtime before submitting again."); } return this.store.runtime;
   }

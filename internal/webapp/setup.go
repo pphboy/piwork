@@ -183,11 +183,12 @@ func (s *Server) onboarding(w http.ResponseWriter, r *http.Request, ss *session)
 			return
 		}
 		defaults, err := s.options.Core.RuntimeDefaults()
+		value["runtime"], value["preparation"] = runtime, s.options.Core.Preparation()
 		if err != nil {
-			webError(w, 503, "RELEASE_DEFAULTS_UNAVAILABLE")
-			return
+			value["releaseError"] = "RELEASE_DEFAULTS_UNAVAILABLE"
+		} else {
+			value["defaultAgentImage"] = defaults.AgentImage
 		}
-		value["runtime"], value["preparation"], value["defaultAgentImage"] = runtime, s.options.Core.Preparation(), defaults.AgentImage
 	}
 	webJSON(w, 200, value)
 }

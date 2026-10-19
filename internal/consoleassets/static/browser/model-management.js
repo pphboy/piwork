@@ -1,9 +1,9 @@
 import { adapter, ConsoleError } from './adapter.js';
-import { esc, Field, Input, PageHeader, Section, Feedback, NavLink, StatusLabel, date } from './components.js';
-const blank = () => ({ name: '', model: '', api: 'openai-responses', baseUrl: '', key: '' });
+import { esc, PageHeader, Section, Feedback, NavLink, StatusLabel } from './components.js';
+import { blankModel, modelDraftIssue, modelFields, modelField, modelPlaceholder, modelProtocolHelp, readModelDraft, validateModelControl, modelTestSummary, modelTestDetails, validModelTest } from './model-form.js';
+const blank = blankModel;
 const part = encodeURIComponent;
 const message = (e) => e instanceof Error ? e.message : 'The request failed. Read current data and try again.';
-const testMessage = 'Reply with OK.';
 export class ModelManagement {
     render;
     dirty;
@@ -32,7 +32,10 @@ export class ModelManagement {
             return; this.capture(); this.validateLength(el); this.revision++; this.dirty(true); if (el.id === 'model-api') {
             const input = document.querySelector('#model-base-url');
             if (input)
-                input.placeholder = this.draft.api === 'anthropic-messages' ? 'https://gateway.example' : 'https://gateway.example/v1';
+                input.placeholder = modelPlaceholder(this.draft.api);
+            const help = document.querySelector('#model-base-url-help');
+            if (help)
+                help.textContent = modelProtocolHelp(this.draft.api);
         } if (this.fieldError && this.fieldInput(this.fieldError.field) === el) {
             if (this.noteError && this.note === this.fieldError.message) {
                 this.note = '';
@@ -79,12 +82,9 @@ export class ModelManagement {
         if (changed)
             this.draft = m ? { name: m.name, model: m.model, api: m.api, baseUrl: m.baseUrl, key: '' } : blank();
     }
-    capture() { const form = document.querySelector('[data-model-form]'); if (!form)
-        return; const data = new FormData(form); this.draft = { name: String(data.get('model-name') ?? ''), model: String(data.get('model-id') ?? ''), api: String(data.get('model-api') ?? 'openai-responses'), baseUrl: String(data.get('model-base-url') ?? ''), key: String(data.get('model-key') ?? '') }; }
-    validateLength(el) { if (el instanceof HTMLInputElement && el.dataset.modelMaxLength) {
-        const max = Number(el.dataset.modelMaxLength);
-        el.setCustomValidity([...el.value].length > max ? `Use at most ${max} characters.` : '');
-    } }
+    capture() { const form = document.querySelector('[data-model-form]'); if (form)
+        this.draft = readModelDraft(form); }
+    validateLength(el) { validateModelControl(el); }
     afterRender() { document.querySelectorAll('[data-model-max-length]').forEach(el => this.validateLength(el)); const key = document.querySelector('#model-key'); if (key)
         key.value = this.draft.key; if (this.fieldError) {
         const input = this.fieldInput(this.fieldError.field);
@@ -92,30 +92,15 @@ export class ModelManagement {
             input.setAttribute('aria-invalid', 'true');
             input.setAttribute('aria-errormessage', 'model-field-error');
             document.querySelector('#model-field-error')?.remove();
-            input.insertAdjacentHTML('afterend', `<p id="model-field-error" role="alert" class="help">${esc(this.fieldError.message)}</p>`);
+            input.insertAdjacentHTML('afterend', `<p id="model-field-error" role="alert" class="field-error">${esc(this.fieldError.message)}</p>`);
         }
     } }
-    fieldInput(field) { const ids = { name: 'model-name', model: 'model-id', api: 'model-api', baseUrl: 'model-base-url', credential: 'model-key' }; return document.getElementById(ids[field.split('.')[0]] || ''); }
+    fieldInput(field) { return document.getElementById(modelField(field)); }
     inputFailure(field, text) { this.fieldError = { field, message: text }; this.note = text; this.noteError = true; this.render(); this.fieldInput(field)?.focus(); }
     markTestStale() { const el = document.querySelector('#model-test-result'); if (el)
         el.innerHTML = this.testMarkup(); this.testDialog?.update(this.testModalMarkup()); }
-    testMarkup() {
-        if (!this.testResult)
-            return '';
-        const { value, revision, pending, error } = this.testResult, stale = revision !== this.revision;
-        const summary = pending ? 'Sending the test message…' : error || (value ? `${value.success ? 'HTTP Test passed.' : 'HTTP Test failed: ' + value.category + '. ' + value.message} Checked ${date(value.checkedAt)} · ${value.durationMs} ms${value.httpStatus ? ' · HTTP ' + value.httpStatus : ''}` : 'The Test result is unavailable.');
-        return Feedback(`${stale ? 'Previous configuration: ' : ''}${summary}${stale ? ' · Configuration changed or was read again; test again.' : ''}`, value?.success && !stale ? 'success' : pending ? 'info' : 'warning', '<button type="button" class="btn secondary" data-model-action="view-test">View test result</button>');
-    }
-    testModalMarkup() {
-        const result = this.testResult;
-        if (!result)
-            return '';
-        const { target, value, pending, revision, error } = result;
-        const stage = pending ? 'Checking configuration and requesting a reply' : error ? (result.notStarted ? 'Test not started. No model request was sent.' : 'The Test result could not be confirmed.') : value?.success ? 'Model reply received.' : 'Model request failed.';
-        const outcome = pending ? Feedback('Sending the test message…', 'info') : error ? Feedback(error, 'warning') : value?.success ? `<h3>Model reply</h3><pre data-model-test-reply>${esc(value.replyText)}</pre>${value.replyTruncated ? Feedback('Reply truncated to the display limit.', 'warning') : ''}` : value ? `${Feedback(value.message, 'warning')}<p data-model-test-recovery>${esc(value.recovery)}</p>` : '';
-        const recovery = error ? '<button type="button" class="btn secondary" data-model-action="edit-test">Back to configuration</button>' : '';
-        return `<div data-model-test-dialog><dl class="summary-list"><dt>Model</dt><dd>${esc(target.provider)}</dd><dt>API type</dt><dd>${esc(target.api === 'openai-responses' ? 'OpenAI Responses' : 'Anthropic Messages')}</dd><dt>Model ID</dt><dd><code>${esc(target.model)}</code></dd></dl><h3>Test message</h3><pre>${esc(value?.testMessage || testMessage)}</pre><div aria-live="polite"><p data-model-test-stage>${esc(stage)}</p>${outcome}${recovery}${value ? `<p class="help">Checked ${date(value.checkedAt)} · ${value.durationMs} ms${value.httpStatus ? ' · HTTP ' + value.httpStatus : ''}</p>` : ''}${result.diagnosticId ? `<p class="help">Diagnostic ID: <code>${esc(result.diagnosticId)}</code></p>` : ''}${revision !== this.revision ? Feedback('Configuration changed or was read again. This result belongs to the previous configuration; test again.', 'warning') : ''}</div><p class="help">Test is advisory. Saving and enabling remain independent of Test results.</p></div>`;
-    }
+    testMarkup() { return modelTestSummary(this.testResult, this.revision); }
+    testModalMarkup() { return modelTestDetails(this.testResult, this.revision); }
     openTestResult() { if (this.testResult && this.showTestDialog) {
         this.testDialog?.close();
         this.testDialog = this.showTestDialog(this.testModalMarkup());
@@ -123,11 +108,7 @@ export class ModelManagement {
     form(m) {
         const d = this.draft;
         return `<form data-model-form="model" class="form-grid">
- ${Field('model-id', 'Model ID', Input('model-id', d.model, 'required maxlength="512" data-model-max-length="256"'))}
- ${Field('model-api', 'API type', `<select id="model-api" name="model-api"><option value="openai-responses" ${d.api === 'openai-responses' ? 'selected' : ''}>OpenAI Responses</option><option value="anthropic-messages" ${d.api === 'anthropic-messages' ? 'selected' : ''}>Anthropic Messages</option></select>`)}
- ${Field('model-base-url', 'Base URL', Input('model-base-url', d.baseUrl, `required type="url" placeholder="${d.api === 'anthropic-messages' ? 'https://gateway.example' : 'https://gateway.example/v1'}"`), 'Responses appends /responses. Messages accepts a service root or /v1 and uses one /v1/messages path.')}
- ${Field('model-key', 'API Key', Input('model-key', '', `type="password" autocomplete="new-password" ${m ? '' : 'required'}`), m ? 'Write-only. Leave blank to keep the saved Key.' : 'Write-only. Used by this model only.')}
- ${Field('model-name', 'Display name (optional)', Input('model-name', d.name, 'maxlength="512" data-model-max-length="256"'), 'Defaults to the Model ID.')}
+ ${modelFields(d, !!m)}
  <div class="form-actions"><button class="btn primary" type="submit" ${this.saving || this.uncertain ? 'disabled' : ''}>${this.saving ? 'Saving…' : m ? 'Save model' : 'Add model'}</button><button class="btn secondary" type="button" data-model-action="test" ${this.testing ? 'disabled' : ''}>Test</button></div><p class="help">Test sends a message and shows the reply. A passed Test is not required to save, enable or select a model.</p></form>`;
     }
     markup() {
@@ -144,6 +125,11 @@ export class ModelManagement {
         if (this.saving || this.uncertain)
             return;
         this.capture();
+        const issue = modelDraftIssue(this.draft, !!this.model());
+        if (issue) {
+            this.inputFailure(issue.field, issue.message);
+            return;
+        }
         const m = this.model(), path = this.path, epoch = adapter.identityEpoch, view = this.view, submitted = this.draft;
         let committed = false;
         this.saving = true;
@@ -268,6 +254,11 @@ export class ModelManagement {
             this.inputFailure(field, 'Enter ' + (field === 'credential' ? 'an API Key' : field === 'baseUrl' ? 'a Base URL' : 'a Model ID') + ' before testing. No model request was sent.');
             return;
         }
+        const issue = modelDraftIssue(d, !!m);
+        if (issue) {
+            this.inputFailure(issue.field, issue.message + ' No model request was sent.');
+            return;
+        }
         const input = { ...(m ? { modelId: m.id } : {}), api: d.api, baseUrl, model, ...(d.key ? { credential: d.key } : {}) };
         const record = { target: { provider: d.name || model, api: d.api, model }, revision, pending: true };
         this.note = '';
@@ -279,7 +270,7 @@ export class ModelManagement {
         this.render();
         try {
             const value = await adapter.modelRequest('model-tests', 'POST', input);
-            if (typeof value.success !== 'boolean' || typeof value.category !== 'string' || value.testMessage !== testMessage || value.success && (typeof value.replyText !== 'string' || !value.replyText.trim() || typeof value.replyTruncated !== 'boolean') || !value.success && (typeof value.reason !== 'string' || typeof value.message !== 'string' || typeof value.recovery !== 'string'))
+            if (!validModelTest(value))
                 throw new Error('The Test response is incomplete.');
             if (this.sameView(path, epoch, view) && this.testResult === record)
                 record.value = value;

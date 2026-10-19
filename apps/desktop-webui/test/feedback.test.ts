@@ -104,6 +104,14 @@ function listing(body: string, modified: string) { return `<d:multistatus xmlns:
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
+test('standalone account menu retains Core and browser controls without hosted management links',async t=>{
+ const {page}=await fixture(t,()=>undefined);
+ await button(page,'back-works').click();await button(page,'account').click();const menu=page.getByRole('menu');
+ for(const name of ['About Piwork','Known operations','Switch Core','Reset browser access','Sign out'])await expect(menu.getByRole('menuitem',{name,exact:true})).toBeVisible();
+ for(const name of ['Administration','Quick setup'])await expect(menu.getByRole('menuitem',{name,exact:true})).toHaveCount(0);
+ await page.keyboard.press('End');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(button(page,'account')).toBeFocused();
+});
+
 for(const method of ['picker','paste','drop','stop-and-send'])test(`Chat images: ${method} adds without side effects and sends a pure image`,async t=>{
  const bytes=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url));
  let accepted=false,submitted:any;

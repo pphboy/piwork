@@ -284,7 +284,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ss.desktop.ServeHTTP(w, r)
 		return
 	}
-	if path == "/setup" || path == "/login" || path == "/setup/browser/onboarding.js" || path == "/setup/style.css" {
+	if path == "/setup" || path == "/login" || strings.HasPrefix(path, "/setup/") {
+		if path == "/setup" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			if ss, err := s.authenticate(r); err == nil && ss.credential.User.Role == "admin" {
+				http.Redirect(w, r, "/admin/setup", http.StatusSeeOther)
+				return
+			}
+		}
 		s.serveSetupAsset(w, r)
 		return
 	}
@@ -326,11 +332,17 @@ func (s *Server) serveSetupAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path, contentType := "static/public/setup.html", "text/html; charset=utf-8"
-	if r.URL.Path == "/setup/browser/onboarding.js" {
-		path, contentType = "static/browser/onboarding.js", "text/javascript; charset=utf-8"
-	}
-	if r.URL.Path == "/setup/style.css" {
+	switch r.URL.Path {
+	case "/setup", "/login":
+	case "/setup/browser/onboarding.js", "/setup/browser/components.js", "/setup/browser/model-form.js":
+		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/setup/browser/"), "text/javascript; charset=utf-8"
+	case "/setup/style.css":
 		path, contentType = "static/public/style.css", "text/css; charset=utf-8"
+	case "/setup/piwork-logo.png":
+		path, contentType = "static/public/piwork-logo.png", "image/png"
+	default:
+		webError(w, 404, "NOT_FOUND")
+		return
 	}
 	data, err := consoleassets.FS.ReadFile(path)
 	if err != nil {

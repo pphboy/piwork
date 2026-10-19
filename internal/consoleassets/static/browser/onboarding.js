@@ -1,31 +1,27 @@
+import { Field, Input, Feedback, icon } from './components.js';
+import { modelErrors } from './model-form.js';
 const root = document.querySelector('#setup-app');
-const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const proof = new URLSearchParams(location.hash.slice(1)).get('setup');
 if (location.hash)
     history.replaceState(null, '', location.pathname);
-let csrf = '', setupCSRF = '', busy = false, notice = '', stage = 'loading', account = '';
-let snapshot = {}, models = [], selectedRef = '', modelUnknown = false, runtimeUnknown = false;
-let pendingRuntime = null;
-let pendingModel = null, beforeModels = new Set();
-let draft = { model: '', api: 'openai-responses', baseUrl: '', name: '' };
-let timer;
-let statusEpoch = 0;
+let csrf = '', setupCSRF = '', authenticated = false, stage = 'loading', account = '', notice = '', noticeError = false, view = 0, identity = 0, writing = false, snapshot = {};
 class RequestError extends Error {
     status;
     unknown;
-    constructor(message, status = 0, unknown = false) {
+    field;
+    code;
+    constructor(message, status = 0, unknown = false, field = '', code = '') {
         super(message);
         this.status = status;
         this.unknown = unknown;
+        this.field = field;
+        this.code = code;
     }
 }
 async function request(path, method = 'GET', body, setup = false) {
     let response;
     try {
-        response = await fetch(path, { method, credentials: 'same-origin', headers: {
-                ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-                ...(method === 'GET' ? {} : { 'X-Piwork-Csrf': setup ? setupCSRF : csrf, 'X-Csrf-Token': setup ? setupCSRF : csrf }),
-            }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+        response = await fetch(path, { method, credentials: 'same-origin', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(method === 'GET' ? {} : { 'X-Piwork-Csrf': setup ? setupCSRF : csrf, 'X-Csrf-Token': setup ? setupCSRF : csrf }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     }
     catch {
         throw new RequestError(method === 'GET' ? 'The server could not be reached. Retry this read.' : 'The result is not confirmed. Read current state before submitting again.', 0, method !== 'GET');
@@ -34,301 +30,236 @@ async function request(path, method = 'GET', body, setup = false) {
     if (!value || typeof value !== 'object')
         throw new RequestError('The response could not be confirmed. Read current state.', response.status, method !== 'GET');
     if (!response.ok) {
-        let message = String(value.message || value.code || 'The request failed.');
+        let message = value.code === 'INVALID_REQUEST' && modelErrors[value.field?.split('.')[0]] || String(value.message || value.code || 'The request failed.');
         if (value.code === 'AUTHENTICATION_FAILED')
             message = 'The account or password is incorrect, or the account is unavailable.';
         if (value.code === 'RATE_LIMITED')
             message = `Too many sign-in attempts. Wait ${Math.max(1, Math.ceil(Number(value.retryAfterMs || 60000) / 1000))} seconds before retrying.`;
-        if (value.field)
-            message += ` Check ${value.field}.`;
-        throw new RequestError(message, response.status, method !== 'GET' && response.status >= 500);
+        if (value.code === 'RELEASE_DEFAULTS_UNAVAILABLE')
+            message = 'The server release is incomplete. Repair the server release, then read current state.';
+        throw new RequestError(message, response.status, method !== 'GET' && response.status >= 500 && value.code !== 'RELEASE_DEFAULTS_UNAVAILABLE', String(value.field || ''), String(value.code || ''));
     }
     return value;
 }
 const web = (path, method = 'GET', body, setup = false) => request('/_web/api/' + path, method, body, setup);
-const admin = (path, method = 'GET', body) => request('/console/api/admin/' + path, method, body);
-const field = (label, name, value = '', type = 'text', extra = '') => `<label class="field"><span>${label}</span><input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;
-const button = (label, action, primary = false, disabled = false) => `<button type="button" class="btn ${primary ? 'primary' : 'secondary'}" data-action="${action}" ${busy || disabled ? 'disabled' : ''}>${label}</button>`;
+const message = (error) => error instanceof Error ? error.message : 'The request could not be confirmed.';
+const button = (text, action, primary = false, disabled = false) => `<button type="button" class="btn ${primary ? 'primary' : 'secondary'}" data-action="${action}" ${disabled ? 'disabled' : ''}>${text}</button>`;
+function current(ticket) { return ticket.view === view && ticket.identity === identity; }
+function context() { return { view, identity }; }
+function clearSecrets() { root.querySelectorAll('input[type=password]').forEach(input => { input.value = ''; }); }
+function changeStage(next) { if (next !== stage) {
+    clearSecrets();
+    view++;
+    stage = next;
+    writing = false;
+} }
+function credentialForm() {
+    const creating = stage === 'administrator';
+    return `<form id="credentials" class="form-grid" novalidate>${Field('account', 'Account', Input('account', account, 'autocomplete="username" required maxlength="128"'))}${Field('password', 'Password', Input('password', '', `type="password" autocomplete="${creating ? 'new-password' : 'current-password'}" required`), creating ? 'Use at least 12 characters.' : 'Use your account password.')}${creating ? Field('confirm-password', 'Confirm password', Input('confirm-password', '', 'type="password" autocomplete="new-password" required'), 'Enter the same password again.') : ''}<div class="form-actions"><button class="btn primary" type="submit">${creating ? 'Create administrator' : 'Sign in'}${icon('arrow', 16)}</button></div></form>`;
+}
 function render() {
-    const title = stage === 'administrator' ? 'Create your administrator' : stage === 'login' ? 'Sign in to Piwork' : stage === 'wizard' ? 'Set up your Core runtime' : stage === 'authorization' ? 'Open your setup link' : stage === 'waiting' ? 'Core setup is pending' : 'Opening Piwork…';
+    const title = stage === 'administrator' ? 'Create your administrator' : stage === 'login' ? 'Sign in to Piwork' : stage === 'authorization' ? 'Open your setup link' : stage === 'waiting' ? (snapshot.status?.ready ? 'Your Core is ready' : 'Core setup is pending') : stage === 'error' ? 'Could not read Core state' : 'Opening Piwork…';
     let content = '';
     if (stage === 'authorization')
         content = `<p>First-time setup requires the private link printed in the installer terminal.</p><p>To replace an expired or lost link, run <code>piwork setup link</code> in that terminal using this installation’s data directory. In Docker, run the command inside the server container.</p>${button('Check setup access', 'refresh', true)}`;
     if (stage === 'administrator' || stage === 'login')
-        content = `<form id="credentials">${field('Account', 'account', account, 'text', 'autocomplete="username" required maxlength="128"')}${field('Password', 'password', '', 'password', `autocomplete="${stage === 'administrator' ? 'new-password' : 'current-password'}" required ${stage === 'administrator' ? 'minlength="12"' : ''}`)}<p class="help">${stage === 'administrator' ? 'Use at least 12 characters. This creates the persistent first administrator.' : 'Your credentials stay on this server; this browser receives an opaque session cookie.'}</p><button class="btn primary" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Waiting for confirmation…' : stage === 'administrator' ? 'Create administrator' : 'Sign in'}</button></form>`;
+        content = credentialForm();
     if (stage === 'waiting')
-        content = `<p>An administrator needs to configure the model and runtime. Available workbench features remain accessible.</p><a class="btn primary" href="/">Open workbench</a>${button('Refresh state', 'refresh')}`;
-    if (stage === 'wizard') {
-        const runtime = snapshot.runtime || {}, configured = runtime.configured === true;
-        content = `<p>Save a model connection, then bind it to the runtime. Preparation continues in the background. Saving does not call the model or create a Work.</p>
-      <section class="section"><h2>1. Model connection</h2><label class="field"><span>Saved model</span><select id="saved-model" aria-label="Saved model"><option value="">Choose a model</option>${models.map(m => `<option value="${esc(m.modelRef)}" ${m.modelRef === selectedRef ? 'selected' : ''} ${!m.enabled || !m.credentialAvailable ? 'disabled' : ''}>${esc(m.name || m.model)}${!m.enabled ? ' — Disabled' : !m.credentialAvailable ? ' — Key unavailable' : ''}</option>`).join('')}</select></label>
-      ${modelUnknown ? '<p role="status">The model save result is not confirmed. Read saved models and select the confirmed entry; do not create it again.</p>' : ''}
-      <form id="model"><h3>Add a model</h3>${field('Model ID', 'model', draft.model, 'text', 'required maxlength="256"')}<label class="field"><span>API type</span><select name="api" aria-label="API type"><option value="openai-responses" ${draft.api === 'openai-responses' ? 'selected' : ''}>OpenAI Responses</option><option value="anthropic-messages" ${draft.api === 'anthropic-messages' ? 'selected' : ''}>Anthropic Messages</option></select></label>${field('Base URL', 'baseUrl', draft.baseUrl, 'url', 'required placeholder="https://api.example.com/v1"')}${field('API Key', 'credential', '', 'password', 'required autocomplete="off"')}<details><summary>Optional display name</summary>${field('Display name', 'name', draft.name)}</details><div class="form-actions">${button('Test connection', 'test-model')}<button class="btn primary" type="submit" ${busy || modelUnknown ? 'disabled' : ''}>Save model</button></div><p class="help">Test sends a real request and may incur provider charges. It is optional and does not save or change configuration.</p><p id="test-result" role="status"></p></form></section>
-      <section class="section"><h2>2. Core runtime</h2><p>${configured ? 'A runtime is already saved. Existing Work configurations remain unchanged.' : 'The release Agent image is supplied automatically.'}</p><p>Release Agent image: <code data-runtime-agent-image>${esc(snapshot.defaultAgentImage || "Unavailable")}</code></p>${configured ? `<p>Saved Agent image: <code>${esc(runtime.agentImage)}</code></p>` : ""}${!snapshot.defaultAgentImage ? '<p role="alert">The release Agent image is unavailable. Repair the server release, then read current state.</p>' : ""}<div class="form-actions">${button('Save runtime', 'save-runtime', true, !selectedRef || runtimeUnknown || !snapshot.defaultAgentImage)}${button('Read current state', 'refresh')}</div><p id="runtime-result" role="status">${runtimeUnknown ? 'Runtime result is not confirmed. Read current state before another save.' : configured ? 'Runtime saved.' : 'Runtime not configured.'}</p></section>
-      <section class="section"><h2>3. Dependency preparation</h2><p id="preparation-summary"></p><ul id="preparation-components"></ul><p>Docker, image pulls and Work readiness are checked separately. Failed dependencies retry automatically after the reported delay; restore Docker or image network access, then read current state. You can leave this page and return later.</p></section>
-      <div class="form-actions"><a class="btn primary" href="/">Open workbench</a><a class="btn secondary" href="/admin">Administration</a>${button('Sign out', 'logout')}</div>`;
-    }
-    root.innerHTML = `<div class="${stage === 'wizard' ? '' : 'login'}"><h1 class="login-heading">${title}</h1>${notice ? `<p class="form-notice" role="alert">${esc(notice)}</p>` : ''}${content}</div>`;
-    updatePreparation();
+        content = `<p>${snapshot.status?.ready ? 'This Core is ready. Open the workbench to use your Work.' : 'An administrator needs to configure the model and runtime. Available workbench features remain accessible.'}</p><div class="form-actions"><a class="btn primary" href="/">Open workbench${icon('arrow', 16)}</a>${button('Refresh state', 'refresh')}</div>`;
+    if (stage === 'error')
+        content = `<p>Your saved configuration has not been changed. Retry when the server is reachable.</p>${button('Read current state', 'refresh', true)}`;
+    root.innerHTML = `<header class="setup-topbar"><a href="/" class="setup-brand" aria-label="Piwork workbench"><img src="/setup/piwork-logo.png" width="32" height="32" alt=""><span>Piwork</span></a><span class="product-label">CoreSetup</span><nav aria-label="Piwork navigation">${authenticated ? button('Sign out', 'logout') : '<a class="btn ghost small" href="/login">Sign in</a>'}</nav></header><main class="setup-main setup-narrow"><div class="setup-heading"><p class="eyebrow">${stage === 'login' ? 'WELCOME TO PIWORK' : 'CORE SETUP'}</p><h1>${title}</h1></div><div id="setup-notice" aria-live="polite"></div><div id="setup-status" class="setup-status" aria-live="polite"></div>${content}</main>`;
+    updateNotice();
+    updateLocks();
 }
-function updatePreparation() {
-    const summary = document.querySelector('#preparation-summary');
-    if (summary)
-        summary.textContent = snapshot.status?.ready ? 'Core is ready for Work operations.' : `Core state: ${snapshot.status?.state || 'Checking'}`;
-    const components = document.querySelector('#preparation-components');
-    if (components)
-        components.innerHTML = Object.entries(snapshot.preparation?.components || {}).map(([name, raw]) => { const value = raw; return `<li>${esc(name)}: ${esc(value.state || 'Not configured')}${value.code ? ' — ' + esc(value.code) : ''}${value.retryAfterSeconds != null ? ' · Retrying in ' + esc(value.retryAfterSeconds) + ' seconds' : ''}</li>`; }).join('');
-}
-async function loadWizard() {
-    const epoch = ++statusEpoch;
-    clearTimeout(timer);
-    const current = await web('onboarding');
-    if (epoch !== statusEpoch)
-        return;
-    snapshot = current;
-    if (!snapshot.administrator) {
-        stage = 'waiting';
-        render();
-        return;
-    }
-    const result = await admin('models');
-    if (epoch !== statusEpoch)
-        return;
-    models = result.models || [];
-    if (!selectedRef)
-        selectedRef = snapshot.runtime?.modelRef || '';
-    if (modelUnknown && pendingModel) {
-        const matches = models.filter(m => !beforeModels.has(m.id) && m.model === pendingModel.model && m.api === pendingModel.api && m.baseUrl === pendingModel.baseUrl && (!pendingModel.name || m.name === pendingModel.name));
-        if (matches.length === 1) {
-            selectedRef = matches[0].modelRef;
-            modelUnknown = false;
-            pendingModel = null;
-            notice = 'The saved model was confirmed by reading current data.';
+function updateNotice() { const node = root.querySelector('#setup-notice'); if (node)
+    node.innerHTML = notice ? Feedback(notice, noticeError ? 'warning' : 'success') : ''; }
+function tell(text, error = false) { notice = text; noticeError = error; updateNotice(); }
+function updateLocks() { root.querySelectorAll('input,button').forEach(node => { node.disabled = writing; }); root.querySelector('#credentials [type=submit]')?.setAttribute('aria-busy', String(writing)); const status = root.querySelector('#setup-status'); if (status)
+    status.textContent = writing ? 'Saving. Waiting for server confirmation…' : ''; }
+let confirmationTouched = false;
+function fieldError(id, text) {
+    const input = root.querySelector('#' + id), error = root.querySelector('#' + id + '-error');
+    if (input) {
+        if (text) {
+            input.setAttribute('aria-invalid', 'true');
+            input.setAttribute('aria-errormessage', id + '-error');
+        }
+        else {
+            input.removeAttribute('aria-invalid');
+            input.removeAttribute('aria-errormessage');
         }
     }
-    if (runtimeUnknown && pendingRuntime && snapshot.runtime?.configured && snapshot.runtime.modelRef === pendingRuntime.modelRef && snapshot.runtime.agentImage === pendingRuntime.agentImage) {
-        runtimeUnknown = false;
-        pendingRuntime = null;
-        notice = 'The saved runtime was confirmed by reading current data.';
+    if (error) {
+        error.textContent = text;
+        error.hidden = !text;
     }
-    stage = 'wizard';
-    render();
-    scheduleStatus();
 }
-function scheduleStatus() {
-    clearTimeout(timer);
-    const epoch = statusEpoch;
-    timer = setTimeout(async () => {
-        if (stage !== 'wizard' || epoch !== statusEpoch)
+function validateCredentials(submitting = false) {
+    const creating = stage === 'administrator', password = root.querySelector('#password')?.value || '', confirmation = root.querySelector('#confirm-password')?.value || '';
+    const errors = {};
+    if (submitting && !root.querySelector('#account')?.value.trim())
+        errors.account = 'Enter your account.';
+    if (submitting || root.querySelector('#password')?.getAttribute('aria-invalid') === 'true') {
+        if (!password)
+            errors.password = 'Enter a password.';
+        else if (creating && password.length < 12)
+            errors.password = 'Use at least 12 characters.';
+    }
+    if (creating && (confirmationTouched || submitting))
+        errors['confirm-password'] = !confirmation ? 'Confirm your password.' : confirmation !== password ? 'The passwords do not match.' : '';
+    if (submitting)
+        confirmationTouched = true;
+    for (const id of ['account', 'password', 'confirm-password'])
+        fieldError(id, errors[id] || '');
+    const first = Object.keys(errors).find(id => !!errors[id]);
+    if (submitting && first)
+        root.querySelector('#' + first)?.focus();
+    return !first;
+}
+async function credentials(form) {
+    if (writing || !validateCredentials(true))
+        return;
+    const creating = stage === 'administrator', ticket = context(), data = new FormData(form);
+    account = String(data.get('account') || '');
+    let password = String(data.get('password') || '');
+    writing = true;
+    updateLocks();
+    try {
+        const value = await web(creating ? 'setup/administrator' : 'login', 'POST', { account, password }, creating);
+        if (!current(ticket))
             return;
-        try {
-            const value = await web('onboarding');
-            if (epoch !== statusEpoch)
-                return;
-            snapshot = value;
-            updatePreparation();
-        }
-        catch (error) {
-            const el = document.querySelector('#preparation-summary');
-            if (el)
-                el.textContent = `State could not be refreshed: ${error.message}`;
-        }
-        if (epoch === statusEpoch)
-            scheduleStatus();
-    }, 5000);
-}
-async function load() {
-    clearTimeout(timer);
-    const state = await web('state');
-    if (!state.administratorInitialized) {
-        const access = await web('setup/session');
-        setupCSRF = access.csrfToken || '';
-        stage = access.authorized ? 'administrator' : 'authorization';
-        render();
-        return;
+        clearSecrets();
+        identity++;
+        location.replace(value.next || '/');
     }
-    const session = await web('session');
-    csrf = session.csrfToken || '';
-    if (!session.authenticated) {
-        stage = 'login';
-        render();
-        return;
-    }
-    if (location.pathname === '/login') {
-        location.replace(session.next || '/');
-        return;
-    }
-    await loadWizard();
-}
-function capture() {
-    const form = document.querySelector('#model');
-    if (form) {
-        const data = new FormData(form);
-        draft = { ...draft, model: String(data.get('model') || ''), api: String(data.get('api') || ''), baseUrl: String(data.get('baseUrl') || ''), name: String(data.get('name') || '') };
-    }
-}
-function setBusy(value) {
-    busy = value;
-    if (value) {
-        statusEpoch++;
-        clearTimeout(timer);
-    }
-    else if (stage === 'wizard') {
-        scheduleStatus();
-    }
-    root.querySelectorAll('button').forEach(button => { button.disabled = value; });
-    const bind = root.querySelector('[data-action=save-runtime]');
-    if (bind)
-        bind.disabled = value || !selectedRef || runtimeUnknown || !snapshot.defaultAgentImage;
-    const save = root.querySelector('#model [type=submit]');
-    if (save)
-        save.disabled = value || modelUnknown;
-}
-root.addEventListener('input', capture);
-root.addEventListener('change', event => { const target = event.target; if (target.id === 'saved-model')
-    selectedRef = target.value; capture(); setBusy(busy); });
-root.addEventListener('submit', event => { event.preventDefault(); if (busy)
-    return; const form = event.target; void submit(form).catch(error => { notice = error.message; render(); }); });
-async function submit(form) {
-    const data = new FormData(form);
-    if (form.id === 'credentials') {
-        account = String(data.get('account') || '');
-        const password = String(data.get('password') || '');
-        const creating = stage === 'administrator';
-        setBusy(true);
-        const passwordField = form.querySelector('[name=password]');
-        try {
-            const value = await web(creating ? 'setup/administrator' : 'login', 'POST', { account, password }, creating);
-            passwordField.value = '';
-            location.replace(value.next || '/');
-        }
-        catch (error) {
-            passwordField.value = '';
-            notice = error.message;
-            if (error instanceof RequestError && error.unknown) {
-                notice += ' Check whether the administrator was created before trying again.';
-                stage = 'authorization';
+    catch (error) {
+        if (!current(ticket))
+            return;
+        clearSecrets();
+        tell(message(error), true);
+        if (creating && error instanceof RequestError && error.unknown) {
+            // An unknown create is only read back. Never replay the creation.
+            try {
+                const state = await web('state');
+                if (!current(ticket))
+                    return;
+                if (state.administratorInitialized) {
+                    changeStage('login');
+                    tell('Administrator created. Sign in to continue.');
+                    render();
+                }
+                else {
+                    changeStage('authorization');
+                    tell('Creation could not be confirmed. Check setup access before trying again.', true);
+                    render();
+                }
             }
-            if (!creating) {
-                const session = await web('session').catch(() => ({}));
-                csrf = session.csrfToken || '';
+            catch {
+                if (current(ticket)) {
+                    changeStage('error');
+                    render();
+                }
             }
         }
-        finally {
-            busy = false;
+        else if (creating && error instanceof RequestError && error.code === 'SETUP_AUTHORIZATION_INVALID') {
+            changeStage('authorization');
             render();
         }
-        return;
+        else if (!creating) {
+            const session = await web('session').catch(() => null);
+            if (current(ticket) && session)
+                csrf = session.csrfToken || '';
+        }
     }
-    if (form.id === 'model') {
-        if (modelUnknown)
-            return;
-        capture();
-        const input = { name: draft.name.trim(), model: draft.model.trim(), api: draft.api, baseUrl: draft.baseUrl.trim(), credential: String(data.get('credential') || '') };
-        beforeModels = new Set(models.map(model => model.id));
-        pendingModel = { name: input.name, model: input.model, api: input.api, baseUrl: input.baseUrl };
-        setBusy(true);
-        try {
-            const value = await admin('models', 'POST', input);
-            if (typeof value.modelRef !== 'string')
-                throw new RequestError('Model save is not confirmed. Read saved models.', 0, true);
-            selectedRef = value.modelRef;
-            pendingModel = null;
-            notice = 'Model saved. Next, save the runtime with this model.';
-            draft = { ...draft, model: '', baseUrl: '', name: '' };
-        }
-        catch (error) {
-            modelUnknown = error instanceof RequestError && error.unknown;
-            notice = error.message;
-        }
-        finally {
-            input.credential = '';
-            const key = form.querySelector('[name=credential]');
-            if (key)
-                key.value = '';
-            busy = false;
-        }
-        await loadWizard();
-    }
-}
-root.addEventListener('click', event => { const action = event.target.closest('[data-action]')?.dataset.action; if (action && !busy)
-    void act(action).catch(error => { busy = false; notice = error.message; render(); }); });
-async function act(action) {
-    capture();
-    if (action === 'refresh') {
-        notice = '';
-        await load();
-        return;
-    }
-    if (action === 'logout') {
-        setBusy(true);
-        try {
-            await web('logout', 'POST', {});
-            location.replace('/login');
-        }
-        finally {
-            busy = false;
-        }
-        return;
-    }
-    if (action === 'save-runtime') {
-        if (!selectedRef || runtimeUnknown || !snapshot.defaultAgentImage)
-            return;
-        pendingRuntime = { agentImage: snapshot.defaultAgentImage, modelRef: selectedRef };
-        setBusy(true);
-        try {
-            const value = await admin('runtime', 'PUT', { modelRef: pendingRuntime.modelRef });
-            if (!value.runtime?.configured || value.runtime.modelRef !== selectedRef)
-                throw new RequestError('Runtime save is not confirmed. Read current state.', 0, true);
-            notice = 'Runtime saved. Dependency preparation continues in the background.';
-            pendingRuntime = null;
-        }
-        catch (error) {
-            runtimeUnknown = error instanceof RequestError && error.unknown;
-            notice = error.message;
-        }
-        finally {
-            busy = false;
-        }
-        await loadWizard();
-        return;
-    }
-    if (action === 'test-model') {
-        const form = document.querySelector('#model');
-        if (!form.reportValidity())
-            return;
-        const data = new FormData(form);
-        const input = { model: draft.model.trim(), api: draft.api, baseUrl: draft.baseUrl.trim(), credential: String(data.get('credential') || '') };
-        setBusy(true);
-        const result = document.querySelector('#test-result');
-        result.textContent = 'Testing the model connection…';
-        try {
-            const value = await admin('model-tests', 'POST', input);
-            result.textContent = value.success ? `Test succeeded: ${value.replyText || 'Model replied.'}` : `Test failed: ${value.message || value.reason || 'Check the connection.'} ${value.recovery || ''} You may still save valid configuration.`;
-        }
-        catch (error) {
-            result.textContent = `Test could not be confirmed: ${error.message} No configuration was saved. You may still save valid configuration.`;
-        }
-        finally {
-            input.credential = '';
-            setBusy(false);
+    finally {
+        password = '';
+        if (current(ticket)) {
+            writing = false;
+            updateLocks();
         }
     }
 }
-void (async () => {
-    render();
-    if (proof) {
-        try {
-            await web('setup/redeem', 'POST', { proof }, true);
+async function load() {
+    const ticket = context();
+    try {
+        const state = await web('state');
+        if (!current(ticket))
+            return;
+        if (!state.administratorInitialized) {
+            const access = await web('setup/session');
+            if (!current(ticket))
+                return;
+            setupCSRF = access.csrfToken || '';
+            changeStage(access.authorized ? 'administrator' : 'authorization');
+            render();
+            return;
         }
-        catch {
-            notice = 'Setup authorization could not be confirmed. Checking the current setup session; an expired link can be replaced from the installer terminal.';
+        const session = await web('session');
+        if (!current(ticket))
+            return;
+        csrf = session.csrfToken || '';
+        authenticated = session.authenticated === true;
+        if (!session.authenticated) {
+            changeStage('login');
+            render();
+            return;
+        }
+        if (location.pathname === '/login') {
+            location.replace(session.next || '/');
+            return;
+        }
+        if (session.user?.role === 'admin') {
+            location.replace('/admin/setup');
+            return;
+        }
+        snapshot = await web('onboarding');
+        if (!current(ticket))
+            return;
+        changeStage('waiting');
+        render();
+    }
+    catch (error) {
+        if (current(ticket)) {
+            changeStage('error');
+            tell(message(error), true);
+            render();
         }
     }
-    await load();
-})().catch(error => { stage = 'authorization'; notice = error.message; render(); });
-window.addEventListener('beforeunload', event => { capture(); if (draft.model || draft.baseUrl || draft.name) {
-    event.preventDefault();
+}
+root.addEventListener('submit', event => { event.preventDefault(); void credentials(event.target); });
+root.addEventListener('input', () => { account = root.querySelector('#account')?.value || ''; validateCredentials(); });
+root.addEventListener('focusout', event => { const input = event.target; if (input.id === 'confirm-password') {
+    confirmationTouched = true;
+    validateCredentials();
+} if (input.id === 'password' && stage === 'administrator' && input.value && input.value.length < 12)
+    fieldError('password', 'Use at least 12 characters.'); });
+root.addEventListener('click', event => { const action = event.target.closest('[data-action]')?.dataset.action; if (!action || writing)
+    return; event.preventDefault(); if (action === 'refresh') {
+    tell('');
+    void load();
+}
+else if (action === 'logout') {
+    writing = true;
+    identity++;
+    clearSecrets();
+    updateLocks();
+    void web('logout', 'POST', {}).then(() => location.replace('/login')).catch(error => { writing = false; tell(message(error), true); updateLocks(); });
 } });
-export {};
+window.addEventListener('pagehide', () => { identity++; view++; clearSecrets(); });
+window.addEventListener('pageshow', event => { if (event.persisted) {
+    identity++;
+    view++;
+    writing = false;
+    clearSecrets();
+    void load();
+} });
+void (async () => { render(); if (proof) {
+    try {
+        await web('setup/redeem', 'POST', { proof }, true);
+    }
+    catch {
+        tell('Setup authorization could not be confirmed. Checking the current setup session.', true);
+    }
+} await load(); })();
 //# sourceMappingURL=onboarding.js.map

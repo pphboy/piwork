@@ -49,6 +49,7 @@ test('native acceptance rejects a foreign target, changed binary and source that
   for(const dir of ['apps/desktop-webui/src','apps/desktop-webui/public','apps/desktop-webui/scripts','apps/ui-shared/assets','build'])mkdirSync(join(base,dir),{recursive:true});
   writeFileSync(join(base,'apps/ui-shared/browser-crypto.js'),'synthetic browser crypto');
   writeFileSync(join(base,'apps/ui-shared/tokens.css'),'synthetic shared tokens');
+  writeFileSync(join(base,'apps/ui-shared/controls.css'),'synthetic shared controls');
   writeFileSync(join(base,'apps/ui-shared/assets/piwork-logo.png'),'synthetic public logo');
   for(const file of ['apps/desktop-webui/tsconfig.json','apps/desktop-webui/package.json','scripts/sync-desktop-assets.mjs','package-lock.json']){mkdirSync(dirname(join(base,file)),{recursive:true});writeFileSync(join(base,file),'{}');}
   const data=Buffer.from('native candidate fixture'),sha256=createHash('sha256').update(data).digest('hex');

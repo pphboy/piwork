@@ -1,3 +1,4 @@
+import { modelErrors } from './model-form.js';
 export class ConsoleError extends Error {
     code;
     retryAfterMs;
@@ -93,12 +94,14 @@ export class ConsoleAdapter {
     session = false;
     currentUserId = "";
     account = "";
+    coreUrl = "";
     lastHealth = null;
     availability = null;
     store = { users: [], skills: [], packages: [], runtime: null, defaults: null, operations: [] };
     csrf = "";
     epoch = 0;
     get identityEpoch() { return this.epoch; }
+    get csrfToken() { return this.csrf; }
     reads = new Map();
     intents = new Map();
     request(path, method = "GET", body, login = false) {
@@ -148,6 +151,7 @@ export class ConsoleAdapter {
         this.session = false;
         this.currentUserId = "";
         this.account = "";
+        this.coreUrl = "";
         this.intents.clear();
         this.store = { users: [], skills: [], packages: [], runtime: null, defaults: null, operations: [] };
     }
@@ -159,6 +163,7 @@ export class ConsoleAdapter {
         this.session = value.authenticated === true;
         this.currentUserId = value.user?.id ?? "";
         this.account = value.user?.account ?? "";
+        this.coreUrl = typeof value.coreUrl === 'string' ? value.coreUrl : "";
         return this.session;
     }
     async guard(_write = false) {
@@ -174,6 +179,7 @@ export class ConsoleAdapter {
         this.session = true;
         this.currentUserId = value.user.id;
         this.account = value.user.account;
+        this.coreUrl = typeof value.coreUrl === 'string' ? value.coreUrl : "";
     }
     async connection() {
         const value = await this.request("availability");
@@ -216,8 +222,8 @@ export class ConsoleAdapter {
             return await this.request(`admin/${resource}`, method, body);
         }
         catch (error) {
-            if ((resource === 'models' || resource.startsWith('models/')) && error instanceof ConsoleError && error.code === 'INVALID_REQUEST' && error.field.split('.')[0] === 'name')
-                throw new ConsoleError('INVALID_REQUEST', 'Display name is invalid. Use at most 256 characters, or leave blank to use the Model ID.', error.retryAfterMs, error.correlationId, error.field);
+            if ((resource === 'models' || resource.startsWith('models/') || resource === 'model-tests') && error instanceof ConsoleError && error.code === 'INVALID_REQUEST' && modelErrors[error.field.split('.')[0]])
+                throw new ConsoleError('INVALID_REQUEST', modelErrors[error.field.split('.')[0]], error.retryAfterMs, error.correlationId, error.field);
             if (resource === 'model-tests' && error instanceof ConsoleError && error.code === 'RESULT_UNKNOWN')
                 throw new ConsoleError('TEST_RESULT_UNAVAILABLE', 'The Test result could not be confirmed. Check the Core connection and explicitly test again. No configuration was saved.', error.retryAfterMs, error.correlationId);
             throw error;
@@ -234,7 +240,7 @@ export class ConsoleAdapter {
         return this.store.runtime;
     }
     async saveRuntime(input, apiKey) {
-        const value = await this.request("admin/runtime", "PUT", { agentImage: input.agentImage, provider: input.provider, model: input.modelId,
+        const value = await this.request("admin/runtime", "PUT", { provider: input.provider, model: input.modelId,
             ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}), credential: apiKey });
         try {
             this.store.runtime = runtimeView(value.runtime);

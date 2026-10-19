@@ -24,7 +24,7 @@ async function fixture(page, handler = () => undefined, path = '/') {
     requests.push(request); let reply = await handler(request);
     if (!reply) {
       const values = {
-        session: { authenticated: true, csrfToken: 'test-csrf', user }, availability: { reachable: true, administratorInitialized: true },
+        session: { authenticated: true, csrfToken: 'test-csrf', user }, about: {}, availability: { reachable: true, administratorInitialized: true },
         'admin/status': { ready: true, state: 'READY', checks: { runtimeConfigured: true } }, health: { healthy: true },
         'admin/runtime-defaults': {agentImage:'agent:test'}, 'admin/users': { users: [user] }, 'admin/runtime': { configured: true, agentImage: 'agent:test', modelRef: 'model-test-00000001', model: { provider: 'test', id: 'test', credentialAvailable: true } },
         'admin/default-work': { baseImage: 'agent:test', configuration: { skills: [], packages: [], agentsMd: 'saved' } },
@@ -72,9 +72,9 @@ test('message Test explains rejected Base URL and required draft fields without 
   await modelsFixture(page,r=>{if(r.path==='admin/model-tests'){requests++;return{status:400,json:{code:'INVALID_REQUEST',field:'baseUrl',message:'Request fields are invalid'}};}});
   await page.getByLabel('API type',{exact:true}).selectOption('anthropic-messages');await expect(page.getByLabel('Base URL',{exact:true})).toHaveAttribute('placeholder','https://gateway.example');
   await page.getByLabel('Model ID',{exact:true}).fill('specified-model');await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('main')).toContainText('Enter a Base URL before testing');expect(requests).toBe(0);
-  await page.getByLabel('Base URL',{exact:true}).fill('ftp://fixture.invalid');await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('main')).toContainText('Enter an API Key before testing');expect(requests).toBe(0);
+  await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('main')).toContainText('Enter an API Key before testing');expect(requests).toBe(0);
   await page.getByLabel('API Key',{exact:true}).fill('synthetic-validation-key');await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('Base URL is invalid');await expect(page.getByRole('dialog')).toContainText('Messages accepts a service root or a Base URL ending in /v1');await expect(page.getByRole('dialog')).not.toContainText('Request fields are invalid');await expect(page.locator('main')).not.toContainText('Enter an API Key before testing');expect(requests).toBe(1);
-  await expect(page.locator('[data-model-test-stage]')).toContainText('No model request was sent');await page.getByRole('button',{name:'Back to configuration',exact:true}).click();await expect(page.getByLabel('Base URL',{exact:true})).toBeFocused();await expect(page.getByLabel('Base URL',{exact:true})).toHaveAttribute('aria-invalid','true');await expect(page.getByLabel('Base URL',{exact:true})).toHaveValue('ftp://fixture.invalid');await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-validation-key');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');await expect(page.locator('#model-field-error')).toHaveCount(0);
+  await expect(page.locator('[data-model-test-stage]')).toContainText('No model request was sent');await page.getByRole('button',{name:'Back to configuration',exact:true}).click();await expect(page.getByLabel('Base URL',{exact:true})).toBeFocused();await expect(page.getByLabel('Base URL',{exact:true})).toHaveAttribute('aria-invalid','true');await expect(page.getByLabel('Base URL',{exact:true})).toHaveValue('https://fixture.invalid/v1');await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-validation-key');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');await expect(page.locator('#model-field-error')).toHaveCount(0);
 });
 
 test('flat unknown models save once and appear in Runtime without another Key or capability form',async({page})=>{
@@ -196,7 +196,7 @@ for (const [action, path, endpoint] of [
       await page.route('**/console/api/admin/operations/op-1', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"code":"CORE_UNREACHABLE"}' }));
       await page.locator('[data-action="refresh-operation"]').click(); await expect(page.locator('[data-action="resume-observation"]')).toBeVisible(); await page.unroute('**/console/api/admin/operations/op-1');
     }
-    if (action === 'sign-out') await page.locator('summary[aria-label="Administrator account"]').click();
+    if (action === 'sign-out') await page.locator('#account-trigger').click();
     const button = page.locator(`[data-action="${action}"]`).first();
     armed = true; const before = requests.filter(r => r.path === endpoint).length;
     await button.click(); await expect(page.locator('[data-action-status]').filter({ hasText: action === 'sign-out' ? 'Signing out' : action === 'verify-runtime' ? 'Verifying' : action === 'resume-observation' ? 'Resuming' : 'Checking' })).toBeVisible();
@@ -443,4 +443,36 @@ test('missing server release Agent blocks Runtime save without offering an image
  await expect(page.locator('#runtime-form button[type=submit]')).toBeDisabled();
  await expect(page.locator('main')).toContainText('RELEASE_DEFAULTS_UNAVAILABLE');
  expect(requests.filter(r=>r.method==='PUT')).toHaveLength(0);
+});
+
+test('administrator command menu keeps native navigation, keyboard and outside pointer focus',async({page})=>{
+ await fixture(page);const trigger=page.getByRole('button',{name:'Administrator account',exact:true}),menu=page.getByRole('menu');
+ await trigger.focus();await page.keyboard.press('ArrowUp');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();
+ await expect(menu.locator('.dropdown-title')).toHaveText('admin');await expect(menu.locator('.account-context')).toContainText('Core: Unavailable');
+ await expect(menu.getByRole('menuitem',{name:'Switch Core'})).toHaveCount(0);await expect(page.locator('a[data-workbench]')).toHaveCount(0);
+ await page.keyboard.press('Home');const about=menu.getByRole('menuitem',{name:'About Piwork',exact:true});await expect(about).toBeFocused();await expect(about).toHaveAttribute('href','/about');
+ await page.keyboard.press('ArrowDown');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('End');await page.keyboard.press('ArrowDown');await expect(about).toBeFocused();
+ await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();
+ await trigger.click();await page.keyboard.press('Tab');await expect(menu).toHaveCount(0);await expect(trigger).not.toBeFocused();
+ await trigger.click();await page.evaluate(()=>{const b=document.createElement('button');b.id='outside-focus-probe';b.textContent='Outside focus probe';document.querySelector('main').prepend(b);});const target=page.locator('#outside-focus-probe');await target.click();await expect(menu).toHaveCount(0);await expect(target).toBeFocused();
+ await trigger.click();const inside=await about.boundingBox();await page.mouse.move(3,200);await page.mouse.down();await page.mouse.move(inside.x+20,inside.y+20);await page.mouse.up();await expect(menu).toBeVisible();
+ await page.mouse.move(inside.x+20,inside.y+20);await page.mouse.down();await page.mouse.move(3,200);await page.mouse.up();await expect(menu).toBeVisible();
+ expect(await menu.evaluate(el=>({animation:getComputedStyle(el).animationName,transition:getComputedStyle(el).transitionDuration,modal:document.querySelectorAll('dialog[open]').length}))).toEqual({animation:'none',transition:'0s',modal:0});
+ await about.focus();await page.keyboard.press('Space');await expect(page).toHaveURL(base+'/about');await expect(menu).toHaveCount(0);await expect(page.locator('main h1')).toHaveText('About Piwork');
+});
+
+test('independent console account shows actual remote Core and wraps long identity at 360px',async({page})=>{
+ const account='administrator-'+('long'.repeat(24)),coreUrl='https://core-'+('x'.repeat(70))+'.example.invalid:7171';
+ await fixture(page,r=>r.path==='session'?{json:{authenticated:true,csrfToken:'test-csrf',user:{id:'admin-1',account,role:'admin'},coreUrl}}:undefined);
+ for(const width of [1440,360]){
+  await page.setViewportSize({width,height:900});await page.getByRole('button',{name:'Administrator account',exact:true}).click();const menu=page.getByRole('menu');
+  await expect(menu.locator('.dropdown-title')).toHaveText(account);await expect(menu.locator('.account-context')).toContainText(coreUrl);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  const bounds=await menu.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(8);expect(bounds.x+bounds.width).toBeLessThanOrEqual(width-7);await page.keyboard.press('Escape');
+ }
+ await expect(page.getByRole('link',{name:'Workbench',exact:true})).toHaveCount(0);await expect(page.getByRole('link',{name:'Quick setup',exact:true})).toHaveCount(0);
+});
+
+test('an identity change closes the administrator menu and replaces its account context',async({page})=>{
+ let changed=false;await fixture(page,r=>r.path==='session'?{json:{authenticated:true,csrfToken:'test-csrf',user:{id:changed?'next-admin':'admin-1',account:changed?'next administrator':'admin',role:'admin'}}}:undefined,'/users');
+ await page.getByRole('button',{name:'Administrator account',exact:true}).click();await expect(page.getByRole('menu')).toBeVisible();changed=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(page.getByRole('menu')).toHaveCount(0);await page.getByRole('button',{name:'Administrator account',exact:true}).click();await expect(page.getByRole('menu').locator('.dropdown-title')).toHaveText('next administrator');
 });

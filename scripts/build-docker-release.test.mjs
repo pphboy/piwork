@@ -13,6 +13,7 @@ function fixture(t) {
   for (const name of ['apps/desktop-webui/tsconfig.json', 'apps/desktop-webui/package.json', 'scripts/sync-desktop-assets.mjs', 'package-lock.json']) writeFileSync(join(base, name), '{}');
   writeFileSync(join(base,'apps/ui-shared/browser-crypto.js'),'synthetic browser crypto');
   writeFileSync(join(base,'apps/ui-shared/tokens.css'),'synthetic shared tokens');
+  writeFileSync(join(base,'apps/ui-shared/controls.css'),'synthetic shared controls');
   writeFileSync(join(base, 'package.json'), '{"version":"0.0.1"}');
   writeFileSync(join(base,'internal/releaseinfo/notes.json'),JSON.stringify({version:1,releases:[]}));
   writeFileSync(join(base, 'apps/ui-shared/assets/piwork-logo.png'), 'synthetic-public-logo');
@@ -48,6 +49,11 @@ test('metadata requires real identity and detects changed build inputs', t => {
     writeFileSync(join(base,'apps/console-webui',directory,'.last-run.json'),'Temporary browser output must not change release identity.');
   }
   assert.equal(identity(base, environment).sourceInputHash, first.sourceInputHash);
+  writeFileSync(join(base,'apps/ui-shared/controls.css'),'updated shared controls');
+  const updatedControls=identity(base,environment);
+  assert.notEqual(updatedControls.desktopUIHash,first.desktopUIHash);
+  assert.notEqual(updatedControls.consoleUIHash,first.consoleUIHash);
+  assert.notEqual(updatedControls.sourceInputHash,first.sourceInputHash);
   writeFileSync(join(base, 'apps/ui-shared/assets/piwork-logo.png'), 'changed-synthetic-public-logo');
   assert.notEqual(identity(base, environment).sourceInputHash, first.sourceInputHash);
   writeFileSync(join(base,'internal/releaseinfo/notes.json'),JSON.stringify({version:1,releases:[]},null,2));

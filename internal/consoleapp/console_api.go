@@ -164,7 +164,7 @@ func (c *nativeConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		if ok {
 			consoleJSON(w, 200, map[string]any{"authenticated": true, "user": session.user,
-				"expiresAt": session.expiresAt.UTC().Format(time.RFC3339), "csrfToken": session.csrf})
+				"expiresAt": session.expiresAt.UTC().Format(time.RFC3339), "csrfToken": session.csrf, "coreUrl": c.options.coreURL})
 			return
 		}
 		c.mu.Lock()
@@ -368,7 +368,7 @@ func (c *nativeConsole) login(w http.ResponseWriter, r *http.Request) {
 	consoleSetCookie(w, consoleLoginCookie, "", 0)
 	consoleSetCookie(w, consoleSessionCookie, sessionID, int(time.Until(expiry).Seconds()))
 	consoleJSON(w, 200, map[string]any{"authenticated": true, "user": record.User,
-		"expiresAt": expiry.UTC().Format(time.RFC3339), "csrfToken": csrf})
+		"expiresAt": expiry.UTC().Format(time.RFC3339), "csrfToken": csrf, "coreUrl": c.options.coreURL})
 }
 
 func consoleAllowedAdmin(method, path string) bool {

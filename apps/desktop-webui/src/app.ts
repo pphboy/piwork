@@ -581,7 +581,7 @@ function connection() {
 }
 function signIn() {
   const access = adapter.state.browserAccess;
-  if (adapter.hosted) return `${topbar()}<main class="auth-main"><h1>${access === 'checking' ? 'Opening workspace…' : 'Connect to Piwork'}</h1><p class="muted" role="status">${esc(adapter.state.browserAccessReason || (access === 'checking' ? 'Checking your server session…' : 'Sign in to continue.'))}</p>${access === 'checking' ? '' : `<a class="btn primary" href="/login">Sign in</a>${btn('Check server connection','check-browser-access','quiet')}`}</main>`;
+  if (adapter.hosted) return `${topbar()}<main class="auth-main"><h1>${access === 'checking' ? 'Opening workspace…' : 'Connect to Piwork'}</h1><p class="muted" role="status">${esc(adapter.state.browserAccessReason || (access === 'checking' ? 'Checking your server session…' : 'Sign in to continue.'))}</p>${access === 'checking' ? '' : `<a class="button primary" href="/login">Sign in</a>${btn('Check server connection','check-browser-access','quiet')}`}</main>`;
   if (access !== 'authorized') {
     const checking = access === 'checking', unavailable = access === 'unavailable';
     return `${topbar()}<main class="auth-main browser-access"><div class="auth-symbol">${icon("lock",26)}</div><h1>${checking ? 'Opening workspace…' : unavailable ? 'Desktop connection unavailable' : 'Browser access required'}</h1><p class="muted" role="status" aria-live="polite">${checking ? 'Connecting to your local Desktop…' : esc(adapter.state.browserAccessReason)}</p>${checking ? '' : `${btn('Check browser access','check-browser-access','primary full')}<div class="recovery-command"><p>From a terminal as the same system user:</p><code>${esc(adapter.reopenCommand())}</code>${btn('Copy reopen command','copy-reopen-command','quiet full')}</div><p class="muted">If the instance is not running, start it with <code>${esc(adapter.startCommand())}</code>. Reopening a running instance keeps its Core, Works and browser sessions.</p><div class="recovery-command"><p>To clear this Desktop’s saved Core login without browser access:</p><code>${esc(adapter.logoutCommand())}</code>${btn('Copy logout command','copy-logout-command','quiet full')}</div>`}</main>`;
@@ -1102,7 +1102,7 @@ function modalMarkup() {
       break;
     case "account":
       title = esc(adapter.state.core.account || "Account");
-      body = `<p class="account-context"><span>Role: ${esc(adapter.state.core.role === 'admin' ? 'Administrator' : adapter.state.core.role)}</span><span title="${esc(adapter.state.core.address)}">Core: ${esc(adapter.state.core.address)}</span></p><div class="menu-list">${btn(`${icon("info")} About Piwork`, "about-piwork")}${btn(`${icon("clock")} Known operations`, "operations")}</div><div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="btn quiet" href="/admin">Administration</a><a class="btn quiet" href="/setup">Core setup</a>` : "") : `${btn(`${icon("refresh")} Switch Core`, "switch-core")}${btn(`${icon("lock")} Reset browser access`, "reset-browser-access")}`}${btn(`${icon("logout")} Sign out`, "sign-out", "danger")}</div>`;
+      body = `<p class="account-context"><span>Role: ${esc(adapter.state.core.role === 'admin' ? 'Administrator' : adapter.state.core.role)}</span><span title="${esc(adapter.state.core.address)}">Core: ${esc(adapter.state.core.address)}</span></p><div class="menu-list">${btn(`${icon("info")} About Piwork`, "about-piwork")}${btn(`${icon("clock")} Known operations`, "operations")}</div><div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} Administration</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} Quick setup</a>` : "") : `${btn(`${icon("refresh")} Switch Core`, "switch-core")}${btn(`${icon("lock")} Reset browser access`, "reset-browser-access")}`}${btn(`${icon("logout")} Sign out`, "sign-out", "danger")}</div>`;
       break;
     case "reset-browser-access":
       title = "Reset browser access?";
@@ -3143,6 +3143,7 @@ root.addEventListener("keydown", (e) => {
     const index=options.indexOf(document.activeElement as HTMLElement),next=menuDestination(e.key,index,options.length);
     if(next>=0){e.preventDefault();options[next]?.focus();return;}
     if(e.key==='Tab'){const trigger=root.querySelector<HTMLElement>(overlayAnchor);dismissAnchoredOverlay();trigger?.focus({preventScroll:true});return;}
+    if(e.key===' '&&e.target instanceof HTMLAnchorElement&&e.target.getAttribute('role')==='menuitem'){e.preventDefault();e.target.click();return;}
     if(e.key.length===1 && !e.ctrlKey && !e.metaKey && !e.altKey){const ordered=[...options.slice(index+1),...options.slice(0,index+1)];const found=ordered.find(node=>node.textContent?.trim().toLowerCase().startsWith(e.key.toLowerCase()));if(found){e.preventDefault();found.focus();return;}}
   }
   if(dialog?.open && (e.target as HTMLElement).getAttribute('role')==='option' && e.key.length===1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key!==' ') {

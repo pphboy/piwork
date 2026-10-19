@@ -304,5 +304,117 @@ func TestRuntimeUsesCoreReleaseDefaultAndRejectsBrowserOverride(t *testing.T) {
 	if fmtJSON(before) != fmtJSON(after) {
 		t.Fatal("missing release modified persisted runtime")
 	}
+	code, snapshot, _ := call(t, b, origin, "/_web/api/onboarding", "GET", "", nil)
+	if code != 200 || snapshot["releaseError"] != "RELEASE_DEFAULTS_UNAVAILABLE" || snapshot["runtime"].(map[string]any)["configured"] != true {
+		t.Fatal("release failure hid confirmed onboarding state", code, snapshot)
+	}
+	code, models, _ := call(t, b, origin, "/console/api/admin/models", "GET", "", nil)
+	if code != 200 || len(models["models"].([]any)) != 1 {
+		t.Fatal("release failure blocked model recovery", code)
+	}
 
+}
+
+func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
+	_, _, origin := fixture(t)
+	client := browser(t)
+	for path, contentType := range map[string]string{
+		"/setup": "text/html", "/login": "text/html",
+		"/setup/browser/onboarding.js": "text/javascript",
+		"/setup/browser/components.js": "text/javascript",
+		"/setup/browser/model-form.js": "text/javascript",
+		"/setup/piwork-logo.png":       "image/png", "/setup/style.css": "text/css",
+	} {
+		response, err := client.Get(origin + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != 200 || !strings.HasPrefix(response.Header.Get("Content-Type"), contentType) || len(body) == 0 {
+			t.Fatalf("setup asset %s unavailable or wrong type", path)
+		}
+	}
+	response, err := client.Get(origin + "/setup/browser/adapter.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 404 {
+		t.Fatal("unexpected setup module was exposed")
+	}
+}
+
+func TestHostedQuickSetupRoutingAndAuthority(t *testing.T) {
+	_, core, origin := fixture(t)
+	anonymous := browser(t)
+	for _, path := range []string{"/admin/setup", "/admin/setup?step=prepare"} {
+		response, err := anonymous.Get(origin + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 303 || response.Header.Get("Location") != "/setup" {
+			t.Fatalf("empty installation route %s: %d", path, response.StatusCode)
+		}
+	}
+	if _, err := core.Identity.Bootstrap(context.Background(), "admin", "synthetic-password"); err != nil {
+		t.Fatal(err)
+	}
+	admin := browser(t)
+	signIn(t, admin, origin, "admin")
+	code, session, _ := call(t, admin, origin, "/_web/api/session", "GET", "", nil)
+	if code != 200 || session["next"] != "/admin/setup" {
+		t.Fatal("first login did not continue inside Admin", code, session)
+	}
+	response, err := admin.Get(origin + "/setup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 303 || response.Header.Get("Location") != "/admin/setup" {
+		t.Fatal("legacy setup did not redirect")
+	}
+	for _, path := range []string{"/admin/setup", "/admin/setup?step=prepare", "/admin/runtime", "/admin/models", "/admin/browser/quick-setup.js"} {
+		response, err := admin.Get(origin + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != 200 || len(content) == 0 {
+			t.Fatalf("admin route %s unavailable: %d", path, response.StatusCode)
+		}
+	}
+	code, models, _ := call(t, admin, origin, "/console/api/admin/models", "GET", "", nil)
+	if code != 200 || len(models["models"].([]any)) != 0 || core.Status().Checks.RuntimeConfigured {
+		t.Fatal("opening Quick setup wrote configuration")
+	}
+	if _, err := core.Identity.CreateUser(context.Background(), identity.OperatorPrincipal(), "ordinary-quick", "synthetic-password", "user"); err != nil {
+		t.Fatal(err)
+	}
+	ordinary := browser(t)
+	signIn(t, ordinary, origin, "ordinary-quick")
+	for _, path := range []string{"/admin/setup", "/admin/setup?step=prepare", "/console/api/admin/models"} {
+		response, err := ordinary.Get(origin + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 403 {
+			t.Fatalf("ordinary user entered %s: %d", path, response.StatusCode)
+		}
+	}
+	response, err = ordinary.Get(origin + "/setup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 200 {
+		t.Fatal("ordinary pending setup page was lost")
+	}
+	code, _, _ = call(t, admin, origin, "/_web/api/setup/administrator", "POST", "", map[string]string{"account": "again", "password": "synthetic-password"})
+	if code == 201 {
+		t.Fatal("Quick setup reopened bootstrap")
+	}
 }

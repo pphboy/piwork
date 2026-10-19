@@ -253,9 +253,13 @@ func TestNativeConsoleBrowserAndAdministratorSession(t *testing.T) {
 		t.Fatal("Console administrator login failed or leaked bearer", logged.Code, logged.Body.String())
 	}
 	var session struct {
-		CSRF string `json:"csrfToken"`
+		CSRF    string `json:"csrfToken"`
+		CoreURL string `json:"coreUrl"`
 	}
 	_ = json.Unmarshal(logged.Body.Bytes(), &session)
+	if session.CoreURL != c.options.coreURL || session.CoreURL == c.options.publicOrigin {
+		t.Fatal("Console reported its own origin instead of the connected Core")
+	}
 	var sessionCookie string
 	for _, value := range logged.Header().Values("Set-Cookie") {
 		if strings.HasPrefix(value, consoleSessionCookie+"=") {
