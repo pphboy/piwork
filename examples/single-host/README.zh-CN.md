@@ -16,7 +16,7 @@ docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 docker compose -f docker-compose.yml logs core
 ```
 
-打开日志中私有设置链接，创建管理员、登录并配置模型/CoreRuntime；Agent 镜像随版本内置、自动使用，不提供手填或高级覆盖。链接过期时：
+打开日志中私有设置链接，创建管理员并确认密码、登录进入 Admin 的 **Quick setup**（`/admin/setup`）后填写或选择模型，点击 **Save and continue** 顺序保存模型及 CoreRuntime。准备页面会自动更新；全部依赖显示 Ready 后，点击 **Open workbench** 进入 Piwork。后续从 **Overview → Quick setup** 返回配置，顶栏 **Workbench** 可返回工作台。Agent 镜像随版本内置、自动使用，不提供手填或高级覆盖。链接过期时：
 
 ```sh
 docker compose -f docker-compose.yml exec -T core piwork-serve --data-dir /var/lib/piwork/examples/single-host/core setup link

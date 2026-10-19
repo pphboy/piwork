@@ -16,7 +16,7 @@ docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 docker compose -f docker-compose.yml logs core
 ```
 
-Open the private setup link from the logs, create the administrator, sign in and configure the model/CoreRuntime. The release supplies the Agent image automatically, with no image input or advanced override. If the link expires:
+Open the private setup link from the logs, create the administrator with password confirmation, sign in to Admin **Quick setup** (`/admin/setup`), enter or choose a model, then select **Save and continue** to save the model and CoreRuntime in sequence. The preparation page updates automatically; when all required components are Ready, select **Open workbench** to enter Piwork. Return through **Overview → Quick setup** to change configuration, or use the topbar **Workbench** link to return. The release supplies the Agent image automatically, with no image input or advanced override. If the link expires:
 
 ```sh
 docker compose -f docker-compose.yml exec -T core piwork-serve --data-dir /var/lib/piwork/examples/single-host/core setup link

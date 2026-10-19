@@ -34,6 +34,7 @@ function replace(base, name, from, to) {
 }
 
 test('paired default commands are standalone, browser-first and parse as shell', () => {
+  for(const name of docs){const text=readFileSync(join(projectRoot,name),'utf8');assert(text.includes('Save and continue'));}
   const baseline = codeBlocks(section(readFileSync(join(projectRoot, docs[0]), 'utf8'), 'docker-quickstart'));
   for (const name of docs) {
     const blocks = codeBlocks(section(readFileSync(join(projectRoot, name), 'utf8'), 'docker-quickstart'));
