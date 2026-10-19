@@ -81,7 +81,7 @@ Input options按钮只打开设置对话框，以展开语义表达；内部Incl
 - Show/Hide Chat归Service Header，同一个位置切换；窄屏显示Chat时Header仍在。分隔线有常驻短握柄，可拖动，原方向键与双击重置保持。
 - Service/会话读取失败显示原资源重试；缓存对话在重读期间仍在。Works名称/Open Work为真实链接，普通点击仍保护未保存内容。
 - 删除文件确认明确UI不能恢复。上传失败不再一律称覆盖：只对已确认存在的目标请求替换；普通失败可重新检查，未知写入先刷新核对且不会直接重复提交。
-- 后续开发按[稳定组件规范](../../../specs/desktop-ui-language/ui-component-adoption.md)选型；不以此要求全量重写或过度设计。
+- 后续开发按[稳定组件规范](../../../../specs/desktop-ui-language/ui-component-adoption.md)选型；不以此要求全量重写或过度设计。
 
 ## 2026-10-14：读取反馈、更多命令与Service详情
 

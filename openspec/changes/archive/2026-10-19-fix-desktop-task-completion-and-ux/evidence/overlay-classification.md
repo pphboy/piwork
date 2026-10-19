@@ -1,6 +1,6 @@
 # 2026-10-14 组件职责扫描
 
-规范来源：用户提供的 `Piwork-UI-Component-Spec-v1.0(1).md`，26944 bytes，SHA256 `9aa41c6de7a938ae803e3ab0f8e4e3869be99fccd564cb7932c10147b271dd32`。原文唯一持久位置：[UI Component Spec v1.0](../../../specs/desktop-ui-language/ui-component-spec-v1.0.md)；[采用说明](../../../specs/desktop-ui-language/ui-component-adoption.md)。原文逐字保存；没有同步或归档其他delta。
+规范来源：用户提供的 `Piwork-UI-Component-Spec-v1.0(1).md`，26944 bytes，SHA256 `9aa41c6de7a938ae803e3ab0f8e4e3869be99fccd564cb7932c10147b271dd32`。原文唯一持久位置：[UI Component Spec v1.0](../../../../specs/desktop-ui-language/ui-component-spec-v1.0.md)；[采用说明](../../../../specs/desktop-ui-language/ui-component-adoption.md)。原文逐字保存；没有同步或归档其他delta。
 
 ## 入口矩阵
 

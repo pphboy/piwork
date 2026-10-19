@@ -8,11 +8,11 @@
 
 `Open in new tab` SHALL 在用户动作中打开独立 Service 视图，正常模式保留 Work 身份、状态及 Back to Work，关闭不停止 Service 或 Run。嵌入被 CSP/X-Frame-Options 拒绝时 SHALL 保留这些响应策略，展示原因与直接新标签页打开应用的回退，不把空白 iframe 当成功。无法可靠判定加载结果时显示预览未确认和可操作回退，不伪称协议故障。
 
-正常独立视图在资格丢失时 SHALL 显示对象/原因/返回；禁止嵌入的直接应用标签页保持应用自己的 UI，本地入口在下一次导航请求被拒绝时返回带 Work 身份与 Back to Work 的不可用页，活动连接仍按 BSA-002 撤销。不通过向任意应用注入脚本/导航栏承诺实时覆盖其已经渲染的画面。无默认入口时提供声明端口选择或明确无法预览，不猜测非 Web 服务成功。
+正常独立视图在资格丢失时 SHALL 显示对象/原因/返回；禁止嵌入的直接应用标签页保持应用自己的 UI，浏览器入口在下一次导航请求被拒绝时返回带 Work 身份与 Back to Work 的不可用页，活动连接仍按 BSA-002 撤销。不通过向任意应用注入脚本/导航栏承诺实时覆盖其已经渲染的画面。无默认入口时提供声明端口选择或明确无法预览，不猜测非 Web 服务成功。
 
 Service 入口准备 SHALL 立即显示当前 Service/端口与准备状态；准备失败显示安全原因和显式重试，不能永久保持 Opening application。iframe 已创建但嵌入检查在有界等待后仍 unknown，SHALL 显示 Preview not confirmed 和重新检查/独立打开入口；不以 iframe load 事件单独宣称应用已正常加载。反馈更新 SHALL 保持同 Work/Service/port 的 iframe 和页面输入，不为显示加载而重建已就绪应用。
 
-独立标签页和独立窗口 SHALL 保留用户手势打开机会；浏览器拦截时原 Work 显示允许弹窗或复制受保护本地链接的下一步，不关闭原菜单并静默结束。需要异步授权时显示准备目标，失败后原页面仍可重试，不能留下无说明的空白窗口。新窗口 SHALL 不保留可访问原 Desktop 的 opener，不以关闭 CSP、代理/PAC 配置或暴露 ticket 绕过失败。
+独立标签页和独立窗口 SHALL 保留用户手势打开机会；浏览器拦截时原 Work 显示允许弹窗或复制受保护链接的下一步，不关闭原菜单并静默结束。需要异步授权时显示准备目标，失败后原页面仍可重试，不能留下无说明的空白窗口。新窗口 SHALL 不保留可访问原 Desktop 的 opener，不以关闭 CSP、代理/PAC 配置或暴露 ticket 绕过失败。
 
 当前所选 Work/Service/声明端口从 Starting 变为真实可访问时，若尚无有效入口且没有同目标在途准备，Desktop SHALL 自动开始一次去重入口准备；不要求切换页签或重选服务。没有实际准备/观察请求时不得永久显示 Opening application，失败或未确认必须提供对应显式恢复。旧身份、其他 Service/端口的晚结果不得替换当前入口。
 
@@ -38,7 +38,7 @@ Service 入口准备 SHALL 立即显示当前 Service/端口与准备状态；�
 
 #### Scenario: 浏览器拦截独立打开
 - **WHEN** 用户点击新标签页或独立窗口，而浏览器未创建窗口
-- **THEN** 原 Work 显示允许弹窗和 Copy local link 回退，复制链接不含凭据或 ticket；未发 Service 控制/停止请求
+- **THEN** 原 Work 显示允许弹窗和 Copy access link 回退（独立 CLI 本机模式为 Copy local link），复制链接不含凭据或 ticket；未发 Service 控制/停止请求
 
 #### Scenario: 异步授权失败
 - **WHEN** 用户手势已打开准备窗口，后续入口授权失败

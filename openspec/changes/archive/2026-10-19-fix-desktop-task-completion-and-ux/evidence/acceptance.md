@@ -453,7 +453,7 @@ GUI使用的 `app.js` SHA-256为 `a8cf325f050e5911304222183944cfbd6de8e76319b55a
 
 远端PR#2读取基线 `e9b6081e8ed5e7fe4692e5010f6713a3a011ed49`，本地等价 `d19506a2919c179acf578fe0368318080e9b5aca`，共同tree `47c36d824360a151a522f67a710f2eb89beddbe7`。实现提交 `3c69257773bf84d93e5e5b55dae8931f12a0a84d`，tree `d123f415f0315575185fd494ebdc4c79875c155a`。完整[入口分类](overlay-classification.md)同时列已修与合理保留，既有独立表单/危险确认没有为了视觉统一降级。
 
-用户原文Spec逐字保存到[稳定规范入口](../../../specs/desktop-ui-language/ui-component-adoption.md)，26944字节及来源SHA256见分类记录；原文没有复制多份。AGENTS链接此入口。其采用不表示新增设计系统、强制linter或完整无障碍合规工程。用户本轮也明确全部已确认误用在本次修完；实现包括持续Operations/Run/Package Inspector，未将这些已确认项推迟。
+用户原文Spec逐字保存到[稳定规范入口](../../../../specs/desktop-ui-language/ui-component-adoption.md)，26944字节及来源SHA256见分类记录；原文没有复制多份。AGENTS链接此入口。其采用不表示新增设计系统、强制linter或完整无障碍合规工程。用户本轮也明确全部已确认误用在本次修完；实现包括持续Operations/Run/Package Inspector，未将这些已确认项推迟。
 
 ### 自动检查
 
