@@ -26,7 +26,7 @@ async function fixture(page, handler = () => undefined, path = '/') {
       const values = {
         session: { authenticated: true, csrfToken: 'test-csrf', user }, availability: { reachable: true, administratorInitialized: true },
         'admin/status': { ready: true, state: 'READY', checks: { runtimeConfigured: true } }, health: { healthy: true },
-        'admin/users': { users: [user] }, 'admin/runtime': { configured: true, agentImage: 'agent:test', modelRef: 'model-test-00000001', model: { provider: 'test', id: 'test', credentialAvailable: true } },
+        'admin/runtime-defaults': {agentImage:'agent:test'}, 'admin/users': { users: [user] }, 'admin/runtime': { configured: true, agentImage: 'agent:test', modelRef: 'model-test-00000001', model: { provider: 'test', id: 'test', credentialAvailable: true } },
         'admin/default-work': { baseImage: 'agent:test', configuration: { skills: [], packages: [], agentsMd: 'saved' } },
         'admin/model-providers': {providers:[]}, 'admin/models': {models:[{id:'managed-test-00001',providerId:'provider-test-00001',modelRef:'model-test-00000001',name:'Test model',model:'test',providerName:'Fixture provider',api:'openai-responses',enabled:true,providerEnabled:true,credentialAvailable:true,capabilityStatus:'sdk'}]},
         'admin/skills': { skills: [{ name: 'skill', enabled: true, fileCount: 1, totalBytes: 1 }] }, 'admin/packages': { packages: [] },
@@ -34,6 +34,7 @@ async function fixture(page, handler = () => undefined, path = '/') {
       };
       reply = values[request.path] ? { json: values[request.path] } : { status: 404, json: { code: 'NOT_FOUND' } };
     }
+    if(request.path==='admin/models'&&reply.json?.models?.length===1&&reply.json.models[0].modelRef==='model-test-00000001')reply={...reply,json:{models:[...reply.json.models,{...reply.json.models[0],id:'managed-test-00002',modelRef:'model-test-00000002',name:'Second model',model:'second'}]}};
     await route.fulfill({ status: reply.status || 200, contentType: 'application/json', body: JSON.stringify(reply.json || {}) });
   });
   await page.goto(base + path); await expect(page.locator('main')).not.toContainText('Loading'); return requests;
@@ -259,7 +260,7 @@ for (const phase of ['PUT', 'readiness']) for (const outcome of ['success', 'fai
         puts++;
         if (puts === 1 && phase === 'PUT') { waiting = true; await old.promise; if (outcome === 'failure') return { status: 503, json: { code: 'CORE_UNREACHABLE' } }; }
         if (puts === 2) await fresh.promise;
-        return { json: { runtime: { configured: true, agentImage: 'agent:saved', modelRef: 'model-test-00000001', model: { provider: 'test', id: 'test', credentialAvailable: true } } } };
+        return { json: { runtime: { configured: true, agentImage: 'agent:test', modelRef: 'model-test-00000001', model: { provider: 'test', id: 'test', credentialAvailable: true } } } };
       }
     }, '/runtime');
     if (phase === 'readiness') await page.evaluate(async outcome => {
@@ -274,7 +275,7 @@ for (const phase of ['PUT', 'readiness']) for (const outcome of ['success', 'fai
         return health;
       };
     }, outcome);
-    await page.locator('[data-action="edit-runtime"]').first().click(); await page.locator('#agentImage').fill('agent:first'); await page.locator('#modelRef').selectOption('model-test-00000001');
+    await page.locator('[data-action="edit-runtime"]').first().click(); await page.locator('#modelRef').selectOption('model-test-00000001');
     await expect(page.locator('#apiKey')).toHaveCount(0);
     await page.locator('#runtime-form button[type="submit"]').click();
     await expect.poll(() => phase === 'PUT' ? waiting : page.evaluate(() => !!window.oldRuntimeReadinessWaiting)).toBe(true);
@@ -284,7 +285,7 @@ for (const phase of ['PUT', 'readiness']) for (const outcome of ['success', 'fai
     await expect(page).toHaveURL(base + '/default-work');
     await expect(page.getByRole('heading', { name: /^(Default Work|Shape new Work)$/ })).toBeVisible();
     await page.goBack(); await page.locator('[data-action="edit-runtime"]').first().click();
-    await page.locator('#agentImage').fill('agent:fresh'); await page.locator('#modelRef').selectOption('model-test-00000001');
+    await page.locator('#modelRef').selectOption('model-test-00000001');
     const submit = page.locator('#runtime-form button[type="submit"]');
     if (phase === 'readiness') { await submit.click(); await expect.poll(() => puts).toBe(2); await expect(submit).toBeDisabled(); }
     if (phase === 'PUT') {
@@ -293,7 +294,7 @@ for (const phase of ['PUT', 'readiness']) for (const outcome of ['success', 'fai
     } else await page.evaluate(() => window.releaseOldRuntimeReadiness());
     // Allow the response body, view guard and finally callback to settle before checking retained input.
     await page.waitForTimeout(100);
-    await expect(page.locator('#agentImage')).toHaveValue('agent:fresh'); await expect(page.locator('#modelRef')).toHaveValue('model-test-00000001');
+    await expect(page.locator('[data-runtime-agent-image]')).toHaveText('agent:test'); await expect(page.locator('#modelRef')).toHaveValue('model-test-00000001');
     await expect(page.locator('#apiKey')).toHaveCount(0);
     if (phase === 'readiness') { await expect(submit).toBeDisabled(); await submit.evaluate(el => el.click()); expect(puts).toBe(2); }
     else { await expect(submit).toBeEnabled(); await submit.click(); await expect.poll(() => puts).toBe(2); await expect(submit).toBeDisabled(); }
@@ -305,12 +306,12 @@ test('S05 runtime saved confirmation precedes readiness; newer non-sensitive edi
   const post=deferred(),health=deferred();let accepted=false;
   try{
     const requests=await fixture(page,async r=>{
-      if(r.path==='admin/runtime'&&r.method==='PUT'){await post.promise;accepted=true;return{json:{runtime:{configured:true,agentImage:'agent:new',modelRef:'model-test-00000001',model:{provider:'test',id:'test',credentialAvailable:true}}}};}
+      if(r.path==='admin/runtime'&&r.method==='PUT'){await post.promise;accepted=true;return{json:{runtime:{configured:true,agentImage:'agent:test',modelRef:'model-test-00000001',model:{provider:'test',id:'test',credentialAvailable:true}}}};}
       if(accepted&&r.path==='admin/status'){await health.promise;return{status:503,json:{code:'CORE_UNREACHABLE'}};}
     },'/runtime');
-    await page.locator('[data-action="edit-runtime"]').first().click();await page.locator('#agentImage').fill('agent:new');await page.locator('#modelRef').selectOption('model-test-00000001');await page.locator('#runtime-form button[type="submit"]').click();
-    await expect(page.locator('[data-action-status]')).toContainText('Saving');await page.locator('#agentImage').fill('agent:newer');post.resolve();
-    await expect(page.locator('main')).toContainText('Runtime saved');await expect(page.locator('#agentImage')).toHaveValue('agent:newer');await expect(page.locator('#apiKey')).toHaveCount(0);health.resolve();await expect(page.locator('main')).toContainText('readiness could not be confirmed');await expect(page.locator('#agentImage')).toHaveValue('agent:newer');expect(requests.filter(r=>r.method==='PUT').length).toBe(1);
+    await page.locator('[data-action="edit-runtime"]').first().click();await page.locator('#modelRef').selectOption('model-test-00000001');await page.locator('#runtime-form button[type="submit"]').click();
+    await expect(page.locator('[data-action-status]')).toContainText('Saving');await page.locator('#modelRef').selectOption('model-test-00000002');post.resolve();
+    await expect(page.locator('main')).toContainText('Runtime saved');await expect(page.locator('#modelRef')).toHaveValue('model-test-00000002');await expect(page.locator('#apiKey')).toHaveCount(0);health.resolve();await expect(page.locator('main')).toContainText('readiness could not be confirmed');await expect(page.locator('#modelRef')).toHaveValue('model-test-00000002');expect(requests.filter(r=>r.method==='PUT').length).toBe(1);
   }finally{post.resolve();health.resolve();}
 });
 
@@ -329,7 +330,7 @@ for(const pagePath of ['/runtime','/default-work'])test(`S01 ${pagePath} explici
       await page.route('**/console/api/admin/default-work',route=>route.request().method()==='PATCH'?route.abort('failed'):route.fallback());await page.locator('[data-action="save-defaults"]').click();await expect(page.locator('[data-action="readback"]')).toBeVisible();
     }
     armed=true;await page.locator('[data-action="readback"]').click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toBeVisible();
-    const field=pagePath==='/runtime'?'#agentImage':'#agentsMd';await page.locator(field).fill('newer draft');gate.resolve();await expect(page.locator(field)).toHaveValue('newer draft');await expect(page.locator('[data-action-status]').filter({hasText:'Checked'}).first()).toContainText(/\d{4}-\d{2}-\d{2}T/);expect(requests.filter(r=>r.path===endpoint).length).toBeGreaterThan(1);
+    const field=pagePath==='/runtime'?'#modelRef':'#agentsMd',draft=pagePath==='/runtime'?'model-test-00000002':'newer draft';if(pagePath==='/runtime')await page.locator(field).selectOption(draft);else await page.locator(field).fill(draft);gate.resolve();await expect(page.locator(field)).toHaveValue(draft);await expect(page.locator('[data-action-status]').filter({hasText:'Checked'}).first()).toContainText(/\d{4}-\d{2}-\d{2}T/);expect(requests.filter(r=>r.path===endpoint).length).toBeGreaterThan(1);
   }finally{gate.resolve();}
 });
 
@@ -433,4 +434,13 @@ test('flat model name errors describe the 256-character optional name instead of
  await modelsFixture(page,r=>r.path==='admin/models'&&r.method==='POST'?{status:400,json:{code:'INVALID_REQUEST',field:'name',message:'Request fields are invalid'}}:undefined);
  await page.getByLabel('Model ID',{exact:true}).fill('model');await page.getByLabel('Display name (optional)',{exact:true}).fill('名'.repeat(256));await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid');await page.getByLabel('API Key',{exact:true}).fill('synthetic-name-error');await page.getByRole('button',{name:'Add model',exact:true}).click();
  await expect(page.locator('#model-field-error')).toContainText('256 characters');await expect(page.locator('#model-field-error')).toContainText('leave blank');await expect(page.locator('#model-field-error')).not.toContainText('128');await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue('名'.repeat(256));
+});
+
+test('missing server release Agent blocks Runtime save without offering an image input',async({page})=>{
+ const requests=await fixture(page,r=>r.path==='admin/runtime-defaults'?{status:503,json:{code:'RELEASE_DEFAULTS_UNAVAILABLE'}}:undefined,'/runtime');
+ await page.getByRole('button',{name:'Edit runtime',exact:true}).click();
+ await expect(page.locator('#agentImage,input[name=agentImage],select[name=agentImage]')).toHaveCount(0);
+ await expect(page.locator('#runtime-form button[type=submit]')).toBeDisabled();
+ await expect(page.locator('main')).toContainText('RELEASE_DEFAULTS_UNAVAILABLE');
+ expect(requests.filter(r=>r.method==='PUT')).toHaveLength(0);
 });

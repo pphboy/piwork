@@ -1,0 +1,6 @@
+{
+  "agent": "docker.io/pphboy/piwork-agentd:0.0.7-19fc33907232-3ab753f8a90a",
+  "packageHelper": "docker.io/pphboy/piwork-agentd:0.0.7-19fc33907232-3ab753f8a90a",
+  "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.7-19fc33907232-3ab753f8a90a",
+  "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.7-19fc33907232-3ab753f8a90a"
+}

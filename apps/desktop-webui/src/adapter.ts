@@ -1,3 +1,4 @@
+import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { historyMessages, resultText, upsertTool } from './chat-projection.js';
 import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, RunStatus, RunModel, Session, Run } from './models.js';
 import { synchronizeConfiguration } from './configuration.js';
@@ -21,6 +22,7 @@ const blankConfig = (): Configuration => ({ skills: [], packages: [], agents: ''
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const stateLabel = (value: string) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
 export class DesktopAdapter {
+  readonly hosted = typeof document !== 'undefined' && document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted';
   about={local:null as Data|null,core:null as Data|null,localError:'',coreError:'',localLoading:false,coreLoading:false,coreChecked:''};
   loadAbout() {
     const epoch=this.epoch;this.about.localLoading=true;this.about.localError='';this.emit();
@@ -61,7 +63,7 @@ export class DesktopAdapter {
         if(!response.ok){const value=await response.json().catch(()=>({}));if(response.status===401)await this.checkBrowserAccess().catch(()=>undefined);throw new Error(value.message || value.code || 'Image could not be read.');}
         if(response.headers.get('Content-Type')!==image.mimeType || Number(response.headers.get('Content-Length'))!==image.byteSize || image.byteSize>5*1024**2)throw new Error('The image response could not be verified.');
         const blob=await response.blob();if(blob.size!==image.byteSize)throw new Error('The image response is incomplete.');
-        const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer())),x=>x.toString(16).padStart(2,'0')).join('');if(hash!==image.sha256)throw new Error('The saved image is corrupt.');
+        const hash=await sha256Hex(new Uint8Array(await blob.arrayBuffer()));if(hash!==image.sha256)throw new Error('The saved image is corrupt.');
         if(epoch!==this.epoch||controller.signal.aborted)return;state.url=URL.createObjectURL(blob);state.phase='ready';
       }catch(error){if(epoch===this.epoch&&!controller.signal.aborted){state.phase='error';state.error=errorText(error);}}
       finally{this.imageControllers.delete(controller);this.imageActive--;this.imageQueue.shift()?.();if(epoch===this.epoch)this.emit();}
@@ -182,6 +184,7 @@ export class DesktopAdapter {
     return value.coreUrl;
   }
   async loadPreferences() {
+    if (this.hosted) return;
     if (['saving','clearing'].includes(this.preferences.phase)) return;
     const sequence = ++this.preferenceSequence, unconfirmed = this.preferences.phase === 'unconfirmed';
     if (!unconfirmed) this.preferences.phase = 'loading';
@@ -303,7 +306,7 @@ export class DesktopAdapter {
     const epoch = this.epoch, authSequence = this.authSequence;
     let response: Response;
     try { response = await fetch(`/_desktop/api/${path}`, { method, credentials: 'same-origin', signal, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-Piwork-Csrf': this.csrf, ...headers }, ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }) }); }
-    catch { throw new DesktopError(method === 'GET' ? 'CORE_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'The local connection is unavailable. Check the CLI and Core.' : 'The response was lost. Check known operations before submitting again.'); }
+    catch { throw new DesktopError(method === 'GET' ? 'CORE_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? (this.hosted ? 'The server connection is unavailable. Check the server and retry this read.' : 'The local connection is unavailable. Check the CLI and Core.') : 'The response was lost. Check known operations before submitting again.'); }
     if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This response was discarded.');
     const value = await response.json().catch(() => null);
     if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while reading the response.');
@@ -318,7 +321,7 @@ export class DesktopAdapter {
         const pending = this.checkBrowserAccess(), sequence = this.authSequence;
         await pending.catch(() => undefined);
         if (sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this readback.');
-        throw new DesktopError(code, this.state.browserAccess === 'authorized' ? 'Browser access checked. The original action was rejected locally; submit it explicitly again if needed.' : 'Browser access ended. Reopen Desktop from the same system user’s terminal.', response.status);
+        throw new DesktopError(code, this.state.browserAccess === 'authorized' ? 'Browser access checked. The original action was rejected locally; submit it explicitly again if needed.' : (this.hosted ? 'Browser access ended. Sign in again on this server.' : 'Browser access ended. Reopen Desktop from the same system user’s terminal.'), response.status);
       }
       else if (response.status === 401 && path !== 'login' && path !== 'session') {
         if (authSequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this response.');
@@ -331,13 +334,20 @@ export class DesktopAdapter {
           this.state.signedIn = false; this.state.scenario = 'auth-expired'; this.emit();
         }
       }
-      const message = code === 'WORK_NAME_CONFLICT' ? 'This Work name is already in use or reserved. Choose a different name.' : value?.message ?? `Request failed (${response.status}).`;
+      const serviceErrors:Record<string,string> = {
+        SERVICE_ORIGIN_CAPACITY:'The server Service port pool is full or its ports are busy. Ask the operator to enlarge --service-ports and allow that range through the firewall. Existing origins stay reserved to their Services.',
+        SERVICE_ORIGIN_STORAGE_UNAVAILABLE:'Service origin storage could not be confirmed. Ask the operator to check the installation data directory, then retry.',
+        SERVICE_ENTRY_LIMIT:'The server has reached its active Service entry limit. Close unused browser sessions before retrying.',
+        SERVICE_GENERATION_CHANGED:'The Work or Service restarted. Reopen its current entry from this Work.',
+      };
+      const message = serviceErrors[code] || (code === 'WORK_NAME_CONFLICT' ? 'This Work name is already in use or reserved. Choose a different name.' : value?.message ?? `Request failed (${response.status}).`);
       throw new DesktopError(code, message, response.status, value?.field === 'name' ? 'name' : undefined);
     }
     if (!value || typeof value !== 'object') throw new DesktopError('INVALID_RESPONSE', 'The server returned an invalid response.');
     return value;
   }
   private acceptSession(value: Data) {
+    if (this.hosted && value.state === 'signed-out') { this.clearIdentity(); location.assign('/login'); return; }
     const changed = this.generation !== value.generation; const previouslySignedIn = this.state.signedIn;
     if (this.csrf && this.csrf !== value.csrf || this.generation !== -1 && this.generation !== value.generation) {
       const context = this.inspectionContext;
@@ -356,6 +366,7 @@ export class DesktopAdapter {
     this.state.lastChecked = value.lastConfirmedAt ?? this.state.lastChecked;
   }
   private requireBrowserAccess(reason: string) {
+    if (this.hosted) { location.assign('/login'); return; }
     if (this.state.browserAccess !== 'required') this.clearIdentity();
     this.csrf = ''; this.generation = -1; this.state.signedIn = false;
     this.state.core.account = ''; this.state.core.role = ''; this.status = {};
@@ -363,7 +374,7 @@ export class DesktopAdapter {
     this.state.scenario = 'ticket-expired'; clearTimeout(this.sessionTimer); this.emit();
   }
   private unavailableBrowserAccess() {
-    this.state.browserAccess = 'unavailable'; this.state.browserAccessReason = 'The local CLI could not be reached or its response could not be verified. Check browser access before continuing.';
+    this.state.browserAccess = 'unavailable'; this.state.browserAccessReason = this.hosted ? 'The Piwork server could not be reached. Retry the connection.' : 'The local CLI could not be reached or its response could not be verified. Check browser access before continuing.';
     this.emit();
   }
   private finishAccessCheck(sequence: number) {
@@ -735,7 +746,7 @@ export class DesktopAdapter {
     if(original.request.disposition!=='live' || !['failed','cancelled','needs_attention'].includes(original.request.state))throw new DesktopError('REQUEST_RETRY_NOT_ALLOWED','Only an eligible live terminal request can be retried.');
     const key=`${id}:${requestId}`,epoch=this.epoch;
     if(this.requestRetries.get(key)?.unknown)throw new DesktopError('RESULT_UNKNOWN','Previous Retry is unknown. Check status using the original key.');
-    const intent={submissionKey:crypto.randomUUID(),error:'',unknown:true};this.requestRetries.set(key,intent);this.emit();
+    const intent={submissionKey:randomUUID(),error:'',unknown:true};this.requestRetries.set(key,intent);this.emit();
     try {
       const value=await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/retry`,'POST',{submissionKey:intent.submissionKey});
       if(epoch!==this.epoch)throw new DesktopError('CONNECTION_CHANGED','The Retry belongs to the previous identity.');
@@ -1174,7 +1185,7 @@ export class DesktopAdapter {
   }
   async newSession(id:string) {
     if(this.chatSubmissions.has(id))throw new DesktopError('RESULT_UNKNOWN','Check the original chat submission first.');
-    const draft={...this.modelSelection(id,'')},intent={kind:'session' as const,key:crypto.randomUUID(),error:'',pair:{ref:draft.ref,thinking:draft.thinking,revision:draft.revision}};this.chatSubmissions.set(id,intent);this.emit();
+    const draft={...this.modelSelection(id,'')},intent={kind:'session' as const,key:randomUUID(),error:'',pair:{ref:draft.ref,thinking:draft.thinking,revision:draft.revision}};this.chatSubmissions.set(id,intent);this.emit();
     try {const value=await this.request(`works/${part(id)}/sessions`,'POST',{idempotencyKey:intent.key});const sessionId=this.acceptChatSession(id,value);this.chatSubmissions.delete(id);
       const state=this.modelSelection(id,sessionId);if(draft.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==draft.ref || state.thinking!==draft.thinking)){Object.assign(state,{ref:draft.ref,thinking:draft.thinking,phase:'dirty',revision:Math.max(1,draft.revision)});void this.saveModel(id,sessionId).catch(()=>undefined);}return sessionId;
     }catch(error){const code=(error as DesktopError).code;if(!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(code==='WORK_BUSY'||code==='RATE_LIMITED'){await this.loadSessions(id).catch(()=>undefined);const active=this.getWork(id)?.run;if(code==='WORK_BUSY'||active&&['accepted','running','cancelling'].includes(active.status))error=new DesktopError('WORK_BUSY','A Run is already active in this Work. Wait for it to finish or use Cancel run.');}intent.error=errorText(error);throw error;}finally{this.emit();}
@@ -1199,8 +1210,8 @@ export class DesktopAdapter {
     if(!this.modelReady(id,sessionId))throw new DesktopError('MODEL_NOT_CONFIRMED','Confirm the Session model and Thinking settings before sending.');
     const prompt=includeIdentity && inputMode!=='command'?`${text}\n\nSelected Service: ${work.services.find(s=>s.id===this.selectedService)?.domain ?? ''}`:text;
     if(cancelRunId && this.cancelAndSendCapabilities.get(id)!==1)throw new DesktopError('CANCEL_AND_SEND_UNSUPPORTED','Stop and send is unavailable in this Work.');
-    const epoch=this.epoch;const intent={kind:'run' as const,key:crypto.randomUUID(),sessionId,cancelRunId,error:''};this.chatSubmissions.set(id,intent);this.emit();
-    try {const descriptors=await Promise.all(images.map(async(image,imageIndex)=>{const bytes=Uint8Array.from(atob(image.data),c=>c.charCodeAt(0));const sha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');return {imageIndex,mimeType:image.mimeType,byteSize:bytes.length,sha256};}));
+    const epoch=this.epoch;const intent={kind:'run' as const,key:randomUUID(),sessionId,cancelRunId,error:''};this.chatSubmissions.set(id,intent);this.emit();
+    try {const descriptors=await Promise.all(images.map(async(image,imageIndex)=>{const bytes=Uint8Array.from(atob(image.data),c=>c.charCodeAt(0));const sha256=await sha256Hex(bytes);return {imageIndex,mimeType:image.mimeType,byteSize:bytes.length,sha256};}));
       if(epoch!==this.epoch||this.chatSubmissions.get(id)!==intent)throw new DesktopError('CONNECTION_CHANGED','The image submission belongs to a previous identity.');
       const value=await this.request(`works/${part(id)}/runs`,'POST',{sessionId,prompt,submissionKey:intent.key,...(inputMode?{inputMode}:{}),...(images.length?{images}:{}),...(cancelRunId?{cancelRunId}:{})});const raw=value.run;
       if(epoch!==this.epoch || this.chatSubmissions.get(id)!==intent)throw new DesktopError('CONNECTION_CHANGED','This submission belongs to a previous identity.');
@@ -1469,7 +1480,7 @@ export class DesktopAdapter {
     const selection = ++this.inspectionSelection;
     await this.abandonInspection(false);
     if (selection !== this.inspectionSelection) return;
-    const context: InspectionContext = { id: crypto.randomUUID(), nonce: ++this.inspectionNonce, core: this.state.core.address, localSession: this.csrf, anonymous: !this.state.signedIn, ready: false, importState: 'unsubmitted' };
+    const context: InspectionContext = { id: randomUUID(), nonce: ++this.inspectionNonce, core: this.state.core.address, localSession: this.csrf, anonymous: !this.state.signedIn, ready: false, importState: 'unsubmitted' };
     this.inspectionContext = context; this.inspectionTransfer = context.id; this.inspection = null;
     const current = () => this.inspectionContext === context && context.nonce === this.inspectionNonce;
     this.transferProgress = { phase: 'receiving', transferred: 0, total: file.size }; this.emit();
@@ -1612,7 +1623,7 @@ export class DesktopAdapter {
     const snapshot = this.getSnapshot(id);
     if (!snapshot || snapshot.status !== 'verified' || snapshot.expiresAt && Date.parse(snapshot.expiresAt) <= Date.now())
       return Promise.reject(new DesktopError('SNAPSHOT_NOT_READY', 'Check this original snapshot before preparing its download.'));
-    const epoch = this.epoch; const job: Data = { transferId: crypto.randomUUID(), snapshotId: id, workId: snapshot.workId, phase: 'Preparing', pending: true, seen: false, transferred: 0 };
+    const epoch = this.epoch; const job: Data = { transferId: randomUUID(), snapshotId: id, workId: snapshot.workId, phase: 'Preparing', pending: true, seen: false, transferred: 0 };
     this.downloads.set(id, job); this.emit(); this.observeDownload(id);
     let pending!: Promise<string>; pending = (async () => {
       try {

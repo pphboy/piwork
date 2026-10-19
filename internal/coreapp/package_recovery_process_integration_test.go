@@ -72,8 +72,9 @@ func TestNativeCorePackageJobsSurviveSignalsWithoutReinstallation(t *testing.T) 
 			initial.Close()
 			start := func() (*exec.Cmd, string) {
 				t.Helper()
-				process := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0")
-				process.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-platform-tools"), "DOCKER_HOST=" + host, "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass", "PIWORK_AGENT_IMAGE=" + image, "PIWORK_PACKAGE_HELPER_IMAGE=" + image, "PIWORK_MODEL_PROVIDER=piwork-deterministic", "PIWORK_MODEL=fixture-v1", "PIWORK_API_KEY=acceptance-only"}
+				seedProcessRuntime(t, directory, image)
+				process := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0", "--package-helper-image", image, "--file-helper-image", os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), "--snapshot-helper-image", os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"), "--no-open")
+				process.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-platform-tools"), "DOCKER_HOST=" + host, "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass"}
 				stdout, err := process.StdoutPipe()
 				if err != nil {
 					t.Fatal(err)
@@ -102,7 +103,7 @@ func TestNativeCorePackageJobsSurviveSignalsWithoutReinstallation(t *testing.T) 
 				var announcement struct{ Event, URL string }
 				select {
 				case line := <-announced:
-					if json.Unmarshal(line, &announcement) != nil || announcement.Event != "core.listening" || announcement.URL == "" {
+					if json.Unmarshal(line, &announcement) != nil || announcement.Event != "app.listening" || announcement.URL == "" {
 						t.Fatal("listener announcement missing")
 					}
 				case <-time.After(45 * time.Second):

@@ -201,6 +201,7 @@ func Entry(args []string, stdout, stderr io.Writer) int {
 }
 
 type nativeConsole struct {
+	hosted     *HostedOptions
 	options    consoleOptions
 	mu         sync.Mutex
 	sessions   map[string]consoleSession
@@ -276,6 +277,12 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		consoleFailure(w, 404, "CONSOLE_ASSET_UNAVAILABLE")
 		return
+	}
+	if c.hosted != nil && contentType == "text/html; charset=utf-8" {
+		html := strings.Replace(string(content), "<head>", `<head><meta name="piwork-mode" content="hosted">`, 1)
+		html = strings.ReplaceAll(html, `href="/style.css"`, `href="/admin/style.css"`)
+		html = strings.ReplaceAll(html, `src="/browser/`, `src="/admin/browser/`)
+		content = []byte(html)
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))

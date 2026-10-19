@@ -174,7 +174,7 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 	}
 	coreURL, token, generation := d.identity.coreURL, d.identity.credential.Token, d.identity.generation
 	d.mu.Unlock()
-	api, err := client.New(coreURL, token)
+	api, err := d.client(coreURL, token)
 	if err != nil {
 		desktopError(w, 503, "CORE_UNAVAILABLE")
 		return
@@ -187,17 +187,35 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 		if errors.As(err, &apiErr) && apiErr.Status == 401 {
 			d.revokeToken(coreURL, token)
 		}
-		desktopControlFailure(w, err)
+		if d.hosted != nil && r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/html") {
+			serviceUnavailablePage(w, r, d.origin, entry.workID, 503, "The Work or Service is unavailable. Check its current state in the workbench.")
+		} else {
+			desktopControlFailure(w, err)
+		}
 		return
 	}
 	if resolved.WorkID != entry.workID || resolved.ServiceID != entry.serviceID {
 		desktopError(w, 403, "SERVICE_IDENTITY_CHANGED")
 		return
 	}
+	if entry.runtimeGeneration != "" && entry.runtimeGeneration != resolved.Generation {
+		d.invalidateServiceEntry(entry)
+		desktopError(w, 409, "SERVICE_GENERATION_CHANGED")
+		return
+	}
 	headers, allowed := cleanServiceRequestHeaders(r, d.serviceOrigin(entry), entry)
 	if !allowed {
 		desktopError(w, 403, "SERVICE_ORIGIN_DENIED")
 		return
+	}
+	if d.hosted != nil && entry.jar != nil {
+		headers.Del("Cookie")
+		request := &http.Request{Header: headers}
+		for _, cookie := range entry.jar.Cookies(d.logicalServiceURL(entry, r.URL.Path)) {
+			if !reservedServiceCookie(cookie.Name) {
+				request.AddCookie(cookie)
+			}
+		}
 	}
 	if !d.reserveService(entry) {
 		desktopError(w, 429, "SERVICE_CONNECTION_LIMIT")
@@ -221,7 +239,7 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 				check, end := context.WithTimeout(ctx, 3*time.Second)
 				view, err := desktopResolveService(check, api, entry.hostname, entry.port)
 				end()
-				if err != nil || view.WorkID != entry.workID || view.ServiceID != entry.serviceID {
+				if err != nil || view.WorkID != entry.workID || view.ServiceID != entry.serviceID || entry.runtimeGeneration != "" && view.Generation != entry.runtimeGeneration {
 					cancel()
 					return
 				}
@@ -248,6 +266,9 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 			pr.Out.URL = &url.URL{Scheme: api.Base.Scheme, Host: api.Base.Host, Path: target.Path, RawPath: target.RawPath, RawQuery: target.RawQuery, ForceQuery: target.ForceQuery}
 			pr.Out.Host = api.Base.Host
 			pr.Out.Header.Set("X-Piwork-Gateway-Token", token)
+			if entry.runtimeGeneration != "" {
+				pr.Out.Header.Set("X-Piwork-Gateway-Generation", entry.runtimeGeneration)
+			}
 		},
 		ModifyResponse: func(response *http.Response) error {
 			if response.StatusCode == 401 && response.Header.Get("X-Piwork-Gateway-Error") == "1" {
@@ -269,9 +290,19 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 				}
 				d.mu.Unlock()
 			}
+			if d.hosted != nil && entry.jar != nil {
+				cookies := response.Cookies()
+				allowed := cookies[:0]
+				for _, cookie := range cookies {
+					if !reservedServiceCookie(cookie.Name) {
+						allowed = append(allowed, cookie)
+					}
+				}
+				entry.jar.SetCookies(d.logicalServiceURL(entry, r.URL.Path), allowed)
+			}
 			cookies := []string{}
 			for _, value := range response.Header.Values("Set-Cookie") {
-				if clean, ok := cleanServiceSetCookie(value); ok {
+				if clean, ok := cleanServiceSetCookie(value); ok && d.hosted == nil {
 					cookies = append(cookies, clean)
 				}
 			}
@@ -286,7 +317,8 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 						logical += ":" + strconv.Itoa(entry.port)
 					}
 					if parsed.Scheme+"://"+parsed.Host == logical {
-						parsed.Scheme, parsed.Host = "http", strings.TrimPrefix(d.serviceOrigin(entry), "http://")
+						browserOrigin, _ := url.Parse(d.serviceOrigin(entry))
+						parsed.Scheme, parsed.Host = browserOrigin.Scheme, browserOrigin.Host
 						response.Header.Set("Location", parsed.String())
 					}
 				}
@@ -299,6 +331,9 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) { desktopError(w, 502, "CORE_UNAVAILABLE") },
+	}
+	if d.hosted != nil && d.hosted.Transport != nil {
+		upstream.Transport = d.hosted.Transport
 	}
 	upstream.ServeHTTP(w, forward)
 }

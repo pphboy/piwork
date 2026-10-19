@@ -7,6 +7,7 @@ import { Check } from "typebox/value";
 import { modelManagementSchemas } from "../packages/contracts/dist/ai-model-management.js";
 import * as chatSchemas from "../packages/contracts/dist/chat-controls.js";
 import * as imageSchemas from "../packages/contracts/dist/chat-images.js";
+import * as onboardingSchemas from "../packages/contracts/dist/web-onboarding.js";
 import * as productSchemas from "../packages/contracts/dist/product-info.js";
 import { SubmitRunInputSchema, AgentRequestRetryQuerySchema, AgentRequestRetrySubmissionSchema } from "../packages/contracts/dist/work-feedback.js";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
@@ -16,6 +17,7 @@ const modelApis = Object.fromEntries(builtinProviders().flatMap(provider => prov
 await writeFile(resolve(root,"internal/coreapp/model-sdk-catalog.json"), `${JSON.stringify(modelApis,null,2)}\n`);
 const schemas = JSON.parse(await readFile(resolve(root, "internal/contracts/schemas.json"), "utf8"));
 Object.assign(schemas, modelManagementSchemas);
+Object.assign(schemas, Object.fromEntries(Object.entries(onboardingSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(chatSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(imageSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(productSchemas).filter(([name])=>name.endsWith("Schema"))));

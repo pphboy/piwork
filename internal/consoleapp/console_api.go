@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"piwork/internal/client"
+	"piwork/internal/contracts"
 	"piwork/internal/localweb"
 )
 
@@ -96,6 +97,10 @@ func consoleEqual(left, right string) bool {
 }
 
 func (c *nativeConsole) activeSession(r *http.Request) (string, consoleSession, bool, error) {
+	if c.hosted != nil {
+		session, err := c.hosted.Resolve(r)
+		return session.ID, consoleSession{token: session.Token, csrf: session.CSRF, user: session.User, expiresAt: session.ExpiresAt}, err == nil && session.User.Role == "admin", err
+	}
 	id := consoleCookie(r, consoleSessionCookie)
 	c.mu.Lock()
 	c.ensureStateLocked()
@@ -108,7 +113,7 @@ func (c *nativeConsole) activeSession(r *http.Request) (string, consoleSession, 
 	if !ok || id == "" {
 		return "", consoleSession{}, false, nil
 	}
-	api, err := client.New(c.options.coreURL, session.token)
+	api, err := c.client(c.options.coreURL, session.token)
 	if err != nil {
 		return "", consoleSession{}, false, err
 	}
@@ -133,7 +138,7 @@ func (c *nativeConsole) activeSession(r *http.Request) (string, consoleSession, 
 func (c *nativeConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	if path == "/console/api/availability" && r.Method == "GET" {
-		api, _ := client.New(c.options.coreURL, "")
+		api, _ := c.client(c.options.coreURL, "")
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 		response, err := api.Binary(ctx, "GET", "/readyz", nil, nil, -1)
@@ -200,7 +205,7 @@ func (c *nativeConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "/console/api/logout" && r.Method == "POST" {
-		api, _ := client.New(c.options.coreURL, session.token)
+		api, _ := c.client(c.options.coreURL, session.token)
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		err := api.Request(ctx, "POST", "/api/v1/logout", nil, nil)
 		cancel()
@@ -217,7 +222,7 @@ func (c *nativeConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "/console/api/about" && r.Method == http.MethodGet {
-		api, _ := client.New(c.options.coreURL, session.token)
+		api, _ := c.client(c.options.coreURL, session.token)
 		var value json.RawMessage
 		if err := api.Request(r.Context(), "GET", "/api/v1/about", nil, &value); err != nil {
 			var apiErr *client.APIError
@@ -232,7 +237,7 @@ func (c *nativeConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "/console/api/health" && r.Method == "GET" {
-		api, _ := client.New(c.options.coreURL, "")
+		api, _ := c.client(c.options.coreURL, "")
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		response, err := api.Binary(ctx, "GET", "/healthz", nil, nil, -1)
 		cancel()
@@ -290,7 +295,7 @@ func (c *nativeConsole) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	c.mu.Unlock()
-	api, err := client.New(c.options.coreURL, "")
+	api, err := c.client(c.options.coreURL, "")
 	if err != nil {
 		consoleFailure(w, 502, "CORE_UNAVAILABLE")
 		return
@@ -321,7 +326,7 @@ func (c *nativeConsole) login(w http.ResponseWriter, r *http.Request) {
 		consoleFailure(w, 401, "AUTHENTICATION_FAILED")
 		return
 	}
-	authenticated, _ := client.New(c.options.coreURL, record.Token)
+	authenticated, _ := c.client(c.options.coreURL, record.Token)
 	if record.User.Role != "admin" {
 		_ = authenticated.Request(r.Context(), "POST", "/api/v1/logout", nil, nil)
 		consoleFailure(w, 403, "ADMIN_ONLY")
@@ -395,6 +400,8 @@ func consoleAllowedAdmin(method, path string) bool {
 			return method == "GET" || method == "POST"
 		case "runtime":
 			return method == "GET" || method == "PUT"
+		case "runtime-defaults":
+			return method == "GET"
 		case "default-work":
 			return method == "GET" || method == "PATCH"
 		}
@@ -434,7 +441,7 @@ func (c *nativeConsole) admin(w http.ResponseWriter, r *http.Request, sessionID 
 		consoleFailure(w, 404, "NOT_FOUND")
 		return
 	}
-	api, _ := client.New(c.options.coreURL, session.token)
+	api, _ := c.client(c.options.coreURL, session.token)
 	multipart := strings.HasPrefix(path, "/skills") && (r.Method == "POST" && path == "/skills" || r.Method == "PUT")
 	limit := int64(2 << 20)
 	timeout := 120 * time.Second
@@ -452,6 +459,54 @@ func (c *nativeConsole) admin(w http.ResponseWriter, r *http.Request, sessionID 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
+	if path == "/runtime" && r.Method == http.MethodPut {
+		input, err := contracts.Decode[contracts.WebRuntimeSelectionInput](r.Body, "WebRuntimeSelectionInputSchema", limit)
+		if err != nil {
+			consoleFailure(w, 400, "INVALID_REQUEST")
+			return
+		}
+		var defaults contracts.WebRuntimeDefaults
+		if err := api.Request(ctx, http.MethodGet, "/api/v1/admin/runtime-defaults", nil, &defaults); err != nil || contracts.Validate("WebRuntimeDefaultsSchema", defaults) != nil {
+			consoleFailure(w, 503, "RELEASE_DEFAULTS_UNAVAILABLE")
+			return
+		}
+		if input.AgentImage.Present && input.AgentImage.Value != defaults.AgentImage {
+			consoleJSON(w, 400, map[string]string{"code": "INVALID_REQUEST", "field": "agentImage"})
+			return
+		}
+		// The user selects a model. Only this trusted adapter supplies the
+		// running Core's version-bound Agent reference to the legacy API.
+		var value json.RawMessage
+		if err := api.Request(ctx, http.MethodPut, "/api/v1/admin/runtime", contracts.AdminRuntimeSelection{AgentImage: defaults.AgentImage, ModelRef: input.ModelRef}, &value); err != nil {
+			var apiErr *client.APIError
+			if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 {
+				consoleJSON(w, apiErr.Status, apiErr.Details)
+			} else {
+				consoleFailure(w, 502, "RUNTIME_RESULT_UNKNOWN")
+			}
+			return
+		}
+		consoleJSON(w, 200, value)
+		return
+	}
+	if path == "/default-work" && r.Method == http.MethodPatch {
+		input, err := localweb.ReadObject(r, limit)
+		if err != nil {
+			consoleFailure(w, 400, "INVALID_REQUEST")
+			return
+		}
+		if _, supplied := input["baseImage"]; supplied {
+			consoleJSON(w, 400, map[string]string{"code": "INVALID_REQUEST", "field": "agentImage"})
+			return
+		}
+		raw, err := json.Marshal(input)
+		if err != nil {
+			consoleFailure(w, 400, "INVALID_REQUEST")
+			return
+		}
+		r.Body = io.NopCloser(strings.NewReader(string(raw)))
+		r.ContentLength = int64(len(raw))
+	}
 	var body io.Reader
 	if r.Method != "GET" && r.Method != "DELETE" {
 		body = io.LimitReader(r.Body, limit+1)

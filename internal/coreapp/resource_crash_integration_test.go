@@ -135,8 +135,9 @@ func TestNativeCoreRecoversInterruptedCreateServiceAndDelete(t *testing.T) {
 			binary := filepath.Join(filepath.Dir(caller), "../../dist/go/piwork-serve")
 			start := func() (*exec.Cmd, string) {
 				t.Helper()
-				cmd := exec.CommandContext(ctx, binary, "serve", "--data-dir", dir, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0")
-				cmd.Env = []string{"PATH=/nonexistent", "DOCKER_HOST=unix://" + filepath.Join(sockets, "engine.sock"), "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass", "PIWORK_AGENT_IMAGE=" + image, "PIWORK_PACKAGE_HELPER_IMAGE=" + image, "PIWORK_MODEL_PROVIDER=piwork-deterministic", "PIWORK_MODEL=fixture-v1", "PIWORK_API_KEY=acceptance-only"}
+				seedProcessRuntime(t, dir, image)
+				cmd := exec.CommandContext(ctx, binary, "serve", "--data-dir", dir, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0", "--package-helper-image", image, "--file-helper-image", os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), "--snapshot-helper-image", os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"), "--no-open")
+				cmd.Env = []string{"PATH=/nonexistent", "DOCKER_HOST=unix://" + filepath.Join(sockets, "engine.sock"), "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass"}
 				output, err := cmd.StdoutPipe()
 				if err != nil {
 					t.Fatal(err)

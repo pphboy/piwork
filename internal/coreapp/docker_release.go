@@ -66,37 +66,3 @@ func ReadDockerRelease(path string) (DockerRelease, error) {
 	}
 	return release, nil
 }
-
-func ApplyDockerReleaseDefaults(values map[string]string) (map[string]string, error) {
-	path := values["PIWORK_RELEASE_CONFIG_PATH"]
-	if path == "" {
-		return values, nil
-	}
-	release, err := ReadDockerRelease(path)
-	if err != nil {
-		return nil, err
-	}
-	merged := make(map[string]string, len(values)+4)
-	for key, value := range values {
-		merged[key] = value
-	}
-	// A built-in Agent reference alone is not a submitted model initialization.
-	for _, key := range []string{"PIWORK_MODEL_PROVIDER", "PIWORK_MODEL", "PIWORK_MODEL_ID", "PIWORK_API_KEY", "PIWORK_MODEL_API_KEY", "PIWORK_MODEL_BASE_URL"} {
-		if _, supplied := values[key]; supplied {
-			if _, explicit := values["PIWORK_AGENT_IMAGE"]; !explicit {
-				merged["PIWORK_AGENT_IMAGE"] = release.Images.Agent
-			}
-			break
-		}
-	}
-	for key, image := range map[string]string{
-		"PIWORK_PACKAGE_HELPER_IMAGE":  release.Images.PackageHelper,
-		"PIWORK_FILE_HELPER_IMAGE":     release.Images.FileHelper,
-		"PIWORK_SNAPSHOT_HELPER_IMAGE": release.Images.SnapshotHelper,
-	} {
-		if _, explicit := values[key]; !explicit {
-			merged[key] = image
-		}
-	}
-	return merged, nil
-}

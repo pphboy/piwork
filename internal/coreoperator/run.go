@@ -40,7 +40,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return failure(err, stderr)
 	}
 	if v.command == "serve" {
-		return coreapp.RunServe(ctx, v.serveArgs, stdout, stderr)
+		return failure(usage("server startup belongs to the unified application entry"), stderr)
 	}
 	// Complete local field checks before reading environment, secret files,
 	// stdin, credentials, or network. A placeholder validates public fields only.
@@ -136,6 +136,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 func prepare(ctx context.Context, v invocation, input io.Reader, stderr io.Writer) (any, string, string, error) {
 	switch v.command {
+	case "setup-link":
+		return nil, "POST", "/control/setup-link", nil
 	case "operation-show":
 		return nil, "GET", "/control/operations/" + url.PathEscape(v.id), nil
 	case "skills-list", "packages-list":

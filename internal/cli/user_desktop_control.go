@@ -94,7 +94,7 @@ func (d *nativeDesktop) serveControl(w http.ResponseWriter, r *http.Request) boo
 		desktopControlFailure(w, err)
 		return true
 	}
-	api, err := client.New(coreURL, token)
+	api, err := d.client(coreURL, token)
 	if err != nil {
 		desktopError(w, 503, "CORE_UNAVAILABLE")
 		return true
@@ -123,7 +123,7 @@ func (d *nativeDesktop) serveControl(w http.ResponseWriter, r *http.Request) boo
 		if json.Unmarshal(result, &operation) == nil && (operation.State == "succeeded" || operation.State == "failed" || operation.State == "superseded") {
 			id := strings.TrimPrefix(r.URL.Path, "/_desktop/api/operations/")
 			if desktopIDPattern.MatchString(id) {
-				_ = (desktopOperationRecords{credentialPath: d.store.Path}).markTerminal(coreURL, userID, id)
+				_ = d.operationRecords().markTerminal(coreURL, userID, id)
 			}
 		}
 	}
@@ -134,7 +134,7 @@ func (d *nativeDesktop) serveControl(w http.ResponseWriter, r *http.Request) boo
 		if json.Unmarshal(result, &accepted) == nil && desktopIDPattern.MatchString(accepted.OperationID) {
 			var value map[string]json.RawMessage
 			if json.Unmarshal(result, &value) == nil {
-				saved := (desktopOperationRecords{credentialPath: d.store.Path}).accept(coreURL, userID, desktopOperationType(r.URL.Path), result) == nil
+				saved := d.operationRecords().accept(coreURL, userID, desktopOperationType(r.URL.Path), result) == nil
 				value["localRecordSaved"], _ = json.Marshal(saved)
 				desktopJSON(w, plan.status, value)
 				return true

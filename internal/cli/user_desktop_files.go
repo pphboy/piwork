@@ -30,7 +30,8 @@ func desktopFileDestination(raw, workID, origin string) (string, error) {
 	value := raw
 	if !strings.HasPrefix(raw, "/") {
 		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Scheme != "http" || parsed.Host != strings.TrimPrefix(origin, "http://") || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		expected, _ := url.Parse(origin)
+		if err != nil || expected == nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Scheme != expected.Scheme || parsed.Host != expected.Host || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
 			return "", proxyFileError("FILE_DESTINATION_DENIED")
 		}
 		value = parsed.EscapedPath()
@@ -118,7 +119,7 @@ func (d *nativeDesktop) serveFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	coreURL, token, generation := d.identity.coreURL, d.identity.credential.Token, d.identity.generation
 	d.mu.Unlock()
-	api, err := client.New(coreURL, token)
+	api, err := d.client(coreURL, token)
 	if err != nil {
 		fail("CORE_UNAVAILABLE")
 		return

@@ -1082,6 +1082,7 @@ type ProductBuild struct {
 	Os            string        `json:"os"`
 	Architecture  string        `json:"architecture"`
 	DesktopUIHash Field[string] `json:"desktopUIHash,omitzero"`
+	ConsoleUIHash Field[string] `json:"consoleUIHash,omitzero"`
 }
 
 type ProductInfo struct {
@@ -1239,6 +1240,14 @@ type SavedModelTestInput struct {
 type SecretReference struct {
 	SecretId ResourceId        `json:"secretId"`
 	Key      Field[Identifier] `json:"key,omitzero"`
+}
+
+type ServiceAccessResolution struct {
+	Hostname   string        `json:"hostname"`
+	WorkId     string        `json:"workId"`
+	ServiceId  string        `json:"serviceId"`
+	Port       int64         `json:"port"`
+	Generation Field[string] `json:"generation,omitzero"`
 }
 
 type ServiceAccess struct {
@@ -1493,6 +1502,44 @@ type User struct {
 	Enabled   bool       `json:"enabled"`
 	CreatedAt Timestamp  `json:"createdAt"`
 	UpdatedAt Timestamp  `json:"updatedAt"`
+}
+
+type WebAdministratorCreated struct {
+	Created bool   `json:"created"`
+	Account string `json:"account"`
+	Next    string `json:"next"`
+}
+
+type WebCredentialsInput struct {
+	Account  string `json:"account"`
+	Password string `json:"password"`
+}
+
+type WebRuntimeDefaults struct {
+	AgentImage string `json:"agentImage"`
+}
+
+type WebRuntimeSelectionInput struct {
+	ModelRef   ResourceId    `json:"modelRef"`
+	AgentImage Field[string] `json:"agentImage,omitzero"`
+}
+
+type WebSetupLink struct {
+	Url string `json:"url"`
+}
+
+type WebSetupProofInput struct {
+	Proof string `json:"proof"`
+}
+
+type WebSetupSession struct {
+	Authorized bool          `json:"authorized"`
+	Complete   Field[bool]   `json:"complete,omitzero"`
+	CsrfToken  Field[string] `json:"csrfToken,omitzero"`
+}
+
+type WebSetupState struct {
+	AdministratorInitialized bool `json:"administratorInitialized"`
 }
 
 type WorkBindingRequirements struct {

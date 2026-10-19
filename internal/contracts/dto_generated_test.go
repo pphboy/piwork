@@ -971,6 +971,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "ServiceAccessResolutionSchema":
+				value, err := Decode[ServiceAccessResolution](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "ServiceAccessSchema":
 				value, err := Decode[ServiceAccess](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -1177,6 +1183,54 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "UserSchema":
 				value, err := Decode[User](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WebAdministratorCreatedSchema":
+				value, err := Decode[WebAdministratorCreated](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WebCredentialsInputSchema":
+				value, err := Decode[WebCredentialsInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WebRuntimeDefaultsSchema":
+				value, err := Decode[WebRuntimeDefaults](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WebRuntimeSelectionInputSchema":
+				value, err := Decode[WebRuntimeSelectionInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WebSetupLinkSchema":
+				value, err := Decode[WebSetupLink](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WebSetupProofInputSchema":
+				value, err := Decode[WebSetupProofInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WebSetupSessionSchema":
+				value, err := Decode[WebSetupSession](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WebSetupStateSchema":
+				value, err := Decode[WebSetupState](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}

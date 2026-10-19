@@ -3,7 +3,6 @@ package coreapp
 import (
 	"context"
 	"errors"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -30,29 +29,6 @@ func normalizeShutdownOptions(options *Options) error {
 		return errShutdownConfiguration
 	}
 	return nil
-}
-
-func shutdownOptionsFromEnvironment(values map[string]string) (Options, error) {
-	var options Options
-	for _, item := range []struct {
-		name  string
-		value *time.Duration
-	}{
-		{"PIWORK_DRAIN_TIMEOUT_MS", &options.WorkDrainTimeout},
-		{"PIWORK_STOP_TIMEOUT_MS", &options.WorkStopTimeout},
-		{"PIWORK_SHUTDOWN_TIMEOUT_MS", &options.ShutdownTimeout},
-	} {
-		raw, exists := values[item.name]
-		if !exists {
-			continue
-		}
-		millis, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || millis < 1 || millis > 600000 {
-			return options, errShutdownConfiguration
-		}
-		*item.value = time.Duration(millis) * time.Millisecond
-	}
-	return options, normalizeShutdownOptions(&options)
 }
 
 // Shutdown must not block forever behind a canceled lifecycle worker's lock.

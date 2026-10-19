@@ -21,7 +21,7 @@ func (d *nativeDesktop) serveKnownOperations(w http.ResponseWriter, r *http.Requ
 	d.mu.Lock()
 	coreURL, userID := d.identity.coreURL, d.identity.credential.User.ID
 	d.mu.Unlock()
-	records := desktopOperationRecords{credentialPath: d.store.Path}
+	records := d.operationRecords()
 	if path == "/_desktop/api/known-operations" && r.Method == http.MethodGet {
 		items, err := records.list(coreURL, userID)
 		if err != nil {

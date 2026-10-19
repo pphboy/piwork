@@ -72,6 +72,7 @@ test.beforeAll(async () => {
       checks: { administrator: true, runtimeConfigured: true, runtimeAvailable: true, filesystemMigrationReady: true } })); return; }
     if (req.url === "/api/v1/admin/model-providers") {res.end(JSON.stringify({providers:[]}));return;}
     if (req.url === "/api/v1/admin/models") {res.end(JSON.stringify({models:[{id:"managed-test-00001",providerId:"provider-test-00001",modelRef:"model-test-00000001",name:"Fixture model",model:"new-model",providerName:"Fixture provider",api:"anthropic-messages",enabled:true,providerEnabled:true,credentialAvailable:true,capabilityStatus:"sdk"}]}));return;}
+    if(req.url === "/api/v1/admin/runtime-defaults"){res.end(JSON.stringify({agentImage:"piwork-agentd:fixture"}));return;}
     if (req.url === "/api/v1/admin/runtime") { if (req.method === "PUT") { runtimeSaves.push(body); runtimeConfigured = true;
         runtimeLast = { configured: true, agentImage: body.agentImage,
           modelRef: body.modelRef, model: { provider: body.provider ?? "anthropic", id: body.model ?? "new-model", credentialAvailable: true }, updatedAt: new Date().toISOString() };
@@ -258,7 +259,7 @@ test('default draft submits only edited fields and retains unknown public config
 });
 test('runtime references a configured model without sending credentials and separates readiness',async({page})=>{
   await login(page); await page.goto(base+'/runtime'); await page.getByRole('button',{name:'Edit runtime',exact:true}).click();
-  await page.getByLabel('Agent image',{exact:true}).fill('piwork-agentd:fixture'); await page.getByLabel('AI model',{exact:true}).selectOption('model-test-00000001');
+  await expect(page.getByLabel('Agent image',{exact:true})).toHaveCount(0); await expect(page.locator('[data-runtime-agent-image]')).toHaveText('piwork-agentd:fixture'); await page.getByLabel('AI model',{exact:true}).selectOption('model-test-00000001');
   await page.getByRole('button',{name:'Save runtime',exact:true}).click(); await expect(page.getByRole('button',{name:'Edit runtime',exact:true})).toBeVisible();
   expect(runtimeSaves.at(-1)).toEqual({agentImage:'piwork-agentd:fixture',modelRef:'model-test-00000001'});
   expect(await page.locator('body').innerText()).not.toContain('write-only-browser-secret'); await page.getByRole('button',{name:'Edit runtime',exact:true}).click(); await expect(page.getByLabel('API Key',{exact:true})).toHaveCount(0);

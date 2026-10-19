@@ -1,3 +1,4 @@
+import { randomUUID } from './browser-crypto.js';
 export interface ImageInput { mimeType: 'image/png'|'image/jpeg'|'image/webp'; data: string }
 export interface DraftImage { id: string; name: string; url: string; bytes: number; input?: ImageInput; reading: boolean }
 export interface HistoryImage { imageIndex: number; mimeType: string; byteSize: number; sha256: string }
@@ -20,7 +21,7 @@ export class ImageDrafts {
       if(!['image/png','image/jpeg','image/webp'].includes(file.type)){errors.push(`${file.name}: Use PNG, JPEG or WebP.`);continue;}
       const existing=this.get(key);
       if(file.size===0 || file.size>5*1024**2 || existing.length>=4 || existing.reduce((n,i)=>n+i.bytes,0)+file.size>10*1024**2){errors.push(`${file.name}: Up to 4 images, 5 MiB each and 10 MiB total.`);continue;}
-      const item:DraftImage={id:crypto.randomUUID(),name:file.name||'Pasted image',bytes:file.size,url:URL.createObjectURL(file),reading:true};
+      const item:DraftImage={id:randomUUID(),name:file.name||'Pasted image',bytes:file.size,url:URL.createObjectURL(file),reading:true};
       this.drafts.set(key,[...existing,item]);this.owners.set(item.id,key);this.changed();
       try {
         const buffer=await file.arrayBuffer();

@@ -1,3 +1,4 @@
+import { randomUUID } from './browser-crypto.js';
 import { packagePhaseView, packageSteps } from './package-phase.js';
 import { ModelManagement, type ModelTestDialog } from './model-management.js';
 import { ActionState, renderActionStates, type ActionIntent, type ActionRecord } from './action-state.js';
@@ -39,6 +40,9 @@ import {
   UploadProgress,
 } from "./components.js";
 const app = document.querySelector<HTMLDivElement>("#app")!;
+const hosted = document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted';
+const routePath = (value: string) => hosted && (value === '/admin' || value.startsWith('/admin/')) ? value.slice(6) || '/' : value;
+const publicPath = (value: string) => hosted ? '/admin' + (value === '/' ? '' : value) : value;
 const modules: [string, string][] = [
   ["Status", "/"],
   ["About Piwork", "/about"],
@@ -50,7 +54,7 @@ const modules: [string, string][] = [
   ["Packages", "/packages"],
   ["Find Operation", "/operations"],
 ];
-let path = location.pathname,
+let path = routePath(location.pathname),
   loadId = 0,
   feedback = "",
   health: Health | null = null,
@@ -110,6 +114,7 @@ let preflightPending = false, selectionVersion = 0, signingIn = false;
 const actions = new ActionState(() => renderConsoleActions());
 const modelManagement = new ModelManagement(()=>{if(path==='/models'||path.startsWith('/models/'))renderPage();},value=>{dirty=value;},error=>isSessionError(error),openModelTestDialog);
 let modelCatalogError='';
+let releaseAgentImage='', runtimeDefaultsError='';
 let actionIdentity = adapter.identityEpoch;
 const manualLabels: Record<string, string> = { 'save-defaults': 'Saving defaults', refresh: 'Reading current page', 'verify-runtime': 'Verifying runtime', 'refresh-status': 'Checking status', 'refresh-operation': 'Checking Operation', 'resume-observation': 'Resuming observation', readback: 'Reading configuration', 'sign-out': 'Signing out', 'retry-connection': 'Checking connection' };
 function consoleIntent(button: HTMLElement): ActionIntent | undefined {
@@ -168,6 +173,12 @@ function shell(body: string) {
     ["AI models", "/models", path==='/models'||path.startsWith('/models/')],
   ];
   app.innerHTML = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="Piwork overview"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">Serve</span></a>${login ? "" : `<nav class="nav" aria-label="Main navigation">${nav.map(([name, url, active]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${name}</a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}">${icon("search", 14)} Find operation</a><button class="btn ghost mobile-menu" data-action="menu" aria-label="Open navigation" aria-expanded="false">Menu ${icon("down", 14)}</button><details class="account-menu"><summary aria-label="Administrator account"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</summary><div class="account-popover"><p><strong>${esc(adapter.account)}</strong></p><p class="muted">Administrator</p>${NavLink("About Piwork","/about","btn secondary")}${Button("Sign out", "sign-out", "secondary")}</div></details>`}</div></header>${login ? "" : `<div class="context-strip">${icon("server", 15)}<span>Core</span><span class="context-tag">Administrator</span><span class="context-end">${path === "/runtime" ? "Core setup" : path === "/models" || path.startsWith("/models/") ? "AI models" : workSetup ? "Work setup" : path === "/users" ? "User access" : path.startsWith("/operations") ? "Package recovery" : "Overview"}</span></div>`}<main id="main" class="main task-main" tabindex="-1">${body}</main><footer class="footer"><span>${icon("shield", 13)} Core runs independently from this console</span><span>PiWork Serve </span></footer><div id="toast-root" aria-live="polite"></div>`;
+  if (hosted) {
+    app.querySelectorAll<HTMLAnchorElement>('a[data-nav]').forEach(link => { const value = link.getAttribute('href') || ''; if (value.startsWith('/') && !value.startsWith('/admin')) link.setAttribute('href', publicPath(value)); });
+    app.querySelectorAll<HTMLImageElement>('img[src="/piwork-logo.png"]').forEach(image => { image.src = '/admin/piwork-logo.png'; });
+    if (!login) { const link = document.createElement('a'); link.href = '/'; link.className = 'btn secondary'; link.textContent = 'Workbench'; app.querySelector('.topbar-inner')?.append(link); }
+    const footer = app.querySelector('.footer span'); if (footer) footer.textContent = 'Closing this page keeps Core and Works running';
+  }
   document.title = `${login ? "Sign in" : path === "/" ? "Overview" : modules.find(([, p]) => p === path)?.[0] || "Details"} · PiWork Serve`;
   startStatusTimer();
 }
@@ -207,7 +218,7 @@ function isSessionError(e: unknown) {
     closeDialog(true);
     dirty = false;
     path = "/login";
-    history.pushState({ path }, "", path);
+    history.pushState({ path }, "", publicPath(path));
     feedback = Feedback(e.message, "warning");
     renderPage();
     return true;
@@ -250,6 +261,7 @@ function routeId() {
   }
 }
 function navigate(next: string, force = false) {
+  next = routePath(next);
   if (next === path && !force) return;
   const execute = () => {
     clearPolling();
@@ -263,7 +275,7 @@ function navigate(next: string, force = false) {
     intentLocked = false;
     closeDialog(true);
     path = next;
-    history.pushState({ path }, "", next);
+    history.pushState({ path }, "", publicPath(next));
     void loadPage();
     window.scrollTo(0, 0);
   };
@@ -336,9 +348,9 @@ function confirmDiscard(action: () => void) {
   confirm.querySelector<HTMLButtonElement>("button")?.focus();
 }
 window.addEventListener("popstate", () => {
-  const next = location.pathname;
+  const next = routePath(location.pathname);
   if (dirty || dialogDirty) {
-    history.pushState({ path }, "", path);
+    history.pushState({ path }, "", publicPath(path));
     confirmDiscard(() => navigate(next, true));
   } else {
     path = next;
@@ -366,7 +378,7 @@ async function loadPage() {
   clearPolling();
   if (path !== "/login" && !adapter.session) {
     path = "/login";
-    history.replaceState({ path }, "", path);
+    history.replaceState({ path }, "", publicPath(path));
   }
   if (path === "/login") {
     renderPage();
@@ -404,6 +416,8 @@ async function loadPage() {
     else if (path==='/models'||path.startsWith('/models/')) await read(modelManagement.load(path));
     else if (path === "/runtime") {
       runtime = await read(adapter.runtime());
+      releaseAgentImage='';runtimeDefaultsError='';
+      try{releaseAgentImage=await read(adapter.runtimeDefaults());}catch(error){if(error instanceof ConsoleViewChanged||isSessionError(error))throw error;runtimeDefaultsError=err(error);}
       try{await read(modelManagement.load('/models'));modelCatalogError='';}catch(error){if(error instanceof ConsoleViewChanged||isSessionError(error))throw error;modelCatalogError=err(error);}
       runtimeEditing = !runtime;
       try {
@@ -415,13 +429,13 @@ async function loadPage() {
       }
       runtimeDraft = runtime
         ? {
-            agentImage: runtime.agentImage,
+            agentImage: releaseAgentImage,
             provider: runtime.provider,
             modelId: runtime.modelId,
             baseUrl: runtime.baseUrl,
             modelRef: runtime.modelRef || '',
           }
-        : { agentImage: "", provider: "", modelId: "", baseUrl: "",modelRef:"" };
+        : { agentImage: releaseAgentImage, provider: "", modelId: "", baseUrl: "",modelRef:"" };
     } else if (path === "/default-work") {
       [defaults, skills, packages] = await read(Promise.all([
         adapter.defaults(),
@@ -600,7 +614,7 @@ function statusPage() {
   } else if (!hasRuntime) {
     title = "Make this Core ready";
     description =
-      "Add an AI model, configure the Agent image, and confirm Core readiness.";
+      "Choose an AI model, save the runtime, and confirm Core readiness.";
     label = "START HERE";
     tone = "setup";
     action = NavLink(
@@ -677,13 +691,13 @@ function runtimePage() {
     ? `<dl class="summary-list"><dt>Agent image</dt><dd><code>${esc(runtime.agentImage)}</code></dd><dt>Model provider</dt><dd>${esc(runtime.provider)}</dd><dt>Model ID</dt><dd><code>${esc(runtime.modelId)}</code></dd><dt>Custom Base URL</dt><dd>${runtime.baseUrl ? `<code>${esc(runtime.baseUrl)}</code>` : "Provider default"}</dd><dt>Credential</dt><dd>${StatusLabel(runtime.credentialAvailable ? "Available" : "Unavailable", runtime.credentialAvailable ? "success" : "warning")}</dd><dt>Updated</dt><dd>${date(runtime.updatedAt)}</dd></dl>`
     : Empty(
         "No runtime saved yet",
-        "Add the image and model configuration to continue.",
+        "Choose a saved model to continue. The Agent image is supplied by this release.",
       );
   const body = runtimeEditing
     ? Section(
         configured ? "Edit runtime" : "Configure runtime",
-        "Enter the Agent image and select a configured AI model.",
-        `<div class="section-body"><form id="runtime-form" class="form-grid">${Field("agentImage", "Agent image", Input("agentImage", runtimeDraft.agentImage, 'required placeholder="ghcr.io/piwork/agent:stable"'))}${Field("modelRef","AI model",`<select id="modelRef" name="modelRef" required><option value="">Choose a model</option>${modelManagement.models.map(m=>`<option ${!m.enabled||!m.credentialAvailable?'disabled':''} value="${esc(m.modelRef)}" ${m.modelRef===runtimeDraft.modelRef?'selected':''}>${esc(m.api+' / '+m.name+' ('+m.model+') · '+m.id.slice(-8)+(!m.enabled?' · Disabled':!m.credentialAvailable?' · Key unavailable':''))}</option>`).join('')}${runtimeDraft.modelRef&&!modelManagement.models.some(m=>m.modelRef===runtimeDraft.modelRef)?`<option selected disabled value="${esc(runtimeDraft.modelRef)}">Saved model configuration · select an available model</option>`:''}</select>`,"Select a configured model. The model Key is kept by Core.")}${NavLink("Manage AI models","/models")}${modelCatalogError?Feedback("Model list could not be loaded. "+modelCatalogError,"warning"):!modelManagement.models.length?Feedback("No models configured. Add a model in AI models first.","info"):''}<div class="form-actions"><button type="submit" class="btn primary" ${saving || readbackRequired ? "disabled" : ""}>${saving ? "Saving…" : "Save runtime"}</button>${Button("Cancel editing", "cancel-runtime-edit", "secondary")}</div><p class="help form-notice">After saving, check readiness separately. No existing Work is changed.</p></form></div>${configured ? Disclosure("Compare with saved configuration", summary) : ""}`,
+        "Select a configured AI model. The Agent image is supplied by the server release.",
+        `<div class="section-body"><form id="runtime-form" class="form-grid"><div><span class="field-label">Release Agent image</span><p><code data-runtime-agent-image>${esc(releaseAgentImage || "Unavailable")}</code></p><p class="help">Supplied by the server release.</p></div>${runtimeDefaultsError?Feedback(runtimeDefaultsError,"warning"):""}${Field("modelRef","AI model",`<select id="modelRef" name="modelRef" required><option value="">Choose a model</option>${modelManagement.models.map(m=>`<option ${!m.enabled||!m.credentialAvailable?'disabled':''} value="${esc(m.modelRef)}" ${m.modelRef===runtimeDraft.modelRef?'selected':''}>${esc(m.api+' / '+m.name+' ('+m.model+') · '+m.id.slice(-8)+(!m.enabled?' · Disabled':!m.credentialAvailable?' · Key unavailable':''))}</option>`).join('')}${runtimeDraft.modelRef&&!modelManagement.models.some(m=>m.modelRef===runtimeDraft.modelRef)?`<option selected disabled value="${esc(runtimeDraft.modelRef)}">Saved model configuration · select an available model</option>`:''}</select>`,"Select a configured model. The model Key is kept by Core.")}${NavLink("Manage AI models","/models")}${modelCatalogError?Feedback("Model list could not be loaded. "+modelCatalogError,"warning"):!modelManagement.models.length?Feedback("No models configured. Add a model in AI models first.","info"):''}<div class="form-actions"><button type="submit" class="btn primary" ${saving || readbackRequired || !releaseAgentImage ? "disabled" : ""}>${saving ? "Saving…" : "Save runtime"}</button>${Button("Cancel editing", "cancel-runtime-edit", "secondary")}</div><p class="help form-notice">After saving, check readiness separately. No existing Work is changed.</p></form></div>${configured ? Disclosure("Compare with saved configuration", summary) : ""}`,
       )
     : Section(
         "Runtime configuration",
@@ -758,14 +772,7 @@ function defaultsEditor(section: DefaultSection, d: Defaults) {
             defaultsSelection("packages", d),
             "At most 64 Packages. Existing Work copies remain unchanged.",
           )
-        : section === "agentImage"
-          ? Field(
-              "default-image",
-              "Agent image",
-              Input("default-image", d.agentImage, "required"),
-              "The base image used to create future Work.",
-            )
-          : Field(
+        : Field(
               "agentsMd",
               "AGENTS.md",
               `<textarea class="editor" id="agentsMd" name="agentsMd" spellcheck="false">${esc(d.agentsMd)}</textarea><div class="count-row"><span id="agents-count">${new TextEncoder().encode(d.agentsMd).length.toLocaleString()} / 262,144 UTF-8 bytes</span><label class="btn small" for="agents-file">${icon("upload", 13)} Import file</label><input type="file" id="agents-file" accept=".md,.txt,text/plain,text/markdown" hidden data-layout="layout-role-0"></div>`,
@@ -776,9 +783,7 @@ function defaultsEditor(section: DefaultSection, d: Defaults) {
       ? "Choose and order Skills"
       : section === "packages"
         ? "Choose Packages"
-        : section === "agentImage"
-          ? "Set the Agent image"
-          : "Write working instructions";
+        : "Write working instructions";
   return Section(
     label,
     "Edit this part of the starting point. Save when you are ready.",
@@ -862,7 +867,7 @@ function defaultsPage() {
       `<span>${d.agentsMd ? new TextEncoder().encode(d.agentsMd).length.toLocaleString() + " bytes" : "No instructions"}</span>${d.agentsMd ? `<p class="instruction-preview">${esc(d.agentsMd.split("\n").filter(Boolean).slice(0, 2).join(" · "))}</p>` : ""}`,
     ],
   ];
-  const summary = `<section class="starting-point"><div class="starting-point-heading"><div><h2>${dirty ? "Your draft starting point" : "Current starting point"}</h2><p>${dirty ? "Changes below have not been saved." : "Used only when a new Work is created."}</p></div>${StatusLabel(dirty ? "Unsaved draft" : "Saved", dirty ? "warning" : "success")}</div>${rows.map(([key, title, description, value]) => `<div class="setup-config-row" data-testid="default-summary-${key}"><div class="setup-config-label"><h3>${title} ${changed(key)}</h3><p>${description}</p></div><div class="setup-config-value">${value}</div>${Button("Edit " + (key === "agentsMd" ? "instructions" : key === "agentImage" ? "image" : title), "edit-defaults", "ghost small", `data-section="${key}"`)}</div>`).join("")}</section>`;
+  const summary = `<section class="starting-point"><div class="starting-point-heading"><div><h2>${dirty ? "Your draft starting point" : "Current starting point"}</h2><p>${dirty ? "Changes below have not been saved." : "Used only when a new Work is created."}</p></div>${StatusLabel(dirty ? "Unsaved draft" : "Saved", dirty ? "warning" : "success")}</div>${rows.map(([key, title, description, value]) => `<div class="setup-config-row" data-testid="default-summary-${key}"><div class="setup-config-label"><h3>${title} ${changed(key)}</h3><p>${description}</p></div><div class="setup-config-value">${value}</div>${key === "agentImage" ? '<span class="help">Managed by the server release</span>' : Button("Edit " + (key === "agentsMd" ? "instructions" : title), "edit-defaults", "ghost small", `data-section="${key}"`)}</div>`).join("")}</section>`;
   const rail =
     !defaultEditSection && !dirty && !defaultLastSaved
       ? `<aside class="task-rail summary-context"><p class="rail-label">CURRENT STARTING POINT</p><div class="saved-context">${icon("check", 16)}<strong>Saved on Core</strong></div><p class="help">New Work uses this configuration. Edit only the part you want to change.</p><div class="task-context"><p class="rail-label">NEED A CAPABILITY?</p>${Button("Add or update a Skill", "open-capability-library", "ghost", `data-kind="skills"`)}${Button("Install or update a Package", "open-capability-library", "ghost", `data-kind="packages"`)}<p class="rail-note">Catalog entries and default selections are managed separately.</p></div></aside>`
@@ -1469,7 +1474,7 @@ function userActionDialog(id: string, action: "enable" | "disable" | "reset") {
         if (result.selfRevoked) {
           dirty = false;
           path = "/login";
-          history.pushState({ path }, "", path);
+          history.pushState({ path }, "", publicPath(path));
           feedback = Feedback(
             "Account updated. All your sessions were revoked. Sign in again.",
             "success",
@@ -1532,7 +1537,7 @@ function catalogActionDialog(
         confirmedMutation(`${name} ${action === "remove" ? "removed" : action === "disable" ? "disabled" : "enabled"}. Existing Work copies are unchanged.`);
         if (action === "remove") {
           path = "/" + kind;
-          history.pushState({ path }, "", path);
+          history.pushState({ path }, "", publicPath(path));
         }
         renderPage();
         void refreshConfirmed(`${name} ${action === "remove" ? "removed" : action === "disable" ? "disabled" : "enabled"}. Existing Work copies are unchanged.`, async () => { if (kind === "skills") skills = await awaitCurrent(adapter.skills()); else packages = await awaitCurrent(adapter.packages()); });
@@ -1648,7 +1653,7 @@ async function submitSkill() {
     dirty = false;
     confirmedMutation(`Skill ${s.name} confirmed by Core. Existing Work copies are unchanged.`);
     path = "/skills/" + encodeURIComponent(s.name);
-    history.pushState({ path }, "", path);
+    history.pushState({ path }, "", publicPath(path));
     feedback = Feedback(
       `Skill ${s.name} confirmed by Core. Existing Work copies are unchanged.`,
       "success",
@@ -1716,7 +1721,7 @@ async function submitPackage(form: FormData) {
               .replace(/#.*$/, "") || "package-from-git"
           : upload?.name || "Package pending Core identity";
     packageIntent = {
-      key: crypto.randomUUID(),
+      key: randomUUID(),
       kind: uploadKind,
       source,
       name: uploadTarget || inferred,
@@ -1754,7 +1759,7 @@ async function submitPackage(form: FormData) {
     dirty = false;
     dialogDirty = false;
     path = "/operations/" + encodeURIComponent(op.id);
-    history.pushState({ path }, "", path);
+    history.pushState({ path }, "", publicPath(path));
     operation = op;
     rememberedOperation = structuredClone(op);
     feedback = Feedback(
@@ -1937,14 +1942,14 @@ async function readback() {
   }
 }
 async function saveRuntime(form: FormData) {
-  const agentImage=String(form.get('agentImage')||'').trim(),modelRef=String(form.get('modelRef')||'');
-  if(!agentImage){setFieldError('agentImage','Enter an Agent image.');return;}
+  const agentImage=releaseAgentImage,modelRef=String(form.get('modelRef')||'');
+  if(!agentImage){feedback=Feedback('The server release Agent image is unavailable. Read current state or repair the server release.','warning');renderPage();return;}
   if(!modelRef){setFieldError('modelRef','Select an available model.');return;}
   runtimeDraft={...runtimeDraft,agentImage,modelRef};
   const valid=currentView(),submittedVersion=JSON.stringify(runtimeDraft);saving=true;
   const button=document.querySelector<HTMLButtonElement>('#runtime-form button[type=submit]');if(button){button.disabled=true;button.textContent='Saving…';}
   try{
-    runtime=await awaitCurrent(adapter.saveRuntimeSelection(agentImage,modelRef));
+    runtime=await awaitCurrent(adapter.saveRuntimeSelection(modelRef));
     if(!runtime||runtime.modelRef!==modelRef)throw new ConsoleError('RESULT_UNKNOWN','Read current runtime before saving again.');
     dirty=JSON.stringify(runtimeDraft)!==submittedVersion;runtimeEditing=dirty;readbackRequired=false;
     if(!dirty)runtimeDraft={agentImage:runtime.agentImage,provider:runtime.provider,modelId:runtime.modelId,baseUrl:runtime.baseUrl,modelRef:runtime.modelRef||''};
@@ -1966,12 +1971,6 @@ async function saveDefaults() {
   )
     return;
   const d = structuredClone(defaultDraft), submittedVersion = JSON.stringify(defaultDraft), valid = currentView();
-  if (!d.agentImage.trim()) {
-    defaultEditSection = "agentImage";
-    renderPage();
-    setFieldError("default-image", "Enter an Agent image before saving.");
-    return;
-  }
   if (new TextEncoder().encode(d.agentsMd).length > 262144) {
     defaultEditSection = "agentsMd";
     renderPage();
@@ -1981,7 +1980,7 @@ async function saveDefaults() {
   const patch: Partial<
     Pick<Defaults, "agentImage" | "skills" | "packages" | "agentsMd">
   > = {};
-  (["agentImage", "skills", "packages", "agentsMd"] as const).forEach((k) => {
+  (["skills", "packages", "agentsMd"] as const).forEach((k) => {
     if (JSON.stringify(d[k]) !== JSON.stringify(defaults![k]))
       Object.assign(patch, { [k]: d[k] });
   });
@@ -2070,17 +2069,13 @@ document.addEventListener("input", (event) => {
   }
   if (
     path === "/runtime" &&
-    ["agentImage", "modelRef"].includes(el.id)
+    el.id === "modelRef"
   ) {
     Object.assign(runtimeDraft, { [el.id]: el.value });
     updateDirty();
   }
   if (path === "/runtime" && el.id === "apiKey") updateDirty();
   if (path === "/default-work" && defaultDraft) {
-    if (el.id === "default-image") {
-      defaultDraft.agentImage = el.value;
-      updateDirty();
-    }
     if (el.id === "agentsMd") {
       defaultDraft.agentsMd = el.value;
       updateDirty();
@@ -2278,7 +2273,7 @@ async function handleConsoleAction(button: HTMLButtonElement) {
     if (!runtimeEditing) {
       runtimeEditing = true;
       renderPage();
-      document.querySelector<HTMLElement>("#agentImage")?.focus();
+      document.querySelector<HTMLElement>("#modelRef")?.focus();
     }
   } else if (action === "cancel-runtime-edit") {
     const cancel = () => {
@@ -2286,7 +2281,7 @@ async function handleConsoleAction(button: HTMLButtonElement) {
       runtimeEditing = false;
       runtimeDraft = runtime
         ? {
-            agentImage: runtime.agentImage,
+            agentImage: releaseAgentImage,
             provider: runtime.provider,
             modelId: runtime.modelId,
             baseUrl: runtime.baseUrl,
@@ -2351,7 +2346,7 @@ async function handleConsoleAction(button: HTMLButtonElement) {
         upload = null;
         packageIntent = null;
         path = "/login";
-        history.pushState({ path }, "", path);
+        history.pushState({ path }, "", publicPath(path));
         feedback = Feedback(
           "Signed out. The console session was revoked.",
           "success",
@@ -2486,8 +2481,8 @@ async function handleConsoleAction(button: HTMLButtonElement) {
     }
   }
 }
-history.replaceState({ path }, "", path);
-void adapter.initialize().then(async () => { await adapter.connection().catch(() => undefined); await loadPage(); }).catch(async () => { path = "/login"; history.replaceState({ path }, "", path); try { await adapter.initialize(); } catch { /* availability shown by login */ } await loadPage(); });
+history.replaceState({ path }, "", publicPath(path));
+void adapter.initialize().then(async () => { await adapter.connection().catch(() => undefined); await loadPage(); }).catch(async () => { path = "/login"; history.replaceState({ path }, "", publicPath(path)); try { await adapter.initialize(); } catch { /* availability shown by login */ } await loadPage(); });
 
 window.addEventListener('pagehide', () => { actions.clear(); clearPolling(); selectionVersion++; preflightPending = false; });
 

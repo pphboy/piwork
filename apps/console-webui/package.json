@@ -11,6 +11,7 @@
     "test:real-core": "playwright test -c playwright.config.mjs real-core.spec.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.55.1"
+    "@playwright/test": "^1.55.1",
+    "@piwork/contracts": "0.1.0"
   }
 }

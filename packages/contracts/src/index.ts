@@ -8,3 +8,5 @@ export * from "./chat-controls.js";
 export * from "./chat-images.js";
 export * from "./product-info.js";
 export * from "./ai-model-management.js";
+
+export * from "./web-onboarding.js";

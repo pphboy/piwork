@@ -129,7 +129,7 @@ func TestPreparationRealHelperCaptureRecoversAfterFirstPullFailure(t *testing.T)
 	})}
 	go server.Serve(listener)
 	t.Cleanup(func() { server.Close(); listener.Close() })
-	initialization, _ := InitializationFromEnvironment(dockerInitializationEnvironment())
+	initialization := runtimeInitializationFixture()
 	a, err := New(context.Background(), Options{DataDirectory: t.TempDir(), Initialization: initialization, FileHelperImage: "fixture/file", SnapshotHelperImage: "fixture/snapshot"})
 	if err != nil {
 		t.Fatal(err)

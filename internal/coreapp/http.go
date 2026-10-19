@@ -343,6 +343,10 @@ func (a *Application) control(w http.ResponseWriter, r *http.Request, actor iden
 		allowed = "GET, POST"
 	case "/runtime":
 		allowed = "GET, PUT"
+	case "/runtime-defaults":
+		if admin {
+			allowed = "GET"
+		}
 	case "/default-work":
 		if admin {
 			allowed = "GET, PATCH"
@@ -467,6 +471,14 @@ func (a *Application) control(w http.ResponseWriter, r *http.Request, actor iden
 			send(w, 200, contracts.AdminCredentialResetResult{UserId: contracts.ResourceId(id), CredentialReset: true})
 			return nil
 		}
+	}
+	if admin && r.Method == http.MethodGet && relative == "/runtime-defaults" {
+		defaults, err := a.RuntimeDefaults()
+		if err != nil {
+			return err
+		}
+		send(w, 200, defaults)
+		return nil
 	}
 	if r.Method == "GET" && relative == "/runtime" {
 		view, err := a.Settings.RuntimeView()

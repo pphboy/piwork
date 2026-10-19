@@ -67,7 +67,7 @@ export function checkPlatform({buildDirectory,reportPath,fixtures={version:1,sce
  let sourceMatches=false;
  try {
   const rebuilt=join(sourceDirectory,metadata.binary);
-  const identity=JSON.stringify({releaseVersion:metadata.releaseVersion,commit:metadata.commit,modified:metadata.modified,desktopUIHash:metadata.desktopUIHash,target:metadata.target,goVersion:metadata.goVersion});
+  const identity=JSON.stringify({releaseVersion:metadata.releaseVersion,commit:metadata.commit,modified:metadata.modified,desktopUIHash:metadata.desktopUIHash,...(metadata.releaseInfoHash?{releaseInfoHash:metadata.releaseInfoHash}:{}),target:metadata.target,goVersion:metadata.goVersion});
   const stamps=[`Version=${metadata.releaseVersion}`,`Commit=${metadata.commit}`,`Modified=${metadata.modified}`,`DesktopUIHash=${metadata.desktopUIHash}`].map(v=>'-X piwork/internal/buildinfo.'+v).join(' ')+` -X 'piwork/internal/buildinfo.ClientReleaseIdentity=piwork-cli-release-v1:${identity}'`;
   const built=invoke('go',['build','-mod=readonly','-trimpath','-buildvcs=true','-ldflags',stamps,'-o',rebuilt,'./cmd/piwork-cli']);
   sourceMatches=built.status===0 && createHash('sha256').update(readFileSync(rebuilt)).digest('hex')===digest;

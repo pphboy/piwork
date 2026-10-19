@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"time"
-
-	"piwork/internal/client"
 )
 
 func (d *nativeDesktop) newSecret() (string, error) {
@@ -93,7 +91,7 @@ func (d *nativeDesktop) cleanupIdentity() desktopLogoutResult {
 	if cleanup == nil {
 		return result
 	}
-	if api, err := client.New(cleanup.coreURL, cleanup.token); err == nil {
+	if api, err := d.client(cleanup.coreURL, cleanup.token); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err = api.Logout(ctx)
 		cancel()
@@ -116,6 +114,9 @@ func (d *nativeDesktop) cleanupIdentity() desktopLogoutResult {
 }
 
 func (d *nativeDesktop) rememberCleanupLocked(coreURL, token string) {
+	if d.hosted != nil {
+		return
+	}
 	if err := d.store.ClearSession(coreURL, token); err != nil && d.pendingCleanup == nil {
 		d.pendingCleanup = &desktopCleanup{coreURL: coreURL, token: token}
 	}

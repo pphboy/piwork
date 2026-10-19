@@ -2,6 +2,7 @@ package coreapp
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -223,11 +224,11 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 			store.Close()
 		}
 	}()
-	hasAdmin, err := id.HasEnabledAdministrator(ctx)
+	hasUsers, err := id.HasUsers(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !hasAdmin && options.Initialization.Administrator != nil {
+	if !hasUsers && options.Initialization.Administrator != nil {
 		admin := options.Initialization.Administrator
 		if _, err := id.Bootstrap(ctx, admin.Account, admin.Password); err != nil {
 			return nil, err
@@ -313,6 +314,12 @@ func regexpAccount(s string) bool {
 }
 
 func (a *Application) Listen(address ListenAddress) (ListenAddress, error) {
+	return a.ListenWithHandler(address, nil, nil)
+}
+
+// ListenWithHandler composes browser handlers with this Core's existing routes
+// and lifecycle. Configuration runs after binding, before serving any request.
+func (a *Application) ListenWithHandler(address ListenAddress, configure func(ListenAddress, http.Handler) (http.Handler, error), tlsConfig *tls.Config) (ListenAddress, error) {
 	a.mu.Lock()
 	if a.closed || a.server != nil {
 		a.mu.Unlock()
@@ -332,6 +339,19 @@ func (a *Application) Listen(address ListenAddress) (ListenAddress, error) {
 	a.server = &http.Server{Handler: http.HandlerFunc(a.route), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 31 * time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10, BaseContext: func(net.Listener) context.Context { return a.ctx }}
 	server := a.server
 	a.mu.Unlock()
+	actual := listener.Addr().(*net.TCPAddr)
+	bound := ListenAddress{actual.IP.String(), actual.Port}
+	if configure != nil {
+		handler, err := configure(bound, server.Handler)
+		if err != nil {
+			_ = listener.Close()
+			return ListenAddress{}, err
+		}
+		server.Handler = handler
+	}
+	if tlsConfig != nil {
+		listener = tls.NewListener(listener, tlsConfig)
+	}
 	go func() {
 		err := server.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {
@@ -344,10 +364,12 @@ func (a *Application) Listen(address ListenAddress) (ListenAddress, error) {
 	if err := a.ScheduleRuntimeRefresh(); err != nil {
 		a.setState("RUNTIME_UNAVAILABLE", true, false, false)
 	}
-	actual := listener.Addr().(*net.TCPAddr)
-	return ListenAddress{actual.IP.String(), actual.Port}, nil
+	return bound, nil
 }
-func stringsPort(port int) string { return strconv.Itoa(port) }
+
+// ServeDone reports an unexpected listener exit to the single startup owner.
+func (a *Application) ServeDone() <-chan error { return a.serveDone }
+func stringsPort(port int) string              { return strconv.Itoa(port) }
 func (a *Application) setState(state string, admin, configured, available bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

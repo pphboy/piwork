@@ -174,8 +174,9 @@ func TestNativeCoreSnapshotJobsRecoverAcrossActualProcessCrashes(t *testing.T) {
 	endpoint, arm := snapshotProcessEngine(t, scope.ID(), upstream)
 	start := func() (*exec.Cmd, string) {
 		t.Helper()
-		process := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0")
-		process.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + endpoint, "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass", "PIWORK_AGENT_IMAGE=" + image, "PIWORK_PACKAGE_HELPER_IMAGE=" + image, "PIWORK_FILE_HELPER_IMAGE=" + fileImage, "PIWORK_SNAPSHOT_HELPER_IMAGE=" + snapshotImage, "PIWORK_MODEL_PROVIDER=piwork-deterministic", "PIWORK_MODEL=fixture-v1", "PIWORK_API_KEY=acceptance-only"}
+		seedProcessRuntime(t, directory, image)
+		process := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0", "--package-helper-image", image, "--file-helper-image", fileImage, "--snapshot-helper-image", snapshotImage, "--no-open")
+		process.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + endpoint, "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass"}
 		stdout, err := process.StdoutPipe()
 		if err != nil {
 			t.Fatal(err)
@@ -204,7 +205,7 @@ func TestNativeCoreSnapshotJobsRecoverAcrossActualProcessCrashes(t *testing.T) {
 		var announcement struct{ Event, URL string }
 		select {
 		case line := <-announced:
-			if json.Unmarshal(line, &announcement) != nil || announcement.Event != "core.listening" {
+			if json.Unmarshal(line, &announcement) != nil || announcement.Event != "app.listening" {
 				diagnostic, _ := os.ReadFile(stderr.Name())
 				t.Fatal("missing Core announcement", string(diagnostic))
 			}

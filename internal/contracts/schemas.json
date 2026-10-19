@@ -17729,6 +17729,9 @@
       },
       "desktopUIHash": {
         "type": "string"
+      },
+      "consoleUIHash": {
+        "type": "string"
       }
     },
     "additionalProperties": false
@@ -17780,6 +17783,9 @@
             "type": "string"
           },
           "desktopUIHash": {
+            "type": "string"
+          },
+          "consoleUIHash": {
             "type": "string"
           }
         },
@@ -21147,6 +21153,37 @@
     },
     "additionalProperties": false
   },
+  "ServiceAccessResolutionSchema": {
+    "type": "object",
+    "required": [
+      "hostname",
+      "workId",
+      "serviceId",
+      "port"
+    ],
+    "properties": {
+      "hostname": {
+        "type": "string"
+      },
+      "workId": {
+        "type": "string"
+      },
+      "serviceId": {
+        "type": "string"
+      },
+      "port": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+      },
+      "generation": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "additionalProperties": false
+  },
   "ServiceAccessSchema": {
     "type": "object",
     "required": [
@@ -23985,6 +24022,142 @@
         "minLength": 20,
         "maxLength": 40,
         "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+      }
+    },
+    "additionalProperties": false
+  },
+  "WebAdministratorCreatedSchema": {
+    "type": "object",
+    "required": [
+      "created",
+      "account",
+      "next"
+    ],
+    "properties": {
+      "created": {
+        "type": "boolean",
+        "const": true
+      },
+      "account": {
+        "type": "string"
+      },
+      "next": {
+        "type": "string",
+        "const": "/login"
+      }
+    },
+    "additionalProperties": false
+  },
+  "WebCredentialsInputSchema": {
+    "type": "object",
+    "required": [
+      "account",
+      "password"
+    ],
+    "properties": {
+      "account": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "password": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    },
+    "additionalProperties": false
+  },
+  "WebRuntimeDefaultsSchema": {
+    "type": "object",
+    "required": [
+      "agentImage"
+    ],
+    "properties": {
+      "agentImage": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "additionalProperties": false
+  },
+  "WebRuntimeSelectionInputSchema": {
+    "type": "object",
+    "required": [
+      "modelRef"
+    ],
+    "properties": {
+      "modelRef": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9-]+$"
+      },
+      "agentImage": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "additionalProperties": false
+  },
+  "WebSetupLinkSchema": {
+    "type": "object",
+    "required": [
+      "url"
+    ],
+    "properties": {
+      "url": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    },
+    "additionalProperties": false
+  },
+  "WebSetupProofInputSchema": {
+    "type": "object",
+    "required": [
+      "proof"
+    ],
+    "properties": {
+      "proof": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "additionalProperties": false
+  },
+  "WebSetupSessionSchema": {
+    "type": "object",
+    "required": [
+      "authorized"
+    ],
+    "properties": {
+      "authorized": {
+        "type": "boolean"
+      },
+      "complete": {
+        "type": "boolean"
+      },
+      "csrfToken": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "additionalProperties": false
+  },
+  "WebSetupStateSchema": {
+    "type": "object",
+    "required": [
+      "administratorInitialized"
+    ],
+    "properties": {
+      "administratorInitialized": {
+        "type": "boolean"
       }
     },
     "additionalProperties": false

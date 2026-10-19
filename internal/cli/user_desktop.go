@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -64,6 +66,8 @@ func parseUserDesktopOptions(args []string) (desktopOptions, error) {
 }
 
 type nativeDesktop struct {
+	serviceEntryMu     sync.Mutex
+	hosted             *HostedDesktopOptions
 	api                *client.Client
 	store              client.CredentialStore
 	port               int
@@ -207,7 +211,11 @@ func openDesktopBrowserContext(ctx context.Context, address string, stderr io.Wr
 }
 
 func (d *nativeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Host != fmt.Sprintf("desktop.localhost:%d", d.port) {
+	if r.Host != d.expectedHost() {
+		if d.hosted != nil {
+			desktopError(w, 403, "HOST_DENIED")
+			return
+		}
 		if !d.serveServiceOrigin(w, r) {
 			desktopError(w, 403, "LOCAL_HOST_DENIED")
 		}
@@ -257,6 +265,9 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 		desktopError(w, 404, "DESKTOP_ASSET_UNAVAILABLE")
 		return
 	}
+	if d.hosted != nil && contentType == "text/html; charset=utf-8" {
+		content = []byte(strings.Replace(string(content), "<head>", `<head><meta name="piwork-mode" content="hosted">`, 1))
+	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
 	w.Header().Set("Cache-Control", "no-store")
@@ -265,6 +276,10 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Origin-Agent-Cluster", "?1")
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src http://*.desktop.localhost:%d; object-src 'none'; base-uri 'none'; frame-ancestors 'none'", d.port))
+	if d.hosted != nil {
+		origin, _ := url.Parse(d.origin)
+		w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src %s://%s; object-src 'none'; base-uri 'none'; frame-ancestors 'none'", origin.Scheme, net.JoinHostPort(origin.Hostname(), "*")))
+	}
 	w.WriteHeader(200)
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(content)

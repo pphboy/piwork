@@ -214,7 +214,7 @@ func (d *nativeDesktop) uploadDesktopPiPackage(w http.ResponseWriter, r *http.Re
 	d.mu.Lock()
 	coreURL, record, generation := d.identity.coreURL, d.identity.credential, d.identity.generation
 	d.mu.Unlock()
-	api, _ := client.New(coreURL, record.Token)
+	api, _ := d.client(coreURL, record.Token)
 	var work json.RawMessage
 	if err := api.Request(r.Context(), "GET", "/api/v1/works/"+url.PathEscape(workID), nil, &work); err != nil {
 		var apiErr *client.APIError

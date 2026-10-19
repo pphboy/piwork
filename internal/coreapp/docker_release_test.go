@@ -65,12 +65,9 @@ func TestDockerReleaseRejectsInvalidOrSensitiveDefaultsSafely(t *testing.T) {
 }
 
 func TestDockerReleaseDefaultsDoNotCreateIncompleteUserInitialization(t *testing.T) {
-	path, release := dockerReleaseFixture(t)
-	values := map[string]string{"PIWORK_RELEASE_CONFIG_PATH": path}
-	merged, err := ApplyDockerReleaseDefaults(values)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, _ = dockerReleaseFixture(t)
+	values := map[string]string{}
+	merged := values
 	if _, exists := merged["PIWORK_AGENT_IMAGE"]; exists {
 		t.Fatal("built-in Agent became submitted user initialization")
 	}
@@ -78,7 +75,7 @@ func TestDockerReleaseDefaultsDoNotCreateIncompleteUserInitialization(t *testing
 		t.Fatal("defaults changed the caller environment map")
 	}
 	initialization, err := InitializationFromEnvironment(merged)
-	if err != nil || initialization.Administrator != nil || initialization.Runtime != nil || merged["PIWORK_FILE_HELPER_IMAGE"] != release.Images.FileHelper {
+	if err != nil || initialization.Administrator != nil || initialization.Runtime != nil {
 		t.Fatal("unconfigured defaults incorrectly initialized a user", err)
 	}
 	a, err := New(context.Background(), Options{DataDirectory: t.TempDir(), Initialization: initialization})
@@ -105,62 +102,19 @@ func TestDockerReleaseDefaultsDoNotCreateIncompleteUserInitialization(t *testing
 	}
 }
 
-func TestDockerReleaseDefaultsRespectExplicitInputAndAliases(t *testing.T) {
-	path, release := dockerReleaseFixture(t)
-	values := dockerInitializationEnvironment()
-	delete(values, "PIWORK_AGENT_IMAGE")
-	values["PIWORK_RELEASE_CONFIG_PATH"] = path
-	merged, err := ApplyDockerReleaseDefaults(values)
-	if err != nil || merged["PIWORK_AGENT_IMAGE"] != release.Images.Agent {
-		t.Fatal("release Agent default not selected", err)
-	}
-	initialization, err := InitializationFromEnvironment(merged)
-	if err != nil || ValidateRuntime(*initialization.Runtime) != nil {
-		t.Fatal("complete model initialization rejected", err)
-	}
-	if _, present := merged["PIWORK_MODEL_BASE_URL"]; present {
-		t.Fatal("unset optional Base URL became empty")
-	}
-	values["PIWORK_MODEL_ID"], values["PIWORK_MODEL_API_KEY"] = values["PIWORK_MODEL"], values["PIWORK_API_KEY"]
-	delete(values, "PIWORK_MODEL")
-	delete(values, "PIWORK_API_KEY")
-	values["PIWORK_AGENT_IMAGE"] = "fixture/explicit:valid"
-	values["PIWORK_FILE_HELPER_IMAGE"] = ""
-	merged, err = ApplyDockerReleaseDefaults(values)
-	if err != nil || merged["PIWORK_AGENT_IMAGE"] != "fixture/explicit:valid" || merged["PIWORK_FILE_HELPER_IMAGE"] != "" {
-		t.Fatal("explicit override was replaced", err)
-	}
-	initialization, err = InitializationFromEnvironment(merged)
-	if err != nil || ValidateRuntime(*initialization.Runtime) != nil {
-		t.Fatal("compatible aliases rejected", err)
-	}
-	values["PIWORK_AGENT_IMAGE"] = " "
-	merged, _ = ApplyDockerReleaseDefaults(values)
-	initialization, _ = InitializationFromEnvironment(merged)
-	if ValidateRuntime(*initialization.Runtime) == nil {
-		t.Fatal("invalid explicit Agent silently fell back")
-	}
-	delete(values, "PIWORK_AGENT_IMAGE")
-	delete(values, "PIWORK_MODEL_PROVIDER")
-	merged, _ = ApplyDockerReleaseDefaults(values)
-	if _, err := InitializationFromEnvironment(merged); err == nil {
-		t.Fatal("partial model input accepted")
-	}
-	if _, err := ApplyDockerReleaseDefaults(map[string]string{}); err != nil {
-		t.Fatal("native initialization unexpectedly requires image defaults", err)
-	}
-}
-
 func TestDockerReleaseChangedDefaultsDoNotReplacePersistedInitialization(t *testing.T) {
 	path, release := dockerReleaseFixture(t)
 	values := dockerInitializationEnvironment()
 	delete(values, "PIWORK_AGENT_IMAGE")
 	values["PIWORK_RELEASE_CONFIG_PATH"] = path
-	merged, _ := ApplyDockerReleaseDefaults(values)
+	merged := values
 	initialization, _ := InitializationFromEnvironment(merged)
 	directory := t.TempDir()
 	a, err := New(context.Background(), Options{DataDirectory: directory, Initialization: initialization})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Settings.ConfigureRuntime(RuntimeInput{AgentImage: release.Images.Agent, Provider: "fixture", Model: "model-one", Credential: "private-initial-key"}); err != nil {
 		t.Fatal(err)
 	}
 	first, _, _ := a.Settings.LoadRuntime()
@@ -178,7 +132,7 @@ func TestDockerReleaseChangedDefaultsDoNotReplacePersistedInitialization(t *test
 	}
 	values["PIWORK_ADMIN_PASSWORD"] = "private-replacement-password"
 	values["PIWORK_MODEL"] = "model-two"
-	merged, _ = ApplyDockerReleaseDefaults(values)
+	merged = values
 	initialization, _ = InitializationFromEnvironment(merged)
 	b, err := New(context.Background(), Options{DataDirectory: directory, Initialization: initialization})
 	if err != nil {

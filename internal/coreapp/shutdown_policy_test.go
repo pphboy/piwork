@@ -1,7 +1,6 @@
 package coreapp
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -11,27 +10,24 @@ import (
 	"time"
 )
 
-func TestShutdownBudgetsDefaultsOverridesAndRejectBeforeOpeningStore(t *testing.T) {
-	defaults, err := shutdownOptionsFromEnvironment(map[string]string{})
+func TestShutdownBudgetsDefaultsAndRejectBeforeOpeningStore(t *testing.T) {
+	defaults := Options{}
+	err := normalizeShutdownOptions(&defaults)
 	if err != nil || defaults.WorkDrainTimeout != 30*time.Second || defaults.WorkStopTimeout != 10*time.Second || defaults.ShutdownTimeout != 45*time.Second {
 		t.Fatal(defaults, err)
 	}
-	changed, err := shutdownOptionsFromEnvironment(map[string]string{"PIWORK_DRAIN_TIMEOUT_MS": "250", "PIWORK_STOP_TIMEOUT_MS": "100", "PIWORK_SHUTDOWN_TIMEOUT_MS": "2000"})
-	if err != nil || changed.WorkDrainTimeout != 250*time.Millisecond || changed.WorkStopTimeout != 100*time.Millisecond || changed.ShutdownTimeout != 2*time.Second {
-		t.Fatal(changed, err)
+	changed := Options{WorkDrainTimeout: 250 * time.Millisecond, WorkStopTimeout: 100 * time.Millisecond, ShutdownTimeout: 2 * time.Second}
+	if normalizeShutdownOptions(&changed) != nil || changed.ShutdownTimeout != 2*time.Second {
+		t.Fatal("explicit internal shutdown budget changed")
 	}
-	for _, value := range []string{"", "0", "-1", "0.5", "600001", "9223372036854775807"} {
-		t.Run(value, func(t *testing.T) {
-			t.Setenv("PIWORK_SHUTDOWN_TIMEOUT_MS", value)
-			directory := filepath.Join(t.TempDir(), "not-created")
-			var stdout, stderr bytes.Buffer
-			if code := RunServe(context.Background(), []string{"--data-dir", directory, "--listen", "127.0.0.1:0"}, &stdout, &stderr); code != 2 || stdout.Len() != 0 {
-				t.Fatal(code, stdout.String(), stderr.String())
-			}
-			if _, err := os.Stat(directory); !os.IsNotExist(err) {
-				t.Fatal("invalid budget created an installation", err)
-			}
-		})
+	for _, value := range []time.Duration{-time.Millisecond, time.Nanosecond, 10*time.Minute + time.Millisecond} {
+		directory := filepath.Join(t.TempDir(), "not-created")
+		if _, err := New(context.Background(), Options{DataDirectory: directory, ShutdownTimeout: value}); err == nil {
+			t.Fatal("invalid shutdown budget accepted")
+		}
+		if _, err := os.Stat(directory); !os.IsNotExist(err) {
+			t.Fatal("invalid budget created installation")
+		}
 	}
 }
 

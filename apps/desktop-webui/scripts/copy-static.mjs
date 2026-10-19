@@ -12,3 +12,5 @@ const browser = new URL('../dist/browser/', import.meta.url);
 mkdirSync(browser, { recursive: true });
 cpSync(markedModule, new URL('marked.js', browser));
 cpSync(new URL('../LICENSE', markedModule), new URL('marked-LICENSE.txt', target));
+
+cpSync(new URL("../../../apps/ui-shared/browser-crypto.js", import.meta.url), new URL("../dist/browser/browser-crypto.js", import.meta.url));

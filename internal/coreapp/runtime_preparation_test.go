@@ -20,7 +20,7 @@ import (
 
 func preparationFixture(t *testing.T, configure func(*runtimePreparation)) (*Application, string, string) {
 	t.Helper()
-	initialization, _ := InitializationFromEnvironment(dockerInitializationEnvironment())
+	initialization := runtimeInitializationFixture()
 	a, err := New(context.Background(), Options{DataDirectory: t.TempDir(), Initialization: initialization, FileHelperImage: "fixture/file", SnapshotHelperImage: "fixture/snapshot"})
 	if err != nil {
 		t.Fatal(err)
@@ -358,7 +358,7 @@ func TestPreparationRealEngineSlowPullStatusAndProtocolFailure(t *testing.T) {
 	})}
 	go server.Serve(listener)
 	t.Cleanup(func() { server.Close(); listener.Close() })
-	initialization, _ := InitializationFromEnvironment(dockerInitializationEnvironment())
+	initialization := runtimeInitializationFixture()
 	a, err := New(context.Background(), Options{DataDirectory: t.TempDir(), Initialization: initialization, DockerOptions: dockerengine.SelectionOptions{DockerHost: "unix://" + socket, DockerConfig: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)

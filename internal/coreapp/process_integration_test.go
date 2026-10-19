@@ -62,7 +62,7 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 		var listening struct{ Event, URL string }
 		select {
 		case raw := <-line:
-			if json.Unmarshal(raw, &listening) != nil || listening.Event != "core.listening" || listening.URL == "" {
+			if json.Unmarshal(raw, &listening) != nil || listening.Event != "app.listening" || listening.URL == "" {
 				cmd.Process.Kill()
 				cmd.Wait()
 				t.Fatal("native Core did not listen", stderr.String())
@@ -219,8 +219,17 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	stop()
 	dockerHost = "unix://" + filepath.Join(t.TempDir(), "absent-engine.sock")
 	base, stop = start()
-	if status, body := httpCall(t, base, "/readyz", "GET", "", nil); status != 503 || body["reason"] != "RUNTIME_UNAVAILABLE" {
-		t.Fatal("unavailable Engine was advertised as ready", status, body)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		status, body := httpCall(t, base, "/readyz", "GET", "", nil)
+		if status != 503 || body["ready"] != false {
+			t.Fatal("unavailable Engine was advertised as ready", status)
+		}
+		if body["reason"] == "RUNTIME_UNAVAILABLE" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("missing Engine failure did not become observable", status, body)
+		}
 	}
 	if status, body := httpCall(t, base, "/healthz", "GET", "", nil); status != 200 || body["status"] != "healthy" {
 		t.Fatal("dependency failure stopped Core health")

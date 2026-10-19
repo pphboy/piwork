@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"piwork/internal/chatimages"
-	"piwork/internal/client"
 	"strconv"
 	"strings"
 )
@@ -44,7 +43,7 @@ func (d *nativeDesktop) serveChatImage(w http.ResponseWriter, r *http.Request) b
 	}
 	base, token := d.identity.coreURL, d.identity.credential.Token
 	d.mu.Unlock()
-	api, err := client.New(base, token)
+	api, err := d.client(base, token)
 	if err != nil {
 		desktopError(w, 503, "CORE_UNAVAILABLE")
 		return true

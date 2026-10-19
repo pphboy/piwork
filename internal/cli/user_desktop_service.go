@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -30,6 +32,9 @@ type desktopServiceEntry struct {
 	ticketEnd                                  time.Time
 	grant                                      string
 	embed                                      string
+	remotePort                                 int
+	jar                                        *cookiejar.Jar
+	runtimeGeneration                          string
 }
 
 func (d *nativeDesktop) serveServiceOrigin(w http.ResponseWriter, r *http.Request) bool {
@@ -49,7 +54,7 @@ func (d *nativeDesktop) serveServiceOrigin(w http.ResponseWriter, r *http.Reques
 		return true
 	}
 	if path == desktopServiceReserved+"entry.js" && r.Method == http.MethodGet {
-		script := `const ticket=new URLSearchParams(location.hash.slice(1)).get('ticket');history.replaceState(null,'',location.pathname);fetch('` + desktopServiceReserved + `redeem',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ticket})}).then(r=>{if(!r.ok)throw Error('Open this Service from its Work.');location.replace('/')}).catch(e=>{document.body.textContent=e.message});`
+		script := `const ticket=new URLSearchParams(location.hash.slice(1)).get('ticket');history.replaceState(null,'',location.pathname);const current=()=>fetch('` + desktopServiceReserved + `session',{cache:'no-store'}).then(r=>r.ok).catch(()=>false);(async()=>{if(await current()){location.replace('/');return}let accepted=false;try{accepted=(await fetch('` + desktopServiceReserved + `redeem',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ticket})})).ok}catch{}if(accepted||await current()){location.replace('/');return}throw Error('Open this Service from its Work.')})().catch(e=>{document.body.textContent=e.message});`
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -82,6 +87,7 @@ func (d *nativeDesktop) serveServiceOrigin(w http.ResponseWriter, r *http.Reques
 			grant, err := desktopSecret()
 			if err == nil {
 				current.ticket = ""
+				delete(d.serviceGrants, current.grant)
 				current.grant = grant
 				if d.serviceGrants == nil {
 					d.serviceGrants = map[string]string{}
@@ -100,15 +106,28 @@ func (d *nativeDesktop) serveServiceOrigin(w http.ResponseWriter, r *http.Reques
 			desktopError(w, 403, "LOCAL_ENTRY_DENIED")
 			return true
 		}
-		w.Header().Set("Set-Cookie", "__Host-piwork-route="+grant+"; Path=/; HttpOnly; Secure; SameSite=Strict")
+		http.SetCookie(w, &http.Cookie{Name: d.routeCookieName(entry), Value: grant, Path: "/", HttpOnly: true, Secure: d.hosted == nil || strings.HasPrefix(d.serviceOrigin(entry), "https://"), SameSite: http.SameSiteStrictMode})
 		desktopJSON(w, 200, map[string]bool{"authorized": true})
+		return true
+	}
+	if path == desktopServiceReserved+"session" && r.Method == http.MethodGet {
+		grant := desktopSessionID(r, d.routeCookieName(entry))
+		d.mu.Lock()
+		current := d.serviceEntries[entry.id]
+		valid := current != nil && grant != "" && current.grant == grant && d.serviceGrants[grant] == entry.id
+		d.mu.Unlock()
+		if !valid || !d.serviceLive(entry) {
+			desktopError(w, 401, "LOCAL_SERVICE_AUTH_REQUIRED")
+		} else {
+			desktopJSON(w, 200, map[string]bool{"authorized": true})
+		}
 		return true
 	}
 	if strings.HasPrefix(r.URL.Path, desktopServiceReserved) {
 		desktopError(w, 404, "NOT_FOUND")
 		return true
 	}
-	grant := desktopSessionID(r, "__Host-piwork-route")
+	grant := desktopSessionID(r, d.routeCookieName(entry))
 	d.mu.Lock()
 	current := d.serviceEntries[entry.id]
 	valid := current != nil && grant != "" && d.serviceGrants[grant] == entry.id && current.grant == grant
@@ -138,10 +157,16 @@ func desktopSessionID(r *http.Request, name string) string {
 }
 
 func (d *nativeDesktop) serviceOrigin(entry desktopServiceEntry) string {
+	if d.hosted != nil && d.hosted.Services != nil {
+		return d.hosted.Services.origin.Scheme + "://" + net.JoinHostPort(d.hosted.Services.origin.Hostname(), strconv.Itoa(entry.remotePort))
+	}
 	return fmt.Sprintf("http://s-%s.desktop.localhost:%d", entry.id, d.port)
 }
 
 func (d *nativeDesktop) serviceEntryFromHost(host string) (desktopServiceEntry, bool) {
+	if d.hosted != nil {
+		return d.remoteServiceEntry(host)
+	}
 	parts := desktopServiceHostPattern.FindStringSubmatch(host)
 	if parts == nil || parts[2] != strconv.Itoa(d.port) {
 		return desktopServiceEntry{}, false
@@ -166,10 +191,12 @@ func (d *nativeDesktop) serviceLive(entry desktopServiceEntry) bool {
 
 func desktopResolveService(ctx context.Context, api *client.Client, hostname string, port int) (struct {
 	Hostname, WorkID, ServiceID string
+	Generation                  string
 	Port                        int
 }, error) {
 	var result struct {
 		Hostname, WorkID, ServiceID string
+		Generation                  string
 		Port                        int
 	}
 	path := "/api/v1/service-access/resolve?hostname=" + url.QueryEscape(hostname) + "&port=" + strconv.Itoa(port)
@@ -218,12 +245,14 @@ func (d *nativeDesktop) serveServiceEntryAPI(w http.ResponseWriter, r *http.Requ
 	}
 	coreURL, token, generation := d.identity.coreURL, d.identity.credential.Token, d.identity.generation
 	d.mu.Unlock()
-	api, err := client.New(coreURL, token)
+	api, err := d.client(coreURL, token)
 	if err != nil {
 		desktopError(w, 503, "CORE_UNAVAILABLE")
 		return true
 	}
 	if path == "/_desktop/api/service-entries" && r.Method == http.MethodPost {
+		d.serviceEntryMu.Lock()
+		defer d.serviceEntryMu.Unlock()
 		input, err := desktopControlInput(r, "workId", "serviceId", "port")
 		if err != nil {
 			desktopControlFailure(w, err)
@@ -302,7 +331,7 @@ func (d *nativeDesktop) serveServiceEntryAPI(w http.ResponseWriter, r *http.Requ
 			return true
 		}
 		entry := &desktopServiceEntry{id: entryID, workID: workID, serviceID: serviceID, hostname: service.Access.Hostname,
-			port: port, sessionID: sessionID, generation: generation, ticket: ticket, ticketEnd: time.Now().Add(30 * time.Second), embed: "unknown"}
+			port: port, sessionID: sessionID, generation: generation, ticket: ticket, ticketEnd: time.Now().Add(30 * time.Second), embed: "unknown", runtimeGeneration: resolved.Generation}
 		d.mu.Lock()
 		current := d.identity.generation == generation && d.identity.checked && d.identity.credential != nil && d.identity.credential.Token == token
 		capacity := false
@@ -313,6 +342,11 @@ func (d *nativeDesktop) serveServiceEntryAPI(w http.ResponseWriter, r *http.Requ
 			}
 			for _, prior := range d.serviceEntries {
 				if prior.workID == workID && prior.serviceID == serviceID && prior.port == port && prior.sessionID == sessionID && prior.generation == generation {
+					if prior.runtimeGeneration != "" && prior.runtimeGeneration != resolved.Generation {
+						delete(d.serviceEntries, prior.id)
+						delete(d.serviceGrants, prior.grant)
+						continue
+					}
 					prior.ticket, prior.ticketEnd = ticket, entry.ticketEnd
 					entry = prior
 					entryID = prior.id
@@ -335,6 +369,22 @@ func (d *nativeDesktop) serveServiceEntryAPI(w http.ResponseWriter, r *http.Requ
 		if capacity {
 			desktopError(w, 429, "SERVICE_ENTRY_LIMIT")
 			return true
+		}
+		if d.hosted != nil && !reused {
+			if d.hosted.Services == nil {
+				d.mu.Lock()
+				delete(d.serviceEntries, entryID)
+				d.mu.Unlock()
+				desktopError(w, 503, "SERVICE_ENTRY_UNAVAILABLE")
+				return true
+			}
+			if err := d.hosted.Services.register(d, entry); err != nil {
+				d.mu.Lock()
+				delete(d.serviceEntries, entryID)
+				d.mu.Unlock()
+				desktopError(w, 503, err.Error())
+				return true
+			}
 		}
 		origin := d.serviceOrigin(*entry)
 		desktopJSON(w, 200, map[string]any{"entryId": entryID, "workId": workID, "serviceId": serviceID,
@@ -361,6 +411,11 @@ func (d *nativeDesktop) serveServiceEntryAPI(w http.ResponseWriter, r *http.Requ
 		}
 		if resolved.WorkID != copy.workID || resolved.ServiceID != copy.serviceID {
 			desktopError(w, 403, "SERVICE_IDENTITY_CHANGED")
+			return true
+		}
+		if copy.runtimeGeneration != "" && copy.runtimeGeneration != resolved.Generation {
+			d.invalidateServiceEntry(copy)
+			desktopError(w, 409, "SERVICE_GENERATION_CHANGED")
 			return true
 		}
 		desktopJSON(w, 200, map[string]any{"workId": copy.workID, "serviceId": copy.serviceID,

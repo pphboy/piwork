@@ -90,6 +90,16 @@ func (s *Service) HasEnabledAdministrator(ctx context.Context) (bool, error) {
 	})
 	return n > 0, err
 }
+
+// HasUsers distinguishes an empty installation from one whose administrator is
+// unavailable. Only the empty installation may expose first-user setup.
+func (s *Service) HasUsers(ctx context.Context) (bool, error) {
+	var count int
+	err := s.store.Read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM users").Scan(&count)
+	})
+	return count > 0, err
+}
 func (s *Service) Bootstrap(ctx context.Context, account, password string) (contracts.User, error) {
 	return s.create(ctx, OperatorPrincipal(), account, password, "admin", true)
 }

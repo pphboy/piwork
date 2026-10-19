@@ -40,7 +40,7 @@ func desktopJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func (d *nativeDesktop) sameOrigin(r *http.Request) bool {
-	if r.Host != fmt.Sprintf("desktop.localhost:%d", d.port) {
+	if r.Host != d.expectedHost() {
 		return false
 	}
 	if origin := r.Header.Get("Origin"); origin != "" && origin != d.origin {
@@ -52,7 +52,12 @@ func (d *nativeDesktop) sameOrigin(r *http.Request) bool {
 	return true
 }
 
-func (d *nativeDesktop) cookieName() string { return fmt.Sprintf("__Host-piwork-desktop-%d", d.port) }
+func (d *nativeDesktop) cookieName() string {
+	if d.hosted != nil {
+		return d.hosted.CookieName
+	}
+	return fmt.Sprintf("__Host-piwork-desktop-%d", d.port)
+}
 
 func equalDesktopSecret(left, right string) bool {
 	return len(left) == len(right) && subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
@@ -179,7 +184,7 @@ func (d *nativeDesktop) verifyIdentity(ctx context.Context) {
 	if record == nil {
 		return
 	}
-	api, err := client.New(coreURL, record.Token)
+	api, err := d.client(coreURL, record.Token)
 	if err != nil {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -288,7 +293,11 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case path == "/_desktop/api/about" && r.Method == http.MethodGet:
-		desktopJSON(w, 200, releaseinfo.Read("piwork-cli"))
+		program := "piwork-cli"
+		if d.hosted != nil {
+			program = "piwork-serve"
+		}
+		desktopJSON(w, 200, releaseinfo.Read(program))
 	case path == "/_desktop/api/preferences":
 		d.servePreferences(w, r)
 	case path == "/_desktop/api/session" && r.Method == http.MethodGet:
@@ -351,7 +360,7 @@ func (d *nativeDesktop) login(w http.ResponseWriter, r *http.Request, csrf strin
 	d.revokeLocked()
 	coreURL, generation := d.identity.coreURL, d.identity.generation
 	d.mu.Unlock()
-	api, err := client.New(coreURL, "")
+	api, err := d.client(coreURL, "")
 	if err != nil {
 		desktopError(w, 400, "INVALID_CORE_URL")
 		return
@@ -369,7 +378,7 @@ func (d *nativeDesktop) login(w http.ResponseWriter, r *http.Request, csrf strin
 	d.mu.Lock()
 	if generation != d.identity.generation || r.Context().Err() != nil {
 		d.mu.Unlock()
-		if revoke, err := client.New(coreURL, record.Token); err == nil {
+		if revoke, err := d.client(coreURL, record.Token); err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = revoke.Request(ctx, http.MethodPost, "/api/v1/logout", nil, nil)
 			cancel()
@@ -379,7 +388,7 @@ func (d *nativeDesktop) login(w http.ResponseWriter, r *http.Request, csrf strin
 	}
 	if err := d.store.Save(record); err != nil {
 		d.mu.Unlock()
-		if revoke, err := client.New(coreURL, record.Token); err == nil {
+		if revoke, err := d.client(coreURL, record.Token); err == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_ = revoke.Request(ctx, http.MethodPost, "/api/v1/logout", nil, nil)
 			cancel()
@@ -441,7 +450,7 @@ func (d *nativeDesktop) switchCore(w http.ResponseWriter, r *http.Request, csrf 
 func (d *nativeDesktop) status(w http.ResponseWriter, r *http.Request) {
 	view := d.view(r.Context(), "")
 	coreURL, _ := view["coreUrl"].(string)
-	anonymous, _ := client.New(coreURL, "")
+	anonymous, _ := d.client(coreURL, "")
 	check := func(path string) map[string]any {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
@@ -461,7 +470,7 @@ func (d *nativeDesktop) status(w http.ResponseWriter, r *http.Request) {
 		}
 		d.mu.Unlock()
 		if token != "" {
-			api, _ := client.New(coreURL, token)
+			api, _ := d.client(coreURL, token)
 			var capability struct {
 				Protocols []string `json:"protocols"`
 			}

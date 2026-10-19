@@ -29,6 +29,10 @@ func validName(name string) bool {
 // OpenDirectory pins an existing ordinary directory without following links.
 func OpenDirectory(path string) (*Directory, error) { return openDirectory(path, false, false) }
 
+// EnsureDirectory creates missing components with owner-only permissions and
+// refuses symlinks. Existing ancestors retain their permissions.
+func EnsureDirectory(path string) (*Directory, error) { return openDirectory(path, false, true) }
+
 // OpenPrivateDirectory accepts only an owned, private directory. Missing
 // components are created privately only when create is true.
 func OpenPrivateDirectory(path string, create bool) (*Directory, error) {

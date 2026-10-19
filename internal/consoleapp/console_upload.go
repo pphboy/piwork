@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"piwork/internal/client"
 	"piwork/internal/localweb"
 	"piwork/internal/pipackage"
 )
@@ -98,7 +97,7 @@ func (c *nativeConsole) uploadPackage(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 	defer file.Close()
-	api, _ := client.New(c.options.coreURL, session.token)
+	api, _ := c.client(c.options.coreURL, session.token)
 	headers := make(http.Header)
 	headers.Set("Accept", "application/json")
 	headers.Set("Content-Type", "application/zip")

@@ -39,9 +39,6 @@ func TestDockerInitializationAcceptsMissingGroupsAndRejectsIncompleteInput(t *te
 	for _, values := range []map[string]string{
 		{"PIWORK_ADMIN_ACCOUNT": "admin"},
 		{"PIWORK_ADMIN_PASSWORD": "private-initial-password"},
-		{"PIWORK_AGENT_IMAGE": "fixture/native"},
-		{"PIWORK_API_KEY": "private-initial-key"},
-		{"PIWORK_MODEL_BASE_URL": "http://host.docker.internal:8000/private-initial-key"},
 	} {
 		if _, err := InitializationFromEnvironment(values); err == nil || strings.Contains(err.Error(), "private-initial") {
 			t.Fatal("incomplete initialization was accepted or exposed a secret", err)
@@ -53,20 +50,18 @@ func TestDockerInitializationValidatesProvidedValuesBeforeOpeningStore(t *testin
 	for _, item := range []struct{ key, value string }{
 		{"PIWORK_ADMIN_ACCOUNT", "invalid account"},
 		{"PIWORK_ADMIN_PASSWORD", "short"},
-		{"PIWORK_AGENT_IMAGE", " "},
-		{"PIWORK_MODEL_PROVIDER", "invalid provider"},
-		{"PIWORK_MODEL", " "},
-		{"PIWORK_API_KEY", ""},
-		{"PIWORK_MODEL_BASE_URL", "http://host.docker.internal:8000/private-initial-key"},
-		{"PIWORK_MODEL_BASE_URL", ""},
+		{"PIWORK_ADMIN_ACCOUNT", ""},
+		{"PIWORK_ADMIN_PASSWORD", ""},
 	} {
 		t.Run(item.key+"/"+item.value, func(t *testing.T) {
 			values := dockerInitializationEnvironment()
 			values[item.key] = item.value
 			initialization, err := InitializationFromEnvironment(values)
-			if err != nil {
-				t.Fatal(err)
+			if err == nil || !strings.Contains(err.Error(), item.key) || strings.Contains(err.Error(), "private-initial") {
+				t.Fatal("invalid ADMIN environment accepted or unsafe error")
 			}
+			// Direct embedded callers retain the same pre-store validation.
+			initialization = Initialization{Administrator: &struct{ Account, Password string }{values["PIWORK_ADMIN_ACCOUNT"], values["PIWORK_ADMIN_PASSWORD"]}}
 			directory := filepath.Join(t.TempDir(), "uncreated")
 			if a, err := New(context.Background(), Options{DataDirectory: directory, Initialization: initialization}); err == nil {
 				closeSettingsApp(t, a)
@@ -82,8 +77,8 @@ func TestDockerInitializationValidatesProvidedValuesBeforeOpeningStore(t *testin
 	for _, base := range []string{"https://models.example.invalid/v1", "http://127.0.0.1:8000", "http://localhost:8000", "http://[::1]:8000"} {
 		values := dockerInitializationEnvironment()
 		values["PIWORK_MODEL_BASE_URL"] = base
-		initialization, err := InitializationFromEnvironment(values)
-		if err != nil || ValidateRuntime(*initialization.Runtime) != nil {
+		input := RuntimeInput{AgentImage: "fixture/native", Provider: "fixture", Model: "model", Credential: "synthetic-key", BaseURL: &base}
+		if err := ValidateRuntime(input); err != nil {
 			t.Fatal("existing model URL policy changed", err)
 		}
 	}
@@ -97,6 +92,9 @@ func TestDockerInitializationPersistsDefaultsWithoutCreatingWorkOrReplacingIdent
 	options := Options{DataDirectory: t.TempDir(), Initialization: initialization}
 	a, err := New(context.Background(), options)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Settings.ConfigureRuntime(RuntimeInput{AgentImage: "fixture/native", Provider: "fixture", Model: "model-one", Credential: "private-initial-key"}); err != nil {
 		t.Fatal(err)
 	}
 	first, _, _ := a.Settings.LoadRuntime()
@@ -141,11 +139,54 @@ func TestDockerInitializationPersistsDefaultsWithoutCreatingWorkOrReplacingIdent
 	}
 	values["PIWORK_MODEL_BASE_URL"] = "http://host.docker.internal:8000/private-replacement-key"
 	options.Initialization, _ = InitializationFromEnvironment(values)
-	if _, err := New(context.Background(), options); err == nil || strings.Contains(err.Error(), "private-replacement") {
-		t.Fatal("persisted configuration bypassed validation of provided env", err)
+	if options.Initialization.Runtime != nil {
+		t.Fatal("legacy model environment was adopted")
 	}
 	view, err := b.Settings.RuntimeView()
 	if err != nil || strings.Contains(fmtJSON(view), "private-") || strings.Contains(fmtJSON(b.Status()), "private-") {
 		t.Fatal("public initialization output contains a secret", err)
 	}
+}
+
+func TestInitializationIgnoresAllLegacyModelAndImageEnvironment(t *testing.T) {
+	for _, name := range []string{"PIWORK_MODEL_PROVIDER", "PIWORK_MODEL", "PIWORK_MODEL_ID", "PIWORK_API_KEY", "PIWORK_MODEL_API_KEY", "PIWORK_MODEL_BASE_URL", "PIWORK_AGENT_IMAGE", "PIWORK_PACKAGE_HELPER_IMAGE", "PIWORK_FILE_HELPER_IMAGE", "PIWORK_SNAPSHOT_HELPER_IMAGE"} {
+		for _, value := range []string{"", "invalid synthetic-legacy-key\nvalue"} {
+			initialization, err := InitializationFromEnvironment(map[string]string{name: value})
+			if err != nil || initialization.Runtime != nil || initialization.Administrator != nil {
+				t.Fatal("deprecated input was interpreted", name)
+			}
+		}
+	}
+}
+
+func TestAdministratorEnvironmentDoesNotBootstrapExistingDisabledUsers(t *testing.T) {
+	initialization, _ := InitializationFromEnvironment(dockerInitializationEnvironment())
+	directory := t.TempDir()
+	app, err := New(context.Background(), Options{DataDirectory: directory, Initialization: initialization})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Store.Write(context.Background(), func(tx *sql.Tx) error { _, err := tx.Exec("UPDATE users SET enabled=0"); return err }); err != nil {
+		t.Fatal(err)
+	}
+	closeSettingsApp(t, app)
+	app, err = New(context.Background(), Options{DataDirectory: directory, Initialization: initialization})
+	if err != nil {
+		t.Fatal("existing disabled user reopened bootstrap", err)
+	}
+	defer closeSettingsApp(t, app)
+	hasUsers, err := app.Identity.HasUsers(context.Background())
+	if err != nil || !hasUsers {
+		t.Fatal("existing users disappeared", err)
+	}
+	enabled, err := app.Identity.HasEnabledAdministrator(context.Background())
+	if err != nil || enabled {
+		t.Fatal("restart reset disabled administrator", err)
+	}
+}
+
+// Runtime preparation fixtures submit configuration explicitly; model env is no
+// longer an initialization interface.
+func runtimeInitializationFixture() Initialization {
+	return Initialization{Administrator: &struct{ Account, Password string }{"admin", "private-initial-password"}, Runtime: &RuntimeInput{AgentImage: "fixture/native", Provider: "fixture", Model: "model-one", Credential: "private-initial-key"}}
 }

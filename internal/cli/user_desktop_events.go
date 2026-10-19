@@ -50,7 +50,7 @@ func (d *nativeDesktop) serveRunEvents(w http.ResponseWriter, r *http.Request) b
 	}
 	coreURL, token, generation := d.identity.coreURL, d.identity.credential.Token, d.identity.generation
 	d.mu.Unlock()
-	api, err := client.New(coreURL, token)
+	api, err := d.client(coreURL, token)
 	if err != nil {
 		desktopError(w, 503, "CORE_UNAVAILABLE")
 		return true

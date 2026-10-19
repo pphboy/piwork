@@ -6,3 +6,5 @@ cpSync(new URL("../../../apps/ui-shared/assets/piwork-logo.png", import.meta.url
 const tokens = readFileSync(new URL("../../ui-shared/tokens.css", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../public/style.css", import.meta.url), "utf8");
 writeFileSync(new URL("style.css", target), tokens + "\n" + styles);
+
+cpSync(new URL("../../../apps/ui-shared/browser-crypto.js", import.meta.url), new URL("../dist/browser/browser-crypto.js", import.meta.url));

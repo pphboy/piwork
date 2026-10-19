@@ -17,7 +17,7 @@ const codeAliases: Record<string, string> = {
 const explanations: Record<string, string> = {
   MODEL_IN_USE: "Remove configuration dependencies before deleting this provider or model. Existing Work may need a different model and Apply.",
   MODEL_TEST_BUSY: "A model Test is already running. Wait for its result before testing again.",
-  DEFAULT_WORK_NOT_CONFIGURED: "Configure Runtime with an Agent image and model before setting defaults.",
+  DEFAULT_WORK_NOT_CONFIGURED: "Choose a model in Runtime before setting defaults. The Agent image is supplied by this release.",
   CORE_UNREACHABLE: "Core could not be reached. Check the connection and try again.",
   SESSION_EXPIRED: "Your administrator session expired or was revoked. Sign in again.",
   ADMIN_ONLY: "Only administrators can access this console. Use the user CLI or Desktop for your own Work.",
@@ -34,7 +34,7 @@ const invalidFields: Record<string,string> = {
   modelRef: 'The selected model is invalid or unavailable. Read current data and select an enabled, compatible model.',
   name: 'Name is invalid. Enter a nonempty name, up to 128 characters.',
   api: 'API type is invalid. Choose OpenAI Responses or Anthropic Messages.',
-  agentImage: 'Agent image is invalid. Enter an available image reference.',
+  agentImage: 'The release Agent image could not be confirmed. Read current runtime or repair the server release.',
   capabilities: 'Model capabilities are invalid. Check the compatible SDK template or explicit definition JSON.',
 };
 
@@ -124,7 +124,7 @@ export class ConsoleAdapter {
     if (!value || typeof value !== "object") throw new ConsoleError(method === "GET" ? "INVALID_RESPONSE" : "RESULT_UNKNOWN", "The server returned an invalid response. Read current data before submitting again.");
     if (!response.ok) {
       const error = errorFrom(value, response.status, method !== "GET", login);
-      if (error.code === "SESSION_EXPIRED") this.clearIdentity();
+      if (error.code === "SESSION_EXPIRED") { this.clearIdentity(); if (document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted') location.assign('/login'); }
       throw error;
     }
     return value;
@@ -177,12 +177,17 @@ export class ConsoleAdapter {
     return { selfRevoked };
   }
   async runtime() { this.store.runtime = runtimeView(await this.request("admin/runtime")); return this.store.runtime; }
+  async runtimeDefaults() {
+    const value=await this.request('admin/runtime-defaults');
+    if(typeof value.agentImage!=='string'||!value.agentImage)throw new ConsoleError('RELEASE_DEFAULTS_UNAVAILABLE','The server release Agent image is unavailable. Repair the server release, then read current state.');
+    return value.agentImage as string;
+  }
   async modelRequest(resource:string,method='GET',body?:unknown) {
     try{return await this.request(`admin/${resource}`,method,body);}
     catch(error){if((resource==='models'||resource.startsWith('models/'))&&error instanceof ConsoleError&&error.code==='INVALID_REQUEST'&&error.field.split('.')[0]==='name')throw new ConsoleError('INVALID_REQUEST','Display name is invalid. Use at most 256 characters, or leave blank to use the Model ID.',error.retryAfterMs,error.correlationId,error.field);if(resource==='model-tests'&&error instanceof ConsoleError&&error.code==='RESULT_UNKNOWN')throw new ConsoleError('TEST_RESULT_UNAVAILABLE','The Test result could not be confirmed. Check the Core connection and explicitly test again. No configuration was saved.',error.retryAfterMs,error.correlationId);throw error;}
   }
-  async saveRuntimeSelection(agentImage:string,modelRef:string) {
-    const value=await this.request('admin/runtime','PUT',{agentImage,modelRef});
+  async saveRuntimeSelection(modelRef:string) {
+    const value=await this.request('admin/runtime','PUT',{modelRef});
     try{this.store.runtime=runtimeView(value.runtime);}catch{throw new ConsoleError('RESULT_UNKNOWN','Read current runtime before saving again.');}
     return this.store.runtime;
   }

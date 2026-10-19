@@ -19,7 +19,7 @@ const codeAliases = {
 const explanations = {
     MODEL_IN_USE: "Remove configuration dependencies before deleting this provider or model. Existing Work may need a different model and Apply.",
     MODEL_TEST_BUSY: "A model Test is already running. Wait for its result before testing again.",
-    DEFAULT_WORK_NOT_CONFIGURED: "Configure Runtime with an Agent image and model before setting defaults.",
+    DEFAULT_WORK_NOT_CONFIGURED: "Choose a model in Runtime before setting defaults. The Agent image is supplied by this release.",
     CORE_UNREACHABLE: "Core could not be reached. Check the connection and try again.",
     SESSION_EXPIRED: "Your administrator session expired or was revoked. Sign in again.",
     ADMIN_ONLY: "Only administrators can access this console. Use the user CLI or Desktop for your own Work.",
@@ -36,7 +36,7 @@ const invalidFields = {
     modelRef: 'The selected model is invalid or unavailable. Read current data and select an enabled, compatible model.',
     name: 'Name is invalid. Enter a nonempty name, up to 128 characters.',
     api: 'API type is invalid. Choose OpenAI Responses or Anthropic Messages.',
-    agentImage: 'Agent image is invalid. Enter an available image reference.',
+    agentImage: 'The release Agent image could not be confirmed. Read current runtime or repair the server release.',
     capabilities: 'Model capabilities are invalid. Check the compatible SDK template or explicit definition JSON.',
 };
 function errorFrom(value, status, write, login = false) {
@@ -134,8 +134,11 @@ export class ConsoleAdapter {
             throw new ConsoleError(method === "GET" ? "INVALID_RESPONSE" : "RESULT_UNKNOWN", "The server returned an invalid response. Read current data before submitting again.");
         if (!response.ok) {
             const error = errorFrom(value, response.status, method !== "GET", login);
-            if (error.code === "SESSION_EXPIRED")
+            if (error.code === "SESSION_EXPIRED") {
                 this.clearIdentity();
+                if (document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted')
+                    location.assign('/login');
+            }
             throw error;
         }
         return value;
@@ -202,6 +205,12 @@ export class ConsoleAdapter {
         return { selfRevoked };
     }
     async runtime() { this.store.runtime = runtimeView(await this.request("admin/runtime")); return this.store.runtime; }
+    async runtimeDefaults() {
+        const value = await this.request('admin/runtime-defaults');
+        if (typeof value.agentImage !== 'string' || !value.agentImage)
+            throw new ConsoleError('RELEASE_DEFAULTS_UNAVAILABLE', 'The server release Agent image is unavailable. Repair the server release, then read current state.');
+        return value.agentImage;
+    }
     async modelRequest(resource, method = 'GET', body) {
         try {
             return await this.request(`admin/${resource}`, method, body);
@@ -214,8 +223,8 @@ export class ConsoleAdapter {
             throw error;
         }
     }
-    async saveRuntimeSelection(agentImage, modelRef) {
-        const value = await this.request('admin/runtime', 'PUT', { agentImage, modelRef });
+    async saveRuntimeSelection(modelRef) {
+        const value = await this.request('admin/runtime', 'PUT', { modelRef });
         try {
             this.store.runtime = runtimeView(value.runtime);
         }

@@ -1,8 +1,6 @@
 package coreapp
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -81,19 +79,6 @@ func TestListenValidationBeforeAnyFileOrNetworkEffects(t *testing.T) {
 	for _, address := range []string{"127.0.0.1:-1", "127.0.0.1:65536", "127.0.0.1:+1", "localhost", "localhost:", "::1:7171", ":7171"} {
 		if _, err := ParseListen(address, true); !errors.Is(err, ErrListen) {
 			t.Fatal(address, err)
-		}
-	}
-}
-func TestServeRejectsInvalidOrRemoteParametersWithoutCreatingInstallation(t *testing.T) {
-	for _, args := range [][]string{{"--listen", "0.0.0.0:7171"}, {"--listen", "127.0.0.1:65536"}, {"--unknown"}, {"--listen", "127.0.0.1:0", "--listen", "127.0.0.1:0"}} {
-		directory := filepath.Join(t.TempDir(), "uncreated-core")
-		args = append([]string{"--data-dir", directory}, args...)
-		var stdout, stderr bytes.Buffer
-		if code := RunServe(context.Background(), args, &stdout, &stderr); code != 2 || stdout.Len() != 0 || stderr.Len() == 0 {
-			t.Fatal(code, stdout.String(), stderr.String())
-		}
-		if _, err := os.Stat(directory); !os.IsNotExist(err) {
-			t.Fatal("invalid parameters created data directory")
 		}
 	}
 }

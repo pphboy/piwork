@@ -292,7 +292,7 @@ func (d *nativeDesktop) transferStore() (*desktopTransfers, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.transfers == nil {
-		t, err := newDesktopTransfers(d.store.Path)
+		t, err := newDesktopTransfers(d.transferPath())
 		if err != nil {
 			return nil, err
 		}
@@ -587,7 +587,7 @@ func (d *nativeDesktop) importDesktopPackage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	_, _ = file.Seek(0, io.SeekStart)
-	api, _ := client.New(coreURL, record.Token)
+	api, _ := d.client(coreURL, record.Token)
 	headers := make(http.Header)
 	headers.Set("Content-Type", workPackageMIME)
 	headers.Set("X-Piwork-Sha256", job.digest)
@@ -671,7 +671,7 @@ func (d *nativeDesktop) importDesktopPackage(w http.ResponseWriter, r *http.Requ
 	var value map[string]json.RawMessage
 	_ = json.Unmarshal(accepted, &value)
 	if value != nil {
-		saved := (desktopOperationRecords{credentialPath: d.store.Path}).accept(coreURL, record.User.ID, "Import Work", accepted) == nil
+		saved := d.operationRecords().accept(coreURL, record.User.ID, "Import Work", accepted) == nil
 		value["localRecordSaved"], _ = json.Marshal(saved)
 		desktopJSON(w, 202, value)
 	} else {
@@ -687,7 +687,7 @@ func (d *nativeDesktop) prepareDesktopDownload(w http.ResponseWriter, r *http.Re
 	d.mu.Lock()
 	coreURL, record, generation := d.identity.coreURL, d.identity.credential, d.identity.generation
 	d.mu.Unlock()
-	api, _ := client.New(coreURL, record.Token)
+	api, _ := d.client(coreURL, record.Token)
 	var metadata snapshotMetadata
 	if err := api.Request(r.Context(), "GET", "/api/v1/work-snapshots/"+snapshotID, nil, &metadata); err != nil {
 		var apiErr *client.APIError

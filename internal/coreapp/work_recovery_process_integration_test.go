@@ -65,11 +65,11 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := func() (*exec.Cmd, string, *bytes.Buffer) {
-		cmd := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0")
+		seedProcessRuntime(t, directory, image)
+		cmd := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0", "--package-helper-image", image, "--file-helper-image", os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), "--snapshot-helper-image", os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"), "--no-open")
 		cmd.Env = []string{
 			"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + host, "DOCKER_CONFIG=" + t.TempDir(),
 			"PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass",
-			"PIWORK_AGENT_IMAGE=" + image, "PIWORK_MODEL_PROVIDER=piwork-deterministic", "PIWORK_MODEL=fixture-v1", "PIWORK_API_KEY=acceptance-only",
 		}
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -93,7 +93,7 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 		var announcement struct{ Event, URL string }
 		select {
 		case rawLine := <-line:
-			if json.Unmarshal(rawLine, &announcement) != nil || announcement.Event != "core.listening" || announcement.URL == "" {
+			if json.Unmarshal(rawLine, &announcement) != nil || announcement.Event != "app.listening" || announcement.URL == "" {
 				t.Fatal("Core did not announce its listener", stderr.String())
 			}
 		case <-time.After(45 * time.Second):

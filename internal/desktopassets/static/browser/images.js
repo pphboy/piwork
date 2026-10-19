@@ -1,3 +1,4 @@
+import { randomUUID } from './browser-crypto.js';
 export class ImageDrafts {
     changed;
     drafts = new Map();
@@ -39,7 +40,7 @@ export class ImageDrafts {
                 errors.push(`${file.name}: Up to 4 images, 5 MiB each and 10 MiB total.`);
                 continue;
             }
-            const item = { id: crypto.randomUUID(), name: file.name || 'Pasted image', bytes: file.size, url: URL.createObjectURL(file), reading: true };
+            const item = { id: randomUUID(), name: file.name || 'Pasted image', bytes: file.size, url: URL.createObjectURL(file), reading: true };
             this.drafts.set(key, [...existing, item]);
             this.owners.set(item.id, key);
             this.changed();
