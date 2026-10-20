@@ -1,5 +1,6 @@
 import {buildNativeTestServer} from './native-test-server.mjs';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
@@ -34,6 +35,7 @@ export async function runCoreDependencyChecks() {
   async function wait(check, name, milliseconds = 180000) {
     const deadline = Date.now() + milliseconds; let last;
     while (Date.now() < deadline) {
+      if (core && (core.exitCode !== null || core.signalCode !== null)) throw new Error('Core exited while waiting for ' + name + ': ' + coreOutput());
       try { const value = await check(); if (value) return value; } catch (error) { last = error; }
       await new Promise(done => setTimeout(done, 250));
     }
@@ -43,11 +45,19 @@ export async function runCoreDependencyChecks() {
     let text = ''; child.stdout.on('data', chunk => { text += chunk; }); child.stderr.on('data', chunk => { text += chunk; });
     return () => text.slice(-8000);
   }
-  async function stop(child) {
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  async function stop(child, requireGraceful = false) {
+    if (!child) return;
+    if (child.exitCode !== null || child.signalCode !== null) {
+      if (requireGraceful) assert.equal(child.exitCode, 0, 'Core exited unsuccessfully');
+      return;
+    }
+    const exited = new Promise(done => child.once('exit', (code, signal) => done({code, signal})));
+    let timer;
     child.kill('SIGTERM');
-    await Promise.race([new Promise(done => child.once('exit', done)), new Promise(done => setTimeout(done, 20000))]);
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    const result = await Promise.race([exited, new Promise(done => { timer = setTimeout(() => done(null), 75000); timer.unref(); })]);
+    clearTimeout(timer);
+    if (!result) { child.kill('SIGKILL'); await exited; }
+    if (requireGraceful) assert.equal(result?.code, 0, 'Core did not close normally within its shutdown budget');
   }
   let core, desktop, browser, token, coreUrl, work, session;
   let coreOutput = () => '', desktopOutput = () => '';
@@ -77,9 +87,9 @@ export async function runCoreDependencyChecks() {
     return run;
   }
   try {
-    const [httpPort, grpcPort, desktopPort] = await Promise.all([port(), port(), port()]);
+    const [httpPort, grpcPort, desktopPort, controlPort] = await Promise.all([port(), port(), port(), port()]);
     coreUrl = `http://127.0.0.1:${httpPort}`;
-    core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', '127.0.0.1:0', '--core-listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
+    core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', `127.0.0.1:${controlPort}`, '--core-listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
       { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent' } });
     coreOutput = output(core);
     await wait(async () => (await fetch(coreUrl + '/healthz')).ok, 'Core health');
@@ -115,6 +125,15 @@ export async function runCoreDependencyChecks() {
     await page.getByRole('button', { name: 'Services', exact: true }).click();
     const frame = page.frameLocator('iframe.real-service-frame');
     await frame.getByRole('heading', { name: 'Personal workstation', exact: true }).waitFor();
+    console.log('Independent CLI Desktop initial Service access verified.');
+    await page.goto(`http://127.0.0.1:${controlPort}`);
+    await page.getByRole('textbox', { name: 'Account', exact: true }).fill('admin');
+    await page.getByLabel('Password', { exact: true }).fill('web-base-synthetic-password');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    await page.getByRole('link', { name: /^NiceGUI dependency validation/ }).click();
+    await page.getByRole('button', { name: 'Services', exact: true }).click();
+    await frame.getByRole('heading', { name: 'Personal workstation', exact: true }).waitFor();
     const candidate = JSON.parse(await readFile(join(root, 'dist/web-base/candidate.json')));
     const services = (await api('GET', `/works/${work}/services`)).services;
     const application = services.find(item => item.name === 'workstation');
@@ -131,20 +150,25 @@ export async function runCoreDependencyChecks() {
     assert.match((await chat('install deterministic workstation Python dependency sdk-extra')).finalText, /^workstation-python-dependency-verified:[a-f0-9]{64}$/);
     await expect(frame.getByRole('heading', { name: 'Personal workstation', exact: true })).toBeVisible({ timeout: 90000 });
     await expect(frame.getByLabel('Todo title', { exact: true })).toHaveValue('kept before dependency update');
-    const dependency = await frame.getByRole('heading', { name: 'Personal workstation', exact: true }).evaluate(async () => (await fetch('/ui/queries/dependency_environment')).json());
+    const dependency = await frame.getByRole('heading', { name: 'Personal workstation', exact: true }).evaluate(async () => (await fetch(window.piworkAppURL('/ui/queries/dependency_environment'))).json());
     assert.equal(dependency.value.version, '1.0.0'); assert.match(dependency.value.pythonPrefix, /\/\.deps\//); assert(dependency.checks.every(item => item.passed));
     const registryStop = await api('POST', `/works/${work}/services/${registryReceipt.serviceId}/stop`, { idempotencyKey: 'registry-unavailable' });
     await wait(async () => (await api('GET', `/operations/${registryStop.operationId}`)).state === 'succeeded', 'registry disabled');
     const offlineRestart = await api('POST', `/works/${work}/services/${application.serviceId}/restart`, { idempotencyKey: 'python-offline-restart' });
     await wait(async () => (await api('GET', `/operations/${offlineRestart.operationId}`)).state === 'succeeded', 'offline Python dependency restart');
     await expect(frame.getByRole('heading', { name: 'Personal workstation', exact: true })).toBeVisible({ timeout: 90000 });
-    assert.equal((await frame.getByRole('heading', { name: 'Personal workstation', exact: true }).evaluate(async () => (await fetch('/ui/queries/dependency_environment')).json())).value.version, '1.0.0');
+    assert.equal((await frame.getByRole('heading', { name: 'Personal workstation', exact: true }).evaluate(async () => (await fetch(window.piworkAppURL('/ui/queries/dependency_environment'))).json())).value.version, '1.0.0');
 
     async function readSource(path) {
       const response = await fetch(`${coreUrl}/api/v1/works/${work}/files/${path}`, { headers: { Authorization: `Bearer ${token}` } });
       assert(response.ok); return response.text();
     }
     async function writeSource(path, body) {
+      await wait(() => {
+        const db = new DatabaseSync(join(data, 'core.sqlite'), { readOnly: true });
+        try { return db.prepare("SELECT count(*) AS pending FROM work_file_jobs WHERE work_id=? AND state!='cleaned'").get(work).pending === 0; }
+        finally { db.close(); }
+      }, 'fixture file helper retirement', 30000);
       const response = await fetch(`${coreUrl}/api/v1/works/${work}/files/${path}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body });
       assert(response.ok, 'Source update was rejected');
     }
@@ -202,7 +226,7 @@ export async function runCoreDependencyChecks() {
     assert.equal((await independent.json()).state, 'succeeded');
     console.log('Extra Python dependency survived Stop/Export/Import/Start with its package registry disabled; snapshot bytes:', snapshotBytes);
     const record = { contractVersion: 2, passed: true, checkedAt: new Date().toISOString(), imageId: candidate.imageId,
-      inputHash: candidate.inputHash, snapshotBytes, checks: ['sdk-python-dependency-install', 'offline-extra-dependency-restart', 'offline-extra-dependency-import', 'draft-storage-failure-retained'], runs: results.map(({ prompt, runId }) => ({ prompt, runId })) };
+      inputHash: candidate.inputHash, browserEntryMode: 'control-plane', independentDesktopInitialAccess: true, snapshotBytes, checks: ['sdk-python-dependency-install', 'offline-extra-dependency-restart', 'offline-extra-dependency-import', 'draft-storage-failure-retained'], runs: results.map(({ prompt, runId }) => ({ prompt, runId })) };
     await writeFile(join(root, 'dist/web-base/core-dependencies-validation.json'), JSON.stringify(record, null, 2) + '\n');
     const main = JSON.parse(await readFile(join(root, 'dist/web-base/core-main-validation.json')));
     assert(main.passed && main.imageId === record.imageId && main.inputHash === record.inputHash, 'Main Core evidence belongs to another image/input');
