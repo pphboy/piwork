@@ -2,7 +2,7 @@ name: piwork-quickstart
 # Liveness keeps first-time setup accessible; /readyz tracks runtime preparation.
 services:
   core:
-    image: docker.io/pphboy/piwork-core:0.0.7-62f2868cb8e2-d69916b52829-dirty
+    image: docker.io/pphboy/piwork-core:0.0.8-fbf639bcbf43-c2a689377a51
     init: true
     user: "0:0"
     network_mode: host

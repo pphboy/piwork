@@ -6,7 +6,7 @@ Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. The default 
 
 Uses its own `/var/lib/piwork/examples/single-host/core` directory. Stop conflicting installations first, preserving their data.
 
-The direct-entry flow in this checkout applies to newly built programs and subsequent releases. Pinned images retain their released initialization behavior; updating source does not update an image. See the [matching release manual](https://github.com/pphboy/piwork/blob/62f2868cb8e24da3d08db7a7d6c00aabd6226cd4/deploy/docker/README.md) for that image, or [build the current source](https://github.com/pphboy/piwork/blob/main/AGENTS.md#构建与验证) to test this flow.
+This published image includes direct browser entry and web setup.
 
 ```sh
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core

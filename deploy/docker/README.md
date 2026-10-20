@@ -12,7 +12,7 @@ This release runs application Services without a Piwork memory cap or Service me
 
 Use Linux x86-64 and rootful Docker Engine 28+. One container serves the workbench, administration and first-time setup, with no environment variables or client CLI required:
 
-The direct-entry flow in this checkout applies to newly built programs and subsequent releases. Pinned images retain their released initialization behavior; updating source does not update an image. See the [matching release manual](https://github.com/pphboy/piwork/blob/62f2868cb8e24da3d08db7a7d6c00aabd6226cd4/deploy/docker/README.md) for that image, or [build the current source](https://github.com/pphboy/piwork/blob/main/AGENTS.md#构建与验证) to test this flow.
+This published image includes direct browser entry and web setup.
 
 ```sh
 docker run --detach --init \
@@ -22,7 +22,7 @@ docker run --detach --init \
     --stop-timeout 60 \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.7-62f2868cb8e2-d69916b52829-dirty
+    docker.io/pphboy/piwork-core:0.0.8-fbf639bcbf43-c2a689377a51
 ```
 
 On this computer or another computer, open `http://SERVER_IP:7171` using the server’s actual IP. An empty installation shows Create administrator; an initialized installation shows normal sign-in. No terminal authorization link is required.
@@ -66,7 +66,7 @@ For an independent client built from this source, run `piwork-cli desktop --no-o
 The optional Compose demo uses its own `/var/lib/piwork/core` directory. Stop an installation using the same ports normally before starting. Set up the administrator and model in the browser.
 
 ```sh
-PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.7-62f2868cb8e2-d69916b52829-dirty \
+PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.8-fbf639bcbf43-c2a689377a51 \
     docker compose -f compose.core.yaml up --detach --wait --wait-timeout 600 core
 ```
 
@@ -105,7 +105,7 @@ docker run --rm --init --interactive --tty \
     --add-host host.docker.internal:host-gateway \
     --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.7-62f2868cb8e2-d69916b52829-dirty
+    docker.io/pphboy/piwork-cli:0.0.8-fbf639bcbf43-c2a689377a51
 ```
 
 ```sh

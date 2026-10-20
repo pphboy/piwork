@@ -12,7 +12,7 @@
 
 Linux x86-64、rootful Docker Engine 28+。运行一个容器即可提供工作台、管理和首次设置，无需环境变量或客户端 CLI：
 
-当前源码的直接访问流程适用于本次重建程序和后续发行。固定镜像保留发布时的初始化行为，更新源码不会更新镜像；该镜像请查阅[对应版本手册](https://github.com/pphboy/piwork/blob/62f2868cb8e24da3d08db7a7d6c00aabd6226cd4/deploy/docker/README.zh-CN.md)。测试新流程请先[构建当前源码](https://github.com/pphboy/piwork/blob/main/AGENTS.md#构建与验证)。
+本版固定镜像包含直接访问与网页配置流程。
 
 ```sh
 docker run --detach --init \
@@ -22,7 +22,7 @@ docker run --detach --init \
     --stop-timeout 60 \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.7-62f2868cb8e2-d69916b52829-dirty
+    docker.io/pphboy/piwork-core:0.0.8-fbf639bcbf43-c2a689377a51
 ```
 
 在本机或另一台电脑直接打开 `http://服务器IP:7171`，使用服务器实际 IP。空安装会显示创建管理员；已有账号时正常登录，无需终端授权链接。
@@ -66,7 +66,7 @@ Docker 镜像已包含统一入口。如需原生运行，先[构建当前源码
 可选 Compose Demo 使用独立数据目录 `/var/lib/piwork/core`，正常停止占用相同端口的安装后再启动。模型和管理员仍在网页设置。
 
 ```sh
-PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.7-62f2868cb8e2-d69916b52829-dirty \
+PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.8-fbf639bcbf43-c2a689377a51 \
     docker compose -f compose.core.yaml up --detach --wait --wait-timeout 600 core
 ```
 
@@ -105,7 +105,7 @@ docker run --rm --init --interactive --tty \
     --add-host host.docker.internal:host-gateway \
     --env PIWORK_CORE_URL=http://host.docker.internal:7171 \
     --mount type=volume,src=piwork-quickstart-client-state,dst=/var/lib/piwork/client \
-    docker.io/pphboy/piwork-cli:0.0.7-62f2868cb8e2-d69916b52829-dirty
+    docker.io/pphboy/piwork-cli:0.0.8-fbf639bcbf43-c2a689377a51
 ```
 
 ```sh

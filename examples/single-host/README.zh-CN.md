@@ -6,7 +6,7 @@ Linux x86-64、rootful Docker Engine 28+、Compose 2.24+。默认只运行统一
 
 使用独立目录 `/var/lib/piwork/examples/single-host/core`。先停止端口冲突的安装，不删除它的数据。
 
-当前源码的直接访问流程适用于本次重建程序和后续发行。固定镜像保留发布时的初始化行为，更新源码不会更新镜像；该镜像请查阅[对应版本手册](https://github.com/pphboy/piwork/blob/62f2868cb8e24da3d08db7a7d6c00aabd6226cd4/deploy/docker/README.zh-CN.md)。测试新流程请先[构建当前源码](https://github.com/pphboy/piwork/blob/main/AGENTS.md#构建与验证)。
+本版固定镜像包含直接访问与网页配置流程。
 
 ```sh
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
