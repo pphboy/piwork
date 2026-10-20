@@ -128,7 +128,7 @@ try {
   await page.getByLabel('Password').fill('web-base-synthetic-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
-  await page.getByRole('button', { name: /^Web base validation/ }).click();
+  await page.getByRole('link', { name: /^Web base validation/ }).click();
   await page.getByRole('button', { name: 'Services', exact: true }).click();
   const frame = page.frameLocator('iframe.real-service-frame');
   await frame.getByRole('heading', { name: 'Personal workstation', exact: true }).waitFor();
