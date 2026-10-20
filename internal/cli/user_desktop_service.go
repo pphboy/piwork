@@ -408,6 +408,14 @@ func (d *nativeDesktop) serveServiceEntryAPI(w http.ResponseWriter, r *http.Requ
 			desktopError(w, 404, "NOT_FOUND")
 			return true
 		}
+		if d.hosted != nil {
+			refreshed, err := d.hostedEntry(r.Context(), copy.workID, copy.serviceID, copy.port)
+			if err != nil {
+				desktopControlFailure(w, err)
+				return true
+			}
+			copy = refreshed
+		}
 		resolved, err := desktopResolveService(r.Context(), api, copy.hostname, copy.port)
 		if err != nil {
 			desktopControlFailure(w, err)
@@ -418,7 +426,9 @@ func (d *nativeDesktop) serveServiceEntryAPI(w http.ResponseWriter, r *http.Requ
 			return true
 		}
 		if copy.runtimeGeneration != "" && copy.runtimeGeneration != resolved.Generation {
-			d.invalidateServiceEntry(copy)
+			if d.hosted == nil {
+				d.invalidateServiceEntry(copy)
+			}
 			desktopError(w, 409, "SERVICE_GENERATION_CHANGED")
 			return true
 		}

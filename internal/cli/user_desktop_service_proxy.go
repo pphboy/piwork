@@ -214,7 +214,9 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if entry.runtimeGeneration != "" && entry.runtimeGeneration != resolved.Generation {
-		d.invalidateServiceEntry(entry)
+		if d.hosted == nil {
+			d.invalidateServiceEntry(entry)
+		}
 		desktopError(w, 409, "SERVICE_GENERATION_CHANGED")
 		return
 	}

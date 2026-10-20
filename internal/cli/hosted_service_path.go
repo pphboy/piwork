@@ -113,12 +113,18 @@ func (d *nativeDesktop) hostedEntry(ctx context.Context, work, service string, p
 	if d.identity.credential == nil || d.identity.credential.Token != token || d.identity.generation != generation {
 		return fail(409, "CONNECTION_CHANGED")
 	}
-	for id, entry := range d.serviceEntries {
+	for _, entry := range d.serviceEntries {
 		if entry.workID == work && entry.serviceID == service && entry.port == port {
-			if entry.runtimeGeneration == resolved.Generation {
-				return *entry, nil
+			if entry.runtimeGeneration != resolved.Generation {
+				jar, err := cookiejar.New(nil)
+				if err != nil {
+					return fail(503, "SERVICE_ENTRY_UNAVAILABLE")
+				}
+				// The authenticated path and its UI probe identify the Service,
+				// while every forwarded request still pins its current runtime.
+				entry.runtimeGeneration, entry.hostname, entry.jar = resolved.Generation, metadata.Access.Hostname, jar
 			}
-			delete(d.serviceEntries, id)
+			return *entry, nil
 		}
 	}
 	if len(d.serviceEntries) >= 1024 {

@@ -255,6 +255,9 @@ func TestHostedServiceStreamsAndStablePathsRevalidateGeneration(t *testing.T) {
 	if status != 200 || newer.Origin != entry.Origin {
 		t.Fatal("same logical Service lost origin", status)
 	}
+	if newer.EntryID != entry.EntryID {
+		t.Fatal("Service restart invalidated the workbench's cached entry probe")
+	}
 	newGrant := grant
 	u, _ := url.Parse(newer.Origin)
 	conn, err := net.Dial("tcp", u.Host)
@@ -288,6 +291,26 @@ func TestHostedServiceStreamsAndStablePathsRevalidateGeneration(t *testing.T) {
 		t.Fatal("new login could not reuse stable path")
 	}
 
+}
+
+func TestHostedServiceProbeRefreshesRuntimeBeforeApplicationRequests(t *testing.T) {
+	f := newHostedServiceFixture(t, 1)
+	h := f.desktop(t, "probe")
+	entry, status := hostedEntryCreate(t, h, "probe", "notes")
+	if status != 200 {
+		t.Fatal(status)
+	}
+	f.generation.Add(1)
+	r := httptest.NewRequest("GET", h.desktop.origin+"/_desktop/api/service-entries/"+entry.EntryID, nil)
+	r.Header.Set("Cookie", "web-session=probe")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatal("cached entry probe failed after restart", w.Code, w.Body.String())
+	}
+	if response := serviceCall(t, "GET", entry.EntryURL, "web-session=probe", ""); response.StatusCode != 200 {
+		t.Fatal("probe did not adopt the current runtime", response.StatusCode)
+	}
 }
 
 func TestHostedConcurrentEntryCreationUsesOneTarget(t *testing.T) {
