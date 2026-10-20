@@ -4,6 +4,14 @@
 
 供应用 Service 复用的 Python 3.13 + NiceGUI + SQLite 基础环境。Agent 编辑 Work 共享 workspace，Core 在独立 Service 中运行应用。标准 Python 包与浏览器资源已安装在镜像中，应用无需 npm 安装、独立前端构建或复制完整标准环境。
 
+## 浏览器 Service 路径
+
+当前源码候选支持 ControlPlane origin（默认 17891）下的 `/services/<workId>/<serviceId>/<port>/`。Core 17871 由后端与 CLI 使用。路径支持需要重建 base 候选；下方既有 published 记录保留旧发行的真实身份。
+
+NiceGUI 已通过校验后的 `X-Forwarded-Prefix` 处理内置链接、资源和 Socket.IO。`ui.link` 与框架下载路径继续使用应用相对路径，不重复添加前缀。自定义 Python HTML/资源使用 `piwork_web_runtime.browser_url(request, '/path')`；调用 `page_head(ui, loaded)` 后，自定义浏览器 fetch 使用 `window.piworkAppURL('/path')`。运行时 helper 按浏览器会话和 Service 目标分名草稿及反馈。容器内 `/health`、`/pi/v1` 仍为根路径。
+
+托管 Service 与工作台同源，须视为可信应用：脚本可使用当前用户的 UI 权限。服务端响应 Cookie 继续按会话/Service/端口分区，JavaScript Cookie 不同步。旧根路径应用须显式适配；导入保留捕获镜像、源码和数据，不改写 URL 或自动升级 base。独立 CLI Desktop 保留自己的根入口。
+
 ## 可用状态与身份
 
 当前源码使用环境契约 **2**、**0.2.0** 版本系列，Python **3.13.16**、NiceGUI **3.18.0**、pip **26.2.1** 与 sqlite3 CLI **3.40.1-2+deb12u2**，首先验证 Linux amd64。精确标准依赖见 [requirements.lock](requirements.lock)，上游 Python 固定镜像见 [environment.json](environment.json)；镜像只读环境清单还记录实际安装包和构建输入 hash。

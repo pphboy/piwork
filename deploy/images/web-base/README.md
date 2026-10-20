@@ -4,6 +4,14 @@
 
 A reusable Python 3.13 + NiceGUI + SQLite environment for application Services. Agent edits the shared Work workspace; Core runs the application in a separate Service. Standard packages and browser resources are already installed in the image. Applications need no npm install, frontend build, or copy of the standard Python environment.
 
+## Browser Service paths
+
+The current source candidate supports `/services/<workId>/<serviceId>/<port>/` on the ControlPlane origin (default port 17891). Core 17871 is used by the backend and CLI. This path support requires a rebuilt base candidate; the published release record below retains its actual older identity.
+
+NiceGUI already uses the validated `X-Forwarded-Prefix` for its own links, resources and Socket.IO. Keep `ui.link` and framework download paths application-relative; do not prefix them twice. For custom Python HTML/resources use `browser_url(request, '/path')` from `piwork_web_runtime`. After `page_head(ui, loaded)`, custom browser fetches use `window.piworkAppURL('/path')`. The runtime helper scopes drafts and feedback by browser session and Service target. Internal `/health` and `/pi/v1` continue at the container root.
+
+Hosted Services share the workbench origin and must be trusted: their scripts can act with the current user's UI permissions. Server-response Cookies remain partitioned by session/Service/port; JavaScript Cookie access is not synchronized. Old root-path applications must be explicitly adapted. Import preserves captured images, source and data; it neither rewrites URLs nor upgrades the base automatically. Independent CLI Desktop retains its own root entry.
+
 ## Availability and identity
 
 The current source defines environment contract **2**, version series **0.2.0**, Python **3.13.16**, NiceGUI **3.18.0**, pip **26.2.1**, and sqlite3 CLI **3.40.1-2+deb12u2**, initially for Linux amd64. Exact standard dependencies are in [requirements.lock](requirements.lock); [environment.json](environment.json) fixes the upstream Python image. The built read-only manifest also records installed packages and the actual input hash.
