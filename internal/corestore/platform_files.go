@@ -279,7 +279,13 @@ func (s *Store) OpenSkillsRoot() (*safefs.Root, error) {
 }
 
 func (s *Store) OpenWorksRoot() (*safefs.Root, error) {
-	return s.root.OpenDirectory("works")
+	if err := s.root.EnsureDirectory("works"); err != nil {
+		return nil, err
+	}
+	// The installation already owns the enclosing store lock. Context reads and
+	// atomic publications may overlap; another exclusive flock here would make
+	// ordinary reads spuriously reject configuration Save.
+	return s.root.OpenPrivateDirectory("works")
 }
 
 func (s *Store) OpenPackageUploadsRoot() (*safefs.Root, error) {

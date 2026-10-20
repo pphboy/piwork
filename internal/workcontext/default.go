@@ -95,12 +95,12 @@ func buildCaptured(store *corestore.Store, dataDirectory, workID, targetContextI
 		return output, ErrContext
 	}
 	defer works.Close()
-	work, err := works.OpenDirectory(workID)
+	work, err := contextDirectory(works, workID)
 	if err != nil {
 		return output, ErrContext
 	}
 	defer work.Close()
-	contexts, err := work.OpenDirectory("contexts")
+	contexts, err := contextDirectory(work, "contexts")
 	if err != nil {
 		return output, ErrContext
 	}
@@ -113,7 +113,7 @@ func buildCaptured(store *corestore.Store, dataDirectory, workID, targetContextI
 	if targetContextID != "" {
 		contextID = targetContextID
 	}
-	stage, err := contexts.OpenDirectory(stageName)
+	stage, err := contextDirectory(contexts, stageName)
 	if err != nil {
 		return output, ErrContext
 	}
@@ -134,7 +134,7 @@ func buildCaptured(store *corestore.Store, dataDirectory, workID, targetContextI
 			_ = contexts.RemoveTree(stageName)
 		}
 	}()
-	skills, err := stage.OpenDirectory("skills")
+	skills, err := contextDirectory(stage, "skills")
 	if err != nil {
 		return output, ErrContext
 	}
@@ -147,7 +147,7 @@ func buildCaptured(store *corestore.Store, dataDirectory, workID, targetContextI
 		return output, ErrContext
 	}
 	skills.Close()
-	packages, err := stage.OpenDirectory("packages")
+	packages, err := contextDirectory(stage, "packages")
 	if err != nil {
 		return output, ErrContext
 	}
@@ -230,12 +230,12 @@ func RemoveCandidate(store *corestore.Store, workID, contextID string) error {
 		return ErrContext
 	}
 	defer works.Close()
-	work, err := works.OpenDirectory(workID)
+	work, err := works.OpenPrivateDirectory(workID)
 	if err != nil {
 		return ErrContext
 	}
 	defer work.Close()
-	contexts, err := work.OpenDirectory("contexts")
+	contexts, err := work.OpenPrivateDirectory("contexts")
 	if err != nil {
 		return ErrContext
 	}
