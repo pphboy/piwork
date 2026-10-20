@@ -8,7 +8,18 @@ import { spawnSync } from 'node:child_process';
 import { checkQuickStart, checkPackageMaterials, installerFiles, codeBlocks, section, projectRoot } from './check-docker-quickstart.mjs';
 import { syncWebsite } from './sync-docker-website.mjs';
 import { sourceInputHash, currentRelease } from './build-docker-release.mjs';
-import { singleHostReadme, nativeQuickStart } from './docker-quickstart-content.mjs';
+import { singleHostReadme, nativeQuickStart, quickStart } from './docker-quickstart-content.mjs';
+
+test('published direct-entry releases describe shipped setup while older images retain their original instructions', () => {
+  const release = { ...currentRelease(), state: 'published' };
+  for (const language of ['en', 'zh']) {
+    const old = quickStart({ ...release, releaseVersion: '0.0.7' }, language, {});
+    const shipped = quickStart({ ...release, releaseVersion: '0.0.8' }, language, {});
+    assert.match(old, /matching release manual|对应版本手册/);
+    assert.doesNotMatch(shipped, /build the current source|构建当前源码/);
+    assert.match(shipped, /includes direct browser entry|包含直接访问与网页配置流程/);
+  }
+});
 
 const docs = ['deploy/docker/README.md', 'deploy/docker/README.zh-CN.md'];
 function fixture(t) {

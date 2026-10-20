@@ -38,6 +38,10 @@ export const firstChatCommand = "piwork-cli chat WORK_ID --message 'Hello, Piwor
 
 function publishedFlowNote(metadata, zh) {
   if (metadata.state !== 'published') return '';
+  const version = /^(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(metadata.releaseVersion || '');
+  if (version && (+version[1] > 0 || +version[2] > 0 || +version[3] >= 8)) {
+    return zh ? '本版固定镜像包含直接访问与网页配置流程。' : 'This published image includes direct browser entry and web setup.';
+  }
   const manual = `https://github.com/pphboy/piwork/blob/${metadata.sourceCommit}/deploy/docker/README${zh ? '.zh-CN' : ''}.md`;
   const sourceBuild = 'https://github.com/pphboy/piwork/blob/main/AGENTS.md#构建与验证';
   return zh
