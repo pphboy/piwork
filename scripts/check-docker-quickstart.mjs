@@ -44,7 +44,7 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   }
   for (const role of roles) check(typeof release.images[role] === 'string' && release.images[role].endsWith(`:${release.releaseId}`) && !release.images[role].endsWith(':latest'), `deploy/docker/release.json: ${role} fixed release reference`);
 
-  const expected = [coreRun(release.images.core), "docker logs piwork-core-quickstart", "docker exec piwork-core-quickstart piwork-serve --data-dir /var/lib/piwork/quickstart/core setup link"];
+  const expected = [coreRun(release.images.core)];
   for (const [name, counterpart, prefix] of [['README.md', 'README.zh-CN.md', ''], ['README.zh-CN.md', 'README.md', 'zh/']]) {
     const text = read(name);
     const manual = `deploy/docker/${name}`;
@@ -74,6 +74,7 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
     try {
       const trial = section(text, 'docker-quickstart'); trials.push(trial);
       const blocks = codeBlocks(trial);
+      check(!/setup link|#setup=|private setup link|私有设置链接|Check (?:setup|browser) access|Reset browser access/.test(trial), `${name}: direct browser entry must not require an authorization link`);
       check(/examples\/single-host\//.test(trial), `${name}: single-host example reference missing`);
       check(!/docker compose[^\n]*run/.test(trial), `${name}: default CLI must be independent of Compose`);
       for (const command of expected) check(blocks.some(block => normalize(block.code) === normalize(command)), `${name}: complete startup and setup commands must match the release`);

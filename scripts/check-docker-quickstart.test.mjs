@@ -58,7 +58,7 @@ test('native Linux instructions retain startup, data, setup and historical clien
     const native = section(readFileSync(join(projectRoot, 'deploy/docker', name), 'utf8'), 'native-quickstart');
     assert.equal(native.trim(), nativeQuickStart(language, { buildLink: '../../AGENTS.md#构建与验证' }).trim());
     assert.deepEqual(codeBlocks(native), baseline);
-    for (const value of ['piwork/server', '0.0.0.0:7171', 'piwork setup link', '--data-dir', 'piwork-cli', 'piwork-console', 'releases/download/v0.0.7/', 'releases/download/v0.0.5/']) assert(native.includes(value), value);
+    for (const value of ['piwork/server', '0.0.0.0:7171', '--data-dir', 'piwork-cli', 'piwork-console', 'releases/download/v0.0.7/', 'releases/download/v0.0.5/']) assert(native.includes(value), value);
     for (const block of codeBlocks(native)) assert.equal(spawnSync('sh', ['-n'], { input: block.code }).status, 0);
   }
 });
@@ -133,7 +133,7 @@ test('semantic deployment drift fails with safe diagnostics', async t => {
   const cases = [
     ['Core bind', base => docs.forEach(name => replace(base, name, '--volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core', '--volume /var/lib/piwork/quickstart/core:/wrong')), 'complete startup'],
     ['Core secret leaked to CLI', base => replace(base, 'examples/single-host/docker-compose.yml.template', '      PIWORK_CORE_URL:', '      PIWORK_API_KEY: synthetic-canary-must-not-print\n      PIWORK_CORE_URL:'), 'CLI must not receive'],
-    ['language mismatch', base => replace(base, 'deploy/docker/README.zh-CN.md', 'docker logs piwork-core-quickstart', 'docker logs another-container'), 'paired browser'],
+    ['language mismatch', base => replace(base, 'deploy/docker/README.zh-CN.md', '--stop-timeout 60', '--stop-timeout 59'), 'paired browser'],
     ['tutorial returned', base => writeFileSync(join(base, 'README.md'), readFileSync(join(base, 'README.md'), 'utf8') + '\n```sh\ndocker run old:tag\n```\n'), 'usage tutorials'],
     ['preview omitted', base => replace(base, 'README.md', '?include_prereleases', ''), 'release badge'],
     ['preview disabled', base => replace(base, 'README.md', '?include_prereleases', '?include_prereleases=false'), 'release badge'],
@@ -209,7 +209,7 @@ test('website command and download drift is checked without a sibling-repository
     const native = section(quickStart, 'native-quickstart');
     assert.deepEqual(codeBlocks(native), codeBlocks(nativeQuickStart('en')));
     assert(native.includes(`](/${prefix}guide/source-installation.html)`));
-    assert(native.includes('piwork/server') && native.includes('piwork setup link'));
+    assert(native.includes('piwork/server') && !native.includes('piwork setup link'));
     assert(native.includes(prefix ? '停止受管 Work' : 'stops managed Works'));
     const source = readFileSync(join(website, 'docs', prefix, 'guide/source-installation.md'), 'utf8');
     assert(source.includes('blob/main/openspec/specs/docker-delivery/spec.md'));
@@ -241,9 +241,9 @@ test('website command and download drift is checked without a sibling-repository
     assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('stale current image')), name);
     writeFileSync(path, original);
   }
-  replace(website, 'docs/zh/guide/quick-start.md', 'docker logs piwork-core-quickstart', 'docker logs another-container');
+  replace(website, 'docs/zh/guide/quick-start.md', '--stop-timeout 60', '--stop-timeout 59');
   assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website zh/Quick Start')));
-  replace(website, 'docs/guide/quick-start.md', 'piwork setup link', 'incorrect setup command');
+  replace(website, 'docs/guide/quick-start.md', '--data-dir', '--incorrect-data-dir');
   assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('native Linux instructions')));
   writeFileSync(join(publicPath, 'docker-compose.yml'), 'different material');
   assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website download')));

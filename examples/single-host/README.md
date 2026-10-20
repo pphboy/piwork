@@ -6,19 +6,13 @@ Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. The default 
 
 Uses its own `/var/lib/piwork/examples/single-host/core` directory. Stop conflicting installations first, preserving their data.
 
+The direct-entry flow in this checkout applies to newly built programs and subsequent releases. Pinned images retain their released initialization behavior; updating source does not update an image. See the [matching release manual](https://github.com/pphboy/piwork/blob/62f2868cb8e24da3d08db7a7d6c00aabd6226cd4/deploy/docker/README.md) for that image, or [build the current source](https://github.com/pphboy/piwork/blob/main/AGENTS.md#构建与验证) to test this flow.
+
 ```sh
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 ```
 
-```sh
-docker compose -f docker-compose.yml logs core
-```
-
-Open the private setup link from the logs, create the administrator with password confirmation, sign in to Admin **Quick setup** (`/admin/setup`), enter or choose a model, then select **Save and continue** to save the model and CoreRuntime in sequence. The preparation page updates automatically; when all required components are Ready, select **Open workbench** to enter Piwork. Return through **Overview → Quick setup** to change configuration, or use the topbar **Workbench** link to return. The release supplies the Agent image automatically, with no image input or advanced override. If the link expires:
-
-```sh
-docker compose -f docker-compose.yml exec -T core piwork-serve --data-dir /var/lib/piwork/examples/single-host/core setup link
-```
+Open `http://SERVER_IP:7171` directly, create the administrator with password confirmation, sign in to Admin **Quick setup** (`/admin/setup`), enter or choose a model, then select **Save and continue** to save the model and CoreRuntime in sequence. The preparation page updates automatically; when all required components are Ready, select **Open workbench** to enter Piwork. Return through **Overview → Quick setup** to change configuration, or use the topbar **Workbench** link to return. The release supplies the Agent image automatically, with no image input or advanced override. No extra authorization link is required.
 
 The server listens on `0.0.0.0:7171` by default. Local or remote computers open `http://SERVER_IP:7171` using its actual non-loopback IP. A local network is sufficient; no public IP is required. Allow TCP 7171 for the main site and TCP 17891–17954 for Service entries (override with `--service-ports`); 7172 is internal Agent RPC, not a browser port. Piwork proxies these ports; user containers are not published directly. Opening only the main port leaves the workbench usable but Services unreachable. No domain, DNS or local proxy is required. HTTP is unencrypted; configure HTTPS explicitly for untrusted networks and expose/proxy both the main site and every Service entry port.
 

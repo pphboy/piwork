@@ -36,17 +36,24 @@ export const singleHostCommands = composeCommands + '\ndocker compose -f docker-
 export const firstWorkCommands = "piwork-cli login --account ACCOUNT\npiwork-cli work create --name 'My Work' --wait";
 export const firstChatCommand = "piwork-cli chat WORK_ID --message 'Hello, Piwork!'";
 
+function publishedFlowNote(metadata, zh) {
+  if (metadata.state !== 'published') return '';
+  const manual = `https://github.com/pphboy/piwork/blob/${metadata.sourceCommit}/deploy/docker/README${zh ? '.zh-CN' : ''}.md`;
+  const sourceBuild = 'https://github.com/pphboy/piwork/blob/main/AGENTS.md#构建与验证';
+  return zh
+    ? `当前源码的直接访问流程适用于本次重建程序和后续发行。固定镜像保留发布时的初始化行为，更新源码不会更新镜像；该镜像请查阅[对应版本手册](${manual})。测试新流程请先[构建当前源码](${sourceBuild})。`
+    : `The direct-entry flow in this checkout applies to newly built programs and subsequent releases. Pinned images retain their released initialization behavior; updating source does not update an image. See the [matching release manual](${manual}) for that image, or [build the current source](${sourceBuild}) to test this flow.`;
+}
+
 export function quickStart(metadata, language, { composeLink, operationsLink, exampleLink }) {
   const zh = language === 'zh';
   const core = typeof metadata.images.core === 'string' ? metadata.images.core : metadata.images.core.reference;
   return [
     metadata.state === 'published' ? '' : (zh ? '**本地候选：镜像尚未推送。** 以下命令对应待验证候选，不能用旧版镜像代替统一入口。' : '**Local candidate: images have not been pushed.** These commands describe the pending candidate; older images do not contain the unified entry.'),
     zh ? 'Linux x86-64、rootful Docker Engine 28+。运行一个容器即可提供工作台、管理和首次设置，无需环境变量或客户端 CLI：' : 'Use Linux x86-64 and rootful Docker Engine 28+. One container serves the workbench, administration and first-time setup, with no environment variables or client CLI required:',
+    publishedFlowNote(metadata, zh),
     code(coreRun(core)),
-    zh ? '打开终端输出中的访问地址。后台启动时，在服务器查看首次设置链接；该链接授权创建首管理员，十分钟后过期，请勿分享：' : 'Open the reported access address. For a detached container, retrieve the first-time setup link on the server. It authorizes creation of the first administrator and expires after ten minutes; keep it private:',
-    code('docker logs piwork-core-quickstart'),
-    zh ? '链接过期时取得新链接（仅安装维护者可执行）：' : 'If it expires, retrieve a new link as the installation operator:',
-    code('docker exec piwork-core-quickstart piwork-serve --data-dir /var/lib/piwork/quickstart/core setup link'),
+    zh ? '在本机或另一台电脑直接打开 `http://服务器IP:7171`，使用服务器实际 IP。空安装会显示创建管理员；已有账号时正常登录，无需终端授权链接。' : 'On this computer or another computer, open `http://SERVER_IP:7171` using the server’s actual IP. An empty installation shows Create administrator; an initialized installation shows normal sign-in. No terminal authorization link is required.',
     zh ? '浏览器创建管理员时输入密码及确认密码，随后正常登录进入 Admin 的 **Quick setup**（`/admin/setup`）。按两步引导填写模型 ID、API 类型、Base URL 和 API Key，或选择已保存模型，点击 **Save and continue**，顺序保存模型并绑定 CoreRuntime。准备页面会自动更新；全部依赖显示 Ready 后，点击 **Open workbench** 进入 Piwork。Agent 镜像随服务端版本内置并自动使用，无需也不能手填、选择或高级覆盖。模型 Test 是显式可选操作；保存不自动调用模型。打开工作台创建 Work，然后聊天、管理文件或打开 Service。后续从 Admin **Overview → Quick setup** 返回配置；顶栏 **Workbench** 可随时返回工作台，准备区的完成按钮仍需等待全部 Ready。已保存的账号、模型和 Work 在重启后保留。' : 'Create the administrator with a password and matching confirmation, then sign in to **Quick setup** in Admin (`/admin/setup`). Follow the two-step guide: enter the model ID, API type, Base URL and API Key, or choose a saved model, then select **Save and continue**. This saves the model and binds CoreRuntime in sequence. The preparation page updates automatically; when all required components are Ready, select **Open workbench** to enter Piwork. The Agent image is embedded with the server release and supplied automatically; it has no input, selector or advanced override. Model Test is explicit and optional; saving does not call the model. Open the workbench to create a Work, chat, manage files or open Services. Return through Admin **Overview → Quick setup** to change configuration. The topbar **Workbench** link remains available while preparation finishes; the completion action waits for all components. Saved accounts, models and Works survive restart.',
     serviceNetworkNote(zh), serviceCompatibilityNote(zh),
     zh ? `可选 [Compose](${composeLink})（2.24+）和 [单机示例](${exampleLink}) 同样直接进入网页；CLI 是高级可选工具。运行与恢复见 [安装手册](${operationsLink})。` : `Optional [Compose](${composeLink}) (2.24+) and the [single-host example](${exampleLink}) open the same web application. CLI is an optional advanced tool. See the [operations guide](${operationsLink}) for recovery.`,
@@ -64,11 +71,14 @@ export function nativeQuickStart(language, { buildLink = 'https://github.com/pph
       ? '默认数据目录为用户配置目录下 `piwork/server`，监听 `0.0.0.0:7171`；使用终端给出的实际 IP 链接。`--data-dir`、`--listen`、`--public-origin`、`--service-ports` 和 TLS 参数见 `--help`。'
       : 'Data defaults to `piwork/server` in the user configuration directory and the listener to `0.0.0.0:7171`; use the actual IP link printed in the terminal. See `--help` for `--data-dir`, `--listen`, `--public-origin`, `--service-ports` and TLS options.',
     zh
-      ? '首次设置链接只给安装维护者。Agent 镜像随服务端版本内置并自动使用，不提供手填或覆盖；网页创建管理员后配置模型。'
-      : 'Keep the first-time setup link private. The Agent image is embedded with the server release and used automatically, with no image input or override; create the administrator and configure the model in the browser.',
+      ? '直接打开实际 IP 地址创建管理员并正常登录，无需额外链接校验。Agent 镜像随服务端版本内置并自动使用，不提供手填或覆盖；网页创建管理员后配置模型。'
+      : 'Open the actual IP address to create the administrator and sign in, with no extra link check. The Agent image is embedded with the server release and used automatically, with no image input or override; create the administrator and configure the model in the browser.',
     zh
-      ? '`piwork setup link` 可轮换过期证明；使用自定义数据目录时保留相同的 `--data-dir`。退出主程序会按 Core 关闭契约停止受管 Work；关闭网页不会。'
-      : '`piwork setup link` rotates an expired proof; retain the same `--data-dir` when using a custom data directory. Exiting this program stops managed Works under the Core shutdown contract; closing a browser does not.',
+      ? '使用自定义数据目录时保留相同的 `--data-dir`。退出主程序会按 Core 关闭契约停止受管 Work；关闭网页不会。'
+      : 'Retain the same `--data-dir` when using a custom data directory. Exiting this program stops managed Works under the Core shutdown contract; closing a browser does not.',
+    zh
+      ? '当前源码构建的独立客户端使用 `piwork-cli desktop --no-open` 启动，在本机浏览器打开 `http://desktop.localhost:17891/`（自定义端口以输出为准）。普通浏览器会话自动建立；已有 CLI 登录会直接复用，否则正常登录。`piwork-cli desktop open --no-open` 仅是可选的地址查询，不签发授权；刷新、新浏览器或清 Cookie 均可直接使用相同地址。CLI 容器须发布本机回环端口并保留状态卷，在宿主机浏览器打开输出的地址，无需 `docker exec ... desktop open`。Desktop 与 CLI 共享 Core 凭据；退出登录会清理共享登录，关闭网页不停止 Work。'
+      : 'For an independent client built from this source, run `piwork-cli desktop --no-open` and open `http://desktop.localhost:17891/` in a browser on this computer (use the printed port if customized). The ordinary browser session is established automatically; a saved CLI login is reused, otherwise sign in normally. `piwork-cli desktop open --no-open` is an optional address lookup that issues no authorization. Refresh, a new browser and cleared Cookies all use the same address. A CLI container must publish the local loopback port and retain its state volume; open the printed address in the host browser, without requiring `docker exec ... desktop open`. Desktop and CLI share Core credentials; signing out clears that shared login, while closing the browser does not stop Works.',
     zh
       ? '`piwork-cli` 保留独立 Windows/Linux 命令行与本机 Desktop；`piwork-console` 是独立管理入口，不属于默认启动依赖。历史 [0.0.7 Linux 发布包](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz) 与 [实验性 Windows CLI 0.0.5](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe) 不包含统一服务端入口。'
       : '`piwork-cli` retains its independent Windows/Linux terminal and local Desktop modes; `piwork-console` is a standalone administrator entry and is not required for default startup. The historical [0.0.7 Linux bundle](https://github.com/pphboy/piwork/releases/download/v0.0.7/piwork-linux-amd64-0.0.7.tar.gz) and [experimental Windows CLI 0.0.5](https://github.com/pphboy/piwork/releases/download/v0.0.5/piwork-cli-windows-amd64-0.0.5.exe) do not contain the unified server entry.',
@@ -116,9 +126,8 @@ export function singleHostReadme(metadata, language) {
  metadata.state==='published'?'':zh?'**本地候选：镜像尚未推送。**':'**Local candidate: images have not been pushed.**',
  zh?'Linux x86-64、rootful Docker Engine 28+、Compose 2.24+。默认只运行统一应用容器，网页完成初始化；无需业务环境变量。CLI 使用显式可选 profile。':'Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. The default starts only the unified application container; initialize in the browser without business environment variables. CLI uses an explicit optional profile.',
  zh?'使用独立目录 `/var/lib/piwork/examples/single-host/core`。先停止端口冲突的安装，不删除它的数据。':'Uses its own `/var/lib/piwork/examples/single-host/core` directory. Stop conflicting installations first, preserving their data.',
- code(composeCommands), code('docker compose -f docker-compose.yml logs core'),
- zh?'打开日志中私有设置链接，创建管理员并确认密码、登录进入 Admin 的 **Quick setup**（`/admin/setup`）后填写或选择模型，点击 **Save and continue** 顺序保存模型及 CoreRuntime。准备页面会自动更新；全部依赖显示 Ready 后，点击 **Open workbench** 进入 Piwork。后续从 **Overview → Quick setup** 返回配置，顶栏 **Workbench** 可返回工作台。Agent 镜像随版本内置、自动使用，不提供手填或高级覆盖。链接过期时：':'Open the private setup link from the logs, create the administrator with password confirmation, sign in to Admin **Quick setup** (`/admin/setup`), enter or choose a model, then select **Save and continue** to save the model and CoreRuntime in sequence. The preparation page updates automatically; when all required components are Ready, select **Open workbench** to enter Piwork. Return through **Overview → Quick setup** to change configuration, or use the topbar **Workbench** link to return. The release supplies the Agent image automatically, with no image input or advanced override. If the link expires:',
- code('docker compose -f docker-compose.yml exec -T core piwork-serve --data-dir /var/lib/piwork/examples/single-host/core setup link'),
+ publishedFlowNote(metadata,zh),code(composeCommands),
+ zh?'直接打开 `http://服务器IP:7171`，创建管理员并确认密码、登录进入 Admin 的 **Quick setup**（`/admin/setup`）后填写或选择模型，点击 **Save and continue** 顺序保存模型及 CoreRuntime。准备页面会自动更新；全部依赖显示 Ready 后，点击 **Open workbench** 进入 Piwork。后续从 **Overview → Quick setup** 返回配置，顶栏 **Workbench** 可返回工作台。Agent 镜像随版本内置、自动使用，不提供手填或高级覆盖。无需额外授权链接。':'Open `http://SERVER_IP:7171` directly, create the administrator with password confirmation, sign in to Admin **Quick setup** (`/admin/setup`), enter or choose a model, then select **Save and continue** to save the model and CoreRuntime in sequence. The preparation page updates automatically; when all required components are Ready, select **Open workbench** to enter Piwork. Return through **Overview → Quick setup** to change configuration, or use the topbar **Workbench** link to return. The release supplies the Agent image automatically, with no image input or advanced override. No extra authorization link is required.',
  serviceNetworkNote(zh),serviceCompatibilityNote(zh),
  zh?'可选 CLI：待 Core 完整就绪后运行；其独立卷保留登录凭证。退出 CLI 不停止 Work。':'Optional CLI: run after Core is fully ready; its own volume retains credentials. Exiting CLI does not stop Works.',
  code('docker compose -f docker-compose.yml run --rm --no-deps cli'),code(firstWorkCommands),code(firstChatCommand),
