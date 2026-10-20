@@ -8,13 +8,13 @@ Defines how a local piwork installation is initialized and run as a durable Core
 
 ### Requirement: Bootstrap the first administrator explicitly
 
-Core SHALL 允许空安装通过受首次设置授权保护的网页创建、显式 operator bootstrap，或成对可选的 ADMIN 环境变量创建首管理员。网页和 env 的初始化语义遵守 web-onboarding 与 CORE-DOCKER-INIT-001，所有入口 MUST 原子核验持久用户集合为空，不能因为管理员被禁用而重新开放。不得生成默认账号/密码，不覆盖任何已有身份。
+Core SHALL 允许空安装通过普通地址直接进入的网页创建、显式 operator bootstrap，或成对可选的 ADMIN 环境变量创建首管理员。网页和 env 的初始化语义遵守 web-onboarding 与 CORE-DOCKER-INIT-001，所有入口 MUST 原子核验持久用户集合为空，不能因为管理员被禁用而重新开放。不得生成默认账号/密码，不覆盖任何已有身份。
 
-原 operator 在线/离线 bootstrap 的凭证、数据目录锁和未知结果不回退规则 SHALL 保留。网页首次设置证明不等于 operator credential，也不授予一般管理员或 Work 操作权限。
+原 operator 在线/离线 bootstrap 的凭证、数据目录锁和未知结果不回退规则 SHALL 保留。网页创建不要求安装者证明或 operator credential；创建成功后仍须正常登录才取得管理员会话或 Work 操作权限。普通会话、来源与 CSRF 校验遵守 web-onboarding。
 
 #### Scenario: 网页创建空安装管理员
-- **WHEN** 安装者持有效首次设置授权提交合法账号密码
-- **THEN** 原子创建持久首管理员并失效首次设置授权，不需要停启 Core
+- **WHEN** 安装者从服务器普通地址提交合法账号密码及普通 CSRF 上下文
+- **THEN** 原子创建持久首管理员并关闭首次创建入口，不需要停启 Core
 
 #### Scenario: Operator 离线或在线初始化
 - **WHEN** 有权限操作者按原契约执行 admin bootstrap
