@@ -1,24 +1,15 @@
 {
   "state": "published",
-  "reference": "docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty@sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098",
+  "reference": "docker.io/pphboy/piwork-web-base:0.2.0-9a40d4443fee-9286afd39f8e-dirty@sha256:68ec208f335f9813b7072f1f9e2907c0de67c64bbcd986feb81f5b7fa6599bf3",
   "platform": "linux/amd64",
-  "version": "0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty",
-  "imageId": "sha256:1b2dc23ea6cc78f5986217a5c133f045334c81d30a53c833f73aa59abdad87a1",
-  "inputHash": "6b6f6f8bbf625e2b36502349e5ba13992060aeab4b5239436c3288919ae7d44e",
+  "version": "0.2.0-9a40d4443fee-9286afd39f8e-dirty",
+  "imageId": "sha256:67d72e7c72274981fcded1c902230ce3c1361888aa6a1f95c0292b9e6829a966",
+  "inputHash": "9286afd39f8ed10ee0214f4197e8eb790a0dd7104119ff3047cfa029fc58df0e",
   "contractVersion": 1,
   "environmentContract": 2,
   "stack": "python-nicegui-sqlite",
   "anonymousReadable": true,
   "maintenanceSource": "deploy/images/web-base/",
-  "registryDigest": "sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098",
-  "hostedPathSupport": false,
-  "localCandidate": {
-    "state": "candidate",
-    "reference": "docker.io/pphboy/piwork-web-base:0.2.0-9a40d4443fee-9286afd39f8e-dirty",
-    "imageId": "sha256:67d72e7c72274981fcded1c902230ce3c1361888aa6a1f95c0292b9e6829a966",
-    "inputHash": "9286afd39f8ed10ee0214f4197e8eb790a0dd7104119ff3047cfa029fc58df0e",
-    "platform": "linux/amd64",
-    "hostedPathSupport": true,
-    "usage": "Explicit local acceptance only; not published or anonymously downloadable. Existing Work images are not replaced."
-  }
+  "registryDigest": "sha256:68ec208f335f9813b7072f1f9e2907c0de67c64bbcd986feb81f5b7fa6599bf3",
+  "hostedPathSupport": true
 }

@@ -6,7 +6,7 @@ A reusable Python 3.13 + NiceGUI + SQLite environment for application Services. 
 
 ## Browser Service paths
 
-The current source candidate supports `/services/<workId>/<serviceId>/<port>/` on the ControlPlane origin (default port 17891). Core 17871 is used by the backend and CLI. This path support requires a rebuilt base candidate; the published release record below retains its actual older identity.
+The published base below supports `/services/<workId>/<serviceId>/<port>/` on the ControlPlane origin (default port 17891). Core 17871 is used by the backend and CLI.
 
 NiceGUI already uses the validated `X-Forwarded-Prefix` for its own links, resources and Socket.IO. Keep `ui.link` and framework download paths application-relative; do not prefix them twice. For custom Python HTML/resources use `browser_url(request, '/path')` from `piwork_web_runtime`. After `page_head(ui, loaded)`, custom browser fetches use `window.piworkAppURL('/path')`. The runtime helper scopes drafts and feedback by browser session and Service target. Internal `/health` and `/pi/v1` continue at the container root.
 
@@ -17,7 +17,7 @@ Hosted Services share the workbench origin and must be trusted: their scripts ca
 The current source defines environment contract **2**, version series **0.2.0**, Python **3.13.16**, NiceGUI **3.18.0**, pip **26.2.1**, and sqlite3 CLI **3.40.1-2+deb12u2**, initially for Linux amd64. Exact standard dependencies are in [requirements.lock](requirements.lock); [environment.json](environment.json) fixes the upstream Python image. The built read-only manifest also records installed packages and the actual input hash.
 
 <!-- web-base-reference:start -->
-**Published and anonymously verified.** `docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty@sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098` is the fixed Linux amd64, contract-2 base. [release.json](release.json) records the actual build commit/dirty flag, input hash, image ID and registry digest; the bundled brain uses this verified reference. `dist/web-base/candidate.json` retains the local build identity. The previous FastAPI/React release remains in [the historical release record](releases/fastapi-react-0.1.0.json).
+**Published and anonymously verified.** `docker.io/pphboy/piwork-web-base:0.2.0-9a40d4443fee-9286afd39f8e-dirty@sha256:68ec208f335f9813b7072f1f9e2907c0de67c64bbcd986feb81f5b7fa6599bf3` is the fixed Linux amd64, contract-2 base with hosted Service path support. [release.json](release.json) records the actual build commit/dirty flag, input hash, image ID and registry digest; the bundled brain uses this verified reference. `dist/web-base/candidate.json` retains the local build identity. The previous NiceGUI artifact remains in [the pre-path release record](releases/nicegui-0.2.0-pre-control-plane.json), and the FastAPI/React artifact in [its historical release record](releases/fastapi-react-0.1.0.json).
 <!-- web-base-reference:end -->
 
 ## Use in a Work
