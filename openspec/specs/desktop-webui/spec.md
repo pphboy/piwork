@@ -1029,7 +1029,7 @@ Modal footer SHALL 按DUL-007统一同类按钮几何与角色，正文按钮、
 - **THEN** 骨架只呈现贴合内容区域的静态形状，区域名称与busy由辅助属性表达；未取得的Session/模型名称可使用对应字段占位，已有名称、真实错误和unknown设置恢复不被隐藏；仅延迟占位显现，不延迟可用内容，缓存刷新不换回骨架
 
 #### Scenario: Service 入口归一与未完成导航不遮挡应用
-- **WHEN** 已取得合法 Service entry，票据 bootstrap URL 经预览检查归一为 origin 路径，或 iframe 的子资源尚未结束而应用已开始显示
+- **WHEN** 已取得合法 Service entry，独立 CLI 票据 bootstrap URL 经预览检查归一为应用路径，或托管入口在保持完整 Service 前缀的情况下确认，或 iframe 的子资源尚未结束而应用已开始显示
 - **THEN** Desktop SHALL 直接显示并保留同一 Service iframe，不以原始 src 等于最新 entryUrl 或 window.load 作为内容展示条件，不覆盖等待骨架；入口取得前可保留首次占位，真实 entry/预览失败与显式恢复入口仍可见，load 不表示业务就绪
 
 ### Requirement: Chat 模型选择遵守下一次受理语义
@@ -1556,15 +1556,17 @@ Create Work SHALL 在提交中、超过十秒等待、明确拒绝与未知结�
 
 统一应用 SHALL 提供仅凭服务器 IP 即可在另一台电脑浏览器使用的完整工作台，不要求该电脑安装 CLI/Docker、设置代理/DNS/hosts 或使用本机启动票据。托管模式 SHALL 复用既有 Work、Service、Files、Chat、模型/Thinking/图片、设置、包、导入导出和原 ID 恢复能力；页面绑定所属 Core，不提供修改服务器实例所属 Core 或读取宿主 CLI 凭证的入口。
 
-托管 Service SHALL 遵守 browser-service-access 的独立入口、服务端响应 Cookie 分区及首版脚本 Cookie 限制；Service 说明明确依赖 document.cookie/Cookie Store 的应用可能不可用，脚本自行写入 Cookie 不保证跨 Service 隔离。该已知限制不阻塞一键启动或其他工作台功能，不能由“完整工作台”推导为任意应用 Cookie 均兼容且隔离；CLI 本机 Service 模式保持原契约。
+托管 Service SHALL 使用当前 ControlPlane origin 的 `/services/<workId>/<serviceId>/<port>/` 路径入口，遵守 browser-service-access 的同源可信应用、动态前缀及服务端响应 Cookie 分区约束。Service 说明 SHALL 明确：应用与工作台同源，脚本可能以当前用户身份访问平台页面/API；任意根路径硬编码、document.cookie/Cookie Store 与服务端 Cookie 同步不在透明兼容保证内。CLI 本机 Service 模式保持自己的独立来源契约，不成为托管回退。
 
 身份 SHALL 按独立浏览器会话解析，传输/暂存、缓存、已知操作及 Service 授权均绑定用户/会话。管理员只能以自己的用户身份访问 Work 内容；注销当前浏览器不清理其他独立登录，禁用/密码重置按 Core 撤销语义生效。托管 Inspect 使用已认证会话私有暂存，保持完整格式校验与不执行内容；独立 CLI 的匿名离线 Inspect 保留。
 
 其他 DWUI 业务条款中的“本地/CLI 传输资源”在托管模式 SHALL 对应会话私有服务器资源，并保持原容量、流式进度、条件写入、取消、未知结果与清理语义；不得把上传换成服务器任意路径或绕过 Core。浏览器关闭、导航和断线不改变远端 Work/Run/Operation 生命周期。
 
+托管浏览器的 API、事件流、文件上传/下载、图片、包和 Service SHALL 全部使用 ControlPlane 17891；只有后端连接 Core 17871。Service 的 entryUrl/basePath SHALL 携带完整目标路径，不从 origin 根重建。预览、复制、独立打开、深链接刷新、登录返回和错误恢复 SHALL 使用同一已授权目标；切换 Work/Service/端口后的晚响应不得覆盖当前入口，单纯布局改变不得重建 iframe。
+
 #### Scenario: 远程完成完整工作流
 - **WHEN** 用户从另一台电脑只用浏览器登录服务器 IP
-- **THEN** 可以创建 Work、收到模型回复、访问受支持的独立 Service、使用 Files、修改配置并完成 Stop/Export/Inspect/Import/Start，Service 兼容限制明确可见，不出现客户端 localhost 或 desktop open 前置步骤
+- **THEN** 可以创建 Work、收到模型回复、访问受支持的路径入口 Service、使用 Files、修改配置并完成 Stop/Export/Inspect/Import/Start，Service 兼容限制明确可见，不出现客户端 localhost 或 desktop open 前置步骤
 
 #### Scenario: 两账号并发使用
 - **WHEN** 两个独立浏览器账号同时使用 Service、Chat、Files 和传输
@@ -1577,3 +1579,11 @@ Create Work SHALL 在提交中、超过十秒等待、明确拒绝与未知结�
 #### Scenario: 托管与本机客户端并存
 - **WHEN** 同一 Core 同时被托管浏览器和原生 piwork-cli desktop 使用
 - **THEN** 两种入口独立认证，CLI 凭证、偏好、本机 open/logout 和匿名 Inspect 不被服务器浏览器登录修改
+
+#### Scenario: 多 Service 同端口独立寻址
+- **WHEN** 同一用户同时打开两个 Work 的 Service，再刷新其中一个深层页面或独立打开
+- **THEN** 均只请求 17891，各自路径携带正确目标，平台只读核验当前身份，不依赖最后打开的应用、其他标签页 Cookie 或 Referer 猜测路由
+
+#### Scenario: 只有浏览器端口可达
+- **WHEN** 独立客户端网络只能连接服务器 17891，无法连接 17871 和旧 Service 端口池
+- **THEN** 托管完整工作流仍可完成，网络记录无浏览器直连 Core、旧池端口或容器 IP

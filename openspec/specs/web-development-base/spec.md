@@ -64,6 +64,10 @@ sqlite3 CLI SHALL 在镜像 PATH 中预装并可直接执行，支持 workspace 
 
 基础环境 SHALL 提供显式开发模式供 Python 页面及业务代码迭代，并通过现有授权 Service 入口工作；静态资源、页面路由、API 及 NiceGUI WebSocket SHALL 不依赖硬编码容器 IP、宿主端口或浏览器直连容器。浏览器 SHALL 不获得平台交互 token，UI 与 Agent 入口 SHALL 复用 Service 的权威业务状态。
 
+官方基础环境、默认 web-app 与工作站模板 SHALL 支持 ControlPlane 的动态 `/services/<workId>/<serviceId>/<port>/` 浏览器入口。页面、静态资源、自定义脚本、API、反馈/回执、下载、相对与根相对导航及 WebSocket SHALL 使用当前已校验代理请求提供的前缀，不能把浏览器请求发到平台根 `/api`、`/piwork-assets` 或 Core 端口。不同 Service 同时打开不依赖全局“当前应用”状态。
+
+容器内的 Agent、探针和协议访问 SHALL 继续使用原端口和根 `/health`、`/pi/v1` 等路径；无浏览器前缀的合法内部请求及独立 CLI 根入口仍可使用。前缀 SHALL 不写死 IP、Work/Service ID 或进入用户代码/包的永久地址，导入换身份后按请求重新取得。代理不通过注入通用 HTML/JS 重写层弥补不支持前缀的第三方应用。
+
 #### Scenario: 浏览器打开并刷新业务页面
 - **WHEN** 用户经 Desktop 打开默认 NiceGUI 应用、访问业务页并直接刷新
 - **THEN** 页面资源、同源 API 和 WebSocket 正常，路由刷新可用，Pi 能通过同一后端查询对应业务状态
@@ -75,6 +79,14 @@ sqlite3 CLI SHALL 在镜像 PATH 中预装并可直接执行，支持 workspace 
 #### Scenario: 显式开发模式
 - **WHEN** 开发者使用开发模式并通过受保护的 Service 入口修改 Python 页面代码
 - **THEN** 代码重载及页面重新连接可用，WebSocket 不绕过当前 Work/Service 授权
+
+#### Scenario: 新路径完整运行
+- **WHEN** 官方模板从 17891 的 Service 前缀打开深层页面并刷新、提交业务 API、下载文件、接收反馈与建立 WebSocket
+- **THEN** 浏览器全部请求保留该 Service 的规范前缀，容器收到对应原始业务路径，页面实际可操作而非仅首页返回成功
+
+#### Scenario: 浏览器前缀与 Agent 根入口并存
+- **WHEN** 用户通过前缀操作应用，同时 Agent 调用同一容器 /pi/v1 且 Core 探测 /health
+- **THEN** 两类访问均成功并读取同一权威业务状态，内部调用不要求浏览器 Cookie 或公开 IP
 
 ### Requirement: 应用文件可持久编辑且启动不覆盖业务
 
@@ -164,6 +176,8 @@ codeVersion 和 frontendVersion SHALL 绑定对应 Python 源码、额外依赖�
 
 该行为 SHALL 由 Pi 开发的应用模板提供，沿用现有 Service 授权和端口；不得为此强制刷新 Desktop 外壳、重建未改变的 iframe、访问跨源 DOM 或向第三方页面注入脚本。版本读取 SHALL 不启动新的 Agent Run，也不绕过正式脑包/Work 配置的显式 Apply。
 
+托管模式中的版本检测、反馈读取与资源重载 SHALL 保持当前 Service 前缀。官方草稿、反馈与返回路径存储 SHALL 按当前浏览器身份和 Service 目标分名，身份切换清理所属状态，防止正常同源多应用之间的键冲突；不得将命名空间描述为恶意同源脚本隔离。重载只作用于原应用，不导航到 ControlPlane 根或另一 Service。
+
 #### Scenario: 页面保持打开时采用新前端
 - **WHEN** 用户在默认应用的业务页保留未提交草稿，AI 成功部署新的 NiceGUI 页面实现
 - **THEN** 无需用户点击刷新，页面自动采用新界面且当前路径和支持恢复的草稿保留
@@ -203,6 +217,10 @@ codeVersion 和 frontendVersion SHALL 绑定对应 Python 源码、额外依赖�
 #### Scenario: 业务刷新不改变平台执行
 - **WHEN** 页面检测版本、普通 Service 状态轮询或用户切换 Focus
 - **THEN** 不额外启动 Agent Run、不 Apply 脑包、不重建未改变的应用 iframe，也不刷新无关第三方应用
+
+#### Scenario: 同源两个应用独立更新
+- **WHEN** 同一浏览器打开两个官方模板应用并分别保留草稿，其中一个完成部署更新
+- **THEN** 仅该应用通过自己的前缀检测和采用版本，恢复自己的路径/草稿，另一应用不重载且状态不串用
 
 ### Requirement: 在基础镜像内安装并持久复用额外 Python 依赖
 

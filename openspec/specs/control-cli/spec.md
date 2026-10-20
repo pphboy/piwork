@@ -8,11 +8,13 @@ Defines an executable local `piwork` command-line client that connects to Core, 
 
 ### Requirement: Resolve one Core endpoint consistently
 
-系统 SHALL 提供独立的 operator 控制面和登录用户客户端命令；既有规范中的 `piwork-serve` operator 职责及配置保持，`piwork-cli` 用于用户客户端。业务 CLI SHALL 按显式 `--core`、`PIWORK_CORE_URL`、保存凭证中的 Core、默认 `http://127.0.0.1:7171` 的顺序解析。operator SHALL 按显式 `--core`、`--env-file` 中的控制面地址和文档化默认值解析，并使用 operator credential。
+系统 SHALL 提供独立的 operator 控制面和登录用户客户端命令；既有规范中的 `piwork-serve` operator 职责及配置保持，`piwork-cli` 用于用户客户端。业务 CLI SHALL 按显式 `--core`、`PIWORK_CORE_URL`、保存凭证中的 Core、默认 `http://127.0.0.1:17871` 的顺序解析。operator SHALL 按显式 `--core`、`--env-file` 中的控制面地址和文档化默认值解析，并使用 operator credential。
 
 默认或显式 Desktop 启动 SHALL 按显式 `--core`、`PIWORK_CORE_URL`、Desktop 默认 Core 配置、保存凭证中的 Core、相同 loopback 默认值的顺序解析。参数和环境变量 SHALL 仅影响本次启动，不自动保存。业务 CLI SHALL 不读取 Desktop 偏好；`desktop open/logout` SHALL 继续只选择既有本机实例，不重新解析 Core。
 
 Desktop 默认配置不存在 SHALL 回退到原凭证/默认值，不要求迁移旧凭证。需要读取的配置损坏、版本不支持、地址字段非法、超过大小限制或无法安全访问 SHALL 返回 exit 1 和安全恢复方向，保留原文件，不静默改连其他 Core；已由参数或环境选定地址时 SHALL 不读取无须使用的 Desktop 偏好。通过参数、环境或旧凭证选定的地址无效 SHALL 返回 exit 2，不继续尝试低优先级地址。凭证仅 SHALL 用于与其 Core origin 相同的请求。
+
+用户 CLI、operator 和独立 Desktop 后端 SHALL 直接访问 Core HTTP 服务，不能要求先启动或经由 ControlPlane 17891。默认端口变化不得迁移已有凭据 origin、改写显式地址、试探旧端口或把连接失败转成浏览器登录；选定旧地址不可达时提供显式配置当前 Core 后重新登录的方向。远程 Core 的可达性由部署监听决定，不由客户端自动修改服务器。
 
 #### Scenario: Use the user client endpoint
 - **WHEN** 用户运行业务 CLI 且未提供显式地址
@@ -45,6 +47,14 @@ Desktop 默认配置不存在 SHALL 回退到原凭证/默认值，不要求迁�
 #### Scenario: 无效高优先级地址
 - **WHEN** 参数、环境或保存配置给出不合法 Core origin
 - **THEN** 拒绝选定地址，不悄悄使用凭证或 loopback，不泄漏 token
+
+#### Scenario: 无历史配置直接使用新 Core
+- **WHEN** 同机客户端没有显式地址、环境覆盖、相关偏好或保存凭据
+- **THEN** 连接 127.0.0.1:17871，使用原用户或 operator 身份，不访问 17891
+
+#### Scenario: 已保存旧端口
+- **WHEN** 保存凭据或 Desktop 偏好仍指向已停止的 7171
+- **THEN** 报告所选地址不可达，不把旧 token 转发到 17871 或其他发现的服务；用户可显式选择新 Core 并正常登录
 
 ### Requirement: Report Core and Work-runtime status
 
@@ -756,7 +766,7 @@ proxy SHALL 在同一端口提供`http://127.0.0.1:<port>/works/<workId>/files/`
 
 **Identifier:** CLI-DESKTOP-001
 
-`piwork-cli [--core <url>] desktop [--port <1..65535>] [--no-open]` 及全局参数解析成功、无子命令且没有 `--json` 时的默认 Desktop 入口 SHALL 在原生模式前台启动仅监听 `127.0.0.1` 的本地 WebUI，默认端口 17891；原生模式默认打开系统浏览器，`--no-open` 仅输出本地打开地址。显式容器模式 SHALL 按 CLI-CONTAINER-001 提供宿主本机入口，并按 CLI-CONTAINER-DESKTOP-001 输出可直接打开的普通地址。地址 SHALL 使用受验证的 localhost 主机名；原生模式本机无需 Docker，容器交付使用已安装的 Docker；两种模式的本地 WebUI 均无需代理/PAC、hosts 编辑或安装本地站点证书。Desktop Core 地址 SHALL 按显式 `--core`、`PIWORK_CORE_URL`、保存的 Desktop 默认地址、凭证 Core、`http://127.0.0.1:7171` 的优先级选择；参数与环境仅覆盖本次调用，普通业务命令仍按原地址优先级且不读取 Desktop 偏好；Core 可以使用合法 HTTP 或 HTTPS origin，不按目标位置限制 HTTP，遵守 CLI-CORE-PROTOCOL-001。普通地址 SHALL 不含浏览器入口 ticket 或其他授权片段；来源合法的浏览器自动建立必要会话，复用同 Core 的有效共享 CLI 凭据或进入正常登录。无登录或 Core 暂不可达 SHALL 仍可打开登录/连接页面和本地包 Inspect，不能借用其他 Core 的 token，不要求终端重新授权。
+`piwork-cli [--core <url>] desktop [--port <1..65535>] [--no-open]` 及全局参数解析成功、无子命令且没有 `--json` 时的默认 Desktop 入口 SHALL 在原生模式前台启动仅监听 `127.0.0.1` 的本地 WebUI，默认端口 17891；原生模式默认打开系统浏览器，`--no-open` 仅输出本地打开地址。显式容器模式 SHALL 按 CLI-CONTAINER-001 提供宿主本机入口，并按 CLI-CONTAINER-DESKTOP-001 输出可直接打开的普通地址。地址 SHALL 使用受验证的 localhost 主机名；原生模式本机无需 Docker，容器交付使用已安装的 Docker；两种模式的本地 WebUI 均无需代理/PAC、hosts 编辑或安装本地站点证书。Desktop Core 地址 SHALL 按显式 `--core`、`PIWORK_CORE_URL`、保存的 Desktop 默认地址、凭证 Core、`http://127.0.0.1:17871` 的优先级选择；参数与环境仅覆盖本次调用，普通业务命令仍按原地址优先级且不读取 Desktop 偏好；Core 可以使用合法 HTTP 或 HTTPS origin，不按目标位置限制 HTTP，遵守 CLI-CORE-PROTOCOL-001。普通地址 SHALL 不含浏览器入口 ticket 或其他授权片段；来源合法的浏览器自动建立必要会话，复用同 Core 的有效共享 CLI 凭据或进入正常登录。无登录或 Core 暂不可达 SHALL 仍可打开登录/连接页面和本地包 Inspect，不能借用其他 Core 的 token，不要求终端重新授权。
 
 启动前 SHALL 校验参数；未知参数、重复或非法端口、显式 Desktop 的 `--json` 返回 exit 2；端口占用返回 exit 6，资源缺失或监听失败返回 exit 5，不自动换端口或遗留半启动监听器。浏览器打开失败 SHALL 保持服务并打印手动打开地址；`--help` 不读取凭证或偏好、不启动监听、不访问网络。Ctrl+C SHALL 关闭本地连接、清理本次临时资源并退出 130，不停止 Work、不取消已经接受的 Core Operation/Run。平台会话失效 SHALL 回到登录状态而不退出 WebUI。既有 `proxy` 默认 17890、PAC、临时 WebDAV 密码及退出语义 SHALL 不变；Desktop 不要求先启动 proxy。
 
@@ -923,8 +933,8 @@ CLI SHALL 仅在 `PIWORK_CLI_CONTAINER_MODE=1` 时启用容器模式；未设置
 以下为已有操作/验证入口的示例，使用实际返回 ID 和隔离测试资源；命令存在不表示本次已执行或验收通过。源码构建使用 Go 1.25.5、Node 24，容器/浏览器专项须预备相应依赖。
 
 ```sh
-piwork-cli --core http://127.0.0.1:7171 status
-printf '%s\n' "$PIWORK_USER_PASSWORD" | piwork-cli --core http://127.0.0.1:7171 login --account owner --password-stdin
+piwork-cli --core http://127.0.0.1:17871 status
+printf '%s\n' "$PIWORK_USER_PASSWORD" | piwork-cli --core http://127.0.0.1:17871 login --account owner --password-stdin
 piwork-cli whoami
 piwork-cli work create --name 'My Work' --wait
 piwork-cli work list
@@ -1003,8 +1013,8 @@ Windows 来源 SHALL 支持相对、盘符绝对、UNC、中文/空格，拒绝�
 
 ```sh
 piwork-cli                          # 默认启动 Desktop
-piwork-cli --core http://<core-host>:7171  # HTTP 默认入口
-piwork-cli --core http://core.example:7171 desktop --no-open
+piwork-cli --core http://<core-host>:17871  # HTTP 默认入口
+piwork-cli --core http://core.example:17871 desktop --no-open
 piwork-cli --core https://core.example
 piwork-cli --help                   # 显式查看原业务命令
 piwork-cli help
@@ -1015,13 +1025,13 @@ piwork-cli desktop logout --port 17901
 ```
 
 ```sh
-piwork-cli --core http://core.example:7171 status
-piwork-cli --core http://core.example:7171 proxy  # 先在这个 origin 登录
-PIWORK_CORE_URL=http://core.example:7171 piwork-cli
+piwork-cli --core http://core.example:17871 status
+piwork-cli --core http://core.example:17871 proxy  # 先在这个 origin 登录
+PIWORK_CORE_URL=http://core.example:17871 piwork-cli
 ```
 
 ```powershell
-$env:PIWORK_CORE_URL = 'http://core.example:7171'
+$env:PIWORK_CORE_URL = 'http://core.example:17871'
 .\piwork-cli.exe
 ```
 

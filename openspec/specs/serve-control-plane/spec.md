@@ -14,7 +14,9 @@
 
 operator 控制面 SHALL 额外提供 PKG-004 的 Core package catalog/default lifecycle 及只限 Core package Operation 的查询。普通 user credential 不得写 /control/packages/default-work；operator credential 不得借 Core operation 查询读取用户 Work package/Session 数据。default-work packages 使用 manifest name，支持替换列表、显式空集合及省略保持；flag 更新必须原子合并未指定字段。
 
-新增管理员 API SHALL 复用上述管理领域能力，使用登录管理员身份，继续排除其他用户 Work 会话正文和 Run 输出。原 /control/* 的 operator 凭证要求及 CLI 与用户客户端的分工 SHALL 保持；管理员 bearer 通过独立 /api/v1/admin/* 管理接口使用，不直接访问 /control/*。
+新增管理员 API SHALL 复用上述管理领域能力，使用登录管理员身份，继续排除其他用户 Work 会话正文和 Run 输出。除 CST-HTTP-BOUNDARY-001 对首次 bootstrap 的单用途委托外，原 /control/* 的 operator 凭证要求及 CLI 与用户客户端的分工 SHALL 保持；管理员 bearer 通过独立 /api/v1/admin/* 管理接口使用，不直接访问 /control/*。
+
+operator SHALL 直连 Core 17871，默认 `http://127.0.0.1:17871`，不经浏览器 ControlPlane 17891。网页首次创建的内部委托仅可调用既有 bootstrap 路由，不是 operator 身份，不可访问用户/配置/Skill/package 管理；正常网页登录和管理仍使用真实用户/admin bearer。
 
 #### Scenario: Operator controls an initialized Core
 - **WHEN** 部署者使用 `piwork-serve status`、`admin`、`skills` 或 `config` 连接 Core
@@ -102,6 +104,8 @@ operator 控制面 SHALL 额外提供 PKG-004 的 Core package catalog/default l
 
 Core SHALL 为 `piwork-serve` 提供仅限本机控制面的 operator credential，并将其与 `piwork-cli` 的用户登录 token 分开存储、校验和撤销。operator credential MUST 使用当前用户可读的保护权限，不能授权用户 Work 对话内容。
 
+网页初始化的进程内委托仅按 CST-HTTP-BOUNDARY-001 使用既有 bootstrap 路由；它 SHALL NOT 读取、替代或暴露 operator credential，也不得用于本 Requirement 的一般控制命令。
+
 #### Scenario: Use operator credential for control commands
 
 - **WHEN** `piwork-serve admin` 或 `piwork-serve config` 连接 Core
@@ -152,7 +156,7 @@ PiSDK/Agent、脑包 extension、浏览器和开发机验证驱动可以继续�
 
 **Identifier:** SCTRL-OPS-001
 
-Console SHALL 是同机独立 HTTPS 进程，仅连接 Core loopback API；浏览器可远端访问，停止 Console 不停止 Core 或已接受 Operation。public-origin 必须匹配实际 HTTPS origin 和监听端口，证书覆盖主机，私钥只允许 owner 读取。默认 Core 127.0.0.1:7171、监听 0.0.0.0:7173，数据目录 .piwork/console。Core 不可达仍显示登录页及真实可用性，不提供 bootstrap。
+Console SHALL 是同机独立 HTTPS 进程，仅连接 Core loopback API；浏览器可远端访问，停止 Console 不停止 Core 或已接受 Operation。public-origin 必须匹配实际 HTTPS origin 和监听端口，证书覆盖主机，私钥只允许 owner 读取。默认 Core 127.0.0.1:17871、监听 0.0.0.0:7173，数据目录 .piwork/console。Core 不可达仍显示登录页及真实可用性，不提供 bootstrap。
 
 仅管理员 SHALL 能登录，普通用户由 CLI 管理自己的 Work。浏览器只持 Secure/HttpOnly/SameSite=Strict 会话 Cookie，Core bearer 在 Console 内存，重启重新登录。Overview/User access/Work setup/AI models 与辅助 Find operation 保持当前导航和深链接，未知写入先读回，默认配置只影响后续 Work。
 
@@ -167,7 +171,7 @@ Console SHALL 是同机独立 HTTPS 进程，仅连接 Core loopback API；浏�
 ```bash
 make build-go
 ./dist/go/piwork-console serve \
-  --core http://127.0.0.1:7171 \
+  --core http://127.0.0.1:17871 \
   --listen 0.0.0.0:7173 \
   --public-origin https://console.example.com:7173 \
   --tls-cert /etc/piwork/console-cert.pem \
@@ -186,7 +190,7 @@ PIWORK_PREVIEW_CERT="$PWD/.piwork/console-preview/cert.pem"
 PIWORK_PREVIEW_KEY="$PWD/.piwork/console-preview/key.pem"
 make build-go
 ./dist/go/piwork-console serve \
-  --core http://127.0.0.1:7171 \
+  --core http://127.0.0.1:17871 \
   --listen 127.0.0.1:7173 \
   --public-origin https://127.0.0.1:7173 \
   --tls-cert "$PIWORK_PREVIEW_CERT" \
