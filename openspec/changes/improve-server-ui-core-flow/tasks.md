@@ -30,6 +30,6 @@
 - [x] 4.5 接入D10-D12 Files与Settings/Apply等待；验证：复用file-admission/file-results及配置测试，确认固定刷新槽、原版本/unknown锁、真实进度和已确认路径不重传，静态pendingApply不动画化。
 - [x] 4.6 接入D13-D17导入导出、Operation/Snapshot、Pi请求、偏好/About独立状态；验证：复用export-flow/preferences等测试并补缺失生命周期，保留原ID、暂停/Hide/unknown语义及下载仅交接边界，31位置均有接入/测试映射，不复制31套完整矩阵。
 - [x] 4.7 在最终代码执行两端既有typecheck/build/browser及现有UI嵌入资源验证，完成合成首设→手动登录→Key→准备→一次进入及代表管理回路；验证：记录真实命令结果，按现有copy-static/sync链核对嵌入资源，代表宽/窄屏截图和三点录屏无秘密并标明fixture。已有隔离Core/Docker条件且获执行授权才跑相关真实集成，否则明确未测和原因，不建设额外环境。
-- [ ] 4.8 汇总四模块差异、31位置覆盖、实际通过/失败/未测和回退范围；验证：`openspec validate improve-server-ui-core-flow --strict`、`node scripts/check-repository-docs.mjs`、`git diff --check`通过，必要证据归本change，临时文件dist；独立审查后按功能提交并推送草稿PR、核对远端及CI，不合并或部署。
+- [x] 4.8 汇总四模块差异、31位置覆盖、实际通过/失败/未测和回退范围；验证：`openspec validate improve-server-ui-core-flow --strict`、`node scripts/check-repository-docs.mjs`、`git diff --check`通过，必要证据归本change，临时文件dist；独立审查后按功能提交并推送草稿PR、核对远端及CI，不合并或部署。
 
-最终本地验收：Desktop browser 335/335、unit 525/525；Console QuickStart 28/28、feedback/management 94/94。真实Core/认证/Docker集成与Go宿主构建未运行，条件限制见 [verification.md](verification.md)。4.8仅发布和远端核对尚待完成；不把未运行项记作通过。
+最终本地验收：Desktop browser 335/335、unit 525/525；Console QuickStart 28/28、feedback/management 94/94。真实Core/认证/Docker集成与Go宿主构建未运行，条件限制见 [verification.md](verification.md)。4.8已完成发布与首次远端/CI核对；PR #3保持Draft，未合并。GitHub返回0个status及0个PR workflow run，仓库无`.github/workflows`；这是未提供CI结果，不是CI通过。不把未运行项记作通过。

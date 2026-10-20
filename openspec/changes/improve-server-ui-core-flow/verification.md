@@ -133,4 +133,13 @@ node --test --test-concurrency=2 \
 - Completeness：8项Requirement/64个Scenario均有实现或明确保留契约，31位置接入完整；任务仅按最终结果勾选。
 - Correctness：合成UI和单元边界以最终测试为准；真实Core/认证/Docker集成未验证，原因见上。
 - Coherence：复用ActionState和既有代次/对象锁，纯UI渲染helper；不引入新的全局Pending状态框架或导航状态机。
-- 本地可运行验收完成；分模块提交、Draft PR与CI状态待发布后记录。未自动合并或部署；不自动归档本change。
+- 本地可运行验收完成；[Draft PR #3](https://github.com/pphboy/piwork/pull/3)已发布，未合并。未自动合并或部署；不自动归档本change。
+
+
+### 发布核对（2026-10-20 03:09 UTC）
+
+- 普通git push因本地无HTTPS凭据失败，改用已连接GitHub connector发布，没有创建或配置凭据。
+- 四个功能/规格提交的每棵远端tree均与本地测试提交相同；最终实现tree为`42b9f370d5874379feafd3b3f05253c27cf6ee75`，发布HEAD为`1d9925db42781060d8e3814a4c7fbc4130f5c648`。connector生成作者/时间元数据，因此commit SHA与本地不同，不是内容差异。
+- 远端基线仍为`efce08c228c12f10d18a968b69c3398bb0e783e1`；独立复核PR open、Draft、未合并，63文件范围仅UI/test/generated UI assets/OpenSpec。
+- GitHub首次核对返回`statuses: []`及`workflow_runs: []`，当前仓库也没有`.github/workflows`目录。没有CI通过结论或正在运行的CI可监控；真实Go/Core/认证/Engine仍未验证，继续保持Draft。
+- 本节与task 4.8的收尾为后续纯文档提交，不改变已测试实现tree中的任何产品或测试文件。没有合并、部署或归档。
