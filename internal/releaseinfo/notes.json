@@ -5,7 +5,7 @@
       "version": "0.0.9",
       "component": "core",
       "title": "Piwork 0.0.9 Preview",
-      "publishedAt": "2026-10-20",
+      "publishedAt": "2026-10-21",
       "sections": [
         {
           "title": "Independent ControlPlane and Core with one-command startup",
@@ -23,7 +23,7 @@
       "version": "0.0.9",
       "component": "desktop",
       "title": "Piwork 0.0.9 Preview",
-      "publishedAt": "2026-10-20",
+      "publishedAt": "2026-10-21",
       "sections": [
         {
           "title": "Service access through the browser entry",
@@ -31,7 +31,8 @@
             "Open hosted Services at /services/<workId>/<serviceId>/<port>/, including HTTP, SSE and WebSocket, without additional browser ports or DNS configuration.",
             "Ship prefix-aware official NiceGUI templates and runtime helpers with scoped drafts and application resource URLs.",
             "Keep independent CLI Desktop and its local Host entry, proxy and credentials separate from the hosted ControlPlane.",
-            "Existing root-path applications and captured images require explicit adaptation; imports retain their original source, images and data."
+            "Existing root-path applications and captured images require explicit adaptation; imports retain their original source, images and data.",
+            "Keep hosted Service entry probes stable across runtime restarts while revalidating the new instance and closing old streams."
           ]
         }
       ]
