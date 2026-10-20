@@ -12,7 +12,7 @@ function fixture() {
   const snapshot = (id = 'snap-new', operationId = 'export-new') => ({ id, workId: 'work-a', operationId, status: 'verified', filename: `${id}.work`, size: '42 bytes', packageSize: 42, digest: 'verified-sha256', expiresAt: '2100-01-01T00:00:00Z' });
   const operation = (id = 'export-new', snapshotId = 'snap-new') => ({ id, workId: 'work-a', checkedWorkId: 'work-a', state: 'succeeded', kind: 'Export Work', snapshotId });
   const port: any = {
-    identityEpoch: 1, state: { signedIn: true, browserAccess: 'authorized' }, downloads: new Map(),
+    identityEpoch: 1, state: { signedIn: true }, downloads: new Map(),
     getWork: (id: string) => id === work.id ? work : undefined,
     project: (w: any) => ({ exportable: w.desired === 'stopped' && w.observed === 'stopped' && !w.statusError && !w.conflict, action: w.desired === 'running' && !w.statusError ? 'stop' : 'check' }),
     getOperation: (id: string) => operations.get(id), getSnapshot: (id: string) => snapshots.get(id),
@@ -224,15 +224,14 @@ test('Resume while an older pass is blocked waits then starts its own fresh read
   oldGet.resolve(f.work); await resumed; await settle(); assert.equal(reads, 2); assert.equal(flow.phase, 'delivered');
 });
 
-for (const revoke of ['epoch', 'signed-out', 'local-auth', 'pagehide']) test(`${revoke} permanently revokes automatic delivery and ignores late success`, async () => {
+for (const revoke of ['epoch', 'signed-out', 'pagehide']) test(`${revoke} permanently revokes automatic delivery and ignores late success`, async () => {
   const f = fixture(); const post = pendingPreparation(f), get = deferred(); f.port.checkDownload = () => get.promise;
   const flow = f.flows.start('work-a', { mode: 'new' }); await settle();
   if (revoke === 'epoch') f.port.identityEpoch++;
   if (revoke === 'signed-out') f.port.state.signedIn = false;
-  if (revoke === 'local-auth') f.port.state.browserAccess = 'required';
   if (revoke === 'pagehide') f.flows.revoke(); else f.flows.update();
   post.resolve('ready'); await settle(); assert.equal(flow.phase, 'revoked'); assert.equal(f.deliveries.length, 0);
-  f.port.state.signedIn = true; f.port.state.browserAccess = 'authorized'; get.resolve(f.port.downloads.get(flow.snapshotId)); await settle();
+  f.port.state.signedIn = true; get.resolve(f.port.downloads.get(flow.snapshotId)); await settle();
   await f.flows.resume(flow.id); assert.equal(f.deliveries.length, 0);
 });
 

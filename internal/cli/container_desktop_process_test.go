@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func TestContainerDesktopStartupHasNoTicketAndControlOpenAuthorizesThisInstance(t *testing.T) {
+func TestContainerDesktopOrdinaryAddressAndOptionalOpenUseThisInstance(t *testing.T) {
 	t.Setenv("PIWORK_CLI_CONTAINER_MODE", "1")
 	t.Setenv("PATH", filepath.Join(t.TempDir(), "no-browser-opener"))
 	free, err := net.Listen("tcp", "127.0.0.1:0")
@@ -54,7 +54,7 @@ func TestContainerDesktopStartupHasNoTicketAndControlOpenAuthorizesThisInstance(
 		t.Fatal("container Desktop did not start")
 	}
 	origin := "http://desktop.localhost:" + strconv.Itoa(port)
-	if strings.Contains(mainLog, "#ticket=") || !strings.Contains(mainLog, origin+"/") || !strings.Contains(mainLog, "desktop open --no-open") {
+	if strings.Contains(mainLog, "#ticket=") || !strings.Contains(mainLog, origin+"/") || strings.Contains(mainLog, "desktop open --no-open") {
 		t.Fatal("unsafe or incomplete container startup output", mainLog)
 	}
 	request := func(method, path, body, host string) int {
@@ -82,8 +82,8 @@ func TestContainerDesktopStartupHasNoTicketAndControlOpenAuthorizesThisInstance(
 	if code := request("GET", "/", "", "attacker.invalid"); code != 403 {
 		t.Fatal("container relaxed Host enforcement", code)
 	}
-	if code := request("GET", "/_desktop/api/state", "", strings.TrimPrefix(origin, "http://")); code < 400 {
-		t.Fatal("anonymous browser inherited identity", code)
+	if code := request("GET", "/_desktop/api/session", "", strings.TrimPrefix(origin, "http://")); code != 200 {
+		t.Fatal("ordinary browser could not establish a session", code)
 	}
 	open := func() string {
 		t.Helper()
@@ -93,23 +93,18 @@ func TestContainerDesktopStartupHasNoTicketAndControlOpenAuthorizesThisInstance(
 		}
 		address := strings.TrimSpace(strings.TrimPrefix(result.String(), "Piwork Desktop: "))
 		if !validDesktopLaunchURL(address, port) {
-			t.Fatal("control returned invalid ticket URL", address)
+			t.Fatal("control returned invalid ordinary URL", address)
 		}
-		return strings.SplitN(address, "#ticket=", 2)[1]
+		return address
 	}
 	previous, fresh := open(), open()
-	if previous == fresh {
-		t.Fatal("open reused a ticket")
+	if previous != fresh || fresh != origin+"/" {
+		t.Fatal("open changed the ordinary URL")
 	}
-	if code := request("POST", "/_desktop/api/bootstrap", `{"ticket":"`+previous+`"}`, strings.TrimPrefix(origin, "http://")); code != 403 {
-		t.Fatal("previous unconsumed ticket remained valid", code)
+	if code := request("POST", "/_desktop/api/bootstrap", `{}`, strings.TrimPrefix(origin, "http://")); code != 404 {
+		t.Fatal("removed bootstrap route still active", code)
 	}
-	if code := request("POST", "/_desktop/api/bootstrap", `{"ticket":"`+fresh+`"}`, strings.TrimPrefix(origin, "http://")); code != 200 {
-		t.Fatal("exec ticket did not authorize this instance", code)
-	}
-	if code := request("POST", "/_desktop/api/bootstrap", `{"ticket":"`+fresh+`"}`, strings.TrimPrefix(origin, "http://")); code != 403 {
-		t.Fatal("ticket could be replayed", code)
-	}
+
 	if err := interruptTestProcess(command); err != nil {
 		t.Fatal(err)
 	}

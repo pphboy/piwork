@@ -109,45 +109,32 @@ func desktopInputError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (d *nativeDesktop) bootstrap(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || r.Header.Get("Origin") != d.origin || !d.sameOrigin(r) {
-		desktopError(w, 403, "LOCAL_BOOTSTRAP_DENIED")
-		return
-	}
-	input, err := readDesktopObject(r, 1024)
-	if err != nil {
-		desktopInputError(w, err)
-		return
-	}
-	var supplied string
-	if json.Unmarshal(input["ticket"], &supplied) != nil {
-		desktopError(w, 403, "LOCAL_BOOTSTRAP_DENIED")
-		return
+// browserSession transparently establishes transport state for an ordinary page.
+// It does not establish a Core login or change the instance's shared credential.
+func (d *nativeDesktop) browserSession(w http.ResponseWriter, r *http.Request) (desktopSession, bool, bool) {
+	if session, ok := d.authorize(r, false); ok {
+		return session, false, true
 	}
 	d.mu.Lock()
-	if d.used || time.Now().After(d.ticketEnd) || !equalDesktopSecret(supplied, d.ticket) {
-		d.mu.Unlock()
-		desktopError(w, 403, "LOCAL_BOOTSTRAP_DENIED")
-		return
-	}
+	defer d.mu.Unlock()
 	d.pruneSessionsLocked()
 	if len(d.sessions) >= 128 {
-		d.mu.Unlock()
 		desktopError(w, 503, "LOCAL_SESSION_CAPACITY")
-		return
+		return desktopSession{}, false, false
 	}
-	sessionID, errID := d.newSecret()
+	id, errID := d.newSecret()
 	csrf, errCSRF := d.newSecret()
 	if errID != nil || errCSRF != nil {
-		d.mu.Unlock()
 		desktopError(w, 503, "LOCAL_SESSION_UNAVAILABLE")
-		return
+		return desktopSession{}, false, false
 	}
-	d.used = true
-	d.sessions[sessionID] = desktopSession{id: sessionID, csrf: csrf, end: time.Now().Add(12 * time.Hour)}
-	d.mu.Unlock()
-	w.Header().Set("Set-Cookie", fmt.Sprintf("%s=%s; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200", d.cookieName(), sessionID))
-	desktopJSON(w, 200, map[string]any{"authorized": true, "csrf": csrf})
+	session := desktopSession{id: id, csrf: csrf, end: time.Now().Add(12 * time.Hour)}
+	if d.sessions == nil {
+		d.sessions = map[string]desktopSession{}
+	}
+	d.sessions[id] = session
+	w.Header().Set("Set-Cookie", fmt.Sprintf("%s=%s; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200", d.cookieName(), id))
+	return session, true, true
 }
 
 func (d *nativeDesktop) revokeLocked() {
@@ -265,16 +252,25 @@ func (d *nativeDesktop) view(ctx context.Context, csrf string) map[string]any {
 
 func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if path == "/_desktop/api/bootstrap" {
-		d.bootstrap(w, r)
-		return
-	}
+	mutation := r.Method != http.MethodGet
 	if !d.sameOrigin(r) {
 		desktopError(w, 403, "LOCAL_ORIGIN_DENIED")
 		return
 	}
-	mutation := r.Method != http.MethodGet
-	session, ok := d.authorize(r, mutation)
+	if path == "/_desktop/api/bootstrap" || path == "/_desktop/api/browser-access/reset" {
+		desktopError(w, 404, "NOT_FOUND")
+		return
+	}
+	var session desktopSession
+	var ok, created bool
+	if path == "/_desktop/api/session" && r.Method == http.MethodGet && d.hosted == nil {
+		session, created, ok = d.browserSession(w, r)
+		if !ok {
+			return
+		}
+	} else {
+		session, ok = d.authorize(r, mutation)
+	}
 	if !ok {
 		if mutation {
 			desktopError(w, 403, "LOCAL_CSRF_OR_AUTH_REQUIRED")
@@ -283,6 +279,7 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
 	if path == "/_desktop/api/about" || path == "/_desktop/api/session" || path == "/_desktop/api/login" || path == "/_desktop/api/logout" || path == "/_desktop/api/connection" || path == "/_desktop/api/status" || path == "/_desktop/api/preferences" {
 		guarded, request, finish, allowed := d.guardAccess(w, r, session, false)
 		if !allowed {
@@ -301,7 +298,11 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/_desktop/api/preferences":
 		d.servePreferences(w, r)
 	case path == "/_desktop/api/session" && r.Method == http.MethodGet:
-		desktopJSON(w, 200, d.view(r.Context(), session.csrf))
+		value := d.view(r.Context(), session.csrf)
+		if created {
+			value["sessionCreated"] = true
+		}
+		desktopJSON(w, 200, value)
 	case path == "/_desktop/api/login" && r.Method == http.MethodPost:
 		d.login(w, r, session.csrf)
 	case path == "/_desktop/api/logout" && r.Method == http.MethodPost:
@@ -310,8 +311,6 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		d.switchCore(w, r, session.csrf)
 	case path == "/_desktop/api/status" && r.Method == http.MethodGet:
 		d.status(w, r)
-	case path == "/_desktop/api/browser-access/reset":
-		d.resetBrowserAccess(w, r)
 	default:
 		guarded, request, finish, ok := d.guardContent(w, r, session)
 		if !ok {

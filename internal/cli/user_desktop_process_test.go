@@ -132,10 +132,9 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Desktop did not listen")
 	}
-	if !strings.HasPrefix(launch, "Piwork Desktop: http://desktop.localhost:") || !strings.Contains(launch, "#ticket=") {
+	if !strings.HasPrefix(launch, "Piwork Desktop: http://desktop.localhost:") || strings.Contains(launch, "#ticket=") {
 		t.Fatal("Desktop launch URL", launch)
 	}
-	ticket := strings.TrimSpace(strings.SplitN(launch, "#ticket=", 2)[1])
 	base := "http://127.0.0.1:" + strconv.Itoa(port)
 	request := func(method, path, body, origin string) *http.Response {
 		t.Helper()
@@ -168,10 +167,10 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 	if response.StatusCode != 200 || !strings.Contains(string(script), "adapter.initialize") {
 		t.Fatal("embedded app unavailable", response.StatusCode)
 	}
-	response = request("POST", "/_desktop/api/bootstrap", `{"ticket":"`+ticket+`"}`, "http://desktop.localhost:"+strconv.Itoa(port))
+	response = request("GET", "/_desktop/api/session", "", "")
 	var session map[string]any
-	if json.NewDecoder(response.Body).Decode(&session) != nil || response.StatusCode != 200 || session["authorized"] != true {
-		t.Fatal("offline Desktop bootstrap failed", response.StatusCode, session)
+	if json.NewDecoder(response.Body).Decode(&session) != nil || response.StatusCode != 200 || session["state"] != "signed-out" {
+		t.Fatal("offline Desktop session failed", response.StatusCode, session)
 	}
 	cookie := response.Header.Get("Set-Cookie")
 	response.Body.Close()
@@ -192,8 +191,8 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Desktop retained listener after SIGINT")
 	}
-	// Rebinding the same local port creates a fresh authority; old browser
-	// cookies and tickets must not gain access to this new listener.
+	// A restarted process rejects old transport cookies for protected requests;
+	// the ordinary page automatically establishes its replacement session.
 	restarted := nativeTestCommand(t, "-test.run=^TestNativeDesktopHelperProcess$")
 	restarted.Dir = command.Dir
 	restarted.Env = command.Env
@@ -213,19 +212,10 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("restarted Desktop did not listen")
 	}
-	parts := strings.SplitN(freshLaunch, "#ticket=", 2)
-	if len(parts) != 2 {
-		t.Fatal("restart ticket absent", freshLaunch)
+	if strings.TrimSpace(freshLaunch) != strings.TrimSpace(launch) {
+		t.Fatal("restart changed the ordinary URL", freshLaunch)
 	}
-	freshTicket := strings.TrimSpace(parts[1])
-	if freshTicket == ticket {
-		t.Fatal("restart reused authority")
-	}
-	response = request("POST", "/_desktop/api/bootstrap", `{"ticket":"`+ticket+`"}`, "http://desktop.localhost:"+strconv.Itoa(port))
-	response.Body.Close()
-	if response.StatusCode != 403 {
-		t.Fatal("old restart ticket accepted", response.StatusCode)
-	}
+
 	oldCookieReq, _ := http.NewRequest("GET", base+"/_desktop/api/identity", nil)
 	oldCookieReq.Host = "desktop.localhost:" + strconv.Itoa(port)
 	oldCookieReq.Header.Set("Cookie", strings.SplitN(cookie, ";", 2)[0])
@@ -237,9 +227,9 @@ func TestNativeDesktopEmbeddedProcessLoadsFromArbitraryDirectory(t *testing.T) {
 	if response.StatusCode != 401 {
 		t.Fatal("old restart cookie accepted", response.StatusCode)
 	}
-	response = request("POST", "/_desktop/api/bootstrap", `{"ticket":"`+freshTicket+`"}`, "http://desktop.localhost:"+strconv.Itoa(port))
+	response = request("GET", "/_desktop/api/session", "", "")
 	response.Body.Close()
-	if response.StatusCode != 200 {
-		t.Fatal("new restart authority rejected", response.StatusCode)
+	if response.StatusCode != 200 || response.Header.Get("Set-Cookie") == "" || response.Header.Get("Set-Cookie") == cookie {
+		t.Fatal("restarted ordinary page did not establish its session", response.StatusCode)
 	}
 }

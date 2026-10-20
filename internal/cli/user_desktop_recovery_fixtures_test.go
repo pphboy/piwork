@@ -42,7 +42,6 @@ func recoveryHTTP(d *nativeDesktop, method, path, body, cookie, csrf string) *ht
 	d.ServeHTTP(response, req)
 	return response
 }
-func recoveryBootstrap(d *nativeDesktop, ticket string) *httptest.ResponseRecorder {
-	return recoveryHTTP(d, "POST", "/_desktop/api/bootstrap", `{"ticket":"`+ticket+`"}`, "", "")
+func recoverySession(d *nativeDesktop) *httptest.ResponseRecorder {
+	return recoveryHTTP(d, "GET", "/_desktop/api/session", "", "", "")
 }
-func recoveryTicket(address string) string { return strings.Split(address, "#ticket=")[1] }

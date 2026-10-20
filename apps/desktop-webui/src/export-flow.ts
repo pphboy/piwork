@@ -35,7 +35,7 @@ export interface ExportTransfer {
 }
 export interface ExportPort {
   readonly identityEpoch: number;
-  state: { signedIn: boolean; browserAccess: string };
+  state: { signedIn: boolean };
   getWork(id: string): Work | undefined;
   project(work: Work): { exportable: boolean; action: string };
   getOperation(id: string): Operation | undefined;
@@ -108,7 +108,7 @@ export class ExportFlows {
   }
   start(workId: string, intent: ExportIntent): ExportFlow {
     this.updateIdentity();
-    if (!this.authorized()) throw new Error('Sign in and confirm browser access before exporting.');
+    if (!this.authorized()) throw new Error('Sign in before exporting.');
     if (intent.mode === 'existing' && !intent.snapshotId) throw new Error('Choose the exact snapshot to download.');
     if (intent.mode === 'new' && intent.snapshotId) throw new Error('A new export cannot target an existing snapshot.');
     const active = [...this.flows.values()].find(flow => flow.workId === workId && flow.identityEpoch === this.port.identityEpoch && !flow.terminal);
@@ -192,7 +192,7 @@ export class ExportFlows {
   }
 
   private require(id: string) { const flow = this.get(id); if (!flow) throw new Error('The original export intent is no longer available.'); return flow; }
-  private authorized() { return this.port.state.signedIn && this.port.state.browserAccess === 'authorized'; }
+  private authorized() { return this.port.state.signedIn; }
   private isVisible() { return this.visible && (this.options.visible?.() ?? true); }
   private changed() { this.options.changed(); }
   private revokeFlow(flow: ExportFlow, reason: string) {
@@ -202,10 +202,10 @@ export class ExportFlows {
     flow.phase = 'revoked'; flow.error = reason; delete flow.contentURL;
   }
   private updateIdentity() {
-    for (const flow of this.flows.values()) if (flow.phase !== 'revoked' && (flow.identityEpoch !== this.port.identityEpoch || !this.authorized())) this.revokeFlow(flow, 'Identity or browser access changed. Look up the original snapshot explicitly after signing in.');
+    for (const flow of this.flows.values()) if (flow.phase !== 'revoked' && (flow.identityEpoch !== this.port.identityEpoch || !this.authorized())) this.revokeFlow(flow, 'The session or account changed. Look up the original snapshot explicitly after signing in.');
   }
   private live(flow: ExportFlow) {
-    if (flow.identityEpoch !== this.port.identityEpoch || !this.authorized()) this.revokeFlow(flow, 'Identity or browser access changed. Look up the original snapshot explicitly after signing in.');
+    if (flow.identityEpoch !== this.port.identityEpoch || !this.authorized()) this.revokeFlow(flow, 'The session or account changed. Look up the original snapshot explicitly after signing in.');
     return flow.phase !== 'revoked' && flow.phase !== 'failed';
   }
   private canAdvance(flow: ExportFlow, generation: number) { return this.live(flow) && !flow.terminal && !flow.paused && this.isVisible() && this.runtime.get(flow.id)!.generation === generation; }

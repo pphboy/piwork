@@ -62,8 +62,8 @@ func TestWindowsDesktopControlRejectsForgedMetadataAndPreservesReplacements(t *t
 		if _, err := requestDesktopControl(t.Context(), d.port, "open"); err == nil {
 			t.Fatal("forged recovery accepted", kind)
 		}
-		if d.ticket != "" {
-			t.Fatal("forged metadata issued browser access")
+		if len(d.sessions) != 0 {
+			t.Fatal("forged metadata established a browser session")
 		}
 	}
 	raw, _ := json.Marshal(c.meta)
@@ -105,8 +105,8 @@ func TestWindowsDesktopControlBoundsActualPipeRequestsAndCancellation(t *testing
 		t.Fatal("forged request replied")
 	}
 	conn.Close()
-	if d.ticket != "" {
-		t.Fatal("forged request performed action")
+	if len(d.sessions) != 0 {
+		t.Fatal("forged request established a browser session")
 	}
 	d.mu.Lock()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)

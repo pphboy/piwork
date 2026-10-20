@@ -19,7 +19,7 @@ import (
 
 func TestDesktopServiceRevocationInterruptsBlockedResolution(t *testing.T) {
 	for _, protocol := range []string{"sse", "websocket"} {
-		for _, cause := range []string{"reset", "expiry"} {
+		for _, cause := range []string{"session-loss", "expiry"} {
 			t.Run(protocol+"/"+cause, func(t *testing.T) {
 				polling, pollEnded, upstreamEnded := make(chan struct{}), make(chan struct{}), make(chan struct{})
 				var resolves, mutations atomic.Int32
@@ -123,10 +123,10 @@ func TestDesktopServiceRevocationInterruptsBlockedResolution(t *testing.T) {
 					t.Fatal("background resolution did not start")
 				}
 				start := time.Now()
-				if cause == "reset" {
-					if reset := recoveryHTTP(d, "POST", "/_desktop/api/browser-access/reset", "{}", d.cookieName()+"=local", "csrf"); reset.Code != 200 {
-						t.Fatal("reset", reset.Code)
-					}
+				if cause == "session-loss" {
+					d.mu.Lock()
+					delete(d.sessions, "local")
+					d.mu.Unlock()
 				} else {
 					d.mu.Lock()
 					session := d.sessions["local"]
@@ -153,8 +153,7 @@ func TestDesktopServiceRevocationInterruptsBlockedResolution(t *testing.T) {
 				if err != nil || saved == nil || saved.Token != record.Token || d.identity.credential != &record {
 					t.Fatal("revocation changed Core login", err)
 				}
-				launch, _ := d.issueTicket()
-				bootstrap := recoveryBootstrap(d, recoveryTicket(launch))
+				bootstrap := recoverySession(d)
 				cookie := strings.Split(bootstrap.Header().Get("Set-Cookie"), ";")[0]
 				var access struct{ CSRF string }
 				_ = json.Unmarshal(bootstrap.Body.Bytes(), &access)

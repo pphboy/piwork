@@ -53,11 +53,11 @@ async function fixture(t: TestContext, handler: Handler, withSnapshot = false) {
     return new Response(JSON.stringify(reply.json ?? {}), { status: reply.status ?? 200, headers: { 'Content-Type': 'application/json' } });
   });
   const adapter = new DesktopAdapter();
-  await adapter.checkBrowserAccess();
+  await adapter.checkSession();
   if (withSnapshot) await adapter.fetchSnapshot(snapshotID);
   t.after(() => adapter.stopDownloadObservers());
   return { adapter, requests, respond: (next: Handler) => { respond = next; },
-    changeIdentity: async () => { generation++; await adapter.checkBrowserAccess(); },
+    changeIdentity: async () => { generation++; await adapter.checkSession(); },
     posts: () => requests.filter(request => request.method === 'POST'),
   };
 }

@@ -50,7 +50,7 @@ func NewHostedDesktop(options HostedDesktopOptions) (*HostedDesktop, error) {
 func (h *HostedDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Login/logout and all connection editing belong to the shared web session.
 	switch r.URL.Path {
-	case "/_desktop/api/login", "/_desktop/api/logout", "/_desktop/api/bootstrap", "/_desktop/api/connection", "/_desktop/api/preferences", "/_desktop/api/browser-access/reset":
+	case "/_desktop/api/login", "/_desktop/api/logout", "/_desktop/api/connection", "/_desktop/api/preferences":
 		desktopError(w, 404, "HOSTED_ROUTE_UNAVAILABLE")
 		return
 	}

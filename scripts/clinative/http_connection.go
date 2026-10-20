@@ -127,11 +127,10 @@ func HTTPConnection(ctx context.Context, buildDirectory, coreURL string) (Result
 		case <-time.After(10 * time.Second):
 			return result, errors.New("HTTP Desktop launch timed out")
 		}
-		prefix := "Piwork Desktop: " + origin + "/#ticket="
-		if !strings.HasPrefix(launch, prefix) {
+		expectedLaunch := "Piwork Desktop: " + origin + "/"
+		if strings.TrimSpace(launch) != expectedLaunch {
 			return result, errors.New("HTTP Desktop failed to launch")
 		}
-		ticket := strings.TrimSpace(strings.TrimPrefix(launch, prefix))
 		cookie, csrf := "", ""
 		request := func(method, path string, value any) (int, []byte, http.Header, error) {
 			var raw []byte
@@ -161,13 +160,9 @@ func HTTPConnection(ctx context.Context, buildDirectory, coreURL string) (Result
 			body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 			return response.StatusCode, body, response.Header, err
 		}
-		code, _, _, err := request("GET", "/_desktop/api/session", nil)
-		if err != nil || code != 401 {
-			return result, errors.New("HTTP Desktop bypassed local authorization")
-		}
-		code, body, headers, err := request("POST", "/_desktop/api/bootstrap", map[string]string{"ticket": ticket})
+		code, body, headers, err := request("GET", "/_desktop/api/session", nil)
 		if err != nil || code != 200 {
-			return result, errors.New("HTTP Desktop bootstrap failed")
+			return result, errors.New("HTTP Desktop ordinary session initialization failed")
 		}
 		var local struct {
 			CSRF string `json:"csrf"`

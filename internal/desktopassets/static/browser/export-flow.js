@@ -32,7 +32,7 @@ export class ExportFlows {
     start(workId, intent) {
         this.updateIdentity();
         if (!this.authorized())
-            throw new Error('Sign in and confirm browser access before exporting.');
+            throw new Error('Sign in before exporting.');
         if (intent.mode === 'existing' && !intent.snapshotId)
             throw new Error('Choose the exact snapshot to download.');
         if (intent.mode === 'new' && intent.snapshotId)
@@ -142,7 +142,7 @@ export class ExportFlows {
     }
     require(id) { const flow = this.get(id); if (!flow)
         throw new Error('The original export intent is no longer available.'); return flow; }
-    authorized() { return this.port.state.signedIn && this.port.state.browserAccess === 'authorized'; }
+    authorized() { return this.port.state.signedIn; }
     isVisible() { return this.visible && (this.options.visible?.() ?? true); }
     changed() { this.options.changed(); }
     revokeFlow(flow, reason) {
@@ -158,11 +158,11 @@ export class ExportFlows {
     updateIdentity() {
         for (const flow of this.flows.values())
             if (flow.phase !== 'revoked' && (flow.identityEpoch !== this.port.identityEpoch || !this.authorized()))
-                this.revokeFlow(flow, 'Identity or browser access changed. Look up the original snapshot explicitly after signing in.');
+                this.revokeFlow(flow, 'The session or account changed. Look up the original snapshot explicitly after signing in.');
     }
     live(flow) {
         if (flow.identityEpoch !== this.port.identityEpoch || !this.authorized())
-            this.revokeFlow(flow, 'Identity or browser access changed. Look up the original snapshot explicitly after signing in.');
+            this.revokeFlow(flow, 'The session or account changed. Look up the original snapshot explicitly after signing in.');
         return flow.phase !== 'revoked' && flow.phase !== 'failed';
     }
     canAdvance(flow, generation) { return this.live(flow) && !flow.terminal && !flow.paused && this.isVisible() && this.runtime.get(flow.id).generation === generation; }

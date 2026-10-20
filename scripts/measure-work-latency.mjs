@@ -190,7 +190,7 @@ try {
     children.push(desktop);
     desktop.stdout.on('data', chunk => { desktopText = (desktopText + chunk.toString()).slice(-6000); });
     desktop.stderr.on('data', chunk => { desktopText = (desktopText + chunk.toString()).slice(-6000); });
-    const launchUrl = await waitFor(() => desktopText.match(/http:\/\/desktop\.localhost:\d+\/#ticket=[\w-]+/)?.[0], 'Desktop launch timeout', 10_000);
+    const launchUrl = await waitFor(() => desktopText.match(/http:\/\/desktop\.localhost:\d+\//)?.[0], 'Desktop launch timeout', 10_000);
     const { measureBrowserCreates } = await import('../apps/desktop-webui/test/work-latency.mjs');
     const samples = await measureBrowserCreates({ launchUrl, password, count: options.samples, retire, onSample: value => { measuringSample = value.index; report.browser.samples.push(value); console.log(JSON.stringify({ phase: 'browser', ...value })); } });
     report.browser = { samples, total: summary(samples.map(s => s.totalMs)) };

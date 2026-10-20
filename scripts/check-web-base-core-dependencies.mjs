@@ -99,7 +99,7 @@ export async function runCoreDependencyChecks() {
     desktop = spawn(cliBinary, ['--core', coreUrl, 'desktop', '--port', String(desktopPort), '--no-open'], { stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, PATH: '/nonexistent', PIWORK_CONFIG_PATH: join(temporary, 'client.json') } });
     desktopOutput = output(desktop);
-    const launch = await wait(() => desktopOutput().match(/http:\/\/desktop\.localhost:\d+\/#ticket=[\w-]+/)?.[0], 'Desktop entry', 15000);
+    const launch = await wait(() => desktopOutput().match(/http:\/\/desktop\.localhost:\d+\//)?.[0], 'Desktop entry', 15000);
     browser = await chromium.launch({ headless: true, channel: 'chromium', args: ['--proxy-server=direct://', '--proxy-bypass-list=*'] });
     const page = await browser.newPage();
     page.on('response', response => {

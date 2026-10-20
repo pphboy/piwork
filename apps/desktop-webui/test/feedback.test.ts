@@ -107,7 +107,8 @@ function deferred() { let resolve!: () => void; const promise = new Promise<void
 test('standalone account menu retains Core and browser controls without hosted management links',async t=>{
  const {page}=await fixture(t,()=>undefined);
  await button(page,'back-works').click();await button(page,'account').click();const menu=page.getByRole('menu');
- for(const name of ['About Piwork','Known operations','Switch Core','Reset browser access','Sign out'])await expect(menu.getByRole('menuitem',{name,exact:true})).toBeVisible();
+ for(const name of ['About Piwork','Known operations','Switch Core','Sign out'])await expect(menu.getByRole('menuitem',{name,exact:true})).toBeVisible();
+ await expect(menu.getByRole('menuitem',{name:'Reset browser access',exact:true})).toHaveCount(0);
  for(const name of ['Administration','Quick setup'])await expect(menu.getByRole('menuitem',{name,exact:true})).toHaveCount(0);
  await page.keyboard.press('End');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(button(page,'account')).toBeFocused();
 });

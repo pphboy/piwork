@@ -72,9 +72,6 @@ type nativeDesktop struct {
 	store              client.CredentialStore
 	port               int
 	origin             string
-	ticket             string
-	ticketEnd          time.Time
-	used               bool
 	mu                 sync.Mutex
 	sessions           map[string]desktopSession
 	fileWrites         map[string]bool
@@ -87,7 +84,6 @@ type nativeDesktop struct {
 	logoutMu           sync.Mutex
 	logoutFlight       *desktopLogoutFlight
 	secret             func() (string, error)
-	localGeneration    int
 	activeAccess       map[*desktopAccess]bool
 	preferencesStorage desktopPreferencesStorage
 }
@@ -133,14 +129,7 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 		d.identity.credential = saved
 	}
 	launchURL := origin + "/"
-	if !container {
-		launchURL, err = d.issueTicket()
-		if err != nil {
-			_ = listener.Close()
-			fmt.Fprintln(stderr, "Unable to create Desktop session")
-			return 5
-		}
-	}
+
 	control, err := startDesktopControl(d)
 	if err != nil {
 		_ = listener.Close()
@@ -156,7 +145,7 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 	go func() { done <- server.Serve(listener) }()
 	fmt.Fprintf(stdout, "Piwork Desktop: %s\n", launchURL)
 	if container {
-		fmt.Fprintln(stdout, "Run piwork-cli desktop open --no-open inside this running container, then open its URL in the browser on this computer.")
+		fmt.Fprintln(stdout, "Open this address in the browser on this computer.")
 	}
 	if options.open && !container {
 		go openDesktopBrowser(launchURL, stderr)

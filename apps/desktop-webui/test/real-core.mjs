@@ -123,7 +123,7 @@ try {
     { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent',
       PIWORK_CONFIG_PATH: join(root, 'client.json') } });
   desktopOutput = capture(desktop);
-  const launchUrl = await waitFor(() => desktopOutput().match(/http:\/\/desktop\.localhost:\d+\/#ticket=[\w-]+/)?.[0],
+  const launchUrl = await waitFor(() => desktopOutput().match(/http:\/\/desktop\.localhost:\d+\//)?.[0],
     'Go Desktop bootstrap URL', 10_000);
   browser = await chromium.launch({ headless: true, executablePath: browserBinary });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
@@ -354,13 +354,15 @@ try {
     let bootstrapPosts = 0, resetPosts = 0, businessWrites = 0;
     page.on('request', request => { if (request.url().endsWith('/bootstrap')) bootstrapPosts++; if (request.url().endsWith('/browser-access/reset')) resetPosts++; if (request.method() !== 'GET' && /\/(?:runs|work-imports|start|stop|retry|delete)(?:$|\?)/.test(new URL(request.url()).pathname)) businessWrites++; });
     await page.goto(launchUrl); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor(); assert.equal(bootstrapPosts, 0);
-    await context.clearCookies(); await page.goto(localOrigin); await page.getByRole('heading', { name: 'Browser access required' }).waitFor();
+    await context.clearCookies(); await page.goto(localOrigin); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
     await page.goto(reopen()); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor(); assert.equal(desktop.pid, pid);
     const secondContext = await browser.newContext(); const second = await secondContext.newPage(); await second.goto(reopen()); await second.getByRole('heading', { name: 'Works', exact: true }).waitFor();
-    const oldPending = reopen();
-    await page.locator('[data-action=account]').click(); await page.getByRole('menuitem', { name: 'Reset browser access', exact: true }).click(); await page.getByRole('button', { name: 'Reset browser access', exact: true }).click();
-    await page.getByRole('heading', { name: 'Browser access required' }).waitFor(); assert.equal(resetPosts, 1);
-    await second.reload(); await second.getByRole('heading', { name: 'Browser access required' }).waitFor(); await second.goto(oldPending); await second.getByRole('heading', { name: 'Browser access required' }).waitFor();
+    assert.equal(reopen(), launchUrl);
+    await page.locator('[data-action=account]').click();
+    await expect(page.getByRole('menuitem', { name: 'Reset browser access', exact: true })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await secondContext.clearCookies(); await second.reload(); await second.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    assert.equal(bootstrapPosts, 0); assert.equal(resetPosts, 0);
     assert.equal(JSON.parse(await readFile(join(root, 'client.json'), 'utf8')).token, identityBefore.token);
     await page.goto(reopen()); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
     await page.locator('[data-action=account]').click(); await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click(); await loginAgain(page);
@@ -368,11 +370,11 @@ try {
     await page.goto(reopen()); await loginAgain(page);
     const captured = JSON.parse(await readFile(join(root, 'client.json'), 'utf8'));
     assert([200,204].includes((await api(coreUrl, captured.token, 'POST', '/api/v1/logout')).status));
-    await readAdapter('await adapter.checkBrowserAccess().catch(error => { if (error.code !== \"CONNECTION_CHANGED\") throw error; })'); await loginAgain(page);
+    await readAdapter('await adapter.checkSession().catch(error => { if (error.code !== \"CONNECTION_CHANGED\") throw error; })'); await loginAgain(page);
     await readAdapter('await adapter.checkConnection()');
     // Pause only this isolated Core process; Docker workloads continue running.
     core.kill('SIGSTOP');
-    try { await readAdapter('await adapter.checkBrowserAccess()'); assert.equal(await readAdapter('return adapter.state.browserAccess'), 'authorized'); assert.equal(await readAdapter('return adapter.state.scenario'), 'core-offline'); }
+    try { await readAdapter('await adapter.checkSession()'); assert.equal(await readAdapter('return adapter.state.sessionState'), 'ready'); assert.equal(await readAdapter('return adapter.state.scenario'), 'core-offline'); }
     finally { core.kill('SIGCONT'); }
     await readAdapter('await adapter.checkConnection()'); assert.equal(await readAdapter('return adapter.state.signedIn'), true);
     assert.equal(desktop.pid, pid); assert.equal((await api(coreUrl, token, 'GET', `/api/v1/works/${workId}`)).data.observedState, 'ready');
@@ -382,10 +384,10 @@ try {
     const savedRun = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/runs/${runBefore}`); assert.equal(savedRun.status, 200); assert.equal((savedRun.data.run ?? savedRun.data).runId, runBefore);
     await waitFor(async () => (await page.locator('#messages').innerText()).includes('skill-read:'), 'original accepted Run history after auth recovery');
     await secondContext.close();
-    // Existing independent application window must also obtain new browser access.
+    // The existing application window also resumes through the ordinary address.
     await app.goto(reopen()); await app.getByRole('heading', { name: 'Works', exact: true }).waitFor(); await app.getByRole('link', { name: /^Real Browser Work/ }).click();
     await page.screenshot({ path: join(screenshotDir, '06-auth-recovered.png'), fullPage: true });
-    console.log(JSON.stringify({ result: 'local auth recovery: real Core login/reuse/reopen/logout/reset/revocation/offline, original PID/Work/Service/files/Run retained, no business replay', browserVersion: browser.version(), bootstrapPosts, resetPosts, businessWrites }));
+    console.log(JSON.stringify({ result: 'ordinary session recovery: real Core login/reuse/reopen/logout/revocation/offline, original PID/Work/Service/files/Run retained, no business replay', browserVersion: browser.version(), bootstrapPosts, resetPosts, businessWrites }));
   }
   await page.getByRole('button', { name: 'Work options' }).click();
   await page.getByRole('menuitem', { name: 'Export Work', exact: true }).click();

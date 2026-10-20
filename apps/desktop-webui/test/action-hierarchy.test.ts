@@ -18,7 +18,7 @@ function fixture() {
   const work: any = { id: 'work-a', name: 'A', desired: 'stopped', files: [], color: 'blue', icon: 'grid', resourceErrors: {} };
   const c: any = {
     view: { layout:'workspace', modal: '', data: {}, path: '/', selected: [], file: '', modalError: '' },
-    adapter: { state: { browserAccess: 'authorized', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [] },
+    adapter: { state: { sessionState: 'ready', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [] },
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
       getSnapshot: () => undefined, downloads: new Map(), directories: new Map([["work-a:/", {checkedAt:"now",loading:false,error:""}]]) },
     document:{fullscreenElement:null},root:{},location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(),
@@ -38,7 +38,8 @@ test('global controls live in Admin, not the topbar or Work header', () => {
   assert.doesNotMatch(c.workHeader(work), /data-action="about-piwork"/);
   c.view.modal = 'account'; const html = c.modalMarkup();
   assert.match(html, /command-dropdown/);
-  for (const action of ['about-piwork', 'operations', 'switch-core', 'reset-browser-access', 'sign-out']) assert.match(html, new RegExp(`data-action="${action}"`));
+  for (const action of ['about-piwork', 'operations', 'switch-core', 'sign-out']) assert.match(html, new RegExp(`data-action="${action}"`));
+  assert.doesNotMatch(html, /data-action="reset-browser-access"/);
   assert.doesNotMatch(html, /data-action="stop-work"/);
 });
 
