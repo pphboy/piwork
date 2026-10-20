@@ -1,3 +1,4 @@
+import { pendingDots } from './pending.js';
 import { adapter, ConsoleError } from './adapter.js';
 import { esc, PageHeader, Section, Feedback, NavLink, StatusLabel } from './components.js';
 import { blankModel, modelDraftIssue, modelFields, modelField, modelPlaceholder, modelProtocolHelp, readModelDraft, validateModelControl, modelTestSummary, modelTestDetails, validModelTest } from './model-form.js';
@@ -17,12 +18,17 @@ export class ModelManagement {
     loading = 0;
     saving = false;
     testing = false;
+    reading = false;
+    pendingAction = '';
+    pendingStarted = 0;
+    pendingTimer;
     uncertain = false;
     note = '';
     noteError = false;
     fieldError = null;
     testResult = null;
     testDialog = null;
+    testSlowTimer;
     constructor(render, dirty, sessionError = () => false, showTestDialog) {
         this.render = render;
         this.dirty = dirty;
@@ -52,7 +58,8 @@ export class ModelManagement {
         document.addEventListener('click', e => { const el = e.target.closest('[data-model-action]'); if (!el)
             return; e.preventDefault(); void this.action(el.dataset.modelAction, el.dataset.id); });
     }
-    reset() { this.testDialog?.close(); this.testDialog = null; this.models = []; this.draft = blank(); this.testResult = null; this.fieldError = null; this.note = ''; this.saving = false; this.testing = false; this.uncertain = false; this.revision++; this.loading++; this.view++; }
+    leave() { clearInterval(this.pendingTimer); clearTimeout(this.testSlowTimer); this.pendingTimer = undefined; this.testSlowTimer = undefined; this.view++; this.draft.key = ''; this.testDialog?.close(); this.testDialog = null; }
+    reset() { this.leave(); clearInterval(this.pendingTimer); this.pendingTimer = undefined; this.reading = false; this.pendingAction = ''; this.testDialog?.close(); this.testDialog = null; this.models = []; this.draft = blank(); this.testResult = null; this.fieldError = null; this.note = ''; this.saving = false; this.testing = false; this.uncertain = false; this.revision++; this.loading++; this.view++; }
     model() { return this.models.find(m => this.path === '/models/' + part(m.id)); }
     sameView(path, epoch, view) { return path === this.path && epoch === adapter.identityEpoch && view === this.view; }
     async load(path, preserveDraft = false) {
@@ -62,6 +69,10 @@ export class ModelManagement {
             this.testDialog?.close();
             this.testDialog = null;
             this.view++;
+            clearInterval(this.pendingTimer);
+            clearTimeout(this.testSlowTimer);
+            this.reading = false;
+            this.pendingAction = '';
             this.saving = false;
             this.testing = false;
             this.draft = blank();
@@ -105,24 +116,29 @@ export class ModelManagement {
         this.testDialog?.close();
         this.testDialog = this.showTestDialog(this.testModalMarkup());
     } }
+    beginPending(action) { this.pendingAction = action; this.pendingStarted = Date.now(); clearInterval(this.pendingTimer); this.pendingTimer = setInterval(() => { if (Date.now() - this.pendingStarted >= 10000)
+        this.render(); }, 1000); }
+    endPending() { this.pendingAction = ''; clearInterval(this.pendingTimer); this.pendingTimer = undefined; }
+    pendingText(action, idle) { const labels = { save: 'Saving model', read: 'Reading current data', enable: 'Enabling model', disable: 'Disabling model', delete: 'Deleting model', default: 'Saving future Work model' }; return this.pendingAction === action ? `${pendingDots()}${labels[action]}` : idle; }
+    busy(action) { return `aria-busy="${this.pendingAction === action}"`; }
     form(m) {
         const d = this.draft;
         return `<form data-model-form="model" class="form-grid">
  ${modelFields(d, !!m)}
- <div class="form-actions"><button class="btn primary" type="submit" ${this.saving || this.uncertain ? 'disabled' : ''}>${this.saving ? 'Saving…' : m ? 'Save model' : 'Add model'}</button><button class="btn secondary" type="button" data-model-action="test" ${this.testing ? 'disabled' : ''}>Test</button></div><p class="help">Test sends a message and shows the reply. A passed Test is not required to save, enable or select a model.</p></form>`;
+ <div class="form-actions"><button class="btn primary" type="submit" ${this.saving || this.reading || this.uncertain ? 'disabled' : ''} ${this.busy('save')}>${this.pendingText('save', m ? 'Save model' : 'Add model')}</button><button class="btn secondary" type="button" data-model-action="test" ${this.testing ? 'disabled' : ''}>Test</button></div><p class="help">Test sends a message and shows the reply. A passed Test is not required to save, enable or select a model.</p></form>`;
     }
     markup() {
         const m = this.model();
-        let body = PageHeader('AI models', 'Add a model, test it, and choose it in Work Chat.', `<button class="btn secondary" data-model-action="read">Read current data</button>${NavLink('Configure runtime', '/runtime', 'btn secondary')}`, this.path !== '/models' ? NavLink('All models', '/models') : '');
-        body += `<div id="model-note">${this.note ? Feedback(this.note, this.noteError ? 'warning' : 'success') : ''}</div>`;
+        let body = PageHeader('AI models', 'Add a model, test it, and choose it in Work Chat.', `<button class="btn secondary" data-model-action="read" ${this.reading || this.saving ? 'disabled' : ''} ${this.busy('read')}>${this.pendingText('read', 'Read current data')}</button>${NavLink('Configure runtime', '/runtime', 'btn secondary')}`, this.path !== '/models' ? NavLink('All models', '/models') : '');
+        body += `<div id="model-pending-note" role="status">${this.pendingAction && Date.now() - this.pendingStarted >= 10000 ? 'Still waiting for ' + esc(this.pendingAction === 'read' ? 'current model data' : 'Core to confirm this model change') + ' (' + Math.floor((Date.now() - this.pendingStarted) / 1000) + 's). You can leave this page; this does not cancel the request.' : ''}</div><div id="model-note">${this.note ? Feedback(this.note, this.noteError ? 'warning' : 'success') : ''}</div>`;
         if (this.path === '/models')
             return body + Section('Models', 'Enabled models with a Key can be selected in Work Chat.', `<div class="section-body">${this.models.length ? this.models.map(m => `<div class="catalog-row"><div><a href="/models/${part(m.id)}" data-nav><strong>${esc(m.name)}</strong></a><p>${esc(m.api === 'openai-responses' ? 'OpenAI Responses' : 'Anthropic Messages')} · <code>${esc(m.model)}</code> · <small>${esc(m.id.slice(-8))}</small></p><p>${m.credentialAvailable ? 'Key available' : 'Key unavailable'}</p></div>${StatusLabel(m.enabled ? 'Enabled' : 'Disabled', m.enabled ? 'success' : 'neutral')}</div>`).join('') : '<p>No models configured. Add one below.</p>'}</div>`) + Section('Add model', 'Each model has its own connection and Key.', `<div class="section-body">${this.form()}<div id="model-test-result">${this.testMarkup()}</div></div>`);
         if (!m)
             return body + Feedback('This model is unavailable. Read the current list.', 'warning');
-        return body + Section(m.name, m.api === 'openai-responses' ? 'OpenAI Responses' : 'Anthropic Messages', `<div class="section-body"><p>${StatusLabel(m.enabled ? 'Enabled' : 'Disabled', m.enabled ? 'success' : 'neutral')}</p>${this.form(m)}<div id="model-test-result">${this.testMarkup()}</div><div class="form-actions"><button class="btn secondary" data-model-action="${m.enabled ? 'disable' : 'enable'}" data-id="${esc(m.id)}" ${this.saving || this.uncertain ? 'disabled' : ''}>${m.enabled ? 'Disable' : 'Enable'} model</button><button class="btn danger" data-model-action="delete" data-id="${esc(m.id)}" ${this.saving || this.uncertain ? 'disabled' : ''}>Delete model</button><button class="btn secondary" data-model-action="default" data-id="${esc(m.id)}" ${!m.enabled || !m.credentialAvailable || this.saving || this.uncertain ? 'disabled' : ''}>Use for future Work</button></div><p class="help">Existing Work and Session choices stay unchanged.</p></div>`);
+        return body + Section(m.name, m.api === 'openai-responses' ? 'OpenAI Responses' : 'Anthropic Messages', `<div class="section-body"><p>${StatusLabel(m.enabled ? 'Enabled' : 'Disabled', m.enabled ? 'success' : 'neutral')}</p>${this.form(m)}<div id="model-test-result">${this.testMarkup()}</div><div class="form-actions"><button class="btn secondary" data-model-action="${m.enabled ? 'disable' : 'enable'}" data-id="${esc(m.id)}" ${this.saving || this.reading || this.uncertain ? 'disabled' : ''} ${this.busy(m.enabled ? 'disable' : 'enable')}>${this.pendingText(m.enabled ? 'disable' : 'enable', (m.enabled ? 'Disable' : 'Enable') + ' model')}</button><button class="btn danger" data-model-action="delete" data-id="${esc(m.id)}" ${this.saving || this.reading || this.uncertain ? 'disabled' : ''} ${this.busy('delete')}>${this.pendingText('delete', 'Delete model')}</button><button class="btn secondary" data-model-action="default" data-id="${esc(m.id)}" ${!m.enabled || !m.credentialAvailable || this.saving || this.reading || this.uncertain ? 'disabled' : ''} ${this.busy('default')}>${this.pendingText('default', 'Use for future Work')}</button></div><p class="help">Existing Work and Session choices stay unchanged.</p></div>`);
     }
     async save() {
-        if (this.saving || this.uncertain)
+        if (this.saving || this.reading || this.uncertain)
             return;
         this.capture();
         const issue = modelDraftIssue(this.draft, !!this.model());
@@ -133,6 +149,7 @@ export class ModelManagement {
         const m = this.model(), path = this.path, epoch = adapter.identityEpoch, view = this.view, submitted = this.draft;
         let committed = false;
         this.saving = true;
+        this.beginPending('save');
         this.note = '';
         this.fieldError = null;
         this.render();
@@ -147,13 +164,14 @@ export class ModelManagement {
             this.note = 'Model saved. Enabled models with a Key are available in Work Chat.';
             this.noteError = false;
             this.revision++;
-            this.dirty(false);
-            if (!m)
+            const newerDraft = this.draft !== submitted;
+            this.dirty(newerDraft);
+            if (!m && !newerDraft)
                 this.draft = blank();
             await this.load(path, true);
         }
         catch (e) {
-            if (this.sessionError(e))
+            if (this.sessionError(e, epoch))
                 return;
             if (this.sameView(path, epoch, view)) {
                 if (!committed && e instanceof ConsoleError && e.field)
@@ -167,6 +185,7 @@ export class ModelManagement {
             submitted.key = '';
             if (this.sameView(path, epoch, view)) {
                 this.saving = false;
+                this.endPending();
                 this.render();
             }
         }
@@ -186,25 +205,37 @@ export class ModelManagement {
             return;
         }
         if (action === 'read') {
+            if (this.reading || this.saving)
+                return;
             const path = this.path, epoch = adapter.identityEpoch, view = this.view;
+            this.capture();
+            this.reading = true;
+            this.beginPending('read');
+            this.render();
             try {
                 await this.load(path, true);
                 if (!this.sameView(path, epoch, view))
                     return;
                 this.uncertain = false;
-                this.note = 'Current data loaded. Keys remain write-only.';
+                this.note = 'Current data loaded. Keys remain write-only. Checked ' + new Date().toLocaleTimeString('en-US') + '.';
                 this.noteError = false;
             }
             catch (e) {
-                if (this.sessionError(e))
+                if (this.sessionError(e, epoch) || !this.sameView(path, epoch, view))
                     return;
                 this.note = message(e);
                 this.noteError = true;
             }
-            this.render();
+            finally {
+                if (this.sameView(path, epoch, view)) {
+                    this.reading = false;
+                    this.endPending();
+                    this.render();
+                }
+            }
             return;
         }
-        if (this.saving || this.uncertain)
+        if (this.saving || this.reading || this.uncertain)
             return;
         const m = this.models.find(m => m.id === id);
         if (!m)
@@ -214,6 +245,7 @@ export class ModelManagement {
         const path = this.path, epoch = adapter.identityEpoch, view = this.view;
         let committed = false;
         this.saving = true;
+        this.beginPending(action);
         this.render();
         try {
             if (action === 'default')
@@ -224,11 +256,13 @@ export class ModelManagement {
             if (!this.sameView(path, epoch, view))
                 return;
             await this.load(path, true);
+            if (!this.sameView(path, epoch, view))
+                return;
             this.note = action === 'default' ? 'Default model saved. Only future Work is affected.' : 'Model state saved.';
             this.noteError = false;
         }
         catch (e) {
-            if (this.sessionError(e))
+            if (this.sessionError(e, epoch))
                 return;
             if (this.sameView(path, epoch, view)) {
                 this.note = committed ? 'State saved. Read current data before another change.' : message(e);
@@ -239,6 +273,7 @@ export class ModelManagement {
         finally {
             if (this.sameView(path, epoch, view)) {
                 this.saving = false;
+                this.endPending();
                 this.render();
             }
         }
@@ -260,7 +295,7 @@ export class ModelManagement {
             return;
         }
         const input = { ...(m ? { modelId: m.id } : {}), api: d.api, baseUrl, model, ...(d.key ? { credential: d.key } : {}) };
-        const record = { target: { provider: d.name || model, api: d.api, model }, revision, pending: true };
+        const record = { target: { provider: d.name || model, api: d.api, model }, revision, pending: true, startedAt: Date.now() };
         this.note = '';
         this.noteError = false;
         this.fieldError = null;
@@ -268,6 +303,9 @@ export class ModelManagement {
         this.testing = true;
         this.openTestResult();
         this.render();
+        clearTimeout(this.testSlowTimer);
+        this.testSlowTimer = setTimeout(() => { if (this.sameView(path, epoch, view) && this.testResult === record && record.pending)
+            this.markTestStale(); }, 10000);
         try {
             const value = await adapter.modelRequest('model-tests', 'POST', input);
             if (!validModelTest(value))
@@ -276,7 +314,7 @@ export class ModelManagement {
                 record.value = value;
         }
         catch (e) {
-            if (this.sessionError(e))
+            if (this.sessionError(e, epoch))
                 return;
             if (this.sameView(path, epoch, view) && this.testResult === record) {
                 record.error = message(e);
@@ -291,6 +329,8 @@ export class ModelManagement {
         }
         finally {
             if (this.sameView(path, epoch, view) && this.testResult === record) {
+                clearTimeout(this.testSlowTimer);
+                this.testSlowTimer = undefined;
                 record.pending = false;
                 this.testing = false;
                 this.render();

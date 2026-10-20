@@ -1,11 +1,13 @@
 import {esc,Field,Input,Feedback,icon} from './components.js';
 import {modelErrors} from './model-form.js';
+import {pendingDots} from './pending.js';
 type Data=Record<string,any>;
 type Stage='loading'|'authorization'|'administrator'|'login'|'waiting'|'error';
 const root=document.querySelector<HTMLElement>('#setup-app')!;
 const proof=new URLSearchParams(location.hash.slice(1)).get('setup');
 if(location.hash)history.replaceState(null,'',location.pathname);
-let csrf='',setupCSRF='',authenticated=false,stage:Stage='loading',account='',notice='',noticeError=false,view=0,identity=0,writing=false,snapshot:Data={};
+let csrf='',setupCSRF='',authenticated=false,stage:Stage='loading',account='',notice='',noticeError=false,view=0,identity=0,writing=false,reading=false,redeeming=false,snapshot:Data={};
+let readLock:symbol|null=null,waitTimer:ReturnType<typeof setTimeout>|undefined,waitSince=0,waitPhase='';
 class RequestError extends Error {
   constructor(message:string,public status=0,public unknown=false,public field='',public code='') {super(message);}
 }
@@ -34,7 +36,7 @@ function clearSecrets(){root.querySelectorAll<HTMLInputElement>('input[type=pass
 function changeStage(next:Stage){if(next!==stage){clearSecrets();view++;stage=next;writing=false;}}
 function credentialForm() {
   const creating=stage==='administrator';
-  return `<form id="credentials" class="form-grid" novalidate>${Field('account','Account',Input('account',account,'autocomplete="username" required maxlength="128"'))}${Field('password','Password',Input('password','',`type="password" autocomplete="${creating?'new-password':'current-password'}" required`),creating?'Use at least 12 characters.':'Use your account password.')}${creating?Field('confirm-password','Confirm password',Input('confirm-password','','type="password" autocomplete="new-password" required'),'Enter the same password again.'):''}<div class="form-actions"><button class="btn primary" type="submit">${creating?'Create administrator':'Sign in'}${icon('arrow',16)}</button></div></form>`;
+  return `<form id="credentials" class="form-grid" novalidate>${Field('account','Account',Input('account',account,'autocomplete="username" required maxlength="128"'))}${Field('password','Password',Input('password','',`type="password" autocomplete="${creating?'new-password':'current-password'}" required`),creating?'Use at least 12 characters.':'Use your account password.')}${creating?Field('confirm-password','Confirm password',Input('confirm-password','','type="password" autocomplete="new-password" required'),'Enter the same password again.'):''}<div class="form-actions"><button class="btn primary" type="submit">${creating?'Create administrator':'Sign in'}<span class="pending-slot" data-credential-pending>${icon('arrow',16)}</span></button></div></form>`;
 }
 function render(){
  const title=stage==='administrator'?'Create your administrator':stage==='login'?'Sign in to Piwork':stage==='authorization'?'Open your setup link':stage==='waiting'?(snapshot.status?.ready?'Your Core is ready':'Core setup is pending'):stage==='error'?'Could not read Core state':'Opening Piwork…';
@@ -48,7 +50,18 @@ function render(){
 }
 function updateNotice(){const node=root.querySelector('#setup-notice');if(node)node.innerHTML=notice?Feedback(notice,noticeError?'warning':'success'):'';}
 function tell(text:string,error=false){notice=text;noticeError=error;updateNotice();}
-function updateLocks(){root.querySelectorAll<HTMLInputElement|HTMLButtonElement>('input,button').forEach(node=>{node.disabled=writing;});root.querySelector('#credentials [type=submit]')?.setAttribute('aria-busy',String(writing));const status=root.querySelector('#setup-status');if(status)status.textContent=writing?'Saving. Waiting for server confirmation…':'';}
+function updateLocks(){
+ const phase=writing?'write':redeeming?'redeem':reading?'read':'';
+ if(phase!==waitPhase){waitPhase=phase;waitSince=phase?Date.now():0;clearTimeout(waitTimer);if(phase)waitTimer=setTimeout(updateLocks,10000);}
+ const slow=!!phase&&Date.now()-waitSince>=10000;
+ root.querySelectorAll<HTMLInputElement|HTMLButtonElement>('input,button').forEach(node=>{node.disabled=writing||(node instanceof HTMLButtonElement&&reading);});
+ root.querySelector('#credentials [type=submit]')?.setAttribute('aria-busy',String(writing));
+ const pending=root.querySelector('[data-credential-pending]');if(pending)pending.innerHTML=writing?pendingDots():icon('arrow',16);
+ root.querySelectorAll('[data-action="refresh"]').forEach(node=>node.setAttribute('aria-busy',String(reading)));
+ const status=root.querySelector('#setup-status');if(status)status.innerHTML=writing?(stage==='login'?'Signing in. Waiting for server confirmation…':stage==='administrator'?'Creating your administrator. Waiting for server confirmation…':`${pendingDots()} Signing out. Waiting for server confirmation…`):redeeming?`${pendingDots()} Checking your setup authorization…`:reading?`${pendingDots()} Reading current state…`:'';
+ if(status&&slow)status.innerHTML+='<span class="pending-wait-message"> Still waiting for the server. No result has been confirmed; do not submit again.</span>';
+}
+
 let confirmationTouched=false;
 function fieldError(id:string,text:string) {
   const input=root.querySelector<HTMLInputElement>('#'+id),error=root.querySelector<HTMLElement>('#'+id+'-error');
@@ -70,7 +83,7 @@ function validateCredentials(submitting=false) {
   return !first;
 }
 async function credentials(form:HTMLFormElement) {
-  if(writing||!validateCredentials(true))return;
+  if(writing||reading||!validateCredentials(true))return;
   const creating=stage==='administrator',ticket=context(),data=new FormData(form);
   account=String(data.get('account')||'');let password=String(data.get('password')||'');writing=true;updateLocks();
   try {const value=await web(creating?'setup/administrator':'login','POST',{account,password},creating);if(!current(ticket))return;clearSecrets();identity++;location.replace(value.next||'/');}
@@ -85,6 +98,7 @@ async function credentials(form:HTMLFormElement) {
   } finally {password='';if(current(ticket)){writing=false;updateLocks();}}
 }
 async function load(){
+ if(reading||writing)return;reading=true;const lock=Symbol();readLock=lock;updateLocks();
  const ticket=context();try{
   const state=await web('state');if(!current(ticket))return;
   if(!state.administratorInitialized){const access=await web('setup/session');if(!current(ticket))return;setupCSRF=access.csrfToken||'';changeStage(access.authorized?'administrator':'authorization');render();return;}
@@ -94,11 +108,12 @@ async function load(){
   if(session.user?.role==='admin'){location.replace('/admin/setup');return;}
   snapshot=await web('onboarding');if(!current(ticket))return;changeStage('waiting');render();
  }catch(error){if(current(ticket)){changeStage('error');tell(message(error),true);render();}}
+ finally{if(readLock===lock){readLock=null;reading=false;updateLocks();}}
 }
 root.addEventListener('submit',event=>{event.preventDefault();void credentials(event.target as HTMLFormElement);});
 root.addEventListener('input',()=>{account=root.querySelector<HTMLInputElement>('#account')?.value||'';validateCredentials();});
 root.addEventListener('focusout',event=>{const input=event.target as HTMLInputElement;if(input.id==='confirm-password'){confirmationTouched=true;validateCredentials();}if(input.id==='password'&&stage==='administrator'&&input.value&&input.value.length<12)fieldError('password','Use at least 12 characters.');});
-root.addEventListener('click',event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset.action;if(!action||writing)return;event.preventDefault();if(action==='refresh'){tell('');void load();}else if(action==='logout'){writing=true;identity++;clearSecrets();updateLocks();void web('logout','POST',{}).then(()=>location.replace('/login')).catch(error=>{writing=false;tell(message(error),true);updateLocks();});}});
-window.addEventListener('pagehide',()=>{identity++;view++;clearSecrets();});
+root.addEventListener('click',event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset.action;if(!action||writing||reading)return;event.preventDefault();if(action==='refresh'){tell('');void load();}else if(action==='logout'){writing=true;identity++;const ticket=context();clearSecrets();updateLocks();void web('logout','POST',{}).then(()=>{if(current(ticket))location.replace('/login');}).catch(error=>{if(!current(ticket))return;writing=false;tell(message(error),true);updateLocks();});}});
+window.addEventListener('pagehide',()=>{identity++;view++;readLock=null;reading=false;redeeming=false;clearTimeout(waitTimer);clearSecrets();});
 window.addEventListener('pageshow',event=>{if(event.persisted){identity++;view++;writing=false;clearSecrets();void load();}});
-void(async()=>{render();if(proof){try{await web('setup/redeem','POST',{proof},true);}catch{tell('Setup authorization could not be confirmed. Checking the current setup session.',true);}}await load();})();
+void(async()=>{const ticket=context();render();if(proof){redeeming=true;updateLocks();try{await web('setup/redeem','POST',{proof},true);}catch{if(current(ticket))tell('Setup authorization could not be confirmed. Checking the current setup session.',true);}finally{if(current(ticket)){redeeming=false;updateLocks();}}}if(current(ticket))await load();})();

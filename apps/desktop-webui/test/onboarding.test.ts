@@ -72,7 +72,7 @@ test('IP browser completes protected setup, model/runtime save, workbench and ad
     await page.getByLabel('Password',{exact:true}).fill('synthetic-password');
     await page.getByRole('button',{name:'Sign in',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
-    await page.getByLabel('Model ID',{exact:true}).fill('synthetic-custom-model');
+    await openModelAdvanced(page);await page.getByLabel('Model ID',{exact:true}).fill('synthetic-custom-model');
     await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/v1');
     await page.getByLabel('API Key',{exact:true}).fill('synthetic-model-key');
     let tests=0;
@@ -132,7 +132,7 @@ test('optional ADMIN environment skips first-user setup while old model variable
     await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
     const models=await page.evaluate(async()=>{const response=await fetch('/console/api/admin/models');return response.json();});
     assert.deepEqual(models.models,[]);
-    await expect(page.getByLabel('Model ID',{exact:true})).toBeVisible();
+    await expect(page.getByLabel('Model ID',{exact:true})).toHaveValue('deepseek-flash');await expect(page.getByLabel('Model ID',{exact:true})).toBeHidden();
     assert.equal(await page.getByLabel('Password',{exact:true}).count(),0);
   } finally {await browser.close();await server.stop();}
 });
@@ -153,7 +153,7 @@ test('lost model/runtime responses are read back without replay and survive rest
   const release=new Promise<void>(resolve=>{releaseStale=resolve;});
   await page.route('**/_web/api/onboarding',async route=>{if(held){await route.continue();return;}held=true;const response=await route.fetch();captured();await release;await route.fulfill({response});});
   await staleCaptured;
-  await page.getByLabel('Model ID',{exact:true}).fill('lost-response-model');await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-key');
+  await openModelAdvanced(page);await page.getByLabel('Model ID',{exact:true}).fill('lost-response-model');await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-key');
   let tests=0,models=0,runtimes=0;
   await page.route('**/console/api/admin/model-tests',async route=>{tests++;await route.fulfill({status:502,contentType:'application/json',body:JSON.stringify({code:'MODEL_TEST_FAILED',message:'Synthetic unavailable model'})});});
   await page.getByRole('button',{name:'Test',exact:true}).click();
@@ -210,7 +210,7 @@ for(const entry of ['/admin/runtime','/runtime'])test(`first runtime through ${e
   await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
   await expect(page.locator('input[name=agentImage],select[name=agentImage]')).toHaveCount(0);await expect(page.locator('body')).not.toContainText('Advanced image override');
   await page.route('**/console/api/admin/runtime',async route=>{if(route.request().method()==='PUT')await route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({code:'INVALID_REQUEST',message:'Synthetic binding failure'})});else await route.continue();});
-  await page.getByLabel('Model ID',{exact:true}).fill('custom-runtime-model');await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-model-key');await page.getByRole('button',{name:'Save and continue',exact:true}).click();
+  await openModelAdvanced(page);await page.getByLabel('Model ID',{exact:true}).fill('custom-runtime-model');await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-model-key');await page.getByRole('button',{name:'Save and continue',exact:true}).click();
   await expect(page.locator('#setup-notice')).toContainText('Model saved. Runtime was not bound.');
   await page.unroute('**/console/api/admin/runtime');
   const metadata=await page.evaluate(async()=>(await fetch('/console/api/admin/runtime-defaults')).json());
@@ -235,7 +235,11 @@ async function loginSetup(page:any,server:BrowserServer) {
  await page.getByRole('button',{name:'Sign in',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
 }
+async function openModelAdvanced(page:any) {
+ const advanced=page.locator('#model-advanced');if(await advanced.count()&&!await advanced.evaluate((el:HTMLDetailsElement)=>el.open))await advanced.locator('summary').click();
+}
 async function fillModel(page:any,name='setup-fixture') {
+ await openModelAdvanced(page);
  await page.getByLabel('Model ID',{exact:true}).fill(name);
  await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/v1');
  await page.getByLabel('API Key',{exact:true}).fill('synthetic-model-key');
@@ -420,7 +424,7 @@ test('setup, Admin and hosted Desktop retain shared control states and wrap at 3
   await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');await create.click();await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
   await page.screenshot({path:join(evidence,'sign-in-360.png'),fullPage:true});await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
   await fillModel(page);await page.getByLabel('Display name (optional)',{exact:true}).fill('Long model name '.repeat(17));
-  const field=page.getByLabel('Model ID',{exact:true});await field.fill('x'.repeat(257));await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(field).toBeFocused();await expect(page.locator('#model-id-error')).toContainText('at most 256');await field.fill('layout-fixture');
+  await openModelAdvanced(page);const field=page.getByLabel('Model ID',{exact:true});await field.fill('x'.repeat(257));await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(field).toBeFocused();await expect(page.locator('#model-id-error')).toContainText('at most 256');await field.fill('layout-fixture');
   await page.getByLabel('Display name (optional)',{exact:true}).fill('Long model name '.repeat(16));
   for(const width of [1440,360]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:join(evidence,`model-${width}.png`),fullPage:true});}
   let release=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});
@@ -464,9 +468,8 @@ test('real Engine prepares fixed release dependencies and permits one explicit W
   page.on('request',request=>{if(request.url().includes('/model-tests'))tests++;if(request.method()==='POST'&&request.url().endsWith('/admin/models'))modelWrites++;if(request.method()==='PUT'&&request.url().endsWith('/admin/runtime'))runtimeWrites++;if(request.method()==='POST'&&new URL(request.url()).pathname==='/_desktop/api/works')works++;});
   await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();
   await expect.poll(async()=>page.evaluate(async()=>{const value=await(await fetch('/_web/api/onboarding')).json();return value.status?.ready&&value.preparation?.ready;}),{timeout:240000,intervals:[1000,2000,5000]}).toBe(true);
-  await page.getByRole('button',{name:'Read current state',exact:true}).click();await expect(page.locator('#preparation-answer')).toContainText('All required components are ready');
-  await captureFollowup(page,'engine-ready');
-  await page.getByRole('link',{name:'Open workbench',exact:true}).click();await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible();assert.equal(works,0);assert.equal(tests,0);
+  await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible({timeout:12000});
+  await captureFollowup(page,'engine-ready');assert.equal(works,0);assert.equal(tests,0);
   await page.locator('[data-action=account]').click();await page.getByRole('menuitem',{name:'Administration',exact:true}).click();await expect(page.locator('main h1')).toContainText('What’s next');await page.getByRole('link',{name:/^Quick setup/}).first().click();await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();await captureFollowup(page,'engine-current-model');await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toContainText('All required components are ready');assert.deepEqual({modelWrites,runtimeWrites},{modelWrites:1,runtimeWrites:1});await page.getByRole('link',{name:'Workbench',exact:true}).click();await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible();await captureFollowup(page,'engine-workbench');
   await page.getByRole('button',{name:'New Work',exact:true}).first().click();await page.locator('#create-name').fill('Setup acceptance Work');await page.getByRole('button',{name:'Create Work',exact:true}).click();
   const openWork=page.locator('#modal .modal-footer').getByRole('link',{name:'Open Work',exact:true});await expect(openWork).toBeVisible({timeout:120000});await openWork.click();
@@ -539,9 +542,10 @@ test('preparation explains waiting and enables its exit only after all dependenc
   page.on('request',request=>{const path=new URL(request.url()).pathname;if(request.method()==='POST'&&path==='/console/api/admin/models')models++;if(request.method()==='PUT'&&path==='/console/api/admin/runtime')runtimes++;if(path.endsWith('/model-tests'))tests++;if(request.method()==='POST'&&path.endsWith('/works'))works++;});
   await page.route('**/_web/api/onboarding',async route=>{const response=await route.fetch();await route.fulfill({response,json:deliveryFixture(await response.json(),mode)});});
   await page.getByRole('button',{name:'Save and continue',exact:true}).click();
+  await expect(page.locator('#preparation-answer')).toBeVisible();await page.reload();
   const answer=page.locator('#preparation-answer'),exit=page.locator('#workbench-exit'),refresh=page.getByRole('button',{name:'Read current state',exact:true});
   await expect(page.getByRole('heading',{name:'Preparing Piwork…',exact:true})).toBeVisible();
-  await expect(answer).toContainText('Preparing Docker Engine');await expect(answer).toContainText('Please wait');await expect(answer).toContainText('updates automatically');await expect(answer.locator('svg')).toHaveCount(1);
+  await expect(answer).toContainText('Preparing Docker Engine');await expect(answer).toContainText('Please wait');await expect(answer).toContainText('updates automatically');await expect(answer.locator('.pending-dots')).toHaveCount(1);
   await expect(page.locator('[data-component=agent]')).toContainText('Waiting for Docker Engine');
   await expect(exit).toBeDisabled();await expect(exit).not.toHaveAttribute('href','/');
   await exit.evaluate((element:HTMLElement)=>element.click());await exit.focus();await page.keyboard.press('Enter');await page.keyboard.press('Space');assert.equal(new URL(page.url()).pathname,'/admin/setup');
@@ -567,6 +571,7 @@ test('preparation separates retry, terminal failure and interrupted observation 
   page.on('request',request=>{if(request.method()!=='GET')mutations++;});
   await page.route('**/_web/api/onboarding',async route=>{if(mode==='offline'){await route.abort('failed');return;}const response=await route.fetch();await route.fulfill({response,json:deliveryFixture(await response.json(),mode)});});
   await page.getByRole('button',{name:'Save and continue',exact:true}).click();
+  await expect(page.locator('#preparation-answer')).toBeVisible();await page.reload();
   const answer=page.locator('#preparation-answer'),exit=page.locator('#workbench-exit'),refresh=page.getByRole('button',{name:'Read current state',exact:true});
   await expect(answer).toContainText('Waiting to retry Files');await expect(answer).toContainText('Retrying in 5 seconds');await expect(answer).toContainText('network and image registry access');await expect(exit).toBeDisabled();
   mode='failed';await refresh.click();await expect(page.getByRole('heading',{name:'Preparation needs attention',exact:true})).toBeVisible();await expect(answer).toContainText('repair the server release');await expect(answer).not.toContainText('Please wait');await expect(answer).not.toContainText('automatically');await expect(exit).toBeDisabled();

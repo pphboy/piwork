@@ -1,0 +1,168 @@
+import {test,expect} from '@playwright/test';
+import {createServer} from 'node:http';
+import {readFile,mkdir} from 'node:fs/promises';
+
+if(process.env.PIWORK_TEST_BROWSER_BIN)test.use({launchOptions:{executablePath:process.env.PIWORK_TEST_BROWSER_BIN}});
+let server,base;
+const names=['docker','agent','packageHelper','defaultContext','fileHelper','snapshotHelper'];
+const gate=()=>{let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
+const savedModel=(ref='model-synthetic')=>({id:ref,modelRef:ref,name:'Saved model',model:'custom-model',api:'openai-responses',baseUrl:'https://models.example.invalid/v1',enabled:true,credentialAvailable:true});
+const preparation=(state='ready')=>({ready:state==='ready',components:Object.fromEntries(names.map(name=>[name,{state}]))});
+const shell=`<!doctype html><html><head><link rel="stylesheet" href="/style.css"></head><body><main class="setup-main" id="quick"></main><script type="module">
+import {mountQuickSetup} from '/browser/quick-setup.js';
+window.log={dirty:false,navigations:[],expired:0,step:'model'};window.active=true;
+window.mount=()=>{window.setup?.dispose();window.setup=mountQuickSetup(document.querySelector('#quick'),{csrf:()=> 'synthetic-csrf',current:()=>window.active,expired:()=>window.log.expired++,navigate:href=>window.log.navigations.push(href),dirty:value=>window.log.dirty=value,step:value=>window.log.step=value,preparation:new URLSearchParams(location.search).has('prepare')});};window.mount();
+</script></body></html>`;
+test.beforeAll(async()=>{
+ server=createServer(async(req,res)=>{
+  if(req.url.startsWith('/browser/')){try{res.setHeader('Content-Type','application/javascript');res.end(await readFile(new URL('../dist/browser/'+req.url.slice(9),import.meta.url)));}catch{res.writeHead(404);res.end();}return;}
+  if(req.url==='/style.css'){res.setHeader('Content-Type','text/css');res.end((await Promise.all(['../../ui-shared/tokens.css','../../ui-shared/controls.css','../public/style.css'].map(path=>readFile(new URL(path,import.meta.url),'utf8')))).join('\n'));return;}
+  if(req.url==='/setup/piwork-logo.png'){res.setHeader('Content-Type','image/png');res.end(await readFile(new URL('../../ui-shared/assets/piwork-logo.png',import.meta.url)));return;}
+  res.setHeader('Content-Type','text/html');res.end(req.url.startsWith('/setup')||req.url.startsWith('/login')?'<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body><div id="setup-app"></div><script type="module" src="/browser/onboarding.js"></script></body></html>':shell);
+ });await new Promise(done=>server.listen(0,'127.0.0.1',done));base=`http://127.0.0.1:${server.address().port}`;
+});
+test.afterAll(async()=>{await new Promise(done=>server.close(done));});
+async function fixture(page,{configured=false,models=[],ready=false,prepare=false,handle=()=>null}={}){
+ const state={models:[...models],requests:[],snapshot:{administrator:true,defaultAgentImage:'agent:synthetic',runtime:configured?{configured:true,modelRef:models[0]?.modelRef||'model-synthetic',agentImage:'agent:synthetic',model:{credentialAvailable:true}}:{configured:false},status:{ready},preparation:preparation(ready?'ready':'preparing')}};
+ await page.route('**/*/api/**',async route=>{
+  const r={path:new URL(route.request().url()).pathname,method:route.request().method(),body:route.request().postDataJSON()};state.requests.push(r);
+  const reply=await handle(r,state,route);if(reply==='handled')return;if(reply){await route.fulfill({status:reply.status||200,json:reply.json});return;}
+  if(r.path==='/_web/api/onboarding'){await route.fulfill({json:state.snapshot});return;}
+  if(r.path==='/console/api/admin/models'){
+   if(r.method==='GET'){await route.fulfill({json:{models:state.models}});return;}
+   const model={...savedModel('model-'+(state.models.length+1)),...r.body,name:r.body.name||r.body.model};delete model.credential;state.models.push(model);await route.fulfill({status:201,json:model});return;
+  }
+  if(r.path==='/console/api/admin/runtime'){
+   state.snapshot.runtime={configured:true,modelRef:r.body.modelRef,agentImage:'agent:synthetic',model:{credentialAvailable:true}};
+   await route.fulfill({json:{runtime:state.snapshot.runtime,status:state.snapshot.status}});return;
+  }
+  if(r.path==='/console/api/admin/model-tests'){await route.fulfill({json:{success:true,category:'success',api:r.body.api,model:r.body.model,testMessage:'Reply with OK.',replyText:'Synthetic OK',replyTruncated:false,checkedAt:'2026-10-20T00:00:00Z',durationMs:5}});return;}
+  await route.fulfill({status:404,json:{code:'NOT_FOUND'}});
+ });await page.goto(base+(prepare?'/?prepare':''));await expect(page.locator('#setup-title')).not.toHaveText('Reading Core configuration…');return state;
+}
+const refresh=page=>page.getByRole('button',{name:'Read current state',exact:true}).click();
+const nav=page=>page.evaluate(()=>window.log.navigations);
+const writes=state=>state.requests.filter(r=>r.method!=='GET');
+async function key(page){await page.getByLabel('API Key',{exact:true}).fill('synthetic-key');}
+async function advanced(page){const details=page.locator('#model-advanced');if(!(await details.evaluate(el=>el.open)))await details.locator('summary').click();}
+
+async function evidence(page,name){
+ if(process.env.PIWORK_UI_EVIDENCE!=='1')return;
+ const directory=new URL('../../../dist/server-ui-core-flow/onboarding/',import.meta.url);await mkdir(directory,{recursive:true});const size=page.viewportSize();
+ for(const width of [1440,390]){await page.setViewportSize({width,height:1000});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:new URL(`${name}-${width}.png`,directory).pathname,fullPage:true});}
+ if(size)await page.setViewportSize(size);
+}
+
+test('first empty draft is Key-only, uses exact defaults and compares dirty against its baseline',async({page})=>{
+ const state=await fixture(page);await evidence(page,'key-only');await expect(page.locator('#model-id')).toHaveValue('deepseek-flash');await expect(page.locator('#model-api')).toHaveValue('anthropic-messages');await expect(page.locator('#model-base-url')).toHaveValue('https://api.deepseek.com/anthropic');await expect(page.locator('#model-id')).toBeHidden();expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
+ await key(page);expect(await page.evaluate(()=>window.log.dirty)).toBe(true);await page.getByLabel('API Key',{exact:true}).fill('');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
+ await advanced(page);await page.getByLabel('Model ID',{exact:true}).fill('other');expect(await page.evaluate(()=>window.log.dirty)).toBe(true);await page.getByLabel('Model ID',{exact:true}).fill('deepseek-flash');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);expect(writes(state)).toEqual([]);
+});
+
+test('Key-only save serializes defaults, never implicitly Tests and enters once after confirmed readiness',async({page})=>{
+ const state=await fixture(page,{ready:true});await key(page);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect.poll(()=>nav(page)).toEqual(['/']);
+ const sent=writes(state);expect(sent.map(r=>r.path)).toEqual(['/console/api/admin/models','/console/api/admin/runtime']);expect(sent[0].body).toEqual({name:'',model:'deepseek-flash',api:'anthropic-messages',baseUrl:'https://api.deepseek.com/anthropic',credential:'synthetic-key'});expect(sent[1].body).toEqual({modelRef:'model-1'});
+ await refresh(page);expect(await nav(page)).toEqual(['/']);await expect(page.locator('#workbench-exit')).toHaveAttribute('href','/');await expect(page.locator('#quick input[type=password]')).toHaveCount(0);expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toContain('synthetic-key');
+});
+
+test('advanced errors expand and focus without a write, while reads preserve draft and focus',async({page})=>{
+ const state=await fixture(page);await key(page);await advanced(page);await page.getByLabel('Base URL',{exact:true}).fill('not-a-url');await page.locator('#model-advanced summary').click();await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#model-base-url')).toBeFocused();await expect(page.locator('#model-advanced')).toHaveAttribute('open','');expect(writes(state)).toEqual([]);
+ await page.getByLabel('Base URL',{exact:true}).fill('https://custom.example.invalid/anthropic');await page.getByLabel('Model ID',{exact:true}).fill('custom');await page.locator('#model-id').evaluate(el=>{window.original=el;el.focus();el.setSelectionRange(1,3);});await page.locator('[data-action=refresh]').evaluate(el=>el.click());await expect(page.locator('#setup-status .pending-dots')).toHaveCount(0);expect(await page.locator('#model-id').evaluate(el=>[el===window.original,document.activeElement===el,el.selectionStart,el.selectionEnd])).toEqual([true,true,1,3]);await expect(page.locator('#model-key')).toHaveValue('synthetic-key');await expect(page.locator('#model-base-url')).toHaveValue('https://custom.example.invalid/anthropic');
+});
+
+test('existing choices keep their baseline and additional models never receive first-install defaults',async({page})=>{
+ const models=[savedModel('first'),savedModel('second')];await fixture(page,{models,configured:true,ready:true});await expect(page.locator('#saved-model')).toHaveValue('first');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);await page.locator('#saved-model').selectOption('second');expect(await page.evaluate(()=>window.log.dirty)).toBe(true);await refresh(page);await expect(page.locator('#saved-model')).toHaveValue('second');await page.locator('#saved-model').selectOption('first');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
+ await page.getByRole('button',{name:'Add model',exact:true}).click();await expect(page.locator('#model-id')).toHaveValue('');await expect(page.locator('#model-api')).toHaveValue('openai-responses');await expect(page.locator('#model-base-url')).toHaveValue('');await expect(page.locator('#model-advanced')).toHaveAttribute('open','');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
+});
+
+test('catalog failure is not an empty installation and read recovery does not overwrite an edited draft',async({page})=>{
+ let fail=true;const state=await fixture(page,{handle:r=>r.path.endsWith('/admin/models')&&r.method==='GET'&&fail?{status:502,json:{message:'Synthetic catalog unavailable'}}:null});await expect(page.locator('#catalog-note')).toContainText('could not be loaded');await expect(page.locator('#model-id')).toHaveValue('');await expect(page.locator('[data-continue]')).toBeDisabled();await advanced(page);await page.locator('#model-id').fill('custom-after-error');await page.locator('#model-base-url').fill('https://custom.example.invalid');await key(page);await page.locator('#model-id').evaluate(el=>{window.catalogInput=el;window.catalogKey=document.querySelector('#model-key');el.focus();el.setSelectionRange(2,5);});fail=false;await page.locator('[data-action=refresh]').evaluate(el=>el.click());await expect(page.locator('#catalog-note')).toHaveText('');expect(await page.locator('#model-id').evaluate(el=>[el===window.catalogInput,document.querySelector('#model-key')===window.catalogKey,document.activeElement===el,el.selectionStart,el.selectionEnd])).toEqual([true,true,true,2,5]);await expect(page.locator('#model-id')).toHaveValue('custom-after-error');await expect(page.locator('#model-key')).toHaveValue('synthetic-key');expect(await page.evaluate(()=>window.log.dirty)).toBe(true);expect(writes(state)).toEqual([]);
+});
+
+for(const missing of names)test(`all six readiness checks remain mandatory: ${missing}`,async({page})=>{
+ const state=await fixture(page,{models:[savedModel()],configured:true,ready:true,prepare:true});state.snapshot.preparation.components[missing]={state:'pending'};await refresh(page);await expect(page.locator('#workbench-exit')).toHaveAttribute('aria-disabled','true');await expect(page.locator('#preparation-answer .pending-dots')).toHaveCount(0);delete state.snapshot.preparation.components[missing];await refresh(page);await expect(page.locator('#workbench-exit')).toHaveAttribute('aria-disabled','true');expect(await nav(page)).toEqual([]);
+});
+
+test('preparation has one waiting indicator, folded details, visible failures and static unknown recovery',async({page})=>{
+ const state=await fixture(page,{models:[savedModel()],configured:true,prepare:true});await evidence(page,'preparing');await expect(page.locator('#preparation-answer .pending-dots')).toHaveCount(1);await expect(page.locator('#preparation-components .pending-dots')).toHaveCount(0);expect(await page.locator('#preparation-details').evaluate(el=>el.open)).toBe(false);
+ state.snapshot.preparation=preparation();state.snapshot.preparation.ready=false;state.snapshot.preparation.components.fileHelper={state:'retrying',code:'IMAGE_UNAVAILABLE',retryAfterSeconds:4};await refresh(page);await expect(page.locator('#preparation-answer')).toContainText('Retrying in 4 seconds');await expect(page.locator('#preparation-answer .pending-dots')).toHaveCount(1);
+ state.snapshot.preparation.components.fileHelper={state:'failed',code:'IMAGE_INCOMPATIBLE'};await refresh(page);await expect(page.locator('#preparation-answer .pending-dots')).toHaveCount(0);await expect(page.locator('#preparation-failures')).toContainText('Docker API is incompatible');await page.getByRole('button',{name:'View Files details',exact:true}).click();await expect(page.locator('[data-component=fileHelper]')).toBeFocused();
+ delete state.snapshot.preparation;await refresh(page);await expect(page.locator('#preparation-answer')).toContainText('No active preparation has been confirmed');await expect(page.locator('#preparation-answer .pending-dots')).toHaveCount(0);await expect(page.locator('#workbench-exit')).toBeDisabled();
+});
+
+test('initial Ready, configured management and remount never auto-enter',async({page})=>{
+ const state=await fixture(page,{models:[savedModel()],configured:true,ready:true,prepare:true});await evidence(page,'ready-manual');await expect(page.locator('#workbench-exit')).toBeEnabled();expect(await nav(page)).toEqual([]);await page.evaluate(()=>window.mount());await expect(page.locator('#workbench-exit')).toBeEnabled();expect(await nav(page)).toEqual([]);expect(writes(state)).toEqual([]);
+ await page.goto(base);await expect(page.locator('#saved-model')).toBeVisible();await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#workbench-exit')).toBeEnabled();expect(await nav(page)).toEqual([]);expect(writes(state)).toEqual([]);
+});
+
+test('save-and-leave keeps its explicit destination even if preparation is already Ready',async({page})=>{
+ await fixture(page,{ready:true});await key(page);await page.evaluate(()=>window.setup.requestLeave(()=>window.log.navigations.push('/admin/runtime')));await page.locator('#leave-dialog').getByRole('button',{name:'Save and continue',exact:true}).click();await expect.poll(()=>nav(page)).toEqual(['/admin/runtime']);await refresh(page);expect(await nav(page)).toEqual(['/admin/runtime']);
+});
+
+for(const invalidate of ['leave','new edit','identity','read error','configuration change'])test(`first-setup automatic entry is revoked by ${invalidate}`,async({page})=>{
+ let fail=false;const state=await fixture(page,{handle:r=>r.path==='/_web/api/onboarding'&&fail?{status:502,json:{message:'Synthetic read failed'}}:null});await key(page);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toContainText('Preparing');
+ if(invalidate==='leave')await page.evaluate(()=>window.setup.requestLeave(()=>window.log.navigations.push('/admin/users')));
+ if(invalidate==='new edit')await page.locator('#quick').dispatchEvent('input');
+ if(invalidate==='identity'){state.snapshot.administrator=false;await refresh(page);await expect.poll(()=>page.evaluate(()=>window.log.expired)).toBe(1);}
+ if(invalidate==='read error'){fail=true;await refresh(page);await expect(page.locator('#preparation-answer')).toContainText('updates will retry');await expect(page.locator('#preparation-answer .pending-dots')).toHaveCount(0);fail=false;}
+ if(invalidate==='configuration change'){state.snapshot.runtime.agentImage='agent:changed';await refresh(page);state.snapshot.runtime.agentImage='agent:synthetic';}
+ state.snapshot.status.ready=true;state.snapshot.preparation=preparation();if(invalidate!=='identity')await refresh(page);expect(await nav(page)).toEqual(invalidate==='leave'?['/admin/users']:[]);
+});
+
+test('a late read cannot navigate, clear secrets or unlock a newly mounted view',async({page})=>{
+ const held=gate();let block=false,started=0;const state=await fixture(page,{ready:true,handle:async r=>{if(r.path==='/_web/api/onboarding'&&block){started++;await held.promise;return{json:structuredClone(state.snapshot)};}return null;}});await key(page);block=true;await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect.poll(()=>started).toBe(1);block=false;await page.evaluate(()=>window.mount());await expect(page.locator('#saved-model')).toBeVisible();await page.getByRole('button',{name:'Add model',exact:true}).click();await page.locator('#model-id').fill('new-draft');await key(page);held.resolve();await expect(page.locator('#model-key')).toHaveValue('synthetic-key');expect(await nav(page)).toEqual([]);
+});
+
+test('model success and Runtime failure retain the reference; only the binding is retried',async({page})=>{
+ let fail=true;const state=await fixture(page,{handle:r=>r.path.endsWith('/admin/runtime')&&fail?{status:400,json:{code:'INVALID_REQUEST',message:'Synthetic binding rejected'}}:null});await key(page);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#setup-notice')).toContainText('Model saved. Runtime was not bound');await expect(page.locator('#saved-model')).toHaveValue('model-1');fail=false;await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();expect(writes(state).filter(r=>r.path.endsWith('/models'))).toHaveLength(1);expect(writes(state).filter(r=>r.path.endsWith('/runtime'))).toHaveLength(2);
+});
+
+test('unknown Runtime outcome reads back without replay or recovering automatic navigation',async({page})=>{
+ let unknown=true;const state=await fixture(page,{ready:true,handle:(r,s)=>{if(r.path.endsWith('/admin/runtime')&&unknown){s.snapshot.runtime={configured:true,modelRef:r.body.modelRef,agentImage:'agent:synthetic',model:{credentialAvailable:true}};return{status:502,json:{code:'CORE_UNAVAILABLE'}};}return null;}});await key(page);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#setup-notice')).toContainText('Runtime save is unconfirmed');unknown=false;await refresh(page);await expect(page.locator('#workbench-exit')).toBeEnabled();expect(await nav(page)).toEqual([]);expect(writes(state)).toHaveLength(2);
+});
+
+test('Test has its own pending and stale result; explicit failure still permits save',async({page})=>{
+ const held=gate();const state=await fixture(page,{handle:async r=>{if(r.path.endsWith('/model-tests')){await held.promise;return{json:{success:false,category:'authentication',testMessage:'Reply with OK.',reason:'provider-authentication',message:'Synthetic Key rejected.',recovery:'Check the Key.',checkedAt:'2026-10-20T00:00:00Z',durationMs:1}};}return null;}});await key(page);await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('#test-dialog .pending-dots')).toHaveCount(1);await expect(page.getByRole('button',{name:'Test',exact:true})).toBeDisabled();await page.locator('#test-dialog').getByRole('button',{name:'Close',exact:true}).click();await advanced(page);await page.locator('#model-id').fill('edited');held.resolve();await expect(page.locator('#model-test-result')).toContainText('Previous configuration');await expect(page.locator('#model-test-result .pending-dots')).toHaveCount(0);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();expect(writes(state).map(r=>r.path)).toEqual(['/console/api/admin/model-tests','/console/api/admin/models','/console/api/admin/runtime']);
+});
+
+async function identityFixture(page,{initialized=false,handle=()=>null}={}){
+ const state={initialized,authorized:false,requests:[]};
+ await page.route('**/_web/api/**',async route=>{
+  const path=new URL(route.request().url()).pathname.split('/_web/api/')[1],request={path,method:route.request().method(),body:route.request().postDataJSON(),headers:route.request().headers()};state.requests.push(request);
+  const special=await handle(request,state,route);if(special==='handled')return;if(special){await route.fulfill({status:special.status||200,json:special.json});return;}
+  const values={state:{administratorInitialized:state.initialized},session:{authenticated:false,csrfToken:'synthetic-login-csrf'},'setup/session':{authorized:state.authorized,csrfToken:'synthetic-setup-csrf'}};
+  if(path==='setup/redeem'){state.authorized=true;await route.fulfill({json:{authorized:true}});return;}
+  if(path==='setup/administrator'){state.initialized=true;await route.fulfill({json:{next:'/login'}});return;}
+  if(path==='login'){await route.fulfill({status:401,json:{code:'AUTHENTICATION_FAILED'}});return;}
+  await route.fulfill({json:values[path]||{}});
+ });await page.goto(base+(initialized?'/login':'/setup#setup=synthetic-one-time-proof'));await expect(page.locator('#credentials')).toBeVisible();return state;
+}
+
+test('creation keeps password validation, single submit and CSRF, then requires a manual sign-in',async({page})=>{
+ const held=gate();const state=await identityFixture(page,{handle:async r=>{if(r.path==='setup/administrator')await held.promise;return null;}});await evidence(page,'create-admin');expect(new URL(page.url()).hash).toBe('');await expect(page.locator('#confirm-password-error')).toBeHidden();await page.locator('#account').fill('admin');await page.locator('#password').fill('synthetic-password');await page.locator('#confirm-password').fill('different-password');await page.locator('#confirm-password').press('Enter');await expect(page.locator('#confirm-password')).toBeFocused();expect(state.requests.filter(r=>r.path==='setup/administrator')).toHaveLength(0);
+ await page.locator('#confirm-password').fill('synthetic-password');await page.getByRole('button',{name:'Create administrator',exact:true}).click();await expect(page.locator('#credentials .pending-dots')).toHaveCount(1);await page.locator('#credentials').evaluate(form=>form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));expect(state.requests.filter(r=>r.path==='setup/administrator')).toHaveLength(1);held.resolve();await expect(page.getByRole('heading',{name:'Sign in to Piwork',exact:true})).toBeVisible();await expect(page.locator('#password')).toHaveValue('');await expect(page.locator('#confirm-password')).toHaveCount(0);expect(state.requests.filter(r=>r.path==='login')).toHaveLength(0);
+ const create=state.requests.find(r=>r.path==='setup/administrator');expect(create.body).toEqual({account:'admin',password:'synthetic-password'});expect(create.headers['x-piwork-csrf']).toBe('synthetic-setup-csrf');expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toMatch(/synthetic-password|synthetic-one-time-proof/);
+ await page.locator('#account').fill('admin');await page.locator('#password').fill('synthetic-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page.locator('#setup-notice')).toContainText('account or password is incorrect');expect(state.requests.filter(r=>r.path==='login')).toHaveLength(1);expect(state.requests.find(r=>r.path==='login').headers['x-piwork-csrf']).toBe('synthetic-login-csrf');await expect(page.locator('#password')).toHaveValue('');await expect(page.locator('#credentials .pending-dots')).toHaveCount(0);
+});
+
+test('setup authorization and current state reads have a local pending and stop on an error',async({page})=>{
+ const held=gate();let failures=false;
+ await page.route('**/_web/api/**',async route=>{const path=new URL(route.request().url()).pathname;if(path.endsWith('/setup/redeem')){await held.promise;await route.fulfill({status:403,json:{code:'SETUP_AUTHORIZATION_INVALID'}});return;}if(path.endsWith('/state')){await route.fulfill({status:failures?502:200,json:failures?{message:'Synthetic state failure'}:{administratorInitialized:false}});return;}await route.fulfill({json:{authorized:false}});});
+ await page.goto(base+'/setup#setup=synthetic-expired-proof');await expect(page.locator('#setup-status .pending-dots')).toHaveCount(1);held.resolve();await expect(page.getByRole('heading',{name:'Open your setup link'})).toBeVisible();await expect(page.locator('#setup-status .pending-dots')).toHaveCount(0);failures=true;await page.getByRole('button',{name:'Check setup access'}).click();await expect(page.getByRole('heading',{name:'Could not read Core state'})).toBeVisible();await expect(page.locator('#setup-status .pending-dots')).toHaveCount(0);await expect(page.getByRole('button',{name:'Read current state'})).toBeEnabled();
+});
+
+test('an unknown model save only reads back the unique public identity and never replays or auto-enters',async({page})=>{
+ let unknown=true;const state=await fixture(page,{ready:true,handle:(r,s)=>{if(r.path.endsWith('/admin/models')&&r.method==='POST'&&unknown){s.models.push({...savedModel('model-unknown'),...r.body,name:r.body.name||r.body.model});delete s.models[0].credential;return{status:502,json:{code:'CORE_UNAVAILABLE'}};}return null;}});await key(page);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#quick')).toContainText('model save result is unconfirmed');unknown=false;await refresh(page);await expect(page.locator('#saved-model')).toHaveValue('model-unknown');expect(writes(state)).toHaveLength(1);expect(await nav(page)).toEqual([]);
+});
+
+test('the existing Messages SDK preserves the Anthropic prefix and appends one messages path',async()=>{
+ const {stream}=await import('@earendil-works/pi-ai/api/anthropic-messages');const requests=[];
+ const model={id:'deepseek-flash',name:'deepseek-flash',provider:'custom',api:'anthropic-messages',baseUrl:'https://api.deepseek.com/anthropic',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:64000,maxTokens:4096};
+ const result=await stream(model,{messages:[{role:'user',content:'Synthetic path check.',timestamp:0}]},{apiKey:'synthetic-path-key',maxRetries:0,fetch:async url=>{requests.push(new URL(String(url)));return new Response(JSON.stringify({type:'error',error:{type:'authentication_error',message:'Synthetic response; no external request'}}),{status:401,headers:{'content-type':'application/json'}});}}).result();
+ expect(result.stopReason).toBe('error');expect(requests).toHaveLength(1);expect(requests[0].origin).toBe('https://api.deepseek.com');expect(requests[0].pathname).toBe('/anthropic/v1/messages');
+});
+
+
+test('a slow save explains the outstanding confirmation without replay or a fabricated timeout',async({page})=>{
+ await page.clock.install();const held=gate();const state=await fixture(page,{handle:async r=>{if(r.path.endsWith('/admin/models')&&r.method==='POST')await held.promise;return null;}});await key(page);const save=page.getByRole('button',{name:'Save and continue',exact:true});const before=await save.boundingBox();await save.click();await expect(save.locator('.pending-dots')).toHaveCount(1);expect((await save.boundingBox()).width).toBe(before.width);await page.clock.fastForward(10001);await expect(page.locator('#setup-status')).toContainText('Still waiting for the server to confirm this save');expect(writes(state)).toHaveLength(1);held.resolve();await expect(page.locator('#preparation-answer')).toBeVisible();await expect(page.locator('#setup-status')).toHaveText('');await page.clock.fastForward(10001);await expect(page.locator('#preparation-answer')).toContainText('Still waiting for the required components');expect(writes(state)).toHaveLength(2);
+});

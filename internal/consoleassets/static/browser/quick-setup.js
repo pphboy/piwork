@@ -1,4 +1,5 @@
 import { esc, Field, Feedback, StatusLabel, icon } from './components.js';
+import { pendingDots } from './pending.js';
 import { blankModel, modelDraftIssue, modelErrors, modelFields, modelField, modelPlaceholder, modelProtocolHelp, readModelDraft, validateModelControl, modelTestSummary, modelTestDetails, validModelTest } from './model-form.js';
 export function mountQuickSetup(root, options) {
     let stage = 'loading', notice = '', noticeError = false, disposed = false;
@@ -8,7 +9,12 @@ export function mountQuickSetup(root, options) {
     let pendingModel = null, beforeModels = new Set();
     let timer, readGeneration = 0, readLock = null, polling = false;
     let testResult = null, leaveAction = null, leaveGeneration = 0;
-    let preparationReadError = '', preparationReadAt = '';
+    let preparationReadError = '', preparationReadAt = '', advancedOpen = false, baselineReady = false;
+    let baselineDraft = blankModel(), baselineRef = '', confirmedReadGeneration = -1;
+    let slowTimer, busySince = 0, busyPhase = '';
+    let preparationTimer, preparationSince = 0;
+    let autoEnter = null;
+    const firstModel = () => ({ ...blankModel(), model: 'deepseek-flash', api: 'anthropic-messages', baseUrl: 'https://api.deepseek.com/anthropic' });
     const preparationNames = ['docker', 'agent', 'packageHelper', 'defaultContext', 'fileHelper', 'snapshotHelper'];
     const preparationLabels = { docker: 'Docker Engine', agent: 'Agent', packageHelper: 'Packages', defaultContext: 'Work defaults', fileHelper: 'Files', snapshotHelper: 'Snapshots' };
     class RequestError extends Error {
@@ -55,8 +61,9 @@ export function mountQuickSetup(root, options) {
     function context() { return { view, identity }; }
     function capture() { if (writing || modelUnknown || runtimeUnknown)
         return; const form = root.querySelector('#model-form'); if (form)
-        draft = readModelDraft(form); }
-    function dirty() { capture(); return stage === 'model' && !modelUnknown && !runtimeUnknown && (mode === 'add' ? !!(draft.model || draft.baseUrl || draft.name || draft.key) : !!selectedRef && selectedRef !== snapshot.runtime?.modelRef); }
+        draft = readModelDraft(form); const advanced = root.querySelector('#model-advanced'); if (advanced)
+        advancedOpen = advanced.open; }
+    function dirty() { capture(); return stage === 'model' && !modelUnknown && !runtimeUnknown && (mode === 'add' ? Object.keys(draft).some(key => draft[key] !== baselineDraft[key]) : selectedRef !== baselineRef); }
     function clearSecrets() { draft.key = ''; root.querySelectorAll('input[type=password]').forEach(input => { input.value = ''; }); }
     function changeStage(next) {
         if (next === stage)
@@ -87,7 +94,7 @@ export function mountQuickSetup(root, options) {
     }
     function modelPage() {
         const unavailable = selectedRef && !models.some(model => model.modelRef === selectedRef && model.enabled && model.credentialAvailable);
-        return `<p class="setup-description">Choose the model this Core uses for new Work. Saving does not call the model or create a Work.</p><div id="setup-docker" class="setup-dependency"></div><div id="catalog-note">${catalogError ? Feedback('Saved models could not be loaded. ' + catalogError, 'warning') : ''}</div>${confirmedModel ? Feedback('Model saved. Continue to bind this model to Core runtime.', 'success') : ''}${models.length && !modelUnknown ? `<div class="setup-mode" aria-label="Model configuration"><button class="btn small" type="button" data-action="choose-model" aria-pressed="${mode === 'choose'}">Choose saved model</button><button class="btn small" type="button" data-action="add-model" aria-pressed="${mode === 'add'}">${icon('plus', 14)} Add model</button></div>` : ''}${modelUnknown ? Feedback('The model save result is unconfirmed. Read current state before another save. If more than one entry matches, inspect the saved models and choose the intended entry.', 'warning') : ''}${runtimeUnknown ? Feedback('Runtime save is unconfirmed. Read current state before continuing.', 'warning') : ''}${mode === 'add' ? `<form id="model-form" class="form-grid" data-setup-model novalidate>${modelFields(draft)}<div class="form-actions"><button type="submit" class="btn primary" data-continue>Save and continue${icon('arrow', 16)}</button><button type="button" class="btn secondary" data-model-action="test">Test</button></div><p class="help">Test sends a message and shows the reply. A passed Test is not required to save, enable or select a model.</p></form><div id="model-test-result">${modelTestSummary(testResult, revision)}</div>` : `<form id="choose-form" class="form-grid" novalidate>${Field('saved-model', 'Saved model', `<select id="saved-model" name="modelRef" required>${modelOptions()}</select>`, 'Only enabled models with a saved Key can be used.')}${unavailable ? Feedback('The saved model is unavailable. Choose an enabled model with a Key or manage AI models.', 'warning') : ''}<div class="form-actions"><button type="submit" class="btn primary" data-continue>Save and continue${icon('arrow', 16)}</button></div></form>`}<div class="setup-local-actions">${button(icon('refresh', 15) + ' Read current state', 'refresh')}<a href="/admin/models">Manage AI models</a></div><div id="release-note">${snapshot.releaseError ? Feedback('The server release is incomplete. Models remain available; repair the release before binding Runtime.', 'warning') : ''}</div>${diagnostics()}`;
+        return `<p class="setup-description">Choose the model this Core uses for new Work. Saving does not call the model or create a Work.</p><div id="setup-docker" class="setup-dependency"></div><div id="catalog-note">${catalogError ? Feedback('Saved models could not be loaded. ' + catalogError, 'warning') : ''}</div>${confirmedModel ? Feedback('Model saved. Continue to bind this model to Core runtime.', 'success') : ''}${models.length && !modelUnknown ? `<div class="setup-mode" aria-label="Model configuration"><button class="btn small" type="button" data-action="choose-model" aria-pressed="${mode === 'choose'}">Choose saved model</button><button class="btn small" type="button" data-action="add-model" aria-pressed="${mode === 'add'}">${icon('plus', 14)} Add model</button></div>` : ''}${modelUnknown ? Feedback('The model save result is unconfirmed. Read current state before another save. If more than one entry matches, inspect the saved models and choose the intended entry.', 'warning') : ''}${runtimeUnknown ? Feedback('Runtime save is unconfirmed. Read current state before continuing.', 'warning') : ''}${mode === 'add' ? `<form id="model-form" class="form-grid" data-setup-model novalidate>${modelFields(draft, false, { open: advancedOpen })}<div class="form-actions"><button type="submit" class="btn primary" data-continue>Save and continue<span class="pending-slot">${icon('arrow', 16)}</span></button><button type="button" class="btn secondary" data-model-action="test">Test</button></div><p class="help">Test sends a message and shows the reply. A passed Test is not required to save, enable or select a model.</p></form><div id="model-test-result">${modelTestSummary(testResult, revision)}</div>` : `<form id="choose-form" class="form-grid" novalidate>${Field('saved-model', 'Saved model', `<select id="saved-model" name="modelRef" required>${modelOptions()}</select>`, 'Only enabled models with a saved Key can be used.')}${unavailable ? Feedback('The saved model is unavailable. Choose an enabled model with a Key or manage AI models.', 'warning') : ''}<div class="form-actions"><button type="submit" class="btn primary" data-continue>Save and continue<span class="pending-slot">${icon('arrow', 16)}</span></button></div></form>`}<div class="setup-local-actions">${button(icon('refresh', 15) + ' Read current state', 'refresh')}<a href="/admin/models">Manage AI models</a></div><div id="release-note">${snapshot.releaseError ? Feedback('The server release is incomplete. Models remain available; repair the release before binding Runtime.', 'warning') : ''}</div>${diagnostics()}`;
     }
     function render() {
         const title = stage === 'model' ? 'Set up your Core runtime' : stage === 'preparation' ? 'Preparing Piwork…' : stage === 'error' ? 'Could not read Core state' : 'Reading Core configuration…';
@@ -95,7 +102,7 @@ export function mountQuickSetup(root, options) {
         if (stage === 'model')
             content = modelPage();
         if (stage === 'preparation')
-            content = `<p class="setup-description">Your Runtime configuration is saved on this server.</p><div id="preparation-answer" class="preparation-state" aria-live="polite" aria-atomic="true"></div><ul id="preparation-components" class="preparation-list" aria-label="Required components"></ul><div class="form-actions"><a class="btn secondary" id="workbench-exit" role="link" tabindex="0" aria-disabled="true" aria-describedby="preparation-exit-help">Open workbench${icon('arrow', 16)}</a>${button(icon('refresh', 15) + ' Read current state', 'refresh')}</div><p id="preparation-exit-help" class="help"></p>${diagnostics()}`;
+            content = `<p class="setup-description">Your Runtime configuration is saved on this server.</p><div id="preparation-answer" class="preparation-state" aria-live="polite" aria-atomic="true"></div><div id="preparation-failures"></div><details class="disclosure" id="preparation-details"><summary>Preparation details · 6 components</summary><ul id="preparation-components" class="preparation-list" aria-label="Required components"></ul></details><div class="form-actions"><a class="btn secondary" id="workbench-exit" role="link" tabindex="0" aria-disabled="true" aria-describedby="preparation-exit-help">Open workbench${icon('arrow', 16)}</a>${button(icon('refresh', 15) + ' Read current state', 'refresh')}</div><p id="preparation-exit-help" class="help"></p>${diagnostics()}`;
         if (stage === 'error')
             content = `<p>Your saved configuration has not been changed. Retry when the server is reachable.</p>${button('Read current state', 'refresh', true)}`;
         root.innerHTML = `${steps()}<div class="setup-heading"><h2 id="setup-title">${title}</h2></div><div id="setup-notice" aria-live="polite"></div><div id="setup-status" class="setup-status" aria-live="polite"></div>${content}<dialog id="test-dialog" class="setup-dialog" aria-labelledby="test-title"><div class="dialog-heading"><div><h2 id="test-title">Model Test</h2><p>Send one message to the specified model and inspect its reply.</p></div><button class="btn icon-button" type="button" data-action="close-test" aria-label="Close Model Test">${icon('close')}</button></div><div id="test-body" class="dialog-body"></div><div class="dialog-footer"><button class="btn secondary" type="button" data-action="close-test">Close</button></div></dialog><dialog id="leave-dialog" class="setup-dialog" aria-labelledby="leave-title"><div class="dialog-heading"><h2 id="leave-title">Unsaved model configuration</h2></div><div class="dialog-body"><p>Save and continue before leaving, discard this draft, or keep editing.</p></div><div class="dialog-footer">${button('Keep editing', 'keep-editing')}${button('Discard draft', 'discard-draft')}${button('Save and continue', 'save-leave', true)}</div></dialog>`;
@@ -109,6 +116,16 @@ export function mountQuickSetup(root, options) {
     function updateLocks() {
         if (disposed || !options.current())
             return;
+        const phase = writing ? 'save' : reading ? 'read' : testing ? 'test' : '';
+        if (phase !== busyPhase) {
+            busyPhase = phase;
+            busySince = phase ? Date.now() : 0;
+            clearTimeout(slowTimer);
+            if (phase)
+                slowTimer = setTimeout(() => { updateLocks(); if (testing)
+                    updateTest(); }, 10000);
+        }
+        const slow = !!phase && Date.now() - busySince >= 10000;
         root.querySelectorAll('form input, form select').forEach(input => { input.disabled = writing || modelUnknown || runtimeUnknown; });
         root.querySelectorAll('button').forEach(node => {
             if (node.closest('dialog'))
@@ -123,10 +140,19 @@ export function mountQuickSetup(root, options) {
         options.dirty(dirty());
         const status = root.querySelector('#setup-status');
         if (status)
-            status.textContent = writing ? 'Saving. Waiting for server confirmation…' : reading ? 'Reading current state…' : '';
+            status.innerHTML = writing ? (slow ? 'Still waiting for the server to confirm this save. Do not submit it again.' : 'Saving. Waiting for server confirmation…') : reading ? `${stage === 'preparation' && preparationPresentation().busy ? '' : pendingDots()} ${slow ? 'Still waiting for the current server state. Your saved configuration is unchanged.' : 'Reading current state…'}` : '';
+        root.querySelectorAll('[data-continue]').forEach(node => { const markup = `Save and continue<span class="pending-slot">${writing ? pendingDots() : icon('arrow', 16)}</span>`; if (node.innerHTML !== markup)
+            node.innerHTML = markup; });
+        root.querySelectorAll('[data-action="refresh"]').forEach(node => node.setAttribute('aria-busy', String(reading)));
+        const testButton = root.querySelector('[data-model-action="test"]');
+        if (testButton)
+            testButton.setAttribute('aria-busy', String(testing));
     }
-    function acceptSnapshot(value) {
+    function acceptSnapshot(value, generation) {
         snapshot = value;
+        confirmedReadGeneration = generation;
+        if (autoEnter && (!value.administrator || value.runtime?.modelRef !== autoEnter.modelRef || value.runtime?.agentImage !== autoEnter.agentImage))
+            autoEnter = null;
         preparationReadError = '';
         preparationReadAt = new Date().toLocaleTimeString('en-US');
     }
@@ -177,24 +203,36 @@ export function mountQuickSetup(root, options) {
         const components = snapshot.preparation?.components || {};
         const entries = preparationNames.map(name => ({ name, value: components[name] || {} }));
         if (preparationReadError)
-            return { title: 'Preparation updates interrupted', summary: 'Current preparation status is unavailable', description: `Showing the last confirmed state${preparationReadAt ? ' from ' + preparationReadAt : ''}. ${preparationReadError} Automatic updates will retry, or choose Read current state.`, tone: 'warning', symbol: 'warning' };
+            return { title: 'Preparation updates interrupted', summary: 'Current preparation status is unavailable', description: `Showing the last confirmed state${preparationReadAt ? ' from ' + preparationReadAt : ''}. ${preparationReadError} Automatic updates will retry, or choose Read current state.`, tone: 'warning', symbol: 'warning', busy: false };
         if (preparationReady())
-            return { title: 'Piwork is ready', summary: 'All required components are ready', description: 'Open the workbench to start using Piwork.', tone: 'success', symbol: 'check' };
+            return { title: 'Piwork is ready', summary: 'All required components are ready', description: 'Open the workbench to start using Piwork.', tone: 'success', symbol: 'check', busy: false };
         const failed = entries.find(({ value }) => value.state === 'failed' || value.state === 'unconfigured');
         if (failed)
-            return { title: 'Preparation needs attention', summary: `${preparationLabels[failed.name]} could not be prepared`, description: preparationRecovery(failed.value) + ' Resolve the issue, then read current state.', tone: 'warning', symbol: 'warning' };
+            return { title: 'Preparation needs attention', summary: `${preparationLabels[failed.name]} could not be prepared`, description: preparationRecovery(failed.value) + ' Resolve the issue, then read current state.', tone: 'warning', symbol: 'warning', busy: false };
         const retrying = entries.find(({ value }) => value.state === 'retrying');
         if (retrying)
-            return { title: 'Preparing Piwork…', summary: `Waiting to retry ${preparationLabels[retrying.name]}`, description: preparationRecovery(retrying.value) + ' ' + retryWait(retrying.value) + ' This page updates automatically.', tone: 'warning', symbol: 'clock' };
+            return { title: 'Preparing Piwork…', summary: `Waiting to retry ${preparationLabels[retrying.name]}`, description: preparationRecovery(retrying.value) + ' ' + retryWait(retrying.value) + ' This page updates automatically.', tone: 'warning', symbol: 'clock', busy: true };
         const active = entries.filter(({ value }) => value.state === 'preparing');
+        if (active.length)
+            return { title: 'Preparing Piwork…', summary: 'Preparing ' + active.map(({ name }) => preparationLabels[name]).join(' and ') + '…', description: 'Please wait while Piwork prepares the required components. This page updates automatically. First-time preparation may need to download resources.', tone: 'info', symbol: 'clock', busy: true };
         const waiting = entries.filter(({ value }) => value.state !== 'ready');
-        const summary = active.length ? 'Preparing ' + active.map(({ name }) => preparationLabels[name]).join(' and ') + '…'
-            : !snapshot.preparation ? 'Waiting for preparation status'
-                : waiting.length ? 'Waiting for ' + waiting.map(({ name }) => preparationLabels[name]).join(', ')
-                    : 'Confirming Core readiness';
-        return { title: 'Preparing Piwork…', summary, description: 'Please wait while Piwork prepares the required components. This page updates automatically. First-time preparation may need to download resources.', tone: 'info', symbol: 'clock' };
+        return { title: 'Preparation status needs confirmation', summary: !snapshot.preparation ? 'Waiting for preparation status' : waiting.length ? 'Not yet confirmed: ' + waiting.map(({ name }) => preparationLabels[name]).join(', ') : 'Core readiness has not been confirmed', description: 'No active preparation has been confirmed. Read current state, or check Runtime diagnostics and the required components below.', tone: 'warning', symbol: 'warning', busy: false };
+    }
+    function maybeAutoEnter() {
+        const intent = autoEnter;
+        if (!intent || reading || writing || polling || stage !== 'preparation' || !current(intent) || intent.revision !== revision || intent.leaveGeneration !== leaveGeneration)
+            return;
+        if (confirmedReadGeneration < intent.minimumReadGeneration || catalogError || !preparationReady())
+            return;
+        if (snapshot.runtime?.modelRef !== intent.modelRef || snapshot.runtime?.agentImage !== intent.agentImage) {
+            autoEnter = null;
+            return;
+        }
+        autoEnter = null;
+        options.navigate('/');
     }
     function preparationReadFailed(error) {
+        autoEnter = null;
         if (stage === 'preparation') {
             preparationReadError = message(error);
             updatePreparation();
@@ -212,21 +250,49 @@ export function mountQuickSetup(root, options) {
         if (!answer)
             return;
         const ready = preparationReady(), presentation = preparationPresentation();
-        const markup = `<div class="feedback ${presentation.tone}" role="status">${icon(presentation.symbol, 17)}<div><strong>${esc(presentation.summary)}</strong><p>${esc(presentation.description)}</p></div></div>`;
+        if (presentation.busy && !preparationSince) {
+            preparationSince = Date.now();
+            preparationTimer = setTimeout(() => { if (!disposed && options.current())
+                updatePreparation(); }, 10000);
+        }
+        else if (!presentation.busy) {
+            preparationSince = 0;
+            clearTimeout(preparationTimer);
+        }
+        const slow = preparationSince && Date.now() - preparationSince >= 10000 ? ' Still waiting for the required components. You can read current state or leave this page while preparation continues.' : '';
+        const markup = `<div class="feedback ${presentation.tone}" role="status">${presentation.busy ? pendingDots() : icon(presentation.symbol, 17)}<div><strong>${esc(presentation.summary)}</strong><p>${esc(presentation.description + slow)}</p></div></div>`;
         if (answer.innerHTML !== markup)
             answer.innerHTML = markup;
         root.querySelector('#setup-title').textContent = presentation.title;
         const step = root.querySelector('[data-preparation-step]');
         step.classList.toggle('complete', ready);
         step.classList.toggle('current', !ready);
-        step.querySelector('.step-label').textContent = ready ? 'Ready for Work' : presentation.tone === 'info' || presentation.symbol === 'clock' ? 'Preparing Piwork…' : 'Prepare Piwork';
+        step.querySelector('.step-label').textContent = ready ? 'Ready for Work' : presentation.busy ? 'Preparing Piwork…' : 'Prepare Piwork';
         step.querySelector('.step-marker').innerHTML = ready ? icon('check', 13) : '2';
         const states = { ready: 'Ready', preparing: 'Preparing', pending: 'Waiting', retrying: 'Retrying', failed: 'Failed', unconfigured: 'Not configured' };
         if (components)
-            components.innerHTML = preparationNames.map(name => {
+            for (const name of preparationNames) {
                 const value = snapshot.preparation?.components?.[name] || {};
-                return `<li data-component="${name}"><span>${esc(preparationLabels[name])}</span>${StatusLabel(states[value.state] || 'Not confirmed', value.state === 'ready' ? 'success' : value.state === 'failed' || value.state === 'retrying' ? 'warning' : 'neutral')}<p>${esc(preparationDetail(name, value))}${value.code ? ` <code>${esc(value.code)}</code>` : ''}</p></li>`;
+                let item = components.querySelector(`[data-component="${name}"]`);
+                if (!item) {
+                    item = document.createElement('li');
+                    item.dataset.component = name;
+                    item.tabIndex = -1;
+                    components.append(item);
+                }
+                const markup = `<span>${esc(preparationLabels[name])}</span>${StatusLabel(states[value.state] || 'Not confirmed', value.state === 'ready' ? 'success' : value.state === 'failed' || value.state === 'retrying' ? 'warning' : 'neutral')}<p>${esc(preparationDetail(name, value))}${value.code ? ` <code>${esc(value.code)}</code>` : ''}</p>`;
+                if (item.innerHTML !== markup)
+                    item.innerHTML = markup;
+            }
+        const failures = root.querySelector('#preparation-failures');
+        if (failures) {
+            const markup = preparationNames.filter(name => ['failed', 'unconfigured'].includes(snapshot.preparation?.components?.[name]?.state)).map(name => {
+                const value = snapshot.preparation.components[name];
+                return `<div class="feedback warning"><div><strong>${esc(preparationLabels[name])} needs attention</strong><p>${esc(preparationRecovery(value))}</p><button class="btn secondary small" type="button" data-action="show-component" data-component-target="${name}">View ${esc(preparationLabels[name])} details</button></div></div>`;
             }).join('');
+            if (failures.innerHTML !== markup)
+                failures.innerHTML = markup;
+        }
         if (exit) {
             exit.classList.toggle('primary', ready);
             exit.classList.toggle('secondary', !ready);
@@ -255,6 +321,14 @@ export function mountQuickSetup(root, options) {
             error.hidden = !text;
         }
     }
+    function focusModelField(id) {
+        const input = root.querySelector('#' + id), advanced = input?.closest('#model-advanced');
+        if (advanced) {
+            advanced.open = true;
+            advancedOpen = true;
+        }
+        input?.focus();
+    }
     function validateModel() {
         capture();
         const form = root.querySelector('#model-form');
@@ -264,14 +338,14 @@ export function mountQuickSetup(root, options) {
         for (const input of form.querySelectorAll('input')) {
             fieldError(input.id, input.validationMessage);
             if (!input.validity.valid) {
-                input.focus();
+                focusModelField(input.id);
                 return false;
             }
         }
         const issue = modelDraftIssue(draft);
         if (issue) {
             fieldError(modelField(issue.field), issue.message);
-            root.querySelector('#' + modelField(issue.field))?.focus();
+            focusModelField(modelField(issue.field));
             return false;
         }
         return true;
@@ -323,7 +397,7 @@ export function mountQuickSetup(root, options) {
             const currentState = await web('onboarding');
             if (!current(ticket) || generation !== readGeneration)
                 return;
-            acceptSnapshot(currentState);
+            acceptSnapshot(currentState, generation);
             if (!snapshot.administrator) {
                 options.expired();
                 dispose();
@@ -342,13 +416,26 @@ export function mountQuickSetup(root, options) {
                 if (!current(ticket) || generation !== readGeneration || sessionFailure(error))
                     return;
                 catalogError = message(error);
+                autoEnter = null;
             }
             const unresolved = modelUnknown || runtimeUnknown;
             resolveUnknown();
-            if (!selectedRef)
-                selectedRef = snapshot.runtime?.modelRef || '';
+            let initializedBaseline = false;
+            if (!baselineReady && !catalogError) {
+                initializedBaseline = true;
+                baselineRef = snapshot.runtime?.modelRef || '';
+                selectedRef = selectedRef || baselineRef;
+                if (!snapshot.runtime?.configured && models.length === 0 && revision === 0) {
+                    draft = firstModel();
+                    advancedOpen = false;
+                }
+                else
+                    advancedOpen = mode === 'add';
+                baselineDraft = revision === 0 ? { ...draft, key: '' } : blankModel();
+                baselineReady = true;
+            }
             const canPrepare = snapshot.runtime?.configured && snapshot.runtime.modelRef && snapshot.runtime.model?.credentialAvailable && (!!catalogError || models.some(model => model.modelRef === snapshot.runtime.modelRef && model.enabled && model.credentialAvailable));
-            if (!preserve || stage !== 'model' || unresolved) {
+            if (!preserve || stage !== 'model' || unresolved || (initializedBaseline && revision === 0)) {
                 if (canPrepare && !runtimeUnknown && !modelUnknown && (preserve || options.preparation)) {
                     changeStage('preparation');
                 }
@@ -390,8 +477,10 @@ export function mountQuickSetup(root, options) {
                 reading = false;
                 updateLocks();
             }
-            if (!reading && !writing)
+            if (!reading && !writing) {
+                maybeAutoEnter();
                 scheduleStatus();
+            }
         }
     }
     function scheduleStatus() {
@@ -408,7 +497,12 @@ export function mountQuickSetup(root, options) {
                 const value = await web('onboarding');
                 if (!current(ticket) || generation !== readGeneration)
                     return;
-                acceptSnapshot(value);
+                if (!value.administrator) {
+                    options.expired();
+                    dispose();
+                    return;
+                }
+                acceptSnapshot(value, generation);
                 updatePreparation();
             }
             catch (error) {
@@ -419,12 +513,13 @@ export function mountQuickSetup(root, options) {
                 if (current(ticket) && generation === readGeneration) {
                     polling = false;
                     updateLocks();
+                    maybeAutoEnter();
                     scheduleStatus();
                 }
             }
         }, 5000);
     }
-    async function continueSetup() {
+    async function continueSetup(allowAutoEnter = true) {
         if (writing || reading || modelUnknown || runtimeUnknown || catalogError)
             return false;
         if (mode === 'add' && !validateModel())
@@ -443,6 +538,8 @@ export function mountQuickSetup(root, options) {
             return true;
         }
         capture();
+        const candidate = allowAutoEnter && snapshot.administrator && snapshot.runtime?.configured === false ? { revision, leaveGeneration } : null;
+        autoEnter = null;
         const submitted = { ...draft }, ticket = context();
         writing = true;
         clearTimeout(timer);
@@ -478,14 +575,18 @@ export function mountQuickSetup(root, options) {
                 return false;
             if (!value.runtime?.configured || value.runtime.modelRef !== pendingRuntime.modelRef)
                 throw new RequestError('Runtime save is not confirmed. Read current state.', 0, true);
+            const confirmedTarget = pendingRuntime;
             snapshot = { ...snapshot, runtime: value.runtime, status: value.status, preparation: undefined };
             pendingRuntime = null;
             confirmedModel = '';
             draft = blankModel();
             revision++;
             testResult = null;
+            const canAutoEnter = candidate && candidate.revision === revision - 1 && candidate.leaveGeneration === leaveGeneration && value.runtime.agentImage === confirmedTarget.agentImage && !!confirmedTarget.agentImage;
             writing = false;
             changeStage('preparation');
+            if (canAutoEnter)
+                autoEnter = { ...context(), revision, leaveGeneration, minimumReadGeneration: readGeneration + 1, ...confirmedTarget };
             tell('');
             render();
             await readCurrent(true);
@@ -494,6 +595,7 @@ export function mountQuickSetup(root, options) {
         catch (error) {
             if (!current(ticket) || sessionFailure(error))
                 return false;
+            autoEnter = null;
             const unknown = error instanceof RequestError && error.unknown;
             if (binding) {
                 runtimeUnknown = unknown;
@@ -505,8 +607,10 @@ export function mountQuickSetup(root, options) {
             else {
                 modelUnknown = unknown;
                 tell(message(error), true);
-                if (error instanceof RequestError && error.field)
+                if (error instanceof RequestError && error.field) {
                     fieldError(modelField(error.field), message(error));
+                    focusModelField(modelField(error.field));
+                }
             }
             if (confirmedModel || unknown) {
                 draft.key = '';
@@ -538,7 +642,7 @@ export function mountQuickSetup(root, options) {
     async function testModel() {
         if (testing || writing || !validateModel())
             return;
-        const submitted = { ...draft }, ticket = context(), record = { target: { provider: draft.name || draft.model, api: draft.api, model: draft.model.trim() }, revision, pending: true };
+        const submitted = { ...draft }, ticket = context(), record = { target: { provider: draft.name || draft.model, api: draft.api, model: draft.model.trim() }, revision, pending: true, startedAt: Date.now() };
         testResult = record;
         testing = true;
         updateLocks();
@@ -600,7 +704,7 @@ export function mountQuickSetup(root, options) {
             leaveAction = null;
             // Entering preparation changes the form view. Only this still-mounted leave
             // intent may navigate after its read; a newer route or identity owns itself.
-            if (await continueSetup() && !disposed && options.current() && generation === leaveGeneration) {
+            if (await continueSetup(false) && !disposed && options.current() && generation === leaveGeneration) {
                 leaveGeneration++;
                 leave?.();
             }
@@ -616,6 +720,7 @@ export function mountQuickSetup(root, options) {
             return;
         }
         if (action === 'add-model' || action === 'choose-model') {
+            autoEnter = null;
             capture();
             if (action === 'choose-model' && dirty() && !confirm('Discard this model draft and choose a saved model?'))
                 return;
@@ -624,6 +729,8 @@ export function mountQuickSetup(root, options) {
             testResult = null;
             testing = false;
             draft = blankModel();
+            baselineDraft = { ...draft };
+            advancedOpen = true;
             confirmedModel = '';
             mode = action === 'add-model' ? 'add' : 'choose';
             render();
@@ -634,6 +741,7 @@ export function mountQuickSetup(root, options) {
     const submit = (event) => { event.preventDefault(); event.stopPropagation(); void continueSetup(); };
     const input = (event) => {
         event.stopPropagation();
+        autoEnter = null;
         const input = event.target;
         if (input.closest('#model-form')) {
             capture();
@@ -664,6 +772,13 @@ export function mountQuickSetup(root, options) {
             return;
         }
         const element = event.target.closest('[data-action],[data-model-action]');
+        if (element?.dataset.action === 'show-component') {
+            event.preventDefault();
+            event.stopPropagation();
+            root.querySelector('#preparation-details').open = true;
+            root.querySelector(`[data-component="${element.dataset.componentTarget}"]`)?.focus();
+            return;
+        }
         if (element) {
             event.preventDefault();
             event.stopPropagation();
@@ -674,7 +789,7 @@ export function mountQuickSetup(root, options) {
                 openTest();
             else if (command === 'edit-test') {
                 root.querySelector('#test-dialog')?.close();
-                root.querySelector('#' + modelField(testResult?.errorField || 'model'))?.focus();
+                focusModelField(modelField(testResult?.errorField || 'model'));
             }
             else
                 void action(element.dataset.action);
@@ -690,14 +805,14 @@ export function mountQuickSetup(root, options) {
         }
     };
     function dispose() { if (disposed)
-        return; disposed = true; leaveGeneration++; leaveAction = null; view++; identity++; readGeneration++; readLock = null; reading = false; polling = false; clearTimeout(timer); clearSecrets(); root.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()); root.removeEventListener('submit', submit); root.removeEventListener('input', input); root.removeEventListener('click', click); }
+        return; autoEnter = null; disposed = true; leaveGeneration++; leaveAction = null; view++; identity++; readGeneration++; readLock = null; reading = false; polling = false; clearTimeout(timer); clearTimeout(slowTimer); clearTimeout(preparationTimer); clearSecrets(); root.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()); root.removeEventListener('submit', submit); root.removeEventListener('input', input); root.removeEventListener('click', click); }
     root.addEventListener('submit', submit);
     root.addEventListener('input', input);
     root.addEventListener('click', click);
     render();
     void readCurrent(false);
     return { dispose, requestLeave(leave) { if (disposed || !options.current())
-            return; leaveGeneration++; leaveAction = null; if (!dirty()) {
+            return; autoEnter = null; leaveGeneration++; leaveAction = null; if (!dirty()) {
             leave();
             return;
         } leaveAction = leave; root.querySelector('#leave-dialog')?.showModal(); } };
