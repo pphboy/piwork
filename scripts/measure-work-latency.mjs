@@ -139,7 +139,7 @@ try {
   const [corePort, grpcPort] = await Promise.all([freePort(), freePort()]);
   coreUrl = `http://127.0.0.1:${corePort}`;
   const coldStart = performance.now();
-  core = spawn(coreBinary, ['serve', '--data-dir', dataDir, '--listen', `127.0.0.1:${corePort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`, '--docker-host', dockerHost], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...childEnvironment, PATH: '/nonexistent' } });
+  core = spawn(coreBinary, ['serve', '--data-dir', dataDir, '--listen', '127.0.0.1:0', '--core-listen', `127.0.0.1:${corePort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`, '--docker-host', dockerHost], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...childEnvironment, PATH: '/nonexistent' } });
   children.push(core); collectPerformance(core);
   await waitFor(async () => { try { return (await fetch(coreUrl + '/healthz')).ok; } catch { return false; } }, 'Core health timeout');
   operator(['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], password + '\n');

@@ -6,6 +6,7 @@ import { renderCompose, root } from './build-docker-release.mjs';
 const input = resolve(process.argv[2] || 'dist/docker/inputs/metadata.json');
 const metadata = JSON.parse(readFileSync(input, 'utf8'));
 metadata.state ||= 'candidate';
+if (metadata.state === 'published' && (metadata.controlPlanePort !== 17891 || metadata.corePort !== 17871)) throw new Error('Build current candidate materials; the published image retains its original ports.');
 metadata.images = Object.fromEntries(Object.entries(metadata.images).map(([role, image]) => [role, typeof image === 'string' ? image : image.reference]));
 writeFileSync(join(root, metadata.state === 'published' ? 'deploy/docker/release.json' : 'deploy/docker/candidate.json'), JSON.stringify(metadata, null, 2) + '\n');
 writeFileSync(join(root, 'deploy/docker/docker-compose.yml'), renderCompose(metadata));

@@ -241,6 +241,7 @@ export class DesktopAdapter {
   getSnapshot(id: string) { return this.state.snapshots.find(snapshot => snapshot.id === id); }
   worksLoading = false; worksChecked = ''; worksError = '';
   private clearIdentity(preserveInspection = false) {
+    if (this.hosted) { try { for (const key of Object.keys(sessionStorage)) if (key.startsWith('piwork:web:')) sessionStorage.removeItem(key); } catch {} }
     const inspection = preserveInspection ? { context: this.inspectionContext, summary: this.inspection, transfer: this.inspectionTransfer, progress: this.transferProgress } : null;
     if (!preserveInspection) { this.inspectionSelection++; this.inspectionNonce++; this.inspectionContext?.xhr?.abort(); this.inspectionContext = null; this.transferProgress = null; this.cleanupPending.clear(); }
     this.epoch++; this.worksLoading = false; this.worksChecked = ''; this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
@@ -331,8 +332,6 @@ export class DesktopAdapter {
         }
       }
       const serviceErrors:Record<string,string> = {
-        SERVICE_ORIGIN_CAPACITY:'The server Service port pool is full or its ports are busy. Ask the operator to enlarge --service-ports and allow that range through the firewall. Existing origins stay reserved to their Services.',
-        SERVICE_ORIGIN_STORAGE_UNAVAILABLE:'Service origin storage could not be confirmed. Ask the operator to check the installation data directory, then retry.',
         SERVICE_ENTRY_LIMIT:'The server has reached its active Service entry limit. Close unused browser sessions before retrying.',
         SERVICE_GENERATION_CHANGED:'The Work or Service restarted. Reopen its current entry from this Work.',
       };
@@ -922,7 +921,7 @@ export class DesktopAdapter {
         if (!current()) return;
         if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port) throw new DesktopError('SERVICE_IDENTITY_CHANGED', 'The application entry identity changed.', 403);
         entry.embed = value.embed === 'blocked' ? 'denied' : value.embed;
-        entry.entryUrl = entry.origin + '/'; entry.checkError = ''; this.emit();
+        entry.entryUrl = entry.origin + (entry.basePath ?? '/'); entry.checkError = ''; this.emit();
         if (value.embed !== 'unknown') { entry.checked = true; this.emit(); return; }
         await new Promise(resolve => setTimeout(resolve, 250));
       }

@@ -12,6 +12,10 @@ const binary=process.env.PIWORK_TEST_UNIFIED_BIN || fileURLToPath(new URL('../..
 const browserOptions=process.env.PIWORK_TEST_BROWSER_BIN ? {executablePath:process.env.PIWORK_TEST_BROWSER_BIN,headless:true,args:['--no-proxy-server']} : {headless:true,channel:'chromium' as const,args:['--no-proxy-server']};
 const serverIP=Object.entries(networkInterfaces()).filter(([name])=>/^(eth|en|wl)/.test(name)).flatMap(([,items])=>items||[]).find(item=>item.family==='IPv4'&&!item.internal)?.address || '127.0.0.1';
 
+function coreOrigin(server:BrowserServer):string {
+ const event=server.output().split('\n').map(line=>{try{return JSON.parse(line);}catch{return null;}}).find(value=>value?.event==='app.listening');
+ assert(event?.coreUrl);assert.notEqual(event.coreUrl,server.origin);return event.coreUrl;
+}
 type BrowserServer={origin:string;directory:string;stop:(preserve?:boolean)=>Promise<void>;restart:()=>Promise<BrowserServer>;output:()=>string};
 async function start(environment:Record<string,string>={}, existing?:{directory:string;port:number}, engineHost?:string):Promise<BrowserServer> {
   const directory=existing?.directory || await mkdtemp(join(tmpdir(),'piwork-unified-browser-'));
@@ -19,7 +23,7 @@ async function start(environment:Record<string,string>={}, existing?:{directory:
   const port=existing?.port || (reserve.address() as {port:number}).port; await new Promise<void>((resolve,reject)=>reserve.close(err=>err?reject(err):resolve()));
   const origin=`http://${serverIP}:${port}`;
   const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>!name.startsWith('PIWORK_')));
-  const processHandle=spawn(binary,['--no-open','--listen',`0.0.0.0:${port}`,'--data-dir',directory,'--agent-grpc-listen','0.0.0.0:0','--docker-host',engineHost||'unix://'+join(directory,'missing-engine.sock')],{env:{...env,...environment},stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams;
+  const processHandle=spawn(binary,['--no-open','--listen',`0.0.0.0:${port}`,'--core-listen','127.0.0.1:0','--data-dir',directory,'--agent-grpc-listen','0.0.0.0:0','--docker-host',engineHost||'unix://'+join(directory,'missing-engine.sock')],{env:{...env,...environment},stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams;
   let output='',stderr='',exited=false;
   processHandle.stdout.on('data',data=>{output+=data.toString();});
   processHandle.stderr.on('data',data=>{stderr+=data.toString();});
@@ -643,7 +647,7 @@ test('hosted account management links share menu geometry, icons and keyboard na
   const geometry=async(item:any)=>item.evaluate((node:HTMLElement)=>{const style=getComputedStyle(node),rect=node.getBoundingClientRect(),svg=node.querySelector('svg')!,range=document.createRange();range.selectNodeContents(node.lastChild!);return {height:rect.height,left:rect.left,width:rect.width,padding:style.padding,fontSize:style.fontSize,fontWeight:style.fontWeight,gap:style.gap,text:range.getBoundingClientRect().left-rect.left,icon:svg.getBoundingClientRect().width};});
   const baseline=await geometry(items[0]);
   for(const item of items){await expect(item.locator('svg')).toHaveCount(1);assert.deepEqual(await geometry(item),baseline);const normal=await item.evaluate(el=>getComputedStyle(el).backgroundColor);await item.hover();assert.notEqual(await item.evaluate(el=>getComputedStyle(el).backgroundColor),normal);await page.keyboard.press('Home');await item.focus();assert.equal(await item.evaluate(el=>getComputedStyle(el).outlineStyle),'solid');await page.mouse.move(0,0);}
-  await expect(menu.locator('.dropdown-title')).toHaveText('admin');await expect(menu.locator('.account-context')).toContainText('Role: Administrator');await expect(menu.locator('.account-context')).toContainText('Core: '+server.origin);await expect(items[2]!).toHaveAttribute('href','/admin');await expect(items[3]!).toHaveAttribute('href','/admin/setup');assert.equal(await menu.getByRole('menuitem',{name:'Sign out',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(180, 35, 50)');
+  await expect(menu.locator('.dropdown-title')).toHaveText('admin');await expect(menu.locator('.account-context')).toContainText('Role: Administrator');await expect(menu.locator('.account-context')).toContainText('Core: '+coreOrigin(server));await expect(items[2]!).toHaveAttribute('href','/admin');await expect(items[3]!).toHaveAttribute('href','/admin/setup');assert.equal(await menu.getByRole('menuitem',{name:'Sign out',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(180, 35, 50)');
   await page.keyboard.press('Home');await expect(items[0]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[1]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[2]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[3]!).toBeFocused();await page.keyboard.press('End');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('Home');await expect(items[0]!).toBeFocused();
   await captureFollowup(page,'account-menu');
   await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();await trigger.click();await page.keyboard.press('Tab');await expect(menu).toHaveCount(0);
@@ -692,7 +696,7 @@ test('Admin account menu shares Desktop geometry and keeps the Workbench link be
   const style=async(node:any)=>node.evaluate((el:HTMLElement)=>{const s=getComputedStyle(el);return {height:el.getBoundingClientRect().height,padding:s.padding,fontSize:s.fontSize,fontWeight:s.fontWeight,gap:s.gap,icon:el.querySelector('svg')!.getBoundingClientRect().width};});
   const desktop=await style(page.getByRole('menuitem',{name:'About Piwork',exact:true}));await page.keyboard.press('Escape');await page.goto(server.origin+'/admin/setup');const trigger=page.getByRole('button',{name:'Administrator account',exact:true});
   for(const width of [1440,360]){
-   await page.setViewportSize({width,height:1000});await trigger.click();const menu=page.getByRole('menu');await expect(menu.locator('.dropdown-title')).toHaveText('admin');await expect(menu.locator('.account-context')).toContainText(server.origin);
+   await page.setViewportSize({width,height:1000});await trigger.click();const menu=page.getByRole('menu');await expect(menu.locator('.dropdown-title')).toHaveText('admin');await expect(menu.locator('.account-context')).toContainText(coreOrigin(server));
    const about=menu.getByRole('menuitem',{name:'About Piwork',exact:true}),signout=menu.getByRole('menuitem',{name:'Sign out',exact:true});assert.deepEqual(await style(about),desktop);assert.deepEqual(await style(signout),desktop);assert.equal(await signout.evaluate(el=>getComputedStyle(el).color),'rgb(180, 35, 50)');
    const link=page.getByRole('link',{name:'Workbench',exact:true});assert.equal(await link.evaluate(el=>!!(el.compareDocumentPosition(document.querySelector('#account-trigger')!)&Node.DOCUMENT_POSITION_FOLLOWING)),true);await page.keyboard.press('Escape');await expect(trigger).toBeFocused();await link.focus();assert.equal(await link.evaluate(el=>getComputedStyle(el).outlineStyle),'solid');assert.equal(await link.evaluate(el=>el.getBoundingClientRect().height),34);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await trigger.click();if(process.env.PIWORK_ONBOARDING_EVIDENCE_DIR)await page.screenshot({path:join(process.env.PIWORK_ONBOARDING_EVIDENCE_DIR,`admin-account-${width}.png`),fullPage:false});await page.keyboard.press('Escape');

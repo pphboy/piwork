@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -32,7 +31,7 @@ type desktopServiceEntry struct {
 	ticketEnd                                  time.Time
 	grant                                      string
 	embed                                      string
-	remotePort                                 int
+	basePath                                   string
 	jar                                        *cookiejar.Jar
 	runtimeGeneration                          string
 }
@@ -157,15 +156,15 @@ func desktopSessionID(r *http.Request, name string) string {
 }
 
 func (d *nativeDesktop) serviceOrigin(entry desktopServiceEntry) string {
-	if d.hosted != nil && d.hosted.Services != nil {
-		return d.hosted.Services.origin.Scheme + "://" + net.JoinHostPort(d.hosted.Services.origin.Hostname(), strconv.Itoa(entry.remotePort))
+	if d.hosted != nil {
+		return d.origin
 	}
 	return fmt.Sprintf("http://s-%s.desktop.localhost:%d", entry.id, d.port)
 }
 
 func (d *nativeDesktop) serviceEntryFromHost(host string) (desktopServiceEntry, bool) {
 	if d.hosted != nil {
-		return d.remoteServiceEntry(host)
+		return desktopServiceEntry{}, false
 	}
 	parts := desktopServiceHostPattern.FindStringSubmatch(host)
 	if parts == nil || parts[2] != strconv.Itoa(d.port) {
@@ -248,6 +247,27 @@ func (d *nativeDesktop) serveServiceEntryAPI(w http.ResponseWriter, r *http.Requ
 	api, err := d.client(coreURL, token)
 	if err != nil {
 		desktopError(w, 503, "CORE_UNAVAILABLE")
+		return true
+	}
+	if d.hosted != nil && path == "/_desktop/api/service-entries" && r.Method == http.MethodPost {
+		input, err := desktopControlInput(r, "workId", "serviceId", "port")
+		if err != nil {
+			desktopControlFailure(w, err)
+			return true
+		}
+		workID, _ := desktopFieldString(input, "workId", 128)
+		serviceID, _ := desktopFieldString(input, "serviceId", 128)
+		port := 0
+		if raw, ok := input["port"]; ok && (json.Unmarshal(raw, &port) != nil || port < 1 || port > 65535) {
+			desktopError(w, 400, "WEB_PORT_REQUIRED")
+			return true
+		}
+		entry, err := d.hostedEntry(r.Context(), workID, serviceID, port)
+		if err != nil {
+			desktopControlFailure(w, err)
+			return true
+		}
+		desktopJSON(w, 200, map[string]any{"entryId": entry.id, "workId": entry.workID, "serviceId": entry.serviceID, "hostname": entry.hostname, "port": entry.port, "origin": d.origin, "basePath": entry.basePath, "entryUrl": d.origin + entry.basePath})
 		return true
 	}
 	if path == "/_desktop/api/service-entries" && r.Method == http.MethodPost {
@@ -369,22 +389,6 @@ func (d *nativeDesktop) serveServiceEntryAPI(w http.ResponseWriter, r *http.Requ
 		if capacity {
 			desktopError(w, 429, "SERVICE_ENTRY_LIMIT")
 			return true
-		}
-		if d.hosted != nil && !reused {
-			if d.hosted.Services == nil {
-				d.mu.Lock()
-				delete(d.serviceEntries, entryID)
-				d.mu.Unlock()
-				desktopError(w, 503, "SERVICE_ENTRY_UNAVAILABLE")
-				return true
-			}
-			if err := d.hosted.Services.register(d, entry); err != nil {
-				d.mu.Lock()
-				delete(d.serviceEntries, entryID)
-				d.mu.Unlock()
-				desktopError(w, 503, err.Error())
-				return true
-			}
 		}
 		origin := d.serviceOrigin(*entry)
 		desktopJSON(w, 200, map[string]any{"entryId": entryID, "workId": workID, "serviceId": serviceID,

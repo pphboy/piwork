@@ -74,7 +74,7 @@ export function identity(base = root, environment = process.env) {
   releaseInfoInputHash(base);
   const desktopUIHash = desktopInputHash(base);
   const consoleUIHash = consoleInputHash(base);
-  const metadata = { manifestVersion: 2, application: 'unified-linux', releaseVersion, sourceCommit, sourceModified: modified === 'true', sourceInputHash: sourceHash, desktopUIHash, consoleUIHash, registry, platform: config.platform, runtimeImage: config.runtimeImage, core: { format: config.coreFormat, schemaVersion: config.coreSchemaVersion }, clientCredentialVersion: config.clientCredentialVersion };
+  const metadata = { manifestVersion: 2, application: 'unified-linux', controlPlanePort: 17891, corePort: 17871, serviceEntryMode: 'path', releaseVersion, sourceCommit, sourceModified: modified === 'true', sourceInputHash: sourceHash, desktopUIHash, consoleUIHash, registry, platform: config.platform, runtimeImage: config.runtimeImage, core: { format: config.coreFormat, schemaVersion: config.coreSchemaVersion }, clientCredentialVersion: config.clientCredentialVersion };
   metadata.releaseId = `${releaseVersion}-${sourceCommit.slice(0, 12)}-${sourceHash.slice(0, 12)}${metadata.sourceModified ? '-dirty' : ''}`;
   metadata.images = Object.fromEntries(roles.map(role => [role, `${registry}/${names[role]}:${metadata.releaseId}`]));
   for (const [key, value] of [['PIWORK_VERSION', releaseVersion], ['PIWORK_SOURCE_INPUT_HASH', sourceHash], ['PIWORK_DESKTOP_UI_HASH', desktopUIHash], ['PIWORK_CONSOLE_UI_HASH', consoleUIHash]]) {

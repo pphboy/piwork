@@ -53,6 +53,6 @@ COPY --from=metadata --chmod=0444 /out/docker-release.json /etc/piwork/docker-re
 ENV DOCKER_HOST=unix:///var/run/docker.sock \
     DOCKER_CONTEXT=""
 HEALTHCHECK --interval=5s --timeout=4s --start-period=10s --retries=120 \
-    CMD curl --fail --silent --output /dev/null --max-time 3 'http://127.0.0.1:7171/healthz' || exit 1
+    CMD curl --fail --silent --output /dev/null --max-time 3 'http://127.0.0.1:17891/healthz' || exit 1
 ENTRYPOINT ["/usr/local/bin/piwork-serve"]
 CMD ["serve", "--data-dir", "/var/lib/piwork/quickstart/core", "--no-open"]

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"log"
@@ -61,7 +63,7 @@ func cleanServiceRequestHeaders(r *http.Request, origin string, entry desktopSer
 	}
 	for name, values := range r.Header {
 		lower := strings.ToLower(name)
-		if lower == "host" || lower == "x-piwork-csrf" || strings.HasPrefix(lower, "proxy-") || strings.HasPrefix(lower, "x-piwork-gateway-") ||
+		if lower == "host" || lower == "x-piwork-app-session" || lower == "forwarded" || strings.HasPrefix(lower, "x-forwarded-") || lower == "x-csrf-token" || lower == "x-piwork-csrf" || strings.HasPrefix(lower, "proxy-") || strings.HasPrefix(lower, "x-piwork-gateway-") ||
 			connected[lower] || lower == "connection" || lower == "keep-alive" || lower == "transfer-encoding" || lower == "te" || lower == "trailer" {
 			continue
 		}
@@ -91,6 +93,10 @@ func cleanServiceRequestHeaders(r *http.Request, origin string, entry desktopSer
 			}
 			value := logical
 			if lower == "referer" {
+				if entry.basePath != "" && strings.HasPrefix(parsed.Path, entry.basePath) {
+					parsed.Path = "/" + strings.TrimPrefix(parsed.Path, entry.basePath)
+					parsed.RawPath = ""
+				}
 				value += parsed.RequestURI()
 			}
 			headers.Set(name, value)
@@ -104,7 +110,7 @@ func cleanServiceRequestHeaders(r *http.Request, origin string, entry desktopSer
 func reservedServiceCookie(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	return strings.HasPrefix(name, "__host-piwork-") || strings.HasPrefix(name, "__secure-piwork-") ||
-		strings.HasPrefix(name, "piwork-desktop") || strings.HasPrefix(name, "piwork-route")
+		strings.HasPrefix(name, "piwork-web-") || strings.HasPrefix(name, "piwork-desktop") || strings.HasPrefix(name, "piwork-route")
 }
 
 func cleanServiceSetCookie(value string) (string, bool) {
@@ -123,15 +129,24 @@ func cleanServiceSetCookie(value string) (string, bool) {
 	return strings.Join(cleaned, ";"), true
 }
 
-func serviceEmbedPolicy(headers http.Header, shellOrigin string) string {
+func serviceEmbedPolicy(headers http.Header, shellOrigin string, sameOrigin bool) string {
 	xfo := strings.ToLower(headers.Get("X-Frame-Options"))
-	if strings.Contains(xfo, "deny") || strings.Contains(xfo, "sameorigin") {
+	if strings.Contains(xfo, "deny") || strings.Contains(xfo, "sameorigin") && !sameOrigin {
 		return "blocked"
 	}
 	for _, policy := range headers.Values("Content-Security-Policy") {
 		for _, directive := range strings.Split(policy, ";") {
-			directive = strings.TrimSpace(directive)
-			if strings.HasPrefix(strings.ToLower(directive), "frame-ancestors") && (strings.Contains(strings.ToLower(directive), "'none'") || !strings.Contains(directive, shellOrigin)) {
+			parts := strings.Fields(directive)
+			if len(parts) == 0 || !strings.EqualFold(parts[0], "frame-ancestors") {
+				continue
+			}
+			allowed := false
+			for _, source := range parts[1:] {
+				if source == "*" || source == shellOrigin || sameOrigin && source == "'self'" {
+					allowed = true
+				}
+			}
+			if !allowed {
 				return "blocked"
 			}
 		}
@@ -236,7 +251,7 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 					cancel()
 					return
 				}
-				check, end := context.WithTimeout(ctx, 3*time.Second)
+				check, end := context.WithTimeout(ctx, 750*time.Millisecond)
 				view, err := desktopResolveService(check, api, entry.hostname, entry.port)
 				end()
 				if err != nil || view.WorkID != entry.workID || view.ServiceID != entry.serviceID || entry.runtimeGeneration != "" && view.Generation != entry.runtimeGeneration {
@@ -266,6 +281,11 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 			pr.Out.URL = &url.URL{Scheme: api.Base.Scheme, Host: api.Base.Host, Path: target.Path, RawPath: target.RawPath, RawQuery: target.RawQuery, ForceQuery: target.ForceQuery}
 			pr.Out.Host = api.Base.Host
 			pr.Out.Header.Set("X-Piwork-Gateway-Token", token)
+			if entry.basePath != "" {
+				pr.Out.Header.Set("X-Forwarded-Prefix", strings.TrimSuffix(entry.basePath, "/"))
+				scope := sha256.Sum256([]byte("application-storage:" + entry.sessionID))
+				pr.Out.Header.Set("X-Piwork-App-Session", hex.EncodeToString(scope[:]))
+			}
 			if entry.runtimeGeneration != "" {
 				pr.Out.Header.Set("X-Piwork-Gateway-Generation", entry.runtimeGeneration)
 			}
@@ -286,7 +306,7 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 			if r.URL.Path == "/" && strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/html") {
 				d.mu.Lock()
 				if current := d.serviceEntries[entry.id]; current != nil {
-					current.embed = serviceEmbedPolicy(response.Header, d.origin)
+					current.embed = serviceEmbedPolicy(response.Header, d.origin, d.hosted != nil)
 				}
 				d.mu.Unlock()
 			}
@@ -311,15 +331,27 @@ func (d *nativeDesktop) forwardServiceHTTP(w http.ResponseWriter, r *http.Reques
 				response.Header.Add("Set-Cookie", value)
 			}
 			if location := response.Header.Get("Location"); location != "" {
-				if parsed, err := url.Parse(location); err == nil && parsed.IsAbs() {
+				if entry.basePath != "" {
 					logical := "http://" + entry.hostname
 					if entry.port != 80 {
 						logical += ":" + strconv.Itoa(entry.port)
 					}
-					if parsed.Scheme+"://"+parsed.Host == logical {
-						browserOrigin, _ := url.Parse(d.serviceOrigin(entry))
-						parsed.Scheme, parsed.Host = browserOrigin.Scheme, browserOrigin.Host
-						response.Header.Set("Location", parsed.String())
+					next, err := hostedServiceLocation(location, r.URL, d.origin, logical, entry.basePath)
+					if err != nil {
+						return err
+					}
+					response.Header.Set("Location", next)
+				} else {
+					if parsed, err := url.Parse(location); err == nil && parsed.IsAbs() {
+						logical := "http://" + entry.hostname
+						if entry.port != 80 {
+							logical += ":" + strconv.Itoa(entry.port)
+						}
+						if parsed.Scheme+"://"+parsed.Host == logical {
+							browserOrigin, _ := url.Parse(d.serviceOrigin(entry))
+							parsed.Scheme, parsed.Host = browserOrigin.Scheme, browserOrigin.Host
+							response.Header.Set("Location", parsed.String())
+						}
 					}
 				}
 			}

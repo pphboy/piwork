@@ -130,7 +130,7 @@ async function credentials(form) {
             return;
         clearSecrets();
         identity++;
-        location.replace(value.next || '/');
+        location.replace(nextLocation(value.next || '/'));
     }
     catch (error) {
         if (!current(ticket))
@@ -181,7 +181,7 @@ async function load() {
             return;
         }
         if (location.pathname === '/login') {
-            location.replace(session.next || '/');
+            location.replace(nextLocation(session.next || '/'));
             return;
         }
         if (session.user?.role === 'admin') {
@@ -219,7 +219,12 @@ else if (action === 'logout') {
     identity++;
     clearSecrets();
     updateLocks();
-    void web('logout', 'POST', {}).then(() => location.replace('/login')).catch(error => { writing = false; tell(message(error), true); updateLocks(); });
+    void web('logout', 'POST', {}).then(() => { try {
+        for (const key of Object.keys(sessionStorage))
+            if (key.startsWith('piwork:web:'))
+                sessionStorage.removeItem(key);
+    }
+    catch { } location.replace('/login'); }).catch(error => { writing = false; tell(message(error), true); updateLocks(); });
 } });
 window.addEventListener('pagehide', () => { identity++; view++; clearSecrets(); });
 window.addEventListener('pageshow', event => { if (event.persisted) {
@@ -231,4 +236,11 @@ window.addEventListener('pageshow', event => { if (event.persisted) {
 } });
 render();
 void load();
+function nextLocation(fallback) {
+    const target = new URLSearchParams(location.search).get('returnTo');
+    if (!target || !/^\/services\/[A-Za-z0-9-]+\/[A-Za-z0-9-]+\/[1-9][0-9]{0,4}\//.test(target))
+        return fallback;
+    const parsed = new URL(target, location.origin);
+    return parsed.origin === location.origin && parsed.pathname.startsWith('/services/') ? parsed.pathname + parsed.search + parsed.hash : fallback;
+}
 //# sourceMappingURL=onboarding.js.map

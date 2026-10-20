@@ -22,7 +22,7 @@ import (
 )
 
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return run(ctx, args, stdin, stdout, stderr, os.Environ(), "http://127.0.0.1:7171")
+	return run(ctx, args, stdin, stdout, stderr, os.Environ(), "http://127.0.0.1:17871")
 }
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, environment []string, fallback string) int {
 	v, err := parse(args)

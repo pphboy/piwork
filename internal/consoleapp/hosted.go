@@ -17,13 +17,13 @@ type HostedSession struct {
 // HostedOptions supplies the unified application's session rather than a
 // second login store, listener, installation lock, or operator identity.
 type HostedOptions struct {
-	Origin, DataDirectory string
-	Transport             http.RoundTripper
-	Resolve               func(*http.Request) (HostedSession, error)
+	Origin, CoreURL, DataDirectory string
+	Transport                      *http.Transport
+	Resolve                        func(*http.Request) (HostedSession, error)
 }
 
 func NewHostedHandler(options HostedOptions) http.Handler {
-	c := &nativeConsole{options: consoleOptions{publicOrigin: options.Origin, coreURL: options.Origin, dataDir: options.DataDirectory}, hosted: &options}
+	c := &nativeConsole{options: consoleOptions{publicOrigin: options.Origin, coreURL: options.CoreURL, dataDir: options.DataDirectory}, hosted: &options}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, err := options.Resolve(r)
 		if err != nil {

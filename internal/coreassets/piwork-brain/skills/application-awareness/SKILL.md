@@ -26,6 +26,8 @@ description: Apply product, UI/UX, state synchronization and engineering judgmen
 - 避免凌乱、拥挤、难以理解的界面，也避免不必要的视觉装饰。
 - 不追求精美设计、品牌包装、复杂动画或定制设计系统。
 
+托管浏览器入口带动态 Service 路径；自定义资源与 fetch 使用模板 URL helper，框架内置链接不重复加前缀，具体方式见 references/nicegui.md。不要把 Core 端口或固定 Work ID 写进浏览器源码。
+
 应用自定义 CSS 类使用业务前缀，并尽量限定在应用根容器内。避免定义可能与框架冲突的全局 `.column`、`.row`、`.card` 等样式；有意调整框架组件也要限定范围并核对效果，不能误改其内部布局容器。
 
 ### 3. UX：操作自然，反馈明确

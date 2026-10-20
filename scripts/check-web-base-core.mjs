@@ -89,7 +89,7 @@ async function chat(prompt) {
 try {
   const [httpPort, grpcPort, desktopPort] = await Promise.all([port(), port(), port()]);
   coreUrl = `http://127.0.0.1:${httpPort}`;
-  core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
+  core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', '127.0.0.1:0', '--core-listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
     { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent' } });
   coreOutput = output(core);
   await wait(async () => (await fetch(coreUrl + '/healthz')).ok, 'Core health');
@@ -409,7 +409,7 @@ HTTPServer(('0.0.0.0',8081),Handler).serve_forever()
   await expect(frame.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible({ timeout: 90000 });
   await expect(frame.getByLabel('Todo title', { exact: true })).toHaveValue('keep this unfinished input');
   await stop(core);
-  core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
+  core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', '127.0.0.1:0', '--core-listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
     { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent' } });
   coreOutput = output(core);
   await wait(async () => (await api('GET', `/works/${work}`)).observedState === 'ready', 'graceful Core recovery', 300000);

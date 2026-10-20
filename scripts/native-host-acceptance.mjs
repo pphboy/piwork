@@ -92,19 +92,19 @@ try {
   for (const volume of [socketVolume, dataVolume]) await docker(['volume', 'create', '--label', label, volume]);
   await docker(['run', '-d', '--privileged', '--name', engine, '--label', label,
     '-e', 'DOCKER_TLS_CERTDIR=', '--mount', `type=volume,src=${socketVolume},dst=/var/run`,
-    '--mount', `type=volume,src=${dataVolume},dst=/data`, '-p', '127.0.0.1::7171',
+    '--mount', `type=volume,src=${dataVolume},dst=/data`, '-p', '127.0.0.1::17871',
     'docker:27-dind', '--host=unix:///var/run/docker.sock', '--tls=false']);
   containers.push(engine);
   await waitFor(async () => (await command('docker', ['exec', engine, 'docker', 'info'], { allowFailure: true })).code === 0, 'independent Engine');
   await loadImages();
   console.log('Independent Engine ready; fixture images loaded.');
   const core = await startHost('core', 'piwork-serve', ['serve', '--data-dir', '/data/core',
-    '--listen', '0.0.0.0:7171', '--allow-insecure-remote', '--agent-grpc-listen', '0.0.0.0:7172']);
-  const address = await docker(['port', engine, '7171/tcp']);
+    '--listen', '0.0.0.0:17891', '--core-listen', '0.0.0.0:17871', '--allow-insecure-remote', '--agent-grpc-listen', '0.0.0.0:7172']);
+  const address = await docker(['port', engine, '17871/tcp']);
   const base = `http://${address}`;
   await waitFor(async () => (await fetch(`${base}/healthz`)).ok, 'scratch Core health');
   const operator = (args, input) => docker(['exec', '-i', core, '/bin/piwork-serve',
-    '--core', 'http://127.0.0.1:7171', '--data-dir', '/data/core', ...args], { input });
+    '--core', 'http://127.0.0.1:17871', '--data-dir', '/data/core', ...args], { input });
   await operator(['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], 'native-host-fixture-password\n');
   await operator(['config', 'set', '--model-provider', 'piwork-deterministic',
     '--model', 'fixture-v1', '--api-key-stdin'], 'fixture-key\n');
@@ -113,7 +113,7 @@ try {
   console.log('Scratch Core initialized and ready.');
   const cli = async (args, input) => {
     const result = await command('docker', ['exec', '-i', '-e', 'PIWORK_CONFIG_PATH=/data/client/client.json', core,
-      '/bin/piwork-cli', '--core', 'http://127.0.0.1:7171', '--json', ...args], { input, allowFailure: true });
+      '/bin/piwork-cli', '--core', 'http://127.0.0.1:17871', '--json', ...args], { input, allowFailure: true });
     if (result.code === 0) return result.stdout.trim();
     let accepted; try { accepted = JSON.parse(result.stdout); } catch { /* No acceptance identity is available. */ }
     if (args.includes('--wait') && result.code === 5 && accepted?.state === 'waiting' &&
@@ -149,7 +149,7 @@ try {
   const service = JSON.parse(await cli(['work', 'service', 'list', workId])).services[0];
   assert.equal(service.observedState, 'ready');
   console.log('Real TS SDK deployed a durable Service through Go MCP.');
-  const proxy = await startHost('proxy', 'piwork-cli', ['--core', 'http://127.0.0.1:7171', 'proxy', '--port', '7175'],
+  const proxy = await startHost('proxy', 'piwork-cli', ['--core', 'http://127.0.0.1:17871', 'proxy', '--port', '7175'],
     ['PIWORK_CONFIG_PATH=/data/client/client.json']);
   const proxyLogs = await waitFor(async () => {
     const output = await docker(['logs', proxy]); return output.includes('WebDAV status: available') && output;
@@ -165,12 +165,12 @@ try {
   });
   assert([201, 204].includes(files.status));
   assert.equal(await insideHTTP(`http://127.0.0.1:7175/works/${workId}/files/native-host.txt`, [davAuth]), 'native host durable bytes');
-  const desktop = await startHost('desktop', 'piwork-cli', ['--core', 'http://127.0.0.1:7171', 'desktop', '--port', '7174', '--no-open'],
+  const desktop = await startHost('desktop', 'piwork-cli', ['--core', 'http://127.0.0.1:17871', 'desktop', '--port', '7174', '--no-open'],
     ['PIWORK_CONFIG_PATH=/data/client/client.json']);
   await waitFor(async () => (await docker(['logs', desktop])).includes('Piwork Desktop:'), 'scratch Desktop');
   assert(/piwork/i.test(await insideHTTP('http://127.0.0.1:7174/', ['Host: desktop.localhost:7174'])));
   assert((await insideHTTP('http://127.0.0.1:7174/desktop/browser/app.js', ['Host: desktop.localhost:7174'])).includes('Pi requests'));
-  const consoleHost = await startHost('console', 'piwork-console', ['serve', '--core', 'http://127.0.0.1:7171', '--listen', '127.0.0.1:7173',
+  const consoleHost = await startHost('console', 'piwork-console', ['serve', '--core', 'http://127.0.0.1:17871', '--listen', '127.0.0.1:7173',
     '--public-origin', 'https://127.0.0.1:7173', '--tls-cert', '/tls/cert.pem', '--tls-key', '/tls/key.pem', '--data-dir', '/data/console']);
   await waitFor(async () => (await insideHTTP('https://127.0.0.1:7173/login', [], true)).includes('PiWork Serve'), 'scratch Console');
   assert((await insideHTTP('https://127.0.0.1:7173/browser/app.js', [], true)).includes('Default Work'));
@@ -262,7 +262,7 @@ try {
   assert.equal(JSON.parse(await cli(['work', 'stop', workId, '--wait'])).state, 'succeeded');
   const exportPath = `/data/client/${workId}.work`;
   const exportAttempt = await command('docker', ['exec', '-w', '/data/client', '-e', 'PIWORK_CONFIG_PATH=/data/client/client.json', core,
-    '/bin/piwork-cli', '--core', 'http://127.0.0.1:7171', '--json', 'work', 'export', workId], { allowFailure: true });
+    '/bin/piwork-cli', '--core', 'http://127.0.0.1:17871', '--json', 'work', 'export', workId], { allowFailure: true });
   let exported = JSON.parse(exportAttempt.stdout);
   if (exportAttempt.code === 5 && exported.state === 'waiting' && typeof exported.operationId === 'string' &&
       typeof exported.snapshotId === 'string' && observationCodes.includes(exported.error?.code)) {

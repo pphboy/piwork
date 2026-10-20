@@ -26,7 +26,7 @@ func (s *Server) serveSetup(w http.ResponseWriter, r *http.Request) {
 		webError(w, 400, "INVALID_REQUEST")
 		return
 	}
-	hasUsers, err := s.options.Core.Identity.HasUsers(r.Context())
+	hasUsers, err := s.hasUsers(r.Context())
 	if err != nil {
 		sendError(w, err)
 		return
@@ -46,19 +46,22 @@ func (s *Server) serveSetup(w http.ResponseWriter, r *http.Request) {
 		webError(w, 403, "CSRF_INVALID")
 		return
 	}
-	user, err := s.options.Core.Identity.Bootstrap(r.Context(), input.Account, input.Password)
+	user, err := s.setup.Bootstrap(r.Context(), input.Account, input.Password)
 	input.Password = ""
 	if err != nil {
 		sendError(w, err)
 		return
 	}
-	_ = s.options.Core.ScheduleRuntimeRefresh()
 	webJSON(w, 201, map[string]any{"created": true, "account": user.Account, "next": "/login"})
 }
 
 func (s *Server) onboarding(w http.ResponseWriter, r *http.Request, ss *session) {
-	status := s.options.Core.Status()
-	value := map[string]any{"user": ss.credential.User, "status": status, "administrator": ss.credential.User.Role == "admin"}
+	status, err := s.api("").ControlStatus(r.Context())
+	if err != nil {
+		sendError(w, err)
+		return
+	}
+	value := map[string]any{"user": ss.credential.User, "status": status.CoreStatus, "administrator": ss.credential.User.Role == "admin"}
 	if ss.credential.User.Role == "admin" {
 		var runtime json.RawMessage
 		api := s.api(ss.credential.Token)
@@ -66,8 +69,9 @@ func (s *Server) onboarding(w http.ResponseWriter, r *http.Request, ss *session)
 			webError(w, 502, "CORE_UNAVAILABLE")
 			return
 		}
-		defaults, err := s.options.Core.RuntimeDefaults()
-		value["runtime"], value["preparation"] = runtime, s.options.Core.Preparation()
+		var defaults contracts.WebRuntimeDefaults
+		err := api.Request(r.Context(), "GET", "/api/v1/admin/runtime-defaults", nil, &defaults)
+		value["runtime"], value["preparation"] = runtime, status.Preparation
 		if err != nil {
 			value["releaseError"] = "RELEASE_DEFAULTS_UNAVAILABLE"
 		} else {

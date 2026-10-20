@@ -2,6 +2,7 @@ package coreapp
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -183,11 +184,12 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	if r.Method == "GET" && path == "/control/status" {
+		hasUsers, err := a.Identity.HasUsers(r.Context())
+		if err != nil {
+			return err
+		}
 		status, preparation := a.deliveryStatus()
-		send(w, 200, struct {
-			Status
-			Preparation Preparation `json:"preparation"`
-		}{status, preparation})
+		send(w, 200, contracts.ControlStatus{CoreStatus: status, HasUsers: hasUsers, Preparation: preparation})
 		return nil
 	}
 	if r.Method == "POST" && path == "/api/v1/login" {
@@ -207,11 +209,15 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	if strings.HasPrefix(path, "/control/") {
-		actor, err := a.operator(r)
-		if err != nil {
-			return err
-		}
 		if r.Method == "POST" && path == "/control/admin/bootstrap" {
+			values := r.Header.Values("Authorization")
+			delegated := a.options.SetupSecret != "" && len(values) == 1 &&
+				subtle.ConstantTimeCompare([]byte(values[0]), []byte("Setup "+a.options.SetupSecret)) == 1
+			if !delegated {
+				if _, err := a.operator(r); err != nil {
+					return err
+				}
+			}
 			account, password, err := readCredentials(r)
 			if err != nil {
 				return err
@@ -223,8 +229,12 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 			if err := a.ScheduleRuntimeRefresh(); err != nil {
 				return err
 			}
-			send(w, 201, map[string]any{"userId": user.Id, "account": user.Account})
+			send(w, 201, contracts.BootstrapResult{UserID: string(user.Id), Account: string(user.Account)})
 			return nil
+		}
+		actor, err := a.operator(r)
+		if err != nil {
+			return err
 		}
 		return a.control(w, r, actor, false)
 	}

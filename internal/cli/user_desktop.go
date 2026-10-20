@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -266,9 +264,9 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src http://*.desktop.localhost:%d; object-src 'none'; base-uri 'none'; frame-ancestors 'none'", d.port))
 	if d.hosted != nil {
-		origin, _ := url.Parse(d.origin)
-		w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src %s://%s; object-src 'none'; base-uri 'none'; frame-ancestors 'none'", origin.Scheme, net.JoinHostPort(origin.Hostname(), "*")))
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 	}
+
 	w.WriteHeader(200)
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(content)

@@ -13,8 +13,8 @@ import { singleHostReadme, nativeQuickStart, quickStart } from './docker-quickst
 test('published direct-entry releases describe shipped setup while older images retain their original instructions', () => {
   const release = { ...currentRelease(), state: 'published' };
   for (const language of ['en', 'zh']) {
-    const old = quickStart({ ...release, releaseVersion: '0.0.7' }, language, {});
-    const shipped = quickStart({ ...release, releaseVersion: '0.0.8' }, language, {});
+    const old = quickStart({ ...release, releaseVersion: '0.0.8', controlPlanePort: undefined, corePort: undefined }, language, {});
+    const shipped = quickStart({ ...release, releaseVersion: '0.0.9', controlPlanePort: 17891, corePort: 17871 }, language, {});
     assert.match(old, /matching release manual|对应版本手册/);
     assert.doesNotMatch(shipped, /build the current source|构建当前源码/);
     assert.match(shipped, /includes direct browser entry|包含直接访问与网页配置流程/);
@@ -29,7 +29,7 @@ function fixture(t) {
   for (const name of ['README.md', 'README.zh-CN.md', 'AGENTS.md', 'LICENSE', '.dockerignore', 'go.mod', 'go.sum', 'package.json', 'package-lock.json', 'tsconfig.base.json', 'Dockerfile.core', 'Dockerfile.cli', 'Dockerfile.core.dockerignore', 'Dockerfile.cli.dockerignore', 'Dockerfile.agentd', 'Dockerfile.file-helper.native', 'Dockerfile.snapshot-helper.native', 'Dockerfile.docker-release']) copyFileSync(join(projectRoot, name), join(base, name));
   mkdirSync(join(base, 'apps/ui-shared/assets'), { recursive: true });
   copyFileSync(join(projectRoot, 'apps/ui-shared/assets/piwork-logo.png'), join(base, 'apps/ui-shared/assets/piwork-logo.png'));
-  const candidate={...currentRelease(base),state:'candidate',sourceInputHash:sourceInputHash(base)};
+  const candidate={...currentRelease(base),state:'candidate',controlPlanePort:17891,corePort:17871,serviceEntryMode:'path',sourceInputHash:sourceInputHash(base)};
   writeFileSync(join(base,'deploy/docker/candidate.json'),JSON.stringify(candidate,null,2)+'\n');
   for(const name of docs){
     const path=join(base,name);
@@ -37,6 +37,10 @@ function fixture(t) {
     if(!/Local candidate|本地候选/.test(section(text,'docker-quickstart')))writeFileSync(path,text.replace('<!-- docker-quickstart:start -->','<!-- docker-quickstart:start -->\n'+(name.includes('zh-CN')?'本地候选':'Local candidate')+'\n'));
   }
   for(const [language,name] of [['en','README.md'],['zh','README.zh-CN.md']])writeFileSync(join(base,'examples/single-host',name),singleHostReadme(candidate,language));
+  const input = join(base, 'dist/fixture-metadata.json'); mkdirSync(dirname(input), { recursive: true });
+  writeFileSync(input, JSON.stringify(candidate));
+  const sync = spawnSync(process.execPath, [join(base,'scripts/sync-docker-quickstart.mjs'),input], {cwd:base,encoding:'utf8'});
+  assert.equal(sync.status,0,sync.stderr);
   refresh(base);
   return base;
 }
@@ -69,7 +73,7 @@ test('native Linux instructions retain startup, data, setup and historical clien
     const native = section(readFileSync(join(projectRoot, 'deploy/docker', name), 'utf8'), 'native-quickstart');
     assert.equal(native.trim(), nativeQuickStart(language, { buildLink: '../../AGENTS.md#构建与验证' }).trim());
     assert.deepEqual(codeBlocks(native), baseline);
-    for (const value of ['piwork/server', '0.0.0.0:7171', '--data-dir', 'piwork-cli', 'piwork-console', 'releases/download/v0.0.7/', 'releases/download/v0.0.5/']) assert(native.includes(value), value);
+    for (const value of ['piwork/server', '0.0.0.0:17891', '--data-dir', 'piwork-cli', 'piwork-console', 'releases/download/v0.0.7/', 'releases/download/v0.0.5/']) assert(native.includes(value), value);
     for (const block of codeBlocks(native)) assert.equal(spawnSync('sh', ['-n'], { input: block.code }).status, 0);
   }
 });
@@ -142,6 +146,8 @@ test('a consistent local candidate requires current inputs and an explicit candi
 
 test('semantic deployment drift fails with safe diagnostics', async t => {
   const cases = [
+    ['Core CLI reachability', base => replace(base, 'examples/single-host/docker-compose.yml.template', '0.0.0.0:17871', '127.0.0.1:17871'), 'bridge CLI requires'],
+    ['Service port drift', base => docs.forEach(name=>replace(base,name,'/services/<workId>/<serviceId>/<port>/','/old-service-ports/')), 'Service path drift'],
     ['Core bind', base => docs.forEach(name => replace(base, name, '--volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core', '--volume /var/lib/piwork/quickstart/core:/wrong')), 'complete startup'],
     ['Core secret leaked to CLI', base => replace(base, 'examples/single-host/docker-compose.yml.template', '      PIWORK_CORE_URL:', '      PIWORK_API_KEY: synthetic-canary-must-not-print\n      PIWORK_CORE_URL:'), 'CLI must not receive'],
     ['language mismatch', base => replace(base, 'deploy/docker/README.zh-CN.md', '--stop-timeout 60', '--stop-timeout 59'), 'paired browser'],

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -20,7 +19,7 @@ func TestHostedInspectionIsPrivateToBrowserAndKnownOperationsToUser(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	transport := client.NewHandlerTransport(context.Background(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/me" {
 			t.Error("inspection contacted business Core", r.URL.Path)
 			w.WriteHeader(404)
@@ -32,10 +31,10 @@ func TestHostedInspectionIsPrivateToBrowserAndKnownOperationsToUser(t *testing.T
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": user, "account": user, "role": "user"})
 	}))
-	defer transport.Close()
+	defer backend.Close()
 	root := t.TempDir()
 	create := func(user, session string) *HostedDesktop {
-		h, err := NewHostedDesktop(HostedDesktopOptions{Origin: "http://127.0.0.1:7171", CookieName: "hosted", SessionID: session, CSRF: "csrf-" + session, StateDirectory: filepath.Join(root, "sessions", session), RecordDirectory: filepath.Join(root, "users", user), Credential: client.Credential{Version: 1, CoreURL: "http://127.0.0.1:7171", Token: user + session, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), User: client.Identity{ID: user, Account: user, Role: "user"}}, Transport: transport})
+		h, err := NewHostedDesktop(HostedDesktopOptions{Origin: "http://127.0.0.1:7171", CookieName: "hosted", SessionID: session, CSRF: "csrf-" + session, StateDirectory: filepath.Join(root, "sessions", session), RecordDirectory: filepath.Join(root, "users", user), Credential: client.Credential{Version: 1, CoreURL: backend.URL, Token: user + session, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), User: client.Identity{ID: user, Account: user, Role: "user"}}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,50 +21,19 @@ import (
 )
 
 type hostedServiceFixture struct {
-	pool         *HostedServicePool
-	transport    *client.HandlerTransport
-	generation   atomic.Int64
-	streamClosed chan struct{}
-}
-
-func freeServicePorts(t *testing.T, count int) int {
-	t.Helper()
-	for attempt := 0; attempt < 100; attempt++ {
-		first, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		port := first.Addr().(*net.TCPAddr).Port
-		listeners := []net.Listener{first}
-		for next := 1; next < count && port+next < 65536; next++ {
-			l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port+next)))
-			if err != nil {
-				break
-			}
-			listeners = append(listeners, l)
-		}
-		for _, l := range listeners {
-			_ = l.Close()
-		}
-		if len(listeners) == count {
-			return port
-		}
-	}
-	t.Fatal("no free bounded Service range")
-	return 0
+	backend, browser *httptest.Server
+	mu               sync.Mutex
+	sessions         map[string]*HostedDesktop
+	generation       atomic.Int64
+	streamClosed     chan struct{}
 }
 
 func newHostedServiceFixture(t *testing.T, ports int) *hostedServiceFixture {
 	t.Helper()
 	f := &hostedServiceFixture{streamClosed: make(chan struct{}, 10)}
 	f.generation.Store(1)
-	first := freeServicePorts(t, ports)
-	var err error
-	f.pool, err = NewHostedServicePool(context.Background(), HostedServiceOptions{Origin: "http://127.0.0.1:7171", ListenHost: "127.0.0.1", StateDirectory: filepath.Join(t.TempDir(), "origins"), FirstPort: first, LastPort: first + ports - 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.transport = client.NewHandlerTransport(context.Background(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	f.sessions = map[string]*HostedDesktop{}
+	f.backend = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/me":
 			_, _ = io.WriteString(w, `{"id":"user-1","account":"owner","role":"user"}`)
@@ -128,22 +97,43 @@ func newHostedServiceFixture(t *testing.T, ports int) *hostedServiceFixture {
 			w.WriteHeader(404)
 		}
 	}))
-	t.Cleanup(func() { f.pool.Close(); f.transport.Close() })
+	f.browser = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := desktopSessionID(r, "web-session")
+		f.mu.Lock()
+		h := f.sessions[id]
+		f.mu.Unlock()
+		if h == nil {
+			w.WriteHeader(401)
+			return
+		}
+		h.desktop.mu.Lock()
+		active := h.desktop.identity.credential != nil
+		h.desktop.mu.Unlock()
+		if !active {
+			w.WriteHeader(401)
+			return
+		}
+		h.ServeService(w, r)
+	}))
+	t.Cleanup(func() { f.browser.Close(); f.backend.Close() })
 	return f
 }
 
 func (f *hostedServiceFixture) desktop(t *testing.T, session string) *HostedDesktop {
 	t.Helper()
 	directory := t.TempDir()
-	h, err := NewHostedDesktop(HostedDesktopOptions{Origin: f.pool.options.Origin, SessionID: session, CSRF: "csrf", CookieName: "web-session", StateDirectory: filepath.Join(directory, "session"), RecordDirectory: filepath.Join(directory, "user"), Credential: client.Credential{Version: 1, CoreURL: f.pool.options.Origin, Token: "test-core-token", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), User: client.Identity{ID: "user-1", Account: "owner", Role: "user"}}, Transport: f.transport, Services: f.pool})
+	h, err := NewHostedDesktop(HostedDesktopOptions{Origin: f.browser.URL, SessionID: session, CSRF: "csrf", CookieName: "web-session", StateDirectory: filepath.Join(directory, "session"), RecordDirectory: filepath.Join(directory, "user"), Credential: client.Credential{Version: 1, CoreURL: f.backend.URL, Token: "test-core-token", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), User: client.Identity{ID: "user-1", Account: "owner", Role: "user"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.mu.Lock()
+	f.sessions[session] = h
+	f.mu.Unlock()
 	t.Cleanup(h.Close)
 	return h
 }
 
-type hostedEntry struct{ EntryID, EntryURL, Origin string }
+type hostedEntry struct{ EntryID, EntryURL, Origin, BasePath string }
 
 func hostedEntryCreate(t *testing.T, h *HostedDesktop, session, service string) (hostedEntry, int) {
 	t.Helper()
@@ -176,15 +166,6 @@ func serviceCall(t *testing.T, method, address, cookie, body string) *http.Respo
 	t.Cleanup(func() { response.Body.Close(); c.CloseIdleConnections() })
 	return response
 }
-func serviceRedeem(t *testing.T, entry hostedEntry) string {
-	t.Helper()
-	parsed, _ := url.Parse(entry.EntryURL)
-	response := serviceCall(t, "POST", entry.Origin+desktopServiceReserved+"redeem", "", `{"ticket":"`+strings.TrimPrefix(parsed.Fragment, "ticket=")+`"}`)
-	if response.StatusCode != 200 || len(response.Cookies()) != 1 || !response.Cookies()[0].HttpOnly || response.Cookies()[0].Secure {
-		t.Fatal("HTTP IP ticket exchange failed", response.StatusCode)
-	}
-	return response.Cookies()[0].Name + "=" + response.Cookies()[0].Value
-}
 func responseText(t *testing.T, r *http.Response) string {
 	t.Helper()
 	b, err := io.ReadAll(r.Body)
@@ -195,7 +176,7 @@ func responseText(t *testing.T, r *http.Response) string {
 	return string(b)
 }
 
-func TestHostedServiceCookiePartitionAndGrantBoundaries(t *testing.T) {
+func TestHostedServiceCookiePartitionAndSessionBoundaries(t *testing.T) {
 	f := newHostedServiceFixture(t, 2)
 	h := f.desktop(t, "first")
 	a, status := hostedEntryCreate(t, h, "first", "notes")
@@ -203,39 +184,31 @@ func TestHostedServiceCookiePartitionAndGrantBoundaries(t *testing.T) {
 		t.Fatal("create", status)
 	}
 	b, status := hostedEntryCreate(t, h, "first", "other")
-	if status != 200 || a.Origin == b.Origin {
-		t.Fatal("Service origins shared", status)
+	if status != 200 || a.Origin != b.Origin || a.EntryURL == b.EntryURL || a.BasePath == "" {
+		t.Fatal("Service target paths", status, a, b)
 	}
-	if r := serviceCall(t, "GET", a.Origin+"/", "web-session=first", ""); r.StatusCode != 401 {
-		t.Fatal("main cookie authorized Service", r.StatusCode)
+	if r := serviceCall(t, "GET", a.EntryURL, "", ""); r.StatusCode != 401 {
+		t.Fatal("anonymous target accepted")
 	}
-	grantA := serviceRedeem(t, a)
-	grantB := serviceRedeem(t, b)
-	parsed, _ := url.Parse(a.EntryURL)
-	if r := serviceCall(t, "POST", a.Origin+desktopServiceReserved+"redeem", "", `{"ticket":"`+strings.TrimPrefix(parsed.Fragment, "ticket=")+`"}`); r.StatusCode != 401 {
-		t.Fatal("ticket replay accepted", r.StatusCode)
-	}
-	if r := serviceCall(t, "GET", b.Origin+"/", grantA, ""); r.StatusCode != 401 {
-		t.Fatal("cross-Service grant accepted", r.StatusCode)
-	}
+	grantA, grantB := "web-session=first", "web-session=first"
 	for _, item := range []struct {
 		entry        hostedEntry
 		grant, value string
 	}{{a, grantA, "notes"}, {b, grantB, "other"}} {
-		r := serviceCall(t, "GET", item.entry.Origin+"/set", item.grant, "")
-		if r.StatusCode != 200 || len(r.Cookies()) != 0 || r.Header.Get("Location") != item.entry.Origin+"/next?q=1" || r.Header.Get("X-Frame-Options") != "DENY" {
+		r := serviceCall(t, "GET", item.entry.EntryURL+"set", item.grant, "")
+		if r.StatusCode != 200 || len(r.Cookies()) != 0 || r.Header.Get("Location") != item.entry.BasePath+"next?q=1" || r.Header.Get("X-Frame-Options") != "DENY" {
 			t.Fatal("upstream headers changed", r.StatusCode, r.Header)
 		}
-		body := responseText(t, serviceCall(t, "GET", item.entry.Origin+"/deep/value?q=hello", item.grant+"; same=forged; piwork-web=forged", ""))
+		body := responseText(t, serviceCall(t, "GET", item.entry.EntryURL+"deep/value?q=hello", item.grant+"; same=forged; piwork-web=forged", ""))
 		if !strings.Contains(body, "same="+item.value) || !strings.Contains(body, "path=only") || strings.Contains(body, "forged") || !strings.Contains(body, "q=hello") {
 			t.Fatal("jar partition/path/query failed", body)
 		}
 	}
-	_ = responseText(t, serviceCall(t, "GET", a.Origin+"/delete", grantA, ""))
-	if body := responseText(t, serviceCall(t, "GET", a.Origin+"/", grantA, "")); strings.Contains(body, "same=") || strings.Contains(body, "path=") {
+	_ = responseText(t, serviceCall(t, "GET", a.EntryURL+"delete", grantA, ""))
+	if body := responseText(t, serviceCall(t, "GET", a.EntryURL, grantA, "")); strings.Contains(body, "same=") || strings.Contains(body, "path=") {
 		t.Fatal("jar deletion/path failed", body)
 	}
-	if r := serviceCall(t, "GET", a.Origin+"/auth", grantA, ""); r.StatusCode != 401 || !strings.Contains(responseText(t, r), "app login required") {
+	if r := serviceCall(t, "GET", a.EntryURL+"auth", grantA, ""); r.StatusCode != 401 || !strings.Contains(responseText(t, r), "app login required") {
 		t.Fatal("application 401 changed", r.StatusCode)
 	}
 	h2 := f.desktop(t, "second")
@@ -243,28 +216,28 @@ func TestHostedServiceCookiePartitionAndGrantBoundaries(t *testing.T) {
 	if status != 200 || a2.Origin != a.Origin {
 		t.Fatal("logical origin not reused", status)
 	}
-	grant2 := serviceRedeem(t, a2)
-	if body := responseText(t, serviceCall(t, "GET", a2.Origin+"/deep/", grant2, "")); strings.Contains(body, "same=") || strings.Contains(body, "path=") {
+	grant2 := "web-session=second"
+	if body := responseText(t, serviceCall(t, "GET", a2.EntryURL+"deep/", grant2, "")); strings.Contains(body, "same=") || strings.Contains(body, "path=") {
 		t.Fatal("browser jars shared", body)
 	}
 	h.Close()
-	if r := serviceCall(t, "GET", a.Origin+"/", grantA, ""); r.StatusCode != 401 {
+	if r := serviceCall(t, "GET", a.EntryURL, grantA, ""); r.StatusCode != 401 {
 		t.Fatal("closed session grant survived", r.StatusCode)
 	}
-	if r := serviceCall(t, "GET", a.Origin+"/", grant2, ""); r.StatusCode != 200 {
+	if r := serviceCall(t, "GET", a.EntryURL, grant2, ""); r.StatusCode != 200 {
 		t.Fatal("other browser revoked", r.StatusCode)
 	}
 }
 
-func TestHostedServiceStreamsAndPinnedOriginSurviveRevocation(t *testing.T) {
+func TestHostedServiceStreamsAndStablePathsRevalidateGeneration(t *testing.T) {
 	f := newHostedServiceFixture(t, 1)
 	h := f.desktop(t, "session")
 	entry, status := hostedEntryCreate(t, h, "session", "notes")
 	if status != 200 {
 		t.Fatal(status)
 	}
-	grant := serviceRedeem(t, entry)
-	stream := serviceCall(t, "GET", entry.Origin+"/events", grant, "")
+	grant := "web-session=session"
+	stream := serviceCall(t, "GET", entry.EntryURL+"events", grant, "")
 	reader := bufio.NewReader(stream.Body)
 	if line, err := reader.ReadString('\n'); err != nil || line != "data: first\n" {
 		t.Fatal("SSE flush lost", line, err)
@@ -275,14 +248,14 @@ func TestHostedServiceStreamsAndPinnedOriginSurviveRevocation(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Service generation revocation exceeded two seconds")
 	}
-	if r := serviceCall(t, "GET", entry.Origin+"/", grant, ""); r.StatusCode == 200 {
-		t.Fatal("old grant revived")
+	if r := serviceCall(t, "GET", entry.EntryURL, grant, ""); r.StatusCode != 200 {
+		t.Fatal("stable path did not resolve current generation")
 	}
 	newer, status := hostedEntryCreate(t, h, "session", "notes")
 	if status != 200 || newer.Origin != entry.Origin {
 		t.Fatal("same logical Service lost origin", status)
 	}
-	newGrant := serviceRedeem(t, newer)
+	newGrant := grant
 	u, _ := url.Parse(newer.Origin)
 	conn, err := net.Dial("tcp", u.Host)
 	if err != nil {
@@ -290,7 +263,7 @@ func TestHostedServiceStreamsAndPinnedOriginSurviveRevocation(t *testing.T) {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
-	_, _ = fmt.Fprintf(conn, "GET /echo HTTP/1.1\r\nHost: %s\r\nOrigin: %s\r\nCookie: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n", u.Host, newer.Origin, newGrant)
+	_, _ = fmt.Fprintf(conn, "GET %secho HTTP/1.1\r\nHost: %s\r\nOrigin: %s\r\nCookie: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n", newer.BasePath, u.Host, newer.Origin, newGrant)
 	socket := bufio.NewReader(conn)
 	response, err := http.ReadResponse(socket, &http.Request{Method: "GET"})
 	if err != nil || response.StatusCode != 101 {
@@ -302,29 +275,22 @@ func TestHostedServiceStreamsAndPinnedOriginSurviveRevocation(t *testing.T) {
 		t.Fatal("WebSocket duplex lost", err)
 	}
 	h.Close()
-	f.pool.Close()
 	_ = conn.Close()
-	options := f.pool.options
-	pool, err := NewHostedServicePool(context.Background(), options)
-	if err != nil {
-		t.Fatal(err)
+	if r := serviceCall(t, "GET", entry.EntryURL, grant, ""); r.StatusCode != 401 {
+		t.Fatal("closed session remained usable")
 	}
-	f.pool = pool
-	t.Cleanup(pool.Close)
 	h = f.desktop(t, "after-restart")
-	if _, status := hostedEntryCreate(t, h, "after-restart", "other"); status != 503 {
-		t.Fatal("retired origin reassigned to another app", status)
-	}
 	reopened, status := hostedEntryCreate(t, h, "after-restart", "notes")
-	if status != 200 || reopened.Origin != entry.Origin {
-		t.Fatal("durable origin pin lost", status)
+	if status != 200 || reopened.EntryURL != entry.EntryURL {
+		t.Fatal("target path changed")
 	}
-	if r := serviceCall(t, "GET", reopened.Origin+"/", newGrant, ""); r.StatusCode != 401 {
-		t.Fatal("pre-restart grant survived", r.StatusCode)
+	if r := serviceCall(t, "GET", reopened.EntryURL, "web-session=after-restart", ""); r.StatusCode != 200 {
+		t.Fatal("new login could not reuse stable path")
 	}
+
 }
 
-func TestHostedConcurrentEntryCreationUsesOnePinnedOrigin(t *testing.T) {
+func TestHostedConcurrentEntryCreationUsesOneTarget(t *testing.T) {
 	f := newHostedServiceFixture(t, 1)
 	h := f.desktop(t, "concurrent")
 	type outcome struct {
@@ -351,16 +317,13 @@ func TestHostedConcurrentEntryCreationUsesOnePinnedOrigin(t *testing.T) {
 			t.Fatal("parallel creation produced distinct or unbound entries")
 		}
 	}
-	f.pool.mu.Lock()
-	pins, slots, refs := len(f.pool.bindings), len(f.pool.slots), 0
-	for _, slot := range f.pool.slots {
-		refs += len(slot.entries)
+	h.desktop.mu.Lock()
+	count := len(h.desktop.serviceEntries)
+	h.desktop.mu.Unlock()
+	if count != 1 {
+		t.Fatal("parallel creation leaked entries", count)
 	}
-	f.pool.mu.Unlock()
-	if pins != 1 || slots != 1 || refs != 1 {
-		t.Fatal("parallel creation leaked capacity", pins, slots, refs)
-	}
-	if _, status := hostedEntryCreate(t, h, "concurrent", "other"); status != 503 {
-		t.Fatal("bounded origin capacity not enforced", status)
+	if _, status := hostedEntryCreate(t, h, "concurrent", "other"); status != 200 {
+		t.Fatal("another Service incorrectly requires a listener", status)
 	}
 }

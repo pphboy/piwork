@@ -4,7 +4,23 @@
   const initial = window.piworkRuntime;
   if (!initial || window.piworkPageClient) return;
   window.piworkPageClient = true;
-  const prefix = 'piwork:web:';
+  const basePath = initial.basePath || '';
+  const scope = initial.storageScope || 'local';
+  const prefix = 'piwork:web:' + basePath + ':' + scope + ':';
+  // These keys prevent ordinary app collisions, not malicious same-origin JS.
+  const identityKey = 'piwork:web:identity:' + basePath;
+  try {
+    const previous = sessionStorage.getItem(identityKey);
+    if (previous && previous !== scope) {
+      const old = 'piwork:web:' + basePath + ':' + previous + ':';
+      for (const key of Object.keys(sessionStorage)) if (key.startsWith(old)) sessionStorage.removeItem(key);
+    }
+    sessionStorage.setItem(identityKey, scope);
+  } catch {}
+  window.piworkAppURL = path => {
+    if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Expected an application-root path');
+    return basePath && (path === basePath || path.startsWith(basePath + '/')) ? path : basePath + path;
+  };
   const pending = new Map();
   const restored = new WeakSet();
   let busy = false, reloading = false, needsReconnect = false;
@@ -65,7 +81,7 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3000);
     try {
-      const response = await fetch(path, { cache: 'no-store', signal: controller.signal });
+      const response = await fetch(window.piworkAppURL(path), { cache: 'no-store', signal: controller.signal });
       if (!response.ok) throw new Error('Service unavailable');
       return await response.json();
     } finally { clearTimeout(timer); }

@@ -52,7 +52,7 @@ func TestUnifiedHelpVersionAndWrongUserCommandsHaveNoStartupEffects(t *testing.T
 }
 
 func TestStartupRejectsInvalidOptionsBeforeCreatingData(t *testing.T) {
-	for _, extra := range [][]string{{"--agent-image", "fixture/agent:override"}, {"--agent-image=fixture/agent:override"}, {"--listen", "invalid"}, {"--listen", "127.0.0.1:1", "--listen", "127.0.0.1:2"}, {"--public-origin", "http://invalid/path"}, {"--tls-cert", "missing"}, {"--service-ports", "1-65535"}, {"--service-ports", "7000-7200"}} {
+	for _, extra := range [][]string{{"--agent-image", "fixture/agent:override"}, {"--agent-image=fixture/agent:override"}, {"--listen", "invalid"}, {"--core-listen", "invalid"}, {"--listen", "127.0.0.1:1", "--listen", "127.0.0.1:2"}, {"--public-origin", "http://invalid/path"}, {"--tls-cert", "missing"}, {"--service-ports", "1-65535"}, {"--service-ports", "7000-7200"}} {
 		directory := filepath.Join(t.TempDir(), "uncreated")
 		args := append([]string{"--data-dir", directory, "--no-open"}, extra...)
 		if code := RunServe(context.Background(), args, io.Discard, io.Discard); code != 2 {
@@ -65,11 +65,11 @@ func TestStartupRejectsInvalidOptionsBeforeCreatingData(t *testing.T) {
 }
 
 func TestBrowserOriginNeverPrintsUnspecifiedAddressAndFormatsIPv6(t *testing.T) {
-	if value := browserOrigin(coreapp.ListenAddress{Host: "::1", Port: 7171}, true); value != "https://[::1]:7171" {
+	if value := browserOrigin(coreapp.ListenAddress{Host: "::1", Port: 17891}, true); value != "https://[::1]:17891" {
 		t.Fatal("IPv6 URL invalid", value)
 	}
 	for _, host := range []string{"0.0.0.0", "::"} {
-		value := browserOrigin(coreapp.ListenAddress{Host: host, Port: 7171}, false)
+		value := browserOrigin(coreapp.ListenAddress{Host: host, Port: 17891}, false)
 		if strings.Contains(value, "0.0.0.0") || strings.Contains(value, "[::]") {
 			t.Fatal("unspecified browser link", value)
 		}
@@ -77,11 +77,16 @@ func TestBrowserOriginNeverPrintsUnspecifiedAddressAndFormatsIPv6(t *testing.T) 
 }
 
 func TestNoArgumentsStartsOnePersistentApplicationAndReleasesItsLock(t *testing.T) {
-	reservation, err := net.Listen("tcp", "0.0.0.0:7171")
+	reservation, err := net.Listen("tcp", "0.0.0.0:17891")
 	if err != nil {
-		t.Skip("default port 7171 belongs to another process")
+		t.Skip("default port 17891 belongs to another process")
 	}
 	_ = reservation.Close()
+	coreReservation, err := net.Listen("tcp", "127.0.0.1:17871")
+	if err != nil {
+		t.Skip("default Core port 17871 belongs to another process")
+	}
+	_ = coreReservation.Close()
 	config := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", config)
 	for _, name := range []string{"PIWORK_ADMIN_ACCOUNT", "PIWORK_ADMIN_PASSWORD"} {
@@ -156,28 +161,24 @@ func TestNoArgumentsStartsOnePersistentApplicationAndReleasesItsLock(t *testing.
 	}
 }
 
-func TestHandlerConfigurationFailureClosesListenerAndInstallationCanClose(t *testing.T) {
+func TestBoundCoreCanCloseBeforeServingAndReleaseInstallation(t *testing.T) {
 	directory := t.TempDir()
 	core, err := coreapp.New(context.Background(), coreapp.Options{DataDirectory: directory})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var bound coreapp.ListenAddress
-	_, err = core.ListenWithHandler(coreapp.ListenAddress{Host: "127.0.0.1", Port: 0}, func(address coreapp.ListenAddress, _ http.Handler) (http.Handler, error) {
-		bound = address
-		return nil, io.ErrUnexpectedEOF
-	}, nil)
-	if err == nil {
-		t.Fatal("failing browser construction was ignored")
-	}
-	listener, err := net.Listen("tcp", net.JoinHostPort(bound.Host, strings.TrimPrefix(bound.URL(), "http://"+bound.Host+":")))
+	bound, err := core.Bind(coreapp.ListenAddress{Host: "127.0.0.1", Port: 0})
 	if err != nil {
-		t.Fatal("failed application retained listener", err)
+		t.Fatal(err)
 	}
-	_ = listener.Close()
 	if err := core.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	listener, err := net.Listen("tcp", bound.Address())
+	if err != nil {
+		t.Fatal("failed startup retained listener", err)
+	}
+	_ = listener.Close()
 	core, err = coreapp.New(context.Background(), coreapp.Options{DataDirectory: directory})
 	if err != nil {
 		t.Fatal("failed startup retained data lock", err)
@@ -188,8 +189,8 @@ func TestHandlerConfigurationFailureClosesListenerAndInstallationCanClose(t *tes
 func TestMissingBrowserOpenerKeepsManualAccessGuidance(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	var stderr bytes.Buffer
-	openBrowser(context.Background(), "http://192.0.2.1:7171", &stderr)
-	if !strings.Contains(stderr.String(), "Open http://192.0.2.1:7171 manually") {
+	openBrowser(context.Background(), "http://192.0.2.1:17891", &stderr)
+	if !strings.Contains(stderr.String(), "Open http://192.0.2.1:17891 manually") {
 		t.Fatal("missing browser opener lost server URL guidance")
 	}
 }
@@ -204,5 +205,102 @@ func TestInvalidAdminEnvironmentHasNoFilesystemEffects(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Dir(directory)); !os.IsNotExist(err) {
 		t.Fatal("invalid admin bootstrap created a parent")
+	}
+}
+
+func TestEitherListenerConflictClosesPartialStartup(t *testing.T) {
+	for _, occupied := range []string{"browser", "core"} {
+		t.Run(occupied, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			directory := t.TempDir()
+			ui, coreAddress := "127.0.0.1:0", "127.0.0.1:0"
+			if occupied == "browser" {
+				ui = listener.Addr().String()
+			} else {
+				coreAddress = listener.Addr().String()
+			}
+			var out, diagnostic bytes.Buffer
+			code := RunServe(context.Background(), []string{"--listen", ui, "--core-listen", coreAddress, "--data-dir", directory, "--no-open"}, &out, &diagnostic)
+			if code != 1 || strings.Contains(out.String(), "app.listening") {
+				t.Fatal("partial startup published", code, out.String())
+			}
+			core, err := coreapp.New(context.Background(), coreapp.Options{DataDirectory: directory})
+			if err != nil {
+				t.Fatal("failure retained data lock", err)
+			}
+			_ = core.Close(context.Background())
+		})
+	}
+}
+
+func TestBackendOriginUsesConcreteSameMachineAddress(t *testing.T) {
+	for host, expected := range map[string]string{"0.0.0.0": "http://127.0.0.1:17871", "::": "http://[::1]:17871", "192.0.2.1": "http://192.0.2.1:17871"} {
+		if actual := backendOrigin(coreapp.ListenAddress{Host: host, Port: 17871}); actual != expected {
+			t.Fatal(actual, expected)
+		}
+	}
+}
+
+func TestEitherServingExitWithdrawsBothEntriesAndReleasesLock(t *testing.T) {
+	for _, failing := range []string{"browser", "core"} {
+		t.Run(failing, func(t *testing.T) {
+			directory := t.TempDir()
+			core, err := coreapp.New(context.Background(), coreapp.Options{DataDirectory: directory})
+			if err != nil {
+				t.Fatal(err)
+			}
+			address, err := core.Listen(coreapp.ListenAddress{Host: "127.0.0.1", Port: 0})
+			if err != nil {
+				t.Fatal(err)
+			}
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })}
+			browserDone := make(chan error, 1)
+			go func() { browserDone <- server.Serve(listener) }()
+			result := make(chan int, 1)
+			go func() { result <- awaitApplication(context.Background(), core, nil, server, browserDone, io.Discard) }()
+			if failing == "browser" {
+				_ = listener.Close()
+			} else {
+				_ = core.Close(context.Background())
+			}
+			select {
+			case code := <-result:
+				if code != 1 {
+					t.Fatal("abnormal serving exit reported success", code)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("supervisor did not finish")
+			}
+			for _, endpoint := range []string{listener.Addr().String(), address.Address()} {
+				connection, err := net.DialTimeout("tcp", endpoint, 100*time.Millisecond)
+				if err == nil {
+					connection.Close()
+					t.Fatal("other listener survived", failing, endpoint)
+				}
+			}
+			reopened, err := coreapp.New(context.Background(), coreapp.Options{DataDirectory: directory})
+			if err != nil {
+				t.Fatal("installation lock leaked", err)
+			}
+			_ = reopened.Close(context.Background())
+		})
+	}
+}
+
+func TestCancelledStartupDoesNotAdvertiseListeners(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out bytes.Buffer
+	code := RunServe(ctx, []string{"--data-dir", t.TempDir(), "--listen", "127.0.0.1:0", "--core-listen", "127.0.0.1:0", "--no-open"}, &out, io.Discard)
+	if code != 0 || strings.Contains(out.String(), "app.listening") {
+		t.Fatal("cancelled startup published readiness", code)
 	}
 }

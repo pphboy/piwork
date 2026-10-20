@@ -72,7 +72,7 @@ async function credentials(form:HTMLFormElement) {
   if(writing||!validateCredentials(true))return;
   const creating=stage==='administrator',ticket=context(),data=new FormData(form);
   account=String(data.get('account')||'');let password=String(data.get('password')||'');writing=true;updateLocks();
-  try {const value=await web(creating?'setup/administrator':'login','POST',{account,password});if(!current(ticket))return;clearSecrets();identity++;location.replace(value.next||'/');}
+  try {const value=await web(creating?'setup/administrator':'login','POST',{account,password});if(!current(ticket))return;clearSecrets();identity++;location.replace(nextLocation(value.next||'/'));}
   catch(error) {
     if(!current(ticket))return;clearSecrets();tell(message(error),true);
     if(creating&&error instanceof RequestError&&(error.unknown||error.status===409)) {
@@ -92,7 +92,7 @@ async function load(){
   const session=await web('session');if(!current(ticket))return;csrf=session.csrfToken||'';authenticated=session.authenticated===true;
   if(!state.administratorInitialized){changeStage('administrator');render();return;}
   if(!session.authenticated){changeStage('login');render();return;}
-  if(location.pathname==='/login'){location.replace(session.next||'/');return;}
+  if(location.pathname==='/login'){location.replace(nextLocation(session.next||'/'));return;}
   if(session.user?.role==='admin'){location.replace('/admin/setup');return;}
   snapshot=await web('onboarding');if(!current(ticket))return;changeStage('waiting');render();
  }catch(error){if(current(ticket)){changeStage('error');tell(message(error),true);render();}}
@@ -100,7 +100,14 @@ async function load(){
 root.addEventListener('submit',event=>{event.preventDefault();void credentials(event.target as HTMLFormElement);});
 root.addEventListener('input',()=>{account=root.querySelector<HTMLInputElement>('#account')?.value||'';validateCredentials();});
 root.addEventListener('focusout',event=>{const input=event.target as HTMLInputElement;if(input.id==='confirm-password'){confirmationTouched=true;validateCredentials();}if(input.id==='password'&&stage==='administrator'&&input.value&&input.value.length<12)fieldError('password','Use at least 12 characters.');});
-root.addEventListener('click',event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset.action;if(!action||writing)return;event.preventDefault();if(action==='refresh'){tell('');void load();}else if(action==='logout'){writing=true;identity++;clearSecrets();updateLocks();void web('logout','POST',{}).then(()=>location.replace('/login')).catch(error=>{writing=false;tell(message(error),true);updateLocks();});}});
+root.addEventListener('click',event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset.action;if(!action||writing)return;event.preventDefault();if(action==='refresh'){tell('');void load();}else if(action==='logout'){writing=true;identity++;clearSecrets();updateLocks();void web('logout','POST',{}).then(()=>{try{for(const key of Object.keys(sessionStorage))if(key.startsWith('piwork:web:'))sessionStorage.removeItem(key);}catch{}location.replace('/login');}).catch(error=>{writing=false;tell(message(error),true);updateLocks();});}});
 window.addEventListener('pagehide',()=>{identity++;view++;clearSecrets();});
 window.addEventListener('pageshow',event=>{if(event.persisted){identity++;view++;writing=false;clearSecrets();void load();}});
 render();void load();
+
+function nextLocation(fallback:string):string {
+  const target = new URLSearchParams(location.search).get('returnTo');
+  if (!target || !/^\/services\/[A-Za-z0-9-]+\/[A-Za-z0-9-]+\/[1-9][0-9]{0,4}\//.test(target)) return fallback;
+  const parsed = new URL(target, location.origin);
+  return parsed.origin === location.origin && parsed.pathname.startsWith('/services/') ? parsed.pathname + parsed.search + parsed.hash : fallback;
+}

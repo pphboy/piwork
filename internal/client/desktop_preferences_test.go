@@ -176,7 +176,7 @@ func TestDesktopResolverPriorityAndBusinessResolverIndependence(t *testing.T) {
 	if got, err := ResolveDesktopCoreURL("", "https://saved.example/", store); err != nil || got != "https://saved.example" {
 		t.Fatal(got, err)
 	}
-	if got, err := ResolveDesktopCoreURL("", "", store); err != nil || got != "http://127.0.0.1:7171" {
+	if got, err := ResolveDesktopCoreURL("", "", store); err != nil || got != "http://127.0.0.1:17871" {
 		t.Fatal(got, err)
 	}
 	for _, invalid := range []string{"bad", "http://remote.example/path"} {

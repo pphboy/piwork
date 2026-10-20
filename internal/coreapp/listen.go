@@ -17,7 +17,7 @@ type ListenAddress struct {
 
 func ParseListen(value string, allowInsecureRemote bool) (ListenAddress, error) {
 	if value == "" {
-		value = "127.0.0.1:7171"
+		value = "127.0.0.1:17871"
 	}
 	host, port, err := net.SplitHostPort(value)
 	if err != nil || host == "" || port == "" {

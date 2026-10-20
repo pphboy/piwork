@@ -79,7 +79,7 @@ export async function runCoreDependencyChecks() {
   try {
     const [httpPort, grpcPort, desktopPort] = await Promise.all([port(), port(), port()]);
     coreUrl = `http://127.0.0.1:${httpPort}`;
-    core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
+    core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', '127.0.0.1:0', '--core-listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
       { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent' } });
     coreOutput = output(core);
     await wait(async () => (await fetch(coreUrl + '/healthz')).ok, 'Core health');

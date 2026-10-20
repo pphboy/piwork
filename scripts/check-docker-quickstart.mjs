@@ -42,6 +42,7 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
       && release.releaseId === `${release.releaseVersion}-${release.sourceCommit.slice(0, 12)}-${release.sourceInputHash.slice(0, 12)}${release.sourceModified ? '-dirty' : ''}`;
     check(valid, 'deploy/docker/release.json: published source identity is inconsistent');
   }
+  check(release.controlPlanePort === 17891 && release.corePort === 17871 && release.serviceEntryMode === 'path', 'deployment metadata: current ports require a matching rebuilt candidate');
   for (const role of roles) check(typeof release.images[role] === 'string' && release.images[role].endsWith(`:${release.releaseId}`) && !release.images[role].endsWith(':latest'), `deploy/docker/release.json: ${role} fixed release reference`);
 
   const expected = [coreRun(release.images.core)];
@@ -85,6 +86,7 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
       }
       check(!/Download and verify the installer|Configure and start Core|下载并校验安装包|配置并启动 Core/.test(trial), `${name}: old download/configuration steps returned`);
       check(release.state !== 'candidate' || /Local candidate|本地候选/.test(trial), `${name}: unpublished candidate must be identified`);
+      check(trial.includes('17891') && trial.includes('17871') && trial.includes('/services/<workId>/<serviceId>/<port>/') && !/7171|17954|--service-ports/.test(trial), `${name}: browser/Core port and Service path drift`);
       const native = section(text, 'native-quickstart');
       check(normalize(native) === normalize(nativeQuickStart(name.includes('zh-CN') ? 'zh' : 'en', { buildLink: '../../AGENTS.md#构建与验证' })), `${name}: native Linux instructions differ from source`);
       for (const block of codeBlocks(native)) check(block.language === 'sh' && spawnSync('sh', ['-n'], { input: block.code }).status === 0, `${name}: native shell syntax is invalid`);
@@ -95,7 +97,7 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   const core = read('Dockerfile.core'), cli = read('Dockerfile.cli');
   check(/FROM \$\{GO_BUILDER_IMAGE\} AS build/.test(core) && /COPY --from=build/.test(core) && !/COPY[^\n]*dist\//.test(core), 'Dockerfile.core: source build must not require host dist');
   check(/--data-dir", "\/var\/lib\/piwork\/quickstart\/core/.test(core) && /DOCKER_HOST=unix:\/\/\/var\/run\/docker\.sock/.test(core) && !/ENV PIWORK_/.test(core), 'Dockerfile.core: embedded defaults and same-path data');
-  check(/HEALTHCHECK/.test(core) && /7171\/healthz/.test(core), 'Dockerfile.core: setup-accessible liveness');
+  check(/HEALTHCHECK/.test(core) && /17891\/healthz/.test(core), 'Dockerfile.core: setup-accessible liveness');
   check(/COPY --from=metadata[^\n]*desktopassets/.test(core) && /COPY --from=metadata[^\n]*consoleassets/.test(core) && /npm run build -w @piwork\/desktop-webui -w @piwork\/console-webui/.test(core), 'Dockerfile.core: both fresh browser resources');
   check(/ENTRYPOINT \["\/usr\/local\/bin\/piwork-cli-entrypoint"\]/.test(cli) && /CMD \[\]/.test(cli) && !/HEALTHCHECK/.test(cli), 'Dockerfile.cli: default terminal and explicit command entrypoint');
   check(/PIWORK_CONFIG_PATH=\/var\/lib\/piwork\/client\/credentials\.json/.test(cli), 'Dockerfile.cli: private persistent state');
@@ -114,6 +116,8 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   check(/source: \/var\/run\/docker\.sock\n\s+target: \/var\/run\/docker\.sock\n\s+bind:\n\s+create_host_path: false/.test(template), 'Compose: missing socket must not create a directory');
   check(/stop_grace_period: 60s/.test(template), 'Compose: shutdown budget');
   const singleHost = read('examples/single-host/docker-compose.yml.template');
+  check(/"--core-listen", "0.0.0.0:17871"/.test(singleHost) && /host\.docker\.internal:17871/.test(singleHost), 'single-host: bridge CLI requires reachable Core 17871');
+  check(/127\.0\.0\.1:17891\/healthz/.test(read('deploy/docker/compose.core.yaml')), 'Core demo: browser liveness port');
   const cliService = singleHost.split('  cli:\n')[1] || '';
   check(/network_mode: host/.test(singleHost) && /host\.docker\.internal:host-gateway/.test(singleHost), 'single-host: Core host and CLI gateway networking');
   check(!/env_file:|include:|extends:|depends_on:/.test(singleHost), 'single-host: no external files or lifecycle dependencies');

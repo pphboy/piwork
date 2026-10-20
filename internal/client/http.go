@@ -40,7 +40,7 @@ func ResolveCoreURL(explicit, saved string) (string, error) {
 		value = saved
 	}
 	if value == "" {
-		value = "http://127.0.0.1:7171"
+		value = "http://127.0.0.1:17871"
 	}
 	_, err := ParseCoreURL(value)
 	return value, err
@@ -70,6 +70,14 @@ func New(raw, token string) (*Client, error) {
 }
 
 func (c *Client) Request(ctx context.Context, method, path string, input any, output any) error {
+	authorization := ""
+	if c.Token != "" {
+		authorization = "Bearer " + c.Token
+	}
+	return c.request(ctx, method, path, input, output, authorization)
+}
+
+func (c *Client) request(ctx context.Context, method, path string, input any, output any, authorization string) error {
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.Contains(path, "#") {
 		return errors.New("invalid Core request path")
 	}
@@ -94,8 +102,8 @@ func (c *Client) Request(ctx context.Context, method, path string, input any, ou
 	if input != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
 	}
 	response, err := c.HTTP.Do(req)
 	if err != nil {

@@ -41,7 +41,7 @@ test.beforeAll(async () => {
   const coreUrl = `http://127.0.0.1:${corePort}`;
   coreOrigin = coreUrl;
   core = spawn(nativeCore, ["serve", "--data-dir", join(root, "core"),
-    "--listen", `127.0.0.1:${corePort}`, "--agent-grpc-listen", `127.0.0.1:${grpcPort}`,
+    "--listen", "127.0.0.1:0", "--core-listen", `127.0.0.1:${corePort}`, "--agent-grpc-listen", `127.0.0.1:${grpcPort}`,
     "--agent-grpc-advertise", `127.0.0.1:${grpcPort}`], {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, PIWORK_PACKAGE_HELPER_IMAGE:

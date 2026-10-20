@@ -82,7 +82,7 @@ func parseConsoleOptions(args []string) (consoleOptions, error) {
 	options.publicOrigin = origin.Scheme + "://" + origin.Host
 	options.coreURL = values["--core"]
 	if options.coreURL == "" {
-		options.coreURL = "http://127.0.0.1:7171"
+		options.coreURL = "http://127.0.0.1:17871"
 	}
 	core, err := client.ParseCoreURL(options.coreURL)
 	if err != nil || !localweb.IsLocalCoreHost(core.Hostname()) {

@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"piwork/internal/corestore"
 	"piwork/internal/distribution"
 	"piwork/internal/dockerengine"
+	"piwork/internal/localweb"
 	"piwork/internal/safefs"
 	"piwork/internal/webapp"
 )
@@ -32,11 +32,11 @@ import (
 const serveHelp = `Usage: piwork [serve] [OPTIONS]
 Start Core, the browser workbench, administration, and first-time setup.
 
-  --listen HOST:PORT             default 0.0.0.0:7171
+  --listen HOST:PORT             browser ControlPlane, default 0.0.0.0:17891
+  --core-listen HOST:PORT        Core API for CLI/backend, default 127.0.0.1:17871
   --data-dir DIR                 default user config directory/piwork/server
   --public-origin URL            exact browser origin; override for NAT/proxy
   --no-open                      print the URL without opening a browser
-  --service-ports FIRST-LAST      default 17891-17954 (up to 1024 ports)
   --tls-cert FILE --tls-key FILE  serve HTTPS with an explicit certificate
   --docker-host UNIX_URL         explicit local Docker Engine endpoint
   --docker-context NAME          explicit local Docker context
@@ -59,7 +59,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	// Consume option values before locating the command: a directory named
 	// "status" is still a directory, and globals may precede "serve".
-	values := map[string]bool{"--listen": true, "--data-dir": true, "--public-origin": true, "--service-ports": true, "--tls-cert": true, "--tls-key": true, "--docker-host": true, "--docker-context": true, "--agent-grpc-listen": true, "--agent-grpc-advertise": true, "--agent-image": true, "--package-helper-image": true, "--file-helper-image": true, "--snapshot-helper-image": true, "--core": true, "--env-file": true, "--operator-credential-file": true}
+	values := map[string]bool{"--listen": true, "--core-listen": true, "--data-dir": true, "--public-origin": true, "--tls-cert": true, "--tls-key": true, "--docker-host": true, "--docker-context": true, "--agent-grpc-listen": true, "--agent-grpc-advertise": true, "--agent-image": true, "--package-helper-image": true, "--file-helper-image": true, "--snapshot-helper-image": true, "--core": true, "--env-file": true, "--operator-credential-file": true}
 	command, index := "", -1
 	explicitDirectory := false
 	for i := 0; i < len(args); i++ {
@@ -125,11 +125,11 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 	flags := flag.NewFlagSet("piwork", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	listen := flags.String("listen", "0.0.0.0:7171", "")
+	listen := flags.String("listen", "0.0.0.0:17891", "")
+	coreListen := flags.String("core-listen", "127.0.0.1:17871", "")
 	directory := flags.String("data-dir", "", "")
 	publicOrigin := flags.String("public-origin", "", "")
 	noOpen := flags.Bool("no-open", false, "")
-	servicePorts := flags.String("service-ports", "17891-17954", "")
 	_ = flags.Bool("allow-insecure-remote", false, "") // Accepted previous explicit spelling.
 	certPath := flags.String("tls-cert", "", "")
 	keyPath := flags.String("tls-key", "", "")
@@ -172,14 +172,9 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "piwork: listen address is invalid")
 		return 2
 	}
-	parts := strings.Split(*servicePorts, "-")
-	first, last := 0, 0
-	if len(parts) == 2 {
-		first, _ = strconv.Atoi(parts[0])
-		last, _ = strconv.Atoi(parts[1])
-	}
-	if first < 1 || last > 65535 || last < first || last-first >= 1024 || address.Port >= first && address.Port <= last {
-		fmt.Fprintln(stderr, "piwork: Service ports must be a valid bounded range excluding the main port")
+	coreAddress, err := coreapp.ParseListen(*coreListen, true)
+	if err != nil {
+		fmt.Fprintln(stderr, "piwork: Core listen address is invalid")
 		return 2
 	}
 	var tlsConfig *tls.Config
@@ -223,6 +218,9 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "piwork:", err)
 		return 2
 	}
+	if ctx.Err() != nil {
+		return 0
+	}
 	home, _ := os.UserHomeDir()
 	// Core deliberately creates only its final directory. Prepare missing
 	// parents without following symlinks, including on a fresh user account.
@@ -232,7 +230,12 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return 1
 	}
 	_ = parent.Close()
-	core, err := coreapp.New(ctx, coreapp.Options{DataDirectory: *directory, Initialization: initialization,
+	setupSecret, err := localweb.Secret()
+	if err != nil {
+		fmt.Fprintln(stderr, "piwork: startup identity unavailable")
+		return 1
+	}
+	core, err := coreapp.New(ctx, coreapp.Options{DataDirectory: *directory, Initialization: initialization, SetupSecret: setupSecret,
 		PackageHelperImage: *packageHelper, FileHelperImage: *fileHelper, SnapshotHelperImage: *snapshotHelper,
 		AgentGRPCListen: *grpcListen, AgentGRPCAdvertise: *grpcAdvertise,
 		DockerOptions: dockerengine.SelectionOptions{DockerHost: *dockerHost, DockerContext: *dockerContext, DockerConfig: os.Getenv("DOCKER_CONFIG"), HomeDirectory: home}})
@@ -247,35 +250,75 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		}
 		return 1
 	}
-	var web *webapp.Server
-	origin := *publicOrigin
-	_, err = core.ListenWithHandler(address, func(bound coreapp.ListenAddress, handler http.Handler) (http.Handler, error) {
-		if origin == "" {
-			origin = browserOrigin(bound, tlsConfig != nil)
-		}
-		var err error
-		web, err = webapp.New(ctx, webapp.Options{Origin: origin, DataDirectory: *directory, Core: core, Handler: handler, ServiceListenHost: bound.Host, ServiceFirstPort: first, ServiceLastPort: last, TLS: tlsConfig})
-		return web, err
-	}, tlsConfig)
+	coreBound, err := core.Bind(coreAddress)
 	if err != nil {
-		_ = closeApplication(core, web)
-		fmt.Fprintln(stderr, "piwork: application could not open its browser/Core listener")
+		_ = closeApplication(core, nil)
+		fmt.Fprintln(stderr, "piwork: Core listener is unavailable")
 		return 1
 	}
-	if json.NewEncoder(stdout).Encode(map[string]any{"event": "app.listening", "url": origin, "pid": os.Getpid(), "dataDirectory": *directory}) != nil {
-		_ = closeApplication(core, web)
+	browserListener, err := net.Listen("tcp", address.Address())
+	if err != nil {
+		_ = closeApplication(core, nil)
+		fmt.Fprintln(stderr, "piwork: browser listener is unavailable")
+		return 1
+	}
+	defer browserListener.Close()
+	actual := browserListener.Addr().(*net.TCPAddr)
+	origin := *publicOrigin
+	if origin == "" {
+		origin = browserOrigin(coreapp.ListenAddress{Host: actual.IP.String(), Port: actual.Port}, tlsConfig != nil)
+	}
+	coreURL := backendOrigin(coreBound)
+	web, err := webapp.New(ctx, webapp.Options{Origin: origin, CoreURL: coreURL, SetupSecret: setupSecret, DataDirectory: *directory})
+	if err != nil {
+		_ = closeApplication(core, nil)
+		fmt.Fprintln(stderr, "piwork: browser initialization failed")
+		return 1
+	}
+	browserServer := &http.Server{Handler: web, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 31 * time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10,
+		BaseContext: func(net.Listener) context.Context { return ctx }}
+	if tlsConfig != nil {
+		browserListener = tls.NewListener(browserListener, tlsConfig)
+	}
+	browserDone := make(chan error, 1)
+	// Both listeners and the installation lock are acquired before recovery or
+	// requests are admitted. There is one shutdown owner and one total budget.
+	if ctx.Err() != nil {
+		_ = closeApplication(core, web, browserServer)
+		return 0
+	}
+	if err := core.Serve(); err != nil {
+		_ = closeApplication(core, web, browserServer)
+		return 1
+	}
+	go func() { browserDone <- browserServer.Serve(browserListener) }()
+	if json.NewEncoder(stdout).Encode(map[string]any{"event": "app.listening", "url": origin, "coreUrl": coreURL, "pid": os.Getpid(), "dataDirectory": *directory}) != nil {
+		_ = closeApplication(core, web, browserServer)
 		return 1
 	}
 
 	if !*noOpen && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
 		go openBrowser(ctx, origin, stderr)
 	}
+	return awaitApplication(ctx, core, web, browserServer, browserDone, stderr)
+}
+
+// Both servers have one supervisor. Any unexpected serving exit withdraws the
+// other entry and closes this installation through the same bounded path.
+func awaitApplication(ctx context.Context, core *coreapp.Application, web *webapp.Server, browserServer *http.Server, browserDone <-chan error, stderr io.Writer) int {
 	var serveErr error
 	select {
 	case <-ctx.Done():
 	case serveErr = <-core.ServeDone():
+		if serveErr == nil {
+			serveErr = errors.New("Core listener ended")
+		}
+	case serveErr = <-browserDone:
+		if serveErr == nil {
+			serveErr = errors.New("browser listener ended")
+		}
 	}
-	if closeApplication(core, web) != nil {
+	if closeApplication(core, web, browserServer) != nil {
 		fmt.Fprintln(stderr, "piwork: shutdown was not confirmed")
 		return 1
 	}
@@ -288,13 +331,16 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 
 // Web resource cleanup and Core workload shutdown share the total budget.
 // Large transfer spool deletion must not postpone stopping managed Works.
-func closeApplication(core *coreapp.Application, web *webapp.Server) error {
+func closeApplication(core *coreapp.Application, web *webapp.Server, servers ...*http.Server) error {
 	closing, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	webDone := make(chan struct{})
 	go func() {
 		if web != nil {
 			web.Close()
+		}
+		for _, server := range servers {
+			_ = server.Close()
 		}
 		close(webDone)
 	}()
@@ -305,6 +351,18 @@ func closeApplication(core *coreapp.Application, web *webapp.Server) error {
 		return errors.New("browser cleanup was not confirmed")
 	}
 	return err
+}
+
+// Wildcards bind interfaces; backend requests use a concrete local address.
+func backendOrigin(address coreapp.ListenAddress) string {
+	if ip := net.ParseIP(address.Host); ip != nil && ip.IsUnspecified() {
+		if ip.To4() != nil {
+			address.Host = "127.0.0.1"
+		} else {
+			address.Host = "::1"
+		}
+	}
+	return address.URL()
 }
 
 func browserOrigin(address coreapp.ListenAddress, secure bool) string {

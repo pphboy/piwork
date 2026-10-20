@@ -96,7 +96,7 @@ let coreOutput = () => '', desktopOutput = () => '';
 try {
   const [corePort, grpcPort, desktopPort] = await Promise.all([freePort(), freePort(), freePort()]);
   const coreUrl = `http://127.0.0.1:${corePort}`;
-  core = spawn(coreBinary, ['serve', '--data-dir', dataDir, '--listen', `127.0.0.1:${corePort}`,
+  core = spawn(coreBinary, ['serve', '--data-dir', dataDir, '--listen', '127.0.0.1:0', '--core-listen', `127.0.0.1:${corePort}`,
     '--agent-grpc-listen', `0.0.0.0:${grpcPort}`], { stdio: ['ignore', 'pipe', 'pipe'], env: {
       ...process.env, PATH: '/nonexistent', PIWORK_PACKAGE_HELPER_IMAGE: image,
       PIWORK_FILE_HELPER_IMAGE: fileImage, PIWORK_SNAPSHOT_HELPER_IMAGE: snapshotImage,

@@ -5,16 +5,17 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestHandlerTransportStreamsBeforeCompletionAndCancels(t *testing.T) {
+func TestHTTPTransportStreamsBeforeCompletionAndCancels(t *testing.T) {
 	lifetime, cancelLifetime := context.WithCancel(context.Background())
 	defer cancelLifetime()
 	finished := make(chan struct{})
-	transport := NewHandlerTransport(lifetime, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(finished)
 		if r.Header.Get("Authorization") != "Bearer synthetic-private-token" {
 			t.Error("identity was lost")
@@ -26,9 +27,8 @@ func TestHandlerTransportStreamsBeforeCompletionAndCancels(t *testing.T) {
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	}))
-	defer transport.Close()
-	api, _ := New("https://server.example:7171", "synthetic-private-token")
-	api.HTTP.Transport = transport
+	defer backend.Close()
+	api, _ := New(backend.URL, "synthetic-private-token")
 	ctx, cancel := context.WithTimeout(lifetime, 3*time.Second)
 	response, err := api.Binary(ctx, "GET", "/events", nil, nil, -1)
 	if err != nil {
@@ -47,10 +47,10 @@ func TestHandlerTransportStreamsBeforeCompletionAndCancels(t *testing.T) {
 	}
 }
 
-func TestHandlerTransportPreservesUpgradeAndClosesHijackedConnections(t *testing.T) {
+func TestHTTPTransportPreservesUpgradeAndClosesHijackedConnections(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	transport := NewHandlerTransport(ctx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "piwork-fixture") {
 			w.WriteHeader(400)
 			return
@@ -64,9 +64,8 @@ func TestHandlerTransportPreservesUpgradeAndClosesHijackedConnections(t *testing
 		_ = buffer.Flush()
 		_, _ = buffer.ReadString('\n')
 	}))
-	defer transport.Close()
-	api, _ := New("http://server.example", "")
-	api.HTTP.Transport = transport
+	defer backend.Close()
+	api, _ := New(backend.URL, "")
 	response, err := api.Binary(ctx, "GET", "/upgrade", http.Header{"Connection": {"Upgrade"}, "Upgrade": {"piwork-fixture"}}, nil, -1)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +80,7 @@ func TestHandlerTransportPreservesUpgradeAndClosesHijackedConnections(t *testing
 	if _, err := io.ReadFull(response.Body, data); err != nil || string(data) != "ready" {
 		t.Fatal("upgrade stream was corrupted", err)
 	}
-	transport.Close()
+	_ = response.Body.Close()
 	done := make(chan error, 1)
 	go func() { _, err := response.Body.Read(data); done <- err }()
 	select {

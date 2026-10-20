@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,32 +24,39 @@ func fixture(t *testing.T) (*Server, *coreapp.Application, string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	directory := t.TempDir()
-	core, err := coreapp.New(ctx, coreapp.Options{DataDirectory: directory})
+	core, err := coreapp.New(ctx, coreapp.Options{DataDirectory: directory, SetupSecret: "test-process-setup"})
 	if err != nil {
 		cancel()
 		t.Fatal(err)
 	}
-	var web *Server
-	bound, err := core.ListenWithHandler(coreapp.ListenAddress{Host: "127.0.0.1", Port: 0}, func(bound coreapp.ListenAddress, handler http.Handler) (http.Handler, error) {
-		var err error
-		web, err = New(ctx, Options{Origin: bound.URL(), DataDirectory: directory, Core: core, Handler: handler})
-		return web, err
-	}, nil)
+	bound, err := core.Listen(coreapp.ListenAddress{Host: "127.0.0.1", Port: 0})
 	if err != nil {
 		cancel()
 		_ = core.Close(context.Background())
 		t.Fatal(err)
 	}
+	server := httptest.NewUnstartedServer(nil)
+	origin := "http://" + server.Listener.Addr().String()
+	web, err := New(ctx, Options{Origin: origin, CoreURL: bound.URL(), SetupSecret: "test-process-setup", DataDirectory: directory})
+	if err != nil {
+		server.Close()
+		cancel()
+		_ = core.Close(context.Background())
+		t.Fatal(err)
+	}
+	server.Config.Handler = web
+	server.Start()
 	t.Cleanup(func() {
 		cancel()
 		web.Close()
+		server.Close()
 		ctx, end := context.WithTimeout(context.Background(), 5*time.Second)
 		defer end()
 		if err := core.Close(ctx); err != nil {
 			t.Error(err)
 		}
 	})
-	return web, core, bound.URL()
+	return web, core, origin
 }
 
 func browser(t *testing.T) *http.Client {

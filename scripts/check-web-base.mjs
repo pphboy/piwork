@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { inputHash, root } from './build-web-base.mjs';
+import { prefixFixture } from './web-base-prefix-fixture.mjs';
 import { queryFaultSource, checkQueryFailure } from './check-application-awareness-page.mjs';
 
 const metadata = JSON.parse(readFileSync(resolve(process.argv[2] || 'dist/web-base/candidate.json')));
@@ -33,7 +34,7 @@ const temporary = mkdtempSync(join(tmpdir(), 'piwork-nicegui-base-'));
 const identity = join(temporary, 'interaction.json');
 writeFileSync(identity, JSON.stringify({ contractVersion: 1, workId: 'work-base-fixture-0001', serviceId: 'service-base-fixture-0001', serviceName,
   token: 'synthetic-base-test-token-' + 'a'.repeat(64), agentUrl: 'https://agentd:7444', caPath: '/etc/piwork/interaction/installation-ca.crt' }));
-let browser;
+let browser, prefixed;
 const app = '/var/data/workspace/apps/app';
 const python = program => docker('exec', container, 'python', '-c', program);
 async function ready(address, name = container) {
@@ -99,14 +100,17 @@ try {
 
   browser = await chromium.launch({ headless: true, channel: 'chromium', args: ['--proxy-server=direct://', '--proxy-bypass-list=*'] });
   const page = await browser.newPage();
-  const errors = [], external = [], sockets = [];
+  prefixed = await prefixFixture(address);
+  const browserAddress = prefixed.url;
+  const errors = [], external = [], sockets = [], requests = [];
+  page.on('request', req => requests.push(req.url()));
   page.on('pageerror', error => errors.push(error.message));
   page.on('websocket', socket => sockets.push(socket.url()));
   await page.route('**/*', route => {
-    if (new URL(route.request().url()).origin !== address) { external.push(new URL(route.request().url()).origin); return route.abort(); }
+    if (new URL(route.request().url()).origin !== prefixed.origin || !new URL(route.request().url()).pathname.startsWith(prefixed.prefix + '/')) { external.push(new URL(route.request().url()).origin); return route.abort(); }
     return route.continue();
   });
-  await page.goto(address);
+  await page.goto(browserAddress);
   await page.getByRole('heading', { name: 'Personal workstation', exact: true }).waitFor();
   await page.getByLabel('Todo title', { exact: true }).fill('NiceGUI browser proof');
   await page.getByRole('button', { name: 'Add Todo', exact: true }).click();
@@ -119,7 +123,10 @@ try {
   await page.getByRole('heading', { name: 'Personal review', exact: true }).waitFor();
   await page.getByRole('link', { name: 'Todos', exact: true }).click();
   await expect(page.getByLabel('Todo title', { exact: true })).toHaveValue('draft survives navigation');
-  assert(sockets.some(url => url.includes('/_nicegui_ws/')), 'No actual NiceGUI WebSocket');
+  assert(sockets.some(url => url.includes(prefixed.prefix + '/_nicegui_ws/')), 'No prefixed NiceGUI WebSocket');
+  await page.reload();
+  await expect(page.getByLabel('Todo title', { exact: true })).toHaveValue('draft survives navigation');
+  assert(requests.every(raw => new URL(raw).pathname.startsWith(prefixed.prefix + '/')), 'Browser escaped its Service path');
   assert.deepEqual(external, [], 'Standard page requested a CDN or external resource');
   assert.deepEqual(errors, []);
   await checkQueryFailure(page, enabled => python(`from pathlib import Path\np=Path('/var/data/workspace/data/${serviceName}/awareness-query-failure')\n${enabled ? "p.write_text('controlled fixture failure')" : 'p.unlink()'}`));
@@ -156,11 +163,12 @@ try {
   assert((await (await fetch(plainAddress)).text()).includes('Generic NiceGUI application'));
   const record = { contractVersion: 2, passed: true, imageId: metadata.imageId, inputHash: metadata.inputHash, checkedAt: new Date().toISOString(), template,
     tools, preparationMs, coldStartMs, warmRestartMs, workspaceBytes, cpuMillis: 250, internalNetwork: true,
-    checks: ['offline-standard-environment', 'missing-extra-dependency-no-implicit-install', 'failed-check-no-ready', 'python-tests', 'nicegui-http-websocket', 'sqlite3', 'readonly-root', 'base-dependency-reuse', 'restart-data', 'checked-input-cache', 'loaded-version-fixed', 'generic-nicegui-service'] };
+    checks: ['offline-standard-environment', 'missing-extra-dependency-no-implicit-install', 'failed-check-no-ready', 'python-tests', 'nicegui-http-websocket', 'dynamic-service-prefix', 'prefix-draft-deep-refresh', 'sqlite3', 'readonly-root', 'base-dependency-reuse', 'restart-data', 'checked-input-cache', 'loaded-version-fixed', 'generic-nicegui-service'] };
   writeFileSync(join(root, 'dist/web-base', template === 'workstation' ? 'validation.json' : 'validation-web-app.json'), JSON.stringify(record, null, 2) + '\n');
   console.log(`NiceGUI ${template}: prepare ${preparationMs} ms, prepared start ${coldStartMs} ms, restart ${warmRestartMs} ms, workspace ${workspaceBytes} bytes; no push.`);
 } finally {
   await browser?.close();
+  await prefixed?.close();
   for (const name of [container, plain]) { try { docker('rm', '-f', name); } catch {} }
   try { docker('volume', 'rm', volume); } catch {}
   try { docker('network', 'rm', network); } catch {}

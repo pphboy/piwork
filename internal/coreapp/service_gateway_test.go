@@ -381,3 +381,39 @@ func TestServiceGatewayControlAcceptanceFencesUnchangedAddressAndRevision(t *tes
 		})
 	}
 }
+
+func TestServiceGatewayValidatesCanonicalPrefixAndFiltersForwardedAuthority(t *testing.T) {
+	_, base, token, path := gatewayFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		send(w, 200, map[string]string{"prefix": r.Header.Get("X-Forwarded-Prefix"), "forwarded": r.Header.Get("Forwarded"), "host": r.Header.Get("X-Forwarded-Host"), "uri": r.URL.RequestURI()})
+	}))
+	hostname := strings.Split(strings.TrimPrefix(path, "/api/v1/service-gateway/"), "/")[0]
+	request, _ := http.NewRequest("GET", base+"/api/v1/service-access/resolve?hostname="+hostname+"&port=80", nil)
+	request.Header.Set(gatewayCredential, token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var target struct {
+		WorkID, ServiceID string
+		Port              int
+	}
+	if err = json.NewDecoder(response.Body).Decode(&target); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	prefix := "/services/" + target.WorkID + "/" + target.ServiceID + "/" + strconv.Itoa(target.Port)
+	for _, values := range [][]string{{prefix}, {prefix + "/"}, {prefix, "/forged"}, {"/services/foreign/notes/80"}} {
+		response := gatewayRequest(t, base, token, path+"/api/v1?q=%2f", nil, http.Header{"X-Forwarded-Prefix": values, "Forwarded": {"host=evil"}, "X-Forwarded-Host": {"evil"}})
+		if len(values) != 1 || values[0] != prefix {
+			if response.StatusCode != 400 {
+				t.Fatal("invalid prefix accepted", response.StatusCode)
+			}
+			continue
+		}
+		var body map[string]string
+		json.NewDecoder(response.Body).Decode(&body)
+		if response.StatusCode != 200 || body["prefix"] != prefix || body["forwarded"] != "" || body["host"] != "" || body["uri"] != "/api/v1?q=%2f" {
+			t.Fatal("prefix/authority changed", response.StatusCode, body)
+		}
+	}
+}
