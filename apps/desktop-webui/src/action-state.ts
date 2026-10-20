@@ -1,3 +1,5 @@
+import { pendingDots } from './pending.js';
+
 export type ActionKind = 'identity' | 'lifecycle' | 'files' | 'configuration' | 'service' | 'agent' | 'transfer' | 'read';
 export interface ActionIntent {
   key: string; kind: ActionKind; work?: string; resource?: string; action?: string;
@@ -97,7 +99,15 @@ export class ActionState {
 
 /** Safe DOM text and local status regions, without replacing input/iframe nodes. */
 export function renderActionStates(root: HTMLElement, actions: ActionState, view: string, intentFor: (element: HTMLElement) => ActionIntent | undefined, visibleRecord: (record: ActionRecord) => boolean = () => true) {
-  root.querySelectorAll('[data-action-status]').forEach(node => node.remove());
+  const previous = new Map([...root.querySelectorAll<HTMLElement>('[data-action-status]')].map(node => [node.dataset.actionStatus!, node]));
+  // Only independently rendered page content can suppress duplicate feedback.
+  // Retained status text must not make its own error/result disappear on the next render.
+  let pageText = root.textContent || '';
+  if (previous.size) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    pageText = ''; let text: Node | null;
+    while ((text = walker.nextNode())) if (!text.parentElement?.closest('[data-action-status]')) pageText += text.textContent || '';
+  }
   const shown = (node: HTMLElement | null): node is HTMLElement => !!node && !!node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
   const regions = [...root.querySelectorAll<HTMLElement>('main, .main-panel, .agent-panel')];
   for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
@@ -105,7 +115,8 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
     const intent = intentFor(button); if (!intent) continue;
     // Only the read-only Files refresh retains keyboard focus while locked.
     if (button.dataset.action === 'refresh-files' && intent.kind === 'read' && button.dataset.readBusy && button.getAttribute('aria-disabled') === 'true') continue;
-    if (actions.conflict(intent)) { button.dataset.actionBaseDisabled = String(button.disabled); button.dataset.actionLocked = 'true'; button.disabled = true; button.setAttribute('aria-busy', 'true'); }
+    const conflict = actions.conflict(intent);
+    if (conflict) { button.dataset.actionBaseDisabled = String(button.disabled); button.dataset.actionLocked = 'true'; button.disabled = true; button.setAttribute('aria-busy', String(conflict.pending || conflict.refresh === 'refreshing')); }
   }
   for (const record of actions.records.values()) {
     if(record.key.startsWith('route:') && !record.error)continue;
@@ -114,28 +125,51 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
     // A confirmed file batch has a short toast; pending, unknown and readback failures remain local.
     if(record.kind==='files' && record.successFeedback==='toast' && !record.pending && !record.error && !record.blocked && record.refresh!=='failed')continue;
     if (!actions.visible(record) || record.view && record.view !== view || !visibleRecord(record)) continue;
-    if (!record.pending && record.error && root.textContent?.includes(record.error) && !record.blocked && record.refresh !== 'failed') continue;
-    if (!record.pending && record.result && root.textContent?.includes(record.result) && !record.error && !record.blocked && record.refresh === '') continue;
+    if (!record.pending && record.error && pageText.includes(record.error) && !record.blocked && record.refresh !== 'failed') continue;
+    if (!record.pending && record.result && pageText.includes(record.result) && !record.error && !record.blocked && record.refresh === '') continue;
     const anchor = record.anchor ? [...root.querySelectorAll<HTMLElement>(record.anchor)].find(shown) : null;
     const anchored = anchor?.closest<HTMLElement>('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ?? null;
     const dialog=anchor?.closest('dialog');
     const dialogSlot=dialog && (dialog.classList.contains('modal-create') || anchored?.matches('.modal-footer,.dialog-footer'))?dialog.querySelector<HTMLElement>('[data-action-status-slot]'):null;
     const region = dialogSlot || (shown(anchored) ? anchored : regions.find(shown) ?? root);
     if (!region) continue;
-    const node = document.createElement('div'); node.dataset.actionStatus = record.key;
+    // A module may already show this request in its own fixed slot. Other objects and
+    // error/unknown feedback still retain their own local region.
+    if (record.pending && !record.error && !record.blocked && record.refresh !== 'failed' && record.action &&
+      [...root.querySelectorAll<HTMLElement>('[data-pending-action][aria-busy="true"]')].some(slot =>
+        shown(slot) && (slot.dataset.pendingAction || '').split(/\s+/).includes(record.action!) &&
+        (!anchored || anchored.contains(slot) || dialog?.contains(slot)))) continue;
+    const node = previous.get(record.key) || document.createElement('div');
+    previous.delete(record.key); node.dataset.actionStatus = record.key;
     node.className = record.kind==='read' && !record.error && record.refresh!=='failed' ? 'local-read-status' : `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
     node.setAttribute('role', 'status'); node.setAttribute('aria-live', 'polite'); node.setAttribute('aria-busy', String(record.pending || record.refresh === 'refreshing'));
     const visible = { ...record };
-    if (record.error && root.textContent?.includes(record.error)) visible.error = undefined;
-    if (record.refreshError && root.textContent?.includes(record.refreshError)) visible.refreshError = undefined;
-    if (record.result && root.textContent?.includes(record.result)) { visible.result = undefined; visible.phase = 'Confirmed'; }
-    node.textContent = actions.message(visible);
-    if (record.businessId && ['new-session','send-message','cancel-run','resume-run'].includes(record.action || '')) {
+    if (record.error && pageText.includes(record.error)) visible.error = undefined;
+    if (record.refreshError && pageText.includes(record.refreshError)) visible.refreshError = undefined;
+    if (record.result && pageText.includes(record.result)) { visible.result = undefined; visible.phase = 'Confirmed'; }
+    const message = actions.message(visible);
+    // Update the text node in place so phase/elapsed-time messages do not restart dots.
+    if (node.firstChild?.nodeType === 3) node.firstChild.nodeValue = message;
+    else node.textContent = message;
+    const busy = record.pending || record.refresh === 'refreshing';
+    const dots = node.querySelector?.('.pending-dots');
+    if (busy && !dots) {
+      const template = document.createElement('span'); template.innerHTML = pendingDots();
+      if (template.firstElementChild) node.append(template.firstElementChild);
+    } else if (!busy) dots?.remove();
+    const detailsId = record.businessId && ['new-session','send-message','cancel-run','resume-run'].includes(record.action || '') ? `${record.action}:${record.businessId}` : '';
+    if (node.dataset.actionDetails !== detailsId) {
+      node.querySelector?.('.action-details')?.remove(); node.dataset.actionDetails = detailsId;
+    }
+    if (detailsId && !node.querySelector?.('.action-details')) {
       const details = document.createElement('details'), summary = document.createElement('summary'), identity = document.createElement('code');
-      details.className='action-details'; summary.textContent=record.action==='new-session'?'Session details':'Run details'; identity.textContent=record.businessId;
+      details.className='action-details'; summary.textContent=record.action==='new-session'?'Session details':'Run details'; identity.textContent=record.businessId || '';
       details.append(summary,identity); node.append(details);
     }
     // Status changes must not move the top of an interactive application frame.
-    if (region.querySelector('iframe')) region.append(node); else region.prepend(node);
+    if (node.parentElement !== region) {
+      if (region.querySelector('iframe')) region.append(node); else region.prepend(node);
+    }
   }
+  previous.forEach(node => node.remove());
 }

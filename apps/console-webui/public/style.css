@@ -1093,20 +1093,9 @@ progress {
   color: var(--muted);
   font-size: 13px;
 }
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid #cad9eb;
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  display: inline-block;
-  animation: spin 1s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* The page keeps one local read slot even while confirmed content is retained. */
+#page-read-status { min-height:38px; margin:0 0 8px; }
+#page-read-status > .action-status { min-height:30px; margin:0; padding:5px 8px; }
 dialog {
   max-width: 580px;
   width: calc(100% - 32px);

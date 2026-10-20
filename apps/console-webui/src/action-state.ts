@@ -1,3 +1,4 @@
+import { pendingDots } from './pending.js';
 export type ActionKind = 'identity' | 'lifecycle' | 'files' | 'configuration' | 'service' | 'agent' | 'transfer' | 'read';
 export interface ActionIntent {
   key: string; kind: ActionKind; work?: string; resource?: string;
@@ -57,29 +58,31 @@ export class ActionState {
   }
   async refresh(record: ActionRecord, read: () => Promise<unknown>) {
     if (!this.current(record)) return;
-    record.refresh = 'refreshing'; record.refreshError = undefined; this.changed();
+    record.refresh = 'refreshing'; record.refreshError = undefined; this.tick(); this.changed();
     try { await read(); if (this.current(record)) { record.refresh = ''; record.checkedAt = new Date(this.now()).toISOString(); } }
     catch (error) { if (this.current(record)) { record.refresh = 'failed'; record.refreshError = error instanceof Error ? error.message : String(error); } }
     finally { if (this.current(record)) this.changed(); }
   }
   message(record: ActionRecord) {
     const elapsed = Math.floor((this.now() - record.started) / 1000);
-    return `${record.target} · ${record.phase}${record.pending && elapsed >= 10 ? ` · Still waiting (${elapsed}s)` : ''}${record.error ? ` · ${record.error}` : ''}${record.refresh === 'refreshing' ? ' · Refreshing' : record.refresh === 'failed' ? ` · Confirmed result retained; refresh not confirmed: ${record.refreshError}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
+    return `${record.target} · ${record.phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · Still waiting (${elapsed}s)` : ''}${record.error ? ` · ${record.error}` : ''}${record.refresh === 'refreshing' ? ' · Refreshing' : record.refresh === 'failed' ? ` · Confirmed result retained; refresh not confirmed: ${record.refreshError}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
   }
   clear() { this.generation++; this.records.clear(); clearTimeout(this.timer); this.timer = undefined; this.changed(); }
   private tick() {
     if (this.timer) return;
-    this.timer = setTimeout(() => { this.timer = undefined; if ([...this.records.values()].some(record => record.pending)) { this.changed(); this.tick(); } }, 1000);
+    this.timer = setTimeout(() => { this.timer = undefined; if ([...this.records.values()].some(record => record.pending || record.refresh === 'refreshing')) { this.changed(); this.tick(); } }, 1000);
   }
 }
 
 /** Safe DOM text and local status regions, without replacing input/iframe nodes. */
 export function renderActionStates(root: HTMLElement, actions: ActionState, view: string, intentFor: (element: HTMLElement) => ActionIntent | undefined, visibleRecord: (record: ActionRecord) => boolean = () => true) {
-  root.querySelectorAll('[data-action-status]').forEach(node => node.remove());
+  const retained = new Set<HTMLElement>();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let pageText = ''; while (walker.nextNode()) if (!walker.currentNode.parentElement?.closest('[data-action-status]')) pageText += walker.currentNode.textContent || '';
   for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
     if (button.dataset.actionLocked) { button.disabled = button.dataset.actionBaseDisabled === 'true'; delete button.dataset.actionLocked; delete button.dataset.actionBaseDisabled; button.removeAttribute('aria-busy'); }
     const intent = intentFor(button); if (!intent) continue;
-    if (actions.conflict(intent)) { button.dataset.actionBaseDisabled = String(button.disabled); button.dataset.actionLocked = 'true'; button.disabled = true; button.setAttribute('aria-busy', 'true'); }
+    const conflict = actions.conflict(intent); if (conflict) { button.dataset.actionBaseDisabled = String(button.disabled); button.dataset.actionLocked = 'true'; button.disabled = true; button.setAttribute('aria-busy', String(conflict.pending)); }
   }
   for (const record of actions.records.values()) {
     if (record.view && record.view !== view || !visibleRecord(record)) continue;
@@ -87,14 +90,21 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
     const region = anchor?.closest<HTMLElement>('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ??
       root.querySelector<HTMLElement>('main, .main-panel, .agent-panel') ?? root;
     if (!region) continue;
-    const node = document.createElement('div'); node.dataset.actionStatus = record.key;
+    const node = [...root.querySelectorAll<HTMLElement>('[data-action-status]')].find(node => node.dataset.actionStatus === record.key) || document.createElement('div'); node.dataset.actionStatus = record.key; retained.add(node);
     node.className = `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
     node.setAttribute('role', 'status'); node.setAttribute('aria-live', 'polite'); node.setAttribute('aria-busy', String(record.pending || record.refresh === 'refreshing'));
     const visible = { ...record };
-    if (record.error && root.textContent?.includes(record.error)) visible.error = undefined;
-    if (record.result && root.textContent?.includes(record.result)) { visible.result = undefined; visible.phase = 'Confirmed'; }
-    node.textContent = actions.message(visible);
-    // Status changes must not move the top of an interactive application frame.
-    if (region.querySelector('iframe')) region.append(node); else region.prepend(node);
+    if (record.error && pageText.includes(record.error)) visible.error = undefined;
+    if (record.result && pageText.includes(record.result)) { visible.result = undefined; visible.phase = 'Confirmed'; }
+    const pending = record.pending || record.refresh === 'refreshing';
+    const message = actions.message(visible);
+    if (node.dataset.pending !== String(pending)) { node.innerHTML = `${pending ? pendingDots() : ''}<span data-action-message></span>`; node.dataset.pending = String(pending); }
+    const text = node.querySelector('[data-action-message]'); if (text && text.textContent !== message) text.textContent = message;
+    if (!node.isConnected) {
+      const slot = record.kind === 'read' && !anchor?.closest('dialog') ? root.querySelector('#page-read-status') : null;
+      if (slot) slot.append(node);
+      else if (region.querySelector('iframe')) region.append(node); else region.prepend(node);
+    }
   }
+  for (const node of root.querySelectorAll<HTMLElement>('[data-action-status]')) if (!retained.has(node)) node.remove();
 }

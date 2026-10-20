@@ -1141,7 +1141,7 @@ pre,
 .loading-list { padding:12px 20px;background:var(--surface);border:1px solid var(--border);border-radius:8px; }
 .loading-list .skeleton { display:grid;grid-template-columns:40px minmax(0,1fr) 96px;gap:16px;align-items:center;min-height:76px;border-bottom:1px solid var(--border); }
 .loading-list .skeleton:last-child { border-bottom:0; }
-.loading-list .skeleton i { height:40px;border-radius:8px;background:var(--surface-subtle); }
+.loading-list .skeleton > i { height:40px;border-radius:8px;background:var(--surface-subtle); }
 .loading-list .skeleton span { height:14px;max-width:60%;border-radius:4px;background:var(--surface-subtle); }
 .loading-list .skeleton span:last-child { max-width:100%; }
 .files-toolbar {
@@ -3036,10 +3036,8 @@ dd > .button {
  .agent-title small { max-width:90px; }
  .focused .agent-header { padding-inline:8px; }
 }
-.local-read-status { font-size:12px; color:var(--muted); padding:5px 10px; overflow-wrap:anywhere; }
-.local-read-status[aria-busy=true]::before { content:' '; display:inline-block; width:8px; height:8px; margin-right:6px; border:1px solid var(--border); border-top-color:currentColor; border-radius:50%; animation:read-spin 1s linear infinite; }
-@keyframes read-spin { to { transform:rotate(360deg); } }
-@media (prefers-reduced-motion:reduce) { .local-read-status[aria-busy=true]::before { animation:none; } }
+.local-read-status { display:flex;align-items:center;gap:6px;font-size:12px; color:var(--muted); padding:5px 10px; overflow-wrap:anywhere; }
+.local-read-status > .pending-dots { order:-1; }
 
 .field > .name-field-error { color:var(--danger, #a33b32); font-size:12px; overflow-wrap:anywhere; }
 .import-name-feedback { overflow-wrap:anywhere; }
@@ -3187,7 +3185,6 @@ dd > .button {
 
 /* Compact actions retain their original hit areas and local status. */
 .file-toolbar-actions .file-refresh { width:40px;min-width:40px;height:40px;min-height:40px;padding:0; }
-.is-reading svg { animation:read-spin 1s linear infinite; }
 .settings-navigation { margin-bottom:12px; }
 .settings-navigation .settings-back { margin:0 0 0 -8px; }
 .settings-heading { align-items:center; }
@@ -3206,7 +3203,6 @@ dd > .button {
  .settings-heading { flex-wrap:wrap;gap:12px; }
  .configuration-compact { max-width:100%; }
 }
-@media(prefers-reduced-motion:reduce) { .is-reading svg { animation:none; } }
 
 /* Footer actions share one geometry, without changing menus or inline controls. */
 .modal .modal-footer { align-items:center;gap:8px;padding:15px 22px; }

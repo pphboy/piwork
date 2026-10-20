@@ -1,4 +1,43 @@
 /* Shared control roles. Page styles own layout and explicit compact contexts. */
+/* Keep the slot and its neighbours still; only the decorative dots fade. */
+.pending-slot,
+.pending-dots {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 24px;
+  min-width: 24px;
+  height: 16px;
+  flex: 0 0 24px;
+  vertical-align: -3px;
+}
+.pending-dots > i {
+  display: block;
+  width: 4px;
+  height: 4px;
+  flex: 0 0 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .35;
+  animation: pending-dot-fade 1.2s ease-in-out infinite;
+}
+.pending-dots > i:nth-child(2) { animation-delay: .2s; }
+.pending-dots > i:nth-child(3) { animation-delay: .4s; }
+@keyframes pending-dot-fade {
+  0%, 60%, 100% { opacity: .35; }
+  30% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pending-dots > i { animation: none; opacity: .7; }
+}
+.app-loading { display:flex; align-items:center; gap:8px; min-height:96px; padding:24px; color:var(--muted); }
+.pending-status { display:inline-flex; align-items:center; gap:6px; max-width:100%; }
+.pending-wait-message { color:var(--muted); font-size:11px; }
+.action-status > .pending-dots { order:-1; margin-top:2px; }
+/* Modal presentation is immediate, including its native backdrop. */
+dialog, dialog::backdrop { animation:none; transition:none; }
+
 :is(.button, .btn) {
   display: inline-flex;
   align-items: center;

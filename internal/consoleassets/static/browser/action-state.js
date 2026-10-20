@@ -1,3 +1,4 @@
+import { pendingDots } from './pending.js';
 /** In-memory request coordination; never a queue or a remote task cancellation API. */
 export class ActionState {
     changed;
@@ -74,6 +75,7 @@ export class ActionState {
             return;
         record.refresh = 'refreshing';
         record.refreshError = undefined;
+        this.tick();
         this.changed();
         try {
             await read();
@@ -95,13 +97,13 @@ export class ActionState {
     }
     message(record) {
         const elapsed = Math.floor((this.now() - record.started) / 1000);
-        return `${record.target} · ${record.phase}${record.pending && elapsed >= 10 ? ` · Still waiting (${elapsed}s)` : ''}${record.error ? ` · ${record.error}` : ''}${record.refresh === 'refreshing' ? ' · Refreshing' : record.refresh === 'failed' ? ` · Confirmed result retained; refresh not confirmed: ${record.refreshError}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
+        return `${record.target} · ${record.phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · Still waiting (${elapsed}s)` : ''}${record.error ? ` · ${record.error}` : ''}${record.refresh === 'refreshing' ? ' · Refreshing' : record.refresh === 'failed' ? ` · Confirmed result retained; refresh not confirmed: ${record.refreshError}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
     }
     clear() { this.generation++; this.records.clear(); clearTimeout(this.timer); this.timer = undefined; this.changed(); }
     tick() {
         if (this.timer)
             return;
-        this.timer = setTimeout(() => { this.timer = undefined; if ([...this.records.values()].some(record => record.pending)) {
+        this.timer = setTimeout(() => { this.timer = undefined; if ([...this.records.values()].some(record => record.pending || record.refresh === 'refreshing')) {
             this.changed();
             this.tick();
         } }, 1000);
@@ -109,7 +111,12 @@ export class ActionState {
 }
 /** Safe DOM text and local status regions, without replacing input/iframe nodes. */
 export function renderActionStates(root, actions, view, intentFor, visibleRecord = () => true) {
-    root.querySelectorAll('[data-action-status]').forEach(node => node.remove());
+    const retained = new Set();
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let pageText = '';
+    while (walker.nextNode())
+        if (!walker.currentNode.parentElement?.closest('[data-action-status]'))
+            pageText += walker.currentNode.textContent || '';
     for (const button of root.querySelectorAll('button[data-action]')) {
         if (button.dataset.actionLocked) {
             button.disabled = button.dataset.actionBaseDisabled === 'true';
@@ -120,11 +127,12 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
         const intent = intentFor(button);
         if (!intent)
             continue;
-        if (actions.conflict(intent)) {
+        const conflict = actions.conflict(intent);
+        if (conflict) {
             button.dataset.actionBaseDisabled = String(button.disabled);
             button.dataset.actionLocked = 'true';
             button.disabled = true;
-            button.setAttribute('aria-busy', 'true');
+            button.setAttribute('aria-busy', String(conflict.pending));
         }
     }
     for (const record of actions.records.values()) {
@@ -135,25 +143,41 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
             root.querySelector('main, .main-panel, .agent-panel') ?? root;
         if (!region)
             continue;
-        const node = document.createElement('div');
+        const node = [...root.querySelectorAll('[data-action-status]')].find(node => node.dataset.actionStatus === record.key) || document.createElement('div');
         node.dataset.actionStatus = record.key;
+        retained.add(node);
         node.className = `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
         node.setAttribute('role', 'status');
         node.setAttribute('aria-live', 'polite');
         node.setAttribute('aria-busy', String(record.pending || record.refresh === 'refreshing'));
         const visible = { ...record };
-        if (record.error && root.textContent?.includes(record.error))
+        if (record.error && pageText.includes(record.error))
             visible.error = undefined;
-        if (record.result && root.textContent?.includes(record.result)) {
+        if (record.result && pageText.includes(record.result)) {
             visible.result = undefined;
             visible.phase = 'Confirmed';
         }
-        node.textContent = actions.message(visible);
-        // Status changes must not move the top of an interactive application frame.
-        if (region.querySelector('iframe'))
-            region.append(node);
-        else
-            region.prepend(node);
+        const pending = record.pending || record.refresh === 'refreshing';
+        const message = actions.message(visible);
+        if (node.dataset.pending !== String(pending)) {
+            node.innerHTML = `${pending ? pendingDots() : ''}<span data-action-message></span>`;
+            node.dataset.pending = String(pending);
+        }
+        const text = node.querySelector('[data-action-message]');
+        if (text && text.textContent !== message)
+            text.textContent = message;
+        if (!node.isConnected) {
+            const slot = record.kind === 'read' && !anchor?.closest('dialog') ? root.querySelector('#page-read-status') : null;
+            if (slot)
+                slot.append(node);
+            else if (region.querySelector('iframe'))
+                region.append(node);
+            else
+                region.prepend(node);
+        }
     }
+    for (const node of root.querySelectorAll('[data-action-status]'))
+        if (!retained.has(node))
+            node.remove();
 }
 //# sourceMappingURL=action-state.js.map
