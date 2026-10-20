@@ -2,6 +2,41 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.9",
+      "component": "core",
+      "title": "Piwork 0.0.9 Preview",
+      "publishedAt": "2026-10-20",
+      "sections": [
+        {
+          "title": "Independent ControlPlane and Core with one-command startup",
+          "items": [
+            "Start two independent HTTP services in one Linux process: ControlPlane defaults to 0.0.0.0:17891 for browsers, while Core defaults to 127.0.0.1:17871 for backend and CLI clients.",
+            "Use the workbench, administration, setup, files, event streams and prefix-aware Services through the single browser port 17891.",
+            "Keep Core authorization and lifecycle ownership behind a real HTTP boundary; explicitly set --core-listen when remote CLI access is required.",
+            "Remove the hosted Service port pool and cross-port grants; trusted Service applications share the ControlPlane origin and must support dynamic URL prefixes.",
+            "Allow configuration saves to overlap published context reads without intermittent lock failures."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.9",
+      "component": "desktop",
+      "title": "Piwork 0.0.9 Preview",
+      "publishedAt": "2026-10-20",
+      "sections": [
+        {
+          "title": "Service access through the browser entry",
+          "items": [
+            "Open hosted Services at /services/<workId>/<serviceId>/<port>/, including HTTP, SSE and WebSocket, without additional browser ports or DNS configuration.",
+            "Ship prefix-aware official NiceGUI templates and runtime helpers with scoped drafts and application resource URLs.",
+            "Keep independent CLI Desktop and its local Host entry, proxy and credentials separate from the hosted ControlPlane.",
+            "Existing root-path applications and captured images require explicit adaptation; imports retain their original source, images and data."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.8",
       "component": "core",
       "title": "Piwork 0.0.8 Preview",
