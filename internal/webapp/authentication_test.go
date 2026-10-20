@@ -4,57 +4,76 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestSetupExpirationRotationOriginAndRestrictedScope(t *testing.T) {
+func TestFirstUserCSRFExpiresAndCannotGrantAccountAccess(t *testing.T) {
 	s, _, origin := fixture(t)
 	browser := browser(t)
-	link, _ := s.SetupLink(context.Background())
-	parsed, _ := url.Parse(link)
-	proof := strings.TrimPrefix(parsed.Fragment, "setup=")
-	request, _ := http.NewRequest("POST", origin+"/_web/api/setup/redeem", strings.NewReader(`{"proof":"`+proof+`"}`))
+	code, session, _ := call(t, browser, origin, "/_web/api/session", "GET", "", nil)
+	if code != 200 || session["authenticated"] != false {
+		t.Fatal("ordinary anonymous session unavailable", code)
+	}
+	csrf := session["csrfToken"].(string)
+	request, _ := http.NewRequest("POST", origin+"/_web/api/setup/administrator", strings.NewReader(`{"account":"admin","password":"synthetic-password"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "http://127.0.0.1:17891")
+	request.Header.Set("X-Piwork-Csrf", csrf)
 	response, err := browser.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
 	if response.StatusCode != 403 {
-		t.Fatal("foreign origin redeemed setup proof")
+		t.Fatal("foreign origin created administrator")
 	}
-	s.setupMu.Lock()
-	s.proofEnd = time.Now().Add(-time.Second)
-	s.setupMu.Unlock()
-	code, _, _ := call(t, browser, origin, "/_web/api/setup/redeem", "POST", "", map[string]string{"proof": proof})
-	if code != 403 {
-		t.Fatal("expired setup proof accepted", code)
+	request, _ = http.NewRequest("GET", origin+"/_web/api/session", nil)
+	request.Host = "invalid.localhost"
+	response, err = browser.Do(request)
+	if err != nil {
+		t.Fatal(err)
 	}
-	link, _ = s.SetupLink(context.Background())
-	parsed, _ = url.Parse(link)
-	code, redeemed, _ := call(t, browser, origin, "/_web/api/setup/redeem", "POST", "", map[string]string{"proof": strings.TrimPrefix(parsed.Fragment, "setup=")})
-	if code != 200 {
-		t.Fatal("rotated proof unavailable", code)
+	_ = response.Body.Close()
+	if response.StatusCode != 400 {
+		t.Fatal("foreign Host obtained a session")
 	}
-	csrf := redeemed["csrfToken"].(string)
 	code, _, _ = call(t, browser, origin, "/console/api/admin/users", "GET", "", nil)
 	if code != 401 {
-		t.Fatal("setup session obtained administrator access", code)
+		t.Fatal("ordinary anonymous session obtained administrator access", code)
 	}
 	code, _, _ = call(t, browser, origin, "/_desktop/api/work-packages", "POST", csrf, map[string]string{})
 	if code != 401 {
-		t.Fatal("setup session obtained Work/Inspect access", code)
+		t.Fatal("ordinary anonymous session obtained Work access", code)
 	}
-	if _, err := s.SetupLink(context.Background()); err != nil {
-		t.Fatal(err)
+	s.mu.Lock()
+	for id, ch := range s.challenges {
+		ch.expires = time.Now().Add(-time.Second)
+		s.challenges[id] = ch
 	}
+	s.mu.Unlock()
 	code, _, _ = call(t, browser, origin, "/_web/api/setup/administrator", "POST", csrf, map[string]string{"account": "admin", "password": "synthetic-password"})
 	if code != 403 {
-		t.Fatal("proof rotation retained an older setup session", code)
+		t.Fatal("expired CSRF accepted", code)
+	}
+	code, renewed, _ := call(t, browser, origin, "/_web/api/session", "GET", "", nil)
+	if code != 200 || renewed["csrfToken"] == csrf {
+		t.Fatal("ordinary session did not recover automatically", code)
+	}
+	for _, path := range []string{"/_web/api/setup/session", "/_web/api/setup/redeem"} {
+		method := "GET"
+		if strings.HasSuffix(path, "redeem") {
+			method = "POST"
+		}
+		code, _, _ = call(t, browser, origin, path, method, "", map[string]string{"proof": "obsolete"})
+		if code != 404 {
+			t.Fatal("removed setup gate route still active", path, code)
+		}
+	}
+	code, result, _ := call(t, browser, origin, "/_web/api/setup/administrator", "POST", renewed["csrfToken"].(string), map[string]string{"account": "admin", "password": "synthetic-password"})
+	if code != 201 || result["next"] != "/login" {
+		t.Fatal("plain session could not create administrator", code, result)
 	}
 }
 

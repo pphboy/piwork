@@ -89,7 +89,7 @@ func TestHelpAndInvalidCommandsDoNoFileSecretOrNetworkIO(t *testing.T) {
 		}
 	}
 	for _, args := range [][]string{
-		{"login"}, {"chat"}, {"--json", "--json", "status"}, {"--core"}, {"status", "extra"},
+		{"setup", "link"}, {"login"}, {"chat"}, {"--json", "--json", "status"}, {"--core"}, {"status", "extra"},
 		{"admin", "bootstrap", "--password-stdin"},
 		{"admin", "bootstrap", "--account", "admin", "--account", "other"},
 		{"admin", "users", "create", "--account", "admin", "--role", "root"},

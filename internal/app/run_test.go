@@ -41,6 +41,9 @@ func TestUnifiedHelpVersionAndWrongUserCommandsHaveNoStartupEffects(t *testing.T
 		} else if code != 0 {
 			t.Fatal("help/version failed", args, code)
 		}
+		if strings.Contains(out.String(), "setup link") {
+			t.Fatal("help still advertises the removed setup link command")
+		}
 	}
 	directory, _ := defaultDirectory()
 	if _, err := os.Stat(directory); !os.IsNotExist(err) {
@@ -140,6 +143,9 @@ func TestNoArgumentsStartsOnePersistentApplicationAndReleasesItsLock(t *testing.
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("shutdown exceeded expected empty-install budget")
+	}
+	if strings.Contains(out.text(), "#setup=") || strings.Contains(out.text(), "First-time setup:") {
+		t.Fatal("startup still issues an installer authorization link")
 	}
 	core, err := coreapp.New(context.Background(), coreapp.Options{DataDirectory: directory})
 	if err != nil {

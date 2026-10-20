@@ -49,7 +49,7 @@ Start Core, the browser workbench, administration, and first-time setup.
 No business environment variables are required. Optional PIWORK_ADMIN_ACCOUNT
 and PIWORK_ADMIN_PASSWORD create only the first administrator on an empty
 installation; model connections are configured in the browser.
-Operator commands: status, admin, config, setup link. User commands: piwork-cli.
+Operator commands: status, admin, config. User commands: piwork-cli.
 `
 
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -266,11 +266,7 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		_ = closeApplication(core, web)
 		return 1
 	}
-	if initialized, err := core.Identity.HasUsers(ctx); err == nil && !initialized {
-		if link, err := web.SetupLink(ctx); err == nil {
-			fmt.Fprintln(stdout, "First-time setup:", link)
-		}
-	}
+
 	if !*noOpen && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
 		go openBrowser(ctx, origin, stderr)
 	}

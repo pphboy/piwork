@@ -136,8 +136,6 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 func prepare(ctx context.Context, v invocation, input io.Reader, stderr io.Writer) (any, string, string, error) {
 	switch v.command {
-	case "setup-link":
-		return nil, "POST", "/control/setup-link", nil
 	case "operation-show":
 		return nil, "GET", "/control/operations/" + url.PathEscape(v.id), nil
 	case "skills-list", "packages-list":

@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,38 +112,28 @@ func signIn(t *testing.T, browser *http.Client, origin, account string) string {
 	return value["csrfToken"].(string)
 }
 
-func TestFirstUserSetupIsScopedOneUseAndClosedAfterBootstrap(t *testing.T) {
-	s, core, origin := fixture(t)
+func TestFirstUserSetupUsesOrdinarySessionAndClosesAfterBootstrap(t *testing.T) {
+	_, core, origin := fixture(t)
 	browser := browser(t)
-	link, err := s.SetupLink(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, _ := url.Parse(link)
-	proof := strings.TrimPrefix(parsed.Fragment, "setup=")
 	code, state, _ := call(t, browser, origin, "/_web/api/state", "GET", "", nil)
-	if code != 200 || state["administratorInitialized"] != false || strings.Contains(fmtJSON(state), proof) {
-		t.Fatal("public state exposed setup authorization")
+	if code != 200 || state["administratorInitialized"] != false {
+		t.Fatal("empty installation state unavailable")
 	}
 	code, _, _ = call(t, browser, origin, "/_web/api/setup/administrator", "POST", "", map[string]string{"account": "admin", "password": "synthetic-password"})
 	if code != 403 {
-		t.Fatal("anonymous bootstrap accepted", code)
+		t.Fatal("bootstrap without CSRF accepted", code)
 	}
-	code, redeemed, response := call(t, browser, origin, "/_web/api/setup/redeem", "POST", "", map[string]string{"proof": proof})
+	code, session, response := call(t, browser, origin, "/_web/api/session", "GET", "", nil)
 	if code != 200 {
-		t.Fatal("valid setup link rejected", code, redeemed)
+		t.Fatal("ordinary session unavailable", code, session)
 	}
 	for _, cookie := range response.Cookies() {
 		if !cookie.HttpOnly || cookie.Secure {
-			t.Fatal("setup cookie unsafe for HTTP")
+			t.Fatal("ordinary session cookie unsafe for HTTP")
 		}
 	}
-	csrf := redeemed["csrfToken"].(string)
-	code, _, _ = call(t, browser, origin, "/_web/api/setup/redeem", "POST", "", map[string]string{"proof": proof})
-	if code != 403 {
-		t.Fatal("setup proof replay accepted", code)
-	}
-	code, resumed, _ := call(t, browser, origin, "/_web/api/setup/session", "GET", "", nil)
+	csrf := session["csrfToken"].(string)
+	code, resumed, _ := call(t, browser, origin, "/_web/api/session", "GET", "", nil)
 	if code != 200 || resumed["csrfToken"] != csrf {
 		t.Fatal("setup cannot resume after refresh")
 	}
@@ -156,15 +145,30 @@ func TestFirstUserSetupIsScopedOneUseAndClosedAfterBootstrap(t *testing.T) {
 	if code != 201 {
 		t.Fatal("valid setup failed", code)
 	}
-	if _, err := s.SetupLink(context.Background()); err == nil {
-		t.Fatal("bootstrap reopened after first user")
+	code, session, _ = call(t, browser, origin, "/_web/api/session", "GET", "", nil)
+	if code != 200 || session["authenticated"] != false {
+		t.Fatal("creation bypassed normal sign-in", code)
 	}
 	if hasUsers, err := core.Identity.HasUsers(context.Background()); err != nil || !hasUsers {
 		t.Fatal("first user not durable", err)
 	}
 	code, _, _ = call(t, browser, origin, "/_web/api/setup/administrator", "POST", csrf, map[string]string{"account": "second", "password": "synthetic-password"})
 	if code != 409 {
-		t.Fatal("old setup grant still works", code)
+		t.Fatal("first-user creation reopened", code)
+	}
+	users, err := core.Identity.ListUsers(context.Background(), identity.OperatorPrincipal())
+	if err != nil || len(users) != 1 {
+		t.Fatal("first administrator missing", err)
+	}
+	if _, err := core.Identity.CreateUser(context.Background(), identity.OperatorPrincipal(), "backup-admin", "synthetic-password", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Identity.SetEnabled(context.Background(), identity.OperatorPrincipal(), string(users[0].Id), false); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ = call(t, browser, origin, "/_web/api/setup/administrator", "POST", csrf, map[string]string{"account": "replacement", "password": "synthetic-password"})
+	if code != 409 {
+		t.Fatal("disabled administrator reopened bootstrap", code)
 	}
 	code, _, _ = call(t, browser, origin, "/healthz", "GET", "", nil)
 	if code != 200 {
@@ -177,18 +181,16 @@ func TestFirstUserSetupIsScopedOneUseAndClosedAfterBootstrap(t *testing.T) {
 }
 
 func TestWebAndOperatorBootstrapAtMostOneUser(t *testing.T) {
-	s, core, origin := fixture(t)
+	_, core, origin := fixture(t)
 	browser := browser(t)
-	link, _ := s.SetupLink(context.Background())
-	parsed, _ := url.Parse(link)
-	_, redeemed, _ := call(t, browser, origin, "/_web/api/setup/redeem", "POST", "", map[string]string{"proof": strings.TrimPrefix(parsed.Fragment, "setup=")})
+	_, session, _ := call(t, browser, origin, "/_web/api/session", "GET", "", nil)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		_, _ = core.Identity.Bootstrap(context.Background(), "operator-admin", "synthetic-password")
 	}()
-	code, _, _ := call(t, browser, origin, "/_web/api/setup/administrator", "POST", redeemed["csrfToken"].(string), map[string]string{"account": "web-admin", "password": "synthetic-password"})
+	code, _, _ := call(t, browser, origin, "/_web/api/setup/administrator", "POST", session["csrfToken"].(string), map[string]string{"account": "web-admin", "password": "synthetic-password"})
 	wg.Wait()
 	if code != 201 && code != 409 {
 		t.Fatal("unexpected concurrent bootstrap result", code)

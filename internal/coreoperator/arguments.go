@@ -14,7 +14,6 @@ import (
 const Usage = `usage: piwork-serve [--core URL] [--env-file FILE] [--data-dir DIR] [--operator-credential-file FILE] [--json] COMMAND
   serve [--help]  (unified Core, web workbench, administration and setup)
   status
-  setup link
   admin bootstrap --account NAME [--password-stdin]
   admin users list
   admin users create --account NAME [--role admin|user] [--password-stdin]
@@ -117,11 +116,6 @@ func parse(args []string) (invocation, error) {
 		return v, nil
 	case "status":
 		v.command, options = "status", rest[1:]
-	case "setup":
-		if len(rest) < 2 || rest[1] != "link" {
-			return v, usage("setup requires link")
-		}
-		v.command, options = "setup-link", rest[2:]
 	case "admin":
 		if len(rest) < 2 {
 			return v, usage("admin requires bootstrap or users")

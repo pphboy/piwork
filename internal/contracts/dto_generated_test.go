@@ -1211,24 +1211,6 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
-			case "WebSetupLinkSchema":
-				value, err := Decode[WebSetupLink](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
-				if err != nil {
-					t.Fatal(err)
-				}
-				target = value
-			case "WebSetupProofInputSchema":
-				value, err := Decode[WebSetupProofInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
-				if err != nil {
-					t.Fatal(err)
-				}
-				target = value
-			case "WebSetupSessionSchema":
-				value, err := Decode[WebSetupSession](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
-				if err != nil {
-					t.Fatal(err)
-				}
-				target = value
 			case "WebSetupStateSchema":
 				value, err := Decode[WebSetupState](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {

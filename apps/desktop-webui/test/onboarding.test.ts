@@ -12,7 +12,7 @@ const binary=process.env.PIWORK_TEST_UNIFIED_BIN || fileURLToPath(new URL('../..
 const browserOptions=process.env.PIWORK_TEST_BROWSER_BIN ? {executablePath:process.env.PIWORK_TEST_BROWSER_BIN,headless:true,args:['--no-proxy-server']} : {headless:true,channel:'chromium' as const,args:['--no-proxy-server']};
 const serverIP=Object.entries(networkInterfaces()).filter(([name])=>/^(eth|en|wl)/.test(name)).flatMap(([,items])=>items||[]).find(item=>item.family==='IPv4'&&!item.internal)?.address || '127.0.0.1';
 
-type BrowserServer={origin:string;directory:string;stop:(preserve?:boolean)=>Promise<void>;restart:()=>Promise<BrowserServer>;setupLink:()=>string;output:()=>string};
+type BrowserServer={origin:string;directory:string;stop:(preserve?:boolean)=>Promise<void>;restart:()=>Promise<BrowserServer>;output:()=>string};
 async function start(environment:Record<string,string>={}, existing?:{directory:string;port:number}, engineHost?:string):Promise<BrowserServer> {
   const directory=existing?.directory || await mkdtemp(join(tmpdir(),'piwork-unified-browser-'));
   const reserve=createServer(); await new Promise<void>(resolve=>reserve.listen(0,'0.0.0.0',resolve));
@@ -37,28 +37,29 @@ async function start(environment:Record<string,string>={}, existing?:{directory:
   try {
     for(let i=0;i<200;i++) {
       if(exited)throw new Error(`Unified server startup failed: ${stderr}`);
-      const ready=output.includes('"event":"app.listening"')&&(environment.PIWORK_ADMIN_ACCOUNT||output.includes('First-time setup:'));
-      if(ready) return {origin,directory,stop,restart:async()=>{await stop(true);return start(environment,{directory,port},engineHost);},setupLink:()=>output.split('\n').find(line=>line.startsWith('First-time setup: '))?.slice('First-time setup: '.length)||'',output:()=>output};
+      const ready=output.includes('"event":"app.listening"');
+      if(ready) return {origin,directory,stop,restart:async()=>{await stop(true);return start(environment,{directory,port},engineHost);},output:()=>output};
       await new Promise(resolve=>setTimeout(resolve,50));
     }
     throw new Error('Unified server did not open its setup page.');
   } catch(error) {await stop();throw error;}
 }
 
-test('IP browser completes protected setup, model/runtime save, workbench and admin navigation',async()=>{
+test('IP browser directly creates an administrator, model/runtime save, workbench and admin navigation',async()=>{
   const server=await start();
   const browser=await chromium.launch(browserOptions);
   try {
     const anonymous=await browser.newContext();
     const untrusted=await anonymous.newPage();
     await untrusted.goto(server.origin);
-    await expect(untrusted.getByRole('heading',{name:'Open your setup link'})).toBeVisible();
-    assert.equal(await untrusted.getByRole('button',{name:'Create administrator',exact:true}).count(),0);
+    await expect(untrusted.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
+    await expect(untrusted.getByRole('button',{name:'Create administrator',exact:true})).toBeVisible();
+    assert.doesNotMatch(server.output(), /First-time setup:|#setup=/);
     const context=await browser.newContext();
     const page=await context.newPage();
     const failures:string[]=[];
     page.on('pageerror',error=>failures.push(error.message));
-    await page.goto(server.setupLink());
+    await page.goto(server.origin);
     await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
     assert.equal(new URL(page.url()).hash,'');
     await page.reload();
@@ -120,7 +121,7 @@ test('optional ADMIN environment skips first-user setup while old model variable
   const server=await start({PIWORK_ADMIN_ACCOUNT:'admin',PIWORK_ADMIN_PASSWORD:'synthetic-password',PIWORK_MODEL_PROVIDER:'invalid legacy provider',PIWORK_MODEL_ID:'legacy-model',PIWORK_MODEL_API_KEY:'synthetic-ignored-key',PIWORK_AGENT_IMAGE:'invalid legacy image'});
   const browser=await chromium.launch(browserOptions);
   try {
-    assert.equal(server.setupLink(),'');
+    assert.doesNotMatch(server.output(),/First-time setup:|#setup=/);
     assert.doesNotMatch(server.output(),/synthetic-password|synthetic-ignored-key/);
     const page=await browser.newPage();
     await page.goto(server.origin);
@@ -184,19 +185,73 @@ test('lost model/runtime responses are read back without replay and survive rest
  }finally{releaseStale();await browser.close();await server.stop();}
 });
 
-test('lost setup responses recover through readback without replaying either mutation',async()=>{
+test('plain IP onboarding survives new browsers, cookie clearing, legacy links and restart',async()=>{
+ let server=await start();const browser=await chromium.launch(browserOptions);
+ try {
+  const context=await browser.newContext();const page=await context.newPage();
+  const requests:string[]=[];page.on('request',r=>requests.push(new URL(r.url()).pathname));
+  await page.goto(server.origin+'/setup#setup=obsolete-proof');
+  await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
+  assert.equal(new URL(page.url()).hash,'');
+  await context.clearCookies();await page.reload();
+  await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
+  server=await server.restart();await page.goto(server.origin);
+  await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
+  await page.getByLabel('Account',{exact:true}).fill('admin');
+  await page.getByLabel('Password',{exact:true}).fill('synthetic-password');
+  await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');
+  await page.getByRole('button',{name:'Create administrator',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
+  await page.getByLabel('Account',{exact:true}).fill('admin');
+  await page.getByLabel('Password',{exact:true}).fill('synthetic-password');
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
+  const other=await browser.newContext();const second=await other.newPage();
+  await second.goto(server.origin);
+  await expect(second.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
+  await context.clearCookies();await page.goto(server.origin);
+  await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
+  server=await server.restart();await page.goto(server.origin+'/setup#setup=used-proof');
+  await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
+  assert.equal(new URL(page.url()).hash,'');
+  assert.equal(requests.some(path=>path.endsWith('/setup/redeem')||path.endsWith('/setup/session')),false);
+  await expect(page.locator('body')).not.toContainText('Open your setup link');
+  await expect(page.getByRole('button',{name:'Check setup access',exact:true})).toHaveCount(0);
+ }finally{await browser.close();await server.stop();}
+});
+
+test('uncommitted administrator response only reads state and leaves an explicit create action',async()=>{
  const server=await start();const browser=await chromium.launch(browserOptions);
  try {
-  const context=await browser.newContext();const page=await context.newPage();let exchanges=0,creations=0;
-  await page.route('**/_web/api/setup/redeem',async route=>{exchanges++;await route.fetch();await route.abort('failed');});
+  const page=await browser.newPage();let creations=0;
+  await page.route('**/_web/api/setup/administrator',async route=>{creations++;await route.abort('failed');});
+  await page.goto(server.origin);
+  await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');
+  await page.getByRole('button',{name:'Create administrator',exact:true}).click();
+  await expect(page.locator('#setup-notice')).toContainText('Creation was not confirmed');
+  await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
+  await expect(page.getByLabel('Password',{exact:true})).toHaveValue('');
+  assert.equal(creations,1);
+  await expect(page.locator('body')).not.toContainText('Open your setup link');
+  await page.unroute('**/_web/api/setup/administrator');
+  await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');
+  await page.getByRole('button',{name:'Create administrator',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
+ }finally{await browser.close();await server.stop();}
+});
+
+test('lost administrator creation response recovers through ordinary readback without replay',async()=>{
+ const server=await start();const browser=await chromium.launch(browserOptions);
+ try {
+  const context=await browser.newContext();const page=await context.newPage();let creations=0;
   await page.route('**/_web/api/setup/administrator',async route=>{creations++;await route.fetch();await route.abort('failed');});
-  await page.goto(server.setupLink());await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
-  assert.equal(exchanges,1);assert.equal(new URL(page.url()).hash,'');
+  await page.goto(server.origin);await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
+  assert.equal(new URL(page.url()).hash,'');
   await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');await page.getByRole('button',{name:'Create administrator',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
   await expect(page.getByLabel('Password',{exact:true})).toHaveValue('');
   assert.equal(await page.getByLabel('Confirm password',{exact:true}).count(),0);
-  assert.equal(creations,1);assert.equal(exchanges,1);
+  assert.equal(creations,1);
   assert.doesNotMatch(await page.evaluate(()=>JSON.stringify({local:{...localStorage},session:{...sessionStorage}})),/synthetic-password/);
  }finally{await browser.close();await server.stop();}
 });
@@ -247,7 +302,7 @@ test('Create admin validates current passwords locally, focuses errors, and send
   const page=await browser.newPage();let posts:any[]=[];let release=()=>{};
   const gate=new Promise<void>(resolve=>{release=resolve;});
   await page.route('**/_web/api/setup/administrator',async route=>{posts.push(route.request().postDataJSON());await gate;await route.continue();});
-  await page.goto(server.setupLink());
+  await page.goto(server.origin);
   await expect(page.locator('.field-error:visible')).toHaveCount(0);
   await expect(page.getByLabel('Password',{exact:true})).toHaveAttribute('autocomplete','new-password');
   await expect(page.getByLabel('Confirm password',{exact:true})).toHaveAttribute('autocomplete','new-password');
@@ -278,16 +333,16 @@ test('Create admin validates current passwords locally, focuses errors, and send
  } finally {await browser.close();await server.stop();}
 });
 
-test('rejected admin creation clears both passwords, preserves account, and keeps setup authorization errors distinct',async()=>{
+test('rejected admin creation clears passwords and recovers ordinary CSRF without a gate',async()=>{
  const server=await start(),browser=await chromium.launch(browserOptions);
  try {
   const page=await browser.newPage();let count=0;
   await page.route('**/_web/api/setup/administrator',async route=>{count++;await route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({code:'INVALID_REQUEST',message:'Synthetic account failure'})});});
-  await page.goto(server.setupLink());await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');await page.getByRole('button',{name:'Create administrator',exact:true}).click();
+  await page.goto(server.origin);await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');await page.getByRole('button',{name:'Create administrator',exact:true}).click();
   await expect(page.locator('#setup-notice')).toContainText('Synthetic account failure');await expect(page.getByLabel('Account',{exact:true})).toHaveValue('admin');await expect(page.getByLabel('Password',{exact:true})).toHaveValue('');await expect(page.getByLabel('Confirm password',{exact:true})).toHaveValue('');assert.equal(count,1);
   await page.unroute('**/_web/api/setup/administrator');
-  await page.route('**/_web/api/setup/administrator',route=>route.fulfill({status:403,contentType:'application/json',body:JSON.stringify({code:'SETUP_AUTHORIZATION_INVALID'})}));
-  await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');await page.getByRole('button',{name:'Create administrator',exact:true}).click();await expect(page.getByRole('heading',{name:'Open your setup link'})).toBeVisible();await expect(page.locator('input[type=password]')).toHaveCount(0);
+  await page.route('**/_web/api/setup/administrator',route=>route.fulfill({status:403,contentType:'application/json',body:JSON.stringify({code:'CSRF_INVALID'})}));
+  await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');await page.getByRole('button',{name:'Create administrator',exact:true}).click();await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();await expect(page.locator('#setup-notice')).toContainText('form session expired');await expect(page.locator('input[type=password]')).toHaveCount(2);await expect(page.getByLabel('Password',{exact:true})).toHaveValue('');
  } finally {await browser.close();await server.stop();}
 });
 
@@ -406,7 +461,7 @@ test('setup, Admin and hosted Desktop retain shared control states and wrap at 3
   const {mkdir}=await import('node:fs/promises');
   const evidence=process.env.PIWORK_ONBOARDING_EVIDENCE_DIR||fileURLToPath(new URL('../../../../dist/align-core-setup/screenshots/',import.meta.url));await mkdir(evidence,{recursive:true});
   const page=await browser.newPage({viewport:{width:1440,height:1000}});
-  await page.goto(server.setupLink());await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
+  await page.goto(server.origin);await expect(page.getByRole('heading',{name:'Create your administrator'})).toBeVisible();
   const appearance=async(locator:any)=>locator.evaluate((el:HTMLElement)=>{const style=getComputedStyle(el),rect=el.getBoundingClientRect();return {height:rect.height,fontSize:style.fontSize,fontWeight:style.fontWeight,padding:style.padding,borderRadius:style.borderRadius,gap:style.gap,background:style.backgroundColor,color:style.color,outline:style.outlineStyle,opacity:style.opacity};});
   const create=page.getByRole('button',{name:'Create administrator',exact:true}),normal=await appearance(create);
   assert.equal(normal.height,40);assert.equal(normal.fontSize,'13px');assert.equal(normal.borderRadius,'7px');assert.equal(normal.gap,'8px');assert.equal(normal.fontWeight,'550');assert.equal(await create.locator('svg').count(),1);
@@ -459,7 +514,7 @@ test('real Engine prepares fixed release dependencies and permits one explicit W
  const server=await start({},undefined,engineHost),browser=await chromium.launch(browserOptions);
  let installation='';
  try {
-  const page=await browser.newPage({viewport:{width:1440,height:1000}});await page.goto(server.setupLink());await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');await page.getByRole('button',{name:'Create administrator',exact:true}).click();
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});await page.goto(server.origin);await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByLabel('Confirm password',{exact:true}).fill('synthetic-password');await page.getByRole('button',{name:'Create administrator',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await loginSetup(page,server);await fillModel(page,'synthetic-no-model-request');let tests=0,works=0,modelWrites=0,runtimeWrites=0;
   page.on('request',request=>{if(request.url().includes('/model-tests'))tests++;if(request.method()==='POST'&&request.url().endsWith('/admin/models'))modelWrites++;if(request.method()==='PUT'&&request.url().endsWith('/admin/runtime'))runtimeWrites++;if(request.method()==='POST'&&new URL(request.url()).pathname==='/_desktop/api/works')works++;});
   await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();

@@ -36,23 +36,18 @@ type Options struct {
 }
 
 type Server struct {
-	ctx                                  context.Context
-	options                              Options
-	origin                               *url.URL
-	transport                            *client.HandlerTransport
-	console                              http.Handler
-	services                             *cli.HostedServicePool
-	mu                                   sync.Mutex
-	sessions                             map[string]*session
-	challenges                           map[string]challenge
-	failures                             map[string]failureBucket
-	closed                               bool
-	cookie, challengeCookie, setupCookie string
-	setupMu                              sync.Mutex
-	proofHash                            [32]byte
-	proofEnd                             time.Time
-	proofUsed                            bool
-	setupSessions                        map[string]challenge
+	ctx                     context.Context
+	options                 Options
+	origin                  *url.URL
+	transport               *client.HandlerTransport
+	console                 http.Handler
+	services                *cli.HostedServicePool
+	mu                      sync.Mutex
+	sessions                map[string]*session
+	challenges              map[string]challenge
+	failures                map[string]failureBucket
+	closed                  bool
+	cookie, challengeCookie string
 }
 
 type session struct {
@@ -100,8 +95,8 @@ func New(ctx context.Context, options Options) (*Server, error) {
 		prefix = "__Host-piwork-web-"
 	}
 	cookie := prefix + hex.EncodeToString(key[:6])
-	s := &Server{ctx: ctx, options: options, origin: origin, cookie: cookie, challengeCookie: cookie + "-login", setupCookie: cookie + "-setup",
-		sessions: map[string]*session{}, challenges: map[string]challenge{}, failures: map[string]failureBucket{}, setupSessions: map[string]challenge{}}
+	s := &Server{ctx: ctx, options: options, origin: origin, cookie: cookie, challengeCookie: cookie + "-login",
+		sessions: map[string]*session{}, challenges: map[string]challenge{}, failures: map[string]failureBucket{}}
 	s.transport = client.NewHandlerTransport(ctx, options.Handler)
 	first, last := options.ServiceFirstPort, options.ServiceLastPort
 	if first == 0 && last == 0 {
@@ -146,9 +141,6 @@ func (s *Server) Close() {
 		ss.desktop.Close()
 		_ = os.RemoveAll(ss.stateDirectory)
 	}
-	s.setupMu.Lock()
-	s.invalidateSetupLocked()
-	s.setupMu.Unlock()
 	s.services.Close()
 	s.transport.Close()
 }
@@ -241,10 +233,6 @@ func (s *Server) sameOrigin(r *http.Request, mutation bool) bool {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if path == "/control/setup-link" {
-		s.operatorSetupLink(w, r)
-		return
-	}
 	if path == "/healthz" || path == "/readyz" || strings.HasPrefix(path, "/api/v1/") || strings.HasPrefix(path, "/control/") {
 		s.options.Handler.ServeHTTP(w, r)
 		return

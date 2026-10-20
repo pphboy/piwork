@@ -39576,342 +39576,6 @@
     "valid": true
   },
   {
-    "schema": "WebSetupLinkSchema",
-    "case": "baseline",
-    "json": "{\"url\":\"a\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "null",
-    "json": "null",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "empty-object",
-    "json": "{}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "empty-array",
-    "json": "[]",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "unknown-field",
-    "json": "{\"url\":\"a\",\"unexpected\":\"private-test-value\"}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "absent-url",
-    "json": "{}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "null-url",
-    "json": "{\"url\":null}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "empty-url",
-    "json": "{\"url\":\"\"}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "unicode-url-6604",
-    "json": "{\"url\":\"中文\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "unicode-url-6605",
-    "json": "{\"url\":\"😀\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "unicode-url-6606",
-    "json": "{\"url\":\"é\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "unicode-url-6607",
-    "json": "{\"url\":\"e\\\\u0301\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "unicode-url-6608",
-    "json": "{\"url\":\" \"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "unicode-url-6609",
-    "json": "{\"url\":\"a\\n\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "unicode-url-6610",
-    "json": "{\"url\":\"a \"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupLinkSchema",
-    "case": "unicode-url-6611",
-    "json": "{\"url\":\"\\u0000\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "baseline",
-    "json": "{\"proof\":\"a\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "null",
-    "json": "null",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "empty-object",
-    "json": "{}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "empty-array",
-    "json": "[]",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "unknown-field",
-    "json": "{\"proof\":\"a\",\"unexpected\":\"private-test-value\"}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "absent-proof",
-    "json": "{}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "null-proof",
-    "json": "{\"proof\":null}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "empty-proof",
-    "json": "{\"proof\":\"\"}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "unicode-proof-6620",
-    "json": "{\"proof\":\"中文\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "unicode-proof-6621",
-    "json": "{\"proof\":\"😀\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "unicode-proof-6622",
-    "json": "{\"proof\":\"é\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "unicode-proof-6623",
-    "json": "{\"proof\":\"e\\\\u0301\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "unicode-proof-6624",
-    "json": "{\"proof\":\" \"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "unicode-proof-6625",
-    "json": "{\"proof\":\"a\\n\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "unicode-proof-6626",
-    "json": "{\"proof\":\"a \"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupProofInputSchema",
-    "case": "unicode-proof-6627",
-    "json": "{\"proof\":\"\\u0000\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "baseline",
-    "json": "{\"authorized\":false}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "null",
-    "json": "null",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "empty-object",
-    "json": "{}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "empty-array",
-    "json": "[]",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "unknown-field",
-    "json": "{\"authorized\":false,\"unexpected\":\"private-test-value\"}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "absent-authorized",
-    "json": "{}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "null-authorized",
-    "json": "{\"authorized\":null}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "empty-authorized",
-    "json": "{\"authorized\":\"\"}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "false-authorized",
-    "json": "{\"authorized\":false}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "absent-complete",
-    "json": "{\"authorized\":false}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "null-complete",
-    "json": "{\"authorized\":false,\"complete\":null}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "empty-complete",
-    "json": "{\"authorized\":false,\"complete\":\"\"}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "false-complete",
-    "json": "{\"authorized\":false,\"complete\":false}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "absent-csrfToken",
-    "json": "{\"authorized\":false}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "null-csrfToken",
-    "json": "{\"authorized\":false,\"csrfToken\":null}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "empty-csrfToken",
-    "json": "{\"authorized\":false,\"csrfToken\":\"\"}",
-    "valid": false
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "unicode-csrfToken-6644",
-    "json": "{\"authorized\":false,\"csrfToken\":\"中文\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "unicode-csrfToken-6645",
-    "json": "{\"authorized\":false,\"csrfToken\":\"😀\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "unicode-csrfToken-6646",
-    "json": "{\"authorized\":false,\"csrfToken\":\"é\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "unicode-csrfToken-6647",
-    "json": "{\"authorized\":false,\"csrfToken\":\"e\\\\u0301\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "unicode-csrfToken-6648",
-    "json": "{\"authorized\":false,\"csrfToken\":\" \"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "unicode-csrfToken-6649",
-    "json": "{\"authorized\":false,\"csrfToken\":\"a\\n\"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "unicode-csrfToken-6650",
-    "json": "{\"authorized\":false,\"csrfToken\":\"a \"}",
-    "valid": true
-  },
-  {
-    "schema": "WebSetupSessionSchema",
-    "case": "unicode-csrfToken-6651",
-    "json": "{\"authorized\":false,\"csrfToken\":\"\\u0000\"}",
-    "valid": true
-  },
-  {
     "schema": "WebSetupStateSchema",
     "case": "baseline",
     "json": "{\"administratorInitialized\":false}",
@@ -40105,49 +39769,49 @@
   },
   {
     "schema": "WorkBlobSchema",
-    "case": "unicode-digest-6684",
+    "case": "unicode-digest-6628",
     "json": "{\"digest\":\"中文\",\"size\":0,\"kinds\":[\"file\"]}",
     "valid": false
   },
   {
     "schema": "WorkBlobSchema",
-    "case": "unicode-digest-6685",
+    "case": "unicode-digest-6629",
     "json": "{\"digest\":\"😀\",\"size\":0,\"kinds\":[\"file\"]}",
     "valid": false
   },
   {
     "schema": "WorkBlobSchema",
-    "case": "unicode-digest-6686",
+    "case": "unicode-digest-6630",
     "json": "{\"digest\":\"é\",\"size\":0,\"kinds\":[\"file\"]}",
     "valid": false
   },
   {
     "schema": "WorkBlobSchema",
-    "case": "unicode-digest-6687",
+    "case": "unicode-digest-6631",
     "json": "{\"digest\":\"e\\\\u0301\",\"size\":0,\"kinds\":[\"file\"]}",
     "valid": false
   },
   {
     "schema": "WorkBlobSchema",
-    "case": "unicode-digest-6688",
+    "case": "unicode-digest-6632",
     "json": "{\"digest\":\" \",\"size\":0,\"kinds\":[\"file\"]}",
     "valid": false
   },
   {
     "schema": "WorkBlobSchema",
-    "case": "unicode-digest-6689",
+    "case": "unicode-digest-6633",
     "json": "{\"digest\":\"a\\n\",\"size\":0,\"kinds\":[\"file\"]}",
     "valid": false
   },
   {
     "schema": "WorkBlobSchema",
-    "case": "unicode-digest-6690",
+    "case": "unicode-digest-6634",
     "json": "{\"digest\":\"a \",\"size\":0,\"kinds\":[\"file\"]}",
     "valid": false
   },
   {
     "schema": "WorkBlobSchema",
-    "case": "unicode-digest-6691",
+    "case": "unicode-digest-6635",
     "json": "{\"digest\":\"\\u0000\",\"size\":0,\"kinds\":[\"file\"]}",
     "valid": false
   },
@@ -40339,49 +40003,49 @@
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-agentsMd-6723",
+    "case": "unicode-agentsMd-6667",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"中文\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": true
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-agentsMd-6724",
+    "case": "unicode-agentsMd-6668",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"😀\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": true
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-agentsMd-6725",
+    "case": "unicode-agentsMd-6669",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"é\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": true
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-agentsMd-6726",
+    "case": "unicode-agentsMd-6670",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"e\\\\u0301\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": true
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-agentsMd-6727",
+    "case": "unicode-agentsMd-6671",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\" \",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": true
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-agentsMd-6728",
+    "case": "unicode-agentsMd-6672",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\\n\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": true
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-agentsMd-6729",
+    "case": "unicode-agentsMd-6673",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a \",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": true
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-agentsMd-6730",
+    "case": "unicode-agentsMd-6674",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"\\u0000\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": true
   },
@@ -40405,49 +40069,49 @@
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-modelRef-6734",
+    "case": "unicode-modelRef-6678",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"中文\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-modelRef-6735",
+    "case": "unicode-modelRef-6679",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"😀\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-modelRef-6736",
+    "case": "unicode-modelRef-6680",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"é\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-modelRef-6737",
+    "case": "unicode-modelRef-6681",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"e\\\\u0301\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-modelRef-6738",
+    "case": "unicode-modelRef-6682",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\" \",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-modelRef-6739",
+    "case": "unicode-modelRef-6683",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"a\\n\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-modelRef-6740",
+    "case": "unicode-modelRef-6684",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"a \",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigSchema",
-    "case": "unicode-modelRef-6741",
+    "case": "unicode-modelRef-6685",
     "json": "{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"\\u0000\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}}",
     "valid": false
   },
@@ -40609,49 +40273,49 @@
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-agentsMd-6768",
+    "case": "unicode-agentsMd-6712",
     "json": "{\"agentsMd\":\"中文\"}",
     "valid": true
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-agentsMd-6769",
+    "case": "unicode-agentsMd-6713",
     "json": "{\"agentsMd\":\"😀\"}",
     "valid": true
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-agentsMd-6770",
+    "case": "unicode-agentsMd-6714",
     "json": "{\"agentsMd\":\"é\"}",
     "valid": true
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-agentsMd-6771",
+    "case": "unicode-agentsMd-6715",
     "json": "{\"agentsMd\":\"e\\\\u0301\"}",
     "valid": true
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-agentsMd-6772",
+    "case": "unicode-agentsMd-6716",
     "json": "{\"agentsMd\":\" \"}",
     "valid": true
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-agentsMd-6773",
+    "case": "unicode-agentsMd-6717",
     "json": "{\"agentsMd\":\"a\\n\"}",
     "valid": true
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-agentsMd-6774",
+    "case": "unicode-agentsMd-6718",
     "json": "{\"agentsMd\":\"a \"}",
     "valid": true
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-agentsMd-6775",
+    "case": "unicode-agentsMd-6719",
     "json": "{\"agentsMd\":\"\\u0000\"}",
     "valid": true
   },
@@ -40675,49 +40339,49 @@
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-modelRef-6779",
+    "case": "unicode-modelRef-6723",
     "json": "{\"modelRef\":\"中文\"}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-modelRef-6780",
+    "case": "unicode-modelRef-6724",
     "json": "{\"modelRef\":\"😀\"}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-modelRef-6781",
+    "case": "unicode-modelRef-6725",
     "json": "{\"modelRef\":\"é\"}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-modelRef-6782",
+    "case": "unicode-modelRef-6726",
     "json": "{\"modelRef\":\"e\\\\u0301\"}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-modelRef-6783",
+    "case": "unicode-modelRef-6727",
     "json": "{\"modelRef\":\" \"}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-modelRef-6784",
+    "case": "unicode-modelRef-6728",
     "json": "{\"modelRef\":\"a\\n\"}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-modelRef-6785",
+    "case": "unicode-modelRef-6729",
     "json": "{\"modelRef\":\"a \"}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationPatchSchema",
-    "case": "unicode-modelRef-6786",
+    "case": "unicode-modelRef-6730",
     "json": "{\"modelRef\":\"\\u0000\"}",
     "valid": false
   },
@@ -40825,49 +40489,49 @@
   },
   {
     "schema": "WorkConfigurationViewSchema",
-    "case": "unicode-workId-6804",
+    "case": "unicode-workId-6748",
     "json": "{\"workId\":\"中文\",\"active\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"desired\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"pendingApply\":false,\"runtime\":{\"state\":\"ready\",\"checkedAt\":\"2026-09-30T00:00:00Z\",\"skills\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationViewSchema",
-    "case": "unicode-workId-6805",
+    "case": "unicode-workId-6749",
     "json": "{\"workId\":\"😀\",\"active\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"desired\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"pendingApply\":false,\"runtime\":{\"state\":\"ready\",\"checkedAt\":\"2026-09-30T00:00:00Z\",\"skills\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationViewSchema",
-    "case": "unicode-workId-6806",
+    "case": "unicode-workId-6750",
     "json": "{\"workId\":\"é\",\"active\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"desired\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"pendingApply\":false,\"runtime\":{\"state\":\"ready\",\"checkedAt\":\"2026-09-30T00:00:00Z\",\"skills\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationViewSchema",
-    "case": "unicode-workId-6807",
+    "case": "unicode-workId-6751",
     "json": "{\"workId\":\"e\\\\u0301\",\"active\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"desired\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"pendingApply\":false,\"runtime\":{\"state\":\"ready\",\"checkedAt\":\"2026-09-30T00:00:00Z\",\"skills\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationViewSchema",
-    "case": "unicode-workId-6808",
+    "case": "unicode-workId-6752",
     "json": "{\"workId\":\" \",\"active\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"desired\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"pendingApply\":false,\"runtime\":{\"state\":\"ready\",\"checkedAt\":\"2026-09-30T00:00:00Z\",\"skills\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationViewSchema",
-    "case": "unicode-workId-6809",
+    "case": "unicode-workId-6753",
     "json": "{\"workId\":\"a\\n\",\"active\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"desired\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"pendingApply\":false,\"runtime\":{\"state\":\"ready\",\"checkedAt\":\"2026-09-30T00:00:00Z\",\"skills\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationViewSchema",
-    "case": "unicode-workId-6810",
+    "case": "unicode-workId-6754",
     "json": "{\"workId\":\"a \",\"active\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"desired\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"pendingApply\":false,\"runtime\":{\"state\":\"ready\",\"checkedAt\":\"2026-09-30T00:00:00Z\",\"skills\":[]}}",
     "valid": false
   },
   {
     "schema": "WorkConfigurationViewSchema",
-    "case": "unicode-workId-6811",
+    "case": "unicode-workId-6755",
     "json": "{\"workId\":\"\\u0000\",\"active\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"desired\":{\"agentImage\":{\"catalogId\":\"aaaaaaaaaaaaaaaa\"},\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"modelRef\":\"aaaaaaaaaaaaaaaa\",\"mcpServers\":[],\"resources\":{\"cpuMillis\":100,\"memoryBytes\":67108864,\"agentCpuMillis\":100,\"agentMemoryBytes\":67108864,\"maxServices\":0,\"maxRetainedVolumes\":0},\"tools\":{\"allowed\":[],\"denied\":[]}},\"pendingApply\":false,\"runtime\":{\"state\":\"ready\",\"checkedAt\":\"2026-09-30T00:00:00Z\",\"skills\":[]}}",
     "valid": false
   },
@@ -41041,49 +40705,49 @@
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-snapshotId-6840",
+    "case": "unicode-snapshotId-6784",
     "json": "{\"version\":1,\"snapshotId\":\"中文\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-snapshotId-6841",
+    "case": "unicode-snapshotId-6785",
     "json": "{\"version\":1,\"snapshotId\":\"😀\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-snapshotId-6842",
+    "case": "unicode-snapshotId-6786",
     "json": "{\"version\":1,\"snapshotId\":\"é\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-snapshotId-6843",
+    "case": "unicode-snapshotId-6787",
     "json": "{\"version\":1,\"snapshotId\":\"e\\\\u0301\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-snapshotId-6844",
+    "case": "unicode-snapshotId-6788",
     "json": "{\"version\":1,\"snapshotId\":\" \",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-snapshotId-6845",
+    "case": "unicode-snapshotId-6789",
     "json": "{\"version\":1,\"snapshotId\":\"a\\n\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-snapshotId-6846",
+    "case": "unicode-snapshotId-6790",
     "json": "{\"version\":1,\"snapshotId\":\"a \",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-snapshotId-6847",
+    "case": "unicode-snapshotId-6791",
     "json": "{\"version\":1,\"snapshotId\":\"\\u0000\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
@@ -41107,49 +40771,49 @@
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-workId-6851",
+    "case": "unicode-workId-6795",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"中文\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-workId-6852",
+    "case": "unicode-workId-6796",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"😀\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-workId-6853",
+    "case": "unicode-workId-6797",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"é\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-workId-6854",
+    "case": "unicode-workId-6798",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"e\\\\u0301\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-workId-6855",
+    "case": "unicode-workId-6799",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\" \",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-workId-6856",
+    "case": "unicode-workId-6800",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\\n\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-workId-6857",
+    "case": "unicode-workId-6801",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a \",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-workId-6858",
+    "case": "unicode-workId-6802",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"\\u0000\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": true
   },
@@ -41173,49 +40837,49 @@
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-imageIdentity-6862",
+    "case": "unicode-imageIdentity-6806",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"中文\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-imageIdentity-6863",
+    "case": "unicode-imageIdentity-6807",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"😀\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-imageIdentity-6864",
+    "case": "unicode-imageIdentity-6808",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"é\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-imageIdentity-6865",
+    "case": "unicode-imageIdentity-6809",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"e\\\\u0301\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-imageIdentity-6866",
+    "case": "unicode-imageIdentity-6810",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\" \",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-imageIdentity-6867",
+    "case": "unicode-imageIdentity-6811",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"a\\n\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-imageIdentity-6868",
+    "case": "unicode-imageIdentity-6812",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"a \",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-imageIdentity-6869",
+    "case": "unicode-imageIdentity-6813",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"\\u0000\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"2026-09-30T00:00:00Z\"}",
     "valid": false
   },
@@ -41293,49 +40957,49 @@
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-createdAt-6882",
+    "case": "unicode-createdAt-6826",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"中文\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-createdAt-6883",
+    "case": "unicode-createdAt-6827",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"😀\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-createdAt-6884",
+    "case": "unicode-createdAt-6828",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"é\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-createdAt-6885",
+    "case": "unicode-createdAt-6829",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"e\\\\u0301\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-createdAt-6886",
+    "case": "unicode-createdAt-6830",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\" \"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-createdAt-6887",
+    "case": "unicode-createdAt-6831",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"a\\n\"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-createdAt-6888",
+    "case": "unicode-createdAt-6832",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"a \"}",
     "valid": false
   },
   {
     "schema": "WorkContextMetadataSchema",
-    "case": "unicode-createdAt-6889",
+    "case": "unicode-createdAt-6833",
     "json": "{\"version\":1,\"snapshotId\":\"a\",\"workId\":\"a\",\"imageIdentity\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"skills\":[],\"packageContractVersion\":1,\"packageBindings\":[],\"createdAt\":\"\\u0000\"}",
     "valid": false
   },
@@ -41509,49 +41173,49 @@
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-operationId-6918",
+    "case": "unicode-operationId-6862",
     "json": "{\"operationId\":\"中文\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-operationId-6919",
+    "case": "unicode-operationId-6863",
     "json": "{\"operationId\":\"😀\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-operationId-6920",
+    "case": "unicode-operationId-6864",
     "json": "{\"operationId\":\"é\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-operationId-6921",
+    "case": "unicode-operationId-6865",
     "json": "{\"operationId\":\"e\\\\u0301\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-operationId-6922",
+    "case": "unicode-operationId-6866",
     "json": "{\"operationId\":\" \",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-operationId-6923",
+    "case": "unicode-operationId-6867",
     "json": "{\"operationId\":\"a\\n\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-operationId-6924",
+    "case": "unicode-operationId-6868",
     "json": "{\"operationId\":\"a \",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-operationId-6925",
+    "case": "unicode-operationId-6869",
     "json": "{\"operationId\":\"\\u0000\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
@@ -41575,49 +41239,49 @@
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-workId-6929",
+    "case": "unicode-workId-6873",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"中文\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-workId-6930",
+    "case": "unicode-workId-6874",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"😀\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-workId-6931",
+    "case": "unicode-workId-6875",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"é\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-workId-6932",
+    "case": "unicode-workId-6876",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"e\\\\u0301\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-workId-6933",
+    "case": "unicode-workId-6877",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\" \",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-workId-6934",
+    "case": "unicode-workId-6878",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"a\\n\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-workId-6935",
+    "case": "unicode-workId-6879",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"a \",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-workId-6936",
+    "case": "unicode-workId-6880",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"\\u0000\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
@@ -41677,49 +41341,49 @@
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-storeId-6946",
+    "case": "unicode-storeId-6890",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"中文\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-storeId-6947",
+    "case": "unicode-storeId-6891",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"😀\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-storeId-6948",
+    "case": "unicode-storeId-6892",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"é\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-storeId-6949",
+    "case": "unicode-storeId-6893",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"e\\\\u0301\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-storeId-6950",
+    "case": "unicode-storeId-6894",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\" \",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-storeId-6951",
+    "case": "unicode-storeId-6895",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"a\\n\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-storeId-6952",
+    "case": "unicode-storeId-6896",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"a \",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-storeId-6953",
+    "case": "unicode-storeId-6897",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"\\u0000\",\"backupManifestDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
     "valid": false
   },
@@ -41743,49 +41407,49 @@
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-backupManifestDigest-6957",
+    "case": "unicode-backupManifestDigest-6901",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"中文\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-backupManifestDigest-6958",
+    "case": "unicode-backupManifestDigest-6902",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"😀\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-backupManifestDigest-6959",
+    "case": "unicode-backupManifestDigest-6903",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"é\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-backupManifestDigest-6960",
+    "case": "unicode-backupManifestDigest-6904",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"e\\\\u0301\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-backupManifestDigest-6961",
+    "case": "unicode-backupManifestDigest-6905",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\" \"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-backupManifestDigest-6962",
+    "case": "unicode-backupManifestDigest-6906",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"a\\n\"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-backupManifestDigest-6963",
+    "case": "unicode-backupManifestDigest-6907",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"a \"}",
     "valid": false
   },
   {
     "schema": "WorkHistoryMigrationSchema",
-    "case": "unicode-backupManifestDigest-6964",
+    "case": "unicode-backupManifestDigest-6908",
     "json": "{\"operationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"fromSchema\":4,\"toSchema\":5,\"storeId\":\"aaaaaaaaaaaaaaaa\",\"backupManifestDigest\":\"\\u0000\"}",
     "valid": false
   },
@@ -41839,49 +41503,49 @@
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-os-6973",
+    "case": "unicode-os-6917",
     "json": "{\"os\":\"中文\",\"architecture\":\"a\",\"variant\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-os-6974",
+    "case": "unicode-os-6918",
     "json": "{\"os\":\"😀\",\"architecture\":\"a\",\"variant\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-os-6975",
+    "case": "unicode-os-6919",
     "json": "{\"os\":\"é\",\"architecture\":\"a\",\"variant\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-os-6976",
+    "case": "unicode-os-6920",
     "json": "{\"os\":\"e\\\\u0301\",\"architecture\":\"a\",\"variant\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-os-6977",
+    "case": "unicode-os-6921",
     "json": "{\"os\":\" \",\"architecture\":\"a\",\"variant\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-os-6978",
+    "case": "unicode-os-6922",
     "json": "{\"os\":\"a\\n\",\"architecture\":\"a\",\"variant\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-os-6979",
+    "case": "unicode-os-6923",
     "json": "{\"os\":\"a \",\"architecture\":\"a\",\"variant\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-os-6980",
+    "case": "unicode-os-6924",
     "json": "{\"os\":\"\\u0000\",\"architecture\":\"a\",\"variant\":\"a\"}",
     "valid": false
   },
@@ -41905,49 +41569,49 @@
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-architecture-6984",
+    "case": "unicode-architecture-6928",
     "json": "{\"os\":\"linux\",\"architecture\":\"中文\",\"variant\":\"a\"}",
     "valid": true
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-architecture-6985",
+    "case": "unicode-architecture-6929",
     "json": "{\"os\":\"linux\",\"architecture\":\"😀\",\"variant\":\"a\"}",
     "valid": true
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-architecture-6986",
+    "case": "unicode-architecture-6930",
     "json": "{\"os\":\"linux\",\"architecture\":\"é\",\"variant\":\"a\"}",
     "valid": true
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-architecture-6987",
+    "case": "unicode-architecture-6931",
     "json": "{\"os\":\"linux\",\"architecture\":\"e\\\\u0301\",\"variant\":\"a\"}",
     "valid": true
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-architecture-6988",
+    "case": "unicode-architecture-6932",
     "json": "{\"os\":\"linux\",\"architecture\":\" \",\"variant\":\"a\"}",
     "valid": true
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-architecture-6989",
+    "case": "unicode-architecture-6933",
     "json": "{\"os\":\"linux\",\"architecture\":\"a\\n\",\"variant\":\"a\"}",
     "valid": true
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-architecture-6990",
+    "case": "unicode-architecture-6934",
     "json": "{\"os\":\"linux\",\"architecture\":\"a \",\"variant\":\"a\"}",
     "valid": true
   },
   {
     "schema": "WorkImagePlatformSchema",
-    "case": "unicode-architecture-6991",
+    "case": "unicode-architecture-6935",
     "json": "{\"os\":\"linux\",\"architecture\":\"\\u0000\",\"variant\":\"a\"}",
     "valid": true
   },
@@ -42085,49 +41749,49 @@
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-sourcePackageDigest-7014",
+    "case": "unicode-sourcePackageDigest-6958",
     "json": "{\"sourcePackageDigest\":\"中文\",\"importOperationId\":\"aaaaaaaaaaaaaaaa\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-sourcePackageDigest-7015",
+    "case": "unicode-sourcePackageDigest-6959",
     "json": "{\"sourcePackageDigest\":\"😀\",\"importOperationId\":\"aaaaaaaaaaaaaaaa\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-sourcePackageDigest-7016",
+    "case": "unicode-sourcePackageDigest-6960",
     "json": "{\"sourcePackageDigest\":\"é\",\"importOperationId\":\"aaaaaaaaaaaaaaaa\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-sourcePackageDigest-7017",
+    "case": "unicode-sourcePackageDigest-6961",
     "json": "{\"sourcePackageDigest\":\"e\\\\u0301\",\"importOperationId\":\"aaaaaaaaaaaaaaaa\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-sourcePackageDigest-7018",
+    "case": "unicode-sourcePackageDigest-6962",
     "json": "{\"sourcePackageDigest\":\" \",\"importOperationId\":\"aaaaaaaaaaaaaaaa\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-sourcePackageDigest-7019",
+    "case": "unicode-sourcePackageDigest-6963",
     "json": "{\"sourcePackageDigest\":\"a\\n\",\"importOperationId\":\"aaaaaaaaaaaaaaaa\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-sourcePackageDigest-7020",
+    "case": "unicode-sourcePackageDigest-6964",
     "json": "{\"sourcePackageDigest\":\"a \",\"importOperationId\":\"aaaaaaaaaaaaaaaa\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-sourcePackageDigest-7021",
+    "case": "unicode-sourcePackageDigest-6965",
     "json": "{\"sourcePackageDigest\":\"\\u0000\",\"importOperationId\":\"aaaaaaaaaaaaaaaa\",\"operationMap\":[]}",
     "valid": false
   },
@@ -42151,49 +41815,49 @@
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-importOperationId-7025",
+    "case": "unicode-importOperationId-6969",
     "json": "{\"sourcePackageDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"importOperationId\":\"中文\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-importOperationId-7026",
+    "case": "unicode-importOperationId-6970",
     "json": "{\"sourcePackageDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"importOperationId\":\"😀\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-importOperationId-7027",
+    "case": "unicode-importOperationId-6971",
     "json": "{\"sourcePackageDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"importOperationId\":\"é\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-importOperationId-7028",
+    "case": "unicode-importOperationId-6972",
     "json": "{\"sourcePackageDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"importOperationId\":\"e\\\\u0301\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-importOperationId-7029",
+    "case": "unicode-importOperationId-6973",
     "json": "{\"sourcePackageDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"importOperationId\":\" \",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-importOperationId-7030",
+    "case": "unicode-importOperationId-6974",
     "json": "{\"sourcePackageDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"importOperationId\":\"a\\n\",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-importOperationId-7031",
+    "case": "unicode-importOperationId-6975",
     "json": "{\"sourcePackageDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"importOperationId\":\"a \",\"operationMap\":[]}",
     "valid": false
   },
   {
     "schema": "WorkImportProvenanceSchema",
-    "case": "unicode-importOperationId-7032",
+    "case": "unicode-importOperationId-6976",
     "json": "{\"sourcePackageDigest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"importOperationId\":\"\\u0000\",\"operationMap\":[]}",
     "valid": false
   },
@@ -42367,49 +42031,49 @@
   },
   {
     "schema": "WorkReadinessSchema",
-    "case": "unicode-observedAt-7061",
+    "case": "unicode-observedAt-7005",
     "json": "{\"identity\":{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1},\"activeRevision\":1,\"state\":\"starting\",\"observedAt\":\"中文\",\"loadedSkillIds\":[],\"unavailableMcpServerIds\":[]}",
     "valid": false
   },
   {
     "schema": "WorkReadinessSchema",
-    "case": "unicode-observedAt-7062",
+    "case": "unicode-observedAt-7006",
     "json": "{\"identity\":{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1},\"activeRevision\":1,\"state\":\"starting\",\"observedAt\":\"😀\",\"loadedSkillIds\":[],\"unavailableMcpServerIds\":[]}",
     "valid": false
   },
   {
     "schema": "WorkReadinessSchema",
-    "case": "unicode-observedAt-7063",
+    "case": "unicode-observedAt-7007",
     "json": "{\"identity\":{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1},\"activeRevision\":1,\"state\":\"starting\",\"observedAt\":\"é\",\"loadedSkillIds\":[],\"unavailableMcpServerIds\":[]}",
     "valid": false
   },
   {
     "schema": "WorkReadinessSchema",
-    "case": "unicode-observedAt-7064",
+    "case": "unicode-observedAt-7008",
     "json": "{\"identity\":{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1},\"activeRevision\":1,\"state\":\"starting\",\"observedAt\":\"e\\\\u0301\",\"loadedSkillIds\":[],\"unavailableMcpServerIds\":[]}",
     "valid": false
   },
   {
     "schema": "WorkReadinessSchema",
-    "case": "unicode-observedAt-7065",
+    "case": "unicode-observedAt-7009",
     "json": "{\"identity\":{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1},\"activeRevision\":1,\"state\":\"starting\",\"observedAt\":\" \",\"loadedSkillIds\":[],\"unavailableMcpServerIds\":[]}",
     "valid": false
   },
   {
     "schema": "WorkReadinessSchema",
-    "case": "unicode-observedAt-7066",
+    "case": "unicode-observedAt-7010",
     "json": "{\"identity\":{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1},\"activeRevision\":1,\"state\":\"starting\",\"observedAt\":\"a\\n\",\"loadedSkillIds\":[],\"unavailableMcpServerIds\":[]}",
     "valid": false
   },
   {
     "schema": "WorkReadinessSchema",
-    "case": "unicode-observedAt-7067",
+    "case": "unicode-observedAt-7011",
     "json": "{\"identity\":{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1},\"activeRevision\":1,\"state\":\"starting\",\"observedAt\":\"a \",\"loadedSkillIds\":[],\"unavailableMcpServerIds\":[]}",
     "valid": false
   },
   {
     "schema": "WorkReadinessSchema",
-    "case": "unicode-observedAt-7068",
+    "case": "unicode-observedAt-7012",
     "json": "{\"identity\":{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1},\"activeRevision\":1,\"state\":\"starting\",\"observedAt\":\"\\u0000\",\"loadedSkillIds\":[],\"unavailableMcpServerIds\":[]}",
     "valid": false
   },
@@ -42499,49 +42163,49 @@
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-installationId-7083",
+    "case": "unicode-installationId-7027",
     "json": "{\"installationId\":\"中文\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-installationId-7084",
+    "case": "unicode-installationId-7028",
     "json": "{\"installationId\":\"😀\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-installationId-7085",
+    "case": "unicode-installationId-7029",
     "json": "{\"installationId\":\"é\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-installationId-7086",
+    "case": "unicode-installationId-7030",
     "json": "{\"installationId\":\"e\\\\u0301\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-installationId-7087",
+    "case": "unicode-installationId-7031",
     "json": "{\"installationId\":\" \",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-installationId-7088",
+    "case": "unicode-installationId-7032",
     "json": "{\"installationId\":\"a\\n\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-installationId-7089",
+    "case": "unicode-installationId-7033",
     "json": "{\"installationId\":\"a \",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-installationId-7090",
+    "case": "unicode-installationId-7034",
     "json": "{\"installationId\":\"\\u0000\",\"workId\":\"aaaaaaaaaaaaaaaa\",\"generation\":1}",
     "valid": false
   },
@@ -42565,49 +42229,49 @@
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-workId-7094",
+    "case": "unicode-workId-7038",
     "json": "{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"中文\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-workId-7095",
+    "case": "unicode-workId-7039",
     "json": "{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"😀\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-workId-7096",
+    "case": "unicode-workId-7040",
     "json": "{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"é\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-workId-7097",
+    "case": "unicode-workId-7041",
     "json": "{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"e\\\\u0301\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-workId-7098",
+    "case": "unicode-workId-7042",
     "json": "{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\" \",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-workId-7099",
+    "case": "unicode-workId-7043",
     "json": "{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"a\\n\",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-workId-7100",
+    "case": "unicode-workId-7044",
     "json": "{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"a \",\"generation\":1}",
     "valid": false
   },
   {
     "schema": "WorkRuntimeIdentitySchema",
-    "case": "unicode-workId-7101",
+    "case": "unicode-workId-7045",
     "json": "{\"installationId\":\"aaaaaaaaaaaaaaaa\",\"workId\":\"\\u0000\",\"generation\":1}",
     "valid": false
   },
@@ -42811,49 +42475,49 @@
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-7135",
+    "case": "unicode-code-7079",
     "json": "{\"code\":\"中文\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-7136",
+    "case": "unicode-code-7080",
     "json": "{\"code\":\"😀\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-7137",
+    "case": "unicode-code-7081",
     "json": "{\"code\":\"é\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-7138",
+    "case": "unicode-code-7082",
     "json": "{\"code\":\"e\\\\u0301\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-7139",
+    "case": "unicode-code-7083",
     "json": "{\"code\":\" \",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-7140",
+    "case": "unicode-code-7084",
     "json": "{\"code\":\"a\\n\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-7141",
+    "case": "unicode-code-7085",
     "json": "{\"code\":\"a \",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-7142",
+    "case": "unicode-code-7086",
     "json": "{\"code\":\"\\u0000\",\"message\":\"a\"}",
     "valid": false
   },
@@ -42877,49 +42541,49 @@
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-7146",
+    "case": "unicode-message-7090",
     "json": "{\"code\":\"OK\",\"message\":\"中文\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-7147",
+    "case": "unicode-message-7091",
     "json": "{\"code\":\"OK\",\"message\":\"😀\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-7148",
+    "case": "unicode-message-7092",
     "json": "{\"code\":\"OK\",\"message\":\"é\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-7149",
+    "case": "unicode-message-7093",
     "json": "{\"code\":\"OK\",\"message\":\"e\\\\u0301\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-7150",
+    "case": "unicode-message-7094",
     "json": "{\"code\":\"OK\",\"message\":\" \"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-7151",
+    "case": "unicode-message-7095",
     "json": "{\"code\":\"OK\",\"message\":\"a\\n\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-7152",
+    "case": "unicode-message-7096",
     "json": "{\"code\":\"OK\",\"message\":\"a \"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-7153",
+    "case": "unicode-message-7097",
     "json": "{\"code\":\"OK\",\"message\":\"\\u0000\"}",
     "valid": true
   },
@@ -42943,49 +42607,49 @@
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-7157",
+    "case": "unicode-field-7101",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"中文\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-7158",
+    "case": "unicode-field-7102",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"😀\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-7159",
+    "case": "unicode-field-7103",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"é\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-7160",
+    "case": "unicode-field-7104",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"e\\\\u0301\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-7161",
+    "case": "unicode-field-7105",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\" \"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-7162",
+    "case": "unicode-field-7106",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"a\\n\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-7163",
+    "case": "unicode-field-7107",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"a \"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-7164",
+    "case": "unicode-field-7108",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"\\u0000\"}",
     "valid": true
   },
@@ -43039,49 +42703,49 @@
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-7173",
+    "case": "unicode-workId-7117",
     "json": "{\"workId\":\"中文\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-7174",
+    "case": "unicode-workId-7118",
     "json": "{\"workId\":\"😀\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-7175",
+    "case": "unicode-workId-7119",
     "json": "{\"workId\":\"é\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-7176",
+    "case": "unicode-workId-7120",
     "json": "{\"workId\":\"e\\\\u0301\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-7177",
+    "case": "unicode-workId-7121",
     "json": "{\"workId\":\" \",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-7178",
+    "case": "unicode-workId-7122",
     "json": "{\"workId\":\"a\\n\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-7179",
+    "case": "unicode-workId-7123",
     "json": "{\"workId\":\"a \",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-7180",
+    "case": "unicode-workId-7124",
     "json": "{\"workId\":\"\\u0000\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
@@ -43105,49 +42769,49 @@
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-7184",
+    "case": "unicode-snapshotId-7128",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"中文\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-7185",
+    "case": "unicode-snapshotId-7129",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"😀\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-7186",
+    "case": "unicode-snapshotId-7130",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"é\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-7187",
+    "case": "unicode-snapshotId-7131",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"e\\\\u0301\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-7188",
+    "case": "unicode-snapshotId-7132",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\" \",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-7189",
+    "case": "unicode-snapshotId-7133",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"a\\n\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-7190",
+    "case": "unicode-snapshotId-7134",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"a \",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-7191",
+    "case": "unicode-snapshotId-7135",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"\\u0000\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
@@ -43171,49 +42835,49 @@
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-7195",
+    "case": "unicode-operationId-7139",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"中文\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-7196",
+    "case": "unicode-operationId-7140",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"😀\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-7197",
+    "case": "unicode-operationId-7141",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"é\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-7198",
+    "case": "unicode-operationId-7142",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"e\\\\u0301\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-7199",
+    "case": "unicode-operationId-7143",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\" \",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-7200",
+    "case": "unicode-operationId-7144",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"a\\n\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-7201",
+    "case": "unicode-operationId-7145",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"a \",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-7202",
+    "case": "unicode-operationId-7146",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"\\u0000\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
@@ -43375,49 +43039,49 @@
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-7229",
+    "case": "unicode-sourceWorkId-7173",
     "json": "{\"version\":1,\"sourceWorkId\":\"中文\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-7230",
+    "case": "unicode-sourceWorkId-7174",
     "json": "{\"version\":1,\"sourceWorkId\":\"😀\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-7231",
+    "case": "unicode-sourceWorkId-7175",
     "json": "{\"version\":1,\"sourceWorkId\":\"é\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-7232",
+    "case": "unicode-sourceWorkId-7176",
     "json": "{\"version\":1,\"sourceWorkId\":\"e\\\\u0301\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-7233",
+    "case": "unicode-sourceWorkId-7177",
     "json": "{\"version\":1,\"sourceWorkId\":\" \",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-7234",
+    "case": "unicode-sourceWorkId-7178",
     "json": "{\"version\":1,\"sourceWorkId\":\"a\\n\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-7235",
+    "case": "unicode-sourceWorkId-7179",
     "json": "{\"version\":1,\"sourceWorkId\":\"a \",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-7236",
+    "case": "unicode-sourceWorkId-7180",
     "json": "{\"version\":1,\"sourceWorkId\":\"\\u0000\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
