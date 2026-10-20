@@ -2,6 +2,40 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.8",
+      "component": "core",
+      "title": "Piwork 0.0.8 Preview",
+      "publishedAt": "2026-10-20",
+      "sections": [
+        {
+          "title": "One-command Linux startup and browser setup",
+          "items": [
+            "Start Core, the web workbench and administration from one Linux program or Docker container, then open the server IP in a browser.",
+            "Create the first administrator directly, with password confirmation, then sign in normally and configure a model and CoreRuntime through Quick setup.",
+            "Use matching embedded Agent and helper image defaults without manual image configuration or model environment variables.",
+            "Remove private setup links and terminal browser authorization while preserving account login, CSRF protection and Work ownership checks."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.8",
+      "component": "desktop",
+      "title": "Piwork 0.0.8 Preview",
+      "publishedAt": "2026-10-20",
+      "sections": [
+        {
+          "title": "Open, sign in and work",
+          "items": [
+            "Open Desktop directly without Access pages, browser tickets or terminal approval; local Desktop restores ordinary sessions and can reuse a valid saved Core login.",
+            "Use consistent Quick setup, Admin navigation and account menu interactions, with clear preparation progress before opening the workbench.",
+            "Recover slow session initialization through Retry connection without replaying business actions.",
+            "Use the simplified bilingual project READMEs and updated one-command installation guides."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.7",
       "component": "core",
       "title": "Piwork 0.0.7 Preview",
