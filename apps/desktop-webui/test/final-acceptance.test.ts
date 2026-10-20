@@ -392,7 +392,10 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) test(`Final 15
   await page.emulateMedia({ reducedMotion });
   await button(page, 'service-menu').click(); await button(page, 'manage-services').click();
   await page.locator('[data-action="service-details"][data-id="service-a"]').click();
-  await expect(page.locator('#modal')).toContainText('Reading this Service’s log snapshot');
+  const pendingLogs = page.locator('#modal [data-pending-action~="refresh-logs"]');
+  await expect(pendingLogs).toContainText('Reading Tool A log snapshot');
+  await expect(pendingLogs).toHaveAttribute('aria-busy', 'true');
+  await expect(pendingLogs.locator('.pending-dots')).toHaveCount(1);
   await button(page, 'close-modal').click(); await button(page, 'tab-Files').click();
   await button(page, 'file-add').click(); await page.getByRole('menuitem', { name: 'New folder' }).click();
   await page.locator('#form-name').fill('new modal keeps focus');
@@ -403,6 +406,7 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) test(`Final 15
   assert.equal(await page.evaluate(() => document.querySelector('#modal') === (window as any).newAcceptanceModal), true);
   await expect(page.locator('dialog[open]')).toHaveCount(1);
   await expect(page.locator('#modal')).not.toContainText('Late original A log');
+  await expect(page.locator('#modal [data-pending-action~="refresh-logs"]')).toHaveCount(0);
   const motion = await page.locator('#modal').evaluate(node => ({ animation: getComputedStyle(node).animationName, transition: getComputedStyle(node).transitionDuration }));
   assert.equal(motion.animation, 'none'); assert.match(motion.transition, /^0s(?:, 0s)*$/);
   await page.keyboard.press('Escape'); await expect(page.locator('#file-add-trigger')).toBeFocused();

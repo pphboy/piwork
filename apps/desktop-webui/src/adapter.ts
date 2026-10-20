@@ -57,7 +57,7 @@ export class DesktopAdapter {
   historyImageKey(id:string,session:string,run:string,index:number){return `${id}:${session}:${run}:${index}`;}
   loadHistoryImage(id:string,session:string,run:string,image:HistoryImage) {
     const key=this.historyImageKey(id,session,run,image.imageIndex);if(this.imageLoads.has(key))return;
-    const state={phase:'loading' as 'loading'|'ready'|'error',url:undefined as string|undefined,error:''},epoch=this.epoch;this.imageLoads.set(key,state);
+    const state={phase:'loading' as 'loading'|'ready'|'error',url:undefined as string|undefined,error:''},epoch=this.epoch;this.imageLoads.set(key,state);this.emit();
     const start=async()=>{this.imageActive++;const controller=new AbortController();this.imageControllers.add(controller);
       try {if(epoch!==this.epoch)return;const response=await fetch(`/_desktop/api/works/${part(id)}/sessions/${part(session)}/runs/${part(run)}/images/${image.imageIndex}`,{credentials:'same-origin',signal:controller.signal});
         if(!response.ok){const value=await response.json().catch(()=>({}));if(response.status===401)await this.checkBrowserAccess().catch(()=>undefined);throw new Error(value.message || value.code || 'Image could not be read.');}
@@ -78,7 +78,7 @@ export class DesktopAdapter {
   requests = new Map<string, { loading: boolean; error: string; items: Data[]; nextCursor: string|null; checkedAt?: string }>();
   requestDetails = new Map<string, Data>();
   requestPresence = new Map<string, { confirmed: boolean; loading: boolean; hasRecords: boolean; error: string }>();
-  requestResponses = new Map<string, { loading: boolean; runs: Run[]; errors: string[]; checked: Record<string,string>; errorsByRun: Record<string,string> }>();
+  requestResponses = new Map<string, { loading: boolean; visibleLoading?: boolean; runs: Run[]; errors: string[]; checked: Record<string,string>; errorsByRun: Record<string,string> }>();
   runDetails = new Map<string, Run>();
   requestRetries = new Map<string,{submissionKey:string; error:string; unknown:boolean}>();
   private cancellingRequests = new Set<string>();
@@ -88,7 +88,7 @@ export class DesktopAdapter {
   modelSelections = new Map<string, { phase: 'clean' | 'dirty' | 'saving' | 'unknown'; ref: string | null; thinking: string|null; error: string; revision: number; confirmedRevision?: number }>();
   chatCapabilities = new Map<string, 0|1|2|3>();
   cancelAndSendCapabilities = new Map<string, 0|1>();
-  activeRuns = new Map<string, { confirmed: boolean; loading: boolean; run: Run|null; error: string }>();
+  activeRuns = new Map<string, { confirmed: boolean; loading: boolean; visibleLoading?: boolean; run: Run|null; error: string }>();
   private activeRevisions = new Map<string,number>();
   commands = new Map<string,{loading:boolean;confirmed:boolean;error:string;items:Data[];checkedAt?:string}>();
   chatSubmissions = new Map<string,{kind:'session'|'run';key:string;sessionId?:string;cancelRunId?:string;error:string;pair?:{ref:string|null;thinking:string|null;revision:number}}>();
@@ -159,9 +159,11 @@ export class DesktopAdapter {
   private interactionTimer?: ReturnType<typeof setInterval>;
   private capabilityReads = new Map<string, Promise<void>>();
   private sessionTimer?: ReturnType<typeof setTimeout>;
-  private authCheck?: { epoch: number; sequence: number; pending: Promise<Data> };
+  private authCheck?: { epoch: number; sequence: number; acceptedEpoch?: number; pending: Promise<Data> };
   private authSequence = 0;
-  preferences = { phase: 'idle' as 'idle'|'loading'|'saving'|'clearing'|'unconfirmed', confirmed: false, coreUrl: null as string|null, error: '', notice: '', waiting: false };
+  connectionCheck = { checking: false, error: '', checkedAt: '', waiting: false };
+  private connectionRequest?: { epoch: number; pending: Promise<void> };
+  preferences = { reading: false, phase: 'idle' as 'idle'|'loading'|'saving'|'clearing'|'unconfirmed', confirmed: false, coreUrl: null as string|null, error: '', notice: '', waiting: false };
   private preferenceSequence = 0;
   private preferenceNotice?: ReturnType<typeof setTimeout>;
   private async preferenceRequest(method: 'GET'|'PUT'|'DELETE', coreUrl?: string): Promise<string|null> {
@@ -184,11 +186,12 @@ export class DesktopAdapter {
     return value.coreUrl;
   }
   async loadPreferences() {
+    if (this.preferences.reading) return;
     if (this.hosted) return;
     if (['saving','clearing'].includes(this.preferences.phase)) return;
     const sequence = ++this.preferenceSequence, unconfirmed = this.preferences.phase === 'unconfirmed';
     if (!unconfirmed) this.preferences.phase = 'loading';
-    this.preferences.error = ''; this.emit();
+    this.preferences.error = ''; this.preferences.reading = true; this.emit();
     try {
       const coreUrl = await this.preferenceRequest('GET');
       if (sequence !== this.preferenceSequence) return;
@@ -196,7 +199,7 @@ export class DesktopAdapter {
     } catch (error) {
       if (sequence !== this.preferenceSequence) return;
       this.preferences.phase = unconfirmed ? 'unconfirmed' : 'idle'; this.preferences.error = errorText(error);
-    } finally { if (sequence === this.preferenceSequence) this.emit(); }
+    } finally { if (sequence === this.preferenceSequence) { this.preferences.reading = false; this.emit(); } }
   }
   async savePreferences(coreUrl: string|null) {
     if (['saving','clearing','unconfirmed'].includes(this.preferences.phase)) return;
@@ -208,7 +211,7 @@ export class DesktopAdapter {
     }
     const sequence = ++this.preferenceSequence;
     clearTimeout(this.preferenceNotice);
-    Object.assign(this.preferences, { phase: coreUrl === null ? 'clearing' : 'saving', error: '', notice: '', waiting: false }); this.emit();
+    Object.assign(this.preferences, { reading: false, phase: coreUrl === null ? 'clearing' : 'saving', error: '', notice: '', waiting: false }); this.emit();
     const slow = setTimeout(() => { if (sequence === this.preferenceSequence && ['saving','clearing'].includes(this.preferences.phase)) { this.preferences.waiting = true; this.emit(); } }, 10000);
     try {
       const saved = await this.preferenceRequest(coreUrl === null ? 'DELETE' : 'PUT', coreUrl ?? undefined);
@@ -243,7 +246,7 @@ export class DesktopAdapter {
   private clearIdentity(preserveInspection = false) {
     const inspection = preserveInspection ? { context: this.inspectionContext, summary: this.inspection, transfer: this.inspectionTransfer, progress: this.transferProgress } : null;
     if (!preserveInspection) { this.inspectionSelection++; this.inspectionNonce++; this.inspectionContext?.xhr?.abort(); this.inspectionContext = null; this.transferProgress = null; this.cleanupPending.clear(); }
-    this.epoch++; this.worksLoading = false; this.worksChecked = ''; this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
+    this.epoch++; this.connectionRequest = undefined; Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false }); this.worksLoading = false; this.worksChecked = ''; this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
     clearInterval(this.interactionTimer); this.interactionTimer=undefined;this.interactionScope='';this.interactionVersion++;
     this.requestPresence.clear();this.requestResponses.clear();this.runDetails.clear();this.activeRuns.clear();this.activeRevisions.clear();this.cancelAndSendCapabilities.clear();
     this.terminalEvidence.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
@@ -394,7 +397,9 @@ export class DesktopAdapter {
       try {
         const value = await this.sessionRead();
         if (epoch !== this.epoch || sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'An older access check was discarded.');
-        this.acceptSession(value); this.scheduleSessionCheck(); this.emit(); return value;
+        this.acceptSession(value);
+        if (this.authCheck?.pending === pending) this.authCheck.acceptedEpoch = this.epoch;
+        this.scheduleSessionCheck(); this.emit(); return value;
       } catch (error) {
         if (epoch === this.epoch && sequence === this.authSequence) {
           if (error instanceof DesktopError && error.code === 'LOCAL_AUTH_REQUIRED') this.requireBrowserAccess('This browser is not authorized to connect to the local CLI. Use the latest launch address.');
@@ -469,12 +474,39 @@ export class DesktopAdapter {
   }
   async switchCore(core: string) { this.authSequence++; this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core })); if (this.state.signedIn) await this.checkConnection(); this.emit(); }
   async signOut() { this.authSequence++; const value = await this.request('logout', 'POST'); this.clearIdentity(); this.acceptSession(value.view); this.emit(); return value; }
-  async checkConnection() {
-    await this.checkBrowserAccess();
-    this.status = await this.request('status'); this.state.lastChecked = this.status.checkedAt ?? '';
-    this.state.scenario = !this.status.health?.available ? 'core-offline' : !this.status.readiness?.available || this.status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
-    if (this.state.signedIn && this.state.scenario !== 'core-offline') { await this.listWorks(); await this.checkCatalog(); await this.recoverOperations(); }
-    this.emit();
+  checkConnection(): Promise<void> {
+    if (this.connectionRequest?.epoch === this.epoch) return this.connectionRequest.pending;
+    let epoch = this.epoch;
+    Object.assign(this.connectionCheck, { checking: true, error: '', waiting: false }); this.emit();
+    const slow = setTimeout(() => { if (epoch === this.epoch && this.connectionCheck.checking) { this.connectionCheck.waiting = true; this.emit(); } }, 10000);
+    let pending!: Promise<void>;
+    pending = (async () => {
+      try {
+        const access = this.checkBrowserAccess(), accessCheck = this.authCheck;
+        await access;
+        // This session read may legitimately accept a new generation. Follow only
+        // the identity it accepted, never a later external switch or newer check.
+        if (accessCheck?.acceptedEpoch !== this.epoch || accessCheck.sequence !== this.authSequence || this.connectionRequest && this.connectionRequest.pending !== pending) return;
+        if (epoch !== this.epoch) {
+          epoch = this.epoch; this.connectionRequest = { epoch, pending };
+          Object.assign(this.connectionCheck, { checking: true, error: '', waiting: false }); this.emit();
+        }
+        const status = await this.request('status');
+        if (epoch !== this.epoch) return;
+        this.status = status; this.state.lastChecked = status.checkedAt ?? new Date().toISOString();
+        this.state.scenario = !status.health?.available ? 'core-offline' : !status.readiness?.available || status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
+        Object.assign(this.connectionCheck, { checking: false, checkedAt: this.state.lastChecked, waiting: false }); this.emit();
+        if (this.state.signedIn && this.state.scenario !== 'core-offline') { await this.listWorks(); await this.checkCatalog(); await this.recoverOperations(); }
+      } catch (error) {
+        if (epoch === this.epoch && this.connectionCheck.checking) this.connectionCheck.error = errorText(error);
+        throw error;
+      } finally {
+        clearTimeout(slow);
+        if (epoch === this.epoch) { this.connectionCheck.checking = false; this.connectionCheck.waiting = false; this.emit(); }
+        if (this.connectionRequest?.pending === pending) this.connectionRequest = undefined;
+      }
+    })();
+    this.connectionRequest = { epoch, pending }; return pending;
   }
   listWorks(explicit = true): Promise<void> {
     const key = `${this.epoch}:${this.mutationSequence}`, previous = this.worksRequests.get(key);
@@ -641,8 +673,8 @@ export class DesktopAdapter {
   async loadActiveRun(id: string, explicit=false) {
     if(this.cancelAndSendCapabilities.get(id)!==1)return;
     const epoch=this.epoch,version=this.interactionVersion,revision=this.activeRevisions.get(id) || 0;
-    const state=this.activeRuns.get(id) ?? {confirmed:false,loading:false,run:null,error:''};
-    if(state.loading)return;this.activeRuns.set(id,state);state.loading=true;
+    const state=this.activeRuns.get(id) ?? {confirmed:false,loading:false,visibleLoading:false,run:null,error:''};
+    if(state.loading)return;this.activeRuns.set(id,state);state.loading=true;state.visibleLoading=explicit || !state.confirmed;if(state.visibleLoading)this.emit();
     try {
       const {value}=await this.readMetadata(`works/${part(id)}/runs/active`,explicit);
       if(epoch!==this.epoch || version!==this.interactionVersion || revision!==(this.activeRevisions.get(id) || 0))return;
@@ -650,7 +682,7 @@ export class DesktopAdapter {
       if(raw!==null && (!raw?.runId || !raw.sessionId || raw.workId!==id || ![1,2,3].includes(raw.state)))throw new DesktopError('INVALID_RESPONSE','The active Run could not be confirmed.');
       Object.assign(state,{confirmed:true,error:'',run:raw===null?null:this.runRecord(raw,raw.sessionId)});
     }catch(error){if(epoch===this.epoch && version===this.interactionVersion && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred))state.error=errorText(error);}
-    finally{if(epoch===this.epoch){state.loading=false;this.emit();}}
+    finally{if(epoch===this.epoch){state.loading=false;state.visibleLoading=false;this.emit();}}
   }
   async loadRunDetails(id: string, runId: string, explicit=true) {
     const epoch=this.epoch,{value}=await this.readMetadata(`works/${part(id)}/runs/${part(runId)}`,explicit),raw=value.run ?? value;
@@ -696,10 +728,10 @@ export class DesktopAdapter {
   }
   private async loadRequestResponses(id: string,requestId: string,runIds: string[],explicit: boolean) {
     const key=`${id}:${requestId}`,epoch=this.epoch,version=this.interactionVersion;
-    const state=this.requestResponses.get(key) ?? {loading:false,runs:[],errors:[],checked:{},errorsByRun:{}};if(state.loading)return;
-    this.requestResponses.set(key,state);state.loading=true;
+    const state=this.requestResponses.get(key) ?? {loading:false,visibleLoading:false,runs:[],errors:[],checked:{},errorsByRun:{}};if(state.loading)return;
+    this.requestResponses.set(key,state);state.loading=true;state.visibleLoading=explicit && runIds.length>0;if(state.visibleLoading)this.emit();
     const results=await Promise.allSettled(runIds.map(runId=>this.loadRunDetails(id,runId,explicit)));
-    if(epoch!==this.epoch)return;state.loading=false;
+    if(epoch!==this.epoch)return;state.loading=false;state.visibleLoading=false;
     if(version!==this.interactionVersion)return;
     const currentIds=this.requestDetails.get(key)?.request.runIds as string[] | undefined;
     const allowed=new Set(currentIds ?? runIds),prior=new Map(state.runs.map(run=>[run.id,run]));

@@ -143,7 +143,7 @@ test('a pending picked image follows automatic initial Session discovery and fin
   if(r.path==='works/work-1/runs'&&r.method==='POST'){submitted=JSON.parse(r.body);return {json:{run:{workId:'work-1',sessionId:'session-1',runId:'run-discovered',submissionKey:submitted.submissionKey,state:4}}};}
  }, false, false);
  await page.evaluate(()=>{const original=File.prototype.arrayBuffer;File.prototype.arrayBuffer=function(){const file=this;return new Promise<ArrayBuffer>(resolve=>{(window as any).releaseImageRead=()=>{File.prototype.arrayBuffer=original;resolve(original.call(file));};});};});
- await page.locator('#chat-image-input').setInputFiles({name:'early.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-draft')).toContainText('Checking');sessions.resolve();await expect(page.locator('.messages')).toContainText('original prompt');await page.evaluate(()=>(window as any).releaseImageRead());await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await button(page,'send-message').click();await expect.poll(()=>submitted?.sessionId).toBe('session-1');assert.equal(requests.filter(r=>r.path==='works/work-1/sessions'&&r.method==='POST').length,0);
+ await page.locator('#chat-image-input').setInputFiles({name:'early.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-draft')).toContainText('Checking');await expect(page.locator('.chat-image-draft .pending-dots')).toHaveCount(1);sessions.resolve();await expect(page.locator('.messages')).toContainText('original prompt');await page.evaluate(()=>(window as any).releaseImageRead());await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await expect(page.locator('.chat-image-draft .pending-dots')).toHaveCount(0);await button(page,'send-message').click();await expect.poll(()=>submitted?.sessionId).toBe('session-1');assert.equal(requests.filter(r=>r.path==='works/work-1/sessions'&&r.method==='POST').length,0);
 });
 
 test('Create Work geometry stays stable during delayed feedback on a narrow viewport',async t=>{
@@ -569,7 +569,7 @@ for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'set
   else if (entry==='open-work') { await expect(page.locator('.work-header .work-read-feedback[role="status"][aria-busy="true"]')).toBeVisible(); await expect(page.getByRole('heading',{name:'Recovery Work',exact:true})).toBeVisible(); }
   else if (entry==='files') { await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true'); await expect(page.locator('.main-panel .read-placeholder[aria-busy="true"]')).toBeVisible(); }
   else if (entry==='sessions'||entry==='select-session') await expect(page.locator('.agent-header [data-action="sessions"]')).toHaveAttribute('aria-busy','true');
-  else await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
+  else await expect(page.locator('[aria-busy="true"]').filter({ has: page.locator('.pending-dots') }).first()).toBeVisible();
   await expect.poll(()=>requests.filter(r=>r.path===endpoint[entry]).length-before).toBe(1);
   // Input/keyboard paths share the same in-flight action, while closing remains legal.
   if (await button(page,trigger).count()) { if(entry!=='open-work') await expect(button(page,trigger)).toBeDisabled(); await page.evaluate(action=>document.querySelector<HTMLElement>(`[data-action="${action}"]`)?.click(),trigger); }
@@ -612,7 +612,7 @@ for(const action of ['detail','refresh'] as const)test(`D09 ${action} reports lo
   });
   await button(page,'tab-Services').click();await button(page,'manage-services').click();if(action==='refresh')await button(page,'service-details').click();
   armed=true;const before=requests.filter(r=>r.path.includes('/logs')).length;await button(page,action==='detail'?'service-details':'refresh-logs').click();
-  await expect(page.locator('[data-action-status][aria-busy="true"]').filter({hasText:'tool'})).toBeVisible();assert.equal(requests.filter(r=>r.path.includes('/logs')).length-before,1);gate.resolve();
+  await expect(page.locator('[aria-busy="true"]').filter({has:page.locator('.pending-dots'),hasText:'tool'}).first()).toBeVisible();assert.equal(requests.filter(r=>r.path.includes('/logs')).length-before,1);gate.resolve();
 });
 
 for (const action of ['read','path','refresh','save','folder','rename','move','copy','delete','upload'] as const) test(`D11–D13 ${action} keeps path feedback and confirms before directory refresh`, async t=>{
@@ -648,9 +648,9 @@ for (const action of ['read','path','refresh','save','folder','rename','move','c
   armed=true;const before=requests.filter(r=>r.method===method&&r.path.startsWith('/_desktop/files/')).length;
   if(action==='upload'){await button(page,'file-add').click();await page.locator('[data-action=upload]').click();await page.locator('#upload-input').setInputFiles({name:'binary.dat',mimeType:'application/octet-stream',buffer:Buffer.from([0,255,1,128])});}
   else if(action==='read')await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();else await button(page,trigger).click();
-  if(action==='read') { await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toHaveAttribute('aria-busy','true'); await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toBeDisabled(); }
+  if(action==='read') { await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toHaveAttribute('aria-busy','true'); await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toBeDisabled(); await expect(page.locator('[data-action="open-file"][data-path="/note.txt"] .pending-dots')).toHaveCount(1); }
   else if(action==='path'||action==='refresh') { await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true'); await expect(button(page,'refresh-files')).toHaveAccessibleName('Reading files…'); }
-  else await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
+  else await expect(page.locator('[aria-busy="true"]').filter({has:page.locator('.pending-dots')}).first()).toBeVisible();
   if(action==='upload'){await expect(page.locator('#app')).toContainText('File 1 of 1');await expect(page.locator('#app')).toContainText('Waiting for confirmation');}
   await expect.poll(()=>requests.filter(r=>r.method===method&&r.path.startsWith('/_desktop/files/')).length-before).toBe(1);
   if(action==='save'){await page.locator('#file-editor').fill('newer unsaved');operation.resolve();await expect(page.locator('#file-editor')).toHaveValue('newer unsaved');await expect(page.locator('#app')).toContainText('Unsaved');}
@@ -690,7 +690,7 @@ for(const action of ['apply','skill-copy','remove-package'])test(`D14/D16 ${acti
   let trigger='apply-config';
   if(action==='skill-copy'){await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();await button(page,'core-skill-copy').click();trigger='confirm-core-skills';}
   if(action==='remove-package'){await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();await button(page,'remove-package').click();trigger='confirm-remove-package';}
-  await button(page,trigger).click();await expect(page.locator('[data-action-status][aria-busy="true"]').filter({ hasText: action === 'apply' ? 'Submitting Apply' : action === 'skill-copy' ? 'Copying Skill' : 'Removing package' })).toBeVisible();gate.resolve();
+  await button(page,trigger).click();await expect(page.locator('[aria-busy="true"]').filter({ has: page.locator('.pending-dots') }).filter({ hasText: action === 'apply' ? 'Submitting Apply' : action === 'skill-copy' ? 'Copying Skill' : 'Removing package' }).first()).toBeVisible();gate.resolve();
   await expect(page.locator('body')).toContainText(action==='skill-copy'?'Skill copy saved':'op-'+action);assert.equal(requests.filter(r=>r.path===endpoint&&r.method!=='GET').length,1);read.resolve();
 });
 
@@ -791,10 +791,23 @@ for(const action of ['inspect','import','query','cleanup','export'] as const)tes
     }
   }
   if(action==='export'){await expect(page.locator('#modal')).toContainText('Starting export');await expect(button(page,'prepare-export')).toHaveCount(0);}
+  else if(action==='inspect'){
+    const transfer=page.locator('#modal [data-pending-action~="work-file-input"]');
+    await expect(transfer).toHaveAttribute('aria-busy','true');await expect(transfer.locator('.pending-dots')).toHaveCount(1);
+    await expect(transfer).toContainText('Transfer: receiving');await expect(page.locator('#modal')).toContainText('0 / 4 bytes');
+    await expect(page.locator('#modal progress[aria-label="Transfer bytes"]')).toHaveAttribute('max','4');
+    await expect(page.locator('#modal progress[aria-label="Transfer bytes"]')).toHaveAttribute('value','0');
+    await expect.poll(()=>requests.filter(r=>r.path==='work-packages'&&r.method==='POST').length).toBe(1);
+    assert.equal(await api(page,'return adapter.inspectionTransfer'),id);assert.equal(await api(page,'return adapter.inspectionContext.id'),id);
+  }
   else await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
   gate.resolve();
   if(action==='export'||action==='import'){await expect(page.locator('#modal')).toContainText('op-'+action);assert.equal(requests.filter(r=>r.path==='work-imports'||r.path.endsWith('/exports')).length,1);read.resolve();}
-  else if(action==='inspect')await expect(page.locator('#modal')).toContainText('verified locally');
+  else if(action==='inspect'){
+    await expect(page.locator('#modal')).toContainText('verified locally');await expect(page.locator('#modal [data-pending-action~="work-file-input"]')).toHaveCount(0);
+    await expect(page.locator('#modal')).toContainText('4 / 4 bytes');assert.equal(await api(page,'return adapter.inspectionTransfer'),id);
+    assert.equal(requests.filter(r=>r.path==='work-packages'&&r.method==='POST').length,1);
+  }
 });
 
 test('DWUI-012 pending Service A permits unrelated B; closing and reopening details rejects A late modal callback',async t=>{
@@ -1218,4 +1231,86 @@ for (const width of [360, 500]) test(`Action hierarchy: narrow Files controls re
   }
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.equal(requests.filter(request => request.method !== 'GET' && request.path.startsWith('/_desktop/files/') && !['PROPFIND','HEAD'].includes(request.method)).length, 0);
+});
+
+test('pending independent: automatic model save ends on unknown while the draft and original lock remain', async t => {
+  const gate = deferred(); t.after(() => gate.resolve());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works/work-1/sessions/session-1/model' && r.method === 'PATCH') { await gate.promise; return { abort: true }; }
+  });
+  await page.locator('#composer').fill('Keep this new draft');
+  await api(page, "adapter.selectModel('work-1', 'session-1', 'model-test-0000000001')");
+  await expect(page.locator('.options-status .pending-dots')).toHaveCount(1);
+  await expect(page.locator('.options-status')).toContainText('Saving');
+  if (process.env.PIWORK_UI_EVIDENCE === '1') { await mkdir('dist/server-ui-core-flow/desktop', { recursive: true }); await page.screenshot({ path: 'dist/server-ui-core-flow/desktop/chat-model-saving-fixture.png', fullPage: true }); }
+  gate.resolve(); await expect(page.locator('.options-status')).toContainText('Unconfirmed');
+  await expect(page.locator('.options-status .pending-dots')).toHaveCount(0);
+  await expect(page.locator('#composer')).toHaveValue('Keep this new draft');
+  assert.equal(await api(page, "return adapter.modelSelection('work-1','session-1').phase"), 'unknown');
+  assert.equal(requests.filter(r => r.path.endsWith('/model') && r.method === 'PATCH').length, 1);
+});
+
+test('pending independent: Activity has one indicator only for the observed live Run and preserves expanded output', async t => {
+  const { page } = await fixture(t, () => undefined);
+  await api(page, `const w = adapter.getWork('work-1'), session = w.sessions.find(s => s.id === 'session-1');
+    w.run = { id: 'run-active', sessionId: session.id, status: 'running', cursor: 1 };
+    session.messages.push({ id: 'tool-current', role: 'tool', text: '', runId: 'run-active', tool: { id: 'tool-current', name: 'read', status: 'Running', content: 'Keep this output' } });
+    adapter.emit();`);
+  await expect(page.locator('.activity .pending-dots')).toHaveCount(1);
+  await page.locator('.activity > summary').click(); await page.locator('.tool-event > summary').click();
+  await page.locator('.tool-event pre').evaluate(el => { (window as any).originalToolOutput = el; });
+  await api(page, "adapter.getWork('work-1').run.status = 'interrupted'; adapter.emit();");
+  await expect(page.locator('.activity .pending-dots')).toHaveCount(0);
+  assert.equal(await page.locator('.tool-event pre').evaluate(el => el === (window as any).originalToolOutput), true);
+  await expect(page.locator('.tool-event pre')).toBeVisible();
+});
+
+for (const previous of ['Failed', 'Result not confirmed']) test(`pending Activity: a running tool remains visible beside a ${previous} result`, async t => {
+  const { page } = await fixture(t, () => undefined);
+  await api(page, `const w = adapter.getWork('work-1'), session = w.sessions.find(s => s.id === 'session-1');
+    w.run = { id: 'run-mixed', sessionId: session.id, status: 'running', cursor: 2 };
+    session.messages.push(
+      { id: 'tool-prior', role: 'tool', text: '', runId: 'run-mixed', tool: { id: 'tool-prior', name: 'prior', status: '${previous}', content: 'Keep the earlier diagnostic' } },
+      { id: 'tool-current', role: 'tool', text: '', runId: 'run-mixed', tool: { id: 'tool-current', name: 'current', status: 'Running', content: 'Current output' } });
+    adapter.emit();`);
+  await expect(page.locator('#messages .pending-dots')).toHaveCount(1);
+  await expect(page.locator('.activity')).toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('.activity > summary')).toContainText('Running');
+  await page.locator('.activity > summary').click();
+  await expect(page.locator('.tool-event').first()).toContainText(previous);
+  await page.locator('.tool-event > summary').first().click();
+  await expect(page.locator('.tool-event pre').first()).toHaveText('Keep the earlier diagnostic');
+  await api(page, "adapter.getWork('work-1').run.status = 'interrupted'; adapter.emit();");
+  await expect(page.locator('#messages .pending-dots')).toHaveCount(0);
+  await expect(page.locator('.tool-event pre').first()).toBeVisible();
+});
+
+for (const withTool of [false, true]) test(`pending active Run: failed observation stops ${withTool ? 'Activity' : 'execution'} dots while retaining the last Run`, async t => {
+  const { page } = await fixture(t, () => undefined);
+  await api(page, `const w = adapter.getWork('work-1'), session = w.sessions.find(s => s.id === 'session-1');
+    w.run = undefined;
+    adapter.activeRuns.set(w.id, { confirmed: true, loading: false, error: '', run: { id: 'run-observed', sessionId: session.id, status: 'running' } });
+    adapter.cancelAndSendCapabilities.set(w.id, 1);
+    session.messages.push({ id: 'observed-message', role: '${withTool ? 'tool' : 'assistant'}', text: '${withTool ? '' : 'Last confirmed output'}', runId: 'run-observed', ${withTool ? "tool: { id: 'observed-tool', name: 'read', status: 'Running', content: 'Last tool output' }" : ''} });
+    adapter.emit();`);
+  await expect(page.locator('#messages .pending-dots')).toHaveCount(1);
+  await api(page, "adapter.activeRuns.get('work-1').error = 'Active Run observation unavailable'; adapter.emit();");
+  await expect(page.locator('#messages .pending-dots')).toHaveCount(0);
+  await expect(page.locator('.message-execution')).toContainText('Run running');
+  assert.equal(await api(page, "return adapter.activeRuns.get('work-1').run.id"), 'run-observed');
+  await api(page, "adapter.getWork('work-1').run = { ...adapter.activeRuns.get('work-1').run, cursor: 2 }; adapter.emit();");
+  await expect(page.locator('#messages .pending-dots')).toHaveCount(1);
+  await api(page, "adapter.getWork('work-1').run.error = 'Live Run observation also interrupted'; adapter.emit();");
+  await expect(page.locator('#messages .pending-dots')).toHaveCount(0);
+});
+
+test('pending independent: About aggregates version reads and keeps the known version during refresh', async t => {
+  const gate = deferred(); t.after(() => gate.resolve()); let held = false;
+  const about = (program: string) => ({ aboutApiVersion: 1, build: { program, version: 'fixture-v1', commit: 'synthetic', os: 'linux', architecture: 'amd64' } });
+  const { page } = await fixture(t, async r => { if (r.path === 'about' || r.path === 'core-about') { if (held) await gate.promise; return { json: about(r.path) }; } });
+  await button(page, 'back-works').click(); await button(page, 'account').click(); await button(page, 'about-piwork').click();
+  await expect(page.locator('#modal')).toContainText('fixture-v1'); await expect(page.locator('#modal .pending-dots')).toHaveCount(0);
+  held = true; await button(page, 'refresh-about').click();
+  await expect(page.locator('#modal .pending-dots')).toHaveCount(1); await expect(page.locator('#modal')).toContainText('fixture-v1');
+  gate.resolve(); await expect(page.locator('#modal .pending-dots')).toHaveCount(0);
 });

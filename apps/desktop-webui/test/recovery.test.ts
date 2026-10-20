@@ -1215,10 +1215,14 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
     if (r.path.endsWith('/chat-options')) return { json: chatOptions() };
   }, false, false);
   await button(page, 'tab-Chat').click();
-  await expect(page.locator('#response-settings-trigger')).toHaveAttribute('aria-busy','true');await expect(page.locator('#response-settings-trigger .read-placeholder-field')).toBeVisible();
+  await expect(page.locator('#response-settings-trigger')).toHaveAttribute('aria-busy','true');
+  await expect(page.locator('#response-settings-trigger')).toContainText('Loading response settings');
+  await expect(page.locator('#response-settings-trigger .pending-dots')).toHaveCount(1);
   await expect(button(page, 'send-message')).toBeDisabled();
   await uiuxEvidence(page, '11-loading-models-closed');
   await openResponseSettings(page);
+  await expect(page.locator('#response-settings-trigger .pending-dots')).toHaveCount(0);
+  await expect(page.locator('#modal .options-status [aria-busy="true"] .pending-dots')).toHaveCount(1);
   await expect(page.locator('#model-select')).toBeDisabled();
   await expect(page.locator('#thinking-select')).toBeDisabled();
   await expect(page.locator('#modal [role=option]')).toHaveCount(0);
@@ -1227,6 +1231,7 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
   await page.locator('#composer').fill('typing continues while models are read');
   release();
   await expect(page.locator('.options-status')).toContainText('Models could not be confirmed');
+  await expect(page.locator('.composer-wrap .pending-dots')).toHaveCount(0);
   await expect(page.locator('.options-status')).toContainText('last known settings');
   await expect(page.locator('.composer-wrap [role=status]').filter({ hasText: 'Models could not be confirmed' })).toHaveCount(1);
   await uiuxEvidence(page, '12-models-unconfirmed-closed');
@@ -2710,8 +2715,11 @@ test('B Service details appear while their isolated log read is still pending', 
   });
   await button(page, 'service-menu').click(); await button(page, 'manage-services').click(); await page.locator('[data-action="service-details"][data-id="service-a"]').click();
   await expect(page.locator('#modal')).toContainText('Tool A'); await expect(page.locator('#modal .service-controls')).toBeVisible();
-  await expect(page.locator('#modal')).toContainText('Reading this Service'); release();
+  const reading = page.locator('#modal [data-pending-action~="refresh-logs"]');
+  await expect(reading).toContainText('Reading Tool A log snapshot'); await expect(reading).toHaveAttribute('aria-busy', 'true');
+  await expect(reading.locator('.pending-dots')).toHaveCount(1); release();
   await expect(page.locator('#modal')).toContainText('Only logs unavailable'); await expect(button(page, 'refresh-logs')).toBeEnabled();
+  await expect(reading).toHaveCount(0); await expect(page.locator('#modal .service-controls')).toBeVisible();
 });
 
 test('B a failed-only retry does not inherit another path unknown lock', async t => {

@@ -115,6 +115,7 @@ export class DesktopAdapter {
             return;
         const state = { phase: 'loading', url: undefined, error: '' }, epoch = this.epoch;
         this.imageLoads.set(key, state);
+        this.emit();
         const start = async () => {
             this.imageActive++;
             const controller = new AbortController();
@@ -255,7 +256,9 @@ export class DesktopAdapter {
     sessionTimer;
     authCheck;
     authSequence = 0;
-    preferences = { phase: 'idle', confirmed: false, coreUrl: null, error: '', notice: '', waiting: false };
+    connectionCheck = { checking: false, error: '', checkedAt: '', waiting: false };
+    connectionRequest;
+    preferences = { reading: false, phase: 'idle', confirmed: false, coreUrl: null, error: '', notice: '', waiting: false };
     preferenceSequence = 0;
     preferenceNotice;
     async preferenceRequest(method, coreUrl) {
@@ -284,6 +287,8 @@ export class DesktopAdapter {
         return value.coreUrl;
     }
     async loadPreferences() {
+        if (this.preferences.reading)
+            return;
         if (this.hosted)
             return;
         if (['saving', 'clearing'].includes(this.preferences.phase))
@@ -292,6 +297,7 @@ export class DesktopAdapter {
         if (!unconfirmed)
             this.preferences.phase = 'loading';
         this.preferences.error = '';
+        this.preferences.reading = true;
         this.emit();
         try {
             const coreUrl = await this.preferenceRequest('GET');
@@ -306,8 +312,10 @@ export class DesktopAdapter {
             this.preferences.error = errorText(error);
         }
         finally {
-            if (sequence === this.preferenceSequence)
+            if (sequence === this.preferenceSequence) {
+                this.preferences.reading = false;
                 this.emit();
+            }
         }
     }
     async savePreferences(coreUrl) {
@@ -327,7 +335,7 @@ export class DesktopAdapter {
         }
         const sequence = ++this.preferenceSequence;
         clearTimeout(this.preferenceNotice);
-        Object.assign(this.preferences, { phase: coreUrl === null ? 'clearing' : 'saving', error: '', notice: '', waiting: false });
+        Object.assign(this.preferences, { reading: false, phase: coreUrl === null ? 'clearing' : 'saving', error: '', notice: '', waiting: false });
         this.emit();
         const slow = setTimeout(() => { if (sequence === this.preferenceSequence && ['saving', 'clearing'].includes(this.preferences.phase)) {
             this.preferences.waiting = true;
@@ -389,6 +397,8 @@ export class DesktopAdapter {
             this.cleanupPending.clear();
         }
         this.epoch++;
+        this.connectionRequest = undefined;
+        Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false });
         this.worksLoading = false;
         this.worksChecked = '';
         this.state.works = [];
@@ -686,6 +696,8 @@ export class DesktopAdapter {
                 if (epoch !== this.epoch || sequence !== this.authSequence)
                     throw new DesktopError('CONNECTION_CHANGED', 'An older access check was discarded.');
                 this.acceptSession(value);
+                if (this.authCheck?.pending === pending)
+                    this.authCheck.acceptedEpoch = this.epoch;
                 this.scheduleSessionCheck();
                 this.emit();
                 return value;
@@ -818,17 +830,63 @@ export class DesktopAdapter {
     async switchCore(core) { this.authSequence++; this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core })); if (this.state.signedIn)
         await this.checkConnection(); this.emit(); }
     async signOut() { this.authSequence++; const value = await this.request('logout', 'POST'); this.clearIdentity(); this.acceptSession(value.view); this.emit(); return value; }
-    async checkConnection() {
-        await this.checkBrowserAccess();
-        this.status = await this.request('status');
-        this.state.lastChecked = this.status.checkedAt ?? '';
-        this.state.scenario = !this.status.health?.available ? 'core-offline' : !this.status.readiness?.available || this.status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
-        if (this.state.signedIn && this.state.scenario !== 'core-offline') {
-            await this.listWorks();
-            await this.checkCatalog();
-            await this.recoverOperations();
-        }
+    checkConnection() {
+        if (this.connectionRequest?.epoch === this.epoch)
+            return this.connectionRequest.pending;
+        let epoch = this.epoch;
+        Object.assign(this.connectionCheck, { checking: true, error: '', waiting: false });
         this.emit();
+        const slow = setTimeout(() => { if (epoch === this.epoch && this.connectionCheck.checking) {
+            this.connectionCheck.waiting = true;
+            this.emit();
+        } }, 10000);
+        let pending;
+        pending = (async () => {
+            try {
+                const access = this.checkBrowserAccess(), accessCheck = this.authCheck;
+                await access;
+                // This session read may legitimately accept a new generation. Follow only
+                // the identity it accepted, never a later external switch or newer check.
+                if (accessCheck?.acceptedEpoch !== this.epoch || accessCheck.sequence !== this.authSequence || this.connectionRequest && this.connectionRequest.pending !== pending)
+                    return;
+                if (epoch !== this.epoch) {
+                    epoch = this.epoch;
+                    this.connectionRequest = { epoch, pending };
+                    Object.assign(this.connectionCheck, { checking: true, error: '', waiting: false });
+                    this.emit();
+                }
+                const status = await this.request('status');
+                if (epoch !== this.epoch)
+                    return;
+                this.status = status;
+                this.state.lastChecked = status.checkedAt ?? new Date().toISOString();
+                this.state.scenario = !status.health?.available ? 'core-offline' : !status.readiness?.available || status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
+                Object.assign(this.connectionCheck, { checking: false, checkedAt: this.state.lastChecked, waiting: false });
+                this.emit();
+                if (this.state.signedIn && this.state.scenario !== 'core-offline') {
+                    await this.listWorks();
+                    await this.checkCatalog();
+                    await this.recoverOperations();
+                }
+            }
+            catch (error) {
+                if (epoch === this.epoch && this.connectionCheck.checking)
+                    this.connectionCheck.error = errorText(error);
+                throw error;
+            }
+            finally {
+                clearTimeout(slow);
+                if (epoch === this.epoch) {
+                    this.connectionCheck.checking = false;
+                    this.connectionCheck.waiting = false;
+                    this.emit();
+                }
+                if (this.connectionRequest?.pending === pending)
+                    this.connectionRequest = undefined;
+            }
+        })();
+        this.connectionRequest = { epoch, pending };
+        return pending;
     }
     listWorks(explicit = true) {
         const key = `${this.epoch}:${this.mutationSequence}`, previous = this.worksRequests.get(key);
@@ -1136,11 +1194,14 @@ export class DesktopAdapter {
         if (this.cancelAndSendCapabilities.get(id) !== 1)
             return;
         const epoch = this.epoch, version = this.interactionVersion, revision = this.activeRevisions.get(id) || 0;
-        const state = this.activeRuns.get(id) ?? { confirmed: false, loading: false, run: null, error: '' };
+        const state = this.activeRuns.get(id) ?? { confirmed: false, loading: false, visibleLoading: false, run: null, error: '' };
         if (state.loading)
             return;
         this.activeRuns.set(id, state);
         state.loading = true;
+        state.visibleLoading = explicit || !state.confirmed;
+        if (state.visibleLoading)
+            this.emit();
         try {
             const { value } = await this.readMetadata(`works/${part(id)}/runs/active`, explicit);
             if (epoch !== this.epoch || version !== this.interactionVersion || revision !== (this.activeRevisions.get(id) || 0))
@@ -1157,6 +1218,7 @@ export class DesktopAdapter {
         finally {
             if (epoch === this.epoch) {
                 state.loading = false;
+                state.visibleLoading = false;
                 this.emit();
             }
         }
@@ -1257,15 +1319,19 @@ export class DesktopAdapter {
     }
     async loadRequestResponses(id, requestId, runIds, explicit) {
         const key = `${id}:${requestId}`, epoch = this.epoch, version = this.interactionVersion;
-        const state = this.requestResponses.get(key) ?? { loading: false, runs: [], errors: [], checked: {}, errorsByRun: {} };
+        const state = this.requestResponses.get(key) ?? { loading: false, visibleLoading: false, runs: [], errors: [], checked: {}, errorsByRun: {} };
         if (state.loading)
             return;
         this.requestResponses.set(key, state);
         state.loading = true;
+        state.visibleLoading = explicit && runIds.length > 0;
+        if (state.visibleLoading)
+            this.emit();
         const results = await Promise.allSettled(runIds.map(runId => this.loadRunDetails(id, runId, explicit)));
         if (epoch !== this.epoch)
             return;
         state.loading = false;
+        state.visibleLoading = false;
         if (version !== this.interactionVersion)
             return;
         const currentIds = this.requestDetails.get(key)?.request.runIds;

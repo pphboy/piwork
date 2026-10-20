@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test, { before, after } from 'node:test';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import { chromium, expect, type Page, type Route } from '@playwright/test';
 
 let browser: Awaited<ReturnType<typeof chromium.launch>>, base = '';
 const server = createServer(async (request, response) => {
-  const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : 'index.html');
-  try { response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html'); response.end(await readFile(new URL(path, import.meta.url))); }
+  const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : (request.url === '/piwork-logo.png' || request.url === '/desktop/piwork-logo.png') ? 'piwork-logo.png' : 'index.html');
+  try { response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.png') ? 'image/png' : 'text/html'); response.end(await readFile(new URL(path, import.meta.url))); }
   catch { response.writeHead(404); response.end(); }
 });
 before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch(process.env.PIWORK_TEST_BROWSER_BIN ? { headless: true, executablePath: process.env.PIWORK_TEST_BROWSER_BIN } : { headless: true, channel: 'chromium' }); });
@@ -354,4 +354,32 @@ test('Reconcile auth: an obsolete CSRF readback is discarded after initializatio
   assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
   assert.equal(records.filter(r => r.path === 'old-mutation').length, 1);
   assert.equal(records.filter(r => r.path === 'bootstrap' || r.path === 'login').length, 0);
+});
+
+test('pending Core: initial and manual checks have one local indicator, end on failure and do not claim to start Core', async t => {
+  let statusCalls = 0, fail = false; const first = pending(), manual = pending(); t.after(async () => { first.resolve(); manual.resolve(); });
+  const { page, records } = await fixture(t, async r => {
+    if (r.path === 'session') return { json: signedIn() };
+    if (r.path === 'status') { statusCalls++; await (statusCalls === 1 ? first.promise : manual.promise); return fail ? { status: 503, json: { message: 'Connection test failed' } } : { json: { health: { available: true }, readiness: { available: true, value: { ready: true } } } }; }
+  });
+  await expect(page.locator('[data-pending-label="Checking Core connection…"] .pending-dots')).toHaveCount(1);
+  await expect(button(page, 'connection')).not.toContainText('Connected');
+  if (process.env.PIWORK_UI_EVIDENCE === '1') {
+    await expect(page.locator('.brand-logo')).toHaveJSProperty('complete', true);
+    await expect.poll(() => page.locator('.brand-logo').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+    await mkdir('dist/server-ui-core-flow/desktop', { recursive: true });
+    await page.screenshot({ path: 'dist/server-ui-core-flow/desktop/core-checking-fixture-wide.png', fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: 'dist/server-ui-core-flow/desktop/core-checking-fixture-narrow.png', fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
+  await expect(page.locator('#app')).not.toContainText('Starting Core');
+  const checking = api(page, 'await Promise.all([adapter.checkConnection(), adapter.checkConnection()])');
+  first.resolve(); await checking; await expect(button(page, 'connection')).toContainText('Connected');
+  assert.equal(records.filter(r => r.path === 'status').length, 1);
+  await button(page, 'connection').click(); fail = true; await button(page, 'check-connection').click();
+  await expect(page.locator('#modal .pending-dots')).toHaveCount(1);
+  manual.resolve(); await expect(page.locator('#modal')).toContainText('Connection test failed');
+  await expect(page.locator('#modal .pending-dots')).toHaveCount(0); await expect(button(page, 'check-connection')).toBeEnabled();
+  assert.equal(records.filter(r => r.path === 'status').length, 2);
 });

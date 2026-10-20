@@ -1,3 +1,4 @@
+const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
 const { unavailableServicesReason } = await import(new URL('../browser/work-navigation.js',import.meta.url).href);
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,7 +38,7 @@ test('narrow chat preserves the same Service header and its original iframe ance
 const {uploadReview}=await import(new URL('../browser/file-results.js',import.meta.url).href);
 function rendererFixture(){
  const work:any={id:'a',name:'A',services:[],sessions:[],resourceChecked:{services:'now',agent:'now'},resourceErrors:{}};
- const c:any={unavailableServicesReason,overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
+ const c:any={pendingDots,unavailableServicesReason,overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
  vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);for(const name of ['modalMarkup','serviceFallbackHeader','serviceViewport','services','agent'])vm.runInContext(extract(name),c);return{c,work};
 }
 test('upload review separates proven overwrites, failed checks and unknown writes without false destructive consent',()=>{
@@ -84,11 +85,11 @@ test('cached Chat reads are silent and failures have exactly one scoped retry wi
  work.sessions[0].checkedAt='now';html=c.agent(work,false);assert.match(html,/chat-welcome/);assert.doesNotMatch(html,/read-placeholder/);
 });
 test('active Run initial checking is neutral and send stays locked; idle unknown and errors retain Check status',()=>{
- const {c,work}=rendererFixture();c.adapter.cancelAndSendCapabilities.set('a',1);c.adapter.activeRuns.set('a',{confirmed:false,loading:true,error:''});let html=c.agent(work,false);
+ const {c,work}=rendererFixture();c.adapter.cancelAndSendCapabilities.set('a',1);c.adapter.activeRuns.set('a',{confirmed:false,loading:true,visibleLoading:true,error:''});let html=c.agent(work,false);
  assert.match(html,/aria-label="Checking conversation status" aria-busy="true"/);assert.match(html,/data-action="send-message"[^>]*disabled/);assert.doesNotMatch(html,/Checking the active Run|data-action="check-active-run"/);
  c.adapter.activeRuns.set('a',{confirmed:false,loading:false,error:''});html=c.agent(work,false);assert.match(html,/Conversation status is not confirmed/);assert.match(html,/data-action="check-active-run"/);assert.doesNotMatch(html,/aria-label="Checking conversation status"/);
  c.adapter.activeRuns.set('a',{confirmed:false,loading:false,error:'Observation lost'});html=c.agent(work,false);assert.match(html,/Observation lost/);assert.match(html,/data-action="check-active-run"/);
- c.adapter.activeRuns.set('a',{confirmed:true,loading:true,error:'',run:null});html=c.agent(work,false);assert.doesNotMatch(html,/Checking conversation status|Conversation status is not confirmed|data-action="check-active-run"/);assert.doesNotMatch(html,/data-action="send-message"[^>]*disabled/);
+ c.adapter.activeRuns.set('a',{confirmed:true,loading:true,visibleLoading:false,error:'',run:null});html=c.agent(work,false);assert.doesNotMatch(html,/Checking conversation status|Conversation status is not confirmed|data-action="check-active-run"/);assert.doesNotMatch(html,/data-action="send-message"[^>]*disabled/);
 });
 test('read feedback is bound to directory, navigation origin and Session; unknown writes stay visible',()=>{
  const {c,work}=rendererFixture();c.view.tab='Files';c.view.path='/current';c.view.file='';vm.runInContext(extract('visibleActionRecord'),c);
@@ -165,23 +166,25 @@ test('first Chat read uses neutral Session/model labels while real errors and un
  c.adapter.models.set('a',{loading:true,confirmed:false,error:'',models:[]});c.adapter.modelSelection=()=>({ref:null,thinking:null,phase:'unknown'});settings=c.chatSettings(work,'');assert.equal(settings.recovery.action,'check-session-model');
 });
 
-test('first-read shapes contain no visible text while Chat fields and input keep their controls',()=>{
+test('first reads own labelled decorative dots while Chat fields and input keep their controls',()=>{
  const {c,work}=rendererFixture();
  for(const shape of ['rows','conversation','service']) {
   const html=vm.runInContext(`readPlaceholder('Loading content…', '${shape}')`,c);
   assert.match(html,/role="status" aria-label="Loading content…" aria-busy="true"/);
-  assert.equal(html.replace(/<[^>]*>/g,''),'');
-  assert.equal((html.match(/aria-hidden="true"/g)||[]).length,3);
+  assert.equal(html.replace(/<[^>]*>/g,''),'Loading content…');
+  assert.equal((html.match(/class="pending-dots"/g)||[]).length,1);assert.ok(html.includes(pendingDots()));
+  assert.equal((html.match(/class="read-placeholder-line" aria-hidden="true"/g)||[]).length,3);
  }
  delete work.resourceChecked.agent;
  const html=c.agent(work,false);
  assert.match(html,/data-action="sessions" aria-label="Loading conversations" aria-busy="true"/);
- assert.match(html,/read-placeholder-field/);assert.match(html,/id="composer"/);
- assert.doesNotMatch(html.replace(/<[^>]*>/g,''),/Loading|No Session yet/);
+ assert.match(html,/class="pending-dots"/);assert.doesNotMatch(html,/read-placeholder-field/);assert.match(html,/id="composer"/);
+ assert.match(html.replace(/<[^>]*>/g,''),/Loading conversations…/);assert.doesNotMatch(html,/No Session yet|chat-welcome/);
  vm.runInContext(extract('modelComposer'),c);vm.runInContext(extract('modelFeedback'),c);
  c.chatSettings=()=>({name:'Loading models…',thinking:'Loading…',state:{ref:null},initialLoading:true,status:'Loading models…'});
  assert.match(c.modelComposer(work,''),/aria-label="Loading response settings" aria-busy="true"/);
- assert.equal(c.modelComposer(work,'').replace(/<[^>]*>/g,''),'');assert.equal(c.modelFeedback(work,''),'');
+ assert.equal(c.modelComposer(work,'').replace(/<[^>]*>/g,''),'Loading response settings…');assert.ok(c.modelComposer(work,'').includes(pendingDots()));assert.doesNotMatch(c.modelComposer(work,''),/read-placeholder-field/);assert.equal(c.modelFeedback(work,''),'');
+ c.view.modal='chat-response-settings';assert.doesNotMatch(c.modelComposer(work,''),/pending-dots/);assert.match(c.modelComposer(work,''),/Loading response settings…/);c.view.modal='';
  c.chatSettings=()=>({name:'Saved model',thinking:'Off',state:{ref:null},status:'Models unavailable',recovery:{label:'Retry models',action:'load-models'}});
  assert.match(c.modelComposer(work,''),/Saved model/);assert.match(c.modelFeedback(work,''),/Models unavailable/);assert.match(c.modelFeedback(work,''),/Retry models/);
 });

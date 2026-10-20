@@ -1,3 +1,4 @@
+const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
 const { overlayRole } = await import(new URL('../browser/overlay-role.js',import.meta.url).href);
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -17,8 +18,9 @@ function extract(...names: string[]) {
 function fixture() {
   const work: any = { id: 'work-a', name: 'A', desired: 'stopped', files: [], color: 'blue', icon: 'grid', resourceErrors: {} };
   const c: any = {
+    pendingDots,
     view: { layout:'workspace', modal: '', data: {}, path: '/', selected: [], file: '', modalError: '' },
-    adapter: { state: { browserAccess: 'authorized', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [] },
+    adapter: { connectionCheck: { checking: false, error: '' }, state: { browserAccess: 'authorized', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [] },
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
       getSnapshot: () => undefined, downloads: new Map(), directories: new Map([["work-a:/", {checkedAt:"now",loading:false,error:""}]]) },
     document:{fullscreenElement:null},root:{},location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(),
@@ -27,7 +29,7 @@ function fixture() {
     downloadProgressMarkup: () => '', actions: { records: new Map() },
   };
   c.fileActionsContext="";c.overlayRole=overlayRole;vm.createContext(c); vm.runInContext(helpers, c);
-  vm.runInContext(extract('isRequestInspector', 'brand', 'topbar', 'quickAction', 'workRouteFeedback', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport'), c);
+  vm.runInContext(extract('coreConnectionStatus', 'fileReadPending', 'isRequestInspector', 'brand', 'topbar', 'quickAction', 'workRouteFeedback', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport'), c);
   return { c, work };
 }
 
