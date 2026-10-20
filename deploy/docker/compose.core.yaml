@@ -25,7 +25,7 @@ services:
     stop_grace_period: 60s
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:7171/healthz"]
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:17891/healthz"]
       interval: 5s
       timeout: 4s
       retries: 120
