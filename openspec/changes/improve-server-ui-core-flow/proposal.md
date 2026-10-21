@@ -42,3 +42,11 @@
 - 主要涉及 Console 的 onboarding/quick-setup/model-form/model-management/app、Desktop 的 app/adapter、共享 controls/样式和既有资源嵌入；不编辑 Go 启动、后端认证或运行逻辑。已有 ActionState 直接复用，只有实际必要时才补可见状态。
 - 不改变 Core、Go启动/后端认证/运行逻辑、API/持久格式、准备调度、权限、已有 Work 或传输语义。不新增启动器、提前监听壳、持续离线探测、组件框架或测试环境建设。
 - [设计](design.md)、[任务](tasks.md)、[31位置映射](pending-map.md) 使用同一四模块范围。动画和共同表现测一次，接入点做覆盖检查，独立状态分支补针对性测试；真实 Core 集成具备条件才运行，未测如实说明。
+
+## 同日页面收敛与重新验证
+
+所有者后续要求移除 Quick setup 模型页的 Read current state、Manage AI models 与 Runtime diagnostics，并将 Works 初次空白等待改为可辨骨架、去除初次读取失败时重复的黄色刷新警告。仅模型页收敛入口，准备页/完整管理能力保留；未知保存仍只读核对，无法确认时提供仅属于该异常状态的检查出口。复核既有同页状态连续性与待完成步骤文案，不扩大到后端。
+
+2026-10-20 工作区中的未发布提交及 bundle 已不可取得，本次从已核实的 PR 远端 `3fe9f14975850de1015eaaa65ccc3acd72e123f9` 重新实现这些 UI 修正；不是原 `0fba29e` 的逐字恢复。旧验收仅属于原历史提交，本次必须重新 build/test/review/verify。GitHub 发布仍暂停，未获得新的明确目标授权前只保留本地提交与可交付 bundle，不推送、不合并、不部署。
+
+所有者同日补充 Starting export 卡片布局问题：仅修正展开 Details 中操作链接与长身份的宽度、换行和行高，确保宽/窄屏可读且不重叠，不隐藏恢复依据或改变导出/停止/Snapshot 行为。

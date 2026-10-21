@@ -87,3 +87,7 @@ Choose model SHALL 列出已保存、启用且凭据可用的模型，包括自�
 #### Scenario: 已配置Runtime用于维护
 - **WHEN** 管理员在已配置且Ready的安装打开Runtime
 - **THEN** 看到当前配置、作用范围和维护动作，而非要求重新完成部署的步骤轨道；可编辑模型引用/读状态，既有Work仍保留原配置
+
+#### Scenario: 待完成步骤不冒充成功
+- **WHEN** Overview 仍缺 Runtime 或等待 readiness 确认
+- **THEN** SHALL 将未完成项表述为 Save runtime 或 Confirm readiness，不在该项未确认时显示 Runtime saved 或 Readiness confirmed

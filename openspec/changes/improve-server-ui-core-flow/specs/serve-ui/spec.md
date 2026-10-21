@@ -73,3 +73,7 @@ Serve SHALL 沿用 UIL-008/009 及 UIL-PENDING-001，在有效异步动作开始
 #### Scenario: 独立模型操作有准确等待对象
 - **WHEN** 管理员点击Read current data或Enable/Disable/Delete/Use for future Work且响应延迟
 - **THEN** 实际操作处显示Reading或相应状态和三点，重复入口受限；不会只把Save按钮改成Saving，也不隐藏未知结果读回要求
+
+#### Scenario: 同页刷新保留导航展开语义
+- **WHEN** 管理员展开账户菜单或窄屏导航，当前身份与路由的后台状态读取返回
+- **THEN** SHALL 保持菜单节点、焦点和展开，触发器 aria-expanded 与实际状态一致；离开或身份变化时关闭，不把旧菜单带入新视图

@@ -35,3 +35,15 @@
 初版（8b271841）本地验收：Desktop browser 335/335、unit 525/525；Console QuickStart 28/28、feedback/management 94/94。真实Core/认证/Docker集成与Go宿主构建未运行，条件限制见 [verification.md](verification.md)。4.8已完成发布与首次远端/CI核对；PR #3保持Draft，未合并。GitHub返回0个status及0个PR workflow run，仓库无`.github/workflows`；这是未提供CI结果，不是CI通过。不把未运行项记作通过。
 
 v0.0.8适配最终验收：Console全部可运行浏览器138/138（QuickStart/首设/会话44 + feedback/management94）、Desktop全部可运行浏览器338/338、24个unit文件524/524，均0失败/跳过；两端typecheck/build、测试编译、43个嵌入资源hash、OpenSpec strict及边界检查通过。完整合成首设链路和未知Works数量呈现已补回归；独立审查完成。实现远端commit `058a96090f86fca1db956bdb9020a59b5358d28f`的tree与本地测试相同，PR #3仍为Draft，GitHub确认无合并冲突、未合并。该commit的status/workflow均空，不能视为CI通过；原生Go/Core/认证/Docker仍未测。
+
+## 5. 同日页面收敛与重建验收
+
+以下是远端3fe9f149基础上的重新实现，之前未发布工作区不可取得，旧通过数字不代表本轮验证。GitHub发布暂停；本组不要求或授权重新推送。
+
+- [x] 5.1 Quick setup 模型页移除三个底部入口，保留准备/管理原能力；自动完整回读未知结果及目录失败，异常检查链接仅在未解决 unknown 出现。验证：正常/普通错误/目录失败无入口；未知模型零/唯一/多匹配与 Runtime 原目标匹配、不重发、不自动导航、Test锁、焦点/展开和读错误归属回归。
+- [x] 5.2 Works 首次未确认显示静态列表骨架；初次失败只保留中间原因和重试，确认列表刷新失败仍可见。验证：初次检查/加载/空/错/成功、错误重试去重与终态、已载内容刷新、长错误纯文本、窄屏及 reduced-motion。
+- [x] 5.3 复核并修正 Console 同页导航状态及 Overview 待完成文案。验证：账户与窄屏导航节点/焦点/ARIA、轮询和新视图关闭、缺配置及准备中事实一致；独立审查不改 Core。
+- [x] 5.4 当前代码重新执行完整可运行浏览器和非浏览器测试、两端 typecheck/build、测试编译、嵌入资源同步/校验、边界与 OpenSpec strict。验证：记录实际命令、数字、失败修复和真实未测项，提供新宽/窄截图，不能复用历史图冒充新截图。
+- [x] 5.5 按功能保存本地提交与可恢复 bundle，核对与main差异只涉及UI/测试/资源/OpenSpec。验证：bundle可读与HEAD、来源/截图fixture限制清楚；生成可持久保存的恢复附件交付，不对GitHub写入、合并或部署。
+
+- [x] 5.6 修正 Starting export 展开 Details 的长操作链接/身份挤窄重叠。验证：根因对应最小布局修复，完整ID及操作入口保留，宽/360px截图与几何不重叠断言，导出相关回归及最终Desktop资源/完整可运行套件重新验证。
