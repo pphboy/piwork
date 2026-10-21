@@ -13,12 +13,11 @@ fi
 export PIWORK_RELEASE_REGISTRY
 PIWORK_RELEASE_REGISTRY=$(cat "$piwork_release_input/registry")
 
-for piwork_release_role in core cli agent fileHelper snapshotHelper; do
+for piwork_release_role in core agent fileHelper snapshotHelper; do
     piwork_release_ref=$(cat "$piwork_release_input/$piwork_release_role")
     docker image inspect "$piwork_release_ref" > "$piwork_release_input/$piwork_release_role.image.json"
     case "$piwork_release_role" in
-        core) piwork_release_programs=(piwork-serve) ;;
-        cli) piwork_release_programs=(piwork-cli) ;;
+        core) piwork_release_programs=(piwork-core) ;;
         agent) piwork_release_programs=(piwork-package-helper piwork-service-mcp) ;;
         fileHelper) piwork_release_programs=(piwork-file-helper) ;;
         snapshotHelper) piwork_release_programs=(piwork-snapshot-helper) ;;
@@ -30,17 +29,12 @@ for piwork_release_role in core cli agent fileHelper snapshotHelper; do
             "$piwork_release_ref" --version \
             > "$piwork_release_input/$piwork_release_role.$piwork_release_program.json"
     done
-    if [[ $piwork_release_role == core || $piwork_release_role == cli ]]; then
+    if [[ $piwork_release_role == core ]]; then
         docker run --rm --network none --read-only "$piwork_release_ref" --help >/dev/null
         docker run --rm --network none --read-only --entrypoint /bin/sh "$piwork_release_ref" -ec \
             'command -v curl >/dev/null; test -s /etc/ssl/certs/ca-certificates.crt; for tool in go node npm python python3 docker; do if command -v "$tool" >/dev/null 2>&1; then exit 1; fi; done'
-        if [[ $piwork_release_role == cli ]]; then
-            docker run --rm --network none --read-only --entrypoint /bin/sh "$piwork_release_ref" -ec \
-                'jq --version >/dev/null; test "$(stat -c %a /var/lib/piwork/client)" = 700; test "$(stat -c %u /var/lib/piwork/client)" = 0'
-        else
-            docker run --rm --network none --read-only --entrypoint cat "$piwork_release_ref" \
-                /etc/piwork/docker-release.json > "$piwork_release_input/core.release-config.json"
-        fi
+        docker run --rm --network none --read-only --entrypoint cat "$piwork_release_ref" \
+            /etc/piwork/docker-release.json > "$piwork_release_input/core.release-config.json"
         printf 'true\n' > "$piwork_release_input/$piwork_release_role.boundary"
     fi
 done

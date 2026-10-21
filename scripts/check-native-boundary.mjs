@@ -59,4 +59,17 @@ for (const name of ['README.md','README.zh-CN.md','AGENTS.md']) {
  const source=await readFile(name,'utf8').catch(error=>{if(error.code==='ENOENT')return '';throw error;});
  if(forbiddenImports.test(source))throw new Error(`Legacy platform reference: ${name}`);
 }
+// The composition root owns lifecycle, not a shortcut around Core HTTP.
+async function checkHTTPBoundary(directory) {
+ if (!await stat(directory).then(() => true, () => false)) return;
+ for (const item of await readdir(directory, {withFileTypes:true})) {
+  const path = join(directory, item.name);
+  if (item.isDirectory()) { await checkHTTPBoundary(path); continue; }
+  if (!path.endsWith('.go') || path.endsWith('_test.go')) continue;
+  const source = await readFile(path, 'utf8');
+  if (/\b(?:NewHandlerTransport|HandlerTransport|ListenWithHandler)\b/.test(source)) throw new Error(`In-process Core transport: ${path}`);
+  if (/^internal\/(?:webapp|cli|consoleapp)\//.test(path) && /"piwork\/internal\/(?:coreapp|corestore|identity)"/.test(source)) throw new Error(`Browser/Core domain dependency: ${path}`);
+ }
+}
+await checkHTTPBoundary('internal');
 console.log('Current sources, scripts, configuration, locks and main specs use native Go platform entry points.');

@@ -1,12 +1,12 @@
 {
   "contractVersion": 2,
   "state": "published",
-  "version": "0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty",
-  "commit": "5818e1de7bb5af9bd6305777fc88b40505a708b3",
+  "version": "0.2.0-9a40d4443fee-9286afd39f8e-dirty",
+  "commit": "9a40d4443fee559335485744d0aabbf186e24b38",
   "modified": true,
-  "inputHash": "6b6f6f8bbf625e2b36502349e5ba13992060aeab4b5239436c3288919ae7d44e",
+  "inputHash": "9286afd39f8ed10ee0214f4197e8eb790a0dd7104119ff3047cfa029fc58df0e",
   "platform": "linux/amd64",
-  "reference": "docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty",
+  "reference": "docker.io/pphboy/piwork-web-base:0.2.0-9a40d4443fee-9286afd39f8e-dirty",
   "environment": {
     "contractVersion": 2,
     "version": "0.2.0",
@@ -17,24 +17,19 @@
     "niceguiVersion": "3.18.0",
     "pipVersion": "26.2.1"
   },
-  "imageId": "sha256:1b2dc23ea6cc78f5986217a5c133f045334c81d30a53c833f73aa59abdad87a1",
-  "maintenanceSource": "deploy/images/web-base/",
-  "localValidationState": "verified",
+  "imageId": "sha256:67d72e7c72274981fcded1c902230ce3c1361888aa6a1f95c0292b9e6829a966",
+  "registryDigest": "sha256:68ec208f335f9813b7072f1f9e2907c0de67c64bbcd986feb81f5b7fa6599bf3",
+  "fixedReference": "docker.io/pphboy/piwork-web-base:0.2.0-9a40d4443fee-9286afd39f8e-dirty@sha256:68ec208f335f9813b7072f1f9e2907c0de67c64bbcd986feb81f5b7fa6599bf3",
   "anonymousReadable": true,
+  "checkedAt": "2026-10-20T16:35:27.437Z",
+  "maintenanceSource": "deploy/images/web-base/",
+  "hostedPathSupport": true,
+  "localValidationState": "verified",
   "validationRecords": [
     "validation.json",
     "validation-web-app.json",
     "tools-validation.json",
     "dependencies-validation.json",
     "core-validation.json"
-  ],
-  "brainAcceptance": {
-    "passed": true,
-    "elapsedMs": 574680,
-    "snapshotBytes": 816069838,
-    "evidenceFile": "page-files-brain.log"
-  },
-  "registryDigest": "sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098",
-  "fixedReference": "docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty@sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098",
-  "checkedAt": "2026-10-11T03:14:53.986Z"
+  ]
 }

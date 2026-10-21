@@ -200,3 +200,28 @@ def test_startup_rejects_an_unchecked_version(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(RuntimeError, match='checked startup version'):
         mount_runtime(FastAPI(), root)
+
+
+def test_request_prefix_and_storage_scope_do_not_change_internal_routes():
+    from starlette.requests import Request
+    from piwork_web_runtime import browser_context, browser_url, page_head
+    from types import SimpleNamespace
+    prefix = '/services/work-one/notes/8080'
+    request = Request({'type': 'http', 'headers': [(b'x-forwarded-prefix', prefix.encode()),
+                                                   (b'x-piwork-app-session', b'a' * 64)]})
+    assert browser_context(request) == {'basePath': prefix, 'storageScope': 'a' * 64}
+    assert browser_url(request, '/api/runtime-version') == prefix + '/api/runtime-version'
+    assert browser_url(request, prefix + '/assets/custom.js') == prefix + '/assets/custom.js'
+    assert browser_url(None, '/health') == '/health'
+    assert browser_url(None, '/pi/v1/capabilities') == '/pi/v1/capabilities'
+    heads = []
+    ui = SimpleNamespace(context=SimpleNamespace(client=SimpleNamespace(request=request)), add_head_html=heads.append)
+    page_head(ui, {'frontendVersion': 'f' * 64})
+    assert 'src="' + prefix + '/piwork-assets/page-client.js?v=' in heads[0]
+    assert prefix + prefix not in heads[0]
+    for invalid in ['/services/work/notes/080/', '/services/work/notes/80/../admin', '\"><script>']:
+        forged = Request({'type': 'http', 'headers': [(b'x-forwarded-prefix', invalid.encode())]})
+        with pytest.raises(ValueError):
+            browser_context(forged)
+    with pytest.raises(ValueError):
+        browser_url(request, '//untrusted.example/x')

@@ -16,6 +16,8 @@
 
 正常运行 SHALL 不依赖宿主 Node、npm、Python、Go、Docker CLI 或 openssl；系统 CA、可写私有数据目录、网络及 Linux 本机 Docker Engine 属于设施。浏览器打开器可选，不可用时 SHALL 输出可手动访问的 URL并保持服务运行。
 
+同一个统一进程 SHALL 启动 ControlPlane 17891 与 Core 17871 两个独立 HTTP 服务。浏览器使用 ControlPlane；原生 CLI/operator 和 ControlPlane 后端调用 Core。Core 是独立业务领域，不因合并交付而变成只可由 UI 对象调用的内部模块。默认监听、可选远程 Core、启动清理与关闭遵守 core-service-startup。
+
 #### Scenario: 在无解释器宿主上完成初始化
 - **WHEN** Linux 安装者仅取得服务端程序和必要设施，从无源码目录运行
 - **THEN** 一次启动即可打开本机或远程网页并完成管理员/runtime 引导，没有三个宿主服务进程或运行时前端构建
@@ -62,7 +64,7 @@ Core SHALL 直接通过 Docker Engine API 管理容器、网络、卷、镜像�
 
 统一服务端 SHALL 内嵌管理界面、工作台、引导及其全部资源，并携带同版非敏感 Agent/helper 默认引用；Agent 引用 SHALL 与本二进制的发行元数据绑定，是程序默认值，不依赖用户手填、镜像选择或高级覆盖。从任意工作目录运行不要求旁置 WebUI、发行配置文件或源码。复用页面 SHALL 满足既有 desktop-ui-language/ui-language、任务反馈与组件选型约束，不以整合为由裁减 Work、Chat、Files、Service、配置、包和迁移能力。
 
-托管页面 SHALL 按浏览器会话隔离用户，Service 独立来源、服务端响应 Cookie 分区及首版脚本 Cookie 限制遵守 browser-service-access；完整工作台不代表任意网页应用的 Cookie 透明兼容。管理区和工作台共用应用入口，页面关闭不影响 Core。独立 piwork-cli desktop SHALL 继续内嵌自己的资源并保持原有本机授权、Service origin 和连接恢复语义。平台凭据不得交给页面或 Service。
+托管页面 SHALL 按浏览器会话隔离用户，托管 Service 的同源路径入口、可信应用边界、服务端响应 Cookie 分区及脚本 Cookie 限制遵守 browser-service-access；完整工作台不代表独立 origin 隔离或任意根路径网页的透明兼容。管理区和工作台共用应用入口，页面关闭不影响 Core。独立 piwork-cli desktop SHALL 继续内嵌自己的资源，普通地址自动建立浏览器会话，按共享 CLI 凭据或正常账号登录继续；遵守 desktop-webui 取消 Access 门禁后的初始化、注销和恢复契约，Service origin 隔离及连接恢复保持。平台凭据不得交给页面或 Service。
 
 #### Scenario: 从任意工作目录打开 Desktop
 - **WHEN** 在无源码/静态目录的位置启动统一程序
@@ -74,7 +76,7 @@ Core SHALL 直接通过 Docker Engine API 管理容器、网络、卷、镜像�
 
 #### Scenario: CLI 本机模式继续可用
 - **WHEN** 用户从任意目录运行原生 piwork-cli desktop
-- **THEN** 本机资源、授权恢复及已配置 Core 的 Work/Service/Files/Chat/Settings 继续可用
+- **THEN** 本机普通地址可直接登录/复用有效共享凭据，资源及已配置 Core 的 Work/Service/Files/Chat/Settings 继续可用，恢复不要求启动授权链接
 
 #### Scenario: Console 独立退出
 - **WHEN** 管理员关闭浏览器管理页面
@@ -82,7 +84,7 @@ Core SHALL 直接通过 Docker Engine API 管理容器、网络、卷、镜像�
 
 #### Scenario: 无代理配置访问 Service
 - **WHEN** 用户在桌面 Chrome 或 Edge 中登录 Desktop，预览服务并打开独立应用标签页
-- **THEN** 浏览器无须配置 proxy/PAC/hosts 即可交互，受支持应用的认证、SSE、WebSocket 和受限嵌入回退可用；托管 IP 模式按 browser-service-access 明确脚本 Cookie 限制，CLI 本机模式保持原行为
+- **THEN** 浏览器无须配置 proxy/PAC/hosts 即可交互，受支持应用的认证、SSE、WebSocket 和受限嵌入回退可用；托管 IP 模式按 browser-service-access 明确同源信任、路径前缀和脚本 Cookie 限制，CLI 本机模式保持原行为
 
 ### Requirement: 保持与容器内 Pi 生态的当前契约
 

@@ -1,6 +1,6 @@
 {
   "name": "piwork",
-  "version": "0.0.7",
+  "version": "0.0.10",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -21,8 +21,7 @@
     "build": "make build",
     "test": "make test",
     "test:integration": "make test-integration",
-    "serve": "./dist/go/piwork-serve",
-    "console": "./dist/go/piwork-console",
+    "core": "./dist/go/piwork-core",
     "cli": "./dist/go/piwork-cli",
     "agent:image": "make native-agent-images",
     "file-helper:image": "make native-helper-images",

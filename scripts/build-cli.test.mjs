@@ -6,8 +6,8 @@ import { join, dirname } from 'node:path';
 import { buildCLI, desktopInputHash, parseTargets } from './build-cli.mjs';
 
 test('CLI target selection is explicit, validated and never hides a bad configured list', () => {
- assert.deepEqual(parseTargets(['--target','windows/arm64','--target','linux/amd64'], {version:8}, 'linux/amd64'), ['windows/arm64','linux/amd64']);
- assert.deepEqual(parseTargets([], null, 'linux/arm64'), ['linux/arm64']);
+ assert.throws(()=>parseTargets(['--target','windows/amd64'],null,'linux/amd64'));
+ assert.throws(()=>parseTargets([],null,'linux/arm64'));
  for (const config of [{}, {version:1,targets:[]}, {version:1,targets:['linux/amd64'],other:true}, {version:1,targets:['../wrong']}]) assert.throws(() => parseTargets([],config,'linux/amd64'));
  assert.throws(() => parseTargets(['--target'],null,'linux/amd64'));
 });
@@ -33,10 +33,10 @@ test('CLI build prepares fresh Desktop once and builds only the requested client
    if (args.includes('tsconfig.json')) assert.equal(existsSync(join(base,'apps/desktop-webui/dist/stale.js')),false);
    return {status:0,stdout,stderr:''};
   };
-  const outputs=buildCLI(['--target','linux/amd64','--target','windows/amd64'],{base,run,nodeVersion:'24.20.0'});
-  assert.equal(outputs.length,2);
+  const outputs=buildCLI(['--target','linux/amd64'],{base,run,nodeVersion:'24.20.0'});
+  assert.equal(outputs.length,1);
   const builds=calls.filter(call=>call.args[0]==='build');
-  assert.equal(builds.length,2);
+  assert.equal(builds.length,1);
   assert.equal(calls.filter(call=>call.args.includes('tsconfig.json')).length,1);
   for (const call of builds) {
    assert.equal(call.args.at(-1),'./cmd/piwork-cli');

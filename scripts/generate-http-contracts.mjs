@@ -16,6 +16,8 @@ const root = resolve(import.meta.dirname, "..");
 const modelApis = Object.fromEntries(builtinProviders().flatMap(provider => provider.getModels().map(model => [`${provider.id}/${model.id}`, model.api])).sort(([a],[b]) => a.localeCompare(b)));
 await writeFile(resolve(root,"internal/coreapp/model-sdk-catalog.json"), `${JSON.stringify(modelApis,null,2)}\n`);
 const schemas = JSON.parse(await readFile(resolve(root, "internal/contracts/schemas.json"), "utf8"));
+// The frozen base also contains historical DTOs; retire the removed setup gate.
+for (const name of ["WebSetupProofInputSchema", "WebSetupSessionSchema", "WebSetupLinkSchema"]) delete schemas[name];
 Object.assign(schemas, modelManagementSchemas);
 Object.assign(schemas, Object.fromEntries(Object.entries(onboardingSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(chatSchemas).filter(([name])=>name.endsWith("Schema"))));

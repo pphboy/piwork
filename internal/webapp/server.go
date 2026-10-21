@@ -4,10 +4,10 @@ package webapp
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,48 +22,44 @@ import (
 	"piwork/internal/consoleapp"
 	"piwork/internal/consoleassets"
 	"piwork/internal/contracts"
-	"piwork/internal/coreapp"
 	"piwork/internal/localweb"
 )
 
 type Options struct {
-	Origin, DataDirectory             string
-	Core                              *coreapp.Application
-	Handler                           http.Handler
-	ServiceListenHost                 string
-	ServiceFirstPort, ServiceLastPort int
-	TLS                               *tls.Config
+	Origin, DataDirectory string
+	CoreURL               string
+	SetupSecret           string `json:"-"`
 }
 
 type Server struct {
-	ctx                                  context.Context
-	options                              Options
-	origin                               *url.URL
-	transport                            *client.HandlerTransport
-	console                              http.Handler
-	services                             *cli.HostedServicePool
-	mu                                   sync.Mutex
-	sessions                             map[string]*session
-	challenges                           map[string]challenge
-	failures                             map[string]failureBucket
-	closed                               bool
-	cookie, challengeCookie, setupCookie string
-	setupMu                              sync.Mutex
-	proofHash                            [32]byte
-	proofEnd                             time.Time
-	proofUsed                            bool
-	setupSessions                        map[string]challenge
+	ctx                     context.Context
+	options                 Options
+	origin                  *url.URL
+	authorities             map[string]bool
+	transport               *http.Transport
+	setup                   *client.SetupClient
+	console                 http.Handler
+	mu                      sync.Mutex
+	sessions                map[string]*session
+	challenges              map[string]challenge
+	failures                map[string]failureBucket
+	closed                  bool
+	cookie, challengeCookie string
 }
 
 type session struct {
 	cancel         context.CancelFunc
+	checkMu        sync.Mutex
+	checking       *sessionCheck
 	id, csrf       string
+	origin         string
 	credential     client.Credential
 	expires        time.Time
 	desktop        *cli.HostedDesktop
 	stateDirectory string
 }
 type challenge struct {
+	origin  string
 	csrf    string
 	expires time.Time
 }
@@ -74,8 +70,11 @@ type failureBucket struct {
 
 func New(ctx context.Context, options Options) (*Server, error) {
 	origin, err := client.ParseCoreURL(options.Origin)
-	if err != nil || options.Core == nil || options.Handler == nil || !filepath.IsAbs(options.DataDirectory) {
+	if err != nil || origin.Scheme != "http" || !filepath.IsAbs(options.DataDirectory) {
 		return nil, errors.New("invalid unified web application configuration")
+	}
+	if _, err := client.ParseCoreURL(options.CoreURL); err != nil {
+		return nil, err
 	}
 	root := filepath.Join(options.DataDirectory, "runtime", "browser-sessions")
 	private, err := clientfs.OpenPrivateDirectory(root, true)
@@ -95,28 +94,15 @@ func New(ctx context.Context, options Options) (*Server, error) {
 		return nil, err
 	}
 	key := sha256.Sum256([]byte(options.Origin))
-	prefix := "piwork-web-"
-	if origin.Scheme == "https" {
-		prefix = "__Host-piwork-web-"
-	}
-	cookie := prefix + hex.EncodeToString(key[:6])
-	s := &Server{ctx: ctx, options: options, origin: origin, cookie: cookie, challengeCookie: cookie + "-login", setupCookie: cookie + "-setup",
-		sessions: map[string]*session{}, challenges: map[string]challenge{}, failures: map[string]failureBucket{}, setupSessions: map[string]challenge{}}
-	s.transport = client.NewHandlerTransport(ctx, options.Handler)
-	first, last := options.ServiceFirstPort, options.ServiceLastPort
-	if first == 0 && last == 0 {
-		first, last = 17891, 17954
-	}
-	listenHost := options.ServiceListenHost
-	if listenHost == "" {
-		listenHost = origin.Hostname()
-	}
-	s.services, err = cli.NewHostedServicePool(ctx, cli.HostedServiceOptions{Origin: options.Origin, ListenHost: listenHost, StateDirectory: filepath.Join(options.DataDirectory, "runtime", "service-origins"), FirstPort: first, LastPort: last, TLS: options.TLS})
+	cookie := "piwork-web-" + hex.EncodeToString(key[:6])
+	s := &Server{ctx: ctx, options: options, origin: origin, cookie: cookie, authorities: localAuthorities(origin), challengeCookie: cookie + "-login",
+		sessions: map[string]*session{}, challenges: map[string]challenge{}, failures: map[string]failureBucket{}}
+	s.transport = &http.Transport{Proxy: nil, MaxResponseHeaderBytes: 32 << 10, MaxIdleConns: 128, MaxIdleConnsPerHost: 64, IdleConnTimeout: 90 * time.Second}
+	s.setup, err = client.NewSetupClient(options.CoreURL, options.SetupSecret)
 	if err != nil {
-		s.transport.Close()
 		return nil, err
 	}
-	s.console = consoleapp.NewHostedHandler(consoleapp.HostedOptions{Origin: options.Origin,
+	s.console = consoleapp.NewHostedHandler(consoleapp.HostedOptions{Origin: s.requestOrigin, CoreURL: options.CoreURL,
 		DataDirectory: filepath.Join(options.DataDirectory, "runtime", "browser-console"), Transport: s.transport,
 		Resolve: func(r *http.Request) (consoleapp.HostedSession, error) {
 			ss, err := s.authenticate(r)
@@ -146,15 +132,11 @@ func (s *Server) Close() {
 		ss.desktop.Close()
 		_ = os.RemoveAll(ss.stateDirectory)
 	}
-	s.setupMu.Lock()
-	s.invalidateSetupLocked()
-	s.setupMu.Unlock()
-	s.services.Close()
-	s.transport.Close()
+	s.transport.CloseIdleConnections()
 }
 
 func (s *Server) api(token string) *client.Client {
-	api, _ := client.New(s.options.Origin, token)
+	api, _ := client.New(s.options.CoreURL, token)
 	api.HTTP.Transport = s.transport
 	return api
 }
@@ -164,22 +146,15 @@ func (s *Server) authenticate(r *http.Request) (*session, error) {
 	s.mu.Lock()
 	ss := s.sessions[id]
 	s.mu.Unlock()
-	if ss == nil {
+	if ss == nil || ss.origin != s.requestOrigin(r) {
 		return nil, contracts.NewError("AUTHENTICATION_REQUIRED", "")
 	}
-	principal, err := s.options.Core.Identity.Authenticate(r.Context(), ss.credential.Token)
-	if err != nil {
-		status, _ := contracts.ProjectError(err)
-		if status >= 500 {
-			return nil, err
-		}
-	}
-	if err != nil || !time.Now().Before(ss.expires) || principal.User.ID != ss.credential.User.ID {
+	if !time.Now().Before(ss.expires) {
 		s.removeSession(ss)
-		if err != nil {
-			return nil, err
-		}
 		return nil, contracts.NewError("AUTHENTICATION_REQUIRED", "")
+	}
+	if err := s.checkSession(r.Context(), ss); err != nil {
+		return nil, err
 	}
 	return ss, nil
 }
@@ -229,10 +204,10 @@ func (s *Server) collect(ctx context.Context) {
 }
 
 func (s *Server) sameOrigin(r *http.Request, mutation bool) bool {
-	if r.Host != s.origin.Host {
+	if s.requestOrigin(r) == "" {
 		return false
 	}
-	if origin := r.Header.Get("Origin"); origin != "" && origin != s.options.Origin || mutation && origin == "" {
+	if origin := r.Header.Get("Origin"); origin != "" && origin != s.requestOrigin(r) || mutation && origin == "" {
 		return false
 	}
 	site := r.Header.Get("Sec-Fetch-Site")
@@ -241,19 +216,42 @@ func (s *Server) sameOrigin(r *http.Request, mutation bool) bool {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	if path == "/control/setup-link" {
-		s.operatorSetupLink(w, r)
+	if path == "/healthz" || path == "/readyz" {
+		s.probe(w, r)
 		return
 	}
-	if path == "/healthz" || path == "/readyz" || strings.HasPrefix(path, "/api/v1/") || strings.HasPrefix(path, "/control/") {
-		s.options.Handler.ServeHTTP(w, r)
+	if strings.HasPrefix(path, "/api/v1/") || strings.HasPrefix(path, "/control/") {
+		webError(w, 404, "NOT_FOUND")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if r.Host != s.origin.Host {
+	if s.requestOrigin(r) == "" {
 		webError(w, 400, "INVALID_HOST")
+		return
+	}
+	if strings.HasPrefix(path, "/services/") {
+		if _, _, _, _, _, ok := cli.ParseHostedServicePath(r.URL.EscapedPath()); !ok {
+			webError(w, 400, "INVALID_SERVICE_ENTRY")
+			return
+		}
+		if !s.sameOrigin(r, r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions) {
+			webError(w, 403, "ORIGIN_INVALID")
+			return
+		}
+		ss, err := s.authenticate(r)
+		if err != nil {
+			var apiErr *client.APIError
+			status, _ := contracts.ProjectError(err)
+			if (status == 401 || errors.As(err, &apiErr) && apiErr.Status == 401) && r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/html") {
+				http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
+			} else {
+				sendError(w, err)
+			}
+			return
+		}
+		ss.desktop.ServeService(w, r)
 		return
 	}
 	if strings.HasPrefix(path, "/_web/api/") || strings.HasPrefix(path, "/_desktop/") || strings.HasPrefix(path, "/console/api/") {
@@ -300,7 +298,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sendError(w, err)
 			return
 		}
-		hasUsers, readErr := s.options.Core.Identity.HasUsers(r.Context())
+		hasUsers, readErr := s.hasUsers(r.Context())
 		if readErr != nil {
 			sendError(w, readErr)
 			return
@@ -365,6 +363,17 @@ func webError(w http.ResponseWriter, status int, code string) {
 	webJSON(w, status, map[string]any{"code": code, "message": code})
 }
 func sendError(w http.ResponseWriter, err error) {
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
+		if apiErr.Status == 401 {
+			webError(w, 401, "AUTHENTICATION_REQUIRED")
+		} else if apiErr.Status >= 400 && apiErr.Status < 500 {
+			webError(w, apiErr.Status, apiErr.Code)
+		} else {
+			webError(w, 502, "CORE_UNAVAILABLE")
+		}
+		return
+	}
 	status, value := contracts.ProjectError(err)
 	webJSON(w, status, value)
 }
@@ -382,8 +391,39 @@ func requestCookie(r *http.Request, name string) string {
 	return value
 }
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, seconds int) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: seconds, HttpOnly: true, Secure: s.origin.Scheme == "https", SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: seconds, HttpOnly: true, Secure: false, SameSite: http.SameSiteStrictMode})
 }
 func readObject(r *http.Request, limit int64) (map[string]json.RawMessage, error) {
 	return localweb.ReadObject(r, limit)
+}
+
+// Authorities come only from this machine, never request DNS or proxy headers.
+func localAuthorities(origin *url.URL) map[string]bool {
+	hosts := []string{"localhost", "127.0.0.1", "::1"}
+	if name, err := os.Hostname(); err == nil {
+		hosts = append(hosts, name)
+	}
+	if addresses, err := net.InterfaceAddrs(); err == nil {
+		for _, address := range addresses {
+			if network, ok := address.(*net.IPNet); ok && network.IP.To4() != nil {
+				hosts = append(hosts, network.IP.String())
+			}
+		}
+	}
+	allowed := map[string]bool{}
+	for _, host := range hosts {
+		authority := net.JoinHostPort(host, origin.Port())
+		if origin.Port() == "" {
+			authority = host
+		}
+		allowed[strings.ToLower(authority)] = true
+	}
+	return allowed
+}
+
+func (s *Server) requestOrigin(r *http.Request) string {
+	if !s.authorities[strings.ToLower(r.Host)] {
+		return ""
+	}
+	return "http://" + r.Host
 }

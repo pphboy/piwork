@@ -12,6 +12,8 @@ STYLE = (Path(__file__).parent / 'style.css').read_text()
 
 def register_pages(station, loaded):
     def page(path):
+        # Request-level Service context scopes custom scripts and drafts;
+        # NiceGUI links below already apply the forwarded prefix themselves.
         page_head(ui, loaded)
         ui.add_css(STYLE)
         with ui.column().classes('webapp-root').props('data-piwork-app'):

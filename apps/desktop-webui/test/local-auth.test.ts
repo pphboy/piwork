@@ -18,14 +18,19 @@ const signedOut = (generation = 1, csrf = 'current-csrf') => ({ state: 'signed-o
 const signedIn = (generation = 1, account = 'owner') => ({ ...signedOut(generation), state: 'authenticated', user: { account, role: 'user' } });
 const denied = { status: 401, json: { code: 'LOCAL_AUTH_REQUIRED' } };
 const pending = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
-async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: Record) => Reply | undefined | Promise<Reply | undefined>, ticket = '') {
+async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: Record) => Reply | undefined | Promise<Reply | undefined>, ticket = '', hosted = false, clock = false) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } }); t.after(() => page.close()); page.setDefaultTimeout(5000);
+  if (clock) await page.clock.install();
   const records: Record[] = [];
   await page.route('**/_desktop/api/**', async (route: Route) => {
     const record = { path: new URL(route.request().url()).pathname.slice('/_desktop/api/'.length), method: route.request().method(), body: route.request().postData() ?? '', headers: route.request().headers() }; records.push(record);
     let reply = await handler(record);
     reply ??= record.path === 'status' ? { json: { health: { available: true }, readiness: { available: true, value: { ready: true } } } } : record.path === 'works' ? { json: { works: [] } } : record.path === 'skills' ? { json: { skills: [] } } : record.path === 'packages' ? { json: { packages: [] } } : record.path === 'known-operations' ? { json: { operations: [] } } : { status: 404, json: { code: 'NOT_FOUND' } };
     if (reply.abort) await route.abort('failed'); else await route.fulfill({ status: reply.status ?? 200, contentType: 'application/json', body: JSON.stringify(reply.json ?? {}) });
+  });
+  if (hosted) await page.route(base + '/', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: (await response.text()).replace('<head>', '<head><meta name="piwork-mode" content="hosted">') });
   });
   await page.goto(base + (ticket ? '/#ticket=' + ticket : '/'));
   return { page, records };
@@ -42,46 +47,89 @@ test('local auth: checking is visible and valid Cookie discards an old ticket wi
   await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
   assert.equal(records.filter(r => r.path === 'bootstrap').length, 0);
 });
-for (const ticket of ['', 'expired', 'replayed', 'prior-process']) test(`local auth: ${ticket || 'missing Cookie'} gives actionable access recovery and explicit readonly check`, async t => {
-  let allowed = false;
-  const { page, records } = await fixture(t, r => r.path === 'session' ? allowed ? { json: signedOut() } : denied : r.path === 'bootstrap' ? { status: 403, json: { code: 'LOCAL_BOOTSTRAP_DENIED' } } : undefined, ticket);
-  await expect(page.getByRole('heading', { name: 'Browser access required' })).toBeVisible();
-  for (const action of ['account', 'sign-in', 'sign-out', 'import', 'operations']) assert.equal(await page.locator(`[data-action="${action}"]`).count(), 0);
-  assert.equal(records.filter(r => r.path === 'bootstrap').length, ticket ? 1 : 0);
-  await expect(page.locator('body')).toContainText(`desktop open --port ${new URL(base).port} --no-open`);
-  await expect(page.locator('body')).toContainText(`desktop logout --port ${new URL(base).port}`);
-  allowed = true; await button(page, 'check-browser-access').click();
+for (const ticket of ['', 'expired', 'replayed', 'prior-process']) test(`ordinary session: ${ticket || 'plain address'} opens normal sign-in without a gate`, async t => {
+  const { page, records } = await fixture(t, r => r.path === 'session' ? { json: signedOut() } : undefined, ticket);
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
-  assert.equal(await page.locator('[data-action="import"]').count(), 1);
-  assert.equal(records.filter(r => r.method !== 'GET').length, ticket ? 1 : 0);
+  await expect(button(page,'sign-in')).toBeVisible(); await expect(button(page,'import')).toBeVisible();
+  assert.equal(new URL(page.url()).hash,'');
+  assert.equal(records.filter(r=>r.method!=='GET').length,0);
+  assert.equal(records.filter(r=>r.path==='bootstrap').length,0);
+  await expect(page.locator('body')).not.toContainText('Browser access required');
+  await expect(button(page,'check-browser-access')).toHaveCount(0);
+  await expect(button(page,'reset-browser-access')).toHaveCount(0);
 });
 test('local auth: initial network failure does not exchange ticket; manual check and deduplicated reads recover', async t => {
   let online = false; const gate = pending(); t.after(async () => gate.resolve());
   const { page, records } = await fixture(t, async r => { if (r.path === 'session') { if (!online) return { abort: true }; await gate.promise; return { json: signedOut() }; } }, 'ticket');
   await expect(page.getByRole('heading', { name: 'Desktop connection unavailable' })).toBeVisible();
   online = true;
-  const checked = api(page, 'await Promise.all([adapter.checkBrowserAccess(), adapter.checkBrowserAccess()])');
+  const checked = api(page, 'await Promise.all([adapter.checkSession(), adapter.checkSession()])');
   await expect.poll(() => records.filter(r => r.path === 'session').length).toBe(2); gate.resolve(); await checked;
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
   assert.equal(records.filter(r => r.path === 'bootstrap').length, 0);
 });
-for (const lost of [false, true]) test(`local auth: exchange ${lost ? 'response lost' : 'confirmed'} is followed by actual Cookie check and no replay`, async t => {
-  let allowed = false;
-  const { page, records } = await fixture(t, r => {
-    if (r.path === 'session') return allowed ? { json: signedOut() } : denied;
-    if (r.path === 'bootstrap') { allowed = true; return lost ? { abort: true } : { json: { authorized: true, csrf: 'not-trusted-alone' } }; }
-  }, 'fresh');
-  await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
-  assert.deepEqual(records.slice(0, 3).map(r => r.path), ['session', 'bootstrap', 'session']);
-  assert.equal(records.filter(r => r.path === 'bootstrap').length, 1);
-  assert.equal(await api(page, 'return adapter.state.signedIn'), false);
+for (const hosted of [false, true]) test(`ordinary session: hung ${hosted ? 'hosted' : 'native'} initialization offers a fresh readonly retry after ten seconds`, async t => {
+  const gate = pending(); t.after(async () => gate.resolve()); let reads = 0;
+  const { page, records } = await fixture(t, async r => {
+    if (r.path !== 'session') return;
+    if (++reads === 1) { await gate.promise; return { json: signedIn(1, 'obsolete-owner') }; }
+    return { json: signedIn(2, 'current-owner') };
+  }, '', hosted, true);
+  await expect(page.getByRole('heading', { name: 'Opening workspace…' })).toBeVisible();
+  await expect(button(page, 'retry-session')).toHaveCount(0);
+  await page.clock.fastForward(11000);
+  await expect(page.locator('body')).toContainText('Still reading your Desktop session');
+  await expect(button(page, 'retry-session')).toBeVisible();
+  await button(page, 'retry-session').click();
+  await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  assert(reads >= 2, 'retry reused the original hung read');
+  gate.resolve();
+  await expect.poll(() => api(page, 'return adapter.state.core.account')).toBe('current-owner');
+  assert.equal(records.filter(r => r.method !== 'GET').length, 0);
+  assert.equal(await page.getByRole('button', { name: 'Retry connection', exact: true }).count(), 0);
 });
-test('local auth: Cookie rejection and session capacity have separate safe diagnostics', async t => {
-  for (const code of ['', 'LOCAL_SESSION_CAPACITY']) {
-    const { page, records } = await fixture(t, r => r.path === 'session' ? denied : r.path === 'bootstrap' ? code ? { status: 503, json: { code } } : { json: { authorized: true } } : undefined, 'fresh');
-    await expect(page.getByRole('heading', { name: 'Browser access required' })).toBeVisible();
-    await expect(page.locator('body')).toContainText(code ? '128 active browser sessions' : 'did not retain its Cookie');
-    assert.equal(records.filter(r => r.path === 'bootstrap').length, 1);
+test('ordinary session: hung automatic Cookie confirmation can be replaced without a mutation', async t => {
+  const gate = pending(); t.after(async () => gate.resolve()); let reads = 0;
+  const { page, records } = await fixture(t, async r => {
+    if (r.path !== 'session') return;
+    reads++;
+    if (reads === 1) return { json: { ...signedOut(), sessionCreated: true } };
+    if (reads === 2) { await gate.promise; return { json: signedIn(1, 'obsolete-owner') }; }
+    return { json: signedOut(2, 'renewed-csrf') };
+  }, '', false, true);
+  await expect.poll(() => reads).toBe(2);
+  await page.clock.fastForward(11000);
+  await button(page, 'retry-session').click();
+  await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
+  gate.resolve();
+  assert.equal(reads, 3);
+  assert.equal(await api(page, 'return adapter.state.signedIn'), false);
+  assert.equal(records.filter(r => r.method !== 'GET').length, 0);
+});
+test('ordinary session: creation verifies the automatic Cookie without an exchange', async t => {
+  let reads=0;
+  const {page,records}=await fixture(t,r=>r.path==='session'?{json:{...signedOut(),...(++reads===1?{sessionCreated:true}:{})}}:undefined);
+  await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();
+  assert.equal(records.filter(r=>r.path==='session').length,2);
+  assert.equal(records.filter(r=>r.method!=='GET').length,0);
+});
+test('ordinary session: a lost read can retry without replaying a write',async t=>{
+  let reads=0;
+  const {page,records}=await fixture(t,r=>r.path==='session'?++reads===1?{abort:true}:{json:signedOut()}:undefined);
+  await expect(page.getByRole('heading',{name:'Desktop connection unavailable'})).toBeVisible();
+  await button(page,'retry-session').click();
+  await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();
+  assert.equal(records.filter(r=>r.method!=='GET').length,0);
+});
+test('ordinary session: blocked Cookies and capacity show connection diagnostics without Access',async t=>{
+  for(const capacity of [false,true]) {
+    const {page,records}=await fixture(t,r=>r.path==='session'?capacity?{status:503,json:{code:'LOCAL_SESSION_CAPACITY'}}:{json:{...signedOut(),sessionCreated:true}}:undefined);
+    await expect(page.getByRole('heading',{name:'Desktop connection unavailable'})).toBeVisible();
+    await expect(page.locator('body')).toContainText(capacity?'128 active browser sessions':'did not retain its session Cookie');
+    await expect(page.locator('body')).not.toContainText('Browser access required');
+    await expect(button(page,'reset-browser-access')).toHaveCount(0);
+    assert.equal(records.filter(r=>r.path==='session').length,capacity?1:2);
+    assert.equal(records.filter(r=>r.method!=='GET').length,0);
   }
 });
 test('local auth: stale CSRF updates from readonly session, preserves account input and does not retry login', async t => {
@@ -95,52 +143,39 @@ test('local auth: stale CSRF updates from readonly session, preserves account in
   await button(page, 'sign-in').click();
   await expect(page.locator('body')).toContainText('original action was rejected locally');
   await expect(page.getByLabel('Account', { exact: true })).toHaveValue('keep-input');
-  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
+  assert.equal(await api(page, 'return adapter.state.sessionState'), 'ready');
   assert.equal(records.filter(r => r.path === 'login').length, 1);
   assert.equal(records.filter(r => r.path === 'session').length, 2);
 });
-test('local auth: offline Core retains local authorization and last known identity', async t => {
+test('local auth: offline Core retains its normal session and last known identity', async t => {
   const { page } = await fixture(t, r => r.path === 'session' ? { json: { ...signedOut(), state: 'offline', lastKnownUser: { account: 'owner', role: 'user' }, lastConfirmedAt: '2026-10-03T00:00:00Z' } } : r.path === 'status' ? { json: { health: { available: false } } } : undefined);
   await expect(page.locator('body')).toContainText('Core is unreachable');
-  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
+  assert.equal(await api(page, 'return adapter.state.sessionState'), 'ready');
   assert.equal(await page.locator('[data-action="account"]').count(), 1);
 });
-test('local auth: reset cancellation has no mutation; confirmed reset hides identity and ends all browser controls', async t => {
-  let local = true; const gate = pending(); t.after(async () => gate.resolve());
-  const { page, records } = await fixture(t, async r => {
-    if (r.path === 'session') return local ? { json: signedIn() } : denied;
-    if (r.path === 'browser-access/reset') { await gate.promise; local = false; return { json: { browserAccessCleared: true, coreSessionRetained: true } }; }
+test('ordinary session: the account menu has normal sign-out and no browser reset', async t => {
+  let signed=true;const gate=pending();t.after(async()=>gate.resolve());
+  const {page,records}=await fixture(t,async r=>{
+    if(r.path==='session')return {json:signed?signedIn():signedOut(2)};
+    if(r.path==='logout'){await gate.promise;signed=false;return {json:{view:signedOut(2),localCleared:true,credentialCleared:true,remoteRevocationConfirmed:true}};}
   });
-  await expect(button(page, 'account')).toBeVisible(); await button(page, 'account').click(); await button(page, 'reset-browser-access').click();
-  await expect(page.getByRole('heading', { name: 'Reset browser access?' })).toBeVisible();
-  await expect(page.locator('#modal')).toContainText('all windows of this Desktop'); await button(page, 'close-modal').click();
-  assert.equal(records.filter(r => r.path === 'browser-access/reset').length, 0);
-  await button(page, 'account').click(); await button(page, 'reset-browser-access').click(); await button(page, 'confirm-reset-browser-access').click();
-  await expect(button(page, 'confirm-reset-browser-access')).toBeDisabled();
-  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[data-action="confirm-reset-browser-access"]')?.click());
-  assert.equal(records.filter(r => r.path === 'browser-access/reset').length, 1); gate.resolve();
-  await expect(page.getByRole('heading', { name: 'Browser access required' })).toBeVisible();
-  assert.equal(await page.locator('[data-action="account"]').count(), 0);
-  await expect(page.locator('body')).toContainText('saved Core login and running Works are retained');
+  await expect(button(page,'account')).toBeVisible();await button(page,'account').click();
+  await expect(button(page,'reset-browser-access')).toHaveCount(0);
+  await button(page,'sign-out').click();
+  await expect(button(page,'sign-out')).toBeDisabled();
+  assert.equal(records.filter(r=>r.path==='logout').length,1);gate.resolve();
+  await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();
+  await expect(button(page,'sign-in')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('Browser access required');
 });
-test('local auth: unknown reset is checked without replay; normal sign out retains local control and reports disk cleanup', async t => {
-  let signed = true;
-  const { page, records } = await fixture(t, r => {
-    if (r.path === 'session') return { json: signed ? signedIn() : { ...signedOut(2), cleanupRequired: true } };
-    if (r.path === 'browser-access/reset') return { abort: true };
-    if (r.path === 'logout') { signed = false; return { json: { view: { ...signedOut(2), cleanupRequired: true }, localCleared: true, credentialCleared: false, remoteRevocationConfirmed: false } }; }
-  });
-  await expect(button(page, 'account')).toBeVisible();
-  await api(page, 'await adapter.resetBrowserAccess().catch(() => undefined)');
-  assert.equal(records.filter(r => r.path === 'browser-access/reset').length, 1);
-  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
-  await button(page, 'account').click(); await button(page, 'sign-out').click();
-  await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
+test('ordinary session: sign-out reports pending saved-credential cleanup', async t => {
+  const {page}=await fixture(t,r=>r.path==='session'?{json:signedIn()}:r.path==='logout'?{json:{view:{...signedOut(2),cleanupRequired:true},localCleared:true,credentialCleared:false,remoteRevocationConfirmed:false}}:undefined);
+  await expect(button(page,'account')).toBeVisible();await button(page,'account').click();await button(page,'sign-out').click();
+  await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();
   await expect(page.locator('body')).toContainText('saved credential cleanup is incomplete');
-  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
-  await expect(button(page, 'sign-in')).toBeVisible();
+  assert.equal(await api(page,'return adapter.state.sessionState'),'ready');
 });
-test('local auth: an old access check cannot overwrite a new account or release a new identity lock', async t => {
+test('local auth: an old session read cannot overwrite a new account or release a new identity lock', async t => {
   const gate = pending(); t.after(async () => gate.resolve()); let armed = false, held = false, loggedIn = false;
   const { page, records } = await fixture(t, async r => {
     if (r.path === 'session') {
@@ -150,7 +185,7 @@ test('local auth: an old access check cannot overwrite a new account or release 
     if (r.path === 'login') { loggedIn = true; return { json: signedIn(2, 'new-owner') }; }
   });
   await expect(button(page, 'sign-in')).toBeVisible(); armed = true;
-  const old = api(page, 'await adapter.checkBrowserAccess().catch(() => undefined)');
+  const old = api(page, 'await adapter.checkSession().catch(() => undefined)');
   await expect.poll(() => held).toBe(true);
   await page.getByLabel('Account', { exact: true }).fill('new-owner'); await page.getByLabel('Password').fill('secret'); await button(page, 'sign-in').click();
   await expect.poll(() => api(page, 'return adapter.state.core.account')).toBe('new-owner');
@@ -178,18 +213,18 @@ test('local auth: completing an obsolete check does not release the current chec
   });
   await expect(button(page, 'sign-in')).toBeVisible(); armed = true;
   const before = records.filter(r => r.path === 'session').length;
-  const old = api(page, 'await adapter.checkBrowserAccess().catch(() => undefined)');
+  const old = api(page, 'await adapter.checkSession().catch(() => undefined)');
   await expect.poll(() => held).toBe(true);
   await api(page, `await adapter.signIn('http://core.test', 'new-owner', 'secret')`);
   await expect.poll(() => records.filter(r => r.path === 'session').length).toBe(before + 2);
   oldGate.resolve(); await old;
-  await api(page, 'void adapter.checkBrowserAccess().catch(() => undefined)');
+  await api(page, 'void adapter.checkSession().catch(() => undefined)');
   assert.equal(records.filter(r => r.path === 'session').length, before + 2);
   freshGate.resolve();
   await expect.poll(() => api(page, 'return !!adapter.worksChecked')).toBe(true);
   assert.notEqual(await api(page, 'return adapter.state.scenario'), 'list-error');
 });
-test('local auth: a delayed business 401 readback cannot abandon a newer reopen initialization', async t => {
+test('local auth: a delayed business 401 readback cannot abandon a newer new initialization', async t => {
   const oldReadback = pending(), freshSession = pending(); let armed = false, readbacks = 0, freshStarted = false;
   t.after(() => { oldReadback.resolve(); freshSession.resolve(); });
   const { page, records } = await fixture(t, async r => {
@@ -215,8 +250,8 @@ test('local auth: a delayed business 401 readback cannot abandon a newer reopen 
   assert.equal(await api(page, 'return adapter.identityEpoch'), epoch);
   freshSession.resolve(); await reopen;
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
-  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
-  assert.equal(records.filter(r => r.path === 'works').length, initialWorksReads + 1, 'only the explicit business read may run; stale/reopen initialization must not add a list read');
+  assert.equal(await api(page, 'return adapter.state.sessionState'), 'ready');
+  assert.equal(records.filter(r => r.path === 'works').length, initialWorksReads + 1, 'only the explicit business read may run; stale/new initialization must not add a list read');
   assert.equal(records.filter(r => r.method !== 'GET').length, 0);
 });
 
@@ -239,7 +274,7 @@ test('local auth: a delayed business 401 readback cannot clear a newly logged-in
   await page.getByRole('button', { name: 'New Work', exact: true }).first().click();
   await page.locator('#create-name').fill('new identity draft'); gate.resolve(); await originalRead;
   assert.equal(await api(page, 'return adapter.state.core.account'), 'new-owner');
-  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
+  assert.equal(await api(page, 'return adapter.state.sessionState'), 'ready');
   assert.notEqual(await api(page, 'return adapter.state.scenario'), 'auth-expired');
   await expect(page.locator('#create-name')).toHaveValue('new identity draft');
   assert.equal(records.filter(r => r.method !== 'GET').length, 1);
@@ -260,13 +295,13 @@ test('local auth: initialization losing its identity epoch leaves an explicit re
   await expect.poll(() => held).toBe(true);
   await api(page, 'adapter.clearIdentity()'); gate.resolve(); await reopen;
   await expect(page.getByRole('heading', { name: 'Desktop connection unavailable' })).toBeVisible();
-  await expect(button(page, 'check-browser-access')).toBeEnabled();
-  await button(page, 'check-browser-access').click();
+  await expect(button(page, 'retry-session')).toBeEnabled();
+  await button(page, 'retry-session').click();
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
   assert.equal(records.filter(r => r.method !== 'GET').length, 0);
 });
 
-for (const offline of [false, true]) test(`local auth: current business 401 readback ${offline ? 'retains offline identity' : 'clears an expired Core identity'} and keeps browser access`, async t => {
+for (const offline of [false, true]) test(`local auth: current business 401 readback ${offline ? 'retains offline identity' : 'clears an expired Core identity'} and keeps normal sign-in`, async t => {
   let armed = false;
   const { page, records } = await fixture(t, r => {
     if (r.path === 'session') return { json: !armed ? signedIn() : offline ? { ...signedOut(), state: 'offline', lastKnownUser: { account: 'owner', role: 'user' } } : signedOut(2) };
@@ -274,7 +309,7 @@ for (const offline of [false, true]) test(`local auth: current business 401 read
   });
   await expect.poll(() => api(page, 'return !!adapter.worksChecked')).toBe(true); armed = true;
   const code = await api(page, `return adapter.request('works').catch(error => error.code)`);
-  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
+  assert.equal(await api(page, 'return adapter.state.sessionState'), 'ready');
   assert.equal(await api(page, 'return adapter.state.signedIn'), offline);
   if (offline) {
     assert.equal(code, 'CORE_UNAVAILABLE'); assert.equal(await api(page, 'return adapter.state.core.account'), 'owner');
@@ -287,14 +322,14 @@ for (const offline of [false, true]) test(`local auth: current business 401 read
   assert.equal(records.filter(r => r.method !== 'GET').length, 0);
 });
 
-test('local auth: recovery commands and readonly check remain keyboard accessible without narrow overflow', async t => {
-  const { page } = await fixture(t, r => r.path === 'session' ? denied : undefined);
-  await expect(page.getByRole('heading', { name: 'Browser access required' })).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 850 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  await button(page, 'copy-reopen-command').focus(); await page.keyboard.press('Enter');
-  await expect(page.locator('#toast')).toContainText(/Copied|Clipboard unavailable/);
-  assert.equal(await page.locator('[aria-live="polite"]').count() > 0, true);
+test('ordinary session: connection retry is keyboard accessible without narrow overflow',async t=>{
+  let online=false;
+  const {page}=await fixture(t,r=>r.path==='session'?online?{json:signedOut()}:{abort:true}:undefined);
+  await expect(page.getByRole('heading',{name:'Desktop connection unavailable'})).toBeVisible();
+  await page.setViewportSize({width:390,height:850});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  online=true;await button(page,'retry-session').focus();await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();
 });
 
 for (const rejectedCode of ['LOCAL_CSRF_OR_AUTH_REQUIRED', 'LOCAL_AUTH_REQUIRED']) test(`Reconcile auth: an old ${rejectedCode} rejection cannot supersede a newer initialization`, async t => {
@@ -324,7 +359,7 @@ for (const rejectedCode of ['LOCAL_CSRF_OR_AUTH_REQUIRED', 'LOCAL_AUTH_REQUIRED'
   assert.equal(sessionReads, 1, 'old rejection started a competing session check');
   fresh.resolve(); await reopen;
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
-  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
+  assert.equal(await api(page, 'return adapter.state.sessionState'), 'ready');
   assert.equal(await api(page, 'return adapter.state.signedIn'), false);
   assert.equal(records.filter(r => r.path === 'old-mutation').length, 1);
   assert.equal(records.filter(r => r.path === 'bootstrap' || r.path === 'login').length, 0);
@@ -351,7 +386,7 @@ test('Reconcile auth: an obsolete CSRF readback is discarded after initializatio
   stale.resolve(); assert.equal(await original, 'CONNECTION_CHANGED');
   fresh.resolve(); await reopen;
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
-  assert.equal(await api(page, 'return adapter.state.browserAccess'), 'authorized');
+  assert.equal(await api(page, 'return adapter.state.sessionState'), 'ready');
   assert.equal(records.filter(r => r.path === 'old-mutation').length, 1);
   assert.equal(records.filter(r => r.path === 'bootstrap' || r.path === 'login').length, 0);
 });
@@ -364,6 +399,8 @@ test('pending Core: initial and manual checks have one local indicator, end on f
   });
   await expect(page.locator('[data-pending-label="Checking Core connection…"] .pending-dots')).toHaveCount(1);
   await expect(button(page, 'connection')).not.toContainText('Connected');
+  await expect(page.locator('.works-footer')).toContainText('Works not yet read');
+  await expect(page.locator('.works-footer')).not.toContainText('0 Works');
   if (process.env.PIWORK_UI_EVIDENCE === '1') {
     await expect(page.locator('.brand-logo')).toHaveJSProperty('complete', true);
     await expect.poll(() => page.locator('.brand-logo').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
@@ -376,6 +413,8 @@ test('pending Core: initial and manual checks have one local indicator, end on f
   await expect(page.locator('#app')).not.toContainText('Starting Core');
   const checking = api(page, 'await Promise.all([adapter.checkConnection(), adapter.checkConnection()])');
   first.resolve(); await checking; await expect(button(page, 'connection')).toContainText('Connected');
+  await expect(page.locator('.works-footer')).toContainText('0 Works');
+  await expect(page.locator('.works-footer')).not.toContainText('Works not yet read');
   assert.equal(records.filter(r => r.path === 'status').length, 1);
   await button(page, 'connection').click(); fail = true; await button(page, 'check-connection').click();
   await expect(page.locator('#modal .pending-dots')).toHaveCount(1);

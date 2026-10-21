@@ -17,8 +17,8 @@ export async function checkQueryFailure(frame, setFault) {
   const draft = (await input.inputValue()) || 'keep the failure recovery draft';
   await input.fill(draft); await input.focus();
   const before = await frame.locator('body').evaluate(async () => ({
-    query: await (await fetch('/ui/queries/todos')).json(),
-    runtime: await (await fetch('/api/runtime-version')).json(),
+    query: await (await fetch((window.piworkAppURL ?? (path => path))('/ui/queries/todos'))).json(),
+    runtime: await (await fetch((window.piworkAppURL ?? (path => path))('/api/runtime-version'))).json(),
   }));
   const content = frame.locator('[data-piwork-business-content]');
   const confirmed = await content.innerText();
@@ -28,15 +28,15 @@ export async function checkQueryFailure(frame, setFault) {
     await expect.poll(() => content.innerText()).toBe(confirmed);
     await expect(input).toHaveValue(draft); await expect(input).toBeFocused();
     const failed = await frame.locator('body').evaluate(async () => ({
-      health: (await fetch('/health')).status,
-      query: (await fetch('/ui/queries/todos')).status,
-      runtime: await (await fetch('/api/runtime-version')).json(),
+      health: (await fetch((window.piworkAppURL ?? (path => path))('/health'))).status,
+      query: (await fetch((window.piworkAppURL ?? (path => path))('/ui/queries/todos'))).status,
+      runtime: await (await fetch((window.piworkAppURL ?? (path => path))('/api/runtime-version'))).json(),
     }));
     assert.equal(failed.health, 200); assert.equal(failed.query, 500);
     assert.equal(failed.runtime.codeVersion, before.runtime.codeVersion);
     await expect(frame.locator('[data-piwork-data-status]')).not.toContainText('private implementation');
     const acted = await frame.locator('body').evaluate(async (_node, stateVersion) => {
-      const response = await fetch('/ui/actions/todo_add', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const response = await fetch((window.piworkAppURL ?? (path => path))('/ui/actions/todo_add'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionId: 'awareness-recovery-todo', expectedStateVersion: stateVersion, input: { title: 'Added while query unavailable' } }) });
       return { status: response.status, body: await response.json() };
     }, before.query.stateVersion);
@@ -68,7 +68,7 @@ export async function checkDesktopPageEvidence(page, frame, confirmReady) {
   try {
     await expect(root).toBeHidden(); await confirmReady();
     hidden = await observe(); assert.equal(hidden.display, 'none');
-    assert.equal(await frame.locator('body').evaluate(async () => (await fetch('/health')).status), 200);
+    assert.equal(await frame.locator('body').evaluate(async () => (await fetch((window.piworkAppURL ?? (path => path))('/health'))).status), 200);
   } finally { await frame.locator('body').evaluate(() => document.getElementById('awareness-style-fault')?.remove()); }
   await expect(root).toBeVisible();
   await frame.locator('body').evaluate(() => {
@@ -97,7 +97,7 @@ export async function checkDesktopPageEvidence(page, frame, confirmReady) {
     await expect(probe.locator('[data-piwork-app]')).toHaveCount(0);
     await expect.poll(() => responses.includes(503)).toBe(true);
     await confirmReady();
-    assert.equal(await probe.evaluate(async () => (await fetch('/health')).status), 200);
+    assert.equal(await probe.evaluate(async () => (await fetch((window.piworkAppURL ?? (path => path))('/health'))).status), 200);
     await probe.unroute(matches); await probe.reload();
     await expect(probe.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible();
     await expect.poll(() => sockets.some(socket => socket.path.includes('_nicegui_ws'))).toBe(true);

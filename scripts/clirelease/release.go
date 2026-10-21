@@ -4,13 +4,11 @@ package clirelease
 
 import (
 	"archive/tar"
-	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"debug/buildinfo"
 	"debug/elf"
-	"debug/pe"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -153,39 +151,15 @@ var commitPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
 var releaseVersionPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 func binaryTarget(filename string) (string, error) {
-	if image, err := pe.Open(filename); err == nil {
-		defer image.Close()
-		arch := map[uint16]string{pe.IMAGE_FILE_MACHINE_AMD64: "amd64", pe.IMAGE_FILE_MACHINE_I386: "386", pe.IMAGE_FILE_MACHINE_ARM64: "arm64"}[image.Machine]
-		if arch == "" {
-			return "", errors.New("unknown PE architecture")
-		}
-		return "windows/" + arch, nil
-	}
 	image, err := elf.Open(filename)
 	if err != nil {
-		return "", errors.New("client is neither PE nor ELF")
+		return "", errors.New("client must be a Linux ELF")
 	}
 	defer image.Close()
-	arch := map[elf.Machine]string{elf.EM_X86_64: "amd64", elf.EM_386: "386", elf.EM_ARM: "arm", elf.EM_AARCH64: "arm64", elf.EM_RISCV: "riscv64", elf.EM_S390: "s390x", elf.EM_LOONGARCH: "loong64"}[image.Machine]
-	if image.Machine == elf.EM_PPC64 {
-		arch = "ppc64"
-		if image.Data == elf.ELFDATA2LSB {
-			arch += "le"
-		}
+	if image.Machine != elf.EM_X86_64 || image.Class != elf.ELFCLASS64 {
+		return "", errors.New("only linux/amd64 is supported")
 	}
-	if image.Machine == elf.EM_MIPS {
-		arch = "mips"
-		if image.Class == elf.ELFCLASS64 {
-			arch += "64"
-		}
-		if image.Data == elf.ELFDATA2LSB {
-			arch += "le"
-		}
-	}
-	if arch == "" {
-		return "", errors.New("unknown ELF architecture")
-	}
-	return "linux/" + arch, nil
+	return "linux/amd64", nil
 }
 
 func ValidateBuild(directory string) (Build, string, error) {
@@ -193,13 +167,11 @@ func ValidateBuild(directory string) (Build, string, error) {
 	if _, err := readJSON(filepath.Join(directory, "build.json"), &metadata); err != nil {
 		return metadata, "", err
 	}
-	if metadata.ReleaseInfoHash != "" && !hexDigest.MatchString(metadata.ReleaseInfoHash) || metadata.Version != 1 || metadata.Program != "piwork-cli" || !releaseVersionPattern.MatchString(metadata.ReleaseVersion) || !commitPattern.MatchString(metadata.Commit) || !hexDigest.MatchString(metadata.SHA256) || !hexDigest.MatchString(metadata.DesktopUIHash) || metadata.GoVersion != "go1.25.5" {
+	if metadata.Target != "linux/amd64" || metadata.ReleaseInfoHash != "" && !hexDigest.MatchString(metadata.ReleaseInfoHash) || metadata.Version != 1 || metadata.Program != "piwork-cli" || !releaseVersionPattern.MatchString(metadata.ReleaseVersion) || !commitPattern.MatchString(metadata.Commit) || !hexDigest.MatchString(metadata.SHA256) || !hexDigest.MatchString(metadata.DesktopUIHash) || metadata.GoVersion != "go1.25.5" {
 		return metadata, "", errors.New("invalid client build identity")
 	}
 	expected := "piwork-cli"
-	if strings.HasPrefix(metadata.Target, "windows/") {
-		expected += ".exe"
-	}
+
 	if metadata.Binary != expected {
 		return metadata, "", errors.New("invalid client binary path")
 	}
@@ -318,15 +290,13 @@ func Package(directory, evidencePath, outputDirectory string) (string, error) {
 	if err != nil || hash(binary) != metadata.SHA256 {
 		return "", errors.New("client changed after validation")
 	}
-	note := []byte("Piwork CLI " + metadata.ReleaseVersion + "\n\nRun piwork-cli[.exe] from any directory to start Desktop. Use --core <origin> for this launch.\nUse --help for retained business commands; use desktop --no-open to print the browser address.\nDesktop can save or clear a default Core for the next launch. Parameters and PIWORK_CORE_URL override it.\nBusiness commands resolve --core, PIWORK_CORE_URL, saved credentials, then local Core; they do not read Desktop preferences.\nConnect to an existing Core. The client does not require Go, Node, Python, Docker or source files.\nCtrl+C exits Desktop/proxy; closing the browser leaves the client running. Forced termination may leave safe stale resources.\n")
+	note := []byte("Piwork CLI " + metadata.ReleaseVersion + "\n\nRun piwork-cli from any directory to start Desktop. Use --core <origin> for this launch.\nUse --help for retained business commands; use desktop --no-open to print the browser address.\nDesktop can save or clear a default Core for the next launch. Parameters and PIWORK_CORE_URL override it.\nBusiness commands resolve --core, PIWORK_CORE_URL, saved credentials, then local Core; they do not read Desktop preferences.\nConnect to an existing Core. The client does not require Go, Node, Python, Docker or source files.\nCtrl+C exits Desktop/proxy; closing the browser leaves the client running. Forced termination may leave safe stale resources.\n")
 	if err := os.MkdirAll(outputDirectory, 0755); err != nil {
 		return "", err
 	}
 	name := "piwork-cli-" + strings.ReplaceAll(metadata.Target, "/", "-") + "-" + metadata.ReleaseVersion + "-" + metadata.Commit[:12]
 	extension := ".tar.gz"
-	if strings.HasPrefix(metadata.Target, "windows/") {
-		extension = ".zip"
-	}
+
 	output := filepath.Join(outputDirectory, name+extension)
 	file, err := os.CreateTemp(outputDirectory, ".client-release-")
 	if err != nil {
@@ -340,21 +310,7 @@ func Package(directory, evidencePath, outputDirectory string) (string, error) {
 		raw  []byte
 		mode int64
 	}{{metadata.Binary, binary, 0755}, {"manifest.json", manifest, 0644}, {"README.txt", note, 0644}}
-	if extension == ".zip" {
-		writer := zip.NewWriter(file)
-		for _, entry := range entries {
-			header := &zip.FileHeader{Name: name + "/" + entry.name, Method: zip.Deflate}
-			header.SetMode(os.FileMode(entry.mode))
-			stream, e := writer.CreateHeader(header)
-			if e != nil {
-				return "", e
-			}
-			if _, e = stream.Write(entry.raw); e != nil {
-				return "", e
-			}
-		}
-		err = writer.Close()
-	} else {
+	{
 		compressed := gzip.NewWriter(file)
 		writer := tar.NewWriter(compressed)
 		for _, entry := range entries {

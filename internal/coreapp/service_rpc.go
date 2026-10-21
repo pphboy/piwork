@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -45,9 +46,30 @@ func validateServiceRPCOptions(options Options) error {
 	return nil
 }
 
+// BindRPC acquires the required internal listener before HTTP accepts requests
+// or workload recovery starts. It does not require a configured Docker runtime.
+func (a *Application) BindRPC(ctx context.Context) error { return a.listenServiceRPC(ctx) }
+
 func (a *Application) listenServiceRPC(ctx context.Context) error {
-	if a.options.AgentGRPCListen == "" || a.serviceServer != nil {
+	if a.options.AgentGRPCListen == "" {
 		return nil
+	}
+	if a.serviceServer != nil {
+		if a.workRuntime != nil {
+			endpoint := a.options.AgentGRPCAdvertise
+			if endpoint == "" {
+				endpoint = net.JoinHostPort("piwork-core", strconv.Itoa(a.serviceListener.Addr().(*net.TCPAddr).Port))
+			}
+			a.workRuntime.Endpoint = endpoint
+		}
+		return nil
+	}
+	if a.agentTLS == nil {
+		manager, err := internaltls.Open(filepath.Join(a.options.DataDirectory, "runtime", "agent-tls"), a.Store)
+		if err != nil {
+			return err
+		}
+		a.agentTLS = manager
 	}
 	active := func(scope internaltls.Scope) bool {
 		check, cancel := context.WithTimeout(a.ctx, 2*time.Second)
@@ -83,11 +105,17 @@ func (a *Application) listenServiceRPC(ctx context.Context) error {
 	}
 	a.serviceServer = server
 	a.serviceListener = listener
-	a.workRuntime.Endpoint = endpoint
+	if a.workRuntime != nil {
+		a.workRuntime.Endpoint = endpoint
+	}
 	a.mu.Unlock()
 	go func() {
-		if err := server.Serve(listener); err != nil && a.ctx.Err() == nil {
-			a.setState("RUNTIME_UNAVAILABLE", true, true, false)
+		err := server.Serve(listener)
+		if a.ctx.Err() == nil {
+			if err == nil {
+				err = errors.New("Agent RPC listener ended")
+			}
+			a.serveDone <- err
 		}
 	}()
 	return nil

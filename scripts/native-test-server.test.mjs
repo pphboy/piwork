@@ -7,7 +7,7 @@ test('fixture server binds fixed dependencies at build time and preserves source
  const images={agent:'fixture/agent:v1',packageHelper:'fixture/agent:v1',fileHelper:'fixture/file:v1',snapshotHelper:'fixture/snapshot:v1'};
  const metadata={releaseVersion:'0.1.0',sourceCommit:'a'.repeat(40),sourceModified:true,desktopUIHash:'b'.repeat(64),consoleUIHash:'c'.repeat(64)};
  const args=fixtureServerBuild('/tmp/piwork-fixture',images,metadata);
- assert.equal(args.at(-1),'./cmd/piwork-serve');
+ assert.equal(args.at(-1),'./cmd/piwork-core');
  const flags=args[args.indexOf('-ldflags')+1];
  assert.deepEqual(JSON.parse(Buffer.from(flags.match(/EncodedImages=([^ ]+)/)[1],'base64')),images);
  for(const value of [metadata.sourceCommit,metadata.desktopUIHash,metadata.consoleUIHash,'Modified=true'])assert(flags.includes(value));

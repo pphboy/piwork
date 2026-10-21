@@ -1,3 +1,4 @@
+import {operatorAPI} from './native-test-core-api.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -8,7 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { sourceInputHash } from './build-docker-release.mjs';
 
-const options = { core: 'dist/go/piwork-serve', cli: 'dist/go/piwork-cli', image: '', mode: 'api', samples: 20, output: 'dist/work-latency/result.json', baseline: false, smoke: false };
+const options = { core: 'dist/go/piwork-core', cli: 'dist/go/piwork-cli', image: '', mode: 'api', samples: 20, output: 'dist/work-latency/result.json', baseline: false, smoke: false };
 for (let i = 2; i < process.argv.length; i++) {
   const flag = process.argv[i].replace(/^--/, '');
   assert.ok(Object.hasOwn(options, flag), 'Unknown measurement option');
@@ -57,11 +58,6 @@ async function api(method, path, body) {
     ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
   }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(180_000) });
   return { status: response.status, data: await response.json().catch(() => ({})) };
-}
-function operator(args, input) {
-  const result = spawnSync(coreBinary, ['--core', coreUrl, '--data-dir', dataDir, ...args], { input, encoding: 'utf8', env: { ...childEnvironment, PATH: '/nonexistent' } });
-  assert.equal(result.status, 0, 'Operator fixture setup failed');
-  return result.stdout;
 }
 function collectPerformance(child) {
   let pending = '';
@@ -136,15 +132,16 @@ try {
     agentVariant: 'production', agentCpuMillis: 1000, agentMemoryBytes: 768 * 1024 * 1024, concurrentSamples: 1, buildSettings,
     checkoutAtMeasurement: { commit: sourceCommit.stdout.trim(), modified: sourceStatus.stdout.trim() !== '', sourceInputHash: sourceInputHash(sourceRoot) },
     sourceNote: 'Checkout metadata describes the measurement workspace; a baseline binary may have different compiler inputs. Binary VCS settings are retained separately when embedded.' };
-  const [corePort, grpcPort] = await Promise.all([freePort(), freePort()]);
+  const [corePort, uiPort] = await Promise.all([freePort(), freePort()]);
   coreUrl = `http://127.0.0.1:${corePort}`;
   const coldStart = performance.now();
-  core = spawn(coreBinary, ['serve', '--data-dir', dataDir, '--listen', `127.0.0.1:${corePort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`, '--docker-host', dockerHost], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...childEnvironment, PATH: '/nonexistent' } });
+  core=spawn(coreBinary,['--data-dir',dataDir,'--ui-port',String(uiPort),'--core-port',String(corePort)],{stdio:['ignore','pipe','pipe'],env:{...childEnvironment,DOCKER_HOST:dockerHost,PATH:'/nonexistent'}});
   children.push(core); collectPerformance(core);
   await waitFor(async () => { try { return (await fetch(coreUrl + '/healthz')).ok; } catch { return false; } }, 'Core health timeout');
-  operator(['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], password + '\n');
-  operator(['config', 'set', '--model-provider', 'openai', '--model', 'gpt-4.1-mini', '--api-key-stdin'], 'latency-fixture-key\n');
-  const fixedImage=JSON.parse(operator(['config','show'])).agentImage;
+  const control=await operatorAPI(coreUrl,dataDir);
+  await control('POST','admin/bootstrap',{account:'admin',password});
+  await control('PUT','runtime',{provider:'openai',model:'gpt-4.1-mini',credential:'latency-fixture-key'});
+  const fixedImage=(await control('GET','runtime')).agentImage;
   if(options.image)assert.equal(fixedImage,options.image,'--image asserts the measured server dependency; it cannot override it');
   const image=JSON.parse(docker(['image','inspect',fixedImage,'--format','{{json .}}']));
   assert.equal(image.Config.Labels['io.piwork.agent.variant'],'production','Performance measurement requires the production Agent');
@@ -190,7 +187,7 @@ try {
     children.push(desktop);
     desktop.stdout.on('data', chunk => { desktopText = (desktopText + chunk.toString()).slice(-6000); });
     desktop.stderr.on('data', chunk => { desktopText = (desktopText + chunk.toString()).slice(-6000); });
-    const launchUrl = await waitFor(() => desktopText.match(/http:\/\/desktop\.localhost:\d+\/#ticket=[\w-]+/)?.[0], 'Desktop launch timeout', 10_000);
+    const launchUrl = await waitFor(() => desktopText.match(/http:\/\/desktop\.localhost:\d+\//)?.[0], 'Desktop launch timeout', 10_000);
     const { measureBrowserCreates } = await import('../apps/desktop-webui/test/work-latency.mjs');
     const samples = await measureBrowserCreates({ launchUrl, password, count: options.samples, retire, onSample: value => { measuringSample = value.index; report.browser.samples.push(value); console.log(JSON.stringify({ phase: 'browser', ...value })); } });
     report.browser = { samples, total: summary(samples.map(s => s.totalMs)) };

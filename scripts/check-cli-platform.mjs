@@ -27,7 +27,7 @@ export function testEvidence(output, status) {
  if (!packages.size || !tests.length) return {status:'unverified',diagnostic:'no native dependency test evidence'};
  return {status:'pass',diagnostic:`${packages.size} dependency packages, ${new Set(tests).size} assertions passed`,tests,packages};
 }
-function hostTarget() { return `${platform()==='win32'?'windows':platform()}/${({x64:'amd64',ia32:'386'})[arch()]||arch()}`; }
+function hostTarget() { if(platform()!=='linux'||arch()!=='x64')throw new Error('Only Linux amd64 is supported');return 'linux/amd64'; }
 export function validateFixtures(value) {
  if (!value || value.version!==1 || !value.scenarios || Object.keys(value).some(k=>!['version','scenarios'].includes(k))) throw new Error('invalid native fixture configuration');
  for (const [id,fixture] of Object.entries(value.scenarios)) {
@@ -49,7 +49,7 @@ export function checkPlatform({buildDirectory,reportPath,fixtures={version:1,sce
  fixtures=validateFixtures(fixtures);
  buildDirectory=resolve(buildDirectory);reportPath=resolve(reportPath);
  const metadata=JSON.parse(readFileSync(join(buildDirectory,'build.json'),'utf8'));
- if (metadata.version!==1 || metadata.program!=='piwork-cli' || metadata.target!==nativeTarget || !['piwork-cli','piwork-cli.exe'].includes(metadata.binary)) throw new Error('acceptance must run on the candidate native target');
+ if (metadata.version!==1 || metadata.program!=='piwork-cli' || metadata.target!==nativeTarget || metadata.binary!=='piwork-cli') throw new Error('acceptance must run on the candidate native target');
  const binary=join(buildDirectory,metadata.binary);
  const digest=createHash('sha256').update(readFileSync(binary)).digest('hex');
  if (digest!==metadata.sha256 || desktopInputHash(base)!==metadata.desktopUIHash) throw new Error('candidate binary or Desktop build input differs; rebuild the candidate first');
@@ -82,10 +82,10 @@ export function checkPlatform({buildDirectory,reportPath,fixtures={version:1,sce
   assign('client-dependencies',{status:evidence.status,diagnostic:evidence.diagnostic+(evidence.status==='pass'?'':`; ${diagnostics}`)},['go test -mod=readonly -json <discovered client module dependencies>']);
   if (evidence.status==='pass') {
    const groups={
-    'private-storage':[/^TestWindowsPrivateCreation|^TestPrivateWrite/,/^Test.*HardLink/],
+    'private-storage':[/^TestPrivateWrite/,/^Test.*HardLink/],
     files:[/^TestFileIdentity/,/^TestSnapshotDownloadRejects/,/^TestSnapshotImportRejects/,/^TestDesktopTransferCleanupOnly/],auth:[/^TestLogoutConcurrentLoginProcesses/,/^TestFailedLoginPreserves/],
-    symlink:nativeTarget.startsWith('windows/')?[/^TestWindowsRealSymlink/,/^TestTreeRefusesUnsafeData/]:[/^TestTreeRefusesUnsafeData/,/^TestArtifactEnvironment/],
-    'desktop-control':nativeTarget.startsWith('windows/')?[/^TestDesktopControlHelperProcess/,/^TestWindowsDesktopControlRoundTrip/,/^TestWindowsDesktopControl.*Forged/,/^TestWindowsDesktopControl.*CrashResiduals/]:[/^TestDesktopControlHelperProcess/,/^TestDesktopControlResources/,/^TestDesktopControlRejectsUnsafe/,/^TestDesktopControlProtocolBounds/],
+    symlink:[/^TestTreeRefusesUnsafeData/,/^TestArtifactEnvironment/],
+    'desktop-control':[/^TestDesktopControlHelperProcess/,/^TestDesktopControlResources/,/^TestDesktopControlRejectsUnsafe/,/^TestDesktopControlProtocolBounds/],
     interrupts:[/^TestPackageWaitInterrupt/,/^TestNativeDesktopEmbeddedProcess/,/^TestNativeProxyProcess/,/^TestChatNativeInterrupt/],
     'default-desktop':[/^TestDefaultDesktopDispatch/,/^TestDefaultDesktopEarlyReturns/],
     'preferences-storage':[/^TestDesktopPreferencesStrictFormat/,/^TestDesktopPreferencesNativeProcessContention/],

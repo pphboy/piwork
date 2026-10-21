@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {managedOutput,recoverOutput,commitOutput} from './managed-output.mjs';
 import { releaseInfoInputHash } from './release-info.mjs';
 
 export const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -13,7 +14,7 @@ export function parseTargets(args, config, fallback) {
     explicit.push(args[++i]);
   }
   let targets = explicit.length ? explicit : config == null ? [fallback] : config.version === 1 && Array.isArray(config.targets) && Object.keys(config).every(k => ['version', 'targets'].includes(k)) ? config.targets : [];
-  if (!targets.length || targets.some(t => typeof t !== 'string' || !/^(windows|linux)\/[a-z0-9]+$/.test(t))) throw new Error('invalid or empty CLI targets');
+  if (!targets.length || targets.some(t => typeof t !== 'string' || t !== 'linux/amd64')) throw new Error('invalid or empty CLI targets');
   return [...new Set(targets)];
 }
 export function desktopInputHash(base = root) {
@@ -67,20 +68,25 @@ export function buildCLI(args, { base = root, run = (command, argv, options) => 
   const modified = Boolean(invoke('git', ['status', '--porcelain', '--untracked-files=normal']));
   const stamps = [`Version=${version}`, `Commit=${commit}`, `Modified=${modified}`, `DesktopUIHash=${uiHash}`].map(v => '-X piwork/internal/buildinfo.' + v).join(' ');
   const outputs = [];
+  const output=managedOutput('dist/cli',base);recoverOutput(output);
+  const stage=mkdtempSync(output+'.stage-');
+  try {
   for (const target of targets) {
     const [goos, goarch] = target.split('/');
-    const directory = join(base, 'dist/cli', `${goos}-${goarch}`);
+    const directory = join(stage, `${goos}-${goarch}`);
     mkdirSync(directory, {recursive: true});
-    const binary = join(directory, goos === 'windows' ? 'piwork-cli.exe' : 'piwork-cli');
+    const binary = join(directory, 'piwork-cli');
     const identity = JSON.stringify({ releaseVersion: version, commit, modified, desktopUIHash: uiHash, releaseInfoHash, target, goVersion: 'go1.25.5' });
     const ldflags = stamps + ` -X 'piwork/internal/buildinfo.ClientReleaseIdentity=piwork-cli-release-v1:${identity}'`;
     invoke('go', ['build', '-mod=readonly', '-trimpath', '-buildvcs=true', '-ldflags', ldflags, '-o', binary, './cmd/piwork-cli'], base, {GOOS: goos, GOARCH: goarch});
     const data = readFileSync(binary);
     const metadata = {version:1, program:'piwork-cli', releaseVersion:version, commit, modified, goVersion:'go1.25.5', target, binary:relative(directory,binary), bytes:data.length, sha256:createHash('sha256').update(data).digest('hex'), desktopUIHash:uiHash, releaseInfoHash};
     writeFileSync(join(directory, 'build.json'), JSON.stringify(metadata, null, 2) + '\n');
-    outputs.push(binary);
+    outputs.push(join(output, `${goos}-${goarch}`, 'piwork-cli'));
   }
+  commitOutput(stage,output);
   return outputs;
+  } finally {rmSync(stage,{recursive:true,force:true});}
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { for (const output of buildCLI(process.argv.slice(2))) process.stdout.write(output + '\n'); }

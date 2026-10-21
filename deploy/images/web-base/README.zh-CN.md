@@ -4,12 +4,20 @@
 
 供应用 Service 复用的 Python 3.13 + NiceGUI + SQLite 基础环境。Agent 编辑 Work 共享 workspace，Core 在独立 Service 中运行应用。标准 Python 包与浏览器资源已安装在镜像中，应用无需 npm 安装、独立前端构建或复制完整标准环境。
 
+## 浏览器 Service 路径
+
+下方已发布 base 支持 ControlPlane origin（默认 17891）下的 `/services/<workId>/<serviceId>/<port>/`。Core 17871 由后端与 CLI 使用。
+
+NiceGUI 已通过校验后的 `X-Forwarded-Prefix` 处理内置链接、资源和 Socket.IO。`ui.link` 与框架下载路径继续使用应用相对路径，不重复添加前缀。自定义 Python HTML/资源使用 `piwork_web_runtime.browser_url(request, '/path')`；调用 `page_head(ui, loaded)` 后，自定义浏览器 fetch 使用 `window.piworkAppURL('/path')`。运行时 helper 按浏览器会话和 Service 目标分名草稿及反馈。容器内 `/health`、`/pi/v1` 仍为根路径。
+
+托管 Service 与工作台同源，须视为可信应用：脚本可使用当前用户的 UI 权限。服务端响应 Cookie 继续按会话/Service/端口分区，JavaScript Cookie 不同步。旧根路径应用须显式适配；导入保留捕获镜像、源码和数据，不改写 URL 或自动升级 base。独立 CLI Desktop 保留自己的根入口。
+
 ## 可用状态与身份
 
 当前源码使用环境契约 **2**、**0.2.0** 版本系列，Python **3.13.16**、NiceGUI **3.18.0**、pip **26.2.1** 与 sqlite3 CLI **3.40.1-2+deb12u2**，首先验证 Linux amd64。精确标准依赖见 [requirements.lock](requirements.lock)，上游 Python 固定镜像见 [environment.json](environment.json)；镜像只读环境清单还记录实际安装包和构建输入 hash。
 
 <!-- web-base-reference:start -->
-**已发布并通过匿名验证。** `docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty@sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098` 是固定的 Linux amd64、contract-2 base。[release.json](release.json) 保留真实构建 commit/dirty、输入 hash、image ID 和 registry digest；脑包使用该已验证引用。`dist/web-base/candidate.json` 保留本地构建身份。旧 FastAPI/React 制品继续保存在[历史发布记录](releases/fastapi-react-0.1.0.json)。
+**已发布并通过匿名验证。** `docker.io/pphboy/piwork-web-base:0.2.0-9a40d4443fee-9286afd39f8e-dirty@sha256:68ec208f335f9813b7072f1f9e2907c0de67c64bbcd986feb81f5b7fa6599bf3` 是固定的 Linux amd64、contract-2 base，支持托管 Service 动态路径。[release.json](release.json) 保留真实构建 commit/dirty、输入 hash、image ID 和 registry digest；脑包使用该已验证引用。`dist/web-base/candidate.json` 保留本地构建身份。旧 NiceGUI 制品保存在[路径改造前的发布记录](releases/nicegui-0.2.0-pre-control-plane.json)，旧 FastAPI/React 制品保存在[历史发布记录](releases/fastapi-react-0.1.0.json)。
 <!-- web-base-reference:end -->
 
 ## 在 Work 中使用

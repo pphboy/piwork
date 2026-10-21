@@ -2,6 +2,107 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.10",
+      "component": "core",
+      "title": "Piwork 0.0.10 Preview",
+      "sections": [
+        {
+          "title": "Simplified Linux delivery",
+          "items": [
+            "Start piwork-core directly with only --ui-port, --core-port and --data-dir. The integrated workbench, administration and setup use HTTP on port 17891; Core HTTP listens on port 17871 for local and remote clients.",
+            "Retire piwork-serve, its piwork alias, standalone Console and terminal Core management commands. Preserve operator identity, protected administration APIs, user authorization and Work data.",
+            "Deliver only piwork-core and piwork-cli for Linux amd64. Keep Agent, MCP and helpers in their runtime images.",
+            "Replace local build and release outputs only after validation, with current production image identities, bilingual materials and checksums."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.10",
+      "component": "desktop",
+      "title": "Piwork 0.0.10 Preview",
+      "sections": [
+        {
+          "title": "Linux native client",
+          "items": [
+            "Use piwork-cli without a subcommand to open Desktop, or use its user commands to connect to an existing Core. Closing the client does not stop Core or Works.",
+            "Retire native Windows delivery and the CLI Docker image. Linux and Windows browsers can continue to use the Core web interface.",
+            "Keep user credentials, local Desktop and proxy behavior, Work commands, files, packages and snapshots."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.9",
+      "component": "core",
+      "title": "Piwork 0.0.9 Preview",
+      "publishedAt": "2026-10-21",
+      "sections": [
+        {
+          "title": "Independent ControlPlane and Core with one-command startup",
+          "items": [
+            "Start two independent HTTP services in one Linux process: ControlPlane defaults to 0.0.0.0:17891 for browsers, while Core defaults to 127.0.0.1:17871 for backend and CLI clients.",
+            "Use the workbench, administration, setup, files, event streams and prefix-aware Services through the single browser port 17891.",
+            "Keep Core authorization and lifecycle ownership behind a real HTTP boundary; explicitly set --core-listen when remote CLI access is required.",
+            "Remove the hosted Service port pool and cross-port grants; trusted Service applications share the ControlPlane origin and must support dynamic URL prefixes.",
+            "Allow configuration saves to overlap published context reads without intermittent lock failures."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.9",
+      "component": "desktop",
+      "title": "Piwork 0.0.9 Preview",
+      "publishedAt": "2026-10-21",
+      "sections": [
+        {
+          "title": "Service access through the browser entry",
+          "items": [
+            "Open hosted Services at /services/<workId>/<serviceId>/<port>/, including HTTP, SSE and WebSocket, without additional browser ports or DNS configuration.",
+            "Ship prefix-aware official NiceGUI templates and runtime helpers with scoped drafts and application resource URLs.",
+            "Keep independent CLI Desktop and its local Host entry, proxy and credentials separate from the hosted ControlPlane.",
+            "Existing root-path applications and captured images require explicit adaptation; imports retain their original source, images and data.",
+            "Keep hosted Service entry probes stable across runtime restarts while revalidating the new instance and closing old streams."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.8",
+      "component": "core",
+      "title": "Piwork 0.0.8 Preview",
+      "publishedAt": "2026-10-20",
+      "sections": [
+        {
+          "title": "One-command Linux startup and browser setup",
+          "items": [
+            "Start Core, the web workbench and administration from one Linux program or Docker container, then open the server IP in a browser.",
+            "Create the first administrator directly, with password confirmation, then sign in normally and configure a model and CoreRuntime through Quick setup.",
+            "Use matching embedded Agent and helper image defaults without manual image configuration or model environment variables.",
+            "Remove private setup links and terminal browser authorization while preserving account login, CSRF protection and Work ownership checks."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.8",
+      "component": "desktop",
+      "title": "Piwork 0.0.8 Preview",
+      "publishedAt": "2026-10-20",
+      "sections": [
+        {
+          "title": "Open, sign in and work",
+          "items": [
+            "Open Desktop directly without Access pages, browser tickets or terminal approval; local Desktop restores ordinary sessions and can reuse a valid saved Core login.",
+            "Use consistent Quick setup, Admin navigation and account menu interactions, with clear preparation progress before opening the workbench.",
+            "Recover slow session initialization through Retry connection without replaying business actions.",
+            "Use the simplified bilingual project READMEs and updated one-command installation guides."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.7",
       "component": "core",
       "title": "Piwork 0.0.7 Preview",

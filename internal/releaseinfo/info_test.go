@@ -10,7 +10,7 @@ import (
 )
 
 func TestRunningIdentityAndEmbeddedNotes(t *testing.T) {
-	for _, program := range []string{"piwork-cli", "piwork-serve"} {
+	for _, program := range []string{"piwork-cli", "piwork-core"} {
 		value := Read(program)
 		if !reflect.DeepEqual(value.Build, buildinfo.Read(program)) {
 			t.Fatal("version command mismatch")
@@ -56,11 +56,11 @@ func TestCatalogRejectsInvalidAndDuplicateNotes(t *testing.T) {
 	savedVersion := buildinfo.Version
 	t.Cleanup(func() { buildinfo.Version = savedVersion })
 	buildinfo.Version = "1.0.0"
-	if Read("piwork-serve").ReleaseNotes == nil || Read("piwork-cli").ReleaseNotes != nil {
+	if Read("piwork-core").ReleaseNotes == nil || Read("piwork-cli").ReleaseNotes != nil {
 		t.Fatal("wrong component match")
 	}
 	buildinfo.Version = "1.0.0-dev"
-	if Read("piwork-serve").ReleaseNotes != nil {
+	if Read("piwork-core").ReleaseNotes != nil {
 		t.Fatal("development version used formal notes")
 	}
 }

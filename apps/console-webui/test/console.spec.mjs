@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
@@ -9,14 +9,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 let root, consoleServer, coreServer, base;
-const nativeConsole = process.env.PIWORK_TEST_NATIVE_CONSOLE || fileURLToPath(new URL("../../../dist/go/piwork-console", import.meta.url));
+let nativeConsole;
 let nativeConsoleOutput = "";
 async function startNativeConsole(binary, args) {
   const child = spawn(binary, args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", (chunk) => { nativeConsoleOutput += chunk; });
   child.stderr.on("data", (chunk) => { nativeConsoleOutput += chunk; });
   for (let attempt = 0; attempt < 100; attempt++) {
-    if (nativeConsoleOutput.includes("piwork-console listening at")) return child;
+    if (nativeConsoleOutput.includes("hosted fixture listening")) return child;
     if (child.exitCode !== null) throw new Error(`Go Console exited: ${nativeConsoleOutput}`);
     await new Promise((done) => setTimeout(done, 100));
   }
@@ -49,9 +49,9 @@ async function freePort() { const server = createNetServer(); await new Promise(
   const port = server.address().port; await new Promise((done) => server.close(done)); return port; }
 test.beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "piwork-console-browser-"));
-  const certPath = join(root, "cert.pem"), keyPath = join(root, "key.pem");
-  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-    "-keyout", keyPath, "-out", certPath, "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], { stdio: "ignore" });
+  nativeConsole=join(root,'hosted-ui-fixture');
+  const build=spawnSync('go',['build','-o',nativeConsole,'./scripts/hosted-ui-fixture'],{cwd:fileURLToPath(new URL('../../../',import.meta.url)),env:{...process.env,CGO_ENABLED:'0'},encoding:'utf8'});
+  expect(build.status,build.stderr).toBe(0);
   coreServer = createHttpServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
     const raw = Buffer.concat(chunks).toString();
@@ -66,9 +66,9 @@ test.beforeAll(async () => {
       }
       if (body.account !== "admin" || body.password !== "correct horse battery") { res.statusCode = 401; res.end('{"code":"AUTHENTICATION_FAILED"}'); return; }
       res.end(JSON.stringify({ token: "core-secret-bearer", expiresAt: new Date(Date.now() + 3600_000).toISOString(), user: users[0] })); return; }
-    if (req.url === "/api/v1/me") { res.end(JSON.stringify(req.headers.authorization === "Bearer second-admin-private-token" ? users.find(item => item.account === "new-admin") : users[0])); return; }
-    if(req.url === "/api/v1/about"){res.end(JSON.stringify({aboutApiVersion:1,build:{program:"piwork-serve",version:"core-about-fixture",commit:"fixture",modified:false,os:"linux",architecture:"amd64"},releaseNotes:{version:"core-about-fixture",title:"Changes",sections:[{title:"Fixes",items:["<script>window.notesExecuted=true</script>"]}]},releasesUrl:"https://github.com/pphboy/piwork/releases"}));return;}
-    if (req.url === "/api/v1/admin/status") { res.end(JSON.stringify({ adminApiVersion: 1, state: "READY", ready: true,
+    if (req.url === "/api/v1/me") { res.end(JSON.stringify({... (req.headers.authorization === "Bearer second-admin-private-token" ? users.find(item => item.account === "new-admin") : users[0]), expiresAt:new Date(Date.now()+3600_000).toISOString()})); return; }
+    if(req.url === "/api/v1/about"){res.end(JSON.stringify({aboutApiVersion:1,build:{program:"piwork-core",version:"core-about-fixture",commit:"fixture",modified:false,os:"linux",architecture:"amd64"},releaseNotes:{version:"core-about-fixture",title:"Changes",sections:[{title:"Fixes",items:["<script>window.notesExecuted=true</script>"]}]},releasesUrl:"https://github.com/pphboy/piwork/releases"}));return;}
+    if (req.url === "/api/v1/admin/status" || req.url === "/control/status") { res.end(JSON.stringify({ adminApiVersion: 1, state: "READY", ready: true, hasUsers: true, preparation: {version: 1},
       checks: { administrator: true, runtimeConfigured: true, runtimeAvailable: true, filesystemMigrationReady: true } })); return; }
     if (req.url === "/api/v1/admin/model-providers") {res.end(JSON.stringify({providers:[]}));return;}
     if (req.url === "/api/v1/admin/models") {res.end(JSON.stringify({models:[{id:"managed-test-00001",providerId:"provider-test-00001",modelRef:"model-test-00000001",name:"Fixture model",model:"new-model",providerName:"Fixture provider",api:"anthropic-messages",enabled:true,providerEnabled:true,credentialAvailable:true,capabilityStatus:"sdk"}]}));return;}
@@ -157,11 +157,9 @@ test.beforeAll(async () => {
     res.statusCode = 404; res.end('{"code":"NOT_FOUND","message":"not found"}');
   });
   await new Promise((done) => coreServer.listen(0, "127.0.0.1", done));
-  const port = await freePort(); base = `https://127.0.0.1:${port}`;
-  const coreUrl = `http://127.0.0.1:${coreServer.address().port}`;
-  consoleServer = await startNativeConsole(nativeConsole,
-    ["serve", "--core", coreUrl, "--listen", `127.0.0.1:${port}`, "--public-origin", base,
-      "--data-dir", join(root, "console"), "--tls-cert", certPath, "--tls-key", keyPath]);
+  const port=await freePort();base=`http://127.0.0.1:${port}/admin`;
+  await mkdir(join(root,'console'),{mode:0o700});
+  consoleServer=await startNativeConsole(nativeConsole,[JSON.stringify({Core:`http://127.0.0.1:${coreServer.address().port}`,Directory:join(root,'console'),Listen:`127.0.0.1:${port}`})]);
 });
 test.afterAll(async () => {
   if (consoleServer?.exitCode === null) {
@@ -173,10 +171,12 @@ test.afterAll(async () => {
 });
 
 async function login(page) {
-  await page.goto(`${base}/login`);
+  await page.goto(`${base.slice(0,-6)}/login?returnTo=/admin`);
   await page.getByLabel('Account',{exact:true}).fill('admin');
   await page.getByLabel('Password',{exact:true}).fill('correct horse battery');
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  await page.waitForURL(url=>!url.pathname.includes('login'));
+  await page.goto(base);
   await expect(page.getByRole('heading',{name:'What’s next for your Core?'})).toBeVisible();
 }
 test.use({ viewport:{width:1440,height:900} });
@@ -186,16 +186,16 @@ test('delivered workspaces retain every management deep link, mobile layout, and
     try {
       const screenshots = fileURLToPath(new URL("../../../dist/logo-title-style", import.meta.url));
       await mkdir(screenshots, {recursive:true});
-      await page.goto(`${base}/login`);
-      await expect(page.getByRole('heading',{name:'Administrator sign in',exact:true})).toBeVisible();
-      await expect.poll(()=>page.locator('.login .brand-logo').evaluate(image=>image.complete && image.naturalWidth > 0)).toBe(true);
-      await expect(page.locator('.login .brand-logo')).toHaveAttribute('alt','Piwork logo');
+      await page.goto(`${base.slice(0,-6)}/login?returnTo=/admin`);
+      await expect(page.getByRole('heading',{name:'Sign in to Piwork',exact:true})).toBeVisible();
+      await expect.poll(()=>page.locator('.setup-brand img').evaluate(image=>image.complete && image.naturalWidth > 0)).toBe(true);
+      await expect(page.locator('.setup-brand img')).toHaveAttribute('alt','');
       await page.screenshot({path:join(screenshots,`console-login-${width}.png`),fullPage:true});
       await login(page);
       const brand = page.getByRole('link',{name:'Piwork overview',exact:true});
-      await expect(brand).toHaveAttribute('href','/');
-      await expect(brand).toHaveText('Serve');
-      await expect(brand.getByText('Serve',{exact:true})).toBeVisible();
+      await expect(brand).toHaveAttribute('href','/admin');
+      await expect(brand).toHaveText('Core');
+      await expect(brand.getByText('Core',{exact:true})).toBeVisible();
       await expect(page.getByRole('button',{name:'Administrator account',exact:true})).toBeVisible();
       await expect(brand.locator('img')).toHaveAttribute('alt','');
       await expect.poll(()=>brand.locator('img').evaluate(image=>image.complete && image.naturalWidth > 0)).toBe(true);
@@ -317,9 +317,9 @@ test('R6 actual Core phase enums drive progress and raw details, including readb
     operationPhase = 'superseded'; operationState = 'superseded'; await page.getByRole('button',{name:'Refresh',exact:true}).click(); await expect(page.getByRole('heading',{name:'Operation superseded'})).toBeVisible();
     operationPhase = 'cleanup-pending'; operationState = 'succeeded'; await page.getByRole('button',{name:'Refresh',exact:true}).click(); await expect(page.getByText(/Package cleanup is pending/)).toBeVisible(); await expect(page.locator('.phase-step.current')).toHaveCount(0);
     operationPhase = 'succeeded'; await page.getByRole('button',{name:'Refresh',exact:true}).click(); await expect(page.locator('.phase-step.current')).toHaveText('Published'); await expect(page.locator('.phase-step.done')).toHaveCount(5);
-    const acceptance = await page.evaluate(async () => { const {adapter} = await import('/browser/adapter.js'); return adapter.submitPackage({kind:'npm',source:'tools@1.0.0',key:crypto.randomUUID(),addDefault:false}); });
+    const acceptance = await page.evaluate(async () => { const {adapter} = await import('/admin/browser/adapter.js'); return adapter.submitPackage({kind:'npm',source:'tools@1.0.0',key:crypto.randomUUID(),addDefault:false}); });
     expect(acceptance.packagePhase).toBe('');
-    const phase = await page.evaluate(async () => { const {packagePhaseView} = await import('/browser/package-phase.js'); return packagePhaseView('', 'running'); }); expect(phase.label).toBe('Submission accepted'); expect(phase.index).toBe(-1);
+    const phase = await page.evaluate(async () => { const {packagePhaseView} = await import('/admin/browser/package-phase.js'); return packagePhaseView('', 'running'); }); expect(phase.label).toBe('Submission accepted'); expect(phase.index).toBe(-1);
     expect(packageAccepts.length).toBe(accepts+1);
   } finally { operationPhase = null; operationState = 'succeeded'; }
 });

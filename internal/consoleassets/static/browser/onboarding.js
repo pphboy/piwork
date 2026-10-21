@@ -2,10 +2,9 @@ import { Field, Input, Feedback, icon } from './components.js';
 import { modelErrors } from './model-form.js';
 import { pendingDots } from './pending.js';
 const root = document.querySelector('#setup-app');
-const proof = new URLSearchParams(location.hash.slice(1)).get('setup');
 if (location.hash)
-    history.replaceState(null, '', location.pathname);
-let csrf = '', setupCSRF = '', authenticated = false, stage = 'loading', account = '', notice = '', noticeError = false, view = 0, identity = 0, writing = false, reading = false, redeeming = false, snapshot = {};
+    history.replaceState(null, '', location.pathname + location.search);
+let csrf = '', authenticated = false, stage = 'loading', account = '', notice = '', noticeError = false, view = 0, identity = 0, writing = false, reading = false, snapshot = {};
 let readLock = null, waitTimer, waitSince = 0, waitPhase = '';
 class RequestError extends Error {
     status;
@@ -20,10 +19,10 @@ class RequestError extends Error {
         this.code = code;
     }
 }
-async function request(path, method = 'GET', body, setup = false) {
+async function request(path, method = 'GET', body) {
     let response;
     try {
-        response = await fetch(path, { method, credentials: 'same-origin', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(method === 'GET' ? {} : { 'X-Piwork-Csrf': setup ? setupCSRF : csrf, 'X-Csrf-Token': setup ? setupCSRF : csrf }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+        response = await fetch(path, { method, credentials: 'same-origin', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(method === 'GET' ? {} : { 'X-Piwork-Csrf': csrf, 'X-Csrf-Token': csrf }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     }
     catch {
         throw new RequestError(method === 'GET' ? 'The server could not be reached. Retry this read.' : 'The result is not confirmed. Read current state before submitting again.', 0, method !== 'GET');
@@ -35,6 +34,8 @@ async function request(path, method = 'GET', body, setup = false) {
         let message = value.code === 'INVALID_REQUEST' && modelErrors[value.field?.split('.')[0]] || String(value.message || value.code || 'The request failed.');
         if (value.code === 'AUTHENTICATION_FAILED')
             message = 'The account or password is incorrect, or the account is unavailable.';
+        if (value.code === 'CSRF_INVALID')
+            message = 'The form session expired. Allow browser cookies, enter your password again and submit.';
         if (value.code === 'RATE_LIMITED')
             message = `Too many sign-in attempts. Wait ${Math.max(1, Math.ceil(Number(value.retryAfterMs || 60000) / 1000))} seconds before retrying.`;
         if (value.code === 'RELEASE_DEFAULTS_UNAVAILABLE')
@@ -43,7 +44,7 @@ async function request(path, method = 'GET', body, setup = false) {
     }
     return value;
 }
-const web = (path, method = 'GET', body, setup = false) => request('/_web/api/' + path, method, body, setup);
+const web = (path, method = 'GET', body) => request('/_web/api/' + path, method, body);
 const message = (error) => error instanceof Error ? error.message : 'The request could not be confirmed.';
 const button = (text, action, primary = false, disabled = false) => `<button type="button" class="btn ${primary ? 'primary' : 'secondary'}" data-action="${action}" ${disabled ? 'disabled' : ''}>${text}</button>`;
 function current(ticket) { return ticket.view === view && ticket.identity === identity; }
@@ -60,10 +61,8 @@ function credentialForm() {
     return `<form id="credentials" class="form-grid" novalidate>${Field('account', 'Account', Input('account', account, 'autocomplete="username" required maxlength="128"'))}${Field('password', 'Password', Input('password', '', `type="password" autocomplete="${creating ? 'new-password' : 'current-password'}" required`), creating ? 'Use at least 12 characters.' : 'Use your account password.')}${creating ? Field('confirm-password', 'Confirm password', Input('confirm-password', '', 'type="password" autocomplete="new-password" required'), 'Enter the same password again.') : ''}<div class="form-actions"><button class="btn primary" type="submit">${creating ? 'Create administrator' : 'Sign in'}<span class="pending-slot" data-credential-pending>${icon('arrow', 16)}</span></button></div></form>`;
 }
 function render() {
-    const title = stage === 'administrator' ? 'Create your administrator' : stage === 'login' ? 'Sign in to Piwork' : stage === 'authorization' ? 'Open your setup link' : stage === 'waiting' ? (snapshot.status?.ready ? 'Your Core is ready' : 'Core setup is pending') : stage === 'error' ? 'Could not read Core state' : 'Opening Piwork…';
+    const title = stage === 'administrator' ? 'Create your administrator' : stage === 'login' ? 'Sign in to Piwork' : stage === 'waiting' ? (snapshot.status?.ready ? 'Your Core is ready' : 'Core setup is pending') : stage === 'error' ? 'Could not read Core state' : 'Opening Piwork…';
     let content = '';
-    if (stage === 'authorization')
-        content = `<p>First-time setup requires the private link printed in the installer terminal.</p><p>To replace an expired or lost link, run <code>piwork setup link</code> in that terminal using this installation’s data directory. In Docker, run the command inside the server container.</p>${button('Check setup access', 'refresh', true)}`;
     if (stage === 'administrator' || stage === 'login')
         content = credentialForm();
     if (stage === 'waiting')
@@ -78,7 +77,7 @@ function updateNotice() { const node = root.querySelector('#setup-notice'); if (
     node.innerHTML = notice ? Feedback(notice, noticeError ? 'warning' : 'success') : ''; }
 function tell(text, error = false) { notice = text; noticeError = error; updateNotice(); }
 function updateLocks() {
-    const phase = writing ? 'write' : redeeming ? 'redeem' : reading ? 'read' : '';
+    const phase = writing ? 'write' : reading ? 'read' : '';
     if (phase !== waitPhase) {
         waitPhase = phase;
         waitSince = phase ? Date.now() : 0;
@@ -95,7 +94,7 @@ function updateLocks() {
     root.querySelectorAll('[data-action="refresh"]').forEach(node => node.setAttribute('aria-busy', String(reading)));
     const status = root.querySelector('#setup-status');
     if (status)
-        status.innerHTML = writing ? (stage === 'login' ? 'Signing in. Waiting for server confirmation…' : stage === 'administrator' ? 'Creating your administrator. Waiting for server confirmation…' : `${pendingDots()} Signing out. Waiting for server confirmation…`) : redeeming ? `${pendingDots()} Checking your setup authorization…` : reading ? `${pendingDots()} Reading current state…` : '';
+        status.innerHTML = writing ? (stage === 'login' ? 'Signing in. Waiting for server confirmation…' : stage === 'administrator' ? 'Creating your administrator. Waiting for server confirmation…' : `${pendingDots()} Signing out. Waiting for server confirmation…`) : reading ? `${pendingDots()} Reading current state…` : '';
     if (status && slow)
         status.innerHTML += '<span class="pending-wait-message"> Still waiting for the server. No result has been confirmed; do not submit again.</span>';
 }
@@ -148,47 +147,24 @@ async function credentials(form) {
     writing = true;
     updateLocks();
     try {
-        const value = await web(creating ? 'setup/administrator' : 'login', 'POST', { account, password }, creating);
+        const value = await web(creating ? 'setup/administrator' : 'login', 'POST', { account, password });
         if (!current(ticket))
             return;
         clearSecrets();
         identity++;
-        location.replace(value.next || '/');
+        location.replace(nextLocation(value.next || '/'));
     }
     catch (error) {
         if (!current(ticket))
             return;
         clearSecrets();
         tell(message(error), true);
-        if (creating && error instanceof RequestError && error.unknown) {
-            // An unknown create is only read back. Never replay the creation.
-            try {
-                const state = await web('state');
-                if (!current(ticket))
-                    return;
-                if (state.administratorInitialized) {
-                    changeStage('login');
-                    tell('Administrator created. Sign in to continue.');
-                    render();
-                }
-                else {
-                    changeStage('authorization');
-                    tell('Creation could not be confirmed. Check setup access before trying again.', true);
-                    render();
-                }
-            }
-            catch {
-                if (current(ticket)) {
-                    changeStage('error');
-                    render();
-                }
-            }
+        if (creating && error instanceof RequestError && (error.unknown || error.status === 409)) {
+            // Read back uncertain/concurrent creation; never replay the write.
+            writing = false;
+            await load(true);
         }
-        else if (creating && error instanceof RequestError && error.code === 'SETUP_AUTHORIZATION_INVALID') {
-            changeStage('authorization');
-            render();
-        }
-        else if (!creating) {
+        else {
             const session = await web('session').catch(() => null);
             if (current(ticket) && session)
                 csrf = session.csrfToken || '';
@@ -202,7 +178,7 @@ async function credentials(form) {
         }
     }
 }
-async function load() {
+async function load(recoveringCreation = false) {
     if (reading || writing)
         return;
     reading = true;
@@ -214,27 +190,27 @@ async function load() {
         const state = await web('state');
         if (!current(ticket))
             return;
-        if (!state.administratorInitialized) {
-            const access = await web('setup/session');
-            if (!current(ticket))
-                return;
-            setupCSRF = access.csrfToken || '';
-            changeStage(access.authorized ? 'administrator' : 'authorization');
-            render();
-            return;
-        }
         const session = await web('session');
         if (!current(ticket))
             return;
         csrf = session.csrfToken || '';
         authenticated = session.authenticated === true;
+        if (!state.administratorInitialized) {
+            changeStage('administrator');
+            if (recoveringCreation)
+                tell('Creation was not confirmed. Enter your password again before trying to create the administrator.', true);
+            render();
+            return;
+        }
         if (!session.authenticated) {
             changeStage('login');
+            if (recoveringCreation)
+                tell('Administrator setup is complete. Sign in to continue.');
             render();
             return;
         }
         if (location.pathname === '/login') {
-            location.replace(session.next || '/');
+            location.replace(nextLocation(session.next || '/'));
             return;
         }
         if (session.user?.role === 'admin') {
@@ -280,11 +256,16 @@ else if (action === 'logout') {
     const ticket = context();
     clearSecrets();
     updateLocks();
-    void web('logout', 'POST', {}).then(() => { if (current(ticket))
-        location.replace('/login'); }).catch(error => { if (!current(ticket))
+    void web('logout', 'POST', {}).then(() => { if (!current(ticket))
+        return; try {
+        for (const key of Object.keys(sessionStorage))
+            if (key.startsWith('piwork:web:'))
+                sessionStorage.removeItem(key);
+    }
+    catch { } location.replace('/login'); }).catch(error => { if (!current(ticket))
         return; writing = false; tell(message(error), true); updateLocks(); });
 } });
-window.addEventListener('pagehide', () => { identity++; view++; readLock = null; reading = false; redeeming = false; clearTimeout(waitTimer); clearSecrets(); });
+window.addEventListener('pagehide', () => { identity++; view++; readLock = null; reading = false; writing = false; clearTimeout(waitTimer); waitPhase = ''; waitSince = 0; clearSecrets(); });
 window.addEventListener('pageshow', event => { if (event.persisted) {
     identity++;
     view++;
@@ -292,22 +273,13 @@ window.addEventListener('pageshow', event => { if (event.persisted) {
     clearSecrets();
     void load();
 } });
-void (async () => { const ticket = context(); render(); if (proof) {
-    redeeming = true;
-    updateLocks();
-    try {
-        await web('setup/redeem', 'POST', { proof }, true);
-    }
-    catch {
-        if (current(ticket))
-            tell('Setup authorization could not be confirmed. Checking the current setup session.', true);
-    }
-    finally {
-        if (current(ticket)) {
-            redeeming = false;
-            updateLocks();
-        }
-    }
-} if (current(ticket))
-    await load(); })();
+render();
+void load();
+function nextLocation(fallback) {
+    const target = new URLSearchParams(location.search).get('returnTo');
+    if (!target || !/^\/services\/[A-Za-z0-9-]+\/[A-Za-z0-9-]+\/[1-9][0-9]{0,4}\//.test(target))
+        return fallback;
+    const parsed = new URL(target, location.origin);
+    return parsed.origin === location.origin && parsed.pathname.startsWith('/services/') ? parsed.pathname + parsed.search + parsed.hash : fallback;
+}
 //# sourceMappingURL=onboarding.js.map

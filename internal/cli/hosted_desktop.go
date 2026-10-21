@@ -17,8 +17,7 @@ type HostedDesktopOptions struct {
 	Origin, SessionID, CSRF, CookieName string
 	StateDirectory, RecordDirectory     string
 	Credential                          client.Credential
-	Transport                           http.RoundTripper
-	Services                            *HostedServicePool
+	Transport                           *http.Transport
 }
 
 type HostedDesktop struct{ desktop *nativeDesktop }
@@ -43,25 +42,31 @@ func NewHostedDesktop(options HostedDesktopOptions) (*HostedDesktop, error) {
 	d := &nativeDesktop{port: port, origin: options.Origin, hosted: &options,
 		sessions:   map[string]desktopSession{options.SessionID: {id: options.SessionID, csrf: options.CSRF, end: expiry}},
 		fileWrites: map[string]bool{}, serviceEntries: map[string]*desktopServiceEntry{}, serviceGrants: map[string]string{}, serviceConns: map[string]int{},
-		identity: desktopIdentity{coreURL: options.Origin, credential: &record, checked: true}}
+		identity: desktopIdentity{coreURL: options.Credential.CoreURL, credential: &record, checked: true}}
 	return &HostedDesktop{desktop: d}, nil
 }
 
 func (h *HostedDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Login/logout and all connection editing belong to the shared web session.
 	switch r.URL.Path {
-	case "/_desktop/api/login", "/_desktop/api/logout", "/_desktop/api/bootstrap", "/_desktop/api/connection", "/_desktop/api/preferences", "/_desktop/api/browser-access/reset":
+	case "/_desktop/api/login", "/_desktop/api/logout", "/_desktop/api/connection", "/_desktop/api/preferences":
 		desktopError(w, 404, "HOSTED_ROUTE_UNAVAILABLE")
 		return
 	}
 	h.desktop.ServeHTTP(w, r)
 }
 
+// SuspendContent stops in-flight content when the remote identity cannot be
+// confirmed, without discarding an otherwise unexpired login.
+func (h *HostedDesktop) SuspendContent() {
+	d := h.desktop
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.cancelAccessLocked()
+}
+
 func (h *HostedDesktop) Close() {
 	d := h.desktop
-	if d.hosted.Services != nil {
-		d.hosted.Services.release(d)
-	}
 	d.mu.Lock()
 	d.revokeLocked()
 	d.cancelAccessLocked()

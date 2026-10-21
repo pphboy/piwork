@@ -28,10 +28,10 @@ function fixture(t) {
 function records(metadata) {
   return Object.fromEntries(roles.map((role, i) => {
     const labels = { 'org.opencontainers.image.version': metadata.releaseVersion, 'org.opencontainers.image.revision': metadata.sourceCommit, 'io.piwork.source.modified': String(metadata.sourceModified), 'io.piwork.source.input-sha256': metadata.sourceInputHash, ...protocols[role] };
-    if (role === 'cli' || role === 'core') labels['io.piwork.desktop.input-sha256'] = metadata.desktopUIHash;
+    if (role === 'core') labels['io.piwork.desktop.input-sha256'] = metadata.desktopUIHash;
     if (role === 'core') labels['io.piwork.console.input-sha256'] = metadata.consoleUIHash;
     const image = { Id: `sha256:${String(i + 1).repeat(64)}`, Os: 'linux', Architecture: 'amd64', RepoTags: [metadata.images[role]], Config: { Labels: labels } };
-    const versions = Object.fromEntries(binaries[role].map(program => [program, { program, version: metadata.releaseVersion, commit: metadata.sourceCommit, modified: metadata.sourceModified, os: 'linux', architecture: 'amd64', goVersion: 'go1.25.5', ...(role === 'cli' ? { desktopUIHash: metadata.desktopUIHash } : role === 'core' ? {desktopUIHash:metadata.desktopUIHash,consoleUIHash:metadata.consoleUIHash} : {}) }]));
+    const versions = Object.fromEntries(binaries[role].map(program => [program, { program, version: metadata.releaseVersion, commit: metadata.sourceCommit, modified: metadata.sourceModified, os: 'linux', architecture: 'amd64', goVersion: 'go1.25.5', ...(role === 'core' ? {desktopUIHash:metadata.desktopUIHash,consoleUIHash:metadata.consoleUIHash} : {}) }]));
     return [role, { image, versions, runtimeBoundary: true, ...(role === 'core' ? { releaseConfig: coreReleaseConfig(metadata) } : {}) }];
   }));
 }
@@ -71,7 +71,6 @@ test('metadata outputs nonsecret image defaults and matching client stamps', t =
   assert.deepEqual(defaults, coreReleaseConfig(metadata));
   assert.equal(defaults.images.packageHelper, defaults.images.agent);
   assert(!/password|apiKey|token|credential/i.test(JSON.stringify(defaults)));
-  assert(readFileSync(join(output, 'cli.ldflags'), 'utf8').includes(metadata.desktopUIHash));
   assert(readFileSync(join(output,'core.ldflags'),'utf8').includes(metadata.consoleUIHash));
   const flags=readFileSync(join(output,'core.ldflags'),'utf8');
   const encoded=flags.match(/EncodedImages=([^ ]+)/)[1];
@@ -84,13 +83,11 @@ test('candidate checks reject stale binaries, resources, protocols and missing b
   assert.equal(verifyImageRecords(metadata, records(metadata)).packageHelper.imageId, records(metadata).agent.image.Id);
   for (const mutate of [
     r => { r.core.image.Config.Labels['org.opencontainers.image.revision'] = 'b'.repeat(40); },
-    r => { r.cli.versions['piwork-cli'].desktopUIHash = '0'.repeat(64); },
     r => { r.agent.image.Config.Labels['io.piwork.work-history.schema'] = '4'; },
     r => { r.fileHelper.versions['piwork-file-helper'].modified = false; },
     r => { r.snapshotHelper.image.Architecture = 'arm64'; },
     r => { r.core.runtimeBoundary = false; },
     r => { r.core.releaseConfig.images.agent = 'wrong:tag'; },
-    r => { r.cli.image.Config.Healthcheck = { Test: ['CMD', 'curl'] }; },
     r => { r.core.image.RepoTags = ['another:candidate']; },
     r => { r.core.existingImageId = 'sha256:' + '0'.repeat(64); },
   ]) {
@@ -126,7 +123,7 @@ test('materials render Core-only and single-host Compose and honestly record loc
   assert.equal(manifest.state, 'candidate');
   assert.equal(manifest.images.core.digest, undefined);
   assert(!readFileSync(join(output, 'docker-compose.yml'), 'utf8').includes('@PIWORK_'));
-  assert.equal(readFileSync(join(output, 'push-commands.sh'), 'utf8').match(/^docker push /gm).length, 5);
+  assert.equal(readFileSync(join(output, 'push-commands.sh'), 'utf8').match(/^docker push /gm).length, 4);
   assert.match(readFileSync(join(output, 'README.txt'), 'utf8'), /Local candidate only/);
   assert.match(readFileSync(join(output, 'SHA256SUMS'), 'utf8'), /docker-compose.yml/);
   writeFileSync(join(base, 'deploy/docker/docker-compose.yml.template'), 'services:\n  core:\n    env_file: ./core.env\n');

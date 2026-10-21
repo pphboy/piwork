@@ -134,7 +134,7 @@ func TestReleaseRejectsMetadataHeaderIdentityAndEvidenceMismatch(t *testing.T) {
 }
 
 func TestReleaseArchiveContainsOnlyClientManifestAndInstructions(t *testing.T) {
-	for _, target := range []string{"linux/amd64", "windows/amd64"} {
+	for _, target := range []string{"linux/amd64"} {
 		t.Run(target, func(t *testing.T) {
 			directory, metadata := fixtureBuild(t, target)
 			report := filepath.Join(directory, "unit-fixture.json")
@@ -251,5 +251,46 @@ func TestChecksumConflictDoesNotLeaveArchiveOrOverwriteExistingSum(t *testing.T)
 	raw, err := os.ReadFile(sumPath)
 	if err != nil || string(raw) != "existing checksum" {
 		t.Fatal("existing checksum changed", err)
+	}
+}
+
+func TestCurrentClientReleaseReplacesOnlyManagedOutput(t *testing.T) {
+	directory, metadata := fixtureBuild(t, "linux/amd64")
+	report := filepath.Join(directory, "fixture.json")
+	writeFixtureJSON(t, report, fixtureEvidence(metadata))
+	root := t.TempDir()
+	output := filepath.Join(root, "dist", "cli-release")
+	if err := os.MkdirAll(output, 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(output, "old-windows.zip"), []byte("stale"), 0600)
+	for i := 0; i < 3; i++ {
+		archive, err := PackageCurrent(root, directory, report, output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries, err := os.ReadDir(output)
+		if err != nil || len(entries) != 2 {
+			t.Fatal("stale release entries", err)
+		}
+		if _, err = os.Stat(archive + ".sha256"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := PackageCurrent(root, directory, report, root); err == nil {
+		t.Fatal("unsafe output accepted")
+	}
+	if _, err := PackageCurrent(root, directory, "missing-evidence", output); err == nil {
+		t.Fatal("invalid evidence accepted")
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil || len(entries) != 2 {
+		t.Fatal("failed packaging lost previous release")
+	}
+	if err = os.Rename(output, output+".previous"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = PackageCurrent(root, directory, report, output); err != nil {
+		t.Fatal("interrupted publication did not recover", err)
 	}
 }

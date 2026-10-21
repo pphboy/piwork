@@ -37,7 +37,7 @@ func TestNativeCoreFileJobsSurviveCrashBeforeAndAfterCommit(t *testing.T) {
 				t.Fatal("native acceptance images required")
 			}
 			_, source, _, _ := runtime.Caller(0)
-			binary := filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-serve")
+			binary := filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-core")
 			if _, err := os.Stat(binary); err != nil {
 				t.Fatal("build native Core first", err)
 			}
@@ -108,7 +108,8 @@ func TestNativeCoreFileJobsSurviveCrashBeforeAndAfterCommit(t *testing.T) {
 			start := func() (*exec.Cmd, string) {
 				t.Helper()
 				seedProcessRuntime(t, directory, image)
-				process := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0", "--package-helper-image", image, "--file-helper-image", fileImage, "--snapshot-helper-image", os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"), "--no-open")
+				binary = processFixtureBinary(t, image, image, fileImage, os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"))
+				process := exec.CommandContext(ctx, binary, processStartupArgs(t, directory)...)
 				process.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=unix://" + socket, "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass"}
 				stdout, err := process.StdoutPipe()
 				if err != nil {
@@ -133,7 +134,10 @@ func TestNativeCoreFileJobsSurviveCrashBeforeAndAfterCommit(t *testing.T) {
 						announced <- nil
 					}
 				}()
-				var announcement struct{ Event, URL string }
+				var announcement struct {
+					Event string
+					URL   string `json:"coreUrl"`
+				}
 				select {
 				case line := <-announced:
 					if json.Unmarshal(line, &announcement) != nil || announcement.Event != "app.listening" {

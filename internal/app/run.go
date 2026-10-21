@@ -3,15 +3,12 @@ package app
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,88 +16,105 @@ import (
 	"strings"
 	"time"
 
+	"piwork/internal/buildinfo"
 	"piwork/internal/clientfs"
 	"piwork/internal/coreapp"
-	"piwork/internal/coreoperator"
 	"piwork/internal/corestore"
 	"piwork/internal/distribution"
 	"piwork/internal/dockerengine"
+	"piwork/internal/localweb"
 	"piwork/internal/safefs"
 	"piwork/internal/webapp"
 )
 
-const serveHelp = `Usage: piwork [serve] [OPTIONS]
+const coreHelp = `Usage: piwork-core [OPTIONS]
 Start Core, the browser workbench, administration, and first-time setup.
 
-  --listen HOST:PORT             default 0.0.0.0:7171
-  --data-dir DIR                 default user config directory/piwork/server
-  --public-origin URL            exact browser origin; override for NAT/proxy
-  --no-open                      print the URL without opening a browser
-  --service-ports FIRST-LAST      default 17891-17954 (up to 1024 ports)
-  --tls-cert FILE --tls-key FILE  serve HTTPS with an explicit certificate
-  --docker-host UNIX_URL         explicit local Docker Engine endpoint
-  --docker-context NAME          explicit local Docker context
-  --package-helper-image IMAGE   advanced helper override
-  --file-helper-image IMAGE      advanced helper override
-  --snapshot-helper-image IMAGE  advanced helper override
-  --agent-grpc-listen HOST:PORT   default 0.0.0.0:7172
-  --agent-grpc-advertise HOST:PORT default piwork-core:<bound RPC port>
+  --ui-port PORT    HTTP UI port, default 17891
+  --core-port PORT  HTTP Core API port, default 17871
+  --data-dir DIR    default user config directory/piwork/server
+  --help, -h        show help
+  --version         show build identity
 
-No business environment variables are required. Optional PIWORK_ADMIN_ACCOUNT
-and PIWORK_ADMIN_PASSWORD create only the first administrator on an empty
-installation; model connections are configured in the browser.
-Operator commands: status, admin, config, setup link. User commands: piwork-cli.
+Both HTTP services accept local and remote connections. Internal Agent mTLS
+uses port 7172. Configure users, models and runtime in the browser.
+Optional PIWORK_ADMIN_ACCOUNT and PIWORK_ADMIN_PASSWORD initialize only the
+first administrator. User commands and Desktop: piwork-cli.
 `
 
-func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		fmt.Fprint(stdout, serveHelp, "\n", coreoperator.Usage)
-		return 0
-	}
-	// Consume option values before locating the command: a directory named
-	// "status" is still a directory, and globals may precede "serve".
-	values := map[string]bool{"--listen": true, "--data-dir": true, "--public-origin": true, "--service-ports": true, "--tls-cert": true, "--tls-key": true, "--docker-host": true, "--docker-context": true, "--agent-grpc-listen": true, "--agent-grpc-advertise": true, "--agent-image": true, "--package-helper-image": true, "--file-helper-image": true, "--snapshot-helper-image": true, "--core": true, "--env-file": true, "--operator-credential-file": true}
-	command, index := "", -1
-	explicitDirectory := false
+type startupOptions struct {
+	uiPort, corePort int
+	directory        string
+}
+
+// Parse the entire command before filesystem, credentials or network access.
+// Diagnostics deliberately never echo option values (which may be secrets).
+func parseStartup(args []string) (startupOptions, error) {
+	options := startupOptions{uiPort: 17891, corePort: 17871}
+	seen := map[string]bool{}
 	for i := 0; i < len(args); i++ {
-		name, _, inline := strings.Cut(args[i], "=")
+		name, value, inline := strings.Cut(args[i], "=")
+		if name != "--ui-port" && name != "--core-port" && name != "--data-dir" || seen[name] {
+			return options, errors.New("invalid startup options")
+		}
+		seen[name] = true
+		if !inline {
+			i++
+			if i == len(args) {
+				return options, errors.New("missing startup value")
+			}
+			value = args[i]
+			if strings.HasPrefix(value, "--") || value == "-h" {
+				return options, errors.New("missing startup value")
+			}
+		}
+		if value == "" {
+			return options, errors.New("empty startup value")
+		}
 		if name == "--data-dir" {
-			explicitDirectory = true
-		}
-		if values[name] {
-			if !inline {
-				i++
-			}
+			options.directory = value
 			continue
 		}
-		if strings.HasPrefix(args[i], "-") {
-			continue
-		}
-		command, index = args[i], i
-		break
-	}
-	if command == "" || command == "serve" {
-		for _, arg := range args {
-			if arg == "--version" {
-				return coreoperator.Run(ctx, args, stdin, stdout, stderr)
+		for _, c := range value {
+			if c < '0' || c > '9' {
+				return options, errors.New("invalid port")
 			}
 		}
-		if index >= 0 {
-			args = append(append([]string{}, args[:index]...), args[index+1:]...)
+		port, err := strconv.Atoi(value)
+		if err != nil || port < 1 || port > 65535 || port == 7172 {
+			return options, errors.New("invalid port")
 		}
-		return RunServe(ctx, args, stdout, stderr)
-	}
-	// Operator defaults follow the unified server; explicit selections retain
-	// their previous precedence and never consult user CLI credentials.
-	if !explicitDirectory && os.Getenv("PIWORK_DATA_DIR") == "" {
-		directory, err := defaultDirectory()
-		if err != nil {
-			fmt.Fprintln(stderr, "piwork: default data directory is unavailable")
-			return 1
+		if name == "--ui-port" {
+			options.uiPort = port
+		} else {
+			options.corePort = port
 		}
-		args = append([]string{"--data-dir", directory}, args...)
 	}
-	return coreoperator.Run(ctx, args, stdin, stdout, stderr)
+	if options.uiPort == options.corePort {
+		return options, errors.New("ports must differ")
+	}
+	return options, nil
+}
+
+func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 {
+		switch args[0] {
+		case "--help", "-h":
+			fmt.Fprint(stdout, coreHelp)
+			return 0
+		case "--version":
+			if json.NewEncoder(stdout).Encode(buildinfo.Read("piwork-core")) != nil {
+				return 1
+			}
+			return 0
+		}
+	}
+	options, err := parseStartup(args)
+	if err != nil {
+		fmt.Fprintln(stderr, "piwork-core: invalid startup options; use --help (user commands: piwork-cli)")
+		return 2
+	}
+	return start(ctx, options, stdout, stderr)
 }
 
 func defaultDirectory() (string, error) {
@@ -111,106 +125,27 @@ func defaultDirectory() (string, error) {
 	return filepath.Join(base, "piwork", "server"), nil
 }
 
-func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			fmt.Fprint(stdout, serveHelp)
-			return 0
-		}
-	}
-	defaults, err := distribution.Defaults()
-	if err != nil {
-		fmt.Fprintln(stderr, "piwork: embedded release dependencies are invalid")
-		return 1
-	}
-	flags := flag.NewFlagSet("piwork", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	listen := flags.String("listen", "0.0.0.0:7171", "")
-	directory := flags.String("data-dir", "", "")
-	publicOrigin := flags.String("public-origin", "", "")
-	noOpen := flags.Bool("no-open", false, "")
-	servicePorts := flags.String("service-ports", "17891-17954", "")
-	_ = flags.Bool("allow-insecure-remote", false, "") // Accepted previous explicit spelling.
-	certPath := flags.String("tls-cert", "", "")
-	keyPath := flags.String("tls-key", "", "")
-	dockerHost := flags.String("docker-host", os.Getenv("DOCKER_HOST"), "")
-	dockerContext := flags.String("docker-context", os.Getenv("DOCKER_CONTEXT"), "")
-	grpcListen := flags.String("agent-grpc-listen", "0.0.0.0:7172", "")
-	grpcAdvertise := flags.String("agent-grpc-advertise", "", "")
-	packageHelper := flags.String("package-helper-image", defaults.PackageHelper, "")
-	fileHelper := flags.String("file-helper-image", defaults.FileHelper, "")
-	snapshotHelper := flags.String("snapshot-helper-image", defaults.SnapshotHelper, "")
-	seen := map[string]bool{}
-	for _, arg := range args {
-		if strings.HasPrefix(arg, "--") {
-			name, _, _ := strings.Cut(arg, "=")
-			if seen[name] {
-				fmt.Fprintln(stderr, "piwork: repeated startup option; use --help")
-				return 2
-			}
-			seen[name] = true
-		}
-	}
-	if flags.Parse(args) != nil || flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "piwork: invalid startup options; use --help")
-		return 2
-	}
-	if *directory == "" {
-		*directory, err = defaultDirectory()
+func start(ctx context.Context, options startupOptions, stdout, stderr io.Writer) int {
+	directory := options.directory
+	var err error
+	if directory == "" {
+		directory, err = defaultDirectory()
 		if err != nil {
-			fmt.Fprintln(stderr, "piwork: default data directory is unavailable")
+			fmt.Fprintln(stderr, "piwork-core: default data directory is unavailable")
 			return 1
 		}
 	}
-	*directory, err = filepath.Abs(*directory)
+	directory, err = filepath.Abs(directory)
 	if err != nil {
-		fmt.Fprintln(stderr, "piwork: data directory is invalid")
+		fmt.Fprintln(stderr, "piwork-core: data directory is invalid")
 		return 2
 	}
-	address, err := coreapp.ParseListen(*listen, true)
+	address := coreapp.ListenAddress{Host: "0.0.0.0", Port: options.uiPort}
+	coreAddress := coreapp.ListenAddress{Host: "0.0.0.0", Port: options.corePort}
+	defaults, err := distribution.Defaults()
 	if err != nil {
-		fmt.Fprintln(stderr, "piwork: listen address is invalid")
-		return 2
-	}
-	parts := strings.Split(*servicePorts, "-")
-	first, last := 0, 0
-	if len(parts) == 2 {
-		first, _ = strconv.Atoi(parts[0])
-		last, _ = strconv.Atoi(parts[1])
-	}
-	if first < 1 || last > 65535 || last < first || last-first >= 1024 || address.Port >= first && address.Port <= last {
-		fmt.Fprintln(stderr, "piwork: Service ports must be a valid bounded range excluding the main port")
-		return 2
-	}
-	var tlsConfig *tls.Config
-	if (*certPath == "") != (*keyPath == "") {
-		fmt.Fprintln(stderr, "piwork: --tls-cert and --tls-key must be provided together")
-		return 2
-	}
-	if *certPath != "" {
-		info, err := os.Lstat(*keyPath)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
-			fmt.Fprintln(stderr, "piwork: TLS key is unavailable or unsafe")
-			return 2
-		}
-		certificate, err := tls.LoadX509KeyPair(*certPath, *keyPath)
-		if err != nil {
-			fmt.Fprintln(stderr, "piwork: TLS certificate/key are invalid")
-			return 2
-		}
-		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
-	}
-	if *publicOrigin != "" {
-		parsed, parseErr := url.Parse(*publicOrigin)
-		if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
-			fmt.Fprintln(stderr, "piwork: --public-origin must be an HTTP(S) origin")
-			return 2
-		}
-		if tlsConfig != nil && parsed.Scheme != "https" {
-			fmt.Fprintln(stderr, "piwork: TLS requires an HTTPS public origin")
-			return 2
-		}
-		*publicOrigin = parsed.Scheme + "://" + parsed.Host
+		fmt.Fprintln(stderr, "piwork-core: embedded release dependencies are invalid")
+		return 1
 	}
 	admin := map[string]string{}
 	for _, name := range []string{"PIWORK_ADMIN_ACCOUNT", "PIWORK_ADMIN_PASSWORD"} {
@@ -220,71 +155,114 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 	initialization, err := coreapp.InitializationFromEnvironment(admin)
 	if err != nil {
-		fmt.Fprintln(stderr, "piwork:", err)
+		fmt.Fprintln(stderr, "piwork-core:", err)
 		return 2
+	}
+	if ctx.Err() != nil {
+		return 0
 	}
 	home, _ := os.UserHomeDir()
 	// Core deliberately creates only its final directory. Prepare missing
 	// parents without following symlinks, including on a fresh user account.
-	parent, err := clientfs.EnsureDirectory(filepath.Dir(*directory))
+	parent, err := clientfs.EnsureDirectory(filepath.Dir(directory))
 	if err != nil {
-		fmt.Fprintln(stderr, "piwork: data directory parent is unavailable or unsafe")
+		fmt.Fprintln(stderr, "piwork-core: data directory parent is unavailable or unsafe")
 		return 1
 	}
 	_ = parent.Close()
-	core, err := coreapp.New(ctx, coreapp.Options{DataDirectory: *directory, Initialization: initialization,
-		PackageHelperImage: *packageHelper, FileHelperImage: *fileHelper, SnapshotHelperImage: *snapshotHelper,
-		AgentGRPCListen: *grpcListen, AgentGRPCAdvertise: *grpcAdvertise,
-		DockerOptions: dockerengine.SelectionOptions{DockerHost: *dockerHost, DockerContext: *dockerContext, DockerConfig: os.Getenv("DOCKER_CONFIG"), HomeDirectory: home}})
+	setupSecret, err := localweb.Secret()
+	if err != nil {
+		fmt.Fprintln(stderr, "piwork-core: startup identity unavailable")
+		return 1
+	}
+	core, err := coreapp.New(ctx, coreapp.Options{DataDirectory: directory, Initialization: initialization, SetupSecret: setupSecret,
+		PackageHelperImage: defaults.PackageHelper, FileHelperImage: defaults.FileHelper, SnapshotHelperImage: defaults.SnapshotHelper,
+		AgentGRPCListen: "0.0.0.0:7172", AgentGRPCAdvertise: "piwork-core:7172",
+		DockerOptions: dockerengine.SelectionOptions{DockerHost: os.Getenv("DOCKER_HOST"), DockerContext: os.Getenv("DOCKER_CONTEXT"), DockerConfig: os.Getenv("DOCKER_CONFIG"), HomeDirectory: home}})
 	if err != nil {
 		switch {
 		case errors.Is(err, safefs.ErrLocked):
-			fmt.Fprintln(stderr, "piwork: another Core owns this data directory")
+			fmt.Fprintln(stderr, "piwork-core: another Core owns this data directory")
 		case errors.Is(err, corestore.ErrUnsupported):
-			fmt.Fprintln(stderr, "piwork:", corestore.ErrUnsupported)
+			fmt.Fprintln(stderr, "piwork-core:", corestore.ErrUnsupported)
 		default:
-			fmt.Fprintln(stderr, "piwork: initialization failed; verify private data and PIWORK_ADMIN_ACCOUNT/PIWORK_ADMIN_PASSWORD")
+			fmt.Fprintln(stderr, "piwork-core: initialization failed; verify private data and PIWORK_ADMIN_ACCOUNT/PIWORK_ADMIN_PASSWORD")
 		}
 		return 1
 	}
-	var web *webapp.Server
-	origin := *publicOrigin
-	_, err = core.ListenWithHandler(address, func(bound coreapp.ListenAddress, handler http.Handler) (http.Handler, error) {
-		if origin == "" {
-			origin = browserOrigin(bound, tlsConfig != nil)
-		}
-		var err error
-		web, err = webapp.New(ctx, webapp.Options{Origin: origin, DataDirectory: *directory, Core: core, Handler: handler, ServiceListenHost: bound.Host, ServiceFirstPort: first, ServiceLastPort: last, TLS: tlsConfig})
-		return web, err
-	}, tlsConfig)
+	if err := core.BindRPC(ctx); err != nil {
+		_ = closeApplication(core, nil)
+		fmt.Fprintln(stderr, "piwork-core: Agent RPC listener is unavailable")
+		return 1
+	}
+	coreBound, err := core.Bind(coreAddress)
 	if err != nil {
-		_ = closeApplication(core, web)
-		fmt.Fprintln(stderr, "piwork: application could not open its browser/Core listener")
+		_ = closeApplication(core, nil)
+		fmt.Fprintln(stderr, "piwork-core: Core listener is unavailable")
 		return 1
 	}
-	if json.NewEncoder(stdout).Encode(map[string]any{"event": "app.listening", "url": origin, "pid": os.Getpid(), "dataDirectory": *directory}) != nil {
-		_ = closeApplication(core, web)
+	browserListener, err := net.Listen("tcp4", address.Address())
+	if err != nil {
+		_ = closeApplication(core, nil)
+		fmt.Fprintln(stderr, "piwork-core: browser listener is unavailable")
 		return 1
 	}
-	if initialized, err := core.Identity.HasUsers(ctx); err == nil && !initialized {
-		if link, err := web.SetupLink(ctx); err == nil {
-			fmt.Fprintln(stdout, "First-time setup:", link)
-		}
+	defer browserListener.Close()
+	actual := browserListener.Addr().(*net.TCPAddr)
+	origin := browserOrigin(coreapp.ListenAddress{Host: actual.IP.String(), Port: actual.Port})
+	coreURL := backendOrigin(coreBound)
+	web, err := webapp.New(ctx, webapp.Options{Origin: origin, CoreURL: coreURL, SetupSecret: setupSecret, DataDirectory: directory})
+	if err != nil {
+		_ = closeApplication(core, nil)
+		fmt.Fprintln(stderr, "piwork-core: browser initialization failed")
+		return 1
 	}
-	if !*noOpen && (os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "") {
+	browserServer := &http.Server{Handler: web, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 31 * time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10,
+		BaseContext: func(net.Listener) context.Context { return ctx }}
+	browserDone := make(chan error, 1)
+	// Both listeners and the installation lock are acquired before recovery or
+	// requests are admitted. There is one shutdown owner and one total budget.
+	if ctx.Err() != nil {
+		_ = closeApplication(core, web, browserServer)
+		return 0
+	}
+	if err := core.Serve(); err != nil {
+		_ = closeApplication(core, web, browserServer)
+		return 1
+	}
+	go func() { browserDone <- browserServer.Serve(browserListener) }()
+	if json.NewEncoder(stdout).Encode(map[string]any{"event": "app.listening", "url": origin, "coreUrl": coreURL, "pid": os.Getpid(), "dataDirectory": directory}) != nil {
+		_ = closeApplication(core, web, browserServer)
+		return 1
+	}
+
+	if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
 		go openBrowser(ctx, origin, stderr)
 	}
+	return awaitApplication(ctx, core, web, browserServer, browserDone, stderr)
+}
+
+// Both servers have one supervisor. Any unexpected serving exit withdraws the
+// other entry and closes this installation through the same bounded path.
+func awaitApplication(ctx context.Context, core *coreapp.Application, web *webapp.Server, browserServer *http.Server, browserDone <-chan error, stderr io.Writer) int {
 	var serveErr error
 	select {
 	case <-ctx.Done():
 	case serveErr = <-core.ServeDone():
+		if serveErr == nil {
+			serveErr = errors.New("Core listener ended")
+		}
+	case serveErr = <-browserDone:
+		if serveErr == nil {
+			serveErr = errors.New("browser listener ended")
+		}
 	}
-	if closeApplication(core, web) != nil {
-		fmt.Fprintln(stderr, "piwork: shutdown was not confirmed")
+	if closeApplication(core, web, browserServer) != nil {
+		fmt.Fprintln(stderr, "piwork-core: shutdown was not confirmed")
 		return 1
 	}
 	if serveErr != nil {
-		fmt.Fprintln(stderr, "piwork: HTTP listener stopped unexpectedly")
+		fmt.Fprintln(stderr, "piwork-core: HTTP listener stopped unexpectedly")
 		return 1
 	}
 	return 0
@@ -292,13 +270,16 @@ func RunServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 
 // Web resource cleanup and Core workload shutdown share the total budget.
 // Large transfer spool deletion must not postpone stopping managed Works.
-func closeApplication(core *coreapp.Application, web *webapp.Server) error {
+func closeApplication(core *coreapp.Application, web *webapp.Server, servers ...*http.Server) error {
 	closing, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	webDone := make(chan struct{})
 	go func() {
 		if web != nil {
 			web.Close()
+		}
+		for _, server := range servers {
+			_ = server.Close()
 		}
 		close(webDone)
 	}()
@@ -311,7 +292,19 @@ func closeApplication(core *coreapp.Application, web *webapp.Server) error {
 	return err
 }
 
-func browserOrigin(address coreapp.ListenAddress, secure bool) string {
+// Wildcards bind interfaces; backend requests use a concrete local address.
+func backendOrigin(address coreapp.ListenAddress) string {
+	if ip := net.ParseIP(address.Host); ip != nil && ip.IsUnspecified() {
+		if ip.To4() != nil {
+			address.Host = "127.0.0.1"
+		} else {
+			address.Host = "::1"
+		}
+	}
+	return address.URL()
+}
+
+func browserOrigin(address coreapp.ListenAddress) string {
 	host := address.Host
 	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
 		host = "127.0.0.1"
@@ -332,11 +325,7 @@ func browserOrigin(address coreapp.ListenAddress, secure bool) string {
 			}
 		}
 	}
-	scheme := "http"
-	if secure {
-		scheme = "https"
-	}
-	return scheme + "://" + net.JoinHostPort(host, fmt.Sprint(address.Port))
+	return "http" + "://" + net.JoinHostPort(host, fmt.Sprint(address.Port))
 }
 
 func openBrowser(parent context.Context, address string, stderr io.Writer) {

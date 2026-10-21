@@ -30,3 +30,9 @@ Service Ready、HTTP 200、Query/Action 成功和代码版本已更新各自只�
 DOM 存在、资源/连接正常而计算样式隐藏内容时，修复有证据支持的样式/尺寸原因；遮罩阻挡时检查其实际来源。资源、脚本或连接异常则处理对应层，不只改 CSS。没有足够证据时保留原因未知，不直接判定 NiceGUI/iframe 架构不兼容，也不默认换栈。
 
 诊断不得泄漏 ticket、token、私有 URL 参数或无关用户内容。必要修复后回到原 Desktop Service 入口，复查相关内容、操作和状态；修改文件或换框架本身不是修复完成的证明。历史失败结果保留，合成夹具的固定分发不能证明任意模型都会自主正确归因。
+
+## 托管浏览器的动态前缀
+
+浏览器 Service 入口为 ControlPlane 的 `/services/<workId>/<serviceId>/<port>/`，不直接连接 Core、容器或额外宿主端口。NiceGUI 使用请求 `X-Forwarded-Prefix` 处理内置链接、资源与 Socket.IO，框架组件不要重复加前缀。官方 `page_head(ui, loaded)` 为自定义资源/版本/反馈提供同一请求上下文；自定义 fetch 使用 `window.piworkAppURL('/path')`，Python 自定义 HTML 资源用 `browser_url(request, '/path')`。不要持久写入 IP 或 Work/Service ID。容器内 `/health`、`/pi/v1` 和 Agent 请求仍用根路径。
+
+应用与工作台同源，按当前用户信任的应用处理，不宣称路径隔离 DOM/存储或当前用户 UI 权限。草稿/反馈使用运行时提供的会话与目标命名空间；响应 Cookie 由代理分区，脚本 Cookie 不同步。旧固定镜像/源码不会随导入自动迁移；显式适配旧应用后再从真实前缀入口验证。

@@ -9,15 +9,15 @@ import (
 )
 
 type desktopAccess struct {
-	session                             string
-	localGeneration, identityGeneration int
-	identityBound                       bool
-	cancel                              context.CancelFunc
+	session            string
+	identityGeneration int
+	identityBound      bool
+	cancel             context.CancelFunc
 }
 
 func (d *nativeDesktop) accessCurrentLocked(a *desktopAccess) bool {
 	ss, ok := d.sessions[a.session]
-	return ok && time.Now().Before(ss.end) && d.localGeneration == a.localGeneration && (!a.identityBound || d.identity.generation == a.identityGeneration)
+	return ok && time.Now().Before(ss.end) && (!a.identityBound || d.identity.generation == a.identityGeneration)
 }
 func (d *nativeDesktop) cancelPlatformAccessLocked() {
 	for a := range d.activeAccess {
@@ -46,7 +46,7 @@ func (d *nativeDesktop) guardAccess(w http.ResponseWriter, r *http.Request, sess
 		return w, r, func() {}, false
 	}
 	ctx, cancel := context.WithCancel(r.Context())
-	a := &desktopAccess{session: session.id, localGeneration: d.localGeneration, identityGeneration: d.identity.generation, identityBound: identityBound, cancel: cancel}
+	a := &desktopAccess{session: session.id, identityGeneration: d.identity.generation, identityBound: identityBound, cancel: cancel}
 	if !d.accessCurrentLocked(a) {
 		d.mu.Unlock()
 		cancel()
@@ -124,7 +124,7 @@ func (w *desktopContentWriter) WriteHeader(status int) {
 		w.ResponseWriter.Header().Del("Content-Length")
 		w.d.mu.Lock()
 		ss, exists := w.d.sessions[w.access.session]
-		localValid := exists && time.Now().Before(ss.end) && w.d.localGeneration == w.access.localGeneration
+		localValid := exists && time.Now().Before(ss.end)
 		identityChanged := w.d.identity.generation != w.access.identityGeneration
 		w.d.mu.Unlock()
 		if !localValid {
@@ -158,36 +158,3 @@ func (w *desktopContentWriter) Flush() {
 	}
 }
 func (w *desktopContentWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-
-func (d *nativeDesktop) resetBrowserAccess(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		desktopError(w, 405, "METHOD_NOT_ALLOWED")
-		return
-	}
-	input, err := readDesktopObject(r, 1024)
-	if err != nil {
-		desktopInputError(w, err)
-		return
-	}
-	if len(input) != 0 {
-		desktopError(w, 400, "INVALID_INPUT")
-		return
-	}
-	d.mu.Lock()
-	d.localGeneration++
-	d.sessions = map[string]desktopSession{}
-	d.ticket = ""
-	d.ticketEnd = time.Time{}
-	d.used = true
-	d.serviceEntries = map[string]*desktopServiceEntry{}
-	d.serviceGrants = map[string]string{}
-	d.serviceConns = map[string]int{}
-	d.cancelAccessLocked()
-	if d.transfers != nil {
-		d.transfers.clear()
-		d.transfers = nil
-	}
-	d.mu.Unlock()
-	w.Header().Set("Set-Cookie", d.cookieName()+"=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0")
-	desktopJSON(w, 200, map[string]bool{"browserAccessCleared": true, "coreSessionRetained": true})
-}

@@ -1,3 +1,8 @@
+if(process.env.PIWORK_TEST_RELEASE_BIN) {
+ const {verifyNativeRelease}=await import('./native-release-acceptance.mjs');
+ await verifyNativeRelease(process.env.PIWORK_TEST_RELEASE_BIN);
+ process.exit(0);
+}
 import {buildNativeTestServer} from './native-test-server.mjs';
 // The driver runs on the development machine. Product processes run in scratch,
 // with only the release binaries, data, and an independent Engine Unix socket.
@@ -5,7 +10,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer as createTCPServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -52,7 +57,7 @@ async function startHost(name, program, args, environment = []) {
   const container = `${identity}-${name}`;
   await docker(['run', '-d', '--name', container, '--label', label,
     '--network', `container:${engine}`, '--tmpfs', '/tmp:rw,noexec,nosuid,nodev', '--mount', `type=volume,src=${socketVolume},dst=/var/run`,
-    '--mount', `type=volume,src=${dataVolume},dst=/data`, '--mount', `type=bind,src=${join(root, 'tls')},dst=/tls,readonly`,
+    '--mount', `type=volume,src=${dataVolume},dst=/data`,
     '-e', 'PATH=/nonexistent', ...environment.flatMap((value) => ['-e', value]),
     '--entrypoint', `/bin/${program}`, hostImage, ...args]);
   containers.push(container);
@@ -69,51 +74,46 @@ async function loadImages() {
   })));
   assert.deepEqual(codes, [0, 0], 'independent Engine image load failed');
 }
-async function insideHTTP(url, headers = [], tls = false) {
+async function insideHTTP(url, headers = []) {
   const result = await command('docker', ['exec', engine, 'wget', '-q', '-O', '-',
-    ...(tls ? ['--no-check-certificate'] : []), ...headers.flatMap((header) => ['--header', header]), url]);
+    ...headers.flatMap((header) => ['--header', header]), url]);
   return result.stdout;
 }
 
 try {
   await mkdir(join(root, 'bin'));
-  await mkdir(join(root, 'tls'));
-  for (const program of ['piwork-serve', 'piwork-cli', 'piwork-console']) {
+  for (const program of ['piwork-core', 'piwork-cli']) {
     await copyFile(join(binaries, program), join(root, 'bin', program));
   }
   if(!process.env.PIWORK_TEST_RELEASE_BIN)buildNativeTestServer(join(root,'bin'),{agent:agentImage,packageHelper:agentImage,fileHelper:fileImage,snapshotHelper:snapshotImage});
-  await symlink('piwork-serve', join(root, 'bin', 'piwork'));
   await writeFile(join(root, 'Dockerfile'), 'FROM scratch\nCOPY bin/ /bin/\n');
-  // Fixture preparation only; openssl is absent from the product host.
-  await command('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-    '-keyout', join(root, 'tls/key.pem'), '-out', join(root, 'tls/cert.pem'),
-    '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1']);
   await docker(['build', '--label', label, '-t', hostImage, root]);
   for (const volume of [socketVolume, dataVolume]) await docker(['volume', 'create', '--label', label, volume]);
   await docker(['run', '-d', '--privileged', '--name', engine, '--label', label,
     '-e', 'DOCKER_TLS_CERTDIR=', '--mount', `type=volume,src=${socketVolume},dst=/var/run`,
-    '--mount', `type=volume,src=${dataVolume},dst=/data`, '-p', '127.0.0.1::7171',
-    'docker:27-dind', '--host=unix:///var/run/docker.sock', '--tls=false']);
+    '--mount', `type=volume,src=${dataVolume},dst=/data`, '-p', '127.0.0.1::17871',
+    'docker:28-dind', '--host=unix:///var/run/docker.sock', '--tls=false']);
   containers.push(engine);
   await waitFor(async () => (await command('docker', ['exec', engine, 'docker', 'info'], { allowFailure: true })).code === 0, 'independent Engine');
   await loadImages();
   console.log('Independent Engine ready; fixture images loaded.');
-  const core = await startHost('core', 'piwork-serve', ['serve', '--data-dir', '/data/core',
-    '--listen', '0.0.0.0:7171', '--allow-insecure-remote', '--agent-grpc-listen', '0.0.0.0:7172']);
-  const address = await docker(['port', engine, '7171/tcp']);
+  const core = await startHost('core','piwork-core',['--data-dir','/data/core']);
+  const address = await docker(['port', engine, '17871/tcp']);
   const base = `http://${address}`;
   await waitFor(async () => (await fetch(`${base}/healthz`)).ok, 'scratch Core health');
-  const operator = (args, input) => docker(['exec', '-i', core, '/bin/piwork-serve',
-    '--core', 'http://127.0.0.1:7171', '--data-dir', '/data/core', ...args], { input });
-  await operator(['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], 'native-host-fixture-password\n');
-  await operator(['config', 'set', '--model-provider', 'piwork-deterministic',
-    '--model', 'fixture-v1', '--api-key-stdin'], 'fixture-key\n');
-  assert.equal(JSON.parse(await operator(['config','show'])).agentImage,agentImage,'The supplied server must embed the fixture Agent image');
+  const operatorCredential=(await docker(['exec',engine,'cat','/data/core/operator.credential'])).trim();
+  const control=async(method,path,body)=>{
+    const response=await fetch(base+'/control/'+path,{method,headers:{Authorization:'Operator '+operatorCredential,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+    assert(response.ok,`Operator API ${path}: ${response.status}`);return response.json();
+  };
+  await control('POST','admin/bootstrap',{account:'admin',password:'native-host-fixture-password'});
+  await control('PUT','runtime',{provider:'piwork-deterministic',model:'fixture-v1',credential:'fixture-key'});
+  assert.equal((await control('GET','runtime')).agentImage,agentImage,'Server must embed the tested Agent image');
   await waitFor(async () => (await fetch(`${base}/readyz?profile=docker-delivery`)).ok, 'scratch Core and helper readiness');
   console.log('Scratch Core initialized and ready.');
   const cli = async (args, input) => {
     const result = await command('docker', ['exec', '-i', '-e', 'PIWORK_CONFIG_PATH=/data/client/client.json', core,
-      '/bin/piwork-cli', '--core', 'http://127.0.0.1:7171', '--json', ...args], { input, allowFailure: true });
+      '/bin/piwork-cli', '--core', 'http://127.0.0.1:17871', '--json', ...args], { input, allowFailure: true });
     if (result.code === 0) return result.stdout.trim();
     let accepted; try { accepted = JSON.parse(result.stdout); } catch { /* No acceptance identity is available. */ }
     if (args.includes('--wait') && result.code === 5 && accepted?.state === 'waiting' &&
@@ -129,9 +129,9 @@ try {
     const reasons = [...publicCodes, ...observationCodes].filter(reason => new RegExp(`\\b${reason}\\b`).test(`${result.stdout}\n${result.stderr}`));
     throw new Error(`Native CLI failed (${result.code})${reasons.length ? `: ${reasons.join(', ')}` : ''}`);
   };
-  const wrongIdentity = await command('docker', ['exec', core, '/bin/piwork', 'chat', 'work-invalid'], { allowFailure: true });
-  assert.equal(wrongIdentity.code, 2, 'operator compatibility alias must reject user chat');
-  assert(JSON.parse(await operator(['--json', 'status'])).state, 'operator status must use operator credentials');
+  const wrongIdentity = await command('docker', ['exec', core, '/bin/piwork-core', 'chat', 'work-invalid'], { allowFailure: true });
+  assert.equal(wrongIdentity.code, 2, 'Core startup must reject user chat');
+  assert((await control('GET','status')).state, 'operator status must use operator credentials');
   await cli(['login', '--account', 'admin', '--password-stdin'], 'native-host-fixture-password\n');
   const login = await fetch(`${base}/api/v1/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ account: 'admin', password: 'native-host-fixture-password' }) });
@@ -149,7 +149,7 @@ try {
   const service = JSON.parse(await cli(['work', 'service', 'list', workId])).services[0];
   assert.equal(service.observedState, 'ready');
   console.log('Real TS SDK deployed a durable Service through Go MCP.');
-  const proxy = await startHost('proxy', 'piwork-cli', ['--core', 'http://127.0.0.1:7171', 'proxy', '--port', '7175'],
+  const proxy = await startHost('proxy', 'piwork-cli', ['--core', 'http://127.0.0.1:17871', 'proxy', '--port', '7175'],
     ['PIWORK_CONFIG_PATH=/data/client/client.json']);
   const proxyLogs = await waitFor(async () => {
     const output = await docker(['logs', proxy]); return output.includes('WebDAV status: available') && output;
@@ -165,16 +165,13 @@ try {
   });
   assert([201, 204].includes(files.status));
   assert.equal(await insideHTTP(`http://127.0.0.1:7175/works/${workId}/files/native-host.txt`, [davAuth]), 'native host durable bytes');
-  const desktop = await startHost('desktop', 'piwork-cli', ['--core', 'http://127.0.0.1:7171', 'desktop', '--port', '7174', '--no-open'],
+  const desktop = await startHost('desktop', 'piwork-cli', ['--core', 'http://127.0.0.1:17871', 'desktop', '--port', '7174', '--no-open'],
     ['PIWORK_CONFIG_PATH=/data/client/client.json']);
   await waitFor(async () => (await docker(['logs', desktop])).includes('Piwork Desktop:'), 'scratch Desktop');
   assert(/piwork/i.test(await insideHTTP('http://127.0.0.1:7174/', ['Host: desktop.localhost:7174'])));
   assert((await insideHTTP('http://127.0.0.1:7174/desktop/browser/app.js', ['Host: desktop.localhost:7174'])).includes('Pi requests'));
-  const consoleHost = await startHost('console', 'piwork-console', ['serve', '--core', 'http://127.0.0.1:7171', '--listen', '127.0.0.1:7173',
-    '--public-origin', 'https://127.0.0.1:7173', '--tls-cert', '/tls/cert.pem', '--tls-key', '/tls/key.pem', '--data-dir', '/data/console']);
-  await waitFor(async () => (await insideHTTP('https://127.0.0.1:7173/login', [], true)).includes('PiWork Serve'), 'scratch Console');
-  assert((await insideHTTP('https://127.0.0.1:7173/browser/app.js', [], true)).includes('Default Work'));
-  console.log('Scratch Service proxy, WebDAV, Desktop and Console are accessible.');
+  assert((await insideHTTP('http://127.0.0.1:17891/login')).includes('Piwork'));
+  console.log('Scratch Service proxy, WebDAV, Desktop and Core UI are accessible.');
 
   const api = async (path, method = 'GET', body) => {
     const response = await fetch(`${base}/api/v1${path}`, {method, headers:{Authorization:`Bearer ${token}`, 'Content-Type':'application/json'}, ...(body ? {body:JSON.stringify(body)} : {})});
@@ -246,8 +243,8 @@ try {
     assert(done.evidence.items.some(e=>e.kind==='sdk' && e.verified),'Each environment needs its actual SDK behavior proof');
   };
   await candidateProof(workId,'scratch-original');
-  await operator(['config','set','--model-provider','piwork-deterministic','--model','fixture-v2','--api-key-stdin'],'fixture-two-key\n');
-  assert.equal(JSON.parse(await operator(['config','show'])).agentImage,agentImage,'The supplied server must embed the fixture Agent image');
+  await control('PUT','runtime',{provider:'piwork-deterministic',model:'fixture-v2',credential:'fixture-two-key'});
+  assert.equal((await control('GET','runtime')).agentImage,agentImage,'The supplied server must embed the fixture Agent image');
   await waitFor(async () => (await fetch(`${base}/readyz?profile=docker-delivery`)).ok, 'updated default runtime and helper readiness');
   const models=await api(`/works/${workId}/models`);
   assert.equal(models.models.length,2);
@@ -262,7 +259,7 @@ try {
   assert.equal(JSON.parse(await cli(['work', 'stop', workId, '--wait'])).state, 'succeeded');
   const exportPath = `/data/client/${workId}.work`;
   const exportAttempt = await command('docker', ['exec', '-w', '/data/client', '-e', 'PIWORK_CONFIG_PATH=/data/client/client.json', core,
-    '/bin/piwork-cli', '--core', 'http://127.0.0.1:7171', '--json', 'work', 'export', workId], { allowFailure: true });
+    '/bin/piwork-cli', '--core', 'http://127.0.0.1:17871', '--json', 'work', 'export', workId], { allowFailure: true });
   let exported = JSON.parse(exportAttempt.stdout);
   if (exportAttempt.code === 5 && exported.state === 'waiting' && typeof exported.operationId === 'string' &&
       typeof exported.snapshotId === 'string' && observationCodes.includes(exported.error?.code)) {
@@ -324,17 +321,17 @@ try {
   assert(sdkContainers.length > 0);
   const sdkProcesses = await docker(['exec', engine, 'docker', 'top', sdkContainers[0], '-eo', 'pid,comm,args']);
   assert(sdkProcesses.includes('node') && sdkProcesses.includes('piwork-service'), 'TS SDK and Go MCP did not run together');
-  const independent = JSON.parse(await cli(['work', 'create', '--name', 'Console independent']));
-  await docker(['stop', '--time', '10', consoleHost]);
-  await waitFor(async () => JSON.parse(await cli(['operation', 'show', independent.operationId])).state === 'succeeded', 'accepted Work after Console exit');
+  const independent = JSON.parse(await cli(['work', 'create', '--name', 'CLI independent']));
+  await docker(['stop', '--time', '10', desktop]);
+  await waitFor(async () => JSON.parse(await cli(['operation', 'show', independent.operationId])).state === 'succeeded', 'accepted Work after CLI exit');
   assert((await fetch(`${base}/healthz`)).ok);
   assert.equal(JSON.parse(await cli(['whoami'])).account, 'admin');
-  assert(JSON.parse(await operator(['--json', 'status'])).state);
-  console.log('Console exit leaves Core, operator/user CLI and the accepted Work Operation running.');
+  assert((await control('GET','status')).state);
+  console.log('CLI exit leaves Core, operator/user CLI and the accepted Work Operation running.');
   console.log(JSON.stringify({ result: 'PASS', fixture: identity, independentEngine: 'Unix socket',
-    productHost: 'scratch: three release binaries, no interpreter or external tool',
+    productHost: 'scratch: two release binaries, no interpreter or external tool',
     execution, checks: ['bootstrap/runtime', 'Work', 'real SDK→Go MCP deployment', 'Service proxy', 'WebDAV',
-      'embedded Desktop/Console', 'Stop/Export/Inspect/Import/Start', 'restored workspace', 'brain default creation', 'page/action observations', 'automatic feedback and async Job', 'Service improvement and experience', 'brain SDK adoption', 'Stop/Start original candidate recovery', 'two independent copies with new SDK proof', 'actual chat model selection'] }));
+      'embedded Desktop/Core UI', 'Stop/Export/Inspect/Import/Start', 'restored workspace', 'brain default creation', 'page/action observations', 'automatic feedback and async Job', 'Service improvement and experience', 'brain SDK adoption', 'Stop/Start original candidate recovery', 'two independent copies with new SDK proof', 'actual chat model selection'] }));
 } finally {
   for (const {socket,child} of relayConnections) {socket.destroy();child.kill();}
   if (browserRelay) await new Promise(resolve=>browserRelay.close(resolve));

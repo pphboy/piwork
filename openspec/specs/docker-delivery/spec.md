@@ -16,6 +16,8 @@ piwork-cli 镜像、原生用户 CLI 及高级终端使用 SHALL 继续作为独
 
 入口及依赖 SHALL 固定实际发行版本/digest，记录同一源码、两套 UI、协议和存储身份，不覆盖旧标签或使用 latest 掩盖身份。缺依赖、身份/协议或相应验收时不得标记交付完成。本地 candidate 与 published 分开；构建/验证不授权 push、上传或官网发布。旧压缩包、校验、离线材料及下载地址保持版本归属，不伪装成新默认交付。
 
+统一镜像 SHALL 在同一进程内启动独立 ControlPlane 17891 和 Core 17871。默认浏览器入口、内嵌工作台/Admin/引导及 Service Proxy 属于 ControlPlane；CLI/operator 直接调用 Core，不经 UI 端口。新版本不提供旧 7171 合并入口或托管 Service 端口池兼容监听；无参数仍一键启动。
+
 #### Scenario: 直接使用已发布镜像
 - **WHEN** 用户已有受支持 Linux Docker，执行当前发行的默认命令
 - **THEN** 一个入口容器提供引导和完整远程工作台，无必填 env 或另启 CLI/Console 的步骤
@@ -100,35 +102,45 @@ piwork-cli 镜像、原生用户 CLI 及高级终端使用 SHALL 继续作为独
 
 **Identifier:** DOCKER-DELIVERY-004
 
-统一服务端 SHALL 沿用 Linux host 网络和同机 Unix socket，支持 Core 访问 Work 私网、Agent 经既有受验证 mTLS 控制端口回连 Core；不发布每个用户 Service 的 Docker 宿主端口。默认网页入口允许同机和远程 IP 访问；应用网关有界 listener 的实际监听和放行范围 SHALL 在同一启动材料说明，并遵守 BSA-IP-001 的来源、Cookie、所有者和撤销边界。
+统一服务端 SHALL 沿用 Linux host 网络和同机 Engine Unix socket，Core 直接访问受管 Work 私网，Agent 通过既有 WorkServices mTLS 回连。用户 Service 容器不发布 Docker 宿主端口。ControlPlane 默认监听 `0.0.0.0:17891`，浏览器只通过该端口完成工作台、Admin、文件、事件与 `/services/<workId>/<serviceId>/<port>/`；不要求额外 Service 端口池、域名、DNS/PAC/hosts 或客户端代理。
 
-默认访问不要求通配域名、公共 DNS 转换、CLI 本机代理、PAC 或 hosts。主站/Service URL SHALL 使用远程客户端可达的服务器地址，不把 Docker/客户端 localhost 当作上游或客户端目标。HTTPS/受信反向代理部署 SHALL 对主站及实际 Service 入口一并验证来源、证书和流式连接，不关闭证书校验或信任任意 Forwarded 头。
+Core SHALL 保留独立 HTTP 端口，默认 `127.0.0.1:17871`，供同机 ControlPlane、用户 CLI 与 operator 使用。需要远程或 bridge 容器 CLI 时，部署 SHALL 显式选择可达的 `--core-listen` 地址和相应网络范围，客户端直接指定该 Core origin；不得把 loopback Core 当作 bridge 容器已可访问或要求 CLI 经过 ControlPlane。浏览器的默认完整使用不以远程 Core 可达为前提。
 
-高级独立 CLI 保留 host-gateway、远端 Core URL、自定义 CA、终端和显式本机 Desktop 契约；模型/MCP 可达性仍从 Work 网络判断，不能因 CLI 宿主地址改变而放宽模型 URL 校验。
+Agent WorkServices 7172 SHALL 保留当前 mTLS 安装/Work/代次/角色校验与容器可达性，不用 Core HTTP 17871 替代，不因浏览器单端口而关闭或仅绑定容器不可达的 loopback。部署材料 SHALL 区分浏览器端口、可选远程 Core 端口和仅容器需要的 RPC 网络范围；保留必要回连，不能把内部监听宣称为浏览器入口或“整个系统仅一个 TCP listener”。
+
+主站及 Service 浏览器 URL SHALL 使用实际客户端可达的 ControlPlane origin，不指向 Core/容器或客户端 localhost。HTTPS/受信反向代理 SHALL 在同一浏览器入口验证前缀、来源、证书和流式连接，不关闭校验、不信任任意 Forwarded 头。高级 CLI 的 HTTP(S)、host-gateway、自定义 CA、终端和显式本机 Desktop 契约保留；模型/MCP 可达性仍从 Work 网络判断，不因 CLI 宿主别名放宽 URL 校验。
 
 #### Scenario: 同机和远程 IP 访问
-- **WHEN** 默认 Docker 服务端运行，浏览器分别在宿主和另一电脑使用
-- **THEN** 两者均可访问完整工作台与 Service，入口不指向客户端 localhost 或要求域名，受管容器无新增用户 Service 端口直出
+- **WHEN** Docker 服务端运行，独立客户端网络只允许访问服务器 17891
+- **THEN** 能使用完整工作台与多个支持前缀的 Service，浏览器不请求 17871、7172 或其他 Service listener，用户容器无宿主端口直出
 
-#### Scenario: HTTPS 或入口池缺项
-- **WHEN** 代理/防火墙只支持主站而实际 Service 入口不可达
-- **THEN** 界面和验收指出缺项及恢复，不能仅凭首页成功声称完整远程可用
-
-#### Scenario: 高级客户端和模型网络
-- **WHEN** CLI 连接远端 Core，Work 调用模型或 MCP
-- **THEN** CLI 原连接/CA 契约保持，模型地址由 Work 网络与既有协议校验，不借宿主别名放开规则
+#### Scenario: 同机和远程 CLI
+- **WHEN** 同机 CLI 使用默认 Core 地址，或部署者显式开放可达 Core 地址供远程 CLI
+- **THEN** CLI 直接通过 17871 按原身份工作，不使用浏览器 Cookie 或 ControlPlane 代理
 
 #### Scenario: Linux 同机 Core 和 CLI
-- **WHEN** 用户显式选择高级独立 CLI、可选 Compose 或单机示例连接统一服务器
-- **THEN** 原 host-gateway、独立凭证和网络语义保持，CLI 不成为默认网页依赖
+- **WHEN** 单机高级示例使用独立 bridge CLI 与 host-gateway
+- **THEN** 示例同时提供可达 Core listener 和正确上游地址，不把 127.0.0.1 的 Core 当成容器可达，不扩大 CLI 对 Engine/安装数据的权限
 
-#### Scenario: CLI 在 Windows 而模型在其他机器
-- **WHEN** Windows CLI 连接 Linux 统一服务器而 Work 调用远端模型/MCP
-- **THEN** 模型/MCP 须从 Work 网络可达，客户端宿主别名不替代目标，原 URL 校验保持
+#### Scenario: Agent 回连与 HTTPS
+- **WHEN** 浏览器入口配置 HTTPS，Agent 创建并管理 Service
+- **THEN** 浏览器仍只使用同一个 HTTPS origin，Agent 保持原 mTLS 回连并校验当前代次，不借用浏览器或用户 token
 
 #### Scenario: 显式启动高级 Desktop
-- **WHEN** 用户按高级材料运行显式 CLI Desktop
-- **THEN** 保留 loopback 发布、内外端口及本地授权，不作为远程网页前置步骤
+- **WHEN** ControlPlane 已使用 17891，而用户另外启动独立 CLI Desktop
+- **THEN** 材料指向其既有显式 --port 选项，默认冲突按原错误契约报告，不自动换端口或让两个实例共享错误身份
+
+#### Scenario: HTTPS 或入口池缺项
+- **WHEN** HTTPS 反向代理没有转发 Service 前缀/升级连接，或部署仍要求旧入口池端口
+- **THEN** 检查指出当前同 origin 路径配置缺项，修正同一入口而不恢复端口池，不能仅凭首页成功报告可用
+
+#### Scenario: 高级客户端和模型网络
+- **WHEN** CLI 使用显式 HTTP(S) Core、自定义 CA 或 host-gateway，Work 调用模型/MCP
+- **THEN** CLI 保持原地址/CA 与直接 Core 访问，模型/MCP 仍按 Work 网络和既有 URL 校验，不被宿主别名放宽
+
+#### Scenario: CLI 在 Windows 而模型在其他机器
+- **WHEN** Windows CLI 连接可达的 Linux Core 17871，而模型位于另一机器
+- **THEN** CLI 直接使用 Core API，模型仍必须从 Work 网络可达，客户端宿主地址不能代替模型地址；不宣称 Windows Core 支持
 
 ### Requirement: 客户端状态和文件交换可跨容器重建
 
@@ -136,11 +148,11 @@ piwork-cli 镜像、原生用户 CLI 及高级终端使用 SHALL 继续作为独
 
 CLI SHALL 使用独立持久状态卷保存登录和 Desktop 偏好，通过 `PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json` 复用现有私有文件和并发控制。终端首次试用 SHALL 只要求此状态卷，创建或重建容器时自动复用它，无需手工创建卷。文件交换 SHALL 作为导入、导出、文件配置和自定义 CA 的可选高级步骤，使用独立 `/exchange` 存储及完整 Docker 复制或挂载操作；浏览器上传/下载使用既有 Desktop 流程。文件交换卷不是 Work 存储，也不是 Core 数据备份。
 
-Desktop 与无 Desktop 命令 SHALL 可共享同一状态卷。运行中的 Desktop 不承诺自动采纳另一个 CLI 新写入的账号/Core；文档 SHALL 要求在这种切换后重启 Desktop 并重新 open。`PIWORK_CORE_URL` 的调用覆盖与 Desktop 偏好优先级保持原契约。
+Desktop 与无 Desktop 命令 SHALL 可共享同一状态卷。运行中的 Desktop 不承诺自动采纳另一个 CLI 新写入的账号/Core；文档 SHALL 要求在这种切换后重启 Desktop，再直接打开普通地址；open 只是可选打开方式。`PIWORK_CORE_URL` 的调用覆盖与 Desktop 偏好优先级保持原契约。
 
 #### Scenario: 重建 CLI
 - **WHEN** 用户停止并重新创建 Desktop CLI，保留状态和交换卷
-- **THEN** 已保存的账号/Core 偏好和交换文件仍存在，旧启动票据/浏览器实例授权不用于新进程，用户执行 open 获取新授权
+- **THEN** 已保存的账号/Core 偏好和交换文件仍存在，普通浏览器会话自动建立，保存登录按原规则核验，无需新授权链接；旧控制实例身份不用于新进程
 
 #### Scenario: 从宿主导入并导出 Work
 - **WHEN** 用户将 `.work` 复制进 `/exchange` 并导入，或将导出结果复制回宿主
@@ -154,15 +166,15 @@ Desktop 与无 Desktop 命令 SHALL 可共享同一状态卷。运行中的 Desk
 
 **Identifier:** DOCKER-DELIVERY-006
 
-双语发行材料 SHALL 给出统一程序和 Docker 默认网页流程、访问地址/首次设置授权的取得、初始化、状态/日志、正常关闭、重建、升级/回退及数据保留命令。默认流程零必填业务环境变量；PIWORK_ADMIN_ACCOUNT/PIWORK_ADMIN_PASSWORD 只在测试/自动部署的可选说明出现，成对创建首管理员并遵守原密码规则，不作为持续密码来源。
+双语发行材料 SHALL 给出统一程序和 Docker 默认网页流程、普通访问地址的取得及直接创建/登录路径、初始化、状态/日志、正常关闭、重建、升级/回退及数据保留命令。默认流程零必填业务环境变量；PIWORK_ADMIN_ACCOUNT/PIWORK_ADMIN_PASSWORD 只在测试/自动部署的可选说明出现，成对创建首管理员并遵守原密码规则，不作为持续密码来源。
 
 模型连接、Key 和 CoreRuntime SHALL 通过网页配置，不再要求 PIWORK_MODEL_PROVIDER/MODEL/MODEL_ID/API_KEY/MODEL_API_KEY/MODEL_BASE_URL 或镜像 env。说明 SHALL 区分代码构建所用变量、独立 CLI/系统环境与被移除的服务端业务初始化输入，不误删用户 Service 环境。
 
-命令 SHALL 完整可复制，说明执行位置、固定发行身份、socket/同路径数据挂载、主站及 Service listener 网络条件、60 秒关闭预算和空安装链接取得方式。高级 operator/CLI/文件交换和旧版安装材料保留独立导航及原身份/格式边界；密码不放命令参数，真实秘密和 setup 证明不进入静态材料或验收输出。
+命令 SHALL 完整可复制，说明执行位置、固定发行身份、socket/同路径数据挂载、主站及 Service listener 网络条件、60 秒关闭预算和空安装直接创建管理员的方式。高级 operator/CLI/文件交换和旧版安装材料保留独立导航及原身份/格式边界；密码不放命令参数，真实秘密不进入静态材料或验收输出；默认步骤不再取得、轮换或校验设置链接，不要求 setup link 命令。
 
 #### Scenario: 新用户按文档操作
-- **WHEN** 用户只执行默认 Docker 命令并打开输出的有效地址/设置链接
-- **THEN** 可以创建管理员和配置模型/runtime，无安装包、env 编辑、CLI 登录或第二入口容器前置步骤
+- **WHEN** 用户只执行默认 Docker 命令并在本机或远程浏览器打开服务器普通 IP 地址
+- **THEN** 可以创建管理员和配置模型/runtime，无设置链接/浏览器 Access、安装包、env 编辑、CLI 登录或第二入口容器前置步骤
 
 #### Scenario: 测试可选 ADMIN env
 - **WHEN** 测试者成对传入有效 ADMIN 值
@@ -218,15 +230,19 @@ Core 正常关闭成功 SHALL 以本安装全部受管 Work 运行容器已停�
 
 新候选 SHALL 使用实际统一镜像、独立空安装及无本版依赖缓存的 Linux Engine，分别验证默认 Docker run 和可选 Compose 的零业务 env 网页安装；每种方式均须网页创建首管理员、保存模型/runtime、准备依赖、创建 Work 并取得首条真实模型回复。测试/自动部署的 ADMIN env 路径另行验证；Compose 加 ADMIN env 的通过记录不能代替 Compose 零 env 记录，Docker run 的零 env 记录也不能代替 Compose。
 
-必做网络验收 SHALL 采用 `0.0.0.0` 通配监听，再从另一电脑或独立客户端网络命名空间通过服务器实际非回环 IP 完成上述流程和规定功能；基础默认路径不预填 `--public-origin`，可使用局域网或隔离网络，无需公网地址或公网连通性实测。NAT/受信代理的显式 origin 覆盖作为对应高级场景单独记录，精确 Host/Origin/CSRF 和 Service 来源隔离保持。IPv6 URL/来源保留单元/契约检查，实际 IPv6 网络不作为本变更完成前提。
+必做网络验收 SHALL 采用 `0.0.0.0` 通配监听，再从另一电脑或独立客户端网络命名空间通过服务器实际非回环 IP 完成上述流程和规定功能；基础默认路径不预填 `--public-origin`，可使用局域网或隔离网络，无需公网地址或公网连通性实测。NAT/受信代理的显式 origin 覆盖作为对应高级场景单独记录，精确 Host/Origin/CSRF 保持，托管 Service 使用明确的同源信任边界。IPv6 URL/来源保留单元/契约检查，实际 IPv6 网络不作为本变更完成前提。
 
 引导页、Runtime 管理页和旧 `/runtime` 深链接 SHALL 均无需也不能输入 Agent 镜像；验收核对已保存 runtime 的引用与实际服务端制品内嵌的发行默认一致。镜像准备失败的验收使用隔离 Engine/registry 故障夹具，不以给产品增加镜像覆盖入口来制造或修复故障。
 
-完整验收 SHALL 覆盖两个用户/浏览器的平台身份隔离、多个 Service 同名响应 Cookie 分区、根路径资源、受支持的应用认证、SSE/WebSocket、独立窗口、Files 条件写入、配置 Save/Apply、包、Stop/Export/Inspect/Import/Start、注销/撤销与服务器正常关闭重启恢复。document.cookie/Cookie Store 兼容与脚本写入 Cookie 跨 Service 串用按 BSA-003/BSA-004 记录为首版已确认限制，保留复现结果且不作为一键启动阻塞；不能将历史失败改写为通过。应用存活、编译、fixture 回复、HttpOnly 单例登录或同机 localhost 成功不得替代完整远程证据；支持范围内未通过项保持失败/未执行，不能追加 DNS 前提或放宽平台鉴权与响应 Cookie 分区要求。
+完整验收 SHALL 覆盖两个用户/浏览器的平台身份隔离、多个 Service 同名响应 Cookie 分区、带 Service 前缀的资源/页面/API、受支持的应用认证、SSE/WebSocket、独立窗口、Files 条件写入、配置 Save/Apply、包、Stop/Export/Inspect/Import/Start、注销/撤销与服务器正常关闭重启恢复。document.cookie/Cookie Store 兼容与脚本写入 Cookie 跨 Service 串用按 BSA-003/BSA-004 记录为首版已确认限制，保留复现结果且不作为一键启动阻塞；不能将历史失败改写为通过。应用存活、编译、fixture 回复、HttpOnly 单例登录或同机 localhost 成功不得替代完整远程证据；支持范围内未通过项保持失败/未执行，不能追加 DNS 前提或放宽 Core 所有者鉴权与响应 Cookie 分区要求。
 
 候选 SHALL 核对源码/二进制/两套 UI/依赖/镜像/协议/Compose/官网材料身份。真实模型、真实浏览器、Windows 浏览器及原生 CLI 平台证据分别标记，不由 Linux 或模拟结果推断其他平台。缺 Windows 浏览器实机时不能声称对应验证完成，也不能因此将 Windows Core 加入范围。
 
 本地验证不授权推送；获明确发行授权后另验匿名读取、远端 digest 和全部依赖身份，不改写旧候选/历史证据。
+
+网络验收 SHALL 明确区分两条路径：浏览器网络只放行 ControlPlane 17891、禁止直连 Core/旧端口池时完成完整网页流程；CLI/operator 使用 Core 17871 完成对应真实用户/管理命令。单纯改变端口常量或编译通过不能证明双服务边界，须有实际网络调用及两个 listener 的启动/失败/关闭证据。
+
+默认 Web base、模板和脑包路径契约变化 SHALL 使用同一实际候选验证：多个 Service 并发、深层刷新、自定义资源/API、应用 Cookie/Authorization、SSE/WebSocket、反馈、自动更新与 Stop/Export/Inspect/Import/Start。旧根路径应用限制明确，不自动迁移源码/镜像，不用旧独立 origin 的成功记录代替新同源前缀验收。
 
 #### Scenario: 两种默认入口均完成终端闭环
 - **WHEN** 实际候选分别以 Docker run 和 Compose 在独立空 Linux 安装零业务 env 启动，监听通配地址，另一电脑或独立客户端网络通过实际 IP 访问
@@ -260,56 +276,86 @@ Core 正常关闭成功 SHALL 以本安装全部受管 Work 运行容器已停�
 - **WHEN** 源码、二进制、两套 UI、镜像或材料不一致，或无法确认关闭
 - **THEN** 阻止候选通过，保留安全诊断，不重提业务操作、不伪造证据或自动推送
 
-### Requirement: README 提供最短的终端试用入口
+#### Scenario: Core 与 UI 分别验证
+- **WHEN** 相同候选的浏览器通过 17891 完成使用，CLI 通过 17871 执行业务，operator 通过 17871 执行管理
+- **THEN** 各自使用正确身份和实际 HTTP 链路，浏览器没有 Core 请求，CLI 无需 ControlPlane；仍只有一个持久 Core 所有者
+
+#### Scenario: 官方应用导入后仍支持前缀
+- **WHEN** 本版模板应用完整导出、导入为新 Work 并显式启动
+- **THEN** 新身份前缀下的资源、业务和 WebSocket 实际可用，原数据和固定镜像保持，不手改包内 URL
+
+### Requirement: README 提供精简项目介绍与文档入口
 
 **Identifier:** DOCKER-DELIVERY-010
 
-README.md/README.zh-CN.md SHALL 保持顶部互链、章节/命令/架构同步，保留居中 Logo 及 160×160 尺寸，Architecture 含图与解释仍位于介绍之后、Problem 之前。
+README.md/README.zh-CN.md SHALL 保持顶部互链、章节、产品含义、平台边界与文档导航对应，保留居中 Logo 及 160×160 尺寸。根 README SHALL 展示简短定位、Work / Service / Harness 各一句说明、现有演示视频和 Desktop 截图；每个说明段落最多两句，若保留 Roadmap 则至多三条。版本变更细节 SHALL 由 Releases 承接，不在介绍中累积多段发行说明。
 
-Quick Start SHALL 默认展示统一服务端的一条完整逻辑 Docker run 命令，随后打开服务器网页、取得首次设置授权、创建管理员、配置模型/runtime 并进入工作台。Agent 镜像是随版本交付的默认值，教程和页面不包含手填、选择或高级覆盖步骤。默认不要求任何业务 env、CLI 容器、Console、客户端代理、安装压缩包、源码构建或域名配置；主站及有界 Service 入口需要的网络放行在同一入口说明。首次授权链接只在实际启动端生成，静态例子不含有效秘密。
+根 README SHALL 提供官网文档、双语部署手册、Releases、Issues、Discussions 和贡献/开发约定入口。安装、启动、首次设置、模型/runtime 配置、CLI、导入导出、构建与验证步骤及详细网络/兼容性限制 SHALL 放在对应既有材料，不在根 README 内嵌命令、配置示例或折叠教程；根 README 不再要求 Architecture 图、Problem 章节或两者排序。
 
-Service 使用说明 SHALL 明确 IP 模式首版依赖脚本读写 Cookie 的应用可能不兼容，脚本自行写入 Cookie 不保证跨 Service 隔离；响应 Cookie 在服务端分区。该限制不新增 DNS/客户端代理步骤，也不阻塞默认网页初始化，不以“完整工作台”宣称所有网页应用透明兼容。
+根 README 顶部 SHALL 包含最新 GitHub Release（包括 Preview）、Apache-2.0、Stars 和 Linux 服务端四类徽章，使用真实仓库信息、准确替代文本及有效点击目标。版本徽章 SHALL 能展示仅有预发行版本的项目，不能以只查正式版的入口错误显示无版本；Linux 徽章 SHALL 清楚表示服务端部署平台，不将浏览器或实验性客户端能力表述为 Windows Core 支持。徽章图片不可用时，产品说明与导航 SHALL 仍可阅读和使用。本要求不创建 Git tag、不修改仓库 Topics，也不展示没有实际来源的 CI 状态或支持承诺。
 
-命令 SHALL 使用实际已发布固定镜像、Linux host 网络、同机 socket、同绝对路径持久数据及 60 秒关闭窗口。Compose 作为可选统一服务端方式，单机示例为可选高级入口；不得由初始化期间 /readyz 失败阻止网页打开。原生 CLI/终端试用及 Windows 客户端使用保留折叠/高级导航。
+根 README 链接的详细 Quick Start SHALL 默认展示统一服务端的一条完整逻辑 Docker run 命令，随后直接打开服务器普通 IP 地址、创建管理员、正常登录、配置模型/runtime 并进入工作台。Agent 镜像是随版本交付的默认值，教程和页面不包含手填、选择或高级覆盖步骤。默认不要求任何业务 env、CLI 容器、Console、客户端代理、安装压缩包、源码构建或域名配置；主站及有界 Service 入口需要的网络放行在同一入口说明。空安装直接创建管理员，不要求终端链接或额外浏览器 Access；启动输出和静态例子不含有效秘密。
 
-代码块 SHALL 标注 shell、完整可复制并说明执行位置、地址/ID 来源、正常停止和重进方式；已有安装复用数据、未知 Operation/Run 恢复不得靠重提创建或消息实现。
+详细使用材料 SHALL 明确 IP 模式首版依赖脚本读写 Cookie 的应用可能不兼容，脚本自行写入 Cookie 不保证跨 Service 隔离；响应 Cookie 在服务端分区。该限制不新增 DNS/客户端代理步骤，也不阻塞默认网页初始化，不以“完整工作台”宣称所有网页应用透明兼容。
+
+详细入口命令 SHALL 使用实际已发布固定镜像、Linux host 网络、同机 socket、同绝对路径持久数据及 60 秒关闭窗口。Compose 作为可选统一服务端方式，单机示例为可选高级入口；不得由初始化期间 /readyz 失败阻止网页打开。Linux Core、原生 CLI/Desktop 及跨平台浏览器说明 SHALL 继续在部署手册或官网的相应高级入口可取得。
+
+详细材料的代码块 SHALL 标注 shell、完整可复制并说明执行位置、地址/ID 来源、正常停止和重进方式；已有安装复用数据、未知 Operation/Run 恢复不得靠重提创建或消息实现。
+
+#### Scenario: 浏览双语项目首页
+- **WHEN** 用户打开任一语言根 README
+- **THEN** 看到对应的简短项目介绍、四类真实徽章、三个核心概念及演示资源，通过文档入口取得操作说明，页面没有安装、配置、使用或构建教程
+
+#### Scenario: 只有 Preview 版本
+- **WHEN** 仓库最近版本为 Preview，尚无正式 GitHub Release
+- **THEN** 版本徽章包含预发行版本，点击后进入可查看 Preview 的 Releases 页面，而不是只接受正式版的地址
+
+#### Scenario: 徽章图片不可用
+- **WHEN** 徽章图片服务无法加载
+- **THEN** 准确替代文本、项目说明及文档链接仍可用，不影响取得安装入口
 
 #### Scenario: 首次使用者完成一次对话
-- **WHEN** 用户按任一语言默认 Quick Start 使用受支持 Linux Docker
-- **THEN** 仅启动一个入口并在浏览器完成配置和对话，执行前无需 export 管理员或模型变量
+- **WHEN** 用户从任一语言 README 进入详细 Quick Start 并使用受支持 Linux Docker
+- **THEN** 仅启动一个入口并通过服务器 IP 在浏览器完成创建管理员、普通登录、配置和对话；无需取得设置链接、本地浏览器授权或 export 管理员/模型变量
 
 #### Scenario: 查看原生 CLI 替代路径
-- **WHEN** 用户选择高级原生/容器 CLI 或可选 Compose
-- **THEN** 各自入口和身份边界清楚，不重新成为默认网页安装前置条件
+- **WHEN** 用户从项目文档导航选择原生 Linux 应用、Linux 原生 CLI、跨平台浏览器或可选 Compose
+- **THEN** 各自入口和身份边界清楚，不重新成为默认网页安装前置条件，统一原生 Linux 说明不因根 README 精简而丢失
 
 #### Scenario: Work 等待中断或消息流中断
-- **WHEN** 镜像尚在准备或原创建/Run 观察中断
-- **THEN** 网页显示实际进度/恢复，按原 ID 核对，不复制终端就绪循环或自动重提 mutation
+- **WHEN** 用户按详细 Quick Start 使用 Piwork，镜像尚在准备或原创建/Run 观察中断
+- **THEN** 网页显示实际进度/恢复，说明按原 ID 核对，不复制终端就绪循环或自动重提 mutation
 
 #### Scenario: Core 正在准备依赖
 - **WHEN** 网页可用而依赖 preparation 尚未完成
-- **THEN** 网页显示真实准备/恢复，不以完整 readiness 阻止引导或要求额外 CLI 等待循环
+- **THEN** 网页显示真实准备/恢复，详细教程不以完整 readiness 阻止引导或要求额外 CLI 等待循环
 
 #### Scenario: 阅读和复制代码
-- **WHEN** 用户查看任一语言入口
-- **THEN** Logo 居中，Architecture 位于 Problem 前，长命令规整分行，两种语言对应命令相同，Try 不含旧下载及配置步骤
+- **WHEN** 用户从 README 进入任一语言详细安装材料并复制命令
+- **THEN** 根 README 保留居中 Logo 与短导航，命令在详细材料中规整分行、两种语言对应一致，默认试用不含旧下载及配置步骤
 
 #### Scenario: 只使用已有 Core
-- **WHEN** 用户已有可达且已配置的 Core，只执行 CLI 独立启动命令
+- **WHEN** 用户已有可达且已配置的 Core，按高级入口只执行 CLI 独立启动命令
 - **THEN** 无需下载 Core Compose、启动本地 Core 或提供管理员/模型初始化变量，即可按用户身份登录和使用；CLI 退出不影响 Core 或 Work
 
 ### Requirement: 可选 Core Compose Demo 与默认材料同步维护
 
 **Identifier:** DOCKER-DELIVERY-011
 
-统一服务端 Compose SHALL 单独启动同一程序，默认无需业务 env，保持 Docker socket、数据路径、host 网络、主站/Service 入口条件、应用 liveness 和 60 秒关闭规则。examples/single-host 的 CLI SHALL 成为显式可选高级组件，不默认拉起、阻塞统一网页或取得 Core 初始化秘密；CLI 启退不创建/重建/停止 Core。
+统一服务端 Compose SHALL 单独启动同一程序，默认无需业务 env，保持 Docker socket、数据路径、host 网络、ControlPlane 17891、Core 17871 及内部 Agent 回连条件、应用 liveness 和 60 秒关闭规则。examples/single-host SHALL 只定义 Core 服务，不包含 CLI profile、服务、状态卷或 exchange；客户端说明使用 Linux 宿主原生 CLI，启退不创建/重建/停止 Core。
 
-双语 README、部署手册、Compose/模板、单机说明、发行默认值/清单及官网的 Quick Start、首页、安装、First Work、源码导航和当前下载材料 SHALL 同步维护，并提供可执行的一致性检查。检查使用合成值，不输出真实秘密；连续同步候选时不得残留前一个当前引用。历史发行下载保留原版本身份，不覆盖为未公开的新候选。
+双语根 README SHALL 同步维护项目展示和有效文档导航，不携带当前镜像命令或重复详细教程。双语部署手册、Compose/模板、单机说明、发行默认值/清单及官网的 Quick Start、首页、安装、First Work、源码导航和当前下载材料 SHALL 继续同步维护以普通地址直接创建/登录的完整运行说明，不要求设置链接或 Desktop Access，并提供可执行的一致性检查。检查使用合成值，不输出真实秘密；连续同步候选时不得残留前一个当前引用。历史发行下载保留原版本身份，不覆盖为未公开的新候选。
+
+材料同步 SHALL 在没有根 README 安装块、原生启动块和 Architecture 章节的情况下正常完成，并保持根 README 内容不变；官网使用说明生成 SHALL 不将根 README 当作教程来源。统一原生 Linux 入口 SHALL 同时在既有双语部署手册和生成的官网材料中有效，不能生成空内容或字面量 undefined。
 
 不同启动方式切换 SHALL 先正常停止原实例并复用所属安装路径；单机示例继续使用独立数据路径，不能自动停止冲突安装或扫描接管其他数据。材料检查失败 SHALL 阻止候选通过。
 
+当前详细材料 SHALL 同步新端口职责、Core 默认通配 HTTP 与外部原生客户端连接、托管 Service 路径及前缀/同源边界。默认 Docker/Compose liveness SHALL 检查 ControlPlane 17891；CLI readiness SHALL 直连 Core 17871。当前材料不得残留要求 7171 合并入口、--service-ports 或 17891–17954 入口池的步骤，也不能将独立 CLI 的 Host/PAC 功能描述成托管兼容回退。
+
+材料检查 SHALL 覆盖监听、Core 客户端默认值、探针、Compose/单机模板和两套 UI/镜像资源身份。旧已发布版本及其历史材料保留真实身份；新端口材料在发行前须标明本地候选，不能把新使用步骤配给仍不支持的旧发布镜像。官网当前生成源及隔离预览同步，不把本地维护当作外部部署授权。
+
 #### Scenario: 材料产生漂移
-- **WHEN** 任一语言/Compose/官网仍要求模型 env、第二默认 CLI 容器，或引用与当前候选不同
+- **WHEN** 任一详细教程语言、Compose 或官网仍要求设置链接、Desktop Access、模型 env、任何 CLI 容器交付步骤，引用与当前候选不同，或根 README 导航无效
 - **THEN** 检查非零退出并定位文件/字段，修复前不能通过候选检查
 
 #### Scenario: CLI 重进不改变 Core
@@ -318,11 +364,19 @@ Service 使用说明 SHALL 明确 IP 模式首版依赖脚本读写 Cookie 的�
 
 #### Scenario: 连续同步两个候选版本
 - **WHEN** 当前材料依次更新为候选 A/B
-- **THEN** 所有当前入口统一指向 B，历史版本下载及真实发布身份不被回填或覆盖
+- **THEN** 所有详细当前入口统一指向 B，根 README 保持简短介绍和导航，历史版本下载及真实发布身份不被回填或覆盖
+
+#### Scenario: 同步后 README 保持精简
+- **WHEN** 在根 README 没有旧安装标记、原生启动标记及 Architecture 章节的隔离副本中同步材料，并重复同步相同输入
+- **THEN** 同步成功且两次均不修改根 README，不追加命令、折叠教程或发行长段，详细材料仍通过一致性检查
+
+#### Scenario: 官网不再读取根 README 教程
+- **WHEN** 根 README 已精简，维护者在隔离目录生成两种语言的官网材料
+- **THEN** 官网仍包含完整默认安装和原生 Linux 入口，未丢失启动/数据/普通登录/关闭说明，没有 undefined，命令与部署手册一致
 
 #### Scenario: 用户选择 Compose Demo
 - **WHEN** 用户选择当前统一服务端 Compose 或单机示例
-- **THEN** 说明独立安装数据和端口条件，零必填 env 启动，CLI 为显式可选
+- **THEN** 说明独立安装数据和端口条件，零必填 env 启动，客户端仅使用独立 Linux 原生 CLI
 
 #### Scenario: 新模板进入候选包
 - **WHEN** 服务端 Compose、单机模板或材料被渲染分发
@@ -330,15 +384,19 @@ Service 使用说明 SHALL 明确 IP 模式首版依赖脚本读写 Cookie 的�
 
 #### Scenario: 新 Compose 文件独立运行
 - **WHEN** 只下载当前服务端 Compose 且已有受支持 Linux Docker
-- **THEN** 无需 env 或第二 YAML 启动完整网页，仅显式选择时运行高级 CLI
+- **THEN** 无需 env 或第二 YAML 启动完整网页，不包含 CLI 容器服务，原生 CLI 可独立连接
 
 #### Scenario: 切换默认启动方式
 - **WHEN** 用户先停止 Core Docker run，再用 Core-only Compose 重新创建 Core，或反向切换
-- **THEN** 同一 Core 数据目录保留原安装，独立 CLI 的状态卷和凭证不变；不会自动迁移到单机部署示例的数据目录
+- **THEN** 同一 Core 数据目录保留原安装，独立原生 CLI 的凭证不变；不会自动迁移到单机部署示例的数据目录
 
 #### Scenario: 高级 Demo 与旧下载保留
 - **WHEN** 用户查阅已有高级 Core-only Demo、Desktop 或旧版本下载
 - **THEN** 入口明确标注其用途和版本，旧地址不被覆写为未验证的新候选，也不要求默认用户使用它们
+
+#### Scenario: 端口或发布身份漂移
+- **WHEN** 当前候选手册、探针、单机原生 CLI、模板或官网生成材料仍使用旧端口池/合并入口，或新说明指向不支持的已发布镜像
+- **THEN** 检查失败并定位不一致，不改写旧 release 的 commit/digest 来伪造一致性
 
 ### Requirement: 发行维护的本地候选和真实发布身份
 

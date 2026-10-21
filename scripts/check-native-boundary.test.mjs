@@ -26,6 +26,13 @@ test('native source boundary scans scripts, runtime configuration, locks and cur
    if(path==='package-lock.json')await writeFile(join(root,path),JSON.stringify({packages:{}}));else await rm(join(root,path));
  }
  await writeFile(join(root,'scripts/agent.mjs'),"await import('../apps/agentd/dist/main.js'); await import('@piwork/pi-adapter');");
- await writeFile(join(root,'openspec/specs/current/spec.md'),'./dist/go/piwork-serve serve');
+ await writeFile(join(root,'openspec/specs/current/spec.md'),'./dist/go/piwork-core serve');
+ for (const dir of ['internal/webapp','internal/client']) await mkdir(join(root,dir),{recursive:true});
+ for (const [path,body,message] of [
+  ['internal/webapp/server.go','package webapp\nimport "piwork/internal/coreapp"','Browser/Core domain dependency'],
+  ['internal/client/transport.go','package client\nfunc NewHandlerTransport() {}','In-process Core transport'],
+ ]) {
+  await writeFile(join(root,path),body); await assert.rejects(check(),err=>err.stderr.includes(message)); await rm(join(root,path));
+ }
  await check();
 });

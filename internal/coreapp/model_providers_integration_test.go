@@ -348,11 +348,17 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 			t.Fatal("Node browser build/test tool required")
 		}
 		cli, _ := filepath.Abs("../../dist/go/piwork-cli")
-		console, _ := filepath.Abs("../../dist/go/piwork-console")
+		hosted := filepath.Join(t.TempDir(), "hosted-ui-fixture")
+		build := exec.CommandContext(ctx, "go", "build", "-o", hosted, "./scripts/hosted-ui-fixture")
+		build.Dir = "../.."
+		build.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("hosted browser fixture build: %v: %s", err, output)
+		}
 		screens, _ := filepath.Abs("../../dist/model-browser-evidence")
 		script, _ := filepath.Abs("testdata/model-provider-browser.mjs")
 		command := exec.CommandContext(ctx, node, script)
-		command.Env = append(os.Environ(), "PIWORK_TEST_NATIVE_CLI="+cli, "PIWORK_TEST_NATIVE_CONSOLE="+console, "PIWORK_TEST_MODEL_CORE_URL="+base, "PIWORK_TEST_MODEL_WORK_ID="+work, "PIWORK_TEST_MODEL_GATEWAY="+g.URL, "PIWORK_TEST_MODEL_SCREENSHOT_DIR="+screens)
+		command.Env = append(os.Environ(), "PIWORK_TEST_NATIVE_CLI="+cli, "PIWORK_TEST_HOSTED_FIXTURE="+hosted, "PIWORK_TEST_MODEL_CORE_URL="+base, "PIWORK_TEST_MODEL_WORK_ID="+work, "PIWORK_TEST_MODEL_GATEWAY="+g.URL, "PIWORK_TEST_MODEL_SCREENSHOT_DIR="+screens)
 		output, err := command.CombinedOutput()
 		if err != nil {
 			t.Fatal("model browser integration failed", string(output))

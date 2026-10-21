@@ -59,14 +59,15 @@ func TestNativeMemoryMigrationProcessRecoveryAndStopSupersession(t *testing.T) {
 			store.Close()
 			endpoint, arm := snapshotProcessEngine(t, scope.ID(), upstream)
 			_, source, _, _ := runtime.Caller(0)
-			binary := filepath.Join(filepath.Dir(source), "../../dist/go/piwork-serve")
+			binary := filepath.Join(filepath.Dir(source), "../../dist/go/piwork-core")
 			image := os.Getenv("PIWORK_TEST_NATIVE_HISTORY4_IMAGE")
 			if image == "" {
 				image = "piwork-memory-history4:acceptance"
 			}
 			start := func() (*exec.Cmd, string) {
 				seedProcessRuntime(t, directory, image)
-				p := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0", "--package-helper-image", next, "--file-helper-image", os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), "--snapshot-helper-image", os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"), "--no-open")
+				binary = processFixtureBinary(t, image, next, os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"))
+				p := exec.CommandContext(ctx, binary, processStartupArgs(t, directory)...)
 				p.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + endpoint, "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass"}
 				stdout, err := p.StdoutPipe()
 				if err != nil {
@@ -93,7 +94,10 @@ func TestNativeMemoryMigrationProcessRecoveryAndStopSupersession(t *testing.T) {
 					for s.Scan() {
 					}
 				}()
-				var address struct{ Event, URL string }
+				var address struct {
+					Event string
+					URL   string `json:"coreUrl"`
+				}
 				select {
 				case line := <-announced:
 					if json.Unmarshal([]byte(line), &address) != nil || address.URL == "" {

@@ -171,7 +171,7 @@ test("browser signs in and out without exposing Core bearer to page storage", as
       let stderr = "";
       child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
       child.stdout.on("data", (chunk: Buffer) => {
-        const url = chunk.toString().match(/http:\/\/desktop\.localhost:\d+\/#ticket=[\w-]+/);
+        const url = chunk.toString().match(/http:\/\/desktop\.localhost:\d+\//);
         if (url) done(url[0]);
       });
       child.once("exit", (code) => fail(new Error(`Desktop exited ${code}: ${stderr}`)));
@@ -327,7 +327,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
     const launchUrl = await new Promise<string>((done, fail) => {
-      child.stdout.on("data", (chunk: Buffer) => { const match = chunk.toString().match(/http:\/\/desktop\.localhost:\d+\/#ticket=[\w-]+/);
+      child.stdout.on("data", (chunk: Buffer) => { const match = chunk.toString().match(/http:\/\/desktop\.localhost:\d+\//);
         if (match) done(match[0]); });
       child.once("exit", (code) => fail(new Error(`Desktop exited ${code}`)));
       setTimeout(() => fail(new Error("Desktop did not start")), 4000).unref();
@@ -773,7 +773,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
   let davProxy: ReturnType<typeof spawn> | undefined;
   try {
     const launchUrl = await new Promise<string>((done, fail) => {
-      child.stdout.on("data", (chunk: Buffer) => { const match = chunk.toString().match(/http:\/\/desktop\.localhost:\d+\/#ticket=[\w-]+/);
+      child.stdout.on("data", (chunk: Buffer) => { const match = chunk.toString().match(/http:\/\/desktop\.localhost:\d+\//);
         if (match) done(match[0]); });
       child.once("exit", (code) => fail(new Error(`Desktop exited ${code}`)));
       setTimeout(() => fail(new Error("Desktop did not start")), 4000).unref();

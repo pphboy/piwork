@@ -30,7 +30,7 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 		t.Skip("set PIWORK_TEST_NATIVE_AGENT_IMAGE to a built acceptance image")
 	}
 	_, source, _, _ := runtime.Caller(0)
-	binary := filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-serve")
+	binary := filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-core")
 	if _, err := os.Stat(binary); err != nil {
 		t.Fatal("make build-go is required", err)
 	}
@@ -66,7 +66,8 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 	}
 	start := func() (*exec.Cmd, string, *bytes.Buffer) {
 		seedProcessRuntime(t, directory, image)
-		cmd := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0", "--package-helper-image", image, "--file-helper-image", os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), "--snapshot-helper-image", os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"), "--no-open")
+		binary = processFixtureBinary(t, image, image, os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"))
+		cmd := exec.CommandContext(ctx, binary, processStartupArgs(t, directory)...)
 		cmd.Env = []string{
 			"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + host, "DOCKER_CONFIG=" + t.TempDir(),
 			"PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass",
@@ -90,7 +91,10 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 				line <- nil
 			}
 		}()
-		var announcement struct{ Event, URL string }
+		var announcement struct {
+			Event string
+			URL   string `json:"coreUrl"`
+		}
 		select {
 		case rawLine := <-line:
 			if json.Unmarshal(rawLine, &announcement) != nil || announcement.Event != "app.listening" || announcement.URL == "" {

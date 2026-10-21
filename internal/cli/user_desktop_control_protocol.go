@@ -80,23 +80,10 @@ func desktopStrictJSON(raw []byte, value any) error {
 }
 
 func validDesktopLaunchURL(address string, port int) bool {
-	prefix := fmt.Sprintf("http://desktop.localhost:%d/#ticket=", port)
-	if len(address) != len(prefix)+43 || !bytes.HasPrefix([]byte(address), []byte(prefix)) {
-		return false
-	}
-	for _, ch := range address[len(prefix):] {
-		if !(ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
-			return false
-		}
-	}
-	return true
+	return address == fmt.Sprintf("http://desktop.localhost:%d/", port)
 }
 func runDesktopControl(args []string, stdout, stderr io.Writer) int {
-	container, err := cliContainerMode()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
-	}
+
 	options, err := parseDesktopControlOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -120,11 +107,11 @@ func runDesktopControl(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "open" {
 		if reply.Error != "" || reply.LaunchURL == "" {
-			fmt.Fprintln(stderr, "Desktop could not issue browser access; check the running instance")
+			fmt.Fprintln(stderr, "Desktop could not return its address; check the running instance")
 			return 5
 		}
 		fmt.Fprintf(stdout, "Piwork Desktop: %s\n", reply.LaunchURL)
-		if options.open && !container {
+		if options.open {
 			openDesktopBrowserContext(ctx, reply.LaunchURL, stderr)
 		}
 		if ctx.Err() != nil {
@@ -136,17 +123,16 @@ func runDesktopControl(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Desktop local identity cleared: %t; saved credential cleared: %t; remote revocation confirmed: %t. Retry piwork-cli desktop logout --port %d.\n", reply.LocalCleared, reply.CredentialCleared, reply.RemoteRevocationConfirmed, options.port)
 		return 5
 	}
-	fmt.Fprintln(stdout, "Desktop platform login cleared; browser access and Work execution retained.")
+	fmt.Fprintln(stdout, "Desktop platform login cleared; sign-in remains available and Works continue.")
 	return 0
 }
 
 func executeDesktopControl(d *nativeDesktop, instance string, port int, action string) desktopControlReply {
 	reply := desktopControlReply{Version: 1, InstanceID: instance, Port: port}
 	if action == "open" {
-		reply.LaunchURL, _ = d.issueTicket()
-		if reply.LaunchURL == "" {
-			reply.Error = "LOCAL_SESSION_UNAVAILABLE"
-		}
+		d.mu.Lock()
+		reply.LaunchURL = d.origin + "/"
+		d.mu.Unlock()
 	} else {
 		result := d.logoutIdentity()
 		reply.LocalCleared = result.LocalCleared

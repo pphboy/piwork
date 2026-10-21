@@ -25,13 +25,13 @@ WORKDIR /source
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY internal ./internal
-COPY cmd/piwork-serve ./cmd/piwork-serve
+COPY cmd/piwork-core ./cmd/piwork-core
 COPY --from=metadata /source/internal/desktopassets/static/ ./internal/desktopassets/static/
 COPY --from=metadata /source/internal/consoleassets/static/ ./internal/consoleassets/static/
 COPY --from=metadata /out/core.ldflags /build.ldflags
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath -buildvcs=false \
-      -ldflags="$(cat /build.ldflags)" -o /out/piwork-serve ./cmd/piwork-serve
+      -ldflags="$(cat /build.ldflags)" -o /out/piwork-core ./cmd/piwork-core
 
 FROM ${PIWORK_RUNTIME_IMAGE}
 RUN apk add --no-cache ca-certificates curl
@@ -48,11 +48,11 @@ LABEL org.opencontainers.image.title="piwork-core" \
       io.piwork.source.input-sha256="${PIWORK_SOURCE_INPUT_HASH}" \
       io.piwork.desktop.input-sha256="${PIWORK_DESKTOP_UI_HASH}" \
       io.piwork.console.input-sha256="${PIWORK_CONSOLE_UI_HASH}"
-COPY --from=build --chmod=0555 /out/piwork-serve /usr/local/bin/piwork-serve
+COPY --from=build --chmod=0555 /out/piwork-core /usr/local/bin/piwork-core
 COPY --from=metadata --chmod=0444 /out/docker-release.json /etc/piwork/docker-release.json
 ENV DOCKER_HOST=unix:///var/run/docker.sock \
     DOCKER_CONTEXT=""
 HEALTHCHECK --interval=5s --timeout=4s --start-period=10s --retries=120 \
-    CMD curl --fail --silent --output /dev/null --max-time 3 'http://127.0.0.1:7171/healthz' || exit 1
-ENTRYPOINT ["/usr/local/bin/piwork-serve"]
-CMD ["serve", "--data-dir", "/var/lib/piwork/quickstart/core", "--no-open"]
+    CMD curl --fail --silent --output /dev/null --max-time 3 'http://127.0.0.1:17891/healthz' || exit 1
+ENTRYPOINT ["/usr/local/bin/piwork-core"]
+CMD ["--data-dir", "/var/lib/piwork/quickstart/core"]

@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"piwork/internal/client"
 	"strings"
 	"sync"
@@ -60,24 +59,32 @@ func TestDesktopRecoveryCLIValidationPrecedesCredentialIO(t *testing.T) {
 		t.Fatal("missing instance", code, stderr.String())
 	}
 }
-func TestDesktopTicketAtomicRenewalCapacityAndRandomFailure(t *testing.T) {
-	d := recoveryDesktop(t)
-	first, err := d.issueTicket()
-	if err != nil {
-		t.Fatal(err)
+func TestDesktopLaunchURLUsesExactPlainOrigin(t *testing.T) {
+	if !validDesktopLaunchURL("http://desktop.localhost:17891/", 17891) {
+		t.Fatal("plain URL rejected")
 	}
-	response := recoveryBootstrap(d, recoveryTicket(first))
+	for _, address := range []string{"http://evil.test:17891/", "http://desktop.localhost:17892/", "http://desktop.localhost:17891/?next=x", "http://desktop.localhost:17891/#ticket=old", "https://desktop.localhost:17891/", "http://desktop.localhost:17891/other"} {
+		if validDesktopLaunchURL(address, 17891) {
+			t.Fatal("unsafe control URL accepted", address)
+		}
+	}
+}
+
+func TestDesktopOrdinarySessionsRenewWithoutGateAndRespectCapacity(t *testing.T) {
+	d := recoveryDesktop(t)
+	response := recoverySession(d)
 	if response.Code != 200 {
 		t.Fatal(response.Code)
 	}
 	cookie := strings.Split(response.Header().Get("Set-Cookie"), ";")[0]
-	second, _ := d.issueTicket()
-	third, _ := d.issueTicket()
-	if recoveryBootstrap(d, recoveryTicket(second)).Code != 403 {
-		t.Fatal("prior ticket valid")
+	for i := 0; i < 2; i++ {
+		reply := executeDesktopControl(d, "instance", d.port, "open")
+		if reply.LaunchURL != d.origin+"/" {
+			t.Fatal("open did not return the ordinary URL")
+		}
 	}
-	if recoveryHTTP(d, "GET", "/_desktop/api/session", "", cookie, "").Code != 200 {
-		t.Fatal("renewal revoked local session")
+	if response := recoveryHTTP(d, "GET", "/_desktop/api/session", "", cookie, ""); response.Code != 200 || response.Header().Get("Set-Cookie") != "" {
+		t.Fatal("open changed the ordinary session", response.Code)
 	}
 	var successes atomic.Int32
 	var wait sync.WaitGroup
@@ -85,93 +92,92 @@ func TestDesktopTicketAtomicRenewalCapacityAndRandomFailure(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if recoveryBootstrap(d, recoveryTicket(third)).Code == 200 {
+			if recoverySession(d).Code == 200 {
 				successes.Add(1)
 			}
 		}()
 	}
 	wait.Wait()
-	if successes.Load() != 1 {
-		t.Fatal("concurrent ticket", successes.Load())
+	if successes.Load() != 12 {
+		t.Fatal("new browsers required a one-use authorization", successes.Load())
 	}
-	fourth, _ := d.issueTicket()
 	d.secret = func() (string, error) { return "", errors.New("random unavailable") }
-	if recoveryBootstrap(d, recoveryTicket(fourth)).Code != 503 || d.used {
-		t.Fatal("random failure consumed ticket")
+	if recoverySession(d).Code != 503 {
+		t.Fatal("failed session generation was accepted")
+	}
+	if reply := executeDesktopControl(d, "instance", d.port, "open"); reply.LaunchURL != d.origin+"/" {
+		t.Fatal("opening required session generation")
 	}
 	d.secret = nil
 	for len(d.sessions) < 128 {
 		id := fmt.Sprint(len(d.sessions))
 		d.sessions[id] = desktopSession{end: time.Now().Add(time.Hour)}
 	}
-	if r := recoveryBootstrap(d, recoveryTicket(fourth)); r.Code != 503 || !strings.Contains(r.Body.String(), "LOCAL_SESSION_CAPACITY") || d.used {
-		t.Fatal("capacity consumed or evicted", r.Code)
+	if r := recoverySession(d); r.Code != 503 || !strings.Contains(r.Body.String(), "LOCAL_SESSION_CAPACITY") {
+		t.Fatal("capacity not enforced", r.Code)
+	}
+	if r := recoveryHTTP(d, "GET", "/_desktop/api/session", "", cookie, ""); r.Code != 200 {
+		t.Fatal("capacity evicted an existing session", r.Code)
 	}
 	d.sessions["expired"] = desktopSession{end: time.Now().Add(-time.Second)}
 	delete(d.sessions, "127")
-	if recoveryBootstrap(d, recoveryTicket(fourth)).Code != 200 {
-		t.Fatal("expired capacity not recovered")
+	if r := recoverySession(d); r.Code != 200 {
+		t.Fatal("expired capacity did not recover", r.Code)
 	}
 }
-func TestDesktopBrowserResetKeepsCoreAndCancelsContent(t *testing.T) {
+
+func TestDesktopSessionExpiryKeepsCoreAndCancelsOldContent(t *testing.T) {
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer core-secret" {
+			t.Error("Core credential missing")
+		}
+		_, _ = io.WriteString(w, `{"id":"owner","account":"owner","role":"user"}`)
+	}))
+	defer core.Close()
 	d := recoveryDesktop(t)
-	credential := client.Credential{Version: 1, CoreURL: d.identity.coreURL, Token: "core-secret", ExpiresAt: "2099-01-01T00:00:00Z", User: client.Identity{ID: "owner", Account: "owner", Role: "user"}}
+	d.identity.coreURL = core.URL
+	credential := client.Credential{Version: 1, CoreURL: core.URL, Token: "core-secret", ExpiresAt: "2099-01-01T00:00:00Z", User: client.Identity{ID: "owner", Account: "owner", Role: "user"}}
 	d.identity.credential = &credential
 	d.identity.checked = true
 	if err := d.store.Save(credential); err != nil {
 		t.Fatal(err)
 	}
-	url, _ := d.issueTicket()
-	bootstrap := recoveryBootstrap(d, recoveryTicket(url))
-	cookie := strings.Split(bootstrap.Header().Get("Set-Cookie"), ";")[0]
-	var jsonValue map[string]any
-	_ = json.Unmarshal(bootstrap.Body.Bytes(), &jsonValue)
-	csrf := jsonValue["csrf"].(string)
+	response := recoverySession(d)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"state":"authenticated"`) {
+		t.Fatal("ordinary page could not reuse CLI login", response.Code, response.Body.String())
+	}
+	cookie := strings.Split(response.Header().Get("Set-Cookie"), ";")[0]
 	req := httptest.NewRequest("GET", d.origin+"/_desktop/files/works/w/files/a", nil)
 	req.Header.Set("Cookie", cookie)
 	ss, ok := d.authorize(req, false)
 	if !ok {
-		t.Fatal("authorization")
+		t.Fatal("ordinary session")
 	}
 	guarded, content, finish, ok := d.guardContent(httptest.NewRecorder(), req, ss)
 	if !ok {
 		t.Fatal("guard")
 	}
 	defer finish()
-	for _, csrfValue := range []string{"", "wrong"} {
-		if recoveryHTTP(d, "POST", "/_desktop/api/browser-access/reset", "{}", cookie, csrfValue).Code != 403 {
-			t.Fatal("reset bypassed csrf")
-		}
-	}
-	if recoveryHTTP(d, "POST", "/_desktop/api/browser-access/reset", "{}", "", csrf).Code != 403 {
-		t.Fatal("anonymous reset")
-	}
-	pending, _ := d.issueTicket()
-	response := recoveryHTTP(d, "POST", "/_desktop/api/browser-access/reset", "{}", cookie, csrf)
-	if response.Code != 200 || !strings.Contains(response.Body.String(), `"coreSessionRetained":true`) {
-		t.Fatal("reset failed", response.Code)
+	d.mu.Lock()
+	expired := d.sessions[ss.id]
+	expired.end = time.Now().Add(-time.Second)
+	d.sessions[ss.id] = expired
+	d.mu.Unlock()
+	renewed := recoveryHTTP(d, "GET", "/_desktop/api/session", "", cookie, "")
+	if renewed.Code != 200 || renewed.Header().Get("Set-Cookie") == "" || !strings.Contains(renewed.Body.String(), `"state":"authenticated"`) {
+		t.Fatal("expiry required authorization", renewed.Code)
 	}
 	select {
 	case <-content.Context().Done():
 	case <-time.After(2 * time.Second):
-		t.Fatal("content not cancelled")
+		t.Fatal("expired content not cancelled")
 	}
 	if _, err := guarded.Write([]byte("old sensitive content")); err == nil {
 		t.Fatal("late content published")
 	}
-	if recoveryHTTP(d, "GET", "/_desktop/api/session", "", cookie, "").Code != 401 || recoveryBootstrap(d, recoveryTicket(pending)).Code != 403 {
-		t.Fatal("old authorization retained")
-	}
-	if d.identity.credential != &credential {
-		t.Fatal("reset logged Core out")
-	}
 	saved, err := d.store.Load()
-	if err != nil || saved.Token != credential.Token {
-		t.Fatal("reset deleted Core credential")
-	}
-	fresh, _ := d.issueTicket()
-	if recoveryBootstrap(d, recoveryTicket(fresh)).Code != 200 {
-		t.Fatal("cannot reauthorize")
+	if err != nil || saved == nil || saved.Token != credential.Token {
+		t.Fatal("session renewal changed Core credentials", err)
 	}
 }
 
@@ -260,66 +266,39 @@ func TestDesktopExpiredContentCancelsAndRemovesRegistration(t *testing.T) {
 	}
 }
 
-func TestDesktopResetOriginAndTemporaryResourceBoundary(t *testing.T) {
+func TestDesktopOrdinarySessionOriginAndRemovedGateRoutes(t *testing.T) {
 	d := recoveryDesktop(t)
-	url, _ := d.issueTicket()
-	bootstrap := recoveryBootstrap(d, recoveryTicket(url))
-	cookie := strings.Split(bootstrap.Header().Get("Set-Cookie"), ";")[0]
-	var value map[string]any
-	_ = json.Unmarshal(bootstrap.Body.Bytes(), &value)
-	csrf := value["csrf"].(string)
 	for _, host := range []string{fmt.Sprintf("service.desktop.localhost:%d", d.port), fmt.Sprintf("localhost:%d", d.port)} {
-		req := httptest.NewRequest("POST", d.origin+"/_desktop/api/browser-access/reset", strings.NewReader("{}"))
+		req := httptest.NewRequest("GET", d.origin+"/_desktop/api/session", nil)
 		req.Host = host
-		req.Header.Set("Cookie", cookie)
-		req.Header.Set("X-Piwork-Csrf", csrf)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Origin", d.origin)
 		response := httptest.NewRecorder()
 		d.ServeHTTP(response, req)
-		if response.Code != 403 {
-			t.Fatal("non-shell Host reset accepted", response.Code)
+		if response.Code != 403 || response.Header().Get("Set-Cookie") != "" {
+			t.Fatal("foreign Host obtained a session", response.Code)
 		}
 	}
-	req := httptest.NewRequest("POST", d.origin+"/_desktop/api/browser-access/reset", strings.NewReader("{}"))
-	req.Header.Set("Cookie", cookie)
-	req.Header.Set("X-Piwork-Csrf", csrf)
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest("GET", d.origin+"/_desktop/api/session", nil)
 	req.Header.Set("Origin", "https://evil.test")
 	response := httptest.NewRecorder()
 	d.ServeHTTP(response, req)
-	if response.Code != 403 {
-		t.Fatal("cross-site reset")
+	if response.Code != 403 || response.Header().Get("Set-Cookie") != "" {
+		t.Fatal("foreign origin obtained a session", response.Code)
 	}
-	transfers, err := d.transferStore()
-	if err != nil {
-		t.Fatal(err)
-	}
-	temporary := filepath.Join(transfers.directory, "pending")
-	if err := transfers.root.AtomicWrite(t.Context(), "pending", []byte("private temporary content")); err != nil {
-		t.Fatal(err)
-	}
-	d.serviceEntries = map[string]*desktopServiceEntry{"old": {}}
-	response = recoveryHTTP(d, "POST", "/_desktop/api/browser-access/reset", "{}", cookie, csrf)
-	if response.Code != 200 || d.transfers != nil || len(d.serviceEntries) != 0 {
-		t.Fatal("reset retained temporary resources")
-	}
-	if _, err := os.Stat(temporary); !os.IsNotExist(err) {
-		t.Fatal("temporary file retained")
-	}
-	if fresh, err := d.transferStore(); err != nil || fresh == transfers {
-		t.Fatal("new transfer store unavailable after reset")
-	} else {
-		fresh.clear()
+	for _, path := range []string{"/_desktop/api/bootstrap", "/_desktop/api/browser-access/reset"} {
+		if response := recoveryHTTP(d, "POST", path, "{}", "", ""); response.Code != 404 {
+			t.Fatal("removed gate still active", path, response.Code)
+		}
 	}
 }
 
-func TestDesktopResetClosesActualWebDAVAndRunStreams(t *testing.T) {
+func TestDesktopLogoutClosesActualWebDAVAndRunStreams(t *testing.T) {
 	for _, route := range []string{"file", "run"} {
 		t.Run(route, func(t *testing.T) {
 			stopped := make(chan struct{})
 			core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
+				case r.URL.Path == "/api/v1/logout":
+					w.WriteHeader(204)
 				case r.URL.Path == "/api/v1/me":
 					_, _ = io.WriteString(w, `{"id":"owner","account":"owner","role":"user"}`)
 				case r.URL.Path == "/api/v1/file-access":
@@ -366,7 +345,7 @@ func TestDesktopResetClosesActualWebDAVAndRunStreams(t *testing.T) {
 			if _, err := response.Body.Read(initial); err != nil {
 				t.Fatal("stream not started", err)
 			}
-			reset := recoveryHTTP(d, "POST", "/_desktop/api/browser-access/reset", "{}", d.cookieName()+"=local", "csrf")
+			reset := recoveryHTTP(d, "POST", "/_desktop/api/logout", "{}", d.cookieName()+"=local", "csrf")
 			if reset.Code != 200 {
 				t.Fatal(reset.Code)
 			}

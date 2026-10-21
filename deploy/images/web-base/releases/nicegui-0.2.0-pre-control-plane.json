@@ -1,0 +1,40 @@
+{
+  "contractVersion": 2,
+  "state": "published",
+  "version": "0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty",
+  "commit": "5818e1de7bb5af9bd6305777fc88b40505a708b3",
+  "modified": true,
+  "inputHash": "6b6f6f8bbf625e2b36502349e5ba13992060aeab4b5239436c3288919ae7d44e",
+  "platform": "linux/amd64",
+  "reference": "docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty",
+  "environment": {
+    "contractVersion": 2,
+    "version": "0.2.0",
+    "platform": "linux/amd64",
+    "pythonImage": "python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641",
+    "pythonVersion": "3.13.16",
+    "sqlite3Version": "3.40.1-2+deb12u2",
+    "niceguiVersion": "3.18.0",
+    "pipVersion": "26.2.1"
+  },
+  "imageId": "sha256:1b2dc23ea6cc78f5986217a5c133f045334c81d30a53c833f73aa59abdad87a1",
+  "maintenanceSource": "deploy/images/web-base/",
+  "localValidationState": "verified",
+  "anonymousReadable": true,
+  "validationRecords": [
+    "validation.json",
+    "validation-web-app.json",
+    "tools-validation.json",
+    "dependencies-validation.json",
+    "core-validation.json"
+  ],
+  "brainAcceptance": {
+    "passed": true,
+    "elapsedMs": 574680,
+    "snapshotBytes": 816069838,
+    "evidenceFile": "page-files-brain.log"
+  },
+  "registryDigest": "sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098",
+  "fixedReference": "docker.io/pphboy/piwork-web-base:0.2.0-5818e1de7bb5-6b6f6f8bbf62-dirty@sha256:c85c9928549f5b6a58dd519bbf1840fe83e52b9da22eaae556f7aca64b448098",
+  "checkedAt": "2026-10-11T03:14:53.986Z"
+}

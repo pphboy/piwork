@@ -68,7 +68,7 @@ for (const changed of ['identity', 'authentication'] as const) test(`pending Cor
   await tickUntil(() => requests.includes('session'));
   if (changed === 'identity') adapter.clearIdentity();
   else adapter.authSequence++;
-  await adapter.checkBrowserAccess();
+  await adapter.checkSession();
   old.resolve(session(1)); await rejected;
   assert.equal(requests.filter(path => path === 'status').length, 0);
   assert.equal(adapter.generation, 2); assert.equal(adapter.connectionCheck.checking, false);
@@ -77,7 +77,7 @@ for (const changed of ['identity', 'authentication'] as const) test(`pending Cor
 test('pending Core: an external identity change after session acceptance is not adopted by the old check', async t => {
   const { adapter, requests } = fixture(t, path => path === 'status' ? ready : fallback(path));
   const unsubscribe = adapter.subscribe(() => {
-    if (adapter.state.browserAccess !== 'authorized') return;
+    if (adapter.state.sessionState !== 'ready') return;
     unsubscribe(); adapter.clearIdentity();
   });
   await adapter.checkConnection();

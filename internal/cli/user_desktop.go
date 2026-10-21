@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,9 +69,6 @@ type nativeDesktop struct {
 	store              client.CredentialStore
 	port               int
 	origin             string
-	ticket             string
-	ticketEnd          time.Time
-	used               bool
 	mu                 sync.Mutex
 	sessions           map[string]desktopSession
 	fileWrites         map[string]bool
@@ -87,7 +81,6 @@ type nativeDesktop struct {
 	logoutMu           sync.Mutex
 	logoutFlight       *desktopLogoutFlight
 	secret             func() (string, error)
-	localGeneration    int
 	activeAccess       map[*desktopAccess]bool
 	preferencesStorage desktopPreferencesStorage
 }
@@ -103,11 +96,7 @@ func desktopSecret() (string, error) {
 }
 
 func runUserDesktop(api *client.Client, store client.CredentialStore, saved *client.Credential, args []string, stdout, stderr io.Writer) int {
-	container, err := cliContainerMode()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
-	}
+
 	options, err := parseUserDesktopOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -119,7 +108,7 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 			return 5
 		}
 	}
-	listener, err := listenCLILocal(options.port, container)
+	listener, err := listenCLILocal(options.port)
 	if err != nil {
 		fmt.Fprintln(stderr, "Desktop port is already in use or unavailable")
 		return 6
@@ -133,14 +122,7 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 		d.identity.credential = saved
 	}
 	launchURL := origin + "/"
-	if !container {
-		launchURL, err = d.issueTicket()
-		if err != nil {
-			_ = listener.Close()
-			fmt.Fprintln(stderr, "Unable to create Desktop session")
-			return 5
-		}
-	}
+
 	control, err := startDesktopControl(d)
 	if err != nil {
 		_ = listener.Close()
@@ -155,10 +137,8 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	fmt.Fprintf(stdout, "Piwork Desktop: %s\n", launchURL)
-	if container {
-		fmt.Fprintln(stdout, "Run piwork-cli desktop open --no-open inside this running container, then open its URL in the browser on this computer.")
-	}
-	if options.open && !container {
+
+	if options.open {
 		go openDesktopBrowser(launchURL, stderr)
 	}
 	exitCode := 0
@@ -189,14 +169,7 @@ func openDesktopBrowser(address string, stderr io.Writer) {
 	openDesktopBrowserContext(context.Background(), address, stderr)
 }
 func openDesktopBrowserContext(ctx context.Context, address string, stderr io.Writer) {
-	command, args := "xdg-open", []string{address}
-	switch runtime.GOOS {
-	case "darwin":
-		command = "open"
-	case "windows":
-		command, args = "rundll32.exe", []string{"url.dll,FileProtocolHandler", address}
-	}
-	process := exec.CommandContext(ctx, command, args...)
+	process := exec.CommandContext(ctx, "xdg-open", address)
 	process.Stdout, process.Stderr = io.Discard, io.Discard
 	if err := process.Start(); err != nil {
 		fmt.Fprintf(stderr, "Could not open a browser. Open %s manually.\n", address)
@@ -277,9 +250,9 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src http://*.desktop.localhost:%d; object-src 'none'; base-uri 'none'; frame-ancestors 'none'", d.port))
 	if d.hosted != nil {
-		origin, _ := url.Parse(d.origin)
-		w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src %s://%s; object-src 'none'; base-uri 'none'; frame-ancestors 'none'", origin.Scheme, net.JoinHostPort(origin.Hostname(), "*")))
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 	}
+
 	w.WriteHeader(200)
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(content)

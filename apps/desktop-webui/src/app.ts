@@ -289,7 +289,7 @@ let servicePreparationScheduled = false;
 const fileSelections = new Map<string, number>();
 const viewKey = () => `${location.hash}:${view.modal}:${modalChoice}:${view.tab}:${view.path}:${view.service}:${view.port}:${sessionChoice}`;
 const actionLabels: Record<string, string> = {
-  'check-browser-access': 'Checking browser access', 'confirm-reset-browser-access': 'Resetting browser access', 'sign-in': 'Signing in', 'sign-out': 'Signing out', 'confirm-switch-core': 'Switching Core', 'check-connection': 'Checking connection',
+  'sign-in': 'Signing in', 'sign-out': 'Signing out', 'confirm-switch-core': 'Switching Core', 'check-connection': 'Checking connection',
   'retry-works': 'Loading Works', 'create-work': 'Creating Work', 'start-work': 'Starting Work', 'start-import-open': 'Starting imported Work', 'check-work-progress': 'Checking Work progress', 'check-service-progress': 'Checking Service progress', 'confirm-stop': 'Stopping Work', 'confirm-delete': 'Deleting Work',
   'retry-work-read': 'Loading Work', 'open-work': 'Loading Work', 'check-work': 'Checking Work', settings: 'Reading settings', 'tab-Services': 'Loading Services', 'tab-Files': 'Reading workspace',
   'retry-services': 'Reading Services', 'run-details': 'Reading Run details', 'active-run': 'Reading active Run', 'check-chat-submission': 'Checking original submission',
@@ -311,7 +311,7 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
   if (['service-action', 'confirm-service-control'].includes(action)) label = `${el.dataset.control || view.data.control || "Control"} Service`;
   const w = targetWork(el); let kind: ActionIntent['kind'] = 'read';
   if(action==='send-message' && w && !imageDrafts.get(draftKey(w)).length && !view.literalSlash && /^\/(model|thinking)\s*$/.test((view.drafts[draftKey(w)] || '').trim())) return;
-  if (['sign-in', 'sign-out', 'confirm-switch-core', 'confirm-reset-browser-access'].includes(action)) kind = 'identity';
+  if (['sign-in', 'sign-out', 'confirm-switch-core'].includes(action)) kind = 'identity';
   else if (['create-work', 'start-work', 'start-import-open', 'confirm-stop', 'confirm-delete'].includes(action)) kind = 'lifecycle';
   else if (['save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'upload-input'].includes(action)) kind = 'files';
   else if (['save-config', 'dirty-config-save', 'apply-config', 'confirm-core-skills', 'confirm-install', 'confirm-remove-package'].includes(action)) kind = 'configuration';
@@ -388,9 +388,9 @@ const activeService = (w: Work) =>
   ) ||
   w.services[0];
 const unavailable = () =>
-  ["core-offline", "cli-closed", "ticket-expired"].includes(
+  ["core-offline", "cli-closed"].includes(
     adapter.state.scenario,
-  ) || !adapter.state.signedIn;
+  ) || !adapter.state.signedIn || adapter.state.sessionState === 'unavailable';
 const dirty = () => view.file && view.fileDraft !== view.fileOriginal;
 function toast(message: string) {
   view.toast = message;
@@ -575,7 +575,7 @@ function brand() {
   return `<a href="#/works" class="brand" aria-label="Piwork Works"><img class="brand-logo" src="/desktop/piwork-logo.png" alt="" width="40" height="40"><span class="brand-product">Desktop</span></a>`;
 }
 function topbar() {
-  if (adapter.state.browserAccess !== "authorized") return `<header class="topbar">${brand()}</header>`;
+  if (adapter.state.sessionState !== "ready") return `<header class="topbar">${brand()}</header>`;
   return `<header class="topbar">${brand()}${view.modal !== "connection" && route()[0] !== "works" ? coreConnectionStatus() : ""}<div class="topbar-right">${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span><span>${esc(adapter.state.core.account || "Account")}</span>${icon("down", 14)}`, "account", "account-button quiet", `aria-label="${esc(adapter.state.core.account || 'Account')} account menu" aria-haspopup="dialog" aria-expanded="${view.modal === 'account'}"`)}</div></header>`;
 }
 function defaultCorePreferences() {
@@ -590,15 +590,13 @@ function coreConnectionStatus() {
 }
 function connection() {
   const s = adapter.state.scenario;
-  return `<button class="connection" data-action="connection"><i class="${["core-offline", "env-not-ready"].includes(s) ? "warn" : ""}"></i>${esc(adapter.state.core.name)}<span>·</span>${adapter.connectionCheck.checking ? pendingStatus("Checking Core connection…", "check-connection") : adapter.connectionCheck.error ? "Not confirmed" : s === "core-offline" ? "Unreachable" : s === "env-not-ready" ? "Runtime not ready" : adapter.connectionCheck.checkedAt ? "Connected" : "Not yet checked"}${icon("down", 12)}</button>`;
+  return `<button class="connection" data-action="connection"><i class="${["core-offline", "env-not-ready"].includes(s) || adapter.state.sessionState === "unavailable" ? "warn" : ""}"></i>${esc(adapter.state.core.name)}<span>·</span>${adapter.connectionCheck.checking ? pendingStatus("Checking Core connection…", "check-connection") : adapter.state.sessionState === "unavailable" ? "Connection unavailable" : adapter.connectionCheck.error ? "Not confirmed" : s === "core-offline" ? "Unreachable" : s === "env-not-ready" ? "Runtime not ready" : adapter.connectionCheck.checkedAt ? "Connected" : "Not yet checked"}${icon("down", 12)}</button>`;
 }
 function signIn() {
-  const access = adapter.state.browserAccess;
-  if (adapter.hosted) return `${topbar()}<main class="auth-main"><h1>${access === 'checking' ? 'Opening workspace…' : 'Connect to Piwork'}</h1><p class="muted" role="status">${access === 'checking' ? pendingStatus('Checking your server session…', 'check-browser-access') : esc(adapter.state.browserAccessReason || 'Sign in to continue.')}</p>${access === 'checking' ? '' : `<a class="button primary" href="/login">Sign in</a>${btn('Check server connection','check-browser-access','quiet')}`}</main>`;
-  if (access !== 'authorized') {
-    const checking = access === 'checking', unavailable = access === 'unavailable';
-    return `${topbar()}<main class="auth-main browser-access"><div class="auth-symbol">${icon("lock",26)}</div><h1>${checking ? 'Opening workspace…' : unavailable ? 'Desktop connection unavailable' : 'Browser access required'}</h1><p class="muted" role="status" aria-live="polite">${checking ? pendingStatus('Connecting to your local Desktop…', 'check-browser-access') : esc(adapter.state.browserAccessReason)}</p>${checking ? '' : `${btn('Check browser access','check-browser-access','primary full')}<div class="recovery-command"><p>From a terminal as the same system user:</p><code>${esc(adapter.reopenCommand())}</code>${btn('Copy reopen command','copy-reopen-command','quiet full')}</div><p class="muted">If the instance is not running, start it with <code>${esc(adapter.startCommand())}</code>. Reopening a running instance keeps its Core, Works and browser sessions.</p><div class="recovery-command"><p>To clear this Desktop’s saved Core login without browser access:</p><code>${esc(adapter.logoutCommand())}</code>${btn('Copy logout command','copy-logout-command','quiet full')}</div>`}</main>`;
-  }
+  const loading = adapter.state.sessionState === 'loading';
+  const retryAvailable = !loading || !!adapter.state.sessionError;
+  if (adapter.hosted) return `${topbar()}<main class="auth-main"><h1>${loading ? 'Opening workspace…' : 'Connect to Piwork'}</h1><p class="muted" role="status">${loading && !adapter.state.sessionError ? pendingStatus('Reading your server session…', 'retry-session') : esc(adapter.state.sessionError || 'Sign in to continue.')}</p>${loading ? '' : '<a class="button primary" href="/login">Sign in</a>'}${retryAvailable ? btn('Retry connection','retry-session','quiet') : ''}</main>`;
+  if (adapter.state.sessionState !== 'ready') return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon('lock',26)}</div><h1>${loading ? 'Opening workspace…' : 'Desktop connection unavailable'}</h1><p class="muted" role="status" aria-live="polite">${loading && !adapter.state.sessionError ? pendingStatus('Connecting to your local Desktop…', 'retry-session') : esc(adapter.state.sessionError || 'Retry the connection.')}</p>${retryAvailable ? btn('Retry connection','retry-session','primary full') : ''}${loading ? '' : `<p class="muted">If Desktop is not running, start <code>${esc(adapter.startCommand())}</code> and reload this ordinary address.</p>`}</main>`;
   return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock",26)}</div><h1>Connect to your Core</h1><p class="muted">Sign in with your Core account. Credentials stay with the local CLI.</p>${adapter.state.cleanupRequired ? feedback(`Local identity is cleared, but saved credential cleanup is incomplete. Run <code>${esc(adapter.logoutCommand())}</code> before signing in or switching Core.`, 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}<label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label>${defaultCorePreferences()}<label class="field">Account<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">Password<input id="auth-password" type="password" autocomplete="current-password"></label>${btn("Sign in", "sign-in", "primary full")}<div class="auth-divider">Inspect a Work package locally before signing in</div>${btn(`${icon("upload",16)} Inspect a .work package`, "import", "quiet")}</main>`;
 }
 function worksRefreshButton() {
@@ -612,7 +610,7 @@ function works() {
   const all = adapter.state.works.filter((w) =>
     w.name.toLowerCase().includes(view.search.toLowerCase()),
   );
-  return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", 'title="Import Work" aria-label="Import Work"')}${btn(icon("plus"), "new-work", "icon-button primary", 'title="New Work" aria-label="New Work"')}</div></div>${adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(!confirmed && !adapter.worksError && (s === "loading" || adapter.worksLoading || adapter.connectionCheck.checking)) ? `<div class="loading-list" role="status" aria-label="Loading your Works" aria-busy="true">${adapter.connectionCheck.checking ? "Works will load after the Core connection check." : pendingStatus("Loading your Works…", "retry-works")}${[1, 2, 3].map(() => '<div class="skeleton" aria-hidden="true"><i></i><span></span><span></span></div>').join("")}</div>` : !confirmed && (s === "list-error" || adapter.worksError) ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "retry-works", "primary")) : !adapter.state.works.length && (confirmed || s === "empty") ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><a class="work-name" data-action="open-work" data-id="${esc(w.id)}" href="#/work/${encodeURIComponent(w.id)}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></a><div class="work-status">${workStatus(w)}${controlMarkup(workControls.get(w.id))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${adapter.state.works.length} Works <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div></div></main>`;
+  return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", 'title="Import Work" aria-label="Import Work"')}${btn(icon("plus"), "new-work", "icon-button primary", 'title="New Work" aria-label="New Work"')}</div></div>${adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(!confirmed && !adapter.worksError && (s === "loading" || adapter.worksLoading || adapter.connectionCheck.checking)) ? `<div class="loading-list" role="status" aria-label="Loading your Works" aria-busy="true">${adapter.connectionCheck.checking ? "Works will load after the Core connection check." : pendingStatus("Loading your Works…", "retry-works")}${[1, 2, 3].map(() => '<div class="skeleton" aria-hidden="true"><i></i><span></span><span></span></div>').join("")}</div>` : !confirmed && (s === "list-error" || adapter.worksError) ? empty("refresh", "Works could not be loaded", "Your account is still signed in. Check the connection and try reading the list again.", btn("Retry loading", "retry-works", "primary")) : !adapter.state.works.length && (confirmed || s === "empty") ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><a class="work-name" data-action="open-work" data-id="${esc(w.id)}" href="#/work/${encodeURIComponent(w.id)}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></a><div class="work-status">${workStatus(w)}${controlMarkup(workControls.get(w.id))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${confirmed ? `${adapter.state.works.length} Works` : "Works not yet read"} <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div></div></main>`;
 }
 function quickAction(w: Work) {
   if (route()[0] === 'works' && controlReady(workControls.get(w.id), w)) return workLink('Open Work', w.id, 'primary small');
@@ -1130,12 +1128,7 @@ function modalMarkup() {
       break;
     case "account":
       title = esc(adapter.state.core.account || "Account");
-      body = `<p class="account-context"><span>Role: ${esc(adapter.state.core.role === 'admin' ? 'Administrator' : adapter.state.core.role)}</span><span title="${esc(adapter.state.core.address)}">Core: ${esc(adapter.state.core.address)}</span></p><div class="menu-list">${btn(`${icon("info")} About Piwork`, "about-piwork")}${btn(`${icon("clock")} Known operations`, "operations")}</div><div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} Administration</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} Quick setup</a>` : "") : `${btn(`${icon("refresh")} Switch Core`, "switch-core")}${btn(`${icon("lock")} Reset browser access`, "reset-browser-access")}`}${btn(`${icon("logout")} Sign out`, "sign-out", "danger")}</div>`;
-      break;
-    case "reset-browser-access":
-      title = "Reset browser access?";
-      body = `<p>This ends browser access in <strong>all windows of this Desktop</strong>, including Service previews, file transfers and live observation.</p><p>The saved Core login is retained. Works, Services and already accepted Runs or Operations continue. File changes already sent may have been committed.</p><p class="muted">Use <code>${esc(adapter.reopenCommand())}</code> to authorize a browser again.</p>`;
-      footer = `${cancel()}${btn('Reset browser access','confirm-reset-browser-access','danger')}`;
+      body = `<p class="account-context"><span>Role: ${esc(adapter.state.core.role === 'admin' ? 'Administrator' : adapter.state.core.role)}</span><span title="${esc(adapter.state.core.address)}">Core: ${esc(adapter.state.core.address)}</span></p><div class="menu-list">${btn(`${icon("info")} About Piwork`, "about-piwork")}${btn(`${icon("clock")} Known operations`, "operations")}</div><div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} Administration</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} Quick setup</a>` : "") : `${btn(`${icon("refresh")} Switch Core`, "switch-core")}`}${btn(`${icon("logout")} Sign out`, "sign-out", "danger")}</div>`;
       break;
     case "connection":
       title = "Core connection";
@@ -1249,7 +1242,7 @@ function modalMarkup() {
     }
     case "service-menu":
       title = "Service options";
-      body = `<div class="menu-list">${btn(`${icon("external")} Open in new tab`, "open-app")}${btn(`${icon("focus")} Open independent window`, "open-window")}${btn(`${icon("copy")} Copy domain`, "copy-domain")}${btn(`${icon("copy")} ${adapter.hosted ? "Copy access link" : "Copy local link"}`, "copy-local")}${btn(`${icon("settings")} Manage services`, "manage-services")}${btn(`${icon("note")} Pi requests for this Work`, "pi-requests")}${route()[0] === 'work' ? btn(`${icon("reset")} Reset split`, "reset-workspace-split") + btn(`${icon("focus")} Focus chat`, "focus-chat") : ''}${browserFullscreenAction()}</div><p class="muted">${adapter.hosted ? "An access link requires this browser session and server to remain available. Services that depend on JavaScript Cookies may not work; Cookies written by scripts are not isolated between Services on the same IP." : "A local link works on this computer while Desktop CLI is running and signed in. It is not a public share link."}</p>`;
+      body = `<div class="menu-list">${btn(`${icon("external")} Open in new tab`, "open-app")}${btn(`${icon("focus")} Open independent window`, "open-window")}${btn(`${icon("copy")} Copy domain`, "copy-domain")}${btn(`${icon("copy")} ${adapter.hosted ? "Copy access link" : "Copy local link"}`, "copy-local")}${btn(`${icon("settings")} Manage services`, "manage-services")}${btn(`${icon("note")} Pi requests for this Work`, "pi-requests")}${route()[0] === 'work' ? btn(`${icon("reset")} Reset split`, "reset-workspace-split") + btn(`${icon("focus")} Focus chat`, "focus-chat") : ''}${browserFullscreenAction()}</div><p class="muted">${adapter.hosted ? "Services share the workbench origin and must be trusted: their scripts can use your current UI permissions. Apps must support their Service URL prefix. Server-response Cookies are partitioned; JavaScript Cookies are not synchronized or isolated. Access links require normal sign-in." : "A local link works on this computer while Desktop CLI is running and signed in. It is not a public share link."}</p>`;
       break;
     case "manage-services":
       title = "Manage services";
@@ -1737,11 +1730,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       void adapter.loadPreferences();
       openModal("switch-core");
       break;
-    case "check-browser-access": await stay(adapter.checkBrowserAccess()); toast("Browser access checked."); if (adapter.state.signedIn) await stay(adapter.checkConnection()); break;
-    case "copy-reopen-command": await copy(adapter.reopenCommand()); break;
-    case "copy-logout-command": await copy(adapter.logoutCommand()); break;
-    case "reset-browser-access": openModal("reset-browser-access"); break;
-    case "confirm-reset-browser-access": await adapter.resetBrowserAccess(); view.modal = ""; render(); break;
+    case "retry-session": await stay(adapter.initialize()); if (adapter.state.sessionState === 'ready' && !adapter.state.signedIn) await stay(adapter.loadPreferences()); break;
     case "sign-in": {
       const account = root.querySelector<HTMLInputElement>("#auth-account")?.value ?? "";
       const password = root.querySelector<HTMLInputElement>("#auth-password")?.value ?? "";
@@ -1751,9 +1740,9 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "import-sign-in": importSignInSuspended = true; view.modal = ""; render(); toast("Sign in to continue importing the inspected package."); break;
     case "sign-out": {
       const result = await stay(adapter.signOut()); if (adapter.hosted) { location.assign("/login"); break; } view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();imageDraftErrors.clear(); view.config = null; view.configDirty = false; view.file = "";
-      closeModal(); toast(result.credentialCleared === false ? `Local identity cleared; saved credential cleanup is incomplete. Run ${adapter.logoutCommand()}.` : result.remoteRevocationConfirmed ? "Signed out. Browser access is retained." : "Local identity and saved credential cleared. Remote revocation could not be confirmed."); break;
+      closeModal(); toast(result.credentialCleared === false ? `Local identity cleared; saved credential cleanup is incomplete. Run ${adapter.logoutCommand()}.` : result.remoteRevocationConfirmed ? "Signed out. Sign in again to continue." : "Local identity and saved credential cleared. Remote revocation could not be confirmed."); break;
     }
-    case "reconnect": toast("Start piwork-cli desktop and open the fresh launch address."); break;
+    case "reconnect": toast("Start piwork-cli desktop and reload this address."); break;
     case "confirm-switch-core": await stay(adapter.switchCore(view.coreAddress)); view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();imageDraftErrors.clear(); view.config = null; view.configDirty = false; closeModal(); break;
     case "retry-works": await stay(adapter.listWorks()); break;
     case 'retry-services':
@@ -2664,7 +2653,7 @@ function closeFileActions(restore = false) {
   if(restore)root.querySelector<HTMLElement>('#file-add-trigger')?.focus({preventScroll:true});
 }
 function render() {
-  if(fileActionsContext && (fileActionsContext!==fileActionsKey() || view.modal || view.selected.length || adapter.state.browserAccess!=='authorized'))fileActionsContext='';
+  if(fileActionsContext && (fileActionsContext!==fileActionsKey() || view.modal || view.selected.length || !adapter.state.signedIn))fileActionsContext='';
   if (current()?.id === selectionWorkId) rememberWork();
   observeCurrentPage();
   if (view.config && !view.config.advancedDirty) synchronizeConfiguration(view.config);
@@ -2689,10 +2678,9 @@ function render() {
   root.classList.toggle('chat-focused',view.layout === 'chat-only');
   let html = "";
   if (adapter.state.scenario === "cli-closed")
-    html = `${topbar()}<main class="auth-main">${empty("terminal", adapter.hosted ? "Server connection closed" : "Desktop’s local connection has closed", adapter.hosted ? "Check that the Piwork server is running, then reload this page." : "Start piwork-cli desktop again, then open its new launch address. A browser-only retry cannot restart the CLI.", "")}</main>`;
+    html = `${topbar()}<main class="auth-main">${empty("terminal", adapter.hosted ? "Server connection closed" : "Desktop’s local connection has closed", adapter.hosted ? "Check that the Piwork server is running, then reload this page." : "Start piwork-cli desktop again, then reload this ordinary address. A browser-only retry cannot restart the CLI.", "")}</main>`;
   else if (
-    !adapter.state.signedIn ||
-    adapter.state.browserAccess !== "authorized"
+    !adapter.state.signedIn
   )
     html = signIn();
   else if (r[0] === "app") {
@@ -2713,7 +2701,7 @@ function render() {
     view.modal='';view.modalError='';view.modalNameError=null;focusReturn='';lastFocus=null;modalChoice++;
   }
   // Action status nodes are reconciled by their owner; retain them without moving iframe ancestors.
-  reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal && adapter.state.browserAccess === "authorized" ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
+  reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
   observeServiceFrames();
   renderActionStates(root, actions, location.hash, el => actionIntent(el), visibleActionRecord);
   for(const el of root.querySelectorAll<HTMLElement>('[data-history-image]'))if(!el.dataset.imageObserved){el.dataset.imageObserved='true';imageObserver.observe(el);}
@@ -3257,7 +3245,7 @@ root.addEventListener("keydown", (e) => {
 function handleRouteNavigation() {
   if (new URLSearchParams(location.hash.slice(1)).has('ticket')) {
     // A reopen link can navigate an existing tab without a document reload.
-    // Use the same Cookie-first initialization and remove the ticket at once.
+    // Ignore obsolete launch fragments and initialize an ordinary session.
     const initialization = adapter.initialize();
     const context = { epoch: adapter.identityEpoch, route: location.hash };
     void initialization.then(() => loadRoute()).catch(error => reportInitializationFailure(error, context.epoch, context.route));
@@ -3315,7 +3303,7 @@ lastRoute = location.hash;
 render();
 const initialization = adapter.initialize();
 const initializationContext = { epoch: adapter.identityEpoch, route: location.hash };
-void initialization.then(async () => { view.coreAddress = adapter.state.core.address; if (adapter.state.browserAccess === 'authorized') void adapter.loadPreferences(); await loadRoute(); }).catch(error => reportInitializationFailure(error, initializationContext.epoch, initializationContext.route));
+void initialization.then(async () => { view.coreAddress = adapter.state.core.address; if (adapter.state.sessionState === 'ready') void adapter.loadPreferences(); await loadRoute(); }).catch(error => reportInitializationFailure(error, initializationContext.epoch, initializationContext.route));
 
 let packageFiles: File[] = [];
 let pendingUploadFiles: File[] = [];

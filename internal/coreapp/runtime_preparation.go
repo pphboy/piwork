@@ -15,18 +15,8 @@ const preparationAttemptTimeout = 10 * time.Minute
 
 var preparationNames = [...]string{"docker", "agent", "packageHelper", "defaultContext", "fileHelper", "snapshotHelper"}
 
-type PreparationComponent struct {
-	State             string  `json:"state"`
-	Attempt           int     `json:"attempt"`
-	RetryAfterSeconds *int    `json:"retryAfterSeconds"`
-	Code              *string `json:"code"`
-}
-
-type Preparation struct {
-	Version    int                             `json:"version"`
-	Ready      bool                            `json:"ready"`
-	Components map[string]PreparationComponent `json:"components"`
-}
+type PreparationComponent = contracts.PreparationComponent
+type Preparation = contracts.Preparation
 
 type preparationEntry struct {
 	PreparationComponent

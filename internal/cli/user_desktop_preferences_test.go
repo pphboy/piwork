@@ -115,7 +115,7 @@ func TestDesktopPreferencesAPIUnknownCommitAuthorizationResetAndCapacity(t *test
 	if r.Code != 200 || !strings.Contains(r.Body.String(), "https://committed.example") {
 		t.Fatal("read-only confirmation failed", r.Code)
 	}
-	d.preferencesStorage = preferenceFailureFixture{DesktopPreferencesStore: store, before: func() { d.mu.Lock(); delete(d.sessions, "fixture"); d.localGeneration++; d.mu.Unlock() }}
+	d.preferencesStorage = preferenceFailureFixture{DesktopPreferencesStore: store, before: func() { d.mu.Lock(); delete(d.sessions, "fixture"); d.mu.Unlock() }}
 	r = recoveryHTTP(d, "PUT", "/_desktop/api/preferences", `{"coreUrl":"https://revoked.example"}`, cookie, "csrf")
 	if r.Code != 401 && r.Code != 403 {
 		t.Fatal("revoked local access not rejected", r.Code)

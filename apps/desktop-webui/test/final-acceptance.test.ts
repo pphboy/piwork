@@ -22,7 +22,7 @@ after(async () => {
 type RequestRecord = { search: string; bytes?: Buffer | null; path: string; method: string; headers: Record<string, string>; body: string };
 type Reply = { status?: number; json?: unknown; body?: string; headers?: Record<string, string>; abort?: boolean };
 const mtime1 = 'Sat, 03 Oct 2026 01:00:00 GMT';
-async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialRead = true) {
+async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialRead = true, beforeNavigation?: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); t.after(() => page.close());
   // Shared synthetic HTTP shape copied with the recovery fixture owner's agreement.
   // Cases that compare normal/reduced motion override this before opening overlays.
@@ -67,6 +67,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
     if (reply.abort) await route.abort('failed');
     else await route.fulfill({ status: reply.status ?? 200, headers: reply.headers, ...(reply.json !== undefined ? { contentType: 'application/json', body: JSON.stringify(reply.json) } : { body: reply.body ?? '' }) });
   });
+  await beforeNavigation?.(page);
   await page.goto(base + (anonymous ? '/' : '/#/work/work-1'));
   await expect(page.getByRole('heading', { name: anonymous ? 'Connect to your Core' : 'Recovery Work', exact: true })).toBeVisible();
   if (!anonymous && waitForInitialRead) {
@@ -104,7 +105,7 @@ function appFixture(r: RequestRecord): Reply | undefined {
   if (r.path.endsWith('/services')) return { json: { services: [service('a'), service('b')] } };
   if (r.path === 'service-entries') {
     const target = JSON.parse(r.body), entryId = `${target.workId}-${target.serviceId}-${target.port}`;
-    return { json: { ...target, entryId, origin: base, entryUrl: `${base}/_desktop/final-app/${entryId}/`, embed: 'allowed' } };
+    return { json: { ...target, entryId, origin: base, basePath: `/_desktop/final-app/${entryId}/`, entryUrl: `${base}/_desktop/final-app/${entryId}/`, embed: 'allowed' } };
   }
   if (r.path.startsWith('service-entries/')) return { json: { embed: 'allowed' } };
   if (r.path.startsWith('/_desktop/final-app/')) return { body: '<html><body><input aria-label="Application draft"><p>Original application</p></body></html>', headers: { 'Content-Type': 'text/html' } };
@@ -417,4 +418,24 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) test(`Final 15
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
   assert.equal(requests.filter(r => r.path === 'works/work-1/services/service-a/logs').length, 1);
   assert.equal(businessWrites(requests).length, 0);
+});
+
+test('Hosted Service entry inspection retains its full prefix and target through layout changes', async t => {
+  const prefix = '/services/work-1/service-a/80/';
+  const {page} = await fixture(t, r => {
+    if (r.path === 'service-entries') { const target=JSON.parse(r.body); return {json:{...target,entryId:'hosted-prefix',origin:base,basePath:prefix,entryUrl:base+prefix,embed:'unknown'}}; }
+    if (r.path === 'service-entries/hosted-prefix') return {json:{workId:'work-1',serviceId:'service-a',port:80,status:'available',embed:'allowed'}};
+    return appFixture(r);
+  }, false, true, page => page.route('**/services/**', route => route.fulfill({contentType:'text/html',body:'<input aria-label="Prefix draft">'})));
+  await api(page, "await adapter.ensureServiceEntry('work-1','service-a',80);");
+  await expect.poll(()=>api(page, "return adapter.serviceEntryUrl('work-1','service-a',80);")).toBe(base+prefix);
+  const frame = page.locator('iframe').filter({visible:true}).first();
+  await expect(frame).toHaveAttribute('src',base+prefix);
+  await frame.contentFrame().getByLabel('Prefix draft').fill('Keep this application');
+  await frame.evaluate(node => { (window as any).prefixFrame=node; });
+  await button(page,'toggle-workspace-chat').click();
+  assert.equal(await frame.evaluate(node => node === (window as any).prefixFrame),true);
+  await expect(frame.contentFrame().getByLabel('Prefix draft')).toHaveValue('Keep this application');
+  await api(page,"await adapter.serviceFrameLoaded('work-1','service-a',80);");
+  await expect(frame).toHaveAttribute('src',base+prefix);
 });

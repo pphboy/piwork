@@ -18,19 +18,6 @@ func (d *nativeDesktop) pruneSessionsLocked() {
 		}
 	}
 }
-func (d *nativeDesktop) issueTicket() (string, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	ticket, err := d.newSecret()
-	if err != nil {
-		return "", err
-	}
-	d.pruneSessionsLocked()
-	d.ticket = ticket
-	d.ticketEnd = time.Now().Add(5 * time.Minute)
-	d.used = false
-	return d.origin + "/#ticket=" + ticket, nil
-}
 
 type desktopCleanup struct{ coreURL, token string }
 type desktopLogoutResult struct {

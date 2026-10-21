@@ -18,7 +18,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: go run scripts/package-cli-release.go --build <directory> --evidence <report> [--output <directory>]")
 		os.Exit(2)
 	}
-	path, err := clirelease.Package(*directory, *evidence, *output)
+	path, err := clirelease.PackageCurrent(".", *directory, *evidence, *output)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -50,7 +50,7 @@ func TestNativeDesktopEmbeddedBrowserAndLocalIdentity(t *testing.T) {
 	}
 	store := client.CredentialStore{Path: filepath.Join(t.TempDir(), "credentials", "client.json")}
 	d := &nativeDesktop{api: api, store: store, port: 17891, origin: "http://desktop.localhost:17891",
-		ticket: "ticket", ticketEnd: time.Now().Add(time.Minute), sessions: make(map[string]desktopSession),
+		sessions: make(map[string]desktopSession),
 		identity: desktopIdentity{coreURL: core.URL}}
 	serve := func(method, path string, body io.Reader, cookie, csrf, origin string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -98,28 +98,26 @@ func TestNativeDesktopEmbeddedBrowserAndLocalIdentity(t *testing.T) {
 	if denied.Code != 403 {
 		t.Fatal("Logo bypassed Host boundary", denied.Code)
 	}
-	if response := serve("POST", "/_desktop/api/bootstrap", strings.NewReader(`{"ticket":"ticket"}`), "", "", "http://evil.example"); response.Code != 403 {
-		t.Fatal("cross origin bootstrap accepted")
+	if response := serve("GET", "/_desktop/api/session", nil, "", "", "http://evil.example"); response.Code != 403 {
+		t.Fatal("cross origin session accepted")
 	}
-	response := serve("POST", "/_desktop/api/bootstrap", strings.NewReader(`{"ticket":"ticket"}`), "", "", d.origin)
+	response := serve("GET", "/_desktop/api/session", nil, "", "", d.origin)
 	if response.Code != 200 || !strings.Contains(response.Header().Get("Set-Cookie"), "HttpOnly; Secure; SameSite=Strict") {
-		t.Fatal("bootstrap did not issue scoped cookie", response.Code, response.Header())
+		t.Fatal("ordinary session did not issue scoped cookie", response.Code, response.Header())
 	}
 	cookie := strings.SplitN(response.Header().Get("Set-Cookie"), ";", 2)[0]
 	var authorized map[string]any
 	if json.Unmarshal(response.Body.Bytes(), &authorized) != nil {
-		t.Fatal("bootstrap JSON", response.Body.String())
+		t.Fatal("session JSON", response.Body.String())
 	}
 	csrf, _ := authorized["csrf"].(string)
 	if csrf == "" {
-		t.Fatal("bootstrap omitted CSRF")
+		t.Fatal("session omitted CSRF")
 	}
-	if replay := serve("POST", "/_desktop/api/bootstrap", strings.NewReader(`{"ticket":"ticket"}`), "", "", d.origin); replay.Code != 403 {
-		t.Fatal("bootstrap ticket replayed", replay.Code)
+	if repeated := serve("GET", "/_desktop/api/session", nil, cookie, "", d.origin); repeated.Code != 200 || repeated.Header().Get("Set-Cookie") != "" {
+		t.Fatal("ordinary session was unnecessarily replaced")
 	}
-	if unauthenticated := serve("GET", "/_desktop/api/session", nil, "", "", ""); unauthenticated.Code != 401 {
-		t.Fatal("session available without local cookie")
-	}
+
 	if wrong := serve("POST", "/_desktop/api/login", strings.NewReader(`{"account":"owner","password":"pass"}`), cookie, "wrong", d.origin); wrong.Code != 403 {
 		t.Fatal("Desktop mutation accepted wrong CSRF")
 	}
@@ -191,8 +189,8 @@ func TestNativeDesktopEmbeddedBrowserAndLocalIdentity(t *testing.T) {
 	d.sessions[id] = desktopSession{csrf: csrf, end: time.Now().Add(-time.Second)}
 	d.mu.Unlock()
 	response = serve("GET", "/_desktop/api/session", nil, cookie, "", "")
-	if response.Code != 401 {
-		t.Fatal("expired local cookie remained valid", response.Code)
+	if response.Code != 200 || response.Header().Get("Set-Cookie") == "" {
+		t.Fatal("expired local cookie did not renew transparently", response.Code)
 	}
 }
 

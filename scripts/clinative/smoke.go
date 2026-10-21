@@ -102,11 +102,10 @@ func Smoke(ctx context.Context, buildDirectory, root string) (Result, error) {
 	case <-time.After(10 * time.Second):
 		return result, errors.New("candidate Desktop launch timed out")
 	}
-	prefix := "Piwork Desktop: http://desktop.localhost:" + strconv.Itoa(port) + "/#ticket="
-	if !strings.HasPrefix(launch, prefix) {
+	expectedLaunch := "Piwork Desktop: http://desktop.localhost:" + strconv.Itoa(port) + "/"
+	if strings.TrimSpace(launch) != expectedLaunch {
 		return result, errors.New("candidate Desktop launch address invalid")
 	}
-	ticket := strings.TrimSpace(strings.TrimPrefix(launch, prefix))
 	base := "http://127.0.0.1:" + strconv.Itoa(port)
 	origin := "http://desktop.localhost:" + strconv.Itoa(port)
 	httpClient := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil}}
@@ -162,12 +161,11 @@ func Smoke(ctx context.Context, buildDirectory, root string) (Result, error) {
 	}
 	status, _, _, err = request("GET", "/_desktop/api/preferences", nil, strings.TrimPrefix(origin, "http://"))
 	if err != nil || status != 401 {
-		return result, errors.New("candidate preferences lack local authorization")
+		return result, errors.New("candidate preferences must require an ordinary session")
 	}
-	bootstrap, _ := json.Marshal(map[string]string{"ticket": ticket})
-	status, body, headers, err := request("POST", "/_desktop/api/bootstrap", bootstrap, strings.TrimPrefix(origin, "http://"))
+	status, body, headers, err := request("GET", "/_desktop/api/session", nil, strings.TrimPrefix(origin, "http://"))
 	if err != nil || status != 200 {
-		return result, errors.New("candidate local bootstrap failed")
+		return result, errors.New("candidate ordinary session initialization failed")
 	}
 	var session struct {
 		CSRF string `json:"csrf"`

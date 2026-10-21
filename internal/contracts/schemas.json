@@ -24098,54 +24098,6 @@
     },
     "additionalProperties": false
   },
-  "WebSetupLinkSchema": {
-    "type": "object",
-    "required": [
-      "url"
-    ],
-    "properties": {
-      "url": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 2048
-      }
-    },
-    "additionalProperties": false
-  },
-  "WebSetupProofInputSchema": {
-    "type": "object",
-    "required": [
-      "proof"
-    ],
-    "properties": {
-      "proof": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 256
-      }
-    },
-    "additionalProperties": false
-  },
-  "WebSetupSessionSchema": {
-    "type": "object",
-    "required": [
-      "authorized"
-    ],
-    "properties": {
-      "authorized": {
-        "type": "boolean"
-      },
-      "complete": {
-        "type": "boolean"
-      },
-      "csrfToken": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 256
-      }
-    },
-    "additionalProperties": false
-  },
   "WebSetupStateSchema": {
     "type": "object",
     "required": [

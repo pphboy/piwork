@@ -5,10 +5,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveRepositoryFile } from './resolve-change-artifact.mjs';
 
 export const releaseMaterials = [
-  'README.md', 'README.zh-CN.md', 'LICENSE',
+  'LICENSE',
   'deploy/docker/README.md', 'deploy/docker/README.zh-CN.md',
   'apps/ui-shared/assets/piwork-logo.png',
-  'apps/ui-shared/assets/desktop-preview.png',
+  'examples/single-host/README.md', 'examples/single-host/README.zh-CN.md',
+  'deploy/docker/docker-compose.yml', 'examples/single-host/docker-compose.yml',
 ];
 const textFile = name => ['.md', '.html'].includes(extname(name));
 const imageFile = name => ['.png', '.jpg', '.jpeg', '.svg', '.webp', '.gif', '.ico'].includes(extname(name));
@@ -18,9 +19,8 @@ const installationFiles = new Set([
   'deploy/images/web-base/release.json', 'deploy/images/web-base/releases/fastapi-react-0.1.0.json',
 ]);
 function allowedMaterial(name) {
-  if (releaseMaterials.includes(name) || name === 'AGENTS.md' || installationFiles.has(name)) return true;
-  if (/^deploy\/docker\/releases\/[^/]+\.json$/.test(name)) return true;
-  return /^(?:openspec\/(?:specs|changes)\/|deploy\/|examples\/|apps\/ui-shared\/assets\/)/.test(name) && (textFile(name) || imageFile(name));
+  if (releaseMaterials.includes(name) || installationFiles.has(name)) return true;
+  return /^(?:deploy\/|examples\/|apps\/ui-shared\/assets\/)/.test(name) && (textFile(name) || imageFile(name));
 }
 function rewriteLinks(text, rewrite) {
   return text.replace(/^[ \t]*```[^\n]*\n[\s\S]*?^[ \t]*```[^\n]*$|\]\(<?([^\s)>]+)>?(?:\s+"[^"]*")?\)|\b(?:src|href)=["']([^"']+)["']/gm,

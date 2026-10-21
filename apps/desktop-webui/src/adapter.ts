@@ -60,7 +60,7 @@ export class DesktopAdapter {
     const state={phase:'loading' as 'loading'|'ready'|'error',url:undefined as string|undefined,error:''},epoch=this.epoch;this.imageLoads.set(key,state);this.emit();
     const start=async()=>{this.imageActive++;const controller=new AbortController();this.imageControllers.add(controller);
       try {if(epoch!==this.epoch)return;const response=await fetch(`/_desktop/api/works/${part(id)}/sessions/${part(session)}/runs/${part(run)}/images/${image.imageIndex}`,{credentials:'same-origin',signal:controller.signal});
-        if(!response.ok){const value=await response.json().catch(()=>({}));if(response.status===401)await this.checkBrowserAccess().catch(()=>undefined);throw new Error(value.message || value.code || 'Image could not be read.');}
+        if(!response.ok){const value=await response.json().catch(()=>({}));if(response.status===401)await this.checkSession().catch(()=>undefined);throw new Error(value.message || value.code || 'Image could not be read.');}
         if(response.headers.get('Content-Type')!==image.mimeType || Number(response.headers.get('Content-Length'))!==image.byteSize || image.byteSize>5*1024**2)throw new Error('The image response could not be verified.');
         const blob=await response.blob();if(blob.size!==image.byteSize)throw new Error('The image response is incomplete.');
         const hash=await sha256Hex(new Uint8Array(await blob.arrayBuffer()));if(hash!==image.sha256)throw new Error('The saved image is corrupt.');
@@ -73,7 +73,7 @@ export class DesktopAdapter {
   retryHistoryImage(id:string,session:string,run:string,image:HistoryImage){this.imageLoads.delete(this.historyImageKey(id,session,run,image.imageIndex));this.loadHistoryImage(id,session,run,image);this.emit();}
   stopImageReads(){for(const c of this.imageControllers)c.abort();this.imageQueue=[];for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();}
   state = { works: [] as Work[], operations: [] as Operation[], snapshots: [] as Snapshot[], scenario: 'loading', signedIn: false,
-    browserAccess: 'checking' as 'checking' | 'authorized' | 'required' | 'unavailable', browserAccessReason: '', browserAccessChecked: '', cleanupRequired: false,
+    sessionState: 'loading' as 'loading' | 'ready' | 'unavailable', sessionError: '', cleanupRequired: false,
     core: { address: '', name: 'Core', account: '', role: '', proxyPort: '', username: '' }, transfers: [] as TransferResult[], lastChecked: '' };
   requests = new Map<string, { loading: boolean; error: string; items: Data[]; nextCursor: string|null; checkedAt?: string }>();
   requestDetails = new Map<string, Data>();
@@ -159,7 +159,7 @@ export class DesktopAdapter {
   private interactionTimer?: ReturnType<typeof setInterval>;
   private capabilityReads = new Map<string, Promise<void>>();
   private sessionTimer?: ReturnType<typeof setTimeout>;
-  private authCheck?: { epoch: number; sequence: number; acceptedEpoch?: number; pending: Promise<Data> };
+  private authCheck?: { epoch: number; sequence: number; acceptedEpoch?: number; connectionOwned?: boolean; pending: Promise<Data>; controller: AbortController };
   private authSequence = 0;
   connectionCheck = { checking: false, error: '', checkedAt: '', waiting: false };
   private connectionRequest?: { epoch: number; pending: Promise<void> };
@@ -173,13 +173,13 @@ export class DesktopAdapter {
       response = await fetch('/_desktop/api/preferences', { method, credentials: 'same-origin',
         headers: method === 'GET' ? {} : { 'X-Piwork-Csrf': csrf, ...(method === 'PUT' ? { 'Content-Type': 'application/json' } : {}) },
         ...(method === 'PUT' ? { body: JSON.stringify({ coreUrl }) } : {}) });
-    } catch { throw new DesktopError(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'Default Core could not be read. Check browser access and try reading again.' : 'The response was lost. Read the saved default before making another change.'); }
+    } catch { throw new DesktopError(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'Default Core could not be read. Check the connection and try reading again.' : 'The response was lost. Read the saved default before making another change.'); }
     const value = await response.json().catch(() => null);
-    if (csrf !== this.csrf) throw new DesktopError(method === 'GET' ? 'LOCAL_AUTH_REQUIRED' : 'RESULT_UNKNOWN', 'Browser access changed. Reopen Desktop and read the saved default.');
+    if (csrf !== this.csrf) throw new DesktopError(method === 'GET' ? 'LOCAL_AUTH_REQUIRED' : 'RESULT_UNKNOWN', 'The session changed. Read the saved default again before making another change.');
     if (!response.ok) {
       const code = value?.code || (method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN');
-      if (['LOCAL_AUTH_REQUIRED', 'LOCAL_CSRF_OR_AUTH_REQUIRED'].includes(code)) await this.checkBrowserAccess().catch(() => undefined);
-      const message = ({ INVALID_DESKTOP_PREFERENCES: 'Enter an HTTP(S) Core origin without credentials, a path, query, or fragment.', DESKTOP_PREFERENCES_BUSY: 'Another instance is saving the default. Wait, read it again, then retry.', DESKTOP_PREFERENCES_UNAVAILABLE: 'The saved default is corrupt or storage is unsafe or unavailable. Restore automatic selection for a corrupt record; check the storage location for permission errors.', DESKTOP_PREFERENCES_OUTCOME_UNKNOWN: 'The change was committed but could not be confirmed. Read the saved default before making another change.' } as Record<string,string>)[code] || 'Default Core could not be confirmed. Check browser access and read again.';
+      if (['LOCAL_AUTH_REQUIRED', 'LOCAL_CSRF_OR_AUTH_REQUIRED'].includes(code)) await this.checkSession().catch(() => undefined);
+      const message = ({ INVALID_DESKTOP_PREFERENCES: 'Enter an HTTP(S) Core origin without credentials, a path, query, or fragment.', DESKTOP_PREFERENCES_BUSY: 'Another instance is saving the default. Wait, read it again, then retry.', DESKTOP_PREFERENCES_UNAVAILABLE: 'The saved default is corrupt or storage is unsafe or unavailable. Restore automatic selection for a corrupt record; check the storage location for permission errors.', DESKTOP_PREFERENCES_OUTCOME_UNKNOWN: 'The change was committed but could not be confirmed. Read the saved default before making another change.' } as Record<string,string>)[code] || 'Default Core could not be confirmed. Check the connection and read again.';
       throw new DesktopError(code, message, response.status);
     }
     if (!value || Object.keys(value).length !== 1 || !('coreUrl' in value) || value.coreUrl !== null && typeof value.coreUrl !== 'string') throw new DesktopError(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', 'The response could not be verified. Read the saved default again.');
@@ -244,6 +244,7 @@ export class DesktopAdapter {
   getSnapshot(id: string) { return this.state.snapshots.find(snapshot => snapshot.id === id); }
   worksLoading = false; worksChecked = ''; worksError = '';
   private clearIdentity(preserveInspection = false) {
+    if (this.hosted) { try { for (const key of Object.keys(sessionStorage)) if (key.startsWith('piwork:web:')) sessionStorage.removeItem(key); } catch {} }
     const inspection = preserveInspection ? { context: this.inspectionContext, summary: this.inspection, transfer: this.inspectionTransfer, progress: this.transferProgress } : null;
     if (!preserveInspection) { this.inspectionSelection++; this.inspectionNonce++; this.inspectionContext?.xhr?.abort(); this.inspectionContext = null; this.transferProgress = null; this.cleanupPending.clear(); }
     this.epoch++; this.connectionRequest = undefined; Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false }); this.worksLoading = false; this.worksChecked = ''; this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
@@ -315,20 +316,16 @@ export class DesktopAdapter {
     if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while reading the response.');
     if (!response.ok) {
       const code = value?.code ?? `HTTP_${response.status}`;
-      if (path !== 'session' && code === 'LOCAL_AUTH_REQUIRED') {
-        if (authSequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this response.');
-        this.requireBrowserAccess('Browser access ended. Use the latest reopen command.');
-      }
-      else if (path !== 'session' && code === 'LOCAL_CSRF_OR_AUTH_REQUIRED') {
-        if (authSequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this response.');
-        const pending = this.checkBrowserAccess(), sequence = this.authSequence;
+      if (path !== 'session' && ['LOCAL_AUTH_REQUIRED','LOCAL_CSRF_OR_AUTH_REQUIRED'].includes(code)) {
+        if (authSequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer sign-in flow owns this response.');
+        const pending = this.checkSession(), sequence = this.authSequence;
         await pending.catch(() => undefined);
-        if (sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this readback.');
-        throw new DesktopError(code, this.state.browserAccess === 'authorized' ? 'Browser access checked. The original action was rejected locally; submit it explicitly again if needed.' : (this.hosted ? 'Browser access ended. Sign in again on this server.' : 'Browser access ended. Reopen Desktop from the same system user’s terminal.'), response.status);
+        if (sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer sign-in flow owns this readback.');
+        throw new DesktopError(code, this.state.sessionState === 'ready' ? 'The session was refreshed. The original action was rejected locally; submit it explicitly again if needed.' : 'The browser session could not be restored. Retry the connection before submitting again.', response.status);
       }
       else if (response.status === 401 && path !== 'login' && path !== 'session') {
         if (authSequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this response.');
-        const pending = this.checkBrowserAccess(), sequence = this.authSequence;
+        const pending = this.checkSession(), sequence = this.authSequence;
         const session = await pending;
         if (sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this readback.');
         if (session.state === 'offline') throw new DesktopError('CORE_UNAVAILABLE', 'Core is unreachable. Last confirmed data is preserved.');
@@ -338,8 +335,6 @@ export class DesktopAdapter {
         }
       }
       const serviceErrors:Record<string,string> = {
-        SERVICE_ORIGIN_CAPACITY:'The server Service port pool is full or its ports are busy. Ask the operator to enlarge --service-ports and allow that range through the firewall. Existing origins stay reserved to their Services.',
-        SERVICE_ORIGIN_STORAGE_UNAVAILABLE:'Service origin storage could not be confirmed. Ask the operator to check the installation data directory, then retry.',
         SERVICE_ENTRY_LIMIT:'The server has reached its active Service entry limit. Close unused browser sessions before retrying.',
         SERVICE_GENERATION_CHANGED:'The Work or Service restarted. Reopen its current entry from this Work.',
       };
@@ -358,7 +353,7 @@ export class DesktopAdapter {
       this.clearIdentity(preserve);
       if (preserve && value.state === 'authenticated') context.anonymous = false;
     }
-    this.state.browserAccess = 'authorized'; this.state.browserAccessReason = ''; this.state.browserAccessChecked = new Date().toISOString(); this.state.cleanupRequired = value.cleanupRequired === true;
+    this.state.sessionState = 'ready'; this.state.sessionError = ''; this.state.cleanupRequired = value.cleanupRequired === true;
     this.generation = value.generation; this.csrf = value.csrf ?? this.csrf;
     this.state.core.address = value.coreUrl ?? ''; this.state.core.name = 'Core';
     const user = value.user ?? value.lastKnownUser;
@@ -368,103 +363,77 @@ export class DesktopAdapter {
     else if (changed || !previouslySignedIn || !this.state.signedIn) this.state.scenario = 'normal';
     this.state.lastChecked = value.lastConfirmedAt ?? this.state.lastChecked;
   }
-  private requireBrowserAccess(reason: string) {
-    if (this.hosted) { location.assign('/login'); return; }
-    if (this.state.browserAccess !== 'required') this.clearIdentity();
-    this.csrf = ''; this.generation = -1; this.state.signedIn = false;
-    this.state.core.account = ''; this.state.core.role = ''; this.status = {};
-    this.state.browserAccess = 'required'; this.state.browserAccessReason = reason;
-    this.state.scenario = 'ticket-expired'; clearTimeout(this.sessionTimer); this.emit();
-  }
-  private unavailableBrowserAccess() {
-    this.state.browserAccess = 'unavailable'; this.state.browserAccessReason = this.hosted ? 'The Piwork server could not be reached. Retry the connection.' : 'The local CLI could not be reached or its response could not be verified. Check browser access before continuing.';
+  private unavailableSession(error: unknown) {
+    this.state.sessionState = 'unavailable';
+    this.state.sessionError = error instanceof DesktopError && error.code === 'LOCAL_SESSION_CAPACITY'
+      ? 'Desktop has reached 128 active browser sessions. Wait for an unused session to expire, then retry the connection.'
+      : error instanceof DesktopError && error.code === 'LOCAL_SESSION_UNAVAILABLE'
+        ? 'Desktop could not create a browser session. Retry the connection.'
+        : errorText(error);
     this.emit();
   }
-  private finishAccessCheck(sequence: number) {
-    if (sequence === this.authSequence && this.state.browserAccess === 'checking') this.unavailableBrowserAccess();
-  }
-  private sessionRead(): Promise<Data> {
-    return this.request('session').then(value => {
-      if (!['signed-out', 'authenticated', 'offline'].includes(value.state) || typeof value.csrf !== 'string' || !value.csrf || !Number.isInteger(value.generation) || typeof value.coreUrl !== 'string') throw new DesktopError('INVALID_RESPONSE', 'The local session response could not be verified.');
+  private sessionRead(signal: AbortSignal): Promise<Data> {
+    return this.request('session', 'GET', undefined, signal).then(value => {
+      if (!['signed-out', 'authenticated', 'offline'].includes(value.state) || typeof value.csrf !== 'string' || !value.csrf || !Number.isInteger(value.generation) || typeof value.coreUrl !== 'string') throw new DesktopError('INVALID_RESPONSE', 'The session response could not be verified. Retry the connection.');
       return value;
     });
   }
-  async checkBrowserAccess(): Promise<Data> {
+  async checkSession(): Promise<Data> {
     if (this.authCheck?.epoch === this.epoch && this.authCheck.sequence === this.authSequence) return this.authCheck.pending;
-    const epoch = this.epoch, sequence = ++this.authSequence;
+    const epoch = this.epoch, sequence = ++this.authSequence, controller = new AbortController();
     let pending!: Promise<Data>;
     pending = (async () => {
       try {
-        const value = await this.sessionRead();
-        if (epoch !== this.epoch || sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'An older access check was discarded.');
-        this.acceptSession(value);
-        if (this.authCheck?.pending === pending) this.authCheck.acceptedEpoch = this.epoch;
-        this.scheduleSessionCheck(); this.emit(); return value;
-      } catch (error) {
-        if (epoch === this.epoch && sequence === this.authSequence) {
-          if (error instanceof DesktopError && error.code === 'LOCAL_AUTH_REQUIRED') this.requireBrowserAccess('This browser is not authorized to connect to the local CLI. Use the latest launch address.');
-          else if (!(error instanceof DesktopError && error.code === 'CONNECTION_CHANGED')) this.unavailableBrowserAccess();
+        let value = await this.sessionRead(controller.signal);
+        if (epoch !== this.epoch || sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'An older session read was discarded.');
+        if (value.sessionCreated === true) {
+          const confirmed = await this.sessionRead(controller.signal);
+          if (epoch !== this.epoch || sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'An older session read was discarded.');
+          if (confirmed.sessionCreated === true || confirmed.csrf !== value.csrf) throw new DesktopError('SESSION_COOKIE_UNAVAILABLE', 'This browser did not retain its session Cookie. Allow cookies for this Desktop, then retry the connection.');
+          value = confirmed;
         }
+        this.acceptSession(value);
+        const acceptedEpoch = this.epoch, connectionOwned = this.authCheck?.connectionOwned;
+        if (this.authCheck?.pending === pending) this.authCheck.acceptedEpoch = acceptedEpoch;
+        this.scheduleSessionCheck(); this.emit();
+        // An explicit connection check continues against exactly this accepted
+        // identity. Standalone session renewal also refreshes the new identity.
+        if (epoch !== acceptedEpoch && acceptedEpoch === this.epoch && sequence === this.authSequence && this.state.signedIn && !connectionOwned) void this.readConnection().catch(() => undefined);
+        return value;
+      } catch (error) {
+        if (epoch !== this.epoch || sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'An older session read was discarded.');
+        if (!(error instanceof DesktopError && error.code === 'CONNECTION_CHANGED')) this.unavailableSession(error);
         throw error;
-      } finally { this.finishAccessCheck(sequence); if (this.authCheck?.pending === pending) this.authCheck = undefined; }
+      } finally { if (this.authCheck?.pending === pending) this.authCheck = undefined; }
     })();
-    this.authCheck = { epoch, sequence, pending }; return pending;
+    this.authCheck = { epoch, sequence, pending, controller }; return pending;
   }
   async initialize() {
-    const ticket = new URLSearchParams(location.hash.slice(1)).get('ticket');
-    if (ticket) history.replaceState(null, '', location.pathname + location.search);
-    this.state.browserAccess = 'checking'; this.emit();
-    const epoch = this.epoch, sequence = ++this.authSequence;
-    let value: Data;
-    try {
-      try { value = await this.sessionRead(); }
-      catch (error) {
-        if (epoch !== this.epoch || sequence !== this.authSequence) return;
-        if (!(error instanceof DesktopError && error.code === 'LOCAL_AUTH_REQUIRED')) { this.unavailableBrowserAccess(); return; }
-        if (!ticket) { this.requireBrowserAccess('This browser is not authorized to connect to the local CLI.'); return; }
-        let redeemed = false, denied = '';
-        try { await this.request('bootstrap', 'POST', { ticket }); redeemed = true; }
-        catch (exchange) {
-          if (exchange instanceof DesktopError && exchange.code === 'CONNECTION_CHANGED') return;
-          if (exchange instanceof DesktopError && ['LOCAL_BOOTSTRAP_DENIED', 'LOCAL_SESSION_CAPACITY', 'LOCAL_SESSION_UNAVAILABLE'].includes(exchange.code)) denied = exchange.code;
-        }
-        // Never repeat a one-use exchange, including a lost response. Verify Cookie.
-        try { value = await this.sessionRead(); }
-        catch (verification) {
-          if (epoch !== this.epoch || sequence !== this.authSequence) return;
-          if (verification instanceof DesktopError && verification.code === 'LOCAL_AUTH_REQUIRED') {
-            const reason = denied === 'LOCAL_SESSION_CAPACITY' ? 'The Desktop has reached 128 active browser sessions. In an authorized window, confirm Reset browser access, then reopen.' : redeemed ? 'The launch address was accepted, but this browser did not retain its Cookie. Allow local site Cookies, then request a new launch address.' : 'The launch address is expired, already used, or its exchange could not be confirmed. Use the most recent reopen output.';
-            this.requireBrowserAccess(reason);
-          } else this.unavailableBrowserAccess();
-          return;
-        }
+    if (new URLSearchParams(location.hash.slice(1)).has('ticket')) history.replaceState(null, '', location.pathname + location.search);
+    this.authSequence++; this.authCheck?.controller.abort();
+    this.state.sessionState = 'loading'; this.state.sessionError = ''; this.emit();
+    const pending = this.checkSession(), sequence = this.authSequence;
+    const slow = setTimeout(() => {
+      if (sequence === this.authSequence && this.state.sessionState === 'loading') {
+        this.state.sessionError = 'Still reading your Desktop session. You can retry the connection if the server is unavailable.'; this.emit();
       }
-      if (epoch !== this.epoch || sequence !== this.authSequence) return;
-      this.acceptSession(value); this.scheduleSessionCheck(); this.emit();
-      if (this.state.signedIn) await this.checkConnection();
-    } finally { this.finishAccessCheck(sequence); }
+    }, 10000);
+    try { await pending; }
+    catch (error) { if (sequence === this.authSequence && this.state.sessionState === 'loading') this.unavailableSession(error); return; }
+    finally { clearTimeout(slow); }
+    if (sequence === this.authSequence && this.state.signedIn) await this.checkConnection();
   }
   private scheduleSessionCheck() {
     clearTimeout(this.sessionTimer);
-    if (this.state.browserAccess !== 'authorized') return;
+    if (this.state.sessionState !== 'ready') return;
     this.sessionTimer = setTimeout(async () => {
-      try { const before = this.generation; await this.checkBrowserAccess(); if (before !== this.generation && this.state.signedIn) await this.checkConnection(); }
-      catch { /* Local recovery is shown by the explicit session check. */ }
+      try { await this.checkSession(); } catch { /* The connection error stays visible until a read succeeds. */ }
       this.scheduleSessionCheck();
     }, 15000);
   }
-  reopenCommand() { return `piwork-cli desktop open --port ${this.localPort()} --no-open`; }
   logoutCommand() { return `piwork-cli desktop logout --port ${this.localPort()}`; }
   startCommand() { return `piwork-cli desktop --port ${this.localPort()} --no-open`; }
   private localPort() { const port = Number(location.port || 17891); return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 17891; }
-  async resetBrowserAccess() {
-    this.authSequence++;
-    try {
-      const result = await this.request('browser-access/reset', 'POST');
-      if (result.browserAccessCleared !== true || result.coreSessionRetained !== true) throw new DesktopError('RESULT_UNKNOWN', 'Reset could not be confirmed. Check browser access.');
-      this.requireBrowserAccess('Browser access was reset for all windows of this Desktop. The saved Core login and running Works are retained. Reopen from the terminal.');
-    } catch (error) { await this.checkBrowserAccess().catch(() => undefined); throw error; }
-  }
   async signIn(core: string, account: string, password: string) {
     this.authSequence++;
     if (core !== this.state.core.address) this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core }));
@@ -474,7 +443,8 @@ export class DesktopAdapter {
   }
   async switchCore(core: string) { this.authSequence++; this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core })); if (this.state.signedIn) await this.checkConnection(); this.emit(); }
   async signOut() { this.authSequence++; const value = await this.request('logout', 'POST'); this.clearIdentity(); this.acceptSession(value.view); this.emit(); return value; }
-  checkConnection(): Promise<void> {
+  checkConnection(): Promise<void> { return this.readConnection(true); }
+  private readConnection(checkSession = false): Promise<void> {
     if (this.connectionRequest?.epoch === this.epoch) return this.connectionRequest.pending;
     let epoch = this.epoch;
     Object.assign(this.connectionCheck, { checking: true, error: '', waiting: false }); this.emit();
@@ -482,14 +452,17 @@ export class DesktopAdapter {
     let pending!: Promise<void>;
     pending = (async () => {
       try {
-        const access = this.checkBrowserAccess(), accessCheck = this.authCheck;
-        await access;
-        // This session read may legitimately accept a new generation. Follow only
-        // the identity it accepted, never a later external switch or newer check.
-        if (accessCheck?.acceptedEpoch !== this.epoch || accessCheck.sequence !== this.authSequence || this.connectionRequest && this.connectionRequest.pending !== pending) return;
-        if (epoch !== this.epoch) {
-          epoch = this.epoch; this.connectionRequest = { epoch, pending };
-          Object.assign(this.connectionCheck, { checking: true, error: '', waiting: false }); this.emit();
+        if (checkSession) {
+          const session = this.checkSession(), sessionCheck = this.authCheck;
+          if (sessionCheck) sessionCheck.connectionOwned = true;
+          await session;
+          // This session read may legitimately accept a new generation. Follow only
+          // the identity it accepted, never a later external switch or newer check.
+          if (sessionCheck?.acceptedEpoch !== this.epoch || sessionCheck.sequence !== this.authSequence || this.connectionRequest && this.connectionRequest.pending !== pending) return;
+          if (epoch !== this.epoch) {
+            epoch = this.epoch; this.connectionRequest = { epoch, pending };
+            Object.assign(this.connectionCheck, { checking: true, error: '', waiting: false }); this.emit();
+          }
         }
         const status = await this.request('status');
         if (epoch !== this.epoch) return;
@@ -984,7 +957,7 @@ export class DesktopAdapter {
         if (!current()) return;
         if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port) throw new DesktopError('SERVICE_IDENTITY_CHANGED', 'The application entry identity changed.', 403);
         entry.embed = value.embed === 'blocked' ? 'denied' : value.embed;
-        entry.entryUrl = entry.origin + '/'; entry.checkError = ''; this.emit();
+        entry.entryUrl = entry.origin + (entry.basePath ?? '/'); entry.checkError = ''; this.emit();
         if (value.embed !== 'unknown') { entry.checked = true; this.emit(); return; }
         await new Promise(resolve => setTimeout(resolve, 250));
       }

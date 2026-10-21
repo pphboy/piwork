@@ -5,7 +5,7 @@ services:
     init: true
     user: "0:0"
     network_mode: host
-    command: ["serve", "--data-dir", "/var/lib/piwork/core", "--no-open"]
+    command: ["--data-dir", "/var/lib/piwork/core"]
     volumes:
       - type: bind
         source: /var/run/docker.sock
@@ -17,15 +17,10 @@ services:
         target: /var/lib/piwork/core
         bind:
           create_host_path: true
-      - type: bind
-        source: /var/lib/piwork/core-exchange
-        target: /var/lib/piwork/core-exchange
-        bind:
-          create_host_path: true
     stop_grace_period: 60s
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:7171/healthz"]
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:17891/healthz"]
       interval: 5s
       timeout: 4s
       retries: 120

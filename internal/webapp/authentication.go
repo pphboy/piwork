@@ -36,7 +36,7 @@ func (s *Server) pruneLocked() {
 func (s *Server) serveAuthentication(w http.ResponseWriter, r *http.Request) bool {
 	path := r.URL.Path
 	if path == "/_web/api/state" && r.Method == http.MethodGet {
-		hasUsers, err := s.options.Core.Identity.HasUsers(r.Context())
+		hasUsers, err := s.hasUsers(r.Context())
 		if err != nil {
 			sendError(w, err)
 			return true
@@ -51,7 +51,7 @@ func (s *Server) serveAuthentication(w http.ResponseWriter, r *http.Request) boo
 		}
 		ss, err := s.authenticate(r)
 		if err == nil {
-			webJSON(w, 200, s.sessionView(ss))
+			s.writeSession(w, r, ss)
 			return true
 		}
 		if status, _ := contracts.ProjectError(err); status >= 500 {
@@ -62,7 +62,7 @@ func (s *Server) serveAuthentication(w http.ResponseWriter, r *http.Request) boo
 		s.pruneLocked()
 		id := requestCookie(r, s.challengeCookie)
 		ch, ok := s.challenges[id]
-		if !ok {
+		if !ok || ch.origin != s.requestOrigin(r) {
 			if len(s.challenges) >= 2048 {
 				s.mu.Unlock()
 				webError(w, 429, "CONSOLE_CHALLENGE_CAPACITY")
@@ -78,12 +78,13 @@ func (s *Server) serveAuthentication(w http.ResponseWriter, r *http.Request) boo
 				webError(w, 503, "CONSOLE_SESSION_UNAVAILABLE")
 				return true
 			}
+			ch.origin = s.requestOrigin(r)
 			ch.expires = time.Now().Add(10 * time.Minute)
 			s.challenges[id] = ch
 		}
 		s.mu.Unlock()
 		s.setCookie(w, s.challengeCookie, id, int(time.Until(ch.expires).Seconds()))
-		webJSON(w, 200, map[string]any{"authenticated": false, "state": "signed-out", "mode": "hosted", "csrf": ch.csrf, "csrfToken": ch.csrf, "generation": 0, "coreUrl": s.options.Origin})
+		webJSON(w, 200, map[string]any{"authenticated": false, "state": "signed-out", "mode": "hosted", "csrf": ch.csrf, "csrfToken": ch.csrf, "generation": 0, "coreUrl": s.options.CoreURL})
 		return true
 	}
 	if path == "/_web/api/login" || path == "/_desktop/api/login" || path == "/console/api/login" {
@@ -118,19 +119,24 @@ func (s *Server) serveAuthentication(w http.ResponseWriter, r *http.Request) boo
 		s.removeSession(ss)
 		s.setCookie(w, s.cookie, "", -1)
 		webJSON(w, 200, map[string]any{"loggedOut": true, "localCleared": true, "remoteRevocationConfirmed": true, "credentialCleared": true,
-			"view": map[string]any{"state": "signed-out", "mode": "hosted", "generation": 2, "coreUrl": s.options.Origin}})
+			"view": map[string]any{"state": "signed-out", "mode": "hosted", "generation": 2, "coreUrl": s.options.CoreURL}})
 		return true
 	}
 	return false
 }
 
-func (s *Server) sessionView(ss *session) map[string]any {
+func (s *Server) writeSession(w http.ResponseWriter, r *http.Request, ss *session) {
+	status, err := s.api("").ControlStatus(r.Context())
+	if err != nil {
+		sendError(w, err)
+		return
+	}
 	next := "/"
-	if ss.credential.User.Role == "admin" && !s.options.Core.Status().Checks.RuntimeConfigured {
+	if ss.credential.User.Role == "admin" && !status.Checks.RuntimeConfigured {
 		next = "/admin/setup"
 	}
-	return map[string]any{"authenticated": true, "state": "authenticated", "mode": "hosted", "user": ss.credential.User,
-		"expiresAt": ss.credential.ExpiresAt, "csrf": ss.csrf, "csrfToken": ss.csrf, "generation": 1, "coreUrl": s.options.Origin, "next": next}
+	webJSON(w, 200, map[string]any{"authenticated": true, "state": "authenticated", "mode": "hosted", "user": ss.credential.User,
+		"expiresAt": ss.credential.ExpiresAt, "csrf": ss.csrf, "csrfToken": ss.csrf, "generation": 1, "coreUrl": s.options.CoreURL, "next": next})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +156,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.pruneLocked()
 	ch, ok := s.challenges[id]
-	if s.closed || !ok || !secretEqual(csrfHeader(r), ch.csrf) {
+	if s.closed || !ok || ch.origin != s.requestOrigin(r) || !secretEqual(csrfHeader(r), ch.csrf) {
 		s.mu.Unlock()
 		webError(w, 403, "CSRF_INVALID")
 		return
@@ -186,7 +192,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			webError(w, 429, "RATE_LIMITED")
 			return
 		}
-		if !errors.As(err, &apiErr) || apiErr.Status == 0 || apiErr.Status >= 500 {
+		if !errors.As(err, &apiErr) || apiErr.Status != 401 {
 			webError(w, 502, "CORE_UNAVAILABLE")
 			return
 		}
@@ -224,22 +230,16 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = private.Close()
 	}
-	desktop, err := cli.NewHostedDesktop(cli.HostedDesktopOptions{Origin: s.options.Origin, SessionID: sessionID, CSRF: csrf, CookieName: s.cookie,
-		StateDirectory: stateDirectory, RecordDirectory: recordDirectory, Credential: record, Transport: s.transport, Services: s.services})
+	desktop, err := cli.NewHostedDesktop(cli.HostedDesktopOptions{Origin: s.requestOrigin(r), SessionID: sessionID, CSRF: csrf, CookieName: s.cookie,
+		StateDirectory: stateDirectory, RecordDirectory: recordDirectory, Credential: record, Transport: s.transport})
 	if err != nil {
 		_ = s.api(record.Token).Logout(r.Context())
 		_ = os.RemoveAll(stateDirectory)
 		webError(w, 503, "BROWSER_SESSION_UNAVAILABLE")
 		return
 	}
-	ss := &session{id: sessionID, csrf: csrf, credential: record, expires: expiry, desktop: desktop, stateDirectory: stateDirectory}
-	watch, cancel, watchErr := s.options.Core.Identity.WatchSession(s.ctx, record.Token)
-	if watchErr != nil {
-		desktop.Close()
-		_ = os.RemoveAll(stateDirectory)
-		sendError(w, watchErr)
-		return
-	}
+	ss := &session{origin: s.requestOrigin(r), id: sessionID, csrf: csrf, credential: record, expires: expiry, desktop: desktop, stateDirectory: stateDirectory}
+	watch, cancel := context.WithCancel(s.ctx)
 	ss.cancel = cancel
 	s.mu.Lock()
 	if s.closed || len(s.sessions) >= 1024 || r.Context().Err() != nil {
@@ -254,14 +254,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	previous := s.sessions[requestCookie(r, s.cookie)]
 	s.sessions[sessionID] = ss
 	s.mu.Unlock()
-	context.AfterFunc(watch, func() { s.removeSession(ss) })
+	go s.observeSession(watch, ss)
 	if previous != nil {
 		s.removeSession(previous)
 		_ = s.api(previous.credential.Token).Logout(r.Context())
 	}
 	s.setCookie(w, s.challengeCookie, "", -1)
 	s.setCookie(w, s.cookie, sessionID, int(time.Until(expiry).Seconds()))
-	webJSON(w, 200, s.sessionView(ss))
+	s.writeSession(w, r, ss)
 }
 
 func csrfHeader(r *http.Request) string {

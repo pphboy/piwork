@@ -23,12 +23,12 @@ func loadPriorSkills(store *corestore.Store, dataDirectory, workID, priorContext
 		return nil, ErrContext
 	}
 	defer works.Close()
-	work, err := works.OpenDirectory(workID)
+	work, err := works.OpenPrivateDirectory(workID)
 	if err != nil {
 		return nil, ErrContext
 	}
 	defer work.Close()
-	contexts, err := work.OpenDirectory("contexts")
+	contexts, err := work.OpenPrivateDirectory("contexts")
 	if err != nil {
 		return nil, ErrContext
 	}
@@ -87,7 +87,7 @@ func loadSelectedSkills(store *corestore.Store, names contracts.SkillSelection) 
 
 func writeSelectedSkills(root *safefs.Root, selected []skillartifact.Snapshot, id string) error {
 	for _, snapshot := range selected {
-		skill, err := root.OpenDirectory(snapshot.Name)
+		skill, err := contextDirectory(root, snapshot.Name)
 		if err != nil {
 			return err
 		}
@@ -135,7 +135,13 @@ func contextDirectory(root *safefs.Root, relative string) (*safefs.Root, error) 
 			}
 			return nil, ErrContext
 		}
-		next, err := current.OpenDirectory(part)
+		// Reuse the installation lock while creating a private staging tree;
+		// immutable published contexts remain readable during publication.
+		err := current.EnsureDirectory(part)
+		var next *safefs.Root
+		if err == nil {
+			next, err = current.OpenPrivateDirectory(part)
+		}
 		if current != root {
 			current.Close()
 		}

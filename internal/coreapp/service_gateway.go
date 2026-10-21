@@ -360,6 +360,15 @@ func (g *serviceGateway) serve(w http.ResponseWriter, r *http.Request) {
 		gatewayFail(w, contracts.NewError("INVALID_REQUEST", ""))
 		return
 	}
+	prefix := ""
+	if values := r.Header.Values("X-Forwarded-Prefix"); len(values) != 0 {
+		expected := "/services/" + target.WorkID + "/" + target.ServiceID + "/" + strconv.FormatInt(target.Port, 10)
+		if len(values) != 1 || values[0] != expected {
+			gatewayFail(w, contracts.NewError("INVALID_REQUEST", ""))
+			return
+		}
+		prefix = expected
+	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	writer := &gatewayWriter{ResponseWriter: w, ctx: ctx}
@@ -384,6 +393,14 @@ func (g *serviceGateway) serve(w http.ResponseWriter, r *http.Request) {
 				pr.Out.Host = net.JoinHostPort(target.Hostname, strconv.FormatInt(requestedPort, 10))
 			}
 			stripGatewayHeaders(pr.Out.Header)
+			for name := range pr.Out.Header {
+				if strings.EqualFold(name, "Forwarded") || strings.HasPrefix(strings.ToLower(name), "x-forwarded-") {
+					pr.Out.Header.Del(name)
+				}
+			}
+			if prefix != "" {
+				pr.Out.Header.Set("X-Forwarded-Prefix", prefix)
+			}
 		},
 		ModifyResponse: func(response *http.Response) error { stripGatewayHeaders(response.Header); return nil },
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {

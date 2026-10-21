@@ -107,7 +107,8 @@ function deferred() { let resolve!: () => void; const promise = new Promise<void
 test('standalone account menu retains Core and browser controls without hosted management links',async t=>{
  const {page}=await fixture(t,()=>undefined);
  await button(page,'back-works').click();await button(page,'account').click();const menu=page.getByRole('menu');
- for(const name of ['About Piwork','Known operations','Switch Core','Reset browser access','Sign out'])await expect(menu.getByRole('menuitem',{name,exact:true})).toBeVisible();
+ for(const name of ['About Piwork','Known operations','Switch Core','Sign out'])await expect(menu.getByRole('menuitem',{name,exact:true})).toBeVisible();
+ await expect(menu.getByRole('menuitem',{name:'Reset browser access',exact:true})).toHaveCount(0);
  for(const name of ['Administration','Quick setup'])await expect(menu.getByRole('menuitem',{name,exact:true})).toHaveCount(0);
  await page.keyboard.press('End');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(button(page,'account')).toBeFocused();
 });
@@ -168,7 +169,7 @@ test('Advanced Create Work keeps feedback visible and buttons stable when the re
 test('About displays local version while Core is delayed and escapes embedded notes',async t=>{
  const gate=deferred();t.after(()=>gate.resolve());
  const about=(program:string,version:string)=>({aboutApiVersion:1,build:{program,version,commit:'fixture',modified:true,os:'linux',architecture:'amd64'},releaseNotes:{version,title:'Update',sections:[{title:'Fixes',items:['<script>window.notesExecuted=true</script>']}]},releasesUrl:'https://github.com/pphboy/piwork/releases'});
- const {page,requests}=await fixture(t,async r=>{if(r.path==='about')return {json:about('piwork-cli','client-test')};if(r.path==='core-about'){await gate.promise;return {json:about('piwork-serve','core-test')};}});
+ const {page,requests}=await fixture(t,async r=>{if(r.path==='about')return {json:about('piwork-cli','client-test')};if(r.path==='core-about'){await gate.promise;return {json:about('piwork-core','core-test')};}});
  await button(page,'back-works').click();await button(page,'account').click();await button(page,'about-piwork').click();await expect(page.locator('#modal')).toContainText('client-test');await expect(page.locator('#modal')).not.toContainText('core-test');
  gate.resolve();await expect(page.locator('#modal')).toContainText('core-test');await page.locator('#modal details').first().locator('summary').click();await expect(page.locator('#modal')).toContainText('<script>');assert.equal(await page.evaluate(()=>(window as any).notesExecuted),undefined);
  await expect(page.locator('#modal a').first()).toHaveAttribute('href','https://github.com/pphboy/piwork/releases');assert.equal(requests.filter(r=>r.method==='POST').length,0);

@@ -159,8 +159,8 @@ func TestDesktopControlProtocolBoundsAndPeers(t *testing.T) {
 			t.Fatal("malformed accepted", string(rawReply))
 		}
 	}
-	if d.ticket != "" {
-		t.Fatal("invalid protocol issued a ticket")
+	if len(d.sessions) != 0 {
+		t.Fatal("invalid protocol established a browser session")
 	}
 	if _, err := requestDesktopControl(context.Background(), d.port, "open"); err != nil {
 		t.Fatal(err)

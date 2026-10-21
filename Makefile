@@ -11,8 +11,8 @@ help:
 	@echo 'test-integration     Run Go Engine and real Go browser integration tests'
 	@echo 'acceptance           Run integration tests and require every scenario to have evidence'
 	@echo 'release              Build native images and a checksumed release archive'
-	@echo 'build-go             Build seven native migration entry points'
-	@echo 'build-cli            Build standalone Windows/Linux clients and Desktop assets'
+	@echo 'build-go             Build piwork-core and piwork-cli for Linux'
+	@echo 'build-cli            Build the standalone Linux client and Desktop assets'
 	@echo 'native-agent-images  Build Agent targets containing Go MCP/package helpers'
 	@echo 'native-helper-images Build Go file/snapshot helper images'
 	@echo 'native-compatibility-images Build real SDK-version and registry fault fixtures'
@@ -42,7 +42,8 @@ webui-assets:
 	npm run clean -w @piwork/desktop-webui -w @piwork/console-webui
 	npm run build -w @piwork/desktop-webui -w @piwork/console-webui
 
-build: harness-fixtures webui-assets build-go
+build: harness-fixtures webui-assets
+	$(MAKE) build-go
 
 native-agent-images:
 	bash scripts/build-native-agent-images.sh
@@ -104,5 +105,5 @@ acceptance: test-integration test-native-host acceptance-index
 	node scripts/check-native-image-boundary.mjs
 	node scripts/check-go-acceptance.mjs
 
-release: build native-agent-images native-helper-images
-	bash scripts/package-go-release.sh
+release:
+	node scripts/release-linux.mjs

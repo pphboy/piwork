@@ -1524,20 +1524,6 @@ type WebRuntimeSelectionInput struct {
 	AgentImage Field[string] `json:"agentImage,omitzero"`
 }
 
-type WebSetupLink struct {
-	Url string `json:"url"`
-}
-
-type WebSetupProofInput struct {
-	Proof string `json:"proof"`
-}
-
-type WebSetupSession struct {
-	Authorized bool          `json:"authorized"`
-	Complete   Field[bool]   `json:"complete,omitzero"`
-	CsrfToken  Field[string] `json:"csrfToken,omitzero"`
-}
-
 type WebSetupState struct {
 	AdministratorInitialized bool `json:"administratorInitialized"`
 }

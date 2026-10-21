@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +19,7 @@ import (
 
 func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	_, source, _, _ := runtime.Caller(0)
-	binary := filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-serve")
+	binary := filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-core")
 	if _, err := os.Stat(binary); err != nil {
 		t.Fatal("make build-go is required", err)
 	}
@@ -34,10 +33,11 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	if image == "" {
 		image = "piwork-agentd:go-migration-acceptance"
 	}
+	binary = processFixtureBinary(t, image, image, os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	start := func() (string, func()) {
-		cmd := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0")
+		cmd := exec.CommandContext(ctx, binary, processStartupArgs(t, directory)...)
 		cmd.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + dockerHost, "DOCKER_CONFIG=" + dockerConfig}
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -59,7 +59,10 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 				line <- nil
 			}
 		}()
-		var listening struct{ Event, URL string }
+		var listening struct {
+			Event string
+			URL   string `json:"coreUrl"`
+		}
 		select {
 		case raw := <-line:
 			if json.Unmarshal(raw, &listening) != nil || listening.Event != "app.listening" || listening.URL == "" {
@@ -91,6 +94,9 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 			// their bounded safe projection, rather than requiring silent stderr.
 			scanner := bufio.NewScanner(bytes.NewReader(stderr.Bytes()))
 			for scanner.Scan() {
+				if strings.HasPrefix(scanner.Text(), "Could not open a browser. Open http://") && strings.HasSuffix(scanner.Text(), " manually.") {
+					continue
+				}
 				var entry map[string]any
 				if json.Unmarshal(scanner.Bytes(), &entry) != nil || entry["event"] != "performance" || (entry["phase"] != "image-inspection" && entry["phase"] != "environment-probe") || (entry["outcome"] != "started" && entry["outcome"] != "succeeded" && entry["outcome"] != "cancelled") {
 					t.Fatal("native Core emitted a failure or an unexpected diagnostic")
@@ -116,60 +122,31 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	}
 	base, stop := start()
 	// A second actual process must fail on the directory lock before binding.
-	second := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0")
+	second := exec.CommandContext(ctx, binary, processStartupArgs(t, directory)...)
 	second.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools")}
 	var secondOutput, secondError bytes.Buffer
 	second.Stdout, second.Stderr = &secondOutput, &secondError
 	if err := second.Run(); err == nil || secondOutput.Len() != 0 || !strings.Contains(secondError.String(), "another Core") {
 		t.Fatal("second native owner was not rejected before listen")
 	}
-	invoke := func(program string, args []string, secret string, want int) map[string]any {
-		command := exec.CommandContext(ctx, program, append([]string{"--core", base, "--data-dir", directory, "--json"}, args...)...)
-		command.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools")}
-		command.Stdin = strings.NewReader(secret)
-		var stdout, stderr bytes.Buffer
-		command.Stdout, command.Stderr = &stdout, &stderr
-		err := command.Run()
-		code := 0
-		if err != nil {
-			if exited, ok := err.(*exec.ExitError); ok {
-				code = exited.ExitCode()
-			} else {
-				t.Fatal("native operator could not execute")
-			}
-		}
-		if code != want || secret != "" && strings.Contains(stdout.String()+stderr.String(), secret) {
-			t.Fatal("unexpected operator exit or secret leak", code, want)
-		}
-		if want != 0 {
-			if stdout.Len() != 0 || stderr.Len() == 0 {
-				t.Fatal("invalid operator failure projection")
-			}
-			return nil
-		}
-		if stderr.Len() != 0 {
-			t.Fatal("successful operator emitted diagnostic")
-		}
-		decoder := json.NewDecoder(&stdout)
-		var result map[string]any
-		if decoder.Decode(&result) != nil {
-			t.Fatal("operator stdout was not JSON")
-		}
-		var extra any
-		if err := decoder.Decode(&extra); err != io.EOF {
-			t.Fatal("operator printed multiple results")
+	operatorBytes, err := os.ReadFile(filepath.Join(directory, "operator.credential"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorAuth := "Operator " + strings.TrimSpace(string(operatorBytes))
+	control := func(method, path string, body any, want int) map[string]any {
+		t.Helper()
+		status, result := httpCall(t, base, "/control/"+path, method, operatorAuth, body)
+		if status != want {
+			t.Fatalf("operator %s: %d", path, status)
 		}
 		return result
 	}
-	alias := filepath.Join(filepath.Dir(binary), "piwork")
 	if status, body := httpCall(t, base, "/readyz", "GET", "", nil); status != 503 || body["reason"] != "ADMIN_REQUIRED" {
 		t.Fatal(status, body)
 	}
-	if result := invoke(binary, []string{"admin", "bootstrap", "--account", "admin", "--password-stdin"}, "native-fixture-password", 0); result["account"] != "admin" {
-		t.Fatal("native operator did not bootstrap")
-	}
-	invoke(alias, []string{"admin", "bootstrap", "--account", "replacement", "--password-stdin"}, "replacement-fixture-password", 6)
-	invoke(alias, []string{"login"}, "", 2)
+	control("POST", "admin/bootstrap", map[string]any{"account": "admin", "password": "native-fixture-password"}, 201)
+	control("POST", "admin/bootstrap", map[string]any{"account": "replacement", "password": "replacement-fixture-password"}, 409)
 	status, login := httpCall(t, base, "/api/v1/login", "POST", "", map[string]any{"account": "admin", "password": "native-fixture-password"})
 	if status != 200 {
 		t.Fatal(status)
@@ -177,34 +154,37 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	token := login["token"].(string)
 	// Real Go Core -> Engine save -> static native image checks. No Agent/Work
 	// is created in this startup/identity fixture and no real model is called.
-	if result := invoke(binary, []string{"config", "set", "--agent-image", image, "--model-provider", "piwork-deterministic", "--model", "fixture-v1", "--api-key-stdin"}, "native-deterministic-fixture", 0); result["configured"] != true {
-		t.Fatal("native operator did not save runtime")
+	if result := control("PUT", "runtime", map[string]any{"provider": "piwork-deterministic", "model": "fixture-v1", "credential": "native-deterministic-fixture"}, 200); result["configured"] != true {
+		t.Fatal("operator runtime write failed")
 	}
+
 	// Saving the runtime confirms persistence; dependency preparation is
 	// asynchronous and must be observed before asserting a ready status.
-	readyDeadline := time.Now().Add(time.Minute)
-	for {
-		status, body := httpCall(t, base, "/readyz", "GET", "", nil)
-		if status == 200 {
-			break
+	awaitReady := func() {
+		readyDeadline := time.Now().Add(time.Minute)
+		for {
+			status, body := httpCall(t, base, "/readyz", "GET", "", nil)
+			if status == 200 {
+				break
+			}
+			if time.Now().After(readyDeadline) || ctx.Err() != nil {
+				t.Fatal("runtime preparation did not become ready", status, body)
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
-		if time.Now().After(readyDeadline) || ctx.Err() != nil {
-			t.Fatal("runtime preparation did not become ready", status, body)
-		}
-		time.Sleep(50 * time.Millisecond)
 	}
-	if result := invoke(alias, []string{"status"}, "", 0); result["ready"] != true {
-		t.Fatal("native alias did not read status")
+	awaitReady()
+	if control("GET", "status", nil, 200)["ready"] != true {
+		t.Fatal("operator status failed")
 	}
-	if result := invoke(binary, []string{"config", "show"}, "", 0); result["configured"] != true {
-		t.Fatal("native operator did not read runtime")
+	if control("GET", "runtime", nil, 200)["configured"] != true {
+		t.Fatal("operator runtime read failed")
 	}
-	if result := invoke(alias, []string{"config", "default-work", "set", "--no-skills"}, "", 0); len(result["configuration"].(map[string]any)["skills"].([]any)) != 0 {
-		t.Fatal("native alias did not save default Work")
+	control("PUT", "default-work", map[string]any{"patch": map[string]any{"skills": []any{}}}, 200)
+	if len(control("GET", "default-work", nil, 200)["configuration"].(map[string]any)["skills"].([]any)) != 0 {
+		t.Fatal("operator defaults failed")
 	}
-	if result := invoke(binary, []string{"config", "default-work", "show"}, "", 0); len(result["configuration"].(map[string]any)["skills"].([]any)) != 0 {
-		t.Fatal("native operator did not read updated default Work")
-	}
+	awaitReady()
 	if status, body := httpCall(t, base, "/readyz", "GET", "", nil); status != 200 || body["reason"] != "READY" {
 		t.Fatal(status, body)
 	}
@@ -235,5 +215,5 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 		t.Fatal("dependency failure stopped Core health")
 	}
 	stop()
-	t.Log("native Core and operator/alias initialized online, checked native image, reopened same session and exited; no host interpreter or Docker command available")
+	t.Log("native Core and operator HTTP initialized online, checked native image, reopened same session and exited; no host interpreter or Docker command available")
 }

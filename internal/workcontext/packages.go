@@ -46,12 +46,12 @@ func Metadata(store *corestore.Store, workID, contextID string) (contracts.WorkC
 		return metadata, err
 	}
 	defer works.Close()
-	work, err := works.OpenDirectory(workID)
+	work, err := works.OpenPrivateDirectory(workID)
 	if err != nil {
 		return metadata, err
 	}
 	defer work.Close()
-	contexts, err := work.OpenDirectory("contexts")
+	contexts, err := work.OpenPrivateDirectory("contexts")
 	if err != nil {
 		return metadata, err
 	}

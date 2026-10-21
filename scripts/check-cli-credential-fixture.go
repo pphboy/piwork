@@ -12,8 +12,8 @@ import (
 	"piwork/internal/client"
 )
 
-// Test-only bootstrap for browser fake-Core fixtures. Native creation is
-// necessary on Windows; Node's mode 0600 cannot establish the required DACL.
+// Test-only bootstrap for browser fake-Core fixtures. Use the native credential
+// store so fixtures follow the same private storage contract as the client.
 func main() {
 	path := flag.String("config", "", "new native credential fixture path")
 	flag.Parse()
