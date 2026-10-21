@@ -292,7 +292,7 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case path == "/_desktop/api/about" && r.Method == http.MethodGet:
 		program := "piwork-cli"
 		if d.hosted != nil {
-			program = "piwork-serve"
+			program = "piwork-core"
 		}
 		desktopJSON(w, 200, releaseinfo.Read(program))
 	case path == "/_desktop/api/preferences":

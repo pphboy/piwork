@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"piwork/internal/client"
 	"piwork/internal/pipackage"
@@ -45,13 +44,15 @@ func TestNativeConsolePackageInputsStageValidateAndUpload(t *testing.T) {
 	}))
 	defer core.Close()
 	root := t.TempDir()
-	c := &nativeConsole{options: consoleOptions{coreURL: core.URL, publicOrigin: "https://console.example:7173", dataDir: root},
-		sessions: map[string]consoleSession{"local": {token: "core-token", csrf: "csrf", user: client.Identity{ID: "user-1", Account: "owner", Role: "admin"}, expiresAt: time.Now().Add(time.Hour)}}}
+	origin := "http://localhost:17891"
+	c := NewHostedHandler(HostedOptions{CoreURL: core.URL, DataDirectory: root, Origin: func(r *http.Request) string { return origin }, Resolve: func(r *http.Request) (HostedSession, error) {
+		return HostedSession{ID: "local", Token: "core-token", CSRF: "csrf", User: client.Identity{ID: "user-1", Account: "owner", Role: "admin"}}, nil
+	}})
 	call := func(kind, contentType, filename string, content []byte) *httptest.ResponseRecorder {
 		t.Helper()
-		r := httptest.NewRequest("POST", c.options.publicOrigin+"/console/api/package-inputs/"+kind, bytes.NewReader(content))
-		r.Header.Set("Cookie", consoleSessionCookie+"=local")
-		r.Header.Set("Origin", c.options.publicOrigin)
+		r := httptest.NewRequest("POST", origin+"/console/api/package-inputs/"+kind, bytes.NewReader(content))
+		r.Header.Set("Cookie", "session=local")
+		r.Header.Set("Origin", origin)
 		r.Header.Set("X-Csrf-Token", "csrf")
 		r.Header.Set("Content-Type", contentType)
 		if filename != "" {

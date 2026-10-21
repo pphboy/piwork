@@ -25,7 +25,7 @@ func TestAboutUsesCoreIdentityWithoutRuntimeAndRequiresCurrentUser(t *testing.T)
 		}
 		auth := "Bearer " + login.Token
 		status, value := httpCall(t, base, "/api/v1/about", "GET", auth, nil)
-		if status != 200 || value["releasesUrl"] != releaseinfo.ReleasesURL || value["build"].(map[string]any)["program"] != "piwork-serve" {
+		if status != 200 || value["releasesUrl"] != releaseinfo.ReleasesURL || value["build"].(map[string]any)["program"] != "piwork-core" {
 			t.Fatal(status, value)
 		}
 		if a.Status().Ready {

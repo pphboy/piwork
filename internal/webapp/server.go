@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +35,7 @@ type Server struct {
 	ctx                     context.Context
 	options                 Options
 	origin                  *url.URL
+	authorities             map[string]bool
 	transport               *http.Transport
 	setup                   *client.SetupClient
 	console                 http.Handler
@@ -50,12 +52,14 @@ type session struct {
 	checkMu        sync.Mutex
 	checking       *sessionCheck
 	id, csrf       string
+	origin         string
 	credential     client.Credential
 	expires        time.Time
 	desktop        *cli.HostedDesktop
 	stateDirectory string
 }
 type challenge struct {
+	origin  string
 	csrf    string
 	expires time.Time
 }
@@ -66,7 +70,7 @@ type failureBucket struct {
 
 func New(ctx context.Context, options Options) (*Server, error) {
 	origin, err := client.ParseCoreURL(options.Origin)
-	if err != nil || !filepath.IsAbs(options.DataDirectory) {
+	if err != nil || origin.Scheme != "http" || !filepath.IsAbs(options.DataDirectory) {
 		return nil, errors.New("invalid unified web application configuration")
 	}
 	if _, err := client.ParseCoreURL(options.CoreURL); err != nil {
@@ -90,19 +94,15 @@ func New(ctx context.Context, options Options) (*Server, error) {
 		return nil, err
 	}
 	key := sha256.Sum256([]byte(options.Origin))
-	prefix := "piwork-web-"
-	if origin.Scheme == "https" {
-		prefix = "__Host-piwork-web-"
-	}
-	cookie := prefix + hex.EncodeToString(key[:6])
-	s := &Server{ctx: ctx, options: options, origin: origin, cookie: cookie, challengeCookie: cookie + "-login",
+	cookie := "piwork-web-" + hex.EncodeToString(key[:6])
+	s := &Server{ctx: ctx, options: options, origin: origin, cookie: cookie, authorities: localAuthorities(origin), challengeCookie: cookie + "-login",
 		sessions: map[string]*session{}, challenges: map[string]challenge{}, failures: map[string]failureBucket{}}
 	s.transport = &http.Transport{Proxy: nil, MaxResponseHeaderBytes: 32 << 10, MaxIdleConns: 128, MaxIdleConnsPerHost: 64, IdleConnTimeout: 90 * time.Second}
 	s.setup, err = client.NewSetupClient(options.CoreURL, options.SetupSecret)
 	if err != nil {
 		return nil, err
 	}
-	s.console = consoleapp.NewHostedHandler(consoleapp.HostedOptions{Origin: options.Origin, CoreURL: options.CoreURL,
+	s.console = consoleapp.NewHostedHandler(consoleapp.HostedOptions{Origin: s.requestOrigin, CoreURL: options.CoreURL,
 		DataDirectory: filepath.Join(options.DataDirectory, "runtime", "browser-console"), Transport: s.transport,
 		Resolve: func(r *http.Request) (consoleapp.HostedSession, error) {
 			ss, err := s.authenticate(r)
@@ -146,7 +146,7 @@ func (s *Server) authenticate(r *http.Request) (*session, error) {
 	s.mu.Lock()
 	ss := s.sessions[id]
 	s.mu.Unlock()
-	if ss == nil {
+	if ss == nil || ss.origin != s.requestOrigin(r) {
 		return nil, contracts.NewError("AUTHENTICATION_REQUIRED", "")
 	}
 	if !time.Now().Before(ss.expires) {
@@ -204,10 +204,10 @@ func (s *Server) collect(ctx context.Context) {
 }
 
 func (s *Server) sameOrigin(r *http.Request, mutation bool) bool {
-	if r.Host != s.origin.Host {
+	if s.requestOrigin(r) == "" {
 		return false
 	}
-	if origin := r.Header.Get("Origin"); origin != "" && origin != s.options.Origin || mutation && origin == "" {
+	if origin := r.Header.Get("Origin"); origin != "" && origin != s.requestOrigin(r) || mutation && origin == "" {
 		return false
 	}
 	site := r.Header.Get("Sec-Fetch-Site")
@@ -227,7 +227,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if r.Host != s.origin.Host {
+	if s.requestOrigin(r) == "" {
 		webError(w, 400, "INVALID_HOST")
 		return
 	}
@@ -391,8 +391,39 @@ func requestCookie(r *http.Request, name string) string {
 	return value
 }
 func (s *Server) setCookie(w http.ResponseWriter, name, value string, seconds int) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: seconds, HttpOnly: true, Secure: s.origin.Scheme == "https", SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: seconds, HttpOnly: true, Secure: false, SameSite: http.SameSiteStrictMode})
 }
 func readObject(r *http.Request, limit int64) (map[string]json.RawMessage, error) {
 	return localweb.ReadObject(r, limit)
+}
+
+// Authorities come only from this machine, never request DNS or proxy headers.
+func localAuthorities(origin *url.URL) map[string]bool {
+	hosts := []string{"localhost", "127.0.0.1", "::1"}
+	if name, err := os.Hostname(); err == nil {
+		hosts = append(hosts, name)
+	}
+	if addresses, err := net.InterfaceAddrs(); err == nil {
+		for _, address := range addresses {
+			if network, ok := address.(*net.IPNet); ok && network.IP.To4() != nil {
+				hosts = append(hosts, network.IP.String())
+			}
+		}
+	}
+	allowed := map[string]bool{}
+	for _, host := range hosts {
+		authority := net.JoinHostPort(host, origin.Port())
+		if origin.Port() == "" {
+			authority = host
+		}
+		allowed[strings.ToLower(authority)] = true
+	}
+	return allowed
+}
+
+func (s *Server) requestOrigin(r *http.Request) string {
+	if !s.authorities[strings.ToLower(r.Host)] {
+		return ""
+	}
+	return "http://" + r.Host
 }

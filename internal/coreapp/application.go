@@ -242,7 +242,7 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 		return nil, err
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
-	a := &Application{Store: store, Identity: id, Settings: settings, files: files, inspectionRoot: root, options: options, ctx: lifetime, cancel: cancel, state: "STORE_OPEN", refresh: make(chan struct{}, 1), serveDone: make(chan error, 1)}
+	a := &Application{Store: store, Identity: id, Settings: settings, files: files, inspectionRoot: root, options: options, ctx: lifetime, cancel: cancel, state: "STORE_OPEN", refresh: make(chan struct{}, 1), serveDone: make(chan error, 2)}
 	a.serviceGateway = newServiceGateway(a)
 	a.packageSlots = make(chan struct{}, 2)
 	a.environmentSlots = make(chan struct{}, 2)
@@ -331,7 +331,11 @@ func (a *Application) Bind(address ListenAddress) (ListenAddress, error) {
 	if strings.EqualFold(bindHost, "localhost") {
 		bindHost = "127.0.0.1"
 	}
-	listener, err := net.Listen("tcp", net.JoinHostPort(bindHost, stringsPort(address.Port)))
+	network := "tcp"
+	if ip := net.ParseIP(bindHost); ip != nil && ip.To4() != nil {
+		network = "tcp4"
+	}
+	listener, err := net.Listen(network, net.JoinHostPort(bindHost, stringsPort(address.Port)))
 	if err != nil {
 		return ListenAddress{}, errors.New("Core HTTP listener is unavailable")
 	}
@@ -445,7 +449,10 @@ func (a *Application) initializeDocker(ctx context.Context) error {
 		resources.SetPackageSettler(func(ctx context.Context, plan dockerengine.ResourcePlan) error {
 			return a.Store.SettlePackageCreation(ctx, plan.WorkID, plan.Kind, plan.LogicalID, plan.Name)
 		})
-		manager, err := internaltls.Open(filepath.Join(a.options.DataDirectory, "runtime", "agent-tls"), a.Store)
+		manager := a.agentTLS
+		if manager == nil {
+			manager, err = internaltls.Open(filepath.Join(a.options.DataDirectory, "runtime", "agent-tls"), a.Store)
+		}
 		if err != nil {
 			return err
 		}

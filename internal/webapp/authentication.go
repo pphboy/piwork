@@ -62,7 +62,7 @@ func (s *Server) serveAuthentication(w http.ResponseWriter, r *http.Request) boo
 		s.pruneLocked()
 		id := requestCookie(r, s.challengeCookie)
 		ch, ok := s.challenges[id]
-		if !ok {
+		if !ok || ch.origin != s.requestOrigin(r) {
 			if len(s.challenges) >= 2048 {
 				s.mu.Unlock()
 				webError(w, 429, "CONSOLE_CHALLENGE_CAPACITY")
@@ -78,6 +78,7 @@ func (s *Server) serveAuthentication(w http.ResponseWriter, r *http.Request) boo
 				webError(w, 503, "CONSOLE_SESSION_UNAVAILABLE")
 				return true
 			}
+			ch.origin = s.requestOrigin(r)
 			ch.expires = time.Now().Add(10 * time.Minute)
 			s.challenges[id] = ch
 		}
@@ -155,7 +156,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.pruneLocked()
 	ch, ok := s.challenges[id]
-	if s.closed || !ok || !secretEqual(csrfHeader(r), ch.csrf) {
+	if s.closed || !ok || ch.origin != s.requestOrigin(r) || !secretEqual(csrfHeader(r), ch.csrf) {
 		s.mu.Unlock()
 		webError(w, 403, "CSRF_INVALID")
 		return
@@ -229,7 +230,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = private.Close()
 	}
-	desktop, err := cli.NewHostedDesktop(cli.HostedDesktopOptions{Origin: s.options.Origin, SessionID: sessionID, CSRF: csrf, CookieName: s.cookie,
+	desktop, err := cli.NewHostedDesktop(cli.HostedDesktopOptions{Origin: s.requestOrigin(r), SessionID: sessionID, CSRF: csrf, CookieName: s.cookie,
 		StateDirectory: stateDirectory, RecordDirectory: recordDirectory, Credential: record, Transport: s.transport})
 	if err != nil {
 		_ = s.api(record.Token).Logout(r.Context())
@@ -237,7 +238,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		webError(w, 503, "BROWSER_SESSION_UNAVAILABLE")
 		return
 	}
-	ss := &session{id: sessionID, csrf: csrf, credential: record, expires: expiry, desktop: desktop, stateDirectory: stateDirectory}
+	ss := &session{origin: s.requestOrigin(r), id: sessionID, csrf: csrf, credential: record, expires: expiry, desktop: desktop, stateDirectory: stateDirectory}
 	watch, cancel := context.WithCancel(s.ctx)
 	ss.cancel = cancel
 	s.mu.Lock()

@@ -11,7 +11,14 @@ fi
 
 piwork_build_dir="${PIWORK_GO_BUILD_DIR:-dist/go}"
 go run ./scripts/releaseinfo-check
-mkdir -p "$piwork_build_dir"
+if [[ "${GOOS:-linux}/${GOARCH:-amd64}" != "linux/amd64" ]]; then
+  echo "Native builds support only linux/amd64." >&2
+  exit 1
+fi
+export GOOS=linux GOARCH=amd64
+piwork_build_dir=$(node scripts/managed-output.mjs prepare "$piwork_build_dir")
+piwork_build_stage=$(mktemp -d "${piwork_build_dir}.stage-XXXXXXXX")
+trap 'rm -rf -- "$piwork_build_stage"' EXIT
 piwork_build_commit="$(git rev-parse --verify HEAD)"
 piwork_build_modified=false
 if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
@@ -37,5 +44,5 @@ if [[ -n "${PIWORK_RELEASE_METADATA:-}" ]]; then
 fi
 go build -mod=readonly -trimpath -buildvcs=true \
   -ldflags "-X piwork/internal/buildinfo.Version=$piwork_build_version -X piwork/internal/buildinfo.Commit=$piwork_build_commit -X piwork/internal/buildinfo.Modified=$piwork_build_modified -X piwork/internal/buildinfo.DesktopUIHash=$piwork_desktop_hash -X piwork/internal/buildinfo.ConsoleUIHash=$piwork_console_hash $piwork_server_defaults" \
-  -o "$piwork_build_dir/" ./cmd/...
-ln -sfn piwork-serve "$piwork_build_dir/piwork"
+  -o "$piwork_build_stage/" ./cmd/piwork-core ./cmd/piwork-cli
+node scripts/managed-output.mjs commit "$piwork_build_dir" "$piwork_build_stage"

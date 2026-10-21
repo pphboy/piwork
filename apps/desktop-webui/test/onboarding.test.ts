@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { chromium, expect } from '@playwright/test';
 
-const binary=process.env.PIWORK_TEST_UNIFIED_BIN || fileURLToPath(new URL('../../../../dist/go/piwork-serve',import.meta.url));
+const binary=process.env.PIWORK_TEST_UNIFIED_BIN || fileURLToPath(new URL('../../../../dist/go/piwork-core',import.meta.url));
 const browserOptions=process.env.PIWORK_TEST_BROWSER_BIN ? {executablePath:process.env.PIWORK_TEST_BROWSER_BIN,headless:true,args:['--no-proxy-server']} : {headless:true,channel:'chromium' as const,args:['--no-proxy-server']};
 const serverIP=Object.entries(networkInterfaces()).filter(([name])=>/^(eth|en|wl)/.test(name)).flatMap(([,items])=>items||[]).find(item=>item.family==='IPv4'&&!item.internal)?.address || '127.0.0.1';
 
@@ -23,7 +23,9 @@ async function start(environment:Record<string,string>={}, existing?:{directory:
   const port=existing?.port || (reserve.address() as {port:number}).port; await new Promise<void>((resolve,reject)=>reserve.close(err=>err?reject(err):resolve()));
   const origin=`http://${serverIP}:${port}`;
   const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>!name.startsWith('PIWORK_')));
-  const processHandle=spawn(binary,['--no-open','--listen',`0.0.0.0:${port}`,'--core-listen','127.0.0.1:0','--data-dir',directory,'--agent-grpc-listen','0.0.0.0:0','--docker-host',engineHost||'unix://'+join(directory,'missing-engine.sock')],{env:{...env,...environment},stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams;
+  const coreReserve=createServer();await new Promise<void>(done=>coreReserve.listen(0,'127.0.0.1',done));
+  const corePort=(coreReserve.address() as {port:number}).port;await new Promise<void>(done=>coreReserve.close(()=>done()));
+  const processHandle=spawn(binary,['--ui-port',String(port),'--core-port',String(corePort),'--data-dir',directory],{env:{...env,...environment,DISPLAY:'',WAYLAND_DISPLAY:'',DOCKER_HOST:engineHost||'unix://'+join(directory,'missing-engine.sock')},stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams;
   let output='',stderr='',exited=false;
   processHandle.stdout.on('data',data=>{output+=data.toString();});
   processHandle.stderr.on('data',data=>{stderr+=data.toString();});

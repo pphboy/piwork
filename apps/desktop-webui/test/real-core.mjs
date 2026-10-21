@@ -1,3 +1,5 @@
+import {operatorAPI} from '../../../scripts/native-test-core-api.mjs';
+import {buildNativeTestServer} from '../../../scripts/native-test-server.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -8,7 +10,7 @@ import { join, resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
-const coreBinary = resolve(process.env.PIWORK_TEST_NATIVE_CORE || join(repositoryRoot, 'dist/go/piwork-serve'));
+let coreBinary = resolve(process.env.PIWORK_TEST_NATIVE_CORE || join(repositoryRoot, 'dist/go/piwork-core'));
 const cliBinary = resolve(process.env.PIWORK_TEST_NATIVE_CLI || join(repositoryRoot, 'dist/go/piwork-cli'));
 const image = process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE || 'piwork-agentd:go-migration-acceptance';
 const fileImage = process.env.PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE || 'piwork-file-helper:go-migration-acceptance';
@@ -33,11 +35,6 @@ async function waitFor(check, label, timeout = 90_000) {
     await new Promise((done) => setTimeout(done, 250));
   }
   throw new Error(`Timed out waiting for ${label}: ${last || 'no result'}`);
-}
-function operator(coreUrl, dataDir, args, input) {
-  const result = spawnSync(coreBinary, ['--core', coreUrl, '--data-dir', dataDir, ...args],
-    { input, encoding: 'utf8', env: { ...process.env, PATH: '/nonexistent' } });
-  assert.equal(result.status, 0, `${args.join(' ')}: ${result.stdout} ${result.stderr}`);
 }
 async function api(coreUrl, token, method, path, body) {
   const response = await fetch(coreUrl + path, { method, headers: {
@@ -94,18 +91,15 @@ await mkdir(screenshotDir, { recursive: true });
 let core, desktop, browser, page;
 let coreOutput = () => '', desktopOutput = () => '';
 try {
-  const [corePort, grpcPort, desktopPort] = await Promise.all([freePort(), freePort(), freePort()]);
+  const [corePort, uiPort, desktopPort] = await Promise.all([freePort(), freePort(), freePort()]);
   const coreUrl = `http://127.0.0.1:${corePort}`;
-  core = spawn(coreBinary, ['serve', '--data-dir', dataDir, '--listen', '127.0.0.1:0', '--core-listen', `127.0.0.1:${corePort}`,
-    '--agent-grpc-listen', `0.0.0.0:${grpcPort}`], { stdio: ['ignore', 'pipe', 'pipe'], env: {
-      ...process.env, PATH: '/nonexistent', PIWORK_PACKAGE_HELPER_IMAGE: image,
-      PIWORK_FILE_HELPER_IMAGE: fileImage, PIWORK_SNAPSHOT_HELPER_IMAGE: snapshotImage,
-    } });
+  if(!process.env.PIWORK_TEST_NATIVE_CORE)coreBinary=buildNativeTestServer(join(root,'bin'),{agent:image,packageHelper:image,fileHelper:fileImage,snapshotHelper:snapshotImage});
+  core=spawn(coreBinary,['--data-dir',dataDir,'--ui-port',String(uiPort),'--core-port',String(corePort)],{stdio:['ignore','pipe','pipe'],env:{...process.env,PATH:'/nonexistent',DISPLAY:'',WAYLAND_DISPLAY:''}});
   coreOutput = capture(core);
   await waitFor(async () => (await fetch(`${coreUrl}/healthz`)).ok, 'Go Core health');
-  operator(coreUrl, dataDir, ['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], 'real-browser-admin-password\n');
-  operator(coreUrl, dataDir, ['config', 'set', '--agent-image', image,
-    '--model-provider', 'piwork-deterministic', '--model', 'fixture-v1', '--api-key-stdin'], 'fixture-key\n');
+  const control=await operatorAPI(coreUrl,dataDir);
+  await control('POST','admin/bootstrap',{account:'admin',password:'real-browser-admin-password'});
+  await control('PUT','runtime',{provider:'piwork-deterministic',model:'fixture-v1',credential:'fixture-key'});
   await waitFor(async () => (await fetch(`${coreUrl}/readyz`)).ok, 'Go Core readiness');
   const login = await api(coreUrl, '', 'POST', '/api/v1/login',
     { account: 'admin', password: 'real-browser-admin-password' });
@@ -424,6 +418,7 @@ try {
   await expect(page.locator('.object-control-progress [data-action=operation]')).toBeVisible();
   await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 180000 });
+  await page.getByRole('button', { name: 'Services', exact: true }).click();
   await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor({ timeout: 20000 });
   await waitState(workId, 'ready');
   console.log('Real Desktop: original Work Start confirmed');

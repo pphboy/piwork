@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -31,9 +32,9 @@ func (w *lockedOutput) text() string { w.mu.Lock(); defer w.mu.Unlock(); return 
 
 func TestUnifiedHelpVersionAndWrongUserCommandsHaveNoStartupEffects(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	for _, args := range [][]string{{"--help"}, {"serve", "--no-open", "--help"}, {"--version"}, {"login"}, {"chat", "synthetic-work"}} {
+	for _, args := range [][]string{{"--help"}, {"--version"}, {"login"}, {"chat", "synthetic-work"}} {
 		var out, stderr bytes.Buffer
-		code := Run(context.Background(), args, strings.NewReader(""), &out, &stderr)
+		code := Run(context.Background(), args, &out, &stderr)
 		if args[0] == "login" || args[0] == "chat" {
 			if code != 2 || !strings.Contains(stderr.String(), "piwork-cli") {
 				t.Fatal("wrong user entry accepted", code)
@@ -54,8 +55,8 @@ func TestUnifiedHelpVersionAndWrongUserCommandsHaveNoStartupEffects(t *testing.T
 func TestStartupRejectsInvalidOptionsBeforeCreatingData(t *testing.T) {
 	for _, extra := range [][]string{{"--agent-image", "fixture/agent:override"}, {"--agent-image=fixture/agent:override"}, {"--listen", "invalid"}, {"--core-listen", "invalid"}, {"--listen", "127.0.0.1:1", "--listen", "127.0.0.1:2"}, {"--public-origin", "http://invalid/path"}, {"--tls-cert", "missing"}, {"--service-ports", "1-65535"}, {"--service-ports", "7000-7200"}} {
 		directory := filepath.Join(t.TempDir(), "uncreated")
-		args := append([]string{"--data-dir", directory, "--no-open"}, extra...)
-		if code := RunServe(context.Background(), args, io.Discard, io.Discard); code != 2 {
+		args := append([]string{"--data-dir", directory}, extra...)
+		if code := Run(context.Background(), args, io.Discard, io.Discard); code != 2 {
 			t.Fatal("invalid startup accepted", extra, code)
 		}
 		if _, err := os.Stat(directory); !os.IsNotExist(err) {
@@ -65,11 +66,11 @@ func TestStartupRejectsInvalidOptionsBeforeCreatingData(t *testing.T) {
 }
 
 func TestBrowserOriginNeverPrintsUnspecifiedAddressAndFormatsIPv6(t *testing.T) {
-	if value := browserOrigin(coreapp.ListenAddress{Host: "::1", Port: 17891}, true); value != "https://[::1]:17891" {
+	if value := browserOrigin(coreapp.ListenAddress{Host: "::1", Port: 17891}); value != "http://[::1]:17891" {
 		t.Fatal("IPv6 URL invalid", value)
 	}
 	for _, host := range []string{"0.0.0.0", "::"} {
-		value := browserOrigin(coreapp.ListenAddress{Host: host, Port: 17891}, false)
+		value := browserOrigin(coreapp.ListenAddress{Host: host, Port: 17891})
 		if strings.Contains(value, "0.0.0.0") || strings.Contains(value, "[::]") {
 			t.Fatal("unspecified browser link", value)
 		}
@@ -100,7 +101,7 @@ func TestNoArgumentsStartsOnePersistentApplicationAndReleasesItsLock(t *testing.
 	defer cancel()
 	var out, stderr lockedOutput
 	done := make(chan int, 1)
-	go func() { done <- Run(ctx, nil, strings.NewReader(""), &out, &stderr) }()
+	go func() { done <- Run(ctx, nil, &out, &stderr) }()
 	var origin string
 	for i := 0; i < 200 && origin == ""; i++ {
 		for _, line := range strings.Split(out.text(), "\n") {
@@ -137,7 +138,7 @@ func TestNoArgumentsStartsOnePersistentApplicationAndReleasesItsLock(t *testing.
 		}
 	}
 	directory := filepath.Join(config, "piwork", "server")
-	if code := RunServe(context.Background(), []string{"--data-dir", directory, "--listen", "127.0.0.1:7170", "--no-open"}, io.Discard, io.Discard); code != 1 {
+	if code := Run(context.Background(), []string{"--data-dir", directory, "--ui-port", "7170"}, io.Discard, io.Discard); code != 1 {
 		t.Fatal("second Core owner accepted", code)
 	}
 	cancel()
@@ -200,7 +201,7 @@ func TestInvalidAdminEnvironmentHasNoFilesystemEffects(t *testing.T) {
 	t.Setenv("PIWORK_ADMIN_PASSWORD", "short")
 	directory := filepath.Join(t.TempDir(), "missing-parent", "server")
 	var stderr bytes.Buffer
-	if code := RunServe(context.Background(), []string{"--data-dir", directory, "--no-open"}, io.Discard, &stderr); code != 2 || !strings.Contains(stderr.String(), "PIWORK_ADMIN_PASSWORD") || strings.Contains(stderr.String(), "short") {
+	if code := Run(context.Background(), []string{"--data-dir", directory}, io.Discard, &stderr); code != 2 || !strings.Contains(stderr.String(), "PIWORK_ADMIN_PASSWORD") || strings.Contains(stderr.String(), "short") {
 		t.Fatal("invalid admin bootstrap projection", code)
 	}
 	if _, err := os.Stat(filepath.Dir(directory)); !os.IsNotExist(err) {
@@ -209,22 +210,26 @@ func TestInvalidAdminEnvironmentHasNoFilesystemEffects(t *testing.T) {
 }
 
 func TestEitherListenerConflictClosesPartialStartup(t *testing.T) {
-	for _, occupied := range []string{"browser", "core"} {
+	for _, occupied := range []string{"browser", "core", "rpc"} {
 		t.Run(occupied, func(t *testing.T) {
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			occupiedAddress := "127.0.0.1:0"
+			if occupied == "rpc" {
+				occupiedAddress = "127.0.0.1:7172"
+			}
+			listener, err := net.Listen("tcp", occupiedAddress)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer listener.Close()
 			directory := t.TempDir()
-			ui, coreAddress := "127.0.0.1:0", "127.0.0.1:0"
+			ui, coreAddress := freePort(t), freePort(t)
 			if occupied == "browser" {
-				ui = listener.Addr().String()
-			} else {
-				coreAddress = listener.Addr().String()
+				ui = strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+			} else if occupied == "core" {
+				coreAddress = strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 			}
 			var out, diagnostic bytes.Buffer
-			code := RunServe(context.Background(), []string{"--listen", ui, "--core-listen", coreAddress, "--data-dir", directory, "--no-open"}, &out, &diagnostic)
+			code := Run(context.Background(), []string{"--ui-port", ui, "--core-port", coreAddress, "--data-dir", directory}, &out, &diagnostic)
 			if code != 1 || strings.Contains(out.String(), "app.listening") {
 				t.Fatal("partial startup published", code, out.String())
 			}
@@ -299,8 +304,48 @@ func TestCancelledStartupDoesNotAdvertiseListeners(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var out bytes.Buffer
-	code := RunServe(ctx, []string{"--data-dir", t.TempDir(), "--listen", "127.0.0.1:0", "--core-listen", "127.0.0.1:0", "--no-open"}, &out, io.Discard)
+	code := Run(ctx, []string{"--data-dir", t.TempDir()}, &out, io.Discard)
 	if code != 0 || strings.Contains(out.String(), "app.listening") {
 		t.Fatal("cancelled startup published readiness", code)
+	}
+}
+
+func freePort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
+}
+func TestThreeOptionsRejectOldCommandsAndMalformedValues(t *testing.T) {
+	for _, args := range [][]string{
+		{"serve"}, {"status"}, {"admin"}, {"config"}, {"skills"}, {"packages"}, {"operation"}, {"help"},
+		{"--help", "serve"}, {"--version", "--data-dir", "secret"},
+		{"--ui-port", "0"}, {"--ui-port", "-1"}, {"--ui-port", "65536"}, {"--ui-port", "+80"}, {"--ui-port", "1.5"},
+		{"--ui-port", "7172"}, {"--core-port", "7172"}, {"--core-port", "17891"},
+		{"--ui-port=1234", "--ui-port", "1235"}, {"--data-dir="}, {"--data-dir"}, {"--no-open"},
+		{"--docker-host", "secret"}, {"--agent-grpc-listen", "secret"}, {"--public-origin", "secret"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", root)
+			var out, diagnostic bytes.Buffer
+			if code := Run(context.Background(), args, &out, &diagnostic); code != 2 {
+				t.Fatalf("exit=%d", code)
+			}
+			if strings.Contains(diagnostic.String(), "secret") || out.Len() != 0 {
+				t.Fatal("invalid options leaked values")
+			}
+			entries, _ := os.ReadDir(root)
+			if len(entries) != 0 {
+				t.Fatal("invalid options created files")
+			}
+		})
+	}
+	options, err := parseStartup([]string{"--ui-port=65535", "--core-port", "1", "--data-dir", "status"})
+	if err != nil || options.uiPort != 65535 || options.corePort != 1 || options.directory != "status" {
+		t.Fatal(options, err)
 	}
 }

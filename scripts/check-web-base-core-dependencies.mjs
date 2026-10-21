@@ -1,3 +1,4 @@
+import {operatorAPI} from './native-test-core-api.mjs';
 import {buildNativeTestServer} from './native-test-server.mjs';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -89,16 +90,13 @@ export async function runCoreDependencyChecks() {
   try {
     const [httpPort, grpcPort, desktopPort, controlPort] = await Promise.all([port(), port(), port(), port()]);
     coreUrl = `http://127.0.0.1:${httpPort}`;
-    core = spawn(coreBinary, ['serve', '--data-dir', data, '--listen', `127.0.0.1:${controlPort}`, '--core-listen', `127.0.0.1:${httpPort}`, '--agent-grpc-listen', `0.0.0.0:${grpcPort}`],
+    core = spawn(coreBinary, ['--data-dir',data,'--ui-port',String(controlPort),'--core-port',String(httpPort)],
       { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent' } });
     coreOutput = output(core);
     await wait(async () => (await fetch(coreUrl + '/healthz')).ok, 'Core health');
-    const operator = (args, input) => {
-      const result = spawnSync(coreBinary, ['--core', coreUrl, '--data-dir', data, ...args], { input, encoding: 'utf8', env: { ...process.env, PATH: '/nonexistent' } });
-      assert.equal(result.status, 0, `Operator ${args[0]} failed: ${result.stderr}`);
-    };
-    operator(['admin', 'bootstrap', '--account', 'admin', '--password-stdin'], 'web-base-synthetic-password\n');
-    operator(['config', 'set', '--model-provider', 'piwork-deterministic', '--model', 'fixture-v1', '--api-key-stdin'], 'synthetic-fixture-key\n');
+    const control=await operatorAPI(coreUrl,data);
+  await control('POST','admin/bootstrap',{account:'admin',password:'web-base-synthetic-password'});
+  await control('PUT','runtime',{provider:'piwork-deterministic',model:'fixture-v1',credential:'synthetic-fixture-key'});
     await wait(async () => (await fetch(coreUrl + '/readyz')).ok, 'Core readiness');
     token = (await api('POST', '/login', { account: 'admin', password: 'web-base-synthetic-password' })).token;
     const created = await api('POST', '/works', { name: 'NiceGUI dependency validation', idempotencyKey: 'web-base-validation' });

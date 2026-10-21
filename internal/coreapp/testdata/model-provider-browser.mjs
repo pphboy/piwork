@@ -13,13 +13,13 @@ async function wait(check,label){for(let i=0;i<240;i++){try{const v=await check(
 function child(binary,args,env={}){const p=spawn(binary,args,{stdio:['ignore','pipe','pipe'],env:{...e,PATH:'/nonexistent',...env}});children.push(p);let output='';p.stdout.on('data',b=>output+=b);p.stderr.on('data',b=>output+=b);return()=>output;}
 try{
   const [consolePort,desktopPort]=await Promise.all([port(),port()]);
-  const origin=`https://127.0.0.1:${consolePort}`;
-  const output=child(e.PIWORK_TEST_NATIVE_CONSOLE,['serve','--core',e.PIWORK_TEST_MODEL_CORE_URL,'--listen',`127.0.0.1:${consolePort}`,'--public-origin',origin,'--data-dir',join(root,'console'),'--tls-cert',e.PIWORK_TEST_MODEL_CERT,'--tls-key',e.PIWORK_TEST_MODEL_KEY]);
-  await wait(()=>output().includes('piwork-console listening at'),'Console startup');
+  const origin=`http://127.0.0.1:${consolePort}`;
+  const output=child(e.PIWORK_TEST_HOSTED_FIXTURE,[JSON.stringify({Core:e.PIWORK_TEST_MODEL_CORE_URL,Directory:join(root,'admin'),Listen:`127.0.0.1:${consolePort}`})]);
+  await wait(()=>output().includes('hosted fixture listening'),'hosted UI startup');
   browser=await chromium.launch({headless:true,channel:'chromium'});
   const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1440,height:1000}}),page=await context.newPage();
   await page.goto(origin+'/login');await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('development-fixture-pass');await page.getByRole('button',{name:'Sign in',exact:true}).click();
-  await page.getByRole('link',{name:'AI models',exact:true}).click();
+  await page.waitForURL(url=>url.pathname!=='/login');await page.goto(origin+'/admin/models');
   for(const [name,api,key] of [['Browser first','openai-responses','synthetic-browser-first'],['Browser second','openai-responses','synthetic-browser-second'],['Browser Messages','anthropic-messages','synthetic-browser-messages']]){
     await page.getByLabel('Display name (optional)',{exact:true}).fill(name);await page.getByLabel('Model ID',{exact:true}).fill('browser-custom-unknown');await page.getByLabel('API type',{exact:true}).selectOption(api);await page.getByLabel('Base URL',{exact:true}).fill(e.PIWORK_TEST_MODEL_GATEWAY+'/v1/');await page.getByLabel('API Key',{exact:true}).fill(key);
     await expect(page.getByLabel('Provider name',{exact:true})).toHaveCount(0);await expect(page.locator('#model-capabilities')).toHaveCount(0);
@@ -36,6 +36,6 @@ try{
   await choose('Browser second');await desktop.locator('#composer').fill('Choose the other connection with the same model ID.');await desktop.locator('[data-action=send-message]').click();await expect.poll(()=>desktop.evaluate(async work=>{const{adapter}=await import('/desktop/browser/adapter.js');const runs=adapter.getWork(work)?.sessions[0]?.runs||[];return runs.filter(r=>r.status==='succeeded').length;},e.PIWORK_TEST_MODEL_WORK_ID)).toBe(3);
   assert.equal(await desktop.evaluate(async work=>{const{adapter}=await import('/desktop/browser/adapter.js');return adapter.getWork(work)?.sessions.length;},e.PIWORK_TEST_MODEL_WORK_ID),1);
   if(e.PIWORK_TEST_MODEL_SCREENSHOT_DIR){await mkdir(e.PIWORK_TEST_MODEL_SCREENSHOT_DIR,{recursive:true});await page.screenshot({path:join(e.PIWORK_TEST_MODEL_SCREENSHOT_DIR,'serve-models.png'),fullPage:true});await desktop.screenshot({path:join(e.PIWORK_TEST_MODEL_SCREENSHOT_DIR,'chat-two-protocols.png'),fullPage:true});}
-  console.log('Actual Console → Core → Desktop Chat → containerized Pi SDK unknown model selection and independent connection execution passed.');
+  console.log('Actual hosted administration → Core → Desktop Chat → containerized Pi SDK unknown model selection and independent connection execution passed.');
 }catch(error){console.error(String(error.message??error).replace(/#ticket=[\w-]+/g,'#ticket=[redacted]'));process.exitCode=1;}
 finally{await browser?.close();for(const p of children.reverse()){if(p.exitCode===null){p.kill('SIGTERM');await Promise.race([new Promise(r=>p.once('exit',r)),new Promise(r=>setTimeout(r,10000))]);if(p.exitCode===null)p.kill('SIGKILL');}}await rm(root,{recursive:true,force:true});}

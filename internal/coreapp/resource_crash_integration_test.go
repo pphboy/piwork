@@ -132,11 +132,12 @@ func TestNativeCoreRecoversInterruptedCreateServiceAndDelete(t *testing.T) {
 			defer server.Close()
 			defer transport.CloseIdleConnections()
 			_, caller, _, _ := runtime.Caller(0)
-			binary := filepath.Join(filepath.Dir(caller), "../../dist/go/piwork-serve")
+			binary := filepath.Join(filepath.Dir(caller), "../../dist/go/piwork-core")
 			start := func() (*exec.Cmd, string) {
 				t.Helper()
 				seedProcessRuntime(t, dir, image)
-				cmd := exec.CommandContext(ctx, binary, "serve", "--data-dir", dir, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0", "--package-helper-image", image, "--file-helper-image", os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), "--snapshot-helper-image", os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"), "--no-open")
+				binary = processFixtureBinary(t, image, image, os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"))
+				cmd := exec.CommandContext(ctx, binary, processStartupArgs(t, dir)...)
 				cmd.Env = []string{"PATH=/nonexistent", "DOCKER_HOST=unix://" + filepath.Join(sockets, "engine.sock"), "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass"}
 				output, err := cmd.StdoutPipe()
 				if err != nil {
@@ -161,7 +162,9 @@ func TestNativeCoreRecoversInterruptedCreateServiceAndDelete(t *testing.T) {
 						line <- ""
 					}
 				}()
-				var announcement struct{ URL string }
+				var announcement struct {
+					URL string `json:"coreUrl"`
+				}
 				select {
 				case first := <-line:
 					if json.Unmarshal([]byte(first), &announcement) != nil || announcement.URL == "" {

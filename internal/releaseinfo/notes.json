@@ -2,6 +2,37 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.10",
+      "component": "core",
+      "title": "Piwork 0.0.10 Preview",
+      "sections": [
+        {
+          "title": "Simplified Linux delivery",
+          "items": [
+            "Start piwork-core directly with only --ui-port, --core-port and --data-dir. The integrated workbench, administration and setup use HTTP on port 17891; Core HTTP listens on port 17871 for local and remote clients.",
+            "Retire piwork-serve, its piwork alias, standalone Console and terminal Core management commands. Preserve operator identity, protected administration APIs, user authorization and Work data.",
+            "Deliver only piwork-core and piwork-cli for Linux amd64. Keep Agent, MCP and helpers in their runtime images.",
+            "Replace local build and release outputs only after validation, with current production image identities, bilingual materials and checksums."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.10",
+      "component": "desktop",
+      "title": "Piwork 0.0.10 Preview",
+      "sections": [
+        {
+          "title": "Linux native client",
+          "items": [
+            "Use piwork-cli without a subcommand to open Desktop, or use its user commands to connect to an existing Core. Closing the client does not stop Core or Works.",
+            "Retire native Windows delivery and the CLI Docker image. Linux and Windows browsers can continue to use the Core web interface.",
+            "Keep user credentials, local Desktop and proxy behavior, Work commands, files, packages and snapshots."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.9",
       "component": "core",
       "title": "Piwork 0.0.9 Preview",

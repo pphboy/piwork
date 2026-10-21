@@ -254,7 +254,7 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if path == "/api/v1/about" && r.Method == http.MethodGet {
-		send(w, 200, releaseinfo.Read("piwork-serve"))
+		send(w, 200, releaseinfo.Read("piwork-core"))
 		return nil
 	}
 	if path == "/api/v1/service-access" && r.Method == http.MethodGet {

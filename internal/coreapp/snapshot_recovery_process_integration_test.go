@@ -135,7 +135,7 @@ func TestNativeCoreSnapshotJobsRecoverAcrossActualProcessCrashes(t *testing.T) {
 		t.Fatal("native acceptance images required")
 	}
 	_, caller, _, _ := runtime.Caller(0)
-	binary := filepath.Join(filepath.Dir(caller), "../../dist/go/piwork-serve")
+	binary := filepath.Join(filepath.Dir(caller), "../../dist/go/piwork-core")
 	if _, err := os.Stat(binary); err != nil {
 		t.Fatal("build current Go Core first", err)
 	}
@@ -175,7 +175,8 @@ func TestNativeCoreSnapshotJobsRecoverAcrossActualProcessCrashes(t *testing.T) {
 	start := func() (*exec.Cmd, string) {
 		t.Helper()
 		seedProcessRuntime(t, directory, image)
-		process := exec.CommandContext(ctx, binary, "serve", "--data-dir", directory, "--listen", "127.0.0.1:0", "--agent-grpc-listen", "0.0.0.0:0", "--package-helper-image", image, "--file-helper-image", fileImage, "--snapshot-helper-image", snapshotImage, "--no-open")
+		binary = processFixtureBinary(t, image, image, fileImage, snapshotImage)
+		process := exec.CommandContext(ctx, binary, processStartupArgs(t, directory)...)
 		process.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + endpoint, "DOCKER_CONFIG=" + t.TempDir(), "PIWORK_ADMIN_ACCOUNT=admin", "PIWORK_ADMIN_PASSWORD=development-fixture-pass"}
 		stdout, err := process.StdoutPipe()
 		if err != nil {
@@ -202,7 +203,10 @@ func TestNativeCoreSnapshotJobsRecoverAcrossActualProcessCrashes(t *testing.T) {
 			for scanner.Scan() {
 			}
 		}()
-		var announcement struct{ Event, URL string }
+		var announcement struct {
+			Event string
+			URL   string `json:"coreUrl"`
+		}
 		select {
 		case line := <-announced:
 			if json.Unmarshal(line, &announcement) != nil || announcement.Event != "app.listening" {

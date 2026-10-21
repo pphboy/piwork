@@ -59,9 +59,8 @@ const modules = selected.map(file => {
 });
 const retainedPackages = packages.filter(pkg => ["@piwork/agentd","@piwork/pi-adapter","@piwork/work-store","@piwork/pi-package","@piwork/contracts"].includes(pkg.name));
 const programs = [
-  ["piwork-serve","宿主 Core/operator","dist/go/piwork-serve","无解释器；piwork 别名"],
+  ["piwork-core","宿主 Core/UI","dist/go/piwork-core","Linux 原生；内嵌管理与工作台"],
   ["piwork-cli","宿主用户 CLI/proxy/Desktop","dist/go/piwork-cli","嵌入 Desktop browser assets"],
-  ["piwork-console","宿主 Console","dist/go/piwork-console","嵌入 Console browser assets"],
   ["piwork-service-mcp","Agent production/acceptance 镜像","/usr/local/bin/piwork-service-mcp","stdio；io.piwork.service-mcp.contract=1"],
   ["piwork-package-helper","Agent/package 准备镜像","/usr/local/bin/piwork-package-helper","prepare/init/capture/measure；io.piwork.package-helper.contract=2"],
   ["piwork-file-helper","原生 file-helper 镜像","/usr/local/bin/piwork-file-helper","stdin/stdout framed protocol；镜像无 Node/Python"],
