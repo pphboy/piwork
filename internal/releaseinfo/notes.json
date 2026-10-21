@@ -14,8 +14,17 @@
             "Deliver only piwork-core and piwork-cli for Linux amd64. Keep Agent, MCP and helpers in their runtime images.",
             "Replace local build and release outputs only after validation, with current production image identities, bilingual materials and checksums."
           ]
+        },
+        {
+          "title": "Guided setup and administration",
+          "items": [
+            "Keep configuration reads and saved-model recovery local to Quick setup, preserve unsaved input and focus, and show concrete dependency preparation before opening the workbench.",
+            "Recommend the direct DeepSeek API with an ordinary platform link that preserves the current setup draft.",
+            "Preserve management navigation and account menu state while background status reads complete."
+          ]
         }
-      ]
+      ],
+      "publishedAt": "2026-10-21"
     },
     {
       "version": "0.0.10",
@@ -29,8 +38,17 @@
             "Retire native Windows delivery and the CLI Docker image. Linux and Windows browsers can continue to use the Core web interface.",
             "Keep user credentials, local Desktop and proxy behavior, Work commands, files, packages and snapshots."
           ]
+        },
+        {
+          "title": "Clear progress and Service feedback",
+          "items": [
+            "Use consistent local pending indicators without replacing focused controls, live Service frames or recovery links.",
+            "Tie Service startup, failures, diagnostics and bounded logs to the original Service while keeping unrelated Services usable.",
+            "Keep chat composer focus, narrow-screen model controls, session choices and export progress readable."
+          ]
         }
-      ]
+      ],
+      "publishedAt": "2026-10-21"
     },
     {
       "version": "0.0.9",
