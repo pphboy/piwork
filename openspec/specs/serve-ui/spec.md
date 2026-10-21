@@ -106,6 +106,8 @@ Core bearer SHALL 仅留在面板服务端，浏览器会话使用随机不透�
 
 离开有未提交更改的页面或覆盖草稿 SHALL 提示丢弃确认。删除、禁用账号及密码重置 SHALL 有含目标名称与实际影响的英文确认步骤。未知结果的变更 SHALL 提示先查询当前状态；只有显式重试且具备稳定幂等键的包安装/更新可以重放原提交。控件 SHALL 有英文可访问名称、键盘操作及可见焦点；360px 宽屏下表单和主要动作仍可操作，宽表格可横向滚动。未知页面 SHALL 返回 404；不提供任意 URL/路径代理。
 
+管理页面 SHALL 区分首次无数据、同页显式刷新和正常后台回读。首次使用稳定外壳和 UIL-PENDING-001 等待槽；当前身份已有已确认内容时，同页刷新 SHALL 保留正文及最后取得时间，不用整页 skeleton 或清空表单取代。页级读取 SHALL 协调同对象显式/后台请求，不让每个卡片另起刷新；状态局部更新保留输入草稿、安全内存中的 Key、焦点/选区、展开和滚动，身份失效与原提交敏感清理规则仍优先。新读失败保留并标明最后确认数据；晚响应不得替换新路由或编辑，修改确认与关联刷新仍遵守 SUI-006。
+
 #### Scenario: 空列表与加载失败
 - **WHEN** 列表尚未完成、返回空集合或请求失败
 - **THEN** 分别显示英文加载状态、带创建入口的空态或错误重试入口，失败不能显示为没有数据
@@ -130,17 +132,23 @@ Core bearer SHALL 仅留在面板服务端，浏览器会话使用随机不透�
 - **WHEN** 管理员禁用账号、重置密码或移除资源
 - **THEN** 确认步骤显示目标及真实影响，取消不发送变更请求
 
+#### Scenario: 同页刷新和轮询保持上下文
+- **WHEN** 管理员编辑Runtime/Default Work/模型或展开详情，显式刷新或后台健康读取随后返回
+- **THEN** 正文及交互节点保持，不整页闪白或重置选择；只更新有效状态，未保存草稿、焦点、展开和滚动保持，旧数据与新确认可区分
+
 ### Requirement: 管理员手动动作与文件预检有明确等待反馈
 
 **Identifier:** SUI-005
 
-Serve SHALL 沿用 UIL-008/009，在有效异步动作开始后的首个可绘制机会、结果返回前，在原对象/表单显示英文动作和等待状态，提供可访问的状态说明及 busy 语义；只禁用按钮不构成反馈。手动 Refresh status、Verify runtime、Retry connection、Refresh/Resume Operation、Read current runtime/defaults 和 Sign out SHALL 均覆盖，重复入口只能有一个在途请求。不同对象的合法导航和操作保持可用，读操作不得与后台轮询叠加成并行查询同一对象。
+Serve SHALL 沿用 UIL-008/009 及 UIL-PENDING-001，在有效异步动作开始后的首个可绘制机会、结果返回前，在原对象/表单显示英文动作和等待状态，提供可访问的状态说明及 busy 语义；只禁用按钮不构成反馈。手动 Refresh status、Verify runtime、Retry connection、Refresh/Resume Operation、Read current runtime/defaults 和 Sign out SHALL 均覆盖，重复入口只能有一个在途请求。不同对象的合法导航和操作保持可用，读操作不得与后台轮询叠加成并行查询同一对象。
 
 选择 Skill 目录、Package 目录/ZIP、AGENTS 文件后，浏览器本地读取/预检 SHALL 显示 Checking selected files，未完成不能提交本次未确认选择；取消选择保持原输入，预检失败保留旧选择，替换/关闭后的晚结果不能恢复旧文件。已有登录、保存、上传和 Package Operation 反馈 SHALL 保持真实；上传、验证、接受、后台准备与发布分别表达。
 
 检查成功即使值未改变 SHALL 有新的确认时间或简短已确认说明。十秒以上未取得响应显示仍在等待及已等待时间，不虚构超时失败。明确失败、结果未知、旧缓存和成功空数据 SHALL 区分；错误不得使用成功措辞/图标。身份/路由变更后旧请求不覆盖当前页面，密码/key 处理仍遵守既有规则。快速动作不人为延迟，普通导航和复制不要求额外 toast。
 
 请求的成功、失败及最终清理回调 SHALL 均受发起时的身份与视图归属约束；离开后返回同一路由也属于新的视图。旧请求不得清理新页面的敏感输入、改变新草稿或释放新动作的提交锁。
+
+统一等待 SHALL 覆盖首次引导读取/创建/登录、Quick setup保存与显式Test、准备观察，以及所有Admin/独立Console列表和详情、模型目录回读、模型添加/保存/启用/停用/删除/设为默认、Runtime/Defaults、用户/Skill/Package动作、Operation与About。独立表单或动作状态不能因未使用通用动作组件而缺失；三点 SHALL 附着实际发起的按钮或对象，启停模型不能仅让无关的Save按钮呈保存中。读取失败、明确结果和未知结果仍按原契约处理。
 
 #### Scenario: 手动检查等待与重复点击
 - **WHEN** 用户点击 Verify runtime、Refresh status、Read current configuration 或 Refresh Operation，响应被延迟并再次触发同一入口
@@ -153,6 +161,14 @@ Serve SHALL 沿用 UIL-008/009，在有效异步动作开始后的首个可绘�
 #### Scenario: 注销与身份失效
 - **WHEN** 注销响应缓慢或 Core 暂时不可达
 - **THEN** 显示 Signing out，重复注销受限，随后按 SUI-003 区分已撤销与未完成，旧账号的晚结果不覆盖新登录页
+
+#### Scenario: 独立模型操作有准确等待对象
+- **WHEN** 管理员点击Read current data或Enable/Disable/Delete/Use for future Work且响应延迟
+- **THEN** 实际操作处显示Reading或相应状态和三点，重复入口受限；不会只把Save按钮改成Saving，也不隐藏未知结果读回要求
+
+#### Scenario: 同页刷新保留导航展开语义
+- **WHEN** 管理员展开账户菜单或窄屏导航，当前身份与路由的后台状态读取返回
+- **THEN** SHALL 保持菜单节点、焦点和展开，触发器 aria-expanded 与实际状态一致；离开或身份变化时关闭，不把旧菜单带入新视图
 
 ### Requirement: 已确认管理修改与关联刷新独立呈现
 

@@ -68,3 +68,24 @@ Session专项最终：24个unit文件533/533；六组浏览器345/345与导出�
 - [x] 8.1 保存2e99278恢复检查点并rebase到新main457650bc，保持上游非UI代码和当前UI行为。
 - [x] 8.2 重建资源并执行受影响完整可运行测试；独立Review、OpenSpec strict与范围核对。
 - [x] 8.3 验证最终恢复补丁/bundle及精确tree，记录新旧证据边界与未发布事实。
+
+## 9. 首设模块加载回归修复
+
+2026-10-21 所有者授权修复本 PR 新增 `pending.js` 后首设卡在 `Opening Piwork…` 的问题；Go 修改仅限首设静态资源路由及回归测试，不调整启动、认证或业务运行逻辑。
+
+- [x] 9.1 补齐首设 `pending.js` 白名单，沿用 MIME/CSP 与匿名读取边界；通过真实 Go HTTP 路由检查首设模块的递归依赖，验证未放行模块仍为 404，先确认测试能复现再验证修复。
+- [x] 9.2 执行受影响 Go 测试、OpenSpec strict、文档归属与 diff 检查，重建当前 Core 二进制并保留 `dist/go` 现有数据；使用隔离安装和真实浏览器验证首设及登录初始化，记录实际验证事实。
+
+2026-10-21 本次回归验证（基于4080ce8工作区修改）：
+
+- 修复前，`CGO_ENABLED=0 go test ./internal/webapp -run 'TestSetup(SharedAssets|ModuleImports)' -count=1` 的两个测试均在 `pending.js` 404 失败；修复后 `CGO_ENABLED=0 go test ./internal/webapp ./internal/consoleassets -count=1` 通过，资源包无独立测试。
+- 使用 Go1.25.5、CGO=0、readonly模块、trimpath与实际commit/dirty/UI hash重建Core，校验发行元数据后仅原子替换 `dist/go/piwork-core`。`dist/go/a` 及其SQLite文件inode保持，原实例未停止；使用新程序需重启原实例。前端源码和嵌入资源字节未变。
+- 在独立用户/网络命名空间与全新数据目录，用真实Chromium访问HTTP私有IP入口，完成匿名首设→创建合成管理员→密码清空→手动登录→Quick setup API Key表单。所有脚本返回200、无页面脚本错误；`pending.js` GET/HEAD均为200与JavaScript MIME/CSP，未放行的adapter仍404。没有提交模型Key、创建Work或调用付费模型。
+- `openspec validate improve-server-ui-core-flow --strict`、`node scripts/check-repository-docs.mjs`、`node scripts/check-native-boundary.mjs` 与 `git diff --check` 通过。临时日志、截图、浏览器验证脚本及结果保存在忽略的 `dist/startup-diagnostic-9f8ilt__/`；该浏览器验证使用真实Go路由，不是前端API fixture。
+
+## 10. 原生引导测试与当前交互同步
+
+- [x] 10.1 按 verify WARNING 同步十项原生引导用例的当前未知结果文案、定时只读恢复、规范入口定位和表单挂载/高级区等待；保留防重发、秘密清理、重启、DOM/焦点和晚响应归属断言，编译测试并重跑原十项失败回归。
+- [x] 10.2 在隔离数据与网络中重跑完整 browser/native-auth/onboarding 原生入口组，确认可运行用例无失败，真实 Engine 的原条件跳过如实记录；核对产品源码/资源不变并执行 OpenSpec strict、文档归属与 diff 检查，记录实际结果。
+
+本组最终：原十项定向回归10/10通过；完整原生入口41项中40通过、0失败、0取消、1项真实Engine按原条件跳过，退出码0。测试编译、43个前端构建/内嵌资源对应及 OpenSpec strict/文档归属/diff 检查通过。本轮只新增测试与变更记录修改，之前的Go静态路由修复保持；细节见 [verification.md](verification.md) 最新原生测试WARNING闭环。

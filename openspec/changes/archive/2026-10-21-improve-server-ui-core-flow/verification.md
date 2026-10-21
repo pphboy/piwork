@@ -331,3 +331,21 @@ Desktop完整348项采用本次稍早刚执行且产品/fixture依赖相同字�
 第二次结果仍仅本地：没有push、merge、deploy或OpenSpec archive；先前GitHub写入暂停和Library helper HTTP403未被绕过。恢复包将基于固定457650bc，上游非UI diff可从9a40d444机械生成，UI/OpenSpec精确增量从已保留6b099bf应用；两条恢复路线均核对最终tree，内部保留不等于用户附件送达。
 
 OpenSpec verify：本次8.1–8.3完成，整体34/34任务；8项Requirement与74项Scenario的既有实现/映射保持。本次不新增能力规格，检查完整性、受影响正确性和既有模式一致性均无阻塞，真实原生集成列为未验证而非通过。最终仅补充本次验收记录的文档提交，不更改已测试产品字节。
+
+## 原生引导测试 WARNING 闭环（2026-10-21）
+
+所有者授权处理 verify 的 W1：此前原生入口组41项中30通过、10失败、1项真实Engine条件跳过。更新 `apps/desktop-webui/test/onboarding.test.ts`，采用当前未知结果文案、模型阶段五秒自动只读回读，以及按规范路径定位的Overview入口。高级区先等待表单挂载再展开；合成 `/v1` 配置显式选择原Responses协议，首次Messages默认仍有原场景覆盖。
+
+原 POST/PUT/Test/Work 次数、密码/Key清理、失败读回锁、重启后的持久事实、DOM/焦点/选区及旧回调归属断言均保留。准备入口返回模型页时使用已有history路由，并检查同一document保持；没有通过整页重载消除旧回调来规避竞态验证。没有新增产品源码/资源修改，先前 `pending.js` Go白名单修复保持。
+
+本轮使用Node24.21.0、Go1.25.5及Chromium，在独立用户/网络命名空间内配置私有IP入口，测试使用临时安装目录和合成账号/Key。browser/native-auth调用真实CLI及合成Core；onboarding调用已重建的真实Core，按原测试注入特定失败，不使用用户现有安装或付费模型。
+
+| 本轮实际检查 | 结果 |
+|---|---|
+| `tsc -p apps/desktop-webui/tsconfig.test.json` | 通过 |
+| 原十项失败用例定向回归 | 10通过，0失败/取消/跳过；最终20.805秒 |
+| `node --test --test-concurrency=1 apps/desktop-webui/dist/test/{browser,native-auth,onboarding}.test.js`（隔离命名空间、指定本轮Core/CLI/浏览器） | 41项：40通过、0失败、0取消、1条件跳过；退出0，112.602秒 |
+| 两端构建/内嵌资源逐文件对应 | 43项相同，本轮未重写资源 |
+| OpenSpec strict、repository-docs、git diff --check | 通过 |
+
+唯一跳过项仍为需要显式 `PIWORK_RUN_ENGINE_BROWSER` 的真实Docker Engine镜像准备/Work场景，本轮没有启用，不能声称其通过。此前同一产品字节的536/38单元与180/348 UI回归数字不累加为本轮新执行。临时执行器、日志和退出码在忽略的 `dist/startup-diagnostic-9f8ilt__/native-{targeted,full}-after.*`；本轮W1对应十项原生失败已消除，完整变更任务38/38。未提交、推送、合并或归档。
