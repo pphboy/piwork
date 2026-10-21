@@ -19,12 +19,14 @@ function coreOrigin(server:BrowserServer):string {
 type BrowserServer={origin:string;directory:string;stop:(preserve?:boolean)=>Promise<void>;restart:()=>Promise<BrowserServer>;output:()=>string};
 async function start(environment:Record<string,string>={}, existing?:{directory:string;port:number}, engineHost?:string):Promise<BrowserServer> {
   const directory=existing?.directory || await mkdtemp(join(tmpdir(),'piwork-unified-browser-'));
-  const reserve=createServer(); await new Promise<void>(resolve=>reserve.listen(0,'0.0.0.0',resolve));
-  const port=existing?.port || (reserve.address() as {port:number}).port; await new Promise<void>((resolve,reject)=>reserve.close(err=>err?reject(err):resolve()));
+  const reserve=createServer(); await new Promise<void>(resolve=>reserve.listen(existing?.port || 0,'0.0.0.0',resolve));
+  const port=(reserve.address() as {port:number}).port;
   const origin=`http://${serverIP}:${port}`;
   const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>!name.startsWith('PIWORK_')));
+  // Keep the UI port reserved while choosing Core's port, including restarts.
   const coreReserve=createServer();await new Promise<void>(done=>coreReserve.listen(0,'127.0.0.1',done));
   const corePort=(coreReserve.address() as {port:number}).port;await new Promise<void>(done=>coreReserve.close(()=>done()));
+  await new Promise<void>((resolve,reject)=>reserve.close(err=>err?reject(err):resolve()));
   const processHandle=spawn(binary,['--ui-port',String(port),'--core-port',String(corePort),'--data-dir',directory],{env:{...env,...environment,DISPLAY:'',WAYLAND_DISPLAY:'',DOCKER_HOST:engineHost||'unix://'+join(directory,'missing-engine.sock')},stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams;
   let output='',stderr='',exited=false;
   processHandle.stdout.on('data',data=>{output+=data.toString();});

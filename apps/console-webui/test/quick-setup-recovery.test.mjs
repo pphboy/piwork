@@ -138,7 +138,7 @@ test('only the original configured Runtime target releases its unknown lock',()=
 });
 
 test('normal, catalog-failed and rejected model pages omit all three permanent footer entries',()=>{
- const {c}=fixture(['modelOptions','modelPage']);
+ const {c}=fixture(['modelOptions','apiGuidance','modelPage']);
  for(const state of [{},{catalogError:'Synthetic catalog failure'},{notice:'Synthetic save rejected',noticeError:true}]){
   Object.assign(c,state);const html=c.modelPage();
   assert.doesNotMatch(html,/Read current state|Manage AI models|Runtime diagnostics|href="\/admin\/models"/);
