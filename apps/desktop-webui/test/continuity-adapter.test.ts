@@ -269,3 +269,27 @@ test('continuity: refreshing Session list keeps confirmed history metadata while
 test('continuity: late Session refresh after identity clearing cannot repopulate the new identity',async t=>{
  const f=await fixture(t),listing=deferred<Reply>();f.respond(()=>listing.promise);const pending=f.adapter.loadSessions('one');f.adapter.clearIdentity();listing.resolve({json:{sessions:[{sessionId:'old'}]}});await assert.rejects(pending);assert.equal(f.adapter.state.works.length,0);
 });
+
+test('continuity: Service diagnostics keep typed public fields, a zero exit code and legacy or missing values', async t => {
+  const f = await fixture(t);
+  const raw = (serviceId: string, observedState: string, lastError: unknown, ports: number[] = []) => ({ serviceId, name: serviceId, enabled: true, observedState, access: { hostname: `${serviceId}.test`, ports: ports.map(port => ({ port, url: `http://${serviceId}.test:${port}` })) }, lastError });
+  f.respond(r => r.path.endsWith('/services') ? { json: { services: [
+    raw('full', 'failed', { code: 'SERVICE_EXITED', stage: 'service-start', message: 'The service process exited.', remediation: 'Inspect service logs and correct the application.', retryable: true, exitCode: 0, correlationId: 'corr-full' }, [3000]),
+    raw('legacy', 'failed', 'Legacy failure text'),
+    raw('empty', 'stopped', null),
+    raw('partial', 'failed', { code: 'UNKNOWN_CODE', stage: 42, message: 'Partially invalid diagnostic', remediation: null, retryable: 'yes', exitCode: 1.5, correlationId: { nested: true } }),
+    raw('blank', 'stopped', {}),
+    raw('number', 'stopped', 7),
+  ] } } : { json: {} });
+  await f.adapter.loadServices('one');
+  const services = f.adapter.getWork('one').services;
+  const byId = (id: string) => services.find((item: Data) => item.id === id)!;
+  assert.deepEqual(byId('full').diagnostic, { code: 'SERVICE_EXITED', stage: 'service-start', message: 'The service process exited.', remediation: 'Inspect service logs and correct the application.', retryable: true, exitCode: 0, correlationId: 'corr-full' });
+  assert.equal(byId('full').observed, 'Failed'); assert.equal(byId('full').error, 'The service process exited.');
+  assert.equal(byId('legacy').diagnostic, undefined); assert.equal(byId('legacy').error, 'Legacy failure text'); assert.equal(byId('legacy').observed, 'Failed');
+  for (const id of ['empty', 'number']) { assert.equal(byId(id).diagnostic, undefined); assert.equal(byId(id).error, undefined); assert.equal(byId(id).observed, 'Stopped'); }
+  assert.equal(byId('blank').diagnostic, undefined);
+  assert.deepEqual(byId('partial').diagnostic, { code: 'UNKNOWN_CODE', stage: '', message: 'Partially invalid diagnostic', remediation: '' });
+  assert.equal(byId('partial').error, 'Partially invalid diagnostic'); assert.equal(byId('partial').observed, 'Failed');
+  assert.equal(services.length, 6);
+});

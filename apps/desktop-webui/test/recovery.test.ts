@@ -2672,6 +2672,292 @@ test('B selected Service Starting to Ready prepares exactly one entry without re
   assert.equal(requests.filter(r => r.path === 'service-entries' && r.method === 'POST').length, 1);
 });
 
+const degradedWork = { json: { id: 'work-1', name: 'Recovery Work', desiredState: 'running', observedState: 'degraded' } };
+const webPort = (hostname: string) => ({ hostname, ports: [{ port: 80, url: `http://${hostname}`, name: 'web' }] });
+const noServiceControls = (requests: RequestRecord[]) => requests.filter(r => /\/(start|stop|restart|retry|remove)$/.test(r.path)).length;
+
+test('Service feedback: a failed non-required Service is explicit while the Work and other Services stay usable', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1') return degradedWork;
+    if (r.path.endsWith('/services')) return { json: { services: [
+      { serviceId: 'service-a', name: 'Tool A', enabled: true, observedState: 'ready', access: webPort('a.work.test') },
+      { serviceId: 'service-b', name: 'Tool B', enabled: true, observedState: 'failed', access: webPort('b.work.test'),
+        lastError: { code: 'SERVICE_START_FAILED', stage: 'service-start', message: 'The service could not start.', remediation: 'Correct the executable or runtime configuration and retry the service.', retryable: true, exitCode: 0, correlationId: 'corr-b' } },
+    ] } };
+    return focusFixture(r);
+  });
+  const notice = page.locator('.work-notice');
+  await expect(notice).toContainText('Tool B failed');
+  await expect(notice).not.toContainText('capabilities');
+  await expect(notice.locator('[data-action="service-details"][data-id="service-b"]')).toHaveCount(1);
+  // The ready Service keeps its normal entry and the Agent stays usable.
+  await expect(page.locator('iframe')).toBeVisible();
+  await expect(page.locator('#composer')).toBeEnabled();
+  await notice.locator('[data-action="service-details"][data-id="service-b"]').click();
+  await expect(page.locator('#modal-title')).toHaveText('Tool B');
+  await expect(page.locator('#modal .service-explanation')).toContainText('Tool B failed to start');
+  await expect(page.locator('#modal .service-explanation')).toContainText('The service could not start.');
+  await page.locator('#modal .service-diagnostics > summary').click();
+  const diagnostics = page.locator('#modal .service-diagnostics');
+  for (const value of ['SERVICE_START_FAILED', 'service-start', 'Exit code', 'corr-b', 'Correct the executable', 'Retryable']) await expect(diagnostics).toContainText(value);
+  await expect(diagnostics.locator('code', { hasText: '0' })).toHaveCount(1);
+  await expect(page.locator('#modal [data-action="operation"]')).toHaveCount(0);
+  await uiuxEvidence(page, 'service-failed-details');
+  await button(page, 'close-modal').click();
+  await page.locator('#service-select').click();
+  await page.locator('[data-action="select-service"][data-id="service-b"]').click();
+  await expect(page.locator('.empty')).toContainText('Tool B failed to start');
+  await expect(page.locator('.empty')).toContainText('The service could not start.');
+  await uiuxEvidence(page, 'service-failed-placeholder');
+  assert.equal(noServiceControls(requests), 0);
+  assert.equal(chatWrites(requests).length, 0);
+});
+
+test('Service feedback: a confirmed Starting Service reads as starting and never as a failure', async t => {
+  let observed = 'starting';
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1') return observed === 'starting' ? degradedWork : undefined;
+    if (r.path.endsWith('/services')) return { json: { services: [{ serviceId: 'service-a', name: 'Tool A', enabled: true, observedState: observed, access: webPort('a.work.test') }] } };
+    return focusFixture(r);
+  });
+  const notice = page.locator('.work-notice');
+  await expect(notice).toContainText('Tool A is starting');
+  await expect(notice).not.toContainText('failed');
+  await expect(notice).not.toContainText('capabilities');
+  await button(page, 'tab-Services').click();
+  await expect(page.locator('.startup-placeholder')).toContainText('Tool A is starting');
+  await expect(page.locator('iframe')).toHaveCount(0);
+  observed = 'ready'; await api(page, "await adapter.refreshVisibleWork('work-1');");
+  await expect(page.locator('iframe')).toBeVisible();
+  await expect(page.locator('.startup-placeholder')).toHaveCount(0);
+  await expect(page.locator('.work-notice')).toHaveCount(0);
+  assert.equal(noServiceControls(requests), 0);
+});
+
+test('Service feedback: multiple failures and a Web-less failure use the Service management direction', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1') return degradedWork;
+    if (r.path.endsWith('/services')) return { json: { services: [
+      { serviceId: 'service-a', name: 'Tool A', enabled: true, observedState: 'ready', access: webPort('a.work.test') },
+      { serviceId: 'service-b', name: 'Tool B', enabled: true, observedState: 'failed', access: webPort('b.work.test') },
+      { serviceId: 'service-c', name: 'Tool C', enabled: true, observedState: 'failed', access: { hostname: 'c.work.test', ports: [] } },
+    ] } };
+    return focusFixture(r);
+  });
+  const notice = page.locator('.work-notice');
+  await expect(notice).toContainText('2 Services failed');
+  await expect(notice.locator('[data-action="manage-services"]')).toHaveCount(1);
+  await notice.locator('[data-action="manage-services"]').click();
+  await expect(page.locator('#modal-title')).toHaveText('Manage services');
+  await page.locator('#modal [data-action="service-details"][data-id="service-c"]').click();
+  await expect(page.locator('#modal-title')).toHaveText('Tool C');
+  await expect(page.locator('#modal .service-explanation')).toContainText('Tool C failed');
+  assert.equal(noServiceControls(requests), 0);
+});
+
+test('Service feedback: an interrupted Service catalog keeps the last confirmed facts, stops booting and recovers', async t => {
+  let interrupted = false;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1') return degradedWork;
+    if (r.path.endsWith('/services')) {
+      if (interrupted) return { status: 503, json: { code: 'UNAVAILABLE', message: 'Service listing unavailable' } };
+      return { json: { services: [{ serviceId: 'service-a', name: 'Tool A', enabled: true, observedState: 'starting', access: webPort('a.work.test') }] } };
+    }
+    return focusFixture(r);
+  });
+  await button(page, 'tab-Services').click();
+  await expect(page.locator('.startup-placeholder')).toHaveCount(1);
+  interrupted = true; await api(page, "await adapter.loadServices('work-1').catch(() => undefined);");
+  await expect(page.locator('.work-notice')).toHaveCount(0);
+  await expect(page.locator('.service-workspace .feedback')).toContainText('Service listing unavailable');
+  await expect(page.locator('.service-workspace .feedback [data-action="retry-services"]')).toHaveCount(1);
+  await expect(page.locator('.startup-placeholder')).toHaveCount(0);
+  await expect(page.locator('.empty')).toContainText('Tool A is starting');
+  interrupted = false; await api(page, "await adapter.loadServices('work-1');");
+  await expect(page.locator('.work-notice')).toContainText('Tool A is starting');
+  await expect(page.locator('.startup-placeholder')).toHaveCount(1);
+  assert.equal(noServiceControls(requests), 0);
+});
+
+const composerOutline = (page: Page) => page.locator('.composer').evaluate(node => { const style = getComputedStyle(node); return { style: style.outlineStyle, width: style.outlineWidth, offset: style.outlineOffset, color: style.outlineColor }; });
+const composerOutlineClipped = (page: Page) => page.locator('.composer').evaluate(node => {
+  const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+  const margin = parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+  for (let ancestor: Element | null = node.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const overflow = getComputedStyle(ancestor);
+    if (overflow.overflowX === 'visible' && overflow.overflowY === 'visible') continue;
+    const clip = ancestor.getBoundingClientRect();
+    return box.left - margin < clip.left || box.right + margin > clip.right || box.top - margin < clip.top || box.bottom + margin > clip.bottom;
+  }
+  return false;
+});
+
+test('Chat composer owns the input focus outline while toolbar controls keep their own focus', async t => {
+  const label = 'DeepSeek Flash with a deliberately long model name for a narrow composer';
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
+    if (r.path.endsWith('/chat-models')) return { json: { ...chatModels(), defaultModel: { ...chatModel, label, thinkingLevels: ['off', 'low', 'high', 'max'] } } };
+  });
+  const accent = await page.evaluate(() => { const probe = document.createElement('span'); probe.style.color = 'var(--accent)'; document.body.appendChild(probe); const value = getComputedStyle(probe).color; probe.remove(); return value; });
+  const check = async (name: string, width: number) => {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(page.locator('#composer')).toBeVisible();
+    await page.locator('#composer').click();
+    assert.deepEqual(await composerOutline(page), { style: 'solid', width: '2px', offset: '2px', color: accent });
+    assert.equal(await page.locator('#composer').evaluate(node => getComputedStyle(node).outlineStyle), 'none');
+    assert.equal(await composerOutlineClipped(page), false);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.keyboard.press('Tab');
+    await expect(page.locator('#response-settings-trigger')).toBeFocused();
+    assert.equal((await composerOutline(page)).style, 'none');
+    assert.equal(await page.locator('#response-settings-trigger').evaluate(node => getComputedStyle(node).outlineStyle), 'solid');
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.locator('#composer')).toBeFocused();
+    assert.equal((await composerOutline(page)).style, 'solid');
+    await uiuxEvidence(page, `composer-focus-${name}-${width}`);
+    assert.equal(chatWrites(requests).length, 0);
+    assert.equal(requests.filter(r => r.method !== 'GET' && r.path.includes('configuration')).length, 0);
+  };
+  await check('workspace', 1440);
+  await check('workspace', 360);
+  await button(page, 'tab-Chat').click();
+  await check('chat', 1440);
+  await check('chat', 360);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await button(page, 'focus-chat').click();
+  await check('focus', 1440);
+  await check('focus', 360);
+});
+
+test('Chat composer keeps a long model name and Stop and send reachable at 360px', async t => {
+  const label = 'DeepSeek Flash with a deliberately long model name for a narrow composer';
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3, cancelAndSendContractVersion: 1 } };
+    if (r.path.endsWith('/chat-models')) return { json: { ...chatModels(), defaultModel: { ...chatModel, label, thinkingLevels: ['off', 'low', 'high', 'max'] } } };
+    if (r.path.endsWith('/runs/active')) return { json: { run: controlRun('old-run', 2, 'session-1', { kind: 'chat' }) } };
+    return controlFixture(r);
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await button(page, 'tab-Chat').click();
+  await expect(page.getByRole('button', { name: 'Stop and send', exact: true })).toBeEnabled();
+  await expect(page.locator('#response-settings-trigger')).toContainText(label);
+  const boxes = await page.locator('#composer, #response-settings-trigger, [data-action="chat-input-options"], [data-action="send-message"]').evaluateAll(nodes => nodes.map(node => { const rect = node.getBoundingClientRect(); return { left: rect.left, right: rect.right, height: rect.height }; }));
+  assert.equal(boxes.length, 4);
+  for (const box of boxes) assert.ok(box.left >= 0 && box.right <= 360, `control must stay inside 360px: ${JSON.stringify(box)}`);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.locator('#composer').click();
+  assert.equal((await composerOutline(page)).style, 'solid');
+  assert.equal(await composerOutlineClipped(page), false);
+  await uiuxEvidence(page, 'composer-stop-and-send-360');
+  assert.equal(chatWrites(requests).length, 0);
+});
+
+test('Service startup placeholder fades only its four squares and ends on the first confirmed fact', async t => {
+  let observed = 'starting', enabled = true, interrupted = false;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1') return degradedWork;
+    if (r.path.endsWith('/services')) {
+      if (interrupted) return { status: 503, json: { message: 'Service listing unavailable' } };
+      return { json: { services: [{ serviceId: 'service-a', name: 'Tool A', enabled, observedState: observed, access: webPort('a.work.test') }] } };
+    }
+    return focusFixture(r);
+  });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await button(page, 'tab-Services').click();
+  const placeholder = page.locator('.startup-placeholder'), main = page.locator('#workspace-main');
+  await expect(placeholder).toHaveCount(1);
+  await expect(placeholder).toHaveAttribute('role', 'status');
+  await expect(placeholder).toHaveAttribute('aria-busy', 'true');
+  await expect(placeholder.locator('.pending-dots')).toHaveCount(0);
+  await expect(placeholder.locator('svg')).toHaveAttribute('aria-hidden', 'true');
+  const rects = placeholder.locator(':scope > svg > rect');
+  await expect(rects).toHaveCount(4);
+  const motion = () => rects.evaluateAll(nodes => nodes.map(node => { const style = getComputedStyle(node); return { name: style.animationName, duration: style.animationDuration, delay: style.animationDelay, opacity: Number(style.opacity) }; }));
+  const running = await motion();
+  for (const item of running) assert.deepEqual([item.name, item.duration], ['startup-square-fade', '1.2s']);
+  assert.deepEqual(running.map(item => item.delay), ['0s', '0.2s', '0.6s', '0.4s']);
+  const samples = [running.map(item => item.opacity)];
+  for (let round = 0; round < 4; round++) { await page.waitForTimeout(140); samples.push((await motion()).map(item => item.opacity)); }
+  assert.ok(samples.some(sample => sample.some((value, index) => value !== samples[0]![index])), 'the four squares must actually fade');
+  assert.equal(await page.locator('.service-toolbar .status').evaluate(node => getComputedStyle(node).animationName), 'none');
+  await uiuxEvidence(page, 'service-startup-placeholder');
+  const geometry = await placeholder.locator(':scope > svg').boundingBox();
+  assert.deepEqual([geometry?.width, geometry?.height], [32, 32]);
+  const placeholderNode = await placeholder.elementHandle(), rectNode = await rects.first().elementHandle();
+  await api(page, "await adapter.refreshVisibleWork('work-1');");
+  await expect(placeholder).toHaveCount(1);
+  assert.equal(await placeholderNode!.evaluate(node => node.isConnected), true);
+  assert.equal(await rectNode!.evaluate(node => node.isConnected), true);
+  assert.deepEqual(await placeholder.locator(':scope > svg').boundingBox(), geometry);
+  // Every terminal or unconfirmed fact ends the booting placeholder immediately.
+  for (const next of ['failed', 'stopped'] as const) {
+    observed = next; await api(page, "await adapter.loadServices('work-1');");
+    await expect(page.locator('.startup-placeholder')).toHaveCount(0);
+    await expect(main.locator('.empty')).toContainText(next === 'failed' ? 'Tool A failed' : 'Tool A is stopped');
+  }
+  observed = 'starting'; enabled = false; await api(page, "await adapter.loadServices('work-1');");
+  await expect(page.locator('.startup-placeholder')).toHaveCount(0);
+  await expect(main.locator('.empty')).toContainText('Tool A is disabled');
+  enabled = true; await api(page, "await adapter.loadServices('work-1');");
+  await expect(page.locator('.startup-placeholder')).toHaveCount(1);
+  interrupted = true; await api(page, "await adapter.loadServices('work-1').catch(() => undefined);");
+  await expect(page.locator('.startup-placeholder')).toHaveCount(0);
+  interrupted = false; await api(page, "await adapter.loadServices('work-1');");
+  await expect(page.locator('.startup-placeholder')).toHaveCount(1);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect.poll(async () => (await motion()).map(item => [item.name, item.opacity])).toEqual(Array.from({ length: 4 }, () => ['none', 0.7]));
+  // A retained application keeps its document instead of the booting placeholder.
+  observed = 'ready'; await api(page, "await adapter.refreshVisibleWork('work-1');");
+  await expect(page.locator('.startup-placeholder')).toHaveCount(0);
+  await expect(page.locator('iframe')).toBeVisible();
+  observed = 'starting'; await api(page, "await adapter.refreshVisibleWork('work-1');");
+  await expect(page.locator('iframe')).toBeVisible();
+  await expect(page.locator('.startup-placeholder')).toHaveCount(0);
+  assert.equal(noServiceControls(requests), 0);
+});
+
+test('Service details: explanation, safe diagnostics and bounded logs stay bound to the original Service', async t => {
+  const hostile = '<img src=x onerror="window.__serviceLeak=1">';
+  let release!: () => void; const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works/work-1') return degradedWork;
+    if (r.path.endsWith('/services')) return { json: { services: [
+      { serviceId: 'service-a', name: `Tool A ${hostile}`, enabled: true, observedState: 'failed', access: webPort('a.work.test'),
+        lastError: { code: 'SERVICE_EXITED', stage: 'service-start', message: `Process exited ${hostile}`, remediation: `Correct it ${hostile}`, retryable: false, exitCode: 1, correlationId: 'corr-a' } },
+      { serviceId: 'service-b', name: 'Tool B', enabled: true, observedState: 'ready', access: webPort('b.work.test') },
+    ] } };
+    if (r.path === 'works/work-1/services/service-a/logs') { await gate; return { json: { serviceId: 'service-a', status: 'available', text: `Late A log ${hostile}`, collectedAt: '2026-10-20T00:00:00Z', truncated: false } }; }
+    if (r.path === 'works/work-1/services/service-b/logs') return { json: { serviceId: 'service-b', status: 'available', text: 'B bounded log', collectedAt: '2026-10-20T00:00:00Z', truncated: false } };
+    return focusFixture(r);
+  });
+  await page.locator('.work-notice [data-action="service-details"][data-id="service-a"]').click();
+  await expect(page.locator('#modal-title')).toHaveText(`Tool A ${hostile}`);
+  await expect(page.locator('#modal .service-explanation')).toContainText(`Process exited ${hostile}`);
+  const markup = await page.locator('#modal').evaluate(node => node.innerHTML);
+  assert.ok(markup.includes('&lt;img src=x'), 'diagnostic text must be escaped'); assert.ok(!markup.includes('<img src=x'), 'diagnostic text must never become markup');
+  await expect(page.locator('#modal .service-diagnostics dl')).toBeHidden();
+  await page.locator('#modal .service-diagnostics > summary').click();
+  await expect(page.locator('#modal .service-diagnostics')).toContainText(`Correct it ${hostile}`);
+  await expect(page.locator('#modal .service-diagnostics code', { hasText: 'corr-a' })).toHaveCount(1);
+  await expect(page.locator('#modal .service-diagnostics code', { hasText: '1' })).toHaveCount(1);
+  await expect(page.locator('#modal [data-action="operation"]')).toHaveCount(0);
+  await expect(page.locator('#modal [data-pending-action~="refresh-logs"]')).toContainText('log snapshot');
+  assert.equal(await page.evaluate(() => (window as any).__serviceLeak), undefined);
+  await button(page, 'close-modal').click();
+  await button(page, 'service-menu').click(); await button(page, 'manage-services').click();
+  await page.locator('#modal [data-action="service-details"][data-id="service-b"]').click();
+  await expect(page.locator('#modal-title')).toHaveText('Tool B');
+  await expect(page.locator('#modal .logs')).toContainText('B bounded log');
+  release();
+  await expect.poll(() => api(page, "return adapter.serviceLogs('work-1','service-a')?.value?.text;")).toContain('Late A log');
+  await expect(page.locator('#modal-title')).toHaveText('Tool B');
+  await expect(page.locator('#modal .logs')).toContainText('B bounded log');
+  await expect(page.locator('#modal .logs')).not.toContainText('Late A log');
+  assert.deepEqual([...new Set(requests.filter(r => r.path.endsWith('/logs')).map(r => r.path))].sort(), ['works/work-1/services/service-a/logs', 'works/work-1/services/service-b/logs']);
+  assert.equal(noServiceControls(requests), 0);
+  assert.equal(requests.filter(r => r.method === 'PATCH' || r.method === 'PUT' || r.path.endsWith('/configuration/apply')).length, 0);
+});
+
 test('B accepted New Work defaults reset only on the next explicit New Work', async t => {
   const { page, requests } = await fixture(t, r => r.path === 'works' && r.method === 'POST' ? { status: 202, json: { operationId: 'create-a', workId: 'new-a' } } : undefined);
   await button(page, 'back-works').click();
