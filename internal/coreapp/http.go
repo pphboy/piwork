@@ -282,6 +282,9 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 		}
 		return a.control(w, r, session.Principal(), true)
 	}
+	if handled, err := a.logExportHTTP(w, r, session, token); handled {
+		return err
+	}
 	if handled, err := a.skillRead(w, r); handled {
 		return err
 	}

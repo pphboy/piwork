@@ -175,7 +175,7 @@ func start(ctx context.Context, options startupOptions, stdout, stderr io.Writer
 		fmt.Fprintln(stderr, "piwork-core: startup identity unavailable")
 		return 1
 	}
-	core, err := coreapp.New(ctx, coreapp.Options{DataDirectory: directory, Initialization: initialization, SetupSecret: setupSecret,
+	core, err := coreapp.New(ctx, coreapp.Options{DataDirectory: directory, Initialization: initialization, SetupSecret: setupSecret, Stdout: stdout, Stderr: stderr,
 		PackageHelperImage: defaults.PackageHelper, FileHelperImage: defaults.FileHelper, SnapshotHelperImage: defaults.SnapshotHelper,
 		AgentGRPCListen: "0.0.0.0:7172", AgentGRPCAdvertise: "piwork-core:7172",
 		DockerOptions: dockerengine.SelectionOptions{DockerHost: os.Getenv("DOCKER_HOST"), DockerContext: os.Getenv("DOCKER_CONTEXT"), DockerConfig: os.Getenv("DOCKER_CONFIG"), HomeDirectory: home}})
@@ -235,6 +235,9 @@ func start(ctx context.Context, options startupOptions, stdout, stderr io.Writer
 		_ = closeApplication(core, web, browserServer)
 		return 1
 	}
+	// The file projection deliberately omits dataDirectory while retaining the
+	// same safe listening identities as the existing stdout record.
+	core.RecordAppEvent("app.listening", "info", map[string]string{"url": origin, "coreUrl": coreURL, "pid": strconv.Itoa(os.Getpid())})
 
 	if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
 		go openBrowser(ctx, origin, stderr)

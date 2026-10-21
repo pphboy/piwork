@@ -2,7 +2,6 @@ package diagnostics
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -67,7 +66,19 @@ func Message(e Event) string {
 	return "Work operation stage completed."
 }
 
+// Sink receives the same safe structured event that is printed, allowing the
+// process log facility to persist it without parsing console text. A nil sink
+// keeps the historical console-only behavior.
+type Sink interface {
+	Diagnostic(event Event, workID, operationID, correlationID string, console []byte)
+	Performance(value map[string]any, console []byte)
+}
+
 func Write(w io.Writer, e Event, workID, operationID, correlationID string) {
+	WriteSink(w, nil, e, workID, operationID, correlationID)
+}
+
+func WriteSink(w io.Writer, sink Sink, e Event, workID, operationID, correlationID string) {
 	e, ok := SafeEvent(e)
 	if !ok {
 		return
@@ -90,7 +101,11 @@ func Write(w io.Writer, e Event, workID, operationID, correlationID string) {
 		v["serviceId"] = e.ServiceID
 	}
 	raw, _ := json.Marshal(v)
-	fmt.Fprintln(w, string(raw))
+	console := append(append([]byte(nil), raw...), '\n')
+	_, _ = w.Write(console)
+	if sink != nil {
+		sink.Diagnostic(e, workID, operationID, correlationID, console)
+	}
 }
 
 // Agent output is untrusted. Ignore text and all fields other than validated

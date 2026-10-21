@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/grpc"
 
 	"piwork/internal/contracts"
+	"piwork/internal/corelogs"
 	"piwork/internal/corestore"
 	"piwork/internal/diagnostics"
 	"piwork/internal/dockerengine"
@@ -47,6 +49,8 @@ type Options struct {
 	SnapshotHelperImage string
 	AgentGRPCListen     string
 	AgentGRPCAdvertise  string
+	Stdout              io.Writer
+	Stderr              io.Writer
 	WorkDrainTimeout    time.Duration
 	WorkStopTimeout     time.Duration
 	ShutdownTimeout     time.Duration
@@ -60,8 +64,15 @@ type Options struct {
 type Status = contracts.CoreStatus
 type Application struct {
 	prepareBrainForTest   func(context.Context) (packageprepare.Result, error)
+	fullLogReaderForTest  fullLogReader
+	logLimitsForTest      *logExportLimits
+	logExportFaultForTest func(stage string) error
+	logVerifyForTest      func(context.Context) error
 	Store                 *corestore.Store
 	Identity              *identity.Service
+	logs                  *corelogs.Manager
+	logsRoot              *safefs.Root
+	previousLogOutput     io.Writer
 	Settings              *Settings
 	files                 *corestore.PlatformFiles
 	inspectionRoot        *safefs.Root
@@ -107,6 +118,13 @@ type Application struct {
 	snapshotRunning       sync.Map
 	snapshotTransfers     sync.Map
 	snapshotWG            sync.WaitGroup
+	logExportWG           sync.WaitGroup
+	logDownloadMu         sync.Mutex // log task admission, download leases and GC
+	logBoundaries         map[string]*corelogs.Boundary
+	logDownloads          int
+	logUserDownloads      map[string]int
+	logExportsDownloading map[string]int
+	archiveSlots          chan struct{}
 	workLocks             sync.Map
 	workQueueMu           sync.Mutex
 	workQueues            map[string]chan struct{}
@@ -188,26 +206,49 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 	if err != nil {
 		return nil, err
 	}
-	files, err := store.OpenPlatformFiles()
+	// The log facility starts after the installation lock and before identity
+	// recovery or listeners. A failure here leaves the data directory untouched
+	// beyond this feature's own namespace.
+	if err := store.RecoverLogStorage(); err != nil {
+		store.Close()
+		return nil, err
+	}
+	logsRoot, err := store.OpenCoreLogDir()
 	if err != nil {
 		store.Close()
+		return nil, err
+	}
+	logs, err := corelogs.Open(logsRoot, corelogs.Options{Stdout: options.Stdout, Stderr: options.Stderr})
+	if err != nil {
+		logsRoot.Close()
+		store.Close()
+		return nil, err
+	}
+	abortLogs := func() {
+		_ = logs.Close()
+		logsRoot.Close()
+		store.Close()
+	}
+	files, err := store.OpenPlatformFiles()
+	if err != nil {
+		abortLogs()
 		return nil, err
 	}
 	settings := NewSettings(store, files)
 	if err := files.SetOperatorPath(options.OperatorCredentialPath); err != nil {
 		files.Close()
-		store.Close()
+		abortLogs()
 		return nil, ErrOperatorCredential
 	}
 	if err := settings.EnsureOperator(ctx); err != nil {
 		files.Close()
-		store.Close()
+		abortLogs()
 		return nil, err
 	}
 	id, err := identity.New(ctx, store, identity.Options{})
 	if err != nil {
 		files.Close()
-		store.Close()
+		abortLogs()
 		return nil, err
 	}
 	keep := false
@@ -215,6 +256,8 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 		if !keep {
 			id.Close()
 			files.Close()
+			_ = logs.Close()
+			logsRoot.Close()
 			store.Close()
 		}
 	}()
@@ -242,9 +285,12 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 		return nil, err
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
-	a := &Application{Store: store, Identity: id, Settings: settings, files: files, inspectionRoot: root, options: options, ctx: lifetime, cancel: cancel, state: "STORE_OPEN", refresh: make(chan struct{}, 1), serveDone: make(chan error, 2)}
+	a := &Application{Store: store, Identity: id, Settings: settings, files: files, inspectionRoot: root, logs: logs, logsRoot: logsRoot, options: options, ctx: lifetime, cancel: cancel, state: "STORE_OPEN", refresh: make(chan struct{}, 1), serveDone: make(chan error, 2)}
 	a.serviceGateway = newServiceGateway(a)
 	a.packageSlots = make(chan struct{}, 2)
+	a.archiveSlots = make(chan struct{}, 2)
+	a.logUserDownloads = map[string]int{}
+	a.logExportsDownloading = map[string]int{}
 	a.environmentSlots = make(chan struct{}, 2)
 	a.environmentCache = preparationcache.New[environmentKey](lifetime, preparationcache.Options[contracts.PiPackagePreparedEnvironment]{Phase: "environment-probe", Clone: cloneEnvironment})
 	a.preparation = newRuntimePreparation(a)
@@ -288,7 +334,10 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 		cancel()
 		return nil, err
 	}
+	a.recoverLogExports(ctx)
+	a.startLogExportGC()
 	keep = true
+	a.attachStandardLog()
 	a.startPackageUploadCollector()
 	return a, nil
 }
@@ -545,7 +594,14 @@ func (a *Application) Close(ctx context.Context) error {
 		result = errors.New("Core runtime shutdown was not confirmed")
 	}
 	workersDone := make(chan struct{})
-	go func() { a.workWG.Wait(); a.packageWG.Wait(); a.fileWG.Wait(); a.snapshotWG.Wait(); close(workersDone) }()
+	go func() {
+		a.workWG.Wait()
+		a.packageWG.Wait()
+		a.fileWG.Wait()
+		a.snapshotWG.Wait()
+		a.logExportWG.Wait()
+		close(workersDone)
+	}()
 	select {
 	case <-workersDone:
 	case <-ctx.Done():
@@ -568,12 +624,14 @@ func (a *Application) Close(ctx context.Context) error {
 	}
 	if a.environmentCache != nil {
 		if err := a.environmentCache.Close(ctx); err != nil {
+			_ = a.shutdownLogs(errors.New("Core shared environment preparation shutdown was not confirmed"))
 			return errors.New("Core shared environment preparation shutdown was not confirmed")
 		}
 	}
 	if a.inspector != nil {
 		if err := a.inspector.Close(ctx); err != nil {
 			if a.inspector.InspectionsActive() {
+				_ = a.shutdownLogs(errors.New("Core shared image inspection shutdown was not confirmed"))
 				return errors.New("Core shared image inspection shutdown was not confirmed")
 			}
 			result = errors.New("Core shared image inspection cleanup was not confirmed")
@@ -589,6 +647,9 @@ func (a *Application) Close(ctx context.Context) error {
 		a.agentTLS.Close()
 	}
 	a.inspectionRoot.Close()
+	if err := a.shutdownLogs(result); err != nil {
+		result = err
+	}
 	a.files.Close()
 	if err := a.Store.Close(); err != nil {
 		result = errors.New("Core storage shutdown was not confirmed")
@@ -607,7 +668,12 @@ func send(w http.ResponseWriter, status int, value any) {
 }
 func (a *Application) route(w http.ResponseWriter, r *http.Request) {
 	trace := &operationTrace{app: a, correlation: string(requestCorrelation()), preacceptDiagnostics: diagnostics.Empty()}
-	r = r.WithContext(diagnostics.WithPerformance(context.WithValue(r.Context(), traceKey{}, trace), diagnostics.PerformanceIdentity{CorrelationID: trace.correlation}))
+	tracedRequest := context.WithValue(r.Context(), traceKey{}, trace)
+	if diagnostics.PerformanceWriter(tracedRequest) == nil {
+		tracedRequest = diagnostics.WithPerformanceWriter(tracedRequest, a.consoleStderr())
+	}
+	tracedRequest = diagnostics.WithPerformanceSink(tracedRequest, a.diagnosticSink())
+	r = r.WithContext(diagnostics.WithPerformance(tracedRequest, diagnostics.PerformanceIdentity{CorrelationID: trace.correlation}))
 	var requestSpan *diagnostics.PerformanceSpan
 	var requestErr error
 	if r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/v1/works" {

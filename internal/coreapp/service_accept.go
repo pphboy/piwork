@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -347,7 +346,7 @@ func (a *Application) beginServiceAdmissionDiagnostics(ctx context.Context, work
 			}
 		}
 		if err == nil {
-			diagnostics.Write(os.Stderr, event, workID, output.OperationID, trace.correlation)
+			diagnostics.WriteSink(a.consoleStderr(), a.diagnosticSink(), event, workID, output.OperationID, trace.correlation)
 		} else {
 			_ = trace.observe(ctx, event)
 		}

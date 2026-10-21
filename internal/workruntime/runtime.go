@@ -59,13 +59,14 @@ type StartSpec struct {
 }
 
 type Started struct {
-	ContainerID string
-	Address     string
-	Client      *agentclient.Client
-	scope       internaltls.Scope
-	contextID   string
-	verified    bool
-	readiness   *agentv1.ReadinessResponse
+	ContainerID      string
+	Address          string
+	Client           *agentclient.Client
+	LogPolicyVersion int64
+	scope            internaltls.Scope
+	contextID        string
+	verified         bool
+	readiness        *agentv1.ReadinessResponse
 }
 
 func (s Started) VerifiedReadiness() *agentv1.ReadinessResponse {
@@ -326,7 +327,7 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 		client.Close()
 		return result, err
 	}
-	return Started{ContainerID: ensured.ID, Address: address, Client: client, scope: spec.Scope, contextID: spec.ContextID, verified: true, readiness: readiness}, nil
+	return Started{ContainerID: ensured.ID, Address: address, Client: client, LogPolicyVersion: ensured.LogPolicyVersion, scope: spec.Scope, contextID: spec.ContextID, verified: true, readiness: readiness}, nil
 }
 
 func (r *Runtime) collectInitializationDiagnostics(ctx context.Context, spec StartSpec, agent dockerengine.ContainerIdentity, containerID string) error {
@@ -344,6 +345,12 @@ func (r *Runtime) collectInitializationDiagnostics(ctx context.Context, spec Sta
 	}
 	span.End(nil)
 	return nil
+}
+
+// AgentContainerIdentity exposes the exact label set used when creating an
+// Agent container so lifecycle logging can bind and archive that instance.
+func AgentContainerIdentity(scope internaltls.Scope, contextID string) dockerengine.ContainerIdentity {
+	return agentIdentity(scope, contextID)
 }
 
 func agentIdentity(scope internaltls.Scope, contextID string) dockerengine.ContainerIdentity {

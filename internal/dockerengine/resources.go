@@ -152,6 +152,31 @@ type ContainerSpec struct {
 type EnsuredContainer struct {
 	ID, Name, SpecHash string
 	Created            bool
+	LogPolicyVersion   int64
+}
+
+const (
+	// ManagedContainerLogPolicyVersion is the version recorded for instances
+	// created with the bounded json-file policy below. Existing instances keep
+	// version 0 and are read according to their actual driver.
+	ManagedContainerLogPolicyVersion = int64(1)
+	LegacyContainerLogPolicyVersion  = int64(0)
+)
+
+func managedLogPolicy(kind string) (container.LogConfig, int64) {
+	if kind != "agent" && kind != "service" {
+		return container.LogConfig{}, LegacyContainerLogPolicyVersion
+	}
+	return container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "16m", "max-file": "4"}}, ManagedContainerLogPolicyVersion
+}
+
+// ObservedContainerLogPolicyVersion reports the actual bounded policy of an
+// inspected instance. It never assumes that a newly desired policy was applied.
+func ObservedContainerLogPolicyVersion(host *container.HostConfig) int64 {
+	if host == nil || host.LogConfig.Type != "json-file" || host.LogConfig.Config["max-size"] != "16m" || host.LogConfig.Config["max-file"] != "4" {
+		return LegacyContainerLogPolicyVersion
+	}
+	return ManagedContainerLogPolicyVersion
 }
 
 func (r *Runtime) containerLabels(identity ContainerIdentity) (map[string]string, error) {
@@ -423,7 +448,7 @@ func (r *Runtime) EnsureContainer(ctx context.Context, input ContainerSpec) (Ens
 		if view.Config == nil || view.Config.Labels[SpecLabel] != hash {
 			return EnsuredContainer{}, ErrSpecificationConflict
 		}
-		return EnsuredContainer{ID: view.ID, Name: strings.TrimPrefix(view.Name, "/"), SpecHash: hash}, nil
+		return EnsuredContainer{ID: view.ID, Name: strings.TrimPrefix(view.Name, "/"), SpecHash: hash, LogPolicyVersion: ObservedContainerLogPolicyVersion(view.HostConfig)}, nil
 	}
 	existing, err := r.findContainer(ctx, spec.Identity)
 	if err != nil {
@@ -444,6 +469,7 @@ func (r *Runtime) EnsureContainer(ctx context.Context, input ContainerSpec) (Ens
 		pids = 32
 	}
 	host := &container.HostConfig{Resources: container.Resources{NanoCPUs: spec.CPUMillis * 1000000, Memory: spec.MemoryBytes, PidsLimit: &pids}, ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges:true"}, RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled}, NetworkMode: container.NetworkMode("none")}
+	host.LogConfig, _ = managedLogPolicy(spec.Identity.Kind)
 	if spec.Identity.Kind == "file-helper" {
 		host.Tmpfs = map[string]string{"/tmp": "rw,noexec,nosuid,nodev,size=16m,mode=1777"}
 	}
@@ -495,7 +521,7 @@ func (r *Runtime) EnsureContainer(ctx context.Context, input ContainerSpec) (Ens
 	if err := checkLabels(view.Container.Config.Labels, labels); err != nil {
 		return EnsuredContainer{}, err
 	}
-	return EnsuredContainer{ID: result.ID, Name: name, SpecHash: hash, Created: true}, nil
+	return EnsuredContainer{ID: result.ID, Name: name, SpecHash: hash, Created: true, LogPolicyVersion: ObservedContainerLogPolicyVersion(view.Container.HostConfig)}, nil
 }
 func (r *Runtime) StartContainer(ctx context.Context, identity ContainerIdentity) (*container.InspectResponse, error) {
 	view, err := r.findContainer(ctx, identity)

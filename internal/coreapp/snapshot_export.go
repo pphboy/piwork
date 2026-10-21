@@ -257,7 +257,7 @@ func (a *Application) failSnapshotExport(job corestore.SnapshotJob, cause error)
 	if contracts.Validate("DiagnosticCodeSchema", code) != nil {
 		code = "WORK_OPERATION_FAILED"
 	}
-	diagnostics.Write(os.Stderr, diagnostics.Event{Component: "core", Stage: "runtime-prepare", Outcome: "failed", Code: code}, snapshotJobWork(job), job.OperationID, job.OperationID)
+	diagnostics.WriteSink(a.consoleStderr(), a.diagnosticSink(), diagnostics.Event{Component: "core", Stage: "runtime-prepare", Outcome: "failed", Code: code}, snapshotJobWork(job), job.OperationID, job.OperationID)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var artifacts []corestore.SnapshotArtifact
