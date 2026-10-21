@@ -18,6 +18,12 @@ R1–R7 对应上一轮独立核验的七项问题，以下是待修复/待证�
 | R6：损坏结果仍标 ready | 同尺寸损坏下载虽 503，后续查询仍 ready/result 非空/error 空 | LOGEXP-004、LOGEXP-007、LOGEXP-008；CLI-LOG-002 | 4.4、5.1；持久 failed/result=null、重启/同键不重采，普通取消不误伤 |
 | R7：任务勾选超过证据 | 8.1/8.3/9.5 和全部移除路径的矩阵未完整执行；9.7 代码已去掉 LogReference，design 仍称持久引用 | WLIFE-LOG-001；LOGEXP-006/007；WACC-LOG-EXPORT-001；DWUI-LOG-001/002 | 3.4、5.2、8.1、8.3、8.6、8.9、8.10、9.5、9.7；勾选对应真实证据，核对持久记录与进程内引用模型；未测边界如实保留 |
 
+### 冻结提交 a036752 的独立核验补充
+
+独立核验针对 `a0367528785d6264832a798a34f028b031817e8a` 连续两次复现以下失败：已配置的短敏感值 `API_KEY=abc` 未脱敏并进入最终 ZIP；合法 UTF-8 `A中文Z` 经流式处理变为 `A中��Z`。复现输入与失败输出分别位于被忽略的 `dist/verify-add-log-export-independent/overlay.json` 和 `dist/verify-add-log-export-independent/redaction-regressions.log`，不是已提交或跨机器可用证据。两项均属于既定 LOGEXP-002 的已知敏感值脱敏与流式日志内容可用性，以及 LOGEXP-005 的流式 ZIP 交付要求，不新增能力或框架。
+
+仅重开 3.3（短值及跨块脱敏）和 4.3（合法 UTF-8 跨块保真与 ZIP 正文核对），保留原要求及 R1–R7 映射；当前进度为 **39/41**。apply 须将两个反例纳入正式最小回归并提供最终 ZIP 证明后才重新勾选。既有未受影响的 GUI、权限及其他证据沿用，不扩大测试矩阵。
+
 ## 1. HTTP 契约与受管存储
 
 - [x] 1.1 在 packages/contracts 定义日志创建/接受、状态、范围、进度、结果、缺口和错误契约，接入 HTTP 生成入口并同步 Go DTO/夹具。验证：`make generate`、contracts 单元测试和 `go test -mod=readonly ./internal/contracts` 通过，覆盖未知/重复字段、非法 ID、正文及安全投影上限。
@@ -35,7 +41,7 @@ R1–R7 对应上一轮独立核验的七项问题，以下是待修复/待证�
 
 - [x] 3.1 为精确绑定 Agent/Service 增加完整日志流读取，使用 stdout/stderr/timestamps/tail=all/until 和有界取消，保持旧 200 行/64 KiB/2 秒 Logs 不变。验证：dockerengine 单元/真实 Engine 测试覆盖大量输出、跨帧/跨块及极长行、时间上界、驱动不支持、异常帧、同名替代实例和取消；其他资源 kind 不被扩大读取。
 - [x] 3.2 为新 Agent/Service 设置 json-file 的 16m/4 文件策略，登记实际日志策略版本并兼容已有绑定/adoption。验证：真实 Engine inspect 确认新策略；已有不同驱动/旧 spec hash 实例不因该默认变化强制重建，旧来源能力如实返回。
-- [x] 3.3 按精确实例实际捕获 Context 固定敏感值上下文，实现流式脱敏、归档私有暂存、文件/目录同步、完整发布和 archived 提交（R1）。验证：跨块秘密、旧配置、非法 UTF-8、断电窗口及源消失回归；新旧凭据不同的失败候选/回滚实例分别正确脱敏，上下文缺失不猜配置、不泄密并持久反馈缺口，内部索引不保存敏感值，半归档不当成功。
+- [ ] 3.3 按精确实例实际捕获 Context 固定敏感值上下文，实现流式脱敏、归档私有暂存、文件/目录同步、完整发布和 archived 提交（R1）。验证：跨块秘密、旧配置、非法 UTF-8、断电窗口及源消失回归；新旧凭据不同的失败候选/回滚实例分别正确脱敏，上下文缺失不猜配置、不泄密并持久反馈缺口，内部索引不保存敏感值，半归档不当成功。追加最小回归：不得忽略已配置的非空 1–3 字节敏感值，覆盖这些长度及跨块匹配；以 `API_KEY=abc` 核对归档和最终 ZIP 均无敏感值明文。
 - [x] 3.4 将有界归档接入全部 Agent/Service RemoveContainer 路径，逐项覆盖 Apply、Work 删除、Service Restart、定义更新、初始化失败、候选失败/回滚和恢复（R1、R7）。验证：生命周期/故障注入逐路径断言归档先于删除、失败仍继续原操作及其他容器收尾；队列计入 5 秒/剩余预算，重启仍追踪已删除源缺口；真实 Engine 路径证据依 8.6，不能以共享钩子推断全部已测。
 - [x] 3.5 建立现存实例来源索引和旧归档/缺口恢复，补充既有双语部署材料中的 Docker 保留、归档容量、升级前不可回填边界。验证：升级/恢复测试保留旧实例与 owner，Work 删除后归档仍按原用户授权，双语材料及 quickstart/路径检查通过。
 
@@ -43,7 +49,7 @@ R1–R7 对应上一轮独立核验的七项问题，以下是待修复/待证�
 
 - [x] 4.1 接入独立 log-exports 三类 API、当前管理员/任务 owner 授权、幂等重放优先、全局单任务及容量/来源预检。验证：coreapp HTTP 测试覆盖普通用户 403 且零来源/暂存 I/O、operator/Agent 拒绝、另一管理员 403、同键并发原 ID/T、新键 busy、严格输入和持久接受失败。
 - [x] 4.2 在接受阶段固定 T/范围及 Core 文件边界，完成无 Work 业务锁的流式收集、实时/归档原实例衔接、去重及真实状态/进度（R2、R4）。验证：接受后轮转不会遗失已引用 T 前内容，失败/重放释放引用；运行中无 Stop/Apply/Run cancel；替换/删除、归档含 T 后记录、Docker/模型未就绪、无 Work、全源不可用和预算行为回归，持久缺口参与结果。
-- [x] 4.3 实现 manifest v1、受管 ZIP、完整密封、长度/hash、ready 原子发布和真实缺口；辅助元数据缺失/损坏不得抹除持久来源/归档事实（R2）。验证：DB 为 partial 且 metadata.json 缺失、损坏或不可核验时仍 complete=false/有 warning，安全可读内容为 partial 否则 unavailable；实际解包核对时间/脱敏/hash，路径注入、磁盘/压缩器故障及半包不能发布，原日志/归档不误删。
+- [ ] 4.3 实现 manifest v1、受管 ZIP、完整密封、长度/hash、ready 原子发布和真实缺口；辅助元数据缺失/损坏不得抹除持久来源/归档事实（R2）。验证：DB 为 partial 且 metadata.json 缺失、损坏或不可核验时仍 complete=false/有 warning，安全可读内容为 partial 否则 unavailable；实际解包核对时间/脱敏/hash，路径注入、磁盘/压缩器故障及半包不能发布，原日志/归档不误删。追加最小回归：合法 UTF-8 不因流式处理边界损坏，以 `A中文Z` 在无敏感值、有其他敏感值及字符跨块时逐字节保持一致，并核对最终 ZIP 内正文；保留非法 UTF-8 的既定处理。
 - [x] 4.4 完成 worker/关闭恢复及损坏结果状态持久化：核验确认缺失/损坏先提交 ready→failed、LOG_EXPORT_CONTENT_UNAVAILABLE、result=null，再拒绝内容；保留原 ID/T/幂等和 cleanupPending（R6）。验证：查询、重启及同键重放保持原失败且不重采；普通取消/网络中断不误标损坏；CLI 回归确认服务端 503 时 download exit 5 且无最终文件，show 原 failed/result=null 仍 exit 0；覆盖 collecting、packing、seal 后 ready 前、ready 后故障窗口，无模型/Docker 就绪依赖或隐式改 T。
 
 ## 5. 授权下载、保留与清理
