@@ -1,6 +1,5 @@
-import {Field,Input,Feedback,icon} from './components.js';
+import {Field,Input,Feedback,icon,pendingDots} from './components.js';
 import {modelErrors} from './model-form.js';
-import {pendingDots} from './pending.js';
 type Data=Record<string,any>;
 type Stage='loading'|'administrator'|'login'|'waiting'|'error';
 const root=document.querySelector<HTMLElement>('#setup-app')!;

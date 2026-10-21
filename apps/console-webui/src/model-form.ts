@@ -1,6 +1,5 @@
 import type {ModelConfig, ModelTestResult} from '@piwork/contracts';
-import {esc, Field, Input, Feedback, date} from './components.js';
-import {pendingDots} from './pending.js';
+import {esc, Field, Input, Feedback, date, pendingDots} from './components.js';
 
 export type ModelDraft = {name:string; model:string; api:ModelConfig['api']; baseUrl:string; key:string};
 export const blankModel = ():ModelDraft => ({name:'', model:'', api:'openai-responses', baseUrl:'', key:''});

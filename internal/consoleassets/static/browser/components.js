@@ -1,3 +1,5 @@
+/** Decorative only: the owning request supplies its label and busy/status semantics. */
+export const pendingDots = () => '<span class="pending-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 export const icon = (name, size = 18) => {
     const paths = {

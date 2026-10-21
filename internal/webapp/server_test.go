@@ -328,22 +328,10 @@ func TestRuntimeUsesCoreReleaseDefaultAndRejectsBrowserOverride(t *testing.T) {
 func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
 	_, _, origin := fixture(t)
 	client := browser(t)
-	for path, contentType := range map[string]string{
-		"/setup": "text/html", "/login": "text/html",
-		"/setup/browser/onboarding.js": "text/javascript",
-		"/setup/browser/components.js": "text/javascript",
-		"/setup/browser/model-form.js": "text/javascript",
-		"/setup/piwork-logo.png":       "image/png", "/setup/style.css": "text/css",
-	} {
-		response, err := client.Get(origin + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, err := io.ReadAll(response.Body)
-		response.Body.Close()
-		if err != nil || response.StatusCode != 200 || !strings.HasPrefix(response.Header.Get("Content-Type"), contentType) || len(body) == 0 {
-			t.Fatalf("setup asset %s unavailable or wrong type", path)
-		}
+	for _, entry := range []string{"/setup", "/login"} {
+		t.Run(entry, func(t *testing.T) {
+			assertBrowserAssetGraph(t, client, origin+entry)
+		})
 	}
 	response, err := client.Get(origin + "/setup/browser/adapter.js")
 	if err != nil {

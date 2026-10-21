@@ -1,5 +1,4 @@
-import { esc, Field, Input, Feedback, date } from './components.js';
-import { pendingDots } from './pending.js';
+import { esc, Field, Input, Feedback, date, pendingDots } from './components.js';
 export const blankModel = () => ({ name: '', model: '', api: 'openai-responses', baseUrl: '', key: '' });
 export const testMessage = 'Reply with OK.';
 export const modelField = (field) => ({ name: 'model-name', model: 'model-id', api: 'model-api', baseUrl: 'model-base-url', credential: 'model-key' }[field.split('.')[0]] || '');

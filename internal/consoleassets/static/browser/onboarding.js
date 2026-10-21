@@ -1,6 +1,5 @@
-import { Field, Input, Feedback, icon } from './components.js';
+import { Field, Input, Feedback, icon, pendingDots } from './components.js';
 import { modelErrors } from './model-form.js';
-import { pendingDots } from './pending.js';
 const root = document.querySelector('#setup-app');
 if (location.hash)
     history.replaceState(null, '', location.pathname + location.search);
