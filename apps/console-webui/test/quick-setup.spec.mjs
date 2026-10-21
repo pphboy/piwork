@@ -55,7 +55,7 @@ async function evidence(page,name){
 }
 
 test('first empty draft is Key-only, uses exact defaults and compares dirty against its baseline',async({page})=>{
- const state=await fixture(page);await expect(page.getByRole('button',{name:'Read current state',exact:true})).toHaveCount(0);await expect(page.getByRole('link',{name:/Manage AI models|Review saved models/})).toHaveCount(0);await expect(page.locator('.setup-diagnostics')).toHaveCount(0);await evidence(page,'key-only-clean');await expect(page.locator('#model-id')).toHaveValue('deepseek-flash');await expect(page.locator('#model-api')).toHaveValue('anthropic-messages');await expect(page.locator('#model-base-url')).toHaveValue('https://api.deepseek.com/anthropic');await expect(page.locator('#model-id')).toBeHidden();expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
+ const state=await fixture(page);await expect(page.locator('.setup-api-guidance')).toHaveCount(1);await expect(page.locator('.setup-api-guidance')).toContainText('We recommend using the DeepSeek API directly.');await expect(page.locator('.setup-api-guidance a')).toHaveAttribute('href','https://platform.deepseek.com');await expect(page.getByRole('button',{name:'Read current state',exact:true})).toHaveCount(0);await expect(page.getByRole('link',{name:/Manage AI models|Review saved models/})).toHaveCount(0);await expect(page.locator('.setup-diagnostics')).toHaveCount(0);await evidence(page,'key-only-clean');await expect(page.locator('#model-id')).toHaveValue('deepseek-flash');await expect(page.locator('#model-api')).toHaveValue('anthropic-messages');await expect(page.locator('#model-base-url')).toHaveValue('https://api.deepseek.com/anthropic');await expect(page.locator('#model-id')).toBeHidden();expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
  await key(page);expect(await page.evaluate(()=>window.log.dirty)).toBe(true);await page.getByLabel('API Key',{exact:true}).fill('');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
  await advanced(page);await page.getByLabel('Model ID',{exact:true}).fill('other');expect(await page.evaluate(()=>window.log.dirty)).toBe(true);await page.getByLabel('Model ID',{exact:true}).fill('deepseek-flash');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);expect(writes(state)).toEqual([]);
 });
@@ -63,7 +63,7 @@ test('first empty draft is Key-only, uses exact defaults and compares dirty agai
 test('Key-only save serializes defaults, never implicitly Tests and enters once after confirmed readiness',async({page})=>{
  const state=await fixture(page,{ready:true});await key(page);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect.poll(()=>nav(page)).toEqual(['/']);
  const sent=writes(state);expect(sent.map(r=>r.path)).toEqual(['/console/api/admin/models','/console/api/admin/runtime']);expect(sent[0].body).toEqual({name:'',model:'deepseek-flash',api:'anthropic-messages',baseUrl:'https://api.deepseek.com/anthropic',credential:'synthetic-key'});expect(sent[1].body).toEqual({modelRef:'model-1'});
- await refresh(page);expect(await nav(page)).toEqual(['/']);await expect(page.locator('#workbench-exit')).toHaveAttribute('href','/');await expect(page.locator('#quick input[type=password]')).toHaveCount(0);expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toContain('synthetic-key');
+ await refresh(page);expect(await nav(page)).toEqual(['/']);await expect(page.locator('#workbench-exit')).toHaveAttribute('href','/');await expect(page.locator('#quick input[type=password]')).toHaveCount(0);await expect(page.locator('.setup-api-guidance')).toHaveCount(0);expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toContain('synthetic-key');
 });
 
 test('advanced errors expand and focus without a write, while reads preserve draft and focus',async({page})=>{
@@ -74,8 +74,8 @@ test('advanced errors expand and focus without a write, while reads preserve dra
 
 test('existing choices keep their baseline and additional models never receive first-install defaults',async({page})=>{
  await page.clock.install();
- const models=[savedModel('first'),savedModel('second')];await fixture(page,{models,configured:true,ready:true});await expect(page.locator('#saved-model')).toHaveValue('first');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);await page.locator('#saved-model').selectOption('second');expect(await page.evaluate(()=>window.log.dirty)).toBe(true);await autoRead(page);await expect(page.locator('#saved-model')).toHaveValue('second');await page.locator('#saved-model').selectOption('first');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
- await page.getByRole('button',{name:'Add model',exact:true}).click();await expect(page.locator('#model-id')).toHaveValue('');await expect(page.locator('#model-api')).toHaveValue('openai-responses');await expect(page.locator('#model-base-url')).toHaveValue('');await expect(page.locator('#model-advanced')).toHaveAttribute('open','');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
+ const models=[savedModel('first'),savedModel('second')];await fixture(page,{models,configured:true,ready:true});await expect(page.locator('.setup-api-guidance')).toHaveCount(0);await expect(page.locator('#saved-model')).toHaveValue('first');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);await page.locator('#saved-model').selectOption('second');expect(await page.evaluate(()=>window.log.dirty)).toBe(true);await autoRead(page);await expect(page.locator('#saved-model')).toHaveValue('second');await page.locator('#saved-model').selectOption('first');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);
+ await page.getByRole('button',{name:'Add model',exact:true}).click();await expect(page.locator('#model-id')).toHaveValue('');await expect(page.locator('#model-api')).toHaveValue('openai-responses');await expect(page.locator('#model-base-url')).toHaveValue('');await expect(page.locator('.setup-api-guidance')).toHaveCount(1);await expect(page.locator('#model-advanced')).toHaveAttribute('open','');expect(await page.evaluate(()=>window.log.dirty)).toBe(false);await page.getByRole('button',{name:'Choose saved model',exact:true}).click();await expect(page.locator('.setup-api-guidance')).toHaveCount(0);
 });
 
 test('catalog failure is not an empty installation and read recovery does not overwrite an edited draft',async({page})=>{
@@ -330,4 +330,62 @@ test('repeated failed recovery reads do not replace the focused exceptional reco
 
 test('initial configuration read failure retains its cause and original error-page retry',async({page})=>{
  let fail=true;const state=await fixture(page,{handle:r=>r.path==='/_web/api/onboarding'&&fail?{status:502,json:{message:'Synthetic first configuration read unavailable'}}:null});await expect(page.locator('#setup-title')).toHaveText('Could not read Core state');await expect(page.locator('#setup-notice')).toContainText('Synthetic first configuration read unavailable');await expect(page.getByRole('button',{name:'Read current state',exact:true})).toBeVisible();await expect(page.getByRole('link',{name:'Review saved models',exact:true})).toHaveCount(0);fail=false;await refresh(page);await expect(page.locator('#model-form')).toBeVisible();await expect(page.locator('#setup-notice')).toHaveText('');await expect(page.getByRole('button',{name:'Read current state',exact:true})).toHaveCount(0);expect(writes(state)).toEqual([]);
+});
+
+test('DeepSeek guidance opens the platform natively and retains the same draft through clicks, keyboard and polling',async({page,context})=>{
+ await page.clock.install();const state=await fixture(page);const originalUrl=page.url();
+ await key(page);await advanced(page);await page.getByLabel('Model ID',{exact:true}).fill('custom-guidance-model');
+ await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/anthropic');
+ const guidance=page.locator('.setup-api-guidance'),link=guidance.getByRole('link',{name:'platform.deepseek.com (opens in a new tab)',exact:true});
+ await expect(link).toHaveAttribute('target','_blank');await expect(link).toHaveAttribute('rel','noopener noreferrer');
+ await page.evaluate(()=>{window.guidanceDocument=document;window.guidanceBlock=document.querySelector('.setup-api-guidance');window.guidanceLink=document.querySelector('.setup-api-guidance a');window.guidanceKey=document.querySelector('#model-key');});
+ const visits=[];await context.route(url=>url.origin==='https://platform.deepseek.com',async route=>{
+  if(route.request().resourceType()==='document')visits.push({url:route.request().url(),referer:route.request().headers().referer});
+  await route.fulfill({contentType:'text/html',body:'<!doctype html><title>Synthetic API platform</title><p>Synthetic platform fixture</p>'});
+ });
+ expect(visits).toEqual([]);
+ for(const activation of ['mouse','keyboard']){
+  const opened=context.waitForEvent('page');
+  if(activation==='keyboard'){await page.getByLabel('API Key',{exact:true}).focus();await page.keyboard.press('Shift+Tab');await expect(link).toBeFocused();await page.keyboard.press('Enter');}
+  else await link.click();
+  const platform=await opened;await platform.bringToFront();await platform.waitForLoadState('domcontentloaded');
+  await expect(platform).toHaveURL('https://platform.deepseek.com/');await expect(platform.getByText('Synthetic platform fixture',{exact:true}),activation+' opens the synthetic platform response').toBeVisible();expect(await platform.evaluate(()=>window.opener===null)).toBe(true);
+  await platform.close();await page.bringToFront();
+  await expect(page).toHaveURL(originalUrl);await expect(page.locator('#leave-dialog')).not.toBeVisible();
+  await expect(page.locator('#model-key')).toHaveValue('synthetic-key');await expect(page.locator('#model-id')).toHaveValue('custom-guidance-model');
+  await expect(page.locator('#model-base-url')).toHaveValue('https://models.example.invalid/anthropic');await expect(page.locator('#model-advanced')).toHaveAttribute('open','');
+  expect(await page.evaluate(()=>window.log.dirty)).toBe(true);expect(writes(state)).toEqual([]);expect(await nav(page)).toEqual([]);
+ }
+ expect(visits).toEqual(Array.from({length:2},()=>({url:'https://platform.deepseek.com/',referer:undefined})));
+ // Chromium's browser-initiated Ctrl-click navigation bypasses context routing.
+ // Observe native delegation, then cancel at document level to avoid real network.
+ await page.evaluate(()=>document.addEventListener('click',event=>{
+  window.guidanceModifiedClick={cancelled:event.defaultPrevented,modified:event.ctrlKey||event.metaKey};event.preventDefault();
+ },{once:true}));
+ await link.click({modifiers:['ControlOrMeta']});
+ expect(await page.evaluate(()=>window.guidanceModifiedClick)).toEqual({cancelled:false,modified:true});
+ expect(context.pages()).toHaveLength(1);expect(writes(state)).toEqual([]);expect(await nav(page)).toEqual([]);
+ await page.getByLabel('API Key',{exact:true}).focus();await page.keyboard.press('Shift+Tab');await autoRead(page);
+ await expect(link).toBeFocused();await expect(guidance).toHaveCount(1);
+ expect(await page.evaluate(()=>window.guidanceDocument===document&&window.guidanceBlock===document.querySelector('.setup-api-guidance')&&window.guidanceLink===document.querySelector('.setup-api-guidance a')&&window.guidanceKey===document.querySelector('#model-key'))).toBe(true);
+ await expect(page.locator('#model-key')).toHaveValue('synthetic-key');expect(writes(state)).toEqual([]);expect(await nav(page)).toEqual([]);
+});
+
+for(const width of [1440,360])test(`DeepSeek guidance stays aligned and readable with a visible keyboard link at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:1000});const state=await fixture(page);
+ const guidance=page.locator('.setup-api-guidance'),link=guidance.locator('a'),label=page.locator('label[for="model-key"]'),input=page.locator('#model-key');
+ const box=await guidance.boundingBox(),field=await input.boundingBox(),caption=await label.boundingBox();
+ expect(box.x).toBeCloseTo(field.x,1);expect(box.width).toBeCloseTo(field.width,1);expect(box.y+box.height).toBeLessThan(caption.y);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ expect(await guidance.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+ await expect(link).toHaveText('platform.deepseek.com');await expect(link.locator('svg')).toHaveAttribute('aria-hidden','true');
+ expect(await link.evaluate(el=>{const text=document.createRange();text.selectNodeContents(el.firstChild);const last=[...text.getClientRects()].at(-1),icon=el.querySelector('svg').getBoundingClientRect();return icon.top<last.bottom&&icon.bottom>last.top;})).toBe(true);
+ await expect(link).toHaveCSS('text-decoration-line','underline');
+ const normal=await link.evaluate(el=>getComputedStyle(el).color);await link.hover();expect(await link.evaluate(el=>getComputedStyle(el).color)).not.toBe(normal);
+ await page.mouse.move(0,0);await input.focus();await page.keyboard.press('Shift+Tab');await expect(link).toBeFocused();await expect(link).toHaveCSS('outline-style','solid');
+ expect(await guidance.getAttribute('role')).toBeNull();await expect(guidance.locator('.pending-dots')).toHaveCount(0);expect(writes(state)).toEqual([]);
+ if(process.env.PIWORK_API_GUIDANCE_EVIDENCE==='1'){
+  const directory=new URL('../../../dist/deepseek-api-guidance/evidence/',import.meta.url);await mkdir(directory,{recursive:true});
+  await page.screenshot({path:new URL(`deepseek-api-guidance-${width}-synthetic.png`,directory).pathname,fullPage:true});
+ }
 });

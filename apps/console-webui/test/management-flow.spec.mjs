@@ -200,6 +200,7 @@ test('S10 Read current data owns its pending state, deduplicates, and retains mo
   const gate=deferred();let delayed=false;
   try{
     const {requests}=await fixture(page,'/models/model-one',async r=>{if(delayed&&r.path==='admin/models')await gate.promise;});
+    await expect(page.locator('.setup-api-guidance')).toHaveCount(0);
     await page.locator('#model-id').fill('unsaved-model');await page.locator('#model-key').fill('synthetic-secret-only');
     await page.locator('#model-id').evaluate(el=>{el.focus();el.setSelectionRange(1,4);window.retainedInput=el;});
     delayed=true;const before=requests.filter(r=>r.path==='admin/models').length;
