@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
-	"os"
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
 	"piwork/internal/diagnostics"
@@ -129,6 +129,39 @@ func serviceRemovalKey(workID, serviceID string) string {
 	sum := sha256.Sum256([]byte(workID + "\x00" + serviceID))
 	return "service_remove_" + hex.EncodeToString(sum[:])
 }
+func (a *Application) registerServiceLogSource(ctx context.Context, workID, serviceID string, revision int64, containerID string, policyVersion int64) (string, error) {
+	if a.Store == nil {
+		return "", nil
+	}
+	if existing, found, err := a.Store.LogSourceByContainer(ctx, containerID); err != nil {
+		return "", err
+	} else if found {
+		return existing.SourceID, nil
+	}
+	var owner string
+	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT owner_user_id FROM works WHERE id=?`, workID).Scan(&owner)
+	}); err != nil {
+		return "", err
+	}
+	instanceID := "service-instance-" + uuid.NewString()
+	sourceID, ok := corestore.LogSourceID(a.Store.InstallationID(), workID, "service", serviceID, revision, instanceID)
+	if !ok {
+		return "", corestore.ErrStorage
+	}
+	source, err := a.Store.RegisterLogSource(ctx, corestore.LogSourceRegistration{
+		SourceID: sourceID, OwnerUserID: owner, WorkID: workID, Kind: "service", ServiceID: serviceID,
+		Generation: revision, InstanceID: instanceID, CreatedAt: packageNow(),
+	})
+	if err != nil {
+		return "", err
+	}
+	if _, err := a.Store.BindLogSource(ctx, source.SourceID, containerID, policyVersion, packageNow()); err != nil {
+		return "", err
+	}
+	return source.SourceID, nil
+}
+
 func (a *Application) stopServiceRuntime(ctx context.Context, workID, serviceID string, remove bool) (returned error) {
 	stage := "service-stop"
 	if remove {
@@ -227,6 +260,7 @@ func (a *Application) stopServiceRuntime(ctx context.Context, workID, serviceID 
 			}
 		}
 		if remove {
+			a.archiveBeforeRemoval(ctx, identity, view.ID)
 			if err := a.dockerRuntime.RemoveContainer(ctx, identity); err != nil {
 				return err
 			}
@@ -441,6 +475,9 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 	if err != nil {
 		return &serviceRuntimeError{Code: "SERVICE_START_FAILED", Stage: "service-start"}
 	}
+	if _, err := a.registerServiceLogSource(ctx, target.WorkID, target.ServiceID, target.Revision, ensured.ID, ensured.LogPolicyVersion); err != nil {
+		return &serviceRuntimeError{Code: "SERVICE_START_FAILED", Stage: "service-start"}
+	}
 	if err := a.serviceTargetCurrent(ctx, target); err != nil {
 		return err
 	}
@@ -501,7 +538,7 @@ func (a *Application) serviceStage(ctx context.Context, target serviceTarget, st
 	if correlation == "" {
 		correlation = "recovery-" + target.ServiceID
 	}
-	diagnostics.Write(os.Stderr, event, target.WorkID, target.OperationID, correlation)
+	diagnostics.WriteSink(a.consoleStderr(), a.diagnosticSink(), event, target.WorkID, target.OperationID, correlation)
 	return nil
 }
 func (a *Application) collectServiceInitialization(ctx context.Context, target serviceTarget) contracts.DiagnosticCollection {

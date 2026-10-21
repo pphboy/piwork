@@ -89,6 +89,12 @@ curl --fail http://127.0.0.1:17891/healthz
 docker logs --tail 100 piwork-core-quickstart
 ```
 
+Core 还会在其数据目录的 `logs/core/` 下保存私有进程日志。每次启动新建 `core-<bootId>-<segment>.jsonl` 分片；分片达到 16 MiB 轮转，安装最多保留 256 MiB、7 天，文件约每秒同步，并在轮转、导出边界和正常关闭时额外同步。保持 Core 数据卷挂载即可在容器替换后保留这些分片。文件覆盖从取得安装目录锁后开始，包含受管诊断、性能事件、标准应用日志及启动/关闭记录；`--help`/`--version`、非法启动参数、取得锁之前的错误以及应用日志设施之外的原生运行时崩溃仍只出现在控制台/stderr，不构成完整原始 stderr 捕获。
+
+删除或替换 Agent/Service 实例前，Core 会把该精确实例保留的 stdout/stderr 归档到数据目录的 `logs/works/`。归档保留 7 天，每 Work 至多 512 MiB、每安装至多 2 GiB，优先清理最旧且无引用的归档。本版本之前已替换或删除的容器无法回填；已有容器继续按实际日志驱动读取，仅新建 Agent/Service 使用 16m × 4 的 json-file 有界策略。同样需保留数据卷。
+
+管理员可从 Linux CLI 或 Desktop 账户菜单的 **Export logs** 导出 Core 安全平台日志及自己全部 Work 日志，导出不会停止或 Apply Work。CLI：`piwork-cli --core http://SERVER_IP:17871 login --account admin`，`piwork-cli --core http://SERVER_IP:17871 logs export --output ./piwork-logs.zip`；用 `logs show EXPORT_ID` 与 `logs download EXPORT_ID --output FILE` 恢复原任务。结果包自就绪起保留 24 小时；部分结果保持 complete=false，并在 manifest.json 列出缺口。关闭 UI 面板或中断 CLI 不会取消已接受的 Core 任务。GUI 全流程无需运行命令；下载 ZIP 后由用户手工发给可信维护者，本功能不自动上传。
+
 同一进程提供两个 HTTP 服务：UI 默认 `0.0.0.0:17891`，Core 默认 `0.0.0.0:17871`。浏览器只连接 UI，所有文件、事件及 `/services/<workId>/<serviceId>/<port>/` 使用同一入口；后端固定通过 loopback HTTP 连接 Core。外部 Linux CLI 直接连接服务器 Core 端口。仅使用 --ui-port/--core-port 改端口。UI 接受本机实际 IPv4、localhost、回环和主机名，校验 Host、Origin 与 CSRF，不信任 Forwarded；切换地址需独立登录。只提供 HTTP，不提供 HTTPS、域名或反向代理配置。内部 Agent 保留容器可达的 7172 mTLS 回连。用户 Service 不发布宿主端口，模型端点须从 Work 网络可达。
 
 托管 Service 与工作台同源，须视为可信应用；其脚本可使用当前用户的 UI 权限。应用须支持动态 Service URL 前缀；旧根路径应用不会自动改写源码、镜像或包。Service 支持响应 Cookie 的服务端登录、Basic/Bearer、HTTP、SSE 和 WebSocket。响应 Cookie 按浏览器会话及 Service 保存在服务器，HTTP 入口不转发 Secure Cookie。依赖 document.cookie/Cookie Store 读写（如脚本读取 CSRF Cookie）的应用不保证透明兼容；脚本写入浏览器 Cookie 也不保证同 IP 跨 Service 隔离，且不会转发上游。不支持硬编码 .work URL、跨站 SSO 或上游 HTTPS 的透明适配。应用 CSP/X-Frame-Options 保留；禁止嵌入时使用新标签页。

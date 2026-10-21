@@ -612,6 +612,71 @@ type ImportWorkRequest struct {
 	IdempotencyKey SnapshotIdempotencyKey `json:"idempotencyKey"`
 }
 
+type LogExportAccepted struct {
+	ExportId      ResourceId     `json:"exportId"`
+	CorrelationId Identifier     `json:"correlationId"`
+	CutoffTime    Timestamp      `json:"cutoffTime"`
+	State         LogExportState `json:"state"`
+	Scope         LogExportScope `json:"scope"`
+	Reused        bool           `json:"reused"`
+}
+
+type LogExportCreateInput struct {
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+type LogExportProgress struct {
+	ProcessedSources int64 `json:"processedSources"`
+	TotalSources     int64 `json:"totalSources"`
+	CollectedBytes   int64 `json:"collectedBytes"`
+}
+
+type LogExportResult struct {
+	Filename  string         `json:"filename"`
+	Size      int64          `json:"size"`
+	Digest    WorkBlobDigest `json:"digest"`
+	ReadyAt   Timestamp      `json:"readyAt"`
+	ExpiresAt Timestamp      `json:"expiresAt"`
+}
+
+type LogExportScope struct {
+	IncludeCoreLogs bool  `json:"includeCoreLogs"`
+	OwnedWorkCount  int64 `json:"ownedWorkCount"`
+	SourceCount     int64 `json:"sourceCount"`
+}
+
+type LogExportState string
+
+type LogExportTaskError struct {
+	Code          string       `json:"code"`
+	Message       string       `json:"message"`
+	CorrelationId Identifier   `json:"correlationId"`
+	RetryAfterMs  Field[int64] `json:"retryAfterMs,omitzero"`
+}
+
+type LogExportView struct {
+	ExportId          ResourceId         `json:"exportId"`
+	CorrelationId     Identifier         `json:"correlationId"`
+	CutoffTime        Timestamp          `json:"cutoffTime"`
+	State             LogExportState     `json:"state"`
+	Scope             LogExportScope     `json:"scope"`
+	CreatedAt         Timestamp          `json:"createdAt"`
+	UpdatedAt         Timestamp          `json:"updatedAt"`
+	Progress          LogExportProgress  `json:"progress"`
+	Complete          json.RawMessage    `json:"complete"`
+	WarningCount      int64              `json:"warningCount"`
+	Warnings          []LogExportWarning `json:"warnings"`
+	WarningsTruncated bool               `json:"warningsTruncated"`
+	Result            json.RawMessage    `json:"result"`
+	Error             json.RawMessage    `json:"error"`
+	CleanupPending    bool               `json:"cleanupPending"`
+}
+
+type LogExportWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type LookupChatSubmission struct {
 	Kind string            `json:"kind"`
 	Key  ChatSubmissionKey `json:"key"`

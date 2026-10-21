@@ -1175,7 +1175,7 @@ function modalMarkup() {
       break;
     case "account":
       title = esc(adapter.state.core.account || "Account");
-      body = `<p class="account-context"><span>Role: ${esc(adapter.state.core.role === 'admin' ? 'Administrator' : adapter.state.core.role)}</span><span title="${esc(adapter.state.core.address)}">Core: ${esc(adapter.state.core.address)}</span></p><div class="menu-list">${btn(`${icon("info")} About Piwork`, "about-piwork")}${btn(`${icon("clock")} Known operations`, "operations")}</div><div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} Administration</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} Quick setup</a>` : "") : `${btn(`${icon("refresh")} Switch Core`, "switch-core")}`}${btn(`${icon("logout")} Sign out`, "sign-out", "danger")}</div>`;
+      body = `<p class="account-context"><span>Role: ${esc(adapter.state.core.role === 'admin' ? 'Administrator' : adapter.state.core.role)}</span><span title="${esc(adapter.state.core.address)}">Core: ${esc(adapter.state.core.address)}</span></p><div class="menu-list">${btn(`${icon("info")} About Piwork`, "about-piwork")}${btn(`${icon("clock")} Known operations`, "operations")}${adapter.state.core.role === "admin" ? btn(`${icon("download")} Export logs`, "export-logs") : ""}</div><div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} Administration</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} Quick setup</a>` : "") : `${btn(`${icon("refresh")} Switch Core`, "switch-core")}`}${btn(`${icon("logout")} Sign out`, "sign-out", "danger")}</div>`;
       break;
     case "connection":
       title = "Core connection";
@@ -1432,6 +1432,21 @@ function modalMarkup() {
       }<p class="muted">Upload and validation happen before acceptance. Core prepares the package asynchronously; installing Agent capabilities may execute package preparation code in its isolated helper.</p>`;
       footer = `${cancel()}${btn(view.data.update ? "Update package" : "Install package", "confirm-install", "primary")}`;
       break;
+    case "log-export": {
+      title = "Export logs";
+      const state = adapter.logExport;
+      if (!state) {
+        body = `<p>No export is in progress. Export Core logs and logs from all your Works without stopping any Work.</p>`;
+        footer = `${close()}${adapter.state.core.role === "admin" ? btn("Export logs", "export-logs-again", "primary") : ""}`;
+        break;
+      }
+      const label = state.phase === "creating" ? "Preparing export" : state.phase === "collecting" ? "Collecting logs" : state.phase === "packing" ? "Creating archive" : state.phase === "ready" ? (state.delivered ? "Download started" : "Ready to download") : state.phase === "unknown" ? "Export creation not confirmed" : state.phase === "expired" ? "Export expired" : "Export failed";
+      const progress = state.total ? ` · ${state.processed}/${state.total} sources` : "";
+      const warnings = state.warnings.length ? `<div class="menu-list">${state.warnings.slice(0, 5).map(w => `<p>${esc(w.message)}</p>`).join("")}</div>` : "";
+      body = `<p>Core logs and logs from all your Works. This export does not stop, start or apply any Work.</p><p role="status">${pendingStatus(label, 'check-log-export download-log-export')}${progress}</p>${state.error ? feedback(esc(state.error), state.phase === "failed" || state.phase === "interrupted" ? "warning" : "info") : ""}${state.phase === "ready" ? `<p>${esc(state.filename)} · ${state.size} bytes${state.expiresAt ? ` · expires ${esc(new Date(state.expiresAt).toLocaleString())}` : ""}</p>` : ""}${state.phase === "ready" && state.complete === false ? `<p role="status">${state.warningCount} gap(s) recorded. The archive manifest lists each source.</p>` : ""}${warnings}<p class="muted">${icon("lock", 14)} Closing this panel does not cancel the Core task. A download starts in your browser; check your browser to confirm it was saved.</p>`;
+      footer = `${close()}${state.phase === "ready" && state.filename ? btn("Download again", "download-log-export", "primary") : ""}${state.phase === "unknown" ? btn("Retry same key", "retry-log-export", "primary") : ""}${["collecting", "packing", "creating"].includes(state.phase) || (state.id && state.error) ? btn("Check status", "check-log-export") : ""}${["failed", "interrupted", "expired"].includes(state.phase) ? btn("Export again", "export-logs-again", "primary") : ""}`;
+      break;
+    }
     case "export": {
       const panel = exportPanel(target);
       title = panel.title; body = panel.body; footer = panel.footer;
@@ -2568,6 +2583,23 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       await stay(adapter.cleanupInspection(el.dataset.id!)); break;
     case "confirm-import":
       show(await stay(adapter.importWork(view.importName.trim())));
+      break;
+    case "export-logs":
+      adapter.recoverLogExport();
+      if (!adapter.logExport || (!adapter.logExport.restored && ["ready", "failed", "interrupted", "expired"].includes(adapter.logExport.phase))) adapter.startLogExport();
+      openModal("log-export");
+      break;
+    case "export-logs-again":
+      adapter.startLogExport();
+      break;
+    case "retry-log-export":
+      adapter.retryLogExportSameKey();
+      break;
+    case "check-log-export":
+      await stay(adapter.checkLogExport());
+      break;
+    case "download-log-export":
+      adapter.deliverLogExport();
       break;
     case 'export':
     case 'prepare-export':

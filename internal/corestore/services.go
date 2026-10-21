@@ -91,3 +91,20 @@ func PutServiceRuntimeBinding(tx *sql.Tx, v ServiceRuntimeBinding) error {
 	_, err := tx.Exec(`INSERT INTO service_runtime_bindings(work_id,service_id,revision,container_id,image_identity,recovery_count,recovery_window_started_at,next_retry_at,ready_since,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(work_id,service_id) DO UPDATE SET revision=excluded.revision,container_id=excluded.container_id,image_identity=excluded.image_identity,recovery_count=excluded.recovery_count,recovery_window_started_at=excluded.recovery_window_started_at,next_retry_at=excluded.next_retry_at,ready_since=excluded.ready_since,updated_at=excluded.updated_at`, v.WorkID, v.ServiceID, v.Revision, v.ContainerID, v.ImageIdentity, v.RecoveryCount, v.RecoveryWindowStartedAt, v.NextRetryAt, v.ReadySince, nowTimestamp(v.UpdatedAt))
 	return err
 }
+
+func ServiceRuntimeBindings(tx *sql.Tx) ([]ServiceRuntimeBinding, error) {
+	rows, err := tx.Query(`SELECT work_id,service_id,revision,container_id,image_identity,recovery_count,recovery_window_started_at,next_retry_at,ready_since,updated_at FROM service_runtime_bindings ORDER BY work_id,service_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []ServiceRuntimeBinding{}
+	for rows.Next() {
+		var v ServiceRuntimeBinding
+		if err := rows.Scan(&v.WorkID, &v.ServiceID, &v.Revision, &v.ContainerID, &v.ImageIdentity, &v.RecoveryCount, &v.RecoveryWindowStartedAt, &v.NextRetryAt, &v.ReadySince, &v.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, v)
+	}
+	return result, rows.Err()
+}

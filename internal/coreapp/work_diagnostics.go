@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"os"
 	"strings"
 
 	"piwork/internal/contracts"
@@ -28,7 +27,12 @@ func (a *Application) traceOperation(ctx context.Context, operation corestore.Op
 		work = *operation.WorkID
 	}
 	correlation := decodeDiagnosticEnvelope(operation.ResultJSON, operation.ID).CorrelationID
-	return diagnostics.WithPerformance(context.WithValue(ctx, traceKey{}, &operationTrace{app: a, work: work, operation: operation.ID, correlation: correlation}), diagnostics.PerformanceIdentity{CorrelationID: correlation, WorkID: work, OperationID: operation.ID})
+	traced := context.WithValue(ctx, traceKey{}, &operationTrace{app: a, work: work, operation: operation.ID, correlation: correlation})
+	if diagnostics.PerformanceWriter(traced) == nil {
+		traced = diagnostics.WithPerformanceWriter(traced, a.consoleStderr())
+	}
+	traced = diagnostics.WithPerformanceSink(traced, a.diagnosticSink())
+	return diagnostics.WithPerformance(traced, diagnostics.PerformanceIdentity{CorrelationID: correlation, WorkID: work, OperationID: operation.ID})
 }
 func traceFrom(ctx context.Context) *operationTrace {
 	value, _ := ctx.Value(traceKey{}).(*operationTrace)
@@ -63,7 +67,7 @@ func (t *operationTrace) observe(ctx context.Context, event diagnostics.Event) e
 	if !ok {
 		return corestore.ErrStorage
 	}
-	diagnostics.Write(os.Stderr, event, t.work, t.operation, t.correlation)
+	diagnostics.WriteSink(t.app.consoleStderr(), t.app.diagnosticSink(), event, t.work, t.operation, t.correlation)
 	if t.operation == "" {
 		if event.Outcome == "failed" {
 			t.preacceptFailed = true
@@ -98,7 +102,7 @@ func (t *operationTrace) observe(ctx context.Context, event diagnostics.Event) e
 		return err
 	})
 	if err != nil {
-		diagnostics.Write(os.Stderr, diagnostics.Event{Component: "core", Stage: event.Stage, Outcome: "failed", Code: "DIAGNOSTIC_PERSIST_FAILED"}, t.work, t.operation, t.correlation)
+		diagnostics.WriteSink(t.app.consoleStderr(), t.app.diagnosticSink(), diagnostics.Event{Component: "core", Stage: event.Stage, Outcome: "failed", Code: "DIAGNOSTIC_PERSIST_FAILED"}, t.work, t.operation, t.correlation)
 	}
 	return err
 }
@@ -153,7 +157,7 @@ func (a *Application) recoverDiagnosticAttempts(ctx context.Context) error {
 				if work != nil {
 					workID = *work
 				}
-				diagnostics.Write(os.Stderr, attempt.Event, workID, attempt.OperationID, v.CorrelationID)
+				diagnostics.WriteSink(a.consoleStderr(), a.diagnosticSink(), attempt.Event, workID, attempt.OperationID, v.CorrelationID)
 			}
 			if _, err := tx.Exec(`DELETE FROM control_metadata WHERE key=?`, p.Key); err != nil {
 				return err
@@ -178,7 +182,7 @@ func (a *Application) completeDiagnosticOperation(ctx context.Context, id, state
 		if trace := traceFrom(ctx); trace != nil {
 			work, corr = trace.work, trace.correlation
 		}
-		diagnostics.Write(os.Stderr, diagnostics.Event{Component: "core", Stage: "activation", Outcome: "failed", Code: "DIAGNOSTIC_PERSIST_FAILED"}, work, id, corr)
+		diagnostics.WriteSink(a.consoleStderr(), a.diagnosticSink(), diagnostics.Event{Component: "core", Stage: "activation", Outcome: "failed", Code: "DIAGNOSTIC_PERSIST_FAILED"}, work, id, corr)
 	}
 	if err == nil && (operation.State == "succeeded" || operation.State == "failed") && result != nil {
 		v := decodeDiagnosticEnvelope(result, id)
@@ -189,7 +193,7 @@ func (a *Application) completeDiagnosticOperation(ctx context.Context, id, state
 				if operation.WorkID != nil {
 					work = *operation.WorkID
 				}
-				diagnostics.Write(os.Stderr, diagnostics.Event{Component: last.Component, Stage: string(last.Stage), Outcome: last.Outcome, Code: string(last.Code)}, work, id, v.CorrelationID)
+				diagnostics.WriteSink(a.consoleStderr(), a.diagnosticSink(), diagnostics.Event{Component: last.Component, Stage: string(last.Stage), Outcome: last.Outcome, Code: string(last.Code)}, work, id, v.CorrelationID)
 			}
 		}
 	}

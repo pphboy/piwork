@@ -228,7 +228,7 @@ func writeMarker(root *safefs.Root, marker Marker) error {
 	return root.AtomicWrite(MarkerName, temp, append(raw, '\n'))
 }
 
-var managedDirectories = []string{"secrets", "runtime", "skills", "works", "snapshots", "pi-packages"}
+var managedDirectories = []string{"secrets", "runtime", "skills", "works", "snapshots", "pi-packages", "logs"}
 
 func validateDirectory(root *safefs.Root, marker Marker, operatorName string) error {
 	if root.CheckPrivate() != nil {

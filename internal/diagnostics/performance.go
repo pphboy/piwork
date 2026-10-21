@@ -21,6 +21,7 @@ type PerformanceIdentity struct {
 
 type performanceKey struct{}
 type performanceWriterKey struct{}
+type performanceSinkKey struct{}
 type performanceScope struct {
 	mu sync.Mutex
 	id PerformanceIdentity
@@ -39,6 +40,15 @@ func WithPerformanceIfAbsent(ctx context.Context, id PerformanceIdentity) contex
 
 func WithPerformanceWriter(ctx context.Context, writer io.Writer) context.Context {
 	return context.WithValue(ctx, performanceWriterKey{}, writer)
+}
+
+func PerformanceWriter(ctx context.Context) io.Writer {
+	writer, _ := ctx.Value(performanceWriterKey{}).(io.Writer)
+	return writer
+}
+
+func WithPerformanceSink(ctx context.Context, sink Sink) context.Context {
+	return context.WithValue(ctx, performanceSinkKey{}, sink)
 }
 
 // BindPerformance attaches accepted business identities without changing the
@@ -112,7 +122,11 @@ func (s *PerformanceSpan) write(outcome string, duration time.Duration, cacheSta
 	}
 	raw, _ := json.Marshal(value)
 	// One write keeps concurrent lines intact for files and pipe-sized events.
-	_, _ = writer.Write(append(raw, '\n'))
+	console := append(append([]byte(nil), raw...), '\n')
+	_, _ = writer.Write(console)
+	if sink, ok := s.ctx.Value(performanceSinkKey{}).(Sink); ok && sink != nil {
+		sink.Performance(value, console)
+	}
 }
 
 func performancePhase(phase string) bool {

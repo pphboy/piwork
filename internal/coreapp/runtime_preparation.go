@@ -448,7 +448,13 @@ func (p *runtimePreparation) execute(ctx context.Context, name string, profile R
 		if a.options.DependencyCheck != nil {
 			return a.options.DependencyCheck(ctx, a, profile)
 		}
-		return a.initializeDocker(ctx)
+		if err := a.initializeDocker(ctx); err != nil {
+			return err
+		}
+		// Existing-instance log indexing is best effort and must never gate
+		// runtime readiness or Work recovery.
+		a.recoverLogSources(ctx)
+		return nil
 	}
 	if name == "defaultContext" {
 		return a.prepareDefaultContext(ctx, profile)

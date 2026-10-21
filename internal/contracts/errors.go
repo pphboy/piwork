@@ -144,6 +144,15 @@ var publicErrors = map[string]errorDefinition{
 	"PI_PACKAGE_ENVIRONMENT_MISMATCH":     {409, "Package preparation environment is incompatible", false},
 	"PI_PACKAGE_ALREADY_INSTALLED":        {409, "Package is already installed", false},
 	"PI_PACKAGE_NAME_MISMATCH":            {400, "Package name does not match the update target", false},
+	"LOG_EXPORT_BUSY":                     {409, "A log export is already running", true},
+	"LOG_EXPORT_SOURCE_LIMIT":             {409, "Too many log sources for one export", false},
+	"LOG_EXPORT_STORAGE_UNAVAILABLE":      {503, "Log export storage is unavailable", true},
+	"LOG_EXPORT_NOT_READY":                {409, "Log export is not ready", false},
+	"LOG_EXPORT_EXPIRED":                  {410, "Log export has expired", false},
+	"LOG_EXPORT_CONTENT_UNAVAILABLE":      {503, "Log export content is unavailable", true},
+	"LOG_EXPORT_TIMEOUT":                  {500, "Log export timed out", false},
+	"LOG_EXPORT_INTERRUPTED":              {500, "Log export was interrupted", false},
+	"LOG_EXPORT_RECORD_CONFLICT":          {409, "Log export record conflicts with current state", false},
 }
 var safeField = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9]*(?:\.[a-zA-Z][a-zA-Z0-9]*)*$`)
 

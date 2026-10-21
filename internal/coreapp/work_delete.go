@@ -70,6 +70,9 @@ func (a *Application) removeAcceptedWork(ctx context.Context, workID string) (re
 			return errCapturedWork
 		}
 	}
+	if view != nil {
+		a.archiveBeforeRemoval(ctx, identity, view.ID)
+	}
 	if err := a.dockerRuntime.RemoveContainer(ctx, identity); err != nil {
 		return err
 	}

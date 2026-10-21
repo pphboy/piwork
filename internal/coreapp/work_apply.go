@@ -336,6 +336,7 @@ func (a *Application) removeApplyAgent(ctx context.Context, workID string) error
 			return err
 		}
 	}
+	a.archiveBeforeRemoval(ctx, identity, view.ID)
 	if err := a.dockerRuntime.RemoveContainer(ctx, identity); err != nil {
 		return err
 	}

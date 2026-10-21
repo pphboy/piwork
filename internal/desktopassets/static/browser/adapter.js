@@ -409,6 +409,141 @@ export class DesktopAdapter {
     getSkills() { const copies = this.state.works.flatMap(work => work.config.skills).filter((name, i, all) => all.indexOf(name) === i && !this.skills.some(s => s.id === name)); return [...this.skills, ...copies.map(name => ({ id: name, name, description: 'Saved Work copy; unavailable in current Core catalog', version: null, loaded: null, modelVisible: null }))]; }
     getPackages() { return this.packages; }
     getSnapshot(id) { return this.state.snapshots.find(snapshot => snapshot.id === id); }
+    logExport = null;
+    logExportTimer;
+    logExportStorageKey() { return `piwork:log-export:${this.state.core.address}:${this.state.core.account}`; }
+    saveLogExportID() { try {
+        if (this.logExport?.id)
+            sessionStorage.setItem(this.logExportStorageKey(), this.logExport.id);
+    }
+    catch { } }
+    loadLogExportID() { try {
+        return sessionStorage.getItem(this.logExportStorageKey());
+    }
+    catch {
+        return null;
+    } }
+    recoverLogExport() {
+        if (this.logExport)
+            return;
+        const id = this.loadLogExportID();
+        if (!id || !/^log-export-[A-Za-z0-9-]{16,128}$/.test(id))
+            return;
+        this.logExport = { id, key: '', cutoff: '', phase: 'collecting', processed: 0, total: 0, collectedBytes: 0, complete: null,
+            warningCount: 0, warnings: [], filename: '', size: 0, digest: '', expiresAt: '', error: '', intent: false, restored: true, autoDelivered: true, delivered: false, polling: false };
+        void this.refreshLogExport(false);
+    }
+    startLogExport() {
+        if (this.state.core.role !== 'admin')
+            return;
+        this.stopLogExportPolling();
+        this.logExport = { id: '', key: randomUUID(), cutoff: '', phase: 'creating', processed: 0, total: 0, collectedBytes: 0, complete: null,
+            warningCount: 0, warnings: [], filename: '', size: 0, digest: '', expiresAt: '', error: '', intent: true, restored: false, autoDelivered: false, delivered: false, polling: false };
+        this.emit();
+        void this.createLogExport(this.logExport.key);
+    }
+    retryLogExportSameKey() { const state = this.logExport; if (!state || state.id || !state.key)
+        return; state.phase = 'creating'; state.error = ''; this.emit(); void this.createLogExport(state.key); }
+    async createLogExport(key) {
+        const epoch = this.epoch;
+        try {
+            const value = await this.request('log-exports', 'POST', { idempotencyKey: key });
+            if (epoch !== this.epoch || this.logExport?.key !== key || typeof value.exportId !== 'string')
+                return;
+            const state = this.logExport;
+            Object.assign(state, { id: value.exportId, cutoff: typeof value.cutoffTime === 'string' ? value.cutoffTime : '', phase: this.logPhase(value.state), error: '' });
+            this.saveLogExportID();
+            this.emit();
+            await this.refreshLogExport(false);
+        }
+        catch (error) {
+            if (epoch !== this.epoch || !this.logExport || this.logExport.key !== key)
+                return;
+            if (!this.logExport.id)
+                this.logExport.phase = 'unknown';
+            this.logExport.error = errorText(error);
+            this.logExport.polling = false;
+            this.emit();
+        }
+    }
+    logPhase(value) {
+        return value === 'collecting' || value === 'packing' || value === 'ready' || value === 'failed' || value === 'interrupted' || value === 'expired' ? value : 'unknown';
+    }
+    async checkLogExport(explicit = true) {
+        const state = this.logExport;
+        if (!state)
+            return;
+        if (!state.id) {
+            this.retryLogExportSameKey();
+            return;
+        }
+        await this.refreshLogExport(explicit);
+    }
+    async refreshLogExport(explicit = true) {
+        const state = this.logExport;
+        if (!state?.id)
+            return;
+        const epoch = this.epoch;
+        try {
+            const value = await this.request(`log-exports/${part(state.id)}`);
+            if (epoch !== this.epoch || this.logExport !== state)
+                throw new DesktopError('CONNECTION_CHANGED', 'The original export identity ended.');
+            const progress = value.progress || {};
+            const result = value.result || {};
+            Object.assign(state, {
+                cutoff: typeof value.cutoffTime === 'string' ? value.cutoffTime : state.cutoff, phase: this.logPhase(value.state),
+                processed: Number(progress.processedSources) || 0, total: Number(progress.totalSources) || 0, collectedBytes: Number(progress.collectedBytes) || 0,
+                complete: typeof value.complete === 'boolean' ? value.complete : null,
+                warningCount: Number(value.warningCount) || 0,
+                warnings: Array.isArray(value.warnings) ? value.warnings.filter((w) => w && typeof w.code === 'string' && typeof w.message === 'string').slice(0, 20) : [],
+                filename: typeof result.filename === 'string' ? result.filename : '', size: Number(result.size) || 0,
+                digest: typeof result.digest === 'string' ? result.digest : '', expiresAt: typeof result.expiresAt === 'string' ? result.expiresAt : '',
+                error: value.error?.message || '', polling: false,
+            });
+            this.emit();
+            if (state.phase === 'ready' && !state.autoDelivered && !state.restored) {
+                state.autoDelivered = true;
+                this.deliverLogExport();
+            }
+            if (state.phase === 'collecting' || state.phase === 'packing')
+                this.scheduleLogExportPolling();
+        }
+        catch (error) {
+            if (epoch !== this.epoch || this.logExport !== state)
+                return;
+            state.error = errorText(error);
+            state.polling = false;
+            this.emit();
+            if (explicit)
+                throw error;
+        }
+    }
+    deliverLogExport() {
+        const state = this.logExport;
+        if (!state?.id || state.phase !== 'ready' || !state.filename)
+            return;
+        state.delivered = true;
+        this.emit();
+        if (typeof document === 'undefined')
+            return;
+        const link = document.createElement('a');
+        link.href = `/_desktop/api/log-exports/${part(state.id)}/content`;
+        link.download = state.filename;
+        link.rel = 'noopener';
+        document.body.append(link);
+        link.click();
+        link.remove();
+    }
+    scheduleLogExportPolling() {
+        this.stopLogExportPolling();
+        const state = this.logExport;
+        if (!state?.id || (state.phase !== 'collecting' && state.phase !== 'packing'))
+            return;
+        state.polling = true;
+        this.logExportTimer = setTimeout(() => { void this.refreshLogExport(false); }, 750);
+    }
+    stopLogExportPolling() { if (this.logExportTimer)
+        clearTimeout(this.logExportTimer); this.logExportTimer = undefined; }
     worksLoading = false;
     worksChecked = '';
     worksError = '';
@@ -462,6 +597,8 @@ export class DesktopAdapter {
         this.downloads.clear();
         this.downloadRequests.clear();
         this.uploadProgress.clear();
+        this.stopLogExportPolling();
+        this.logExport = null;
         Object.assign(this.about, { core: null, coreError: '', coreLoading: false, coreChecked: '' });
         this.stopImageReads();
         for (const value of this.imageLoads.values())

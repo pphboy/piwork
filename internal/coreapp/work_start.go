@@ -71,8 +71,31 @@ func (a *Application) startWorkRuntime(ctx context.Context, spec workruntime.Sta
 			return workruntime.Started{}, err
 		}
 	}
+	var sourceID string
+	if a.Store != nil {
+		work, workErr := a.Store.Work(ctx, spec.Scope.WorkID, false)
+		if workErr != nil {
+			return workruntime.Started{}, workErr
+		}
+		if id, ok := corestore.LogSourceID(a.Store.InstallationID(), spec.Scope.WorkID, "agent", "agentd", spec.Scope.Generation, spec.Scope.InstanceID); ok {
+			configRevision, _ := a.logContextRevision(ctx, spec.Scope.WorkID, spec.ContextID)
+			source, registerErr := a.Store.RegisterLogSource(ctx, corestore.LogSourceRegistration{
+				SourceID: id, OwnerUserID: work.OwnerUserID, WorkID: spec.Scope.WorkID, Kind: "agent",
+				Generation: spec.Scope.Generation, ConfigRevision: configRevision, InstanceID: spec.Scope.InstanceID, CreatedAt: packageNow(),
+			})
+			if registerErr != nil {
+				return workruntime.Started{}, registerErr
+			}
+			sourceID = source.SourceID
+		}
+	}
 	started, err := a.workRuntime.Start(ctx, spec)
 	if err != nil {
+		if sourceID != "" && a.dockerRuntime != nil {
+			if view, inspectErr := a.dockerRuntime.InspectContainer(ctx, workruntime.AgentContainerIdentity(spec.Scope, spec.ContextID)); inspectErr == nil && view != nil {
+				_, _ = a.Store.BindLogSource(ctx, sourceID, view.ID, dockerengine.ObservedContainerLogPolicyVersion(view.HostConfig), packageNow())
+			}
+		}
 		var failure *diagnostics.Failure
 		if trace := traceFrom(ctx); trace != nil && errors.As(err, &failure) {
 			if persistErr := a.retainFailureCollection(ctx, trace.operation, failure); persistErr != nil {
@@ -80,6 +103,12 @@ func (a *Application) startWorkRuntime(ctx context.Context, spec workruntime.Sta
 			}
 		}
 		return started, err
+	}
+	if sourceID != "" {
+		if _, bindErr := a.Store.BindLogSource(ctx, sourceID, started.ContainerID, started.LogPolicyVersion, packageNow()); bindErr != nil {
+			started.Client.Close()
+			return started, bindErr
+		}
 	}
 	err = a.Store.Write(ctx, func(tx *sql.Tx) error {
 		binding, err := corestore.ReadResourceBinding(tx, a.Store.InstallationID(), spec.Scope.WorkID, "agent", "agentd")
