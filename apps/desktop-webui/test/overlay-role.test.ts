@@ -249,3 +249,18 @@ test('Sessions offers one New session before the scoped list',()=>{
  const {c,work}=rendererFixture();c.view.modal='sessions';work.sessions=[{id:'one',messages:[]}];const html=c.modalMarkup();
  assert.equal((html.match(/data-action="new-session"/g)||[]).length,1);assert.ok(html.indexOf('data-action="new-session"')<html.indexOf('class="session-list"'));assert.match(html,/data-action="select-session" data-id="one"/);
 });
+
+test('Sessions keeps selected check independent of Run status and has one close action',()=>{
+ const {c,work}=rendererFixture();c.view.modal='sessions';c.view.session='one';c.sessionDisplayName=(_:unknown,s:any)=>s.title;
+ work.sessions=[{id:'one',title:'a<very-long-title>',messages:[]}];work.run={sessionId:'one',status:'running'};
+ const html=c.modalMarkup();assert.match(html,/session-picker/);assert.match(html,/aria-selected="true"/);assert.match(html,/session-choice-check/);assert.match(html,/running/);assert.match(html,/a&lt;very-long-title&gt;/);
+ assert.equal((html.match(/data-action="close-modal"/g)||[]).length,1);assert.doesNotMatch(html,/modal-footer|button primary[^>]*data-action="new-session"/);
+ assert.match(html,/Switching Sessions does not stop an active Run/);
+});
+
+test('Sessions retains distinct loading, empty, error and retained-list refresh states',()=>{
+ const {c,work}=rendererFixture();c.view.modal='sessions';let html=c.modalMarkup();assert.match(html,/No Sessions yet/);assert.doesNotMatch(html,/Loading conversations|Conversations could not be read/);
+ work.resourceLoading={agent:true};html=c.modalMarkup();assert.match(html,/Loading conversations/);assert.doesNotMatch(html,/No Sessions yet/);
+ work.resourceLoading.agent=false;work.resourceErrors.agent='<Read failed>';html=c.modalMarkup();assert.match(html,/Conversations could not be read/);assert.match(html,/&lt;Read failed&gt;/);assert.match(html,/retry-conversation/);assert.doesNotMatch(html,/No Sessions yet|Loading conversations/);
+ work.sessions=[{id:'kept',messages:[]}];work.resourceLoading.agent=true;html=c.modalMarkup();assert.match(html,/Reading conversations/);assert.match(html,/data-id="kept"/);assert.match(html,/Conversations could not be read/);
+});

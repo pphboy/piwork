@@ -41,6 +41,11 @@ const mtime3 = 'Sat, 03 Oct 2026 01:00:04 GMT';
 async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialWork = true) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); t.after(() => page.close()); page.setDefaultTimeout(5000);
   const requests: RequestRecord[] = [];
+  const baseline = process.env.PIWORK_SESSION_BASELINE_DIR;
+  if (baseline) {
+    await page.route('**/desktop/browser/app.js', async route => route.fulfill({ contentType: 'application/javascript', body: await readFile(`${baseline}/before-app.js`) }));
+    await page.route('**/style.css', async route => route.fulfill({ contentType: 'text/css', body: await readFile(`${baseline}/before-style.css`) }));
+  }
   // Browser-managed attachment downloads do not reliably pass through page.route.
   // Serve content over HTTP and record it once at the server, never as the SPA fallback.
   nativeDownloadHandler = async (request, response) => {
@@ -1314,4 +1319,130 @@ test('pending independent: About aggregates version reads and keeps the known ve
   held = true; await button(page, 'refresh-about').click();
   await expect(page.locator('#modal .pending-dots')).toHaveCount(1); await expect(page.locator('#modal')).toContainText('fixture-v1');
   gate.resolve(); await expect(page.locator('#modal .pending-dots')).toHaveCount(0);
+});
+
+// Session chooser presentation uses the production renderer with synthetic API responses.
+for (const width of [1440, 360]) test(`Session chooser presentation stays readable at ${width}px`, async t => {
+  let stress = false;
+  const longTitle = 'release-notes-' + 'verylongunbrokentoken'.repeat(7);
+  const { page, requests } = await fixture(t, r => {
+    if (/\/sessions\/extra-/.test(r.path)) return { json: { session: { workId: 'work-1', sessionId: r.path.split('/').at(-1) }, messages: [], runs: [] } };
+    if (r.path.endsWith('/sessions') && r.method === 'GET') return { json: { sessions: stress
+      ? [{ sessionId: 'session-1', title: 'Release planning' }, { sessionId: 'session-2', title: longTitle }, ...Array.from({ length: 12 }, (_, i) => ({ sessionId: `extra-${i}`, title: `Conversation ${i + 3}` }))]
+      : [{ sessionId: 'session-1', title: 'Release planning' }] } };
+  });
+  await page.setViewportSize({ width, height: 900 });
+  await button(page, 'sessions').click();
+  await expect(page.locator('#modal [role=option]')).toHaveCount(1);
+  await expect.poll(() => api(page, `return !!adapter.getWork('work-1').resourceLoading?.agent`)).toBe(false);
+  await api(page, `adapter.getWork('work-1').run = { id: 'run-fixture', sessionId: 'session-1', status: 'running', text: '', cursor: 0 }; adapter.emit();`);
+  const selected = page.locator('#modal [aria-selected=true]');
+  await expect(selected).toContainText('running');
+  const phase = process.env.PIWORK_SESSION_EVIDENCE;
+  const output = process.env.PIWORK_SESSION_SCREENSHOTS;
+  if (output) { await mkdir(output, { recursive: true }); await page.screenshot({ path: `${output}/sessions-${phase || 'after'}-${width}.png` }); }
+  if (phase !== 'before') {
+    await expect(page.locator('#modal')).toHaveClass(/session-picker/);
+    await expect(selected).toBeFocused();
+    await expect(selected.locator('.session-choice-check')).toHaveCount(1);
+    await expect(page.locator('#modal [data-action=close-modal]')).toHaveCount(1);
+    await expect(page.locator('#modal .modal-footer')).toHaveCount(0);
+    await expect(page.locator('#modal [data-action=new-session]')).not.toHaveClass(/primary/);
+    const spacing = await page.evaluate(() => {
+      const a = document.querySelector('#modal [data-action=new-session]')!.getBoundingClientRect();
+      const b = document.querySelector('#modal [role=listbox]')!.getBoundingClientRect();
+      return b.top - a.bottom;
+    });
+    assert.ok(spacing >= 10, `command/list gap ${spacing}`);
+  }
+  await page.keyboard.press('Escape');
+  if (phase !== 'before') await expect(button(page, 'sessions')).toBeFocused();
+  stress = true;
+  await button(page, 'sessions').click();
+  await expect(page.locator('#modal [role=option]')).toHaveCount(14);
+  if (output) await page.screenshot({ path: `${output}/sessions-${phase || 'after'}-long-${width}.png` });
+  if (phase === 'before') return;
+  await expect(page.locator('#modal .session-choice-title').nth(1)).toHaveText(longTitle);
+  const geometry = await page.locator('#modal').evaluate(el => {
+    const panel = el.getBoundingClientRect(), title = el.querySelectorAll('.session-choice-title')[1]!.getBoundingClientRect();
+    const body = el.querySelector('.modal-body')!;
+    return { left: panel.left, right: panel.right, width: innerWidth, titleLeft: title.left, titleRight: title.right, scrollWidth: body.scrollWidth, clientWidth: body.clientWidth };
+  });
+  assert.ok(geometry.left >= 0 && geometry.right <= width);
+  assert.ok(geometry.titleLeft >= geometry.left && geometry.titleRight <= geometry.right);
+  assert.ok(geometry.scrollWidth <= geometry.clientWidth, 'long labels must not cause horizontal overflow');
+  await page.setViewportSize({ width, height: 480 });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await page.locator('#modal [role=option]').first().focus();
+  await page.keyboard.press('End');
+  const last = page.locator('#modal [role=option]').last();
+  await expect(last).toBeFocused();
+  await expect.poll(() => last.evaluate(el => { const r = el.getBoundingClientRect(), body = el.closest('.modal-body')!.getBoundingClientRect(); return { visible: r.top >= body.top - 1 && r.bottom <= body.bottom + 1, top: r.top, bottom: r.bottom, bodyTop: body.top, bodyBottom: body.bottom }; })).toMatchObject({ visible: true });
+  if (output) await page.screenshot({ path: `${output}/sessions-${phase || 'after'}-short-${width}.png` });
+  await page.keyboard.press('Enter'); await expect(page.locator('#modal')).toHaveCount(0);
+  await page.locator('#sessions-trigger').click();
+  const reopened = page.locator('#modal [aria-selected=true]');
+  await expect(reopened).toHaveAttribute('data-id', 'extra-11'); await expect(reopened).toBeFocused();
+  await expect.poll(() => reopened.evaluate(el => { const r=el.getBoundingClientRect(), b=el.closest('.modal-body')!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1; })).toBe(true);
+  await expect(page.locator('#sessions-trigger')).toBeEnabled();
+  await page.keyboard.press('Escape'); await expect(page.locator('#sessions-trigger')).toBeFocused();
+  await button(page, 'sessions').click();
+  await page.keyboard.press('Home'); await expect(page.locator('#modal [role=option]').first()).toBeFocused();
+  await expect(button(page, 'sessions')).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => ({id:document.activeElement?.id, tag:document.activeElement?.tagName, action:(document.activeElement as HTMLElement)?.dataset.action, modal:!!document.querySelector('#modal')}))).toEqual({id:'session-current-trigger',tag:'BUTTON',action:'sessions',modal:false});
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0, 'opening and keyboard navigation never mutate Sessions or Runs');
+});
+
+test('Session chooser keyboard switching retains drafts and creating remains single pending action', async t => {
+  const create = deferred(); t.after(async () => create.resolve());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path.endsWith('/sessions') && r.method === 'POST') { await create.promise; return { json: { sessionId: 'session-new' } }; }
+    if (r.path.endsWith('/sessions')) return { json: { sessions: [{ sessionId: 'session-1' }, { sessionId: 'session-2' }] } };
+    if (r.path.endsWith('/sessions/session-2') || r.path.endsWith('/sessions/session-new')) return { json: { session: { workId: 'work-1', sessionId: r.path.split('/').at(-1) }, messages: [], runs: [] } };
+  });
+  await page.locator('#composer').fill('Keep my session one draft');
+  await button(page, 'sessions').click();
+  await expect(page.locator('#modal [data-id=session-1]')).toBeFocused();
+  await page.keyboard.press('ArrowDown'); await expect(page.locator('#modal [data-id=session-2]')).toBeFocused();
+  await page.keyboard.press('Enter'); await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('#messages')).toHaveAttribute('data-reading-key', /session-2$/);
+  await expect(page.locator('#composer')).toHaveValue('');
+  await button(page, 'sessions').click(); await page.keyboard.press('Home'); await page.keyboard.press('Enter');
+  await expect(page.locator('#composer')).toHaveValue('Keep my session one draft');
+  await button(page, 'sessions').click(); await button(page, 'new-session').click();
+  await expect(button(page, 'new-session')).toBeDisabled();
+  await expect(page.locator('#modal .pending-dots')).not.toHaveCount(0);
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/sessions')).length, 1);
+  create.resolve(); await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('#messages')).toHaveAttribute('data-reading-key', /session-new$/);
+  assert.equal(requests.filter(r => r.method === 'POST' && !r.path.endsWith('/sessions')).length, 0);
+});
+
+test('Session chooser retains rows during a failed refresh and retries to a confirmed empty list', async t => {
+  const read = deferred(); t.after(async () => read.resolve());
+  let mode = 'ready';
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path.endsWith('/sessions') && r.method === 'GET') {
+      if (mode === 'pending') { await read.promise; return { status: 503, json: { code: 'UNAVAILABLE', message: 'Session list unavailable' } }; }
+      if (mode === 'failed') return { status: 503, json: { code: 'UNAVAILABLE', message: 'Session list unavailable' } };
+      if (mode === 'empty') return { json: { sessions: [] } };
+    }
+  });
+  mode = 'pending'; await button(page, 'sessions').click();
+  await expect(page.locator('#modal [role=option]')).toHaveCount(1);
+  await expect(page.locator('#modal')).toContainText('Reading conversations');
+  await expect(button(page, 'sessions')).toBeDisabled();
+  await page.keyboard.press('Escape'); await expect(page.locator('#modal')).toHaveCount(0);
+  assert.equal(await page.evaluate(() => { const el = document.activeElement as HTMLElement; return el !== document.body && !!el.getClientRects().length && !el.hasAttribute('disabled') && !el.closest('#modal'); }), true, 'a locked trigger falls back to another available workspace control');
+  mode = 'failed'; read.resolve(); await expect(button(page, 'sessions')).toBeEnabled();
+  await button(page, 'sessions').click();
+  await expect(page.locator('#modal')).toContainText('Conversations could not be read');
+  await expect(page.locator('#modal [role=option]')).toHaveCount(1);
+  await expect(page.locator('#modal')).not.toContainText('No Sessions yet');
+  mode = 'empty'; await page.locator('#modal [data-action=retry-conversation]').click();
+  await expect(page.locator('#modal')).toContainText('No Sessions yet');
+  await expect(page.locator('#modal')).not.toContainText('Conversations could not be read');
+  await expect(page.locator('#modal [data-action=new-session]')).toBeEnabled();
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
