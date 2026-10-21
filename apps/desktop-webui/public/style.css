@@ -3079,9 +3079,11 @@ dd > .button {
 .export-privacy svg { flex: none; margin-top: 1px; }
 .export-details { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 14px; font-size: 11px; }
 .export-details summary { color: var(--muted); cursor: pointer; }
-.export-details dl { display: grid; grid-template-columns: 65px minmax(0,1fr); gap: 8px 12px; margin: 14px 0; }
+.export-details dl { display: grid; grid-template-columns: 65px minmax(0,1fr); align-items: start; gap: 8px 12px; margin: 14px 0; }
 .export-details dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .export-details dd .button, .export-details .menu-list .button { white-space: normal; overflow-wrap: anywhere; text-align: left; justify-content: flex-start; max-width: 100%; padding: 0; }
+/* Operation IDs are text links, not the fixed-size copy controls used by other metadata. */
+.export-details dd > .button.text-button { display: block; width: 100%; min-width: 0; height: auto; min-height: 32px; margin: 0; }
 .export-details .feedback { padding: 10px; }
 .export-details .feedback > div { min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
