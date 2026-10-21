@@ -308,3 +308,26 @@ before图片通过拦截静态资源加载同基线的app.js/CSS，after使用�
 真实原生host/认证/Core/Docker整合和Go宿主重建未运行：工作区没有`dist/go/piwork-cli`或`piwork-serve`，亦无已配置隔离运行环境。Desktop `browser/native-auth/onboarding`、Console `console.spec`和real-core套件因此未运行，不能将合成浏览器通过当作整合通过。未合并、部署或归档。
 
 本次只做本地rebase及验证；GitHub写入仍暂停，远端PR #3没有被更新，不声称其远端冲突已解除。Library先前附件上传403本次没有盲重试。最终本地恢复包、精确UI增量与源树校验记录另行保存；恢复可从已保留6b099bf加公开固定a6c36da1主线和本次UI增量逐字复原，内部保存不等于已向用户发送附件。
+
+
+## 再次同步 main 验收（2026-10-21，目标457650bc）
+
+所有者再次要求“再rebase main”后重新fetch，发现主线从a6c36da1前进7个提交到固定目标`457650bcec742ded30fc61b368d40b02aed0c63f`。先前已验证的2e99278保存为本地检查点和可恢复bundle；本轮使用rebase --rebase-merges继续重放，最终基线以457650bc为准，不把上一轮a6c36da1称为最新完成状态，也不无限追逐后续新提交。
+
+### 第二次冲突处理与独立审查
+
+冲突集中在Console壳的长模板行、初始HTML和生成资源。采用上游Piwork Core静态/动态标题、Core品牌副标题与页脚，同时保留本分支初始loading和同页节点/菜单状态协调；未重新设计页面。保留上游HTTP托管测试入口、fixture程序名变更，以及Playwright全局配置删除ignoreHTTPSErrors。上游console.spec已有单一context同名选项仍逐字保留，本轮不声称全仓库不存在该选项。
+
+独立审查逐blob核对：1,765个非UI路径与新main模式/内容完全一致；最新main为祖先，源差异79个路径全部属于两端WebUI、shared controls、生成UI资源和本change。Desktop产品源码、public、shared和嵌入资源与已通过完整348项的2e99278逐字相同。Console产品相对2e99278仅上游品牌/标题/页脚文本变化；Service完整前缀、returnTo验证、身份清理的晚响应保护和既有页面修正均保留，没有Core/API/CLI/容器/VM实现修改。
+
+### 实际终验与证据边界
+
+再次执行两端typecheck/build、Desktop测试编译，Desktop24个非浏览器文件536/536、Console恢复单元38/38通过；43个构建/嵌入资源SHA256全部一致，native-boundary、repository-docs与diff检查通过。Console四个可运行浏览器文件166/166通过（1.8分钟、退出0），包括上一轮新增15项兼容场景。临时命令和终态日志在`dist/rebase-main-0033/`。
+
+Desktop完整348项采用本次稍早刚执行且产品/fixture依赖相同字节的结果，不虚称第二次全部重跑；上游仅改About夹具中的程序名，该反馈套件另行重跑130/130通过，0失败/取消/跳过，退出0，用时186.727秒；不把这130项再次累加到348项覆盖数。Session截图同样属于第一次rebase后真实云Chromium渲染的相同Desktop字节，不把它们说成第二次重新截图。所有网络均为合成fixture，不代表真实Core运行。
+
+主线上游已删除独立Console并改为Linux piwork-core内嵌HTTP管理，本轮完整继承这些非UI变化。真实host/Core/认证/Docker集成及Go宿主重建仍未运行：工作区没有dist/go/piwork-core或piwork-cli，可见/usr/bin/go不是可用Go编译器；Console console.spec现在需编译hosted-ui-fixture，Desktop原生依赖及real-core套件仍不具备条件。不建设新后端环境，不将这些未测项标为通过。
+
+第二次结果仍仅本地：没有push、merge、deploy或OpenSpec archive；先前GitHub写入暂停和Library helper HTTP403未被绕过。恢复包将基于固定457650bc，上游非UI diff可从9a40d444机械生成，UI/OpenSpec精确增量从已保留6b099bf应用；两条恢复路线均核对最终tree，内部保留不等于用户附件送达。
+
+OpenSpec verify：本次8.1–8.3完成，整体34/34任务；8项Requirement与74项Scenario的既有实现/映射保持。本次不新增能力规格，检查完整性、受影响正确性和既有模式一致性均无阻塞，真实原生集成列为未验证而非通过。最终仅补充本次验收记录的文档提交，不更改已测试产品字节。
