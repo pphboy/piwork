@@ -1,6 +1,6 @@
 # 实施与验证记录
 
-基线：`efce08c228c12f10d18a968b69c3398bb0e783e1`，2026-10-20。此记录随最终测试结果更新，不将早期失败或未运行项目记作通过。
+当前适配基线：v0.0.8 main `9a40d4443fee559335485744d0aabbf186e24b38`。初版 PR 基线为 `efce08c228c12f10d18a968b69c3398bb0e783e1`。下文初版结果保留为历史证据；本次上游适配以本节新结果为准；初版结果仅保留为历史证据。
 
 ## 1. 范围与结果
 
@@ -10,7 +10,37 @@
 - 新空模型默认`deepseek-flash`、`anthropic-messages`、`https://api.deepseek.com/anthropic`，仅Key默认显露。自定义配置不覆盖；只用合成值，未调用付费模型。
 - 两端资源经原copy-static/sync脚本生成；`internal/*assets/static`仅为对应UI嵌入资源。
 
-## 2. 最终验证命令与结果
+## v0.0.8 适配验证（2026-10-20）
+
+实现提交：本地 `148c716e2dcf1a96d4e74e3d3b6339c121423c1a`，已发布同内容的远端 `058a96090f86fca1db956bdb9020a59b5358d28f`，实现 tree `f0afb0db3a32c45813b61b1ffdb88b854b297794`。合并保留原 PR 与 main 两个父提交；相对 main 的所有产品改动仍仅为 UI、对应测试与生成 UI 资源，Core/CLI/后端认证/contracts/scripts/deploy 字节与 main 完全一致。
+
+- 采用 v0.0.8 普通 `state/session`、CSRF 与自动浏览器 Cookie 确认；旧 `#setup` / `#ticket` 只清除，不调用已移除的设置授权或浏览器授权端点。
+- 创建管理员后仍清空密码并手动登录；未知创建、并发 409 只读回，不自动重发。补齐 CSRF 恢复、state/session 失败、pagehide/pageshow 后旧创建/登录/退出响应不清除新草稿或解新锁的合成回归。
+- 补充一条实际前端导航 `/setup → /login → /admin/setup` 的合成链路：创建、手动成功登录、Key-only 保存、六项分别非 ready 均阻止完成、全部 ready 仅一次导航回调。断言仅四次明确写入，密码/Key 不进入浏览器存储；不是原生 Core 端到端验收。
+- Desktop 保留上游 sessionCreated 的 Cookie 读回与中断重试，并沿原身份代次将 Core 检查归属本次接受的会话，旧响应不终止新等待。
+- 独立审查确认上述归属与恢复逻辑；发现的旧 Console 授权夹具已改为普通会话，未回滚产品契约。视觉复核另修正初次 Core 检查期间页脚把未知列表显示为 `0 Works`：现在显示 `Works not yet read`，确认空列表后才显示 0，并在同一延迟 Core 浏览器测试断言两阶段。
+
+| 最终不重复计数的检查 | 结果 |
+|---|---|
+| Console QuickStart / 首设 / 会话及完整合成链路 | 44/44 通过 |
+| Console feedback + management | 94/94 通过 |
+| Desktop 六个可运行 browser suite | 338/338 通过，0失败/跳过 |
+| Desktop 24个非浏览器 unit/渲染契约 | 524/524 通过，0失败/跳过 |
+| 两端 typecheck/build、Desktop 测试编译 | 通过 |
+| OpenSpec strict、repository-docs、native-boundary、diff空白 | 通过（最终复查） |
+| UI嵌入资源逐文件hash | Console browser12/public4、Desktop browser23/public4，全部相等 |
+
+最终 Console 命令与初版相同，但一次执行 `quick-setup.spec.mjs feedback.spec.mjs management-flow.spec.mjs`，总计138。最终 Desktop 浏览器使用相同六个文件，`--test-concurrency=3`；unit仍为下文24文件、`--test-concurrency=2`。本轮日志位于忽略目录 `dist/ui-review/*-upstream*.log`。此前一次 Desktop 338/338 与 Console137/137是中间验证，不与最终结果相加。
+
+发布核对（2026-10-20 04:32 UTC）：GitHub connector发布的实现tree与本地Git tree完全一致，保留父提交 `8b271841` 与 `9a40d444`；`git ls-remote`确认分支已指向 `058a9609`。PR #3仍open、Draft、未合并，GitHub报告mergeable=true。最终规格/截图作为单独文档提交，不改变已测试产品代码；未部署或归档。
+
+最新普通首设页面（390px，真实构建前端+合成API）：
+
+<p align="center"><img src="evidence/create-administrator-narrow.png" alt="普通会话创建管理员：合成API，真实UI" width="390"></p>
+
+未测边界保持：没有 Go 编译器或原生 Core/CLI 二进制，`/usr/bin/go` 是同名棋类应用而非 Go 工具链；没有运行原生认证/Core/Engine/Docker集成、Go宿主重建或付费模型请求。本 PR 不以 mock 的138/338结果替代这些未测项。当前仓库没有 `.github/workflows`；远端实现commit的查询返回 `statuses: []`、`workflow_runs: []`，没有CI通过结论或可等待的运行。
+
+## 2. 初版验证命令与结果（8b271841）
 
 执行环境：Node 24.19、npm 11.9、云桌面原生Chromium。exec环境无法建立Chromium单实例socket，浏览器测试在同一云桌面Terminal正常执行，没有关闭安全机制或发布公网fixture。API均由测试夹具提供，使用真实构建的前端页面。
 

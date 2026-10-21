@@ -8,7 +8,7 @@
 
 **Identifier:** SUI-CFG-001
 
-状态页 SHALL 显示 Core 是否可达、健康、readiness 原因和公开 checks，提供手动刷新并在页面可见时每 15 秒刷新。初始化缺管理员 SHALL 在统一入口指向受授权的网页首次创建；可选 ADMIN env 不作为默认前置；已登录但运行时缺失 SHALL 链接运行时配置。Core 返回非 ready SHALL 展示 `ADMIN_REQUIRED`、`RUNTIME_NOT_CONFIGURED` 或 `RUNTIME_UNAVAILABLE` 等实际原因，不能将健康等同于可创建 Work。查询失败 SHALL 标记旧数据及其时间，禁止把旧 ready 显示为当前 ready。
+状态页 SHALL 显示 Core 是否可达、健康、readiness 原因和公开 checks，提供手动刷新并在页面可见时每 15 秒刷新。初始化缺管理员 SHALL 在统一入口指向普通网页首次创建；可选 ADMIN env 不作为默认前置；已登录但运行时缺失 SHALL 链接运行时配置。Core 返回非 ready SHALL 展示 `ADMIN_REQUIRED`、`RUNTIME_NOT_CONFIGURED` 或 `RUNTIME_UNAVAILABLE` 等实际原因，不能将健康等同于可创建 Work。查询失败 SHALL 标记旧数据及其时间，禁止把旧 ready 显示为当前 ready。
 
 Overview SHALL 按当前可确认事实提供一个主要任务动作：缺模型/Runtime时继续设置；已配置但正在准备时查看原准备；当前状态确认Ready时打开工作台。准备失败/未知提供诊断或恢复而不冒充进行中。Quick setup SHALL 保持单一可发现入口，不在已完成安装的状态卡与任务列表重复成为主动作。管理任务按现有User access、Work setup及辅助运维职责组织，配置与诊断仍可达，不改变顶层导航和旧深链接。准备页六项完成契约不得扩大为整个工作台的登录或访问门禁。
 
@@ -40,7 +40,7 @@ Choose model SHALL 列出已保存、启用且凭据可用的模型，包括自�
 
 保存成功 SHALL 以 Core persisted 配置为准。已保存但环境未 ready 用英文分别说明两个事实及真实状态；校验/保存前失败保留旧配置与非敏感草稿，不自动重复提交。变更只更新后续新 Work 默认，不暗示旧 Work 已切换。旧深链接 SHALL 映射到统一管理区，既有持久初始化模型对应关系保留，不要求重新输入 Key；不再从 env 初始化或更新模型。CoreSetup 的统一继续动作按 ONBOARD-002 推进，Admin 保留正常编辑/保存和 readiness 检查，不要求用户重复完成首次引导。
 
-统一应用 SHALL 从 Overview 提供 Admin 内的 Quick setup，路径和身份边界遵守 ONBOARD-002/004。Quick setup、完整 Runtime 与 AI models 管理 SHALL 读取同一持久模型和 Runtime，采用相同校验、显式 Test、敏感清理及未知结果读回规则，不因快速入口另建配置、强制 Test 或重新要求已有 Key。已配置安装可通过快速入口显式选模型并保存；原 `/admin/runtime` 与 `/admin/models` 及其旧深链接 SHALL 保留。高级独立 Console 保持现有管理能力，不依赖统一应用专用的首次授权流程。
+统一应用 SHALL 从 Overview 提供 Admin 内的 Quick setup，路径和身份边界遵守 ONBOARD-002/004。Quick setup、完整 Runtime 与 AI models 管理 SHALL 读取同一持久模型和 Runtime，采用相同校验、显式 Test、敏感清理及未知结果读回规则，不因快速入口另建配置、强制 Test 或重新要求已有 Key。已配置安装可通过快速入口显式选模型并保存；原 `/admin/runtime` 与 `/admin/models` 及其旧深链接 SHALL 保留。高级独立 Console 保持现有管理能力，不依赖统一应用专用的首次创建流程。
 
 已配置Runtime页面 SHALL 以当前模型安全摘要、配置影响范围、编辑与维护状态组织内容，不常驻 Make this Core ready 或 Configure runtime / Confirm readiness 首次部署轨道。模型名称/ID、协议、地址摘要、Key是否可用、modelRef和更新时间 SHALL 可读取；长技术身份按需披露，不回显Key。Edit runtime、显式状态检查、只读诊断及返回工作台/管理导航 SHALL 保留；未配置安装仍提供真实下一步，不删减 Default Work 的Skills、Packages和AGENTS能力。保存和读取采用统一局部三点与连续性规则，不混淆保存确认与Ready。
 

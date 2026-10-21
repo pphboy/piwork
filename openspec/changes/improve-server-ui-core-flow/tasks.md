@@ -1,10 +1,10 @@
 # Tasks
 
-已收到2026-10-20的apply与PR授权；最新边界为仅UI和前端交互，不改Core、Go启动、后端认证或运行逻辑。D1保留、D3手动，D2移出本轮，原1.2/1.3启动层任务撤销而不标作完成。实施前已核远端main与基线相同。先做4.1共享表现；每项仅在实现及对应验证完成后勾选。
+已收到2026-10-20的apply与PR授权；最新边界为仅UI和前端交互，不改Core、Go启动、后端认证或运行逻辑。D1保留、D3手动，D2移出本轮，原1.2/1.3启动层任务撤销而不标作完成。初版发布后main更新至9a40d444（v0.0.8）；现维护同一PR，采用上游普通会话契约，受影响实现与完整可运行验证已重新完成。先做4.1共享表现；每项仅在实现及对应验证完成后勾选。
 
 ## 1. M01 首设界面
 
-- [x] 1.1 统一授权、创建管理员、普通登录的组件/文案/局部Pending，保留创建后手动登录；验证：复用onboarding测试覆盖字段错误、密码确认、双击与离开晚响应，创建后密码清空、未自动发送登录请求，proof/CSRF与正常认证不变。
+- [x] 1.1 统一普通入口、创建管理员、普通登录的组件/文案/局部Pending，保留创建后手动登录；验证：复用onboarding测试覆盖字段错误、密码确认、双击与离开晚响应，创建后密码清空、未自动发送登录请求，普通session/CSRF与正常认证沿用最新上游；不请求已删除设置/浏览器授权端点。
 
 ## 2. M02 QuickStart
 
@@ -24,7 +24,7 @@
 ## 4. M04 共享Pending与跨模块验证
 
 - [x] 4.1 在shared controls与两端薄渲染包装统一三点和初始壳：1.2秒依次opacity、固定槽、快速结束、reduced-motion、Modal无开合动画；验证：共用组件/代表浏览器测试一次覆盖动效与共同表现，录帧核对无布局移动，无全局遮罩；复用原ActionState，不另建状态框架。
-- [x] 4.2 接入D01-D02会话授权与Core初次/手动检查的可见在途/结束状态；验证：本地/托管代表延迟测试覆盖同目标去重、错误结束和晚响应，文案不声称Desktop启动Core，不新增持续探测。
+- [x] 4.2 接入D01-D02普通会话与Core初次/手动检查的可见在途/结束状态；验证：本地/托管代表延迟测试覆盖同目标去重、错误结束和晚响应，文案不声称Desktop启动Core，不新增持续探测。
 - [x] 4.3 接入D03-D05 Works/生命周期、Service控制/入口/日志；验证：复用lifecycle/work-navigation测试检查原对象与Accepted反馈，iframe保留、同对象防重和独立对象可用，仅补未覆盖状态分支。
 - [x] 4.4 接入D06-D09 Chat/Session/发送取消、模型自动保存、图片与Activity；验证：复用feedback/continuity测试，针对自动保存、图片和Activity独立状态补生命周期断言，保留原Run、草稿、流式文本、阅读锚点及晚响应保护。
 - [x] 4.5 接入D10-D12 Files与Settings/Apply等待；验证：复用file-admission/file-results及配置测试，确认固定刷新槽、原版本/unknown锁、真实进度和已确认路径不重传，静态pendingApply不动画化。
@@ -32,4 +32,6 @@
 - [x] 4.7 在最终代码执行两端既有typecheck/build/browser及现有UI嵌入资源验证，完成合成首设→手动登录→Key→准备→一次进入及代表管理回路；验证：记录真实命令结果，按现有copy-static/sync链核对嵌入资源，代表宽/窄屏截图和三点录屏无秘密并标明fixture。已有隔离Core/Docker条件且获执行授权才跑相关真实集成，否则明确未测和原因，不建设额外环境。
 - [x] 4.8 汇总四模块差异、31位置覆盖、实际通过/失败/未测和回退范围；验证：`openspec validate improve-server-ui-core-flow --strict`、`node scripts/check-repository-docs.mjs`、`git diff --check`通过，必要证据归本change，临时文件dist；独立审查后按功能提交并推送草稿PR、核对远端及CI，不合并或部署。
 
-最终本地验收：Desktop browser 335/335、unit 525/525；Console QuickStart 28/28、feedback/management 94/94。真实Core/认证/Docker集成与Go宿主构建未运行，条件限制见 [verification.md](verification.md)。4.8已完成发布与首次远端/CI核对；PR #3保持Draft，未合并。GitHub返回0个status及0个PR workflow run，仓库无`.github/workflows`；这是未提供CI结果，不是CI通过。不把未运行项记作通过。
+初版（8b271841）本地验收：Desktop browser 335/335、unit 525/525；Console QuickStart 28/28、feedback/management 94/94。真实Core/认证/Docker集成与Go宿主构建未运行，条件限制见 [verification.md](verification.md)。4.8已完成发布与首次远端/CI核对；PR #3保持Draft，未合并。GitHub返回0个status及0个PR workflow run，仓库无`.github/workflows`；这是未提供CI结果，不是CI通过。不把未运行项记作通过。
+
+v0.0.8适配最终验收：Console全部可运行浏览器138/138（QuickStart/首设/会话44 + feedback/management94）、Desktop全部可运行浏览器338/338、24个unit文件524/524，均0失败/跳过；两端typecheck/build、测试编译、43个嵌入资源hash、OpenSpec strict及边界检查通过。完整合成首设链路和未知Works数量呈现已补回归；独立审查完成。实现远端commit `058a96090f86fca1db956bdb9020a59b5358d28f`的tree与本地测试相同，PR #3仍为Draft，GitHub确认无合并冲突、未合并。该commit的status/workflow均空，不能视为CI通过；原生Go/Core/认证/Docker仍未测。

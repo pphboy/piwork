@@ -1,6 +1,6 @@
 # Pending位置与规格/任务映射
 
-本附件是实现覆盖索引；完成状态以tasks及实际测试证据为准，未记录验证不表示已通过。现状证据来自固定提交 `4cb118450a89383825d8e136a131eaf7cbc5c543`；本次main基线 `efce08c228c12f10d18a968b69c3398bb0e783e1` 的UI/Core源码相同，代码链接保持原图证据版本。
+本附件是实现覆盖索引；完成状态以tasks及实际测试证据为准，未记录验证不表示已通过。现状证据来自固定提交 `4cb118450a89383825d8e136a131eaf7cbc5c543`；初版基线 `efce08c228c12f10d18a968b69c3398bb0e783e1` 的UI/Core源码相同。当前适配 v0.0.8 main `9a40d4443fee559335485744d0aabbf186e24b38`，普通会话替代旧授权；下表旧提交链接仅为历史定位，不代表恢复已删除的流程。
 
 图示来源：已交付《Piwork Server 与 Desktop 界面修正清单》2026-10-20 PDF/Markdown。可见现状图为02创建管理员、04Quick setup、05准备中、07Overview、08Runtime；其余编号仅是先前采集索引，不应在本附件不存在图片时宣称“见图”。全部现状图是原样前端加合成API，不是实际Core/模型测试。其他位置用源码锚点定位，未伪造现状截图。
 
@@ -23,8 +23,8 @@ ONBOARD-005、UIL-SETUP-001、SUI-006、DWUI-012/013/014 等继续作为有效�
 
 | 编号 | 图中位置/入口 | 当前状态来源 | 拟议三点附着点与修正（提案） |
 |---|---|---|---|
-| S01 | 图01 主状态与 Check setup access | Opening Piwork / 读取首设授权。[apps/console-webui/src/onboarding.ts:39-51](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/console-webui/src/onboarding.ts#L39-L51) | 主卡固定状态区。授权链接缺失/过期不是 Pending；提示用户下一步。 |
-| S02 | 图02 Create administrator | writing 锁定输入和按钮，状态文字 Saving。[apps/console-webui/src/onboarding.ts:36-51](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/console-webui/src/onboarding.ts#L36-L51) | 提交按钮中固定宽度三点与创建文案。保留输入；失败回原表单。创建成功清空密码并进入普通手动登录；保留proof/CSRF，自动认证延期。 |
+| S01 | 首设主状态与普通会话读取（原图01授权页已由上游移除） | Opening Piwork / 读取普通会话及首设状态。[apps/console-webui/src/onboarding.ts:39-51](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/console-webui/src/onboarding.ts#L39-L51) | 主卡固定状态区。会话/状态读取失败停止 Pending并提供读取恢复，不要求设置链接。 |
+| S02 | 图02 Create administrator | writing 锁定输入和按钮，状态文字 Saving。[apps/console-webui/src/onboarding.ts:36-51](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/console-webui/src/onboarding.ts#L36-L51) | 提交按钮中固定宽度三点与创建文案。保留输入；失败回原表单。创建成功清空密码并进入普通手动登录；沿用上游普通会话/CSRF，自动认证延期。 |
 | S03 | 图03 Sign in；首设页 Sign out | 同一个 writing 生命周期。[apps/console-webui/src/onboarding.ts:39-51](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/console-webui/src/onboarding.ts#L39-L51) | 当前提交/退出操作。登录失败不继续转圈。 |
 | S04 | 图04 Quick setup 首次读取、Read current state | loading/reading/polling 已分开。[apps/console-webui/src/quick-setup.ts:75-95](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/console-webui/src/quick-setup.ts#L75-L95) | 初读卡片固定状态槽；后续读取保留表单/选择，不重建整页；自动轮询不让每个字段各自刷新。 |
 | S05 | 图04 Save and continue | writing；模型 POST 后 runtime PUT。[apps/console-webui/src/quick-setup.ts:250-285](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/console-webui/src/quick-setup.ts#L250-L285) | 主按钮一处三点，文案反映保存/绑定阶段；不自动测试模型；保存未知时停止写入并读回。 |
@@ -42,8 +42,8 @@ ONBOARD-005、UIL-SETUP-001、SUI-006、DWUI-012/013/014 等继续作为有效�
 
 | 编号 | 页面位置/入口 | 真实状态/证据 | 三点附着对象与边界 |
 |---|---|---|---|
-| D01 | 最早静态壳；浏览器授权/Server session 检查 | index初始Loading；browserAccess=checking。[apps/desktop-webui/public/index.html:2](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/public/index.html#L2)；[apps/desktop-webui/src/app.ts:582-589](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L582-L589) | 主状态区一个三点；正文分别表述连接本地Desktop/检查Server会话。 |
-| D02 | Core连接/重连、Check connection、Connect/Sign in、切换/退出Core、重置浏览器授权 | action表identity；自动checkConnection缺可见checking。[apps/desktop-webui/src/app.ts:285-286](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L285-L286)；[apps/desktop-webui/src/app.ts:578-589](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L578-L589)；[apps/desktop-webui/src/app.ts:1712-1738](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L1712-L1738) | Core连接区或原按钮；保留当前工作台。不可把Unreachable或需要授权误显示持续启动。 |
+| D01 | 最早静态壳；普通Desktop/Server session 检查 | index初始Loading；browserSession=checking。[apps/desktop-webui/public/index.html:2](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/public/index.html#L2)；[apps/desktop-webui/src/app.ts:582-589](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L582-L589) | 主状态区一个三点；正文分别表述连接本地Desktop/检查Server会话。 |
+| D02 | Core连接/重连、Check connection、Connect/Sign in、切换/退出Core | action表identity；自动checkConnection缺可见checking。[apps/desktop-webui/src/app.ts:285-286](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L285-L286)；[apps/desktop-webui/src/app.ts:578-589](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L578-L589)；[apps/desktop-webui/src/app.ts:1712-1738](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L1712-L1738) | Core连接区或原按钮；保留当前工作台。不可把Unreachable或需要登录误显示持续启动。 |
 | D03 | Works列表首次读取/刷新；打开Work与独立应用入口 | worksLoading/readPlaceholder；Work header读状态。[apps/desktop-webui/src/app.ts:591-624](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L591-L624)；[apps/desktop-webui/src/app.ts:2681-2681](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L2681-L2681)；[apps/desktop-webui/src/app.ts:3280-3316](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L3280-L3316) | Works工具栏固定读取槽；Work标题旁；无数据初读内容框架。不重排卡片或先显示空列表。 |
 | D04 | New Work、Start、Stop、Delete、导入后Start | lifecycle ActionState与workControls；Preparing/Starting/Stopping。[apps/desktop-webui/src/app.ts:189-231](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L189-L231)；[apps/desktop-webui/src/app.ts:633-641](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L633-L641)；[apps/desktop-webui/src/app.ts:1130-1188](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L1130-L1188) | 对话框原主按钮→Work对象状态位置。Accepted只是已接受，继续观测原Operation；未知/失败停止Pending。 |
 | D05 | Services首次读取、启动/停止/移除、应用入口探测、独立窗口、Check preview、日志读取/刷新 | resourceLoading / serviceEntryPending / controls。[apps/desktop-webui/src/app.ts:642-689](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L642-L689)；[apps/desktop-webui/src/app.ts:1216-1247](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L1216-L1247)；[apps/desktop-webui/src/app.ts:1421-1430](https://github.com/pphboy/piwork/blob/4cb118450a89383825d8e136a131eaf7cbc5c543/apps/desktop-webui/src/app.ts#L1421-L1430) | Service工具栏/相关状态面板/日志标题；保留已打开iframe，不能以iframe所有子资源load事件作为可用门槛。 |
@@ -76,9 +76,9 @@ ONBOARD-005、UIL-SETUP-001、SUI-006、DWUI-012/013/014 等继续作为有效�
 
 | 位置 | 实际修改/接入对象 | 对应验证入口 |
 |---|---|---|
-| S01 | C/onboarding.ts：授权兑换、首读与恢复读取的主卡状态 | quick-setup.spec.mjs authorization/current-state |
-| S02 | C/onboarding.ts：创建管理员固定按钮槽，手动登录与秘密清理 | quick-setup.spec.mjs creation、onboarding.test.ts（原生集成本轮未运行） |
-| S03 | C/onboarding.ts：正常登录/退出，原 view/identity 票据 | quick-setup.spec.mjs creation；feedback.spec.mjs Login/Logout |
+| S01 | C/onboarding.ts：普通会话/CSRF、首设状态初读与恢复读取的主卡状态 | quick-setup.spec.mjs ordinary state/session、CSRF恢复、bfcache旧读 |
+| S02 | C/onboarding.ts：创建管理员固定按钮槽，手动登录与秘密清理 | quick-setup.spec.mjs creation/unknown/409/完整首设链路、onboarding.test.ts（原生集成本轮未运行） |
+| S03 | C/onboarding.ts：正常登录/退出，原 view/identity 票据 | quick-setup.spec.mjs手动登录/CSRF/旧登录与退出；feedback.spec.mjs Login/Logout |
 | S04 | C/quick-setup.ts：read、baseline、原位表单更新 | quick-setup.spec.mjs defaults/dirty/catalog recovery/late read |
 | S05 | C/quick-setup.ts：save、固定 pending-slot、模型与Runtime分段保存 | quick-setup.spec.mjs serialization/binding failure/unknown/slow save |
 | S06 | C/quick-setup.ts、model-form.ts、model-management.ts：实际Test结果区 | quick-setup.spec.mjs stale/failure；feedback.spec.mjs三协议Test；management-flow.spec.mjs慢Test |
@@ -90,7 +90,7 @@ ONBOARD-005、UIL-SETUP-001、SUI-006、DWUI-012/013/014 等继续作为有效�
 | S12 | C/action-state.ts与app.ts：Users/Skills/Packages原动作与文件预检 | feedback.spec.mjs Users、Skills、Packages、multipart与原对象晚响应 |
 | S13 | C/app.ts：operationPage与refreshOperation | management-flow.spec.mjs Operation终态/401；feedback.spec.mjs原Operation/恢复 |
 | S14 | C/app.ts：About、列表、会话按钮与聚合状态 | management-flow.spec.mjs About保留旧值/失败提示；feedback.spec.mjs登录退出 |
-| D01 | D/app.ts signIn/browserAccess与两端静态index壳 | local-auth.test.ts；pending-dots.test.ts两端初始壳 |
+| D01 | D/app.ts signIn/browserSession与两端静态index壳 | local-auth.test.ts；pending-dots.test.ts两端初始壳 |
 | D02 | D/adapter.ts connectionCheck、D/app.ts Core状态与原identity动作 | pending-adapter.test.ts去重/慢等/失败/代次；local-auth.test.ts单主等待/退出 |
 | D03 | D/app.ts readPlaceholder、worksRefreshButton、workRouteFeedback | feedback.test.ts Works/重试/open-work；work-navigation与continuity-adapter |
 | D04 | D/app.ts controlMarkup、Work进行态；原ActionState | lifecycle/control-adapter；feedback.test.ts创建/Start/Stop/原Operation及独立对象 |
