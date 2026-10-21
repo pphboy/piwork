@@ -2,6 +2,17 @@
 
 日期：2026-10-22（Asia/Shanghai）。范围：规划提交 `6cdec2f`；本轮 apply 完成后等待独立 verify，不同步主规格、不归档、不推送、不发布。
 
+## 独立核验后两项最小修复（规划 e843d14）
+
+冻结基线 `a0367528785d6264832a798a34f028b031817e8a` 的短敏感值遗漏和合法 UTF-8 损坏均已修复；代码与必要回归提交为 `52856ce40a1ee5d526aae1d8b1945ca88adb7c70`。仅修改现有 `secretRedactor`：非空已知值不再按长度过滤；输出前在至多三个先行字节内核对 UTF-8 字符边界，Flush 处理全部余量；非法字节仍由原 `bytes.ToValidUTF8` 替换。没有增加框架、记录模型、服务或改变权限/交付路径。任务 3.3、4.3 重新完成，进度 41/41，等待 tmux 2 独立复核。
+
+- 直接使用 `dist/verify-add-log-export-independent/overlay.json`，未修改独立核验输入。修复前 `overlay-before.log` 再次复现短值单元失败、`A中文Z` 变为 `A中��Z` 及 ZIP 中出现 `API_KEY=abc`；修复后运行 `go test -mod=readonly -overlay=dist/verify-add-log-export-independent/overlay.json ./internal/coreapp -run '^TestIndependent(ShortKnownSecretMustBeRedacted|ValidUTF8MustSurviveRedaction|ShortKnownSecretLeaksArchiveAndZIP)$' -count=1 -v`，三个反例全部通过（0.242s）。结果为 `dist/apply-add-log-export-redaction/overlay-after.log`，修复前输出在同目录 `overlay-before.log`。
+- 正式最小回归：`TestSecretRedactorShortKnownValuesAcrossChunks` 覆盖非空 1/2/3 字节值及每个秘密切分位置；`TestSecretRedactorValidUTF8AcrossChunks` 覆盖 `A中文Z`、四字节字符，在无已知值、有其他长/短敏感值时的每个双块切分及逐字节输入，输出逐字节相等。
+- `TestArchiveAndZIPPreserveUTF8AndRedactShortKnownValues` 以合成 Service 配置的空值及 1/2/3 字节值、逐字节日志块生成真实归档；核对落盘 stdout 后模拟原容器消失，强制 worker 回退归档并生成实际 ZIP，再打开 ZIP 逐字节核对 stdout 与期望文本一致、短值已替换、`A中文Z` 保真，stderr 非法字节仍为替换字符。该证明是正式测试中的实际归档/ZIP 断言，不声称重新执行了 GUI 或真实 Engine 生命周期。
+- 相关检查：`go test -mod=readonly ./internal/coreapp -run '^Test(SecretRedactor|DockerTimestampScanner|Archive|RecoverPublishedLogArchives|MarkMissingLogSources|LogExport|LogRegression)' -count=1 -v` 通过（20.822s），涵盖原脱敏、归档及 worker/ZIP 用例，含上述正式新增回归；日志 `dist/apply-add-log-export-redaction/related.log`。
+- Go 1.25.5 下 `go build -mod=readonly -o dist/apply-add-log-export-redaction/piwork-core ./cmd/piwork-core` 成功，仅作本轮编译检查；不是发布或部署制品，既有构建身份不改写。OpenSpec 严格校验、文档边界和 diff 检查通过。涉及 Node 的检查沿用已约定的 npx Node 24 PATH。
+- 本轮没有修改 UI、契约、生成资源、部署材料或权限机制；原真实 GUI/Engine 证据及其限制按下文实际范围沿用，未重新执行 GUI/Engine/全仓库矩阵，也不把旧包当作本次新脱敏证明。不自行 verify、sync、archive、merge、push 或发布。
+
 ## 已提交实现与环境
 
 - `2637407`：日志契约、生成 DTO/夹具、受管存储和 Core 分片管理。
