@@ -1,0 +1,25 @@
+{
+  "kind": "real-empty-core-browser-smoke",
+  "routeInterception": false,
+  "administratorCreated": false,
+  "consoleErrors": [],
+  "pageErrors": [],
+  "failedRequests": [],
+  "mutationRequests": [],
+  "aliveAndUnconfigured": true,
+  "realAnonymousSessionConfirmed": true,
+  "browser": "154.0.8037.57",
+  "nonSetupModuleRemainsBlocked": true,
+  "unneededPendingRouteRemainsBlocked": true,
+  "emptyInstallationPreserved": true,
+  "passed": true,
+  "coreExitCode": 0,
+  "pageChecks": 20,
+  "resourceResponses": 100,
+  "viewports": [
+    1440,
+    390
+  ],
+  "sourceCommit": "39267dfa7a20f27e166ec85df88630b913c95f82",
+  "publishedImplementation": "30a9f60ee48836afdc9a8feb119916b022022b9e"
+}

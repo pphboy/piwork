@@ -331,3 +331,36 @@ Desktop完整348项采用本次稍早刚执行且产品/fixture依赖相同字�
 第二次结果仍仅本地：没有push、merge、deploy或OpenSpec archive；先前GitHub写入暂停和Library helper HTTP403未被绕过。恢复包将基于固定457650bc，上游非UI diff可从9a40d444机械生成，UI/OpenSpec精确增量从已保留6b099bf应用；两条恢复路线均核对最终tree，内部保留不等于用户附件送达。
 
 OpenSpec verify：本次8.1–8.3完成，整体34/34任务；8项Requirement与74项Scenario的既有实现/映射保持。本次不新增能力规格，检查完整性、受影响正确性和既有模式一致性均无阻塞，真实原生集成列为未验证而非通过。最终仅补充本次验收记录的文档提交，不更改已测试产品字节。
+
+## 2026-10-21 生产首设 pending.js 404 回归纠正
+
+### 事实、根因与最小修复
+
+所有者在真实启动中报告首设不能打开。原发布 `4080ce8` 的 onboarding.js 和 model-form.js 导入 pending.js，但生产 Go 的匿名 setup 白名单只有 onboarding/components/model-form；之前的静态 fixture 可以读取任意 dist 文件，硬编码 Go 资源测试也没有递归依赖检查，因而没有发现该回归。此前 UI 测试数量不是首设可启动的证明，本段补充并纠正该验证缺口。
+
+实现提交本地 `39267dfa7a20f27e166ec85df88630b913c95f82`，已追加到同一 Draft PR #3 的 `30a9f60ee48836afdc9a8feb119916b022022b9e`，远端分支与 tree `e67054f8b4ff0bdce41210a32c9e6d52e7e1dcd9` 已核验一致。仅将不变的 pendingDots 标记定义移到无导入的 components；首设两个模块直接复用，管理用 pending 薄再导出保持兼容。生产 Go 白名单、认证、Core/API/运行逻辑均未修改。新增 Go 文件只是 HTTP 资源交付回归测试。
+
+### 当前代码重新验证
+
+- 在独立的原发布 `4080ce8` worktree 仅加入新测试，`TestSetupSharedAssetsArePublicAndTyped` 的 /setup 和 /login 均失败：`/setup/browser/pending.js referenced by /setup/browser/model-form.js: status=404`。同一最终测试在修复后通过，各递归检查 6 个 HTML/JS/CSS/PNG 资源的 200、非空及正确 MIME；未公开 adapter.js 仍为 404。测试还覆盖 import、side-effect import、再导出、HTML/CSS 引用语法，避免只重复白名单。
+- 官方 Go 1.25.5 linux-amd64 下载校验通过；SHA-256 `9e9b755d63b36acf30c12a9a3fc379243714c1c6d3dd72861da637f336ebb35b`。`go test ./internal/webapp ./internal/app ./internal/consoleassets -count=1` 通过；最终 webapp JSON 结果为 14 个顶层测试、8 个子测试、0 失败（不是将子测试与顶层相加为独立场景）。
+- `bash scripts/build-go.sh` 成功构建真实 Linux Core 与 CLI。构建时的身份为 4080ce8 + modified=true，真实反映尚未提交的修复工作树；随后提交的产品源码与被测字节相同。未把带修改的二进制说成原 4080ce8 成品。
+- Console typecheck/build、38/38 Quick setup recovery 单测通过；既有四组浏览器 166/166，加此前因缺 Go 未执行的 `console.spec.mjs` 14/14，共 180/180。后 14 条使用真实 Go UI 服务和合成 Core API，仍不算真实 Core 业务集成。
+- 全部 Console 12 个模块/21 条静态导入或再导出边、Desktop 23 个模块/25 条边对照实际 Go BrowserAsset 规则和嵌入文件审计，无其他不可提供目标。Console 16 个构建/嵌入资源逐字一致。Desktop 代码与资源本轮未变，没有声称重新执行全部 Desktop 套件。
+- 独立 Review 确认无导入环、三点标记不变、匿名白名单不扩大。native-boundary、repository-doc、diff --check、OpenSpec strict 通过。
+
+### 真实空安装启动及浏览器
+
+使用刚构建的真实 piwork-core、新建临时 HOME/数据目录及空安装，未创建管理员、未配置密钥/模型、未连接 Docker Work；UI/数据/API 均未 mock 或拦截。Chromium 154 在 1440×900 和 390×800 打开根入口、/setup、/login，并检查刷新、Sign in 链接与前进后退，共 20 次初始化断言；100 次实际静态资源响应全部成功，0 JS/console 错误、0 请求失败、0 修改请求。表单与按钮可用，不再停在 Opening Piwork。空安装的 /login 按现有规则仍显示创建管理员，不将其误写为已完成认证。
+
+真实 UI health 返回 200，ready 返回预期 503（空安装尚未配置），state/session 读取有效；不打印 CSRF/cookie。未知 setup 模块及不再需要的 pending.js 路径仍为 404。测试结束 Core 正常退出 0，只清理本次新建临时数据。初次冒烟的 Chromium 因测试临时路径太长未启动，保留该失败记录，改为短 /tmp 路径后才取得上述通过结果；没有为此修改产品。
+
+- [真实空安装宽屏](evidence/startup-20261021/real-empty-core-setup-1440.png)
+- [真实空安装窄屏](evidence/startup-20261021/real-empty-core-setup-390.png)
+- [不含凭证的执行摘要](evidence/startup-20261021/real-empty-core-result.json)
+
+这些新截图不是模拟 API 图；只证明空安装页面启动与资源初始化，不证明管理员登录后的完整真实业务链。Docker Work 创建/容器生命周期、镜像拉取、真实模型调用及完整安装配置仍未执行，不将本次冒烟扩大为全部集成通过。
+
+### OpenSpec verify
+
+第 9 组任务 3/3 完成；新增生产入口 Scenario 映射到 components/onboarding/model-form 的依赖边、真实 Go 图回归和上述无 mock 启动证据。Completeness/Correctness/Coherence 本次修复无未解决项；真实 Docker/模型边界明确保留。修复已按租约追加到原 PR，保持 Draft，未合并、未部署。

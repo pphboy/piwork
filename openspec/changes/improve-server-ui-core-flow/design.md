@@ -136,3 +136,7 @@ Console 在当前路由复用/协调页级读状态，同对象显式刷新与�
 ### main 再次推进的处理
 
 第二次rebase目标457650bc。保留主线Console名称Piwork Core、HTTP托管测试入口及移除忽略TLS错误配置；本轮UI交互与Session修正仍保留。重跑受影响Console全部可运行套件、两端非浏览器检查及生成资源核对；Desktop生产源码若与已验证检查点逐字一致，可沿用同一字节的完整浏览器结果并明确记录。真实Go/Core集成仍依赖可用工具和隔离环境，不将UI fixture代替该证据。
+
+## 生产首设依赖图边界
+
+setup/login 使用受限 Go 静态白名单，开发静态服务器能读取的文件不代表生产可用。pendingDots 定义放入已放行且无外部依赖的 components；onboarding 和 model-form 直接复用它，其他管理模块可经 pending 薄再导出保持现有引用。不得为修正 UI 新依赖扩大匿名资源白名单或改认证/Core。Go 路由测试从实际 HTML 入口递归核对 JS 导入/再导出、样式等资源的 HTTP 200、正确 MIME、非空响应，并继续验证未公开模块为 404。真实空 Core 启动与浏览器初始化不拦截资产或 API；使用全新隔离数据目录，无管理员创建、模型密钥或 Docker Work。原有大量模拟 API 测试不能代替此交付验证。
