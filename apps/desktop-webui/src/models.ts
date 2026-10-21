@@ -23,6 +23,16 @@ export type RunStatus =
   | "failed"
   | "cancelled"
   | "interrupted";
+/** The safe subset of the Core Service diagnostic; unknown fields are never copied. */
+export interface ServiceDiagnostic {
+  code: string;
+  stage: string;
+  message: string;
+  remediation: string;
+  retryable?: boolean;
+  exitCode?: number;
+  correlationId?: string;
+}
 export interface Service {
   id: string;
   name: string;
@@ -31,7 +41,8 @@ export interface Service {
   enabled: boolean;
   observed: ServiceStatus;
   error?: string;
-  operationId?: string;
+  /** A correlation id is diagnostic text only: it never implies a navigable Operation. */
+  diagnostic?: ServiceDiagnostic;
 }
 export interface WorkspaceFile {
   path: string;

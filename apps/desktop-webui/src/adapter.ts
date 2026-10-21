@@ -1,6 +1,6 @@
 import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { historyMessages, resultText, upsertTool } from './chat-projection.js';
-import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, RunStatus, RunModel, Session, Run } from './models.js';
+import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, RunStatus, RunModel, Session, Run, Service, ServiceDiagnostic } from './models.js';
 import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
@@ -21,6 +21,26 @@ const runStates: RunStatus[] = ['interrupted', 'accepted', 'running', 'cancellin
 const blankConfig = (): Configuration => ({ skills: [], packages: [], agents: '', advanced: '{}', revision: 0, activeRevision: 0, loaded: false, modelVisible: false });
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const stateLabel = (value: string) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
+const diagnosticText = (value: unknown) => typeof value === 'string' ? value : '';
+/** Copy only the typed public diagnostic fields; never stringify an unknown object or infer a stage. */
+function serviceDiagnostic(raw: unknown): ServiceDiagnostic | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const value = raw as Data;
+  const diagnostic: ServiceDiagnostic = { code: diagnosticText(value.code), stage: diagnosticText(value.stage), message: diagnosticText(value.message), remediation: diagnosticText(value.remediation) };
+  if (typeof value.retryable === 'boolean') diagnostic.retryable = value.retryable;
+  if (typeof value.exitCode === 'number' && Number.isInteger(value.exitCode)) diagnostic.exitCode = value.exitCode;
+  if (diagnosticText(value.correlationId)) diagnostic.correlationId = diagnosticText(value.correlationId);
+  const known = diagnostic.code || diagnostic.stage || diagnostic.message || diagnostic.remediation || diagnostic.correlationId || diagnostic.retryable !== undefined || diagnostic.exitCode !== undefined;
+  return known ? diagnostic : undefined;
+}
+function serviceErrorText(raw: unknown) {
+  if (typeof raw === 'string') return raw;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  return diagnosticText((raw as Data).message) || undefined;
+}
+function mapService(raw: Data): Service {
+  return { id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState) as Service['observed'], ports: (raw.access?.ports ?? []).filter((p: Data) => /^https?:/.test(p.url ?? '')).sort((a: Data, b: Data) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p: Data) => p.port), error: serviceErrorText(raw.lastError), diagnostic: serviceDiagnostic(raw.lastError) };
+}
 export class DesktopAdapter {
   readonly hosted = typeof document !== 'undefined' && document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted';
   about={local:null as Data|null,core:null as Data|null,localError:'',coreError:'',localLoading:false,coreLoading:false,coreChecked:''};
@@ -604,7 +624,7 @@ export class DesktopAdapter {
       if (!current()) return;
       if (!Array.isArray(value.services)) throw new DesktopError('INVALID_RESPONSE', 'Service listing is incomplete.');
       (work.resourceChecked ??= {}).services = new Date().toISOString();
-      work.services = value.services.map((raw: Data) => ({ id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState) as Work['services'][number]['observed'], ports: (raw.access?.ports ?? []).filter((p: Data) => /^https?:/.test(p.url ?? '')).sort((a: Data, b: Data) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p: Data) => p.port), error: typeof raw.lastError === 'string' ? raw.lastError : raw.lastError?.message }));
+      work.services = value.services.map(mapService);
       if (work.resourceErrors) delete work.resourceErrors.services;
       for (const key of this.serviceEntryKeys(id)) {
         const service = work.services.find(service => key.startsWith(`${id}:${service.id}:`));

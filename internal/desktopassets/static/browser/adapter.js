@@ -24,6 +24,32 @@ const runStates = ['interrupted', 'accepted', 'running', 'cancelling', 'succeede
 const blankConfig = () => ({ skills: [], packages: [], agents: '', advanced: '{}', revision: 0, activeRevision: 0, loaded: false, modelVisible: false });
 const errorText = (error) => error instanceof Error ? error.message : String(error);
 const stateLabel = (value) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
+const diagnosticText = (value) => typeof value === 'string' ? value : '';
+/** Copy only the typed public diagnostic fields; never stringify an unknown object or infer a stage. */
+function serviceDiagnostic(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        return undefined;
+    const value = raw;
+    const diagnostic = { code: diagnosticText(value.code), stage: diagnosticText(value.stage), message: diagnosticText(value.message), remediation: diagnosticText(value.remediation) };
+    if (typeof value.retryable === 'boolean')
+        diagnostic.retryable = value.retryable;
+    if (typeof value.exitCode === 'number' && Number.isInteger(value.exitCode))
+        diagnostic.exitCode = value.exitCode;
+    if (diagnosticText(value.correlationId))
+        diagnostic.correlationId = diagnosticText(value.correlationId);
+    const known = diagnostic.code || diagnostic.stage || diagnostic.message || diagnostic.remediation || diagnostic.correlationId || diagnostic.retryable !== undefined || diagnostic.exitCode !== undefined;
+    return known ? diagnostic : undefined;
+}
+function serviceErrorText(raw) {
+    if (typeof raw === 'string')
+        return raw;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        return undefined;
+    return diagnosticText(raw.message) || undefined;
+}
+function mapService(raw) {
+    return { id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState), ports: (raw.access?.ports ?? []).filter((p) => /^https?:/.test(p.url ?? '')).sort((a, b) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p) => p.port), error: serviceErrorText(raw.lastError), diagnostic: serviceDiagnostic(raw.lastError) };
+}
 export class DesktopAdapter {
     hosted = typeof document !== 'undefined' && document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted';
     about = { local: null, core: null, localError: '', coreError: '', localLoading: false, coreLoading: false, coreChecked: '' };
@@ -1040,7 +1066,7 @@ export class DesktopAdapter {
             if (!Array.isArray(value.services))
                 throw new DesktopError('INVALID_RESPONSE', 'Service listing is incomplete.');
             (work.resourceChecked ??= {}).services = new Date().toISOString();
-            work.services = value.services.map((raw) => ({ id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState), ports: (raw.access?.ports ?? []).filter((p) => /^https?:/.test(p.url ?? '')).sort((a, b) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p) => p.port), error: typeof raw.lastError === 'string' ? raw.lastError : raw.lastError?.message }));
+            work.services = value.services.map(mapService);
             if (work.resourceErrors)
                 delete work.resourceErrors.services;
             for (const key of this.serviceEntryKeys(id)) {
