@@ -40,7 +40,7 @@ Conversations, Services, and files in one workbench.
 - [Deployment guide](deploy/docker/README.md)
 - [Releases](https://github.com/pphboy/piwork/releases)
 
-Piwork is currently a preview. The server runs on Linux, with remote access from Windows and Linux browsers.
+Piwork is currently a preview. Core and the native CLI support Linux only; Windows and Linux browsers can access Core remotely.
 
 ## Roadmap
 

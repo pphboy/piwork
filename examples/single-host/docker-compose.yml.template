@@ -6,7 +6,7 @@ services:
     init: true
     user: "0:0"
     network_mode: host
-    command: ["serve", "--data-dir", "/var/lib/piwork/examples/single-host/core", "--no-open", "--core-listen", "0.0.0.0:17871"]
+    command: ["--data-dir", "/var/lib/piwork/examples/single-host/core"]
     volumes:
       - type: bind
         source: /var/run/docker.sock
@@ -20,18 +20,3 @@ services:
           create_host_path: true
     stop_grace_period: 60s
     restart: unless-stopped
-  cli:
-    image: @PIWORK_CLI_IMAGE@
-    profiles: [cli]
-    init: true
-    user: "0:0"
-    stdin_open: true
-    tty: true
-    environment:
-      PIWORK_CORE_URL: http://host.docker.internal:17871
-    extra_hosts: ["host.docker.internal:host-gateway"]
-    volumes:
-      - client-state:/var/lib/piwork/client
-volumes:
-  client-state:
-    name: piwork-single-host-client-state

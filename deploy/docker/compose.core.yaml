@@ -5,7 +5,7 @@ services:
     init: true
     user: "0:0"
     network_mode: host
-    command: ["serve", "--data-dir", "/var/lib/piwork/core", "--no-open"]
+    command: ["--data-dir", "/var/lib/piwork/core"]
     volumes:
       - type: bind
         source: /var/run/docker.sock
@@ -15,11 +15,6 @@ services:
       - type: bind
         source: /var/lib/piwork/core
         target: /var/lib/piwork/core
-        bind:
-          create_host_path: true
-      - type: bind
-        source: /var/lib/piwork/core-exchange
-        target: /var/lib/piwork/core-exchange
         bind:
           create_host_path: true
     stop_grace_period: 60s

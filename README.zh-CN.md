@@ -40,7 +40,7 @@ Piwork 是一个可迁移的 AI 工作空间，将对话、文件和运行中的
 - [部署手册](deploy/docker/README.zh-CN.md)
 - [发布版本](https://github.com/pphboy/piwork/releases)
 
-Piwork 目前处于预览阶段。服务端运行于 Linux，Windows 与 Linux 浏览器均可远程访问。
+Piwork 目前处于预览阶段。Core 与原生 CLI 仅支持 Linux；Windows 与 Linux 浏览器均可远程访问 Core。
 
 ## 路线图
 
