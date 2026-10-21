@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -333,6 +335,7 @@ func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
 		"/setup/browser/onboarding.js": "text/javascript",
 		"/setup/browser/components.js": "text/javascript",
 		"/setup/browser/model-form.js": "text/javascript",
+		"/setup/browser/pending.js":    "text/javascript",
 		"/setup/piwork-logo.png":       "image/png", "/setup/style.css": "text/css",
 	} {
 		response, err := client.Get(origin + path)
@@ -352,6 +355,44 @@ func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != 404 {
 		t.Fatal("unexpected setup module was exposed")
+	}
+}
+
+func TestSetupModuleImportsArePublicAndTyped(t *testing.T) {
+	_, _, origin := fixture(t)
+	client := browser(t)
+	entry, err := url.Parse(origin + "/setup/browser/onboarding.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Follow the embedded entry's actual imports through the production handler.
+	// A fixture static server would hide omissions in the public asset allowlist.
+	imports := regexp.MustCompile(`(?m)^\s*(?:import|export)\s+(?:[^;'"\n]+\s+from\s+)?['"]([^'"]+)['"]`)
+	queue := []*url.URL{entry}
+	seen := map[string]bool{}
+	for len(queue) > 0 {
+		module := queue[0]
+		queue = queue[1:]
+		if seen[module.String()] {
+			continue
+		}
+		seen[module.String()] = true
+		response, err := client.Get(module.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/javascript") || len(body) == 0 {
+			t.Fatalf("setup module %s unavailable or wrong type: HTTP %d", module.Path, response.StatusCode)
+		}
+		for _, match := range imports.FindAllSubmatch(body, -1) {
+			dependency, err := module.Parse(string(match[1]))
+			if err != nil || dependency.Scheme != entry.Scheme || dependency.Host != entry.Host || !strings.HasPrefix(dependency.Path, "/setup/browser/") {
+				t.Fatalf("setup module %s imports unsupported dependency %q", module.Path, match[1])
+			}
+			queue = append(queue, dependency)
+		}
 	}
 }
 
