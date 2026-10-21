@@ -1366,9 +1366,10 @@ pre,
 .loading-list { padding:12px 20px;background:var(--surface);border:1px solid var(--border);border-radius:8px; }
 .loading-list .skeleton { display:grid;grid-template-columns:40px minmax(0,1fr) 96px;gap:16px;align-items:center;min-height:76px;border-bottom:1px solid var(--border); }
 .loading-list .skeleton:last-child { border-bottom:0; }
-.loading-list .skeleton > i { height:40px;border-radius:8px;background:var(--surface-subtle); }
-.loading-list .skeleton span { height:14px;max-width:60%;border-radius:4px;background:var(--surface-subtle); }
+.loading-list .skeleton > i { height:40px;border-radius:8px;background:var(--border); }
+.loading-list .skeleton span { height:14px;max-width:60%;border-radius:4px;background:var(--border); }
 .loading-list .skeleton span:last-child { max-width:100%; }
+.works-error-cause { display:block;margin-bottom:8px;overflow-wrap:anywhere; }
 .files-toolbar {
   display: flex;
   flex: none;
@@ -3486,7 +3487,7 @@ a.button.primary { color:var(--on-accent,#fff); }
 .read-placeholder-line:last-child { max-width:65%; }
 .read-placeholder-field { display:inline-block;width:112px;height:14px;border-radius:4px;background:var(--surface-subtle);vertical-align:middle; }
 /* A one-step reveal suppresses fast-read flashes without delaying real content. */
-.read-placeholder-line,.read-placeholder-field,.loading-list .skeleton { animation:read-placeholder-reveal 0s 150ms both; }
+.read-placeholder-line,.read-placeholder-field { animation:read-placeholder-reveal 0s 150ms both; }
 @keyframes read-placeholder-reveal { from { opacity:0; } to { opacity:1; } }
 .read-failure { align-items:flex-start; }
 .read-failure > div { flex:1;min-width:0; }

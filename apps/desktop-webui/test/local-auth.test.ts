@@ -398,6 +398,8 @@ test('pending Core: initial and manual checks have one local indicator, end on f
     if (r.path === 'status') { statusCalls++; await (statusCalls === 1 ? first.promise : manual.promise); return fail ? { status: 503, json: { message: 'Connection test failed' } } : { json: { health: { available: true }, readiness: { available: true, value: { ready: true } } } }; }
   });
   await expect(page.locator('[data-pending-label="Checking Core connection…"] .pending-dots')).toHaveCount(1);
+  await expect(page.locator('.loading-list .skeleton')).toHaveCount(3); await expect(page.locator('.loading-list')).toHaveText('');
+  await expect(page.locator('.pending-dots')).toHaveCount(1);
   await expect(button(page, 'connection')).not.toContainText('Connected');
   await expect(page.locator('.works-footer')).toContainText('Works not yet read');
   await expect(page.locator('.works-footer')).not.toContainText('0 Works');
@@ -421,4 +423,116 @@ test('pending Core: initial and manual checks have one local indicator, end on f
   manual.resolve(); await expect(page.locator('#modal')).toContainText('Connection test failed');
   await expect(page.locator('#modal .pending-dots')).toHaveCount(0); await expect(button(page, 'check-connection')).toBeEnabled();
   assert.equal(records.filter(r => r.path === 'status').length, 2);
+});
+
+async function captureWorksEvidence(page: Page, name: string) {
+  // Capture the stable page after its existing transient toast naturally ends.
+  if (process.env.PIWORK_UI_EVIDENCE === '1') await expect(page.locator('#toast')).not.toHaveClass(/visible/);
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await expect(page.locator('.connection > i')).toHaveCount(1);
+    if (process.env.PIWORK_UI_EVIDENCE === '1') {
+      await expect.poll(() => page.locator('.brand-logo').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+      await mkdir('dist/server-ui-core-flow/desktop', { recursive: true });
+      await page.screenshot({ path: `dist/server-ui-core-flow/desktop/${name}-${width}.png`, fullPage: true });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+test('Works first-read static skeleton stays visible without duplicate pending or unknown zero count', async t => {
+  const first = pending(); t.after(async () => first.resolve());
+  const { page, records } = await fixture(t, async r => {
+    if (r.path === 'session') return { json: signedIn() };
+    if (r.path === 'works') { await first.promise; return { json: { works: [] } }; }
+  });
+  await expect.poll(() => records.filter(r => r.path === 'works').length).toBeGreaterThan(0);
+  const skeleton = page.locator('.loading-list');
+  await expect(skeleton).toBeVisible(); await expect(skeleton).toHaveAttribute('aria-label', 'Loading your Works');
+  await expect(skeleton).toHaveAttribute('aria-busy', 'true'); await expect(skeleton).toHaveText('');
+  await expect(skeleton.locator('.skeleton')).toHaveCount(3); await expect(page.locator('.pending-dots')).toHaveCount(0);
+  await expect(page.locator('.works-footer')).toContainText('Works not yet read');
+  await expect(page.locator('.works-footer')).not.toContainText('0 Works');
+  await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toHaveCount(0);
+  for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+    await page.emulateMedia({ reducedMotion });
+    const style = await skeleton.locator('.skeleton').first().evaluate(row => ({ animation: getComputedStyle(row).animationName, opacity: getComputedStyle(row).opacity, fill: getComputedStyle(row.querySelector('i')!).backgroundColor, surface: getComputedStyle(row.parentElement!).backgroundColor }));
+    assert.equal(style.animation, 'none'); assert.equal(style.opacity, '1'); assert.notEqual(style.fill, style.surface);
+    await captureWorksEvidence(page, `works-initial-skeleton-${reducedMotion}`);
+  }
+  first.resolve();
+  await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
+  await expect(skeleton).toHaveCount(0); await expect(page.locator('.works-footer')).toContainText('0 Works');
+  assert.equal(records.filter(r => r.method !== 'GET').length, 0);
+});
+
+test('Works initial error has one cause and retry; retries stay local and confirmed-empty refresh failures remain visible', async t => {
+  const failedRetry = pending(), successfulRetry = pending(); t.after(async () => { failedRetry.resolve(); successfulRetry.resolve(); });
+  let mode = 'initial';
+  const longError = `Retry unavailable: ${'upstream-'.repeat(32)}<script>not executed</script>`;
+  const { page, records } = await fixture(t, async r => {
+    if (r.path === 'session') return { json: signedIn() };
+    if (r.path !== 'works') return;
+    if (mode === 'retry-failure') { await failedRetry.promise; return { status: 503, json: { message: longError } }; }
+    if (mode === 'retry-success') { await successfulRetry.promise; return { json: { works: [] } }; }
+    return { status: 503, json: { message: mode === 'refresh-failure' ? 'Confirmed empty list refresh unavailable' : 'Initial Works read unavailable' } };
+  });
+  await expect(page.getByRole('heading', { name: 'Works could not be loaded' })).toBeVisible();
+  await expect.poll(() => records.filter(r => r.path === 'works').length).toBeGreaterThan(0);
+  await expect.poll(() => api(page, 'return !adapter.worksLoading && !adapter.connectionRequest;')).toBe(true);
+  await expect(page.locator('.works-error-cause')).toHaveText('Initial Works read unavailable');
+  await expect(page.getByRole('button', { name: 'Retry loading', exact: true })).toHaveCount(1);
+  await expect(page.locator('.works-page > .feedback')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
+  await expect(page.locator('.works-footer')).toContainText('Works not yet read');
+  await captureWorksEvidence(page, 'works-initial-error');
+  const initialReads = records.filter(r => r.path === 'works').length;
+  mode = 'retry-failure'; await page.getByRole('button', { name: 'Retry loading', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Reading Works…', exact: true })).toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('.page-heading .pending-dots')).toHaveCount(1); await expect(page.locator('.pending-dots')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Retry loading', exact: true })).toBeDisabled();
+  await expect(page.locator('.loading-list')).toHaveCount(0); await expect(page.locator('.works-page > .feedback')).toHaveCount(0);
+  await page.locator('[data-action="retry-works"]').evaluateAll(nodes => nodes.forEach(node => (node as HTMLButtonElement).click()));
+  assert.equal(records.filter(r => r.path === 'works').length, initialReads + 1);
+  await captureWorksEvidence(page, 'works-initial-error-retrying');
+  failedRetry.resolve(); await expect(page.locator('.works-error-cause')).toHaveText(longError);
+  await expect(page.locator('.works-page script')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry loading', exact: true })).toBeEnabled();
+  await expect(page.locator('.works-page > .feedback')).toHaveCount(0);
+  await captureWorksEvidence(page, 'works-initial-error-long');
+  await page.setViewportSize({ width: 360, height: 900 });
+  assert.equal(await page.locator('.works-error-cause').evaluate(node => node.scrollWidth <= node.clientWidth), true);
+  mode = 'retry-success'; await page.getByRole('button', { name: 'Retry loading', exact: true }).click();
+  await expect(page.locator('.page-heading .pending-dots')).toHaveCount(1); successfulRetry.resolve();
+  await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
+  await expect(page.locator('.works-error-cause')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
+  await expect(page.locator('.works-footer')).toContainText('0 Works');
+  mode = 'refresh-failure'; await page.getByRole('button', { name: 'Refresh Works', exact: true }).click();
+  await expect(page.locator('.works-page > .feedback')).toContainText('Works could not be refreshed. Confirmed empty list refresh unavailable');
+  await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Works could not be loaded' })).toHaveCount(0);
+  await expect(page.locator('.loading-list')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
+  await captureWorksEvidence(page, 'works-confirmed-empty-refresh-error');
+  assert.equal(records.filter(r => r.method !== 'GET').length, 0);
+});
+
+
+test('Works failed initial Core check leaves an unconfirmed list with explicit read recovery', async t => {
+  const { page, records } = await fixture(t, r => {
+    if (r.path === 'session') return { json: signedIn() };
+    if (r.path === 'status') return { status: 503, json: { message: 'Initial Core check unavailable' } };
+  });
+  await expect(page.getByRole('heading', { name: 'Works have not been read' })).toBeVisible();
+  await expect.poll(() => api(page, 'return !adapter.connectionCheck.checking && !adapter.connectionRequest;')).toBe(true);
+  await expect(page.getByRole('heading', { name: 'No matching Works' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toHaveCount(0);
+  await expect(page.locator('.works-footer')).toContainText('Works not yet read');
+  await expect(page.locator('.loading-list')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
+  assert.equal(records.filter(r => r.path === 'works').length, 0);
+  await captureWorksEvidence(page, 'works-unconfirmed-core-error');
+  await page.getByRole('button', { name: 'Read Works', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
+  await expect(page.locator('.works-footer')).toContainText('0 Works');
+  assert.equal(records.filter(r => r.path === 'works').length, 1);
+  assert.equal(records.filter(r => r.method !== 'GET').length, 0);
 });
