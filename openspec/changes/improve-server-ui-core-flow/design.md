@@ -132,3 +132,7 @@ Console 在当前路由复用/协调页级读状态，同对象显式刷新与�
 ## v0.0.9 rebase决策
 
 使用真实primary分支main的a6c36da1作为新祖先。重放保留功能提交边界，冲突按上游契约与已完成UI交互组合解决，不以整文件旧版本覆盖新版。Service检查结束后保持`origin + (basePath ?? "/")`；登录成功及已登录入口保留受验证的同源Service returnTo；托管身份清理/确认注销删除piwork:web:缓存，失败或晚响应仍遵守现有身份/视图锁。采用主线同源可信应用提示与回归。Session动作、局部Pending、Quick setup入口收敛、Works骨架/单一初错、导出明细修正保持。Core/Go/contracts/deploy及主规格与新main逐字相同；生成资源按新源码重建。现有图仅证明原基线外观，兼容验收另行记录。
+
+### main 再次推进的处理
+
+第二次rebase目标457650bc。保留主线Console名称Piwork Core、HTTP托管测试入口及移除忽略TLS错误配置；本轮UI交互与Session修正仍保留。重跑受影响Console全部可运行套件、两端非浏览器检查及生成资源核对；Desktop生产源码若与已验证检查点逐字一致，可沿用同一字节的完整浏览器结果并明确记录。真实Go/Core集成仍依赖可用工具和隔离环境，不将UI fixture代替该证据。
