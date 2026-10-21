@@ -47,6 +47,9 @@ const userUsage = `usage: piwork-cli [--core <url>] [--json] [command]
   work snapshot download <snapshotId> --output <file>
   work import <file> [--name <name>] [--wait]
   work packages <list|show|install|update|enable|disable|remove> ...
+  logs export [--output <file>] [--idempotency-key <key>]
+  logs show <exportId>
+  logs download <exportId> --output <file>
   operation show <operationId>
   session <create|list|show> <workId> [sessionId]
   run <show|watch|cancel> <workId> <runId> [--after <sequence>]
@@ -261,6 +264,8 @@ func runUserWithDesktop(args []string, stdout, stderr io.Writer, launch func(*cl
 		var result json.RawMessage
 		err = api.Request(ctx, "GET", path, nil, &result)
 		output = result
+	case "logs":
+		output, err = runUserLogs(ctx, api, command.args[1:], stderr)
 	case "session":
 		output, err = runUserSession(ctx, api, command.args[1:])
 	case "run":
@@ -284,6 +289,14 @@ func runUserWithDesktop(args []string, stdout, stderr io.Writer, launch func(*cl
 		fmt.Fprintln(stderr, client.SafeErrorMessage(err.Error()))
 		if errors.Is(err, context.Canceled) {
 			return 130
+		}
+		var localFailure *logExportLocalError
+		if errors.As(err, &localFailure) {
+			return 2
+		}
+		var verificationFailure *logExportVerificationError
+		if errors.As(err, &verificationFailure) {
+			return 1
 		}
 		var apiErr *client.APIError
 		if errors.As(err, &apiErr) {
@@ -346,6 +359,14 @@ func confirmedInvalidLogoutSession(err error) bool {
 }
 
 func encodeUserCommandOutput(stdout, stderr io.Writer, value any, command userCommand) error {
+	if !command.json && len(command.args) >= 1 && command.args[0] == "logs" {
+		if object, ok := value.(map[string]any); ok {
+			if text, ok := logExportText(object, command.args[1]); ok {
+				_, err := io.WriteString(stdout, client.SafeErrorMessage(text))
+				return err
+			}
+		}
+	}
 	if !command.json && len(command.args) >= 3 && command.args[0] == "work" && command.args[1] == "service" && command.args[2] == "logs" {
 		if logs, ok := value.(map[string]any); ok {
 			if logs["status"] == "unavailable" {
@@ -470,6 +491,9 @@ func validateUserCommand(args []string) error {
 		if len(args) == 3 && args[1] == "show" && args[2] != "" && !strings.HasPrefix(args[2], "--") {
 			return nil
 		}
+	case "logs":
+		_, err := parseUserLogs(args[1:])
+		return err
 	case "session":
 		return validateUserSession(args[1:])
 	case "run":
