@@ -17,7 +17,7 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await new Promise(resolve => server.close(resolve)); });
 const evidenceRoot=fileURLToPath(new URL('../../../dist/server-ui-core-flow/management/',import.meta.url));
-async function evidence(page,name){if(process.env.PIWORK_UI_EVIDENCE==='1'){await mkdir(evidenceRoot,{recursive:true});await page.screenshot({path:evidenceRoot+name+'.png',fullPage:true});}}
+async function evidence(page,name,fullPage=true){if(process.env.PIWORK_UI_EVIDENCE==='1'){await mkdir(evidenceRoot,{recursive:true});await page.screenshot({path:evidenceRoot+name+'.png',fullPage});}}
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const model = { id:'model-one', modelRef:'ref-one', name:'Saved model', model:'synthetic-model', api:'anthropic-messages', baseUrl:'https://fixture.invalid/anthropic', credentialAvailable:true, enabled:true, updatedAt:'2026-10-20T00:00:00Z' };
 async function fixture(page, path = '/runtime', handler = () => undefined, state = {}) {
@@ -56,16 +56,88 @@ for (const scenario of ['missing','preparing','failed','unknown','ready']) test(
   const lead=page.locator('[data-testid="overview-next-task"]');
   await expect(lead.locator('.btn.primary')).toHaveCount(1);
   await expect(lead).toContainText(scenario==='missing'?'Quick setup':scenario==='preparing'?'View preparation':scenario==='ready'?'Open workbench':'Review runtime');
+  const progress=lead.locator('.setup-progress');
+  if(ready)await expect(progress).toHaveCount(0);
+  else{
+    await expect(progress).toContainText(scenario==='missing'?'Save runtime':'Runtime saved');
+    await expect(progress).toContainText('Confirm readiness');
+    await expect(progress).not.toContainText('Readiness confirmed');
+    if(scenario==='missing')await expect(progress).not.toContainText('Runtime saved');
+  }
   const setup=page.locator('main a[href^="/admin/setup"]');await expect(setup).toHaveCount(1);
   const compact=await page.locator('.mobile-menu').isVisible();if(compact)await page.locator('.mobile-menu').click();
   await expect(page.getByRole('navigation',{name:'Main navigation'})).toContainText('User access');
   await expect(page.getByRole('navigation',{name:'Main navigation'})).toContainText('Work setup');
   if(compact)await page.locator('.mobile-menu').click();
   await expect(page.locator('.workbench-link')).toBeVisible();
-  if(['ready','preparing'].includes(scenario)){
+  if(['missing','ready','preparing'].includes(scenario)){
     await evidence(page,'overview-'+scenario+'-'+page.viewportSize().width+'-synthetic');
     if(process.env.PIWORK_UI_EVIDENCE==='1'){await page.setViewportSize({width:1440,height:900});await evidence(page,'overview-'+scenario+'-1440-synthetic');}
   }
+});
+
+test('S08 Overview polling retains the wide account menu, focus and expanded semantics; navigation closes it',async({page})=>{
+  await page.setViewportSize({width:1440,height:900});await page.clock.install();
+  const {values}=await fixture(page,'/admin');
+  const trigger=page.locator('#account-trigger'), menu=page.locator('#account-dropdown');
+  await trigger.focus();await trigger.press('ArrowDown');
+  await expect(menu.getByRole('menuitem',{name:'About Piwork',exact:true})).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  const signOut=menu.getByRole('menuitem',{name:'Sign out',exact:true});
+  await expect(signOut).toBeFocused();
+  await page.evaluate(()=>{window.retainedShell={trigger:document.querySelector('#account-trigger'),menu:document.querySelector('#account-dropdown'),focused:document.activeElement};});
+  values['admin/status']={ready:false,state:'RUNTIME_UNAVAILABLE',checks:{runtimeConfigured:true}};
+  values.preparation={ready:false,components:{agent:{state:'preparing'}}};
+  await page.clock.fastForward(15001);
+  await expect(page.locator('[data-testid="overview-next-task"]')).toContainText('Piwork is preparing');
+  await expect(menu).toBeVisible();await expect(trigger).toHaveAttribute('aria-expanded','true');await expect(signOut).toBeFocused();
+  expect(await page.evaluate(()=>window.retainedShell.trigger===document.querySelector('#account-trigger')&&window.retainedShell.menu===document.querySelector('#account-dropdown')&&window.retainedShell.focused===document.activeElement)).toBe(true);
+  // A full-page screenshot can resize the viewport and legitimately close this menu.
+  await evidence(page,'overview-account-menu-poll-1440-synthetic',false);
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();await expect(trigger).toHaveAttribute('aria-expanded','false');await expect(trigger).toBeFocused();
+  await trigger.press('ArrowDown');await menu.getByRole('menuitem',{name:'About Piwork',exact:true}).click();
+  await expect(page).toHaveURL(base+'/admin/about');await expect(page.getByRole('heading',{name:'About Piwork',exact:true})).toBeVisible();
+  await expect(menu).toBeHidden();await expect(trigger).toHaveAttribute('aria-expanded','false');
+  expect(await page.evaluate(()=>!window.retainedShell.trigger.isConnected&&!window.retainedShell.menu.isConnected)).toBe(true);
+  await page.getByRole('navigation',{name:'Main navigation'}).getByRole('link',{name:'Overview',exact:true}).click();
+  await expect(page).toHaveURL(base+'/admin');await expect(menu).toBeHidden();await expect(trigger).toHaveAttribute('aria-expanded','false');
+});
+
+test('S08 Overview polling retains narrow navigation, focus and expanded semantics; navigation closes it',async({page})=>{
+  await page.setViewportSize({width:360,height:900});await page.clock.install();
+  const {values}=await fixture(page,'/admin');
+  const trigger=page.locator('.mobile-menu'), navigation=page.getByRole('navigation',{name:'Main navigation',includeHidden:true});
+  await expect(navigation).toBeHidden();await trigger.click();await expect(navigation).toBeVisible();
+  const userAccess=navigation.getByRole('link',{name:'User access',exact:true});
+  await userAccess.focus();
+  await page.evaluate(()=>{window.retainedShell={trigger:document.querySelector('.mobile-menu'),navigation:document.querySelector('.nav'),focused:document.activeElement};});
+  values['admin/status']={ready:false,state:'RUNTIME_UNAVAILABLE',checks:{runtimeConfigured:true}};
+  values.preparation={ready:false,components:{agent:{state:'preparing'}}};
+  await page.clock.fastForward(15001);
+  await expect(page.locator('[data-testid="overview-next-task"]')).toContainText('Piwork is preparing');
+  await expect(navigation).toBeVisible();await expect(navigation).toHaveClass(/\bopen\b/);await expect(trigger).toHaveAttribute('aria-expanded','true');await expect(userAccess).toBeFocused();
+  expect(await page.evaluate(()=>window.retainedShell.trigger===document.querySelector('.mobile-menu')&&window.retainedShell.navigation===document.querySelector('.nav')&&window.retainedShell.focused===document.activeElement)).toBe(true);
+  await evidence(page,'overview-navigation-poll-360-synthetic',false);
+  await userAccess.click();await expect(page).toHaveURL(base+'/admin/users');await expect(page.getByRole('heading',{name:'Give people access',exact:true})).toBeVisible();
+  await expect(navigation).toBeHidden();await expect(navigation).not.toHaveClass(/\bopen\b/);await expect(trigger).toHaveAttribute('aria-expanded','false');
+  expect(await page.evaluate(()=>!window.retainedShell.trigger.isConnected&&!window.retainedShell.navigation.isConnected)).toBe(true);
+  await trigger.click();await navigation.getByRole('link',{name:'Overview',exact:true}).click();
+  await expect(page).toHaveURL(base+'/admin');await expect(navigation).toBeHidden();await expect(trigger).toHaveAttribute('aria-expanded','false');
+});
+
+test('S08 an identity change closes account and narrow navigation surfaces on the same path',async({page})=>{
+  await page.setViewportSize({width:360,height:900});await page.clock.install();
+  const {values}=await fixture(page,'/admin');
+  await page.locator('.mobile-menu').click();await page.locator('#account-trigger').click();
+  await expect(page.locator('.nav')).toBeVisible();await expect(page.locator('#account-dropdown')).toBeVisible();
+  await page.evaluate(()=>{window.retainedShell={menu:document.querySelector('#account-dropdown'),navigation:document.querySelector('.nav')};});
+  values.session={authenticated:true,csrfToken:'synthetic-new-csrf',user:{id:'new-admin',account:'new-admin',role:'admin',enabled:true}};
+  await page.clock.fastForward(15001);
+  await expect(page.locator('#account-dropdown .dropdown-title')).toHaveText('new-admin');await expect(page).toHaveURL(base+'/admin');
+  await expect(page.locator('#account-dropdown')).toBeHidden();await expect(page.locator('#account-trigger')).toHaveAttribute('aria-expanded','false');
+  await expect(page.locator('.nav')).toBeHidden();await expect(page.locator('.mobile-menu')).toHaveAttribute('aria-expanded','false');
+  expect(await page.evaluate(()=>!window.retainedShell.menu.isConnected&&!window.retainedShell.navigation.isConnected)).toBe(true);
 });
 
 test('S08 stale Ready cannot remain the primary workbench action; expanded diagnostics survive recovery',async({page})=>{
