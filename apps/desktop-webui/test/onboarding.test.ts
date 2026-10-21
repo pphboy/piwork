@@ -6,7 +6,7 @@ import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { chromium, expect } from '@playwright/test';
+import { chromium, expect, type Page } from '@playwright/test';
 
 const binary=process.env.PIWORK_TEST_UNIFIED_BIN || fileURLToPath(new URL('../../../../dist/go/piwork-core',import.meta.url));
 const browserOptions=process.env.PIWORK_TEST_BROWSER_BIN ? {executablePath:process.env.PIWORK_TEST_BROWSER_BIN,headless:true,args:['--no-proxy-server']} : {headless:true,channel:'chromium' as const,args:['--no-proxy-server']};
@@ -150,7 +150,7 @@ test('lost model/runtime responses are read back without replay and survive rest
  const browser=await chromium.launch(browserOptions);
  let releaseStale=()=>{};
  try {
-  const context=await browser.newContext();const page=await context.newPage();
+  const context=await browser.newContext();const page=await context.newPage();await page.clock.install();
   await page.goto(server.origin+'/login');
   await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
@@ -159,24 +159,24 @@ test('lost model/runtime responses are read back without replay and survive rest
   const staleCaptured=new Promise<void>(resolve=>{captured=resolve;});
   const release=new Promise<void>(resolve=>{releaseStale=resolve;});
   await page.route('**/_web/api/onboarding',async route=>{if(held){await route.continue();return;}held=true;const response=await route.fetch();captured();await release;await route.fulfill({response});});
-  await staleCaptured;
-  await openModelAdvanced(page);await page.getByLabel('Model ID',{exact:true}).fill('lost-response-model');await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-key');
+  await page.clock.fastForward(5001);await staleCaptured;
+  await openModelAdvanced(page);await page.getByLabel('Model ID',{exact:true}).fill('lost-response-model');await page.getByLabel('API type',{exact:true}).selectOption('openai-responses');await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-key');
   let tests=0,models=0,runtimes=0;
   await page.route('**/console/api/admin/model-tests',async route=>{tests++;await route.fulfill({status:502,contentType:'application/json',body:JSON.stringify({code:'MODEL_TEST_FAILED',message:'Synthetic unavailable model'})});});
   await page.getByRole('button',{name:'Test',exact:true}).click();
   await expect(page.getByRole('dialog')).toContainText('Synthetic unavailable model');await page.getByRole('button',{name:'Close',exact:true}).click();assert.equal(tests,1);
   await page.route('**/console/api/admin/models',async route=>{if(route.request().method()!=='POST'){await route.continue();return;}models++;await route.fetch();await route.abort('failed');});
   await page.getByRole('button',{name:'Save and continue',exact:true}).click();
-  await expect(page.locator('#setup-notice')).toContainText('not confirmed');
+  await expect(page.locator('#setup-notice')).toContainText('The model save result is unconfirmed');
   releaseStale();
-  await page.getByRole('button',{name:'Read current state',exact:true}).click();
+  await readSetupAutomatically(page);
   await expect(page.locator('#setup-notice')).toContainText('Model save confirmed');
   assert.equal(models,1);assert.equal(tests,1);
   assert.equal(await page.getByLabel('API Key',{exact:true}).count(),0);
   await page.route('**/console/api/admin/runtime',async route=>{if(route.request().method()!=='PUT'){await route.continue();return;}runtimes++;await route.fetch();await route.abort('failed');});
   await page.getByRole('button',{name:'Save and continue',exact:true}).click();
   await expect(page.locator('#setup-notice')).toContainText('Runtime save is unconfirmed');
-  await page.getByRole('button',{name:'Read current state',exact:true}).click();
+  await readSetupAutomatically(page);
   await expect(page.locator('#preparation-answer')).toBeVisible();assert.equal(runtimes,1);
   await page.goto(server.origin+'/');await page.goto(server.origin+'/admin/setup?step=prepare');
   await expect(page.locator('#preparation-answer')).toBeVisible();
@@ -296,12 +296,36 @@ async function loginSetup(page:any,server:BrowserServer) {
  await page.getByRole('button',{name:'Sign in',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
 }
-async function openModelAdvanced(page:any) {
- const advanced=page.locator('#model-advanced');if(await advanced.count()&&!await advanced.evaluate((el:HTMLDetailsElement)=>el.open))await advanced.locator('summary').click();
+async function openModelAdvanced(page:Page) {
+ const advanced=page.locator('#model-advanced');await expect(advanced).toBeAttached();
+ if(!await advanced.evaluate((el:HTMLDetailsElement)=>el.open))await advanced.locator('summary').click();
+ await expect(page.getByLabel('Model ID',{exact:true})).toBeVisible();
+}
+async function readSetupAutomatically(page:Page) {
+ // Observe a new request from the existing timer, not a released older response.
+ const read=page.waitForRequest(request=>new URL(request.url()).pathname==='/_web/api/onboarding'&&request.method()==='GET');
+ await page.clock.fastForward(5001);
+ const response=await(await read).response();assert.ok(response);
+ await response.finished();
+}
+async function openQuickSetup(page:Page) {
+ const originalDocument=await page.evaluateHandle(()=>document);
+ const entry=page.locator('main a[href^="/admin/setup"]');
+ await expect(entry).toHaveCount(1);await entry.click();
+ await expect(page).toHaveURL(url=>url.pathname==='/admin/setup');
+ // Keep pending callbacks alive when the contextual entry opens preparation.
+ // Reenter the canonical model route through the existing browser-history handler.
+ if(new URL(page.url()).searchParams.get('step')==='prepare')await page.evaluate(()=>{
+  history.pushState(null,'','/admin/setup');window.dispatchEvent(new PopStateEvent('popstate'));
+ });
+ await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
+ assert.equal(await originalDocument.evaluate(node=>node===document),true);await originalDocument.dispose();
 }
 async function fillModel(page:any,name='setup-fixture') {
  await openModelAdvanced(page);
  await page.getByLabel('Model ID',{exact:true}).fill(name);
+ // This fixture's /v1 address belongs to Responses, independently of first-install defaults.
+ await page.getByLabel('API type',{exact:true}).selectOption('openai-responses');
  await page.getByLabel('Base URL',{exact:true}).fill('https://models.example.invalid/v1');
  await page.getByLabel('API Key',{exact:true}).fill('synthetic-model-key');
 }
@@ -373,7 +397,7 @@ test('model save is confirmed separately; rejected binding retries only Runtime 
 for(const outcome of ['rejected','lost-response'])test(`a new model ${outcome} after rejected Runtime binding recovers only its own save chain`,async()=>{
  const server=await start({PIWORK_ADMIN_ACCOUNT:'admin',PIWORK_ADMIN_PASSWORD:'synthetic-password'}),browser=await chromium.launch(browserOptions);
  try {
-  const page=await browser.newPage();await loginSetup(page,server);
+  const page=await browser.newPage();await page.clock.install();await loginSetup(page,server);
   let posts=0,bindings:string[]=[],tests=0,works=0,failRead=false,newRef='';
   page.on('request',request=>{const path=new URL(request.url()).pathname;if(path.endsWith('/model-tests'))tests++;if(request.method()==='POST'&&path.endsWith('/works'))works++;});
   await page.route('**/console/api/admin/runtime',async route=>{
@@ -397,11 +421,11 @@ for(const outcome of ['rejected','lost-response'])test(`a new model ${outcome} a
    assert.equal(posts,2);assert.equal(bindings.length,1);
    await page.getByLabel('API Key',{exact:true}).fill('synthetic-model-key');await save.click();
   } else {
-   await expect(notice).toContainText('not confirmed');await expect(notice).not.toContainText('Runtime save is unconfirmed');await expect(save).toBeDisabled();
+   await expect(notice).toContainText('The model save result is unconfirmed');await expect(notice).not.toContainText('Runtime save is unconfirmed');await expect(save).toBeDisabled();
    assert.equal(posts,2);assert.equal(bindings.length,1);
-   const refresh=page.getByRole('button',{name:'Read current state',exact:true});failRead=true;await refresh.click();await expect(page.locator('#catalog-note')).toContainText('could not be loaded');await expect(save).toBeDisabled();
+   failRead=true;await readSetupAutomatically(page);await expect(page.locator('#catalog-note')).toContainText('could not be loaded');await expect(save).toBeDisabled();
    assert.equal(posts,2);assert.equal(bindings.length,1);
-   failRead=false;await refresh.click();await expect(notice).toContainText('Model save confirmed');await expect(page.getByLabel('Saved model',{exact:true})).toHaveValue(newRef);await expect(save).toBeEnabled();
+   failRead=false;await readSetupAutomatically(page);await expect(notice).toContainText('Model save confirmed');await expect(page.getByLabel('Saved model',{exact:true})).toHaveValue(newRef);await expect(save).toBeEnabled();
    assert.equal(posts,2);assert.equal(bindings.length,1);assert.notEqual(newRef,bindings[0]);await save.click();
   }
   await expect(page.locator('#preparation-answer')).toBeVisible();assert.equal(posts,outcome==='rejected'?3:2);assert.deepEqual(bindings,[bindings[0],newRef]);assert.equal(tests,0);assert.equal(works,0);
@@ -413,25 +437,26 @@ for(const outcome of ['rejected','lost-response'])test(`a new model ${outcome} a
 test('unknown model save remains read-only through failed readback, then resumes from a confirmed saved reference',async()=>{
  const server=await start({PIWORK_ADMIN_ACCOUNT:'admin',PIWORK_ADMIN_PASSWORD:'synthetic-password'}),browser=await chromium.launch(browserOptions);
  try {
-  const page=await browser.newPage();await loginSetup(page,server);let posts=0,puts=0,failRead=false;
+  const page=await browser.newPage();await page.clock.install();await loginSetup(page,server);let posts=0,puts=0,failRead=false;
   await page.route('**/console/api/admin/models',async route=>{if(route.request().method()==='POST'){posts++;await route.fetch();await route.abort('failed');}else if(failRead)await route.abort('failed');else await route.continue();});
   page.on('request',request=>{if(request.method()==='PUT'&&request.url().endsWith('/admin/runtime'))puts++;});
-  await fillModel(page);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#setup-notice')).toContainText('not confirmed');await expect(page.getByRole('button',{name:'Save and continue',exact:true})).toBeDisabled();assert.equal(posts,1);assert.equal(puts,0);
-  failRead=true;await page.getByRole('button',{name:'Read current state',exact:true}).click();await expect(page.locator('#catalog-note')).toContainText('could not be loaded');assert.equal(posts,1);assert.equal(puts,0);
-  failRead=false;await page.getByRole('button',{name:'Read current state',exact:true}).click();await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();assert.equal(puts,0);
+  await fillModel(page);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#setup-notice')).toContainText('The model save result is unconfirmed');await expect(page.getByRole('button',{name:'Save and continue',exact:true})).toBeDisabled();assert.equal(posts,1);assert.equal(puts,0);
+  failRead=true;await readSetupAutomatically(page);await expect(page.locator('#catalog-note')).toContainText('could not be loaded');assert.equal(posts,1);assert.equal(puts,0);
+  failRead=false;await readSetupAutomatically(page);await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();assert.equal(puts,0);
   await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();assert.equal(posts,1);assert.equal(puts,1);
  } finally {await browser.close();await server.stop();}
 });
 
-test('background reads and explicit refresh retain model DOM, Key, focus, selection and Test revision',async()=>{
+test('automatic model reads retain DOM, Key, focus, selection and Test revision without a manual refresh',async()=>{
  const server=await start({PIWORK_ADMIN_ACCOUNT:'admin',PIWORK_ADMIN_PASSWORD:'synthetic-password'}),browser=await chromium.launch(browserOptions);
  try {
-  const page=await browser.newPage();await loginSetup(page,server);await fillModel(page);
+  const page=await browser.newPage();await page.clock.install();await loginSetup(page,server);await fillModel(page);
   await page.getByLabel('API type',{exact:true}).selectOption('anthropic-messages');await expect(page.getByLabel('Base URL',{exact:true})).toHaveAttribute('placeholder','https://gateway.example');
   let reads=0,tests=0;page.on('request',request=>{if(request.url().endsWith('/_web/api/onboarding'))reads++;});
   const field=page.getByLabel('Model ID',{exact:true});await field.focus();await field.evaluate((input:HTMLInputElement)=>{input.setSelectionRange(2,5);(window as any).keptModelInput=input;});
-  await expect.poll(()=>reads,{timeout:8000}).toBeGreaterThan(0);await expect(field).toBeFocused();assert.deepEqual(await field.evaluate((input:HTMLInputElement)=>[input===(window as any).keptModelInput,input.selectionStart,input.selectionEnd]),[true,2,5]);await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-model-key');
-  await page.getByRole('button',{name:'Read current state',exact:true}).click();assert.equal(await field.evaluate(input=>input===(window as any).keptModelInput),true);await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-model-key');
+  await readSetupAutomatically(page);assert.equal(reads,1);await expect(field).toBeFocused();assert.deepEqual(await field.evaluate((input:HTMLInputElement)=>[input===(window as any).keptModelInput,input.selectionStart,input.selectionEnd]),[true,2,5]);await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-model-key');
+  await expect(page.getByRole('button',{name:'Read current state',exact:true})).toHaveCount(0);
+  await readSetupAutomatically(page);assert.equal(reads,2);assert.equal(await field.evaluate(input=>input===(window as any).keptModelInput),true);await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-model-key');
   let release=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});
   await page.route('**/console/api/admin/model-tests',async route=>{tests++;await gate;await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({success:false,category:'authentication',reason:'provider-authentication',message:'Synthetic authentication failure',recovery:'Check the saved Key.',testMessage:'Reply with OK.',checkedAt:new Date().toISOString(),durationMs:1})});});
   await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.getByRole('dialog')).toBeVisible();await page.keyboard.press('Escape');await field.fill('changed-model');release();await expect(page.locator('#model-test-result')).toContainText('Previous configuration');assert.equal(await page.locator('dialog[open]').count(),0);assert.equal(tests,1);
@@ -443,23 +468,23 @@ test('background reads and explicit refresh retain model DOM, Key, focus, select
 test('saved model mode retains disabled/keyless reasons and catalog failure never pretends the catalog is empty',async()=>{
  const server=await start({PIWORK_ADMIN_ACCOUNT:'admin',PIWORK_ADMIN_PASSWORD:'synthetic-password'}),browser=await chromium.launch(browserOptions);
  try {
-  const page=await browser.newPage();await loginSetup(page,server);
+  const page=await browser.newPage();await page.clock.install();await loginSetup(page,server);
   await page.route('**/console/api/admin/models',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({models:[{id:'disabled',modelRef:'model-disabled',model:'disabled',name:'Disabled fixture',enabled:false,credentialAvailable:true},{id:'keyless',modelRef:'model-keyless',model:'keyless',name:'Keyless fixture',enabled:true,credentialAvailable:false}]})}));
   await page.reload();await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();await expect(page.getByLabel('Model ID',{exact:true})).toHaveCount(0);await expect(page.locator('#saved-model option:disabled')).toHaveCount(2);await expect(page.locator('#saved-model')).toContainText('Key unavailable');
   const choose=page.getByRole('button',{name:'Choose saved model',exact:true});await expect(choose).toHaveAttribute('aria-pressed','true');assert.equal(await choose.evaluate(el=>el.getBoundingClientRect().height),34);const selectedBackground=await choose.evaluate(el=>getComputedStyle(el).backgroundColor);
   await page.getByRole('button',{name:'Add model',exact:true}).click();await expect(page.getByLabel('Model ID',{exact:true})).toBeVisible();await expect(page.getByLabel('Saved model',{exact:true})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Add model',exact:true})).toHaveAttribute('aria-pressed','true');await expect(page.getByRole('button',{name:'Add model',exact:true}).locator('svg')).toHaveCount(1);assert.notEqual(await choose.evaluate(el=>getComputedStyle(el).backgroundColor),selectedBackground);
   await page.unroute('**/console/api/admin/models');await page.route('**/console/api/admin/models',route=>route.abort('failed'));await page.reload();await expect(page.locator('#catalog-note')).toContainText('could not be loaded');await expect(page.getByRole('button',{name:'Save and continue',exact:true})).toBeDisabled();await expect(page.getByRole('heading',{name:'Open your setup link'})).toHaveCount(0);
-  await page.unroute('**/_web/api/state');await page.getByRole('button',{name:'Read current state',exact:true}).click();await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();await expect(page.locator('#setup-notice')).toBeEmpty();
+  await page.unroute('**/console/api/admin/models');await readSetupAutomatically(page);await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();await expect(page.locator('#catalog-note')).toBeEmpty();await expect(page.locator('#setup-notice')).toBeEmpty();
  } finally {await browser.close();await server.stop();}
 });
 
 test('network errors preserve setup and expired login clears model secrets',async()=>{
  const server=await start({PIWORK_ADMIN_ACCOUNT:'admin',PIWORK_ADMIN_PASSWORD:'synthetic-password'}),browser=await chromium.launch(browserOptions);
  try {
-  const page=await browser.newPage();await loginSetup(page,server);await fillModel(page);
+  const page=await browser.newPage();await page.clock.install();await loginSetup(page,server);await fillModel(page);
   await page.evaluate(async()=>{const s=await(await fetch('/_web/api/session')).json();await fetch('/_web/api/logout',{method:'POST',headers:{'Content-Type':'application/json','X-Piwork-Csrf':s.csrfToken},body:'{}'});});
-  await page.route('**/_web/api/onboarding',route=>route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({code:'AUTH_REQUIRED'})}));await page.getByRole('button',{name:'Read current state',exact:true}).click();await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await expect(page.locator('input[type=password]')).toHaveCount(1);await expect(page.getByLabel('Password',{exact:true})).toHaveValue('');
+  await page.route('**/_web/api/onboarding',route=>route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({code:'AUTH_REQUIRED'})}));await readSetupAutomatically(page);await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await expect(page.locator('input[type=password]')).toHaveCount(1);await expect(page.getByLabel('Password',{exact:true})).toHaveValue('');
   await page.unroute('**/_web/api/onboarding');await page.route('**/_web/api/state',route=>route.abort('failed'));await page.reload();await expect(page.getByRole('heading',{name:'Could not read Core state'})).toBeVisible();await expect(page.getByRole('heading',{name:'Open your setup link'})).toHaveCount(0);
   await page.unroute('**/_web/api/state');await page.getByRole('button',{name:'Read current state',exact:true}).click();await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await loginSetup(page,server);await expect(page.locator('#setup-notice')).toBeEmpty();
  } finally {await browser.close();await server.stop();}
@@ -531,7 +556,7 @@ test('real Engine prepares fixed release dependencies and permits one explicit W
   await expect.poll(async()=>page.evaluate(async()=>{const value=await(await fetch('/_web/api/onboarding')).json();return value.status?.ready&&value.preparation?.ready;}),{timeout:240000,intervals:[1000,2000,5000]}).toBe(true);
   await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible({timeout:12000});
   await captureFollowup(page,'engine-ready');assert.equal(works,0);assert.equal(tests,0);
-  await page.locator('[data-action=account]').click();await page.getByRole('menuitem',{name:'Administration',exact:true}).click();await expect(page.locator('main h1')).toContainText('What’s next');await page.getByRole('link',{name:/^Quick setup/}).first().click();await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();await captureFollowup(page,'engine-current-model');await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toContainText('All required components are ready');assert.deepEqual({modelWrites,runtimeWrites},{modelWrites:1,runtimeWrites:1});await page.getByRole('link',{name:'Workbench',exact:true}).click();await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible();await captureFollowup(page,'engine-workbench');
+  await page.locator('[data-action=account]').click();await page.getByRole('menuitem',{name:'Administration',exact:true}).click();await expect(page.locator('main h1')).toContainText('What’s next');await openQuickSetup(page);await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();await captureFollowup(page,'engine-current-model');await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toContainText('All required components are ready');assert.deepEqual({modelWrites,runtimeWrites},{modelWrites:1,runtimeWrites:1});await page.getByRole('link',{name:'Workbench',exact:true}).click();await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible();await captureFollowup(page,'engine-workbench');
   await page.getByRole('button',{name:'New Work',exact:true}).first().click();await page.locator('#create-name').fill('Setup acceptance Work');await page.getByRole('button',{name:'Create Work',exact:true}).click();
   const openWork=page.locator('#modal .modal-footer').getByRole('link',{name:'Open Work',exact:true});await expect(openWork).toBeVisible({timeout:120000});await openWork.click();
   await expect(page.getByRole('heading',{name:'Setup acceptance Work',exact:true})).toBeVisible({timeout:60000});
@@ -673,7 +698,7 @@ test('Admin Quick setup is canonical, explicit and can observe an unchanged Runt
   const page=await browser.newPage();await loginSetup(page,server);assert.equal(new URL(page.url()).pathname,'/admin/setup');await expect(page.locator('main h1')).toHaveText('Quick setup');await expect(page.locator('.setup-topbar')).toHaveCount(0);await expect(page.locator('.setup-steps li')).toHaveCount(2);
   let posts=0,puts=0,tests=0,works=0;page.on('request',r=>{const path=new URL(r.url()).pathname;if(path==='/console/api/admin/models'&&r.method()==='POST')posts++;if(path==='/console/api/admin/runtime'&&r.method()==='PUT')puts++;if(path.endsWith('/model-tests'))tests++;if(path.endsWith('/works')&&r.method()==='POST')works++;});
   await fillModel(page,'current-model');await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();assert.equal(new URL(page.url()).search,'?step=prepare');await page.reload();await expect(page.locator('#preparation-answer')).toBeVisible();
-  await page.getByRole('link',{name:'Overview',exact:true}).click();await page.getByRole('link',{name:/^Quick setup/}).first().click();await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();await expect(page.locator('#preparation-answer')).toHaveCount(0);assert.equal(new URL(page.url()).search,'');
+  await page.getByRole('link',{name:'Overview',exact:true}).click();await openQuickSetup(page);await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();await expect(page.locator('#preparation-answer')).toHaveCount(0);assert.equal(new URL(page.url()).search,'');
   const currentRef=await page.getByLabel('Saved model',{exact:true}).inputValue();assert.ok(currentRef);await expect(page.getByRole('button',{name:'Save and continue',exact:true})).toBeEnabled();assert.deepEqual({posts,puts},{posts:1,puts:1});
   await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();assert.equal(puts,1);
   await page.goto(server.origin+'/setup');await expect(page.getByLabel('Saved model',{exact:true})).toHaveValue(currentRef);assert.equal(new URL(page.url()).pathname,'/admin/setup');
@@ -718,7 +743,7 @@ test('leaving and returning to Quick setup discards late Test callbacks without 
  try{
   const page=await browser.newPage();await loginSetup(page,server);await fillModel(page,'old-view');const oldGate=new Promise<void>(r=>{oldRelease=r;}),newGate=new Promise<void>(r=>{newRelease=r;});let tests=0;
   await page.route('**/console/api/admin/model-tests',async route=>{const input=route.request().postDataJSON();tests++;await(input.model==='old-view'?oldGate:newGate);await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({success:true,api:input.api,model:input.model,category:'success',testMessage:'Reply with OK.',replyText:input.model,replyTruncated:false,checkedAt:new Date().toISOString(),durationMs:1})});});
-  await page.getByRole('button',{name:'Test',exact:true}).click();await page.getByRole('button',{name:'Close',exact:true}).click();await page.getByRole('link',{name:'Overview',exact:true}).click();await page.getByRole('button',{name:'Discard draft',exact:true}).click();await page.getByRole('link',{name:/^Quick setup/}).first().click();await fillModel(page,'new-view');await page.getByRole('button',{name:'Test',exact:true}).click();await expect.poll(()=>tests).toBe(2);oldRelease();await expect(page.getByRole('dialog')).toContainText('Sending the test message');await expect(page.getByRole('dialog')).not.toContainText('old-view');await expect(page.getByRole('button',{name:'Test',exact:true})).toBeDisabled();await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-model-key');newRelease();await expect(page.locator('[data-model-test-reply]')).toHaveText('new-view');await page.getByRole('button',{name:'Close',exact:true}).click();await expect(page.getByRole('button',{name:'Test',exact:true})).toBeEnabled();
+  await page.getByRole('button',{name:'Test',exact:true}).click();await page.getByRole('button',{name:'Close',exact:true}).click();await page.getByRole('link',{name:'Overview',exact:true}).click();await page.getByRole('button',{name:'Discard draft',exact:true}).click();await openQuickSetup(page);await fillModel(page,'new-view');await page.getByRole('button',{name:'Test',exact:true}).click();await expect.poll(()=>tests).toBe(2);oldRelease();await expect(page.getByRole('dialog')).toContainText('Sending the test message');await expect(page.getByRole('dialog')).not.toContainText('old-view');await expect(page.getByRole('button',{name:'Test',exact:true})).toBeDisabled();await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-model-key');newRelease();await expect(page.locator('[data-model-test-reply]')).toHaveText('new-view');await page.getByRole('button',{name:'Close',exact:true}).click();await expect(page.getByRole('button',{name:'Test',exact:true})).toBeEnabled();
  }finally{oldRelease();newRelease();await browser.close();await server.stop();}
 });
 
@@ -751,7 +776,7 @@ for(const destination of ['users','new-quick-draft'])test(`a delayed save-and-le
   await page.getByRole('link',{name:'Workbench',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Save and continue',exact:true}).click();await held;await expect(page.locator('#preparation-answer')).toBeVisible();await page.getByRole('link',{name:'User access',exact:true}).click();await expect(page.locator('main h1')).toHaveText('Give people access');
   let expected='/admin/users';
   if(destination==='new-quick-draft'){
-   await page.getByRole('link',{name:'Overview',exact:true}).click();await page.getByRole('link',{name:/^Quick setup/}).first().click();await page.getByRole('button',{name:'Add model',exact:true}).click();await fillModel(page,'new-draft-after-leave');await page.getByLabel('Model ID',{exact:true}).focus();expected='/admin/setup';
+   await page.getByRole('link',{name:'Overview',exact:true}).click();await openQuickSetup(page);await page.getByRole('button',{name:'Add model',exact:true}).click();await fillModel(page,'new-draft-after-leave');await page.getByLabel('Model ID',{exact:true}).focus();expected='/admin/setup';
    await page.getByLabel('Model ID',{exact:true}).evaluate((input:HTMLInputElement)=>{(window as any).newLeaveInput=input;input.setSelectionRange(2,5);});
   }
   const reply=page.waitForResponse(r=>r.url().endsWith('/_web/api/onboarding'));release();await reply;await page.evaluate(async()=>{await new Promise<void>(r=>setTimeout(r,0));});
