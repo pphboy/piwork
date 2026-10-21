@@ -29,4 +29,8 @@ docker compose -f docker-compose.yml stop core
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 ```
 
+Core 进程日志保存在数据目录的 `logs/core/`，按 16 MiB 分片，保留上限 256 MiB、7 天。保持数据卷挂载；覆盖范围边界见[安装指南](../../deploy/docker/README.zh-CN.md#terminal-operations)。
+
+管理员可从 Linux CLI 或 Desktop 账户菜单的 **Export logs** 导出 Core 安全平台日志及自己全部 Work 日志，导出不会停止或 Apply Work。CLI：`piwork-cli --core http://SERVER_IP:17871 login --account admin`，`piwork-cli --core http://SERVER_IP:17871 logs export --output ./piwork-logs.zip`；用 `logs show EXPORT_ID` 与 `logs download EXPORT_ID --output FILE` 恢复原任务。结果包自就绪起保留 24 小时；部分结果保持 complete=false，并在 manifest.json 列出缺口。关闭 UI 面板或中断 CLI 不会取消已接受的 Core 任务。GUI 全流程无需运行命令；下载 ZIP 后由用户手工发给可信维护者，本功能不自动上传。
+
 正常关闭保留用户、模型、Work ID、历史及卷。不要使用 down -v 或全局 prune。详见 [安装手册](../../deploy/docker/README.zh-CN.md#terminal-operations)。

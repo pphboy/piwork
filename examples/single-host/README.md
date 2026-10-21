@@ -29,4 +29,8 @@ docker compose -f docker-compose.yml stop core
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
 ```
 
+Core process logs are stored under `logs/core/` in the Core data directory with 16 MiB shards, 256 MiB and 7-day retention. Keep the data volume mounted; see the [installation guide](../../deploy/docker/README.md#terminal-operations) for coverage boundaries.
+
+Administrators can export Core safe platform logs plus all of their own Work logs from the Linux CLI or the Desktop account menu (**Export logs**). Export never stops or applies a Work. CLI: `piwork-cli --core http://SERVER_IP:17871 login --account admin`, then `piwork-cli --core http://SERVER_IP:17871 logs export --output ./piwork-logs.zip`; recover the original task with `logs show EXPORT_ID` and `logs download EXPORT_ID --output FILE`. Ready archives are kept for 24 hours; partial results keep complete=false and list gaps in manifest.json. Closing the UI panel or interrupting the CLI does not cancel an accepted Core task. The GUI flow requires no commands; download the ZIP and send it manually to a trusted maintainer. This feature does not upload it automatically.
+
 Normal shutdown preserves users, models, Work IDs, history and volumes. Do not use down -v or global prune. See the [installation guide](../../deploy/docker/README.md#terminal-operations).
