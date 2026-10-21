@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -32,9 +31,7 @@ func nativeCLIForTest(t *testing.T) string {
 		return absolute
 	}
 	filename := "piwork-cli"
-	if runtime.GOOS == "windows" {
-		filename += ".exe"
-	}
+
 	binary := filepath.Join(t.TempDir(), filename)
 	build := exec.Command("go", "build", "-mod=readonly", "-o", binary, "./cmd/piwork-cli")
 	build.Dir = "../.."

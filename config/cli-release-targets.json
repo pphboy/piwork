@@ -1,4 +1,4 @@
 {
   "version": 1,
-  "targets": ["linux/amd64", "windows/amd64"]
+  "targets": ["linux/amd64"]
 }

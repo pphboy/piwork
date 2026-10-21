@@ -3,7 +3,6 @@ package client
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -28,9 +27,6 @@ func TestCredentialPathPriorityAndLazyAbsoluteResolution(t *testing.T) {
 			want := test.want
 			if test.name == "default" {
 				want = filepath.Join(test.home, ".config", "piwork", "client.json")
-				if runtime.GOOS == "windows" {
-					want = filepath.Join(test.appdata, "piwork", "client.json")
-				}
 			}
 			got, err := CredentialPath()
 			if test.fail {

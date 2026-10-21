@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -97,11 +96,7 @@ func desktopSecret() (string, error) {
 }
 
 func runUserDesktop(api *client.Client, store client.CredentialStore, saved *client.Credential, args []string, stdout, stderr io.Writer) int {
-	container, err := cliContainerMode()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
-	}
+
 	options, err := parseUserDesktopOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -113,7 +108,7 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 			return 5
 		}
 	}
-	listener, err := listenCLILocal(options.port, container)
+	listener, err := listenCLILocal(options.port)
 	if err != nil {
 		fmt.Fprintln(stderr, "Desktop port is already in use or unavailable")
 		return 6
@@ -142,10 +137,8 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	fmt.Fprintf(stdout, "Piwork Desktop: %s\n", launchURL)
-	if container {
-		fmt.Fprintln(stdout, "Open this address in the browser on this computer.")
-	}
-	if options.open && !container {
+
+	if options.open {
 		go openDesktopBrowser(launchURL, stderr)
 	}
 	exitCode := 0
@@ -176,14 +169,7 @@ func openDesktopBrowser(address string, stderr io.Writer) {
 	openDesktopBrowserContext(context.Background(), address, stderr)
 }
 func openDesktopBrowserContext(ctx context.Context, address string, stderr io.Writer) {
-	command, args := "xdg-open", []string{address}
-	switch runtime.GOOS {
-	case "darwin":
-		command = "open"
-	case "windows":
-		command, args = "rundll32.exe", []string{"url.dll,FileProtocolHandler", address}
-	}
-	process := exec.CommandContext(ctx, command, args...)
+	process := exec.CommandContext(ctx, "xdg-open", address)
 	process.Stdout, process.Stderr = io.Discard, io.Discard
 	if err := process.Start(); err != nil {
 		fmt.Fprintf(stderr, "Could not open a browser. Open %s manually.\n", address)
