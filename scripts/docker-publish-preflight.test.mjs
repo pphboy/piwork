@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { renderPublishScript, remoteConfigIdentity } from './docker-publish-preflight.mjs';
 
-const roles = ['core', 'cli', 'agent', 'fileHelper', 'snapshotHelper'];
-const manifest = { releaseVersion: '1', sourceCommit: 'a'.repeat(40), sourceModified: true, sourceInputHash: 'b'.repeat(64), desktopUIHash: 'c'.repeat(64), images: Object.fromEntries(roles.map((role, i) => [role, { reference: `docker.io/pphboy/piwork-${role.toLowerCase()}:reviewed`, imageId: 'sha256:' + String(i + 1).repeat(64), platform: 'linux/amd64', protocolLabels: {} }])) };
+const roles = ['core', 'agent', 'fileHelper', 'snapshotHelper'];
+const manifest = { application:'unified-linux', consoleUIHash:'d'.repeat(64), releaseVersion: '1', sourceCommit: 'a'.repeat(40), sourceModified: true, sourceInputHash: 'b'.repeat(64), desktopUIHash: 'c'.repeat(64), images: Object.fromEntries(roles.map((role, i) => [role, { reference: `docker.io/pphboy/piwork-${role.toLowerCase()}:reviewed`, imageId: 'sha256:' + String(i + 1).repeat(64), platform: 'linux/amd64', protocolLabels: {} }])) };
 
 test('remote config identity selects only a unique linux/amd64 manifest', () => {
   const config = { config: { digest: manifest.images.core.imageId } };
@@ -26,7 +26,7 @@ const fs=require('fs'); const args=process.argv.slice(2); const m=JSON.parse(fs.
 const ref=args.at(-1); const role=Object.keys(m.images).find(k=>m.images[k].reference===ref); const im=m.images[role]; const mode=process.env.FIXTURE_MODE;
 fs.appendFileSync(process.env.FIXTURE_CALLS, args[0]+' '+(role||'')+'\\n');
 if(args[0]==='image') {
- const labels=[m.releaseVersion,m.sourceCommit,String(m.sourceModified),m.sourceInputHash,...Object.values(im.protocolLabels),...(role==='cli'?[m.desktopUIHash]:[])];
+ const labels=[m.releaseVersion,m.sourceCommit,String(m.sourceModified),m.sourceInputHash,...Object.values(im.protocolLabels),...(role==='core'?[m.desktopUIHash,m.consoleUIHash]:[])];
  console.log([mode==='retag'&&role==='snapshotHelper'?'sha256:changed':im.imageId,im.platform,...labels].join('|'));
 } else if(args[0]==='manifest') {
  if(role==='snapshotHelper'&&['missing','auth','network','unknown'].includes(mode)) { console.error(mode==='missing'?'no such manifest: '+ref:mode==='auth'?'unauthorized: authentication required':mode==='network'?'connection timeout':'unknown remote result'); process.exitCode=1; }
@@ -48,7 +48,7 @@ if(args[0]==='image') {
       assert.equal(result.status === 0, success, result.stderr);
       const log = readFileSync(calls, 'utf8').trim().split('\n');
       const pushes = log.filter(line => line.startsWith('push '));
-      assert.equal(pushes.length, success && flag === '--push' ? 5 : 0);
+      assert.equal(pushes.length, success && flag === '--push' ? 4 : 0);
       if (pushes.length) assert(log.indexOf('manifest snapshotHelper') < log.findIndex(line => line.startsWith('push ')));
     }
   });

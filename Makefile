@@ -105,5 +105,5 @@ acceptance: test-integration test-native-host acceptance-index
 	node scripts/check-native-image-boundary.mjs
 	node scripts/check-go-acceptance.mjs
 
-release: build native-agent-images native-helper-images
-	bash scripts/package-go-release.sh
+release:
+	node scripts/release-linux.mjs
