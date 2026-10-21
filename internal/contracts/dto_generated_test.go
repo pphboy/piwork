@@ -533,6 +533,60 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "LogExportAcceptedSchema":
+				value, err := Decode[LogExportAccepted](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "LogExportCreateInputSchema":
+				value, err := Decode[LogExportCreateInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "LogExportProgressSchema":
+				value, err := Decode[LogExportProgress](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "LogExportResultSchema":
+				value, err := Decode[LogExportResult](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "LogExportScopeSchema":
+				value, err := Decode[LogExportScope](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "LogExportStateSchema":
+				value, err := Decode[LogExportState](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "LogExportTaskErrorSchema":
+				value, err := Decode[LogExportTaskError](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "LogExportViewSchema":
+				value, err := Decode[LogExportView](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "LogExportWarningSchema":
+				value, err := Decode[LogExportWarning](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "LookupChatSubmissionSchema":
 				value, err := Decode[LookupChatSubmission](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {

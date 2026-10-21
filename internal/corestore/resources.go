@@ -117,3 +117,20 @@ func (s *Store) SettlePackageCreation(ctx context.Context, work, kind, logical, 
 		return changed(result, err, ErrStorage)
 	})
 }
+
+func ResourceBindings(tx *sql.Tx, installation, kind string) ([]ResourceBinding, error) {
+	rows, err := tx.Query(`SELECT installation_id,work_id,resource_kind,logical_id,runtime_id,generation,labels_json,observed_at FROM resource_bindings WHERE installation_id=? AND resource_kind=? ORDER BY work_id,logical_id`, installation, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []ResourceBinding{}
+	for rows.Next() {
+		var v ResourceBinding
+		if err := rows.Scan(&v.InstallationID, &v.WorkID, &v.Kind, &v.LogicalID, &v.RuntimeID, &v.Generation, &v.LabelsJSON, &v.ObservedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, v)
+	}
+	return result, rows.Err()
+}
