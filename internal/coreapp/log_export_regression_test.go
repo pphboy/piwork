@@ -28,7 +28,7 @@ func acceptLogRegressionSource(t *testing.T, a *Application, source corestore.Lo
 }
 
 func TestLogRegressionMissingMetadataCannotEraseKnownArchiveGap(t *testing.T) {
-	for _, variant := range []string{"missing", "corrupt", "foreign"} {
+	for _, variant := range []string{"missing", "corrupt", "foreign", "live"} {
 		t.Run(variant, func(t *testing.T) {
 			a, source, identity, directory := archiveFixture(t)
 			a.fullLogReaderForTest = &fakeFullLogReader{stdout: [][]byte{[]byte("2026-10-21T00:00:00Z retained prefix\n")}, err: io.ErrUnexpectedEOF}
@@ -39,7 +39,7 @@ func TestLogRegressionMissingMetadataCannotEraseKnownArchiveGap(t *testing.T) {
 			if err := os.Remove(filepath.Join(directory, "logs", "works", source.WorkID, source.SourceID, "metadata.json")); err != nil {
 				t.Fatal(err)
 			}
-			if variant != "missing" {
+			if variant != "missing" && variant != "live" {
 				raw := []byte("{invalid")
 				if variant == "foreign" {
 					raw = []byte(`{"version":1,"state":"archived","sourceId":"wrong-source"}`)
@@ -49,6 +49,9 @@ func TestLogRegressionMissingMetadataCannotEraseKnownArchiveGap(t *testing.T) {
 				}
 			}
 			a.fullLogReaderForTest = &fakeFullLogReader{err: dockerengine.ErrResourceMissing}
+			if variant == "live" {
+				a.fullLogReaderForTest = &fakeFullLogReader{stdout: [][]byte{[]byte("2026-10-21T00:00:00Z retained prefix\n")}}
+			}
 			id := "log-export-dddddddddddddddddddddddddddddddd"
 			acceptLogRegressionSource(t, a, source, id, "regression-missing-metadata")
 			a.runLogExport(id)

@@ -398,7 +398,11 @@ func (run *logExportRun) collectSource(item corestore.LogTaskSource) {
 			state, start, end, bytes, entries, readErr := run.copyLiveSource(source, dir, limit)
 			dir.Close()
 			if readErr == nil {
-				run.recordItem(item, state, "", entries, start, end, bytes, 0)
+				reason := ""
+				if source.State == "partial" || source.State == "failed" || source.State == "missing" {
+					state, reason = "partial", "source has a previously recorded log gap"
+				}
+				run.recordItem(item, state, reason, entries, start, end, bytes, 0)
 				return
 			}
 			liveState, reason = state, classifyLiveReason(readErr)
