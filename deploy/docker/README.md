@@ -10,9 +10,9 @@ This release runs application Services without a Piwork memory cap or Service me
 
 <!-- docker-quickstart:start -->
 
-**Local candidate: images have not been pushed.** These commands describe the pending candidate; older images do not contain the unified entry.
-
 Use Linux x86-64 and rootful Docker Engine 28+. One container serves the workbench, administration and first-time setup, with no environment variables or client CLI required:
+
+This published image includes direct browser entry and web setup.
 
 ```sh
 docker run --detach --init \
@@ -22,7 +22,7 @@ docker run --detach --init \
     --stop-timeout 60 \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.10-a6c36da16ebc-f1b82b8572fb-dirty
+    docker.io/pphboy/piwork-core:0.0.10-024c864cb667-99aec1718558
 ```
 
 On this computer or another computer, open `http://SERVER_IP:17891` using the server’s actual IP. An empty installation shows Create administrator; an initialized installation shows normal sign-in. No terminal authorization link is required.
@@ -72,7 +72,7 @@ Open `http://desktop.localhost:17901/` locally. Desktop shares user credentials 
 The optional Compose demo uses its own `/var/lib/piwork/core` directory. Stop an installation using the same ports normally before starting. Set up the administrator and model in the browser.
 
 ```sh
-PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.10-a6c36da16ebc-f1b82b8572fb-dirty \
+PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.10-024c864cb667-99aec1718558 \
     docker compose -f compose.core.yaml up --detach --wait --wait-timeout 600 core
 ```
 

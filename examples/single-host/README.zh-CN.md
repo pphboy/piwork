@@ -2,11 +2,11 @@
 
 [English](README.md) | **简体中文**
 
-**本地候选：镜像尚未推送。**
-
 Linux x86-64、rootful Docker Engine 28+、Compose 2.24+。默认只运行统一应用容器，网页完成初始化；无需业务环境变量。客户端使用 Linux 原生 CLI。
 
 使用独立目录 `/var/lib/piwork/examples/single-host/core`。先停止端口冲突的安装，不删除它的数据。
+
+本版固定镜像包含直接访问与网页配置流程。
 
 ```sh
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core

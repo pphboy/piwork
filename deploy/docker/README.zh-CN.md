@@ -10,9 +10,9 @@
 
 <!-- docker-quickstart:start -->
 
-**本地候选：镜像尚未推送。** 以下命令对应待验证候选，不能用旧版镜像代替统一入口。
-
 Linux x86-64、rootful Docker Engine 28+。运行一个容器即可提供工作台、管理和首次设置，无需环境变量或客户端 CLI：
+
+本版固定镜像包含直接访问与网页配置流程。
 
 ```sh
 docker run --detach --init \
@@ -22,7 +22,7 @@ docker run --detach --init \
     --stop-timeout 60 \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.10-a6c36da16ebc-f1b82b8572fb-dirty
+    docker.io/pphboy/piwork-core:0.0.10-024c864cb667-99aec1718558
 ```
 
 在本机或另一台电脑直接打开 `http://服务器IP:17891`，使用服务器实际 IP。空安装会显示创建管理员；已有账号时正常登录，无需终端授权链接。
@@ -72,7 +72,7 @@ Linux 原生客户端默认启动 Desktop，连接已有 Core；同机 UI 已占
 可选 Compose Demo 使用独立数据目录 `/var/lib/piwork/core`，正常停止占用相同端口的安装后再启动。模型和管理员仍在网页设置。
 
 ```sh
-PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.10-a6c36da16ebc-f1b82b8572fb-dirty \
+PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.10-024c864cb667-99aec1718558 \
     docker compose -f compose.core.yaml up --detach --wait --wait-timeout 600 core
 ```
 

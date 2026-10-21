@@ -2,11 +2,11 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**Local candidate: images have not been pushed.**
-
 Requires Linux x86-64, rootful Docker Engine 28+ and Compose 2.24+. The default starts only the unified application container; initialize in the browser without business environment variables. Use the Linux native CLI as the client.
 
 Uses its own `/var/lib/piwork/examples/single-host/core` directory. Stop conflicting installations first, preserving their data.
+
+This published image includes direct browser entry and web setup.
 
 ```sh
 docker compose -f docker-compose.yml up --detach --wait --wait-timeout 600 core
