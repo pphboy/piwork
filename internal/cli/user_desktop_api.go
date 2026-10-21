@@ -318,6 +318,9 @@ func (d *nativeDesktop) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		defer finish()
 		w, r = guarded, request
+		if d.serveLogExports(w, r, session) {
+			return
+		}
 		if d.serveTransfer(w, r, session) {
 			return
 		}

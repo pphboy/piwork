@@ -12,6 +12,12 @@ export function fileVersion(value: string | null | undefined): string {
   const time = value ? Date.parse(value) : NaN;
   return Number.isFinite(time) ? new Date(time).toUTCString() : '';
 }
+export interface LogExportState {
+  id: string; key: string; cutoff: string; phase: 'creating' | 'collecting' | 'packing' | 'ready' | 'failed' | 'interrupted' | 'expired' | 'unknown';
+  processed: number; total: number; collectedBytes: number; complete: boolean | null; warningCount: number;
+  warnings: Array<{ code: string; message: string }>; filename: string; size: number; digest: string; expiresAt: string;
+  error: string; intent: boolean; restored: boolean; autoDelivered: boolean; delivered: boolean; polling: boolean;
+}
 interface InspectionContext { id: string; nonce: number; core: string; localSession: string; anonymous: boolean; ready: boolean; importState: 'unsubmitted' | 'submitting' | 'unknown' | 'accepted'; xhr?: XMLHttpRequest; operationId?: string }
 interface UploadIntent { file: File; modified: string; absent: boolean }
 
@@ -262,6 +268,102 @@ export class DesktopAdapter {
   getSkills() { const copies = this.state.works.flatMap(work => work.config.skills).filter((name, i, all) => all.indexOf(name) === i && !this.skills.some(s => s.id === name)); return [...this.skills, ...copies.map(name => ({ id: name, name, description: 'Saved Work copy; unavailable in current Core catalog', version: null, loaded: null, modelVisible: null }))]; }
   getPackages() { return this.packages; }
   getSnapshot(id: string) { return this.state.snapshots.find(snapshot => snapshot.id === id); }
+
+  logExport: LogExportState | null = null;
+  private logExportTimer?: ReturnType<typeof setTimeout>;
+  private logExportStorageKey() { return `piwork:log-export:${this.state.core.address}:${this.state.core.account}`; }
+  private saveLogExportID() { try { if (this.logExport?.id) sessionStorage.setItem(this.logExportStorageKey(), this.logExport.id); } catch {} }
+  private loadLogExportID() { try { return sessionStorage.getItem(this.logExportStorageKey()); } catch { return null; } }
+  recoverLogExport() {
+    if (this.logExport) return;
+    const id = this.loadLogExportID();
+    if (!id || !/^log-export-[A-Za-z0-9-]{16,128}$/.test(id)) return;
+    this.logExport = { id, key: '', cutoff: '', phase: 'collecting', processed: 0, total: 0, collectedBytes: 0, complete: null,
+      warningCount: 0, warnings: [], filename: '', size: 0, digest: '', expiresAt: '', error: '', intent: false, restored: true, autoDelivered: true, delivered: false, polling: false };
+    void this.refreshLogExport(false);
+  }
+  startLogExport() {
+    if (this.state.core.role !== 'admin') return;
+    this.stopLogExportPolling();
+    this.logExport = { id: '', key: randomUUID(), cutoff: '', phase: 'creating', processed: 0, total: 0, collectedBytes: 0, complete: null,
+      warningCount: 0, warnings: [], filename: '', size: 0, digest: '', expiresAt: '', error: '', intent: true, restored: false, autoDelivered: false, delivered: false, polling: false };
+    this.emit();
+    void this.createLogExport(this.logExport.key);
+  }
+  retryLogExportSameKey() { const state = this.logExport; if (!state || state.id || !state.key) return; state.phase = 'creating'; state.error = ''; this.emit(); void this.createLogExport(state.key); }
+  private async createLogExport(key: string) {
+    const epoch = this.epoch;
+    try {
+      const value = await this.request('log-exports', 'POST', { idempotencyKey: key });
+      if (epoch !== this.epoch || this.logExport?.key !== key || typeof value.exportId !== 'string') return;
+      const state = this.logExport;
+      Object.assign(state, { id: value.exportId, cutoff: typeof value.cutoffTime === 'string' ? value.cutoffTime : '', phase: this.logPhase(value.state), error: '' });
+      this.saveLogExportID(); this.emit(); await this.refreshLogExport(false);
+    } catch (error) {
+      if (epoch !== this.epoch || !this.logExport || this.logExport.key !== key) return;
+      if (!this.logExport.id) this.logExport.phase = 'unknown'; this.logExport.error = errorText(error); this.logExport.polling = false; this.emit();
+    }
+  }
+  private logPhase(value: unknown): LogExportState['phase'] {
+    return value === 'collecting' || value === 'packing' || value === 'ready' || value === 'failed' || value === 'interrupted' || value === 'expired' ? value : 'unknown';
+  }
+  async checkLogExport(explicit = true) {
+    const state = this.logExport;
+    if (!state) return;
+    if (!state.id) { this.retryLogExportSameKey(); return; }
+    await this.refreshLogExport(explicit);
+  }
+  async refreshLogExport(explicit = true) {
+    const state = this.logExport;
+    if (!state?.id) return;
+    const epoch = this.epoch;
+    try {
+      const value = await this.request(`log-exports/${part(state.id)}`);
+      if (epoch !== this.epoch || this.logExport !== state) throw new DesktopError('CONNECTION_CHANGED', 'The original export identity ended.');
+      const progress = value.progress || {};
+      const result = value.result || {};
+      Object.assign(state, {
+        cutoff: typeof value.cutoffTime === 'string' ? value.cutoffTime : state.cutoff, phase: this.logPhase(value.state),
+        processed: Number(progress.processedSources) || 0, total: Number(progress.totalSources) || 0, collectedBytes: Number(progress.collectedBytes) || 0,
+        complete: typeof value.complete === 'boolean' ? value.complete : null,
+        warningCount: Number(value.warningCount) || 0,
+        warnings: Array.isArray(value.warnings) ? value.warnings.filter((w: Data) => w && typeof w.code === 'string' && typeof w.message === 'string').slice(0, 20) : [],
+        filename: typeof result.filename === 'string' ? result.filename : '', size: Number(result.size) || 0,
+        digest: typeof result.digest === 'string' ? result.digest : '', expiresAt: typeof result.expiresAt === 'string' ? result.expiresAt : '',
+        error: value.error?.message || '', polling: false,
+      });
+      this.emit();
+      if (state.phase === 'ready' && !state.autoDelivered && !state.restored) {
+        state.autoDelivered = true;
+        this.deliverLogExport();
+      }
+      if (state.phase === 'collecting' || state.phase === 'packing') this.scheduleLogExportPolling();
+    } catch (error) {
+      if (epoch !== this.epoch || this.logExport !== state) return;
+      state.error = errorText(error); state.polling = false; this.emit();
+      if (explicit) throw error;
+    }
+  }
+  deliverLogExport() {
+    const state = this.logExport;
+    if (!state?.id || state.phase !== 'ready' || !state.filename) return;
+    state.delivered = true; this.emit();
+    if (typeof document === 'undefined') return;
+    const link = document.createElement('a');
+    link.href = `/_desktop/api/log-exports/${part(state.id)}/content`;
+    link.download = state.filename;
+    link.rel = 'noopener';
+    document.body.append(link); link.click(); link.remove();
+  }
+  private scheduleLogExportPolling() {
+    this.stopLogExportPolling();
+    const state = this.logExport;
+    if (!state?.id || (state.phase !== 'collecting' && state.phase !== 'packing')) return;
+    state.polling = true;
+    this.logExportTimer = setTimeout(() => { void this.refreshLogExport(false); }, 750);
+  }
+  private stopLogExportPolling() { if (this.logExportTimer) clearTimeout(this.logExportTimer); this.logExportTimer = undefined; }
+
   worksLoading = false; worksChecked = ''; worksError = '';
   private clearIdentity(preserveInspection = false) {
     if (this.hosted) { try { for (const key of Object.keys(sessionStorage)) if (key.startsWith('piwork:web:')) sessionStorage.removeItem(key); } catch {} }
@@ -271,7 +373,7 @@ export class DesktopAdapter {
     clearInterval(this.interactionTimer); this.interactionTimer=undefined;this.interactionScope='';this.interactionVersion++;
     this.requestPresence.clear();this.requestResponses.clear();this.runDetails.clear();this.activeRuns.clear();this.activeRevisions.clear();this.cancelAndSendCapabilities.clear();
     this.terminalEvidence.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
-    this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear();
+    this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear(); this.stopLogExportPolling(); this.logExport = null;
     Object.assign(this.about,{core:null,coreError:'',coreLoading:false,coreChecked:''});
     this.stopImageReads();for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();this.imageCapabilities.clear();
     this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();this.cancellingRequests.clear();this.requestReadErrors.clear();this.requestCancellations.clear();
