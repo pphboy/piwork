@@ -15,7 +15,8 @@ export interface QuickSetupOptions {
 }
 export interface QuickSetup {dispose:()=>void;requestLeave:(leave:()=>void)=>void;}
 export function mountQuickSetup(root:HTMLElement,options:QuickSetupOptions):QuickSetup {
-let stage:Stage='loading',notice='',noticeError=false,disposed=false;
+let stage:Stage='loading',notice='',noticeError=false,modelReadError='',disposed=false;
+let noticeNode:Element|null=null,noticeMarkup='';
 let snapshot:Data={},models:Data[]=[],catalogError='',selectedRef='',mode:'add'|'choose'='add';
 let draft=blankModel(),revision=0,view=0,identity=0,reading=false,writing=false,testing=false;
 let modelUnknown=false,runtimeUnknown=false,confirmedModel='',pendingRuntime:{modelRef:string;agentImage:string}|null=null;
@@ -61,6 +62,7 @@ function clearSecrets() {draft.key='';root.querySelectorAll<HTMLInputElement>('i
 function changeStage(next:Stage) {
   if(next===stage)return;
   clearSecrets();view++;readGeneration++;readLock=null;reading=false;polling=false;clearTimeout(timer);writing=false;testing=false;stage=next;if(next==='model'||next==='preparation')options.step(next);
+  if(next==='preparation')modelReadError='';
   root.querySelector<HTMLDialogElement>('#test-dialog')?.close();
 }
 function steps() {
@@ -75,7 +77,7 @@ function modelOptions() {
 }
 function modelPage() {
   const unavailable=selectedRef&&!models.some(model=>model.modelRef===selectedRef&&model.enabled&&model.credentialAvailable);
-  return `<p class="setup-description">Choose the model this Core uses for new Work. Saving does not call the model or create a Work.</p><div id="setup-docker" class="setup-dependency"></div><div id="catalog-note">${catalogError?Feedback('Saved models could not be loaded. '+catalogError,'warning'):''}</div>${confirmedModel?Feedback('Model saved. Continue to bind this model to Core runtime.','success'):''}${models.length&&!modelUnknown?`<div class="setup-mode" aria-label="Model configuration"><button class="btn small" type="button" data-action="choose-model" aria-pressed="${mode==='choose'}">Choose saved model</button><button class="btn small" type="button" data-action="add-model" aria-pressed="${mode==='add'}">${icon('plus',14)} Add model</button></div>`:''}${modelUnknown?Feedback('The model save result is unconfirmed. Read current state before another save. If more than one entry matches, inspect the saved models and choose the intended entry.','warning'):''}${runtimeUnknown?Feedback('Runtime save is unconfirmed. Read current state before continuing.','warning'):''}${mode==='add'?`<form id="model-form" class="form-grid" data-setup-model novalidate>${modelFields(draft,false,{open:advancedOpen})}<div class="form-actions"><button type="submit" class="btn primary" data-continue>Save and continue<span class="pending-slot">${icon('arrow',16)}</span></button><button type="button" class="btn secondary" data-model-action="test">Test</button></div><p class="help">Test sends a message and shows the reply. A passed Test is not required to save, enable or select a model.</p></form><div id="model-test-result">${modelTestSummary(testResult,revision)}</div>`:`<form id="choose-form" class="form-grid" novalidate>${Field('saved-model','Saved model',`<select id="saved-model" name="modelRef" required>${modelOptions()}</select>`,'Only enabled models with a saved Key can be used.')}${unavailable?Feedback('The saved model is unavailable. Choose an enabled model with a Key or manage AI models.','warning'):''}<div class="form-actions"><button type="submit" class="btn primary" data-continue>Save and continue<span class="pending-slot">${icon('arrow',16)}</span></button></div></form>`}<div class="setup-local-actions">${button(icon('refresh',15)+' Read current state','refresh')}<a href="/admin/models">Manage AI models</a></div><div id="release-note">${snapshot.releaseError?Feedback('The server release is incomplete. Models remain available; repair the release before binding Runtime.','warning'):''}</div>${diagnostics()}`;
+  return `<p class="setup-description">Choose the model this Core uses for new Work. Saving does not call the model or create a Work.</p><div id="setup-docker" class="setup-dependency"></div><div id="catalog-note">${catalogError?Feedback('Saved models could not be loaded. '+catalogError+' Automatic updates will retry.','warning'):''}</div>${confirmedModel?Feedback('Model saved. Continue to bind this model to Core runtime.','success'):''}${models.length&&!modelUnknown?`<div class="setup-mode" aria-label="Model configuration"><button class="btn small" type="button" data-action="choose-model" aria-pressed="${mode==='choose'}">Choose saved model</button><button class="btn small" type="button" data-action="add-model" aria-pressed="${mode==='add'}">${icon('plus',14)} Add model</button></div>`:''}${mode==='add'?`<form id="model-form" class="form-grid" data-setup-model novalidate>${modelFields(draft,false,{open:advancedOpen})}<div class="form-actions"><button type="submit" class="btn primary" data-continue>Save and continue<span class="pending-slot">${icon('arrow',16)}</span></button><button type="button" class="btn secondary" data-model-action="test">Test</button></div><p class="help">Test sends a message and shows the reply. A passed Test is not required to save, enable or select a model.</p></form><div id="model-test-result">${modelTestSummary(testResult,revision)}</div>`:`<form id="choose-form" class="form-grid" novalidate>${Field('saved-model','Saved model',`<select id="saved-model" name="modelRef" required>${modelOptions()}</select>`,'Only enabled models with a saved Key can be used.')}${unavailable?Feedback('The saved model is unavailable. Choose an enabled model with a Key or manage AI models.','warning'):''}<div class="form-actions"><button type="submit" class="btn primary" data-continue>Save and continue<span class="pending-slot">${icon('arrow',16)}</span></button></div></form>`}<div id="release-note">${snapshot.releaseError?Feedback('The server release is incomplete. Models remain available; repair the release before binding Runtime.','warning'):''}</div>`;
 }
 function render() {
  const title=stage==='model'?'Set up your Core runtime':stage==='preparation'?'Preparing Piwork…':stage==='error'?'Could not read Core state':'Reading Core configuration…';
@@ -86,7 +88,19 @@ function render() {
  root.innerHTML=`${steps()}<div class="setup-heading"><h2 id="setup-title">${title}</h2></div><div id="setup-notice" aria-live="polite"></div><div id="setup-status" class="setup-status" aria-live="polite"></div>${content}<dialog id="test-dialog" class="setup-dialog" aria-labelledby="test-title"><div class="dialog-heading"><div><h2 id="test-title">Model Test</h2><p>Send one message to the specified model and inspect its reply.</p></div><button class="btn icon-button" type="button" data-action="close-test" aria-label="Close Model Test">${icon('close')}</button></div><div id="test-body" class="dialog-body"></div><div class="dialog-footer"><button class="btn secondary" type="button" data-action="close-test">Close</button></div></dialog><dialog id="leave-dialog" class="setup-dialog" aria-labelledby="leave-title"><div class="dialog-heading"><h2 id="leave-title">Unsaved model configuration</h2></div><div class="dialog-body"><p>Save and continue before leaving, discard this draft, or keep editing.</p></div><div class="dialog-footer">${button('Keep editing','keep-editing')}${button('Discard draft','discard-draft')}${button('Save and continue','save-leave',true)}</div></dialog>`;
  updateNotice();updatePreparation();updateLocks();
 }
-function updateNotice() {const node=root.querySelector('#setup-notice');if(node)node.innerHTML=notice?Feedback(notice,noticeError?'warning':'success'):'';}
+function unknownNotice() {
+  if(modelUnknown)return 'The model save result is unconfirmed. Automatic updates will check the saved models without submitting again. If it remains unconfirmed, review saved models before choosing how to continue.';
+  if(runtimeUnknown)return 'Runtime save is unconfirmed. Automatic updates will check the original model and server release without submitting again. If it remains unconfirmed, review the saved configuration in Admin.';
+  return '';
+}
+function updateNotice() {
+  const node=root.querySelector('#setup-notice');if(!node)return;
+  const unresolved=stage==='model'?unknownNotice():'';
+  const recovery=unresolved?'<a href="/admin/models">Review saved models</a>':'';
+  const markup=(modelReadError?Feedback(modelReadError,'warning'):'')+(notice?Feedback(notice,noticeError?'warning':'success',unresolved&&notice.includes(unresolved)?recovery:''):'')+(unresolved&&!notice.includes(unresolved)?Feedback(unresolved,'warning',recovery):'');
+  // A repeated read must not replace the focused exceptional recovery link.
+  if(node!==noticeNode||markup!==noticeMarkup){node.innerHTML=markup;noticeNode=node;noticeMarkup=markup;}
+}
 function tell(text:string,error=false) {notice=text;noticeError=error;updateNotice();}
 function updateLocks() {
   if(disposed||!options.current())return;
@@ -96,7 +110,7 @@ function updateLocks() {
   root.querySelectorAll<HTMLInputElement|HTMLSelectElement>('form input, form select').forEach(input=>{input.disabled=writing||modelUnknown||runtimeUnknown;});
   root.querySelectorAll<HTMLButtonElement>('button').forEach(node=>{
     if(node.closest('dialog'))return;
-    node.disabled=writing||(reading&&node.dataset.action!=='refresh')||((modelUnknown||runtimeUnknown)&&['choose-model','add-model'].includes(node.dataset.action||''))||(node.hasAttribute('data-continue')&&(modelUnknown||runtimeUnknown||!!catalogError))||(node.dataset.modelAction==='test'&&testing);
+    node.disabled=writing||(reading&&node.dataset.action!=='refresh')||((modelUnknown||runtimeUnknown)&&['choose-model','add-model'].includes(node.dataset.action||''))||(node.hasAttribute('data-continue')&&(modelUnknown||runtimeUnknown||!!catalogError))||(node.dataset.modelAction==='test'&&(testing||modelUnknown||runtimeUnknown));
     if(node.dataset.action==='refresh'){node.setAttribute('aria-disabled',String(writing||reading||polling));node.setAttribute('aria-busy',String(reading||polling));}
   });
   root.querySelectorAll<HTMLButtonElement>('[data-continue],#credentials [type=submit]').forEach(node=>{node.setAttribute('aria-busy',String(writing));});
@@ -108,6 +122,7 @@ function updateLocks() {
 }
 function acceptSnapshot(value:Data,generation:number) {
   snapshot=value;confirmedReadGeneration=generation;
+  if(modelReadError){modelReadError='';updateNotice();}
   if(autoEnter&&(!value.administrator||value.runtime?.modelRef!==autoEnter.modelRef||value.runtime?.agentImage!==autoEnter.agentImage))autoEnter=null;
   preparationReadError='';
   preparationReadAt=new Date().toLocaleTimeString('en-US');
@@ -174,7 +189,7 @@ function maybeAutoEnter() {
 function preparationReadFailed(error:unknown) {
   autoEnter=null;
   if(stage==='preparation'){preparationReadError=message(error);updatePreparation();}
-  else tell('State could not be refreshed: '+message(error),true);
+  else {modelReadError='State could not be refreshed: '+message(error);updateNotice();}
 }
 function updatePreparation() {
   const docker=root.querySelector('#setup-docker');
@@ -254,7 +269,8 @@ async function readCurrent(preserve=true) {
     if(!snapshot.administrator){options.expired();dispose();return;}
     try {const result=await admin('models');if(!current(ticket)||generation!==readGeneration)return;if(!Array.isArray(result.models))throw new Error('The model catalog response is incomplete.');models=result.models;catalogError='';}
     catch(error){if(!current(ticket)||generation!==readGeneration||sessionFailure(error))return;catalogError=message(error);autoEnter=null;}
-    const unresolved=modelUnknown||runtimeUnknown;resolveUnknown();
+    const modelWasUnknown=modelUnknown,runtimeWasUnknown=runtimeUnknown;resolveUnknown();
+    const recovered=modelWasUnknown!==modelUnknown||runtimeWasUnknown!==runtimeUnknown;
     let initializedBaseline=false;
     if(!baselineReady&&!catalogError){
       initializedBaseline=true;
@@ -264,8 +280,8 @@ async function readCurrent(preserve=true) {
       baselineDraft=revision===0?{...draft,key:''}:blankModel();baselineReady=true;
     }
     const canPrepare=snapshot.runtime?.configured&&snapshot.runtime.modelRef&&snapshot.runtime.model?.credentialAvailable&&(!!catalogError||models.some(model=>model.modelRef===snapshot.runtime.modelRef&&model.enabled&&model.credentialAvailable));
-    if(!preserve||stage!=='model'||unresolved||(initializedBaseline&&revision===0)) {
-      if(canPrepare&&!runtimeUnknown&&!modelUnknown&&(preserve||options.preparation)){changeStage('preparation');}
+    if(!preserve||stage!=='model'||recovered||(initializedBaseline&&revision===0)) {
+      if(canPrepare&&!runtimeUnknown&&!modelUnknown&&!modelWasUnknown&&(stage==='preparation'||options.preparation||runtimeWasUnknown)){changeStage('preparation');}
       else{changeStage('model');mode=confirmedModel||models.length?'choose':'add';}
       if(stage==='preparation'&&root.querySelector('#preparation-answer'))updatePreparation();else render();
     } else {
@@ -273,7 +289,7 @@ async function readCurrent(preserve=true) {
       updatePreparation();
       const release=root.querySelector('#release-note');if(release)release.innerHTML=snapshot.releaseError?Feedback('The server release is incomplete. Models remain available; repair the release before binding Runtime.','warning'):'';
       const select=root.querySelector<HTMLSelectElement>('#saved-model');if(select)select.innerHTML=modelOptions();
-      const note=root.querySelector('#catalog-note');if(note)note.innerHTML=catalogError?Feedback('Saved models could not be loaded. '+catalogError,'warning'):'';
+      const note=root.querySelector('#catalog-note');if(note)note.innerHTML=catalogError?Feedback('Saved models could not be loaded. '+catalogError+' Automatic updates will retry.','warning'):'';
     }
   } catch(error){if(current(ticket)&&generation===readGeneration&&!sessionFailure(error)){preparationReadFailed(error);if(stage==='loading'){changeStage('error');render();}}}
   finally {if(readLock===lock){readLock=null;reading=false;updateLocks();}if(!reading&&!writing){maybeAutoEnter();scheduleStatus();}}
@@ -283,6 +299,7 @@ function scheduleStatus() {
   const ticket=context(),generation=readGeneration;
   timer=setTimeout(async()=>{
     if(!current(ticket)||generation!==readGeneration||writing||reading)return;
+    if(stage==='model'&&(modelUnknown||runtimeUnknown||catalogError)){await readCurrent(true);return;}
     polling=true;updateLocks();
     try {const value=await web('onboarding');if(!current(ticket)||generation!==readGeneration)return;if(!value.administrator){options.expired();dispose();return;}acceptSnapshot(value,generation);updatePreparation();}
     catch(error){if(current(ticket)&&generation===readGeneration&&!sessionFailure(error))preparationReadFailed(error);}
@@ -323,8 +340,8 @@ async function continueSetup(allowAutoEnter=true) {
   } catch(error) {
     if(!current(ticket)||sessionFailure(error))return false;
     autoEnter=null;const unknown=error instanceof RequestError&&error.unknown;
-    if(binding){runtimeUnknown=unknown;if(!unknown)pendingRuntime=null;mode='choose';tell('Model saved. '+(unknown?'Runtime save is unconfirmed. Read current state before continuing.':'Runtime was not bound. '+message(error)+' Continue to retry only the binding.'),true);}
-    else {modelUnknown=unknown;tell(message(error),true);if(error instanceof RequestError&&error.field){fieldError(modelField(error.field),message(error));focusModelField(modelField(error.field));}}
+    if(binding){runtimeUnknown=unknown;if(!unknown)pendingRuntime=null;mode='choose';tell('Model saved. '+(unknown?unknownNotice():'Runtime was not bound. '+message(error)+' Continue to retry only the binding.'),true);}
+    else {modelUnknown=unknown;tell(unknown?unknownNotice():message(error),true);if(error instanceof RequestError&&error.field){fieldError(modelField(error.field),message(error));focusModelField(modelField(error.field));}}
     if(confirmedModel||unknown){draft.key='';mode=confirmedModel?'choose':mode;render();}
     else {const key=root.querySelector<HTMLInputElement>('#model-key');if(key&&key.value===submitted.key)key.value='';draft.key='';}
     return false;
@@ -335,7 +352,7 @@ async function continueSetup(allowAutoEnter=true) {
 function updateTest() {const result=root.querySelector('#model-test-result');if(result)result.innerHTML=modelTestSummary(testResult,revision);const body=root.querySelector('#test-body');if(body)body.innerHTML=modelTestDetails(testResult,revision);}
 function openTest() {if(!testResult)return;updateTest();root.querySelector<HTMLDialogElement>('#test-dialog')?.showModal();}
 async function testModel() {
-  if(testing||writing||!validateModel())return;
+  if(testing||writing||reading||modelUnknown||runtimeUnknown||!validateModel())return;
   const submitted={...draft},ticket=context(),record:ModelTestRecord={target:{provider:draft.name||draft.model,api:draft.api,model:draft.model.trim()},revision,pending:true,startedAt:Date.now()};
   testResult=record;testing=true;updateLocks();openTest();
   try {const value=await admin('model-tests','POST',{model:submitted.model.trim(),api:submitted.api,baseUrl:submitted.baseUrl.trim(),credential:submitted.key});if(!validModelTest(value))throw new Error('The Test response is incomplete.');if(current(ticket)&&testResult===record)record.value=value;}
