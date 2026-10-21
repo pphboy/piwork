@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"time"
+	"unicode/utf8"
 )
 
 // secretRedactor replaces exact known secret values while preserving matches
@@ -23,7 +24,7 @@ func newSecretRedactor(target io.Writer, secrets []string) *secretRedactor {
 	list := make([][]byte, 0, len(secrets))
 	max := 0
 	for _, secret := range secrets {
-		if len(secret) < 4 || unique[secret] {
+		if secret == "" || unique[secret] {
 			continue
 		}
 		unique[secret] = true
@@ -64,11 +65,27 @@ func (r *secretRedactor) drain(final bool) error {
 	}
 	for len(r.pending) > 0 {
 		safe := len(r.pending) - carry
-		if safe <= 0 {
-			if !final {
-				return nil
-			}
+		if final {
 			safe = len(r.pending)
+		}
+		if safe <= 0 {
+			return nil
+		}
+		// Do not turn a valid rune into replacement characters by emitting
+		// only its prefix. Inspect at most UTFMax-1 preceding bytes; invalid
+		// bytes still pass through emit's existing replacement policy.
+		for back := 1; back < utf8.UTFMax && back <= safe; back++ {
+			start := safe - back
+			if utf8.RuneStart(r.pending[start]) {
+				_, size := utf8.DecodeRune(r.pending[start:])
+				if size > back {
+					safe = start
+				}
+				break
+			}
+		}
+		if safe == 0 {
+			return nil
 		}
 		start, length := r.earliestMatch(safe)
 		if start < 0 {

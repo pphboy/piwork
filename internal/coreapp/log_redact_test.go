@@ -2,9 +2,65 @@ package coreapp
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestSecretRedactorShortKnownValuesAcrossChunks(t *testing.T) {
+	for _, secret := range []string{"a", "ab", "abc"} {
+		for split := 0; split <= len(secret); split++ {
+			t.Run(fmt.Sprintf("%d-bytes/split-%d", len(secret), split), func(t *testing.T) {
+				var output bytes.Buffer
+				r := newSecretRedactor(&output, []string{"", secret, secret})
+				for _, chunk := range []string{"API_KEY=" + secret[:split], secret[split:] + "\n"} {
+					if _, err := r.Write([]byte(chunk)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := r.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				if output.String() != "API_KEY=[redacted]\n" {
+					t.Fatalf("short known secret leaked or content changed: %q", output.String())
+				}
+			})
+		}
+	}
+}
+
+func TestSecretRedactorValidUTF8AcrossChunks(t *testing.T) {
+	for _, input := range []string{"A中文Z", "A中文🙂Z"} {
+		for _, secrets := range [][]string{nil, {"secret-value"}, {"abc"}} {
+			// Include one-byte writes and every two-chunk split, including
+			// splits inside a UTF-8 rune and the redactor's carry boundary.
+			for split := -1; split <= len(input); split++ {
+				var output bytes.Buffer
+				r := newSecretRedactor(&output, secrets)
+				chunks := []string{input}
+				if split >= 0 {
+					chunks = []string{input[:split], input[split:]}
+				} else {
+					chunks = nil
+					for i := range len(input) {
+						chunks = append(chunks, input[i:i+1])
+					}
+				}
+				for _, chunk := range chunks {
+					if _, err := r.Write([]byte(chunk)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := r.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				if output.String() != input {
+					t.Fatalf("split=%d secrets=%q: got %q want %q", split, secrets, output.String(), input)
+				}
+			}
+		}
+	}
+}
 
 func TestSecretRedactorPreservesBoundariesAndUTF8(t *testing.T) {
 	for secret := range map[string]bool{"super-secret-value": true, "another-token-123": true} {

@@ -168,6 +168,50 @@ func TestArchiveLogSourceRedactsCrossChunkSecretsAndPublishes(t *testing.T) {
 	}
 }
 
+func TestArchiveAndZIPPreserveUTF8AndRedactShortKnownValues(t *testing.T) {
+	for _, secret := range []string{"", "a", "ab", "abc"} {
+		t.Run("secret-"+secret, func(t *testing.T) {
+			a, source, identity, directory := archiveFixture(t)
+			ctx := context.Background()
+			if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+				_, err := tx.Exec(`UPDATE service_revisions SET definition_json=replace(definition_json,'super-secret-value',?) WHERE work_id=? AND service_id=?`, secret, source.WorkID, source.ServiceID)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			input := "2026-10-21T00:00:00Z A中文Z\n2026-10-21T00:00:00Z API_KEY=" + secret + "\n"
+			want := input
+			if secret != "" {
+				want = strings.ReplaceAll(input, secret, "[redacted]")
+			}
+			var chunks [][]byte
+			for i := range len(input) {
+				chunks = append(chunks, []byte(input[i:i+1]))
+			}
+			a.fullLogReaderForTest = &fakeFullLogReader{stdout: chunks, stderr: [][]byte{{0xff, '\n'}}}
+			archive, err := a.archiveLogSource(ctx, source, identity, time.Second)
+			if err != nil || archive.State != "archived" {
+				t.Fatalf("archive failed: %#v %v", archive, err)
+			}
+			body, err := os.ReadFile(filepath.Join(directory, "logs", "works", source.WorkID, source.SourceID, "stdout.log"))
+			if err != nil || string(body) != want {
+				t.Fatalf("archive content: got %q want %q error=%v", body, want, err)
+			}
+			id := "log-export-ffffffffffffffffffffffffffffffff"
+			// Simulate the original container being gone so the ZIP must use
+			// the bytes actually published to the retained archive.
+			a.fullLogReaderForTest = &fakeFullLogReader{err: dockerengine.ErrResourceMissing}
+			acceptLogRegressionSource(t, a, source, id, "short-secret-utf8")
+			a.runLogExport(id)
+			bundle := verifyBundle(t, a, id)
+			prefix := "works/" + source.WorkID + "/" + source.SourceID + "/"
+			if bundle[prefix+"stdout.log"] != want || bundle[prefix+"stderr.log"] != "�\n" {
+				t.Fatalf("ZIP content changed or leaked: stdout=%q stderr=%q", bundle[prefix+"stdout.log"], bundle[prefix+"stderr.log"])
+			}
+		})
+	}
+}
+
 func TestArchiveLogSourceRecordsMissingAndPartialWithoutFakeSuccess(t *testing.T) {
 	a, source, identity, directory := archiveFixture(t)
 	a.fullLogReaderForTest = &fakeFullLogReader{err: dockerengine.ErrResourceMissing}
