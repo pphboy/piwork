@@ -47,3 +47,12 @@ v0.0.8适配最终验收：Console全部可运行浏览器138/138（QuickStart/�
 - [x] 5.5 按功能保存本地提交与可恢复 bundle，核对与main差异只涉及UI/测试/资源/OpenSpec。验证：bundle可读与HEAD、来源/截图fixture限制清楚；生成可持久保存的恢复附件交付，不对GitHub写入、合并或部署。
 
 - [x] 5.6 修正 Starting export 展开 Details 的长操作链接/身份挤窄重叠。验证：根因对应最小布局修复，完整ID及操作入口保留，宽/360px截图与几何不重叠断言，导出相关回归及最终Desktop资源/完整可运行套件重新验证。
+
+## 6. Session选择器样式收敛
+
+- [x] 6.1 读取用户实际截图并在7f7221基线更新proposal/design/spec，确认仅Session选择器范围及现有顶部New session契约。
+- [x] 6.2 调整局部间距/行密度/按钮层级/选中状态与长名称换行，保留原会话动作、Run及加载/错误恢复；补渲染和真实浏览器回归。
+- [x] 6.3 同fixture生成宽/窄before/after截图，验证焦点、短视口、长标签及单次创建；执行相关完整测试/build/嵌入资源校验和独立Review/OpenSpec verify。
+- [x] 6.4 按实现与验收分提交并验证本地恢复包，明确Library交付阻塞、不推送GitHub、不合并部署；记录精确补丁与来源以便恢复。
+
+Session专项最终：24个unit文件533/533；六组浏览器345/345与导出呈现补充2/2，组合347/347且0失败/跳过；typecheck/build、43资源hash、OpenSpec strict及独立Review通过。完整范围和真实未测项见verification.md。本地实现a1bb406及恢复补丁已核验；Library附件和GitHub发布仍未完成，不将内部保管的补丁记录视为用户附件。

@@ -230,3 +230,42 @@ GitHub只读核对确认[PR #3](https://github.com/pphboy/piwork/pull/3)仍open/
 - Coherence：保留原页面代次、对象锁和读回模式，没有新增全局状态框架或Core行为。独立只读终审未发现阻塞问题或越界修改。
 - 本地功能分四个提交，文档和本轮截图另行提交；完整Git bundle包含当前分支历史、源码、测试、生成资源及OpenSpec证据，可独立恢复。临时测试日志不在Git bundle内，另随验证记录压缩附件提供，避免将工作目录日志误说成Git内容。
 - 恢复附件仅交回用户保存，不能视为GitHub已更新。线上PR仍为3fe9f149，发布权限问题仍待确认；不合并、部署或归档。本地bundle校验值与恢复命令在随附manifest中给出。
+
+## 2026-10-20 Session 选择器专项验收
+
+### 来源与范围
+
+本轮从已持久保存并精确恢复的 `7f7221e5e8a39cb713b2db928e8dd7c871e76272` 出发，只实现用户22:35 UTC截图要求的Session选择器收敛。此前丢失的 `ef676b6` 全面审查修改未被恢复，也不能当成本轮基线。先读取本轮实际PNG，再在同一change更新proposal/design/spec/tasks，随后apply、测试和独立Review。实现提交 `a1bb406659f7b4c9f5e4b7f47b5b8f87d6626aab`。
+
+生产修改仅在Desktop `src/app.ts`、`public/style.css`及对应嵌入资源：
+- New session保留规范要求的顶部位置，改为独立的次级按钮，与列表分隔12px；短行最低48px，长名称完整换行，图标与状态不挤占名称。
+- 轻量选中底色和独立勾选标记，Run徽标放在名称之下。保留切换不停止Run的事实说明，移除重复footer Close，头部命名关闭仍在。
+- 打开时明确优先当前选中项，并允许把长列表底部选中项滚入可见区域。两个既有Session入口有独立稳定ID，修正原来混用data-action导致的错误锚定和返回焦点；原入口暂被读取锁禁用时仍采用原安全回退。
+- 不改adapter、Session选择/创建处理器、Run处理器、Core/backend或其他浮层。与主线 `9a40d4443fee559335485744d0aabbf186e24b38` 对比，Go文件、apps/agentd及packages没有变化。新增改动只在Desktop UI、测试、生成资源及本change。
+
+### 测试与视觉证据
+
+使用云桌面系统Chromium、真实编译前端及合成API。没有真实模型Key、用户Session数据、付费调用、Docker Work或真实Core运行。截图不是设计生成图，也不证明真实后端集成。
+
+- Desktop24个非浏览器文件：533/533通过，0失败/取消/跳过；新增两项渲染回归覆盖选中+运行标记、名称转义，以及加载/空/错误/保留列表刷新区分。
+- Session专项4/4浏览器回归通过：1440/360px与480px短视口、长token、当前选中末项复开、两个入口焦点、Home/End/Arrow/Enter/Escape、无意外POST、草稿保留、单次创建及局部等待、读取锁焦点安全回退、失败刷新保留列表与Retry恢复确认空态。前三项曾连续执行三轮均通过，不累加为覆盖数量。
+- 最终完整可运行组合347/347通过，0失败/取消/跳过，退出码0，用时302.388秒。其中原六组浏览器加新增Session回归345项，导出呈现补充2项（1项浏览器、1项生产渲染契约）；均与上述533项分组不重叠。终态于2026-10-20 22:57:58 UTC确认。
+- Desktop typecheck/build、测试编译、43个两端已构建资源manifest与逐文件SHA256对齐、native-boundary、repository-docs、git diff --check通过。Console源码未改，本专项不把此前Console测试重新声称为本次执行。
+
+命令与临时日志在忽略目录 `dist/session-style-2237/`：`unit-full.log`、`after-browser.log`、`final-browser.log`、`final-static.log`及`assets-manifest.json`。最终完整可运行组为：
+
+```sh
+PIWORK_TEST_BROWSER_BIN=/usr/bin/chromium node --test --test-concurrency=3 \
+  apps/desktop-webui/dist/test/{feedback,local-auth,preferences,recovery,final-acceptance,pending-dots,export-presentation}.test.js
+```
+
+before图片通过拦截静态资源加载同基线的app.js/CSS，after使用当前正常构建；其余fixture相同。1440px、360px各保留短列表和长名称图，after另有480px高视口末项键盘焦点图。名称为`sessions-{before,after}-{1440,360}.png`、`sessions-{before,after}-long-{1440,360}.png`、`sessions-after-short-{1440,360}.png`，包含在本轮恢复附件中。原图只用于理解需求，不作为合成截图交付。
+
+开发中发现并处理：原混合querySelector实际先聚焦Close；两个同data-action入口错误定位；选中末项preventScroll导致不可见；局部CSS优先级被旧通用span规则覆盖。独立Review已核对最终源码、测试、生成资源及宽/窄/短视口像素，无剩余阻塞。两项早期测试误把读取锁期间禁用的原触发器当作可聚焦对象，调整为“可用时精确恢复”和独立“锁定时安全回退”断言，不修改原锁或删除恢复验证。
+
+### OpenSpec verify与交付限制
+
+- Completeness：本专项任务6.1–6.4完成，change任务28/28；change共8项Requirement、74项Scenario。本轮新增的DWUI-011两项Session场景分别由上述渲染/几何及交互/恢复测试映射；历史其他场景记录仍保留，不能解释为丢失审查已重建。
+- Correctness：上述实际执行范围内无已知功能阻塞；真实宿主/Core/认证/Docker集成未验证，当前没有dist/go/piwork-cli或piwork-serve及可用原生集成条件，故未运行依赖这些二进制的browser/onboarding/native-auth套件，也未建设新后端环境。
+- Coherence：使用现有popover/listbox、按钮、badge及focusKey模式，New session仍位于顶部；无新框架、业务状态或会话请求语义变更。OpenSpec strict通过，不执行archive、merge或deploy。
+- 交付状态：本地提交、补丁和增量bundle已用持久基线的独立clone验证相同tree；实现补丁的独立记录已回读核验，但这不是用户可下载附件；Library必需上传helper仍在tools/list阶段HTTP403，之前同一路径明确未上传且重试失败，本轮没有再次尝试或换路线。GitHub写入仍暂停，本轮未推送PR。不能把本地图片/恢复包称为已送达用户的附件。
