@@ -1,6 +1,6 @@
 # 实施与验证记录
 
-当前适配基线：v0.0.8 main `9a40d4443fee559335485744d0aabbf186e24b38`。初版 PR 基线为 `efce08c228c12f10d18a968b69c3398bb0e783e1`。下文初版结果保留为历史证据；本次上游适配以本节新结果为准；初版结果仅保留为历史证据。
+当前适配基线：v0.0.9 main `a6c36da16ebcc0e96f0e34ef820d857f2bea4877`。本次rebase验证见文末专节；下文v0.0.8、重建与Session结果均属于各自历史提交，不自动算作新基线通过。
 
 ## 1. 范围与结果
 
@@ -269,3 +269,42 @@ before图片通过拦截静态资源加载同基线的app.js/CSS，after使用�
 - Correctness：上述实际执行范围内无已知功能阻塞；真实宿主/Core/认证/Docker集成未验证，当前没有dist/go/piwork-cli或piwork-serve及可用原生集成条件，故未运行依赖这些二进制的browser/onboarding/native-auth套件，也未建设新后端环境。
 - Coherence：使用现有popover/listbox、按钮、badge及focusKey模式，New session仍位于顶部；无新框架、业务状态或会话请求语义变更。OpenSpec strict通过，不执行archive、merge或deploy。
 - 交付状态：本地提交、补丁和增量bundle已用持久基线的独立clone验证相同tree；实现补丁的独立记录已回读核验，但这不是用户可下载附件；Library必需上传helper仍在tools/list阶段HTTP403，之前同一路径明确未上传且重试失败，本轮没有再次尝试或换路线。GitHub写入仍暂停，本轮未推送PR。不能把本地图片/恢复包称为已送达用户的附件。
+
+## v0.0.9 main rebase验收（2026-10-21）
+
+所有者要求rebase主分支。远端实际主分支是main，不存在master；确认并fetch的目标为`a6c36da16ebcc0e96f0e34ef820d857f2bea4877`。重放前的完整保留分支为`6b099bf2b0dfdfde6a38113d734ec8ab87089858`，工作树干净，已建立备份分支及验证完整bundle。使用`git rebase --rebase-merges --onto a6c36da1 9a40d444`保留功能提交边界和已有合并结构；原v0.0.8协调提交的UI解决结果完整保留，再组合新main的UI差异，后续setup/Works/export/Session提交顺序重放。不是丢失ef676b6审查的恢复。
+
+### 冲突决策与边界
+
+- 冲突位于onboarding、Desktop adapter/app、action-hierarchy测试及对应嵌入资源；没有Core冲突解决或后端改写。相对保存的6b099bf，产品源码仅增加上游的三份UI文件差异。
+- Service检查完成保留`origin + (basePath ?? '/')`，沿上游完整Service目标继续预览/独立打开；保留上游iframe身份/输入不因布局变化丢失的浏览器回归。
+- 登录成功和已登录/login均通过上游nextLocation处理同源Service returnTo；不改上游URL校验。托管身份清理与成功注销清除piwork:web:缓存，Console合并时将原current(ticket)保护放在整个清理及跳转之前，旧注销成功不能清掉新视图存储或释放新请求锁。
+- 保留上游Service同源可信应用、前缀支持及Cookie限制说明。Quick setup底部入口收敛、自动只读unknown恢复、Works骨架/单一初错、export明细和Session选中/焦点/长名称修正均保留。
+- `a6c36da1`为最终分支祖先；相对它只有两端WebUI、shared controls、生成UI资源和本change差异。Core/Go、Agent、contracts、部署/发行、脚本与主规格完全等于上游，不将上游自身的架构变更计为本PR修改。
+
+### 最终实际检查
+
+| 不重叠检查组 | 结果 |
+|---|---|
+| Desktop24个非浏览器文件 | 536/536，0失败/取消/跳过 |
+| Console Quick setup恢复单元 | 38/38，0失败/取消/跳过 |
+| Desktop原六组浏览器及export呈现补充 | 348/348，0失败/取消/跳过；含1项上游新增Service前缀浏览器回归，export补充中1项是生产渲染契约 |
+| Console既有三个可运行浏览器文件 | 151/151通过 |
+| Console新增controlplane-compat浏览器回归 | 15/15通过；标准test:browser已纳入此文件 |
+| 两端typecheck/build、Desktop测试编译 | 通过 |
+| 43个UI构建/嵌入资源SHA-256对应 | 全部相同，独立Review重复确认 |
+| native-boundary、repository-docs、diff检查、OpenSpec strict | 通过 |
+
+新增Console15项实际加载编译后的onboarding：验证正常登录/已登录两条返回路径的query/hash；拒绝外部、协议相对、非Service、两种点路径归一化逃出Service的目标并保留服务端fallback；注销成功只清指定sessionStorage前缀、不清相似键/其他键/localStorage；失败保留；pagehide/pageshow后旧成功不能清新缓存、跳转或解除新注销锁。Desktop新增3项验证hosted/local身份清理边界和存储读取异常下原清理仍完成。独立Review未发现产品阻断；指出新测试未接入常规脚本，已修正并核对。
+
+首次直接exec启动浏览器未能完成套件初始化，已中止且不计为产品断言失败；最终两端浏览器均经云电脑Terminal启动标准系统Chromium完成。新增存储异常测试最初误要求clearIdentity修改signedIn，调整为其现有清空对象列表契约后536项全部重跑通过，未因此修改产品行为。所有界面/网络响应均为合成fixture，无真实账号、Key或付费模型请求。
+
+实际命令与终态日志位于忽略目录`dist/rebase-v009-0016/`：`run-desktop.sh`（348）、`run-console.sh`（151）、`run-compat.sh`（15），对应exit文件均为0；`desktop-unit.log`与`console-unit.log`分别536和38。两端标准build/typecheck、`tsc -p apps/desktop-webui/tsconfig.test.json`、原24文件清单node --test、Quick setup恢复node --test已重跑。临时Console配置只沿原配置使用系统Chromium和隔离结果目录，不修改产品或测试断言。
+
+本次新Session宽1440/窄360、长名称和短视口截图在`/workspace/shared/piwork-rebase-screenshots/`，实际像素复核与浏览器几何/焦点断言通过，不能当作真实Core证据。用户先前截图展示的样式没有被rebase回退。
+
+### 未测与交付
+
+真实原生host/认证/Core/Docker整合和Go宿主重建未运行：工作区没有`dist/go/piwork-cli`或`piwork-serve`，亦无已配置隔离运行环境。Desktop `browser/native-auth/onboarding`、Console `console.spec`和real-core套件因此未运行，不能将合成浏览器通过当作整合通过。未合并、部署或归档。
+
+本次只做本地rebase及验证；GitHub写入仍暂停，远端PR #3没有被更新，不声称其远端冲突已解除。Library先前附件上传403本次没有盲重试。最终本地恢复包、精确UI增量与源树校验记录另行保存；恢复可从已保留6b099bf加公开固定a6c36da1主线和本次UI增量逐字复原，内部保存不等于已向用户发送附件。

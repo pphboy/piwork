@@ -2,15 +2,15 @@
 
 ## Context
 
-本变更按 [proposal.md](proposal.md) 收敛为四个实施模块。当前适配基线为 v0.0.8 main `9a40d4443fee559335485744d0aabbf186e24b38`。初版基线 `efce08c228c12f10d18a968b69c3398bb0e783e1` 与现状图提交 `4cb118450a89383825d8e136a131eaf7cbc5c543` 仅作为历史证据；上游已移除设置链接和本机浏览器授权。图02/04/05/07/08为原样前端加合成 API 的浏览器渲染，不代表真实 Core/Docker/付费模型测试。
+本变更按 [proposal.md](proposal.md) 收敛为四个实施模块。当前适配基线为 v0.0.9 main `a6c36da16ebcc0e96f0e34ef820d857f2bea4877`；原v0.0.8验证仅作历史。初版基线 `efce08c228c12f10d18a968b69c3398bb0e783e1` 与现状图提交 `4cb118450a89383825d8e136a131eaf7cbc5c543` 仅作为历史证据；上游已移除设置链接和本机浏览器授权。图02/04/05/07/08为原样前端加合成 API 的浏览器渲染，不代表真实 Core/Docker/付费模型测试。
 
 现有可复用部分：`onboarding.ts` 的普通会话/CSRF与手动登录；`quick-setup.ts` 的模型/Runtime 分段确认、unknown 读回、view/identity/readGeneration；Console 和 Desktop 的 ActionState/对象锁、Desktop 的局部读取与 DOM 连续性；`apps/ui-shared/{tokens,controls}.css` 及现有静态资源嵌入。当前问题主要是呈现、默认草稿、刷新方式和部分独立请求缺少可见等待。
 
 ### Core 等待的真实边界
 
 ```text
-Server: coreapp.New -> HTTP listening -> Runtime 自动准备 -> 浏览器引导
-        [尚无产品网页]                   [现有页面可显示三点]
+Server: 上游启动协调 -> ControlPlane 17891 提供浏览器页面 -> 后端查询 Core 17871
+                        [页面显示真实连接/准备状态，不等同于 Work ready]
 Desktop: 本地 HTTP/静态壳 -> 普通会话检查 -> Core 连接检查 -> Works
          Desktop 不负责启动 Core
 ```
@@ -101,7 +101,7 @@ Console 在当前路由复用/协调页级读状态，同对象显式刷新与�
 
 ## Migration Plan
 
-无数据迁移。已收到 apply 与 PR 授权，初版实施基线为 efce08c；PR 维护适配已核远端 main 为 9a40d444，使用保留双方历史的 merge，完整采用上游 Core/认证；本轮仅UI与前端交互。实施先做共享 Pending，再按首设界面、QuickStart、管理和其余入口接入，复用已有测试与资源嵌入；同一 app.ts 避免多人并改。按四模块可独立回退代码/资源，不清理用户配置或 Work。
+无数据迁移。已收到 apply 与 PR 授权，初版实施基线为 efce08c；首次 PR 维护适配使用9a40d444与保留双方历史的merge；本次rebase沿该合并结构将上游父提交推进到a6c36da1，完整采用上游 Core/认证；本轮仅UI与前端交互。实施先做共享 Pending，再按首设界面、QuickStart、管理和其余入口接入，复用已有测试与资源嵌入；同一 app.ts 避免多人并改。按四模块可独立回退代码/资源，不清理用户配置或 Work。
 
 创建后自动认证、Go启动入口D2、HTTP前启动壳和持续离线观察均不在本轮。所有者已授权提交、推送和PR；完成独立审查后按功能拆分提交并开草稿PR，核对远端与CI，不自动合并或部署。
 
