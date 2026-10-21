@@ -116,3 +116,27 @@ test('pending active Run: explicit retry emits in-flight state and background re
   const background = adapter.loadActiveRun('one'); assert.equal(adapter.activeRuns.get('one').visibleLoading, false); assert.equal(notices.length, before);
   held.resolve({ json: { run: null } }); await background; assert.ok(requests.filter(path => path.endsWith('/runs/active')).length <= 2);
 });
+
+for (const hosted of [true, false]) test(`identity cleanup removes only hosted Service session storage (hosted=${hosted})`, t => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+  const storage: Record<string, any> = { 'piwork:web:service-a': 'old-a', 'piwork:web:service-b': 'old-b', 'unrelated-preference': 'keep' };
+  Object.defineProperty(storage, 'removeItem', { value: (key: string) => { delete storage[key]; } });
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: storage });
+  t.after(() => { if (original) Object.defineProperty(globalThis, 'sessionStorage', original); else delete (globalThis as any).sessionStorage; });
+  const adapter = new DesktopAdapter();
+  Object.defineProperty(adapter, 'hosted', { value: hosted });
+  adapter.clearIdentity();
+  assert.equal(storage['unrelated-preference'], 'keep');
+  assert.deepEqual(Object.keys(storage).sort(), hosted ? ['unrelated-preference'] : ['piwork:web:service-a', 'piwork:web:service-b', 'unrelated-preference']);
+});
+
+test('unavailable hosted session storage does not prevent identity cleanup', t => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, get() { throw new Error('Synthetic storage unavailable'); } });
+  t.after(() => { if (original) Object.defineProperty(globalThis, 'sessionStorage', original); else delete (globalThis as any).sessionStorage; });
+  const adapter = new DesktopAdapter();
+  Object.defineProperty(adapter, 'hosted', { value: true });
+  adapter.state.works.push({ id: 'old-work' });
+  assert.doesNotThrow(() => adapter.clearIdentity());
+  assert.deepEqual(adapter.state.works, []);
+});
