@@ -29,14 +29,14 @@
 
 ## 当前架构
 
-- Go 统一 Linux 应用在同一进程启动两个独立 HTTP 服务：ControlPlane 默认 0.0.0.0:17891 承载托管网页、管理、引导和 Service Proxy；Core 默认 127.0.0.1:17871 供后端、CLI/operator 直连，--core-listen 可显式允许远程客户端。浏览器只连接 ControlPlane；网页业务不导入 Core/store/identity 实现，不使用进程内 transport。Core 保留用户与权限、Work 生命周期、Docker 编排、Service、文件、包和快照职责。入口为 cmd/piwork-serve/，无参数或 serve 由 internal/app/ 协调启动；operator 命令由 internal/coreoperator/ 实现，piwork 是同一程序的别名。
-- Go CLI 继续独立提供用户命令、本机代理与 Desktop；cmd/piwork-console/ 保留高级独立管理员 HTTPS 入口。默认统一应用不依赖第二个宿主程序或 CLI 容器。托管浏览器会话不读取 CLI 凭证。
+- Go Linux 应用由 cmd/piwork-core/ 和 internal/app/ 无子命令启动，只提供 --ui-port、--core-port、--data-dir 三项运行配置。UI 默认 0.0.0.0:17891，Core 默认 0.0.0.0:17871，均为 HTTP；后端固定通过 127.0.0.1 访问 Core，浏览器只连接 UI。Host/Origin 由本机地址校验，不使用客户端 Forwarded。内部 Agent 7172 mTLS 保留。三个 listener 和存储锁由统一生命周期管理。
+- 宿主只交付 Linux amd64 的 piwork-core、piwork-cli。Core 内嵌管理、工作台和引导；CLI 独立提供用户命令、本机代理与 Desktop，可连接本机或远程 Core，不控制 Core 进程。operator 凭证、元数据和受保护管理 API 保留，命令适配已删除。托管浏览器会话不读取 CLI 凭证。
 - Service MCP、package-helper、file-helper、snapshot-helper 均由 cmd/ 中对应的 Go 程序实现，随 Agent 或 helper 镜像交付。
 - apps/agentd/ 是容器内完整的 TypeScript Pi Agent SDK harness，包含 RPC、Session/Run、历史、模型/工具执行与资源加载。
 - packages/contracts/、pi-adapter/、pi-package/、work-store/ 保留 Agent 所需的契约、SDK 适配、包加载和私有历史依赖，不能按“Core 已改 Go”整体删除。
 - apps/desktop-webui/、console-webui/ 保留浏览器 TypeScript；构建后的资源嵌入 Go 程序。
-- Core、CLI、Console 和 Go helper 关闭 CGo。宿主平台运行时不依赖 Node、npm、Python、Go 工具链、Docker CLI 或 OpenSSL；镜像内 harness/Pi 生态及用户 Service 的语言依赖按各自职责保留。
-- Core 使用本机 Docker Engine Unix API，仅部署在 Linux；Windows/Linux 浏览器可通过服务器 IP 直接使用，原生 CLI 仍覆盖 Windows/Linux。默认无业务环境变量，仅可选成对 ADMIN 测试初始化；模型及 Agent/helper 的旧初始化环境变量不再读取。托管 Service 使用同一浏览器 origin 的 /services/<workId>/<serviceId>/<port>/ 路径，应用须支持动态前缀并视为当前用户信任的同源应用；服务端响应 Cookie 分区保留，脚本 Cookie 不同步。独立 CLI Desktop 的本机 Host 入口保留。Agent 7172 mTLS 回连独立于浏览器/Core HTTP。构建工具依赖与用户运行依赖分开描述。
+- Core、CLI 和 Go helper 关闭 CGo。宿主平台运行时不依赖 Node、npm、Python、Go 工具链、Docker CLI 或 OpenSSL；镜像内 harness/Pi 生态及用户 Service 的语言依赖按各自职责保留。
+- Core 使用本机 Docker Engine Unix API，仅部署在 Linux；Windows/Linux 浏览器可通过服务器 IP 直接使用，原生 Core/CLI 仅支持 Linux amd64。默认无业务环境变量，仅可选成对 ADMIN 测试初始化；模型及 Agent/helper 的旧初始化环境变量不再读取。托管 Service 使用同一浏览器 origin 的 /services/<workId>/<serviceId>/<port>/ 路径，应用须支持动态前缀并视为当前用户信任的同源应用；服务端响应 Cookie 分区保留，脚本 Cookie 不同步。独立 CLI Desktop 的本机 Host 入口保留。Agent 7172 mTLS 回连独立于浏览器/Core HTTP。构建工具依赖与用户运行依赖分开描述。
 - 当前生产入口使用 Go 平台。旧 TS Core 分支和提交历史保持现状，除非用户另有明确要求，不改写历史或继续处理旧分支。
 
 ## 目录约定
@@ -47,7 +47,7 @@
 | apps/、packages/ | TypeScript 应用与共享包，工作区目录使用小写连字符命名 |
 | apps/*-webui/test/ | 浏览器测试；包内单元测试可与源码并置 |
 | scripts/ | 构建、生成、验证与打包入口 |
-| deploy/docker/ | 双 Docker 安装材料与手册 |
+| deploy/docker/ | Core Docker 安装材料与双语手册 |
 | fixtures/、internal/*/testdata/ | 必要的合成夹具与协议 golden 数据 |
 | apps/ui-shared/assets/ | 两端 WebUI 共用的产品资源 |
 | openspec/ | 主规格、变更规划、归档及所属证据/原型附件 |
@@ -57,7 +57,7 @@
 
 - operator 身份与用户 CLI 身份分离；用户 CLI 不读取 operator 凭证，管理员控制权限不等于读取他人 Work 内容的权限。
 - CLI 与 Desktop 共用用户凭证，但 Desktop 的默认 Core 偏好独立于业务 CLI 的地址选择。调整入口时核对 control-cli、desktop-webui 及 cli-runtime-portability 的有效主规格/变更中的优先级和恢复规则。
-- Core 正常退出会停止本安装全部受管 Work 运行容器，保留持久意图、配置、历史和数据，供重启恢复。CLI 或 Console 退出不停止 Work。
+- Core 正常退出会停止本安装全部受管 Work 运行容器，保留持久意图、配置、历史和数据，供重启恢复。CLI 或浏览器退出不停止 Work。
 - Work workspace 是受管共享卷。导出前须确认 Work stopped；导入得到 stopped Work，随后由用户显式 Start。
 - 为开发或测试使用独立安装和数据目录。Docker 清理只针对本次创建的精确 installation ID/标签，不执行全局 prune 或删除其他安装资源。
 - 真实 env、密码、API key、token、Core 数据、凭证、快照及私钥不提交到 Git，也不输出到公开文档或验收报告。必要的合成测试数据继续保留，忽略规则维护在 .gitignore 与 .dockerignore。
@@ -85,4 +85,4 @@ make test
 
 proto、HTTP DTO 和 Work history 的生成入口为 make generate；变更契约时同步生成产物和相关跨语言测试。历史场景索引和跳过项不能替代实际测试通过。
 
-make release 是本机构建与打包入口。对外推送、发布或发行仅在用户明确要求时执行；不要把本地整理或验收自动扩展为发行。
+make build 的 dist/go 只包含两个宿主程序；内部 MCP/helper 由镜像独立构建。make build-cli 独立构建 Linux 客户端。make release 先冻结输入并构建生产 Agent/helper 镜像，再构建同版 Core/CLI 与 Core 镜像，核验后替换受管 dist/release 成品。当前候选只有 core、agent、fileHelper、snapshotHelper 四个镜像角色，packageHelper 复用 Agent。make release 是本机构建与打包入口。对外推送、发布或发行仅在用户明确要求时执行；不要把本地整理或验收自动扩展为发行。
