@@ -2,6 +2,38 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.12",
+      "component": "core",
+      "title": "Piwork 0.0.12 Preview",
+      "publishedAt": "2026-10-22",
+      "sections": [
+        {
+          "title": "Reliable SQLite WAL recovery and bounded shutdown",
+          "items": [
+            "Open supported installations using the committed SQLite main database and WAL together, including partially checkpointed databases and missing or stale SHM indexes, without manual checkpoint or data reconstruction.",
+            "Validate WAL snapshots in a private temporary copy before opening the original writer. Reject unsupported identities, versions, schema and corrupt snapshots while preserving the original installation files.",
+            "Treat busy or incomplete checkpoints and storage/log close failures as unconfirmed shutdown with a nonzero exit status. Keep installation ownership through actual database cleanup and final log closure.",
+            "Bound internal transaction draining and concurrent close waits by the remaining shutdown budget. Cancel and roll back unfinished transactions, prevent late writes from old callbacks, and preserve committed data and Work/Service intent."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.12",
+      "component": "desktop",
+      "title": "Piwork 0.0.12 Preview",
+      "publishedAt": "2026-10-22",
+      "sections": [
+        {
+          "title": "Core restart reliability",
+          "items": [
+            "Use Desktop and CLI with Core installations recovered directly from committed SQLite WAL. Saved sessions, installation identity and Work/Service selections are retained through supported recovery.",
+            "Continue using the browser entry on port 17891 and the Core API on port 17871, with the existing Linux amd64 CLI and Desktop interfaces."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.11",
       "component": "core",
       "title": "Piwork 0.0.11 Preview",
