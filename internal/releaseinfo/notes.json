@@ -2,6 +2,39 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.11",
+      "component": "core",
+      "title": "Piwork 0.0.11 Preview",
+      "publishedAt": "2026-10-22",
+      "sections": [
+        {
+          "title": "Core-managed diagnostic log exports",
+          "items": [
+            "Preserve safe platform logs and bounded Agent/Service archives in the installation data directory, and export retained Core logs plus the requesting administrator's own Work logs without stopping Works.",
+            "Produce an immutable ZIP with a fixed cutoff, source manifest, checksums and explicit gaps. Recover accepted tasks with their original idempotency key and download the same retained result again.",
+            "Keep administrator and task-owner authorization through collection and download, redact known credentials including short values, and preserve valid UTF-8 across streamed chunks.",
+            "Provide logs export, logs show and logs download in piwork-cli. Simplify startup help while preserving the existing runtime ports and authentication."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.11",
+      "component": "desktop",
+      "title": "Piwork 0.0.11 Preview",
+      "publishedAt": "2026-10-22",
+      "sections": [
+        {
+          "title": "Export troubleshooting logs from Desktop",
+          "items": [
+            "Use the single Export logs entry in the administrator account menu to collect logs, create the archive and start a browser download through the existing UI origin.",
+            "Show real collection stages and incomplete sources, recover a lost create response with the original key, and retain the original task when detail reads temporarily fail.",
+            "Start at most one automatic download for the current intent and use Download again for the same package. Save the ZIP and send it to a trusted maintainer manually; no upload service is included."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.10",
       "component": "core",
       "title": "Piwork 0.0.10 Preview",
