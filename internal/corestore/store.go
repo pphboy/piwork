@@ -152,7 +152,7 @@ func Open(ctx context.Context, options Options) (_ *Store, returned error) {
 		}
 		marker.Phase = "ready"
 	}
-	if err := verifyDatabase(ctx, root, DatabaseName, marker, true); err != nil {
+	if err := verifyStoredDatabase(ctx, root, DatabaseName, marker, options.fault); err != nil {
 		return nil, err
 	}
 	for _, directory := range managedDirectories {
@@ -369,7 +369,7 @@ func verifyDatabase(ctx context.Context, root *safefs.Root, name string, marker 
 }
 func initialize(ctx context.Context, root *safefs.Root, marker Marker, fault func(string) error) error {
 	if _, err := root.ReadFile(DatabaseName, 0); !errors.Is(err, os.ErrNotExist) {
-		if err := verifyDatabase(ctx, root, DatabaseName, marker, true); err != nil {
+		if err := verifyStoredDatabase(ctx, root, DatabaseName, marker, fault); err != nil {
 			return err
 		}
 	} else {
