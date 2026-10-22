@@ -45,6 +45,18 @@ func TestUnifiedHelpVersionAndWrongUserCommandsHaveNoStartupEffects(t *testing.T
 		if strings.Contains(out.String(), "setup link") {
 			t.Fatal("help still advertises the removed setup link command")
 		}
+		if args[0] == "--help" {
+			for _, removed := range []string{"7172", "mTLS"} {
+				if strings.Contains(out.String(), removed) {
+					t.Fatal("help still describes the internal Agent RPC", removed)
+				}
+			}
+			for _, option := range []string{"--ui-port", "--core-port", "--data-dir"} {
+				if !strings.Contains(out.String(), option) {
+					t.Fatal("help lost a startup option", option)
+				}
+			}
+		}
 	}
 	directory, _ := defaultDirectory()
 	if _, err := os.Stat(directory); !os.IsNotExist(err) {

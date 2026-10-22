@@ -36,10 +36,10 @@ Start Core, the browser workbench, administration, and first-time setup.
   --help, -h        show help
   --version         show build identity
 
-Both HTTP services accept local and remote connections. Internal Agent mTLS
-uses port 7172. Configure users, models and runtime in the browser.
-Optional PIWORK_ADMIN_ACCOUNT and PIWORK_ADMIN_PASSWORD initialize only the
-first administrator. User commands and Desktop: piwork-cli.
+Both HTTP services accept local and remote connections. Configure users, models
+and runtime in the browser. Optional PIWORK_ADMIN_ACCOUNT and
+PIWORK_ADMIN_PASSWORD initialize only the first administrator. User commands
+and Desktop: piwork-cli.
 `
 
 type startupOptions struct {
