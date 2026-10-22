@@ -133,6 +133,7 @@ func TestNativeShutdownConfirmsOtherWorksAfterFailedAgentDrain(t *testing.T) {
 			t.Fatal("another Work was skipped after failed drain", id, err)
 		}
 	}
+	waitForShutdownStoreRelease(t, a.options.DataDirectory)
 	reopened, err := corestore.Open(ctx, corestore.Options{Directory: a.options.DataDirectory})
 	if err != nil {
 		t.Fatal("shutdown retained store lock", err)

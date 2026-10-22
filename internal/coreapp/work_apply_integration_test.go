@@ -221,6 +221,8 @@ func nativeApplyFixtureConfig(t *testing.T, mcp bool, models ...RuntimeInput) (*
 	}
 	status, created := packageHTTPCall(t, base, "/api/v1/works", "POST", auth, map[string]any{"name": "Apply Work", "idempotencyKey": "create", "configuration": config})
 	if status != 202 {
+		preparation, _ := json.Marshal(a.Preparation())
+		t.Logf("Work fixture preparation: %s; status: %+v", preparation, a.Status())
 		t.Fatal(status, created)
 	}
 	id := created["workId"].(string)

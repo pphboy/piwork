@@ -544,7 +544,9 @@ func (m *Manager) Close() error {
 			failures = append(failures, ErrUnsafe)
 		}
 		if m.options.Fault != nil {
-			_ = m.options.Fault("sync")
+			if err := m.options.Fault("sync"); err != nil {
+				failures = append(failures, ErrUnsafe)
+			}
 		}
 		if err := m.active.Close(); err != nil {
 			failures = append(failures, ErrUnsafe)

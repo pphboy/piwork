@@ -37,6 +37,7 @@ func TestShutdownBoundsUnresponsiveCleanupAndReleasesStore(t *testing.T) {
 	if err := a.Close(context.Background()); err == nil || time.Since(started) > 500*time.Millisecond {
 		t.Fatal("stalled shutdown not bounded", err, time.Since(started))
 	}
+	waitForShutdownStoreRelease(t, a.options.DataDirectory)
 	b, err := New(context.Background(), Options{DataDirectory: a.options.DataDirectory})
 	if err != nil {
 		t.Fatal("failed shutdown retained directory lock", err)

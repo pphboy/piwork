@@ -98,11 +98,11 @@ func (a *Application) diagnosticSink() diagnostics.Sink {
 
 // RecordAppEvent writes a file-only lifecycle event. The console keeps its
 // existing stdout/stderr format, so no default console text is emitted.
-func (a *Application) RecordAppEvent(event, level string, fields map[string]string) {
+func (a *Application) RecordAppEvent(event, level string, fields map[string]string) error {
 	if a.logs == nil {
-		return
+		return nil
 	}
-	_ = a.logs.Emit(corelogs.Event{
+	return a.logs.Emit(corelogs.Event{
 		Stream: "stderr", Level: level, Component: "core", Event: event,
 		Message: "Core lifecycle event.", Fields: fields, ConsoleText: []byte{},
 	})
@@ -136,8 +136,9 @@ func (a *Application) shutdownLogs(result error) error {
 	if result != nil {
 		level, outcome = "warn", "unconfirmed"
 	}
-	a.RecordAppEvent("app.shutdown", level, map[string]string{"outcome": outcome})
-	if err := a.closeLogs(); err != nil {
+	eventErr := a.RecordAppEvent("app.shutdown", level, map[string]string{"outcome": outcome})
+	closeErr := a.closeLogs()
+	if eventErr != nil || closeErr != nil {
 		return errors.New("Core log shutdown was not confirmed")
 	}
 	return nil
@@ -150,7 +151,7 @@ func (a *Application) closeLogs() error {
 	a.detachStandardLog()
 	err := a.logs.Close()
 	if a.logsRoot != nil {
-		a.logsRoot.Close()
+		err = errors.Join(err, a.logsRoot.Close())
 		a.logsRoot = nil
 	}
 	a.logs = nil

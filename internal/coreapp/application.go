@@ -647,11 +647,17 @@ func (a *Application) Close(ctx context.Context) error {
 		a.agentTLS.Close()
 	}
 	a.inspectionRoot.Close()
+	if err := a.files.Close(); err != nil {
+		result = errors.New("Core file storage shutdown was not confirmed")
+	}
+	if err := a.Store.CloseDatabase(ctx); err != nil {
+		result = errors.New("Core storage shutdown was not confirmed")
+	}
 	if err := a.shutdownLogs(result); err != nil {
 		result = err
 	}
-	a.files.Close()
-	if err := a.Store.Close(); err != nil {
+	// The installation lock remains held through the final log write/sync.
+	if err := a.Store.CloseContext(ctx); err != nil {
 		result = errors.New("Core storage shutdown was not confirmed")
 	}
 	a.mu.Lock()

@@ -54,15 +54,22 @@ type Options struct {
 	fault func(stage string) error
 }
 type Store struct {
-	root           *safefs.Root
-	writer         *sql.DB
-	reader         *sql.DB
-	installationID string
-	mu             sync.Mutex
-	life           sync.RWMutex
-	closed         bool
-	transientMu    sync.Mutex
-	transientWork  map[string]int
+	root               *safefs.Root
+	writer             *sql.DB
+	reader             *sql.DB
+	installationID     string
+	life               sync.Mutex
+	transactions       sync.WaitGroup
+	transactionCtx     context.Context
+	cancelTransactions context.CancelFunc
+	closed             bool
+	databaseCloseDone  chan struct{}
+	databaseCloseErr   error
+	releaseRoot        bool
+	rootClosed         bool
+	rootCloseErr       error
+	transientMu        sync.Mutex
+	transientWork      map[string]int
 }
 
 func Open(ctx context.Context, options Options) (_ *Store, returned error) {
@@ -174,7 +181,8 @@ func Open(ctx context.Context, options Options) (_ *Store, returned error) {
 		return nil, ErrStorage
 	}
 	keep = true
-	return &Store{root: root, writer: writer, reader: reader, installationID: marker.InstallationID}, nil
+	transactionCtx, cancelTransactions := context.WithCancel(context.Background())
+	return &Store{root: root, writer: writer, reader: reader, installationID: marker.InstallationID, transactionCtx: transactionCtx, cancelTransactions: cancelTransactions}, nil
 }
 func newIdentity() (string, error) {
 	var data [16]byte
@@ -437,7 +445,7 @@ func initialize(ctx context.Context, root *safefs.Root, marker Marker, fault fun
 				return err
 			}
 		}
-		if _, err := db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		if err := checkpointDatabase(ctx, db); err != nil {
 			return ErrStorage
 		}
 		if err := db.Close(); err != nil {
@@ -478,18 +486,13 @@ func (s *Store) InstallationID() string { return s.installationID }
 // Write serializes short durable mutations. Callers must commit before any
 // Docker/RPC/network effect; operations persist their fence within this callback.
 func (s *Store) Write(ctx context.Context, callback func(*sql.Tx) error) error {
-	s.life.RLock()
-	defer s.life.RUnlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return ErrClosed
-	}
-	tx, err := s.writer.BeginTx(ctx, nil)
+	// The writer pool's single connection serializes mutations, including waits
+	// for admission, which must remain cancelable during shutdown.
+	tx, finish, err := s.beginTransaction(ctx, false)
 	if err != nil {
-		return ErrStorage
+		return err
 	}
-	defer tx.Rollback()
+	defer finish()
 	if err := callback(tx); err != nil {
 		return err
 	}
@@ -499,32 +502,14 @@ func (s *Store) Write(ctx context.Context, callback func(*sql.Tx) error) error {
 	return nil
 }
 func (s *Store) Read(ctx context.Context, callback func(*sql.Tx) error) error {
-	s.life.RLock()
-	defer s.life.RUnlock()
-	if s.closed {
-		return ErrClosed
-	}
-	reader := s.reader
-	tx, err := reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, finish, err := s.beginTransaction(ctx, true)
 	if err != nil {
-		return ErrStorage
+		return err
 	}
-	defer tx.Rollback()
+	defer finish()
 	if err := callback(tx); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
-func (s *Store) Close() error {
-	s.life.Lock()
-	defer s.life.Unlock()
-	if s.closed {
-		return nil
-	}
-	s.closed = true
-	err := s.reader.Close()
-	_, checkpointErr := s.writer.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-	return errors.Join(err, checkpointErr, s.writer.Close(), s.root.Close())
-}
-
 func (s *Store) String() string { return fmt.Sprintf("%s/schema%d", Format, SchemaVersion) }
