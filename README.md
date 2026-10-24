@@ -29,6 +29,8 @@ Each Work keeps its own environment and can move between Piwork installations as
 
 [Watch the 70-second demo](https://www.youtube.com/watch?v=ll1MS091gPU): create a content studio, evolve it, and move the whole Work to another installation.
 
+[Watch the English demo: Piwork: One AI Workspace, Five Real Demos](https://www.youtube.com/watch?v=GiSqWeTWNUc).
+
 ![Piwork Desktop workbench](apps/ui-shared/assets/desktop-preview.png)
 
 Conversations, Services, and files in one workbench.

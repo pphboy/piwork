@@ -29,6 +29,8 @@ Piwork 是一个可迁移的 AI 工作空间，将对话、文件和运行中的
 
 [观看 70 秒演示](https://www.youtube.com/watch?v=ll1MS091gPU)：创建内容工作室，持续改进，再将整个 Work 迁移到另一套安装。
 
+[观看英文演示：Piwork: One AI Workspace, Five Real Demos](https://www.youtube.com/watch?v=GiSqWeTWNUc)。
+
 ![Piwork Desktop 工作台](apps/ui-shared/assets/desktop-preview.png)
 
 在同一个工作台中处理对话、Service 和文件。
