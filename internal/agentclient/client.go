@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -31,9 +32,10 @@ var ErrContextIncompatible = fmt.Errorf("agent context contract is incompatible:
 var ErrResponse = errors.New("agent response belongs to another Work")
 
 type Client struct {
-	scope internaltls.Scope
-	conn  *grpc.ClientConn
-	rpc   agentv1.AgentServiceClient
+	scope           internaltls.Scope
+	conn            *grpc.ClientConn
+	rpc             agentv1.AgentServiceClient
+	responseProfile string
 }
 
 // Open binds an AgentService channel to one inspected Docker IP and one
@@ -184,7 +186,7 @@ func (c *Client) ReadSession(ctx context.Context, sessionID string, profiles ...
 		return nil, ErrResponse
 	}
 	for _, run := range response.Runs {
-		if run.WorkId != c.scope.WorkID || run.SessionId != sessionID || !validRunMetadata(run) {
+		if run.WorkId != c.scope.WorkID || run.SessionId != sessionID || !c.validRun(run) {
 			return nil, ErrResponse
 		}
 	}
@@ -233,33 +235,33 @@ func (c *Client) SubmitRun(ctx context.Context, sessionID, key, prompt string, m
 	if len(modes) > 0 {
 		mode = &modes[0]
 	}
-	response, err := c.rpc.SubmitRun(ctx, &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: sessionID, SubmissionKey: key, Prompt: prompt, ModelRef: modelRef, InputMode: mode})
+	response, err := c.rpc.SubmitRun(ctx, &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: sessionID, SubmissionKey: key, Prompt: prompt, ModelRef: modelRef, InputMode: mode, ResponseProfile: c.profile()})
 	if err != nil {
 		return nil, err
 	}
-	if response.GetRun().GetWorkId() != c.scope.WorkID || response.GetRun().GetSessionId() != sessionID || response.GetRun().GetSubmissionKey() != key || !validRunMetadata(response.GetRun()) {
+	if response.GetRun().GetWorkId() != c.scope.WorkID || response.GetRun().GetSessionId() != sessionID || response.GetRun().GetSubmissionKey() != key || !c.validRun(response.GetRun()) {
 		return nil, ErrResponse
 	}
 	return response, nil
 }
 
 func (c *Client) GetRun(ctx context.Context, runID string) (*agentv1.Run, error) {
-	response, err := c.rpc.GetRun(ctx, &agentv1.GetRunRequest{WorkId: c.scope.WorkID, RunId: runID})
+	response, err := c.rpc.GetRun(ctx, &agentv1.GetRunRequest{WorkId: c.scope.WorkID, RunId: runID, ResponseProfile: c.profile()})
 	if err != nil {
 		return nil, err
 	}
-	if response.GetWorkId() != c.scope.WorkID || response.GetRunId() != runID || !validRunMetadata(response) {
+	if response.GetWorkId() != c.scope.WorkID || response.GetRunId() != runID || !c.validRun(response) {
 		return nil, ErrResponse
 	}
 	return response, nil
 }
 
 func (c *Client) CancelRun(ctx context.Context, runID, key string) (*agentv1.Run, error) {
-	response, err := c.rpc.CancelRun(ctx, &agentv1.CancelRunRequest{WorkId: c.scope.WorkID, RunId: runID, IdempotencyKey: key})
+	response, err := c.rpc.CancelRun(ctx, &agentv1.CancelRunRequest{WorkId: c.scope.WorkID, RunId: runID, IdempotencyKey: key, ResponseProfile: c.profile()})
 	if err != nil {
 		return nil, err
 	}
-	if response.GetWorkId() != c.scope.WorkID || response.GetRunId() != runID || !validRunMetadata(response) {
+	if response.GetWorkId() != c.scope.WorkID || response.GetRunId() != runID || !c.validRun(response) {
 		return nil, ErrResponse
 	}
 	return response, nil
@@ -270,7 +272,7 @@ func (c *Client) CancelRun(ctx context.Context, runID, key string) (*agentv1.Run
 func (c *Client) WatchRun(ctx context.Context, runID string, after *uint64, onEvent func(*agentv1.RunEvent) error) error {
 	observer, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stream, err := c.rpc.WatchRun(observer, &agentv1.WatchRunRequest{WorkId: c.scope.WorkID, RunId: runID, AfterSequence: after})
+	stream, err := c.rpc.WatchRun(observer, &agentv1.WatchRunRequest{WorkId: c.scope.WorkID, RunId: runID, AfterSequence: after, ResponseProfile: c.profile()})
 	if err != nil {
 		return err
 	}
@@ -278,9 +280,13 @@ func (c *Client) WatchRun(ctx context.Context, runID string, after *uint64, onEv
 	if after != nil {
 		cursor = *after
 	}
+	var fragmentSequence, fragmentOffset, fragmentTotal uint64
 	for {
 		event, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
+			if fragmentSequence != 0 {
+				return ErrResponse
+			}
 			return nil
 		}
 		if err != nil {
@@ -289,7 +295,40 @@ func (c *Client) WatchRun(ctx context.Context, runID string, after *uint64, onEv
 		if event.GetWorkId() != c.scope.WorkID || event.GetRunId() != runID || event.GetSequence() <= cursor {
 			return ErrResponse
 		}
-		cursor = event.GetSequence()
+		advance := true
+		if c.responseProfile != "" && event.GetText() != nil {
+			text := event.GetText()
+			size := uint64(len(text.Delta))
+			if text.ByteOffset == nil || text.TotalBytes == nil || text.Complete == nil || size > contracts.HistoryFragmentBytes || !utf8.ValidString(text.Delta) || text.GetTotalBytes() > uint64(contracts.MaxSafeInteger) || fragmentSequence != 0 && text.GetTotalBytes() != fragmentTotal || fragmentSequence != 0 && fragmentSequence != event.Sequence || text.GetByteOffset() != fragmentOffset || fragmentOffset+size > text.GetTotalBytes() || text.GetComplete() != (fragmentOffset+size == text.GetTotalBytes()) {
+				return ErrResponse
+			}
+			fragmentSequence = event.Sequence
+			fragmentTotal = text.GetTotalBytes()
+			fragmentOffset += size
+			advance = text.GetComplete()
+			if advance {
+				fragmentSequence = 0
+				fragmentOffset = 0
+			}
+		} else if fragmentSequence != 0 {
+			return ErrResponse
+		}
+		if advance {
+			cursor = event.GetSequence()
+		}
+
+		if c.responseProfile != "" && event.GetState() != nil {
+			state := event.GetState()
+			if state.FinalText != "" || state.ResultRefJson == nil {
+				return ErrResponse
+			}
+			if state.GetResultRefJson() != "null" {
+				ref, err := contracts.Decode[contracts.HistoryResultRef](strings.NewReader(state.GetResultRefJson()), "HistoryResultRefSchema", 8192)
+				if err != nil || string(ref.WorkId) != event.WorkId || string(ref.SessionId) != event.SessionId || string(ref.RunId) != runID {
+					return ErrResponse
+				}
+			}
+		}
 		if tool := event.GetTool(); tool != nil && !publicJSON(tool.GetResultPreviewJson(), "ToolResultPreviewSchema") {
 			return ErrResponse
 		}

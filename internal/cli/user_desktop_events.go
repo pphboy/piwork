@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"piwork/internal/client"
+	"piwork/internal/contracts"
 )
 
 var desktopRunEventsPattern = regexp.MustCompile(`^/_desktop/api/works/([A-Za-z0-9][A-Za-z0-9-]{0,127})/runs/([A-Za-z0-9][A-Za-z0-9-]{0,127})/events$`)
@@ -22,8 +23,17 @@ func (d *nativeDesktop) serveRunEvents(w http.ResponseWriter, r *http.Request) b
 	if parts == nil || r.Method != http.MethodGet {
 		return false
 	}
-	values := r.URL.Query()
-	if len(values) != 1 || len(values["after"]) != 1 || values.Get("after") == "" {
+	values, queryErr := url.ParseQuery(r.URL.RawQuery)
+	modern := false
+	if profile, exists := values["responseProfile"]; exists {
+		if len(profile) != 1 || profile[0] != contracts.HistoryResponseProfile {
+			desktopError(w, 400, "INVALID_CURSOR")
+			return true
+		}
+		modern = true
+		values.Del("responseProfile")
+	}
+	if queryErr != nil || len(values) != 1 || len(values["after"]) != 1 || values.Get("after") == "" {
 		desktopError(w, 400, "INVALID_CURSOR")
 		return true
 	}
@@ -57,7 +67,11 @@ func (d *nativeDesktop) serveRunEvents(w http.ResponseWriter, r *http.Request) b
 	}
 	corePath := "/api/v1/works/" + parts[1] + "/runs/" + parts[2]
 	var run json.RawMessage
-	if err := api.Request(r.Context(), http.MethodGet, corePath, nil, &run); err != nil {
+	precheckPath := corePath
+	if modern {
+		precheckPath = client.HistoryResponsePath(corePath)
+	}
+	if err := api.Request(r.Context(), http.MethodGet, precheckPath, nil, &run); err != nil {
 		var apiErr *client.APIError
 		if errors.As(err, &apiErr) && apiErr.Status == 401 {
 			d.revokeToken(coreURL, token)
@@ -85,7 +99,11 @@ func (d *nativeDesktop) serveRunEvents(w http.ResponseWriter, r *http.Request) b
 			}
 		}
 	}()
-	u := api.Base.ResolveReference(&url.URL{Path: corePath + "/events", RawQuery: "after=" + strconv.FormatUint(after, 10)})
+	eventQuery := url.Values{"after": {strconv.FormatUint(after, 10)}}
+	if modern {
+		eventQuery.Set("responseProfile", contracts.HistoryResponseProfile)
+	}
+	u := api.Base.ResolveReference(&url.URL{Path: corePath + "/events", RawQuery: eventQuery.Encode()})
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		desktopError(w, 503, "RUN_STREAM_UNAVAILABLE")
@@ -138,6 +156,8 @@ func (d *nativeDesktop) serveRunEvents(w http.ResponseWriter, r *http.Request) b
 	w.WriteHeader(200)
 	reader := bufio.NewReader(io.LimitReader(response.Body, (16<<20)+1))
 	var total int64
+	var fragmentSequence uint64
+	var fragmentOffset int64
 	for {
 		line, err := reader.ReadBytes('\n')
 		total += int64(len(line))
@@ -147,6 +167,14 @@ func (d *nativeDesktop) serveRunEvents(w http.ResponseWriter, r *http.Request) b
 		if len(line) > 0 && line[len(line)-1] == '\n' {
 			var event struct {
 				Sequence json.Number `json:"sequence"`
+				Kind     struct {
+					Case string `json:"$case"`
+					Text struct {
+						Delta                  string
+						ByteOffset, TotalBytes json.Number
+						Complete               *bool
+					}
+				} `json:"kind"`
 			}
 			if json.Unmarshal(line, &event) != nil {
 				return true
@@ -155,7 +183,27 @@ func (d *nativeDesktop) serveRunEvents(w http.ResponseWriter, r *http.Request) b
 			if parseErr != nil || sequence <= after {
 				return true
 			}
-			after = sequence
+			advance := true
+			if modern && event.Kind.Case == "text" {
+				frame := event.Kind.Text
+				offset, e1 := frame.ByteOffset.Int64()
+				size, e2 := frame.TotalBytes.Int64()
+				if frame.Complete == nil || e1 != nil || e2 != nil || offset != fragmentOffset || fragmentSequence != 0 && fragmentSequence != sequence || offset+int64(len(frame.Delta)) > size || *frame.Complete != (offset+int64(len(frame.Delta)) == size) {
+					return true
+				}
+				fragmentSequence = sequence
+				fragmentOffset += int64(len(frame.Delta))
+				advance = *frame.Complete
+				if advance {
+					fragmentSequence = 0
+					fragmentOffset = 0
+				}
+			} else if fragmentSequence != 0 {
+				return true
+			}
+			if advance {
+				after = sequence
+			}
 			if _, writeErr := w.Write(line); writeErr != nil {
 				return true
 			}

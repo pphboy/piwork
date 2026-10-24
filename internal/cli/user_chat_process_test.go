@@ -21,6 +21,8 @@ func TestChatNativeInterruptCancelsOnlyOriginalAcceptedRun(t *testing.T) {
 	var submissions, cancellations atomic.Int32
 	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/works/work-1/history-capabilities":
+			http.NotFound(w, r)
 		case "/api/v1/works/work-1/runs":
 			submissions.Add(1)
 			json.NewEncoder(w).Encode(map[string]any{"run": map[string]string{"runId": "run-original"}})

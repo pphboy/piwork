@@ -117,8 +117,14 @@ func (c *Client) request(ctx context.Context, method, path string, input any, ou
 		return nil
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
-	if err != nil || len(raw) > responseLimit {
-		return &APIError{Status: response.StatusCode, Code: "MALFORMED_RESPONSE", Text: "Core returned an oversized or incomplete response"}
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return &APIError{Status: response.StatusCode, Code: "RESPONSE_INCOMPLETE", Text: "Core returned an incomplete response"}
+	}
+	if len(raw) > responseLimit {
+		return &APIError{Status: response.StatusCode, Code: "RESPONSE_TOO_LARGE", Text: "Core returned an oversized response"}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var failure struct{ Code, Message string }

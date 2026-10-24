@@ -267,9 +267,9 @@ func runUserWithDesktop(args []string, stdout, stderr io.Writer, launch func(*cl
 	case "logs":
 		output, err = runUserLogs(ctx, api, command.args[1:], stderr)
 	case "session":
-		output, err = runUserSession(ctx, api, command.args[1:])
+		output, err = runUserSession(ctx, api, command.args[1:], stderr)
 	case "run":
-		output, err = runUserRun(ctx, api, command.args[1:], stdout)
+		output, err = runUserRun(ctx, api, command.args[1:], stdout, stderr)
 	case "chat":
 		output, err = runUserChat(ctx, api, command.args[1:], command.json, stdout, stderr)
 	case "operation":
@@ -359,6 +359,10 @@ func confirmedInvalidLogoutSession(err error) bool {
 }
 
 func encodeUserCommandOutput(stdout, stderr io.Writer, value any, command userCommand) error {
+	if history, ok := value.(*historyOutput); ok {
+		_, err := history.WriteTo(stdout)
+		return err
+	}
 	if !command.json && len(command.args) >= 1 && command.args[0] == "logs" {
 		if object, ok := value.(map[string]any); ok {
 			if text, ok := logExportText(object, command.args[1]); ok {

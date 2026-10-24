@@ -25,7 +25,7 @@ import (
 
 func conversationPath(r *http.Request) (workID, resource, item, action string, matched bool) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/")
-	if len(parts) < 5 || len(parts) > 10 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" && parts[4] != "models" && parts[4] != "agent-requests" && parts[4] != "evidence" && parts[4] != "chat-capabilities" && parts[4] != "chat-models" && parts[4] != "commands" && parts[4] != "chat-image-capabilities" {
+	if len(parts) < 5 || len(parts) > 10 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" && parts[4] != "models" && parts[4] != "agent-requests" && parts[4] != "evidence" && parts[4] != "chat-capabilities" && parts[4] != "chat-models" && parts[4] != "commands" && parts[4] != "chat-image-capabilities" && parts[4] != "history-capabilities" {
 		return "", "", "", "", false
 	}
 	for i := 3; i < len(parts); i++ {
@@ -57,6 +57,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 		return false, nil
 	}
 	valid := (resource == "chat-image-capabilities" && item == "" || resource == "session-images") && r.Method == "GET" || chatControlRoute(r.Method, resource, item, action) || feedbackRoute(r.Method, resource, item, action) || resource == "models" && item == "" && action == "" && r.Method == "GET" || resource == "sessions" && item != "" && action == "model" && r.Method == "PATCH" || action == "" && (resource == "sessions" && (r.Method == "GET" || r.Method == "POST" && item == "") || resource == "runs" && (r.Method == "POST" && item == "" || r.Method == "GET" && item != "")) || resource == "runs" && item != "" && r.Method == "POST" && action == "cancel" || resource == "runs" && item != "" && r.Method == "GET" && action == "events"
+	valid = valid || historyRoute(r.Method, resource, item, action)
 	if !valid {
 		return false, nil
 	}
@@ -90,6 +91,13 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	stopRouteWatch := context.AfterFunc(routeLifetime, cancelRoute)
 	defer stopRouteWatch()
 	r = r.WithContext(routeRequest)
+	if historyRoute(r.Method, resource, item, action) {
+		return true, serveHistoryHTTP(w, r, agent, resource, item)
+	}
+	r, agent, err = conversationProfile(r, agent, resource, item)
+	if err != nil {
+		return true, err
+	}
 	if resource == "chat-image-capabilities" {
 		result, err := agent.ChatImageCapabilities(r.Context())
 		if status.Code(err) == codes.Unimplemented {
@@ -272,6 +280,12 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 		if err != nil {
 			return true, err
 		}
+		if input.ResponseProfile.Present {
+			if _, err := agent.HistoryCapabilities(r.Context()); err != nil {
+				return true, historyCapabilityError(err)
+			}
+			agent = agent.WithHistoryProfile()
+		}
 		var images []chatimages.Input
 		if input.Images.Present {
 			raw, _ := json.Marshal(input.Images.Value)
@@ -392,7 +406,7 @@ func conversationError(err error) error {
 			return contracts.NewError("WORK_BUSY", "")
 		}
 
-		for _, code := range []string{"IMAGE_INVALID", "IMAGE_LIMIT_EXCEEDED", "IMAGE_MODEL_UNSUPPORTED", "IMAGE_MODEL_UNCONFIRMED", "IMAGE_INPUT_UNSUPPORTED", "IMAGE_HISTORY_CORRUPT", "WORK_BUSY", "CHAT_OPTIONS_UNSUPPORTED", "CANCEL_AND_SEND_UNSUPPORTED", "CANCEL_TIMEOUT", "THINKING_LEVEL_UNSUPPORTED", "SLASH_COMMAND_UNKNOWN", "SLASH_COMMAND_UNSUPPORTED", "SLASH_COMMAND_UNAVAILABLE", "MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
+		for _, code := range []string{"HISTORY_UNSUPPORTED", "HISTORY_CURSOR_EXPIRED", "INVALID_HISTORY_CURSOR", "HISTORY_CORRUPT", "RESPONSE_TOO_LARGE", "IMAGE_INVALID", "IMAGE_LIMIT_EXCEEDED", "IMAGE_MODEL_UNSUPPORTED", "IMAGE_MODEL_UNCONFIRMED", "IMAGE_INPUT_UNSUPPORTED", "IMAGE_HISTORY_CORRUPT", "WORK_BUSY", "CHAT_OPTIONS_UNSUPPORTED", "CANCEL_AND_SEND_UNSUPPORTED", "CANCEL_TIMEOUT", "THINKING_LEVEL_UNSUPPORTED", "SLASH_COMMAND_UNKNOWN", "SLASH_COMMAND_UNSUPPORTED", "SLASH_COMMAND_UNAVAILABLE", "MODEL_UNAVAILABLE", "MODEL_NOT_SUPPORTED", "MODEL_LIST_UNAVAILABLE", "RUN_MODEL_SELECTION_UNSUPPORTED", "REQUEST_RETRY_NOT_ALLOWED", "REQUEST_EXPIRED", "REQUEST_CAPACITY_EXCEEDED", "SUBMIT_CONFLICT"} {
 			if strings.HasPrefix(state.Message(), code+":") {
 				return contracts.NewError(code, "")
 			}
@@ -459,17 +473,31 @@ func runView(run *agentv1.Run) any {
 	if failure := run.GetError(); failure != nil {
 		view["error"] = map[string]any{"code": failure.GetCode(), "message": failure.GetMessage(), "retryable": failure.GetRetryable()}
 	}
+	if run.ResultRefJson != nil {
+		delete(view, "finalText")
+		view["resultRef"] = decodePublicProjection(run.GetResultRefJson())
+	}
 	return view
 }
 
 func runEventView(event *agentv1.RunEvent) any {
 	view := map[string]any{"workId": event.GetWorkId(), "sessionId": event.GetSessionId(), "runId": event.GetRunId(), "sequence": strconv.FormatUint(event.GetSequence(), 10), "createdAt": event.GetCreatedAt()}
 	if value := event.GetText(); value != nil {
-		view["kind"] = map[string]any{"$case": "text", "text": map[string]any{"delta": value.GetDelta()}}
+		text := map[string]any{"delta": value.GetDelta()}
+		if value.ByteOffset != nil {
+			text["byteOffset"] = strconv.FormatUint(value.GetByteOffset(), 10)
+			text["totalBytes"] = strconv.FormatUint(value.GetTotalBytes(), 10)
+			text["complete"] = value.GetComplete()
+		}
+		view["kind"] = map[string]any{"$case": "text", "text": text}
 	} else if value := event.GetTool(); value != nil {
 		view["kind"] = map[string]any{"$case": "tool", "tool": map[string]any{"serverId": value.GetServerId(), "toolName": value.GetToolName(), "toolCallId": value.GetToolCallId(), "phase": value.GetPhase(), "isError": value.GetIsError(), "result": decodePublicProjection(value.GetResultPreviewJson())}}
 	} else if value := event.GetState(); value != nil {
 		state := map[string]any{"state": int32(value.GetState()), "finalText": value.GetFinalText()}
+		if value.ResultRefJson != nil {
+			delete(state, "finalText")
+			state["resultRef"] = decodePublicProjection(value.GetResultRefJson())
+		}
 		if failure := value.GetError(); failure != nil {
 			state["error"] = map[string]any{"code": failure.GetCode(), "message": failure.GetMessage(), "retryable": failure.GetRetryable()}
 		}

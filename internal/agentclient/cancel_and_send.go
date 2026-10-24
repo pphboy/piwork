@@ -20,7 +20,7 @@ func (c *Client) GetActiveRun(ctx context.Context, contextID string) (*agentv1.R
 	if version != 1 {
 		return nil, contracts.NewError("CANCEL_AND_SEND_UNSUPPORTED", "")
 	}
-	response, err := c.rpc.GetActiveRun(ctx, &agentv1.GetActiveRunRequest{WorkId: c.scope.WorkID})
+	response, err := c.rpc.GetActiveRun(ctx, &agentv1.GetActiveRunRequest{WorkId: c.scope.WorkID, ResponseProfile: c.profile()})
 	if err != nil {
 		return nil, err
 	}
@@ -28,7 +28,7 @@ func (c *Client) GetActiveRun(ctx context.Context, contextID string) (*agentv1.R
 		return nil, ErrResponse
 	}
 	run := response.GetRun()
-	if run != nil && (run.GetWorkId() != c.scope.WorkID || run.GetRunId() == "" || run.GetSessionId() == "" || run.GetState() < agentv1.RunState_RUN_STATE_ACCEPTED || run.GetState() > agentv1.RunState_RUN_STATE_CANCELLING || !validRunMetadata(run)) {
+	if run != nil && (run.GetWorkId() != c.scope.WorkID || run.GetRunId() == "" || run.GetSessionId() == "" || run.GetState() < agentv1.RunState_RUN_STATE_ACCEPTED || run.GetState() > agentv1.RunState_RUN_STATE_CANCELLING || !c.validRun(run)) {
 		return nil, ErrResponse
 	}
 	return run, nil
@@ -55,7 +55,7 @@ func (c *Client) SubmitRunWithCancel(ctx context.Context, contextID, session, ke
 			return nil, err
 		}
 	}
-	request := &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: session, SubmissionKey: key, Prompt: prompt, ModelRef: model, InputMode: mode, CancelRunId: &cancelRunID}
+	request := &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: session, SubmissionKey: key, Prompt: prompt, ModelRef: model, InputMode: mode, CancelRunId: &cancelRunID, ResponseProfile: c.profile()}
 	for _, image := range images {
 		data, err := base64.StdEncoding.Strict().DecodeString(image.Data)
 		if err != nil {
@@ -67,7 +67,7 @@ func (c *Client) SubmitRunWithCancel(ctx context.Context, contextID, session, ke
 	if err != nil {
 		return nil, err
 	}
-	if response.GetRun().GetWorkId() != c.scope.WorkID || response.GetRun().GetSessionId() != session || response.GetRun().GetSubmissionKey() != key || !validRunMetadata(response.GetRun()) {
+	if response.GetRun().GetWorkId() != c.scope.WorkID || response.GetRun().GetSessionId() != session || response.GetRun().GetSubmissionKey() != key || !c.validRun(response.GetRun()) {
 		return nil, ErrResponse
 	}
 	return response, nil

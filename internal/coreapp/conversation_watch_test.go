@@ -154,3 +154,42 @@ func TestConversationBusyRunIsNotProviderRateLimiting(t *testing.T) {
 		}
 	}
 }
+
+func TestFragmentReplayPreservesBoundedBufferWhileHealthyReaderDrains(t *testing.T) {
+	buffer := newObserverBuffer()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 100; i++ {
+			if err := buffer.pushFragment(ctx, make([]byte, 32768)); err != nil {
+				done <- err
+				return
+			}
+		}
+		buffer.finish(nil)
+		done <- nil
+	}()
+	count := 0
+	for {
+		item, finished, err := buffer.pop()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if item != nil {
+			count++
+			continue
+		}
+		if finished {
+			break
+		}
+		select {
+		case <-buffer.wakeup:
+		case <-time.After(10 * time.Second):
+			t.Fatal("blocked producer")
+		}
+	}
+	if err := <-done; err != nil || count != 100 {
+		t.Fatal(err, count)
+	}
+}

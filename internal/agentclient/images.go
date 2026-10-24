@@ -42,7 +42,7 @@ func (c *Client) SubmitImageRun(ctx context.Context, session, key, prompt string
 		}
 		return nil, err
 	}
-	request := &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: session, SubmissionKey: key, Prompt: prompt, ModelRef: model, InputMode: &mode}
+	request := &agentv1.SubmitRunRequest{WorkId: c.scope.WorkID, SessionId: session, SubmissionKey: key, Prompt: prompt, ModelRef: model, InputMode: &mode, ResponseProfile: c.profile()}
 	for _, image := range images {
 		bytes, err := base64.StdEncoding.Strict().DecodeString(image.Data)
 		if err != nil {
@@ -54,7 +54,7 @@ func (c *Client) SubmitImageRun(ctx context.Context, session, key, prompt string
 	if err != nil {
 		return nil, err
 	}
-	if value.GetRun().GetWorkId() != c.scope.WorkID || value.GetRun().GetSessionId() != session || value.GetRun().GetSubmissionKey() != key || !validRunMetadata(value.GetRun()) {
+	if value.GetRun().GetWorkId() != c.scope.WorkID || value.GetRun().GetSessionId() != session || value.GetRun().GetSubmissionKey() != key || !c.validRun(value.GetRun()) {
 		return nil, ErrResponse
 	}
 	return value, nil

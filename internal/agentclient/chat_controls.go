@@ -27,7 +27,13 @@ func (c *Client) SetSessionChatOptions(ctx context.Context, id string, input con
 	return value, err
 }
 func (c *Client) LookupChatSubmission(ctx context.Context, kind, key string) (*contracts.ChatSubmissionLookup, error) {
-	value, err := contentValue[contracts.ChatSubmissionLookup](ctx, c, c.rpc.LookupChatSubmission, "", map[string]string{"kind": kind, "key": key}, "ChatSubmissionLookupSchema")
+	input := map[string]string{"kind": kind, "key": key}
+	schema := "ChatSubmissionLookupSchema"
+	if c.responseProfile != "" {
+		input["responseProfile"] = c.responseProfile
+		schema = "HistorySubmissionLookupSchema"
+	}
+	value, err := contentValue[contracts.ChatSubmissionLookup](ctx, c, c.rpc.LookupChatSubmission, "", input, schema)
 	if err != nil {
 		return nil, err
 	}

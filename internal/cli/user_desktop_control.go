@@ -220,6 +220,9 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			return desktopControl{}, false, nil
 		}
 	}
+	if plan, handled, err := planDesktopHistory(r, parts); handled || err != nil {
+		return plan, handled, err
+	}
 	feedbackRead := r.Method == http.MethodGet && len(parts) >= 3 && (len(parts) <= 4 || len(parts) == 5 && parts[4] == "retry-submission") && parts[0] == "works" && parts[2] == "agent-requests"
 	imageHistory := r.Method == http.MethodGet && len(parts) == 4 && parts[0] == "works" && parts[2] == "sessions"
 	if r.URL.RawQuery != "" && !feedbackRead && !imageHistory && !(len(parts) == 5 && parts[0] == "works" && parts[2] == "services" && parts[4] == "logs") {
@@ -595,9 +598,15 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 	if parts[2] == "runs" {
 		path := base + "/runs"
 		if len(parts) == 3 && method == http.MethodPost {
-			input, err := desktopControlInputLimit(r, chatimages.MaxRequestBytes, "sessionId", "prompt", "modelRef", "submissionKey", "inputMode", "images", "cancelRunId")
+			input, err := desktopControlInputLimit(r, chatimages.MaxRequestBytes, "sessionId", "prompt", "modelRef", "submissionKey", "inputMode", "images", "cancelRunId", "responseProfile")
 			if err != nil {
 				return desktopControl{}, true, err
+			}
+			if raw, exists := input["responseProfile"]; exists {
+				var value string
+				if json.Unmarshal(raw, &value) != nil || value != contracts.HistoryResponseProfile {
+					return desktopControl{}, true, errors.New("INVALID_INPUT")
+				}
 			}
 			if model, exists := input["modelRef"]; exists {
 				var value any

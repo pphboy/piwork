@@ -34,7 +34,24 @@ func validateUserSession(args []string) error {
 	return errors.New("invalid session command; run piwork-cli --help")
 }
 
-func runUserSession(ctx context.Context, api *client.Client, args []string) (any, error) {
+func userHasHistory(ctx context.Context, api *client.Client, work string, stderr io.Writer) (bool, error) {
+	modern, err := api.HasHistory(ctx, work)
+	if err == nil && !modern {
+		fmt.Fprintln(stderr, "Paged history is unavailable for this Work; legacy history reads have size limits. Update Core and CLI as needed, then explicitly Apply a compatible Work Agent image to enable paged history.")
+	}
+	return modern, err
+}
+
+func runUserSession(ctx context.Context, api *client.Client, args []string, stderr io.Writer) (any, error) {
+	if args[0] == "show" {
+		modern, err := userHasHistory(ctx, api, args[1], stderr)
+		if err != nil {
+			return nil, err
+		}
+		if modern {
+			return buildSessionHistory(ctx, api, args[1], args[2])
+		}
+	}
 	base := "/api/v1/works/" + url.PathEscape(args[1]) + "/sessions"
 	method, path := "GET", base
 	var input any
@@ -50,6 +67,9 @@ func runUserSession(ctx context.Context, api *client.Client, args []string) (any
 	}
 	var result json.RawMessage
 	err := api.Request(ctx, method, path, input, &result)
+	if err != nil && args[0] == "show" {
+		return nil, fmt.Errorf("Session %s/%s could not be read; retry the original session show: %w", args[1], args[2], err)
+	}
 	return result, err
 }
 
@@ -76,12 +96,25 @@ func validateUserRun(args []string) error {
 	return errors.New("invalid run command; run piwork-cli --help")
 }
 
-func runUserRun(ctx context.Context, api *client.Client, args []string, stdout io.Writer) (any, error) {
+func runUserRun(ctx context.Context, api *client.Client, args []string, stdout, stderr io.Writer) (any, error) {
 	base := "/api/v1/works/" + url.PathEscape(args[1]) + "/runs/" + url.PathEscape(args[2])
+	modern, capErr := userHasHistory(ctx, api, args[1], stderr)
+	if capErr != nil {
+		return nil, capErr
+	}
+	profile := func(path string) string {
+		if modern {
+			return client.HistoryResponsePath(path)
+		}
+		return path
+	}
 	switch args[0] {
 	case "show":
 		var result json.RawMessage
-		err := api.Request(ctx, "GET", base, nil, &result)
+		err := api.Request(ctx, "GET", profile(base), nil, &result)
+		if err == nil && modern {
+			return api.CompleteHistoryRun(ctx, result)
+		}
 		return result, err
 	case "cancel":
 		key, err := randomKey()
@@ -89,14 +122,21 @@ func runUserRun(ctx context.Context, api *client.Client, args []string, stdout i
 			return nil, err
 		}
 		var result json.RawMessage
-		err = api.Request(ctx, "POST", base+"/cancel", map[string]string{"idempotencyKey": key}, &result)
+		err = api.Request(ctx, "POST", profile(base+"/cancel"), map[string]string{"idempotencyKey": key}, &result)
+		if err == nil && modern {
+			return api.CompleteHistoryRun(ctx, result)
+		}
 		return result, err
 	case "watch":
 		after := "0"
 		if len(args) == 5 {
 			after = args[4]
 		}
-		err := api.StreamNDJSON(ctx, base+"/events?after="+after, func(event json.RawMessage) error {
+		stream := api.StreamNDJSON
+		if modern {
+			stream = api.StreamHistory
+		}
+		err := stream(ctx, base+"/events?after="+after, func(event json.RawMessage) error {
 			_, err := stdout.Write(append(event, '\n'))
 			return err
 		})
@@ -184,6 +224,16 @@ func runUserChat(ctx context.Context, api *client.Client, args []string, jsonOut
 }
 
 func chatOnce(ctx context.Context, api *client.Client, options chatOptions, jsonOutput bool, stdout, stderr io.Writer) (any, error) {
+	modern, err := userHasHistory(ctx, api, options.workID, stderr)
+	if err != nil {
+		return streamedOutput{}, err
+	}
+	profile := func(path string) string {
+		if modern {
+			return client.HistoryResponsePath(path)
+		}
+		return path
+	}
 	key, err := randomKey()
 	if err != nil {
 		return streamedOutput{}, err
@@ -197,7 +247,11 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 			AdoptedExperienceVersion int64                          `json:"adoptedExperienceVersion"`
 		} `json:"run"`
 	}
-	err = api.Request(ctx, "POST", base, map[string]string{"sessionId": options.session, "submissionKey": key, "prompt": options.message}, &accepted)
+	input := map[string]string{"sessionId": options.session, "submissionKey": key, "prompt": options.message}
+	if modern {
+		input["responseProfile"] = contracts.HistoryResponseProfile
+	}
+	err = api.Request(ctx, "POST", base, input, &accepted)
 	if err != nil {
 		return streamedOutput{}, err
 	}
@@ -210,9 +264,13 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 	}
 	streamPath := base + "/" + url.PathEscape(runID) + "/events?after=0"
 	var cursor uint64
-	err = api.StreamNDJSON(ctx, streamPath, func(event json.RawMessage) error {
+	stream := api.StreamNDJSON
+	if modern {
+		stream = api.StreamHistory
+	}
+	err = stream(ctx, streamPath, func(event json.RawMessage) error {
 		var envelope struct {
-			Sequence uint64 `json:"sequence"`
+			Sequence json.Number `json:"sequence"`
 			Kind     struct {
 				Case string `json:"$case"`
 				Text struct {
@@ -230,8 +288,8 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 			} `json:"kind"`
 		}
 		_ = json.Unmarshal(event, &envelope)
-		if envelope.Sequence > cursor {
-			cursor = envelope.Sequence
+		if sequence, parseErr := envelope.Sequence.Int64(); parseErr == nil && sequence >= 0 && uint64(sequence) > cursor {
+			cursor = uint64(sequence)
 		}
 		if jsonOutput {
 			_, err := stdout.Write(append(event, '\n'))
@@ -255,7 +313,7 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 			cancelContext, stop := context.WithTimeout(context.Background(), 5*time.Second)
 			cancelKey := "cancel-" + key
 			var cancelled json.RawMessage
-			cancelErr := api.Request(cancelContext, "POST", base+"/"+url.PathEscape(runID)+"/cancel", map[string]string{"idempotencyKey": cancelKey}, &cancelled)
+			cancelErr := api.Request(cancelContext, "POST", profile(base+"/"+url.PathEscape(runID)+"/cancel"), map[string]string{"idempotencyKey": cancelKey}, &cancelled)
 			stop()
 			if cancelErr == nil {
 				terminalContext, terminalStop := context.WithTimeout(context.Background(), 30*time.Second)
@@ -264,7 +322,7 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 					var terminal struct {
 						State any `json:"state"`
 					}
-					if pollErr := api.Request(terminalContext, "GET", base+"/"+url.PathEscape(runID), nil, &terminal); pollErr != nil {
+					if pollErr := api.Request(terminalContext, "GET", profile(base+"/"+url.PathEscape(runID)), nil, &terminal); pollErr != nil {
 						break
 					}
 					state := fmt.Sprint(terminal.State)
@@ -296,10 +354,13 @@ func chatOnce(ctx context.Context, api *client.Client, options chatOptions, json
 		State any `json:"state"`
 		Error any `json:"error"`
 	}
-	if err := api.Request(viewContext, "GET", base+"/"+url.PathEscape(runID), nil, &result); err != nil {
+	if err := api.Request(viewContext, "GET", profile(base+"/"+url.PathEscape(runID)), nil, &result); err != nil {
 		return streamedOutput{}, err
 	}
 	state := fmt.Sprint(result.State)
+	if modern && (state == "1" || state == "2" || state == "3" || state == "RUN_STATE_ACCEPTED" || state == "RUN_STATE_RUNNING" || state == "RUN_STATE_CANCELLING") {
+		return streamedOutput{}, &client.APIError{Code: "RESPONSE_INCOMPLETE", Text: "Run " + runID + " is still active; resume the original Run"}
+	}
 	if state == "RUN_STATE_FAILED" || state == "RUN_STATE_CANCELLED" || state == "RUN_STATE_INTERRUPTED" || state == "5" || state == "6" || state == "7" {
 		if jsonOutput {
 			_ = json.NewEncoder(stdout).Encode(map[string]any{"type": "run-terminal", "runId": runID, "state": result.State, "error": result.Error})

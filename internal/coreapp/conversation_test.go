@@ -29,7 +29,7 @@ func TestConversationAccessPrecedesAgentRoute(t *testing.T) {
 	ownerLogin, _ := a.Identity.Login(ctx, "owner", "development-fixture-pass", "fixture")
 	otherLogin, _ := a.Identity.Login(ctx, "other", "development-fixture-pass", "fixture")
 	adminLogin, _ := a.Identity.Login(ctx, "admin", "development-fixture-pass", "fixture")
-	for _, resource := range []string{"sessions", "runs/active", "agent-requests/original/retry-submission?submissionKey=key"} {
+	for _, resource := range []string{"sessions", "runs/active", "history-capabilities", "sessions/session-1/history?direction=older", "sessions/session-1/history?content=result&runId=run-1", "agent-requests/original/retry-submission?submissionKey=key"} {
 		path := "/api/v1/works/work-conversation-1/" + resource
 		if status, body := httpCall(t, base, path, "GET", "Bearer "+otherLogin.Token, nil); status != 404 || body["code"] != "NOT_FOUND" {
 			t.Fatal("foreign Work metadata leaked", status, body)

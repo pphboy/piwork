@@ -22,6 +22,8 @@ func TestChatSubmitsOneRunAndStreamsWithoutResubmission(t *testing.T) {
 			t.Error("missing bearer")
 		}
 		switch r.URL.Path {
+		case "/api/v1/works/work-1/history-capabilities":
+			http.NotFound(w, r)
 		case "/api/v1/works/work-1/sessions":
 			sessions++
 			json.NewEncoder(w).Encode(map[string]string{"sessionId": "session-1"})
@@ -69,6 +71,8 @@ func TestChatInterruptExplicitlyCancelsAcceptedRun(t *testing.T) {
 	var cancellations int
 	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/works/work-1/history-capabilities":
+			http.NotFound(w, r)
 		case "/api/v1/works/work-1/runs":
 			json.NewEncoder(w).Encode(map[string]any{"run": map[string]string{"runId": "run-1"}})
 		case "/api/v1/works/work-1/runs/run-1/events":
@@ -133,6 +137,8 @@ func TestChatDisconnectPreservesRunAndResumesWithoutSubmission(t *testing.T) {
 	submissions, streams := 0, 0
 	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/v1/works/work-1/history-capabilities":
+			http.NotFound(w, r)
 		case "/api/v1/works/work-1/runs":
 			submissions++
 			json.NewEncoder(w).Encode(map[string]any{"run": map[string]string{"runId": "run-recover"}})

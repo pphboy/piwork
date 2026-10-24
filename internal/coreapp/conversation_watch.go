@@ -44,16 +44,41 @@ func serveRunEvents(w http.ResponseWriter, r *http.Request, agent runObserver, r
 // observerBuffer separates one browser's socket pressure from the Agent RPC
 // reader. A slow browser can consume at most one MiB of queued event bytes.
 type observerBuffer struct {
-	mu     sync.Mutex
-	items  [][]byte
-	head   int
-	bytes  int
-	done   bool
-	err    error
-	wakeup chan struct{}
+	mu      sync.Mutex
+	items   [][]byte
+	head    int
+	bytes   int
+	done    bool
+	err     error
+	wakeup  chan struct{}
+	drained chan struct{}
 }
 
-func newObserverBuffer() *observerBuffer { return &observerBuffer{wakeup: make(chan struct{}, 1)} }
+func newObserverBuffer() *observerBuffer {
+	return &observerBuffer{wakeup: make(chan struct{}, 1), drained: make(chan struct{}, 1)}
+}
+
+// Fragmented replay can be produced faster than a healthy HTTP socket drains.
+// Wait for this observer only, with the same finite socket pressure budget.
+func (b *observerBuffer) pushFragment(ctx context.Context, item []byte) error {
+	if len(item)+1 > observerBufferLimit {
+		return errSlowObserver
+	}
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		if err := b.push(item); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return errSlowObserver
+		case <-b.drained:
+		}
+	}
+}
 
 func (b *observerBuffer) signal() {
 	select {
@@ -89,6 +114,10 @@ func (b *observerBuffer) pop() ([]byte, bool, error) {
 		b.items[b.head] = nil
 		b.head++
 		b.bytes -= len(item) + 1
+		select {
+		case b.drained <- struct{}{}:
+		default:
+		}
 		if b.head == len(b.items) {
 			b.items, b.head = nil, 0
 		} else if b.head > 64 && b.head*2 >= len(b.items) {
@@ -109,6 +138,9 @@ func watchRunHTTP(w http.ResponseWriter, r *http.Request, agent runObserver, run
 			raw, err := json.Marshal(runEventView(event))
 			if err != nil {
 				return err
+			}
+			if event.GetText() != nil && event.GetText().ByteOffset != nil || event.GetState() != nil && event.GetState().ResultRefJson != nil {
+				return buffer.pushFragment(observer, raw)
 			}
 			return buffer.push(raw)
 		})
