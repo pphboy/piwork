@@ -2,6 +2,38 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.13",
+      "component": "core",
+      "title": "Piwork 0.0.13 Preview",
+      "publishedAt": "2026-10-24",
+      "sections": [
+        {
+          "title": "Complete history and results for long conversations",
+          "items": [
+            "Read long sessions through bounded history pages and UTF-8 text fragments, including large messages, tool history, image descriptions and more than 1000 Runs, while preserving the original SDK history.",
+            "Keep Run controls and completion events small, and retrieve complete results through the same history channel. CLI session show still emits one complete session/messages/runs JSON value.",
+            "Recover history through the original Run or submission key without another model execution. Report older Agent history limits with an explicit update and Apply direction."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.13",
+      "component": "desktop",
+      "title": "Piwork 0.0.13 Preview",
+      "publishedAt": "2026-10-24",
+      "sections": [
+        {
+          "title": "Load and recover large conversations",
+          "items": [
+            "Open the most recent history first and load earlier messages on demand, preserving the reading position, draft and Activity state.",
+            "Recover large final answers and interrupted history reads through bounded pages, merge text and tool fragments consistently, and show each final answer once.",
+            "Preserve loaded content when a page fails or expires, explain incomplete text and older Agent limits, and keep history reads isolated across accounts, Works and Sessions."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.12",
       "component": "core",
       "title": "Piwork 0.0.12 Preview",
