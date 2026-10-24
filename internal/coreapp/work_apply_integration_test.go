@@ -203,6 +203,12 @@ func nativeApplyFixtureConfig(t *testing.T, mcp bool, models ...RuntimeInput) (*
 	t.Setenv("PATH", filepath.Join(t.TempDir(), "no-host-platform-tools"))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
+	for !a.Status().Ready {
+		if ctx.Err() != nil {
+			t.Fatal("fixture runtime preparation", ctx.Err(), a.Status(), a.Preparation())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	login, err := a.Identity.Login(ctx, "admin", "development-fixture-pass", "apply")
 	if err != nil {
 		t.Fatal(err)

@@ -158,6 +158,9 @@ func (f *brainAcceptance) apply(key string) {
 func (f *brainAcceptance) agentEval(program string) string {
 	f.t.Helper()
 	host := os.Getenv("PIWORK_TEST_DOCKER_HOST")
+	if direct := os.Getenv("PIWORK_TEST_DOCKER_EXEC_HOST"); direct != "" {
+		host = direct
+	}
 	if host == "" {
 		host = "unix:///var/run/docker.sock"
 	}

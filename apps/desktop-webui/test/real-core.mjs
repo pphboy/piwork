@@ -131,7 +131,8 @@ try {
   await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
   await page.screenshot({ path: join(screenshotDir, '01-empty-work-list.png'), fullPage: true });
   const runChatControls=async()=>{const {chatControlsAcceptance}=await import('./chat-controls-real-core.mjs');await chatControlsAcceptance({page,coreUrl,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),repositoryRoot,image,screenshotDir,fixtureRoot:root});};
-  if(process.env.PIWORK_TEST_CHAT_CONTROLS==='only')await runChatControls();
+  if(process.env.PIWORK_TEST_HISTORY==='only'){const {historyAcceptance}=await import('./history-real-core.mjs');await historyAcceptance({page,coreUrl,uiUrl:`http://127.0.0.1:${uiPort}`,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),dataDir});}
+  else if(process.env.PIWORK_TEST_CHAT_CONTROLS==='only')await runChatControls();
   else {
   const lifecycleRequests = [];
   page.on('request', request => { const path = new URL(request.url()).pathname; if (request.method() === 'POST' && (/\/_desktop\/api\/works(?:$|\/[^/]+\/(?:start|stop|retry|delete)$)/).test(path)) lifecycleRequests.push(path); });
