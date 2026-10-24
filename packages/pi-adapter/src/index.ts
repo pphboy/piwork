@@ -20,3 +20,4 @@ export {
 } from "./mcp-bridge.js";
 export { getSupportedThinkingLevels, clampThinkingLevel } from "@earendil-works/pi-ai";
 export { toolResultPreview } from "./tool-preview.js";
+export { SessionHistoryIndex, type IndexedHistorySnapshot, type HistoryEntryLocation } from "./history-index.js";

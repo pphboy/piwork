@@ -58,6 +58,9 @@ import { AgentDaemonControl } from "./daemon.js";
 import { initializeChildAgentDirectory, initializeDefaultChildAgentModel, PiSdkRunExecutor } from "./pi-sdk-executor.js";
 import { RunManager, CancelAndSendError } from "./runs.js";
 import { AgentSessionService } from "./sessions.js";
+import { SessionHistoryReader } from "./session-history.js";
+import { historyRunView } from "./history-projection.js";
+import { historyCapabilities, historyJSON, HistoryError, HISTORY_RESPONSE_PROFILE, HISTORY_LIMITS, type ReadSessionPageRequest, type SessionHistoryPage } from "@piwork/contracts";
 import { loadConfiguredSkills, RequiredSkillError, type ConfiguredSkill } from "./skills.js";
 import { emitAgentDiagnostic } from "./diagnostics.js";
 import { defineTool, type ResourceLoader, type ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -156,6 +159,7 @@ export class AgentApplication {
   private readonly server = new Server({"grpc.max_receive_message_length":CHAT_IMAGE_LIMITS.requestBytes,"grpc.max_send_message_length":6*1024**2});
   private closed = false;
   private readonly installationId: string;
+  private readonly history: SessionHistoryReader;
 
   private constructor(
     readonly config: AgentRuntimeConfig,
@@ -172,6 +176,7 @@ export class AgentApplication {
     private readonly brainFlow?: BrainFlow,
     private readonly brainLoop?: BrainLoop,
   ) {
+    this.history = new SessionHistoryReader(config.workId,store);
     const authority = new X509Certificate(readBoundedRegularFile(config.tls.caCertificatePath));
     const commonName = authority.toLegacyObject().subject.CN;
     if (typeof commonName !== "string" || !/^piwork-installation-[a-zA-Z0-9][a-zA-Z0-9-]{0,127}$/.test(commonName)) {
@@ -399,10 +404,11 @@ export class AgentApplication {
         const input = parseContent(request);
         if (!Check(LookupChatSubmissionSchema, input)) throw Object.assign(new Error("Invalid submission query"), { code: status.INVALID_ARGUMENT });
         const value = input.kind === "session" ? this.store.findSessionSubmission(request.workId, input.key) : this.store.findRunSubmission(request.workId, input.key);
+        const identity={kind:input.kind,key:input.key};
         const result = value ? input.kind === "session"
-          ? { ...input, status: "accepted", session: publicSessionLookup(value as SessionRecord) }
-          : { ...input, status: "accepted", run: publicRunLookup(value as RunRecord) }
-          : { ...input, status: "not-found" };
+          ? { ...identity, status: "accepted", session: publicSessionLookup(value as SessionRecord) }
+          : { ...identity, status: "accepted", run: input.responseProfile ? historyRunView(value as RunRecord) : publicRunLookup(value as RunRecord) }
+          : { ...identity, status: "not-found" };
         return { valueJson: JSON.stringify(result) };
       }),
       setSessionModel: unary(async (request: AgentContentRequest): Promise<Session> => {
@@ -496,6 +502,14 @@ export class AgentApplication {
         this.verifyWork(request.workId);
         return { sessions: this.sessions.list().map(sessionMessage), nextPageToken: "" };
       }),
+      getSessionHistoryCapabilities: unary((request:AgentContentRequest):AgentContentResponse=>{
+        this.verifyWork(request.workId);return {valueJson:JSON.stringify(historyCapabilities())};
+      }),
+      readSessionPage: unary((request:ReadSessionPageRequest):SessionHistoryPage=>{
+        this.verifyWork(request.workId);
+        let query:unknown;try{query=JSON.parse(request.queryJson || "{}");}catch{throw Object.assign(new Error("Invalid history query"),{code:status.INVALID_ARGUMENT});}
+        return {pageJson:historyJSON(this.history.page(request.sessionId,query as import("@piwork/contracts").HistoryQuery))};
+      }),
       readSession: unary((request: ReadSessionRequest): SessionHistory => {
         this.verifyWork(request.workId);
         if(request.imageProfile && request.imageProfile!==CHAT_IMAGE_PROFILE) throw Object.assign(new Error("Unsupported image profile"),{code:status.INVALID_ARGUMENT});
@@ -522,7 +536,7 @@ export class AgentApplication {
             }
             return { entryId: entry.id, role: entry.role, text: entry.text, createdAt: "", runId, blocks: entry.blocks.filter(block=>block.type!=="image" || request.imageProfile===CHAT_IMAGE_PROFILE).map(block => ({ blockId: block.type==="image"?`${runId}-image-${block.image.imageIndex}`:block.blockId, type: block.type, text: block.type === "text" ? block.text : "", toolCallId: block.type === "tool-call" || block.type === "tool-result" ? block.toolCallId : "", toolName: block.type === "tool-call" || block.type === "tool-result" ? block.toolName : "", resultPreviewJson: block.type === "tool-result" ? JSON.stringify(block.result) : "", ...(block.type==="image"?{image:block.image}:{}) })) };
           }),
-          runs: runs.map(runMessage),
+          runs: runs.map(run => runMessage(run)),
         };
       }),
       getChatImageCapabilities: unary(async (request: AgentContentRequest): Promise<AgentContentResponse> => {
@@ -538,6 +552,7 @@ export class AgentApplication {
       }),
       submitRun: unary(async (request: SubmitRunRequest, call): Promise<SubmitRunResponse> => {
         this.verifyWork(request.workId);
+        historyResponseProfile(request.responseProfile);
         if (request.inputMode !== undefined && !Check(ChatInputModeSchema, request.inputMode)) throw Object.assign(new Error("Invalid input mode"), { code: status.INVALID_ARGUMENT });
         const images=(request.images ?? []).map(i=>({mimeType:i.mimeType as ChatImageInput["mimeType"],data:Buffer.from(i.data).toString("base64")}));
         const controller = new AbortController();
@@ -545,18 +560,20 @@ export class AgentApplication {
         if (request.cancelRunId !== undefined) { call.on("cancelled", cancelled); if (call.cancelled) cancelled(); }
         try {
           const result = await this.runs.submitChat({ ...request, images, inputMode: request.inputMode as "text" | "command" | undefined, ...(request.modelRef === "" ? { modelRef: null } : {}), ...(request.cancelRunId === undefined ? {} : { signal: controller.signal }) });
-          return { run: runMessage(result.run), reused: result.reused };
+          return { run: runMessage(result.run,request.responseProfile), reused: result.reused };
         } finally { call.removeListener("cancelled", cancelled); }
       }),
-      getRun: unary((request: GetRunRequest): Run => runMessage(this.requireRun(request.workId, request.runId))),
+      getRun: unary((request: GetRunRequest): Run => {historyResponseProfile(request.responseProfile);return runMessage(this.requireRun(request.workId, request.runId),request.responseProfile);}),
       getActiveRun: unary((request: GetActiveRunRequest): GetActiveRunResponse => {
         this.verifyWork(request.workId);
+        historyResponseProfile(request.responseProfile);
         const run = this.runs.activeRun(request.workId);
-        return { run: run ? runMessage(run) : undefined };
+        return { run: run ? runMessage(run,request.responseProfile) : undefined };
       }),
       cancelRun: unary((request: CancelRunRequest): Run => {
+        historyResponseProfile(request.responseProfile);
         this.requireRun(request.workId, request.runId);
-        return runMessage(this.runs.cancel(request.runId));
+        return runMessage(this.runs.cancel(request.runId),request.responseProfile);
       }),
       watchRun: (call: ServerWritableStream<WatchRunRequest, RunEvent>) => { void this.watch(call); },
     };
@@ -566,12 +583,19 @@ export class AgentApplication {
     try {
       this.authenticate(call);
       this.verifyWork(call.request.workId);
+      historyResponseProfile(call.request.responseProfile);
       let cursor = Number(call.request.afterSequence ?? 0n);
       while (!call.cancelled) {
         for (const event of this.runs.watch(call.request.runId, cursor)) {
           const run = this.requireRun(call.request.workId, call.request.runId);
           cursor = event.sequence;
-          call.write(eventMessage(event, run));
+          for(const frame of historyEventMessages(event,run,call.request.responseProfile)) {
+            if(call.cancelled)return;
+            if(!call.write(frame))await new Promise<void>(resolve=>{
+              const finish=()=>{call.removeListener("drain",finish);call.removeListener("cancelled",finish);resolve();};
+              call.once("drain",finish);call.once("cancelled",finish);
+            });
+          }
         }
         const run = this.requireRun(call.request.workId, call.request.runId);
         if (isTerminal(run) && cursor >= run.latestSequence) break;
@@ -799,7 +823,7 @@ function sessionMessage(value: SessionRecord): Session {
     sourceJson: value.sourceJson ?? "", thinkingUnrequested: preference?.thinkingLevel === null, thinkingLevel: preference?.thinkingLevel ?? "off" };
 }
 
-function runMessage(value: RunRecord): Run {
+function runMessage(value: RunRecord, profile?:string): Run {
   const states: Record<RunRecord["state"], RunState> = {
     accepted: RunState.RUN_STATE_ACCEPTED,
     running: RunState.RUN_STATE_RUNNING,
@@ -812,7 +836,8 @@ function runMessage(value: RunRecord): Run {
   return {
     workId: value.workId, sessionId: value.sessionId, runId: value.runId,
     submissionKey: value.submissionKey, state: states[value.state], promptDigest: value.promptDigest,
-    finalText: value.finalText ?? "", error: value.errorJson === null ? undefined : JSON.parse(value.errorJson),
+    finalText: profile ? "" : value.finalText ?? "", error: value.errorJson === null ? undefined : JSON.parse(value.errorJson),
+    ...(profile?{resultRefJson:JSON.stringify(historyRunView(value).resultRef)}:{}),
     acceptedAt: value.acceptedAt, startedAt: value.startedAt ?? "", finishedAt: value.finishedAt ?? "",
     earliestAvailableSequence: BigInt(value.earliestAvailableSequence), latestSequence: BigInt(value.latestSequence),
     actualModelJson: value.actualModelJson ? JSON.stringify(publicRunModel(JSON.parse(value.actualModelJson) as RunModelSnapshot)) : "",
@@ -853,7 +878,25 @@ function isTerminal(run: RunRecord): boolean {
   return ["succeeded", "failed", "cancelled", "interrupted"].includes(run.state);
 }
 
+function historyResponseProfile(profile?:string):void {
+  if(profile!==undefined&&profile!==HISTORY_RESPONSE_PROFILE)throw Object.assign(new Error("Unsupported response profile"),{code:status.INVALID_ARGUMENT});
+}
+export function* historyEventMessages(value:RunEventRecord,run:RunRecord,profile?:string):Generator<RunEvent> {
+  const event=eventMessage(value,profile?{...run,finalText:null}:run);
+  if(!profile){yield event;return;}
+  if(event.kind?.$case==="state")event.kind.state.resultRefJson=JSON.stringify(historyRunView(run).resultRef);
+  if(event.kind?.$case!=="text"){yield event;return;}
+  const raw=Buffer.from(event.kind.text.delta);
+  for(let offset=0;offset<raw.length||offset===0;){
+    let end=Math.min(raw.length,offset+HISTORY_LIMITS.fragmentBytes);
+    if(end<raw.length)while(end>offset&&(raw[end]!&0xc0)===0x80)end--;
+    yield {...event,kind:{$case:"text",text:{delta:raw.subarray(offset,end).toString("utf8"),byteOffset:BigInt(offset),totalBytes:BigInt(raw.length),complete:end===raw.length}}};
+    if(end===raw.length)break;offset=end;
+  }
+}
+
 function grpcError(error: unknown): Error & { code: number } {
+  if(error instanceof HistoryError)return Object.assign(new Error(`${error.historyCode}: ${error.message}`),{code:error.historyCode==="HISTORY_CURSOR_EXPIRED"?status.OUT_OF_RANGE:error.historyCode==="INVALID_HISTORY_CURSOR"?status.INVALID_ARGUMENT:status.FAILED_PRECONDITION});
   if (error instanceof CancelAndSendError) return Object.assign(new Error(`${error.cancellationCode}: ${error.message}`), { code: error.cancellationCode === "INVALID_REQUEST" ? status.INVALID_ARGUMENT : status.FAILED_PRECONDITION });
   if(error instanceof ChatImageError) return Object.assign(new Error(`${error.code}: ${error.message}`),{code:error.code==="IMAGE_LIMIT_EXCEEDED"?status.RESOURCE_EXHAUSTED:status.FAILED_PRECONDITION});
   if (error instanceof RunModelError) return Object.assign(new Error(`${error.modelErrorCode}: ${error.message}`), { code: status.FAILED_PRECONDITION });

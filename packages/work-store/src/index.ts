@@ -8,6 +8,7 @@ export {
   type AcceptRunRequest,
   type AcceptedRun,
   type RunRecord,
+  type HistoryRunRecord,
   type RunEventRecord,
   type SessionRecord,
 } from "./store.js";

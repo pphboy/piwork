@@ -1,4 +1,4 @@
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { type SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { writeFileSync } from "node:fs";
 import { toolResultPreview, type ToolResultPreview } from "./tool-preview.js";
 import { validateChatImages, type ChatImageInput, type ChatImageDescriptor } from "@piwork/contracts";
@@ -108,7 +108,12 @@ export function readPersistentSession(session: SessionManager): PersistentSessio
   return {
     sessionId: session.getSessionId(),
     historyPath,
-    entries: entries.flatMap((entry): PersistentSessionEntry[] => {
+    entries: entries.flatMap(entry => projectPersistentEntry(entry, runFor(entry.parentId))),
+  };
+}
+
+/** Shared public projection for whole-session compatibility and indexed reads. */
+export function projectPersistentEntry(entry: SessionEntry, runId?: string): PersistentSessionEntry[] {
       if (entry.type !== "message") return [];
       const role = entry.message.role;
       const content = "content" in entry.message ? entry.message.content : undefined;
@@ -132,8 +137,5 @@ export function readPersistentSession(session: SessionManager): PersistentSessio
         : Array.isArray(content)
           ? content.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
           : "";
-      const runId = runFor(entry.parentId);
       return [{ id: entry.id, role, originalText:text, text: role === "toolResult" ? blocks.flatMap(block => block.type === "tool-result" && block.result.kind === "text" ? [block.result.text] : []).join("") : safeText(text), blocks, ...(runId === undefined ? {} : { runId }) }];
-    }),
-  };
 }

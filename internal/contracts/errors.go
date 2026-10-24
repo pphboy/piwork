@@ -24,6 +24,12 @@ type errorDefinition struct {
 }
 
 var publicErrors = map[string]errorDefinition{
+	"HISTORY_UNSUPPORTED":                 {501, "Update the Work Agent and Apply to read paged history", false},
+	"HISTORY_CURSOR_EXPIRED":              {410, "The history snapshot expired; reread the original Session", false},
+	"INVALID_HISTORY_CURSOR":              {400, "The history cursor does not match this request", false},
+	"HISTORY_CORRUPT":                     {502, "Saved conversation history could not be verified", false},
+	"RESPONSE_TOO_LARGE":                  {502, "The upstream response exceeded its declared budget", false},
+	"RESPONSE_INCOMPLETE":                 {502, "The upstream response was incomplete", true},
 	"RELEASE_DEFAULTS_UNAVAILABLE":        {503, "The server release dependencies are unavailable; repair the server release", false},
 	"RETRY_SUBMISSION_LOOKUP_UNSUPPORTED": {501, "Retry submission lookup is not supported", false},
 	"CANCEL_AND_SEND_UNSUPPORTED":         {501, "This Work does not support Stop and send", false},

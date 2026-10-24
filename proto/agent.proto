@@ -10,6 +10,8 @@ service AgentService {
   rpc CreateSession(CreateSessionRequest) returns (Session);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
   rpc ReadSession(ReadSessionRequest) returns (SessionHistory);
+  rpc GetSessionHistoryCapabilities(AgentContentRequest) returns (AgentContentResponse);
+  rpc ReadSessionPage(ReadSessionPageRequest) returns (SessionHistoryPage);
   rpc GetChatImageCapabilities(AgentContentRequest) returns (AgentContentResponse);
   rpc ReadSessionImage(ReadSessionImageRequest) returns (SessionImage);
   rpc SubmitRun(SubmitRunRequest) returns (SubmitRunResponse);
@@ -154,6 +156,15 @@ message ReadSessionRequest {
   optional string image_profile = 3;
 }
 
+// Page JSON is the shared, strictly validated HTTP projection. Keeping one
+// representation also makes its escaped byte budget identical on both hops.
+message ReadSessionPageRequest {
+  string work_id = 1;
+  string session_id = 2;
+  string query_json = 3;
+}
+message SessionHistoryPage { string page_json = 1; }
+
 message ImageInput { string mime_type = 1; bytes data = 2; }
 message ImageDescriptor { string mime_type = 1; uint32 byte_size = 2; string sha256 = 3; uint32 image_index = 4; }
 message ReadSessionImageRequest { string work_id = 1; string session_id = 2; string run_id = 3; uint32 image_index = 4; }
@@ -220,6 +231,7 @@ message Run {
   uint32 adopted_experience_version = 16;
   string thinking_level = 17;
   bool thinking_unrequested = 18;
+  optional string result_ref_json = 19;
 }
 
 message SubmitRunRequest {
@@ -232,6 +244,7 @@ message SubmitRunRequest {
   optional string input_mode = 6;
   repeated ImageInput images = 7;
   optional string cancel_run_id = 8;
+  optional string response_profile = 9;
 }
 
 message SubmitRunResponse {
@@ -242,25 +255,31 @@ message SubmitRunResponse {
 message GetRunRequest {
   string work_id = 1;
   string run_id = 2;
+  optional string response_profile = 3;
 }
 
-message GetActiveRunRequest { string work_id = 1; }
+message GetActiveRunRequest { string work_id = 1; optional string response_profile = 2; }
 message GetActiveRunResponse { Run run = 1; }
 
 message WatchRunRequest {
   string work_id = 1;
   string run_id = 2;
   optional uint64 after_sequence = 3;
+  optional string response_profile = 4;
 }
 
 message CancelRunRequest {
   string work_id = 1;
   string run_id = 2;
   string idempotency_key = 3;
+  optional string response_profile = 4;
 }
 
 message TextEvent {
   string delta = 1;
+  optional uint64 byte_offset = 2;
+  optional uint64 total_bytes = 3;
+  optional bool complete = 4;
 }
 
 message ToolEvent {
@@ -276,6 +295,7 @@ message StateEvent {
   RunState state = 1;
   string final_text = 2;
   RunError error = 3;
+  optional string result_ref_json = 4;
 }
 
 message RunEvent {

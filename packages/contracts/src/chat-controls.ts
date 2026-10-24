@@ -66,6 +66,7 @@ export const RunSubmissionSelectorSchema = Type.Union([
 export const ChatSubmissionKeySchema = Type.String({ minLength: 1, maxLength: 256, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:-]*$" });
 export const LookupChatSubmissionSchema = Type.Object({
   kind: Type.Union([Type.Literal("session"), Type.Literal("run")]), key: ChatSubmissionKeySchema,
+  responseProfile: Type.Optional(Type.Literal("history-v1")),
 }, strict);
 const modelPreference = Type.Object({
   ...RunModelDescriptionSchema.properties,

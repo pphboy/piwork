@@ -16,6 +16,8 @@ import {
   WatchRunRequest,
   ReadSessionRequest,
   SessionContentBlock,
+  ReadSessionPageRequest,
+  SessionHistoryPage,
 } from "./agent.js";
 
 test("incremental image RPC fields preserve bytes and explicit history negotiation",()=>{
@@ -122,7 +124,7 @@ test("generated grpc-js service exposes the durable Agent API", () => {
     "drain",
     "createSession",
     "listSessions",
-    "readSession", "getChatImageCapabilities", "readSessionImage",
+    "readSession", "getSessionHistoryCapabilities", "readSessionPage", "getChatImageCapabilities", "readSessionImage",
     "submitRun",
     "getRun",
     "getActiveRun",

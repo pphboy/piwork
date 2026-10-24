@@ -68,6 +68,12 @@ export interface RunRecord {
   readonly adoptedMemorySelection?: MemorySelection | null;
 }
 
+export interface HistoryRunRecord extends RunRecord { readonly resultBytes: number | null; }
+const historyRunColumns = `work_id,session_id,run_id,submission_key,prompt_digest,state,
+ NULL AS final_text,error_json,accepted_at,started_at,finished_at,earliest_available_sequence,latest_sequence,
+ context_identity,model_selector_json,actual_model_json,source_json,adopted_experience_version,adopted_memory_selection_json,
+ CASE WHEN final_text IS NULL THEN NULL ELSE length(CAST(final_text AS BLOB)) END AS result_bytes`;
+
 export interface AcceptRunRequest {
   readonly privateInputJson?: string;
   readonly workId: string;
@@ -328,6 +334,46 @@ export class WorkStore {
     this.assertOpen();
     const rows = this.database.prepare("SELECT * FROM runs WHERE work_id=? AND session_id=? ORDER BY accepted_at,run_id LIMIT 1000").all(workId, sessionId) as Record<string, string | number | null>[];
     return rows.map(mapRun);
+  }
+
+  /** Stable keyset traversal for history; the limit bounds a batch, not a Session. */
+  historyRuns(workId: string, sessionId: string, after?: { acceptedAt: string; runId: string }, limit = 100): HistoryRunRecord[] {
+    this.assertOpen();
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid history batch");
+    const rows = this.database.prepare(`SELECT ${historyRunColumns} FROM runs WHERE work_id=? AND session_id=?
+      AND (accepted_at > ? OR (accepted_at = ? AND run_id > ?)) ORDER BY accepted_at,run_id LIMIT ?`)
+      .all(workId,sessionId,after?.acceptedAt ?? "",after?.acceptedAt ?? "",after?.runId ?? "",limit) as Record<string,string|number|null>[];
+    return rows.map(row => ({ ...mapRun(row), resultBytes: row.result_bytes === null ? null : Number(row.result_bytes) }));
+  }
+
+  historyRun(workId: string, runId: string): HistoryRunRecord | undefined {
+    this.assertOpen();
+    const row = this.database.prepare(`SELECT ${historyRunColumns} FROM runs WHERE work_id=? AND run_id=?`).get(workId,runId) as Record<string,string|number|null> | undefined;
+    return row ? { ...mapRun(row), resultBytes: row.result_bytes === null ? null : Number(row.result_bytes) } : undefined;
+  }
+
+  historyResult(workId: string, sessionId: string, runId: string, byteOffset: number, bytes: number): Buffer {
+    this.assertOpen();
+    if (!Number.isSafeInteger(byteOffset) || byteOffset < 0 || !Number.isInteger(bytes) || bytes < 1 || bytes > 65536) throw new Error("Invalid result range");
+    const row = this.database.prepare("SELECT substr(CAST(final_text AS BLOB),?,?) AS part FROM runs WHERE work_id=? AND session_id=? AND run_id=?")
+      .get(byteOffset+1,bytes,workId,sessionId,runId);
+    if (!row) throw Object.assign(new Error("Run not found"),{name:"RunNotFoundError"});
+    return row.part instanceof Uint8Array ? Buffer.from(row.part) : Buffer.alloc(0);
+  }
+
+  *historyToolCalls(workId: string, sessionId: string): Generator<{runId:string;callId:string}> {
+    let run = "", sequence = 0;
+    while (true) {
+      const rows = this.database.prepare(`SELECT e.run_id,e.sequence,json_extract(e.payload_json,'$.toolCallId') AS call_id
+        FROM run_events e JOIN runs r ON r.run_id=e.run_id WHERE r.work_id=? AND r.session_id=?
+        AND e.event_type IN ('tool-start','tool-end') AND (e.run_id > ? OR (e.run_id=? AND e.sequence>?))
+        ORDER BY e.run_id,e.sequence LIMIT 500`).all(workId,sessionId,run,run,sequence);
+      if (!rows.length) return;
+      for (const row of rows) {
+        run = String(row.run_id); sequence = Number(row.sequence);
+        if (typeof row.call_id === "string" && row.call_id) yield {runId:run,callId:row.call_id};
+      }
+    }
   }
   getRun(runId: string): RunRecord | undefined {
     this.assertOpen();

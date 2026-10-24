@@ -515,6 +515,48 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "HistoryCapabilitiesSchema":
+				value, err := Decode[HistoryCapabilities](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "HistoryPageSchema":
+				value, err := Decode[HistoryPage](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "HistoryQuerySchema":
+				value, err := Decode[HistoryQuery](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "HistoryResultRefSchema":
+				value, err := Decode[HistoryResultRef](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "HistoryRunSummarySchema":
+				value, err := Decode[HistoryRunSummary](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "HistorySegmentSchema":
+				value, err := Decode[HistorySegment](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "HistorySubmissionLookupSchema":
+				value, err := Decode[HistorySubmissionLookup](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "IdentifierSchema":
 				value, err := Decode[Identifier](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {

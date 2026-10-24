@@ -219,6 +219,20 @@ export interface ReadSessionRequest {
   imageProfile?: string | undefined;
 }
 
+/**
+ * Page JSON is the shared, strictly validated HTTP projection. Keeping one
+ * representation also makes its escaped byte budget identical on both hops.
+ */
+export interface ReadSessionPageRequest {
+  workId: string;
+  sessionId: string;
+  queryJson: string;
+}
+
+export interface SessionHistoryPage {
+  pageJson: string;
+}
+
 export interface ImageInput {
   mimeType: string;
   data: Buffer;
@@ -297,6 +311,7 @@ export interface Run {
   adoptedExperienceVersion: number;
   thinkingLevel: string;
   thinkingUnrequested: boolean;
+  resultRefJson?: string | undefined;
 }
 
 export interface SubmitRunRequest {
@@ -309,6 +324,7 @@ export interface SubmitRunRequest {
   inputMode?: string | undefined;
   images: ImageInput[];
   cancelRunId?: string | undefined;
+  responseProfile?: string | undefined;
 }
 
 export interface SubmitRunResponse {
@@ -319,10 +335,12 @@ export interface SubmitRunResponse {
 export interface GetRunRequest {
   workId: string;
   runId: string;
+  responseProfile?: string | undefined;
 }
 
 export interface GetActiveRunRequest {
   workId: string;
+  responseProfile?: string | undefined;
 }
 
 export interface GetActiveRunResponse {
@@ -333,16 +351,21 @@ export interface WatchRunRequest {
   workId: string;
   runId: string;
   afterSequence?: bigint | undefined;
+  responseProfile?: string | undefined;
 }
 
 export interface CancelRunRequest {
   workId: string;
   runId: string;
   idempotencyKey: string;
+  responseProfile?: string | undefined;
 }
 
 export interface TextEvent {
   delta: string;
+  byteOffset?: bigint | undefined;
+  totalBytes?: bigint | undefined;
+  complete?: boolean | undefined;
 }
 
 export interface ToolEvent {
@@ -358,6 +381,7 @@ export interface StateEvent {
   state: RunState;
   finalText: string;
   error?: RunError | undefined;
+  resultRefJson?: string | undefined;
 }
 
 export interface RunEvent {
@@ -2761,6 +2785,192 @@ export const ReadSessionRequest: MessageFns<ReadSessionRequest> = {
   },
 };
 
+function createBaseReadSessionPageRequest(): ReadSessionPageRequest {
+  return { workId: "", sessionId: "", queryJson: "" };
+}
+
+export const ReadSessionPageRequest: MessageFns<ReadSessionPageRequest> = {
+  encode(message: ReadSessionPageRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.workId !== "") {
+      writer.uint32(10).string(message.workId);
+    }
+    if (message.sessionId !== "") {
+      writer.uint32(18).string(message.sessionId);
+    }
+    if (message.queryJson !== "") {
+      writer.uint32(26).string(message.queryJson);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ReadSessionPageRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseReadSessionPageRequest();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.workId = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.sessionId = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.queryJson = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): ReadSessionPageRequest {
+    return {
+      workId: isSet(object.workId)
+        ? globalThis.String(object.workId)
+        : isSet(object.work_id)
+        ? globalThis.String(object.work_id)
+        : "",
+      sessionId: isSet(object.sessionId)
+        ? globalThis.String(object.sessionId)
+        : isSet(object.session_id)
+        ? globalThis.String(object.session_id)
+        : "",
+      queryJson: isSet(object.queryJson)
+        ? globalThis.String(object.queryJson)
+        : isSet(object.query_json)
+        ? globalThis.String(object.query_json)
+        : "",
+    };
+  },
+
+  toJSON(message: ReadSessionPageRequest): unknown {
+    const obj: any = {};
+    if (message.workId !== "") {
+      obj.workId = message.workId;
+    }
+    if (message.sessionId !== "") {
+      obj.sessionId = message.sessionId;
+    }
+    if (message.queryJson !== "") {
+      obj.queryJson = message.queryJson;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<ReadSessionPageRequest>): ReadSessionPageRequest {
+    return ReadSessionPageRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ReadSessionPageRequest>): ReadSessionPageRequest {
+    const message = createBaseReadSessionPageRequest();
+    message.workId = object.workId ?? "";
+    message.sessionId = object.sessionId ?? "";
+    message.queryJson = object.queryJson ?? "";
+    return message;
+  },
+};
+
+function createBaseSessionHistoryPage(): SessionHistoryPage {
+  return { pageJson: "" };
+}
+
+export const SessionHistoryPage: MessageFns<SessionHistoryPage> = {
+  encode(message: SessionHistoryPage, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.pageJson !== "") {
+      writer.uint32(10).string(message.pageJson);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): SessionHistoryPage {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseSessionHistoryPage();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.pageJson = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): SessionHistoryPage {
+    return {
+      pageJson: isSet(object.pageJson)
+        ? globalThis.String(object.pageJson)
+        : isSet(object.page_json)
+        ? globalThis.String(object.page_json)
+        : "",
+    };
+  },
+
+  toJSON(message: SessionHistoryPage): unknown {
+    const obj: any = {};
+    if (message.pageJson !== "") {
+      obj.pageJson = message.pageJson;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<SessionHistoryPage>): SessionHistoryPage {
+    return SessionHistoryPage.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<SessionHistoryPage>): SessionHistoryPage {
+    const message = createBaseSessionHistoryPage();
+    message.pageJson = object.pageJson ?? "";
+    return message;
+  },
+};
+
 function createBaseImageInput(): ImageInput {
   return { mimeType: "", data: Buffer.alloc(0) };
 }
@@ -3851,6 +4061,7 @@ function createBaseRun(): Run {
     adoptedExperienceVersion: 0,
     thinkingLevel: "",
     thinkingUnrequested: false,
+    resultRefJson: undefined,
   };
 }
 
@@ -3917,6 +4128,9 @@ export const Run: MessageFns<Run> = {
     }
     if (message.thinkingUnrequested !== false) {
       writer.uint32(144).bool(message.thinkingUnrequested);
+    }
+    if (message.resultRefJson !== undefined) {
+      writer.uint32(154).string(message.resultRefJson);
     }
     return writer;
   },
@@ -4078,6 +4292,14 @@ export const Run: MessageFns<Run> = {
             message.thinkingUnrequested = reader.bool();
             continue;
           }
+          case 19: {
+            if (tag !== 154) {
+              break;
+            }
+
+            message.resultRefJson = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -4174,6 +4396,11 @@ export const Run: MessageFns<Run> = {
         : isSet(object.thinking_unrequested)
         ? globalThis.Boolean(object.thinking_unrequested)
         : false,
+      resultRefJson: isSet(object.resultRefJson)
+        ? globalThis.String(object.resultRefJson)
+        : isSet(object.result_ref_json)
+        ? globalThis.String(object.result_ref_json)
+        : undefined,
     };
   },
 
@@ -4233,6 +4460,9 @@ export const Run: MessageFns<Run> = {
     if (message.thinkingUnrequested !== false) {
       obj.thinkingUnrequested = message.thinkingUnrequested;
     }
+    if (message.resultRefJson !== undefined) {
+      obj.resultRefJson = message.resultRefJson;
+    }
     return obj;
   },
 
@@ -4266,6 +4496,7 @@ export const Run: MessageFns<Run> = {
     message.adoptedExperienceVersion = object.adoptedExperienceVersion ?? 0;
     message.thinkingLevel = object.thinkingLevel ?? "";
     message.thinkingUnrequested = object.thinkingUnrequested ?? false;
+    message.resultRefJson = object.resultRefJson ?? undefined;
     return message;
   },
 };
@@ -4280,6 +4511,7 @@ function createBaseSubmitRunRequest(): SubmitRunRequest {
     inputMode: undefined,
     images: [],
     cancelRunId: undefined,
+    responseProfile: undefined,
   };
 }
 
@@ -4308,6 +4540,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     }
     if (message.cancelRunId !== undefined) {
       writer.uint32(66).string(message.cancelRunId);
+    }
+    if (message.responseProfile !== undefined) {
+      writer.uint32(74).string(message.responseProfile);
     }
     return writer;
   },
@@ -4389,6 +4624,14 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
             message.cancelRunId = reader.string();
             continue;
           }
+          case 9: {
+            if (tag !== 74) {
+              break;
+            }
+
+            message.responseProfile = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -4437,6 +4680,11 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
         : isSet(object.cancel_run_id)
         ? globalThis.String(object.cancel_run_id)
         : undefined,
+      responseProfile: isSet(object.responseProfile)
+        ? globalThis.String(object.responseProfile)
+        : isSet(object.response_profile)
+        ? globalThis.String(object.response_profile)
+        : undefined,
     };
   },
 
@@ -4466,6 +4714,9 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     if (message.cancelRunId !== undefined) {
       obj.cancelRunId = message.cancelRunId;
     }
+    if (message.responseProfile !== undefined) {
+      obj.responseProfile = message.responseProfile;
+    }
     return obj;
   },
 
@@ -4482,6 +4733,7 @@ export const SubmitRunRequest: MessageFns<SubmitRunRequest> = {
     message.inputMode = object.inputMode ?? undefined;
     message.images = object.images?.map((e) => ImageInput.fromPartial(e)) || [];
     message.cancelRunId = object.cancelRunId ?? undefined;
+    message.responseProfile = object.responseProfile ?? undefined;
     return message;
   },
 };
@@ -4572,7 +4824,7 @@ export const SubmitRunResponse: MessageFns<SubmitRunResponse> = {
 };
 
 function createBaseGetRunRequest(): GetRunRequest {
-  return { workId: "", runId: "" };
+  return { workId: "", runId: "", responseProfile: undefined };
 }
 
 export const GetRunRequest: MessageFns<GetRunRequest> = {
@@ -4582,6 +4834,9 @@ export const GetRunRequest: MessageFns<GetRunRequest> = {
     }
     if (message.runId !== "") {
       writer.uint32(18).string(message.runId);
+    }
+    if (message.responseProfile !== undefined) {
+      writer.uint32(26).string(message.responseProfile);
     }
     return writer;
   },
@@ -4615,6 +4870,14 @@ export const GetRunRequest: MessageFns<GetRunRequest> = {
             message.runId = reader.string();
             continue;
           }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.responseProfile = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -4639,6 +4902,11 @@ export const GetRunRequest: MessageFns<GetRunRequest> = {
         : isSet(object.run_id)
         ? globalThis.String(object.run_id)
         : "",
+      responseProfile: isSet(object.responseProfile)
+        ? globalThis.String(object.responseProfile)
+        : isSet(object.response_profile)
+        ? globalThis.String(object.response_profile)
+        : undefined,
     };
   },
 
@@ -4650,6 +4918,9 @@ export const GetRunRequest: MessageFns<GetRunRequest> = {
     if (message.runId !== "") {
       obj.runId = message.runId;
     }
+    if (message.responseProfile !== undefined) {
+      obj.responseProfile = message.responseProfile;
+    }
     return obj;
   },
 
@@ -4660,18 +4931,22 @@ export const GetRunRequest: MessageFns<GetRunRequest> = {
     const message = createBaseGetRunRequest();
     message.workId = object.workId ?? "";
     message.runId = object.runId ?? "";
+    message.responseProfile = object.responseProfile ?? undefined;
     return message;
   },
 };
 
 function createBaseGetActiveRunRequest(): GetActiveRunRequest {
-  return { workId: "" };
+  return { workId: "", responseProfile: undefined };
 }
 
 export const GetActiveRunRequest: MessageFns<GetActiveRunRequest> = {
   encode(message: GetActiveRunRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.workId !== "") {
       writer.uint32(10).string(message.workId);
+    }
+    if (message.responseProfile !== undefined) {
+      writer.uint32(18).string(message.responseProfile);
     }
     return writer;
   },
@@ -4697,6 +4972,14 @@ export const GetActiveRunRequest: MessageFns<GetActiveRunRequest> = {
             message.workId = reader.string();
             continue;
           }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.responseProfile = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -4716,6 +4999,11 @@ export const GetActiveRunRequest: MessageFns<GetActiveRunRequest> = {
         : isSet(object.work_id)
         ? globalThis.String(object.work_id)
         : "",
+      responseProfile: isSet(object.responseProfile)
+        ? globalThis.String(object.responseProfile)
+        : isSet(object.response_profile)
+        ? globalThis.String(object.response_profile)
+        : undefined,
     };
   },
 
@@ -4723,6 +5011,9 @@ export const GetActiveRunRequest: MessageFns<GetActiveRunRequest> = {
     const obj: any = {};
     if (message.workId !== "") {
       obj.workId = message.workId;
+    }
+    if (message.responseProfile !== undefined) {
+      obj.responseProfile = message.responseProfile;
     }
     return obj;
   },
@@ -4733,6 +5024,7 @@ export const GetActiveRunRequest: MessageFns<GetActiveRunRequest> = {
   fromPartial(object: DeepPartial<GetActiveRunRequest>): GetActiveRunRequest {
     const message = createBaseGetActiveRunRequest();
     message.workId = object.workId ?? "";
+    message.responseProfile = object.responseProfile ?? undefined;
     return message;
   },
 };
@@ -4805,7 +5097,7 @@ export const GetActiveRunResponse: MessageFns<GetActiveRunResponse> = {
 };
 
 function createBaseWatchRunRequest(): WatchRunRequest {
-  return { workId: "", runId: "", afterSequence: undefined };
+  return { workId: "", runId: "", afterSequence: undefined, responseProfile: undefined };
 }
 
 export const WatchRunRequest: MessageFns<WatchRunRequest> = {
@@ -4821,6 +5113,9 @@ export const WatchRunRequest: MessageFns<WatchRunRequest> = {
         throw new globalThis.Error("value provided for field message.afterSequence of type uint64 too large");
       }
       writer.uint32(24).uint64(message.afterSequence);
+    }
+    if (message.responseProfile !== undefined) {
+      writer.uint32(34).string(message.responseProfile);
     }
     return writer;
   },
@@ -4862,6 +5157,14 @@ export const WatchRunRequest: MessageFns<WatchRunRequest> = {
             message.afterSequence = reader.uint64() as bigint;
             continue;
           }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.responseProfile = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -4891,6 +5194,11 @@ export const WatchRunRequest: MessageFns<WatchRunRequest> = {
         : isSet(object.after_sequence)
         ? BigInt(object.after_sequence)
         : undefined,
+      responseProfile: isSet(object.responseProfile)
+        ? globalThis.String(object.responseProfile)
+        : isSet(object.response_profile)
+        ? globalThis.String(object.response_profile)
+        : undefined,
     };
   },
 
@@ -4905,6 +5213,9 @@ export const WatchRunRequest: MessageFns<WatchRunRequest> = {
     if (message.afterSequence !== undefined) {
       obj.afterSequence = message.afterSequence.toString();
     }
+    if (message.responseProfile !== undefined) {
+      obj.responseProfile = message.responseProfile;
+    }
     return obj;
   },
 
@@ -4918,12 +5229,13 @@ export const WatchRunRequest: MessageFns<WatchRunRequest> = {
     message.afterSequence = (object.afterSequence !== undefined && object.afterSequence !== null)
       ? BigInt(object.afterSequence)
       : undefined;
+    message.responseProfile = object.responseProfile ?? undefined;
     return message;
   },
 };
 
 function createBaseCancelRunRequest(): CancelRunRequest {
-  return { workId: "", runId: "", idempotencyKey: "" };
+  return { workId: "", runId: "", idempotencyKey: "", responseProfile: undefined };
 }
 
 export const CancelRunRequest: MessageFns<CancelRunRequest> = {
@@ -4936,6 +5248,9 @@ export const CancelRunRequest: MessageFns<CancelRunRequest> = {
     }
     if (message.idempotencyKey !== "") {
       writer.uint32(26).string(message.idempotencyKey);
+    }
+    if (message.responseProfile !== undefined) {
+      writer.uint32(34).string(message.responseProfile);
     }
     return writer;
   },
@@ -4977,6 +5292,14 @@ export const CancelRunRequest: MessageFns<CancelRunRequest> = {
             message.idempotencyKey = reader.string();
             continue;
           }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.responseProfile = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -5006,6 +5329,11 @@ export const CancelRunRequest: MessageFns<CancelRunRequest> = {
         : isSet(object.idempotency_key)
         ? globalThis.String(object.idempotency_key)
         : "",
+      responseProfile: isSet(object.responseProfile)
+        ? globalThis.String(object.responseProfile)
+        : isSet(object.response_profile)
+        ? globalThis.String(object.response_profile)
+        : undefined,
     };
   },
 
@@ -5020,6 +5348,9 @@ export const CancelRunRequest: MessageFns<CancelRunRequest> = {
     if (message.idempotencyKey !== "") {
       obj.idempotencyKey = message.idempotencyKey;
     }
+    if (message.responseProfile !== undefined) {
+      obj.responseProfile = message.responseProfile;
+    }
     return obj;
   },
 
@@ -5031,18 +5362,34 @@ export const CancelRunRequest: MessageFns<CancelRunRequest> = {
     message.workId = object.workId ?? "";
     message.runId = object.runId ?? "";
     message.idempotencyKey = object.idempotencyKey ?? "";
+    message.responseProfile = object.responseProfile ?? undefined;
     return message;
   },
 };
 
 function createBaseTextEvent(): TextEvent {
-  return { delta: "" };
+  return { delta: "", byteOffset: undefined, totalBytes: undefined, complete: undefined };
 }
 
 export const TextEvent: MessageFns<TextEvent> = {
   encode(message: TextEvent, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
     if (message.delta !== "") {
       writer.uint32(10).string(message.delta);
+    }
+    if (message.byteOffset !== undefined) {
+      if (BigInt.asUintN(64, message.byteOffset) !== message.byteOffset) {
+        throw new globalThis.Error("value provided for field message.byteOffset of type uint64 too large");
+      }
+      writer.uint32(16).uint64(message.byteOffset);
+    }
+    if (message.totalBytes !== undefined) {
+      if (BigInt.asUintN(64, message.totalBytes) !== message.totalBytes) {
+        throw new globalThis.Error("value provided for field message.totalBytes of type uint64 too large");
+      }
+      writer.uint32(24).uint64(message.totalBytes);
+    }
+    if (message.complete !== undefined) {
+      writer.uint32(32).bool(message.complete);
     }
     return writer;
   },
@@ -5068,6 +5415,30 @@ export const TextEvent: MessageFns<TextEvent> = {
             message.delta = reader.string();
             continue;
           }
+          case 2: {
+            if (tag !== 16) {
+              break;
+            }
+
+            message.byteOffset = reader.uint64() as bigint;
+            continue;
+          }
+          case 3: {
+            if (tag !== 24) {
+              break;
+            }
+
+            message.totalBytes = reader.uint64() as bigint;
+            continue;
+          }
+          case 4: {
+            if (tag !== 32) {
+              break;
+            }
+
+            message.complete = reader.bool();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -5081,13 +5452,35 @@ export const TextEvent: MessageFns<TextEvent> = {
   },
 
   fromJSON(object: any): TextEvent {
-    return { delta: isSet(object.delta) ? globalThis.String(object.delta) : "" };
+    return {
+      delta: isSet(object.delta) ? globalThis.String(object.delta) : "",
+      byteOffset: isSet(object.byteOffset)
+        ? BigInt(object.byteOffset)
+        : isSet(object.byte_offset)
+        ? BigInt(object.byte_offset)
+        : undefined,
+      totalBytes: isSet(object.totalBytes)
+        ? BigInt(object.totalBytes)
+        : isSet(object.total_bytes)
+        ? BigInt(object.total_bytes)
+        : undefined,
+      complete: isSet(object.complete) ? globalThis.Boolean(object.complete) : undefined,
+    };
   },
 
   toJSON(message: TextEvent): unknown {
     const obj: any = {};
     if (message.delta !== "") {
       obj.delta = message.delta;
+    }
+    if (message.byteOffset !== undefined) {
+      obj.byteOffset = message.byteOffset.toString();
+    }
+    if (message.totalBytes !== undefined) {
+      obj.totalBytes = message.totalBytes.toString();
+    }
+    if (message.complete !== undefined) {
+      obj.complete = message.complete;
     }
     return obj;
   },
@@ -5098,6 +5491,13 @@ export const TextEvent: MessageFns<TextEvent> = {
   fromPartial(object: DeepPartial<TextEvent>): TextEvent {
     const message = createBaseTextEvent();
     message.delta = object.delta ?? "";
+    message.byteOffset = (object.byteOffset !== undefined && object.byteOffset !== null)
+      ? BigInt(object.byteOffset)
+      : undefined;
+    message.totalBytes = (object.totalBytes !== undefined && object.totalBytes !== null)
+      ? BigInt(object.totalBytes)
+      : undefined;
+    message.complete = object.complete ?? undefined;
     return message;
   },
 };
@@ -5272,7 +5672,7 @@ export const ToolEvent: MessageFns<ToolEvent> = {
 };
 
 function createBaseStateEvent(): StateEvent {
-  return { state: 0, finalText: "", error: undefined };
+  return { state: 0, finalText: "", error: undefined, resultRefJson: undefined };
 }
 
 export const StateEvent: MessageFns<StateEvent> = {
@@ -5285,6 +5685,9 @@ export const StateEvent: MessageFns<StateEvent> = {
     }
     if (message.error !== undefined) {
       RunError.encode(message.error, writer.uint32(26).fork()).join();
+    }
+    if (message.resultRefJson !== undefined) {
+      writer.uint32(34).string(message.resultRefJson);
     }
     return writer;
   },
@@ -5326,6 +5729,14 @@ export const StateEvent: MessageFns<StateEvent> = {
             message.error = RunError.decode(reader, reader.uint32());
             continue;
           }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.resultRefJson = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -5347,6 +5758,11 @@ export const StateEvent: MessageFns<StateEvent> = {
         ? globalThis.String(object.final_text)
         : "",
       error: isSet(object.error) ? RunError.fromJSON(object.error) : undefined,
+      resultRefJson: isSet(object.resultRefJson)
+        ? globalThis.String(object.resultRefJson)
+        : isSet(object.result_ref_json)
+        ? globalThis.String(object.result_ref_json)
+        : undefined,
     };
   },
 
@@ -5361,6 +5777,9 @@ export const StateEvent: MessageFns<StateEvent> = {
     if (message.error !== undefined) {
       obj.error = RunError.toJSON(message.error);
     }
+    if (message.resultRefJson !== undefined) {
+      obj.resultRefJson = message.resultRefJson;
+    }
     return obj;
   },
 
@@ -5374,6 +5793,7 @@ export const StateEvent: MessageFns<StateEvent> = {
     message.error = (object.error !== undefined && object.error !== null)
       ? RunError.fromPartial(object.error)
       : undefined;
+    message.resultRefJson = object.resultRefJson ?? undefined;
     return message;
   },
 };
@@ -5670,6 +6090,26 @@ export const AgentServiceService = {
     responseSerialize: (value: SessionHistory): Buffer => Buffer.from(SessionHistory.encode(value).finish()),
     responseDeserialize: (value: Buffer): SessionHistory => SessionHistory.decode(value),
   },
+  getSessionHistoryCapabilities: {
+    path: "/piwork.agent.v1.AgentService/GetSessionHistoryCapabilities" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  readSessionPage: {
+    path: "/piwork.agent.v1.AgentService/ReadSessionPage" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: ReadSessionPageRequest): Buffer =>
+      Buffer.from(ReadSessionPageRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): ReadSessionPageRequest => ReadSessionPageRequest.decode(value),
+    responseSerialize: (value: SessionHistoryPage): Buffer => Buffer.from(SessionHistoryPage.encode(value).finish()),
+    responseDeserialize: (value: Buffer): SessionHistoryPage => SessionHistoryPage.decode(value),
+  },
   getChatImageCapabilities: {
     path: "/piwork.agent.v1.AgentService/GetChatImageCapabilities" as const,
     requestStream: false as const,
@@ -5875,6 +6315,8 @@ export interface AgentServiceServer extends UntypedServiceImplementation {
   createSession: handleUnaryCall<CreateSessionRequest, Session>;
   listSessions: handleUnaryCall<ListSessionsRequest, ListSessionsResponse>;
   readSession: handleUnaryCall<ReadSessionRequest, SessionHistory>;
+  getSessionHistoryCapabilities: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  readSessionPage: handleUnaryCall<ReadSessionPageRequest, SessionHistoryPage>;
   getChatImageCapabilities: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   readSessionImage: handleUnaryCall<ReadSessionImageRequest, SessionImage>;
   submitRun: handleUnaryCall<SubmitRunRequest, SubmitRunResponse>;
@@ -6002,6 +6444,36 @@ export interface AgentServiceClient extends Client {
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: SessionHistory) => void,
+  ): ClientUnaryCall;
+  getSessionHistoryCapabilities(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionHistoryCapabilities(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionHistoryCapabilities(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  readSessionPage(
+    request: ReadSessionPageRequest,
+    callback: (error: ServiceError | null, response: SessionHistoryPage) => void,
+  ): ClientUnaryCall;
+  readSessionPage(
+    request: ReadSessionPageRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: SessionHistoryPage) => void,
+  ): ClientUnaryCall;
+  readSessionPage(
+    request: ReadSessionPageRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: SessionHistoryPage) => void,
   ): ClientUnaryCall;
   getChatImageCapabilities(
     request: AgentContentRequest,

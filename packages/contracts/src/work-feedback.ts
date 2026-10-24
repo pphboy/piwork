@@ -37,6 +37,7 @@ export const SubmitRunInputSchema = Type.Object({
   modelRef: Type.Optional(Type.Union([ResourceIdSchema, Type.Null()])),
   inputMode: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("command")])),
   cancelRunId: Type.Optional(IdentifierSchema),
+  responseProfile: Type.Optional(Type.Literal("history-v1")),
 }, strict);
 export const SetSessionModelSchema = Type.Object({
   modelRef: Type.Union([ResourceIdSchema, Type.Null()]),

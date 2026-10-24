@@ -600,6 +600,99 @@ type FileHelperResult struct {
 	Entries int64 `json:"entries"`
 }
 
+type HistoryCapabilities struct {
+	ContractVersion float64 `json:"contractVersion"`
+	Profile         string  `json:"profile"`
+	ResponseProfile string  `json:"responseProfile"`
+	DefaultEntries  float64 `json:"defaultEntries"`
+	MaxEntries      float64 `json:"maxEntries"`
+	PageBytes       float64 `json:"pageBytes"`
+	RpcBytes        float64 `json:"rpcBytes"`
+	FragmentBytes   float64 `json:"fragmentBytes"`
+}
+
+type HistoryPage struct {
+	ContractVersion float64             `json:"contractVersion"`
+	Session         ChatSessionView     `json:"session"`
+	SnapshotId      string              `json:"snapshotId"`
+	Segments        []HistorySegment    `json:"segments"`
+	Runs            []HistoryRunSummary `json:"runs"`
+	NextCursor      json.RawMessage     `json:"nextCursor"`
+	HasMore         bool                `json:"hasMore"`
+}
+
+type HistoryQuery struct {
+	Direction    Field[string]     `json:"direction,omitzero"`
+	Limit        Field[int64]      `json:"limit,omitzero"`
+	Cursor       Field[string]     `json:"cursor,omitzero"`
+	Snapshot     Field[string]     `json:"snapshot,omitzero"`
+	RunId        Field[Identifier] `json:"runId,omitzero"`
+	Content      Field[string]     `json:"content,omitzero"`
+	ImageProfile Field[string]     `json:"imageProfile,omitzero"`
+}
+
+type HistoryResultRef struct {
+	WorkId    Identifier        `json:"workId"`
+	SessionId Identifier        `json:"sessionId"`
+	RunId     Identifier        `json:"runId"`
+	Content   string            `json:"content"`
+	Snapshot  Field[string]     `json:"snapshot,omitzero"`
+	EntryId   Field[Identifier] `json:"entryId,omitzero"`
+	BlockId   Field[Identifier] `json:"blockId,omitzero"`
+}
+
+type HistoryRunSummary struct {
+	WorkId                    Identifier      `json:"workId"`
+	SessionId                 Identifier      `json:"sessionId"`
+	RunId                     Identifier      `json:"runId"`
+	SubmissionKey             string          `json:"submissionKey"`
+	State                     int64           `json:"state"`
+	PromptDigest              string          `json:"promptDigest"`
+	AcceptedAt                Timestamp       `json:"acceptedAt"`
+	StartedAt                 string          `json:"startedAt"`
+	FinishedAt                string          `json:"finishedAt"`
+	EarliestAvailableSequence string          `json:"earliestAvailableSequence"`
+	LatestSequence            string          `json:"latestSequence"`
+	ActualModel               json.RawMessage `json:"actualModel"`
+	ThinkingLevel             ThinkingSetting `json:"thinkingLevel"`
+	Source                    AgentRunSource  `json:"source"`
+	AdoptedExperienceVersion  int64           `json:"adoptedExperienceVersion"`
+	Error                     Field[struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		Retryable bool   `json:"retryable"`
+	}] `json:"error,omitzero"`
+	ResultRef json.RawMessage `json:"resultRef"`
+}
+
+type HistorySegment struct {
+	EntryId    Identifier        `json:"entryId"`
+	EntryOrder WorkByteSize      `json:"entryOrder"`
+	Role       string            `json:"role"`
+	RunId      string            `json:"runId"`
+	BlockId    Identifier        `json:"blockId"`
+	BlockIndex WorkByteSize      `json:"blockIndex"`
+	BlockCount WorkByteSize      `json:"blockCount"`
+	Type       string            `json:"type"`
+	ByteOffset WorkByteSize      `json:"byteOffset"`
+	TotalBytes WorkByteSize      `json:"totalBytes"`
+	Complete   bool              `json:"complete"`
+	Text       string            `json:"text"`
+	ToolCallId Field[Identifier] `json:"toolCallId,omitzero"`
+	ToolName   Field[string]     `json:"toolName,omitzero"`
+	ResultKind Field[string]     `json:"resultKind,omitzero"`
+	Truncated  Field[bool]       `json:"truncated,omitzero"`
+	IsError    Field[bool]       `json:"isError,omitzero"`
+	Image      Field[struct {
+		MimeType   ChatImageMime  `json:"mimeType"`
+		ByteSize   int64          `json:"byteSize"`
+		Sha256     WorkBlobDigest `json:"sha256"`
+		ImageIndex int64          `json:"imageIndex"`
+	}] `json:"image,omitzero"`
+}
+
+type HistorySubmissionLookup = json.RawMessage
+
 type Identifier string
 
 type ImageSelection struct {
@@ -678,8 +771,9 @@ type LogExportWarning struct {
 }
 
 type LookupChatSubmission struct {
-	Kind string            `json:"kind"`
-	Key  ChatSubmissionKey `json:"key"`
+	Kind            string            `json:"kind"`
+	Key             ChatSubmissionKey `json:"key"`
+	ResponseProfile Field[string]     `json:"responseProfile,omitzero"`
 }
 
 type ManagedModelList struct {
@@ -1528,13 +1622,14 @@ type SlashCommand struct {
 type SnapshotIdempotencyKey string
 
 type SubmitRunInput struct {
-	SessionId     Identifier              `json:"sessionId"`
-	SubmissionKey string                  `json:"submissionKey"`
-	Prompt        string                  `json:"prompt"`
-	Images        Field[[]ChatImageInput] `json:"images,omitzero"`
-	ModelRef      Field[json.RawMessage]  `json:"modelRef,omitzero"`
-	InputMode     Field[ChatInputMode]    `json:"inputMode,omitzero"`
-	CancelRunId   Field[Identifier]       `json:"cancelRunId,omitzero"`
+	SessionId       Identifier              `json:"sessionId"`
+	SubmissionKey   string                  `json:"submissionKey"`
+	Prompt          string                  `json:"prompt"`
+	Images          Field[[]ChatImageInput] `json:"images,omitzero"`
+	ModelRef        Field[json.RawMessage]  `json:"modelRef,omitzero"`
+	InputMode       Field[ChatInputMode]    `json:"inputMode,omitzero"`
+	CancelRunId     Field[Identifier]       `json:"cancelRunId,omitzero"`
+	ResponseProfile Field[string]           `json:"responseProfile,omitzero"`
 }
 
 type ThinkingLevel string
