@@ -2178,6 +2178,7 @@ test('Controls timeout preserves draft and late old completion cannot send; unkn
  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('Keep original');await button(page,'send-message').click();await expect(page.locator('#app')).toContainText('your message was not sent');await expect(page.locator('#composer')).toHaveValue('Keep original');
  active=null;await api(page,"await adapter.loadActiveRun('work-1',true)");assert.equal(requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST').length,1);await expect(button(page,'send-message')).toHaveAttribute('aria-label','Send message');
  mode='lost';active=controlRun();await api(page,"await adapter.loadActiveRun('work-1',true)");await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await page.locator('#composer').fill('Next draft');await button(page,'check-chat-submission').click();await expect(page.locator('#composer')).toHaveValue('Next draft');
+ await expect.poll(()=>api(page,"return adapter.getWork('work-1').run?.id")).toBe('recovered-run');
  assert.equal(requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST').length,2);assert.equal(requests.filter(r=>r.path.includes('/runs/submissions/')).length,1);assert.ok(requests.some(r=>r.path.endsWith(`/runs/submissions/${originalKey}`)));
 });
 
@@ -3205,4 +3206,119 @@ test('Focused Chat stays visible during the narrow breakpoint before resize reco
  await expect(page.locator('.work-layout')).not.toHaveClass(/narrow-chat/);
  await page.locator('main').evaluate(node=>node.dataset.layout='service-only');
  await expect(page.locator('.agent-side')).toHaveCSS('display','none');
+});
+
+test('History pages: recent-only opening, earlier anchor, draft and partial Markdown remain safe',async t=>{
+  let pages=0;
+  const segment=(id:string,order:number,text:string,offset=0,total=new TextEncoder().encode(text).length)=>({entryId:id,entryOrder:order,role:'assistant',runId:'',blockId:`${id}-0`,blockIndex:0,blockCount:1,type:'text',text,byteOffset:offset,totalBytes:total,complete:offset+new TextEncoder().encode(text).length===total});
+  const history=(segments:any[],cursor:string|null)=>({contractVersion:1,session:{workId:'work-1',sessionId:'session-1',modelPreference:null,thinkingLevel:'off',source:{kind:'chat'}},snapshotId:'snapshot',segments,runs:[],nextCursor:cursor,hasMore:!!cursor});
+  const {page,requests}=await fixture(t,r=>{
+    if(r.path.endsWith('/history-capabilities'))return{json:{contractVersion:1,profile:'session-history-v1',pageBytes:524288}};
+    if(r.path.endsWith('/history')){pages++;return{json:r.search.includes('cursor=')?history([segment('older',0,'Earlier saved message')],null):history([segment('partial',1,'[unfinished](https://example.test)',3,37),...Array.from({length:30},(_,i)=>segment(`recent-${i}`,i+2,`Recent ${i}\n\n`+'Saved line. '.repeat(20)))],'older')};}
+    return undefined;
+  });
+  await expect(page.locator('[data-action=load-earlier-history]')).toHaveCount(1);
+  assert.ok(pages>=1);assert.equal(requests.some(r=>r.path.endsWith('/history')&&r.search.includes('cursor=')),false);assert.equal(requests.some(r=>r.path.endsWith('/sessions/session-1')),false);const initialPages=pages;
+  await page.locator('#composer').fill('Keep this draft');
+  await page.locator('#messages').evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});
+  await expect(page.locator('#messages a[href="https://example.test"]')).toHaveCount(0);
+  await expect(page.locator('.history-partial').first()).toBeVisible();
+  const anchor=page.locator('[data-message-key]').filter({hasText:'Recent 0'}).first();
+  const before=(await anchor.boundingBox())!.y;
+  await page.locator('[data-action=load-earlier-history]').click();
+  await expect(page.locator('#messages')).toContainText('Earlier saved message');
+  await expect(page.locator('#composer')).toHaveValue('Keep this draft');
+  const after=(await anchor.boundingBox())!.y;assert.ok(Math.abs(after-before)<5,`reading anchor moved ${after-before}`);
+  assert.equal(pages,initialPages+1);
+});
+
+test('History compatibility: old Agent explains update and Apply while preserving messages and draft',async t=>{
+ let fail=false,reads=0;
+ const {page}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{status:501,json:{code:'HISTORY_UNSUPPORTED'}};
+  if(r.path.endsWith('/sessions/session-1')){
+   reads++;return fail?{status:502,json:{code:'RESPONSE_TOO_LARGE',message:'Legacy history is too large'}}:{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:null,source:{kind:'chat'}},messages:[{entryId:'known',role:'assistant',text:'Known saved answer'}],runs:[]}};
+  }
+  return undefined;
+ });
+ await expect(page.locator('#messages')).toContainText('Known saved answer');
+ await expect(page.locator('.agent-panel')).toContainText('Legacy history reads have size limits');
+ await expect(page.locator('.agent-panel')).toContainText('explicitly Apply');
+ await page.locator('#composer').fill('Keep my draft');
+ const before=reads;fail=true;
+ await api(page,`try { await adapter.loadSession('work-1','session-1'); } catch {}`);
+ await expect(page.locator('.agent-panel')).toContainText('Conversation could not be read');
+ await expect(page.locator('#messages')).toContainText('Known saved answer');
+ await expect(page.locator('#composer')).toHaveValue('Keep my draft');
+ assert.equal(reads,before+1);
+});
+
+test('History compatibility: event precheck capacity failure stops reconnecting and keeps the original Run',async t=>{
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{status:501,json:{code:'HISTORY_UNSUPPORTED'}};
+  if(r.path.endsWith('/sessions/session-1'))return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:null,source:{kind:'chat'}},messages:[{role:'assistant',text:'Known saved answer'}],runs:[]}};
+  if(r.path.endsWith('/events'))return{status:503,json:{code:'RESPONSE_TOO_LARGE',message:'Legacy history limit'}};
+  return undefined;
+ });
+ await expect(page.locator('#messages')).toContainText('Known saved answer');
+ await page.locator('#composer').fill('Keep my draft');await page.clock.install();
+ await api(page,`const w=adapter.getWork('work-1');w.run={id:'original-run',sessionId:'session-1',status:'running',cursor:7,created:''};return adapter.resumeRun('work-1');`);
+ await page.clock.runFor(7000);
+ assert.equal(requests.filter(r=>r.path.endsWith('/events')).length,1);
+ assert.equal(requests.filter(r=>r.method==='POST').length,0);
+ const run=await api(page,`return adapter.getWork('work-1').run;`);
+ assert.equal(run.id,'original-run');assert.equal(run.status,'running');assert.equal(run.cursor,7);
+ assert.match(run.error,/Legacy history limit/);assert.match(run.error,/explicitly Apply/);
+ await expect(page.locator('#messages')).toContainText('Known saved answer');
+ await expect(page.locator('#composer')).toHaveValue('Keep my draft');
+});
+
+test('History pages: mixed final result readback preserves complete Markdown and one tool',async t=>{
+ const runId='mixed-run',entryId='mixed-final';
+ const part=(index:number,text:string,type='text')=>({entryId,entryOrder:0,role:'assistant',runId,blockId:`${entryId}-${index}`,blockIndex:index,blockCount:3,type,text,byteOffset:0,totalBytes:new TextEncoder().encode(text).length,complete:true});
+ const first=part(0,'**Before**'),tool={...part(1,'','tool-call'),toolCallId:'call-1',toolName:'read'},last=part(2,'**After**');
+ const ref={workId:'work-1',sessionId:'session-1',runId,content:'result',entryId};
+ const summary={workId:'work-1',sessionId:'session-1',runId,state:6,resultRef:ref};
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{json:{contractVersion:1,profile:'session-history-v1',pageBytes:524288}};
+  if(r.path.endsWith('/history'))return{json:{contractVersion:1,session:{workId:'work-1',sessionId:'session-1',modelPreference:null,thinkingLevel:'off',source:{kind:'chat'}},snapshotId:'snapshot',segments:r.search.includes('content=result')?[first,last]:[first,tool,last],runs:[summary],nextCursor:null,hasMore:false}};
+  return undefined;
+ });
+ await expect(page.locator('.message-text strong')).toHaveCount(2);
+ await page.locator('#composer').fill('Keep my draft');
+ await api(page,`return adapter.loadSavedRun('work-1',{id:'mixed-run',sessionId:'session-1',status:'cancelled',cursor:0,created:'',resultRef:${JSON.stringify(ref)}});`);
+ await expect(page.locator('.history-partial')).toHaveCount(0);
+ await expect(page.locator('.message-text strong')).toHaveCount(2);
+ await expect(page.locator('.tool-event')).toHaveCount(1);
+ await expect(page.locator('#composer')).toHaveValue('Keep my draft');
+ assert.ok(requests.some(r=>r.path.endsWith('/history')&&r.search.includes('content=result')));
+ assert.equal(requests.filter(r=>r.method==='POST').length,0);
+ assert.equal(requests.some(r=>r.path.endsWith('/sessions/session-1')),false);
+});
+
+test('History pages: tool-only cancelled Run recovers its complete empty result without a blank reply',async t=>{
+ const runId='original-run',entryId='sdk-tool',resultId=`${runId}-final`;
+ const basePart={entryOrder:0,role:'assistant',runId,blockIndex:0,blockCount:1,text:'',byteOffset:0,totalBytes:0,complete:true};
+ const tool={...basePart,entryId,blockId:`${entryId}-0`,type:'tool-call',toolCallId:'call-1',toolName:'read'};
+ const result={...basePart,entryId:resultId,entryOrder:1,blockId:`${resultId}-0`,type:'run-result'};
+ const ref={workId:'work-1',sessionId:'session-1',runId,content:'result',entryId:resultId};
+ const summary={workId:'work-1',sessionId:'session-1',runId,state:6,resultRef:ref};
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{json:{contractVersion:1,profile:'session-history-v1',pageBytes:524288}};
+  if(r.path.endsWith('/history'))return{json:{contractVersion:1,session:{workId:'work-1',sessionId:'session-1',modelPreference:null,thinkingLevel:'off',source:{kind:'chat'}},snapshotId:'snapshot',segments:r.search.includes('content=result')?[result]:[tool,result],runs:[summary],nextCursor:null,hasMore:false}};
+  if(r.path.endsWith('/events'))return{status:410,json:{code:'CURSOR_EXPIRED'}};
+  if(r.path.endsWith('/runs/original-run'))return{json:summary};
+  return undefined;
+ });
+ await expect(page.locator('.tool-event')).toHaveCount(1);await page.locator('#composer').fill('Keep my draft');
+ await page.clock.install();await beginExpiredRun(page);await page.clock.runFor(7000);
+ const run=await api(page,`return adapter.getWork('work-1').run;`);
+ assert.equal(run.status,'cancelled');assert.equal(run.error,undefined);
+ assert.equal(await api(page,`return adapter.readRunResult('work-1',adapter.getWork('work-1').run);`),'');
+ await expect(page.locator('.history-partial')).toHaveCount(0);
+ await expect(page.locator('.tool-event')).toHaveCount(1);await expect(page.locator('.message.assistant')).toHaveCount(0);
+ await expect(page.locator('#composer')).toHaveValue('Keep my draft');
+ assert.equal(requests.filter(r=>r.path.endsWith('/events')).length,1);
+ assert.equal(requests.some(r=>r.path.endsWith('/sessions/session-1')),false);
+ assert.equal(requests.filter(r=>r.method==='POST').length,0);
 });

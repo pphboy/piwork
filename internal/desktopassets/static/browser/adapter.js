@@ -1,5 +1,6 @@
 import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { historyMessages, resultText, upsertTool } from './chat-projection.js';
+import { HistoryProjection } from './history-projection.js';
 import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
@@ -51,6 +52,203 @@ function mapService(raw) {
     return { id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState), ports: (raw.access?.ports ?? []).filter((p) => /^https?:/.test(p.url ?? '')).sort((a, b) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p) => p.port), error: serviceErrorText(raw.lastError), diagnostic: serviceDiagnostic(raw.lastError) };
 }
 export class DesktopAdapter {
+    historySupport = new Map();
+    historyProjections = new Map();
+    historyControllers = new Set();
+    historyReads = new Map();
+    fullHistoryRuns = new Set();
+    historyEventParts = new Map();
+    historyProjection(id, session) { const key = `${id}:${session}`; let value = this.historyProjections.get(key); if (!value) {
+        value = new HistoryProjection();
+        this.historyProjections.set(key, value);
+    } return value; }
+    historyNotice(id) {
+        return this.historySupport.get(id) === false ? 'Paged history is unavailable for this Work. Legacy history reads have size limits. Update Core and the Work Agent image as needed, then explicitly Apply the compatible Agent image to enable paged history.' : '';
+    }
+    legacyHistoryLimit(id, error) {
+        return this.historySupport.get(id) === false && error instanceof DesktopError && ['RESPONSE_TOO_LARGE', 'RATE_LIMITED', 'HISTORY_UNSUPPORTED'].includes(error.code);
+    }
+    async supportsHistory(id) {
+        if (this.historySupport.get(id))
+            return true;
+        const epoch = this.epoch;
+        try {
+            const value = await this.request(`works/${part(id)}/history-capabilities`);
+            if (epoch !== this.epoch)
+                return false;
+            if (value.contractVersion !== 1 || value.profile !== 'session-history-v1' || value.pageBytes !== 524288)
+                throw new DesktopError('INVALID_RESPONSE', 'History capabilities are incomplete.');
+            this.historySupport.set(id, true);
+            return true;
+        }
+        catch (error) {
+            if (epoch === this.epoch && [404, 501].includes(error.httpStatus ?? 0)) {
+                this.historySupport.set(id, false);
+                return false;
+            }
+            throw error;
+        }
+    }
+    cancelHistoryReads() { for (const controller of this.historyControllers)
+        controller.abort(); this.historyControllers.clear(); this.historyReads.clear(); }
+    async historyPage(id, sessionId, query, signal) {
+        const value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}/history?${query}`, 'GET', undefined, signal);
+        if (value.contractVersion !== 1 || value.session?.workId !== id || value.session?.sessionId !== sessionId || typeof value.snapshotId !== 'string' || !Array.isArray(value.segments) || !Array.isArray(value.runs) || value.hasMore !== (typeof value.nextCursor === 'string' && !!value.nextCursor))
+            throw new DesktopError('INVALID_RESPONSE', 'History page does not match this conversation.');
+        if (query.has('snapshot') && query.get('snapshot') !== value.snapshotId || query.has('cursor') && query.get('cursor') === value.nextCursor)
+            throw new DesktopError('INVALID_RESPONSE', 'History range did not advance within the requested snapshot.');
+        return value;
+    }
+    async loadEarlierHistory(id, sessionId, reload = false) { const work = this.getWork(id); if (!work || !this.project(work).usable)
+        throw new DesktopError('WORK_UNAVAILABLE', 'Start the Work explicitly before reading more history.'); return this.loadPagedSession(id, sessionId, !reload); }
+    loadPagedSession(id, sessionId, earlier = false) {
+        const key = `${id}:${sessionId}:${earlier}`, pending = this.historyReads.get(key);
+        if (pending)
+            return pending;
+        const promise = (async () => {
+            const epoch = this.epoch, version = this.sessionVersions.get(id) || 0, session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+            if (!session)
+                return {};
+            const state = session.history ??= { loading: false, error: '', cursor: null, snapshot: '', hasMore: false };
+            if (earlier && (!state.cursor || state.expired))
+                return {};
+            const controller = new AbortController();
+            this.historyControllers.add(controller);
+            state.loading = true;
+            state.error = '';
+            if (!earlier) {
+                session.loading = true;
+                session.error = '';
+            }
+            this.emit();
+            try {
+                await this.loadImageCapabilities(id);
+                if (epoch !== this.epoch || controller.signal.aborted)
+                    return {};
+                const profile = !!this.imageCapabilities.get(id)?.value, query = new URLSearchParams({ direction: 'older', ...(profile ? { imageProfile: 'chat-images-v1' } : {}), ...(earlier ? { cursor: state.cursor } : {}) });
+                const page = await this.historyPage(id, sessionId, query, controller.signal);
+                if (epoch !== this.epoch || controller.signal.aborted || this.getWork(id)?.sessions.find(s => s.id === sessionId) !== session)
+                    return {};
+                const projection = this.historyProjection(id, sessionId);
+                projection.merge(page);
+                const runs = page.runs.map(run => this.runRecord(run, sessionId));
+                session.runs = [...(session.runs ?? []).filter(run => !runs.some(next => next.id === run.id)), ...runs];
+                this.confirmSessionModel(id, session, page.session, version);
+                session.imageProfile = profile;
+                const active = runs.find(run => ['accepted', 'running', 'cancelling'].includes(run.status)), work = this.getWork(id);
+                const restore = active && (!work.run || !['accepted', 'running', 'cancelling'].includes(work.run.status));
+                if (restore) {
+                    work.run = active;
+                    projection.suppress(active.id);
+                }
+                session.messages = projection.project(session.messages);
+                session.checkedAt = new Date().toISOString();
+                Object.assign(state, { cursor: page.nextCursor, snapshot: page.snapshotId, hasMore: page.hasMore, expired: false, error: '' });
+                if (restore)
+                    void this.resumeRun(id);
+                return page;
+            }
+            catch (error) {
+                if (epoch !== this.epoch || controller.signal.aborted)
+                    return {};
+                state.error = errorText(error);
+                state.expired = error.code === 'HISTORY_CURSOR_EXPIRED';
+                if (!earlier)
+                    session.error = errorText(error);
+                throw error;
+            }
+            finally {
+                this.historyControllers.delete(controller);
+                if (epoch === this.epoch) {
+                    state.loading = false;
+                    session.loading = false;
+                    this.emit();
+                }
+            }
+        })().finally(() => { if (this.historyReads.get(key) === promise)
+            this.historyReads.delete(key); });
+        this.historyReads.set(key, promise);
+        return promise;
+    }
+    async readRunResult(id, run, signal) {
+        if (!run.resultRef)
+            return '';
+        if (run.resultRef.workId !== id || run.resultRef.sessionId !== run.sessionId || run.resultRef.runId !== run.id)
+            throw new DesktopError('INVALID_RESPONSE', 'Result reference does not match the original Run.');
+        const query = new URLSearchParams({ direction: 'newer', content: 'result', runId: run.id, ...(run.resultRef.snapshot ? { snapshot: run.resultRef.snapshot } : {}) });
+        let cursor = null, block = '', offset = 0, complete = false;
+        const text = [];
+        do {
+            if (cursor)
+                query.set('cursor', cursor);
+            const page = await this.historyPage(id, run.sessionId, query, signal);
+            if (!query.has('snapshot'))
+                query.set('snapshot', page.snapshotId);
+            for (const part of page.segments) {
+                if (part.runId !== run.id || !['text', 'run-result'].includes(part.type) || part.blockId !== block && block && !complete)
+                    throw new DesktopError('INVALID_RESPONSE', 'Result contains conflicting ranges.');
+                if (part.blockId !== block) {
+                    block = part.blockId;
+                    offset = 0;
+                }
+                if (part.byteOffset !== offset)
+                    throw new DesktopError('RESPONSE_INCOMPLETE', 'Result contains a missing range.');
+                text.push(part.text);
+                offset += new TextEncoder().encode(part.text).length;
+                complete = part.complete;
+            }
+            if (page.nextCursor === cursor && cursor)
+                throw new DesktopError('INVALID_RESPONSE', 'Result cursor did not advance.');
+            cursor = page.nextCursor;
+        } while (cursor);
+        if (!block || !complete)
+            throw new DesktopError('RESPONSE_INCOMPLETE', 'The saved result is incomplete.');
+        return text.join('');
+    }
+    async loadSavedRun(id, run, signal) {
+        const epoch = this.epoch, session = this.getWork(id)?.sessions.find(s => s.id === run.sessionId);
+        if (!session)
+            return;
+        const projection = this.historyProjection(id, run.sessionId), runKey = `${id}:${run.id}`, profile = !!this.imageCapabilities.get(id)?.value || !!session.imageProfile;
+        const query = new URLSearchParams({ direction: 'older', runId: run.id, ...(profile ? { imageProfile: 'chat-images-v1' } : {}) });
+        let cursor = null;
+        do {
+            if (cursor)
+                query.set('cursor', cursor);
+            const page = await this.historyPage(id, run.sessionId, query, signal);
+            if (epoch !== this.epoch || signal?.aborted)
+                return;
+            const covered = this.fullHistoryRuns.has(runKey) && page.segments.every((segment) => projection.covers(segment));
+            projection.merge(page);
+            cursor = page.nextCursor;
+            if (covered)
+                break;
+        } while (cursor);
+        this.fullHistoryRuns.add(runKey);
+        projection.reveal(run.id);
+        if (run.resultRef) {
+            const resultQuery = new URLSearchParams({ direction: 'newer', content: 'result', runId: run.id, ...(run.resultRef.snapshot ? { snapshot: run.resultRef.snapshot } : {}) });
+            cursor = null;
+            do {
+                if (cursor)
+                    resultQuery.set('cursor', cursor);
+                const page = await this.historyPage(id, run.sessionId, resultQuery, signal);
+                if (epoch !== this.epoch || signal?.aborted)
+                    return;
+                projection.merge(page);
+                cursor = page.nextCursor;
+            } while (cursor);
+        }
+        if (epoch !== this.epoch || signal?.aborted)
+            return;
+        session.messages = projection.project(session.messages, new Set(['accepted', 'running', 'cancelling'].includes(run.status) ? [] : [run.id]));
+        if (!['accepted', 'running', 'cancelling'].includes(run.status))
+            for (const key of this.historyEventParts.keys())
+                if (key.startsWith(`${id}:${run.id}:`))
+                    this.historyEventParts.delete(key);
+        session.checkedAt = new Date().toISOString();
+        this.emit();
+    }
     hosted = typeof document !== 'undefined' && document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted';
     about = { local: null, core: null, localError: '', coreError: '', localLoading: false, coreLoading: false, coreChecked: '' };
     loadAbout() {
@@ -216,7 +414,8 @@ export class DesktopAdapter {
     pairSaves = new Map();
     chatSelection = '';
     sessionVersions = new Map();
-    activateChat(id, sessionId) { this.chatSelection = `${id}:${sessionId}`; }
+    activateChat(id, sessionId) { const key = `${id}:${sessionId}`; if (this.chatSelection && this.chatSelection !== key)
+        this.cancelHistoryReads(); this.chatSelection = key; }
     status = {};
     inspection = null;
     inspectionTransfer = '';
@@ -600,6 +799,11 @@ export class DesktopAdapter {
         this.stopLogExportPolling();
         this.logExport = null;
         Object.assign(this.about, { core: null, coreError: '', coreLoading: false, coreChecked: '' });
+        this.cancelHistoryReads();
+        this.historySupport.clear();
+        this.historyProjections.clear();
+        this.fullHistoryRuns.clear();
+        this.historyEventParts.clear();
         this.stopImageReads();
         for (const value of this.imageLoads.values())
             if (value.url)
@@ -664,6 +868,13 @@ export class DesktopAdapter {
         this.pausedOperations.clear();
     }
     request(path, method = 'GET', body, signal) {
+        const runPath = /^works\/([^/]+)\/runs(?:\/|$|\?)/.exec(path), lookup = /^works\/([^/]+)\/(?:runs|sessions)\/submissions\//.exec(path), target = runPath ?? lookup;
+        if (target && this.historySupport.get(decodeURIComponent(target[1]))) {
+            if (method === 'POST' && /^works\/[^/]+\/runs$/.test(path))
+                body = { ...body, responseProfile: 'history-v1' };
+            else if (!/[?&]responseProfile=/.test(path))
+                path += (path.includes('?') ? '&' : '?') + 'responseProfile=history-v1';
+        }
         if (method !== 'GET' || signal)
             return this.requestOnce(path, method, body, signal);
         const key = `${this.epoch}:${path === 'session' ? `${this.authSequence}:` : ''}${path}`;
@@ -726,6 +937,10 @@ export class DesktopAdapter {
         this.associateOperations(work);
         if (!this.project(work).retainWorkspace)
             this.revokeWorkEntries(work.id);
+        if (old && !this.project(work).usable) {
+            this.cancelHistoryReads();
+            this.historySupport.delete(work.id);
+        }
         return work;
     }
     async requestOnce(path, method = 'GET', body, signal, headers = {}) {
@@ -1333,12 +1548,21 @@ export class DesktopAdapter {
         }
     }
     async loadRunDetails(id, runId, explicit = true) {
-        const epoch = this.epoch, { value } = await this.readMetadata(`works/${part(id)}/runs/${part(runId)}`, explicit), raw = value.run ?? value;
+        const epoch = this.epoch;
+        await this.supportsHistory(id);
+        if (epoch !== this.epoch)
+            return;
+        const { value } = await this.readMetadata(`works/${part(id)}/runs/${part(runId)}`, explicit), raw = value.run ?? value;
         if (raw.runId !== runId || raw.workId !== id || !raw.sessionId)
             throw new DesktopError('INVALID_RESPONSE', 'Run details do not match the original Run.');
         if (epoch !== this.epoch)
             return;
         const run = this.runRecord(raw, raw.sessionId);
+        if (run.resultRef) {
+            run.finalText = await this.readRunResult(id, run);
+            if (epoch !== this.epoch)
+                return;
+        }
         this.runDetails.set(`${id}:${runId}`, run);
         this.emit();
         return run;
@@ -1571,7 +1795,7 @@ export class DesktopAdapter {
             throw error;
         }
     }
-    runRecord(raw, sessionId) { return { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, created: raw.acceptedAt ?? '', finished: raw.finishedAt, finalText: raw.finalText, error: raw.error?.message, executionError: raw.error?.message, actualModel: raw.actualModel ?? null, thinkingLevel: raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel, source: raw.source, adoptedExperienceVersion: raw.adoptedExperienceVersion }; }
+    runRecord(raw, sessionId) { return { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, resultRef: raw.resultRef, created: raw.acceptedAt ?? '', finished: raw.finishedAt, finalText: raw.finalText, error: raw.error?.message, executionError: raw.error?.message, actualModel: raw.actualModel ?? null, thinkingLevel: raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel, source: raw.source, adoptedExperienceVersion: raw.adoptedExperienceVersion }; }
     modelSelection(id, sessionId) {
         const key = `${id}:${sessionId}`;
         let state = this.modelSelections.get(key);
@@ -1792,7 +2016,7 @@ export class DesktopAdapter {
             }
         }
         else {
-            const raw = await this.request(`works/${part(id)}/sessions/${part(sessionId)}`);
+            const raw = await this.supportsHistory(id) ? await this.historyPage(id, sessionId, new URLSearchParams({ limit: '1' })) : await this.request(`works/${part(id)}/sessions/${part(sessionId)}`);
             if (epoch !== this.epoch)
                 return;
             state.phase = 'clean';
@@ -1833,7 +2057,11 @@ export class DesktopAdapter {
                 throw new DesktopError('INVALID_RESPONSE', 'Session listing is incomplete.');
             (work.resourceChecked ??= {}).agent = new Date().toISOString();
             const existing = new Map(work.sessions.map(session => [session.id, session]));
-            work.sessions = value.sessions.map((raw) => ({ id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: existing.get(raw.sessionId)?.messages ?? [], checkedAt: existing.get(raw.sessionId)?.checkedAt, imageProfile: existing.get(raw.sessionId)?.imageProfile, error: existing.get(raw.sessionId)?.error, modelPreference: raw.modelPreference ?? null, thinkingLevel: raw.thinkingLevel === undefined ? 'off' : raw.thinkingLevel, source: raw.source, runs: existing.get(raw.sessionId)?.runs ?? [] }));
+            work.sessions = value.sessions.map((raw) => { const saved = existing.get(raw.sessionId), session = saved ?? { id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: [], runs: [] }; session.title = raw.title ?? `Session ${raw.sessionId}`; if (!saved || version === (this.sessionVersions.get(id) || 0)) {
+                session.modelPreference = raw.modelPreference ?? null;
+                session.thinkingLevel = raw.thinkingLevel === undefined ? 'off' : raw.thinkingLevel;
+                session.source = raw.source;
+            } return session; });
             if (version !== (this.sessionVersions.get(id) || 0))
                 for (const previous of existing.values()) {
                     const current = work.sessions.find(s => s.id === previous.id);
@@ -1860,6 +2088,41 @@ export class DesktopAdapter {
         }
     }
     async loadSession(id, sessionId) {
+        const work = this.getWork(id);
+        if (work?.run?.sessionId === sessionId && ['accepted', 'running', 'cancelling'].includes(work.run.status) && this.streams.has(id))
+            return;
+        const epoch = this.epoch, target = work?.sessions.find(s => s.id === sessionId);
+        if (!target)
+            return;
+        target.loading = true;
+        target.error = '';
+        this.emit();
+        try {
+            const supported = await this.supportsHistory(id);
+            if (epoch !== this.epoch)
+                return;
+            if (supported) {
+                await this.loadPagedSession(id, sessionId);
+                if (epoch === this.epoch)
+                    await this.readSessionOptions(id, sessionId);
+                return;
+            }
+            return await this.loadLegacySession(id, sessionId);
+        }
+        catch (error) {
+            if (epoch !== this.epoch)
+                return;
+            target.error = errorText(error);
+            throw error;
+        }
+        finally {
+            if (epoch === this.epoch) {
+                target.loading = false;
+                this.emit();
+            }
+        }
+    }
+    async loadLegacySession(id, sessionId) {
         const work = this.getWork(id);
         if (work?.run?.sessionId === sessionId && ['accepted', 'running', 'cancelling'].includes(work.run.status) && this.streams.has(id))
             return;
@@ -2425,6 +2688,11 @@ export class DesktopAdapter {
         const intent = this.chatSubmissions.get(id);
         if (!intent)
             return;
+        const epoch = this.epoch;
+        if (intent.kind === 'run')
+            await this.supportsHistory(id);
+        if (epoch !== this.epoch || this.chatSubmissions.get(id) !== intent)
+            return;
         const value = await this.request(`works/${part(id)}/${intent.kind === 'session' ? 'sessions' : 'runs'}/submissions/${part(intent.key)}`);
         if (this.chatSubmissions.get(id) !== intent)
             return;
@@ -2527,6 +2795,9 @@ export class DesktopAdapter {
         if (!runId)
             return;
         const epoch = this.epoch;
+        await this.supportsHistory(id);
+        if (epoch !== this.epoch)
+            return;
         await this.request(`works/${part(id)}/runs/${part(runId)}/cancel`, 'POST');
         if (epoch !== this.epoch)
             return;
@@ -2560,6 +2831,10 @@ export class DesktopAdapter {
         let retry = true;
         let delay = 2000;
         try {
+            if (!this.historySupport.has(id))
+                await this.supportsHistory(id);
+            if (!current())
+                return;
             const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`, 'GET', undefined, controller.signal);
             if (!current())
                 return;
@@ -2567,30 +2842,42 @@ export class DesktopAdapter {
             run.status = runStates[raw.state] ?? 'interrupted';
             run.executionError = raw.error?.message;
             const profile = this.imageCapabilities.get(id)?.value || this.getWork(id)?.sessions.find(s => s.id === run.sessionId)?.imageProfile ? '?imageProfile=chat-images-v1' : '';
-            const history = await this.request(`works/${part(id)}/sessions/${part(run.sessionId)}${profile}`, 'GET', undefined, controller.signal);
-            if (!current())
-                return;
-            if (!Array.isArray(history.messages))
-                throw new Error('Saved session history is incomplete.');
-            const session = this.getWork(id)?.sessions.find(s => s.id === run.sessionId);
-            if (session) {
-                session.messages = historyMessages(history.messages, session.messages);
-                session.imageProfile = !!profile;
-                if (!['accepted', 'running', 'cancelling'].includes(run.status) && raw.finalText && !session.messages.some(m => m.role === 'assistant' && !m.tool && m.text === raw.finalText))
-                    session.messages.push({ role: 'assistant', text: raw.finalText });
+            if (this.historySupport.get(id)) {
+                run.resultRef = raw.resultRef;
+                await this.loadSavedRun(id, run, controller.signal);
+                if (!current())
+                    return;
+                observer.failures = 0;
+                retry = ['accepted', 'running', 'cancelling'].includes(run.status);
+                run.error = run.executionError ?? (retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined);
             }
-            observer.failures = 0;
-            retry = ['accepted', 'running', 'cancelling'].includes(run.status);
-            run.error = run.executionError ?? (retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined);
+            else {
+                const history = await this.request(`works/${part(id)}/sessions/${part(run.sessionId)}${profile}`, 'GET', undefined, controller.signal);
+                if (!current())
+                    return;
+                if (!Array.isArray(history.messages))
+                    throw new Error('Saved session history is incomplete.');
+                const session = this.getWork(id)?.sessions.find(s => s.id === run.sessionId);
+                if (session) {
+                    session.messages = historyMessages(history.messages, session.messages);
+                    session.imageProfile = !!profile;
+                    if (!['accepted', 'running', 'cancelling'].includes(run.status) && raw.finalText && !session.messages.some(m => m.role === 'assistant' && !m.tool && m.text === raw.finalText))
+                        session.messages.push({ role: 'assistant', text: raw.finalText });
+                }
+                observer.failures = 0;
+                retry = ['accepted', 'running', 'cancelling'].includes(run.status);
+                run.error = run.executionError ?? (retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined);
+            }
         }
         catch (error) {
             if (!current())
                 return;
-            run.error = [run.executionError, `History recovery failed: ${errorText(error)}. Reread the original Run; do not resend the prompt.`].filter(Boolean).join(' ');
+            const legacyLimit = this.legacyHistoryLimit(id, error);
+            run.error = [run.executionError, `History recovery failed: ${errorText(error)}. Reread the original Run; do not resend the prompt.`, legacyLimit ? this.historyNotice(id) : ''].filter(Boolean).join(' ');
             delay = Math.min(30000, 2000 * 2 ** Math.min(observer.failures++, 4));
             // Terminal history errors require explicit readback; do not claim completion
             // or poll an inaccessible/deleted Run indefinitely.
-            retry = ['accepted', 'running', 'cancelling'].includes(run.status) && !(error instanceof DesktopError && [401, 403, 404].includes(error.httpStatus ?? 0));
+            retry = !legacyLimit && ['accepted', 'running', 'cancelling'].includes(run.status) && !(error instanceof DesktopError && [401, 403, 404].includes(error.httpStatus ?? 0));
         }
         if (!current())
             return;
@@ -2633,8 +2920,13 @@ export class DesktopAdapter {
                 connected?.();
             return;
         }
+        let retry = true;
         try {
-            const response = await fetch(`/_desktop/api/works/${part(id)}/runs/${part(run.id)}/events?after=${run.cursor}`, { credentials: 'same-origin', signal: controller.signal });
+            if (!this.historySupport.has(id))
+                await this.supportsHistory(id);
+            if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run)
+                return;
+            const response = await fetch(`/_desktop/api/works/${part(id)}/runs/${part(run.id)}/events?after=${run.cursor}${this.historySupport.get(id) ? '&responseProfile=history-v1' : ''}`, { credentials: 'same-origin', signal: controller.signal });
             if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run)
                 return;
             if (!response.ok) {
@@ -2647,7 +2939,8 @@ export class DesktopAdapter {
                         connected?.();
                     return;
                 }
-                throw new Error(`Run stream failed (${response.status}).`);
+                const failure = await response.json().catch(() => null);
+                throw new DesktopError(typeof failure?.code === 'string' ? failure.code : 'RUN_STREAM_UNAVAILABLE', typeof failure?.message === 'string' ? failure.message : `Run stream failed (${response.status}).`, response.status);
             }
             connected?.();
             const reader = response.body.getReader();
@@ -2660,7 +2953,32 @@ export class DesktopAdapter {
                 const sequence = Number(event.sequence);
                 if (!Number.isSafeInteger(sequence) || sequence <= run.cursor)
                     return;
-                run.cursor = sequence;
+                const frame = event.kind?.$case === 'text' ? event.kind.text : null;
+                if (frame?.byteOffset !== undefined) {
+                    const key = `${id}:${run.id}:${sequence}`, offset = Number(frame.byteOffset), total = Number(frame.totalBytes), bytes = new TextEncoder().encode(frame.delta ?? '').length;
+                    let pending = this.historyEventParts.get(key);
+                    if (!pending) {
+                        pending = { offset: 0, parts: new Map() };
+                        this.historyEventParts.set(key, pending);
+                    }
+                    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(total) || offset < 0 || offset + bytes > total || frame.complete !== (offset + bytes === total))
+                        throw new Error('Run event fragment is invalid.');
+                    if (pending.parts.has(offset)) {
+                        if (pending.parts.get(offset) !== frame.delta)
+                            throw new Error('Run event changed while reconnecting.');
+                        if (frame.complete)
+                            run.cursor = sequence;
+                        return;
+                    }
+                    if (offset !== pending.offset)
+                        throw new Error('Run event fragment is incomplete.');
+                    pending.parts.set(offset, frame.delta ?? '');
+                    pending.offset += bytes;
+                    if (frame.complete)
+                        run.cursor = sequence;
+                }
+                else
+                    run.cursor = sequence;
                 const session = work.sessions.find(s => s.id === run.sessionId);
                 if (!session)
                     return;
@@ -2679,6 +2997,7 @@ export class DesktopAdapter {
                 }
                 else if (kind?.$case === 'state') {
                     run.status = runStates[kind.state.state] ?? 'interrupted';
+                    run.resultRef = kind.state.resultRef;
                     run.error = run.executionError = kind.state.error?.message;
                     if (kind.state.finalText && !session.messages.some(m => m.runId === run.id && m.role === 'assistant' && !!m.text))
                         session.messages.push({ id: `${run.id}-final`, runId: run.id, role: 'assistant', text: kind.state.finalText });
@@ -2707,12 +3026,24 @@ export class DesktopAdapter {
             const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`);
             run.status = runStates[(value.run ?? value).state] ?? 'interrupted';
             run.executionError = (value.run ?? value).error?.message;
-            if (['accepted', 'running', 'cancelling'].includes(run.status))
-                run.error = 'Event stream ended. Resume this Run to continue from its cursor.';
+            run.resultRef = (value.run ?? value).resultRef;
+            if (['accepted', 'running', 'cancelling'].includes(run.status)) {
+                if (this.historySupport.get(id) && [...this.historyEventParts.keys()].some(key => key.startsWith(`${id}:${run.id}:`))) {
+                    run.historyRecovery = true;
+                    const observer = { controller, run, epoch, failures: 0 };
+                    this.historyObservers.set(id, observer);
+                    await this.recoverRunHistory(id, observer);
+                }
+                else
+                    run.error = 'Event stream ended. Resume this Run to continue from its cursor.';
+            }
             else {
                 run.error = run.executionError;
                 this.reconnectAttempts.delete(id);
-                await this.loadSession(id, run.sessionId);
+                if (this.historySupport.get(id))
+                    await this.loadSavedRun(id, run, controller.signal);
+                else
+                    await this.loadSession(id, run.sessionId);
                 await this.loadServices(id).catch(() => undefined);
                 await this.loadConfiguration(id).catch(() => undefined);
             }
@@ -2720,14 +3051,16 @@ export class DesktopAdapter {
         }
         catch (error) {
             if (!controller.signal.aborted && epoch === this.epoch) {
-                run.error = [run.executionError, `${errorText(error)} Resume the original Run; do not send the prompt again.`].filter(Boolean).join(' ');
+                const legacyLimit = this.legacyHistoryLimit(id, error);
+                retry = !legacyLimit;
+                run.error = [run.executionError, `${errorText(error)} Resume the original Run; do not send the prompt again.`, legacyLimit ? this.historyNotice(id) : ''].filter(Boolean).join(' ');
                 this.emit();
             }
         }
         finally {
             if (this.streams.get(id) === controller) {
                 this.streams.delete(id);
-                if (!run.historyRecovery && epoch === this.epoch && !controller.signal.aborted && this.getWork(id)?.run === run && ['accepted', 'running', 'cancelling'].includes(run.status)) {
+                if (retry && !run.historyRecovery && epoch === this.epoch && !controller.signal.aborted && this.getWork(id)?.run === run && ['accepted', 'running', 'cancelling'].includes(run.status)) {
                     const attempt = this.reconnectAttempts.get(id) ?? 0;
                     this.reconnectAttempts.set(id, attempt + 1);
                     this.reconnects.set(id, setTimeout(() => { if (epoch === this.epoch && this.getWork(id)?.run === run)

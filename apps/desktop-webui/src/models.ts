@@ -53,6 +53,8 @@ export interface WorkspaceFile {
   content?: string;
 }
 export interface Message {
+  historyStored?: boolean;
+  historyIncomplete?: boolean;
   images?: import('./images.js').HistoryImage[];
   id?: string;
   runId?: string;
@@ -63,6 +65,7 @@ export interface Message {
 }
 export interface RunModel { modelRef: string | null; label: string; provider: string; model: string; thinkingLevels?: string[]; defaultThinkingLevel?: string | null; thinkingAvailability?: "unknown" }
 export interface Session {
+  history?: { loading: boolean; error: string; cursor: string | null; snapshot: string; hasMore: boolean; expired?: boolean };
   imageProfile?: boolean;
   thinkingLevel?: string | null;
   loading?: boolean;
@@ -77,6 +80,7 @@ export interface Session {
   runs?: Run[];
 }
 export interface Run {
+  resultRef?: {workId:string;sessionId:string;runId:string;content:'result';snapshot?:string;entryId?:string;blockId?:string}|null;
   thinkingLevel?: string | null;
   actualModel?: RunModel | null;
   source?: Session["source"];

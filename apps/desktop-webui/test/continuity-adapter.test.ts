@@ -260,7 +260,7 @@ test('continuity: refreshing Session list keeps confirmed history metadata while
  const f=await fixture(t),history=deferred<Reply>(),w=f.adapter.getWork('one');
  w.sessions=[{id:'s',title:'Saved',messages:[{role:'assistant',text:'kept'}],runs:[],checkedAt:'2026-10-13T00:00:00Z',imageProfile:true}];
  f.adapter.loadImageCapabilities=async()=>undefined;f.adapter.readSessionOptions=async()=>undefined;
- f.respond(r=>r.path==='works/one/sessions'?{json:{sessions:[{sessionId:'s',title:'Saved'}]}}:history.promise);
+ f.respond(r=>r.path.endsWith('/history-capabilities')?{status:404,json:{code:'NOT_FOUND'}}:r.path==='works/one/sessions'?{json:{sessions:[{sessionId:'s',title:'Saved'}]}}:history.promise);
  const pending=f.adapter.loadSessions('one');for(let i=0;i<20;i++)await Promise.resolve();
  const cached=f.adapter.getWork('one').sessions[0];assert.equal(cached.loading,true);assert.equal(cached.checkedAt,'2026-10-13T00:00:00Z');assert.equal(cached.imageProfile,true);assert.equal(cached.messages[0].text,'kept');
  history.resolve({json:{session:{sessionId:'s',workId:'one',modelPreference:null,thinkingLevel:'off'},messages:[],runs:[]}});await pending;assert.equal(f.adapter.getWork('one').sessions[0].loading,false);
