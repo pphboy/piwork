@@ -7,6 +7,7 @@ import test from 'node:test';
 // history event ordering remain browser QA. PIWORK_APP_PATH enables red/green runs.
 const source = readFileSync(process.env.PIWORK_APP_PATH || new URL('../browser/app.js', import.meta.url), 'utf8');
 const navigation = await import(new URL('../browser/work-navigation.js', import.meta.url).href);
+const fileReference = await import(new URL('../browser/file-reference.js', import.meta.url).href);
 function extract(names: string[]) {
   return names.map(name => {
     const match = source.match(new RegExp('^(?:async )?function ' + name + '\\([\\s\\S]*?^}', 'm'));
@@ -26,6 +27,9 @@ function fixture() {
     render: () => {}, toast: () => {}, openModal: () => {}, activeService: () => work.services[0], current: () => work, targetWork: () => work,
     ViewChanged: class extends Error {}, URLSearchParams,
     restoreSelection: navigation.restoreSelection, initialWorkArea: navigation.initialWorkArea, exitWorkspaceFocus: async () => true,
+    parentDirectory: navigation.parentDirectory, isFilesRoute: fileReference.isFilesRoute, filesRouteTarget: fileReference.filesRouteTarget,
+    fileSourceReturn: undefined, clearFileTarget: () => { c.view.file = ''; c.view.fileStatus = 'idle'; }, openFile: async () => undefined,
+    workReadErrors: new Map(),
   };
   c.route = () => c.location.hash.replace(/^#\/?/, '').split('/');
   c.viewKey = () => `${c.location.hash}:${c.modalChoice}:${c.view.tab}:${c.view.path}:${c.view.file}`;
@@ -206,4 +210,48 @@ test('confirmed folder creation starts one original-directory reread without rep
  const {c,work}=fixture();c.view.formName='new';c.view.path='/original';c.view.modal='new-folder';const calls:string[]=[];const record={};
  Object.assign(c,{joinPath:(a:string,b:string)=>a+'/'+b,validateName:(s:string)=>s,assertFileAdmission:()=>{},retainFileResults:(_w:any,_t:any,r:any)=>r,confirmFileAttempt:()=>{},filesConfirmed:()=>true,closeModal:()=>{c.view.modal='';},modalTransfers:[]});c.adapter.transfer=async()=>{calls.push('mkdir');return[{status:'succeeded'}];};c.adapter.loadDirectory=async(_id:string,path:string)=>calls.push('read:'+path);c.actions.refresh=async(_r:any,load:()=>Promise<void>)=>load();
  vm.runInContext(extract(['handleAction']),c);await c.handleAction('confirm-folder',{dataset:{}},record);assert.deepEqual(calls,['mkdir','read:/original']);
+});
+
+test('an explicit Files deep link exits focus and wins over the last restored area', async () => {
+  const { c, work } = fixture(); work.sessions = [];
+  c.location.hash = '#/work/one/files/%2Foutput%2Freport.txt';
+  c.route = () => ['work', 'one', 'files', '/output/report.txt'];
+  c.selectionWorkId = 'one';
+  c.workSelections.set('one', { area: 'Services', path: '/old', file: '', service: '', port: 0, session: '' });
+  c.view.tab = 'Chat'; c.view.path = '/old';
+  c.adapter.project = () => ({ usable: true, retainWorkspace: true, action: 'start' });
+  c.adapter.loadWork = async () => work;
+  c.adapter.loadDirectory = async () => undefined;
+  let exits = 0; const opened: Array<[string, string]> = [];
+  c.exitWorkspaceFocus = async () => { exits++; return true; };
+  c.openFile = async (target: any, path: string) => { opened.push([target.id, path]); c.view.file = path; c.view.fileStatus = 'ready'; };
+  c.actions.finish = () => {}; c.actions.fail = () => {};
+  vm.runInContext(extract(['loadRoute']), c);
+  await c.loadRoute();
+  assert.equal(exits, 1, 'focus/full screen is exited before Files becomes visible');
+  assert.equal(c.view.tab, 'Files');
+  assert.equal(c.view.path, '/output');
+  assert.deepEqual(opened, [['one', '/output/report.txt']]);
+  assert.equal(c.view.file, '/output/report.txt');
+});
+
+test('an invalid Files deep link never becomes a file action or another file', async () => {
+  const { c, work } = fixture(); work.sessions = [];
+  c.location.hash = '#/work/one/files/%2F..%2Fsecret';
+  c.route = () => ['work', 'one', 'files', '/../secret'];
+  c.selectionWorkId = 'one';
+  c.adapter.project = () => ({ usable: true, retainWorkspace: true, action: 'start' });
+  c.adapter.loadWork = async () => work;
+  const directories: string[] = [];
+  c.adapter.loadDirectory = async (_id: string, path: string) => { directories.push(path); };
+  let opened = 0;
+  c.openFile = async () => { opened++; };
+  c.actions.finish = () => {}; c.actions.fail = () => {};
+  vm.runInContext(extract(['loadRoute']), c);
+  await c.loadRoute();
+  assert.equal(opened, 0);
+  assert.equal(c.view.tab, 'Files');
+  assert.equal(c.view.file, '');
+  assert.deepEqual(directories, ['/']);
+  assert.match(c.filesRestoreNotice, /not valid/);
 });

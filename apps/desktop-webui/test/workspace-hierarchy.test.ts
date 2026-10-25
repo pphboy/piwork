@@ -93,3 +93,19 @@ test('independent Service options omit Chat and split commands',()=>{
 test('narrow service-chat remains visible before resize can add the local narrow-chat class',()=>{
  const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');assert.match(css,/\.service-focused\[data-layout="service-chat"\] \.work-layout\.service-workspace > \.agent-side,[\s\S]*?display:block/);assert.doesNotMatch(css,/\.service-focused\[data-layout="service-only"\][^}]*display:block/);
 });
+
+test('an associated Run reply in request detail renders constrained file links for its Work', () => {
+  const { c, work } = fixture();
+  const request = { requestId: 'request-file', goal: 'Publish report', source: { kind: 'chat' }, state: 'succeeded',
+    disposition: 'live', updatedAt: 'now', runIds: ['a'], result: 'Done' };
+  c.view.modal = 'pi-request-detail'; c.view.data = { requestId: 'request-file', source: 'chat' };
+  c.adapter.requestDetails.set('work-a:request-file', { request, evidence: { items: [] } });
+  c.adapter.requestResponses.set('work-a:request-file', { runs: [{ id: 'a', status: 'succeeded', source: { kind: 'chat' },
+    created: 'now', finalText: 'Current: [报告.txt](piwork-file:/output/%E6%8A%A5%E5%91%8A.txt) and [bad](piwork-file://host/a.txt).' }], checked: {}, errors: [] });
+  const html = c.modalMarkup();
+  assert.match(html, /class="request-text chat-markdown"/);
+  assert.match(html, /class="chat-file-link" href="#\/work\/work-a\/files\/%2Foutput%2F%E6%8A%A5%E5%91%8A\.txt" data-path="\/output\/报告\.txt"/);
+  assert.doesNotMatch(html, /target="_blank"/);
+  assert.doesNotMatch(html, /piwork-file:\/\/host/);
+  assert.equal(work.id, 'work-a');
+});

@@ -1,5 +1,6 @@
 import { Marked, Renderer } from './marked.js';
 import type { Tokens } from './marked.js';
+import { fileReferenceLink } from './file-reference.js';
 
 const MAX_MARKDOWN_LENGTH = 64 * 1024;
 const MAX_MARKDOWN_LINES = 4096;
@@ -23,6 +24,8 @@ function safeLink(href: string): string | undefined {
 }
 
 class ChatRenderer extends Renderer {
+  constructor(private readonly workId?: string) { super(); }
+
   override html({ text }: Tokens.HTML | Tokens.Tag): string {
     return escapeHTML(text);
   }
@@ -39,6 +42,10 @@ class ChatRenderer extends Renderer {
 
   override link({ href, title, tokens }: Tokens.Link): string {
     const label = this.parser.parseInline(tokens);
+    // A model-authored reference becomes navigation only when its raw format
+    // and the reply's real Work both validate. Otherwise it stays label text.
+    const file = fileReferenceLink(href, this.workId);
+    if (file) return `<a class="chat-file-link" href="${escapeHTML(file.href)}" data-path="${escapeHTML(file.path)}" title="Open in Files">${label}</a>`;
     const destination = safeLink(href);
     if (!destination) return label;
     return `<a href="${escapeHTML(destination)}" target="_blank" rel="noopener noreferrer"${title ? ` title="${escapeHTML(title)}"` : ''}>${label}</a>`;
@@ -55,7 +62,7 @@ class ChatRenderer extends Renderer {
  * Oversized/malformed input remains complete, escaped plain text. No message
  * contents are cached across renders, conversations, or authenticated identities.
  */
-export function renderChatMarkdown(text: string): string {
+export function renderChatMarkdown(text: string, context?: { workId?: string }): string {
   const plain = () => `<div class="chat-markdown-plain">${escapeHTML(text)}</div>`;
   if (!text) return '';
   if (text.length > MAX_MARKDOWN_LENGTH || text.split('\n', MAX_MARKDOWN_LINES + 1).length > MAX_MARKDOWN_LINES) return plain();
@@ -69,7 +76,7 @@ export function renderChatMarkdown(text: string): string {
     // setOptions preserves the renderer prototype; extension registration via
     // the constructor only copies own methods and would discard our overrides.
     const markdown = new Marked();
-    markdown.setOptions({ gfm: true, breaks: true, async: false, renderer: new ChatRenderer() });
+    markdown.setOptions({ gfm: true, breaks: true, async: false, renderer: new ChatRenderer(context?.workId) });
     return markdown.parse(text, { async: false });
   } catch {
     // A partial/malformed message must never take down the rest of Chat.

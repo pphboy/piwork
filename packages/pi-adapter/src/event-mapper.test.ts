@@ -19,3 +19,12 @@ test('public tool previews omit non-text/private content and mark missing result
  const mapped=mapSdkEvent(event({type:'tool_execution_end',toolName:'read',toolCallId:'call-2',isError:true,result:{content:[{type:'image',data:'private-image-data',mimeType:'image/png'}],details:{secret:'private'}}}));
  assert.deepEqual(mapped?.payload.result,{kind:'non-text',truncated:false,isError:true});assert.doesNotMatch(JSON.stringify(mapped),/private/);
 });
+
+test('a file reference passes through text deltas byte-for-byte without normalization', () => {
+  const deltas = ['[报告', '.txt](piwork-file:/output/%E6%8A%A5%E5%91%8A', '.txt)'];
+  for (const delta of deltas) assert.deepEqual(mapSdkEvent(event({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta } })),
+    { type: 'text-delta', payload: { delta } });
+  const invalid = '[bad](piwork-file://host/%2e%2e/x)';
+  assert.deepEqual(mapSdkEvent(event({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: invalid } })),
+    { type: 'text-delta', payload: { delta: invalid } });
+});

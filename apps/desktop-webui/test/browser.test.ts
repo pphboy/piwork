@@ -652,9 +652,11 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     }
     if (request.url?.startsWith(coreRoot) && request.method === "PROPFIND" && request.headers.depth === "0") {
       const name = decodeURIComponent(request.url.slice(coreRoot.length));
-      if (!actionFiles.has(name)) { response.writeHead(404); return response.end("{}"); }
+      const known = name === "note.txt" ? workspaceText : name === "binary.bin" ? "\x00\x01\x02"
+        : name === "large.txt" ? "x".repeat(1048577) : actionFiles.get(name);
+      if (known === undefined) { response.writeHead(404); return response.end("{}"); }
       response.writeHead(207, { "content-type": "application/xml; charset=utf-8" });
-      return response.end(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>${request.url}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>${Buffer.byteLength(actionFiles.get(name)!)}</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`);
+      return response.end(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>${request.url}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>${Buffer.byteLength(known)}</d:getcontentlength><d:getlastmodified>Tue, 29 Sep 2026 00:00:00 GMT</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`);
     }
     if (request.url === `${coreRoot}new%20folder/` && request.method === "MKCOL") {
       folderCreated = true; response.writeHead(201); return response.end();

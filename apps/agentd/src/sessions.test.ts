@@ -143,3 +143,27 @@ test('complete chat options are atomic; legacy model PATCH retains Thinking and 
   assert.equal(store.findSessionSubmission('work-1','key')?.sessionId,first.sessionId);assert.equal(store.findSessionSubmission('other-work','key'),undefined);
  }finally{store.close();await rm(root,{recursive:true,force:true});}
 });
+
+test("file references in assistant history survive daemon replacement and read never executes a model", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-agentd-file-reference-"));
+  const workspace = join(root, "data"), sessionRoot = join(root, "session", "sdk");
+  await mkdir(workspace, { recursive: true });
+  const databasePath = join(root, "session", "work.sqlite");
+  let store = WorkStore.open(databasePath);
+  try {
+    let sessions = new AgentSessionService("work-1", store, workspace, sessionRoot);
+    const created = sessions.create();
+    const sdk = sessions.continue(created.sessionId);
+    appendUserMessage(sdk, "show the report");
+    const reply = "Current file: [报告.txt](piwork-file:/output/%E6%8A%A5%E5%91%8A.txt)";
+    appendAssistantMessage(sdk, reply);
+    store.close();
+
+    store = WorkStore.open(databasePath);
+    sessions = new AgentSessionService("work-1", store, workspace, sessionRoot);
+    const restored = sessions.read(created.sessionId);
+    assert.deepEqual(restored.entries.map(entry => [entry.role, entry.text]), [["user", "show the report"], ["assistant", reply]]);
+    assert.equal(restored.entries.some(entry => entry.blocks.some(block => block.type === "tool-call" || block.type === "tool-result")), false);
+    assert.equal(restored.entries.some(entry => entry.blocks.some(block => block.type === "image")), false);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});

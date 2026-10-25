@@ -63,3 +63,44 @@ test('Chinese headings and bold text render inside long table cells', () => {
   assert.match(result, /class="chat-markdown-table"/);
   assert.ok(result.includes('长内容'.repeat(1000)));
 });
+
+test('Work file references become Files links bound to the reply Work', () => {
+  const html = renderChatMarkdown('[报告.txt](piwork-file:/output/%E6%8A%A5%E5%91%8A.txt)', { workId: 'work-1' });
+  assert.match(html, /<a class="chat-file-link" href="#\/work\/work-1\/files\/%2Foutput%2F%E6%8A%A5%E5%91%8A\.txt"/);
+  assert.match(html, /data-path="\/output\/报告\.txt"/);
+  assert.match(html, /title="Open in Files"/);
+  assert.doesNotMatch(html, /target="_blank"/);
+  // Without a confirmed Work the same text stays readable and non-navigable.
+  const plain = renderChatMarkdown('[x](piwork-file:/a.txt)');
+  assert.doesNotMatch(plain, /<a\b/);
+  assert.match(plain, />x</);
+});
+
+test('invalid, ambiguous or cross-scheme file references stay text', () => {
+  for (const href of ['piwork-file://evil.example/a.txt', 'piwork-file:/a/../b.txt', 'piwork-file:/a%2fb.txt',
+    'piwork-file:/', 'piwork-file:/a.txt?download=1', 'PIWORK-FILE:/a.txt', 'file:///etc/passwd']) {
+    const html = renderChatMarkdown(`[bad](${href})`, { workId: 'work-1' });
+    assert.doesNotMatch(html, /chat-file-link/, href);
+    assert.doesNotMatch(html, /<a\b/, href);
+  }
+  assert.match(renderChatMarkdown('[web](https://example.com/a.txt)', { workId: 'work-1' }), /href="https:\/\/example.com\/a.txt"/);
+});
+
+test('file links in code, HTML and Markdown image syntax never become navigation', () => {
+  const fenced = renderChatMarkdown('```\n[x](piwork-file:/a.txt)\n```', { workId: 'work-1' });
+  assert.doesNotMatch(fenced, /chat-file-link/);
+  const image = renderChatMarkdown('![track](piwork-file:/pixel.png)', { workId: 'work-1' });
+  assert.doesNotMatch(image, /chat-file-link|<(?:img|iframe|video|audio|source)\b/);
+  assert.match(image, /\[Image: track\]/);
+  const html = renderChatMarkdown('<a href="piwork-file:/a.txt">raw</a>', { workId: 'work-1' });
+  assert.doesNotMatch(html, /chat-file-link|<a\b/);
+  assert.match(html, /&lt;a href=/);
+});
+
+test('every streamed prefix of a file reference is safe and the completed one is one link', () => {
+  const message = 'See [report](piwork-file:/output/report%201.txt).';
+  for (let length = 0; length <= message.length; length++) assert.doesNotThrow(() => renderChatMarkdown(message.slice(0, length), { workId: 'work-1' }));
+  const html = renderChatMarkdown(message, { workId: 'work-1' });
+  assert.equal((html.match(/class="chat-file-link"/g) || []).length, 1);
+  assert.match(html, /href="#\/work\/work-1\/files\/%2Foutput%2Freport%201\.txt"/);
+});

@@ -44,13 +44,20 @@ export interface Service {
   /** A correlation id is diagnostic text only: it never implies a navigable Operation. */
   diagnostic?: ServiceDiagnostic;
 }
+import type { ImageMime } from './image-content.js';
+export type WorkspaceFileKind = "directory" | "file" | "special";
+/** Confirmed current preview only; a listing or metadata read never proves content. */
+export type FilePreview =
+  | { kind: "text"; content: string }
+  | { kind: "image"; mimeType: ImageMime; url: string; width: number; height: number }
+  | { kind: "download-only"; reason: "binary" | "oversized" | "unsupported" | "document" };
 export interface WorkspaceFile {
   path: string;
   name: string;
-  kind: "directory" | "file" | "text" | "binary" | "special";
+  kind: WorkspaceFileKind;
   size: number;
   modified: string;
-  content?: string;
+  preview?: FilePreview;
 }
 export interface Message {
   historyStored?: boolean;

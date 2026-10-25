@@ -54,3 +54,30 @@ test('ordered public blocks follow ancestor Run markers and bound UTF-8 previews
   assert.equal(entries.at(-1)?.runId,'');assert.doesNotMatch(JSON.stringify(entries),/private\/argument/);assert.ok((await readFile(session.getSessionFile()!,'utf8')).includes(full));
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('assistant file references reload as ordinary text without attachment records or model execution', async () => {
+  const { initializePersistentSession, appendUserMessage, appendAssistantMessage, readPersistentSession, loadPersistentSession } = await import('./session-persistence.js');
+  const { readFile } = await import('node:fs/promises');
+  const { SessionManager } = await import('@earendil-works/pi-coding-agent');
+  const root = await mkdtemp(join(tmpdir(), 'piwork-file-reference-'));
+  const cwd = join(root, 'workspace'), sessionRoot = join(root, 'sessions');
+  await mkdir(cwd, { recursive: true });
+  try {
+    const initial = initializePersistentSession({ cwd, sessionRoot });
+    const session = SessionManager.open(initial.getSessionFile()!, sessionRoot, cwd);
+    appendUserMessage(session, 'show the report');
+    const text = 'Here it is: [报告.txt](piwork-file:/output/%E6%8A%A5%E5%91%8A.txt) and [old](piwork-file:/old.txt).';
+    appendAssistantMessage(session, text);
+    const first = readPersistentSession(session), assistant = first.entries.find(entry => entry.role === 'assistant')!;
+    assert.equal(assistant.text, text);
+    assert.deepEqual(assistant.blocks.map(block => block.type), ['text']);
+    assert.equal(assistant.blocks[0]!.type === 'text' ? assistant.blocks[0]!.text : '', text);
+    assert.equal(first.entries.some(entry => entry.blocks.some(block => block.type === 'image')), false);
+    assert.equal(JSON.stringify(first.entries).includes('piwork-file:'), true);
+    assert.equal((await readFile(initial.getSessionFile()!, 'utf8')).includes(text), true);
+    // Process-style reopen only reads the same SDK history; it starts no Run or tool.
+    const reopened = readPersistentSession(loadPersistentSession({ cwd, sessionRoot, sessionId: first.sessionId }));
+    assert.deepEqual(reopened.entries.map(entry => [entry.role, entry.text]), first.entries.map(entry => [entry.role, entry.text]));
+    assert.equal(reopened.entries.some(entry => entry.blocks.some(block => block.type === 'tool-call' || block.type === 'tool-result')), false);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

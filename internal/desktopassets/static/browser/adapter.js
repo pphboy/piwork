@@ -3,6 +3,7 @@ import { historyMessages, resultText, upsertTool } from './chat-projection.js';
 import { HistoryProjection } from './history-projection.js';
 import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
+import { detectImageMime, imageDimensions, imageWithinLimits, FILE_IMAGE_MAX_BYTES } from './image-content.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
 import { MetadataReads, ObservationDeferred, ObservationStopped } from './observation.js';
 export function fileVersion(value) {
@@ -769,6 +770,8 @@ export class DesktopAdapter {
         Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false });
         this.worksLoading = false;
         this.worksChecked = '';
+        this.stopFileReads();
+        this.directoryLoads.clear();
         this.state.works = [];
         this.state.operations = [];
         this.state.snapshots = [];
@@ -935,8 +938,10 @@ export class DesktopAdapter {
             raw.desiredState !== (['stop', 'delete'].includes(intent.action) ? intent.action === 'delete' ? 'deleted' : 'stopped' : 'running'))
             delete work.lifecycleIntent;
         this.associateOperations(work);
-        if (!this.project(work).retainWorkspace)
+        if (!this.project(work).retainWorkspace) {
             this.revokeWorkEntries(work.id);
+            this.revokeWorkFilePreviews(work.id);
+        }
         if (old && !this.project(work).usable) {
             this.cancelHistoryReads();
             this.historySupport.delete(work.id);
@@ -3071,41 +3076,376 @@ export class DesktopAdapter {
     }
     fileURL(id, path) { if (!path.startsWith('/') || path.split('/').some(p => p === '.' || p === '..' || /[\\\x00]/.test(p)))
         throw new Error('Invalid workspace path.'); return `/_desktop/files/works/${part(id)}/files/${path.slice(1).split('/').map(part).join('/')}`; }
+    directoryLoads = new Map();
+    fileReaders = new Map();
+    fileReadGenerations = new Map();
+    releasePreview(file) { if (file?.preview?.kind === 'image')
+        URL.revokeObjectURL(file.preview.url); if (file)
+        delete file.preview; }
+    removeFileEntry(id, path) { const work = this.getWork(id); if (!work)
+        return; const file = work.files.find(item => item.path === path); this.releasePreview(file); work.files = work.files.filter(item => item.path !== path); }
+    /** Stop one target's active read and release its confirmed preview asset. */
+    releaseFilePreview(id, path) {
+        const reader = this.fileReaders.get(id);
+        if (reader?.path === path) {
+            reader.controller.abort();
+            this.fileReaders.delete(id);
+        }
+        this.releasePreview(this.getWork(id)?.files.find(file => file.path === path));
+    }
+    /** Stop every preview read and revoke every file preview asset. */
+    stopFileReads() {
+        for (const reader of this.fileReaders.values())
+            reader.controller.abort();
+        this.fileReaders.clear();
+        this.fileReadGenerations.clear();
+        for (const work of this.state.works)
+            for (const file of work.files ?? [])
+                this.releasePreview(file);
+    }
+    revokeWorkFilePreviews(id) {
+        const reader = this.fileReaders.get(id);
+        if (reader) {
+            reader.controller.abort();
+            this.fileReaders.delete(id);
+        }
+        this.fileReadGenerations.delete(id);
+        const work = this.getWork(id);
+        if (work)
+            for (const file of work.files)
+                this.releasePreview(file);
+    }
+    fileError(response, fallback) {
+        // A bounded status/header only; never read or expose an unbounded body.
+        const code = response.headers.get('X-Piwork-File-Error') || '';
+        const message = code ? `The file request was rejected (${code}).` : `${fallback} (${response.status}).`;
+        return new DesktopError(code || 'FILE_READ_FAILED', message, response.status);
+    }
+    /** File auth failures share the existing session check/revocation path. */
+    async fileAuth(response) {
+        if (response.status !== 401 && response.status !== 403)
+            return;
+        const epoch = this.epoch;
+        try {
+            const session = await this.checkSession();
+            if (epoch !== this.epoch)
+                return;
+            if (session.state === 'signed-out') {
+                this.clearIdentity();
+                this.state.signedIn = false;
+                this.state.scenario = 'auth-expired';
+                this.emit();
+            }
+        }
+        catch {
+            // The file status is still the immediate, accurate result for this target.
+        }
+    }
+    async checkTarget(id, path, signal) {
+        const epoch = this.epoch, work = this.getWork(id);
+        if (!work)
+            throw new DesktopError('WORK_NOT_FOUND', 'This Work is no longer available.', 404);
+        const parent = path.slice(0, path.lastIndexOf('/')) || '/';
+        const parentURL = this.fileURL(id, parent).replace(/\/?$/, '/'), url = this.fileURL(id, path);
+        const response = await fetch(url, { method: 'PROPFIND', credentials: 'same-origin', signal,
+            headers: { Depth: '0', 'X-Piwork-Csrf': this.csrf } });
+        if (epoch !== this.epoch)
+            throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This file check was discarded.');
+        if (response.status === 404 || response.status === 410) {
+            this.removeFileEntry(id, path);
+            this.emit();
+            throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', response.status);
+        }
+        if (!response.ok) {
+            await this.fileAuth(response);
+            throw this.fileError(response, 'The current file could not be checked');
+        }
+        const findTarget = (rows) => rows.find(item => item.href === url) ?? rows.find(item => item.name === path.slice(path.lastIndexOf('/') + 1));
+        let entries = parseEntries(await response.text(), parentURL);
+        if (epoch !== this.epoch)
+            throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while checking the target.');
+        let entry = findTarget(entries);
+        if (!entry) {
+            // Some backends answer Depth 0 with the containing folder. The parent
+            // listing still proves the target's current metadata, not its bytes.
+            const listing = await fetch(parentURL, { method: 'PROPFIND', credentials: 'same-origin', signal,
+                headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
+            if (epoch !== this.epoch)
+                throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while checking the target.');
+            if (listing.status === 404 || listing.status === 410) {
+                this.removeFileEntry(id, path);
+                this.emit();
+                throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', listing.status);
+            }
+            if (!listing.ok) {
+                await this.fileAuth(listing);
+                throw this.fileError(listing, 'The current file could not be checked');
+            }
+            entries = parseEntries(await listing.text(), parentURL);
+            entry = findTarget(entries);
+        }
+        if (!entry) {
+            this.removeFileEntry(id, path);
+            this.emit();
+            throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', 404);
+        }
+        const fresh = { path, name: entry.name, kind: entry.directory ? 'directory' : entry.kind === 'file' ? 'file' : 'special',
+            size: entry.size ?? 0, modified: entry.modified ?? '' };
+        // Metadata is current, but a transient read failure must retain the last
+        // confirmed preview instead of presenting the target as empty.
+        const existing = work.files.find(item => item.path === path);
+        if (existing) {
+            existing.name = fresh.name;
+            existing.kind = fresh.kind;
+            existing.size = fresh.size;
+            existing.modified = fresh.modified;
+            return { ...existing };
+        }
+        work.files = [...work.files, fresh];
+        return fresh;
+    }
+    async boundedBody(response, signal) {
+        const reader = response.body?.getReader();
+        if (!reader)
+            throw new DesktopError('FILE_READ_FAILED', 'The file content is unavailable.');
+        const chunks = [];
+        let size = 0, image = false, decided = false;
+        const cancel = async () => { await reader.cancel().catch(() => undefined); };
+        try {
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                chunks.push(value);
+                size += value.byteLength;
+                if (!decided && size >= 12) {
+                    image = detectImageMime(this.head(chunks, 12)) !== undefined;
+                    decided = true;
+                }
+                if (size > (image ? FILE_IMAGE_MAX_BYTES : 1_048_576)) {
+                    await cancel();
+                    throw new DesktopError(image ? 'FILE_PREVIEW_TOO_LARGE' : 'FILE_TEXT_TOO_LARGE', image ? 'This image exceeds the 10 MiB preview limit.' : 'This file exceeds the 1 MiB text limit.', 413);
+                }
+                if (signal.aborted) {
+                    await cancel();
+                    throw new DOMException('The file read was replaced.', 'AbortError');
+                }
+            }
+        }
+        catch (error) {
+            await cancel();
+            throw error;
+        }
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) {
+            bytes.set(chunk, offset);
+            offset += chunk.byteLength;
+        }
+        return bytes;
+    }
+    head(chunks, size) {
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) {
+            if (offset >= size)
+                break;
+            const part = chunk.subarray(0, size - offset);
+            bytes.set(part, offset);
+            offset += part.byteLength;
+        }
+        return bytes;
+    }
+    /**
+     * Recheck the target's current metadata, then read bounded current bytes.
+     * A directory listing never proves a file's current content or type.
+     */
+    async readFile(id, path, external) {
+        const epoch = this.epoch, work = this.getWork(id);
+        if (!work)
+            throw new DesktopError('WORK_NOT_FOUND', 'This Work is no longer available.', 404);
+        const previous = this.fileReaders.get(id);
+        if (previous)
+            previous.controller.abort();
+        const controller = new AbortController();
+        const forward = () => controller.abort();
+        external?.addEventListener('abort', forward, { once: true });
+        this.fileReaders.set(id, { controller, path });
+        const generation = (this.fileReadGenerations.get(id) || 0) + 1;
+        this.fileReadGenerations.set(id, generation);
+        const current = () => epoch === this.epoch && this.fileReadGenerations.get(id) === generation && !controller.signal.aborted;
+        const abortIfStale = () => { if (!current())
+            throw new DOMException('The file read was replaced.', 'AbortError'); };
+        try {
+            const target = await this.checkTarget(id, path, controller.signal);
+            abortIfStale();
+            if (target.kind === 'directory') {
+                await this.loadDirectory(id, path);
+                abortIfStale();
+                return { ...target };
+            }
+            if (target.kind === 'special')
+                return { ...target };
+            if (target.size > FILE_IMAGE_MAX_BYTES) {
+                const file = this.getWork(id).files.find(item => item.path === path);
+                this.releasePreview(file);
+                file.preview = { kind: 'download-only', reason: 'oversized' };
+                this.emit();
+                return { ...file };
+            }
+            const response = await fetch(this.fileURL(id, path), { credentials: 'same-origin', signal: controller.signal });
+            if (!response.ok) {
+                await this.fileAuth(response);
+                throw this.fileError(response, 'The file could not be read');
+            }
+            const declared = Number(response.headers.get('content-length'));
+            if (Number.isFinite(declared) && declared > FILE_IMAGE_MAX_BYTES) {
+                await response.body?.cancel().catch(() => undefined);
+                const file = this.getWork(id).files.find(item => item.path === path);
+                this.releasePreview(file);
+                file.preview = { kind: 'download-only', reason: 'oversized' };
+                this.emit();
+                return { ...file };
+            }
+            let bytes;
+            try {
+                bytes = await this.boundedBody(response, controller.signal);
+            }
+            catch (error) {
+                if (error instanceof DesktopError && error.code === 'FILE_TEXT_TOO_LARGE') {
+                    const file = this.getWork(id).files.find(item => item.path === path);
+                    this.releasePreview(file);
+                    file.preview = { kind: 'download-only', reason: 'oversized' };
+                    this.emit();
+                    return { ...file };
+                }
+                if (error instanceof DesktopError && error.code === 'FILE_PREVIEW_TOO_LARGE') {
+                    const file = this.getWork(id).files.find(item => item.path === path);
+                    this.releasePreview(file);
+                    file.preview = { kind: 'download-only', reason: 'oversized' };
+                    this.emit();
+                    return { ...file };
+                }
+                throw error;
+            }
+            abortIfStale();
+            const mime = detectImageMime(bytes);
+            let preview;
+            if (mime)
+                preview = await this.imagePreview(bytes, mime, controller.signal);
+            else if (this.binaryContainer(bytes))
+                preview = { kind: 'download-only', reason: 'document' };
+            else
+                preview = this.textPreview(bytes);
+            try {
+                abortIfStale();
+            }
+            catch (error) {
+                if (preview.kind === 'image')
+                    URL.revokeObjectURL(preview.url);
+                throw error;
+            }
+            const file = this.getWork(id).files.find(item => item.path === path);
+            if (!file) {
+                if (preview.kind === 'image')
+                    URL.revokeObjectURL(preview.url);
+                throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', 404);
+            }
+            this.releasePreview(file);
+            file.preview = preview;
+            file.size = bytes.byteLength;
+            file.modified = fileVersion(response.headers.get('Last-Modified')) || file.modified;
+            this.emit();
+            return { ...file };
+        }
+        finally {
+            external?.removeEventListener('abort', forward);
+            if (this.fileReaders.get(id)?.controller === controller)
+                this.fileReaders.delete(id);
+        }
+    }
+    textPreview(bytes) {
+        try {
+            const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+            if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content))
+                throw new Error('Binary control bytes');
+            return { kind: 'text', content };
+        }
+        catch {
+            return { kind: 'download-only', reason: 'binary' };
+        }
+    }
+    /** Formats that are documents, not editable text, even when their bytes are ASCII. */
+    binaryContainer(bytes) {
+        if (bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d)
+            return true; // %PDF-
+        if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38)
+            return true; // GIF8
+        return bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04; // ZIP
+    }
+    async imagePreview(bytes, mime, signal) {
+        let width = 0, height = 0;
+        try {
+            ({ width, height } = imageDimensions(mime, bytes));
+        }
+        catch {
+            return { kind: 'download-only', reason: 'unsupported' };
+        }
+        if (!imageWithinLimits(width, height))
+            return { kind: 'download-only', reason: 'oversized' };
+        // A truncated or unsupported image must not become a broken <img>.
+        let bitmap;
+        const blob = new Blob([bytes.buffer], { type: mime });
+        try {
+            bitmap = await createImageBitmap(blob);
+        }
+        catch {
+            return { kind: 'download-only', reason: 'unsupported' };
+        }
+        finally {
+            bitmap?.close();
+        }
+        if (signal.aborted)
+            throw new DOMException('The file read was replaced.', 'AbortError');
+        return { kind: 'image', mimeType: mime, url: URL.createObjectURL(blob), width, height };
+    }
     async loadDirectory(id, path = '/') {
         const epoch = this.epoch;
         const work = this.getWork(id);
+        if (!work)
+            throw new DesktopError('WORK_NOT_FOUND', 'This Work is no longer available.', 404);
         const key = `${id}:${path}`, state = this.directories.get(key) || { loading: false, checkedAt: '', error: '' };
+        const generation = (this.directoryLoads.get(key) || 0) + 1;
+        this.directoryLoads.set(key, generation);
         this.directories.set(key, state);
         state.loading = true;
         this.emit();
         try {
             const base = this.fileURL(id, path).replace(/\/?$/, '/');
             const response = await fetch(base, { method: 'PROPFIND', credentials: 'same-origin', headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
-            if (!response.ok)
-                throw new DesktopError('FILES_READ_FAILED', `Workspace cannot be read (${response.status}).`, response.status);
-            if (epoch !== this.epoch)
-                throw new Error('The connection changed; the file listing was discarded.');
+            if (!response.ok) {
+                await this.fileAuth(response);
+                throw this.fileError(response, 'Workspace cannot be read');
+            }
             const text = await response.text();
-            if (epoch !== this.epoch)
-                throw new Error('The identity changed while reading directory metadata.');
+            if (epoch !== this.epoch || this.directoryLoads.get(key) !== generation)
+                throw new DesktopError('CONNECTION_CHANGED', 'The connection changed; the file listing was discarded.');
             const entries = parseEntries(text, base);
             state.checkedAt = new Date().toISOString();
             state.error = '';
-            const children = entries.filter(e => e.name !== '/').map(e => ({ path: (path === '/' ? '' : path) + '/' + e.name, name: e.name, kind: e.directory ? 'directory' : e.kind === 'file' ? 'file' : 'special', size: e.size ?? 0, modified: e.modified ?? '' }));
-            for (const child of children) {
-                const old = work.files.find(f => f.path === child.path);
-                if (old?.content !== undefined && old.size === child.size && old.modified === child.modified) {
-                    child.content = old.content;
-                    child.kind = old.kind;
-                }
-            }
+            const children = entries.filter(e => e.name !== '/').map(e => ({ path: (path === '/' ? '' : path) + '/' + e.name, name: e.name,
+                kind: e.directory ? 'directory' : e.kind === 'file' ? 'file' : 'special', size: e.size ?? 0, modified: e.modified ?? '' }));
+            // A listing proves names and metadata only. Any earlier preview is stale.
+            for (const old of work.files)
+                if ((old.path.slice(0, old.path.lastIndexOf('/')) || '/') === path)
+                    this.releasePreview(old);
             work.files = [...work.files.filter(f => (f.path.slice(0, f.path.lastIndexOf('/')) || '/') !== path), ...children];
             if (work.resourceErrors)
                 delete work.resourceErrors.files;
             this.emit();
         }
         catch (error) {
-            if (epoch === this.epoch) {
+            if (epoch === this.epoch && this.directoryLoads.get(key) === generation) {
                 (work.resourceErrors ??= {}).files = errorText(error);
                 state.error = errorText(error);
                 this.emit();
@@ -3114,71 +3454,9 @@ export class DesktopAdapter {
         }
         finally {
             state.loading = false;
-            if (epoch === this.epoch)
+            if (epoch === this.epoch && this.directoryLoads.get(key) === generation)
                 this.emit();
         }
-    }
-    async readFile(id, path) {
-        const epoch = this.epoch;
-        const work = this.getWork(id);
-        let file = work.files.find(f => f.path === path);
-        if (!file) {
-            await this.loadDirectory(id, path.slice(0, path.lastIndexOf('/')) || '/');
-            file = work.files.find(f => f.path === path);
-        }
-        if (!file)
-            throw new DesktopError('FILE_NOT_FOUND', 'File was not found in the current workspace listing.', 404);
-        if (file.kind === 'directory') {
-            await this.loadDirectory(id, path);
-            return file;
-        }
-        if (file.kind === 'special')
-            return file;
-        if (file.size > 1_048_576) {
-            file.kind = 'binary';
-            return file;
-        }
-        const response = await fetch(this.fileURL(id, path), { credentials: 'same-origin' });
-        if (!response.ok)
-            throw new DesktopError('FILE_READ_FAILED', `File cannot be read (${response.status}).`, response.status);
-        const reader = response.body.getReader();
-        const chunks = [];
-        let size = 0;
-        while (true) {
-            const result = await reader.read();
-            if (result.done)
-                break;
-            size += result.value.byteLength;
-            if (size > 1_048_576) {
-                await reader.cancel();
-                file.kind = 'binary';
-                this.emit();
-                return file;
-            }
-            chunks.push(result.value);
-        }
-        const bytes = new Uint8Array(size);
-        let offset = 0;
-        for (const chunk of chunks) {
-            bytes.set(chunk, offset);
-            offset += chunk.length;
-        }
-        try {
-            file.content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-            if (file.content.includes('\0'))
-                throw new Error('Binary');
-            file.kind = 'text';
-        }
-        catch {
-            file.kind = 'binary';
-            delete file.content;
-        }
-        if (epoch !== this.epoch)
-            throw new Error('The connection changed; the file response was discarded.');
-        file.size = size;
-        file.modified = fileVersion(response.headers.get('Last-Modified')) || fileVersion(file.modified);
-        this.emit();
-        return { ...file };
     }
     async uploadResponse(url, method, body, headers, progress) {
         const epoch = this.epoch;
@@ -3259,7 +3537,8 @@ export class DesktopAdapter {
             confirmed?.(result);
             const file = this.getWork(id).files.find(f => f.path === path);
             if (file) {
-                file.content = content;
+                this.releasePreview(file);
+                file.preview = { kind: 'text', content };
                 file.modified = '';
             }
             // A later HEAD alone cannot establish which body it describes. Compare a fresh
@@ -3267,7 +3546,7 @@ export class DesktopAdapter {
             if (!result.modified) {
                 try {
                     const fresh = await this.readFile(id, path);
-                    if (fresh.content === content)
+                    if (fresh.preview?.kind === 'text' && fresh.preview.content === content)
                         result.modified = fileVersion(fresh.modified);
                 }
                 catch {
