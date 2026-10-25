@@ -654,7 +654,7 @@ for (const action of ['read','path','refresh','save','folder','rename','move','c
   armed=true;const before=requests.filter(r=>r.method===method&&r.path.startsWith('/_desktop/files/')).length;
   if(action==='upload'){await button(page,'file-add').click();await page.locator('[data-action=upload]').click();await page.locator('#upload-input').setInputFiles({name:'binary.dat',mimeType:'application/octet-stream',buffer:Buffer.from([0,255,1,128])});}
   else if(action==='read')await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();else await button(page,trigger).click();
-  if(action==='read') { await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toHaveAttribute('aria-busy','true'); await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toBeDisabled(); await expect(page.locator('[data-action="open-file"][data-path="/note.txt"] .pending-dots')).toHaveCount(1); }
+  if(action==='read') { await expect(page.locator('.file-target-toolbar')).toContainText('note.txt'); await expect(page.locator('.read-placeholder')).toContainText('Reading note.txt'); }
   else if(action==='path'||action==='refresh') { await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true'); await expect(button(page,'refresh-files')).toHaveAccessibleName('Reading files…'); }
   else await expect(page.locator('[aria-busy="true"]').filter({has:page.locator('.pending-dots')}).first()).toBeVisible();
   if(action==='upload'){await expect(page.locator('#app')).toContainText('File 1 of 1');await expect(page.locator('#app')).toContainText('Waiting for confirmation');}
@@ -893,7 +893,8 @@ test('DWUI-012 readonly file callback after Core switch cannot reopen a file or 
   const {page}=await fixture(t,async r=>{
     if(r.path.startsWith('/_desktop/files/')){if(r.method==='GET'){await gate.promise;return{body:'original private file'};}return{status:207,body:listing('original private file',mtime1)};}
   });
-  await button(page,'tab-Files').click();await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();await expect(page.locator('[data-action="open-file"][data-path="/note.txt"]')).toHaveAttribute('aria-busy','true');
+  await button(page,'tab-Files').click();await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
+  await expect(page.locator('.file-target-toolbar')).toContainText('note.txt');await expect(page.locator('.read-placeholder')).toContainText('Reading note.txt');
   await api(page,"await adapter.switchCore('http://new-core.test')");gate.resolve();await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();await expect(page.locator('#app')).not.toContainText('original private file');await expect(page.locator('#file-editor')).toHaveCount(0);
 });
 
@@ -956,7 +957,7 @@ test('DWUI-016/017 Start to Ready, terminal readback failure and retry preserve 
 });
 
 test('DWUI-019 Files navigation leaves no Checked/ISO stack and Refresh confirmation expires', async t => {
-  const { page } = await fixture(t, r => {
+  const { page, requests } = await fixture(t, r => {
     if (r.method !== 'PROPFIND') return;
     const path = r.path.includes('/files/apps') ? r.path.includes('/child') ? '' : 'apps/child/' : 'apps/';
     return { body: `<d:multistatus xmlns:d="DAV:">${path ? `<d:response><d:href>/_desktop/files/works/work-1/files/${path}</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>` : ''}</d:multistatus>` };
@@ -1445,4 +1446,242 @@ test('Session chooser retains rows during a failed refresh and retries to a conf
   await expect(page.locator('#modal')).not.toContainText('Conversations could not be read');
   await expect(page.locator('#modal [data-action=new-session]')).toBeEnabled();
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('delivered file links open current Files content, bounded image previews and explicit failure exits', async t => {
+  const png = await readFile(new URL('../../../../fixtures/chat-images/png.png', import.meta.url));
+  const jpeg = await readFile(new URL('../../../../fixtures/chat-images/jpeg.jpg', import.meta.url));
+  const webp = await readFile(new URL('../../../../fixtures/chat-images/webp.webp', import.meta.url));
+  const filesBase = '/_desktop/files/works/work-1/files/';
+  const contents: Record<string, Buffer> = {
+    'note.txt': Buffer.from('hello from chat\n'), 'image.png': png, 'photo.jpg': jpeg, 'pic.webp': webp,
+    'fake.txt': png, 'broken.png': Buffer.concat([png.subarray(0, 8), Buffer.from('broken')]), 'large.png': Buffer.from('x'),
+  };
+  const sizes: Record<string, number> = Object.fromEntries(Object.entries(contents).map(([name, bytes]) => [name, bytes.length]));
+  sizes['large.png'] = 11 * 1024 * 1024;
+  let missingExists = false;
+  const row = (name: string, size: number, href = `${filesBase}${encodeURIComponent(name)}`) =>
+    `<d:response><d:href>${href}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>${size}</d:getcontentlength><d:getlastmodified>${mtime1}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`;
+  const text = 'Files: [报告.txt](piwork-file:/note.txt), [PNG](piwork-file:/image.png), [JPEG](piwork-file:/photo.jpg), '
+    + '[WebP](piwork-file:/pic.webp), [fake](piwork-file:/fake.txt), [broken](piwork-file:/broken.png), '
+    + '[large](piwork-file:/large.png), [missing](piwork-file:/missing.txt), [nested](piwork-file:/gone/note.txt).';
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1/sessions/session-1') return { json: { session: { workId: 'work-1', sessionId: 'session-1', modelPreference: null, source: { kind: 'chat' } },
+      messages: [{ entryId: 'assistant-1', runId: 'run-1', role: 'assistant', blocks: [{ blockId: 'b1', type: 'text', text }] }], runs: [] } };
+    if (!r.path.startsWith(filesBase)) return;
+    const name = decodeURIComponent(r.path.slice(filesBase.length)).replace(/\/$/, '');
+    if (name === 'gone' || name.startsWith('gone/')) return { status: 404 };
+    const list = [...Object.keys(contents), ...(missingExists ? ['missing.txt'] : [])];
+    if (r.method === 'PROPFIND') {
+      if (!name) return { status: 207, body: `<d:multistatus xmlns:d="DAV:">${list.map(item => row(item, sizes[item]!)).join('')}</d:multistatus>` };
+      if (name === 'missing.txt' && !missingExists) return { status: 404 };
+      return { status: 207, body: `<d:multistatus xmlns:d="DAV:">${row(name, name === 'missing.txt' ? 8 : sizes[name] ?? 0)}</d:multistatus>` };
+    }
+    if (r.method === 'GET') {
+      if (name === 'missing.txt') return missingExists ? { body: 'now here' } : { status: 404 };
+      const bytes = contents[name];
+      return bytes ? { body: bytes } : { status: 404 };
+    }
+  });
+  await expect(button(page, 'tab-Chat')).toHaveClass(/active/);
+  const posts = () => requests.filter(record => record.method === 'POST').length;
+  const beforePosts = posts();
+
+  // Focus chat must exit before Files is truly visible.
+  await page.locator('[data-action="focus-chat"]').click();
+  await expect(page.locator('[data-action="exit-service-focus"]')).toBeVisible();
+  await page.locator('a.chat-file-link[data-path="/image.png"]').click();
+  await expect(page.locator('.file-image-preview img')).toBeVisible();
+  assert.equal(await page.locator('#workspace-main').getAttribute('inert'), null);
+  await expect.poll(() => page.locator('.file-image-preview img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+  await expect(page.locator('[data-action="save-file"]')).toHaveCount(0);
+  await expect(page.locator('.file-target-toolbar')).not.toContainText(/Saved|Unsaved/);
+
+  // The same message link works from the Chat side panel of the Services layout.
+  await button(page, 'tab-Services').click();
+  await expect(page.locator('#workspace-chat')).toBeVisible();
+  await page.locator('#workspace-chat a.chat-file-link[data-path="/photo.jpg"]').click();
+  await expect(page.locator('.file-image-preview img')).toBeVisible();
+  await expect(page.locator('#workspace-chat')).toBeVisible();
+  await button(page, 'tab-Chat').click();
+
+  // All three real image encodings decode; a fake suffix follows content, not its extension.
+  for (const [label, path, bytes] of [['PNG', '/image.png', png], ['JPEG', '/photo.jpg', jpeg], ['WebP', '/pic.webp', webp], ['fake suffix', '/fake.txt', png]] as const) {
+    await button(page, 'tab-Chat').click();
+    await page.locator(`a.chat-file-link[data-path="${path}"]`).click();
+    const image = page.locator('.file-image-preview img');
+    await expect(image, label).toBeVisible();
+    await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth > 0), { message: label }).toBe(true);
+    assert.ok(bytes.length > 0);
+  }
+
+  // 360px keeps the preview inside the page and Back to files is keyboard reachable.
+  await page.setViewportSize({ width: 360, height: 800 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const back = page.locator('.file-target-toolbar [data-action="close-file"]');
+  await back.focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('.file-table')).toBeVisible();
+  await expect(page.locator('.breadcrumbs')).toContainText('Workspace');
+  // The Files list opens images through the same preview capability as a chat link.
+  await page.locator('[data-action="open-file"][data-path="/image.png"]').click();
+  await expect(page.locator('.file-image-preview img')).toBeVisible();
+  await expect.poll(() => page.locator('.file-image-preview img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+  await page.locator('.file-target-toolbar [data-action="close-file"]').click();
+  await expect(page.locator('.file-table')).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  // Corrupt and over-budget images explain the limit and offer the real download only.
+  await button(page, 'tab-Chat').click(); await page.locator('a.chat-file-link[data-path="/broken.png"]').click();
+  await expect(page.locator('.main-panel')).toContainText('not a valid PNG, JPEG or WebP');
+  await expect(page.locator('.main-panel')).toContainText('Download file');
+  await expect(page.locator('.file-image-preview img')).toHaveCount(0);
+  await button(page, 'tab-Chat').click(); await page.locator('a.chat-file-link[data-path="/large.png"]').click();
+  await expect(page.locator('.main-panel')).toContainText('preview limits');
+  assert.equal(requests.filter(record => record.method === 'GET' && record.path.endsWith('/large.png')).length, 0);
+
+  // A missing target keeps its path and Retry resolves only after the file really exists.
+  await button(page, 'tab-Chat').click(); await page.locator('a.chat-file-link[data-path="/missing.txt"]').click();
+  await expect(page.locator('.main-panel')).toContainText('File not found');
+  await expect(page.locator('[data-action="retry-file-preview"]')).toBeVisible();
+  missingExists = true;
+  await page.locator('[data-action="retry-file-preview"]').click();
+  await expect(page.locator('#file-editor')).toHaveValue('now here');
+
+  // A missing parent keeps the target explicit and Back lands on the nearest readable folder.
+  await button(page, 'tab-Chat').click();
+  await page.locator('a.chat-file-link[data-path="/gone/note.txt"]').click();
+  await expect(page.locator('.main-panel')).toContainText('File not found');
+  await page.locator('.file-target-toolbar [data-action="close-file"]').click();
+  await expect(page.locator('.main-panel')).toContainText('folder is no longer available');
+  await expect(page.locator('.breadcrumbs')).toContainText('Workspace');
+
+  // The same hash works as a copied/reloaded current-login entry and creates no Run.
+  const href = await page.locator('a.chat-file-link[data-path="/note.txt"]').getAttribute('href');
+  await page.goto(`${base}/${href}`);
+  await expect(page.locator('#file-editor')).toHaveValue('hello from chat\n');
+  await page.reload();
+  await expect(page.locator('.file-target-toolbar')).toContainText('note.txt');
+  await expect(page.locator('#file-editor')).toHaveValue('hello from chat\n');
+  await expect(page.locator('#workspace-main')).not.toHaveAttribute('inert');
+  assert.equal(posts(), beforePosts, 'opening, retrying and reloading file targets submits no Run or control request');
+});
+
+test('a request reply file link returns to the original request inspector', async t => {
+  const filesBase = '/_desktop/files/works/work-1/files/';
+  const request = { requestId: 'request-file', goal: 'Publish the report', source: { kind: 'chat' }, state: 'completed',
+    disposition: 'live', updatedAt: 'now', runIds: ['run-1'], result: 'Report ready' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1/agent-requests') return { json: { items: [request], nextCursor: null, checkedAt: 'now' } };
+    if (r.path === 'works/work-1/agent-requests/request-file') return { json: { request, evidence: { items: [], nextCursor: null } } };
+    if (r.path === 'works/work-1/runs/run-1') return { json: { runId: 'run-1', workId: 'work-1', sessionId: 'session-1', state: 4,
+      finalText: 'Current: [report.txt](piwork-file:/note.txt)' } };
+    if (r.path === filesBase + 'note.txt' && r.method === 'PROPFIND') return { status: 207, body: listing('request reply file', mtime1) };
+    if (r.path === filesBase + 'note.txt' && r.method === 'GET') return { body: 'request reply file', headers: { 'Last-Modified': mtime1 } };
+  });
+  await page.locator('[data-action="pi-requests"]').click();
+  await page.locator('[data-action="pi-request-detail"][data-id="request-file"]').click();
+  await expect(page.locator('.request-overview')).toContainText('Publish the report');
+  await page.locator('.request-executions > summary').click();
+  await page.locator('.request-execution > summary').click();
+  await page.locator('a.chat-file-link[data-path="/note.txt"]').click();
+  await expect(page.locator('#file-editor')).toHaveValue('request reply file');
+  await expect(page.locator('[data-action="back-to-file-source"]')).toBeVisible();
+  await page.locator('[data-action="back-to-file-source"]').click();
+  await expect(page.locator('.request-overview')).toContainText('Publish the report');
+  await expect(page.locator('#file-editor')).toHaveCount(0);
+  assert.equal(requests.filter(record => record.method === 'POST').length, 0);
+});
+
+test('retrying a failed file read keeps the unsaved draft and its separate reread baseline', async t => {
+  let failGet = false;
+  const notePath = '/_desktop/files/works/work-1/files/note.txt';
+  const { page, requests } = await fixture(t, (r): Reply | undefined => {
+    if (r.method === 'PROPFIND' && (r.path === notePath || r.path === '/_desktop/files/works/work-1/files/')) return { status: 207, body: listing('server version', mtime1), headers: { 'Content-Type': 'application/xml' } };
+    if (r.path === notePath && r.method === 'GET') return failGet ? { status: 503 } : { body: 'server version', headers: { 'Last-Modified': mtime1 } };
+  });
+  await button(page, 'tab-Files').click(); await button(page, 'open-file').click();
+  await page.locator('#file-editor').fill('draft stays');
+  failGet = true; await button(page, 'refresh-files').click();
+  await expect(page.locator('.main-panel')).toContainText('503');
+  failGet = false;
+  await page.locator('[data-action="retry-file-preview"]').click();
+  await expect(page.locator('#file-editor')).toHaveValue('draft stays');
+  await expect(page.locator('.file-reread pre')).toHaveText('server version');
+  await expect(page.locator('.editor-toolbar')).toContainText('Unsaved');
+  assert.equal(requests.filter(record => record.method === 'PUT').length, 0);
+});
+
+test('a chat file link honors the dirty file guard and only navigates after an explicit discard', async t => {
+  const root = '/_desktop/files/works/work-1/files/';
+  const reply = 'Open [other.txt](piwork-file:/other.txt).';
+  const row = (name: string, body: string) => `<d:response><d:href>${root}${name}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>${Buffer.byteLength(body)}</d:getcontentlength><d:getlastmodified>${mtime1}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`;
+  const { page, requests } = await fixture(t, (r): Reply | undefined => {
+    if (r.path === 'works/work-1/sessions/session-1') return { json: { session: { workId: 'work-1', sessionId: 'session-1', modelPreference: null, source: { kind: 'chat' } },
+      messages: [{ entryId: 'assistant-1', runId: 'run-1', role: 'assistant', blocks: [{ blockId: 'b1', type: 'text', text: reply }] }], runs: [] } };
+    if (r.path === root && r.method === 'PROPFIND') return { status: 207, body: `<d:multistatus xmlns:d="DAV:">${row('note.txt', 'saved note')}${row('other.txt', 'other content')}</d:multistatus>` };
+    if (r.path === root + 'note.txt' && r.method === 'PROPFIND') return { status: 207, body: `<d:multistatus xmlns:d="DAV:">${row('note.txt', 'saved note')}</d:multistatus>` };
+    if (r.path === root + 'other.txt' && r.method === 'PROPFIND') return { status: 207, body: `<d:multistatus xmlns:d="DAV:">${row('other.txt', 'other content')}</d:multistatus>` };
+    if (r.path === root + 'note.txt' && r.method === 'GET') return { body: 'saved note', headers: { 'Last-Modified': mtime1 } };
+    if (r.path === root + 'other.txt' && r.method === 'GET') return { body: 'other content', headers: { 'Last-Modified': mtime1 } };
+  });
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
+  await page.locator('#file-editor').fill('dirty draft');
+  const link = page.locator('#workspace-chat a.chat-file-link[data-path="/other.txt"]');
+  await link.click();
+  await expect(page.locator('#modal')).toContainText('Save your file changes?');
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(page.locator('#file-editor')).toHaveValue('dirty draft');
+  assert.equal(new URL(page.url()).hash, '#/work/work-1');
+  await link.click();
+  await page.locator('#modal').getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(page.locator('#file-editor')).toHaveValue('other content');
+  assert.equal(requests.filter(record => record.method === 'PUT').length, 0);
+});
+
+test('a streamed reply only becomes a link when complete and opens the current file', async t => {
+  const root = '/_desktop/files/works/work-1/files/';
+  const finalText = '[report](piwork-file:/note.txt)';
+  let completed = false;
+  const { page, requests } = await fixture(t, (r): Reply | undefined => {
+    if (r.path === 'works/work-1/sessions/session-1') return { json: { session: { workId: 'work-1', sessionId: 'session-1', modelPreference: null, source: { kind: 'chat' } },
+      messages: completed ? [{ entryId: 'user-1', role: 'user', text: 'produce a file' },
+        { entryId: 'assistant-1', runId: 'run-live', role: 'assistant', blocks: [{ blockId: 'b1', type: 'text', text: finalText }] }]
+        : [{ entryId: 'user-1', role: 'user', text: 'start' }], runs: [] } };
+    if (r.path === 'works/work-1/runs' && r.method === 'POST') return { status: 202, json: { run: { sessionId: 'session-1', runId: 'run-live', state: 1 }, reused: false } };
+    if (r.path === 'works/work-1/runs/run-live/events') { completed = true; return { status: 200, body: `${JSON.stringify({ sequence: '1', kind: { $case: 'text', text: { delta: '[report](piwork-file:/not' } } })}\n${JSON.stringify({ sequence: '2', kind: { $case: 'text', text: { delta: 'e.txt)' } } })}\n${JSON.stringify({ sequence: '3', kind: { $case: 'state', state: { state: 4, finalText } } })}\n`, headers: { 'Content-Type': 'application/x-ndjson' } }; }
+    if (r.path === 'works/work-1/runs/run-live') return { json: { run: { runId: 'run-live', workId: 'work-1', sessionId: 'session-1', state: 4, finalText } } };
+    if (r.method === 'PROPFIND' && (r.path === root || r.path === root + 'note.txt')) return { status: 207, body: listing('streamed file', mtime1), headers: { 'Content-Type': 'application/xml' } };
+    if (r.path === root + 'note.txt' && r.method === 'GET') return { body: 'streamed file', headers: { 'Last-Modified': mtime1 } };
+  });
+  await page.locator('#composer').fill('produce a file');
+  await button(page, 'send-message').click();
+  const link = page.locator('a.chat-file-link[data-path="/note.txt"]');
+  await expect(link).toBeVisible();
+  assert.equal(requests.filter(record => record.path.startsWith('/_desktop/files/')).length, 0, 'rendering a reply must not read the workspace');
+  await link.click();
+  await expect(page.locator('#file-editor')).toHaveValue('streamed file');
+  assert.equal(requests.filter(record => record.method === 'POST' && record.path === 'works/work-1/runs').length, 1);
+});
+
+
+test('a revoked file session clears the preview and returns to sign-in', async t => {
+  const root = '/_desktop/files/works/work-1/files/';
+  let signedOut = false, revoked = false;
+  const { page, requests } = await fixture(t, (r): Reply | undefined => {
+    if (r.path === 'session') return { json: signedOut
+      ? { state: 'signed-out', generation: 2, csrf: 'revoked-csrf', coreUrl: 'http://core.test' }
+      : { state: 'authenticated', generation: 1, csrf: 'local-session-csrf', coreUrl: 'http://core.test', user: { id: 'owner', account: 'owner', role: 'user' } } };
+    if (r.method === 'PROPFIND' && (r.path === root || r.path === root + 'note.txt')) return { status: 207, body: listing('secret file', mtime1), headers: { 'Content-Type': 'application/xml' } };
+    if (r.path === root + 'note.txt' && r.method === 'GET') return revoked ? { status: 401, headers: { 'X-Piwork-File-Error': 'AUTH_REQUIRED' } } : { body: 'secret file', headers: { 'Last-Modified': mtime1 } };
+  });
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
+  await expect(page.locator('#file-editor')).toHaveValue('secret file');
+  signedOut = true; revoked = true;
+  await button(page, 'refresh-files').click();
+  await expect(page.getByRole('heading', { name: 'Connect to your Core', exact: true })).toBeVisible();
+  await expect(page.locator('#file-editor')).toHaveCount(0);
+  await expect(page.locator('#app')).not.toContainText('secret file');
+  assert.ok(requests.some(record => record.path === 'session'), 'file auth reuses the session readback');
 });

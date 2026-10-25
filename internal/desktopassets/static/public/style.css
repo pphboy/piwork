@@ -1501,6 +1501,35 @@ pre,
 .editor-toolbar .status {
   margin-left: auto;
 }
+.file-target-toolbar { align-items: flex-start; flex-wrap: wrap; }
+.file-target-heading { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 240px; }
+.file-target-heading strong { font-size: 13px; overflow-wrap: anywhere; }
+.file-target-heading .mono { font-size: 11px; overflow-wrap: anywhere; }
+.file-image-preview {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 16px 17px;
+  overflow: auto;
+}
+.file-image-preview img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(70vh, 720px);
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+.file-image-preview figcaption { max-width: 100%; font-size: 11px; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
+.chat-markdown a.chat-file-link { font-weight: 500; }
 .file-editor {
   width: 100%;
   min-height: 320px;
@@ -2757,6 +2786,12 @@ dd > .button {
   .file-row > .button {
     width: 30px;
   }
+  .file-target-toolbar { padding: 9px 8px; }
+  .file-target-heading { flex-basis: 100%; }
+  .file-target-heading strong { font-size: 11px; }
+  .file-image-preview { padding: 12px 8px; }
+  .file-image-preview img { max-height: 55vh; }
+  .file-image-preview figcaption { font-size: 9px; }
   .editor-toolbar {
     gap: 8px;
     flex-wrap: wrap;
@@ -3295,6 +3330,7 @@ dd > .button {
 .import-name-feedback { overflow-wrap:anywhere; }
 .button.send-button.stop-and-send { width:auto; padding:0 9px; white-space:nowrap; font-size:11px; }
 .request-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+.request-text.chat-markdown { white-space:normal; }
 @media (max-width:600px) {
  .service-toolbar { height:auto; min-height:53px; flex-wrap:wrap; gap:6px; padding:8px 12px; }
  .service-toolbar .actions { margin-left:auto; }

@@ -19,9 +19,11 @@ import {
   type Service,
   type Configuration,
   type WorkspaceFile,
+  type FilePreview,
   type Operation,
   type Run,
 } from "./models.js";
+import { filesDeepLink, filesRouteTarget, isFilesRoute } from "./file-reference.js";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const pendingAges = new WeakMap<HTMLElement, { label: string; started: number }>();
@@ -122,6 +124,8 @@ let view = {
   fileReread: null as WorkspaceFile | null,
   fileUnprotected: false,
   fileWriteUncertain: false,
+  fileStatus: "idle" as "idle" | "loading" | "ready" | "missing" | "unavailable" | "error",
+  fileError: "",
   selected: [] as string[],
   settingsTab: "Skills",
   config: null as Configuration | null,
@@ -297,7 +301,7 @@ const actionLabels: Record<string, string> = {
   'retry-conversation': 'Reading conversation', 'sessions': 'Reading Sessions', 'select-session': 'Reading Session', 'new-session': 'Creating Session', 'send-message': 'Submitting message', 'cancel-run': 'Requesting cancellation', 'resume-run': 'Reconnecting Run',
   'service-details': 'Reading logs', 'service-action': 'Submitting Service control', 'confirm-service-control': 'Submitting Service control', 'refresh-logs': 'Reading logs',
   'open-app': 'Opening application', 'open-window': 'Opening application', 'retry-service-entry': 'Preparing application', 'check-preview': 'Checking preview',
-  'refresh-files': 'Reading workspace', 'file-path': 'Reading directory', 'open-file': 'Reading file', 'open-source': 'Reading file', 'save-file': 'Saving file', 'dirty-save': 'Saving file',
+  'refresh-files': 'Reading workspace', 'file-path': 'Reading directory', 'open-file': 'Reading file', 'open-source': 'Reading file', 'retry-file-preview': 'Reading file', 'save-file': 'Saving file', 'dirty-save': 'Saving file',
   'confirm-upload-overwrite': 'Uploading files', 'confirm-folder': 'Creating folder', 'retry-selected-files': 'Retrying selected paths', 'confirm-transfer': 'Transferring files', 'confirm-file-delete': 'Deleting files',
   'save-config': 'Saving settings', 'dirty-config-save': 'Saving settings', 'refresh-config': 'Reading settings', 'apply-config': 'Submitting Apply', 'confirm-core-skills': 'Copying Skill', 'check-catalog': 'Reading catalog',
   'confirm-install': 'Submitting package', 'confirm-remove-package': 'Removing package', 'confirm-import': 'Submitting import', 'prepare-export': 'Preparing Export',
@@ -373,10 +377,15 @@ let toastTimer: ReturnType<typeof setTimeout>;
 let lastFocus: HTMLElement | null = null;
 let pendingNav: (() => void | Promise<void>) | null = null;
 let sourceGuardReturn: { epoch: number; route: string; modal: string; data: Record<string, string>; focus: string } | undefined;
+/** The request inspector a Files target was opened from, so Back can restore it. */
+let fileSourceReturn: { epoch: number; workId: string; path: string; tab: string; modal: string; data: Record<string, string>; scroll: number } | undefined;
 let composition = false;
 let lastRoute = "";
 const route = () => {
-  if (location.hash && !location.hash.includes("ticket=")) return location.hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
+  if (location.hash && !location.hash.includes("ticket=")) {
+    try { return location.hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent); }
+    catch { return ["works"]; }
+  }
   const match = /^\/works\/([^/]+)(?:\/services\/([^/]+))?/.exec(location.pathname);
   return match ? match[2] ? ["app", decodeURIComponent(match[1]), decodeURIComponent(match[2]), new URLSearchParams(location.search).get("port") || ""] : ["work", decodeURIComponent(match[1])] : ["works"];
 };
@@ -984,7 +993,7 @@ function messageMarkup(w:Work,sessionId:string,messages:import('./models.js').Me
  if(group.activity){const running=group.messages.some(m=>m.tool?.status==='Running'),failures=group.messages.filter(m=>m.tool?.status==='Failed'),unknown=group.messages.some(m=>m.tool?.status?.includes('confirmed'));
  const busy=activityBusy(w,sessionId,group.messages);
  return `<details class="activity" data-message-key="${esc(key)}" data-activity-key="${esc(key)}" ${expandedActivity.get(key)?'open':''} aria-busy="${busy}"><summary>${busy ? pendingDots() : icon('terminal',14)} Activity · ${group.messages.length} ${group.messages.length===1?'tool':'tools'} · ${failures.length?'Needs attention':running?'Running':unknown?'Result not confirmed':'Completed'}${busy && failures.length?' · Running':''}${failures.length?` · ${failures.length} failed<small class="activity-error">${esc(failures[0]?.tool?.content?.slice(0,160) || 'A tool failed. Open Activity to review the result.')}</small>`:''}</summary>${group.messages.map(m=>`<details class="tool-event" data-message-key="${esc(`${key}:${m.tool?.id || m.id}`)}" data-activity-key="${esc(`${key}:${m.tool?.id || m.id}`)}" ${expandedActivity.get(`${key}:${m.tool?.id || m.id}`)?"open":""}><summary>${esc(m.tool?.name)} · ${esc(m.tool?.status)}</summary><pre>${esc(m.tool?.content)}</pre></details>`).join('')}</details>${execution}`;}
- return group.messages.map(m=>`<div class="message ${m.role}" data-message-key="${esc(key)}">${m.role==='assistant'?`<div class="message-author">${icon('spark',14)} piwork</div>`:''}<div class="message-text${m.role==='assistant'?' chat-markdown':''}">${m.role==='assistant'?renderChatMarkdown(m.text):esc(m.text)}</div>${m.images?.length?`<div class="chat-message-images">${m.images.map(image=>historyImageMarkup(w,sessionId,m.runId!,image)).join('')}</div>`:''}${m.source?`<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${fileReadPending(m.source) ? pendingDots() : icon('file',13)} ${esc(m.source)}</button>`:''}</div>`).join('')+execution;
+ return group.messages.map(m=>`<div class="message ${m.role}" data-message-key="${esc(key)}">${m.role==='assistant'?`<div class="message-author">${icon('spark',14)} piwork</div>`:''}<div class="message-text${m.role==='assistant'?' chat-markdown':''}">${m.role==='assistant'?renderChatMarkdown(m.text,{workId:w.id}):esc(m.text)}</div>${m.images?.length?`<div class="chat-message-images">${m.images.map(image=>historyImageMarkup(w,sessionId,m.runId!,image)).join('')}</div>`:''}${m.source?`<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${fileReadPending(m.source) ? pendingDots() : icon('file',13)} ${esc(m.source)}</button>`:''}</div>`).join('')+execution;
  }).join('');
 }
 const webCommands=['new','resume','model','thinking','settings'];
@@ -1008,23 +1017,26 @@ function fillCommand(command:string) {
  textDraftRevisions.set(key,(textDraftRevisions.get(key) || 0)+1);view.drafts[key]=draft.replace(/^(\s*)\/[^\s]*/,`$1${command}`)+( /\s/.test(draft.trimStart())?'':' ');view.commandIndex=0;render();const input=root.querySelector<HTMLTextAreaElement>('#composer');if(input){input.value=view.drafts[key];input.focus();const position=(/^\s*\/[^\s]*/.exec(input.value)?.[0].length ?? input.value.length)+1;view.commandCaret=Math.min(position,input.value.length);input.setSelectionRange(view.commandCaret,view.commandCaret);}
 }
 function fileReadPending(path: string) {
-  return [...actions.records.values()].some(record => record.pending && record.work === current()?.id && record.view === location.hash && ['open-file', 'open-source'].includes(record.action || '') && record.resource === path);
+  return [...actions.records.values()].some(record => record.pending && record.work === current()?.id && record.view === location.hash && ['open-file', 'open-source', 'retry-file-preview'].includes(record.action || '') && record.resource === path);
 }
-function fileRefreshButton(w: Work) {
+function fileRefreshButton(w: Work, idleLabel = 'Refresh files') {
   const record=[...actions.records.values()].filter(item=>['refresh-files','file-path'].includes(item.action || '') && item.work===w.id && (item.resource===(view.file || view.path) || item.origin===(view.file || view.path)) && item.view===location.hash).sort((a,b)=>b.token-a.token)[0];
   const pending=!!record?.pending || !!adapter.directories.get(`${w.id}:${view.path}`)?.loading;
-  const label=pending?(record && Date.now()-record.started>=10000?'Still reading files…':'Reading files…'):'Refresh files';
+  const label=pending?(record && Date.now()-record.started>=10000?'Still reading files…':'Reading files…'):idleLabel;
   return btn(pending && !!adapter.directories.get(`${w.id}:${view.path}`)?.checkedAt ? pendingDots() : icon('refresh',16),'refresh-files',`icon-button quiet file-refresh ${pending?'is-reading':''}`,`aria-label="${label}" title="${label}" ${pending?'aria-disabled="true" aria-busy="true" data-read-busy="true"':''}`);
 }
 function files(w: Work) {
+  if (view.file) return fileTarget(w);
   const directory = adapter.directories.get(`${w.id}:${view.path}`);
   const filesError=directory?.error || (!directory && view.path === '/' ? w.resourceErrors?.files : '') || (adapter.state.scenario === 'files-failed' ? 'The file capability could not be reached.' : '');
   const initialRead=!directory?.checkedAt && !filesError;
-  const f = w.files.find((x) => x.path === view.file);
   const list = w.files.filter((x) => {
     const parent = x.path.slice(0, x.path.lastIndexOf("/")) || "/";
     return parent === view.path;
   });
+  const toolbarActions = view.selected.length
+    ? `<span class="selection-count" role="status">${view.selected.length} selected</span>${btn(icon("copy",16), "file-copy", "icon-button quiet", 'aria-label="Copy selected files" title="Copy selected files"')}${btn(icon("move",16), "file-move", "icon-button quiet", 'aria-label="Move selected files" title="Move selected files"')}${btn(icon("trash",16), "file-delete", "icon-button quiet danger", 'aria-label="Delete selected files" title="Delete selected files"')}${btn(icon("close",16), "clear-selection", "icon-button quiet", 'aria-label="Clear selection" title="Clear selection"')}`
+    : `${fileRefreshButton(w)}<div class="file-add-anchor">${btn(icon('more',16),'file-add','icon-button quiet',`id="file-add-trigger" aria-label="More file actions" title="More file actions" aria-haspopup="menu" aria-expanded="${!!fileActionsContext}" aria-controls="file-actions"`)}${fileActionsContext ? `<div id="file-actions" class="file-actions-menu" role="menu" aria-label="File actions">${btn(`${icon('upload',16)} Upload files`,'upload','','role="menuitem" tabindex="-1"')}${btn(`${icon('folder',16)} New folder`,'new-folder','','role="menuitem" tabindex="-1"')}<div class="file-actions-separator" role="separator"></div>${btn(`${icon('external',16)} Connect with WebDAV`,'webdav','','role="menuitem" tabindex="-1"')}</div>` : ''}</div>`;
   return `${filesRestoreNotice ? feedback(esc(filesRestoreNotice), "warning") : ""}${filesError?readFailure(`Could not read ${view.path}`,filesError,"refresh-files",!!directory?.loading):""}${uploadProgressMarkup()}<div class="files-toolbar"><div class="breadcrumbs"><button data-action="file-path" data-path="/">${icon("folder", 16)} Workspace</button>${view.path
     .split("/")
     .filter(Boolean)
@@ -1034,7 +1046,45 @@ function files(w: Work) {
     )
     .join(
       "",
-    )}</div><div class="actions file-toolbar-actions">${!f && view.selected.length ? `<span class="selection-count" role="status">${view.selected.length} selected</span>${btn(icon("copy",16), "file-copy", "icon-button quiet", 'aria-label="Copy selected files" title="Copy selected files"')}${btn(icon("move",16), "file-move", "icon-button quiet", 'aria-label="Move selected files" title="Move selected files"')}${btn(icon("trash",16), "file-delete", "icon-button quiet danger", 'aria-label="Delete selected files" title="Delete selected files"')}${btn(icon("close",16), "clear-selection", "icon-button quiet", 'aria-label="Clear selection" title="Clear selection"')}` : `${fileRefreshButton(w)}<div class="file-add-anchor">${btn(icon('more',16),'file-add','icon-button quiet',`id="file-add-trigger" aria-label="More file actions" title="More file actions" aria-haspopup="menu" aria-expanded="${!!fileActionsContext}" aria-controls="file-actions"`)}${fileActionsContext ? `<div id="file-actions" class="file-actions-menu" role="menu" aria-label="File actions">${btn(`${icon('upload',16)} Upload files`,'upload','','role="menuitem" tabindex="-1"')}${btn(`${icon('folder',16)} New folder`,'new-folder','','role="menuitem" tabindex="-1"')}<div class="file-actions-separator" role="separator"></div>${btn(`${icon('external',16)} Connect with WebDAV`,'webdav','','role="menuitem" tabindex="-1"')}</div>` : ''}</div>`}</div></div>${f ? textEditor(f) : `${initialRead ? readPlaceholder(`Loading ${view.path}…`) : !directory?.checkedAt && filesError ? '' : list.length ? `<div class="file-table"><div class="file-head"><span></span><span>NAME</span><span>SIZE</span><span>MODIFIED</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="Select ${esc(f.name)}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${fileReadPending(f.path) ? pendingDots() : icon(f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? "Special item" : f.kind === "directory" ? "Folder" : f.kind === "binary" ? "Binary file" : f.kind === "text" ? "UTF-8 text" : "File"}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="Actions for ${esc(f.name)}"`)}</div>`).join("")}</div>` : empty("folder", "This folder is empty", "Upload files or create a folder to get started.", btn("Upload files", "upload", "primary"))}`}${transferResults()}`;
+    )}</div><div class="actions file-toolbar-actions">${toolbarActions}</div></div>${initialRead ? readPlaceholder(`Loading ${view.path}…`) : !directory?.checkedAt && filesError ? '' : list.length ? `<div class="file-table"><div class="file-head"><span></span><span>NAME</span><span>SIZE</span><span>MODIFIED</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="Select ${esc(f.name)}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${fileReadPending(f.path) ? pendingDots() : icon(f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? "Special item" : f.kind === "directory" ? "Folder" : f.preview?.kind === "text" ? "UTF-8 text" : f.preview?.kind === "image" ? "Image" : f.preview?.kind === "download-only" ? "Download only" : "File"}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="Actions for ${esc(f.name)}"`)}</div>`).join("")}</div>` : empty("folder", "This folder is empty", "Upload files or create a folder to get started.", btn("Upload files", "upload", "primary"))}${transferResults()}`;
+}
+function fileTargetBackLink(): string {
+  return btn(`${icon("arrow", 16)} Back to files`, "close-file", "quiet small");
+}
+function fileTarget(w: Work): string {
+  const path = view.file, f = w.files.find(item => item.path === path);
+  const name = f?.name || path.slice(path.lastIndexOf('/') + 1) || path;
+  const source = fileSourceReturn && fileSourceReturn.epoch === adapter.identityEpoch && fileSourceReturn.workId === w.id
+    && fileSourceReturn.path === path && fileSourceReturn.modal === 'pi-request-detail';
+  const toolbar = `<div class="files-toolbar file-target-toolbar"><div class="file-target-heading"><strong>${esc(name)}</strong><span class="mono muted">${esc(path)}</span></div><div class="actions file-toolbar-actions">${fileRefreshButton(w, 'Refresh file')}${source ? btn(`${icon("arrow", 16)} Back to request`, "back-to-file-source", "quiet small") : ''}${fileTargetBackLink()}</div></div>`;
+  const retry = `${btn("Retry", "retry-file-preview", "small")}${btn("Back to files", "close-file", "primary")}`;
+  if (view.fileStatus === 'loading' || !f && view.fileStatus === 'idle') return `${toolbar}${readPlaceholder(`Reading ${name}…`, 'file')}`;
+  if (view.fileStatus === 'missing') return `${toolbar}${dirty() ? feedback('Your unsaved draft is kept in this page, but the saved file is no longer available.', 'warning') : ''}${empty("file", "File not found", `${esc(path)} is not in this Work’s current workspace. It may have been moved or deleted.`, retry)}`;
+  if (view.fileStatus === 'unavailable') return `${toolbar}${feedback(esc(view.fileError || 'This file cannot be opened right now.'), 'warning', retry)}`;
+  if (view.fileStatus === 'error') return `${toolbar}${feedback(esc(view.fileError || 'The file could not be read.'), 'warning', retry)}`;
+  if (!f) return `${toolbar}${empty("file", "File not found", `${esc(path)} is not in this Work’s current workspace.`, retry)}`;
+  if (f.kind === 'special') return `${toolbar}${empty("terminal", "This is a special filesystem item", "Links and special items cannot be opened as ordinary files.", fileTargetBackLink())}`;
+  const preview = f.preview;
+  const keepDraft = view.fileEditable && (dirty() || view.fileReread !== null || view.fileWriteUncertain);
+  if (keepDraft || preview?.kind === 'text') return `${toolbar}${textEditor(f)}`;
+  if (preview?.kind === 'image') return `${toolbar}${imagePreview(f, preview)}`;
+  if (preview?.kind === 'download-only') return `${toolbar}${downloadOnlyPreview(f, preview)}`;
+  return `${toolbar}${readPlaceholder(`Reading ${name}…`, 'file')}`;
+}
+function imagePreview(f: WorkspaceFile, preview: Extract<FilePreview, { kind: 'image' }>): string {
+  const label = preview.mimeType === 'image/png' ? 'PNG image' : preview.mimeType === 'image/jpeg' ? 'JPEG image' : 'WebP image';
+  return `<figure class="file-image-preview"><img src="${esc(preview.url)}" alt="${esc(f.name)}"><figcaption>${esc(label)} · ${preview.width}×${preview.height} · ${size(f.size)}${f.modified ? ` · ${esc(f.modified)}` : ''}</figcaption></figure><div class="editor-footer"><span>Read-only preview of the current file</span><div class="actions">${btn("Download file", "download-file", "primary", `data-path="${esc(f.path)}"`)}</div></div>`;
+}
+function downloadOnlyPreview(f: WorkspaceFile, preview: Extract<FilePreview, { kind: 'download-only' }>): string {
+  const reason = preview.reason === 'oversized'
+    ? 'This file exceeds the preview limits (10 MiB, 8192 pixels per side and 40 million pixels).'
+    : preview.reason === 'document'
+      ? 'PDF, GIF and archive files are not previewed here. Download the original file to open it with a compatible application.'
+      : preview.reason === 'unsupported'
+        ? 'This file is not a valid PNG, JPEG or WebP image that this browser can decode.'
+        : 'This file is not UTF-8 text, so it cannot be opened in the editor.';
+  const details = `${size(f.size)}${f.modified ? ` · ${esc(f.modified)}` : ''}`;
+  return empty("file", "Download to open this file", `${esc(reason)} ${details}. The saved file is still available.`, btn(`${icon("download")} Download file`, "download-file", "primary", `data-path="${esc(f.path)}"`));
 }
 const decodePaths = (value?: string): string[] =>
   value ? JSON.parse(value) : [];
@@ -1052,7 +1102,9 @@ function transferResults() {
 }
 function textEditor(f: WorkspaceFile) {
   const editable = view.fileEditable;
-  return `<div class="editor-toolbar">${btn(`${icon("arrow", 16)} Back to files`, "close-file", "quiet small")}<strong>${esc(f.name)}</strong>${badge(dirty() ? "Unsaved" : "Saved")}</div>${editable ? `${!view.fileBaseline ? feedback("No modification time is available. Concurrent changes cannot be protected.", "warning", btn("Allow unprotected overwrite", "allow-unprotected-file", "small")) : ""}${view.fileWriteUncertain ? feedback("The previous write needs review. Reread the target before saving again.", "warning", btn("Reread saved version", "refresh-files", "small")) : ""}${view.fileReread ? `<section class="file-reread"><h3>Current saved version · read only</h3><pre>${esc(view.fileReread.content ?? "This target is no longer editable text.")}</pre>${btn("Overwrite this reread version", "use-reread-version", "small", view.fileReread.kind === "text" ? "" : "disabled")}</section>` : ""}<textarea id="file-editor" class="file-editor" spellcheck="false" aria-label="Edit ${esc(f.name)}">${esc(view.fileDraft)}</textarea><div class="editor-footer"><span>UTF-8 · ${size(new TextEncoder().encode(view.fileDraft).length)} / 1 MiB limit · Version checks have second precision</span><div class="actions">${btn("Download saved version", "download-file", "quiet", `data-path="${esc(f.path)}"`)}${btn("Discard", "discard-file", "quiet", dirty() ? "" : "disabled")}${btn("Save file", "save-file", "primary", dirty() ? "" : "disabled")}</div></div>` : empty(f.kind === "special" ? "terminal" : "file", f.kind === "special" ? "This is a special filesystem item" : f.kind === "binary" ? "Download to open this binary file" : f.kind === "file" ? "Open this file to inspect its contents" : "This file exceeds the editing limit", f.kind === "special" ? "Special items cannot be treated as ordinary editable files." : "The in-browser editor supports UTF-8 text up to 1 MiB.", f.kind === "special" ? "" : btn(`${icon("download")} Download file`, "download-file", "primary", `data-path="${esc(f.path)}"`))}`;
+  const reread = view.fileReread?.preview?.kind === 'text' ? view.fileReread.preview.content : null;
+  const rereadOther = !!view.fileReread && view.fileReread.preview?.kind !== 'text';
+  return `<div class="editor-toolbar"><strong>${esc(f.name)}</strong>${editable ? badge(dirty() ? "Unsaved" : "Saved") : ""}</div>${editable ? `${!view.fileBaseline ? feedback("No modification time is available. Concurrent changes cannot be protected.", "warning", btn("Allow unprotected overwrite", "allow-unprotected-file", "small")) : ""}${view.fileWriteUncertain ? feedback("The previous write needs review. Reread the target before saving again.", "warning", btn("Reread saved version", "refresh-files", "small")) : ""}${rereadOther ? feedback("The saved target is no longer editable text. Your draft is kept in this page.", "warning", btn("Download saved version", "download-file", "small", `data-path="${esc(f.path)}"`)) : ""}${reread !== null ? `<section class="file-reread"><h3>Current saved version · read only</h3><pre>${esc(reread)}</pre>${btn("Overwrite this reread version", "use-reread-version", "small")}</section>` : ""}<textarea id="file-editor" class="file-editor" spellcheck="false" aria-label="Edit ${esc(f.name)}">${esc(view.fileDraft)}</textarea><div class="editor-footer"><span>UTF-8 · ${size(new TextEncoder().encode(view.fileDraft).length)} / 1 MiB limit · Version checks have second precision</span><div class="actions">${btn("Download saved version", "download-file", "quiet", `data-path="${esc(f.path)}"`)}${btn("Discard", "discard-file", "quiet", dirty() ? "" : "disabled")}${btn("Save file", "save-file", "primary", dirty() ? "" : "disabled")}</div></div>` : empty("file", "Download to open this file", "The in-browser editor supports UTF-8 text up to 1 MiB.", btn(`${icon("download")} Download file`, "download-file", "primary", `data-path="${esc(f.path)}"`))}`;
 }
 function settingsPage(w: Work) {
   const configurationError = w.resourceErrors?.configuration;
@@ -1327,7 +1379,7 @@ function modalMarkup() {
       const cancellation=target && adapter.requestCancellation(target.id,r.requestId);
       const waiting=['waiting_result','waiting_apply'].includes(r.state);
       const live=r.disposition==='live',editable=live && !!target && adapter.project(target).usable,responses=target?adapter.requestResponses.get(`${target.id}:${r.requestId}`):undefined;
-      body=`<div class="request-overview"><h3>${esc(r.goal)}</h3><p>${esc(r.source.kind==='service'?`Service: ${r.source.serviceName}`:'Chat')}</p>${live && !detail.readError && !r.error && cancellation?.phase !== 'unknown' && ['pending','running','cancelling'].includes(r.state) ? pendingStatus(requestStateLabel(r.state)) : badge(requestStateLabel(r.state))}<small>${detail.checkedAt?'Last confirmed':'Updated'} ${esc(detail.checkedAt || r.updatedAt)}</small></div>${detail.readError?feedback(`Status not confirmed: ${esc(detail.readError)}`,'warning'):''}${!live?'<p class="muted">Historical · Read only</p>':''}<section class="request-result"><h3>Result &amp; next step</h3>${r.result?`<p class="request-text">${esc(r.result)}</p>`:''}${waiting && r.waitRef?feedback(`Waiting for ${esc(r.waitRef.kind)} · Chat remains available.<small>Deadline ${esc(r.waitRef.deadlineAt)}</small>`,'warning'):''}${r.error?feedback(esc(r.error.message),'warning'):''}${!r.result && (!waiting || !r.waitRef) && !r.error?'<p>No result reported yet.</p>':''}${retryIntent?feedback(esc(retryIntent.error || 'Retry result unknown. Check status to verify the original submission.'),'warning'):''}</section>${responses?.visibleLoading ? pendingStatus("Reading executions…", "pi-request-detail") : ""}<details class="request-executions"><summary>Executions <span>${r.runIds.length}</span></summary>${r.runIds.map((runId:string,index:number)=>{const run=responses?.runs.find(item=>item.id===runId);return `<details class="request-execution"><summary>Execution ${index+1} ${run?badge(run.status):'<span>Not confirmed</span>'}</summary>${run?`${runFacts(run)}${responses?.checked[run.id]?`<small>Last confirmed ${esc(responses.checked[run.id])}</small>`:''}${run.finalText?`<p class="request-text">${esc(run.finalText)}</p>`:'<p>No saved reply.</p>'}${run.error?feedback(esc(run.error),'warning'):''}`:`<p>${responses?.loading?'Reading execution…':'Execution has not been confirmed.'}</p>`}</details>`;}).join('') || '<p>No Run admitted.</p>'}<p class="muted">A successful Run does not mean the request is complete.</p></details>${responses?.errors.map(error=>feedback(esc(error),'warning')).join('') || ''}<details class="request-evidence"><summary>Evidence &amp; technical details</summary><p>Request ID <code>${esc(r.requestId)}</code></p>${r.waitRef?`<p>Wait reference <code>${esc(r.waitRef.id)}</code></p>`:''}${detail.evidence.items.map((e:Record<string,any>)=>`<article class="capability"><strong>${esc(e.kind)} · ${e.verified?'Verified':'Observed'}</strong><p>${esc(e.summary)}</p><small>${esc(e.observedAt)} · ${esc(e.objectRef)}${e.stateVersion?` · State ${esc(e.stateVersion)}`:''}${e.codeVersion?` · Code ${esc(e.codeVersion)}`:''}</small></article>`).join('') || '<p>No evidence yet.</p>'}${detail.evidence.nextCursor?btn('More evidence','next-pi-evidence','small'):''}</details>`;
+      body=`<div class="request-overview"><h3>${esc(r.goal)}</h3><p>${esc(r.source.kind==='service'?`Service: ${r.source.serviceName}`:'Chat')}</p>${live && !detail.readError && !r.error && cancellation?.phase !== 'unknown' && ['pending','running','cancelling'].includes(r.state) ? pendingStatus(requestStateLabel(r.state)) : badge(requestStateLabel(r.state))}<small>${detail.checkedAt?'Last confirmed':'Updated'} ${esc(detail.checkedAt || r.updatedAt)}</small></div>${detail.readError?feedback(`Status not confirmed: ${esc(detail.readError)}`,'warning'):''}${!live?'<p class="muted">Historical · Read only</p>':''}<section class="request-result"><h3>Result &amp; next step</h3>${r.result?`<p class="request-text">${esc(r.result)}</p>`:''}${waiting && r.waitRef?feedback(`Waiting for ${esc(r.waitRef.kind)} · Chat remains available.<small>Deadline ${esc(r.waitRef.deadlineAt)}</small>`,'warning'):''}${r.error?feedback(esc(r.error.message),'warning'):''}${!r.result && (!waiting || !r.waitRef) && !r.error?'<p>No result reported yet.</p>':''}${retryIntent?feedback(esc(retryIntent.error || 'Retry result unknown. Check status to verify the original submission.'),'warning'):''}</section>${responses?.visibleLoading ? pendingStatus("Reading executions…", "pi-request-detail") : ""}<details class="request-executions"><summary>Executions <span>${r.runIds.length}</span></summary>${r.runIds.map((runId:string,index:number)=>{const run=responses?.runs.find(item=>item.id===runId);return `<details class="request-execution"><summary>Execution ${index+1} ${run?badge(run.status):'<span>Not confirmed</span>'}</summary>${run?`${runFacts(run)}${responses?.checked[run.id]?`<small>Last confirmed ${esc(responses.checked[run.id])}</small>`:''}${run.finalText?`<div class="request-text chat-markdown">${target?renderChatMarkdown(run.finalText,{workId:target.id}):esc(run.finalText)}</div>`:'<p>No saved reply.</p>'}${run.error?feedback(esc(run.error),'warning'):''}`:`<p>${responses?.loading?'Reading execution…':'Execution has not been confirmed.'}</p>`}</details>`;}).join('') || '<p>No Run admitted.</p>'}<p class="muted">A successful Run does not mean the request is complete.</p></details>${responses?.errors.map(error=>feedback(esc(error),'warning')).join('') || ''}<details class="request-evidence"><summary>Evidence &amp; technical details</summary><p>Request ID <code>${esc(r.requestId)}</code></p>${r.waitRef?`<p>Wait reference <code>${esc(r.waitRef.id)}</code></p>`:''}${detail.evidence.items.map((e:Record<string,any>)=>`<article class="capability"><strong>${esc(e.kind)} · ${e.verified?'Verified':'Observed'}</strong><p>${esc(e.summary)}</p><small>${esc(e.observedAt)} · ${esc(e.objectRef)}${e.stateVersion?` · State ${esc(e.stateVersion)}`:''}${e.codeVersion?` · Code ${esc(e.codeVersion)}`:''}</small></article>`).join('') || '<p>No evidence yet.</p>'}${detail.evidence.nextCursor?btn('More evidence','next-pi-evidence','small'):''}</details>`;
       if (cancellation) body += feedback(cancellation.phase === 'accepted' ? `Cancellation requested. Refresh the original request to check its current state.${cancellation.error ? ` ${esc(cancellation.error)}` : ''}` : cancellation.phase === 'unknown' ? `Cancellation result is unknown. Refresh the original request; it will not be submitted again. ${esc(cancellation.error)}` : 'Requesting cancellation…', cancellation.phase === 'unknown' || cancellation.error ? 'warning' : 'info');
       footer=`${close()}${btn('Check status','pi-request-detail','small',`data-id="${esc(r.requestId)}"`)}${view.data.source!=='service' && editable&&['failed','cancelled','needs_attention'].includes(r.state)?btn('Retry with new request','retry-pi-request','primary',retryIntent?'disabled':''):''}${editable && requestCancellable(r)?btn(r.state==='cancelling'?'Cancelling…':'Cancel request','cancel-pi-request','danger',r.state==='cancelling' || cancellation?'disabled':''):''}`;break;
     }
@@ -1995,12 +2047,15 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       if (!await exitWorkspaceFocus()) break;
       await guard(async () => {
         areaChoice++; fileChoice++; filesRestoreNotice = "";
+        if (currentWork && view.file) adapter.releaseFilePreview(currentWork.id, view.file);
+        if (view.file) clearFileTarget();
+        fileSourceReturn = undefined;
         view.tab=action.slice(4);view.modal="";view.file="";render();
         if (action === "tab-Services" && currentWork) { await stay(adapter.loadServices(currentWork.id)); const service = activeService(currentWork); if (service) { view.service = service.id; view.port = service.ports.includes(view.port) ? view.port : service.ports[0] || 0; if (view.port && service.observed === "Ready") await stay(adapter.ensureServiceEntry(currentWork.id, service.id, view.port)); } }
         if (action === "tab-Files" && currentWork) await stay(adapter.loadDirectory(currentWork.id, view.path));
         view.tab = action.slice(4);
         view.modal = "";
-        view.file = "";
+        view.file = ""; view.fileStatus = "idle";
         if (route()[2]) location.hash = `/work/${currentWork?.id}`;
         render();
       });
@@ -2150,25 +2205,29 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       break;
     case "open-source":
       if (currentWork) {
+        const path = el.dataset.path!;
+        const link = filesDeepLink(currentWork.id, path);
+        if (!link) { toast("This file reference is not valid."); break; }
         sourceGuardReturn = (dirty() || view.configDirty) && view.modal ? { epoch: adapter.identityEpoch, route: location.hash, modal: view.modal, data: { ...view.data }, focus: focusKey(el) } : undefined;
+        const source = view.modal === 'pi-request-detail' ? { epoch: adapter.identityEpoch, workId: currentWork.id, path,
+          tab: view.tab, modal: view.modal, data: { ...view.data }, scroll: root.querySelector<HTMLElement>('#modal .modal-body')?.scrollTop ?? 0 } : undefined;
         await guard(async () => {
-          const originalDetail = sourceGuardReturn; sourceGuardReturn = undefined;
-          const epoch = adapter.identityEpoch, origin = viewKey();
-          try { await openFile(currentWork, el.dataset.path!); }
-          catch (error) {
-            if (epoch === adapter.identityEpoch && origin === viewKey() && !(error instanceof ViewChanged)) {
-              if (originalDetail) { modalChoice++; view.modal = originalDetail.modal; view.data = { ...originalDetail.data }; }
-              view.modalError = error instanceof Error ? error.message : String(error); toast(view.modalError);
-            }
-            throw error;
-          }
-          // openFile verifies the captured view before publishing its own path.
-          // That deliberate path change must not be mistaken for navigation away.
-          if (epoch !== adapter.identityEpoch || current()?.id !== currentWork.id) throw new ViewChanged();
-          areaChoice++; view.tab = "Files"; view.config = null; view.configDirty = false;
+          sourceGuardReturn = undefined;
+          const epoch = adapter.identityEpoch;
+          // Leave focus first so Files is actually visible before any read starts.
+          if (!await exitWorkspaceFocus() || epoch !== adapter.identityEpoch || current()?.id !== currentWork.id) return;
+          fileSourceReturn = source;
+          view.config = null; view.configDirty = false;
+          areaChoice++; fileChoice++;
           view.modal = ""; modalChoice++;
-          history.replaceState(null, "", location.pathname + location.search + `#/work/${encodeURIComponent(currentWork.id)}`);
-          lastRoute = location.hash; render();
+          view.tab = "Files";
+          view.path = parentDirectory(path);
+          clearFileTarget();
+          history.replaceState(null, "", location.pathname + location.search + link);
+          lastRoute = location.hash;
+          render();
+          // The target shell owns loading and failure; only the current target reads.
+          await openFile(currentWork, path).catch(error => { if (!(error instanceof ViewChanged)) render(); });
         });
       }
       break;
@@ -2227,20 +2286,36 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       if (currentWork) {
         const epoch = adapter.identityEpoch, snapshot = unknownFiles.reviewSnapshot(currentWork.id), origin = ownedView();
         const directories = [...new Set([view.path, ...snapshot.directories])], read: string[] = [];
+        if (view.file) { view.fileStatus = "loading"; render(); }
         for (const directory of directories) { await adapter.loadDirectory(currentWork.id, directory); if (epoch !== adapter.identityEpoch) throw new ViewChanged(); read.push(directory); }
         const reviewed = unknownFiles.completeReview(snapshot, read);
         for (const identity of reviewed.actions) { const original = actions.records.get(identity.key); if (original && original.token === identity.token && original.generation === identity.generation) actions.review(original); }
         if (origin !== ownedView()) throw new ViewChanged();
-        if (view.file) await stay(adapter.readFile(currentWork.id, view.file));
-      }
-      if (view.file && currentWork) {
-        const fresh = currentWork.files.find((f) => f.path === view.file);
-        if (fresh && (dirty() || view.fileWriteUncertain)) {
-          view.fileReread = { ...fresh };
-
-        } else if (fresh) {
-          view.fileDraft = fresh.content || "";
-          view.fileOriginal = view.fileDraft; view.fileBaseline = fileVersion(fresh.modified); view.fileReread = null; view.fileUnprotected = false;
+        const openPath = view.file;
+        if (openPath) {
+          const keepDraft = dirty() || view.fileWriteUncertain;
+          try {
+            const fresh = await adapter.readFile(currentWork.id, openPath);
+            if (epoch !== adapter.identityEpoch || openPath !== view.file) throw new ViewChanged();
+            if (fresh.kind === "directory") { view.path = fresh.path; view.file = ""; view.fileStatus = "idle"; view.selected = []; }
+            else if (keepDraft) {
+              // The draft and its original save baseline stay independent of the reread.
+              view.fileReread = { ...fresh };
+              view.fileStatus = "ready";
+            } else applyFilePreview(fresh);
+          } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') {
+              if (epoch !== adapter.identityEpoch || openPath !== view.file) throw new ViewChanged();
+              view.fileStatus = "unavailable";
+              view.fileError = "The file read was interrupted because this Work is no longer available.";
+            } else {
+              if (epoch !== adapter.identityEpoch || openPath !== view.file) throw new ViewChanged();
+              const status = error instanceof DesktopError ? error.httpStatus : undefined;
+              view.fileStatus = missingFileTarget(status) ? "missing"
+                : status && [401, 403, 502, 503, 504].includes(status) ? "unavailable" : "error";
+              view.fileError = error instanceof Error ? error.message : String(error);
+            }
+          }
         }
       }
       render();
@@ -2251,7 +2326,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
         if (currentWork) await stay(adapter.loadDirectory(currentWork.id, el.dataset.path!));
         if (choice !== fileChoice) throw new ViewChanged();
         view.path = el.dataset.path!;
-        view.file = "";
+        view.file = ""; view.fileStatus = "idle"; fileSourceReturn = undefined;
         view.selected = [];
         render();
       });
@@ -2259,6 +2334,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "open-file":
       if (currentWork) {
         const path = el.dataset.path || view.data.path;
+        fileSourceReturn = undefined;
         await guard(async () => {
           view.modal = "";
           await stay(openFile(currentWork, path));
@@ -2267,10 +2343,38 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       }
       break;
     case "close-file":
-      await guard(() => {
-        view.file = "";
+      await guard(async () => {
+        const work = currentWork;
+        const leaving = view.file;
+        if (work && leaving) adapter.releaseFilePreview(work.id, leaving);
+        clearFileTarget(); fileSourceReturn = undefined;
+        if (work) {
+          const original = view.path;
+          if (isFilesRoute(route())) {
+            history.replaceState(null, "", location.pathname + location.search + `#/work/${encodeURIComponent(work.id)}`);
+            lastRoute = location.hash;
+          }
+          if (adapter.project(work).retainWorkspace) await showDirectoryOrAncestor(work, original);
+        }
         render();
       });
+      break;
+    case "retry-file-preview":
+      if (currentWork && view.file) await openFile(currentWork, view.file);
+      break;
+    case "back-to-file-source":
+      if (currentWork && fileSourceReturn && fileSourceReturn.epoch === adapter.identityEpoch && fileSourceReturn.workId === currentWork.id) {
+        const source = fileSourceReturn; fileSourceReturn = undefined;
+        adapter.releaseFilePreview(currentWork.id, view.file);
+        clearFileTarget();
+        view.tab = source.tab; view.modal = source.modal; view.data = { ...source.data }; modalChoice++;
+        if (isFilesRoute(route())) {
+          history.replaceState(null, "", location.pathname + location.search + `#/work/${encodeURIComponent(currentWork.id)}`);
+          lastRoute = location.hash;
+        }
+        render();
+        queueMicrotask(() => { const body = root.querySelector<HTMLElement>('#modal .modal-body'); if (body) body.scrollTop = source.scroll; });
+      }
       break;
     case "discard-file":
       view.fileDraft = view.fileOriginal;
@@ -2279,7 +2383,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "allow-unprotected-file":
       view.fileUnprotected = true; toast("Unprotected overwrite approved for the next save."); break;
     case "use-reread-version":
-      if (view.fileReread?.kind === "text") { view.fileBaseline = fileVersion(view.fileReread.modified); view.fileOriginal = view.fileReread.content ?? ""; view.fileUnprotected = false; view.fileWriteUncertain = false; view.fileReread = null; render(); }
+      if (view.fileReread?.preview?.kind === "text") { view.fileBaseline = fileVersion(view.fileReread.modified); view.fileOriginal = view.fileReread.preview.content; view.fileUnprotected = false; view.fileWriteUncertain = false; view.fileReread = null; render(); }
       break;
     case "save-file":
       await stay(saveFile(record));
@@ -2683,23 +2787,78 @@ function focusNameField(start: number, end: number) {
     field.value = view.formName; field.focus({ preventScroll: true }); field.setSelectionRange(start, end);
   });
 }
+function clearFileTarget() {
+  view.file = ""; view.fileStatus = "idle"; view.fileError = "";
+  view.fileDraft = ""; view.fileOriginal = ""; view.fileBaseline = ""; view.fileEditable = false;
+  view.fileReread = null; view.fileUnprotected = false; view.fileWriteUncertain = false;
+  filesRestoreNotice = "";
+}
+async function showDirectoryOrAncestor(w: Work, start: string) {
+  const original = start || "/";
+  let path = original;
+  for (;;) {
+    try { await adapter.loadDirectory(w.id, path); view.path = path; break; }
+    catch (error) {
+      if (!missingFileTarget((error as DesktopError).httpStatus) || path === "/") { view.path = path; break; }
+      path = parentDirectory(path);
+    }
+  }
+  if (path !== original) filesRestoreNotice = `The file’s folder is no longer available. Opened ${path} instead.`;
+}
+function applyFilePreview(f: WorkspaceFile) {
+  view.file = f.path;
+  const text = f.preview?.kind === "text" ? f.preview.content : "";
+  view.fileDraft = text;
+  view.fileOriginal = text;
+  view.fileEditable = f.preview?.kind === "text";
+  view.fileBaseline = fileVersion(f.modified);
+  view.fileReread = null; view.fileUnprotected = false; view.fileWriteUncertain = false;
+  view.fileStatus = "ready"; view.fileError = "";
+}
 async function openFile(w: Work, path: string) {
   const key = viewKey(), epoch = adapter.identityEpoch, choice = ++fileChoice;
-  await adapter.readFile(w.id, path);
-  if (key !== viewKey() || epoch !== adapter.identityEpoch || choice !== fileChoice) throw new ViewChanged();
-  const f = w.files.find((f) => f.path === path);
-  if (!f) {
-    throw new Error("This file is not available in the workspace.");
+  // A retry or explicit reopen of the same editable target must not discard a
+  // draft that the failed read never proved stale.
+  const keepDraft = view.file === path && view.fileEditable && (dirty() || view.fileWriteUncertain || view.fileReread !== null);
+  if (view.file !== path) {
+    view.fileDraft = ""; view.fileOriginal = ""; view.fileBaseline = ""; view.fileEditable = false;
+    view.fileReread = null; view.fileUnprotected = false; view.fileWriteUncertain = false;
   }
-  if (f.kind === "directory") {
-    view.path = f.path;
-    view.file = "";
-    view.selected = [];
-  } else {
+  view.file = path; view.fileStatus = 'loading'; view.fileError = '';
+  render();
+  try {
+    await adapter.readFile(w.id, path);
+    if (key !== viewKey() || epoch !== adapter.identityEpoch || choice !== fileChoice) throw new ViewChanged();
+    const f = w.files.find((f) => f.path === path);
+    if (!f) throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', 404);
+    if (f.kind === "directory") {
+      view.path = f.path;
+      view.file = "";
+      view.fileStatus = "idle";
+      view.selected = [];
+      return;
+    }
     view.path = f.path.slice(0, f.path.lastIndexOf("/")) || "/";
-    view.file = f.path;
-    view.fileDraft = f.content || "";
-    view.fileOriginal = view.fileDraft; view.fileEditable = f.kind === "text" && f.size <= 1048576; view.fileBaseline = fileVersion(f.modified); view.fileReread = null; view.fileUnprotected = false; view.fileWriteUncertain = false;
+    if (keepDraft) {
+      view.fileReread = { ...f };
+      view.fileStatus = "ready";
+    } else applyFilePreview(f);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      if (epoch !== adapter.identityEpoch || choice !== fileChoice || view.file !== path) throw new ViewChanged();
+      // Work stop or an external cancel without a newer target: never keep
+      // claiming the target is still loading.
+      view.fileStatus = "unavailable";
+      view.fileError = "The file read was interrupted because this Work is no longer available.";
+      throw error;
+    }
+    if (key !== viewKey() || epoch !== adapter.identityEpoch || choice !== fileChoice) throw new ViewChanged();
+    const status = error instanceof DesktopError ? error.httpStatus : undefined;
+    view.fileStatus = missingFileTarget(status) ? "missing"
+      : status && [401, 403, 502, 503, 504].includes(status) ? "unavailable" : "error";
+    view.fileError = error instanceof Error ? error.message : String(error);
+    if (!keepDraft) view.fileEditable = false;
+    throw error;
   }
 }
 async function copy(text: string) {
@@ -2713,9 +2872,9 @@ async function copy(text: string) {
 function visibleActionRecord(record: ActionRecord) {
   if (record.kind === 'read' && record.action === 'retry-works' && record.error && adapter.worksError) return false;
   if (record.kind === 'read' && record.action === 'open-source') return record.work === current()?.id && (record.sourceContext === `${view.tab}:${view.session}:${view.modal}` || view.tab === 'Files' && record.resource === view.file);
-  if (record.kind === 'read' && ['tab-Files','refresh-files','file-path','open-file','open-source'].includes(record.action || '')) {
+  if (record.kind === 'read' && ['tab-Files','refresh-files','file-path','open-file','open-source','retry-file-preview'].includes(record.action || '')) {
     if (record.work !== current()?.id || view.tab !== 'Files') return false;
-    if (['file-path','open-file','open-source'].includes(record.action || '')) return record.resource === (view.file || view.path) || record.origin === (view.file || view.path);
+    if (['file-path','open-file','open-source','retry-file-preview'].includes(record.action || '')) return record.resource === (view.file || view.path) || record.origin === (view.file || view.path);
     if (record.resource !== (view.file || view.path)) return false;
     if (record.error && !view.file) {
       const directory = adapter.directories.get(`${record.work}:${view.path}`);
@@ -3348,11 +3507,27 @@ function handleRouteNavigation() {
     void initialization.then(() => loadRoute()).catch(error => reportInitializationFailure(error, context.epoch, context.route));
     return;
   }
+  // Preserve the request inspector a file target was opened from before the
+  // modal is closed by navigation (plain links cannot carry their own source).
+  if (lastRoute) {
+    const target = isFilesRoute(route()) ? filesRouteTarget(route()) : undefined;
+    let previousRoute: string[] = [];
+    try { previousRoute = lastRoute.replace(/^#\/?/, '').split('/').map(decodeURIComponent); } catch { /* keep no source */ }
+    if (target && previousRoute[0] === 'work' && previousRoute[1] === target.workId) {
+      if (view.modal === 'pi-request-detail') fileSourceReturn = { epoch: adapter.identityEpoch, workId: target.workId, path: target.path,
+        tab: view.tab, modal: view.modal, data: { ...view.data }, scroll: root.querySelector<HTMLElement>('#modal .modal-body')?.scrollTop ?? 0 };
+      // A second hash step (for example after leaving a dirty dialog) keeps a
+      // matching source; any other plain navigation drops it.
+      else if (fileSourceReturn?.workId !== target.workId || fileSourceReturn?.path !== target.path) fileSourceReturn = undefined;
+    }
+  }
   if ((dirty() || view.configDirty) && location.hash !== lastRoute) {
     const destination = location.hash;
     history.replaceState(null, "", lastRoute || "#/works");
     guard(() => {
-      view.file = "";
+      const workId = current()?.id;
+      if (workId && view.file) adapter.releaseFilePreview(workId, view.file);
+      clearFileTarget();
       view.configDirty = false;
       view.config = null;
       location.hash = destination;
@@ -3365,7 +3540,7 @@ function handleRouteNavigation() {
   render();
 }
 window.addEventListener("hashchange", handleRouteNavigation);
-window.addEventListener("pagehide", () => { actions.clear(); adapter.stopDownloadObservers(); adapter.stopRunObservers(); adapter.abandonInspectionOnUnload(); });
+window.addEventListener("pagehide", () => { actions.clear(); adapter.stopDownloadObservers(); adapter.stopRunObservers(); adapter.abandonInspectionOnUnload(); adapter.stopFileReads(); });
 window.addEventListener("beforeunload", (e) => {
   if (dirty() || view.configDirty || hasUnsentDrafts({ texts: Object.values(view.drafts), imageGroups: imageDrafts.groups(), pending: pendingImageSubmissions.values() })) {
     e.preventDefault();
@@ -3385,11 +3560,13 @@ async function restoreRuntimePanel(work: Work) {
     if (service.observed === 'Ready' && view.port && (tab === 'Services' || route()[0] === 'app')) await adapter.ensureServiceEntry(work.id, service.id, view.port).catch(() => undefined);
   }
   if (tab === 'Files' && path === view.path) await adapter.loadDirectory(work.id, path).catch(() => undefined);
+  const routeTarget = filesRouteTarget(route());
+  if (routeTarget && routeTarget.workId === work.id && view.file === routeTarget.path && adapter.project(work).retainWorkspace)
+    await openFile(work, routeTarget.path).catch(() => undefined);
   if (epoch === adapter.identityEpoch && origin === location.hash) render();
 }
 adapter.subscribe(() => { exportFlows.update(); if (lastIdentity !== adapter.identityEpoch) { lastIdentity = adapter.identityEpoch; actions.clear(); createDraft.clear(); resetCreateFields(); unknownFiles.clear(); fileAttempt = undefined; modalTransfers = []; uploadPickerTarget = undefined; pendingUploadTarget = undefined; pendingUploadFiles = []; sourceGuardReturn = undefined; pendingNav = null; workControls.clear(); serviceControls.clear(); importStarts.clear(); workSelections.clear(); selectionWorkId = ''; fileChoice++; filesRestoreNotice = ''; workReadErrors.clear(); view.serviceOpenError = "";
-    view.file = ""; view.fileDraft = ""; view.fileOriginal = ""; view.fileBaseline = ""; view.fileReread = null;
-    view.config = null; view.configDirty = false; view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();imageDraftErrors.clear();resetWorkspaceFocus();workspacePanels.clear();chatReading.clear();expandedActivity.clear();pendingWebCommand=undefined; fileSelections.clear(); runtimeAvailability.clear();
+    view.config = null; view.configDirty = false; view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();imageDraftErrors.clear();resetWorkspaceFocus();workspacePanels.clear();chatReading.clear();expandedActivity.clear();pendingWebCommand=undefined; fileSelections.clear(); runtimeAvailability.clear(); fileSourceReturn = undefined; clearFileTarget();
     if (!(view.modal === "import" && adapter.inspection)) { view.modal = ""; view.modalError = ""; } }
   const work = current();
   const restore = work && runtimeAvailability.get(work.id) === false && adapter.project(work).usable;
@@ -3430,7 +3607,9 @@ async function loadRoute() {
   if (!adapter.state.signedIn) return;
   const version = ++routeLoad, r = route(), origin = location.hash, epoch = adapter.identityEpoch;
   const valid = () => version === routeLoad && origin === location.hash && epoch === adapter.identityEpoch;
-  if (!['work','app'].includes(r[0]) || r[2] === 'settings' || workspaceReturn && workspaceReturn.workId !== r[1]) {
+  const filesRoute = isFilesRoute(r);
+  const filesTarget = filesRoute ? filesRouteTarget(r) : undefined;
+  if (!['work','app'].includes(r[0]) || r[2] === 'settings' || workspaceReturn && workspaceReturn.workId !== r[1] || filesRoute) {
     if (!await exitWorkspaceFocus() || !valid()) return;
   }
   const entering = selectionWorkId !== r[1] || !['work', 'app'].includes(r[0]);
@@ -3438,8 +3617,9 @@ async function loadRoute() {
   const savedSelection = workSelections.get(r[1]);
   const previous = restoreSelection(savedSelection);
   if (entering) {
-    selectionWorkId = r[1]; fileChoice++; filesRestoreNotice = '';
-    view.tab = previous.area; view.path = previous.path; view.file = ''; view.selected = [];
+    selectionWorkId = r[1]; fileChoice++; filesRestoreNotice = ''; fileSourceReturn = undefined;
+    view.tab = filesRoute ? 'Files' : previous.area; view.path = filesRoute && filesTarget ? parentDirectory(filesTarget.path) : previous.path;
+    view.file = ''; view.selected = [];
     view.service = previous.service; view.port = previous.port; view.session = previous.session; view.noteLoaded = '';
   }
   const choices = { area: areaChoice, service: serviceChoice, session: sessionChoice, file: fileChoice, modal: modalChoice };
@@ -3457,10 +3637,29 @@ async function loadRoute() {
     if (choices.session === sessionChoice) view.session = work.sessions.find(s => s.id === view.session)?.id ?? work.sessions[0]?.id ?? '';
     if (view.session && r[0] !== 'app') await adapter.loadSession(work.id, view.session);
     if (!valid()) return;
-    if (entering && r[0] === 'work' && r[2] !== 'settings' && choices.area === areaChoice && choices.modal === modalChoice)
+    if (filesRoute && choices.area === areaChoice && choices.file === fileChoice) {
+      // An explicit target wins over the last restored area; it is checked, not assumed.
+      view.tab = 'Files'; view.modal = '';
+      if (filesTarget) {
+        view.path = parentDirectory(filesTarget.path);
+        clearFileTarget();
+        if (adapter.project(work).retainWorkspace) {
+          await openFile(work, filesTarget.path).catch(() => undefined);
+        } else {
+          view.file = filesTarget.path; view.fileStatus = 'unavailable';
+          view.fileError = 'This Work is not running. Start it to open its files.';
+        }
+        if (!valid()) return;
+      } else {
+        view.path = '/'; view.file = ''; view.fileStatus = 'idle';
+        filesRestoreNotice = 'This file link is not valid.';
+        if (adapter.project(work).usable) await adapter.loadDirectory(work.id, '/').catch(() => undefined);
+        if (!valid()) return;
+      }
+    } else if (entering && r[0] === 'work' && r[2] !== 'settings' && choices.area === areaChoice && choices.modal === modalChoice)
       view.tab = initialWorkArea(savedSelection, work, adapter.project(work).usable, adapter.modelReady(work.id, view.session));
     if (r[2] === 'settings' && !view.configDirty) view.config = structuredClone(work.config);
-    if (entering && r[0] !== 'app' && r[2] !== 'settings' && choices.area === areaChoice && choices.file === fileChoice && view.tab === 'Files' && adapter.project(work).usable)
+    if (!filesRoute && entering && r[0] !== 'app' && r[2] !== 'settings' && choices.area === areaChoice && choices.file === fileChoice && view.tab === 'Files' && adapter.project(work).usable)
       await restoreFiles(work, previous, valid);
     if (!valid()) return;
     const selectedService = activeService(work);
@@ -3579,7 +3778,7 @@ function productInfoMarkup(label:string,info:Record<string,any>|null,loading:boo
  return `<section class="product-info"><h3>${esc(label)}</h3>${loading?'<p>Loading version…</p>':''}${error?feedback(esc(error),'warning'):''}${build?`<dl><dt>Version</dt><dd>${esc(build.version)}</dd><dt>Build</dt><dd><code>${esc(build.commit)}</code>${build.modified?' · Modified':''}</dd><dt>Platform</dt><dd>${esc(build.os)} / ${esc(build.architecture)}</dd></dl><details><summary>Release notes</summary>${notes?`<h4>${esc(notes.title)} · ${esc(notes.version)}</h4>${notes.publishedAt?`<p>${esc(notes.publishedAt)}</p>`:''}${(notes.sections ?? []).map((section:any)=>`<h4>${esc(section.title)}</h4><ul>${section.items.map((item:string)=>`<li>${esc(item)}</li>`).join('')}</ul>`).join('')}`:'<p>Release notes are not available for this build.</p>'}</details>`:''}<p><a href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">All releases</a></p></section>`;
 }
 
-window.addEventListener('hashchange',()=>adapter.stopImageReads());
+window.addEventListener("hashchange",()=>{adapter.stopImageReads();adapter.stopFileReads();});
 
 function consumeImageSubmission(workId:string,submitted:ImageSubmission) {
  if(submitted.epoch!==adapter.identityEpoch)return;

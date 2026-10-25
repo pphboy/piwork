@@ -1,4 +1,5 @@
 import { randomUUID } from './browser-crypto.js';
+import { imageDimensions, imageWithinLimits } from './image-content.js';
 export class ImageDrafts {
     changed;
     drafts = new Map();
@@ -71,57 +72,8 @@ export class ImageDrafts {
     }
 }
 function checkDimensions(mime, b) {
-    const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
-    let width = 0, height = 0;
-    if (mime === 'image/png' && b.length >= 33 && v.getUint32(0) === 0x89504e47) {
-        width = v.getUint32(16);
-        height = v.getUint32(20);
-    }
-    else if (mime === 'image/jpeg' && b[0] === 255 && b[1] === 216) {
-        let p = 2;
-        while (p + 4 <= b.length) {
-            if (b[p++] !== 255)
-                break;
-            while (b[p] === 255)
-                p++;
-            const marker = b[p++];
-            const n = v.getUint16(p);
-            if (n < 2 || p + n > b.length)
-                break;
-            if (marker >= 192 && marker <= 207 && ![196, 200, 204].includes(marker)) {
-                height = v.getUint16(p + 3);
-                width = v.getUint16(p + 5);
-                break;
-            }
-            p += n;
-        }
-    }
-    else if (mime === 'image/webp' && b.length >= 20 && v.getUint32(0) === 0x52494646 && v.getUint32(8) === 0x57454250) {
-        let p = 12;
-        while (p + 8 <= b.length) {
-            const tag = v.getUint32(p), n = v.getUint32(p + 4, true), d = p + 8;
-            if (d + n > b.length)
-                break;
-            if (tag === 0x56503820 && n >= 10) {
-                width = v.getUint16(d + 6, true) & 16383;
-                height = v.getUint16(d + 8, true) & 16383;
-                break;
-            }
-            if (tag === 0x5650384c && n >= 5) {
-                const x = v.getUint32(d + 1, true);
-                width = (x & 16383) + 1;
-                height = ((x >>> 14) & 16383) + 1;
-                break;
-            }
-            if (tag === 0x56503858 && n === 10) {
-                width = 1 + b[d + 4] + (b[d + 5] << 8) + (b[d + 6] << 16);
-                height = 1 + b[d + 7] + (b[d + 8] << 8) + (b[d + 9] << 16);
-                break;
-            }
-            p = d + n + (n & 1);
-        }
-    }
-    if (!width || !height || width > 8192 || height > 8192 || width * height > 40_000_000)
+    const { width, height } = imageDimensions(mime, b);
+    if (!imageWithinLimits(width, height))
         throw new Error('Invalid image dimensions');
 }
 //# sourceMappingURL=images.js.map

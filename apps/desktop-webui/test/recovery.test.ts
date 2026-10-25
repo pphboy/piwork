@@ -145,7 +145,9 @@ test('R1 editor binds the original version; dirty refresh and 412 readback never
   await page.locator('#file-editor').fill('second draft'); await button(page, 'save-file').click(); assert.equal(puts()[2]?.headers['if-unmodified-since'], mtime3); await expect(page.locator('#file-editor')).toHaveValue('second draft');
   // A recorded PUT is acceptance, not completion of its confirming GET.
   await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveCount(0);
-  await page.locator('#file-editor').fill('keep editable draft'); body='\0binary'; modified='Sat, 03 Oct 2026 01:00:06 GMT'; await button(page, 'refresh-files').click(); await expect(page.locator('#file-editor')).toHaveValue('keep editable draft'); await expect(button(page, 'use-reread-version')).toBeDisabled();
+  await page.locator('#file-editor').fill('keep editable draft'); body='\0binary'; modified='Sat, 03 Oct 2026 01:00:06 GMT'; await button(page, 'refresh-files').click(); await expect(page.locator('#file-editor')).toHaveValue('keep editable draft');
+  await expect(page.locator('.main-panel')).toContainText('no longer editable text');
+  await expect(page.locator('[data-action="use-reread-version"]')).toHaveCount(0);
 });
 
 test('R1 missing time requires consent; lost save response retains input without automatic PUT', async t => {
@@ -3102,10 +3104,12 @@ for (const scenario of ['dirty-discard', 'read-error-retry']) test(`B brain sour
     await expect(page.locator('#modal')).toContainText('Editable source:'); assert.equal(requests.filter(r => r.path === href && r.method === 'GET').length, 0);
     await button(page, 'open-source').click(); await button(page, 'dirty-config-discard').click();
   } else {
-    await expect(page.locator('#modal')).toContainText('503'); fail = false; await button(page, 'open-source').click();
+    await expect(page.locator('.file-target-toolbar')).toContainText('brain.md');
+    await expect(page.locator('.main-panel')).toContainText('503'); fail = false;
+    await page.locator('[data-action="retry-file-preview"]').click();
   }
   await expect(page.locator('#modal')).toHaveCount(0); await expect(page.locator('#file-editor')).toHaveValue('brain source');
-  assert.equal(new URL(page.url()).hash, '#/work/work-1');
+  assert.equal(new URL(page.url()).hash, '#/work/work-1/files/%2F.pi%2Fpackages%2Fpiwork-brain%2Fbrain.md');
   assert.equal(requests.filter(r => r.method === 'PUT' || r.path.endsWith('/apply')).length, 0);
 });
 

@@ -288,7 +288,7 @@ try {
   assert.equal(uncertainWrites, 1);
   await page.unroute(localFileUrl, loseWriteReply);
   await page.getByRole('button', { name: 'Discard', exact: true }).click();
-  await page.getByRole('button', { name: 'Refresh files' }).click();
+  await page.getByRole('button', { name: 'Refresh file' }).click();
   await page.getByRole('button', { name: 'Back to files' }).click();
   await page.locator('#file-editor').waitFor({state:'hidden'});
   const binary = Buffer.from([0,1,2,128,255,42]);
@@ -383,6 +383,98 @@ try {
     await page.screenshot({ path: join(screenshotDir, '06-auth-recovered.png'), fullPage: true });
     console.log(JSON.stringify({ result: 'ordinary session recovery: real Core login/reuse/reopen/logout/revocation/offline, original PID/Work/Service/files/Run retained, no business replay', browserVersion: browser.version(), bootstrapPosts, resetPosts, businessWrites }));
   }
+  // Delivered files: Agent-generated link, current-path reread, image/PDF fallback,
+  // standalone/hosted downloads and cross-account denial.
+  const fileEndpoint = name => `${coreUrl}/api/v1/works/${workId}/files/${name.split('/').map(encodeURIComponent).join('/')}`;
+  const coreFile = (name, init = {}) => fetch(fileEndpoint(name), { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream', ...(init.headers ?? {}) } });
+  const digestOf = bytes => createHash('sha256').update(bytes).digest('hex');
+  const deliveryAcceptance = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${workId}/runs`) && response.request().method() === 'POST');
+  await page.locator('#composer').fill('deliver workspace file fixture');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  const deliveryResponse = await deliveryAcceptance;
+  assert.equal(deliveryResponse.status(), 202, await deliveryResponse.text());
+  const deliveryRun = (await deliveryResponse.json()).run;
+  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${deliveryRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  // The Agent created both files through real tools; verify the binary image link,
+  // browser decode and the bytes downloaded from the same current file.
+  const agentImageLink = page.locator('a.chat-file-link[data-path="/output/图片.png"]').last();
+  await expect(agentImageLink).toBeVisible();
+  await agentImageLink.click();
+  await expect(page.locator('.file-image-preview img')).toBeVisible();
+  await expect.poll(() => page.locator('.file-image-preview img').evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
+  const agentImageDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download file', exact: true }).click();
+  const agentImageFile = join(root, 'agent-image.png');
+  await (await agentImageDownload).saveAs(agentImageFile);
+  const agentImageCore = Buffer.from(await (await coreFile('output/图片.png')).arrayBuffer());
+  assert.equal(digestOf(await readFile(agentImageFile)), digestOf(agentImageCore));
+  await page.getByRole('button', { name: 'Chat', exact: true }).click();
+  const deliveredLink = page.locator('a.chat-file-link[data-path="/output/报告.txt"]').last();
+  await expect(deliveredLink).toBeVisible();
+  assert.match(await deliveredLink.getAttribute('href'), new RegExp(`^#/work/${workId}/files/`));
+  await deliveredLink.click();
+  await expect(page.locator('.file-target-toolbar')).toContainText('报告.txt');
+  await expect(page.locator('#file-editor')).toHaveValue('交付文件\n');
+  let mutation = await coreFile('output/报告.txt', { method: 'PUT', body: 'changed by another writer\n' });
+  assert([200, 201, 204].includes(mutation.status), await mutation.text());
+  await page.locator('.file-target-toolbar [data-action="refresh-files"]').click();
+  await expect(page.locator('#file-editor')).toHaveValue('changed by another writer\n');
+  mutation = await coreFile('output/报告.txt', { method: 'DELETE' });
+  assert([200, 204, 207].includes(mutation.status), await mutation.text());
+  await page.locator('.file-target-toolbar [data-action="refresh-files"]').click();
+  await expect(page.locator('.main-panel')).toContainText('File not found');
+  mutation = await coreFile('output/报告.txt', { method: 'PUT', headers: { 'If-None-Match': '*' }, body: '交付文件\n' });
+  assert([200, 201, 204].includes(mutation.status), await mutation.text());
+  await page.locator('[data-action="retry-file-preview"]').click();
+  await expect(page.locator('#file-editor')).toHaveValue('交付文件\n');
+  const png = await readFile(join(repositoryRoot, 'fixtures/chat-images/png.png'));
+  for (const [name, body] of [['output/picture.png', png], ['output/document.pdf', Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n')]]) {
+    const upload = await coreFile(name, { method: 'PUT', headers: { 'If-None-Match': '*' }, body });
+    assert([200, 201, 204].includes(upload.status), await upload.text());
+  }
+  await page.locator('.file-target-toolbar [data-action="close-file"]').click();
+  await page.locator('[data-action="open-file"][data-path="/output/picture.png"]').click();
+  await expect(page.locator('.file-image-preview img')).toBeVisible();
+  await expect.poll(() => page.locator('.file-image-preview img').evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
+  await page.locator('.file-target-toolbar [data-action="close-file"]').click();
+  await page.locator('[data-action="open-file"][data-path="/output/document.pdf"]').click();
+  await expect(page.locator('.main-panel')).toContainText('PDF, GIF and archive files are not previewed');
+  await page.locator('.file-target-toolbar [data-action="close-file"]').click();
+  await page.locator('[data-action="open-file"][data-path="/output/报告.txt"]').click();
+  const standaloneDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download saved version', exact: true }).click();
+  const standaloneFile = join(root, 'standalone-file.txt');
+  await (await standaloneDownload).saveAs(standaloneFile);
+  const coreBytes = Buffer.from(await (await coreFile('output/报告.txt')).arrayBuffer());
+  assert.equal(digestOf(await readFile(standaloneFile)), digestOf(coreBytes));
+  // Hosted workbench served by Core's UI listener.
+  const hostedContext = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 900 } });
+  try {
+    const hosted = await hostedContext.newPage();
+    await hosted.goto(`http://127.0.0.1:${uiPort}/login`);
+    await hosted.getByLabel('Account', { exact: true }).fill('admin');
+    await hosted.getByLabel('Password').fill('real-browser-admin-password');
+    await hosted.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await hosted.waitForURL(url => url.pathname !== '/login');
+    await hosted.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    await hosted.getByRole('link', { name: /^Real Browser Work/ }).click();
+    await hosted.getByRole('button', { name: 'Files', exact: true }).click();
+    await hosted.locator('[data-action="open-file"][data-path="/output"]').click();
+    await hosted.locator('[data-action="open-file"][data-path="/output/报告.txt"]').click();
+    const hostedDownload = hosted.waitForEvent('download');
+    await hosted.getByRole('button', { name: 'Download saved version', exact: true }).click();
+    const hostedFile = join(root, 'hosted-file.txt');
+    await (await hostedDownload).saveAs(hostedFile);
+    assert.equal(digestOf(await readFile(hostedFile)), digestOf(coreBytes));
+  } finally { await hostedContext.close(); }
+  const otherUser = await fetch(`${coreUrl}/api/v1/admin/users`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ account: 'file-other', password: 'file-other-password' }) });
+  assert.equal(otherUser.status, 201, await otherUser.text());
+  const otherLogin = await api(coreUrl, '', 'POST', '/api/v1/login', { account: 'file-other', password: 'file-other-password' });
+  assert.equal(otherLogin.status, 200, JSON.stringify(otherLogin.data));
+  const denied = await fetch(fileEndpoint('output/报告.txt'), { headers: { Authorization: `Bearer ${otherLogin.data.token}` } });
+  assert([403, 404].includes(denied.status), `cross-account file access returned ${denied.status}`);
+  console.log(JSON.stringify({ result: 'delivered file current content, Agent-generated image preview/download, PDF download, reread/delete/recreate, standalone+hosted download hashes and cross-account denial verified', deliveryRun: deliveryRun.runId, agentImageSha256: digestOf(agentImageCore), textSha256: digestOf(coreBytes) }));
+  await page.getByRole('button', { name: 'Chat', exact: true }).click();
   await page.getByRole('button', { name: 'Work options' }).click();
   await page.getByRole('menuitem', { name: 'Export Work', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Stop and export', exact: true })).toBeVisible();
@@ -526,6 +618,15 @@ try {
   await page.getByRole('button', { name: 'Services', exact: true }).click();
   await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
   await waitFor(async () => (await page.locator('#messages').innerText()).includes('skill-read:'), 'restored session history');
+  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
+  await page.locator(`[data-action=select-session][data-id="${originalSessionId}"]`).click();
+  const importedLink = page.locator('a.chat-file-link[data-path="/output/报告.txt"]').last();
+  await expect(importedLink).toBeVisible();
+  await importedLink.click();
+  await expect(page.locator('.file-target-toolbar')).toContainText('报告.txt');
+  await expect(page.locator('#file-editor')).toHaveValue('交付文件\n');
+  await page.locator('.file-target-toolbar [data-action="close-file"]').click();
+  await page.getByRole('button', { name: 'Chat', exact: true }).click();
   const importedOptions = await api(coreUrl, token, 'GET', `/api/v1/works/${imported.id}/sessions/${originalSessionId}/chat-options`);
   assert.equal(importedOptions.status, 200, JSON.stringify(importedOptions.data));
   assert.equal(importedOptions.data.thinkingLevel, 'off');
@@ -541,7 +642,7 @@ try {
   assert.equal(continuedResponse.status(), 202, await continuedResponse.text());
   const continuedRun = (await continuedResponse.json()).run;
   await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${continuedRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
-  await expect(page.locator('.activity')).toHaveCount(2);
+  await expect(page.locator('.activity')).toHaveCount(3); // original Skill run + delivered-file run + continued run
   console.log(JSON.stringify({ result: 'workspace UX: active Skill directory, complete settings pair, command parameters, ordered tool history, stable Focus/fullscreen, exported/imported Thinking and continued original Session', browserVersion: browser.version(), originalSessionId }));
   await page.screenshot({ path: join(screenshotDir, '04-restored-work.png'), fullPage: true });
   for (const width of [1440,1024,390]) { await page.setViewportSize({ width, height: 900 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `horizontal overflow at ${width}px`); await page.screenshot({ path: join(screenshotDir, `05-responsive-${width}.png`), fullPage: true }); }
@@ -561,6 +662,71 @@ try {
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY !== '1') assert.equal(mainReloads, 0, 'lifecycle required reloading the WebUI document');
   console.log(JSON.stringify({ result: 'lifecycle confirmed: enabled/disabled Service, sentinel bytes, stopped resources, Delete original ID', browserVersion: browser.version(), mainReloads, lifecycleRequests, installationId, sentinelBytes: sentinel.length, enabledService: restored.find(item => item.serviceId === service.data.serviceId)?.observedState, disabledService: restored.find(item => item.serviceId === disabled.data.serviceId)?.observedState, stoppedRunningResources: 0, stoppedFileRead: stoppedFiles.status, stoppedFileWrite: stoppedWrite.status }));
   if(process.env.PIWORK_TEST_CHAT_CONTROLS==='1')await runChatControls();
+
+  // Source Core offline: import the exported package into a second isolated Core,
+  // start it, and open the delivered link from the restored history. The link has
+  // no source address and resolves only against the receiving Work.
+  const [corePortB, uiPortB] = await Promise.all([freePort(), freePort()]);
+  const coreBUrl = `http://127.0.0.1:${corePortB}`, dataDirB = join(root, 'core-b');
+  let coreB;
+  try {
+    await stop(desktop); await stop(core);
+    console.log('Real Desktop: source Core stopped; importing into a second Core');
+    coreB = spawn(coreBinary, ['--data-dir', dataDirB, '--ui-port', String(uiPortB), '--core-port', String(corePortB)], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent', DISPLAY: '', WAYLAND_DISPLAY: '' } });
+    await waitFor(async () => (await fetch(`${coreBUrl}/healthz`)).ok, 'second Core health', 90_000);
+    const controlB = await operatorAPI(coreBUrl, dataDirB);
+    await controlB('POST', 'admin/bootstrap', { account: 'admin', password: 'real-browser-admin-password' });
+    await controlB('PUT', 'runtime', { provider: 'piwork-deterministic', model: 'fixture-v1', credential: 'fixture-key' });
+    await waitFor(async () => (await fetch(`${coreBUrl}/readyz`)).ok, 'second Core readiness', 180_000);
+    const tokenB = (await api(coreBUrl, '', 'POST', '/api/v1/login', { account: 'admin', password: 'real-browser-admin-password' })).data.token;
+    assert.equal(typeof tokenB, 'string');
+    const packageBytes = await readFile(exportedPath);
+    const uploadedB = await fetch(`${coreBUrl}/api/v1/work-packages`, { method: 'POST', headers: { Authorization: `Bearer ${tokenB}`,
+      'Content-Type': 'application/vnd.piwork.work-package', 'X-Piwork-SHA256': createHash('sha256').update(packageBytes).digest('hex') }, body: packageBytes });
+    const uploadedBText = await uploadedB.text();
+    assert.equal(uploadedB.status, 201, uploadedBText);
+    const packageB = JSON.parse(uploadedBText);
+    const importB = await fetch(`${coreBUrl}/api/v1/work-imports`, { method: 'POST', headers: { Authorization: `Bearer ${tokenB}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packageId: packageB.packageId, idempotencyKey: 'source-offline-import' }) });
+    const importBText = await importB.text();
+    assert.equal(importB.status, 202, importBText);
+    const importedB = JSON.parse(importBText);
+    await waitFor(async () => (await api(coreBUrl, tokenB, 'GET', `/api/v1/operations/${importedB.operationId}`)).data.state === 'succeeded', 'second Core import', 180_000);
+    assert.equal((await api(coreBUrl, tokenB, 'GET', `/api/v1/works/${importedB.workId}`)).data.observedState, 'stopped');
+    const startB = await fetch(`${coreBUrl}/api/v1/works/${importedB.workId}/start`, { method: 'POST', headers: { Authorization: `Bearer ${tokenB}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idempotencyKey: 'source-offline-start' }) });
+    const startBText = await startB.text();
+    assert.equal(startB.status, 202, startBText);
+    const startBReceipt = JSON.parse(startBText);
+    await waitFor(async () => (await api(coreBUrl, tokenB, 'GET', `/api/v1/operations/${startBReceipt.operationId}`)).data.state === 'succeeded', 'second Core start', 180_000);
+    await waitFor(async () => (await api(coreBUrl, tokenB, 'GET', `/api/v1/works/${importedB.workId}`)).data.observedState === 'ready', 'second Core Work ready', 180_000);
+    const contextB = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const pageB = await contextB.newPage();
+      await pageB.goto(`http://127.0.0.1:${uiPortB}/login`);
+      await pageB.getByLabel('Account', { exact: true }).fill('admin');
+      await pageB.getByLabel('Password').fill('real-browser-admin-password');
+      await pageB.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await pageB.waitForURL(url => url.pathname !== '/login');
+      await pageB.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+      await pageB.getByRole('link', { name: /^Real Browser Work/ }).click();
+      await pageB.getByRole('button', { name: 'Chat', exact: true }).click();
+      await pageB.getByRole('button', { name: 'Sessions', exact: true }).click();
+      await pageB.locator(`[data-action=select-session][data-id="${originalSessionId}"]`).click();
+      const importedLinkB = pageB.locator('a.chat-file-link[data-path="/output/报告.txt"]').last();
+      await expect(importedLinkB).toBeVisible();
+      const hrefB = await importedLinkB.getAttribute('href');
+      assert.match(hrefB, new RegExp(`^#/work/${importedB.workId}/files/`));
+      assert.doesNotMatch(hrefB, /^https?:|127\.0\.0\.1|localhost/, 'file link must not carry a source Core address');
+      await importedLinkB.click();
+      await expect(pageB.locator('.file-target-toolbar')).toContainText('报告.txt');
+      await expect(pageB.locator('#file-editor')).toHaveValue('交付文件\n');
+    } finally { await contextB.close(); }
+    console.log(JSON.stringify({ result: 'source Core offline import: history link resolved in the receiving Work', sourceCoreStopped: true, importedWork: importedB.workId, session: originalSessionId }));
+  } finally {
+    await stop(coreB);
+    await cleanupInstallation(dataDirB);
+  }
   console.log(JSON.stringify({ result: 'real Go Core/CLI: lifecycle, Service iframe preservation/tab, Run, binary WebDAV, uncertain write, Save/Apply, Stop/Export/Inspect/Import/Start and responsive layout', workId, screenshots: screenshotDir }));
   }
 } catch (error) {
