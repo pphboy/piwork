@@ -31,6 +31,16 @@ export function packageNameKey(name: string): string {
   return createHash("sha256").update(name).digest("hex");
 }
 
+/**
+ * Minimal platform output convention. It is independent of optional brain
+ * cognition and does not grant tools, files or navigation by itself.
+ */
+export function fileDeliveryPrompt(): string {
+  return `## Delivering Work files
+The shared workspace root is /var/data/workspace/. After an allowed tool confirms a file exists in this Work's workspace, you may deliver it in your reply as a Markdown link of the form [name](piwork-file:/relative/path), encoding each relative path segment as UTF-8 percent-encoding exactly once. For example, output/report 1.txt becomes piwork-file:/output/report%201.txt and output/报告.txt becomes piwork-file:/output/%E6%8A%A5%E5%91%8A.txt.
+Use this only for a file you verified with an allowed tool. If you cannot verify that the file exists, say what is missing; never claim a file was created, saved, or downloaded based on link text alone. The link opens the current file at that path in this Work's Files, not a saved copy from this reply. Do not use Work IDs, other schemes, absolute container or host paths, directory targets, query strings or fragments.`;
+}
+
 /** Each call owns a fresh SDK loader and extension runtime. Only frozen, enabled roots are passed to Pi. */
 export async function createPackageResourceLoader(input: {
   readonly root: string;
@@ -75,7 +85,11 @@ export async function createPackageResourceLoader(input: {
     agentsFilesOverride: () => ({ agentsFiles: [{ path: "/run/piwork/AGENTS.md", content: input.agentsMd }] }),
     skillsOverride: (result) => ({ skills: [...input.standaloneSkills, ...result.skills], diagnostics: result.diagnostics }),
     systemPromptOverride: () => undefined,
-    appendSystemPromptOverride: () => cognition === undefined ? [] : brainPrompt(cognition, input.experience,input.memorySelection),
+    appendSystemPromptOverride: (base) => [
+      ...base,
+      ...(cognition === undefined ? [] : brainPrompt(cognition, input.experience, input.memorySelection)),
+      fileDeliveryPrompt(),
+    ],
   });
   await sdk.reload();
   if (cognition !== undefined && input.standaloneSkills.some((skill) => skill.name === "deploy-work-service")) {

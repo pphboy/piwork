@@ -11,6 +11,40 @@ import { createDeterministicRuntime } from "@piwork/pi-adapter";
 import { validatePiPackageArtifact } from "@piwork/pi-package";
 import { createPackageResourceLoader, packageNameKey } from "./package-resources.js";
 
+test("platform file guidance reaches the actual SDK context without packages and verified text and image writes become links", async () => {
+  const home = mkdtempSync(join(tmpdir(), "piwork-agent-file-delivery-"));
+  try {
+    const workspace = join(home, "workspace"), agentDirectory = join(home, "agent");
+    mkdirSync(workspace); mkdirSync(agentDirectory);
+    const { loader, toolNames } = await createPackageResourceLoader({ root: join(home, "packages"), bindings: [], selection: [],
+      standaloneSkills: [], agentsMd: "# Agent\n", workspace, agentDirectory });
+    assert.deepEqual([...toolNames], []);
+    const { runtime, model } = await createDeterministicRuntime();
+    const { session } = await createAgentSession({ cwd: workspace, agentDir: agentDirectory, modelRuntime: runtime,
+      model, thinkingLevel: "off", resourceLoader: loader, settingsManager: SettingsManager.inMemory(),
+      sessionManager: SessionManager.inMemory(workspace), tools: ["write", "bash"] });
+    try {
+      assert.match(session.systemPrompt, /piwork-file:\/relative\/path/);
+      assert.match(session.systemPrompt, /\/var\/data\/workspace\//);
+      assert.doesNotMatch(session.systemPrompt, /Piwork workstation cognition/);
+      assert.deepEqual(session.getActiveToolNames().sort(), ["bash", "write"]);
+      await session.prompt("inspect file delivery guidance");
+      assert.ok(session.messages.some(message => message.role === "assistant"
+        && JSON.stringify(message.content).includes("file-delivery-guidance:true:true:plain")));
+      await session.prompt("deliver workspace file fixture");
+      assert.equal(readFileSync(join(workspace, "output", "报告.txt"), "utf8"), "交付文件\n");
+      const image = readFileSync(join(workspace, "output", "图片.png"));
+      assert.equal(image.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+      assert.equal(image.length, 72);
+      const reply = session.messages.findLast(message => message.role === "assistant");
+      assert.ok(reply?.content.some(part => part.type === "text"
+        && part.text.includes("[报告.txt](piwork-file:/output/%E6%8A%A5%E5%91%8A.txt)")));
+      assert.ok(reply?.content.some(part => part.type === "text"
+        && part.text.includes("[图片.png](piwork-file:/output/%E5%9B%BE%E7%89%87.png)")));
+    } finally { session.dispose(); }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
 test("only enabled owned package extensions enter an isolated SDK loader", async () => {
   const home = mkdtempSync(join(tmpdir(), "piwork-agent-package-"));
   try {

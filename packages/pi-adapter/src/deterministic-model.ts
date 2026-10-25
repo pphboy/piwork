@@ -17,6 +17,8 @@ import { deterministicKanban } from "./deterministic-kanban.js";
 
 const MODEL_ID = "fixture-v1";
 const serviceTool = (name: string) => modelMcpToolName("work-services", name);
+/** 2x1 PNG fixture used to exercise a real binary file delivery. */
+const DELIVERY_IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGOsF9FgYGAAAAQMAL31QtfuAAAAAElFTkSuQmCC";
 
 export async function createDeterministicRuntime(modelId = MODEL_ID): Promise<{
   readonly runtime: ModelRuntime;
@@ -154,6 +156,28 @@ function streamDeterministic(
     }
     if (prompt.trim() === "inspect piwork brain candidate cognition") {
       emitText(stream, output, `brain-candidate-new:${systemPrompt.includes("Workstation candidate cognition")}`); return;
+    }
+    if (prompt.trim() === "inspect file delivery guidance") {
+      emitText(stream, output, `file-delivery-guidance:${systemPrompt.includes("piwork-file:/relative/path")}:${systemPrompt.includes("/var/data/workspace/")}:${systemPrompt.includes("Piwork workstation cognition") ? "brain" : "plain"}`);
+      return;
+    }
+    if (prompt.trim() === "deliver workspace file fixture") {
+      const write = toolResults.find(result => result.toolName === "write");
+      if (!write) { emitToolCall(stream, output, "file-delivery-write", "write", { path: "output/报告.txt", content: "交付文件\n" }); return; }
+      if (write.isError) { emitText(stream, output, "File creation could not be verified; no file link is provided."); return; }
+      // A real built-in shell call creates the binary image; the fixture only
+      // chooses the command and does not write bytes through the model.
+      const image = toolResults.find(result => result.toolName === "bash");
+      if (!image) {
+        emitToolCall(stream, output, "file-delivery-image", "bash", { command: `node -e "require('fs').writeFileSync('output/图片.png', Buffer.from('${DELIVERY_IMAGE_BASE64}','base64'))"` });
+        return;
+      }
+      if (image.isError) {
+        emitText(stream, output, "[报告.txt](piwork-file:/output/%E6%8A%A5%E5%91%8A.txt)\n\nThe image could not be verified; no image link is provided.");
+        return;
+      }
+      emitText(stream, output, "[报告.txt](piwork-file:/output/%E6%8A%A5%E5%91%8A.txt)\n\n[图片.png](piwork-file:/output/%E5%9B%BE%E7%89%87.png)");
+      return;
     }
     if (prompt.trim() === "inspect piwork brain cognition" || prompt.trim() === "inspect piwork brain cognition for personal review") {
       emitText(stream, output, systemPrompt.includes("Piwork workstation cognition")

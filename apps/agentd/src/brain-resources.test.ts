@@ -35,6 +35,23 @@ async function awarenessFixture(t: { after: (callback: () => void) => void }) {
   } };
 }
 
+test("file delivery guidance joins brain cognition without granting package tools", async t => {
+  const f = await awarenessFixture(t);
+  const { loader, toolNames } = await createPackageResourceLoader(f.input);
+  assert.ok(toolNames.size > 0, "brain package must register tools before authorization");
+  const { runtime, model } = await createDeterministicRuntime();
+  const { session } = await createAgentSession({ cwd: f.workspace, agentDir: f.input.agentDirectory, modelRuntime: runtime, model,
+    resourceLoader: loader, sessionManager: SessionManager.inMemory(f.workspace), tools: [], thinkingLevel: "off" });
+  try {
+    assert.match(session.systemPrompt, /Piwork workstation cognition/);
+    assert.match(session.systemPrompt, /piwork-file:\/relative\/path/);
+    assert.deepEqual(session.getActiveToolNames(), []);
+    await session.prompt("inspect file delivery guidance");
+    assert.ok(session.messages.some(message => message.role === "assistant"
+      && JSON.stringify(message.content).includes("file-delivery-guidance:true:true:brain")));
+  } finally { session.dispose(); }
+});
+
 test("NiceGUI Reference is conditionally read from the captured Skill and not injected into every task", async t => {
   const f = await awarenessFixture(t);
   initializeBrainSource({ frozenRoot: f.packageRoot, workspace: f.workspace, privateDirectory: join(f.root, "private"), binding: f.binding });
@@ -153,7 +170,10 @@ test("application awareness stays within enabled captured packages and duplicate
   for (const input of [{ ...f.input, selection: [{ name: "piwork-brain", enabled: false }] }, { ...f.input, bindings: [], selection: [] }]) {
     const { loader, resources } = await createPackageResourceLoader(input);
     assert.deepEqual(loader.getSkills().skills, []);
-    assert.deepEqual(loader.getAppendSystemPrompt(), []);
+    const appended = loader.getAppendSystemPrompt().join("\n");
+    assert.doesNotMatch(appended, /Piwork workstation cognition/);
+    assert.match(appended, /piwork-file:\/relative\/path/);
+    assert.match(appended, /\/var\/data\/workspace\//);
     assert.deepEqual(resources, []);
   }
   const name = "awareness-conflict", key = packageNameKey(name), other = join(f.input.root, key);
@@ -201,7 +221,9 @@ test("frozen brain is a real SDK package, injects cognition each Run, and bridge
     assert.doesNotMatch(loaded.loader.getAppendSystemPrompt().join("\n"), /User edit/);
     assert.equal(selectPackageTools(loaded.toolNames, { allowed: [], denied: ["package:piwork-brain:brain_service"] }, new Set()).length, 3);
     const disabled = await createPackageResourceLoader({ ...input, selection: [{ name: "piwork-brain", enabled: false }] });
-    assert.deepEqual(disabled.loader.getAppendSystemPrompt(), []);
+    const disabledAppend = disabled.loader.getAppendSystemPrompt().join("\n");
+    assert.doesNotMatch(disabledAppend, /Piwork workstation cognition/);
+    assert.match(disabledAppend, /piwork-file:\/relative\/path/);
     const workId = "work-1111111111111111";
     const sessions = new AgentSessionService(workId, store, workspace, join(root, "sessions"), "context-brain");
     const daemon = new AgentDaemonControl({ workId, generation: 1, instanceId: "instance-brain" });
