@@ -2,6 +2,38 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.14",
+      "component": "core",
+      "title": "Piwork 0.0.14 Preview",
+      "publishedAt": "2026-10-26",
+      "sections": [
+        {
+          "title": "Deliver workspace files through Assistant replies",
+          "items": [
+            "Provide platform file-delivery guidance in the Agent model context, with or without an enabled brain package. Agents use existing authorized tools to create and verify workspace files, then return Work-relative file links in ordinary replies.",
+            "Preserve file references in conversation history and complete Work exports. Imported links resolve within the receiving Work, and opening a link reads the current file at that path.",
+            "Keep existing tool permissions, owner authorization and explicit Agent image selection and Apply requirements. Existing Work images do not upgrade automatically."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.14",
+      "component": "desktop",
+      "title": "Piwork 0.0.14 Preview",
+      "publishedAt": "2026-10-26",
+      "sections": [
+        {
+          "title": "Open delivered files in Files",
+          "items": [
+            "Open verified-format file links from live replies, saved conversations and request details in the current Work Files view, preserving drafts and return navigation.",
+            "Preview current PNG, JPEG and WebP content with bounded reads and image limits, keep UTF-8 text editing, and provide original file downloads. PDF and unsupported files remain downloadable without a new viewer.",
+            "Handle missing files, changed contents, read failures and identity changes explicitly. Preserve paged history recovery and render file navigation only after a saved message is complete."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.13",
       "component": "core",
       "title": "Piwork 0.0.13 Preview",
