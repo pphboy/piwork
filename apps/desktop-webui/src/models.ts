@@ -14,6 +14,10 @@ export type ServiceStatus =
   | "Stopped"
   | "Failed"
   | "Starting"
+  | "Recovering"
+  | "Running"
+  | "Completed"
+  | "Unknown"
   | "Removed";
 export type RunStatus =
   | "accepted"
@@ -32,6 +36,7 @@ export interface ServiceDiagnostic {
   retryable?: boolean;
   exitCode?: number;
   correlationId?: string;
+  cause?: ServiceDiagnostic;
 }
 export interface Service {
   id: string;
@@ -43,6 +48,12 @@ export interface Service {
   error?: string;
   /** A correlation id is diagnostic text only: it never implies a navigable Operation. */
   diagnostic?: ServiceDiagnostic;
+  temporary?: { mode: 'once' | 'listener'; state: string; exitCode?: number; cleanupState?: string };
+}
+export interface TemporaryCleanup {
+  workId: string; serviceId: string; runId: string; createOperationId: string; operationId?: string;
+  state: string; stage: string; trigger: string; errorCode?: string; logState?: string; updatedAt: string; truncated: boolean;
+  events: Array<{ at: string; stage: string; outcome: string; code?: string }>;
 }
 import type { ImageMime } from './image-content.js';
 export type WorkspaceFileKind = "directory" | "file" | "special";
@@ -103,6 +114,8 @@ export interface Run {
   finalText?: string;
   error?: string;
   executionError?: string;
+  errorCode?: string;
+  errorRetryable?: boolean;
 }
 export interface Configuration {
   skills: string[];

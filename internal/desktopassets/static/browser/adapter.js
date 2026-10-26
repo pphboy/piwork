@@ -25,10 +25,10 @@ const part = encodeURIComponent;
 const runStates = ['interrupted', 'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'];
 const blankConfig = () => ({ skills: [], packages: [], agents: '', advanced: '{}', revision: 0, activeRevision: 0, loaded: false, modelVisible: false });
 const errorText = (error) => error instanceof Error ? error.message : String(error);
-const stateLabel = (value) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
+const stateLabel = (value) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', recovering: 'Recovering', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
 const diagnosticText = (value) => typeof value === 'string' ? value : '';
 /** Copy only the typed public diagnostic fields; never stringify an unknown object or infer a stage. */
-function serviceDiagnostic(raw) {
+function serviceDiagnostic(raw, includeCause = true) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
         return undefined;
     const value = raw;
@@ -39,6 +39,11 @@ function serviceDiagnostic(raw) {
         diagnostic.exitCode = value.exitCode;
     if (diagnosticText(value.correlationId))
         diagnostic.correlationId = diagnosticText(value.correlationId);
+    if (includeCause) {
+        const cause = serviceDiagnostic(value.cause, false);
+        if (cause)
+            diagnostic.cause = cause;
+    }
     const known = diagnostic.code || diagnostic.stage || diagnostic.message || diagnostic.remediation || diagnostic.correlationId || diagnostic.retryable !== undefined || diagnostic.exitCode !== undefined;
     return known ? diagnostic : undefined;
 }
@@ -50,7 +55,10 @@ function serviceErrorText(raw) {
     return diagnosticText(raw.message) || undefined;
 }
 function mapService(raw) {
-    return { id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState), ports: (raw.access?.ports ?? []).filter((p) => /^https?:/.test(p.url ?? '')).sort((a, b) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p) => p.port), error: serviceErrorText(raw.lastError), diagnostic: serviceDiagnostic(raw.lastError) };
+    const value = raw.temporary;
+    const temporary = value && ['once', 'listener'].includes(value.mode) && typeof value.state === 'string' ? { mode: value.mode, state: value.state, ...(Number.isInteger(value.exitCode) ? { exitCode: value.exitCode } : {}), ...(typeof value.cleanupState === 'string' ? { cleanupState: value.cleanupState } : {}) } : undefined;
+    const observed = temporary && raw.observedState === 'running' ? 'Running' : temporary && raw.observedState === 'completed' ? 'Completed' : stateLabel(raw.observedState);
+    return { id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed, ports: (raw.access?.ports ?? []).filter((p) => /^https?:/.test(p.url ?? '')).sort((a, b) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p) => p.port), error: serviceErrorText(raw.lastError), diagnostic: serviceDiagnostic(raw.lastError), temporary };
 }
 export class DesktopAdapter {
     historySupport = new Map();
@@ -400,6 +408,8 @@ export class DesktopAdapter {
     requestPresence = new Map();
     requestResponses = new Map();
     runDetails = new Map();
+    temporaryCleanups = new Map();
+    temporaryCleanupRequests = new Map();
     requestRetries = new Map();
     cancellingRequests = new Set();
     requestReadErrors = new Map();
@@ -783,6 +793,8 @@ export class DesktopAdapter {
         this.requestPresence.clear();
         this.requestResponses.clear();
         this.runDetails.clear();
+        this.temporaryCleanups.clear();
+        this.temporaryCleanupRequests.clear();
         this.activeRuns.clear();
         this.activeRevisions.clear();
         this.cancelAndSendCapabilities.clear();
@@ -1572,6 +1584,61 @@ export class DesktopAdapter {
         this.emit();
         return run;
     }
+    async loadTemporaryCleanups(workId, kind, ref) {
+        const key = `${workId}:${kind}:${ref}`, prior = this.temporaryCleanupRequests.get(key);
+        if (prior)
+            return prior;
+        const epoch = this.epoch, state = this.temporaryCleanups.get(key) ?? { loading: false, error: '', items: [], truncated: false };
+        this.temporaryCleanups.set(key, state);
+        state.loading = true;
+        state.error = '';
+        this.emit();
+        let pending;
+        pending = (async () => {
+            try {
+                const path = kind === 'run' ? `works/${part(workId)}/temporary-cleanups?runId=${part(ref)}` : `works/${part(workId)}/temporary-cleanups/${part(ref)}`;
+                const value = await this.request(path);
+                const raw = kind === 'run' ? value.items : [value];
+                if (!Array.isArray(raw) || raw.length > 256)
+                    throw new DesktopError('INVALID_RESPONSE', 'Cleanup records are incomplete.');
+                const items = raw.map((item) => {
+                    if (!item || item.workId !== workId || typeof item.serviceId !== 'string' || typeof item.runId !== 'string' || typeof item.createOperationId !== 'string' ||
+                        kind === 'run' && item.runId !== ref || kind === 'service' && item.serviceId !== ref || !Array.isArray(item.events) || item.events.length > 32)
+                        throw new DesktopError('INVALID_RESPONSE', 'Cleanup record identity is invalid.');
+                    return { workId, serviceId: item.serviceId, runId: item.runId, createOperationId: item.createOperationId, ...(typeof item.operationId === 'string' && item.operationId ? { operationId: item.operationId } : {}),
+                        state: diagnosticText(item.state), stage: diagnosticText(item.stage), trigger: diagnosticText(item.trigger), ...(diagnosticText(item.errorCode) ? { errorCode: diagnosticText(item.errorCode) } : {}),
+                        ...(diagnosticText(item.logState) ? { logState: diagnosticText(item.logState) } : {}), updatedAt: diagnosticText(item.updatedAt), truncated: item.truncated === true,
+                        events: item.events.map((event) => ({ at: diagnosticText(event?.at), stage: diagnosticText(event?.stage), outcome: diagnosticText(event?.outcome), ...(diagnosticText(event?.code) ? { code: diagnosticText(event.code) } : {}) })) };
+                });
+                if (epoch !== this.epoch || this.temporaryCleanups.get(key) !== state)
+                    return;
+                state.items = items;
+                state.truncated = kind === 'run' && value.truncated === true;
+            }
+            catch (error) {
+                if (epoch !== this.epoch || this.temporaryCleanups.get(key) !== state)
+                    return;
+                if (error instanceof DesktopError && error.httpStatus === 404) {
+                    state.items = [];
+                    state.truncated = false;
+                }
+                else {
+                    state.error = errorText(error);
+                    throw error;
+                }
+            }
+            finally {
+                if (this.temporaryCleanupRequests.get(key) === pending)
+                    this.temporaryCleanupRequests.delete(key);
+                if (epoch === this.epoch && this.temporaryCleanups.get(key) === state) {
+                    state.loading = false;
+                    this.emit();
+                }
+            }
+        })();
+        this.temporaryCleanupRequests.set(key, pending);
+        return pending;
+    }
     async loadRequests(id, serviceName = '', more = false) {
         const key = `${id}:${serviceName}`, state = this.requests.get(key) ?? { loading: false, error: '', items: [], nextCursor: null }, epoch = this.epoch;
         if (state.loading)
@@ -1800,7 +1867,7 @@ export class DesktopAdapter {
             throw error;
         }
     }
-    runRecord(raw, sessionId) { return { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, resultRef: raw.resultRef, created: raw.acceptedAt ?? '', finished: raw.finishedAt, finalText: raw.finalText, error: raw.error?.message, executionError: raw.error?.message, actualModel: raw.actualModel ?? null, thinkingLevel: raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel, source: raw.source, adoptedExperienceVersion: raw.adoptedExperienceVersion }; }
+    runRecord(raw, sessionId) { return { id: raw.runId, sessionId, status: runStates[raw.state] ?? 'interrupted', cursor: 0, resultRef: raw.resultRef, created: raw.acceptedAt ?? '', finished: raw.finishedAt, finalText: raw.finalText, error: raw.error?.message, executionError: raw.error?.message, errorCode: typeof raw.error?.code === 'string' ? raw.error.code : undefined, errorRetryable: typeof raw.error?.retryable === 'boolean' ? raw.error.retryable : undefined, actualModel: raw.actualModel ?? null, thinkingLevel: raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel, source: raw.source, adoptedExperienceVersion: raw.adoptedExperienceVersion }; }
     modelSelection(id, sessionId) {
         const key = `${id}:${sessionId}`;
         let state = this.modelSelections.get(key);
@@ -2846,6 +2913,8 @@ export class DesktopAdapter {
             const raw = value.run ?? value;
             run.status = runStates[raw.state] ?? 'interrupted';
             run.executionError = raw.error?.message;
+            run.errorCode = typeof raw.error?.code === 'string' ? raw.error.code : undefined;
+            run.errorRetryable = typeof raw.error?.retryable === 'boolean' ? raw.error.retryable : undefined;
             const profile = this.imageCapabilities.get(id)?.value || this.getWork(id)?.sessions.find(s => s.id === run.sessionId)?.imageProfile ? '?imageProfile=chat-images-v1' : '';
             if (this.historySupport.get(id)) {
                 run.resultRef = raw.resultRef;
@@ -3004,6 +3073,8 @@ export class DesktopAdapter {
                     run.status = runStates[kind.state.state] ?? 'interrupted';
                     run.resultRef = kind.state.resultRef;
                     run.error = run.executionError = kind.state.error?.message;
+                    run.errorCode = typeof kind.state.error?.code === 'string' ? kind.state.error.code : undefined;
+                    run.errorRetryable = typeof kind.state.error?.retryable === 'boolean' ? kind.state.error.retryable : undefined;
                     if (kind.state.finalText && !session.messages.some(m => m.runId === run.id && m.role === 'assistant' && !!m.text))
                         session.messages.push({ id: `${run.id}-final`, runId: run.id, role: 'assistant', text: kind.state.finalText });
                 }
@@ -3031,6 +3102,8 @@ export class DesktopAdapter {
             const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`);
             run.status = runStates[(value.run ?? value).state] ?? 'interrupted';
             run.executionError = (value.run ?? value).error?.message;
+            run.errorCode = typeof (value.run ?? value).error?.code === 'string' ? (value.run ?? value).error.code : undefined;
+            run.errorRetryable = typeof (value.run ?? value).error?.retryable === 'boolean' ? (value.run ?? value).error.retryable : undefined;
             run.resultRef = (value.run ?? value).resultRef;
             if (['accepted', 'running', 'cancelling'].includes(run.status)) {
                 if (this.historySupport.get(id) && [...this.historyEventParts.keys()].some(key => key.startsWith(`${id}:${run.id}:`))) {

@@ -2081,6 +2081,69 @@ test('Work naming: Import uses the actual Core name and preserves it across stag
 });
 
 const controlRun=(id='run-background',state=2,sessionId='session-auto',source:any={kind:'service',serviceName:'Tool A',requestId:'request-a'})=>({workId:'work-1',sessionId,runId:id,submissionKey:'original-key',state,acceptedAt:'2026-10-12T00:00:00Z',actualModel:chatModel,thinkingLevel:'high',source,finalText:state===4?'Original associated reply':''});
+
+test('model authentication failure stays visible in Run history with role-appropriate guidance', async t => {
+  for (const role of ['user', 'admin'] as const) await t.test(role, async t => {
+    const failure = { code: 'MODEL_AUTHENTICATION_FAILED', message: 'Model authentication failed. Check the API Key.', retryable: false };
+    const run = { ...controlRun('run-auth', 5, 'session-1', { kind: 'chat' }), error: failure };
+    const { page, requests } = await fixture(t, r => {
+      if (r.path === 'session') return { json: { state: 'authenticated', generation: 1, csrf: 'local-session-csrf', coreUrl: 'http://core.test', user: { account: 'fixture', role } } };
+      if (r.path === 'works/work-1/sessions/session-1') return { json: { session: { workId: 'work-1', sessionId: 'session-1', modelPreference: null, source: { kind: 'chat' } }, messages: [{ entryId: 'user-auth', runId: 'run-auth', role: 'user', blocks: [{ blockId: 'user-auth', type: 'text', text: 'Original prompt' }] }], runs: [run] } };
+      if (r.path === 'works/work-1/runs/run-auth') return { json: run };
+      return focusFixture(r);
+    });
+    const execution = page.locator('.message-execution').filter({ hasText: 'Model authentication failed' });
+    await expect(execution).toContainText(role === 'admin' ? 'Open Administration on the connected Core' : 'Ask an administrator');
+    await execution.locator('[data-action="run-details"]').click();
+    await expect(page.locator('#modal')).toContainText('Model authentication failed');
+    await expect(page.locator('#modal')).toContainText(role === 'admin' ? 'Open Administration' : 'Ask an administrator');
+    assert.equal(requests.filter(r => r.path === 'logout' || r.path.endsWith('/runs') && r.method === 'POST').length, 0);
+  });
+});
+
+test('model authentication classification survives live events and original Run readback', async t => {
+  const failure = { code: 'MODEL_AUTHENTICATION_FAILED', message: 'Model authentication failed. Check the API Key.', retryable: false };
+  const run = { ...controlRun('run-auth-live', 5, 'session-1', { kind: 'chat' }), error: failure };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1/runs/run-auth-live/events') return { body: JSON.stringify({ sequence: '1', kind: { $case: 'state', state: { state: 5, error: failure } } }) + '\n', headers: { 'Content-Type': 'application/x-ndjson' } };
+    if (r.path === 'works/work-1/runs/run-auth-live') return { json: run };
+    if (r.path === 'works/work-1/sessions/session-1') return { json: { session: { workId: 'work-1', sessionId: 'session-1', modelPreference: null, source: { kind: 'chat' } }, messages: [{ entryId: 'user-live', runId: 'run-auth-live', role: 'user', blocks: [{ blockId: 'user-live', type: 'text', text: 'Original prompt' }] }], runs: [run] } };
+    return focusFixture(r);
+  });
+  await api(page, "adapter.getWork('work-1').run={id:'run-auth-live',sessionId:'session-1',status:'running',cursor:0,created:'',source:{kind:'chat'}};await adapter.resumeRun('work-1');");
+  assert.equal(await api(page, "return adapter.getWork('work-1').run.errorCode"), 'MODEL_AUTHENTICATION_FAILED');
+  assert.equal(await api(page, "return adapter.getWork('work-1').run.errorRetryable"), false);
+  await expect(page.locator('.message-execution').filter({ hasText: 'Model authentication failed' })).toContainText('Ask an administrator');
+  assert.equal(requests.filter(r => r.path === 'logout' || r.path.endsWith('/runs') && r.method === 'POST').length, 0);
+});
+
+test('expired Run cursor restores model permission failure without resending', async t => {
+  const failure = { code: 'MODEL_PERMISSION_DENIED', message: 'Model access was denied. Check model permissions.', retryable: false };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/runs/original-run/events')) return { status: 410 };
+    if (r.path.endsWith('/runs/original-run')) return { json: { run: { state: 5, error: failure } } };
+    if (r.path.endsWith('/sessions/session-1')) return { json: { messages: [{ role: 'user', text: 'original prompt' }] } };
+  });
+  await beginExpiredRun(page);
+  const run = await api(page, "return adapter.getWork('work-1').run");
+  assert.equal(run.errorCode, 'MODEL_PERMISSION_DENIED');
+  assert.equal(run.errorRetryable, false);
+  assert.equal(run.executionError, failure.message);
+  assert.equal(requests.filter(r => r.path === 'logout' || r.path.endsWith('/runs') && r.method === 'POST').length, 0);
+});
+
+test('legacy Run error is shown without inventing an authentication category', async t => {
+  const run = { ...controlRun('run-old-agent', 5, 'session-1', { kind: 'chat' }), error: { code: 'MODEL_EXECUTION_FAILED', message: 'The model execution failed.', retryable: true } };
+  const { page } = await fixture(t, r => {
+    if (r.path === 'works/work-1/sessions/session-1') return { json: { session: { workId: 'work-1', sessionId: 'session-1', modelPreference: null, source: { kind: 'chat' } }, messages: [{ entryId: 'user-old', runId: 'run-old-agent', role: 'user', blocks: [{ blockId: 'user-old', type: 'text', text: 'Original prompt' }] }], runs: [run] } };
+    if (r.path === 'works/work-1/runs/run-old-agent') return { json: run };
+    return focusFixture(r);
+  });
+  const execution = page.locator('.message-execution').filter({ hasText: 'The model execution failed.' });
+  await expect(execution).toBeVisible();
+  await expect(execution).not.toContainText('Ask an administrator');
+  await expect(execution).not.toContainText('API Key');
+});
 const controlRequest=(state='waiting_result',disposition='live')=>({requestId:'request-a',goal:'Build the requested report',source:{kind:'service',serviceName:'Tool A'},state,disposition,createdAt:'2026-10-12T00:00:00Z',updatedAt:'2026-10-12T00:01:00Z',runIds:['run-background'],result:null,error:null,waitRef:state==='waiting_result'?{kind:'job',id:'job-original',deadlineAt:'2026-10-12T00:05:00Z'}:null});
 function controlFixture(r:RequestRecord):Reply|undefined {
  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3,cancelAndSendContractVersion:1}};
@@ -2735,6 +2798,79 @@ test('Service feedback: a confirmed Starting Service reads as starting and never
   await expect(page.locator('.startup-placeholder')).toHaveCount(0);
   await expect(page.locator('.work-notice')).toHaveCount(0);
   assert.equal(noServiceControls(requests), 0);
+});
+
+test('Service feedback: recovery preserves its original cause until Ready', async t => {
+  let observed = 'recovering';
+  const { page } = await fixture(t, r => {
+    if (r.path === 'works/work-1') return observed === 'recovering' ? degradedWork : undefined;
+    if (r.path.endsWith('/services')) return { json: { services: [{ serviceId: 'service-a', name: 'Tool A', enabled: true, observedState: observed, access: webPort('a.work.test'), ...(observed === 'recovering' ? { lastError: { code: 'SERVICE_EXITED', stage: 'service-recovery', message: 'The service process exited.', remediation: 'Inspect service logs.', exitCode: 0, retryable: true } } : { lastError: null }) }] } };
+    return focusFixture(r);
+  });
+  const notice = page.locator('.work-notice');
+  await expect(notice).toContainText('Tool A is recovering');
+  await expect(notice).toContainText('The service process exited.');
+  await notice.locator('[data-action="service-details"]').click();
+  await expect(page.locator('#modal .service-explanation')).toContainText('The service process exited.');
+  await button(page, 'close-modal').click();
+  observed = 'ready'; await api(page, "await adapter.refreshVisibleWork('work-1');");
+  await expect(page.locator('.work-notice')).toHaveCount(0);
+});
+
+test('temporary cleanup remains visible when Service logs fail and refresh confirms completion', async t => {
+  let state = 'pending';
+  const cleanup = () => ({ workId:'work-1', serviceId:'service-probe', runId:'run-probe', createOperationId:'operation-create', operationId:'operation-cleanup', trigger:'run-cancelled', state, stage:state==='completed'?'release':'remove', ...(state==='pending'?{errorCode:'DOCKER_UNAVAILABLE'}:{}), logState:'unavailable', updatedAt:'2026-10-12T00:01:00Z', truncated:false, events:[{at:'2026-10-12T00:01:00Z',stage:state==='completed'?'release':'remove',outcome:state==='completed'?'succeeded':'unconfirmed'}] });
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1/services') return { json: { services:[
+      { serviceId:'service-a',name:'Tool A',enabled:true,observedState:'ready',access:webPort('a.work.test') },
+      { serviceId:'service-probe',name:'Probe',enabled:true,observedState:'failed',access:{hostname:'probe.work.test',ports:[]},temporary:{mode:'once',state:'completed',exitCode:7,cleanupState:state} },
+    ] } };
+    if (r.path === 'works/work-1/temporary-cleanups/service-probe') return { json:cleanup() };
+    if (r.path === 'works/work-1/services/service-probe/logs') return { status:503,json:{message:'Log snapshot unavailable'} };
+    return focusFixture(r);
+  });
+  await button(page,'service-menu').click(); await button(page,'manage-services').click();
+  await page.locator('#modal [data-action="service-details"][data-id="service-probe"]').click();
+  const modal=page.locator('#modal');
+  await expect(modal).toContainText('Exit code'); await expect(modal).toContainText('7');
+  await expect(modal).toContainText('Waiting to retry'); await expect(modal).toContainText('Docker is unavailable');
+  await expect(modal).toContainText('Service output could not be archived');
+  await expect(modal.locator('[data-action="check-operation"][data-id="operation-cleanup"]')).toHaveCount(1);
+  await expect(modal.locator('[data-control="retry"]')).toHaveCount(0);
+  state='completed'; await button(page,'refresh-temporary-cleanups').click();
+  await expect(modal).toContainText('Confirmed complete'); await expect(modal).not.toContainText('Docker is unavailable');
+  assert.equal(noServiceControls(requests),0);
+});
+
+test('temporary cleanup is associated with the original Run and hides stale data when its read fails', async t => {
+  let failed = false;
+  const run = { ...controlRun('run-cleanup', 6, 'session-1', { kind: 'chat' }) };
+  const cleanup = { workId:'work-1',serviceId:'service-probe',runId:'run-cleanup',createOperationId:'operation-create',operationId:'operation-cleanup',trigger:'run-cancelled',state:'pending',stage:'remove',errorCode:'TEMPORARY_CREATE_UNCONFIRMED',updatedAt:'2026-10-12T00:01:00Z',truncated:false,events:[{at:'2026-10-12T00:01:00Z',stage:'remove',outcome:'unconfirmed'}] };
+  const { page } = await fixture(t,r=>{
+    if(r.path==='works/work-1/sessions/session-1')return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:null,source:{kind:'chat'}},messages:[{entryId:'user-cleanup',runId:'run-cleanup',role:'user',blocks:[{blockId:'user-cleanup',type:'text',text:'Original prompt'}]}],runs:[run]}};
+    if(r.path==='works/work-1/runs/run-cleanup')return{json:run};
+    if(r.path==='works/work-1/temporary-cleanups')return failed?{status:503,json:{message:'Cleanup read unavailable'}}:{json:{items:[cleanup],truncated:false}};
+    return focusFixture(r);
+  });
+  await page.locator('.message-execution').filter({hasText:'cancelled'}).locator('[data-action="run-details"]').click();
+  const modal=page.locator('#modal'); await expect(modal).toContainText('The original container creation has not been confirmed');
+  failed=true; await button(page,'refresh-temporary-cleanups').click();
+  await expect(modal).toContainText('Cleanup status is not confirmed');
+  await expect(modal).not.toContainText('Waiting to retry');
+});
+
+test('late temporary cleanup response cannot repopulate a changed Core identity', async t => {
+  const { page } = await fixture(t, async r => {
+    if (r.path === 'works/work-1/temporary-cleanups') {
+      await new Promise(done => setTimeout(done, 500));
+      return { json:{items:[{workId:'work-1',serviceId:'service-old',runId:'run-old',createOperationId:'operation-old',state:'pending',stage:'remove',trigger:'run-cancelled',updatedAt:'2026-10-12T00:01:00Z',truncated:false,events:[]}],truncated:false} };
+    }
+    return focusFixture(r);
+  });
+  await api(page, "void adapter.loadTemporaryCleanups('work-1','run','run-old').catch(()=>undefined)");
+  await api(page, "await adapter.switchCore('http://another.test')");
+  await page.waitForTimeout(700);
+  assert.equal(await api(page, "return adapter.temporaryCleanups.size"), 0);
 });
 
 test('Service feedback: multiple failures and a Web-less failure use the Service management direction', async t => {

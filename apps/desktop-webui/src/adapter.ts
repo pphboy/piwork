@@ -1,7 +1,7 @@
 import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { historyMessages, resultText, upsertTool } from './chat-projection.js';
 import { HistoryProjection } from './history-projection.js';
-import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, FilePreview, RunStatus, RunModel, Session, Run, Service, ServiceDiagnostic } from './models.js';
+import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, FilePreview, RunStatus, RunModel, Session, Run, Service, ServiceDiagnostic, TemporaryCleanup } from './models.js';
 import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { detectImageMime, imageDimensions, imageWithinLimits, FILE_IMAGE_MAX_BYTES, type ImageMime } from './image-content.js';
@@ -28,16 +28,17 @@ const part = encodeURIComponent;
 const runStates: RunStatus[] = ['interrupted', 'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'];
 const blankConfig = (): Configuration => ({ skills: [], packages: [], agents: '', advanced: '{}', revision: 0, activeRevision: 0, loaded: false, modelVisible: false });
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-const stateLabel = (value: string) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
+const stateLabel = (value: string) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', recovering: 'Recovering', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
 const diagnosticText = (value: unknown) => typeof value === 'string' ? value : '';
 /** Copy only the typed public diagnostic fields; never stringify an unknown object or infer a stage. */
-function serviceDiagnostic(raw: unknown): ServiceDiagnostic | undefined {
+function serviceDiagnostic(raw: unknown, includeCause = true): ServiceDiagnostic | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const value = raw as Data;
   const diagnostic: ServiceDiagnostic = { code: diagnosticText(value.code), stage: diagnosticText(value.stage), message: diagnosticText(value.message), remediation: diagnosticText(value.remediation) };
   if (typeof value.retryable === 'boolean') diagnostic.retryable = value.retryable;
   if (typeof value.exitCode === 'number' && Number.isInteger(value.exitCode)) diagnostic.exitCode = value.exitCode;
   if (diagnosticText(value.correlationId)) diagnostic.correlationId = diagnosticText(value.correlationId);
+  if (includeCause) { const cause = serviceDiagnostic(value.cause, false); if (cause) diagnostic.cause = cause; }
   const known = diagnostic.code || diagnostic.stage || diagnostic.message || diagnostic.remediation || diagnostic.correlationId || diagnostic.retryable !== undefined || diagnostic.exitCode !== undefined;
   return known ? diagnostic : undefined;
 }
@@ -47,7 +48,10 @@ function serviceErrorText(raw: unknown) {
   return diagnosticText((raw as Data).message) || undefined;
 }
 function mapService(raw: Data): Service {
-  return { id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed: stateLabel(raw.observedState) as Service['observed'], ports: (raw.access?.ports ?? []).filter((p: Data) => /^https?:/.test(p.url ?? '')).sort((a: Data, b: Data) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p: Data) => p.port), error: serviceErrorText(raw.lastError), diagnostic: serviceDiagnostic(raw.lastError) };
+  const value = raw.temporary;
+  const temporary: Service['temporary'] = value && ['once','listener'].includes(value.mode) && typeof value.state === 'string' ? { mode: value.mode, state: value.state, ...(Number.isInteger(value.exitCode) ? { exitCode: value.exitCode } : {}), ...(typeof value.cleanupState === 'string' ? { cleanupState: value.cleanupState } : {}) } : undefined;
+  const observed = temporary && raw.observedState === 'running' ? 'Running' : temporary && raw.observedState === 'completed' ? 'Completed' : stateLabel(raw.observedState) as Service['observed'];
+  return { id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed, ports: (raw.access?.ports ?? []).filter((p: Data) => /^https?:/.test(p.url ?? '')).sort((a: Data, b: Data) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p: Data) => p.port), error: serviceErrorText(raw.lastError), diagnostic: serviceDiagnostic(raw.lastError), temporary };
 }
 export class DesktopAdapter {
   private historySupport = new Map<string, boolean>();
@@ -196,6 +200,8 @@ export class DesktopAdapter {
   requestPresence = new Map<string, { confirmed: boolean; loading: boolean; hasRecords: boolean; error: string }>();
   requestResponses = new Map<string, { loading: boolean; visibleLoading?: boolean; runs: Run[]; errors: string[]; checked: Record<string,string>; errorsByRun: Record<string,string> }>();
   runDetails = new Map<string, Run>();
+  temporaryCleanups = new Map<string, { loading: boolean; error: string; items: TemporaryCleanup[]; truncated: boolean }>();
+  private temporaryCleanupRequests = new Map<string, Promise<void>>();
   requestRetries = new Map<string,{submissionKey:string; error:string; unknown:boolean}>();
   private cancellingRequests = new Set<string>();
   requestReadErrors = new Map<string,string>();
@@ -461,7 +467,7 @@ export class DesktopAdapter {
     if (!preserveInspection) { this.inspectionSelection++; this.inspectionNonce++; this.inspectionContext?.xhr?.abort(); this.inspectionContext = null; this.transferProgress = null; this.cleanupPending.clear(); }
     this.epoch++; this.connectionRequest = undefined; Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false }); this.worksLoading = false; this.worksChecked = ''; this.stopFileReads(); this.directoryLoads.clear(); this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
     clearInterval(this.interactionTimer); this.interactionTimer=undefined;this.interactionScope='';this.interactionVersion++;
-    this.requestPresence.clear();this.requestResponses.clear();this.runDetails.clear();this.activeRuns.clear();this.activeRevisions.clear();this.cancelAndSendCapabilities.clear();
+    this.requestPresence.clear();this.requestResponses.clear();this.runDetails.clear();this.temporaryCleanups.clear();this.temporaryCleanupRequests.clear();this.activeRuns.clear();this.activeRevisions.clear();this.cancelAndSendCapabilities.clear();
     this.terminalEvidence.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
     this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear(); this.stopLogExportPolling(); this.logExport = null;
     Object.assign(this.about,{core:null,coreError:'',coreLoading:false,coreChecked:''});
@@ -883,6 +889,39 @@ export class DesktopAdapter {
     if(epoch!==this.epoch)return;
     const run=this.runRecord(raw,raw.sessionId);if(run.resultRef){run.finalText=await this.readRunResult(id,run);if(epoch!==this.epoch)return;}this.runDetails.set(`${id}:${runId}`,run);this.emit();return run;
   }
+  async loadTemporaryCleanups(workId: string, kind: 'run' | 'service', ref: string) {
+    const key = `${workId}:${kind}:${ref}`, prior = this.temporaryCleanupRequests.get(key);
+    if (prior) return prior;
+    const epoch = this.epoch, state = this.temporaryCleanups.get(key) ?? { loading: false, error: '', items: [], truncated: false };
+    this.temporaryCleanups.set(key, state); state.loading = true; state.error = ''; this.emit();
+    let pending!: Promise<void>;
+    pending = (async () => {
+      try {
+        const path = kind === 'run' ? `works/${part(workId)}/temporary-cleanups?runId=${part(ref)}` : `works/${part(workId)}/temporary-cleanups/${part(ref)}`;
+        const value = await this.request(path);
+        const raw = kind === 'run' ? value.items : [value];
+        if (!Array.isArray(raw) || raw.length > 256) throw new DesktopError('INVALID_RESPONSE', 'Cleanup records are incomplete.');
+        const items: TemporaryCleanup[] = raw.map((item: Data) => {
+          if (!item || item.workId !== workId || typeof item.serviceId !== 'string' || typeof item.runId !== 'string' || typeof item.createOperationId !== 'string' ||
+              kind === 'run' && item.runId !== ref || kind === 'service' && item.serviceId !== ref || !Array.isArray(item.events) || item.events.length > 32) throw new DesktopError('INVALID_RESPONSE', 'Cleanup record identity is invalid.');
+          return { workId, serviceId: item.serviceId, runId: item.runId, createOperationId: item.createOperationId, ...(typeof item.operationId === 'string' && item.operationId ? { operationId: item.operationId } : {}),
+            state: diagnosticText(item.state), stage: diagnosticText(item.stage), trigger: diagnosticText(item.trigger), ...(diagnosticText(item.errorCode) ? { errorCode: diagnosticText(item.errorCode) } : {}),
+            ...(diagnosticText(item.logState) ? { logState: diagnosticText(item.logState) } : {}), updatedAt: diagnosticText(item.updatedAt), truncated: item.truncated === true,
+            events: item.events.map((event: Data) => ({ at: diagnosticText(event?.at), stage: diagnosticText(event?.stage), outcome: diagnosticText(event?.outcome), ...(diagnosticText(event?.code) ? { code: diagnosticText(event.code) } : {}) })) };
+        });
+        if (epoch !== this.epoch || this.temporaryCleanups.get(key) !== state) return;
+        state.items = items; state.truncated = kind === 'run' && value.truncated === true;
+      } catch (error) {
+        if (epoch !== this.epoch || this.temporaryCleanups.get(key) !== state) return;
+        if (error instanceof DesktopError && error.httpStatus === 404) { state.items = []; state.truncated = false; }
+        else { state.error = errorText(error); throw error; }
+      } finally {
+        if (this.temporaryCleanupRequests.get(key) === pending) this.temporaryCleanupRequests.delete(key);
+        if (epoch === this.epoch && this.temporaryCleanups.get(key) === state) { state.loading = false; this.emit(); }
+      }
+    })();
+    this.temporaryCleanupRequests.set(key, pending); return pending;
+  }
   async loadRequests(id: string,serviceName='',more=false) {
     const key=`${id}:${serviceName}`,state=this.requests.get(key) ?? {loading:false,error:'',items:[],nextCursor:null},epoch=this.epoch;
     if(state.loading)return;this.requests.set(key,state);state.loading=true;state.error='';this.emit();
@@ -1000,7 +1039,7 @@ export class DesktopAdapter {
       intent.error='Retry result remains unknown: no mapping confirmed for the original key.';this.emit();
     } catch(error){if(epoch===this.epoch && this.requestRetries.get(key)===intent){intent.error=`Retry result remains unknown: ${errorText(error)}`;this.emit();}throw error;}
   }
-  private runRecord(raw: Data,sessionId: string): Run { return { id:raw.runId,sessionId,status:runStates[raw.state] ?? 'interrupted',cursor:0,resultRef:raw.resultRef,created:raw.acceptedAt ?? '',finished:raw.finishedAt,finalText:raw.finalText,error:raw.error?.message,executionError:raw.error?.message,actualModel:raw.actualModel ?? null,thinkingLevel:raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel,source:raw.source,adoptedExperienceVersion:raw.adoptedExperienceVersion }; }
+  private runRecord(raw: Data,sessionId: string): Run { return { id:raw.runId,sessionId,status:runStates[raw.state] ?? 'interrupted',cursor:0,resultRef:raw.resultRef,created:raw.acceptedAt ?? '',finished:raw.finishedAt,finalText:raw.finalText,error:raw.error?.message,executionError:raw.error?.message,errorCode:typeof raw.error?.code === 'string' ? raw.error.code : undefined,errorRetryable:typeof raw.error?.retryable === 'boolean' ? raw.error.retryable : undefined,actualModel:raw.actualModel ?? null,thinkingLevel:raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel,source:raw.source,adoptedExperienceVersion:raw.adoptedExperienceVersion }; }
   modelSelection(id: string,sessionId: string) {
     const key=`${id}:${sessionId}`;let state=this.modelSelections.get(key);
     if(!state){const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);state={phase:'clean',ref:session?.modelPreference?.modelRef ?? null,thinking:session?.thinkingLevel === undefined ? (sessionId ? 'off' : this.models.get(id)?.defaultModel?.defaultThinkingLevel ?? (this.models.get(id)?.defaultModel?.thinkingAvailability==='unknown'?null:'off')) : session.thinkingLevel,error:'',revision:0};this.modelSelections.set(key,state);}return state;
@@ -1487,6 +1526,8 @@ export class DesktopAdapter {
       const raw = value.run ?? value;
       run.status = runStates[raw.state] ?? 'interrupted';
       run.executionError = raw.error?.message;
+      run.errorCode = typeof raw.error?.code === 'string' ? raw.error.code : undefined;
+      run.errorRetryable = typeof raw.error?.retryable === 'boolean' ? raw.error.retryable : undefined;
       const profile=this.imageCapabilities.get(id)?.value || this.getWork(id)?.sessions.find(s=>s.id===run.sessionId)?.imageProfile?'?imageProfile=chat-images-v1':'';
       if(this.historySupport.get(id)) {
         run.resultRef=raw.resultRef;await this.loadSavedRun(id,run,controller.signal);if(!current())return;
@@ -1558,11 +1599,11 @@ export class DesktopAdapter {
         const session = work.sessions.find(s => s.id === run.sessionId); if (!session) return;
         const kind = event.kind; if (kind?.$case === 'text') { let message = session.messages.at(-1); if (!message || message.role !== 'assistant' || message.tool) { message = { id:`${run.id}-text-${sequence}`,runId:run.id,role: 'assistant', text: '' }; session.messages.push(message); } message.text += kind.text.delta ?? ''; }
         else if (kind?.$case === 'tool') { const tool = kind.tool; upsertTool(session.messages,{id:`${run.id}-tool-${tool.toolCallId}`,runId:run.id,role:'assistant',text:'',tool:{id:tool.toolCallId,name:tool.toolName,status:tool.phase==='tool-end'?(tool.isError?'Failed':'Completed'):'Running',isError:tool.isError,content:resultText(tool.result,tool.toolName)}}); }
-        else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted';run.resultRef=kind.state.resultRef; run.error = run.executionError = kind.state.error?.message; if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); }
+        else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted';run.resultRef=kind.state.resultRef; run.error = run.executionError = kind.state.error?.message;run.errorCode=typeof kind.state.error?.code==='string'?kind.state.error.code:undefined;run.errorRetryable=typeof kind.state.error?.retryable==='boolean'?kind.state.error.retryable:undefined; if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); }
         this.emit(); };
       while (epoch === this.epoch && !controller.signal.aborted && this.streams.get(id) === controller && this.getWork(id)?.run === run) { const { value, done } = await reader.read(); if (done) { buffer += decoder.decode(); if (buffer.trim()) consume(buffer); break; } buffer += decoder.decode(value, { stream: true }); if (buffer.length > 2_097_152) throw new Error('Run event exceeded the supported size.'); let index; while ((index = buffer.indexOf('\n')) !== -1) { consume(buffer.slice(0, index)); buffer = buffer.slice(index + 1); } }
       if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run) return;
-      const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`); run.status = runStates[(value.run ?? value).state] ?? 'interrupted'; run.executionError = (value.run ?? value).error?.message;run.resultRef=(value.run??value).resultRef;
+      const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`); run.status = runStates[(value.run ?? value).state] ?? 'interrupted'; run.executionError = (value.run ?? value).error?.message;run.errorCode=typeof (value.run??value).error?.code==='string'?(value.run??value).error.code:undefined;run.errorRetryable=typeof (value.run??value).error?.retryable==='boolean'?(value.run??value).error.retryable:undefined;run.resultRef=(value.run??value).resultRef;
       if (['accepted', 'running', 'cancelling'].includes(run.status)) {
         if(this.historySupport.get(id)&&[...this.historyEventParts.keys()].some(key=>key.startsWith(`${id}:${run.id}:`))){run.historyRecovery=true;const observer={controller,run,epoch,failures:0};this.historyObservers.set(id,observer);await this.recoverRunHistory(id,observer);}
         else run.error = 'Event stream ended. Resume this Run to continue from its cursor.';

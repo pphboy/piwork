@@ -800,10 +800,16 @@ function workState(w) {
     <details class="state-footnote"><summary>State details</summary><p>Target: ${esc(w.desired)} · Last confirmed: ${esc(w.status)} · Checked ${esc(w.checkedAt || 'Not confirmed')}</p></details></main>`;
 }
 function serviceUnavailableReason(service) {
+    if (service.temporary?.mode === 'once' && service.observed === 'Completed')
+        return 'The one-time command completed. Check its confirmed exit code and cleanup status.';
+    if (service.temporary?.mode === 'once' && service.observed === 'Running')
+        return 'The one-time command is running. Its result is not confirmed yet.';
     if (!service.enabled)
         return 'This Service is disabled. Starting the Work does not re-enable it. Enable it explicitly from Manage services.';
     if (service.observed === 'Starting')
         return 'This Service is starting. Its application entry will open after readiness is confirmed.';
+    if (service.observed === 'Recovering')
+        return 'This Service is recovering. Check its details for the original failure and current status.';
     if (service.observed === 'Failed')
         return 'This Service failed. Check its details and logs before an explicit retry.';
     if (service.observed === 'Stopped')
@@ -815,24 +821,34 @@ function serviceCatalogConfirmed(w) {
     return !!w.resourceChecked?.services && !w.resourceErrors?.services;
 }
 function serviceFacts(w) {
-    const services = serviceCatalogConfirmed(w) ? w.services.filter(s => s.enabled && s.observed !== 'Removed') : [];
-    return { failed: services.filter(s => s.observed === 'Failed'), starting: services.filter(s => s.observed === 'Starting') };
+    const services = serviceCatalogConfirmed(w) ? w.services.filter(s => s.enabled && s.observed !== 'Removed' && !s.temporary) : [];
+    return { failed: services.filter(s => s.observed === 'Failed'), starting: services.filter(s => s.observed === 'Starting'), recovering: services.filter(s => s.observed === 'Recovering'), unknown: services.filter(s => s.observed === 'Unknown') };
 }
 /** The Work summary never substitutes for the concrete Service facts it summarizes. */
 function serviceNotice(w) {
     if (w.status !== 'Degraded' || !serviceCatalogConfirmed(w))
         return '';
-    const { failed, starting } = serviceFacts(w);
+    const { failed, starting, recovering, unknown } = serviceFacts(w);
     if (failed.length) {
-        const summary = failed.length === 1 ? `${esc(failed[0].name)} failed` : `${failed.length} Services failed`;
+        const summary = failed.length === 1 ? `${esc(failed[0].name)} failed: ${esc(serviceFailureReason(failed[0]))}` : `${failed.length} Services failed`;
         const entry = failed.length === 1
             ? btn('View details', 'service-details', 'text-button', `data-id="${esc(failed[0].id)}"`)
             : btn('View details', 'manage-services', 'text-button');
-        return `<div class="work-notice">${icon('info', 15)} ${summary}. Other Services and the Agent remain usable. ${entry}</div>`;
+        return `<div class="work-notice">${icon('info', 15)} ${summary}. Check the status of other Services and the Agent. ${entry}</div>`;
+    }
+    if (recovering.length) {
+        const summary = recovering.length === 1 ? `${esc(recovering[0].name)} is recovering${recovering[0].diagnostic?.message ? `: ${esc(recovering[0].diagnostic.message)}` : ''}` : `${recovering.length} Services are recovering`;
+        const entry = recovering.length === 1 ? btn('View details', 'service-details', 'text-button', `data-id="${esc(recovering[0].id)}"`) : btn('View details', 'manage-services', 'text-button');
+        return `<div class="work-notice">${icon('info', 15)} ${summary}. ${entry}</div>`;
+    }
+    if (unknown.length) {
+        const summary = unknown.length === 1 ? `${esc(unknown[0].name)}: ${esc(unknown[0].diagnostic?.message || 'Service status is not confirmed.')}` : `${unknown.length} Service states are not confirmed`;
+        const entry = unknown.length === 1 ? btn('View details', 'service-details', 'text-button', `data-id="${esc(unknown[0].id)}"`) : btn('View details', 'manage-services', 'text-button');
+        return `<div class="work-notice">${icon('info', 15)} ${summary}. ${entry}</div>`;
     }
     if (starting.length) {
         const summary = starting.length === 1 ? `${esc(starting[0].name)} is starting` : `${starting.length} Services are starting`;
-        return `<div class="work-notice">${icon('clock', 15)} ${summary}. Starting is not a failure; other Services remain usable.</div>`;
+        return `<div class="work-notice">${icon('clock', 15)} ${summary}. Starting is not a failure; check the status of other Services.</div>`;
     }
     return `<div class="work-notice">${icon('info', 15)} Some Services are not ready. Available Services remain usable. ${btn('View details', 'manage-services', 'text-button')}</div>`;
 }
@@ -1189,7 +1205,14 @@ function executionMarkup(w, sessionId, runId) {
     const cancellable = active?.id === runId && ['accepted', 'running', 'cancelling'].includes(active.status);
     const running = !!run && !run.error && (w.run?.id === runId || !observed?.error && activeObserved?.id === runId) && ['accepted', 'running', 'cancelling'].includes(run.status);
     const activityRunning = activityBusy(w, sessionId, w.sessions.find(session => session.id === sessionId)?.messages.filter(message => message.runId === runId) ?? []);
-    return `<div class="message-execution" data-message-key="${esc(`${adapter.identityEpoch}:${w.id}:${sessionId}:execution:${runId}`)}"><div class="execution-summary">${run ? running && !activityRunning ? pendingStatus(`Run ${run.status}`) : badge(`Run ${run.status}`) : '<span>Execution</span>'}${btn('Details', 'run-details', 'text-button', `data-run-id="${esc(runId)}" aria-label="Run details"`)}${cancellable ? btn(active.cancellationRequested || active.status === 'cancelling' ? 'Cancelling…' : 'Cancel run', 'cancel-run', 'text-button', `data-run-id="${esc(runId)}" ${active.cancellationRequested || active.status === 'cancelling' ? 'disabled' : ''}`) : ''}</div>${run?.error ? feedback(esc(run.error), 'warning') : ''}${run && run.id === w.run?.id && ['interrupted', 'accepted', 'running', 'cancelling'].includes(run.status) && (run.error || run.status === 'interrupted') ? btn('Resume original Run', 'resume-run', 'text-button', `data-run-id="${esc(runId)}"`) : ''}</div>`;
+    return `<div class="message-execution" data-message-key="${esc(`${adapter.identityEpoch}:${w.id}:${sessionId}:execution:${runId}`)}"><div class="execution-summary">${run ? running && !activityRunning ? pendingStatus(`Run ${run.status}`) : badge(`Run ${run.status}`) : '<span>Execution</span>'}${btn('Details', 'run-details', 'text-button', `data-run-id="${esc(runId)}" aria-label="Run details"`)}${cancellable ? btn(active.cancellationRequested || active.status === 'cancelling' ? 'Cancelling…' : 'Cancel run', 'cancel-run', 'text-button', `data-run-id="${esc(runId)}" ${active.cancellationRequested || active.status === 'cancelling' ? 'disabled' : ''}`) : ''}</div>${run?.error ? feedback(esc(run.error), 'warning') : ''}${modelFailureHelp(run)}${run && run.id === w.run?.id && ['interrupted', 'accepted', 'running', 'cancelling'].includes(run.status) && (run.error || run.status === 'interrupted') ? btn('Resume original Run', 'resume-run', 'text-button', `data-run-id="${esc(runId)}"`) : ''}</div>`;
+}
+function modelFailureHelp(run) {
+    if (!run || !['MODEL_AUTHENTICATION_FAILED', 'MODEL_PERMISSION_DENIED'].includes(run.errorCode ?? ''))
+        return '';
+    if (adapter.state.core.role !== 'admin')
+        return '<p class="muted">Ask an administrator to check the model configuration before submitting a new Run.</p>';
+    return adapter.hosted ? '<p class="muted">Check the model configuration in <a href="/admin">Administration</a>, then submit a new Run.</p>' : '<p class="muted">Open Administration on the connected Core to check the model configuration, then submit a new Run.</p>';
 }
 function unmatchedExecutions(w, sessionId, messages) {
     const bound = new Set(messages.map(message => message.runId).filter(Boolean));
@@ -1611,7 +1634,7 @@ function modalMarkup() {
             const observed = target && adapter.activeRuns.get(target.id), active = target && (adapter.cancelAndSendCapabilities.get(target.id) === 1 ? observed?.confirmed && !observed.error ? observed.run : undefined : target.run);
             const cancellable = !!run && active?.id === run.id && ['accepted', 'running', 'cancelling'].includes(active.status);
             const history = target?.sessions.find(s => s.id === view.session)?.runs || [];
-            body = run ? `${runFacts(run)}${run.error ? feedback(esc(run.error), 'warning') : ''}<details><summary>Technical details</summary><dl><dt>Run ID</dt><dd><code>${esc(run.id)}</code></dd><dt>Session ID</dt><dd><code>${esc(run.sessionId)}</code></dd><dt>Event cursor</dt><dd>${run.cursor}</dd></dl></details><p class="muted">One active Run per Work. Closing details does not cancel execution.</p>` : '<p>Run details have not been confirmed.</p>';
+            body = run ? `${runFacts(run)}${run.error ? feedback(esc(run.error), 'warning') : ''}${modelFailureHelp(run)}${target ? temporaryCleanupMarkup(target.id, 'run', run.id) : ''}<details><summary>Technical details</summary><dl><dt>Run ID</dt><dd><code>${esc(run.id)}</code></dd><dt>Session ID</dt><dd><code>${esc(run.sessionId)}</code></dd><dt>Event cursor</dt><dd>${run.cursor}</dd></dl></details><p class="muted">One active Run per Work. Closing details does not cancel execution.</p>` : '<p>Run details have not been confirmed.</p>';
             if (history.length)
                 body += `<details><summary>Earlier execution details</summary>${history.map(r => `<p>${btn(`${esc(r.status)} · ${esc(r.created || 'Time unavailable')} · ${esc(modelDisplayName(r.actualModel))}`, 'run-details', 'text-button', `data-run-id="${esc(r.id)}"`)}</p>`).join('')}</details>`;
             footer = `${close()}${run && cancellable ? btn(run.cancellationRequested || run.status === 'cancelling' ? 'Cancelling…' : 'Cancel run', 'cancel-run', 'danger', `data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status === 'cancelling' ? 'disabled' : ''}`) : ''}`;
@@ -1638,7 +1661,7 @@ function modalMarkup() {
             title = s ? esc(s.name) : "Service removed";
             body = s
                 ? serviceDetails(s, target)
-                : `${target ? controlMarkup(serviceControls.get(`${target.id}:${view.data.serviceId}`)) : ""}<p>The Service definition was removed. Workspace files were not deleted.</p>`;
+                : `${target ? controlMarkup(serviceControls.get(`${target.id}:${view.data.serviceId}`)) : ""}<p>The Service definition was removed. Workspace files were not deleted.</p>${target ? temporaryCleanupMarkup(target.id, 'service', view.data.serviceId) : ''}`;
             footer = `${close()}${btn("Back to services", "manage-services")}`;
             break;
         }
@@ -1844,15 +1867,37 @@ function serviceDiagnostics(s) {
         diagnostic.remediation ? `<dt>Suggested fix</dt><dd>${esc(diagnostic.remediation)}</dd>` : '',
         diagnostic.correlationId ? `<dt>Correlation ID</dt><dd><code>${esc(diagnostic.correlationId)}</code></dd>` : '',
         diagnostic.retryable !== undefined ? `<dt>Retryable</dt><dd>${diagnostic.retryable ? 'Yes' : 'No'}</dd>` : '',
+        diagnostic.cause?.message ? `<dt>Original failure</dt><dd>${esc(diagnostic.cause.message)}${diagnostic.cause.exitCode !== undefined ? ` · Exit code ${diagnostic.cause.exitCode}` : ''}</dd>` : '',
     ].join('');
     return rows ? `<details class="service-diagnostics"><summary>Technical diagnostics</summary><dl class="property-list">${rows}</dl></details>` : '';
 }
 function serviceExplanation(s) {
+    if (s.temporary?.mode === 'once' && s.observed === 'Failed')
+        return `<div class="service-explanation"><h3>${esc(s.name)} failed</h3><p>The one-time command exited${s.temporary.exitCode !== undefined ? ` with code ${s.temporary.exitCode}` : ' with an unconfirmed result'}. Check its output and cleanup status; it will not be replayed.</p></div>`;
     if (s.observed === 'Failed')
         return `<div class="service-explanation"><h3>${serviceFailureTitle(s)}</h3><p>${esc(serviceFailureReason(s))}</p>${s.diagnostic?.remediation ? '' : '<p>Check the log snapshot below, then retry this Service explicitly.</p>'}</div>`;
     if (!s.enabled || s.observed !== 'Ready')
-        return `<div class="service-explanation"><h3>${esc(s.name)} is ${s.enabled ? esc(s.observed.toLowerCase()) : 'disabled'}</h3><p>${esc(serviceUnavailableReason(s))}</p></div>`;
+        return `<div class="service-explanation"><h3>${esc(s.name)} is ${s.enabled ? esc(s.observed.toLowerCase()) : 'disabled'}</h3><p>${esc(serviceUnavailableReason(s))}</p>${s.enabled && s.diagnostic?.message ? `<p>${esc(s.diagnostic.message)}</p>` : ''}</div>`;
     return '';
+}
+function temporaryCleanupMarkup(workId, kind, ref) {
+    const state = adapter.temporaryCleanups.get(`${workId}:${kind}:${ref}`);
+    if (!state)
+        return '';
+    const refresh = btn('Refresh cleanup', 'refresh-temporary-cleanups', 'small', `data-kind="${kind}" data-ref="${esc(ref)}"`);
+    if (state.loading)
+        return `<section class="service-explanation"><h3>Temporary Service cleanup</h3><p>Checking cleanup status…</p></section>`;
+    if (state.error)
+        return `<section class="service-explanation"><h3>Temporary Service cleanup</h3><p>Cleanup status is not confirmed.</p>${feedback(esc(state.error), 'warning')}${refresh}</section>`;
+    if (!state.items.length)
+        return kind === 'service' ? `<section class="service-explanation"><h3>Temporary Service cleanup</h3><p>No cleanup record is confirmed.</p>${refresh}</section>` : '';
+    const labels = { requested: 'Requested', running: 'In progress', pending: 'Waiting to retry', completed: 'Confirmed complete' };
+    const reasons = { DOCKER_UNAVAILABLE: 'Docker is unavailable.', TEMPORARY_CREATE_UNCONFIRMED: 'The original container creation has not been confirmed.', WORK_OPERATION_FAILED: 'The cleanup step could not be confirmed.', DIAGNOSTIC_PERSIST_FAILED: 'The cleanup record could not be persisted.' };
+    const triggers = { 'run-succeeded': 'Run completed', 'run-failed': 'Run failed', 'run-cancelled': 'Run cancelled', 'run-interrupted': 'Agent interrupted', 'agent-replaced': 'Agent replaced', 'work-stop': 'Work stopped', 'work-delete': 'Work deleted', 'core-shutdown': 'Core shutdown', explicit: 'Explicit request' };
+    const stages = { request: 'Cleanup requested', inspect: 'Check original instance', stop: 'Stop instance', remove: 'Remove instance', release: 'Release capacity', retry: 'Retry', logs: 'Archive service output' };
+    const outcomes = { started: 'Started', succeeded: 'Confirmed', failed: 'Failed', unconfirmed: 'Not confirmed' };
+    const items = state.items.map(item => `<article><p><strong>${esc(item.serviceId)}</strong> · ${esc(labels[item.state] || 'Status not confirmed')} · ${esc(stages[item.stage] || item.stage)}</p><p>Triggered by ${esc(triggers[item.trigger] || 'an unconfirmed event')}.</p>${item.errorCode ? `<p>${esc(reasons[item.errorCode] || 'The cleanup reason is not confirmed.')}</p>` : ''}${item.logState === 'unavailable' ? '<p>Service output could not be archived.</p>' : item.logState === 'partial' ? '<p>Service output was only partially archived.</p>' : ''}${item.operationId ? btn('View cleanup operation', 'check-operation', 'text-button', `data-id="${esc(item.operationId)}"`) : ''}<details><summary>Cleanup log${item.truncated ? ' · older entries truncated' : ''}</summary>${item.events.map(event => `<p>${esc(event.at)} · ${esc(stages[event.stage] || event.stage)} · ${esc(outcomes[event.outcome] || event.outcome)}${event.code ? ` · ${esc(event.code)}` : ''}</p>`).join('')}</details></article>`).join('');
+    return `<section class="service-explanation"><h3>Temporary Service cleanup</h3>${items}${state.truncated ? '<p>Older cleanup records were truncated.</p>' : ''}${refresh}</section>`;
 }
 function serviceDetails(s, w) {
     const logs = adapter.serviceLogs(w.id, s.id), control = serviceControls.get(`${w.id}:${s.id}`);
@@ -1861,7 +1906,9 @@ function serviceDetails(s, w) {
     const currentService = route()[0] === 'app' ? w.services.find(item => item.id === route()[2]) : activeService(w);
     const entryChoice = s.ports.length > 1 && currentService?.id === s.id
         ? `<label class="field">Web entry<select id="port-select" data-service-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || s.observed !== 'Ready' ? 'disabled' : ''}>${s.ports.map(item => `<option value="${item}" ${item === port ? 'selected' : ''}>Port ${item}</option>`).join('')}</select></label>` : '';
-    return `${controlMarkup(control)}${open}${entryChoice}${serviceExplanation(s)}<dl class="property-list"><dt>Domain</dt><dd><code>${esc(s.domain)}</code></dd><dt>Declared Web ports</dt><dd>${s.ports.length ? s.ports.join(", ") : "No Web ports declared"}</dd><dt>Enabled</dt><dd>${s.enabled ? "Yes" : "No · persists across Work restarts"}</dd><dt>Observed</dt><dd>${badge(s.observed)}</dd></dl>${serviceDiagnostics(s)}<div class="service-controls">${btn("Start", "service-action", "small", `data-control="start" data-id="${s.id}" ${!adapter.project(w).usable || s.observed === "Ready" ? "disabled" : ""}`)}${btn("Stop", "service-action", "small", `data-control="stop" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled ? "disabled" : ""}`)}${btn("Restart", "service-action", "small", `data-control="restart" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn("Retry", "service-action", "small", `data-control="retry" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}${btn("Remove", "service-action", "small danger", `data-control="remove" data-id="${s.id}" ${!adapter.project(w).usable ? "disabled" : ""}`)}</div><div class="logs-heading"><h3>Log snapshot</h3>${btn(`${icon("refresh", 14)} Refresh logs`, "refresh-logs", "small")}</div>${logs?.loading ? pendingStatus(`Reading ${s.name} log snapshot…`, 'service-details refresh-logs') : ""}${logs?.error ? feedback(esc(logs.error), "warning", btn("Retry logs", "refresh-logs", "small")) : ""}<pre class="logs">${esc(logs?.value?.text ?? logs?.value?.reason ?? "Logs have not been retrieved.")}</pre><p class="muted small-text">${esc(logs?.value?.status ?? "Not retrieved")} · Collected ${esc(logs?.value?.collectedAt ?? "Not provided")} · ${logs?.value?.truncated ? "Output truncated" : "Bounded snapshot"}. This is not a live stream.</p>`;
+    const ordinaryControls = s.temporary ? '' : `${btn("Start", "service-action", "small", `data-control="start" data-id="${s.id}" ${!adapter.project(w).usable || s.observed === "Ready" ? "disabled" : ""}`)}${btn("Stop", "service-action", "small", `data-control="stop" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled ? "disabled" : ""}`)}${btn("Restart", "service-action", "small", `data-control="restart" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn("Retry", "service-action", "small", `data-control="retry" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}`;
+    const temporaryFacts = s.temporary ? `<dt>Lifetime</dt><dd>Run temporary · ${esc(s.temporary.mode)}</dd>${s.temporary.exitCode !== undefined ? `<dt>Exit code</dt><dd>${s.temporary.exitCode}</dd>` : ''}` : '';
+    return `${controlMarkup(control)}${open}${entryChoice}${serviceExplanation(s)}<dl class="property-list"><dt>Domain</dt><dd><code>${esc(s.domain)}</code></dd><dt>Declared Web ports</dt><dd>${s.ports.length ? s.ports.join(", ") : "No Web ports declared"}</dd><dt>Enabled</dt><dd>${s.enabled ? "Yes" : "No · persists across Work restarts"}</dd><dt>Observed</dt><dd>${badge(s.observed)}</dd>${temporaryFacts}</dl>${serviceDiagnostics(s)}${s.temporary ? temporaryCleanupMarkup(w.id, 'service', s.id) : ''}<div class="service-controls">${ordinaryControls}${btn("Remove", "service-action", "small danger", `data-control="remove" data-id="${s.id}" ${!adapter.project(w).usable ? "disabled" : ""}`)}</div><div class="logs-heading"><h3>Log snapshot</h3>${btn(`${icon("refresh", 14)} Refresh logs`, "refresh-logs", "small")}</div>${logs?.loading ? pendingStatus(`Reading ${s.name} log snapshot…`, 'service-details refresh-logs') : ""}${logs?.error ? feedback(esc(logs.error), "warning", btn("Retry logs", "refresh-logs", "small")) : ""}<pre class="logs">${esc(logs?.value?.text ?? logs?.value?.reason ?? "Logs have not been retrieved.")}</pre><p class="muted small-text">${esc(logs?.value?.status ?? "Not retrieved")} · Collected ${esc(logs?.value?.collectedAt ?? "Not provided")} · ${logs?.value?.truncated ? "Output truncated" : "Bounded snapshot"}. This is not a live stream.</p>`;
 }
 let focusReturn = "";
 function focusKey(el) {
@@ -2976,11 +3023,17 @@ async function handleAction(action, el, record) {
             if (currentWork) {
                 const runId = el.dataset.runId || (action === 'active-run' ? adapter.activeRuns.get(currentWork.id)?.run?.id : undefined) || currentWork.run?.id;
                 openModal('run-details', runId ? { runId } : {});
-                if (runId)
+                if (runId) {
+                    void adapter.loadTemporaryCleanups(currentWork.id, 'run', runId).catch(() => undefined);
                     await stay(adapter.loadRunDetails(currentWork.id, runId));
+                }
             }
             break;
         }
+        case "refresh-temporary-cleanups":
+            if (currentWork && (el.dataset.kind === 'run' || el.dataset.kind === 'service') && el.dataset.ref)
+                await stay(adapter.loadTemporaryCleanups(currentWork.id, el.dataset.kind, el.dataset.ref));
+            break;
         case "check-active-run":
             if (currentWork)
                 await stay(adapter.loadActiveRun(currentWork.id, true));
@@ -3074,8 +3127,10 @@ async function handleAction(action, el, record) {
             break;
         case "service-details":
             openModal("service-details", { serviceId: el.dataset.id });
-            if (currentWork)
+            if (currentWork) {
+                void adapter.loadTemporaryCleanups(currentWork.id, 'service', el.dataset.id).catch(() => undefined);
                 await stay(adapter.readLogs(currentWork.id, el.dataset.id));
+            }
             break;
         case "service-action": {
             const control = el.dataset.control;

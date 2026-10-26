@@ -280,6 +280,7 @@ test('continuity: Service diagnostics keep typed public fields, a zero exit code
     raw('partial', 'failed', { code: 'UNKNOWN_CODE', stage: 42, message: 'Partially invalid diagnostic', remediation: null, retryable: 'yes', exitCode: 1.5, correlationId: { nested: true } }),
     raw('blank', 'stopped', {}),
     raw('number', 'stopped', 7),
+    raw('recovering', 'recovering', { code: 'DOCKER_UNAVAILABLE', stage: 'service-recovery', message: 'Runtime unavailable.', remediation: 'Restore runtime.', cause: { code: 'SERVICE_EXITED', stage: 'service-recovery', message: 'Process exited.', remediation: 'Inspect logs.', exitCode: 0 } }),
   ] } } : { json: {} });
   await f.adapter.loadServices('one');
   const services = f.adapter.getWork('one').services;
@@ -289,7 +290,9 @@ test('continuity: Service diagnostics keep typed public fields, a zero exit code
   assert.equal(byId('legacy').diagnostic, undefined); assert.equal(byId('legacy').error, 'Legacy failure text'); assert.equal(byId('legacy').observed, 'Failed');
   for (const id of ['empty', 'number']) { assert.equal(byId(id).diagnostic, undefined); assert.equal(byId(id).error, undefined); assert.equal(byId(id).observed, 'Stopped'); }
   assert.equal(byId('blank').diagnostic, undefined);
+  assert.equal(byId('recovering').observed, 'Recovering');
+  assert.deepEqual(byId('recovering').diagnostic.cause, { code: 'SERVICE_EXITED', stage: 'service-recovery', message: 'Process exited.', remediation: 'Inspect logs.', exitCode: 0 });
   assert.deepEqual(byId('partial').diagnostic, { code: 'UNKNOWN_CODE', stage: '', message: 'Partially invalid diagnostic', remediation: '' });
   assert.equal(byId('partial').error, 'Partially invalid diagnostic'); assert.equal(byId('partial').observed, 'Failed');
-  assert.equal(services.length, 6);
+  assert.equal(services.length, 7);
 });
