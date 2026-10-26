@@ -300,6 +300,9 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 	if handled, err := a.workRead(w, r, session.Principal()); handled {
 		return err
 	}
+	if handled, err := a.temporaryCleanupHTTP(w, r, session.Principal()); handled {
+		return err
+	}
 	if handled, err := a.serviceHTTP(w, r, session.Principal()); handled {
 		return err
 	}

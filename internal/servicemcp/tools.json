@@ -10,7 +10,7 @@
   },
   {
     "name": "service_create",
-    "description": "Create a durable service from an existing image",
+    "description": "Create a durable Service from an existing image. If deployment_context confirms the temporary capability, temporaryMode once runs a one-time command and listener creates a short-lived listener. Inspect the original result and output, then remove it and confirm cleanup.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -208,6 +208,10 @@
             "command"
           ],
           "additionalProperties": false
+        },
+        "temporaryMode": {
+          "type": "string",
+          "enum": ["once", "listener"]
         },
         "idempotencyKey": {
           "type": "string",

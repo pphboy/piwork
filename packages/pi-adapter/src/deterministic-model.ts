@@ -128,6 +128,76 @@ function streamDeterministic(
     const brainSkill = [...systemPrompt.matchAll(/<location>([^<]*\/SKILL\.md)<\/location>/g)].map((match) => decodeXml(match[1]!)).find((path) => path.includes("deploy-work-service")) ?? manifestPath;
     if (deterministicWorkstation(stream, output, toolResults, brainSkill, prompt.trim())) return;
     if (deterministicKanban(stream, output, toolResults, brainSkill, prompt.trim())) return;
+    if (prompt.trim() === "run direct probe fixture") {
+      const result = toolResults.find(item => item.toolName === "bash");
+      if (!result) { emitToolCall(stream, output, "direct-probe", "bash", { command: "node -e \"console.log('direct-probe-output')\"" }); return; }
+      emitText(stream, output, result.isError || !toolResultText(result).includes("direct-probe-output") ? "direct-probe-failed" : "direct-probe-complete");
+      return;
+    }
+    if (["run temporary probe fixture", "run temporary listener and wait fixture", "run temporary listener then finish fixture", "run temporary listener then fail fixture", "force temporary unsupported fixture"].includes(prompt.trim())) {
+      const listener = prompt.includes("run temporary listener");
+      const forceUnsupported = prompt.trim() === "force temporary unsupported fixture";
+      const failed = toolResults.find(result => result.isError);
+      if (failed) { emitText(stream, output, forceUnsupported ? "temporary-probe-unavailable" : `temporary-probe-failed:${failed.toolName}:${toolResultText(failed)}`); return; }
+      const contextResult = toolResults.find(result => result.toolName === serviceTool("deployment_context"));
+      if (!contextResult) { emitToolCall(stream, output, "temp-context", serviceTool("deployment_context"), {}); return; }
+      if (!forceUnsupported && parseToolJson(contextResult).runTemporaryServiceContractVersion !== 1) { emitText(stream, output, "temporary-probe-unavailable"); return; }
+      const create = toolResults.find(result => result.toolName === serviceTool("service_create"));
+      if (!create) {
+        emitToolCall(stream, output, "temp-create", serviceTool("service_create"), {
+          temporaryMode: listener ? "listener" : "once", idempotencyKey: `deterministic-${prompt.trim().replaceAll(" ", "-")}`,
+          definition: { name: listener ? prompt.includes("then finish") ? "fixture-listener-finish" : prompt.includes("then fail") ? "fixture-listener-fail" : "fixture-listener-wait" : "fixture-probe", image: { reference: "piwork-agentd:go-migration-acceptance" }, command: "node", args: ["-e", listener ? "setInterval(()=>{},1000)" : "console.log('temporary-probe-output')"], workingDirectory: "/", enabled: true, cpuMillis: 250 },
+        });
+        return;
+      }
+      const serviceId = String(parseToolJson(create).serviceId ?? "");
+      if (!serviceId) { emitText(stream, output, forceUnsupported && toolResultText(create).includes("unavailable") ? "temporary-probe-unavailable" : `temporary-probe-failed:missing-service:${toolResultText(create)}`); return; }
+      const observations = toolResults.filter(result => result.toolName === serviceTool("service_get"));
+      if (listener) {
+        const state = observations.length ? parseToolJson(observations.at(-1)!).observedState : undefined;
+        if (state !== "ready") {
+          if (observations.length >= 150 || state === "failed") { emitText(stream, output, "temporary-listener-failed"); return; }
+          await new Promise(resolve => setTimeout(resolve, 100));
+          emitToolCall(stream, output, `temp-get-${observations.length}`, serviceTool("service_get"), { serviceId }); return;
+        }
+        if (prompt.trim() === "run temporary listener then finish fixture") { emitText(stream, output, "temporary-listener-finished"); return; }
+        if (prompt.trim() === "run temporary listener then fail fixture") {
+          output.stopReason = "error";
+          output.errorMessage = "deterministic model failure";
+          stream.push({ type: "error", reason: "error", error: output });
+          stream.end();
+          return;
+        }
+        await waitForAbort(options?.signal);
+        output.stopReason = "aborted";
+        output.errorMessage = "deterministic execution aborted";
+        stream.push({ type: "error", reason: "aborted", error: output });
+        stream.end();
+        return;
+      }
+      const temporary = observations.length ? parseToolJson(observations.at(-1)!).temporary as { state?: string; exitCode?: number } | undefined : undefined;
+      if (temporary?.state !== "completed") {
+        if (observations.length >= 150) { emitText(stream, output, "temporary-probe-failed:result-timeout"); return; }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        emitToolCall(stream, output, `temp-get-${observations.length}`, serviceTool("service_get"), { serviceId }); return;
+      }
+      if (temporary.exitCode !== 0) { emitText(stream, output, `temporary-probe-failed:exit-${temporary.exitCode}`); return; }
+      const logs = toolResults.find(result => result.toolName === serviceTool("service_logs"));
+      if (!logs) { emitToolCall(stream, output, "temp-logs", serviceTool("service_logs"), { serviceId, tailLines: 10 }); return; }
+      if (!toolResultText(logs).includes("temporary-probe-output")) { emitText(stream, output, "temporary-probe-failed:missing-output"); return; }
+      const remove = toolResults.find(result => result.toolName === serviceTool("service_remove"));
+      if (!remove) { emitToolCall(stream, output, "temp-remove", serviceTool("service_remove"), { serviceId, idempotencyKey: "deterministic-temporary-cleanup" }); return; }
+      const operationId = String(parseToolJson(remove).operationId ?? "");
+      const operations = toolResults.filter(result => result.toolName === serviceTool("operation_get"));
+      const state = operations.length ? parseToolJson(operations.at(-1)!).state : undefined;
+      if (state === undefined || state === "pending" || state === "running") {
+        if (operations.length >= 150 || !operationId) { emitText(stream, output, "temporary-probe-failed:cleanup-timeout"); return; }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        emitToolCall(stream, output, `temp-cleanup-${operations.length}`, serviceTool("operation_get"), { operationId }); return;
+      }
+      emitText(stream, output, state === "succeeded" ? `temporary-probe-complete:${serviceId}` : `temporary-probe-failed:cleanup-${String(state)}`);
+      return;
+    }
     if (prompt.includes("deploy deterministic service")) {
       deterministicDeployment(stream, output, toolResults, brainSkill);
       return;

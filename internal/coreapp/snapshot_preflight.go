@@ -52,6 +52,11 @@ func (a *Application) snapshotPreflight(ctx context.Context, workID, current str
 	if work.DesiredState != "stopped" || work.ObservedState != "stopped" {
 		return zero, contracts.NewError("SNAPSHOT_REQUIRES_STOPPED", "")
 	}
+	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		return corestore.AssertTemporaryCleanupConfirmedTx(tx, workID)
+	}); err != nil {
+		return zero, snapshotPublicError(err)
+	}
 	if a.dockerRuntime == nil || a.engine == nil {
 		return zero, contracts.NewError("SNAPSHOT_RUNTIME_UNAVAILABLE", "")
 	}

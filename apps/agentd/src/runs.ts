@@ -6,6 +6,7 @@ import { canonicalJson, type RequestPhase } from "@piwork/work-store";
 import { BRAIN_LIMITS } from "@piwork/contracts";
 import { RunModelError, type RunModelResolver } from "./run-models.js";
 import { CHAT_IMAGE_PROFILE, ChatImageError, chatInputDigest, validateChatImages, type ChatImageInput } from "@piwork/contracts";
+import { ModelProviderError } from "./model-provider-errors.js";
 
 export interface RunExecutionContext {
   readonly images?: readonly ChatImageInput[];
@@ -348,9 +349,9 @@ export class RunManager {
           this.store.tryCompleteRun(run.runId, "cancelled", null, null, this.now().toISOString());
         } else {
           this.store.tryCompleteRun(run.runId, "failed", null, JSON.stringify({
-            code: error instanceof RunModelError ? error.modelErrorCode : error instanceof ChatImageError ? error.code : "MODEL_EXECUTION_FAILED",
-            message: error instanceof RunModelError || error instanceof ChatImageError ? error.message : "Model execution failed.",
-            retryable: true,
+            code: error instanceof ModelProviderError ? error.providerErrorCode : error instanceof RunModelError ? error.modelErrorCode : error instanceof ChatImageError ? error.code : "MODEL_EXECUTION_FAILED",
+            message: error instanceof ModelProviderError || error instanceof RunModelError || error instanceof ChatImageError ? error.message : "Model execution failed.",
+            retryable: !(error instanceof ModelProviderError),
           }), this.now().toISOString());
         }
       } finally {

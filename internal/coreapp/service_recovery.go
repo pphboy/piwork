@@ -9,21 +9,34 @@ import (
 	"sync"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
 	"piwork/internal/dockerengine"
 )
 
 type serviceEffect struct {
-	Control int64
-	Cancel  context.CancelFunc
+	Control   int64
+	ServiceID string
+	Cancel    context.CancelFunc
 }
 
-func (a *Application) serviceEffectContext(ctx context.Context, workID string, control int64) (context.Context, func()) {
+func (a *Application) serviceEffectContext(ctx context.Context, workID string, control int64, serviceID ...string) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	effect := &serviceEffect{Control: control, Cancel: cancel}
+	if len(serviceID) == 1 {
+		effect.ServiceID = serviceID[0]
+	}
 	a.serviceEffects.Store(workID, effect)
 	return ctx, func() { a.serviceEffects.CompareAndDelete(workID, effect); cancel() }
+}
+func (a *Application) cancelSpecificServiceEffect(workID, serviceID string) {
+	if value, ok := a.serviceEffects.Load(workID); ok {
+		effect := value.(*serviceEffect)
+		if effect.ServiceID == serviceID {
+			effect.Cancel()
+		}
+	}
 }
 func (a *Application) cancelServiceEffects(workID string) {
 	if value, ok := a.serviceEffects.Load(workID); ok {
@@ -76,17 +89,76 @@ func (a *Application) serviceFailure(ctx context.Context, target serviceTarget, 
 	}
 	state := "failed"
 	if unknown {
-		code = "DOCKER_UNAVAILABLE"
+		if code != "SERVICE_STATE_UNCONFIRMED" {
+			code = "DOCKER_UNAVAILABLE"
+		}
 		state = "unknown"
 	}
-	raw, _ := json.Marshal(map[string]any{"code": code, "stage": stage, "serviceId": target.ServiceID, "message": "Service runtime is unavailable.", "remediation": "Restore the runtime or correct the service configuration and retry.", "retryable": true})
+	diagnostic := map[string]any{"code": code, "stage": stage, "serviceId": target.ServiceID}
+	if !unknown && failure != nil && failure.ExitCode != nil {
+		diagnostic["exitCode"] = *failure.ExitCode
+	}
 	return a.Store.Write(ctx, func(tx *sql.Tx) error {
 		if err := a.serviceTargetTx(tx, target); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`UPDATE service_heads SET observed_state=?,last_error_json=? WHERE work_id=? AND service_id=?`, state, string(raw), target.WorkID, target.ServiceID)
+		current, err := corestore.ReadService(tx, target.WorkID, target.ServiceID, false)
+		if err != nil {
+			return err
+		}
+		// A failed automatic attempt does not erase the failure which caused
+		// recovery. Explicit user Operations keep their own terminal result.
+		if !unknown && current.LastErrorJSON != nil && (current.ObservedState == "recovering" || current.ObservedState == "starting") {
+			var previous struct {
+				Code  string          `json:"code"`
+				Cause json.RawMessage `json:"cause"`
+			}
+			if json.Unmarshal([]byte(*current.LastErrorJSON), &previous) == nil && (previous.Code == "DOCKER_UNAVAILABLE" || previous.Code == "SERVICE_STATE_UNCONFIRMED") {
+				if len(previous.Cause) > 0 {
+					_, err := tx.Exec(`UPDATE service_heads SET observed_state=?,last_error_json=? WHERE work_id=? AND service_id=?`, state, string(previous.Cause), target.WorkID, target.ServiceID)
+					return err
+				}
+			} else {
+				_, err := tx.Exec(`UPDATE service_heads SET observed_state=? WHERE work_id=? AND service_id=?`, state, target.WorkID, target.ServiceID)
+				return err
+			}
+		}
+		if unknown && current.LastErrorJSON != nil {
+			var previous struct {
+				Code  string          `json:"code"`
+				Cause json.RawMessage `json:"cause"`
+			}
+			if json.Unmarshal([]byte(*current.LastErrorJSON), &previous) == nil {
+				if len(previous.Cause) > 0 {
+					diagnostic["cause"] = previous.Cause
+				} else if previous.Code == "DOCKER_UNAVAILABLE" || previous.Code == "SERVICE_STATE_UNCONFIRMED" {
+					// Repeated unknown observations have no earlier root cause.
+				} else {
+					diagnostic["cause"] = json.RawMessage(*current.LastErrorJSON)
+				}
+			}
+		}
+		raw, err := json.Marshal(diagnostic)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE service_heads SET observed_state=?,last_error_json=? WHERE work_id=? AND service_id=?`, state, string(raw), target.WorkID, target.ServiceID)
 		return err
 	})
+}
+
+// A missing container and a confirmed process exit are different facts. In
+// particular, Docker's zero default is not evidence of an exit for a container
+// which never started or whose state cannot be confirmed.
+func observedServiceFailure(view *container.InspectResponse) *serviceRuntimeError {
+	if view == nil {
+		return &serviceRuntimeError{Code: "SERVICE_INSTANCE_MISSING", Stage: "service-recovery"}
+	}
+	if view.State != nil && !view.State.Running && view.State.Status == "exited" {
+		exitCode := view.State.ExitCode
+		return &serviceRuntimeError{Code: "SERVICE_EXITED", Stage: "service-recovery", ExitCode: &exitCode}
+	}
+	return nil
 }
 
 // Called under the Work runtime lock on every Agent start/recovery. A healthy
@@ -106,6 +178,17 @@ func (a *Application) restoreWorkServicesLocked(ctx context.Context, workID stri
 	state := "ready"
 	for _, service := range services {
 		if !service.Enabled {
+			continue
+		}
+		var temporary bool
+		if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+			_, found, err := corestore.ReadTemporaryServiceTx(tx, workID, service.ServiceID)
+			temporary = found
+			return err
+		}); err != nil {
+			return "", err
+		}
+		if temporary {
 			continue
 		}
 		definition, err := contracts.Decode[contracts.ServiceDefinition](strings.NewReader(service.DefinitionJSON), "ServiceDefinitionSchema", serviceRequestLimit)
@@ -167,8 +250,42 @@ func (a *Application) stopWorkServicesLocked(ctx context.Context, workID string,
 	if err != nil {
 		return err
 	}
+	work, err := a.Store.Work(ctx, workID, true)
+	if err != nil {
+		return err
+	}
+	trigger := "agent-replaced"
+	if work.DesiredState == "stopped" {
+		trigger = "work-stop"
+	}
+	if work.DesiredState == "deleted" {
+		trigger = "work-delete"
+	}
+	if a.Status().State == "SHUTTING_DOWN" {
+		trigger = "core-shutdown"
+	}
 	var failures []error
 	for _, service := range services {
+		var temporary corestore.TemporaryServiceRecord
+		var isTemporary bool
+		if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+			var err error
+			temporary, isTemporary, err = corestore.ReadTemporaryServiceTx(tx, workID, service.ServiceID)
+			return err
+		}); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if isTemporary {
+			if err := a.closeTemporaryRunAndRequestCleanup(ctx, temporary.Owner, trigger); err != nil {
+				failures = append(failures, err)
+				continue
+			}
+			if err := a.cleanupTemporaryService(ctx, temporary); err != nil {
+				failures = append(failures, err)
+			}
+			continue
+		}
 		if err := a.stopServiceRuntime(ctx, workID, service.ServiceID, remove || service.TombstonedAt != nil); err != nil {
 			failures = append(failures, err)
 			continue
@@ -202,7 +319,8 @@ func (a *Application) reconcileServices(ctx context.Context) {
 	}
 	var ids []string
 	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.Query(`SELECT id FROM works WHERE desired_state='running' AND observed_state IN ('ready','degraded','failed') AND deleted_at IS NULL`)
+		rows, err := tx.Query(`SELECT id FROM works WHERE (desired_state='running' AND observed_state IN ('ready','degraded','failed') AND deleted_at IS NULL)
+			OR EXISTS(SELECT 1 FROM control_metadata m WHERE substr(m.key,1,length('run-temporary-service:service:' || works.id || ':'))='run-temporary-service:service:' || works.id || ':')`)
 		if err != nil {
 			return err
 		}
@@ -240,6 +358,7 @@ func (a *Application) reconcileServices(ctx context.Context) {
 			}
 			defer lock.Unlock()
 			a.reconcileWorkServicesLocked(ctx, workID)
+			a.reconcileTemporaryServicesLocked(ctx, workID)
 		}(workID)
 	}
 }
@@ -258,6 +377,14 @@ func (a *Application) reconcileWorkServicesLocked(ctx context.Context, workID st
 		if !service.Enabled {
 			continue
 		}
+		var temporary bool
+		if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+			_, found, err := corestore.ReadTemporaryServiceTx(tx, workID, service.ServiceID)
+			temporary = found
+			return err
+		}); err != nil || temporary {
+			continue
+		}
 		var pending bool
 		if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
 			return tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM operations WHERE work_id=? AND service_id=? AND state IN ('pending','running'))`, workID, service.ServiceID).Scan(&pending)
@@ -273,12 +400,21 @@ func (a *Application) reconcileWorkServicesLocked(ctx context.Context, workID st
 		view, _, err := a.inspectServiceRuntime(probeCtx, workID, service.ServiceID)
 		cancel()
 		if err != nil {
-			_ = a.serviceFailure(ctx, target, err, true)
+			if errors.Is(err, dockerengine.ErrUnavailable) {
+				_ = a.serviceFailure(ctx, target, err, true)
+			} else {
+				_ = a.serviceFailure(ctx, target, &serviceRuntimeError{Code: "SERVICE_STATE_UNCONFIRMED", Stage: "service-recovery"}, true)
+			}
 			continue
 		}
 		running := view != nil && view.State != nil && view.State.Running
+		if view != nil && !running && (view.State == nil || view.State.Status != "exited") {
+			_ = a.serviceFailure(ctx, target, &serviceRuntimeError{Code: "SERVICE_STATE_UNCONFIRMED", Stage: "service-recovery"}, true)
+			continue
+		}
 		healthy := running && service.ObservedState == "ready" && service.AppliedRevision != nil && *service.AppliedRevision == service.DesiredRevision
 		verifyExisting := running && service.ObservedState == "unknown"
+		observedFailure := observedServiceFailure(view)
 		var retry bool
 		err = a.Store.Write(ctx, func(tx *sql.Tx) error {
 			if err := a.serviceTargetTx(tx, target); err != nil {
@@ -299,7 +435,27 @@ func (a *Application) reconcileWorkServicesLocked(ctx context.Context, workID st
 				if definition.RestartPolicy == "never" || binding.RecoveryCount >= 3 && !retry {
 					state = "failed"
 				}
-				_, err = tx.Exec(`UPDATE service_heads SET observed_state=? WHERE work_id=? AND service_id=?`, state, workID, service.ServiceID)
+				if observedFailure != nil && (service.LastErrorJSON == nil || service.ObservedState == "ready" || service.ObservedState == "unknown") {
+					diagnostic := map[string]any{"code": observedFailure.Code, "stage": observedFailure.Stage, "serviceId": service.ServiceID}
+					if observedFailure.ExitCode != nil {
+						diagnostic["exitCode"] = *observedFailure.ExitCode
+					}
+					if service.ObservedState == "unknown" && service.LastErrorJSON != nil {
+						var previous struct {
+							Cause json.RawMessage `json:"cause"`
+						}
+						if json.Unmarshal([]byte(*service.LastErrorJSON), &previous) == nil && len(previous.Cause) > 0 {
+							diagnostic["cause"] = previous.Cause
+						}
+					}
+					raw, marshalErr := json.Marshal(diagnostic)
+					if marshalErr != nil {
+						return marshalErr
+					}
+					_, err = tx.Exec(`UPDATE service_heads SET observed_state=?,last_error_json=? WHERE work_id=? AND service_id=?`, state, string(raw), workID, service.ServiceID)
+				} else {
+					_, err = tx.Exec(`UPDATE service_heads SET observed_state=? WHERE work_id=? AND service_id=?`, state, workID, service.ServiceID)
+				}
 			}
 			return err
 		})

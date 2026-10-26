@@ -77,6 +77,7 @@ var publicErrors = map[string]errorDefinition{
 	"SNAPSHOT_CAPACITY_BUSY":              {409, "Snapshot capacity is full", true},
 	"SNAPSHOT_TRANSFER_BUSY":              {503, "Snapshot transfer capacity is full", true},
 	"SNAPSHOT_CLEANUP_REQUIRED":           {503, "Snapshot cleanup is required", true},
+	"TEMPORARY_CLEANUP_PENDING":           {409, "Temporary Service cleanup is not yet confirmed; check its cleanup record before exporting", true},
 	"SNAPSHOT_EXPORT_FAILED":              {500, "Work export failed", false},
 	"PACKAGE_INVALID":                     {400, "Work package is invalid", false},
 	"PACKAGE_FORMAT_UNSUPPORTED":          {400, "Work package format is unsupported", false},

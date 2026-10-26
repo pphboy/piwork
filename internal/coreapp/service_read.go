@@ -30,9 +30,21 @@ type publicServiceView struct {
 	Endpoints       []contracts.ServiceEndpoint `json:"endpoints"`
 	CreatedAt       string                      `json:"createdAt"`
 	Access          serviceAccess               `json:"access"`
+	Temporary       *publicTemporaryService     `json:"temporary,omitempty"`
+}
+
+type publicTemporaryService struct {
+	Mode         string `json:"mode"`
+	State        string `json:"state"`
+	ExitCode     *int   `json:"exitCode,omitempty"`
+	CleanupState string `json:"cleanupState,omitempty"`
 }
 
 func safeServiceDiagnostic(raw *string, serviceID string) any {
+	return safeServiceDiagnosticDepth(raw, serviceID, 0)
+}
+
+func safeServiceDiagnosticDepth(raw *string, serviceID string, depth int) any {
 	if raw == nil {
 		return nil
 	}
@@ -41,6 +53,7 @@ func safeServiceDiagnostic(raw *string, serviceID string) any {
 		Stage         string
 		CorrelationID string
 		ExitCode      *int
+		Cause         json.RawMessage
 	}
 	if json.Unmarshal([]byte(*raw), &value) != nil || !validDiagnosticStage(value.Stage) {
 		return nil
@@ -55,6 +68,12 @@ func safeServiceDiagnostic(raw *string, serviceID string) any {
 	}
 	if value.ExitCode != nil {
 		view["exitCode"] = *value.ExitCode
+	}
+	if depth == 0 && len(value.Cause) > 0 {
+		causeRaw := string(value.Cause)
+		if cause := safeServiceDiagnosticDepth(&causeRaw, serviceID, depth+1); cause != nil {
+			view["cause"] = cause
+		}
 	}
 	return view
 }
@@ -78,7 +97,25 @@ func (a *Application) serviceView(ctx context.Context, work corestore.WorkRecord
 	if err != nil {
 		return publicServiceView{}, err
 	}
-	return publicServiceView{MemoryLimitMode: "unlimited", WorkID: record.WorkID, ServiceID: record.ServiceID, Name: record.Name, DesiredRevision: record.DesiredRevision, AppliedRevision: record.AppliedRevision, Enabled: record.Enabled, ObservedState: record.ObservedState, LastError: safeServiceDiagnostic(record.LastErrorJSON, record.ServiceID), Definition: definition, Endpoints: endpoints, CreatedAt: record.CreatedAt, Access: access}, nil
+	var temporary *publicTemporaryService
+	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		result, found, err := corestore.ReadTemporaryServiceTx(tx, record.WorkID, record.ServiceID)
+		if err != nil || !found {
+			return err
+		}
+		temporary = &publicTemporaryService{Mode: result.Mode, State: result.State, ExitCode: result.ExitCode}
+		cleanup, found, err := corestore.ReadTemporaryCleanupTx(tx, record.WorkID, record.ServiceID)
+		if err != nil {
+			return err
+		}
+		if found {
+			temporary.CleanupState = cleanup.State
+		}
+		return nil
+	}); err != nil {
+		return publicServiceView{}, err
+	}
+	return publicServiceView{MemoryLimitMode: "unlimited", WorkID: record.WorkID, ServiceID: record.ServiceID, Name: record.Name, DesiredRevision: record.DesiredRevision, AppliedRevision: record.AppliedRevision, Enabled: record.Enabled, ObservedState: record.ObservedState, LastError: safeServiceDiagnostic(record.LastErrorJSON, record.ServiceID), Definition: definition, Endpoints: endpoints, CreatedAt: record.CreatedAt, Access: access, Temporary: temporary}, nil
 }
 func (a *Application) readService(ctx context.Context, actor serviceActor, workID, serviceID string) (publicServiceView, error) {
 	var work corestore.WorkRecord

@@ -27,6 +27,9 @@ const (
 	WorkServices_AuthorizeHistoryMigration_FullMethodName     = "/piwork.core.services.v1.WorkServices/AuthorizeHistoryMigration"
 	WorkServices_GetDeploymentContext_FullMethodName          = "/piwork.core.services.v1.WorkServices/GetDeploymentContext"
 	WorkServices_CreateService_FullMethodName                 = "/piwork.core.services.v1.WorkServices/CreateService"
+	WorkServices_CreateTemporaryService_FullMethodName        = "/piwork.core.services.v1.WorkServices/CreateTemporaryService"
+	WorkServices_OpenTemporaryRunLease_FullMethodName         = "/piwork.core.services.v1.WorkServices/OpenTemporaryRunLease"
+	WorkServices_CloseTemporaryRunLease_FullMethodName        = "/piwork.core.services.v1.WorkServices/CloseTemporaryRunLease"
 	WorkServices_ListServices_FullMethodName                  = "/piwork.core.services.v1.WorkServices/ListServices"
 	WorkServices_GetService_FullMethodName                    = "/piwork.core.services.v1.WorkServices/GetService"
 	WorkServices_UpdateService_FullMethodName                 = "/piwork.core.services.v1.WorkServices/UpdateService"
@@ -51,6 +54,9 @@ type WorkServicesClient interface {
 	AuthorizeHistoryMigration(ctx context.Context, in *WorkPrivateRequest, opts ...grpc.CallOption) (*WorkPrivateResponse, error)
 	GetDeploymentContext(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*DeploymentContext, error)
 	CreateService(ctx context.Context, in *CreateServiceRequest, opts ...grpc.CallOption) (*Acceptance, error)
+	CreateTemporaryService(ctx context.Context, in *CreateTemporaryServiceRequest, opts ...grpc.CallOption) (*Acceptance, error)
+	OpenTemporaryRunLease(ctx context.Context, in *TemporaryRunRequest, opts ...grpc.CallOption) (*TemporaryRunLease, error)
+	CloseTemporaryRunLease(ctx context.Context, in *TemporaryRunRequest, opts ...grpc.CallOption) (*Empty, error)
 	ListServices(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListServicesResponse, error)
 	GetService(ctx context.Context, in *ServiceIdRequest, opts ...grpc.CallOption) (*ServiceView, error)
 	UpdateService(ctx context.Context, in *UpdateServiceRequest, opts ...grpc.CallOption) (*Acceptance, error)
@@ -145,6 +151,36 @@ func (c *workServicesClient) CreateService(ctx context.Context, in *CreateServic
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Acceptance)
 	err := c.cc.Invoke(ctx, WorkServices_CreateService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workServicesClient) CreateTemporaryService(ctx context.Context, in *CreateTemporaryServiceRequest, opts ...grpc.CallOption) (*Acceptance, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Acceptance)
+	err := c.cc.Invoke(ctx, WorkServices_CreateTemporaryService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workServicesClient) OpenTemporaryRunLease(ctx context.Context, in *TemporaryRunRequest, opts ...grpc.CallOption) (*TemporaryRunLease, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TemporaryRunLease)
+	err := c.cc.Invoke(ctx, WorkServices_OpenTemporaryRunLease_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workServicesClient) CloseTemporaryRunLease(ctx context.Context, in *TemporaryRunRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, WorkServices_CloseTemporaryRunLease_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +299,9 @@ type WorkServicesServer interface {
 	AuthorizeHistoryMigration(context.Context, *WorkPrivateRequest) (*WorkPrivateResponse, error)
 	GetDeploymentContext(context.Context, *Empty) (*DeploymentContext, error)
 	CreateService(context.Context, *CreateServiceRequest) (*Acceptance, error)
+	CreateTemporaryService(context.Context, *CreateTemporaryServiceRequest) (*Acceptance, error)
+	OpenTemporaryRunLease(context.Context, *TemporaryRunRequest) (*TemporaryRunLease, error)
+	CloseTemporaryRunLease(context.Context, *TemporaryRunRequest) (*Empty, error)
 	ListServices(context.Context, *Empty) (*ListServicesResponse, error)
 	GetService(context.Context, *ServiceIdRequest) (*ServiceView, error)
 	UpdateService(context.Context, *UpdateServiceRequest) (*Acceptance, error)
@@ -306,6 +345,15 @@ func (UnimplementedWorkServicesServer) GetDeploymentContext(context.Context, *Em
 }
 func (UnimplementedWorkServicesServer) CreateService(context.Context, *CreateServiceRequest) (*Acceptance, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateService not implemented")
+}
+func (UnimplementedWorkServicesServer) CreateTemporaryService(context.Context, *CreateTemporaryServiceRequest) (*Acceptance, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateTemporaryService not implemented")
+}
+func (UnimplementedWorkServicesServer) OpenTemporaryRunLease(context.Context, *TemporaryRunRequest) (*TemporaryRunLease, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method OpenTemporaryRunLease not implemented")
+}
+func (UnimplementedWorkServicesServer) CloseTemporaryRunLease(context.Context, *TemporaryRunRequest) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CloseTemporaryRunLease not implemented")
 }
 func (UnimplementedWorkServicesServer) ListServices(context.Context, *Empty) (*ListServicesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListServices not implemented")
@@ -498,6 +546,60 @@ func _WorkServices_CreateService_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkServicesServer).CreateService(ctx, req.(*CreateServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkServices_CreateTemporaryService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateTemporaryServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkServicesServer).CreateTemporaryService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkServices_CreateTemporaryService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkServicesServer).CreateTemporaryService(ctx, req.(*CreateTemporaryServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkServices_OpenTemporaryRunLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TemporaryRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkServicesServer).OpenTemporaryRunLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkServices_OpenTemporaryRunLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkServicesServer).OpenTemporaryRunLease(ctx, req.(*TemporaryRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkServices_CloseTemporaryRunLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TemporaryRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkServicesServer).CloseTemporaryRunLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkServices_CloseTemporaryRunLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkServicesServer).CloseTemporaryRunLease(ctx, req.(*TemporaryRunRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -720,6 +822,18 @@ var WorkServices_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateService",
 			Handler:    _WorkServices_CreateService_Handler,
+		},
+		{
+			MethodName: "CreateTemporaryService",
+			Handler:    _WorkServices_CreateTemporaryService_Handler,
+		},
+		{
+			MethodName: "OpenTemporaryRunLease",
+			Handler:    _WorkServices_OpenTemporaryRunLease_Handler,
+		},
+		{
+			MethodName: "CloseTemporaryRunLease",
+			Handler:    _WorkServices_CloseTemporaryRunLease_Handler,
 		},
 		{
 			MethodName: "ListServices",

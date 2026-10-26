@@ -134,6 +134,12 @@ func rpcServiceError(err error) error {
 	if errors.Is(err, internaltls.ErrIdentity) {
 		return status.Error(codes.Unauthenticated, "runtime identity is invalid")
 	}
+	if errors.Is(err, corestore.ErrTemporaryIdentity) {
+		return status.Error(codes.PermissionDenied, "temporary Run identity is invalid")
+	}
+	if errors.Is(err, corestore.ErrTemporaryLeaseClosed) {
+		return status.Error(codes.FailedPrecondition, "temporary Run creation has ended")
+	}
 	_, view := contracts.ProjectError(servicePublicError(err))
 	code := codes.Unavailable
 	switch view.Code {
@@ -227,6 +233,28 @@ func (server *serviceRPC) definition(ctx context.Context, value *servicesv1.Serv
 func (server *serviceRPC) CreateService(ctx context.Context, request *servicesv1.CreateServiceRequest) (*servicesv1.Acceptance, error) {
 	return server.definition(ctx, request.Definition, "", 0, request.IdempotencyKey)
 }
+func (server *serviceRPC) CreateTemporaryService(ctx context.Context, request *servicesv1.CreateTemporaryServiceRequest) (*servicesv1.Acceptance, error) {
+	actor, workID, err := rpcActor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	temporary := request.GetTemporary()
+	if temporary == nil || actor.Runtime == nil || temporary.Generation != uint64(actor.Runtime.Generation) || temporary.InstanceId != actor.Runtime.InstanceID || temporary.RunId == "" || temporary.LeaseId == "" ||
+		(temporary.Mode != "once" && temporary.Mode != "listener") || request.IdempotencyKey == "" || len(request.IdempotencyKey) > 256 {
+		return nil, status.Error(codes.InvalidArgument, "temporary Service identity is invalid")
+	}
+	raw, err := rpcDefinitionInput(request.Definition)
+	if err != nil {
+		return nil, rpcServiceError(err)
+	}
+	admission := temporaryServiceAdmission{Owner: corestore.TemporaryRunOwner{WorkID: workID, RunID: temporary.RunId, Generation: actor.Runtime.Generation, InstanceID: actor.Runtime.InstanceID}, LeaseID: temporary.LeaseId, Mode: temporary.Mode}
+	accepted, err := server.App.acceptServiceDefinitionScoped(ctx, actor, workID, "", 0, raw, request.IdempotencyKey, &admission)
+	if err != nil {
+		return nil, rpcServiceError(err)
+	}
+	server.App.enqueueWork(workID)
+	return rpcAcceptance(accepted), nil
+}
 func (server *serviceRPC) UpdateService(ctx context.Context, request *servicesv1.UpdateServiceRequest) (*servicesv1.Acceptance, error) {
 	return server.definition(ctx, request.Definition, request.ServiceId, request.ExpectedRevision, request.IdempotencyKey)
 }
@@ -288,6 +316,17 @@ func rpcServiceView(value publicServiceView) (*servicesv1.ServiceView, error) {
 		definition.Readiness = &servicesv1.ReadinessProbe{Kind: probe.Kind, PortName: string(probe.PortName.Value), Path: probe.Path.Value, Command: probe.Command.Value, DeadlineMs: uint32(probe.DeadlineMs.Value), TimeoutMs: uint32(probe.TimeoutMs.Value)}
 	}
 	result := &servicesv1.ServiceView{MemoryLimitMode: "unlimited", WorkId: value.WorkID, ServiceId: value.ServiceID, Name: value.Name, DesiredRevision: uint32(value.DesiredRevision), Enabled: value.Enabled, ObservedState: value.ObservedState, Definition: definition, CreatedAt: value.CreatedAt, Access: &servicesv1.ServiceAccess{Hostname: value.Access.Hostname, DefaultUrl: value.Access.DefaultURL, DefaultPortName: value.Access.DefaultPortName, Status: value.Access.Status}}
+	if value.Temporary != nil {
+		status := &servicesv1.TemporaryServiceStatus{Mode: value.Temporary.Mode, State: value.Temporary.State}
+		if value.Temporary.ExitCode != nil {
+			code := int32(*value.Temporary.ExitCode)
+			status.ExitCode = &code
+		}
+		if value.Temporary.CleanupState != "" {
+			status.CleanupState = &value.Temporary.CleanupState
+		}
+		result.Temporary = status
+	}
 	if value.AppliedRevision != nil {
 		revision := uint32(*value.AppliedRevision)
 		result.AppliedRevision = &revision
@@ -298,10 +337,32 @@ func rpcServiceView(value publicServiceView) (*servicesv1.ServiceView, error) {
 	for _, item := range value.Access.Ports {
 		result.Access.Ports = append(result.Access.Ports, &servicesv1.ServiceAccessPort{Name: item.Name, Port: uint32(item.Port), Url: item.URL})
 	}
-	if value.LastError != nil {
-		result.LastError = &servicesv1.SafeError{Code: "SERVICE_FAILED", Message: "Service operation failed.", Remediation: "Inspect service logs and retry.", CorrelationId: value.ServiceID}
+	if diagnostic, ok := value.LastError.(map[string]any); ok {
+		result.LastError = rpcServiceDiagnostic(diagnostic)
 	}
 	return result, nil
+}
+
+func rpcServiceDiagnostic(diagnostic map[string]any) *servicesv1.SafeError {
+	value := &servicesv1.SafeError{}
+	value.Code, _ = diagnostic["code"].(string)
+	value.Message, _ = diagnostic["message"].(string)
+	value.Remediation, _ = diagnostic["remediation"].(string)
+	value.CorrelationId, _ = diagnostic["correlationId"].(string)
+	if stage, ok := diagnostic["stage"].(string); ok {
+		value.Stage = &stage
+	}
+	if exitCode, ok := diagnostic["exitCode"].(int); ok && int64(exitCode) >= math.MinInt32 && int64(exitCode) <= math.MaxInt32 {
+		v := int32(exitCode)
+		value.ExitCode = &v
+	}
+	if retryable, ok := diagnostic["retryable"].(bool); ok {
+		value.Retryable = &retryable
+	}
+	if cause, ok := diagnostic["cause"].(map[string]any); ok {
+		value.Cause = rpcServiceDiagnostic(cause)
+	}
+	return value
 }
 func (server *serviceRPC) GetService(ctx context.Context, request *servicesv1.ServiceIdRequest) (*servicesv1.ServiceView, error) {
 	actor, workID, err := rpcActor(ctx)
@@ -353,7 +414,7 @@ func (server *serviceRPC) GetOperation(ctx context.Context, request *servicesv1.
 	}
 	result := &servicesv1.OperationView{OperationId: operation.ID, WorkId: workID, ServiceId: *operation.ServiceID, Kind: operation.Kind, State: operation.State, CreatedAt: operation.CreatedAt, UpdatedAt: operation.UpdatedAt}
 	if diagnostic, ok := safeServiceDiagnostic(operation.ErrorJSON, *operation.ServiceID).(map[string]any); ok {
-		result.Error = &servicesv1.SafeError{Code: diagnostic["code"].(string), Message: diagnostic["message"].(string), Remediation: diagnostic["remediation"].(string), CorrelationId: operation.ID}
+		result.Error = rpcServiceDiagnostic(diagnostic)
 	}
 	return result, nil
 }
@@ -372,7 +433,7 @@ func (server *serviceRPC) ReadServiceLogs(ctx context.Context, request *services
 	}
 	result := &servicesv1.ServiceLogs{ServiceId: view.ServiceID, Status: view.Status, Text: view.Text, Truncated: view.Truncated, CollectedAt: view.CollectedAt}
 	if view.Reason != "" {
-		result.Error = &servicesv1.SafeError{Code: "LOGS_UNAVAILABLE", Message: view.Reason, Remediation: "Verify the service instance and retry.", CorrelationId: view.ServiceID}
+		result.Error = &servicesv1.SafeError{Code: "LOGS_UNAVAILABLE", Message: view.Reason, Remediation: "Verify the service instance and retry."}
 	}
 	return result, nil
 }
@@ -400,7 +461,8 @@ func (server *serviceRPC) GetDeploymentContext(ctx context.Context, _ *servicesv
 			return err
 		}
 		availableCPU, availableMemory := max(int64(0), config.Resources.CpuMillis-usage.CPUMillis), max(int64(0), config.Resources.MemoryBytes-usage.MemoryBytes)
-		result = &servicesv1.DeploymentContext{WorkId: workID, WorkspacePath: "/var/data/workspace", WorkspaceWritable: true, Lifecycle: work.DesiredState, TotalCpuMillis: uint32(config.Resources.CpuMillis), TotalMemoryBytes: uint64(config.Resources.MemoryBytes), AgentCpuMillis: uint32(config.Resources.AgentCpuMillis), AgentMemoryBytes: uint64(config.Resources.AgentMemoryBytes), AvailableCpuMillis: uint32(availableCPU), AvailableMemoryBytes: uint64(availableMemory), DefaultServiceCpuMillis: 250, DefaultServiceMemoryBytes: 0, ServiceMemoryPolicy: "unlimited", ApiVersion: "v2"}
+		version := uint32(1)
+		result = &servicesv1.DeploymentContext{WorkId: workID, WorkspacePath: "/var/data/workspace", WorkspaceWritable: true, Lifecycle: work.DesiredState, TotalCpuMillis: uint32(config.Resources.CpuMillis), TotalMemoryBytes: uint64(config.Resources.MemoryBytes), AgentCpuMillis: uint32(config.Resources.AgentCpuMillis), AgentMemoryBytes: uint64(config.Resources.AgentMemoryBytes), AvailableCpuMillis: uint32(availableCPU), AvailableMemoryBytes: uint64(availableMemory), DefaultServiceCpuMillis: 250, DefaultServiceMemoryBytes: 0, ServiceMemoryPolicy: "unlimited", ApiVersion: "v2", RunTemporaryServiceContractVersion: &version}
 		return nil
 	})
 	return result, rpcServiceError(err)

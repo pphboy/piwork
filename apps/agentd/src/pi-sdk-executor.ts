@@ -11,6 +11,7 @@ import { ChatImageError, chatInputDigest } from "@piwork/contracts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { RunModelResolver } from "./run-models.js";
 import { parseResourceCommand, requireResourceCommand, validateLoadedResourceCommand } from "./resource-commands.js";
+import { protectProviderStream } from "./model-provider-errors.js";
 
 const CHILD_AGENT_DIRECTORY = "/tmp/piwork-child-agent";
 
@@ -28,6 +29,7 @@ export class PiSdkRunExecutor implements RunExecutor {
       readonly capabilities?: ModelCapabilities;
     },
     private readonly context: { readonly resourceLoaderFactory: (context?: RunExecutionContext) => Promise<ResourceLoader>; readonly resolvedTools: readonly string[]; readonly customTools?: readonly ToolDefinition[]; readonly models?: RunModelResolver;
+      readonly customToolsFactory?: (run: RunExecutionContext) => readonly ToolDefinition[];
       readonly packageTools?: ReadonlyMap<string, string>; readonly commands?: readonly SlashCommand[];
       readonly onSdkToolResult?: (context: RunExecutionContext, result: { toolName: string; toolCallId: string; args: unknown; isError: boolean; result: unknown }) => void },
   ) {}
@@ -63,7 +65,7 @@ export class PiSdkRunExecutor implements RunExecutor {
       thinkingLevel: context.actualModel?.thinkingLevel ?? "off",
       sessionManager,
       tools: [...this.context.resolvedTools],
-      customTools: [...(this.context.customTools ?? [])],
+      customTools: [...(this.context.customToolsFactory?.(context) ?? this.context.customTools ?? [])],
       resourceLoader,
       settingsManager: SettingsManager.inMemory(),
     });
@@ -104,6 +106,8 @@ export class PiSdkRunExecutor implements RunExecutor {
       await session.bindExtensions({ mode: "json" });
       emitRunPhase(context, "extensions-bound");
       if (initializationErrors > 0) failExtensionEvent("initialization");
+      const protectedStream = protectProviderStream(session.agent.streamFunction, context.actualModel);
+      session.agent.streamFunction = protectedStream.streamFunction;
       context.signal.throwIfAborted();
       const assertAcceptedOptions = () => {
         if (context.actualModel && (session.model?.id !== context.actualModel.model || session.model.provider !== context.actualModel.provider || session.model.baseUrl !== model.baseUrl || session.thinkingLevel !== (context.actualModel.thinkingLevel ?? "off"))) throw new Error("accepted model and Thinking settings could not be applied");
@@ -170,7 +174,7 @@ export class PiSdkRunExecutor implements RunExecutor {
       if (runErrors > 0) failExtensionEvent("run");
       const assistant = session.messages.findLast((message) => message.role === "assistant" && !previousMessages.has(message));
       if (assistant === undefined || assistant.role !== "assistant") throw new Error("model execution produced no assistant result");
-      if (assistant.stopReason === "error") throw new Error("model execution ended with a provider error");
+      if (assistant.stopReason === "error") throw protectedStream.failure() ?? new Error("model execution ended with a provider error");
       if (assistant.stopReason === "aborted" && !context.signal.aborted) {
         throw new Error("model execution ended unexpectedly");
       }

@@ -139,6 +139,13 @@ func nativeModelGateway(t *testing.T) (*modelGateway, string) {
 				return
 			}
 		}
+		if stream && auth == "synthetic-invalid-key" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Private-Fixture", "synthetic-header-secret")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"type":"authentication_error","code":"invalid_api_key","message":"synthetic-provider-secret /private/provider/path"}}`))
+			return
+		}
 		text := "gateway:" + api + ":" + model
 		if !stream {
 			w.Header().Set("Content-Type", "application/json")

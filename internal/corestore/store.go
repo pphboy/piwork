@@ -27,6 +27,11 @@ const SchemaVersion = 1
 const MarkerName = "core-format.json"
 const DatabaseName = "core.sqlite"
 
+// Older Core versions reject this additional root file before opening the
+// database. It must be durable before writing temporary-service records.
+const temporaryServiceGuard = ".run-temporary-services-v1"
+const temporaryServiceNamespace = "run-temporary-service:"
+
 var ErrUnsupported = errors.New("CORE_STORAGE_FORMAT_UNSUPPORTED: use an independent supported Go data directory")
 var ErrStorage = errors.New("Core storage could not be opened safely")
 var ErrClosed = errors.New("Core store is closed")
@@ -39,10 +44,11 @@ var schemaSQL string
 var schemaObjects []byte
 
 type Marker struct {
-	Format         string `json:"format"`
-	SchemaVersion  int    `json:"schemaVersion"`
-	InstallationID string `json:"installationId"`
-	Phase          string `json:"phase"`
+	Format            string `json:"format"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	InstallationID    string `json:"installationId"`
+	Phase             string `json:"phase"`
+	temporaryServices bool
 }
 type Options struct {
 	Directory      string
@@ -74,7 +80,7 @@ type Store struct {
 
 func Open(ctx context.Context, options Options) (_ *Store, returned error) {
 	if name := options.OperatorCredentialName; name != "" {
-		if !safefs.ValidFileName(name) || name == MarkerName || strings.HasPrefix(name, DatabaseName) || name == "runtime-profile.json" || strings.HasPrefix(name, ".core-format-") {
+		if !safefs.ValidFileName(name) || name == MarkerName || name == temporaryServiceGuard || strings.HasPrefix(name, DatabaseName) || name == "runtime-profile.json" || strings.HasPrefix(name, ".core-format-") {
 			return nil, ErrUnsupported
 		}
 		for _, managed := range managedDirectories {
@@ -147,6 +153,11 @@ func Open(ctx context.Context, options Options) (_ *Store, returned error) {
 	}
 	if err := validateDirectory(root, marker, options.OperatorCredentialName); err != nil {
 		return nil, err
+	}
+	if _, err := root.ReadFile(temporaryServiceGuard, 0); err == nil {
+		marker.temporaryServices = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, ErrUnsupported
 	}
 	if marker.Phase == "initializing" {
 		if options.fault != nil {
@@ -258,6 +269,7 @@ func validateDirectory(root *safefs.Root, marker Marker, operatorName string) er
 	} else {
 		files["operator.credential"] = true
 		files["runtime-profile.json"] = true
+		files[temporaryServiceGuard] = true
 		for _, name := range managedDirectories {
 			directories[name] = true
 		}
@@ -278,6 +290,11 @@ func validateDirectory(root *safefs.Root, marker Marker, operatorName string) er
 		if entry == markerTemp(marker.InstallationID) {
 			pending, err := readMarker(root, entry)
 			if err != nil || pending.InstallationID != marker.InstallationID {
+				return ErrUnsupported
+			}
+		}
+		if entry == temporaryServiceGuard {
+			if _, err := root.ReadFile(entry, 0); err != nil {
 				return ErrUnsupported
 			}
 		}
@@ -326,6 +343,12 @@ func verifyConnection(ctx context.Context, db *sql.DB, marker Marker) error {
 	}
 	if err := verifySchema(ctx, db); err != nil {
 		return err
+	}
+	if !marker.temporaryServices {
+		var hasTemporary bool
+		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM control_metadata WHERE substr(key,1,?)=?)", len(temporaryServiceNamespace), temporaryServiceNamespace).Scan(&hasTemporary); err != nil || hasTemporary {
+			return ErrUnsupported
+		}
 	}
 	var integrity string
 	if err := db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&integrity); err != nil || integrity != "ok" {

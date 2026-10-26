@@ -78,7 +78,7 @@ export class McpBridge {
     return [...this.unavailable].sort();
   }
 
-  async callTool(namespacedName: string, args: unknown): Promise<unknown> {
+  async callTool(namespacedName: string, args: unknown, metadata?: Record<string, unknown>): Promise<unknown> {
     const separator = namespacedName.indexOf(".");
     if (separator <= 0) throw new Error("MCP tool name must use server_id.tool namespace");
     const serverId = namespacedName.slice(0, separator);
@@ -94,7 +94,7 @@ export class McpBridge {
     validateArguments(tool.inputSchema, args);
     try {
       return await server.client.callTool(
-        { name: toolName, arguments: isRecord(args) ? args : undefined },
+        { name: toolName, arguments: isRecord(args) ? args : undefined, ...(metadata ? { _meta: metadata } : {}) },
         undefined,
         { timeout: server.config.timeoutMs ?? 30_000, maxTotalTimeout: server.config.timeoutMs ?? 30_000 },
       );

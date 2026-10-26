@@ -40,7 +40,8 @@ message ServiceDefinition {
 message ServiceEndpoint { string name = 1; string protocol = 2; string host = 3; uint32 port = 4; string url = 5; }
 message ServiceAccessPort { string name = 1; uint32 port = 2; string url = 3; }
 message ServiceAccess { string hostname = 1; optional string default_url = 2; optional string default_port_name = 3; string status = 4; repeated ServiceAccessPort ports = 5; }
-message SafeError { string code = 1; string message = 2; string field = 3; string remediation = 4; string correlation_id = 5; }
+message SafeError { string code = 1; string message = 2; string field = 3; string remediation = 4; string correlation_id = 5; optional string stage = 6; optional int32 exit_code = 7; optional bool retryable = 8; optional SafeError cause = 9; }
+message TemporaryServiceStatus { string mode = 1; string state = 2; optional int32 exit_code = 3; optional string cleanup_state = 4; }
 message ServiceView {
   string work_id = 1;
   string service_id = 2;
@@ -55,6 +56,7 @@ message ServiceView {
   string created_at = 11;
   ServiceAccess access = 12;
   string memory_limit_mode = 13;
+  optional TemporaryServiceStatus temporary = 14;
 }
 message OperationView {
   string operation_id = 1;
@@ -88,8 +90,20 @@ message DeploymentContext {
   uint64 default_service_memory_bytes = 12;
   string api_version = 13;
   string service_memory_policy = 14;
+  // Absent on endpoints that cannot safely own and clean up Run-scoped work.
+  optional uint32 run_temporary_service_contract_version = 15;
+}
+message TemporaryServiceRequest {
+  string mode = 1;
+  string run_id = 2;
+  uint64 generation = 3;
+  string instance_id = 4;
+  string lease_id = 5;
 }
 message CreateServiceRequest { ServiceDefinition definition = 1; string idempotency_key = 2; }
+message CreateTemporaryServiceRequest { ServiceDefinition definition = 1; string idempotency_key = 2; TemporaryServiceRequest temporary = 3; }
+message TemporaryRunRequest { string run_id = 1; }
+message TemporaryRunLease { string lease_id = 1; }
 message ListServicesResponse { repeated ServiceView services = 1; }
 message ServiceIdRequest { string service_id = 1; }
 message MutateServiceRequest { string service_id = 1; string idempotency_key = 2; }
@@ -107,6 +121,9 @@ service WorkServices {
   rpc AuthorizeHistoryMigration(WorkPrivateRequest) returns (WorkPrivateResponse);
   rpc GetDeploymentContext(Empty) returns (DeploymentContext);
   rpc CreateService(CreateServiceRequest) returns (Acceptance);
+  rpc CreateTemporaryService(CreateTemporaryServiceRequest) returns (Acceptance);
+  rpc OpenTemporaryRunLease(TemporaryRunRequest) returns (TemporaryRunLease);
+  rpc CloseTemporaryRunLease(TemporaryRunRequest) returns (Empty);
   rpc ListServices(Empty) returns (ListServicesResponse);
   rpc GetService(ServiceIdRequest) returns (ServiceView);
   rpc UpdateService(UpdateServiceRequest) returns (Acceptance);

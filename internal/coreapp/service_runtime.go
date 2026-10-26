@@ -34,6 +34,8 @@ type serviceRuntimeError struct {
 	Collection  *contracts.DiagnosticCollection
 }
 
+var errTemporaryObservationPending = errors.New("temporary Service outcome is not yet confirmed")
+
 func (e *serviceRuntimeError) Error() string { return e.Code }
 
 func (a *Application) serviceTargetTx(tx *sql.Tx, target serviceTarget) error {
@@ -47,6 +49,28 @@ func (a *Application) serviceTargetTx(tx *sql.Tx, target serviceTarget) error {
 	}
 	if work.ControlVersion != target.Control || service.DesiredRevision != target.Revision || service.Enabled != target.Enabled || (service.TombstonedAt != nil) != target.Removed {
 		return errWorkSuperseded
+	}
+	if target.Enabled && !target.Removed {
+		temporary, found, err := corestore.ReadTemporaryServiceTx(tx, target.WorkID, target.ServiceID)
+		if err != nil {
+			return err
+		}
+		if found {
+			_, cleaning, err := corestore.ReadTemporaryCleanupTx(tx, target.WorkID, target.ServiceID)
+			if err != nil {
+				return err
+			}
+			if cleaning {
+				return errWorkSuperseded
+			}
+			open, err := corestore.TemporaryRunOpenTx(tx, temporary.Owner)
+			if err != nil {
+				return err
+			}
+			if !open {
+				return errWorkSuperseded
+			}
+		}
 	}
 	if target.OperationID != "" {
 		var latest, state string
@@ -304,6 +328,20 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 	if a.dockerRuntime == nil || a.engine == nil {
 		return errCapturedWork
 	}
+	var temporary corestore.TemporaryServiceRecord
+	var temporaryFound bool
+	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		var err error
+		temporary, temporaryFound, err = corestore.ReadTemporaryServiceTx(tx, target.WorkID, target.ServiceID)
+		return err
+	}); err != nil {
+		return err
+	}
+	if temporaryFound && temporary.State != "accepted" {
+		// A prior create/start may have reached Docker. A reconciler observes
+		// the exact instance; the command is never dispatched a second time.
+		return errTemporaryObservationPending
+	}
 	if target.OperationID == "" {
 		if err := a.serviceStage(ctx, target, "service-recovery", "started", "SERVICE_START_FAILED"); err != nil {
 			return err
@@ -331,7 +369,9 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 	}
 	defer func() {
 		outcome := "succeeded"
-		if returned != nil {
+		if errors.Is(returned, errTemporaryObservationPending) {
+			outcome = "interrupted"
+		} else if returned != nil {
 			outcome = "failed"
 			var runtimeErr *serviceRuntimeError
 			if errors.As(returned, &runtimeErr) {
@@ -392,7 +432,7 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 		if err := a.serviceTargetTx(tx, target); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`UPDATE service_heads SET observed_state='starting',last_error_json=NULL WHERE work_id=? AND service_id=?`, target.WorkID, target.ServiceID)
+		_, err := tx.Exec(`UPDATE service_heads SET observed_state='starting' WHERE work_id=? AND service_id=?`, target.WorkID, target.ServiceID)
 		return err
 	}); err != nil {
 		return err
@@ -471,9 +511,29 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 	if err := transition("service-start", "SERVICE_START_FAILED"); err != nil {
 		return err
 	}
+	if temporaryFound {
+		if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+			if err := a.serviceTargetTx(tx, target); err != nil {
+				return err
+			}
+			return corestore.MarkTemporaryLaunchingTx(tx, target.WorkID, target.ServiceID, packageNow())
+		}); err != nil {
+			return err
+		}
+	}
 	ensured, err := a.dockerRuntime.EnsureContainer(ctx, dockerengine.ContainerSpec{Identity: identity, Image: *imageID, DisplayName: networkName + "_" + definition.Name, Entrypoint: []string{definition.Command}, Command: definition.Args, Environment: environment, User: "10001:10001", CPUMillis: definition.CpuMillis, MemoryBytes: 0, WorkingDirectory: path.Clean(definition.WorkingDirectory), Network: &dockerengine.ContainerNetwork{Name: network.Name, WorkID: target.WorkID, Aliases: []string{"svc-" + definition.Name}}, Mounts: mounts})
 	if err != nil {
+		if temporaryFound {
+			return errTemporaryObservationPending
+		}
 		return &serviceRuntimeError{Code: "SERVICE_START_FAILED", Stage: "service-start"}
+	}
+	if temporaryFound {
+		if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+			return corestore.ConfirmTemporaryContainerTx(tx, target.WorkID, target.ServiceID, ensured.ID, packageNow())
+		}); err != nil {
+			return err
+		}
 	}
 	if _, err := a.registerServiceLogSource(ctx, target.WorkID, target.ServiceID, target.Revision, ensured.ID, ensured.LogPolicyVersion); err != nil {
 		return &serviceRuntimeError{Code: "SERVICE_START_FAILED", Stage: "service-start"}
@@ -508,7 +568,22 @@ func (a *Application) runServiceRuntime(ctx context.Context, target serviceTarge
 		return err
 	}
 	if _, err := a.dockerRuntime.StartContainer(ctx, identity); err != nil {
+		if temporaryFound {
+			return errTemporaryObservationPending
+		}
 		return &serviceRuntimeError{Code: "SERVICE_START_FAILED", Stage: "service-start"}
+	}
+	if temporaryFound && temporary.Mode == "once" {
+		if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+			if err := a.serviceTargetTx(tx, target); err != nil {
+				return err
+			}
+			_, err := tx.Exec(`UPDATE service_heads SET observed_state='running',applied_revision=? WHERE work_id=? AND service_id=?`, target.Revision, target.WorkID, target.ServiceID)
+			return err
+		}); err != nil {
+			return err
+		}
+		return errTemporaryObservationPending
 	}
 	if err := transition("service-readiness", "SERVICE_READINESS_TIMEOUT"); err != nil {
 		return err

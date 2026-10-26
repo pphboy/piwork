@@ -83,6 +83,11 @@ test("actual SDK continues one Session with independently authenticated Run mode
     const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const input = JSON.parse(Buffer.concat(chunks).toString()) as { model: string; thinking?: unknown };
     observed.push({ model: input.model, key: String(request.headers["x-api-key"] ?? ""), ...(input.thinking?{thinking:input.thinking}:{}) });
+    if (request.headers["x-api-key"] === "invalid-private-fixture-key") {
+      response.writeHead(401, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { type: "authentication_error", code: "invalid_api_key", message: "private provider error" } }));
+      return;
+    }
     response.writeHead(200, { "content-type": "text/event-stream" });
     const emit = (type: string, payload: unknown) => response.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
     emit("message_start", { type: "message_start", message: { id: "fixture-message", type: "message", role: "assistant", model: input.model, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } });
@@ -101,8 +106,9 @@ test("actual SDK continues one Session with independently authenticated Run mode
     const credentialPath = join(root, "default-key"); await writeFile(credentialPath, "default-private-fixture-key\n");
     const selected = { modelRef: "catalog-model-0002", label: "Second", provider: "anthropic", model: "claude-sonnet-4-5", baseUrl };
     const modelConfig = { provider: "anthropic", id: "fixture-model-one", baseUrl, credentialPath, deterministic: false };
+    let selectedCredential = "override-private-fixture-key";
     const models = new AgentRunModels(modelConfig, {
-      async models() { throw new Error("unused"); }, async resolveModel(ref) { return ref === null ? { model: { modelRef: null, label: "Default", provider: modelConfig.provider, model: modelConfig.id, baseUrl }, credential: "default-private-fixture-key" } : { model: selected, credential: "override-private-fixture-key" }; },
+      async models() { throw new Error("unused"); }, async resolveModel(ref) { return ref === null ? { model: { modelRef: null, label: "Default", provider: modelConfig.provider, model: modelConfig.id, baseUrl }, credential: "default-private-fixture-key" } : { model: selected, credential: selectedCredential }; },
     });
     const sessions = new RealAgentSessions("work-model", store, workspace, join(root, "sessions"), "context-model"); const session = sessions.create();
     const executor = new PiSdkRunExecutor(sessions, agentDirectory, modelConfig, { models, resolvedTools: [], resourceLoaderFactory: async () => {
@@ -124,12 +130,85 @@ test("actual SDK continues one Session with independently authenticated Run mode
     assert.equal(JSON.parse(third.run.actualModelJson!).thinkingLevel,'high');
     assert.equal((observed[2]?.thinking as {type:string}).type,'enabled');
     assert.ok((observed[2]?.thinking as unknown as {budget_tokens:number}).budget_tokens>0);
+    selectedCredential = "invalid-private-fixture-key";
+    const failed = await manager.submitChat({ workId: "work-model", sessionId: session.sessionId, submissionKey: "before-key-rotation", prompt: "Original prompt", modelRef: selected.modelRef });
+    const failedResult = await manager.wait(failed.run.runId);
+    assert.equal(failedResult.state, "failed");
+    assert.equal(JSON.parse(failedResult.errorJson!).code, "MODEL_AUTHENTICATION_FAILED");
+    selectedCredential = "rotated-private-fixture-key";
+    const rotated = await manager.submitChat({ workId: "work-model", sessionId: session.sessionId, submissionKey: "after-key-rotation", prompt: "New prompt", modelRef: selected.modelRef });
+    assert.equal((await manager.wait(rotated.run.runId)).finalText, "actual-model:claude-sonnet-4-5");
+    assert.equal(observed[3]?.key, "invalid-private-fixture-key");
+    assert.equal(observed[4]?.key, "rotated-private-fixture-key");
+    const replay = await manager.submitChat({ workId: "work-model", sessionId: session.sessionId, submissionKey: "before-key-rotation", prompt: "Original prompt", modelRef: selected.modelRef });
+    assert.equal(replay.run.runId, failed.run.runId);
+    assert.equal(store.getRun(failed.run.runId)?.errorJson, failedResult.errorJson);
+    assert.equal(observed.length, 5, "replaying the old Run must not call the provider");
     const history = await readFile(session.sdkHistoryPath, "utf8");
     assert.match(history, /fixture-model-one/); assert.match(history, /claude-sonnet-4-5/);
     assert.doesNotMatch(history + JSON.stringify(manager.watch(first.run.runId)) + JSON.stringify(manager.watch(second.run.runId)) + JSON.stringify(store.getRun(second.run.runId)), /private-fixture-key/);
     assert.equal(await readFile(credentialPath, "utf8"), "default-private-fixture-key\n");
     const db = await readFile(join(root, "work.sqlite")); assert.equal(db.includes(Buffer.from("override-private-fixture-key")), false);
   } finally { store.close(); await new Promise<void>((resolve) => server.close(() => resolve())); await rm(root, { recursive: true, force: true }); }
+});
+
+test("actual SDK classifies provider authentication safely for both supported protocols", async () => {
+  const root = await mkdtemp(join(tmpdir(), "piwork-provider-failure-"));
+  let responseStatus = 401;
+  let requests = 0;
+  const server = createServer((request, response) => {
+    requests++;
+    if (responseStatus === 0) { request.socket.destroy(); return; }
+    response.writeHead(responseStatus, { "content-type": "application/json", "retry-after": "0", "x-private-header": "synthetic-header-secret" });
+    response.end(JSON.stringify({ error: { type: "authentication_error", code: responseStatus === 401 ? "invalid_api_key" : "forged-401", message: "synthetic-provider-secret /private/provider/path" } }));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    for (const api of ["anthropic-messages", "openai-responses"] as const) {
+      const directory = join(root, api); await mkdir(directory);
+      const workspace = join(directory, "workspace"), agentDirectory = join(directory, "agent");
+      await mkdir(workspace); await mkdir(agentDirectory);
+      const credentialPath = join(directory, "key"); await writeFile(credentialPath, "synthetic-key-secret\n");
+      const store = WorkStore.open(join(directory, "work.sqlite"));
+      try {
+        const sessions = new RealAgentSessions("work-model", store, workspace, join(directory, "sessions"), "context-model");
+        const executor = new PiSdkRunExecutor(sessions, agentDirectory, {
+          provider: api === "anthropic-messages" ? "anthropic" : "openai", id: "fixture-model", baseUrl, api, credentialPath, deterministic: false,
+        }, { resolvedTools: [], resourceLoaderFactory: async () => {
+          const loader = new DefaultResourceLoader({ cwd: workspace, agentDir: agentDirectory, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
+          await loader.reload(); return loader;
+        } });
+        const daemon = new AgentDaemonControl({ workId: "work-model", generation: 1, instanceId: "agent-model" });
+        daemon.configure({ modelCredentialStatus: "available", contextIdentity: "context-model", loadedSkills: [], resolvedTools: [], initializationComplete: true });
+        const manager = new RunManager(store, daemon, executor);
+        for (const status of [401, 403, 429, 0]) {
+          responseStatus = status;
+          const session = sessions.create();
+          const before = requests;
+          const accepted = manager.submit({ workId: "work-model", sessionId: session.sessionId, submissionKey: `${api}-${status}`, prompt: "fixture" });
+          const run = await manager.wait(accepted.run.runId);
+          assert.equal(run.state, "failed");
+          const error = JSON.parse(run.errorJson!);
+          assert.equal(error.code, status === 401 ? "MODEL_AUTHENTICATION_FAILED" : status === 403 ? "MODEL_PERMISSION_DENIED" : "MODEL_EXECUTION_FAILED");
+          assert.equal(error.retryable, status !== 401 && status !== 403);
+          if (status === 401) assert.match(error.message, /API Key is invalid/);
+          if (status === 401 || status === 403) assert.equal(requests - before, 1, "authentication failures must not be retried");
+          else assert.ok(requests - before > 1, "transient failures retain the existing retry behavior");
+          const replay = manager.submit({ workId: "work-model", sessionId: session.sessionId, submissionKey: `${api}-${status}`, prompt: "fixture" });
+          assert.equal(replay.run.runId, run.runId);
+          const historyFile = sessions.continue(session.sessionId).getSessionFile(); assert.ok(historyFile);
+          const persisted = await readFile(historyFile, "utf8");
+          const publicFacts = JSON.stringify({ run, events: manager.watch(run.runId), history: sessions.read(session.sessionId) });
+          for (const secret of ["synthetic-key-secret", "synthetic-provider-secret", "synthetic-header-secret", "/private/provider/path"]) {
+            assert.equal(persisted.includes(secret), false, `secret in SDK history: ${secret}`);
+            assert.equal(publicFacts.includes(secret), false, `secret in Run: ${secret}`);
+          }
+        }
+      } finally { store.close(); }
+    }
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await rm(root, { recursive: true, force: true }); }
 });
 
 test("child Pi reads only the selected Work model and credential from private files", async () => {

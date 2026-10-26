@@ -3,11 +3,220 @@ package coreapp
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"piwork/internal/corestore"
 )
+
+func TestObservedServiceFailureDistinguishesExitAndMissing(t *testing.T) {
+	for _, code := range []int{0, 7} {
+		failure := observedServiceFailure(&container.InspectResponse{State: &container.State{Status: "exited", ExitCode: code}})
+		if failure == nil || failure.Code != "SERVICE_EXITED" || failure.Stage != "service-recovery" || failure.ExitCode == nil || *failure.ExitCode != code {
+			t.Fatalf("lost confirmed exit %d: %+v", code, failure)
+		}
+	}
+	missing := observedServiceFailure(nil)
+	if missing == nil || missing.Code != "SERVICE_INSTANCE_MISSING" || missing.ExitCode != nil {
+		t.Fatalf("missing container misclassified: %+v", missing)
+	}
+	if got := observedServiceFailure(&container.InspectResponse{State: &container.State{Status: "created"}}); got != nil {
+		t.Fatalf("unstarted container has no confirmed exit: %+v", got)
+	}
+}
+
+func TestServiceRecoveryRetainsSafeExitCodeAndOriginalOperation(t *testing.T) {
+	a, actor, workID := serviceAcceptFixture(t)
+	ctx := context.Background()
+	accepted, err := a.acceptServiceDefinition(ctx, actor, workID, "", 0, serviceRaw("exit-check", 250), "exit-check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := a.Store.Work(ctx, workID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE operations SET state='succeeded' WHERE id=?`, accepted.OperationID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := a.Store.Operation(ctx, accepted.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit := 0
+	target := serviceTarget{WorkID: workID, ServiceID: accepted.ServiceID, Control: work.ControlVersion, Revision: 1, Enabled: true}
+	if err := a.serviceFailure(ctx, target, &serviceRuntimeError{Code: "SERVICE_EXITED", Stage: "service-recovery", ExitCode: &exit}, false); err != nil {
+		t.Fatal(err)
+	}
+	service, err := a.Store.Service(ctx, workID, accepted.ServiceID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostic, ok := safeServiceDiagnostic(service.LastErrorJSON, accepted.ServiceID).(map[string]any)
+	if !ok || diagnostic["code"] != "SERVICE_EXITED" || diagnostic["exitCode"] != 0 || diagnostic["stage"] != "service-recovery" {
+		t.Fatalf("exit diagnosis lost: %v", diagnostic)
+	}
+	rpc, err := rpcServiceView(publicServiceView{WorkID: workID, ServiceID: accepted.ServiceID, LastError: diagnostic})
+	if err != nil || rpc.LastError == nil || rpc.LastError.Code != "SERVICE_EXITED" || rpc.LastError.CorrelationId != "" || rpc.LastError.ExitCode == nil || *rpc.LastError.ExitCode != 0 || rpc.LastError.Stage == nil || *rpc.LastError.Stage != "service-recovery" {
+		t.Fatalf("RPC lost cause or invented correlation: %+v %v", rpc, err)
+	}
+	after, err := a.Store.Operation(ctx, accepted.OperationID)
+	if err != nil || after.State != before.State || after.ErrorJSON != nil {
+		t.Fatalf("recovery changed original operation: %+v %v", after, err)
+	}
+	exit = 7
+	if err := a.serviceFailure(ctx, target, &serviceRuntimeError{Code: "SERVICE_EXITED", Stage: "service-readiness", ExitCode: &exit}, false); err != nil {
+		t.Fatal(err)
+	}
+	service, err = a.Store.Service(ctx, workID, accepted.ServiceID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostic = safeServiceDiagnostic(service.LastErrorJSON, accepted.ServiceID).(map[string]any)
+	if diagnostic["code"] != "SERVICE_EXITED" || diagnostic["exitCode"] != 7 || diagnostic["stage"] != "service-readiness" {
+		t.Fatalf("readiness diagnosis lost: %v", diagnostic)
+	}
+	if err := a.serviceFailure(ctx, target, errors.New("private Docker failure"), true); err != nil {
+		t.Fatal(err)
+	}
+	service, err = a.Store.Service(ctx, workID, accepted.ServiceID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostic = safeServiceDiagnostic(service.LastErrorJSON, accepted.ServiceID).(map[string]any)
+	if diagnostic["code"] != "DOCKER_UNAVAILABLE" || diagnostic["exitCode"] != nil || service.ObservedState != "unknown" {
+		t.Fatalf("unknown Docker state misclassified: %v", diagnostic)
+	}
+	cause, ok := diagnostic["cause"].(map[string]any)
+	if !ok || cause["code"] != "SERVICE_EXITED" || cause["exitCode"] != 7 {
+		t.Fatalf("runtime uncertainty erased the original cause: %v", diagnostic)
+	}
+	rpc, err = rpcServiceView(publicServiceView{WorkID: workID, ServiceID: accepted.ServiceID, LastError: diagnostic})
+	if err != nil || rpc.LastError == nil || rpc.LastError.Cause == nil || rpc.LastError.Cause.GetExitCode() != 7 {
+		t.Fatalf("RPC lost original cause: %+v %v", rpc, err)
+	}
+}
+
+func TestServiceWorkObservationAccountsForEveryCurrentService(t *testing.T) {
+	a, actor, workID := serviceAcceptFixture(t)
+	ctx := context.Background()
+	first, err := a.acceptServiceDefinition(ctx, actor, workID, "", 0, serviceRaw("first-app", 250), "first-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := a.acceptServiceDefinition(ctx, actor, workID, "", 0, serviceRaw("second-app", 250), "second-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE works SET desired_state='running',observed_state='ready' WHERE id=?`, workID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO runtime_generations(work_id,generation,instance_id,state,retry_count,created_at,updated_at) VALUES(?,1,'agent-current','ready',0,?,?)`, workID, packageNow(), packageNow()); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`UPDATE service_heads SET observed_state='failed',last_error_json='{"code":"SERVICE_EXITED","stage":"service-recovery","exitCode":0}' WHERE work_id=?`, workID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(want string) {
+		t.Helper()
+		if err := a.updateServiceWorkObservation(ctx, workID); err != nil {
+			t.Fatal(err)
+		}
+		work, err := a.Store.Work(ctx, workID, false)
+		if err != nil || work.ObservedState != want {
+			t.Fatalf("Work state: got %s, want %s (%v)", work.ObservedState, want, err)
+		}
+	}
+	check("degraded")
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE service_heads SET observed_state='ready',last_error_json=NULL WHERE work_id=? AND service_id=?`, workID, first.ServiceID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check("degraded")
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE service_heads SET enabled=0,observed_state='disabled',last_error_json=NULL WHERE work_id=? AND service_id=?`, workID, second.ServiceID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check("ready")
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE service_revisions SET definition_json=json_set(definition_json,'$.required',json('true')) WHERE work_id=? AND service_id=?`, workID, first.ServiceID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`UPDATE service_heads SET observed_state='failed' WHERE work_id=? AND service_id=?`, workID, first.ServiceID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check("failed")
+}
+
+func TestStaleServiceRecoveryCannotOverwriteNewTarget(t *testing.T) {
+	a, actor, workID := serviceAcceptFixture(t)
+	ctx := context.Background()
+	accepted, err := a.acceptServiceDefinition(ctx, actor, workID, "", 0, serviceRaw("fenced-app", 250), "fenced-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := a.Store.Work(ctx, workID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := serviceTarget{WorkID: workID, ServiceID: accepted.ServiceID, Control: work.ControlVersion, Revision: 1, Enabled: true}
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE works SET control_version=control_version+1 WHERE id=?`, workID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	exit := 7
+	if err := a.serviceFailure(ctx, target, &serviceRuntimeError{Code: "SERVICE_EXITED", Stage: "service-recovery", ExitCode: &exit}, false); !errors.Is(err, errWorkSuperseded) {
+		t.Fatalf("stale recovery was not fenced: %v", err)
+	}
+	service, err := a.Store.Service(ctx, workID, accepted.ServiceID, false)
+	if err != nil || service.LastErrorJSON != nil {
+		t.Fatalf("stale recovery overwrote newer target: %+v %v", service, err)
+	}
+}
+
+func TestAutomaticServiceRecoveryPreservesOriginalFailure(t *testing.T) {
+	a, actor, workID := serviceAcceptFixture(t)
+	ctx := context.Background()
+	accepted, err := a.acceptServiceDefinition(ctx, actor, workID, "", 0, serviceRaw("recover-app", 250), "recover-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := a.Store.Work(ctx, workID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const original = `{"code":"SERVICE_EXITED","stage":"service-recovery","exitCode":0}`
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE service_heads SET observed_state='starting',last_error_json=? WHERE work_id=? AND service_id=?`, original, workID, accepted.ServiceID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	target := serviceTarget{WorkID: workID, ServiceID: accepted.ServiceID, Control: work.ControlVersion, Revision: 1, Enabled: true}
+	if err := a.serviceFailure(ctx, target, &serviceRuntimeError{Code: "SERVICE_START_FAILED", Stage: "service-start"}, false); err != nil {
+		t.Fatal(err)
+	}
+	service, err := a.Store.Service(ctx, workID, accepted.ServiceID, false)
+	if err != nil || service.ObservedState != "failed" || service.LastErrorJSON == nil || *service.LastErrorJSON != original {
+		t.Fatalf("automatic recovery replaced original cause: %+v %v", service, err)
+	}
+}
 
 func TestServiceRecoveryBudgetPersistsAcrossCoreRestart(t *testing.T) {
 	a, actor, workID := serviceAcceptFixture(t)

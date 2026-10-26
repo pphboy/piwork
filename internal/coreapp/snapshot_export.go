@@ -77,6 +77,9 @@ func (a *Application) acceptWorkExport(ctx context.Context, actor identity.Princ
 		if err := a.rejectUnresolvedHistoryTx(tx, workID); err != nil {
 			return corestore.MutationEffect{}, err
 		}
+		if err := corestore.AssertTemporaryCleanupConfirmedTx(tx, workID); err != nil {
+			return corestore.MutationEffect{}, err
+		}
 		var busy int
 		if err := tx.QueryRow(`SELECT count(*) FROM operations WHERE work_id=? AND id!=? AND state IN ('pending','running')`, workID, id).Scan(&busy); err != nil {
 			return corestore.MutationEffect{}, err
@@ -124,6 +127,9 @@ func snapshotPublicError(err error) error {
 	}
 	if errors.Is(err, corestore.ErrIdempotencyConflict) {
 		return contracts.NewError("IDEMPOTENCY_CONFLICT", "")
+	}
+	if errors.Is(err, corestore.ErrTemporaryCleanupPending) {
+		return contracts.NewError("TEMPORARY_CLEANUP_PENDING", "")
 	}
 	if errors.Is(err, corestore.ErrSnapshotBusy) {
 		return contracts.NewError("WORK_BUSY", "")

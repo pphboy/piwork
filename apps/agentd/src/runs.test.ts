@@ -10,8 +10,33 @@ import { AgentDaemonControl } from "./daemon.js";
 import { RunManager, type RunExecutionContext, type RunExecutor } from "./runs.js";
 import type { RunModelResolver } from "./run-models.js";
 import { RunModelError } from "./run-models.js";
+import { ModelProviderError } from "./model-provider-errors.js";
 
 const NOW = "2026-09-20T00:00:00.000Z";
+
+test("provider authentication failures preserve safe terminal state and original submission", async () => {
+  await withStore(async store => {
+    const executor = new ControlledExecutor();
+    const manager = readyManager(store, executor);
+    for (const code of ["MODEL_AUTHENTICATION_FAILED", "MODEL_PERMISSION_DENIED"] as const) {
+      const input = { workId: "work-a", sessionId: "session-a", submissionKey: code, prompt: "fixture" };
+      const accepted = manager.submit(input);
+      await executor.waitUntilRunning(accepted.run.runId);
+      executor.reject(accepted.run.runId, new ModelProviderError(code));
+      const run = await manager.wait(accepted.run.runId);
+      const failure = JSON.parse(run.errorJson!);
+      assert.equal(run.state, "failed");
+      assert.equal(failure.code, code);
+      assert.equal(failure.retryable, false);
+      assert.match(failure.message, /administrator/);
+      const replay = manager.submit(input);
+      assert.equal(replay.run.runId, run.runId);
+      assert.equal(replay.reused, true);
+      const state = manager.watch(run.runId).findLast(event => event.eventType === "state");
+      assert.deepEqual(JSON.parse(state!.payloadJson).error, failure);
+    }
+  });
+});
 
 test("unavailable Work storage rejects submission before executor side effects", async () => {
   await withStore(async (store) => {

@@ -53,6 +53,31 @@ test("retained Work tool policy hides a denied built-in service tool", () => {
   assert.deepEqual(mcpTools({ listTools: () => [] } as unknown as McpBridge, { allowed: [], denied: [] }), []);
 });
 
+test("temporary Service tools bind the actual Run and fail closed when capability or policy is absent", async () => {
+  const discovered = { serverId: "work-services", name: "service_create", namespacedName: "work-services.service_create", modelName: "work-services__service_create", inputSchema: {} };
+  const calls: Array<{ args: unknown; metadata: unknown }> = [];
+  const bridge = { listTools: () => [discovered], async callTool(_name: string, args: unknown, metadata: unknown) { calls.push({ args, metadata }); return { content: [{ type: "text", text: "accepted" }] }; } } as unknown as McpBridge;
+  let supported = false, opens = 0;
+  const control = { async temporaryServicesSupported() { return supported; }, async openTemporaryRunLease(runId: string) { opens++; assert.equal(runId, "run-actual"); return "lease-private"; } };
+  const attempted = new Set<string>();
+  const run = { workId: "work-actual", sessionId: "session-actual", runId: "run-actual", prompt: "probe", signal: new AbortController().signal, emit() {} };
+  const context = { run, generation: 3, instanceId: "agent-current", control, attempted };
+  assert.equal(mcpTools(bridge, { allowed: [], denied: ["work-services.service_create"] }, context).length, 0);
+  const tool = mcpTools(bridge, { allowed: [], denied: [] }, context)[0]!.definition;
+  const execute = tool.execute as (...args: any[]) => Promise<any>;
+  const unavailable = await execute("call-1", { temporaryMode: "once" });
+  assert.equal(unavailable.details.isError, true);
+  assert.equal(opens, 0); assert.equal(calls.length, 0); assert.equal(attempted.size, 0);
+  supported = true;
+  const result = await execute("call-2", { temporaryMode: "once" });
+  assert.equal(result.details.isError, false);
+  assert.deepEqual(calls[0]!.metadata, { "piwork.run": { runId: "run-actual", generation: "3", instanceId: "agent-current", leaseId: "lease-private" } });
+  assert.deepEqual([...attempted], ["run-actual"]);
+  assert.equal(JSON.stringify(result).includes("lease-private"), false);
+  await execute("call-3", { definition: {}, idempotencyKey: "ordinary" });
+  assert.equal(calls[1]!.metadata, undefined);
+});
+
 test("package tool policy maps canonical keys to native SDK names with deny precedence", () => {
   const tools = new Map([["package:@example/tools:hello", "hello"], ["package:@example/tools:other", "other"]]);
   assert.deepEqual(selectPackageTools(tools, { allowed: [], denied: ["package:@example/tools:other"] }, new Set(["read"])),

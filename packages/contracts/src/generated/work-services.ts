@@ -116,6 +116,17 @@ export interface SafeError {
   field: string;
   remediation: string;
   correlationId: string;
+  stage?: string | undefined;
+  exitCode?: number | undefined;
+  retryable?: boolean | undefined;
+  cause?: SafeError | undefined;
+}
+
+export interface TemporaryServiceStatus {
+  mode: string;
+  state: string;
+  exitCode?: number | undefined;
+  cleanupState?: string | undefined;
 }
 
 export interface ServiceView {
@@ -132,6 +143,7 @@ export interface ServiceView {
   createdAt: string;
   access?: ServiceAccess | undefined;
   memoryLimitMode: string;
+  temporary?: TemporaryServiceStatus | undefined;
 }
 
 export interface OperationView {
@@ -168,11 +180,35 @@ export interface DeploymentContext {
   defaultServiceMemoryBytes: bigint;
   apiVersion: string;
   serviceMemoryPolicy: string;
+  /** Absent on endpoints that cannot safely own and clean up Run-scoped work. */
+  runTemporaryServiceContractVersion?: number | undefined;
+}
+
+export interface TemporaryServiceRequest {
+  mode: string;
+  runId: string;
+  generation: bigint;
+  instanceId: string;
+  leaseId: string;
 }
 
 export interface CreateServiceRequest {
   definition?: ServiceDefinition | undefined;
   idempotencyKey: string;
+}
+
+export interface CreateTemporaryServiceRequest {
+  definition?: ServiceDefinition | undefined;
+  idempotencyKey: string;
+  temporary?: TemporaryServiceRequest | undefined;
+}
+
+export interface TemporaryRunRequest {
+  runId: string;
+}
+
+export interface TemporaryRunLease {
+  leaseId: string;
 }
 
 export interface ListServicesResponse {
@@ -1788,7 +1824,17 @@ export const ServiceAccess: MessageFns<ServiceAccess> = {
 };
 
 function createBaseSafeError(): SafeError {
-  return { code: "", message: "", field: "", remediation: "", correlationId: "" };
+  return {
+    code: "",
+    message: "",
+    field: "",
+    remediation: "",
+    correlationId: "",
+    stage: undefined,
+    exitCode: undefined,
+    retryable: undefined,
+    cause: undefined,
+  };
 }
 
 export const SafeError: MessageFns<SafeError> = {
@@ -1807,6 +1853,18 @@ export const SafeError: MessageFns<SafeError> = {
     }
     if (message.correlationId !== "") {
       writer.uint32(42).string(message.correlationId);
+    }
+    if (message.stage !== undefined) {
+      writer.uint32(50).string(message.stage);
+    }
+    if (message.exitCode !== undefined) {
+      writer.uint32(56).int32(message.exitCode);
+    }
+    if (message.retryable !== undefined) {
+      writer.uint32(64).bool(message.retryable);
+    }
+    if (message.cause !== undefined) {
+      SafeError.encode(message.cause, writer.uint32(74).fork()).join();
     }
     return writer;
   },
@@ -1864,6 +1922,38 @@ export const SafeError: MessageFns<SafeError> = {
             message.correlationId = reader.string();
             continue;
           }
+          case 6: {
+            if (tag !== 50) {
+              break;
+            }
+
+            message.stage = reader.string();
+            continue;
+          }
+          case 7: {
+            if (tag !== 56) {
+              break;
+            }
+
+            message.exitCode = reader.int32();
+            continue;
+          }
+          case 8: {
+            if (tag !== 64) {
+              break;
+            }
+
+            message.retryable = reader.bool();
+            continue;
+          }
+          case 9: {
+            if (tag !== 74) {
+              break;
+            }
+
+            message.cause = SafeError.decode(reader, reader.uint32());
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -1887,6 +1977,14 @@ export const SafeError: MessageFns<SafeError> = {
         : isSet(object.correlation_id)
         ? globalThis.String(object.correlation_id)
         : "",
+      stage: isSet(object.stage) ? globalThis.String(object.stage) : undefined,
+      exitCode: isSet(object.exitCode)
+        ? globalThis.Number(object.exitCode)
+        : isSet(object.exit_code)
+        ? globalThis.Number(object.exit_code)
+        : undefined,
+      retryable: isSet(object.retryable) ? globalThis.Boolean(object.retryable) : undefined,
+      cause: isSet(object.cause) ? SafeError.fromJSON(object.cause) : undefined,
     };
   },
 
@@ -1907,6 +2005,18 @@ export const SafeError: MessageFns<SafeError> = {
     if (message.correlationId !== "") {
       obj.correlationId = message.correlationId;
     }
+    if (message.stage !== undefined) {
+      obj.stage = message.stage;
+    }
+    if (message.exitCode !== undefined) {
+      obj.exitCode = Math.round(message.exitCode);
+    }
+    if (message.retryable !== undefined) {
+      obj.retryable = message.retryable;
+    }
+    if (message.cause !== undefined) {
+      obj.cause = SafeError.toJSON(message.cause);
+    }
     return obj;
   },
 
@@ -1920,6 +2030,137 @@ export const SafeError: MessageFns<SafeError> = {
     message.field = object.field ?? "";
     message.remediation = object.remediation ?? "";
     message.correlationId = object.correlationId ?? "";
+    message.stage = object.stage ?? undefined;
+    message.exitCode = object.exitCode ?? undefined;
+    message.retryable = object.retryable ?? undefined;
+    message.cause = (object.cause !== undefined && object.cause !== null)
+      ? SafeError.fromPartial(object.cause)
+      : undefined;
+    return message;
+  },
+};
+
+function createBaseTemporaryServiceStatus(): TemporaryServiceStatus {
+  return { mode: "", state: "", exitCode: undefined, cleanupState: undefined };
+}
+
+export const TemporaryServiceStatus: MessageFns<TemporaryServiceStatus> = {
+  encode(message: TemporaryServiceStatus, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.mode !== "") {
+      writer.uint32(10).string(message.mode);
+    }
+    if (message.state !== "") {
+      writer.uint32(18).string(message.state);
+    }
+    if (message.exitCode !== undefined) {
+      writer.uint32(24).int32(message.exitCode);
+    }
+    if (message.cleanupState !== undefined) {
+      writer.uint32(34).string(message.cleanupState);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): TemporaryServiceStatus {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseTemporaryServiceStatus();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.mode = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.state = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 24) {
+              break;
+            }
+
+            message.exitCode = reader.int32();
+            continue;
+          }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.cleanupState = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): TemporaryServiceStatus {
+    return {
+      mode: isSet(object.mode) ? globalThis.String(object.mode) : "",
+      state: isSet(object.state) ? globalThis.String(object.state) : "",
+      exitCode: isSet(object.exitCode)
+        ? globalThis.Number(object.exitCode)
+        : isSet(object.exit_code)
+        ? globalThis.Number(object.exit_code)
+        : undefined,
+      cleanupState: isSet(object.cleanupState)
+        ? globalThis.String(object.cleanupState)
+        : isSet(object.cleanup_state)
+        ? globalThis.String(object.cleanup_state)
+        : undefined,
+    };
+  },
+
+  toJSON(message: TemporaryServiceStatus): unknown {
+    const obj: any = {};
+    if (message.mode !== "") {
+      obj.mode = message.mode;
+    }
+    if (message.state !== "") {
+      obj.state = message.state;
+    }
+    if (message.exitCode !== undefined) {
+      obj.exitCode = Math.round(message.exitCode);
+    }
+    if (message.cleanupState !== undefined) {
+      obj.cleanupState = message.cleanupState;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<TemporaryServiceStatus>): TemporaryServiceStatus {
+    return TemporaryServiceStatus.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<TemporaryServiceStatus>): TemporaryServiceStatus {
+    const message = createBaseTemporaryServiceStatus();
+    message.mode = object.mode ?? "";
+    message.state = object.state ?? "";
+    message.exitCode = object.exitCode ?? undefined;
+    message.cleanupState = object.cleanupState ?? undefined;
     return message;
   },
 };
@@ -1939,6 +2180,7 @@ function createBaseServiceView(): ServiceView {
     createdAt: "",
     access: undefined,
     memoryLimitMode: "",
+    temporary: undefined,
   };
 }
 
@@ -1982,6 +2224,9 @@ export const ServiceView: MessageFns<ServiceView> = {
     }
     if (message.memoryLimitMode !== "") {
       writer.uint32(106).string(message.memoryLimitMode);
+    }
+    if (message.temporary !== undefined) {
+      TemporaryServiceStatus.encode(message.temporary, writer.uint32(114).fork()).join();
     }
     return writer;
   },
@@ -2103,6 +2348,14 @@ export const ServiceView: MessageFns<ServiceView> = {
             message.memoryLimitMode = reader.string();
             continue;
           }
+          case 14: {
+            if (tag !== 114) {
+              break;
+            }
+
+            message.temporary = TemporaryServiceStatus.decode(reader, reader.uint32());
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2164,6 +2417,7 @@ export const ServiceView: MessageFns<ServiceView> = {
         : isSet(object.memory_limit_mode)
         ? globalThis.String(object.memory_limit_mode)
         : "",
+      temporary: isSet(object.temporary) ? TemporaryServiceStatus.fromJSON(object.temporary) : undefined,
     };
   },
 
@@ -2208,6 +2462,9 @@ export const ServiceView: MessageFns<ServiceView> = {
     if (message.memoryLimitMode !== "") {
       obj.memoryLimitMode = message.memoryLimitMode;
     }
+    if (message.temporary !== undefined) {
+      obj.temporary = TemporaryServiceStatus.toJSON(message.temporary);
+    }
     return obj;
   },
 
@@ -2235,6 +2492,9 @@ export const ServiceView: MessageFns<ServiceView> = {
       ? ServiceAccess.fromPartial(object.access)
       : undefined;
     message.memoryLimitMode = object.memoryLimitMode ?? "";
+    message.temporary = (object.temporary !== undefined && object.temporary !== null)
+      ? TemporaryServiceStatus.fromPartial(object.temporary)
+      : undefined;
     return message;
   },
 };
@@ -2616,6 +2876,7 @@ function createBaseDeploymentContext(): DeploymentContext {
     defaultServiceMemoryBytes: 0n,
     apiVersion: "",
     serviceMemoryPolicy: "",
+    runTemporaryServiceContractVersion: undefined,
   };
 }
 
@@ -2676,6 +2937,9 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
     }
     if (message.serviceMemoryPolicy !== "") {
       writer.uint32(114).string(message.serviceMemoryPolicy);
+    }
+    if (message.runTemporaryServiceContractVersion !== undefined) {
+      writer.uint32(120).uint32(message.runTemporaryServiceContractVersion);
     }
     return writer;
   },
@@ -2805,6 +3069,14 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
             message.serviceMemoryPolicy = reader.string();
             continue;
           }
+          case 15: {
+            if (tag !== 120) {
+              break;
+            }
+
+            message.runTemporaryServiceContractVersion = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2885,6 +3157,11 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
         : isSet(object.service_memory_policy)
         ? globalThis.String(object.service_memory_policy)
         : "",
+      runTemporaryServiceContractVersion: isSet(object.runTemporaryServiceContractVersion)
+        ? globalThis.Number(object.runTemporaryServiceContractVersion)
+        : isSet(object.run_temporary_service_contract_version)
+        ? globalThis.Number(object.run_temporary_service_contract_version)
+        : undefined,
     };
   },
 
@@ -2932,6 +3209,9 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
     if (message.serviceMemoryPolicy !== "") {
       obj.serviceMemoryPolicy = message.serviceMemoryPolicy;
     }
+    if (message.runTemporaryServiceContractVersion !== undefined) {
+      obj.runTemporaryServiceContractVersion = Math.round(message.runTemporaryServiceContractVersion);
+    }
     return obj;
   },
 
@@ -2963,6 +3243,157 @@ export const DeploymentContext: MessageFns<DeploymentContext> = {
         : 0n;
     message.apiVersion = object.apiVersion ?? "";
     message.serviceMemoryPolicy = object.serviceMemoryPolicy ?? "";
+    message.runTemporaryServiceContractVersion = object.runTemporaryServiceContractVersion ?? undefined;
+    return message;
+  },
+};
+
+function createBaseTemporaryServiceRequest(): TemporaryServiceRequest {
+  return { mode: "", runId: "", generation: 0n, instanceId: "", leaseId: "" };
+}
+
+export const TemporaryServiceRequest: MessageFns<TemporaryServiceRequest> = {
+  encode(message: TemporaryServiceRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.mode !== "") {
+      writer.uint32(10).string(message.mode);
+    }
+    if (message.runId !== "") {
+      writer.uint32(18).string(message.runId);
+    }
+    if (message.generation !== 0n) {
+      if (BigInt.asUintN(64, message.generation) !== message.generation) {
+        throw new globalThis.Error("value provided for field message.generation of type uint64 too large");
+      }
+      writer.uint32(24).uint64(message.generation);
+    }
+    if (message.instanceId !== "") {
+      writer.uint32(34).string(message.instanceId);
+    }
+    if (message.leaseId !== "") {
+      writer.uint32(42).string(message.leaseId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): TemporaryServiceRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseTemporaryServiceRequest();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.mode = reader.string();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.runId = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 24) {
+              break;
+            }
+
+            message.generation = reader.uint64() as bigint;
+            continue;
+          }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.instanceId = reader.string();
+            continue;
+          }
+          case 5: {
+            if (tag !== 42) {
+              break;
+            }
+
+            message.leaseId = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): TemporaryServiceRequest {
+    return {
+      mode: isSet(object.mode) ? globalThis.String(object.mode) : "",
+      runId: isSet(object.runId)
+        ? globalThis.String(object.runId)
+        : isSet(object.run_id)
+        ? globalThis.String(object.run_id)
+        : "",
+      generation: isSet(object.generation) ? BigInt(object.generation) : 0n,
+      instanceId: isSet(object.instanceId)
+        ? globalThis.String(object.instanceId)
+        : isSet(object.instance_id)
+        ? globalThis.String(object.instance_id)
+        : "",
+      leaseId: isSet(object.leaseId)
+        ? globalThis.String(object.leaseId)
+        : isSet(object.lease_id)
+        ? globalThis.String(object.lease_id)
+        : "",
+    };
+  },
+
+  toJSON(message: TemporaryServiceRequest): unknown {
+    const obj: any = {};
+    if (message.mode !== "") {
+      obj.mode = message.mode;
+    }
+    if (message.runId !== "") {
+      obj.runId = message.runId;
+    }
+    if (message.generation !== 0n) {
+      obj.generation = message.generation.toString();
+    }
+    if (message.instanceId !== "") {
+      obj.instanceId = message.instanceId;
+    }
+    if (message.leaseId !== "") {
+      obj.leaseId = message.leaseId;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<TemporaryServiceRequest>): TemporaryServiceRequest {
+    return TemporaryServiceRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<TemporaryServiceRequest>): TemporaryServiceRequest {
+    const message = createBaseTemporaryServiceRequest();
+    message.mode = object.mode ?? "";
+    message.runId = object.runId ?? "";
+    message.generation = (object.generation !== undefined && object.generation !== null)
+      ? BigInt(object.generation)
+      : 0n;
+    message.instanceId = object.instanceId ?? "";
+    message.leaseId = object.leaseId ?? "";
     return message;
   },
 };
@@ -3054,6 +3485,261 @@ export const CreateServiceRequest: MessageFns<CreateServiceRequest> = {
       ? ServiceDefinition.fromPartial(object.definition)
       : undefined;
     message.idempotencyKey = object.idempotencyKey ?? "";
+    return message;
+  },
+};
+
+function createBaseCreateTemporaryServiceRequest(): CreateTemporaryServiceRequest {
+  return { definition: undefined, idempotencyKey: "", temporary: undefined };
+}
+
+export const CreateTemporaryServiceRequest: MessageFns<CreateTemporaryServiceRequest> = {
+  encode(message: CreateTemporaryServiceRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.definition !== undefined) {
+      ServiceDefinition.encode(message.definition, writer.uint32(10).fork()).join();
+    }
+    if (message.idempotencyKey !== "") {
+      writer.uint32(18).string(message.idempotencyKey);
+    }
+    if (message.temporary !== undefined) {
+      TemporaryServiceRequest.encode(message.temporary, writer.uint32(26).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): CreateTemporaryServiceRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseCreateTemporaryServiceRequest();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.definition = ServiceDefinition.decode(reader, reader.uint32());
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.idempotencyKey = reader.string();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.temporary = TemporaryServiceRequest.decode(reader, reader.uint32());
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): CreateTemporaryServiceRequest {
+    return {
+      definition: isSet(object.definition) ? ServiceDefinition.fromJSON(object.definition) : undefined,
+      idempotencyKey: isSet(object.idempotencyKey)
+        ? globalThis.String(object.idempotencyKey)
+        : isSet(object.idempotency_key)
+        ? globalThis.String(object.idempotency_key)
+        : "",
+      temporary: isSet(object.temporary) ? TemporaryServiceRequest.fromJSON(object.temporary) : undefined,
+    };
+  },
+
+  toJSON(message: CreateTemporaryServiceRequest): unknown {
+    const obj: any = {};
+    if (message.definition !== undefined) {
+      obj.definition = ServiceDefinition.toJSON(message.definition);
+    }
+    if (message.idempotencyKey !== "") {
+      obj.idempotencyKey = message.idempotencyKey;
+    }
+    if (message.temporary !== undefined) {
+      obj.temporary = TemporaryServiceRequest.toJSON(message.temporary);
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<CreateTemporaryServiceRequest>): CreateTemporaryServiceRequest {
+    return CreateTemporaryServiceRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<CreateTemporaryServiceRequest>): CreateTemporaryServiceRequest {
+    const message = createBaseCreateTemporaryServiceRequest();
+    message.definition = (object.definition !== undefined && object.definition !== null)
+      ? ServiceDefinition.fromPartial(object.definition)
+      : undefined;
+    message.idempotencyKey = object.idempotencyKey ?? "";
+    message.temporary = (object.temporary !== undefined && object.temporary !== null)
+      ? TemporaryServiceRequest.fromPartial(object.temporary)
+      : undefined;
+    return message;
+  },
+};
+
+function createBaseTemporaryRunRequest(): TemporaryRunRequest {
+  return { runId: "" };
+}
+
+export const TemporaryRunRequest: MessageFns<TemporaryRunRequest> = {
+  encode(message: TemporaryRunRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.runId !== "") {
+      writer.uint32(10).string(message.runId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): TemporaryRunRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseTemporaryRunRequest();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.runId = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): TemporaryRunRequest {
+    return {
+      runId: isSet(object.runId)
+        ? globalThis.String(object.runId)
+        : isSet(object.run_id)
+        ? globalThis.String(object.run_id)
+        : "",
+    };
+  },
+
+  toJSON(message: TemporaryRunRequest): unknown {
+    const obj: any = {};
+    if (message.runId !== "") {
+      obj.runId = message.runId;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<TemporaryRunRequest>): TemporaryRunRequest {
+    return TemporaryRunRequest.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<TemporaryRunRequest>): TemporaryRunRequest {
+    const message = createBaseTemporaryRunRequest();
+    message.runId = object.runId ?? "";
+    return message;
+  },
+};
+
+function createBaseTemporaryRunLease(): TemporaryRunLease {
+  return { leaseId: "" };
+}
+
+export const TemporaryRunLease: MessageFns<TemporaryRunLease> = {
+  encode(message: TemporaryRunLease, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.leaseId !== "") {
+      writer.uint32(10).string(message.leaseId);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): TemporaryRunLease {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseTemporaryRunLease();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.leaseId = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  fromJSON(object: any): TemporaryRunLease {
+    return {
+      leaseId: isSet(object.leaseId)
+        ? globalThis.String(object.leaseId)
+        : isSet(object.lease_id)
+        ? globalThis.String(object.lease_id)
+        : "",
+    };
+  },
+
+  toJSON(message: TemporaryRunLease): unknown {
+    const obj: any = {};
+    if (message.leaseId !== "") {
+      obj.leaseId = message.leaseId;
+    }
+    return obj;
+  },
+
+  create(base?: DeepPartial<TemporaryRunLease>): TemporaryRunLease {
+    return TemporaryRunLease.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<TemporaryRunLease>): TemporaryRunLease {
+    const message = createBaseTemporaryRunLease();
+    message.leaseId = object.leaseId ?? "";
     return message;
   },
 };
@@ -3825,6 +4511,34 @@ export const WorkServicesService = {
     responseSerialize: (value: Acceptance): Buffer => Buffer.from(Acceptance.encode(value).finish()),
     responseDeserialize: (value: Buffer): Acceptance => Acceptance.decode(value),
   },
+  createTemporaryService: {
+    path: "/piwork.core.services.v1.WorkServices/CreateTemporaryService" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: CreateTemporaryServiceRequest): Buffer =>
+      Buffer.from(CreateTemporaryServiceRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): CreateTemporaryServiceRequest => CreateTemporaryServiceRequest.decode(value),
+    responseSerialize: (value: Acceptance): Buffer => Buffer.from(Acceptance.encode(value).finish()),
+    responseDeserialize: (value: Buffer): Acceptance => Acceptance.decode(value),
+  },
+  openTemporaryRunLease: {
+    path: "/piwork.core.services.v1.WorkServices/OpenTemporaryRunLease" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: TemporaryRunRequest): Buffer => Buffer.from(TemporaryRunRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): TemporaryRunRequest => TemporaryRunRequest.decode(value),
+    responseSerialize: (value: TemporaryRunLease): Buffer => Buffer.from(TemporaryRunLease.encode(value).finish()),
+    responseDeserialize: (value: Buffer): TemporaryRunLease => TemporaryRunLease.decode(value),
+  },
+  closeTemporaryRunLease: {
+    path: "/piwork.core.services.v1.WorkServices/CloseTemporaryRunLease" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: TemporaryRunRequest): Buffer => Buffer.from(TemporaryRunRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): TemporaryRunRequest => TemporaryRunRequest.decode(value),
+    responseSerialize: (value: Empty): Buffer => Buffer.from(Empty.encode(value).finish()),
+    responseDeserialize: (value: Buffer): Empty => Empty.decode(value),
+  },
   listServices: {
     path: "/piwork.core.services.v1.WorkServices/ListServices" as const,
     requestStream: false as const,
@@ -3928,6 +4642,9 @@ export interface WorkServicesServer extends UntypedServiceImplementation {
   authorizeHistoryMigration: handleUnaryCall<WorkPrivateRequest, WorkPrivateResponse>;
   getDeploymentContext: handleUnaryCall<Empty, DeploymentContext>;
   createService: handleUnaryCall<CreateServiceRequest, Acceptance>;
+  createTemporaryService: handleUnaryCall<CreateTemporaryServiceRequest, Acceptance>;
+  openTemporaryRunLease: handleUnaryCall<TemporaryRunRequest, TemporaryRunLease>;
+  closeTemporaryRunLease: handleUnaryCall<TemporaryRunRequest, Empty>;
   listServices: handleUnaryCall<Empty, ListServicesResponse>;
   getService: handleUnaryCall<ServiceIdRequest, ServiceView>;
   updateService: handleUnaryCall<UpdateServiceRequest, Acceptance>;
@@ -4060,6 +4777,51 @@ export interface WorkServicesClient extends Client {
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: Acceptance) => void,
+  ): ClientUnaryCall;
+  createTemporaryService(
+    request: CreateTemporaryServiceRequest,
+    callback: (error: ServiceError | null, response: Acceptance) => void,
+  ): ClientUnaryCall;
+  createTemporaryService(
+    request: CreateTemporaryServiceRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: Acceptance) => void,
+  ): ClientUnaryCall;
+  createTemporaryService(
+    request: CreateTemporaryServiceRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: Acceptance) => void,
+  ): ClientUnaryCall;
+  openTemporaryRunLease(
+    request: TemporaryRunRequest,
+    callback: (error: ServiceError | null, response: TemporaryRunLease) => void,
+  ): ClientUnaryCall;
+  openTemporaryRunLease(
+    request: TemporaryRunRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: TemporaryRunLease) => void,
+  ): ClientUnaryCall;
+  openTemporaryRunLease(
+    request: TemporaryRunRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: TemporaryRunLease) => void,
+  ): ClientUnaryCall;
+  closeTemporaryRunLease(
+    request: TemporaryRunRequest,
+    callback: (error: ServiceError | null, response: Empty) => void,
+  ): ClientUnaryCall;
+  closeTemporaryRunLease(
+    request: TemporaryRunRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: Empty) => void,
+  ): ClientUnaryCall;
+  closeTemporaryRunLease(
+    request: TemporaryRunRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: Empty) => void,
   ): ClientUnaryCall;
   listServices(
     request: Empty,

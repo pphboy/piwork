@@ -9,11 +9,13 @@ import (
 	"errors"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"piwork/internal/contracts"
 	"piwork/internal/rpc/servicesv1"
+	"strconv"
 	"time"
 	"unicode/utf16"
 )
@@ -100,8 +102,11 @@ func newServer(lifetime context.Context, client servicesv1.WorkServicesClient) (
 			if err != nil {
 				return toolError("Service tool arguments are invalid."), nil
 			}
-			response, err := invoke(ctx, client, tool.Name, payload)
+			response, err := invoke(ctx, client, tool.Name, payload, request.Params.Meta)
 			if err != nil {
+				if tool.Name == "service_create" && status.Code(err) == codes.Unimplemented {
+					return toolError("Run-scoped temporary Service is unavailable in this Work."), nil
+				}
 				return toolError(status.Code(err).String() + ": Service request could not be completed."), nil
 			}
 			projected, err := (protojson.MarshalOptions{EmitDefaultValues: true}).Marshal(response)
@@ -195,7 +200,7 @@ func toolError(message string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: message}}}
 }
 
-func invoke(ctx context.Context, client servicesv1.WorkServicesClient, name string, raw []byte) (proto.Message, error) {
+func invoke(ctx context.Context, client servicesv1.WorkServicesClient, name string, raw []byte, metadata mcp.Meta) (proto.Message, error) {
 	timeout := 5 * time.Second
 	switch name {
 	case "service_create", "service_update", "service_start", "service_stop", "service_restart", "service_remove", "service_retry":
@@ -211,6 +216,7 @@ func invoke(ctx context.Context, client servicesv1.WorkServicesClient, name stri
 		OperationID      string          `json:"operationId"`
 		ExpectedRevision uint64          `json:"expectedRevision"`
 		TailLines        uint32          `json:"tailLines"`
+		TemporaryMode    string          `json:"temporaryMode"`
 		Definition       json.RawMessage `json:"definition"`
 	}
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -227,6 +233,31 @@ func invoke(ctx context.Context, client servicesv1.WorkServicesClient, name stri
 	case "deployment_context":
 		return client.GetDeploymentContext(ctx, &servicesv1.Empty{})
 	case "service_create":
+		if fields.TemporaryMode != "" {
+			capabilities, err := client.GetDeploymentContext(ctx, &servicesv1.Empty{})
+			if err != nil {
+				return nil, err
+			}
+			if capabilities.GetRunTemporaryServiceContractVersion() != 1 {
+				return nil, status.Error(codes.Unimplemented, "temporary Service capability unavailable")
+			}
+			owner, ok := metadata["piwork.run"].(map[string]any)
+			if !ok {
+				return nil, status.Error(codes.FailedPrecondition, "trusted Run context unavailable")
+			}
+			runID, _ := owner["runId"].(string)
+			instanceID, _ := owner["instanceId"].(string)
+			leaseID, _ := owner["leaseId"].(string)
+			generationText, _ := owner["generation"].(string)
+			generation, err := strconv.ParseUint(generationText, 10, 63)
+			if err != nil || generation == 0 || runID == "" || len(runID) > 256 || instanceID == "" || len(instanceID) > 256 || leaseID == "" || len(leaseID) > 256 {
+				return nil, status.Error(codes.FailedPrecondition, "trusted Run context invalid")
+			}
+			return client.CreateTemporaryService(ctx, &servicesv1.CreateTemporaryServiceRequest{
+				Definition: definition, IdempotencyKey: fields.IdempotencyKey,
+				Temporary: &servicesv1.TemporaryServiceRequest{Mode: fields.TemporaryMode, RunId: runID, InstanceId: instanceID, Generation: generation, LeaseId: leaseID},
+			})
+		}
 		return client.CreateService(ctx, &servicesv1.CreateServiceRequest{Definition: definition, IdempotencyKey: fields.IdempotencyKey})
 	case "service_list":
 		return client.ListServices(ctx, &servicesv1.Empty{})

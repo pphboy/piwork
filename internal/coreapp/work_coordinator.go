@@ -196,6 +196,22 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 	if current == nil {
 		for _, operation := range operations {
 			if operation.WorkID != nil && *operation.WorkID == workID && isServiceOperation(operation.Kind) {
+				if operation.Kind == "cleanup-temporary-service" {
+					continue
+				}
+				if operation.Kind == "create-temporary-service" && operation.State == "running" && operation.ServiceID != nil {
+					var waiting bool
+					if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+						record, found, err := corestore.ReadTemporaryServiceTx(tx, workID, *operation.ServiceID)
+						waiting = found && record.State != "accepted"
+						return err
+					}); err != nil {
+						return false, err
+					}
+					if waiting {
+						continue
+					}
+				}
 				return true, a.processServiceOperation(ctx, operation)
 			}
 		}

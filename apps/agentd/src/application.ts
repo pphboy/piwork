@@ -256,6 +256,7 @@ export class AgentApplication {
       }
       const bridgedTools = mcpTools(mcp, loaded.toolPolicy);
       const customTools = bridgedTools.map((tool) => tool.definition);
+      const temporaryAttempts = new Set<string>();
       const reserved = new Set<string>([...BUILT_IN_WORK_TOOLS, ...customTools.map((tool) => tool.name)]);
       const packageTools = selectPackageTools(loaded.packageTools, loaded.toolPolicy, reserved);
       const resolvedTools = [...loaded.resolvedTools, ...bridgedTools.map((tool) => tool.canonicalName), ...packageTools.map(([canonical]) => canonical)];
@@ -272,8 +273,12 @@ export class AgentApplication {
         join(config.dataDirectory, "agent"),
         { ...config.model, deterministic: config.deterministic },
         { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools, models, commands: loaded.commands, packageTools: new Map(packageTools),
+          customToolsFactory: (run) => mcpTools(mcp!, loaded.toolPolicy, { run, generation: config.generation, instanceId: config.instanceId, control, attempted: temporaryAttempts }).map((tool) => tool.definition),
           onSdkToolResult: (run, result) => candidates.recordSdkResult(run, result, new Map(packageTools)) },
       )), undefined, models, prompt => { requireResourceCommand(loaded.commands, prompt); }, activeBrain !== undefined, sessionId => sessions.hasImageContext(sessionId));
+      runs.onSettled((run) => {
+        if (temporaryAttempts.delete(run.runId) && control) void control.closeTemporaryRunLease(run.runId).catch(() => undefined);
+      });
       runs.recover();
       daemon.configure({
         modelCredentialStatus: "available",
@@ -778,6 +783,7 @@ function mcpServer(server: McpServer): McpBridgeServer {
 export function mcpTools(
   bridge: McpBridge,
   policy: CapturedWorkContext["toolPolicy"],
+  temporary?: { readonly run: RunExecutionContext; readonly generation: number; readonly instanceId: string; readonly control?: Pick<WorkPrivateClient, "temporaryServicesSupported" | "openTemporaryRunLease">; readonly attempted: Set<string> },
 ): Array<{ readonly canonicalName: string; readonly definition: ToolDefinition }> {
   const allowed = new Set(policy.allowed);
   const denied = new Set(policy.denied);
@@ -791,7 +797,20 @@ export function mcpTools(
         description: `${tool.description ?? `MCP tool ${tool.namespacedName}`} (canonical name: ${tool.namespacedName})`,
         parameters: tool.inputSchema as any,
         execute: async (_id, parameters) => {
-          const result = await bridge.callTool(tool.namespacedName, parameters) as { content?: unknown; isError?: boolean };
+          let metadata: Record<string, unknown> | undefined;
+          if (tool.namespacedName === "work-services.service_create" && parameters && typeof parameters === "object" && "temporaryMode" in parameters) {
+            try {
+              if (!temporary?.control || !await temporary.control.temporaryServicesSupported()) throw new Error("unsupported");
+              temporary.run.signal.throwIfAborted();
+              temporary.attempted.add(temporary.run.runId);
+              const leaseId = await temporary.control.openTemporaryRunLease(temporary.run.runId);
+              temporary.run.signal.throwIfAborted();
+              metadata = { "piwork.run": { runId: temporary.run.runId, generation: String(temporary.generation), instanceId: temporary.instanceId, leaseId } };
+            } catch {
+              return { content: [{ type: "text", text: "Run-scoped temporary Service is unavailable or its Run ownership could not be confirmed." }], details: { serverId: tool.serverId, canonicalName: tool.namespacedName, isError: true } };
+            }
+          }
+          const result = await bridge.callTool(tool.namespacedName, parameters, metadata) as { content?: unknown; isError?: boolean };
           return { content: Array.isArray(result.content) ? result.content as any : [{ type: "text", text: JSON.stringify(result) }], details: { serverId: tool.serverId, canonicalName: tool.namespacedName, isError: result.isError === true } };
         },
       }),

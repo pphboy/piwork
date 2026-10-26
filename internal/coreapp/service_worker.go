@@ -15,7 +15,7 @@ import (
 
 func isServiceOperation(kind string) bool {
 	switch kind {
-	case "create-service", "update-service", "enable-service", "disable-service", "restart-service", "retry-service", "remove-service":
+	case "create-service", "create-temporary-service", "cleanup-temporary-service", "update-service", "enable-service", "disable-service", "restart-service", "retry-service", "remove-service":
 		return true
 	}
 	return false
@@ -43,7 +43,7 @@ func (a *Application) processServiceOperation(ctx context.Context, operation cor
 	}
 	defer lock.Unlock()
 	parent := ctx
-	ctx, release := a.serviceEffectContext(ctx, target.WorkID, target.Control)
+	ctx, release := a.serviceEffectContext(ctx, target.WorkID, target.Control, target.ServiceID)
 	defer release()
 	if err := a.serviceTargetCurrent(ctx, target); err != nil {
 		if errors.Is(err, errWorkSuperseded) {
@@ -89,6 +89,11 @@ func (a *Application) processServiceOperation(ctx context.Context, operation cor
 	}
 	if parent.Err() != nil {
 		return parent.Err()
+	}
+	if errors.Is(err, errTemporaryObservationPending) && ctx.Err() == nil {
+		// The command is observed asynchronously so it cannot monopolize the
+		// Work operation lock while waiting for a long-running process.
+		return nil
 	}
 	if ctx.Err() != nil {
 		// A newer accepted target cancelled this Engine/RPC operation. The
@@ -189,6 +194,13 @@ func updateServiceWorkObservationTx(tx *sql.Tx, workID string) error {
 	state := "ready"
 	for _, service := range services {
 		if !service.Enabled || service.ObservedState == "ready" {
+			continue
+		}
+		_, temporary, err := corestore.ReadTemporaryServiceTx(tx, workID, service.ServiceID)
+		if err != nil {
+			return err
+		}
+		if temporary {
 			continue
 		}
 		var definition contracts.ServiceDefinition
