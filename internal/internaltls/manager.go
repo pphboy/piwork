@@ -392,6 +392,10 @@ func (m *Manager) AgentClientConfig(ctx context.Context, scope Scope) (*tls.Conf
 	if err != nil {
 		return nil, err
 	}
+	return agentClientTLSConfig(scope, identity.ServerName, ca, b)
+}
+
+func agentClientTLSConfig(scope Scope, serverName string, ca keyPair, b bundle) (*tls.Config, error) {
 	cert, err := certificatePair(b.Pairs[CoreClient])
 	if err != nil {
 		return nil, err
@@ -400,12 +404,88 @@ func (m *Manager) AgentClientConfig(ctx context.Context, scope Scope) (*tls.Conf
 	if err != nil {
 		return nil, err
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS12, ServerName: identity.ServerName, RootCAs: pool, Certificates: []tls.Certificate{cert}, VerifyConnection: func(state tls.ConnectionState) error {
+	return &tls.Config{MinVersion: tls.VersionTLS12, ServerName: serverName, RootCAs: pool, Certificates: []tls.Certificate{cert}, VerifyConnection: func(state tls.ConnectionState) error {
 		if len(state.PeerCertificates) == 0 {
 			return ErrIdentity
 		}
 		return verifyRole(state.PeerCertificates[0], scope, AgentServer)
 	}}, nil
+}
+
+// ExistingAgentClientConfig validates already published material without
+// creating, repairing, or rotating files mounted into a running Agent.
+func (m *Manager) ExistingAgentClientConfig(ctx context.Context, scope Scope) (*tls.Config, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || ctx.Err() != nil || !scope.valid(true) || scope.InstallationID != m.store.InstallationID() {
+		return nil, ErrIdentity
+	}
+	caBundle, raw, err := m.decode(ctx, "internal_tls/authority", Scope{InstallationID: scope.InstallationID}, []string{"installation-ca"})
+	if err != nil || len(raw) == 0 || len(caBundle.Previous) != 0 {
+		return nil, ErrMaterial
+	}
+	ca := caBundle.Pairs["installation-ca"]
+	caCert, _, err := validateAuthority(ca, scope.InstallationID, m.now())
+	if err != nil {
+		return nil, err
+	}
+	pki, exists, err := openExistingPrivateChild(m.root, "pki")
+	if err != nil || !exists {
+		return nil, ErrMaterial
+	}
+	defer pki.Close()
+	if err := checkPublishedPairs(pki, caBundle, map[string]os.FileMode{"installation-ca": 0600}, true); err != nil {
+		return nil, err
+	}
+	roles := []string{AgentServer, CoreClient, AgentServiceClient}
+	b, raw, err := m.decode(ctx, fmt.Sprintf("internal_tls/generation/%s/%d", scope.WorkID, scope.Generation), scope, roles)
+	if err != nil || len(raw) == 0 || len(b.Previous) != 0 {
+		return nil, ErrMaterial
+	}
+	for _, role := range roles {
+		cert, _, err := parsePair(b.Pairs[role])
+		if err != nil || cert.CheckSignatureFrom(caCert) != nil || verifyRole(cert, scope, role) != nil || cert.KeyUsage != x509.KeyUsageDigitalSignature|x509.KeyUsageKeyEncipherment || len(cert.ExtKeyUsage) != 1 {
+			return nil, ErrMaterial
+		}
+		usage := x509.ExtKeyUsageClientAuth
+		if role == AgentServer {
+			usage = x509.ExtKeyUsageServerAuth
+		}
+		if cert.ExtKeyUsage[0] != usage {
+			return nil, ErrMaterial
+		}
+		if m.now().Before(cert.NotBefore) || !m.now().Add(time.Minute).Before(cert.NotAfter) {
+			return nil, ErrExpired
+		}
+	}
+	work, exists, err := openExistingPrivateChild(m.root, scope.WorkID)
+	if err != nil || !exists {
+		return nil, ErrMaterial
+	}
+	defer work.Close()
+	root, exists, err := openExistingPrivateChild(work, fmt.Sprintf("tls-generation-%d", scope.Generation))
+	if err != nil || !exists {
+		return nil, ErrMaterial
+	}
+	defer root.Close()
+	if err := checkPublishedPairs(root, b, map[string]os.FileMode{AgentServer: 0644, AgentServiceClient: 0644}, false); err != nil {
+		return nil, err
+	}
+	return agentClientTLSConfig(scope, scope.commonName(AgentServer), ca, b)
+}
+
+func checkPublishedPairs(root *safefs.Root, b bundle, modes map[string]os.FileMode, authority bool) error {
+	for _, publication := range pairPublications(b, modes) {
+		mode := publication.mode
+		if authority && publication.name == "installation-ca.crt" {
+			mode = 0644
+		}
+		raw, err := root.ReadMaterial(publication.name, 1<<20, mode)
+		if err != nil || !bytes.Equal(raw, publication.value) {
+			return ErrMaterial
+		}
+	}
+	return nil
 }
 func (m *Manager) ServiceClientConfig(ctx context.Context, scope Scope) (*tls.Config, error) {
 	m.mu.Lock()

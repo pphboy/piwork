@@ -155,12 +155,12 @@ func (a *Application) recoverCapturedWorks(ctx context.Context) error {
 			} else if !errors.Is(err, corestore.ErrNotFound) {
 				return err
 			}
-			if _, err := a.startCapturedWork(ctx, id, generation, instanceID); err != nil && !errors.Is(err, errWorkSuperseded) {
+			if _, err, writeErr := a.startCapturedWorkForRecovery(ctx, id, generation, instanceID, work.ControlVersion); err != nil && !errors.Is(err, errWorkSuperseded) {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				if err := a.recordRecoveryFailure(ctx, id, generation); err != nil {
-					return err
+				if writeErr != nil {
+					return writeErr
 				}
 			}
 		} else if work.DesiredState == "stopped" {
@@ -187,29 +187,52 @@ func runtimeRetryPermitted(value corestore.RuntimeGeneration, at time.Time) bool
 	return true
 }
 
-func (a *Application) recordRecoveryFailure(ctx context.Context, workID string, generation int64) error {
-	work, err := a.Store.Work(ctx, workID, false)
-	if err != nil || work.DesiredState != "running" {
-		return err
-	}
-	_, err = a.Store.RuntimeGeneration(ctx, workID, generation)
-	if err == nil {
-		_, err = a.Store.RecordRuntimeFailure(ctx, workID, generation, time.Now().UTC())
-	} else if errors.Is(err, corestore.ErrNotFound) {
-		err = nil
-	}
+func (a *Application) recordRecoveryFailure(ctx context.Context, workID string, generation, control int64) error {
+	now := time.Now().UTC()
+	updated := false
+	err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		work, err := corestore.ReadWork(tx, workID, false)
+		if err != nil {
+			return err
+		}
+		if work.DesiredState != "running" || work.ControlVersion != control {
+			return nil
+		}
+		plan, found, err := corestore.ReadRuntimeReplacementTx(tx, workID)
+		if err != nil {
+			return err
+		}
+		if found && plan.ControlVersion == control && plan.Stage == "starting" && (generation == plan.SourceGeneration || generation == plan.Target.Generation) {
+			generation = plan.Target.Generation
+		}
+		var latest int64
+		if err := tx.QueryRow(`SELECT COALESCE(MAX(generation),0) FROM runtime_generations WHERE work_id=?`, workID).Scan(&latest); err != nil {
+			return err
+		}
+		if latest != generation {
+			return nil
+		}
+		if _, err := corestore.RecordRuntimeFailureTx(ctx, tx, workID, generation, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE works SET observed_state='failed',updated_at=? WHERE id=? AND desired_state='running' AND control_version=?`, now.Format(time.RFC3339Nano), workID, control); err != nil {
+			return err
+		}
+		updated = true
+		return nil
+	})
 	if err != nil {
 		return err
+	}
+	if !updated {
+		return nil
 	}
 	if safefs.ValidFileName(workID) {
 		log.Printf("piwork: Work %s Agent recovery attempt failed", workID)
 	} else {
 		log.Print("piwork: Work Agent recovery attempt failed")
 	}
-	return a.Store.Write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE works SET observed_state='failed',updated_at=? WHERE id=? AND desired_state='running'`, time.Now().UTC().Format(time.RFC3339Nano), workID)
-		return err
-	})
+	return nil
 }
 
 func (a *Application) runtimeRecoveryLoop() {
@@ -312,7 +335,7 @@ func (a *Application) reconcileReadyAgents(ctx context.Context) {
 			if client := a.agentRoutes.Revoke(item.workID); client != nil {
 				client.Close()
 			}
-			_ = a.recordRecoveryFailure(ctx, item.workID, item.generation)
+			_ = a.recordRecoveryFailure(ctx, item.workID, item.generation, work.ControlVersion)
 		}()
 	}
 }
@@ -325,12 +348,7 @@ func (a *Application) recoverDueGeneration(ctx context.Context, generation cores
 	if err != nil || work.DesiredState != "running" {
 		return
 	}
-	if _, err := a.startCapturedWork(ctx, generation.WorkID, generation.Generation, *generation.InstanceID); err != nil {
-		if errors.Is(err, errWorkSuperseded) || ctx.Err() != nil {
-			return
-		}
-		_ = a.recordRecoveryFailure(ctx, generation.WorkID, generation.Generation)
-	}
+	_, _, _ = a.startCapturedWorkForRecovery(ctx, generation.WorkID, generation.Generation, *generation.InstanceID, work.ControlVersion)
 }
 
 func (a *Application) resetStableGenerations(ctx context.Context) error {

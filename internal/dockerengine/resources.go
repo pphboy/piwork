@@ -523,6 +523,58 @@ func (r *Runtime) EnsureContainer(ctx context.Context, input ContainerSpec) (Ens
 	}
 	return EnsuredContainer{ID: result.ID, Name: name, SpecHash: hash, Created: true, LogPolicyVersion: ObservedContainerLogPolicyVersion(view.Container.HostConfig)}, nil
 }
+
+// ValidateRunningContainer verifies an existing instance without creating or
+// starting any resource. A label alone is not proof of the actual mounts.
+func (r *Runtime) ValidateRunningContainer(ctx context.Context, input ContainerSpec) (*container.InspectResponse, error) {
+	spec, err := normalizeContainer(input)
+	if err != nil {
+		return nil, err
+	}
+	if spec.Network == nil || spec.Network.WorkID != spec.Identity.WorkID {
+		return nil, ErrSpecification
+	}
+	if _, err := r.inspectNetwork(ctx, spec.Network.Name, spec.Identity.WorkID); err != nil {
+		return nil, err
+	}
+	if err := r.validateMounts(ctx, spec); err != nil {
+		return nil, err
+	}
+	view, err := r.findContainer(ctx, spec.Identity)
+	if err != nil {
+		return nil, err
+	}
+	if view == nil {
+		return nil, ErrResourceMissing
+	}
+	if view.Config == nil || view.HostConfig == nil || view.State == nil || !view.State.Running {
+		return nil, ErrStateUnknown
+	}
+	hash, err := containerSpecHash(spec)
+	if err != nil || view.Config.Labels[SpecLabel] != hash || view.Config.Image != spec.Image || view.Config.User != spec.User || view.Config.WorkingDir != spec.WorkingDirectory || view.HostConfig.NanoCPUs != spec.CPUMillis*1000000 || view.HostConfig.Memory != spec.MemoryBytes || string(view.HostConfig.NetworkMode) != spec.Network.Name {
+		return nil, ErrSpecificationConflict
+	}
+	if len(view.HostConfig.Mounts) != len(spec.Mounts) {
+		return nil, ErrSpecificationConflict
+	}
+	actual := make(map[string]mount.Mount, len(view.HostConfig.Mounts))
+	for _, item := range view.HostConfig.Mounts {
+		if _, exists := actual[item.Target]; exists {
+			return nil, ErrSpecificationConflict
+		}
+		actual[item.Target] = item
+	}
+	for _, expected := range spec.Mounts {
+		item, exists := actual[expected.Target]
+		if !exists || string(item.Type) != expected.Type || item.Source != expected.Source || item.ReadOnly != expected.ReadOnly {
+			return nil, ErrSpecificationConflict
+		}
+		if expected.Type == "volume" && item.VolumeOptions != nil && item.VolumeOptions.NoCopy != !expected.CopyImageData {
+			return nil, ErrSpecificationConflict
+		}
+	}
+	return view, nil
+}
 func (r *Runtime) StartContainer(ctx context.Context, identity ContainerIdentity) (*container.InspectResponse, error) {
 	view, err := r.findContainer(ctx, identity)
 	if err != nil {

@@ -60,6 +60,7 @@ func (a *Application) acceptWorkAction(ctx context.Context, actor identity.Princ
 		if err := a.Identity.AuthorizePrincipalTx(tx, actor); err != nil {
 			return corestore.MutationEffect{}, err
 		}
+		var capturedContext string
 		if desired == "running" {
 			if err := assertPackageScopeIdleTx(tx, workID); err != nil {
 				return corestore.MutationEffect{}, err
@@ -84,6 +85,7 @@ func (a *Application) acceptWorkAction(ctx context.Context, actor identity.Princ
 				captured = current.DesiredContextID
 			}
 			if captured != nil {
+				capturedContext = *captured
 				if err := putCapturedStart(tx, startCaptureKey(operationID), *captured); err != nil {
 					return corestore.MutationEffect{}, err
 				}
@@ -91,6 +93,11 @@ func (a *Application) acceptWorkAction(ctx context.Context, actor identity.Princ
 		}
 		if _, err := corestore.AdvanceWorkControl(tx, workID, work.ControlVersion, desired, ""); err != nil {
 			return corestore.MutationEffect{}, err
+		}
+		if desired == "running" {
+			if err := corestore.RebaseRuntimeReplacementTx(tx, workID, operationID, capturedContext, work.ControlVersion+1, time.Now()); err != nil {
+				return corestore.MutationEffect{}, err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE operations SET state='superseded',updated_at=? WHERE work_id=? AND state IN ('pending','running') AND target_version<?`, time.Now().UTC().Format(time.RFC3339Nano), workID, work.ControlVersion+1); err != nil {
 			return corestore.MutationEffect{}, err
@@ -254,6 +261,22 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 	var observed string
 	ctx = a.traceOperation(ctx, *current)
 	if work.DesiredState == "running" {
+		// Keep explicit starts and their terminal Operation publication in the
+		// same lock scope as automatic recovery effects and failure writeback.
+		value, _ := a.workLocks.LoadOrStore(workID, &sync.Mutex{})
+		lock := value.(*sync.Mutex)
+		if err := lockWorkContext(ctx, lock); err != nil {
+			return true, err
+		}
+		defer lock.Unlock()
+		work, err = a.Store.Work(ctx, workID, false)
+		if err != nil {
+			return true, err
+		}
+		if work.ControlVersion != current.TargetVersion || work.DesiredState != "running" {
+			_, err := a.completeDiagnosticOperation(ctx, current.ID, "superseded", nil, nil, nil)
+			return true, err
+		}
 		if current.Kind == "retry-work" {
 			err = a.settleWorkFiles(ctx, workID, true)
 		}
@@ -267,13 +290,13 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 			if captureErr != nil {
 				err = captureErr
 			} else {
-				generation, instanceID, err = a.selectCapturedAgentGeneration(ctx, work, captured)
+				generation, instanceID, err = a.selectCapturedAgentGenerationLocked(ctx, work, captured)
 			}
 			if err == nil {
 				if existing, lookupErr := a.Store.RuntimeGeneration(ctx, workID, generation); lookupErr == nil {
 					if current.Kind == "retry-work" {
 						if existing.State != "ready" {
-							_, err = a.Store.ResetRuntimeRetryBudget(ctx, workID, generation, time.Now().UTC())
+							_, err = a.Store.ResetRuntimeRetryBudgetOnce(ctx, workID, generation, current.ID, time.Now().UTC())
 						}
 					} else if !runtimeRetryPermitted(existing, time.Now().UTC()) {
 						err = errCapturedWork
@@ -298,26 +321,21 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 					if captureErr != nil {
 						err = captureErr
 					} else {
-						_, err = a.startCapturedWork(ctx, workID, generation, instanceID, captured)
+						_, err = a.startCapturedWorkLocked(ctx, workID, generation, instanceID, captured)
 					}
 				} else {
-					value, _ := a.workLocks.LoadOrStore(workID, &sync.Mutex{})
-					lock := value.(*sync.Mutex)
-					if err = lockWorkContext(ctx, lock); err == nil {
-						_, err = a.restoreWorkServicesLocked(ctx, workID)
-						lock.Unlock()
+					_, err = a.restoreWorkServicesLocked(ctx, workID)
+					if err == nil {
+						err = a.updateServiceWorkObservation(ctx, workID)
 						if err == nil {
-							err = a.updateServiceWorkObservation(ctx, workID)
-							if err == nil {
-								err = a.Store.Write(ctx, func(tx *sql.Tx) error {
-									gate, failure := corestore.ReadFileGate(tx, workID)
-									if failure == nil && !gate.Closed {
-										return nil
-									}
-									_, failure = corestore.OpenFileGate(tx, workID, packageNow())
-									return failure
-								})
-							}
+							err = a.Store.Write(ctx, func(tx *sql.Tx) error {
+								gate, failure := corestore.ReadFileGate(tx, workID)
+								if failure == nil && !gate.Closed {
+									return nil
+								}
+								_, failure = corestore.OpenFileGate(tx, workID, packageNow())
+								return failure
+							})
 						}
 					}
 				}
@@ -349,6 +367,11 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 		return true, finishErr
 	}
 	if err != nil {
+		if work.DesiredState == "running" && a.workResumeFaultForTest != nil {
+			if hookErr := a.workResumeFaultForTest("operation-failure"); hookErr != nil {
+				return true, hookErr
+			}
+		}
 		diagnostic := diagnosticCause(err, "WORK_OPERATION_FAILED", "runtime-start")
 		errorJSON, _ := json.Marshal(diagnostic)
 		value := string(errorJSON)
@@ -417,7 +440,7 @@ func (a *Application) selectAgentGeneration(ctx context.Context, work corestore.
 	err := a.Store.Read(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `SELECT generation,COALESCE(instance_id,''),state FROM runtime_generations WHERE work_id=? ORDER BY generation DESC LIMIT 1`, work.ID).Scan(&generation, &instanceID, &state)
 	})
-	if err == nil && instanceID != "" && (state == "stopped" || state == "starting" || state == "ready" || state == "recovering" || state == "failed" || state == "draining") {
+	if err == nil && instanceID != "" && (state == "stopped" || state == "preparing" || state == "starting" || state == "ready" || state == "recovering" || state == "failed" || state == "draining") {
 		return generation, instanceID, nil
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -436,6 +459,25 @@ func (a *Application) selectAgentGeneration(ctx context.Context, work corestore.
 func (a *Application) stopAcceptedWork(ctx context.Context, workID string) (returned error) {
 	var fileErr error
 	defer func() { returned = errors.Join(returned, fileErr) }()
+	defer func() {
+		if returned == nil && fileErr == nil {
+			plan, found, err := a.runtimeReplacement(ctx, workID)
+			if err != nil {
+				returned = err
+				return
+			}
+			if found {
+				work, err := a.Store.Work(ctx, workID, false)
+				if err != nil {
+					returned = err
+					return
+				}
+				if work.DesiredState != "running" && work.ControlVersion > plan.ControlVersion {
+					returned = a.Store.Write(ctx, func(tx *sql.Tx) error { return corestore.CancelRuntimeReplacementTx(tx, workID) })
+				}
+			}
+		}
+	}()
 	if a.dockerRuntime == nil {
 		return errCapturedWork
 	}

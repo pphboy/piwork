@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"sync"
 
 	"github.com/google/uuid"
 	"piwork/internal/contracts"
@@ -52,7 +51,8 @@ func (a *Application) readCapturedStart(ctx context.Context, key string) (string
 // An initial launch may have failed before active was published. A later
 // accepted Start can capture a different desired context; the existing Agent
 // must be removed with its original identity before allocating a new one.
-func (a *Application) selectCapturedAgentGeneration(ctx context.Context, work corestore.WorkRecord, captured string) (int64, string, error) {
+// The caller holds the Work lock through generation selection and activation.
+func (a *Application) selectCapturedAgentGenerationLocked(ctx context.Context, work corestore.WorkRecord, captured string) (int64, string, error) {
 	generation, instance, err := a.selectAgentGeneration(ctx, work)
 	if err != nil || work.ActiveContextID != nil || captured == "" {
 		return generation, instance, err
@@ -61,12 +61,6 @@ func (a *Application) selectCapturedAgentGeneration(ctx context.Context, work co
 	if err != nil || prior == "" || prior == captured {
 		return generation, instance, err
 	}
-	value, _ := a.workLocks.LoadOrStore(work.ID, &sync.Mutex{})
-	lock := value.(*sync.Mutex)
-	if err := lockWorkContext(ctx, lock); err != nil {
-		return 0, "", err
-	}
-	defer lock.Unlock()
 	current, err := a.Store.Work(ctx, work.ID, false)
 	if err != nil {
 		return 0, "", err

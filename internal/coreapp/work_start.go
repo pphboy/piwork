@@ -89,7 +89,37 @@ func (a *Application) startWorkRuntime(ctx context.Context, spec workruntime.Sta
 			sourceID = source.SourceID
 		}
 	}
-	started, err := a.workRuntime.Start(ctx, spec)
+	var started workruntime.Started
+	var err error
+	if spec.AdoptExisting {
+		started, err = a.workRuntime.Adopt(ctx, spec)
+	} else {
+		if a.workResumeFaultForTest != nil {
+			plan, found, err := a.runtimeReplacement(ctx, spec.Scope.WorkID)
+			if err != nil {
+				return started, err
+			}
+			if found && plan.Stage == "starting" && plan.Target.Generation == spec.Scope.Generation {
+				spec.AfterContainerCreate = func(context.Context) error { return a.workResumeFaultForTest("target-created") }
+			}
+		}
+		var exists bool
+		if err = a.Store.Read(ctx, func(tx *sql.Tx) error {
+			_, found, err := corestore.ReadRuntimeLaunchTx(tx, spec.Scope.WorkID, spec.Scope.Generation)
+			exists = found
+			return err
+		}); err != nil {
+			return started, err
+		}
+		if exists {
+			spec.AfterCredentialPublication = func(ctx context.Context) error {
+				return a.Store.Write(ctx, func(tx *sql.Tx) error {
+					return corestore.MarkRuntimeLaunchPublishedTx(tx, spec.Scope.WorkID, spec.Scope.Generation, spec.Scope.InstanceID, time.Now())
+				})
+			}
+		}
+		started, err = a.workRuntime.Start(ctx, spec)
+	}
 	if err != nil {
 		if sourceID != "" && a.dockerRuntime != nil {
 			if view, inspectErr := a.dockerRuntime.InspectContainer(ctx, workruntime.AgentContainerIdentity(spec.Scope, spec.ContextID)); inspectErr == nil && view != nil {
@@ -150,12 +180,15 @@ func (a *Application) confirmMissingAgent(ctx context.Context, workID string) er
 }
 
 type capturedWork struct {
-	contextID     string
-	configuration string
-	imageID       string
-	profileJSON   string
-	revision      int64
-	control       int64
+	contextID         string
+	configuration     string
+	imageID           string
+	profileJSON       string
+	modelRef          string
+	credentialRef     string
+	credentialVersion string
+	revision          int64
+	control           int64
 }
 
 // capturedStartSpec derives every launch input from durable, immutable Work
@@ -165,6 +198,13 @@ func (a *Application) capturedStartSpec(ctx context.Context, workID string, gene
 }
 
 func (a *Application) capturedContextSpec(ctx context.Context, workID string, generation int64, instanceID, contextID string, allowStopped bool) (workruntime.StartSpec, capturedWork, error) {
+	return a.capturedContextSpecForLaunch(ctx, workID, generation, instanceID, contextID, allowStopped, nil, false)
+}
+
+// Existing running Agents use the captured execution definition without
+// resolving a new startup secret. A pending launch instead uses its pinned
+// secret reference while continuing to check the model's current admission.
+func (a *Application) capturedContextSpecForLaunch(ctx context.Context, workID string, generation int64, instanceID, contextID string, allowStopped bool, binding *corestore.RuntimeLaunchBinding, adopting bool) (workruntime.StartSpec, capturedWork, error) {
 	var spec workruntime.StartSpec
 	var record capturedWork
 	if !safefs.ValidFileName(workID) || !safefs.ValidFileName(instanceID) || generation < 1 || generation > contracts.MaxSafeInteger {
@@ -189,20 +229,33 @@ func (a *Application) capturedContextSpec(ctx context.Context, workID string, ge
 	if json.Unmarshal([]byte(record.configuration), &configured) != nil {
 		return spec, capturedWork{}, errCapturedWork
 	}
-	err = a.Store.Read(ctx, func(tx *sql.Tx) error {
-		metadata, _, _, err := a.catalogModelTx(tx, string(configured.ModelRef), false)
+	record.modelRef = string(configured.ModelRef)
+	var secret []byte
+	if !adopting {
+		err = a.Store.Read(ctx, func(tx *sql.Tx) error {
+			metadata, _, version, err := a.catalogModelTx(tx, record.modelRef, false)
+			if err != nil {
+				return err
+			}
+			record.credentialRef = metadata.CredentialRef
+			record.credentialVersion = version
+			return nil
+		})
 		if err != nil {
-			return err
+			return spec, capturedWork{}, err
 		}
-		profile.Model.CredentialRef = metadata.CredentialRef
-		return nil
-	})
-	if err != nil {
-		return spec, capturedWork{}, err
-	}
-	secret, err := a.files.ReadSecret(profile.Model.CredentialRef)
-	if err != nil || len(secret) < 2 || secret[len(secret)-1] != '\n' {
-		return spec, capturedWork{}, errCapturedWork
+		if binding != nil {
+			if binding.WorkID != workID || binding.Generation != generation || binding.InstanceID != instanceID || binding.ContextID != record.contextID || binding.ImageID != record.imageID || binding.ModelRef != record.modelRef {
+				return spec, capturedWork{}, errCapturedWork
+			}
+			record.credentialRef = binding.CredentialRef
+			record.credentialVersion = binding.CredentialVersion
+		}
+		secret, err = a.files.ReadSecret(record.credentialRef)
+		if err != nil || len(secret) < 2 || secret[len(secret)-1] != '\n' {
+			return spec, capturedWork{}, errCapturedWork
+		}
+		secret = secret[:len(secret)-1]
 	}
 	contextDirectory := filepath.Join(a.options.DataDirectory, "works", workID, "contexts", record.contextID)
 	root, err := safefs.OpenExistingRoot(contextDirectory)
@@ -224,16 +277,68 @@ func (a *Application) capturedContextSpec(ctx context.Context, workID string, ge
 	spec = workruntime.StartSpec{
 		Scope:   internaltls.Scope{InstallationID: a.Store.InstallationID(), WorkID: workID, Generation: generation, InstanceID: instanceID},
 		ImageID: record.imageID, ContextID: record.contextID, ContextDirectory: contextDirectory,
-		Model: workruntime.Model{Provider: profile.Model.Provider, ID: profile.Model.ID, BaseURL: profile.Model.BaseURL, Credential: secret[:len(secret)-1], API: profile.Model.API, Capabilities: profile.Model.Capabilities},
+		Model: workruntime.Model{Provider: profile.Model.Provider, ID: profile.Model.ID, BaseURL: profile.Model.BaseURL, Credential: secret, API: profile.Model.API, Capabilities: profile.Model.Capabilities},
 	}
 	return spec, record, nil
 }
 
-// startCapturedWork is the single production entry for turning a captured
-// Work into an Agent route. A future lifecycle worker chooses the generation
-// and calls this after accepting its durable Operation. Failed or superseded
-// launches never publish a route. Per-Work locks leave other Works independent.
+// startCapturedWork acquires the Work lock before turning a captured Work into
+// an Agent route. Callers that hold the lock through Operation publication use
+// startCapturedWorkLocked instead. Failed or superseded launches never publish
+// a route. Per-Work locks leave other Works independent.
 func (a *Application) startCapturedWork(ctx context.Context, workID string, generation int64, instanceID string, capturedContexts ...string) (workruntime.Started, error) {
+	started, err, _ := a.runWorkStartAttempt(ctx, workID, generation, nil, func() (workruntime.Started, error) {
+		return a.startCapturedWorkLocked(ctx, workID, generation, instanceID, capturedContexts...)
+	})
+	return started, err
+}
+
+// runWorkStartAttempt keeps an automatic recovery and its failure writeback
+// under the same Work lock as every other start.
+func (a *Application) runWorkStartAttempt(ctx context.Context, workID string, generation int64, recoveryControl *int64, attempt func() (workruntime.Started, error)) (workruntime.Started, error, error) {
+	value, _ := a.workLocks.LoadOrStore(workID, &sync.Mutex{})
+	lock := value.(*sync.Mutex)
+	if err := lockWorkContext(ctx, lock); err != nil {
+		return workruntime.Started{}, err, nil
+	}
+	defer lock.Unlock()
+	started, err := attempt()
+	if recoveryControl != nil && err != nil && ctx.Err() == nil && !errors.Is(err, errWorkSuperseded) {
+		return started, err, a.recordRecoveryFailure(ctx, workID, generation, *recoveryControl)
+	}
+	return started, err, nil
+}
+
+func (a *Application) startCapturedWorkForRecovery(ctx context.Context, workID string, generation int64, instanceID string, control int64) (workruntime.Started, error, error) {
+	return a.runWorkStartAttempt(ctx, workID, generation, &control, func() (workruntime.Started, error) {
+		work, err := a.Store.Work(ctx, workID, false)
+		if err != nil {
+			return workruntime.Started{}, err
+		}
+		if work.DesiredState != "running" || work.ControlVersion != control {
+			return workruntime.Started{}, errWorkSuperseded
+		}
+		if work.ActiveContextID != nil {
+			current, err := a.Store.RuntimeGeneration(ctx, workID, generation)
+			if err == nil && current.State == "ready" && current.InstanceID != nil && *current.InstanceID == instanceID {
+				scope := internaltls.Scope{InstallationID: a.Store.InstallationID(), WorkID: workID, Generation: generation, InstanceID: instanceID}
+				if _, err := a.agentRoutes.Agent(scope, *work.ActiveContextID); err == nil {
+					return workruntime.Started{}, errWorkSuperseded
+				}
+			} else if err != nil && !errors.Is(err, corestore.ErrNotFound) {
+				return workruntime.Started{}, err
+			}
+		}
+		return a.startCapturedWorkLocked(ctx, workID, generation, instanceID)
+	})
+}
+
+func (a *Application) startCapturedWorkLocked(ctx context.Context, workID string, generation int64, instanceID string, capturedContexts ...string) (workruntime.Started, error) {
+	finishMutation, err := a.Store.BeginTransientMutation(ctx, workID)
+	if err != nil {
+		return workruntime.Started{}, err
+	}
+	defer finishMutation()
 	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
 		jobs, err := corestore.PendingFileJobs(tx, &workID)
 		if err != nil {
@@ -250,12 +355,6 @@ func (a *Application) startCapturedWork(ctx context.Context, workID string, gene
 	if a.workRuntime == nil {
 		return zero, errCapturedWork
 	}
-	value, _ := a.workLocks.LoadOrStore(workID, &sync.Mutex{})
-	lock := value.(*sync.Mutex)
-	if err := lockWorkContext(ctx, lock); err != nil {
-		return zero, err
-	}
-	defer lock.Unlock()
 	contextID := ""
 	if len(capturedContexts) > 1 {
 		return zero, errCapturedWork
@@ -275,23 +374,26 @@ func (a *Application) startCapturedWork(ctx context.Context, workID string, gene
 			}
 		}
 	}
-	spec, record, err := a.capturedContextSpec(ctx, workID, generation, instanceID, contextID, false)
+	spec, record, err := a.resolveWorkStartLocked(ctx, workID, generation, instanceID, contextID)
 	if err != nil {
 		return zero, err
 	}
+	generation, instanceID = spec.Scope.Generation, spec.Scope.InstanceID
 	if _, err := a.agentRoutes.Agent(spec.Scope, spec.ContextID); err == nil {
 		return zero, errWorkSuperseded
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	err = a.Store.Write(ctx, func(tx *sql.Tx) error {
-		var existing string
-		check := tx.QueryRowContext(ctx, `SELECT instance_id FROM runtime_generations WHERE work_id=? AND generation=?`, workID, generation).Scan(&existing)
+		var existing, existingState string
+		check := tx.QueryRowContext(ctx, `SELECT instance_id,state FROM runtime_generations WHERE work_id=? AND generation=?`, workID, generation).Scan(&existing, &existingState)
 		if check == nil {
 			if existing != instanceID {
 				return errWorkSuperseded
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET state='starting',ready_since=NULL,updated_at=? WHERE work_id=? AND generation=? AND instance_id=?`, now, workID, generation, instanceID); err != nil {
-				return err
+			if !spec.AdoptExisting || existingState != "ready" {
+				if _, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET state='starting',ready_since=NULL,updated_at=? WHERE work_id=? AND generation=? AND instance_id=?`, now, workID, generation, instanceID); err != nil {
+					return err
+				}
 			}
 		} else if errors.Is(check, sql.ErrNoRows) {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO runtime_generations(work_id,generation,instance_id,state,retry_count,created_at,updated_at) VALUES(?,?,?,'starting',0,?,?)`, workID, generation, instanceID, now, now); err != nil {
@@ -300,10 +402,25 @@ func (a *Application) startCapturedWork(ctx context.Context, workID string, gene
 		} else {
 			return check
 		}
+		if !spec.AdoptExisting {
+			_, found, err := corestore.ReadRuntimeLaunchTx(tx, workID, generation)
+			if err != nil {
+				return err
+			}
+			if !found {
+				if err := corestore.PutRuntimeLaunchTx(tx, launchBinding(spec, record)); err != nil {
+					return err
+				}
+			}
+		}
 		if err := putCapturedStart(tx, generationContextKey(workID, generation), record.contextID); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE works SET observed_state='starting',updated_at=? WHERE id=? AND desired_state='running' AND control_version=?`, now, workID, record.control)
+		observed := "starting"
+		if spec.AdoptExisting && existingState == "ready" {
+			observed = ""
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE works SET observed_state=CASE WHEN ?='' THEN observed_state ELSE ? END,updated_at=? WHERE id=? AND desired_state='running' AND control_version=?`, observed, observed, now, workID, record.control)
 		if err != nil {
 			return err
 		}
@@ -342,7 +459,7 @@ func (a *Application) startCapturedWork(ctx context.Context, workID string, gene
 		if err := tx.QueryRowContext(ctx, `SELECT desired_state,control_version,active_context_id FROM works WHERE id=? AND deleted_at IS NULL`, workID).Scan(&desired, &control, &activeContext); err != nil || desired != "running" || control != record.control || activeContext.Valid && activeContext.String != record.contextID {
 			return errWorkSuperseded
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET state='ready',ready_since=?,updated_at=? WHERE work_id=? AND generation=? AND instance_id=? AND state='starting'`, now, now, workID, generation, instanceID)
+		result, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET state='ready',ready_since=COALESCE(ready_since,?),updated_at=? WHERE work_id=? AND generation=? AND instance_id=? AND (state='starting' OR (?=1 AND state='ready'))`, now, now, workID, generation, instanceID, spec.AdoptExisting)
 		if err != nil {
 			return err
 		}
@@ -353,6 +470,12 @@ func (a *Application) startCapturedWork(ctx context.Context, workID string, gene
 			return err
 		}
 		if _, err := corestore.OpenFileGate(tx, workID, now); err != nil {
+			return err
+		}
+		if err := corestore.MarkRuntimeLaunchActivatedTx(tx, workID, generation, instanceID, time.Now()); err != nil {
+			return err
+		}
+		if err := corestore.FinishRuntimeReplacementTx(tx, workID, generation); err != nil {
 			return err
 		}
 		return a.agentRoutes.Publish(spec.Scope, spec.ContextID, started)

@@ -43,21 +43,22 @@ const applyOperationKind = "apply-work-configuration"
 // This private plan is committed with acceptance. Neither later Save nor
 // installation defaults can replace its captured candidate or rollback target.
 type workApplyPlan struct {
-	WorkID            string                    `json:"workId"`
-	ContextID         string                    `json:"contextId"`
-	Revision          int64                     `json:"revision"`
-	PriorContextID    *string                   `json:"priorContextId"`
-	PriorRevision     *int64                    `json:"priorRevision"`
-	DesiredState      string                    `json:"desiredState"`
-	Control           int64                     `json:"control"`
-	Stage             string                    `json:"stage"`
-	Generation        int64                     `json:"generation"`
-	InstanceID        string                    `json:"instanceId"`
-	ErrorCode         string                    `json:"errorCode,omitempty"`
-	ErrorStage        string                    `json:"errorStage,omitempty"`
-	PrimaryDiagnostic *contracts.SafeDiagnostic `json:"primaryDiagnostic,omitempty"`
-	HistoryBackup     *applyHistoryBackup       `json:"historyBackup,omitempty"`
-	HistoryRecovered  bool                      `json:"historyRecovered,omitempty"`
+	WorkID             string                    `json:"workId"`
+	ContextID          string                    `json:"contextId"`
+	Revision           int64                     `json:"revision"`
+	PriorContextID     *string                   `json:"priorContextId"`
+	PriorRevision      *int64                    `json:"priorRevision"`
+	DesiredState       string                    `json:"desiredState"`
+	Control            int64                     `json:"control"`
+	Stage              string                    `json:"stage"`
+	Generation         int64                     `json:"generation"`
+	InstanceID         string                    `json:"instanceId"`
+	ErrorCode          string                    `json:"errorCode,omitempty"`
+	ErrorStage         string                    `json:"errorStage,omitempty"`
+	PrimaryDiagnostic  *contracts.SafeDiagnostic `json:"primaryDiagnostic,omitempty"`
+	HistoryBackup      *applyHistoryBackup       `json:"historyBackup,omitempty"`
+	HistoryRecovered   bool                      `json:"historyRecovered,omitempty"`
+	PriorResumeRemoved bool                      `json:"priorResumeRemoved,omitempty"`
 }
 
 func applyPlanKey(id string) string { return "work_apply_" + strings.ReplaceAll(id, "-", "_") }
@@ -224,7 +225,15 @@ func (a *Application) applyGeneration(ctx context.Context, id string, plan *work
 		}
 		plan.InstanceID = "agent-" + instance.String()
 	}
-	spec, _, err := a.capturedContextSpec(ctx, plan.WorkID, plan.Generation, plan.InstanceID, contextID, true)
+	binding, found, err := a.runtimeLaunch(ctx, plan.WorkID, plan.Generation)
+	if err != nil {
+		return workruntime.StartSpec{}, err
+	}
+	var pinned *corestore.RuntimeLaunchBinding
+	if found {
+		pinned = &binding
+	}
+	spec, captured, err := a.capturedContextSpecForLaunch(ctx, plan.WorkID, plan.Generation, plan.InstanceID, contextID, true, pinned, false)
 	if err != nil {
 		return spec, err
 	}
@@ -244,6 +253,11 @@ func (a *Application) applyGeneration(ctx context.Context, id string, plan *work
 		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
+		}
+		if !found {
+			if err := corestore.PutRuntimeLaunchTx(tx, launchBinding(spec, captured)); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(`INSERT INTO runtime_generations(work_id,generation,instance_id,state,retry_count,created_at,updated_at) VALUES(?,?,?,'starting',0,?,?) ON CONFLICT(work_id,generation) DO UPDATE SET state='starting',updated_at=excluded.updated_at`, plan.WorkID, plan.Generation, plan.InstanceID, packageNow(), packageNow()); err != nil {
 			return err
@@ -414,6 +428,18 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 	if err := a.applyCurrent(ctx, plan); err != nil {
 		return err
 	}
+	previous, found, err := a.runtimeReplacement(ctx, plan.WorkID)
+	if err != nil {
+		return err
+	}
+	if found && previous.ControlVersion < plan.Control {
+		if err := a.settleSupersededResumeForApplyLocked(ctx, operation.ID, &plan, previous); err != nil {
+			if errors.Is(err, errWorkSuperseded) || ctx.Err() != nil {
+				return err
+			}
+			return a.finishWorkApply(ctx, operation, plan, "RUNTIME_PREPARE_FAILED", "runtime-prepare", "not-required", true)
+		}
+	}
 	if err := a.reconcileHistoryUpgradeLocked(ctx, plan.WorkID, operation.ID); err != nil {
 		return err
 	}
@@ -432,7 +458,7 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 	if a.workRuntime == nil || a.dockerRuntime == nil {
 		return a.finishWorkApply(ctx, operation, plan, "RUNTIME_PREPARE_FAILED", "runtime-prepare", "not-required", false)
 	}
-	if plan.PriorContextID != nil && *plan.PriorContextID == plan.ContextID {
+	if plan.PriorContextID != nil && *plan.PriorContextID == plan.ContextID && !plan.PriorResumeRemoved {
 		return a.finishWorkApply(ctx, operation, plan, "", "", "not-required", false)
 	}
 	probeGeneration := plan.Generation
@@ -495,7 +521,7 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 			return a.finishWorkApply(ctx, operation, plan, "RUNTIME_PREPARE_FAILED", "runtime-prepare", "not-required", false)
 		}
 
-		priorAbsent := false
+		priorAbsent := plan.PriorResumeRemoved
 		if plan.HistoryRecovered {
 			view, err := a.dockerRuntime.InspectContainer(ctx, dockerengine.ContainerIdentity{WorkID: plan.WorkID, Kind: "agent", LogicalID: "agentd"})
 			if err != nil {
@@ -764,6 +790,11 @@ func (a *Application) publishWorkApply(ctx context.Context, operation corestore.
 		if _, err := tx.Exec(`UPDATE runtime_generations SET state=?,ready_since=?,updated_at=? WHERE work_id=? AND generation=? AND instance_id=?`, state, now, now, plan.WorkID, plan.Generation, plan.InstanceID); err != nil {
 			return err
 		}
+		if !stopped {
+			if err := corestore.MarkRuntimeLaunchActivatedTx(tx, plan.WorkID, plan.Generation, plan.InstanceID, time.Now()); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(`UPDATE works SET active_context_id=?,active_revision=?,observed_state=?,updated_at=? WHERE id=? AND control_version=?`, plan.ContextID, plan.Revision, observed, now, plan.WorkID, plan.Control); err != nil {
 			return err
 		}
@@ -898,6 +929,11 @@ func (a *Application) finishWorkApply(ctx context.Context, operation corestore.O
 			}
 			if _, err := tx.Exec(`UPDATE runtime_generations SET state=?,ready_since=?,updated_at=? WHERE work_id=? AND generation=?`, state, packageNow(), packageNow(), plan.WorkID, plan.Generation); err != nil {
 				return err
+			}
+			if state == "ready" {
+				if err := corestore.MarkRuntimeLaunchActivatedTx(tx, plan.WorkID, plan.Generation, plan.InstanceID, time.Now()); err != nil {
+					return err
+				}
 			}
 		}
 		if len(publish) == 1 {
