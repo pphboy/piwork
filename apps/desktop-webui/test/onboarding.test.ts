@@ -505,7 +505,10 @@ test('setup, Admin and hosted Desktop retain shared control states and wrap at 3
   await create.focus();assert.equal((await appearance(create)).outline,'solid');await create.hover();assert.notEqual((await appearance(create)).background,normal.background);
   await page.mouse.down();assert.notEqual((await appearance(create)).background,normal.background);await page.mouse.up();
   for(const width of [1440,360]){
-   await page.setViewportSize({width,height:1000});await page.getByLabel('Account',{exact:true}).focus();await page.keyboard.press('Tab');await expect(page.getByLabel('Password',{exact:true})).toBeFocused();await page.keyboard.press('Tab');await expect(page.getByLabel('Confirm password',{exact:true})).toBeFocused();
+   await page.setViewportSize({width,height:1000});const nav=page.getByRole('navigation',{name:'Piwork navigation'}),language=nav.locator('[data-action="language"]'),signIn=nav.getByRole('link',{name:'Sign in',exact:true});
+   await expect(language).toBeVisible();await expect(signIn).toBeVisible();await language.focus();await page.keyboard.press('Tab');await expect(signIn).toBeFocused();
+   for(const item of [language,signIn]){const bounds=await item.boundingBox();assert.ok(bounds&&bounds.x>=0&&bounds.x+bounds.width<=width);}
+   await page.getByLabel('Account',{exact:true}).focus();await page.keyboard.press('Tab');await expect(page.getByLabel('Password',{exact:true})).toBeFocused();await page.keyboard.press('Tab');await expect(page.getByLabel('Confirm password',{exact:true})).toBeFocused();
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.equal(await page.locator('.setup-brand img').evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0),true);
    await page.screenshot({path:join(evidence,`create-admin-${width}.png`),fullPage:true});
   }
