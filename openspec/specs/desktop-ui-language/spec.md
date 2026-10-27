@@ -260,7 +260,7 @@ Desktop SHALL 将选中 Service 仅视为对话身份上下文，SHALL 不自动
 
 **Identifier:** DUL-007
 
-Desktop SHALL 沿用 Serve 浅色语义令牌，包括 `#F5F8FC` 画布、`#F8FBFF` 次级背景、白色主表面、`#DCE7F2` 分隔、`#1B2634` 正文和 `#0969DA` 交互强调。Work 列表 SHALL 占独立页面；Work 内 SHALL 让真实 Service 或当前文件/聚焦对话占主区域，Agent 辅助栏保持可用，Work 身份和 Service 状态/域名分别处于稳定且较低干扰的工具栏。Work 列表行 SHALL 以一个当前状态快捷动作及低频菜单组织生命周期入口，已知 Operation 的活动区 SHALL 按需出现且不占永久导航。Import 审核与 Export 进度 SHALL 保持步骤、私有包提醒和恢复动作的层级。应用视口与 Desktop 外壳 SHALL 清楚区分，普通消息和列表行 SHALL 以留白、对齐及细分隔组织。窄屏 SHALL 将 Service、Chat、Files 变成可达的同级切换或覆盖层，不强挤窄列；360px 宽屏 SHALL 无整页横向滚动。焦点 SHALL 可见，普通文字对比度至少 4.5:1、大字至少 3:1，并尊重减少动态效果设置。
+Desktop SHALL 沿用 Serve 浅色语义令牌，包括 `#F5F8FC` 画布、`#F8FBFF` 次级背景、白色主表面、`#DCE7F2` 分隔、`#1B2634` 正文和 `#0969DA` 交互强调。Work 列表 SHALL 占独立页面；Work 内 SHALL 让真实 Service 或当前文件/聚焦对话占主区域，Agent 辅助栏保持可用，Work 身份和 Service 状态/域名分别处于稳定且较低干扰的工具栏。Work 列表行 SHALL 以一个当前状态快捷动作及低频菜单组织生命周期入口，没有可见 Work 的创建、导入和已移除 Work 任务提示 SHALL 在 Works 列表按需出现，不占永久导航。Import 审核与 Export 进度 SHALL 保持步骤、私有包提醒和恢复动作的层级。应用视口与 Desktop 外壳 SHALL 清楚区分，普通消息和列表行 SHALL 以留白、对齐及细分隔组织。窄屏 SHALL 将 Service、Chat、Files 变成可达的同级切换或覆盖层，不强挤窄列；360px 宽屏 SHALL 无整页横向滚动。焦点 SHALL 可见，普通文字对比度至少 4.5:1、大字至少 3:1，并尊重减少动态效果设置。
 
 同类控件 SHALL 使用一致的样式与状态规则：共享视觉角色调整后，所有对应 Desktop 使用处 SHALL 一致变化，局部布局及 Service 应用内部样式 SHALL 保持独立。Work 列表 SHALL 以名称摘要、状态、快捷动作、菜单的顺序组织，状态圆点与文字成组，行内垂直居中、跨行同列对齐；动作控件 SHALL 不同时触发行导航。实现 SHALL 用实际字体、长内容、键盘与窄屏核验，静态坐标不得替代验证，已知错位、遮挡和不可读问题 SHALL 在交付前修正。
 
@@ -293,7 +293,7 @@ Works 搜索和 Chat 输入 SHALL 保持至少 2px 的可见键盘焦点；使�
 
 只有已明确列入轻量菜单/只读信息白名单、无草稿且非 busy 的弹层 SHALL 支持外部指针关闭；指针按下和抬起均在弹层外才关闭，拖选跨越边界不误关。危险确认、覆盖/丢弃、编辑、Inspect/Import 及提交/未知恢复流程不纳入该白名单；Escape、显式 Close/Cancel、焦点限制和返回规则保持。关闭观察的动作 SHALL 用 Close，Cancel request/run 保留真实执行对象。Files 选择命中区 SHALL 至少 32px 且与文件名的打开动作分离，选择工具栏不推移文件行。
 
-全局 About Piwork 与 Known operations SHALL 放在 Admin/账号下拉，不在 Work 顶栏常驻。Stop Work 与 Work information SHALL 放在所属 Work 更多菜单；Ready Work 列表主动作 SHALL 是 Open Work，Stopped 保留 Start。已有 Works 列表底部 SHALL 不重复展示 Create a Work，空列表创建引导仍保留。账号下拉自身无编辑草稿，外侧关闭 SHALL 不因背景草稿或后台任务被阻断；不扩大其他危险确认窗的外侧关闭范围。Files 无选择时 SHALL 不显示 Select files 提示条，选中后的批量动作 SHALL 使用现有工具栏，不推移文件行。全 Work Pi Requests SHALL 依 DUL-002 归 Work 级辅助入口，保持与 Service 请求过滤入口不同的范围；不以常驻主按钮或未读计数抢占使用主流程。
+About Piwork SHALL 放在 Admin/账号下拉，不在 Work 顶栏常驻；Known operations 不作为账号菜单或其他全局入口。Stop Work 与 Work information SHALL 放在所属 Work 更多菜单；Ready Work 列表主动作 SHALL 是 Open Work，Stopped 保留 Start。已有 Works 列表底部 SHALL 不重复展示 Create a Work，空列表创建引导仍保留。账号下拉自身无编辑草稿，外侧关闭 SHALL 不因背景草稿或后台任务被阻断；不扩大其他危险确认窗的外侧关闭范围。Files 无选择时 SHALL 不显示 Select files 提示条，选中后的批量动作 SHALL 使用现有工具栏，不推移文件行。全 Work Pi Requests SHALL 依 DUL-002 归 Work 级辅助入口，保持与 Service 请求过滤入口不同的范围；不以常驻主按钮或未读计数抢占使用主流程。
 
 Works 的 Refresh/Import/New SHALL 使用一致的图标动作组，前两者为次级、New 保留主动作角色；tooltip、可访问名称、键盘焦点与空列表文字引导保持。账号菜单 SHALL 只显示一次清楚账号身份，角色如需展示使用明确标签而非重复裸名称，Core 信息和管理动作仍可达。
 
@@ -307,7 +307,7 @@ Works 的 Refresh/Import/New SHALL 使用一致的图标动作组，前两者为
 
 #### Scenario: 全局与Work管理分层
 - **WHEN** 用户查看Works或使用Work
-- **THEN** About/Known operations在Admin，Stop/Work information在当前Work更多菜单；Ready行可直接Open，Stopped可Start；已存在Work时没有底部重复创建CTA
+- **THEN** About在Admin且不显示Known operations，Stop/Work information在当前Work更多菜单；Ready行可直接Open，Stopped可Start；已存在Work时没有底部重复创建CTA
 
 #### Scenario: 头像菜单仅收起展示
 - **WHEN** 用户打开Admin后在外侧按下并抬起或按Escape，包含背景存在草稿或任务的情况
@@ -883,3 +883,39 @@ Assistant 文件引用 SHALL 作为进入同 Work Files 的导航入口，以文
 #### Scenario: 无法预览仍有明确出口
 - **WHEN** 目标是 PDF/其他普通文件、超限图片，或者读取失败
 - **THEN** 所属 Files 区域表达原因，分别提供合法 Download、Retry 或返回；不把失败显示为空文件或强制发起下载
+
+### Requirement: 操作进度和问题留在所属任务界面
+
+**Identifier:** DUL-OPREC-001
+
+Desktop SHALL 将 Work、Service、Apply、Package 和导入导出的任务反馈安排在各自的列表行、面板或流程内；主要可见内容依次表达动作与对象、真实状态、必要原因与下一步，Check status 为就近只读动作，原 Operation 详情为次级入口。没有可见 Work 的创建、导入和已移除 Work 的任务 SHALL 在 Works 列表使用按需出现的紧凑提示，呈现必要状态与对应动作，不新增全局导航或全局操作中心。
+
+任务进行中 SHALL 使用既有局部等待语义，明确失败、观察中断和未知结果 SHALL 停止误导性的进行中动效，显示可理解的原因与安全下一步；当前状态、已接受目标和最后确认事实不得混写。普通成功 SHALL 保持短暂、克制，同一任务的进度或错误不在行、通用条、详情和 toast 同时重复。技术 ID、阶段明细和相关标识 SHALL 在次级详情中按需展开、完整读取和复制，不挤占任务名称与主要动作。
+
+多个临时任务 SHALL 各自可识别且可访问，可先显示有限的紧凑摘要并在同一位置展开其余任务；收起详情不丢失未处理状态。Work 搜索、空列表或暂时读取失败不隐藏需要处理的无对象任务。详情与反馈 SHALL 复用现有控件、语义色及非阻断的所属上下文；危险操作仍使用已有确认，普通检查不增加确认。
+
+任务反馈更新 SHALL 保持列表和控件可用、焦点及相关草稿，不为展示进度或错误重载既有 Service iframe。360px 宽屏、长名称及长 ID SHALL 换行或在所属区域局部滚动，不导致整页横向溢出、遮挡主要按钮或破坏键盘访问。中英文文案 SHALL 指向当前任务的恢复动作，不再引导用户前往已移除的 Known operations。
+
+#### Scenario: 账号菜单不再出现全局入口
+- **WHEN** 普通用户或管理员在托管工作台或独立 Desktop 打开账号菜单
+- **THEN** About 和原有适用账号管理动作仍可达，Known operations 不出现；任务状态在对应对象或 Works 临时提示中可查
+
+#### Scenario: Work 行内展示进行和失败
+- **WHEN** 用户在列表启动 Work，随后该任务处于进行中或确认失败
+- **THEN** 原行以紧凑状态和就近检查呈现结果，失败有原因与下一步；不同时堆叠重复的全局提示，详情保留原 ID
+
+#### Scenario: 未发布或已移除的 Work
+- **WHEN** 导入尚未发布、创建尚未出现 Work 行，或删除后 Work 行已经移除
+- **THEN** Works 列表按需显示对应任务及检查/详情，搜索和空列表不隐藏任务；无需进入账号菜单或新建操作中心
+
+#### Scenario: Service 与 Apply 的原位恢复
+- **WHEN** Service 控制或配置 Apply 失败、观察中断或仍在运行
+- **THEN** 分别在对应 Service 管理区域或 Settings 中显示对象、状态、原因及只读检查；查看详情不切换其他 Service、不重载已有应用或丢弃草稿
+
+#### Scenario: 详情显示真实诊断
+- **WHEN** 用户展开失败任务详情，后端返回部分安全诊断和一个长 Operation ID
+- **THEN** 可读到实际提供的字段、可用下一步及完整 ID；缺失原因被明确说明，未知字段不被猜测或以对象字符串展示
+
+#### Scenario: 多任务与窄屏访问
+- **WHEN** Works 存在多个无对象任务，使用 360px 界面、长名称和键盘查看并收起详情
+- **THEN** 可识别和展开每个需处理的任务，状态文字及操作可达；长值不覆盖按钮或造成整页横向滚动，收起不取消执行或丢失恢复入口
