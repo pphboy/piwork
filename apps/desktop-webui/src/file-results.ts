@@ -1,3 +1,4 @@
+import { t } from './locale.js';
 export interface FilePathResult {
   readonly path: string;
   readonly status: 'succeeded' | 'failed' | 'unknown';
@@ -16,9 +17,9 @@ export interface FileMutationTarget {
 /** These are decoded workspace paths, never URLs. Do not URI-decode literal file names here. */
 export function normalizeWorkspacePath(path: string): string {
   if (!path.startsWith('/') || path.startsWith('//') || /[\\\x00-\x1f\x7f]/.test(path))
-    throw new Error('Expected a path inside this Work.');
+    throw new Error(t('d.files.pathOutside'));
   const parts = path.split('/').filter(Boolean);
-  if (parts.some(part => part === '.' || part === '..')) throw new Error('Workspace paths cannot traverse directories.');
+  if (parts.some(part => part === '.' || part === '..')) throw new Error(t('d.files.pathTraversal'));
   return '/' + parts.join('/');
 }
 
@@ -30,7 +31,7 @@ export function fileParentDirectory(path: string): string {
 function targetSnapshot(target: FileMutationTarget): FileMutationTarget {
   const source = normalizeWorkspacePath(target.source);
   const destination = target.destination === undefined ? undefined : normalizeWorkspacePath(target.destination);
-  if (source === '/' || destination === '/') throw new Error('The workspace root cannot be a mutation target.');
+  if (source === '/' || destination === '/') throw new Error(t('d.files.rootMutation'));
   return Object.freeze({ source, ...(destination === undefined ? {} : { destination }) });
 }
 
@@ -56,7 +57,7 @@ export class FileMutationResults {
   private latest = new Map<string, readonly FilePathResult[]>();
   constructor(targets: readonly FileMutationTarget[]) {
     this.targets = Object.freeze(targets.map(targetSnapshot));
-    if (new Set(this.targets.map(targetKey)).size !== this.targets.length) throw new Error('Duplicate file mutation target.');
+    if (new Set(this.targets.map(targetKey)).size !== this.targets.length) throw new Error(t('d.files.duplicateTarget'));
   }
 
   get attempts(): readonly FileMutationAttempt[] { return Object.freeze([...this.history]); }
@@ -69,7 +70,7 @@ export class FileMutationResults {
   record(targets: readonly FileMutationTarget[], results: readonly FilePathResult[]): FileMutationAttempt {
     const submitted = targets.map(targetSnapshot);
     if (!submitted.length || submitted.some(target => !this.targets.some(original => targetKey(original) === targetKey(target))))
-      throw new Error('Results must belong to this attempt’s original file targets.');
+      throw new Error(t('d.files.foreignResults'));
     const copied = Object.freeze(results.map(result => Object.freeze({ ...result })));
     const attempt = Object.freeze({ id: this.history.length + 1, targets: Object.freeze(submitted), results: copied });
     for (const target of submitted) {
@@ -78,7 +79,7 @@ export class FileMutationResults {
       const ambiguous = own.some(result => submitted.filter(candidate => resultBelongs(result, candidate)).length !== 1);
       // Missing, malformed or ambiguous rows cannot turn an uncertain write into a safe retry.
       const unknown: FilePathResult = Object.freeze({ path: target.source, status: 'unknown',
-        message: 'The complete result for this original target is unknown. Reread its source and destination before a new action.' });
+        message: t('d.files.resultUnknown') });
       this.latest.set(targetKey(target), Object.freeze([...own, ...unassociated, ...(!own.length || unassociated.length || ambiguous ? [unknown] : [])]));
     }
     this.history.push(attempt);

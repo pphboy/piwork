@@ -1,3 +1,4 @@
+import { t } from './locale.js';
 const message = (error) => error instanceof Error ? error.message : String(error);
 const isStop = (operation) => operation.action === 'stop' || /^stop[-_ ]work$/i.test(operation.kind);
 const failedOperation = (operation) => ['failed', 'superseded'].includes(operation.state);
@@ -32,17 +33,17 @@ export class ExportFlows {
     start(workId, intent) {
         this.updateIdentity();
         if (!this.authorized())
-            throw new Error('Sign in before exporting.');
+            throw new Error(t('d.export.signIn'));
         if (intent.mode === 'existing' && !intent.snapshotId)
-            throw new Error('Choose the exact snapshot to download.');
+            throw new Error(t('d.export.chooseSnapshot'));
         if (intent.mode === 'new' && intent.snapshotId)
-            throw new Error('A new export cannot target an existing snapshot.');
+            throw new Error(t('d.export.newTargetsExisting'));
         const active = [...this.flows.values()].find(flow => flow.workId === workId && flow.identityEpoch === this.port.identityEpoch && !flow.terminal);
         if (active) {
             const original = this.runtime.get(active.id);
             if (active.mode === intent.mode && original.intentSnapshotId === intent.snapshotId && active.stopConfirmed === !!intent.stopConfirmed)
                 return active;
-            throw new Error('Another export intent is active for this Work. Check or finish its original snapshot before choosing a different export.');
+            throw new Error(t('d.export.intentActive'));
         }
         const work = this.port.getWork(workId);
         const flow = {
@@ -113,7 +114,7 @@ export class ExportFlows {
                             await this.run(flow, true);
                     })();
     }
-    revoke(reason = 'Automatic delivery ended. Explicitly look up the original snapshot to download it again.') {
+    revoke(reason = t('d.export.deliveryEnded')) {
         for (const flow of this.flows.values())
             this.revokeFlow(flow, reason);
         this.changed();
@@ -126,7 +127,7 @@ export class ExportFlows {
             const runtime = this.runtime.get(flow.id);
             const transfer = flow.snapshotId && this.port.downloads.get(flow.snapshotId);
             if (transfer && flow.transferId && transfer.transferId === flow.transferId && transfer.snapshotId === flow.snapshotId && transfer.workId === flow.workId && transfer.terminalFailure) {
-                this.fail(flow, transfer.error || 'The original download preparation failed. Retry this snapshot explicitly.');
+                this.fail(flow, transfer.error || t('d.export.preparationFailed'));
                 this.changed();
                 continue;
             }
@@ -141,7 +142,7 @@ export class ExportFlows {
         }
     }
     require(id) { const flow = this.get(id); if (!flow)
-        throw new Error('The original export intent is no longer available.'); return flow; }
+        throw new Error(t('d.export.intentGone')); return flow; }
     authorized() { return this.port.state.signedIn; }
     isVisible() { return this.visible && (this.options.visible?.() ?? true); }
     changed() { this.options.changed(); }
@@ -158,11 +159,11 @@ export class ExportFlows {
     updateIdentity() {
         for (const flow of this.flows.values())
             if (flow.phase !== 'revoked' && (flow.identityEpoch !== this.port.identityEpoch || !this.authorized()))
-                this.revokeFlow(flow, 'The session or account changed. Look up the original snapshot explicitly after signing in.');
+                this.revokeFlow(flow, t('d.export.identityChanged'));
     }
     live(flow) {
         if (flow.identityEpoch !== this.port.identityEpoch || !this.authorized())
-            this.revokeFlow(flow, 'The session or account changed. Look up the original snapshot explicitly after signing in.');
+            this.revokeFlow(flow, t('d.export.identityChanged'));
         return flow.phase !== 'revoked' && flow.phase !== 'failed';
     }
     canAdvance(flow, generation) { return this.live(flow) && !flow.terminal && !flow.paused && this.isVisible() && this.runtime.get(flow.id).generation === generation; }
@@ -193,7 +194,7 @@ export class ExportFlows {
     }
     validOperation(flow, operation, id) {
         if (operation.id !== id || operation.workId !== flow.workId || operation.checkedWorkId !== flow.workId) {
-            this.fail(flow, 'The original Operation could not be confirmed for this Work.');
+            this.fail(flow, t('d.export.originalOperationUnknown'));
             return false;
         }
         return true;
@@ -204,15 +205,15 @@ export class ExportFlows {
         const limit = this.runtime.get(flow.id).stopVersionLimit;
         if (!work.statusError) {
             if (limit === undefined) {
-                this.fail(flow, 'The original Stop control version is not confirmed. Check the Work and start a new export explicitly.');
+                this.fail(flow, t('d.export.stopVersionUnknown'));
                 return false;
             }
             if (!controlVersion(work.controlVersion) || work.controlVersion < limit) {
-                flow.error = 'Waiting for the original Stop control version to be confirmed.';
+                flow.error = t('d.export.stopVersionWaiting');
                 return false;
             }
             if (work.controlVersion > limit) {
-                this.fail(flow, 'The Work control sequence changed beyond this Stop intent. Check the Work and start a new export explicitly.');
+                this.fail(flow, t('d.export.controlSequenceChanged'));
                 return false;
             }
         }
@@ -221,7 +222,7 @@ export class ExportFlows {
         // it. The native Operation envelope does not publish its target version.
         const contraryTarget = stop && stop.state === 'succeeded' && !work.statusError && work.desired !== 'stopped';
         if (contraryTarget || work.lifecycleIntent && work.lifecycleIntent.operationId !== flow.stopOperationId || work.operationId && work.operationId !== flow.stopOperationId) {
-            this.fail(flow, 'A newer Work control replaced the original Stop. Check the Work before starting another export.');
+            this.fail(flow, t('d.export.controlReplaced'));
             return false;
         }
         return true;
@@ -238,18 +239,19 @@ export class ExportFlows {
             this.runtime.get(flow.id).workMutationUnknown = !rejected;
         if (!this.live(flow))
             return;
+        const actionLabel = action === 'Stop' ? t('d.export.actionStop') : action === 'Export' ? t('d.export.actionExport') : t('d.export.actionDownloadPreparation');
         if (rejected) {
-            this.fail(flow, `${action} was rejected before acceptance. ${message(error)}`);
+            this.fail(flow, t('d.export.actionRejected', { action: actionLabel, detail: message(error) }));
             return;
         }
-        this.unknown(flow, `${action} result is unknown. Check the original IDs; this request will not be submitted again. ${message(error)}`);
+        this.unknown(flow, t('d.export.actionUnknown', { action: actionLabel, detail: message(error) }));
     }
     admitWorkMutation(flow) {
         const runtime = this.runtime.get(flow.id);
         if (this.options.canSubmitWorkMutation?.(flow.workId, flow.id) === false) {
             runtime.awaitingControlCheck = true;
             flow.phase = 'checking';
-            flow.error = 'Another Work control is pending or unknown. This stage was not submitted. Check its original result before continuing.';
+            flow.error = t('d.export.controlPending');
             return false;
         }
         runtime.awaitingControlCheck = false;
@@ -271,11 +273,11 @@ export class ExportFlows {
                 flow.error = '';
                 if (flow.mode === 'new' && !runtime.exportSubmitted) {
                     if (runtime.missingStopIdentity) {
-                        this.unknown(flow, 'The Work was already stopping, but its original Stop Operation is not known. Check that original operation before starting another export.');
+                        this.unknown(flow, t('d.export.alreadyStopping'));
                         return;
                     }
                     if (runtime.stopSubmitted && !flow.stopOperationId) {
-                        this.unknown(flow, 'Stop acceptance is unknown and has no original Operation ID. Do not submit Stop again.');
+                        this.unknown(flow, t('d.export.stopAcceptanceUnknown'));
                         return;
                     }
                     if (flow.stopOperationId) {
@@ -284,24 +286,24 @@ export class ExportFlows {
                         if (!this.live(flow) || !this.validOperation(flow, stop, flow.stopOperationId))
                             return;
                         if (!isStop(stop)) {
-                            this.fail(flow, 'The original Operation is not a Stop for this Work.');
+                            this.fail(flow, t('d.export.notStop'));
                             return;
                         }
                         if (failedOperation(stop)) {
-                            this.fail(flow, stop.error || `The original Stop ${stop.state}. Export was not submitted.`);
+                            this.fail(flow, stop.error || t('d.export.stopState', { state: stop.state }));
                             return;
                         }
                         const work = await this.read(flow, 'work', () => this.port.refreshWorkStatus(flow.workId, explicit));
                         if (!this.live(flow))
                             return;
                         if (!work || work.id !== flow.workId) {
-                            this.fail(flow, 'The original Work is no longer available.');
+                            this.fail(flow, t('d.export.originalWorkUnavailable'));
                             return;
                         }
                         if (!this.matchingStop(flow, work))
                             return;
                         if (stop.state !== 'succeeded' || !this.stopped(work)) {
-                            flow.error = 'Waiting for the original Stop and confirmed stopped Work.';
+                            flow.error = t('d.export.waitStop');
                             return;
                         }
                     }
@@ -311,22 +313,22 @@ export class ExportFlows {
                         if (!this.live(flow))
                             return;
                         if (!work || work.id !== flow.workId) {
-                            this.fail(flow, 'The original Work is no longer available.');
+                            this.fail(flow, t('d.export.originalWorkUnavailable'));
                             return;
                         }
                         if (!this.stopped(work)) {
                             if (work.desired === 'stopped' || work.statusError || this.port.project(work).action !== 'stop') {
-                                flow.error = 'Work is not confirmed stopped and free of conflicting controls. Check its status.';
+                                flow.error = t('d.export.workNotStopped');
                                 return;
                             }
                             if (!flow.stopConfirmed) {
-                                this.fail(flow, 'Confirm Stop and export before stopping a running Work.');
+                                this.fail(flow, t('d.export.stopRequired'));
                                 return;
                             }
                             if (!this.canAdvance(flow, generation) || !this.admitWorkMutation(flow))
                                 return;
                             if (!controlVersion(work.controlVersion) || work.controlVersion >= Number.MAX_SAFE_INTEGER) {
-                                this.fail(flow, 'The Work control version is not confirmed. Check its status before Stop and export.');
+                                this.fail(flow, t('d.export.controlVersionUnknown'));
                                 return;
                             }
                             // Core AdvanceWorkControl commits exactly one version per accepted
@@ -343,7 +345,7 @@ export class ExportFlows {
                                     return;
                                 if (!stop.id || stop.workId !== flow.workId || !isStop(stop)) {
                                     runtime.workMutationUnknown = true;
-                                    this.unknown(flow, 'Stop acceptance did not identify the original Work and Operation. Check known operations.');
+                                    this.unknown(flow, t('d.export.stopAcceptanceNoIdentity'));
                                     return;
                                 }
                                 flow.stopOperationId = stop.id;
@@ -374,7 +376,7 @@ export class ExportFlows {
                             return;
                         if (!operation.id || operation.workId !== flow.workId) {
                             runtime.workMutationUnknown = true;
-                            this.unknown(flow, 'Export acceptance did not identify the original Work and Operation. Check known operations.');
+                            this.unknown(flow, t('d.export.exportAcceptanceNoIdentity'));
                             return;
                         }
                         flow.exportOperationId = operation.id;
@@ -393,7 +395,7 @@ export class ExportFlows {
                 if (!this.live(flow))
                     return;
                 if (flow.mode === 'new' && !flow.exportOperationId) {
-                    this.unknown(flow, 'Export acceptance is unknown and has no original Operation ID. Do not submit Export again.');
+                    this.unknown(flow, t('d.export.exportAcceptanceUnknown'));
                     return;
                 }
                 // Existing-snapshot intents establish their operation exclusively through
@@ -407,7 +409,7 @@ export class ExportFlows {
                     flow.exportOperationId = snapshot.operationId;
                 }
                 if (!flow.exportOperationId) {
-                    this.unknown(flow, 'The original snapshot has no confirmed Export Operation.');
+                    this.unknown(flow, t('d.export.exportNoOperation'));
                     return;
                 }
                 flow.phase = 'exporting';
@@ -415,11 +417,11 @@ export class ExportFlows {
                 if (!this.live(flow) || !this.validOperation(flow, operation, flow.exportOperationId))
                     return;
                 if (failedOperation(operation)) {
-                    this.fail(flow, operation.error || `The original Export ${operation.state}.`);
+                    this.fail(flow, operation.error || t('d.export.exportState', { state: operation.state }));
                     return;
                 }
                 if (flow.snapshotId && operation.snapshotId !== flow.snapshotId) {
-                    this.fail(flow, 'The Export Operation does not match the original snapshot.');
+                    this.fail(flow, t('d.export.exportMismatch'));
                     return;
                 }
                 if (!flow.snapshotId && operation.snapshotId)
@@ -429,7 +431,7 @@ export class ExportFlows {
                     return;
                 }
                 if (!flow.snapshotId) {
-                    this.unknown(flow, 'The original Export has no confirmed snapshot ID.');
+                    this.unknown(flow, t('d.export.noSnapshotId'));
                     return;
                 }
                 flow.phase = 'snapshot';
@@ -455,7 +457,7 @@ export class ExportFlows {
                         try {
                             if (old?.terminalFailure) {
                                 if (!this.port.retryDownloadSnapshot) {
-                                    this.fail(flow, 'The previous transfer failed. Start an explicit new transfer for this snapshot.');
+                                    this.fail(flow, t('d.export.previousFailed'));
                                     return;
                                 }
                                 pending = this.port.retryDownloadSnapshot(flow.snapshotId);
@@ -467,7 +469,7 @@ export class ExportFlows {
                         catch (error) {
                             this.mutationFailure(flow, error, 'Download preparation');
                             return;
-                        }
+                        } // i18n-exempt: internal action discriminator, displayed via d.export.actionDownloadPreparation
                         // Do not await the POST: the original transfer can become ready through
                         // GET first, or its late POST can unblock a still-pending older GET.
                         void pending.then(() => { if (this.live(flow)) {
@@ -480,14 +482,14 @@ export class ExportFlows {
                             if (job?.terminalFailure)
                                 this.fail(flow, job.error || message(error));
                             else if (!job?.ready)
-                                this.unknown(flow, `Download preparation is not confirmed. Check the original transfer. ${message(error)}`);
+                                this.unknown(flow, t('d.export.preparationUnconfirmed', { detail: message(error) }));
                             this.changed();
                             this.update();
                         });
                     }
                 }
                 if (!flow.transferId) {
-                    this.unknown(flow, 'Download preparation has no original transfer ID. It will not be submitted again.');
+                    this.unknown(flow, t('d.export.noOriginalTransferId'));
                     return;
                 }
                 flow.phase = 'preparing';
@@ -495,7 +497,7 @@ export class ExportFlows {
                 if (!this.live(flow) || flow.autoDeliveryConsumed || flow.terminal)
                     return;
                 if (!transfer) {
-                    flow.error = 'The original transfer has not been confirmed yet.';
+                    flow.error = t('d.export.transferUnconfirmed');
                     return;
                 }
                 this.acceptTransfer(flow, transfer, generation);
@@ -505,9 +507,9 @@ export class ExportFlows {
                     flow.error = message(error);
                     const status = error?.httpStatus;
                     if (runtime.failedRead === 'transfer')
-                        this.unknown(flow, `The original transfer could not be confirmed. ${message(error)}`);
+                        this.unknown(flow, t('d.export.transferUnconfirmedDetail', { detail: message(error) }));
                     else if (status === 404 || status === 410)
-                        this.fail(flow, `The original resource is unavailable. ${message(error)}`);
+                        this.fail(flow, t('d.export.resourceUnavailable', { detail: message(error) }));
                 }
             }
             finally {
@@ -530,7 +532,7 @@ export class ExportFlows {
     }
     validSnapshotIdentity(flow, snapshot) {
         if (snapshot.id !== flow.snapshotId || snapshot.workId !== flow.workId || !snapshot.operationId || flow.exportOperationId && snapshot.operationId !== flow.exportOperationId) {
-            this.fail(flow, 'The snapshot does not match the original Work and Export Operation.');
+            this.fail(flow, t('d.export.snapshotWrong'));
             return false;
         }
         return true;
@@ -543,11 +545,11 @@ export class ExportFlows {
                 runtime.expiresAt = runtime.expiresAt === undefined ? expiry : Math.min(runtime.expiresAt, expiry);
         }
         if (snapshot.status === 'expired' || runtime.expiresAt !== undefined && runtime.expiresAt <= Date.now()) {
-            this.fail(flow, 'The original snapshot expired. Export the Work again explicitly.');
+            this.fail(flow, t('d.export.snapshotExpired'));
             return false;
         }
         if (snapshot.status === 'failed' || snapshot.status === 'unavailable') {
-            this.fail(flow, 'The original snapshot is unavailable. Export the Work again explicitly.');
+            this.fail(flow, t('d.export.snapshotUnavailable'));
             return false;
         }
         if (snapshot.status !== 'verified') {
@@ -555,18 +557,18 @@ export class ExportFlows {
             return false;
         }
         if (typeof snapshot.packageSize !== 'number' || !Number.isFinite(snapshot.packageSize) || snapshot.packageSize < 0 || !snapshot.digest || runtime.expiresAt === undefined) {
-            this.fail(flow, 'The original snapshot has no complete verified package metadata.');
+            this.fail(flow, t('d.export.snapshotMetadata'));
             return false;
         }
         return true;
     }
     acceptTransfer(flow, transfer, generation) {
         if (transfer.transferId !== flow.transferId || transfer.snapshotId !== flow.snapshotId || transfer.workId !== flow.workId) {
-            this.fail(flow, 'The download transfer does not match the original snapshot and transfer ID.');
+            this.fail(flow, t('d.export.transferWrong'));
             return;
         }
         if (transfer.terminalFailure) {
-            this.fail(flow, transfer.error || 'The original download preparation failed. Retry this snapshot explicitly.');
+            this.fail(flow, transfer.error || t('d.export.preparationFailed'));
             return;
         }
         if (!transfer.ready) {
@@ -588,7 +590,7 @@ export class ExportFlows {
             this.options.deliver(flow, flow.contentURL);
         }
         catch (error) {
-            flow.error = `Use Save file to download this verified transfer again. ${message(error)}`;
+            flow.error = t('d.export.saveAgain', { detail: message(error) });
         }
         this.changed();
     }

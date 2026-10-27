@@ -1,6 +1,7 @@
 import { Marked, Renderer } from './marked.js';
 import type { Tokens } from './marked.js';
 import { fileReferenceLink } from './file-reference.js';
+import { t } from './locale.js';
 
 const MAX_MARKDOWN_LENGTH = 64 * 1024;
 const MAX_MARKDOWN_LINES = 4096;
@@ -32,12 +33,14 @@ class ChatRenderer extends Renderer {
 
   override code({ text, lang }: Tokens.Code): string {
     const language = (lang || '').split(/\s/, 1)[0];
-    const label = language ? ` aria-label="${escapeHTML(language)} code"` : ' aria-label="Code"';
+    const label = language
+      ? ` aria-label="${escapeHTML(t('d.chat.codeLabelLanguage', { language }))}"`
+      : ` aria-label="${escapeHTML(t('d.chat.codeLabel'))}"`;
     return `<pre class="chat-markdown-code" tabindex="0"${label}><code>${escapeHTML(text)}\n</code></pre>\n`;
   }
 
   override table(token: Tokens.Table): string {
-    return `<div class="chat-markdown-table" tabindex="0" role="region" aria-label="Table">${super.table(token)}</div>\n`;
+    return `<div class="chat-markdown-table" tabindex="0" role="region" aria-label="${escapeHTML(t('d.chat.tableLabel'))}">${super.table(token)}</div>\n`;
   }
 
   override link({ href, title, tokens }: Tokens.Link): string {
@@ -45,7 +48,7 @@ class ChatRenderer extends Renderer {
     // A model-authored reference becomes navigation only when its raw format
     // and the reply's real Work both validate. Otherwise it stays label text.
     const file = fileReferenceLink(href, this.workId);
-    if (file) return `<a class="chat-file-link" href="${escapeHTML(file.href)}" data-path="${escapeHTML(file.path)}" title="Open in Files">${label}</a>`;
+    if (file) return `<a class="chat-file-link" href="${escapeHTML(file.href)}" data-path="${escapeHTML(file.path)}" title="${escapeHTML(t('d.chat.openInFiles'))}">${label}</a>`;
     const destination = safeLink(href);
     if (!destination) return label;
     return `<a href="${escapeHTML(destination)}" target="_blank" rel="noopener noreferrer"${title ? ` title="${escapeHTML(title)}"` : ''}>${label}</a>`;
@@ -54,7 +57,8 @@ class ChatRenderer extends Renderer {
   override image({ text }: Tokens.Image): string {
     // Do not fetch model-provided remote images or tracking URLs. Actual chat
     // attachments use the existing authenticated image pipeline separately.
-    return `<span class="chat-markdown-image">[Image: ${escapeHTML(text || 'image')}]</span>`;
+    const alt = escapeHTML(text || t('d.chat.imageFallback'));
+    return `<span class="chat-markdown-image">${t('d.chat.imageLabel', { text: alt })}</span>`;
   }
 }
 

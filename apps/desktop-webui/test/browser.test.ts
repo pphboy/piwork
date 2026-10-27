@@ -202,7 +202,9 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     assert.equal(corePaths.filter(path => path === '/api/v1/operations/operation-browser-create-1234').length, before);
     await page.getByRole('button',{name:'Close dialog'}).click();
     await create('Missing Operation');
-    await expect(page.locator('#modal')).toContainText('Observation interrupted. OPERATION_NOT_FOUND');
+    // Unknown server text stays a diagnostic beside the localized summary.
+    await expect(page.locator('#modal')).toContainText('Observation interrupted.');
+    await expect(page.locator('#modal')).toContainText('OPERATION_NOT_FOUND');
     await page.waitForTimeout(2400); assert.equal(missingOperationReads, 1, '404 operation was automatically polled again');
     await page.getByRole('button',{name:'Close dialog'}).click();
     await create('Superseded Work');

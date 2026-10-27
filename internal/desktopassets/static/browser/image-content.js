@@ -1,3 +1,5 @@
+/** Pure content-based image identification shared by chat input and Files preview. */
+import { t } from './locale.js';
 /** Bounded defaults chosen for read-only Files preview (not chat input limits). */
 export const FILE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 export const IMAGE_MAX_SIDE = 8192;
@@ -67,7 +69,7 @@ export function imageDimensions(mime, bytes) {
         }
     }
     if (!width || !height)
-        throw new Error('Invalid image dimensions');
+        throw new Error(t('d.images.invalidDimensions'));
     return { width, height };
 }
 export function imageWithinLimits(width, height) {

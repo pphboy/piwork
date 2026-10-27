@@ -4,5 +4,5 @@ package desktopassets
 
 import "embed"
 
-//go:embed static/browser/*.js static/public/*
+//go:embed static/browser/*.js static/browser/i18n/*.js static/public/*
 var FS embed.FS

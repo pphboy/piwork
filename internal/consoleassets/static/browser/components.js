@@ -1,6 +1,8 @@
+import { t, currentLocale } from './locale.js';
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 export const icon = (name, size = 18) => {
     const paths = {
+        globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
         grid: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
         info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
         logout: '<path d="M9 3H3v18h6M10 12h11m-5-5 5 5-5 5"/>',
@@ -37,7 +39,7 @@ export const Section = (title, description, body, actions = "", cls = "") => `<s
 export const Field = (id, label, control, help = "", error = "") => `<div class="field"><label for="${id}">${label}</label><div class="field-body">${control}${help ? `<p class="help" id="${id}-help">${help}</p>` : ""}<p class="field-error" id="${id}-error" ${error ? "" : "hidden"}>${esc(error)}</p></div></div>`;
 export const Input = (id, value = "", attrs = "") => `<input id="${id}" name="${id}" value="${esc(value)}" ${attrs}>`;
 export const DataTable = (head, rows, empty) => `<div class="table-scroll"><table><thead><tr>${head.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.join("") : `<tr><td colspan="${head.length}" class="empty-cell">${esc(empty)}</td></tr>`}</tbody></table></div>`;
-export const date = (value) => !value ? "Not provided" : new Date(value).toLocaleString("en-US", {
+export const date = (value) => !value ? t("ui.notProvided") : new Date(value).toLocaleString(currentLocale() === "zh-CN" ? "zh-CN" : "en-US", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -50,7 +52,7 @@ export const bytes = (value) => value < 1024
         ? `${(value / 1024).toFixed(1)} KiB`
         : `${(value / 1048576).toFixed(1)} MiB`;
 export const Disclosure = (title, body) => `<details class="disclosure"><summary>${esc(title)}</summary><div class="disclosure-body">${body}</div></details>`;
-export const Copy = (value) => Button(icon("copy", 15), "copy", "icon-button", `data-value="${esc(value)}" aria-label="Copy ${esc(value)}" title="Copy"`);
+export const Copy = (value) => Button(icon("copy", 15), "copy", "icon-button", `data-value="${esc(value)}" aria-label="${esc(t("ui.copyAria", { value }))}" title="${esc(t("ui.copy"))}"`);
 export const Empty = (title, message, action = "") => `<div class="empty-state">${icon("box", 26)}<h3>${esc(title)}</h3><p>${esc(message)}</p>${action}</div>`;
-export const UploadProgress = (label, sent, total) => `<div class="upload-progress" role="status"><div><strong>${esc(label)}</strong><span>${total ? `${bytes(sent)} / ${bytes(total)}` : ""}</span></div>${total ? `<progress max="${total}" value="${sent}" aria-label="Bytes uploaded"></progress>` : '<span class="working-line">Waiting for Core confirmation…</span>'}</div>`;
+export const UploadProgress = (label, sent, total) => `<div class="upload-progress" role="status"><div><strong>${esc(label)}</strong><span>${total ? `${bytes(sent)} / ${bytes(total)}` : ""}</span></div>${total ? `<progress max="${total}" value="${sent}" aria-label="${esc(t("ui.bytesUploaded"))}"></progress>` : `<span class="working-line">${esc(t("ui.waitingCore"))}</span>`}</div>`;
 //# sourceMappingURL=components.js.map

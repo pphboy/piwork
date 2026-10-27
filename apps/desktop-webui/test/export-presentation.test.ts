@@ -1,3 +1,5 @@
+const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.meta.url).href);
+const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdir, readFile } from 'node:fs/promises';
@@ -20,6 +22,7 @@ function fixture(longToken = false) {
   const saved = { ...snapshot, id: `snapshot-saved-${suffix}`, status: 'verified' };
   const flow = { id: 'export-layout-flow', workId: work.id, workName: work.name, stopOperationId: `operation-stop-${suffix}`, exportOperationId: snapshot.operationId, snapshotId: snapshot.id, phase: 'exporting', paused: false, terminal: false };
   const context: any = {
+    ...localeSandbox,
     pendingDots, overlayRole, exportSnapshotAvailable, innerWidth: 1440,
     adapter: { getWork: () => work, getSnapshot: () => snapshot, downloads: new Map(), state: { snapshots: [snapshot, saved] } },
     exportFlows: { get: () => flow, forWork: () => flow },
@@ -55,7 +58,8 @@ test('export details retains full original IDs, collapsed disclosure and existin
   assert.match(html, /data-action="resume-export-flow"[^>]*>Resume<\/button>/);
   assert.doesNotMatch(html, /data-pending-label="Starting export"/);
   assert.match(html, /Paused\. Resume in Details/);
-  assert.match(source, /data-copy="\$\{op\.id\}" aria-label="Copy Operation ID"/);
+  assert.match(source, /data-copy="\$\{op\.id\}" aria-label="\$\{t\('ops\.copyId'\)\}"/);
+  assert.equal(catalog.en['ops.copyId'], 'Copy Operation ID');
 });
 
 async function assertDetailsGeometry(page: Page) {

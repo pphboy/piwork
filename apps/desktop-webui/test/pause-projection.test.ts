@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { readFileSync } from 'node:fs';
 const { DesktopAdapter } = await import(new URL('../browser/adapter.js', import.meta.url).href);
+const { t: translate, stateText } = await import(new URL('../browser/locale.js', import.meta.url).href);
 const app = readFileSync(new URL('../browser/app.js', import.meta.url), 'utf8');
 // Execute the production modal renderer, not a duplicate observation projection.
 const helpers = app.slice(app.indexOf('const esc ='), app.indexOf('let view ='));
@@ -11,7 +12,7 @@ const importName = app.match(/^function importNameFeedback\([\s\S]*?^}/m)?.[0];
 assert.ok(importName, 'production import name projection exists');
 const inspector = app.match(/^function isRequestInspector\([\s\S]*?^}/m)?.[0];
 assert.ok(inspector, 'production inspector projection exists');
-const renderOperation = new Function('adapter', 'id', `const overlayRole=()=> 'modal';${helpers}\n${importName}\n${inspector}\n${phase}\nconst view={modal:'operation',data:{id},modalError:''};const route=()=>[];const current=()=>undefined;${modal};return modalMarkup();`);
+const renderOperation = new Function('adapter', 'id', 't', 'stateText', `const overlayRole=()=> 'modal';${helpers}\n${importName}\n${inspector}\n${phase}\nconst view={modal:'operation',data:{id},modalError:''};const route=()=>[];const current=()=>undefined;${modal};return modalMarkup();`);
 const id = 'original-operation';
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 function fixture(t: TestContext, status: number) {
@@ -35,7 +36,7 @@ for (const status of [503, 401, 404, 410]) test(`DWUI-017 paused observation ${s
   const key = f.adapter.metadataKey(`operations/${id}`);
   assert.equal(f.adapter.metadata.paused(key), true);
   assert.equal(f.adapter.operationPaused(id), true);
-  const markup = renderOperation(f.adapter, id);
+  const markup = renderOperation(f.adapter, id, translate, stateText);
   assert.match(markup, /data-action="resume-operation"/);
   assert.doesNotMatch(markup, /data-action="pause-operation"/);
   const before = f.calls.filter(r => r.path === `operations/${id}`).length;
@@ -46,10 +47,10 @@ for (const status of [503, 401, 404, 410]) test(`DWUI-017 paused observation ${s
 test('DWUI-017 a scheduled backoff is not an exhausted pause and manual pause survives visibility', async t => {
   const f = fixture(t, 503); f.adapter.scheduleOperationPoll(); await f.advance(2000);
   assert.equal(f.adapter.operationPaused(id), false);
-  assert.match(renderOperation(f.adapter, id), /data-action="pause-operation"/);
+  assert.match(renderOperation(f.adapter, id, translate, stateText), /data-action="pause-operation"/);
   f.adapter.pauseOperation(id); f.adapter.observePage('', false); f.adapter.observePage('', true);
   assert.equal(f.adapter.operationPaused(id), true);
-  assert.match(renderOperation(f.adapter, id), /data-action="resume-operation"/);
+  assert.match(renderOperation(f.adapter, id, translate, stateText), /data-action="resume-operation"/);
   await f.advance(60000); assert.equal(f.calls.filter(r => r.path === `operations/${id}`).length, 1);
   assert.ok(f.calls.every(r => r.method === 'GET'));
 });

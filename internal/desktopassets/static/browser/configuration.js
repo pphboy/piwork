@@ -1,13 +1,14 @@
+import { t } from './locale.js';
 function validate(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value))
-        throw new Error('Configuration JSON must be an object.');
+        throw new Error(t('d.config.objectRequired'));
     const raw = value;
     if (raw.skills !== undefined && (!Array.isArray(raw.skills) || raw.skills.some((s) => typeof s !== 'string')))
-        throw new Error('skills must be an array of names.');
+        throw new Error(t('d.config.skillsShape'));
     if (raw.packages !== undefined && (!Array.isArray(raw.packages) || raw.packages.some((p) => !p || typeof p.name !== 'string' || typeof p.enabled !== 'boolean')))
-        throw new Error('packages must contain a name and enabled boolean.');
+        throw new Error(t('d.config.packagesShape'));
     if (raw.agentsMd !== undefined && typeof raw.agentsMd !== 'string')
-        throw new Error('agentsMd must be text.');
+        throw new Error(t('d.config.agentsMdText'));
 }
 /** Advanced text may be temporarily invalid. Commit it before leaving its editor
  * or saving; otherwise the simple forms update the same complete public object. */
@@ -16,7 +17,7 @@ export function synchronizeConfiguration(config) {
     validate(parsed);
     if (config.advancedDirty) {
         config.skills = [...(parsed.skills ?? [])];
-        config.packages = (parsed.packages ?? []).map((p) => ({ ...p, source: 'Saved Work copy' }));
+        config.packages = (parsed.packages ?? []).map((p) => ({ ...p, source: 'Saved Work copy' })); // i18n-exempt: configuration protocol value, not display text
         config.agents = parsed.agentsMd ?? '';
     }
     else {

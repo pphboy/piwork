@@ -218,6 +218,14 @@ test('S03 user confirmation survives slow and failed Users refresh without anoth
     await page.locator('#dialog-submit').click(); await expect(page.locator('#dialog-submit')).toContainText('Creating');
     mutation.resolve(); await expect(page.locator('main')).toContainText('Account new-user created'); await expect(page.locator('[data-action-status]')).toContainText('Refreshing');
     refresh.resolve(); await expect(page.locator('main')).toContainText('not confirmed'); await expect(page.locator('[data-action="readback"]')).toBeVisible();
+    const translated = await page.evaluate(async () => {
+      const { chooseLocale, t } = await import('/browser/locale.js');
+      chooseLocale('zh-CN');
+      return { error: t('adapter.explain.CORE_UNREACHABLE'), account: t('dialog.accountCreated', { account: 'new-user', hint: t('dialog.userSignIn') }) };
+    });
+    await expect(page.locator('main')).toContainText(translated.account);
+    await expect(page.locator('[data-action-status]')).toContainText(translated.error);
+    await expect(page.locator('[data-action-status]')).not.toContainText('Confirmed result retained');
     expect(requests.filter(r => r.method === 'POST').length).toBe(1); expect(await page.locator('body').innerText()).not.toContain('test-password-only');
   } finally { mutation.resolve(); refresh.resolve(); }
 });
@@ -451,6 +459,7 @@ test('administrator command menu keeps native navigation, keyboard and outside p
  await expect(menu.locator('.dropdown-title')).toHaveText('admin');await expect(menu.locator('.account-context')).toContainText('Core: Unavailable');
  await expect(menu.getByRole('menuitem',{name:'Switch Core'})).toHaveCount(0);await expect(page.locator('a[data-workbench]')).toHaveCount(0);
  await page.keyboard.press('Home');const about=menu.getByRole('menuitem',{name:'About Piwork',exact:true});await expect(about).toBeFocused();await expect(about).toHaveAttribute('href','/about');
+ await page.keyboard.press('ArrowDown');await expect(menu.locator('[data-action=language]')).toBeFocused();
  await page.keyboard.press('ArrowDown');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('End');await page.keyboard.press('ArrowDown');await expect(about).toBeFocused();
  await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();
  await trigger.click();await page.keyboard.press('Tab');await expect(menu).toHaveCount(0);await expect(trigger).not.toBeFocused();

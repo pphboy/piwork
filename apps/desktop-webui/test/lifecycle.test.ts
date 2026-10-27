@@ -62,7 +62,7 @@ test('DWUI-017 manual terminal query keeps a refresh obligation, failure then GE
   await a.checkOperation('original-stop');
   await assert.rejects(a.refreshWorkStatus('work-one')); await assert.rejects(a.listWorks());
   assert.equal(a.state.operations[0].state, 'succeeded'); assert.equal(a.workSync.size, 1);
-  assert.match(a.getWork('work-one').statusError, /offline/); assert.equal(a.state.works.length, 1);
+  assert.match(String(a.getWork('work-one').statusError), /offline/); assert.equal(a.state.works.length, 1);
   failed = false; await a.refreshWorkStatus('work-one'); await a.listWorks();
   assert.equal(a.workSync.size, 0); assert.equal(a.project(a.getWork('work-one')).action, 'start');
   assert.equal(a.project(a.getWork('work-one')).exportable, true); assert.deepEqual(writes, []);

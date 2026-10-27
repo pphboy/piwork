@@ -332,11 +332,18 @@ func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
 	client := browser(t)
 	for path, contentType := range map[string]string{
 		"/setup": "text/html", "/login": "text/html",
-		"/setup/browser/onboarding.js": "text/javascript",
-		"/setup/browser/components.js": "text/javascript",
-		"/setup/browser/model-form.js": "text/javascript",
-		"/setup/browser/pending.js":    "text/javascript",
-		"/setup/piwork-logo.png":       "image/png", "/setup/style.css": "text/css",
+		"/setup/browser/onboarding.js":   "text/javascript",
+		"/setup/browser/components.js":   "text/javascript",
+		"/setup/browser/model-form.js":   "text/javascript",
+		"/setup/browser/pending.js":      "text/javascript",
+		"/setup/browser/i18n.js":         "text/javascript",
+		"/setup/browser/boot.js":         "text/javascript",
+		"/setup/browser/locale.js":       "text/javascript",
+		"/setup/browser/i18n/catalog.js": "text/javascript",
+		"/setup/browser/i18n/shared.js":  "text/javascript",
+		"/setup/browser/i18n/setup.js":   "text/javascript",
+		"/setup/browser/i18n/app.js":     "text/javascript",
+		"/setup/piwork-logo.png":         "image/png", "/setup/style.css": "text/css",
 	} {
 		response, err := client.Get(origin + path)
 		if err != nil {
@@ -355,6 +362,47 @@ func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != 404 {
 		t.Fatal("unexpected setup module was exposed")
+	}
+}
+
+func TestSetupLanguageModulesSupportHeadAndKeepCSP(t *testing.T) {
+	_, _, origin := fixture(t)
+	client := browser(t)
+	// Every boot/runtime module the setup entry references must also answer HEAD
+	// with the same type, and the asset response must keep the strict policy.
+	for _, path := range []string{
+		"/setup/browser/boot.js",
+		"/setup/browser/i18n.js",
+		"/setup/browser/locale.js",
+		"/setup/browser/i18n/catalog.js",
+		"/setup/browser/i18n/shared.js",
+		"/setup/browser/i18n/setup.js",
+		"/setup/browser/i18n/app.js",
+	} {
+		request, err := http.NewRequest(http.MethodHead, origin+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/javascript") {
+			t.Fatalf("setup language module %s HEAD: HTTP %d, type %q", path, response.StatusCode, response.Header.Get("Content-Type"))
+		}
+		if policy := response.Header.Get("Content-Security-Policy"); !strings.Contains(policy, "default-src 'none'") || !strings.Contains(policy, "script-src 'self'") {
+			t.Fatalf("setup language module %s lost CSP: %q", path, policy)
+		}
+	}
+	// The allowlist is exact-path only: an unlisted nested module stays hidden.
+	response, err := client.Get(origin + "/setup/browser/i18n/unlisted.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatal("unlisted nested setup module was exposed")
 	}
 }
 

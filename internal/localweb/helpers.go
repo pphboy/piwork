@@ -14,8 +14,10 @@ import (
 	"unicode/utf8"
 )
 
-// BrowserAsset accepts one embedded module filename, never a host path.
-var BrowserAsset = regexp.MustCompile(`^[a-z][a-z0-9-]*\.js$`)
+// BrowserAsset accepts an embedded module path made of safe lowercase segments.
+// Nested catalogs such as i18n/catalog.js are allowed; host paths, dot segments
+// and absolute paths are not.
+var BrowserAsset = regexp.MustCompile(`^(?:[a-z][a-z0-9-]*/)*[a-z][a-z0-9-]*\.js$`)
 var IDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,127}$`)
 var NamePattern = regexp.MustCompile(`^(?:@[a-z0-9][a-z0-9._-]*/)?[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 

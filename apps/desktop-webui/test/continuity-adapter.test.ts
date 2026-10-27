@@ -85,7 +85,7 @@ test('continuity: late Ready Services read and even a newer Ready read cannot cl
   late.resolve({ json: { services: [service()] } }); await list;
   f.respond(() => ({ json: { services: [service()] } })); await f.adapter.loadServices('one');
   assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000), null);
-  assert.match(f.adapter.serviceEntryError('one', 'notes', 3000), /permission revoked/);
+  assert.match(String(f.adapter.serviceEntryError('one', 'notes', 3000)), /permission revoked/);
   f.respond(r => ({ json: r.method === 'POST' ? entry() : { embed: 'allowed' } }));
   await f.adapter.ensureServiceEntry('one', 'notes', 3000, true);
   assert.ok(f.adapter.serviceEntryUrl('one', 'notes', 3000));
@@ -99,7 +99,7 @@ test('continuity: entry success started before a newer service denial cannot reo
   await assert.rejects(f.adapter.loadServices('one'));
   pending.resolve({ json: entry() }); await preparation.catch(() => undefined);
   assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000), null);
-  assert.match(f.adapter.serviceEntryError('one', 'notes', 3000), /revoked/);
+  assert.match(String(f.adapter.serviceEntryError('one', 'notes', 3000)), /revoked/);
 });
 
 test('continuity: a mismatched entry response never becomes the selected entry', async t => {
@@ -123,7 +123,7 @@ test('continuity: pending Works refresh shares one published state and keeps row
   const deduped = first === duplicate; assert.equal(f.adapter.worksLoading, true);
   pending.resolve({ status: 503, json: { message: 'list temporarily unavailable' } });
   await Promise.allSettled([first, duplicate]); assert.equal(deduped, true);
-  assert.equal(f.adapter.state.works.length, 1); assert.match(f.adapter.worksError, /temporarily unavailable/);
+  assert.equal(f.adapter.state.works.length, 1); assert.match(String(f.adapter.worksError), /temporarily unavailable/);
   assert.equal(f.adapter.worksLoading, false); assert.ok(f.adapter.worksChecked);
 });
 
@@ -145,7 +145,7 @@ test('continuity: logs have independent Work Service state, preserve content on 
   assert.equal(f.adapter.serviceLogs?.('two', 'notes')?.value?.text, 'other Work logs');
   f.respond(() => ({ status: 503, json: { message: 'log outage' } })); await assert.rejects(f.adapter.readLogs('one', 'notes'));
   assert.equal(f.adapter.serviceLogs('one', 'notes').value.text, 'first Work logs');
-  assert.match(f.adapter.serviceLogs('one', 'notes').error, /log outage/);
+  assert.match(String(f.adapter.serviceLogs('one', 'notes').error), /log outage/);
   assert.equal(f.adapter.serviceLogs('two', 'notes').value.text, 'other Work logs');
   assert.equal(f.requests.filter(r => r.method !== 'GET').length, 0);
 });
@@ -174,7 +174,7 @@ test('continuity: explicit new-tab entry denial revokes cached entry and beats a
   const direct = f.adapter.directServiceURL('one', 'notes', 3000);
   const rejected = assert.rejects(direct, /permission revoked/); late.resolve({ json: { embed: 'allowed' } }); await Promise.all([probe, rejected]);
   assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000), null);
-  assert.match(f.adapter.serviceEntryError('one', 'notes', 3000), /permission revoked/);
+  assert.match(String(f.adapter.serviceEntryError('one', 'notes', 3000)), /permission revoked/);
 });
 
 test('continuity: Services denial before any entry blocks automatic access after Ready metadata', async t => {
@@ -182,7 +182,7 @@ test('continuity: Services denial before any entry blocks automatic access after
   f.respond(r => ({ json: r.path.endsWith('/services') ? { services: [service()] } : r.method === 'POST' ? entry() : { embed: 'allowed' } }));
   await f.adapter.loadServices('one'); await f.adapter.ensureServiceEntry('one', 'notes', 3000);
   assert.equal(f.requests.filter(r => r.path === 'service-entries').length, 0);
-  assert.match(f.adapter.serviceEntryError('one', 'notes', 3000), /permission revoked/);
+  assert.match(String(f.adapter.serviceEntryError('one', 'notes', 3000)), /permission revoked/);
   await f.adapter.ensureServiceEntry('one', 'notes', 3000, true); assert.ok(f.adapter.serviceEntryUrl('one', 'notes', 3000)); assert.equal(f.adapter.serviceEntryError('one', 'notes', 3000), '');
 });
 
@@ -220,7 +220,7 @@ for (const invalidation of ['stopped', 'removed', 'port-withdrawn', 'work-stoppe
   if (invalidation === 'work-stopped') await f.adapter.refreshWorkStatus('one'); await f.adapter.loadServices('one');
   await f.adapter.ensureServiceEntry('one', 'notes', 3000);
   assert.equal(f.requests.filter(r => r.path === 'service-entries').length, 1);
-  assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000), null); assert.match(f.adapter.serviceEntryError('one', 'notes', 3000), /permission revoked/);
+  assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000), null); assert.match(String(f.adapter.serviceEntryError('one', 'notes', 3000)), /permission revoked/);
   await f.adapter.ensureServiceEntry('one', 'notes', 3000, true);
   assert.equal(f.requests.filter(r => r.path === 'service-entries').length, 2); assert.ok(f.adapter.serviceEntryUrl('one', 'notes', 3000));
 });
@@ -236,7 +236,7 @@ for (const status of [404, 410]) test(`continuity: trusted Work ${status} revoke
   assert.equal(f.adapter.project(original).retainWorkspace, false); assert.equal(f.adapter.project(original).usable, false);
   assert.equal(f.adapter.getWork('one'), original, 'unavailability alone must not claim remote deletion');
   assert.equal(original.status, 'Ready'); assert.equal(original.checkedAt, confirmedAt); assert.equal(original.desired, 'running');
-  assert.match(original.statusError, /Original Work unavailable/); assert.equal(f.adapter.state.operations.length, 0);
+  assert.match(String(original.statusError), /Original Work unavailable/); assert.equal(f.adapter.state.operations.length, 0);
   assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000), null);
   assert.equal(f.adapter.serviceEntryUrl('two', 'notes', 3000), otherEntry); assert.equal(f.adapter.project(f.adapter.getWork('two')).usable, true);
   await f.adapter.listWorks(); assert.equal(f.adapter.project(original).retainWorkspace, false, 'Ready list metadata cannot restore access');

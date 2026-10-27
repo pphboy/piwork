@@ -301,10 +301,13 @@ test('R7 catalog errors recover independently, reject malformed arrays, accept e
   const { page } = await fixture(t, r => r.path === 'skills' ? skillReply : r.path === 'packages' ? packageReply : undefined);
   await button(page, 'settings').click(); await page.locator('[data-tab="AGENTS.md"]').click(); await page.locator('#agents-editor').fill('dirty instructions');
   skillReply = { status: 503, json: { message: 'skills offline' } }; await api(page, `adapter.state.scenario='env-not-ready'; return adapter.checkCatalog();`);
-  let facts = await api(page, `return {catalog:adapter.catalog,scenario:adapter.state.scenario,skills:adapter.getSkills()};`); assert.match(facts.catalog.skills.error, /skills offline/); assert.equal(facts.catalog.packages.error, ''); assert.equal(facts.scenario, 'env-not-ready'); assert.equal(facts.skills.length, 2);
+  // Cached feedback is a localizable message identity; its raw server text and
+  // catalog key both remain inspectable across the browser boundary.
+  const feedbackText = (value: any): string => typeof value === 'string' ? value : value?.raw || value?.key || '';
+  let facts = await api(page, `return {catalog:adapter.catalog,scenario:adapter.state.scenario,skills:adapter.getSkills()};`); assert.match(feedbackText(facts.catalog.skills.error), /skills offline/); assert.equal(feedbackText(facts.catalog.packages.error), ''); assert.equal(facts.scenario, 'env-not-ready'); assert.equal(facts.skills.length, 2);
   await page.locator('[data-tab="Skills"]').click(); await expect(page.locator('[data-action="core-skill-copy"]').first()).toBeDisabled();
-  skillReply = { json: {} }; await api(page, `return adapter.checkCatalog();`); assert.match(await api(page, `return adapter.catalog.skills.error;`), /incomplete/);
-  skillReply = { json: { skills: [{ name: 'saved' }, { name: 'new' }] } }; packageReply = { json: { packages: 'bad' } }; await button(page, 'check-catalog').click(); await expect(page.locator('[data-action="core-skill-copy"]').first()).toBeEnabled(); assert.equal(await api(page, `return adapter.catalog.skills.error;`), ''); assert.match(await api(page, `return adapter.catalog.packages.error;`), /incomplete/);
+  skillReply = { json: {} }; await api(page, `return adapter.checkCatalog();`); assert.match(feedbackText(await api(page, `return adapter.catalog.skills.error;`)), /incomplete/i);
+  skillReply = { json: { skills: [{ name: 'saved' }, { name: 'new' }] } }; packageReply = { json: { packages: 'bad' } }; await button(page, 'check-catalog').click(); await expect(page.locator('[data-action="core-skill-copy"]').first()).toBeEnabled(); assert.equal(feedbackText(await api(page, `return adapter.catalog.skills.error;`)), ''); assert.match(feedbackText(await api(page, `return adapter.catalog.packages.error;`)), /incomplete/i);
   await page.locator('[data-tab="AGENTS.md"]').click(); await expect(page.locator('#agents-editor')).toHaveValue('dirty instructions');
   packageReply = { json: { packages: [] } }; skillReply = { json: { skills: [] } }; await api(page, `return adapter.checkCatalog();`); facts = await api(page, `return {catalog:adapter.catalog,scenario:adapter.state.scenario,packages:adapter.getPackages()};`); assert.equal(facts.catalog.skills.error, ''); assert.equal(facts.catalog.packages.error, ''); assert.equal(facts.scenario, 'env-not-ready'); assert.deepEqual(facts.packages, []); await api(page, `adapter.acceptSession({state:'authenticated',generation:1,csrf:'local-session-csrf',coreUrl:'http://core.test',user:{account:'owner',role:'user'}});`); assert.equal(await api(page, `return adapter.state.scenario;`), 'env-not-ready');
   await api(page, `adapter.state.scenario='core-offline'; return adapter.checkCatalog();`); assert.equal(await api(page, `return adapter.state.scenario;`), 'core-offline');
@@ -2345,7 +2348,9 @@ for (const timing of ['virtual', 'real'] as const) test(`Controls recovery: canc
  const reads=()=>requests.filter(r=>r.path.endsWith('/agent-requests/request-a') && r.method==='GET').length;
  const before=reads();state='cancelled';
  if(timing==='virtual')await page.clock.runFor(6000);
- await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/,{timeout:10000});
+ // Execution details can already contain a cancelled Run while the request is
+ // still cancelling. Wait for the original request's own terminal state.
+ await expect(page.locator('#modal .request-overview .status')).toHaveText('Cancelled',{timeout:10000});
  assert.ok(reads()>before,'the original request must actually be reread to confirm cancellation');
  await expect(button(page,'cancel-pi-request')).toHaveCount(0);
  const terminal=reads();
@@ -2810,6 +2815,10 @@ test('Service feedback: recovery preserves its original cause until Ready', asyn
   const notice = page.locator('.work-notice');
   await expect(notice).toContainText('Tool A is recovering');
   await expect(notice).toContainText('The service process exited.');
+  await page.evaluate(async () => { const path = '/desktop/browser/locale.js'; const locale = await import(path); locale.chooseLocale('zh-CN'); });
+  await expect(notice).toContainText('Tool A 正在恢复');
+  await expect(notice).toContainText('The service process exited.');
+  await page.evaluate(async () => { const path = '/desktop/browser/locale.js'; const locale = await import(path); locale.chooseLocale('en'); });
   await notice.locator('[data-action="service-details"]').click();
   await expect(page.locator('#modal .service-explanation')).toContainText('The service process exited.');
   await button(page, 'close-modal').click();
@@ -2835,6 +2844,10 @@ test('temporary cleanup remains visible when Service logs fail and refresh confi
   await expect(modal).toContainText('Exit code'); await expect(modal).toContainText('7');
   await expect(modal).toContainText('Waiting to retry'); await expect(modal).toContainText('Docker is unavailable');
   await expect(modal).toContainText('Service output could not be archived');
+  await page.evaluate(async () => { const path = '/desktop/browser/locale.js'; const locale = await import(path); locale.chooseLocale('zh-CN'); });
+  await expect(modal).toContainText('等待重试');
+  await expect(modal).toContainText('Docker 不可用');
+  await page.evaluate(async () => { const path = '/desktop/browser/locale.js'; const locale = await import(path); locale.chooseLocale('en'); });
   await expect(modal.locator('[data-action="check-operation"][data-id="operation-cleanup"]')).toHaveCount(1);
   await expect(modal.locator('[data-control="retry"]')).toHaveCount(0);
   state='completed'; await button(page,'refresh-temporary-cleanups').click();

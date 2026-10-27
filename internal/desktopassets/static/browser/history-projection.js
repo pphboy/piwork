@@ -1,6 +1,7 @@
+import { t } from './locale.js';
 import { historyMessages } from './chat-projection.js';
 const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', { fatal: true });
-const invalid = () => { throw new Error('Saved history contains a missing or conflicting content range.'); };
+const invalid = () => { throw new Error(t('d.history.invalidRange')); };
 /** The cache contains only content explicitly read by this page. Range overlap
  * is validated by bytes, never inferred from equal messages or tool names. */
 export class HistoryProjection {

@@ -481,7 +481,7 @@ test('Works initial error has one cause and retry; retries stay local and confir
   await expect(page.getByRole('heading', { name: 'Works could not be loaded' })).toBeVisible();
   await expect.poll(() => records.filter(r => r.path === 'works').length).toBeGreaterThan(0);
   await expect.poll(() => api(page, 'return !adapter.worksLoading && !adapter.connectionRequest;')).toBe(true);
-  await expect(page.locator('.works-error-cause')).toHaveText('Initial Works read unavailable');
+  await expect(page.locator('.works-error-cause')).toContainText('Initial Works read unavailable');
   await expect(page.getByRole('button', { name: 'Retry loading', exact: true })).toHaveCount(1);
   await expect(page.locator('.works-page > .feedback')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
   await expect(page.locator('.works-footer')).toContainText('Works not yet read');
@@ -495,7 +495,7 @@ test('Works initial error has one cause and retry; retries stay local and confir
   await page.locator('[data-action="retry-works"]').evaluateAll(nodes => nodes.forEach(node => (node as HTMLButtonElement).click()));
   assert.equal(records.filter(r => r.path === 'works').length, initialReads + 1);
   await captureWorksEvidence(page, 'works-initial-error-retrying');
-  failedRetry.resolve(); await expect(page.locator('.works-error-cause')).toHaveText(longError);
+  failedRetry.resolve(); await expect(page.locator('.works-error-cause')).toContainText(longError);
   await expect(page.locator('.works-page script')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Retry loading', exact: true })).toBeEnabled();
   await expect(page.locator('.works-page > .feedback')).toHaveCount(0);
@@ -508,7 +508,8 @@ test('Works initial error has one cause and retry; retries stay local and confir
   await expect(page.locator('.works-error-cause')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
   await expect(page.locator('.works-footer')).toContainText('0 Works');
   mode = 'refresh-failure'; await page.getByRole('button', { name: 'Refresh Works', exact: true }).click();
-  await expect(page.locator('.works-page > .feedback')).toContainText('Works could not be refreshed. Confirmed empty list refresh unavailable');
+  await expect(page.locator('.works-page > .feedback')).toContainText('Works could not be refreshed.');
+  await expect(page.locator('.works-page > .feedback')).toContainText('Confirmed empty list refresh unavailable');
   await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Works could not be loaded' })).toHaveCount(0);
   await expect(page.locator('.loading-list')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);

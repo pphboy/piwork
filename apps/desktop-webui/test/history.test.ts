@@ -104,7 +104,7 @@ test('original-key recovery negotiates a cleared history capability before readi
  t.after(()=>adapter.clearIdentity());await adapter.recoverChatSubmission('work-1');
  assert.equal(requests.length,2);assert.ok(requests[0]!.endsWith('/history-capabilities'));
  assert.equal(adapter.chatSubmissions.get('work-1').key,'original-key');
- assert.match(adapter.chatSubmissions.get('work-1').error,/not found/);
+ assert.match(String(adapter.chatSubmissions.get('work-1').error),/not found/);
 });
 
 test('identity change during original-key capability negotiation stops the old lookup',async t=>{
@@ -201,7 +201,7 @@ test('old Agent capacity failures stop automatic whole-session recovery without 
   t.after(()=>adapter.clearIdentity());await adapter.resumeRun('work-1');
   assert.equal(run.status,'running');assert.equal(adapter.getWork('work-1').sessions[0].messages[0].text,'Known content');
   assert.equal(adapter.reconnects.size,0);assert.equal(adapter.historyObservers.size,0);assert.equal(requests.length,3);
-  assert.match(run.error,/explicitly Apply/);
+  assert.match(String(run.error),/explicitly Apply/);
  });
 });
 
@@ -222,7 +222,7 @@ test('old Agent event precheck limits stop reconnecting before any 410 recovery'
   assert.deepEqual(requests,['/_desktop/api/works/work-1/runs/run-1/events?after=7']);
   assert.equal(run.status,'running');assert.equal(run.cursor,7);
   assert.equal(adapter.getWork('work-1').sessions[0].messages[0].text,'Known content');
-  assert.match(run.error,/Legacy history limit/);assert.match(run.error,/explicitly Apply/);
+  assert.match(String(run.error),/Legacy history limit/);assert.match(String(run.error),/explicitly Apply/);
  });
 });
 

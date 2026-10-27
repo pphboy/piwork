@@ -8,6 +8,7 @@ import { createServer as createHTTPServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { catalog } from '../dist/browser/i18n/catalog.js';
 
 let nativeCore = process.env.PIWORK_TEST_NATIVE_CORE || fileURLToPath(new URL("../../../dist/go/piwork-core", import.meta.url));
 async function freePort() {
@@ -57,6 +58,33 @@ async function login(page) {
   await page.goto(origin+'/admin');
   await expect(page.getByRole('heading', { name: 'What’s next for your Core?' })).toBeVisible();
 }
+
+test('real Core login and administration retain identity across both languages', async ({ browser }) => {
+  const context = await browser.newContext({ locale: 'zh-CN' });
+  const page = await context.newPage();
+  const zh = catalog['zh-CN'], en = catalog.en;
+  try {
+    await page.goto(`${origin}/login`);
+    await page.getByLabel(zh['onboarding.form.account'], { exact: true }).fill('admin');
+    await page.getByLabel(zh['onboarding.form.password'], { exact: true }).fill('correct horse battery');
+    await page.getByRole('button', { name: zh['onboarding.form.signIn'], exact: true }).click();
+    await page.waitForURL(url => url.pathname !== '/login');
+    await page.goto(`${origin}/admin`);
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    await expect(page.getByRole('heading', { name: zh['status.heading'], exact: true })).toBeVisible();
+    await page.goto(`${origin}/admin/users`);
+    await expect(page.getByRole('heading', { name: zh['users.pageTitle'], exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'admin', exact: true })).toBeVisible();
+    await page.locator('#account-trigger').click();
+    await page.locator('#account-dropdown [data-action="language"]').click();
+    await page.locator('.language-picker [data-locale="en"]').click();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect(page.getByRole('heading', { name: en['users.pageTitle'], exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'admin', exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  } finally { await context.close(); }
+});
 test('real message Test sends to the specified model and displays actual Responses and Messages replies in a Modal',async({page})=>{
   const captured=[];let failureStatus=0;
   const gateway=createHTTPServer(async(request,response)=>{

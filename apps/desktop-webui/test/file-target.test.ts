@@ -1,3 +1,4 @@
+const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -15,6 +16,7 @@ function extract(...names: string[]) {
 function fixture() {
   const work: any = { id: 'work-a', name: 'A', services: [], files: [], resourceErrors: {} };
   const c: any = {
+  ...localeSandbox,
     pendingDots, filesRestoreNotice: '', fileActionsContext: '', fileSourceReturn: undefined,
     view: { tab: 'Files', path: '/output', file: '', fileStatus: 'idle', fileError: '', selected: [],
       fileDraft: '', fileOriginal: '', fileBaseline: '', fileEditable: false, fileReread: null,

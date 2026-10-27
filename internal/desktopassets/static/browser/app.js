@@ -1,3 +1,4 @@
+import { createLanguagePicker } from './i18n.js';
 import { pendingDots } from './pending.js';
 import { renderChatMarkdown } from './chat-markdown.js';
 import { overlayRole, anchoredOverlay, overlayPlacement, menuDestination, overlayForAction } from './overlay-role.js';
@@ -15,7 +16,9 @@ import { editAdvanced, synchronizeConfiguration } from './configuration.js';
 import { ActionState, renderActionStates } from './action-state.js';
 import { adapter, DesktopError, fileVersion } from "./adapter.js";
 import { filesDeepLink, filesRouteTarget, isFilesRoute } from "./file-reference.js";
+import { t, stateText, onLocaleChange, chooseLocale, languageChoices, applyDocumentTitle, formatTime, formatDateTime, formatNumber } from './locale.js';
 const root = document.querySelector("#app");
+onLocaleChange(render);
 const pendingAges = new WeakMap();
 let pendingNoticeTimer;
 const imageDrafts = new ImageDrafts(() => render());
@@ -69,18 +72,22 @@ const icon = (name, size = 18) => {
         trash: '<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/>',
         terminal: '<path d="m4 7 5 5-5 5m8 0h8"/>',
         logout: '<path d="M9 3H3v18h6M10 12h11m-5-5 5 5-5 5"/>',
+        globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
     };
     return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.grid}</svg>`;
 };
 const btn = (label, action, cls = "", extra = "") => `<button class="button ${cls}" data-action="${action}" ${extra}>${label}</button>`;
+const languageName = () => languageChoices().find(choice => choice.selected)?.label || '';
+const languageTrigger = (cls = 'account-button quiet', key = 'topbar') => btn(`${icon('globe', 16)}<span>${t('lang.menu')}</span>${icon('down', 12)}`, 'language', `${cls} language-trigger`, `data-language-trigger="${key}" aria-label="${esc(t('lang.triggerAria', { language: languageName() }))}" aria-haspopup="listbox" aria-expanded="${typeof languagePicker !== 'undefined' && languagePicker.isOpen}"`);
+const languageMenuItems = () => `<div class="menu-list language-menu">${btn(`${icon('globe', 16)}<span>${t('lang.menu')}</span><span class="language-current">${esc(languageName())}</span>${icon('chevron', 14)}`, 'language', 'language-trigger', 'role="menuitem" tabindex="-1" data-language-trigger="menu" aria-haspopup="listbox" aria-expanded="false"')}</div>`;
 const workLink = (label, id, cls = '') => `<a class="button ${cls}" data-action="open-work" data-id="${esc(id)}" href="#/work/${encodeURIComponent(id)}">${label}</a>`;
-const badge = (status) => `<span class="status ${status.toLowerCase().replaceAll(" ", "-")}"><i></i>${esc(status)}</span>`;
+const badge = (status) => `<span class="status ${status.toLowerCase().replaceAll(" ", "-")}"><i></i>${esc(stateText(status))}</span>`;
 const feedback = (text, tone = "info", action = "") => `<div class="feedback ${tone}" role="status">${icon(tone === "success" ? "check" : "info")}<div>${text}</div>${action}</div>`;
 const empty = (symbol, title, body, action = "") => `<div class="empty">${icon(symbol, 32)}<h2>${title}</h2><p>${body}</p>${action}</div>`;
 const pendingStatus = (label, ownedActions = '') => `<span class="pending-status" role="status" aria-busy="true" data-pending-label="${esc(label)}" ${ownedActions ? `data-pending-action="${ownedActions}"` : ''}>${pendingDots()}<span>${esc(label)}</span></span>`;
 const operationBusy = (op) => !!op && ['accepted', 'pending', 'preparing', 'running'].includes(op.state) && !op.error && !op.observationError && !adapter.operationPaused(op.id);
 const readPlaceholder = (label, shape = "rows") => `<div class="read-placeholder read-placeholder-${esc(shape)}" role="status" aria-label="${esc(label)}" aria-busy="true">${pendingStatus(label)}<div class="read-placeholder-line" aria-hidden="true"></div><div class="read-placeholder-line" aria-hidden="true"></div><div class="read-placeholder-line" aria-hidden="true"></div></div>`;
-const readFailure = (label, error, action, busy = false) => `<div class="feedback warning read-failure"><div><span>${esc(label)}</span><details><summary>Details</summary><p>${esc(error)}</p></details></div>${btn(busy ? pendingDots() : icon('refresh', 16), action, `icon-button quiet ${busy ? 'is-reading' : ''}`, `aria-label="${busy ? 'Retrying' : 'Retry'} ${esc(label.toLowerCase())}" title="${busy ? 'Retrying…' : 'Retry'}" ${busy ? 'disabled aria-busy="true" data-read-busy="true"' : ''}`)}</div>`;
+const readFailure = (label, error, action, busy = false) => `<div class="feedback warning read-failure"><div><span>${esc(label)}</span><details><summary>${t('common.details')}</summary><p>${esc(error)}</p></details></div>${btn(busy ? pendingDots() : icon('refresh', 16), action, `icon-button quiet ${busy ? 'is-reading' : ''}`, `aria-label="${busy ? esc(t('readFailure.retryingAria', { label: label.toLowerCase() })) : esc(t('readFailure.retryAria', { label: label.toLowerCase() }))}" title="${busy ? esc(t('common.retrying')) : esc(t('common.retry'))}" ${busy ? 'disabled aria-busy="true" data-read-busy="true"' : ''}`)}</div>`;
 let view = {
     search: "",
     deleteConfirmed: false,
@@ -150,6 +157,7 @@ let view = {
     commandCaret: 0,
     fullscreenError: '',
 };
+const languagePicker = createLanguagePicker({ choices: languageChoices, label: () => t('lang.menu'), onChoose: chooseLocale });
 const workspacePanels = new WorkspacePanelsStore();
 const expandedActivity = new Map();
 let workspaceReturn, chatReturn;
@@ -181,20 +189,28 @@ const importStarts = new Map();
 function controlReady(control, w) {
     return !!control?.operationId && workCompletionReady(adapter.getOperation(control.operationId), w.id, adapter.project(w).usable);
 }
+const controlActionKeys = {
+    'Start Work': 'action.startWork', 'Retry Work': 'action.retryWork', // i18n-exempt: internal control identifiers, rendered through controlActionText
+    'start Service': 'action.startService', 'restart Service': 'action.restartService',
+    'retry Service': 'action.retryService', 'stop Service': 'action.stopService', 'remove Service': 'action.removeService',
+};
+/** Presentation only: internal control identifiers stay unchanged for comparisons. */
+const controlActionText = (action) => controlActionKeys[action] ? t(controlActionKeys[action]) : action;
 function controlMarkup(control) {
     if (!control)
         return '';
     const op = control.operationId ? adapter.getOperation(control.operationId) : undefined;
     const state = op?.state || control.phase;
     const busy = operationBusy(op);
-    const label = state === 'pending' ? 'Submitting' : state === 'accepted' ? 'Accepted · waiting for confirmation' : state === 'unknown' ? 'Result unknown · check the original target' : state === 'reviewed' ? 'Original outcome unknown · current target checked' : state;
-    return `<div class="object-control-progress" role="status" aria-busy="${busy}"><span>${busy ? pendingStatus(`${control.action} · ${label}`) : `${esc(control.action)} · ${esc(label)}`}</span>${control.error || op?.error || op?.observationError ? `<small>${esc(control.error || op?.error || op?.observationError)}</small>` : ''}<div class="actions">${control.operationId ? btn('Operation details', 'operation', 'text-button small', `data-id="${esc(control.operationId)}"`) : ''}${btn('Check progress', control.serviceId ? 'check-service-progress' : 'check-work-progress', 'text-button small', `data-id="${esc(control.workId)}"${control.serviceId ? ` data-service-id="${esc(control.serviceId)}"` : ''}`)}</div></div>`;
+    const label = state === 'pending' ? t('control.submitting') : state === 'accepted' ? t('control.acceptedWaiting') : state === 'unknown' ? t('control.resultUnknown') : state === 'reviewed' ? t('control.outcomeUnknown') : stateText(state);
+    const action = controlActionText(control.action);
+    return `<div class="object-control-progress" role="status" aria-busy="${busy}"><span>${busy ? pendingStatus(`${action} · ${label}`) : `${esc(action)} · ${esc(label)}`}</span>${control.error || op?.error || op?.observationError ? `<small>${esc(control.error || op?.error || op?.observationError)}</small>` : ''}<div class="actions">${control.operationId ? btn(t('control.operationDetails'), 'operation', 'text-button small', `data-id="${esc(control.operationId)}"`) : ''}${btn(t('control.checkProgress'), control.serviceId ? 'check-service-progress' : 'check-work-progress', 'text-button small', `data-id="${esc(control.workId)}"${control.serviceId ? ` data-service-id="${esc(control.serviceId)}"` : ''}`)}</div></div>`;
 }
 async function submitWorkStart(w, record, imported) {
     const old = workControls.get(w.id), permitted = adapter.project(w).action;
     if (!['start', 'retry'].includes(permitted) || old && ['pending', 'unknown'].includes(old.phase))
-        throw new Error('Check the original Work control before starting again.');
-    const control = { workId: w.id, action: permitted === 'retry' ? 'Retry Work' : 'Start Work', phase: 'pending' };
+        throw new Error(t('action.checkWorkControl'));
+    const control = { workId: w.id, action: permitted === 'retry' ? 'Retry Work' : 'Start Work', phase: 'pending' }; // i18n-exempt: internal control identifier
     const epoch = adapter.identityEpoch;
     workControls.set(w.id, control);
     render();
@@ -210,7 +226,7 @@ async function submitWorkStart(w, record, imported) {
         }
         if (record) {
             record.businessId = op.id;
-            actions.confirm(record, `Accepted · ${op.id}`);
+            actions.confirm(record, t('action.accepted', { id: op.id }));
         }
         void adapter.loadWork(w.id).catch(() => undefined);
         render();
@@ -234,7 +250,7 @@ async function submitWorkStart(w, record, imported) {
 async function submitServiceControl(w, serviceId, action, record) {
     const key = `${w.id}:${serviceId}`, old = serviceControls.get(key), original = old?.operationId && adapter.getOperation(old.operationId);
     if (old && (['pending', 'unknown'].includes(old.phase) || original && !['succeeded', 'failed', 'superseded'].includes(original.state)))
-        throw new Error('Check this Service’s original control before submitting another.');
+        throw new Error(t('action.checkServiceControl'));
     const epoch = adapter.identityEpoch, origin = location.hash, choice = modalChoice;
     const control = { workId: w.id, serviceId, action: `${action} Service`, phase: 'pending' };
     serviceControls.set(key, control);
@@ -247,7 +263,7 @@ async function submitServiceControl(w, serviceId, action, record) {
         control.phase = 'accepted';
         if (record) {
             record.businessId = op.id;
-            actions.confirm(record, `Accepted · ${op.id}`);
+            actions.confirm(record, t('action.accepted', { id: op.id }));
         }
         if (origin === location.hash && choice === modalChoice && current()?.id === w.id)
             openModal('service-details', { serviceId });
@@ -296,13 +312,13 @@ const exportFlows = new ExportFlows(adapter, {
 });
 function openExportFlow(flow, record) { if (record) {
     record.businessId = flow.id;
-    actions.confirm(record, 'Export intent retained; follow original progress');
+    actions.confirm(record, t('action.exportIntentRetained'));
 } openModal('export', { id: flow.workId, flowId: flow.id, snapshotId: flow.snapshotId || '' }); }
 function beginExport(work, stopConfirmed = false, record) {
     const old = exportFlows.forWork(work.id);
     if (old && !old.terminal) {
         if (old.mode !== 'new')
-            throw new Error('This Work already has an active download for another intent. Check or finish that original download first.');
+            throw new Error(t('action.downloadActive'));
         openExportFlow(old, record);
         return;
     }
@@ -319,30 +335,33 @@ let servicePreparationScheduled = false;
 const fileSelections = new Map();
 const viewKey = () => `${location.hash}:${view.modal}:${modalChoice}:${view.tab}:${view.path}:${view.service}:${view.port}:${sessionChoice}`;
 const actionLabels = {
-    'sign-in': 'Signing in', 'sign-out': 'Signing out', 'confirm-switch-core': 'Switching Core', 'check-connection': 'Checking connection',
-    'retry-works': 'Loading Works', 'create-work': 'Creating Work', 'start-work': 'Starting Work', 'start-import-open': 'Starting imported Work', 'check-work-progress': 'Checking Work progress', 'check-service-progress': 'Checking Service progress', 'confirm-stop': 'Stopping Work', 'confirm-delete': 'Deleting Work',
-    'retry-work-read': 'Loading Work', 'open-work': 'Loading Work', 'check-work': 'Checking Work', settings: 'Reading settings', 'tab-Services': 'Loading Services', 'tab-Files': 'Reading workspace',
-    'retry-services': 'Reading Services', 'run-details': 'Reading Run details', 'active-run': 'Reading active Run', 'check-chat-submission': 'Checking original submission',
-    'load-models': 'Reading models', 'save-model': 'Saving Session model', 'check-session-model': 'Reading Session model', 'service-requests': 'Reading Agent requests', 'check-active-run': 'Checking active Run', 'pi-requests': 'Reading Pi requests', 'pi-request-detail': 'Reading Pi request', 'cancel-pi-request': 'Cancelling Pi request', 'retry-pi-request': 'Retrying Pi request', 'next-pi-requests': 'Reading more Pi requests', 'next-pi-evidence': 'Reading more evidence',
-    'load-earlier-history': 'Reading earlier messages', 'reload-history': 'Reading recent messages', 'retry-conversation': 'Reading conversation', 'sessions': 'Reading Sessions', 'select-session': 'Reading Session', 'new-session': 'Creating Session', 'send-message': 'Submitting message', 'cancel-run': 'Requesting cancellation', 'resume-run': 'Reconnecting Run',
-    'service-details': 'Reading logs', 'service-action': 'Submitting Service control', 'confirm-service-control': 'Submitting Service control', 'refresh-logs': 'Reading logs',
-    'open-app': 'Opening application', 'open-window': 'Opening application', 'retry-service-entry': 'Preparing application', 'check-preview': 'Checking preview',
-    'refresh-files': 'Reading workspace', 'file-path': 'Reading directory', 'open-file': 'Reading file', 'open-source': 'Reading file', 'retry-file-preview': 'Reading file', 'save-file': 'Saving file', 'dirty-save': 'Saving file',
-    'confirm-upload-overwrite': 'Uploading files', 'confirm-folder': 'Creating folder', 'retry-selected-files': 'Retrying selected paths', 'confirm-transfer': 'Transferring files', 'confirm-file-delete': 'Deleting files',
-    'save-config': 'Saving settings', 'dirty-config-save': 'Saving settings', 'refresh-config': 'Reading settings', 'apply-config': 'Submitting Apply', 'confirm-core-skills': 'Copying Skill', 'check-catalog': 'Reading catalog',
-    'confirm-install': 'Submitting package', 'confirm-remove-package': 'Removing package', 'confirm-import': 'Submitting import', 'prepare-export': 'Preparing Export',
-    'export': 'Preparing Export', 'view-snapshot': 'Checking snapshot', 'save-export-file': 'Checking original download', 'check-export-flow': 'Checking export', 'resume-export-flow': 'Resuming export',
-    'download-work': 'Preparing download', 'check-download': 'Checking transfer', 'check-operation': 'Checking Operation', 'lookup-operation': 'Reading Operation', 'lookup-snapshot': 'Reading snapshot',
-    'operations': 'Reading known Operations', 'clear-operations': 'Clearing completed records', 'resume-operation': 'Resuming observation', 'check-inspection-import': 'Checking transfer', 'retry-inspection-cleanup': 'Releasing local transfer',
+    'sign-in': 'actions.signIn', 'sign-out': 'actions.signOut', 'confirm-switch-core': 'actions.switchingCore', 'check-connection': 'actions.checkingConnection',
+    'retry-works': 'actions.loadingWorks', 'create-work': 'actions.creatingWork', 'start-work': 'actions.startingWork', 'start-import-open': 'actions.startingImportedWork', 'check-work-progress': 'actions.checkingWorkProgress', 'check-service-progress': 'actions.checkingServiceProgress', 'confirm-stop': 'actions.stoppingWork', 'confirm-delete': 'actions.deletingWork',
+    'retry-work-read': 'actions.loadingWork', 'open-work': 'actions.loadingWork', 'check-work': 'actions.checkingWork', settings: 'actions.readingSettings', 'tab-Services': 'actions.loadingServices', 'tab-Files': 'actions.readingWorkspace',
+    'retry-services': 'actions.readingServices', 'run-details': 'actions.readingRunDetails', 'active-run': 'actions.readingActiveRun', 'check-chat-submission': 'actions.checkingOriginalSubmission',
+    'load-models': 'actions.readingModels', 'save-model': 'actions.savingSessionModel', 'check-session-model': 'actions.readingSessionModel', 'service-requests': 'actions.readingAgentRequests', 'check-active-run': 'actions.checkingActiveRun', 'pi-requests': 'actions.readingPiRequests', 'pi-request-detail': 'actions.readingPiRequest', 'cancel-pi-request': 'actions.cancellingPiRequest', 'retry-pi-request': 'actions.retryingPiRequest', 'next-pi-requests': 'actions.readingMorePiRequests', 'next-pi-evidence': 'actions.readingMoreEvidence',
+    'load-earlier-history': 'actions.readingEarlierMessages', 'reload-history': 'actions.readingRecentMessages', 'retry-conversation': 'actions.readingConversation', 'sessions': 'actions.readingSessions', 'select-session': 'actions.readingSession', 'new-session': 'actions.creatingSession', 'send-message': 'actions.submittingMessage', 'cancel-run': 'actions.requestingCancellation', 'resume-run': 'actions.reconnectingRun',
+    'service-details': 'actions.readingLogs', 'service-action': 'actions.submittingServiceControl', 'confirm-service-control': 'actions.submittingServiceControl', 'refresh-logs': 'actions.readingLogs',
+    'open-app': 'actions.openingApplication', 'open-window': 'actions.openingApplication', 'retry-service-entry': 'actions.preparingApplication', 'check-preview': 'actions.checkingPreview',
+    'refresh-files': 'actions.readingWorkspace', 'file-path': 'actions.readingDirectory', 'open-file': 'actions.readingFile', 'open-source': 'actions.readingFile', 'retry-file-preview': 'actions.readingFile', 'save-file': 'actions.savingFile', 'dirty-save': 'actions.savingFile',
+    'confirm-upload-overwrite': 'actions.uploadingFiles', 'confirm-folder': 'actions.creatingFolder', 'retry-selected-files': 'actions.retryingSelectedPaths', 'confirm-transfer': 'actions.transferringFiles', 'confirm-file-delete': 'actions.deletingFiles',
+    'save-config': 'actions.savingSettings', 'dirty-config-save': 'actions.savingSettings', 'refresh-config': 'actions.readingSettings', 'apply-config': 'actions.submittingApply', 'confirm-core-skills': 'actions.copyingSkill', 'check-catalog': 'actions.readingCatalog',
+    'confirm-install': 'actions.submittingPackage', 'confirm-remove-package': 'actions.removingPackage', 'confirm-import': 'actions.submittingImport', 'prepare-export': 'actions.preparingExport',
+    'export': 'actions.preparingExport', 'view-snapshot': 'actions.checkingSnapshot', 'save-export-file': 'actions.checkingOriginalDownload', 'check-export-flow': 'actions.checkingExport', 'resume-export-flow': 'actions.resumingExport',
+    'download-work': 'actions.preparingDownload', 'check-download': 'actions.checkingTransfer', 'check-operation': 'actions.checkingOperation', 'lookup-operation': 'actions.readingOperation', 'lookup-snapshot': 'actions.readingSnapshot',
+    'operations': 'actions.readingKnownOperations', 'clear-operations': 'actions.clearingCompletedRecords', 'resume-operation': 'actions.resumingObservation', 'check-inspection-import': 'actions.checkingTransfer', 'retry-inspection-cleanup': 'actions.releasingLocalTransfer',
 };
+const serviceControlKeys = { start: 'action.startService', stop: 'action.stopService', restart: 'action.restartService', retry: 'action.retryService', remove: 'action.removeService' };
 function actionIntent(el, action = el.dataset.action || '') {
-    let label = actionLabels[action];
+    let label = actionLabels[action] ? t(actionLabels[action]) : undefined;
     if (!label)
         return;
     if (action === 'send-message' && el.dataset.cancelRunId)
-        label = 'Stopping previous Run and sending';
-    if (['service-action', 'confirm-service-control'].includes(action))
-        label = `${el.dataset.control || view.data.control || "Control"} Service`;
+        label = t('action.stoppingRunSend');
+    if (['service-action', 'confirm-service-control'].includes(action)) {
+        const control = el.dataset.control || view.data.control || '';
+        label = serviceControlKeys[control] ? t(serviceControlKeys[control]) : control ? t('action.controlServiceNamed', { control }) : t('action.controlService');
+    }
     const w = targetWork(el);
     let kind = 'read';
     if (action === 'send-message' && w && !imageDrafts.get(draftKey(w)).length && !view.literalSlash && /^\/(model|thinking)\s*$/.test((view.drafts[draftKey(w)] || '').trim()))
@@ -369,7 +388,7 @@ function actionIntent(el, action = el.dataset.action || '') {
     const resource = ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
     const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
     const chatAction = ['new-session', 'send-message', 'cancel-run', 'resume-run', 'check-session-model', 'save-model', 'retry-conversation', 'load-earlier-history', 'reload-history'].includes(action);
-    return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || 'New Work' : chatAction ? w?.name || 'Chat' : `${w?.name || adapter.state.core.address || (adapter.hosted ? 'Server' : 'Local CLI')}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
+    return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || t('target.newWork') : chatAction ? w?.name || t('target.chat') : `${w?.name || adapter.state.core.address || (adapter.hosted ? t('target.server') : t('target.localCli'))}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
         anchor: focusKey(el), view: location.hash, origin: view.file || view.path, sourceContext: `${view.tab}:${view.session}:${view.modal}` };
 }
 async function dispatchAction(el, perform, intent = actionIntent(el)) {
@@ -385,20 +404,20 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
         return;
     }
     if (intent.action === 'create-work' && createSubmissionBlocked(actions.records.values(), view.createName)) {
-        toast('The original Create Work result is still pending or unknown. Check that original request before creating another Work.');
+        toast(t('action.createBlocked'));
         return;
     }
     if (intent.work && intent.kind === 'lifecycle' && exportFlows.workControlBlocked(intent.work)) {
-        toast('The original Stop or Export submission is not confirmed. Check its original progress before another Work control.');
+        toast(t('action.lifecycleBlocked'));
         return;
     }
     if (intent.work && ['export', 'prepare-export'].includes(intent.action || '') && exportWorkConflict(actions.records.values(), intent.work)) {
-        toast('An original Work control is still pending or unknown. Check that control before Export.');
+        toast(t('action.exportBlocked'));
         return;
     }
     const conflict = actions.conflict(intent);
     if (conflict) {
-        toast(`${conflict.target} · ${conflict.phase}. Wait for confirmation.`);
+        toast(t('action.conflict', { target: conflict.target, phase: conflict.phase }));
         return;
     }
     const record = actions.begin(intent);
@@ -433,20 +452,20 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
 }
 function progressText(progress) {
     const total = typeof progress.total === 'number' && Number.isFinite(progress.total) && progress.total > 0 ? progress.total : undefined;
-    return `${esc(progress.phase)}${progress.transferred !== undefined ? ` · ${esc(progress.transferred)}${total ? ` / ${total}` : ''} bytes` : ''}${total ? `<progress value="${Math.min(progress.transferred || 0, total)}" max="${total}" aria-label="Transfer bytes"></progress>` : ''}`;
+    return `${esc(progress.phase)}${progress.transferred !== undefined ? ` · ${esc(progress.transferred)}${total ? ` / ${total}` : ''} ${t('progress.bytes')}` : ''}${total ? `<progress value="${Math.min(progress.transferred || 0, total)}" max="${total}" aria-label="${esc(t('progress.transferBytes'))}"></progress>` : ''}`;
 }
 function uploadProgressMarkup() {
     const work = current(), progress = work && adapter.uploadProgress.get(work.id);
     if (!progress)
         return '';
     const waiting = !progress.error && !['failed', 'unknown', 'ready', 'succeeded', 'delivered'].includes(String(progress.phase).toLowerCase());
-    return feedback(`${waiting ? pendingStatus(String(progress.phase), 'upload-input confirm-upload-overwrite confirm-install') : ''}${esc(progress.path)}${progress.count ? ` · File ${progress.index} of ${progress.count}` : ''} · ${progressText(progress)}`);
+    return feedback(`${waiting ? pendingStatus(String(progress.phase), 'upload-input confirm-upload-overwrite confirm-install') : ''}${esc(progress.path)}${progress.count ? ` · ${t('progress.fileOf', { index: progress.index, count: progress.count })}` : ''} · ${progressText(progress)}`);
 }
 function downloadProgressMarkup(snapshotID) {
     const job = adapter.downloads.get(snapshotID);
     if (!job)
         return '';
-    return feedback(`Transfer <code>${esc(job.transferId)}</code> · ${progressText(job)}${job.checkedAt ? ` · Checked ${esc(job.checkedAt)}` : ''}${job.error ? ` · ${esc(job.error)}` : ''}${job.observationError ? ` · Observation interrupted: ${esc(job.observationError)}` : ''}`, job.error || job.observationError ? 'warning' : 'info', btn('Check transfer', 'check-download', 'small', `data-id="${esc(snapshotID)}"`));
+    return feedback(`${t('progress.transfer')} <code>${esc(job.transferId)}</code> · ${progressText(job)}${job.checkedAt ? ` · ${t('progress.checked', { time: esc(job.checkedAt) })}` : ''}${job.error ? ` · ${esc(job.error)}` : ''}${job.observationError ? ` · ${t('progress.observationInterrupted', { error: esc(job.observationError) })}` : ''}`, job.error || job.observationError ? 'warning' : 'info', btn(t('progress.checkTransfer'), 'check-download', 'small', `data-id="${esc(snapshotID)}"`));
 }
 let toastTimer;
 let lastFocus = null;
@@ -523,7 +542,7 @@ async function restoreFiles(w, previous, valid) {
                 path = parentDirectory(path);
                 continue;
             }
-            filesRestoreNotice = `The previous folder could not be restored. ${error instanceof Error ? error.message : String(error)}`;
+            filesRestoreNotice = t('restore.folderFailed', { error: error instanceof Error ? error.message : String(error) });
             render();
             return;
         }
@@ -531,7 +550,7 @@ async function restoreFiles(w, previous, valid) {
             return;
         view.path = path;
         if (path !== previous.path)
-            filesRestoreNotice = `The previous folder is no longer available. Opened ${path} instead.`;
+            filesRestoreNotice = t('restore.folderMoved', { path });
         if (previous.file && path === previous.path) {
             try {
                 await openFile(w, previous.file);
@@ -539,7 +558,7 @@ async function restoreFiles(w, previous, valid) {
             catch (error) {
                 if (!valid() || area !== areaChoice || view.tab !== 'Files' || error instanceof ViewChanged)
                     return;
-                filesRestoreNotice = `The previous file could not be opened. ${error instanceof Error ? error.message : String(error)}`;
+                filesRestoreNotice = t('restore.fileFailed', { error: error instanceof Error ? error.message : String(error) });
             }
         }
         if (valid())
@@ -552,7 +571,7 @@ function draftKey(w, session = view.session) {
 }
 function imageDraftMarkup(w, key) {
     const images = imageDrafts.get(key), reason = images.length ? adapter.imageInputReason(w.id, view.session) : '';
-    return `${images.length ? `<div class="chat-image-drafts">${images.map(image => `<div class="chat-image-draft"><img src="${esc(image.url)}" alt="${esc(image.name)}"><span>${esc(image.name)}${image.reading ? pendingStatus('Checking image…') : ''}</span>${btn('Remove', 'remove-chat-image', 'small', `data-id="${esc(image.id)}" aria-label="Remove ${esc(image.name)}"`)}</div>`).join('')}</div>` : ''}${reason ? feedback(adapter.imageCapabilities.get(w.id)?.loading ? pendingStatus(reason, 'check-image-support') : esc(reason), 'warning', adapter.imageCapabilities.get(w.id)?.error ? btn('Check image support', 'check-image-support', 'small') : '') : ''}${imageDraftErrors.get(key)?.message ? feedback(esc(imageDraftErrors.get(key).message), 'warning') : ''}`;
+    return `${images.length ? `<div class="chat-image-drafts">${images.map(image => `<div class="chat-image-draft"><img src="${esc(image.url)}" alt="${esc(image.name)}"><span>${esc(image.name)}${image.reading ? pendingStatus(t('image.checking')) : ''}</span>${btn(t('image.remove'), 'remove-chat-image', 'small', `data-id="${esc(image.id)}" aria-label="${esc(t('image.removeAria', { name: image.name }))}"`)}</div>`).join('')}</div>` : ''}${reason ? feedback(adapter.imageCapabilities.get(w.id)?.loading ? pendingStatus(reason, 'check-image-support') : esc(reason), 'warning', adapter.imageCapabilities.get(w.id)?.error ? btn(t('image.checkSupport'), 'check-image-support', 'small') : '') : ''}${imageDraftErrors.get(key)?.message ? feedback(esc(imageDraftErrors.get(key).message), 'warning') : ''}`;
 }
 async function addChatImages(files) {
     const w = current();
@@ -570,7 +589,7 @@ async function addChatImages(files) {
 function historyImageMarkup(w, session, run, image) {
     const key = adapter.historyImageKey(w.id, session, run, image.imageIndex), state = adapter.imageLoads.get(key);
     const attrs = `data-work="${esc(w.id)}" data-session="${esc(session)}" data-run="${esc(run)}" data-index="${esc(image.imageIndex)}"`;
-    return `<div class="chat-history-image" data-history-image ${attrs}>${state?.phase === 'ready' ? `<button data-action="preview-chat-image" ${attrs} aria-label="View image ${esc(image.imageIndex + 1)}"><img src="${esc(state.url)}" alt="Sent image ${esc(image.imageIndex + 1)}" loading="lazy"></button>` : state?.phase === 'error' ? `${feedback(esc(state.error), 'warning')}${btn('Retry image', 'retry-chat-image', 'small', attrs)}` : pendingStatus('Loading image…', 'retry-chat-image')}</div>`;
+    return `<div class="chat-history-image" data-history-image ${attrs}>${state?.phase === 'ready' ? `<button data-action="preview-chat-image" ${attrs} aria-label="${esc(t('image.viewAria', { index: image.imageIndex + 1 }))}"><img src="${esc(state.url)}" alt="${esc(t('image.sentAlt', { index: image.imageIndex + 1 }))}" loading="lazy"></button>` : state?.phase === 'error' ? `${feedback(esc(state.error), 'warning')}${btn(t('image.retry'), 'retry-chat-image', 'small', attrs)}` : pendingStatus(t('image.loading'), 'retry-chat-image')}</div>`;
 }
 async function openWork(w, record) {
     await guard(async () => {
@@ -591,7 +610,7 @@ function currentNameError() {
 }
 function nameFieldError(id, importing = false) {
     const message = currentNameError();
-    return message ? `<span id="${id}" class="name-field-error" role="alert">${esc(message)}${importing ? ' Or leave the name blank to let Core choose one.' : ''}</span>` : '';
+    return message ? `<span id="${id}" class="name-field-error" role="alert">${esc(message)}${importing ? esc(t('name.leaveBlank')) : ''}</span>` : '';
 }
 function clearNameFieldError(renderNow = true) {
     if (!view.modalNameError)
@@ -607,13 +626,13 @@ function clearNameFieldError(renderNow = true) {
 }
 function importNameFeedback(op) {
     if (op.kind !== 'Import Work' && op.kind !== 'import-work')
-        return '';
+        return ''; // i18n-exempt: server operation kind
     const name = op.importName || adapter.getWork(op.workId)?.name;
     if (!name)
-        return `<div class="import-name-feedback">${feedback('The import name has not been confirmed.')}</div>`;
-    const title = op.state === 'succeeded' ? 'Imported as' : 'Name selected for this import';
+        return `<div class="import-name-feedback">${feedback(t('import.nameUnconfirmed'))}</div>`;
+    const title = op.state === 'succeeded' ? t('import.importedAs') : t('import.nameSelected');
     const renamed = op.importSourceName && op.importSourceName !== name;
-    return `<div class="import-name-feedback">${feedback(`${title}: <strong>${esc(name)}</strong>${renamed ? `<p>Core selected this name instead of <strong>${esc(op.importSourceName)}</strong> because the source name was unavailable.</p>` : ''}`)}</div>`;
+    return `<div class="import-name-feedback">${feedback(`${t('import.titleLine', { title, name: `<strong>${esc(name)}</strong>` })}${renamed ? `<p>${t('import.renamed', { source: `<strong>${esc(op.importSourceName)}</strong>` })}</p>` : ''}`)}</div>`;
 }
 let overlayAnchor = "";
 let overlayContext = "";
@@ -715,106 +734,108 @@ function closeModal(restoreFocus = true) {
     if (restoreFocus)
         restore();
 }
-const phase = (op) => `<div class="phase-track" role="status" aria-busy="${operationBusy(op)}"><div>${operationBusy(op) ? pendingStatus(`Current phase: ${op.phase || op.state}`) : `<span>${op.state === 'succeeded' ? icon('check', 14) : icon('clock', 14)}</span>Current phase: ${esc(op.phase || op.state)}`}</div></div>`;
+const phase = (op) => `<div class="phase-track" role="status" aria-busy="${operationBusy(op)}"><div>${operationBusy(op) ? pendingStatus(t('phase.current', { phase: stateText(op.phase || op.state) })) : `<span>${op.state === 'succeeded' ? icon('check', 14) : icon('clock', 14)}</span>${t('phase.current', { phase: esc(stateText(op.phase || op.state)) })}`}</div></div>`;
 function scenarioBar() { return ""; }
 function brand() {
-    return `<a href="#/works" class="brand" aria-label="Piwork Works"><img class="brand-logo" src="/desktop/piwork-logo.png" alt="" width="40" height="40"><span class="brand-product">Desktop</span></a>`;
+    return `<a href="#/works" class="brand" aria-label="${esc(t('brand.worksAria'))}"><img class="brand-logo" src="/desktop/piwork-logo.png" alt="" width="40" height="40"><span class="brand-product">Desktop</span></a>`;
 }
 function topbar() {
     if (adapter.state.sessionState !== "ready")
-        return `<header class="topbar">${brand()}</header>`;
-    return `<header class="topbar">${brand()}${view.modal !== "connection" && route()[0] !== "works" ? coreConnectionStatus() : ""}<div class="topbar-right">${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span><span>${esc(adapter.state.core.account || "Account")}</span>${icon("down", 14)}`, "account", "account-button quiet", `aria-label="${esc(adapter.state.core.account || 'Account')} account menu" aria-haspopup="dialog" aria-expanded="${view.modal === 'account'}"`)}</div></header>`;
+        return `<header class="topbar">${brand()}<div class="topbar-right">${languageTrigger()}</div></header>`;
+    return `<header class="topbar">${brand()}${view.modal !== "connection" && route()[0] !== "works" ? coreConnectionStatus() : ""}<div class="topbar-right">${!adapter.state.signedIn ? languageTrigger() : ''}${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span><span>${esc(adapter.state.core.account || t('topbar.account'))}</span>${icon("down", 14)}`, "account", "account-button quiet", `aria-label="${esc(t('topbar.accountMenuAria', { account: adapter.state.core.account || t('topbar.account') }))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'account'}"`)}</div></header>`;
 }
 function defaultCorePreferences() {
     const p = adapter.preferences, blocked = ['saving', 'clearing', 'unconfirmed'].includes(p.phase);
-    const pending = p.reading ? 'Reading saved default…' : p.phase === 'saving' ? 'Saving default…' : p.phase === 'clearing' ? 'Restoring automatic selection…' : p.phase === 'loading' ? 'Reading saved default…' : p.phase === 'unconfirmed' ? 'Change not yet confirmed. Read the saved default to continue.' : '';
-    return `<section class="default-core-preferences" aria-label="Default Core"><p class="muted">Current connection: <code>${esc(adapter.state.core.address)}</code></p><p>Saved default: <strong>${esc(p.confirmed ? p.coreUrl || 'Not set · automatic selection' : 'Not yet read')}</strong></p><p class="muted">Saving affects future launches. Parameters and environment can override it. Use Sign in or Connect to change the current connection.</p><div>${btn('Save as default', 'save-default-core', 'quiet small', blocked ? 'disabled' : '')}${btn('Restore automatic selection', 'clear-default-core', 'quiet small', blocked ? 'disabled' : '')}${btn('Read saved default', 'read-default-core', 'quiet small', ['saving', 'clearing', 'loading'].includes(p.phase) || p.reading ? 'disabled' : '')}</div>${pending ? `<p role="status" aria-live="polite">${['saving', 'clearing', 'loading'].includes(p.phase) || p.reading ? pendingStatus(pending, 'read-default-core save-default-core clear-default-core') : esc(pending)}${p.waiting ? ' Still waiting for confirmation; other actions remain available.' : ''}</p>` : ''}${p.error ? feedback(esc(p.error), 'warning') : ''}${p.notice ? `<p role="status" aria-live="polite">${esc(p.notice)}</p>` : ''}</section>`;
+    const pending = p.reading ? t('defaults.reading') : p.phase === 'saving' ? t('defaults.saving') : p.phase === 'clearing' ? t('defaults.restoring') : p.phase === 'loading' ? t('defaults.reading') : p.phase === 'unconfirmed' ? t('defaults.unconfirmed') : '';
+    return `<section class="default-core-preferences" aria-label="${esc(t('defaults.aria'))}"><p class="muted">${t('defaults.currentConnection', { address: `<code>${esc(adapter.state.core.address)}</code>` })}</p><p>${t('defaults.savedDefault', { value: `<strong>${esc(p.confirmed ? p.coreUrl || t('defaults.notSet') : t('defaults.notRead'))}</strong>` })}</p><p class="muted">${t('defaults.help')}</p><div>${btn(t('defaults.save'), 'save-default-core', 'quiet small', blocked ? 'disabled' : '')}${btn(t('defaults.restore'), 'clear-default-core', 'quiet small', blocked ? 'disabled' : '')}${btn(t('defaults.read'), 'read-default-core', 'quiet small', ['saving', 'clearing', 'loading'].includes(p.phase) || p.reading ? 'disabled' : '')}</div>${pending ? `<p role="status" aria-live="polite">${['saving', 'clearing', 'loading'].includes(p.phase) || p.reading ? pendingStatus(pending, 'read-default-core save-default-core clear-default-core') : esc(pending)}${p.waiting ? esc(t('defaults.stillWaiting')) : ''}</p>` : ''}${p.error ? feedback(esc(p.error), 'warning') : ''}${p.notice ? `<p role="status" aria-live="polite">${esc(p.notice)}</p>` : ''}</section>`;
 }
 function coreConnectionStatus() {
     const check = adapter.connectionCheck;
     if (check.checking)
-        return pendingStatus(check.waiting ? 'Still checking Core connection. You can leave this view; no Core is started.' : 'Checking Core connection…', 'check-connection');
-    return check.error ? `<span class="muted" role="status">Core check not confirmed: ${esc(check.error)}</span>` : '';
+        return pendingStatus(check.waiting ? t('conn.stillChecking') : t('conn.checking'), 'check-connection');
+    return check.error ? `<span class="muted" role="status">${t('conn.notConfirmed', { error: esc(check.error) })}</span>` : '';
 }
 function connection() {
     const s = adapter.state.scenario;
-    return `<button class="connection" data-action="connection"><i class="${["core-offline", "env-not-ready"].includes(s) || adapter.state.sessionState === "unavailable" ? "warn" : ""}"></i>${esc(adapter.state.core.name)}<span>·</span>${adapter.connectionCheck.checking ? pendingStatus("Checking Core connection…", "check-connection") : adapter.state.sessionState === "unavailable" ? "Connection unavailable" : adapter.connectionCheck.error ? "Not confirmed" : s === "core-offline" ? "Unreachable" : s === "env-not-ready" ? "Runtime not ready" : adapter.connectionCheck.checkedAt ? "Connected" : "Not yet checked"}${icon("down", 12)}</button>`;
+    return `<button class="connection" data-action="connection"><i class="${["core-offline", "env-not-ready"].includes(s) || adapter.state.sessionState === "unavailable" ? "warn" : ""}"></i>${esc(adapter.state.core.name)}<span>·</span>${adapter.connectionCheck.checking ? pendingStatus(t('conn.checking'), "check-connection") : adapter.state.sessionState === "unavailable" ? t('conn.unavailable') : adapter.connectionCheck.error ? t('common.notConfirmed') : s === "core-offline" ? t('conn.unreachable') : s === "env-not-ready" ? t('conn.runtimeNotReady') : adapter.connectionCheck.checkedAt ? t('conn.connected') : t('conn.notChecked')}${icon("down", 12)}</button>`;
 }
 function signIn() {
+    applyDocumentTitle(t('doc.connect'));
     const loading = adapter.state.sessionState === 'loading';
     const retryAvailable = !loading || !!adapter.state.sessionError;
     if (adapter.hosted)
-        return `${topbar()}<main class="auth-main"><h1>${loading ? 'Opening workspace…' : 'Connect to Piwork'}</h1><p class="muted" role="status">${loading && !adapter.state.sessionError ? pendingStatus('Reading your server session…', 'retry-session') : esc(adapter.state.sessionError || 'Sign in to continue.')}</p>${loading ? '' : '<a class="button primary" href="/login">Sign in</a>'}${retryAvailable ? btn('Retry connection', 'retry-session', 'quiet') : ''}</main>`;
+        return `${topbar()}<main class="auth-main"><h1>${loading ? t('auth.opening') : t('auth.connectToPiwork')}</h1><p class="muted" role="status">${loading && !adapter.state.sessionError ? pendingStatus(t('auth.readingServerSession'), 'retry-session') : esc(adapter.state.sessionError || t('auth.signInContinue'))}</p>${loading ? '' : `<a class="button primary" href="/login">${t('auth.signIn')}</a>`}${retryAvailable ? btn(t('auth.retry'), 'retry-session', 'quiet') : ''}</main>`;
     if (adapter.state.sessionState !== 'ready')
-        return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon('lock', 26)}</div><h1>${loading ? 'Opening workspace…' : 'Desktop connection unavailable'}</h1><p class="muted" role="status" aria-live="polite">${loading && !adapter.state.sessionError ? pendingStatus('Connecting to your local Desktop…', 'retry-session') : esc(adapter.state.sessionError || 'Retry the connection.')}</p>${retryAvailable ? btn('Retry connection', 'retry-session', 'primary full') : ''}${loading ? '' : `<p class="muted">If Desktop is not running, start <code>${esc(adapter.startCommand())}</code> and reload this ordinary address.</p>`}</main>`;
-    return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock", 26)}</div><h1>Connect to your Core</h1><p class="muted">Sign in with your Core account. Credentials stay with the local CLI.</p>${adapter.state.cleanupRequired ? feedback(`Local identity is cleared, but saved credential cleanup is incomplete. Run <code>${esc(adapter.logoutCommand())}</code> before signing in or switching Core.`, 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}<label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label>${defaultCorePreferences()}<label class="field">Account<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">Password<input id="auth-password" type="password" autocomplete="current-password"></label>${btn("Sign in", "sign-in", "primary full")}<div class="auth-divider">Inspect a Work package locally before signing in</div>${btn(`${icon("upload", 16)} Inspect a .work package`, "import", "quiet")}</main>`;
+        return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon('lock', 26)}</div><h1>${loading ? t('auth.opening') : t('auth.desktopUnavailable')}</h1><p class="muted" role="status" aria-live="polite">${loading && !adapter.state.sessionError ? pendingStatus(t('auth.connectingLocal'), 'retry-session') : esc(adapter.state.sessionError || t('auth.retryConnection'))}</p>${retryAvailable ? btn(t('auth.retry'), 'retry-session', 'primary full') : ''}${loading ? '' : `<p class="muted">${t('auth.startDesktop', { command: `<code>${esc(adapter.startCommand())}</code>` })}</p>`}</main>`;
+    return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock", 26)}</div><h1>${t('auth.connectToCore')}</h1><p class="muted">${t('auth.coreAccountHelp')}</p>${adapter.state.cleanupRequired ? feedback(t('auth.cleanupIncomplete', { command: `<code>${esc(adapter.logoutCommand())}</code>` }), 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}<label class="field">${t('auth.coreAddress')}<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label>${defaultCorePreferences()}<label class="field">${t('auth.account')}<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">${t('auth.password')}<input id="auth-password" type="password" autocomplete="current-password"></label>${btn(t('auth.signIn'), "sign-in", "primary full")}<div class="auth-divider">${t('auth.inspectDivider')}</div>${btn(`${icon("upload", 16)} ${t('auth.inspectPackage')}`, "import", "quiet")}</main>`;
 }
 function worksRefreshButton() {
     const pending = adapter.worksLoading || [...actions.records.values()].some(record => record.action === 'retry-works' && record.pending && record.view === location.hash);
-    const label = pending ? 'Reading Works…' : 'Refresh Works';
-    return btn(pending && (!!adapter.worksChecked || !!adapter.worksError || adapter.state.works.length > 0) ? pendingDots() : icon('refresh'), 'retry-works', `icon-button quiet ${pending ? 'is-reading' : ''}`, `title="${label}" aria-label="${label}" ${pending ? 'disabled aria-busy="true" data-read-busy="true"' : ''}`);
+    const label = pending ? t('works.reading') : t('works.refresh');
+    return btn(pending && (!!adapter.worksChecked || !!adapter.worksError || adapter.state.works.length > 0) ? pendingDots() : icon('refresh'), 'retry-works', `icon-button quiet ${pending ? 'is-reading' : ''}`, `title="${esc(label)}" aria-label="${esc(label)}" ${pending ? 'disabled aria-busy="true" data-read-busy="true"' : ''}`);
 }
 function works() {
+    applyDocumentTitle(t('doc.works'));
     const s = adapter.state.scenario;
     const confirmed = !!adapter.worksChecked || adapter.state.works.length > 0;
     const all = adapter.state.works.filter((w) => w.name.toLowerCase().includes(view.search.toLowerCase()));
-    return `${topbar()}<main class="works-page"><div class="works-eyebrow">YOUR WORKSPACE</div><div class="page-heading"><div><h1>Works</h1><p>A place for your tools, files, and conversations.</p></div><div class="actions">${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", 'title="Import Work" aria-label="Import Work"')}${btn(icon("plus"), "new-work", "icon-button primary", 'title="New Work" aria-label="New Work"')}</div></div>${confirmed && adapter.worksError ? feedback(`Works could not be refreshed. ${esc(adapter.worksError)}`, 'warning', btn('Retry loading', 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="Search your Works" aria-label="Search Works">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", 'aria-label="Clear search"') : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(`Core is unreachable. Last confirmed ${esc(adapter.state.lastChecked)}. This is not a password error.`, "warning", btn("Check connection", "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback("Core is reachable. The runtime is not ready; existing information is available.", "warning", btn("Check readiness", "check-connection", "small")) : ""}${(!confirmed && !adapter.worksError && (s === "loading" || adapter.worksLoading || adapter.connectionCheck.checking)) ? `<div class="loading-list" role="status" aria-label="Loading your Works" aria-busy="true">${[1, 2, 3].map(() => '<div class="skeleton" aria-hidden="true"><i></i><span></span><span></span></div>').join("")}</div>` : !confirmed && (s === "list-error" || adapter.worksError) ? empty("refresh", "Works could not be loaded", `${adapter.worksError ? `<span class="works-error-cause">${esc(adapter.worksError)}</span>` : ""}Your account is still signed in. Check the connection and try reading the list again.`, btn("Retry loading", "retry-works", "primary")) : !confirmed ? empty("grid", "Works have not been read", "Check the Core connection, or read the list to confirm your Works.", btn("Read Works", "retry-works", "primary")) : !adapter.state.works.length ? empty("grid", "Make room for your next idea", "Create a Work, then ask the Agent to build a tool or help with your files.", btn(`${icon("plus")} New Work`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>NAME</span><span>STATUS</span><span>QUICK ACTION</span><span></span></div>${all.map((w) => `<div class="work-row"><a class="work-name" data-action="open-work" data-id="${esc(w.id)}" href="#/work/${encodeURIComponent(w.id)}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></a><div class="work-status">${workStatus(w)}${controlMarkup(workControls.get(w.id))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="More options for ${esc(w.name)}"`)}</div>`).join("")}</div>` : empty("search", "No matching Works", "Try a different name.", btn("Clear search", "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} Only your own Works appear here</span><span>${confirmed ? `${adapter.state.works.length} Works` : "Works not yet read"} <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>Start with an idea. Make something useful.</strong><p>Give your Work a goal, then build and use its tools alongside the Agent.</p></div></div></main>`;
+    return `${topbar()}<main class="works-page"><div class="works-eyebrow">${t('works.eyebrow')}</div><div class="page-heading"><div><h1>${t('term.works')}</h1><p>${t('works.subtitle')}</p></div><div class="actions">${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", `title="${esc(t('works.import'))}" aria-label="${esc(t('works.import'))}"`)}${btn(icon("plus"), "new-work", "icon-button primary", `title="${esc(t('works.newWork'))}" aria-label="${esc(t('works.newWork'))}"`)}</div></div>${confirmed && adapter.worksError ? feedback(t('works.refreshFailed', { error: esc(adapter.worksError) }), 'warning', btn(t('works.retryLoading'), 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="${esc(t('works.searchPlaceholder'))}" aria-label="${esc(t('works.searchAria'))}">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", `aria-label="${esc(t('works.clearSearch'))}"`) : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(t('works.coreOffline', { time: esc(adapter.state.lastChecked) }), "warning", btn(t('works.checkConnection'), "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback(t('works.runtimeNotReady'), "warning", btn(t('works.checkReadiness'), "check-connection", "small")) : ""}${(!confirmed && !adapter.worksError && (s === "loading" || adapter.worksLoading || adapter.connectionCheck.checking)) ? `<div class="loading-list" role="status" aria-label="${esc(t('works.loadingAria'))}" aria-busy="true">${[1, 2, 3].map(() => '<div class="skeleton" aria-hidden="true"><i></i><span></span><span></span></div>').join("")}</div>` : !confirmed && (s === "list-error" || adapter.worksError) ? empty("refresh", t('works.loadFailed'), `${adapter.worksError ? `<span class="works-error-cause">${esc(adapter.worksError)}</span>` : ""}${t('works.loadFailedBody')}`, btn(t('works.retryLoading'), "retry-works", "primary")) : !confirmed ? empty("grid", t('works.notReadTitle'), t('works.notReadBody'), btn(t('works.read'), "retry-works", "primary")) : !adapter.state.works.length ? empty("grid", t('works.emptyTitle'), t('works.emptyBody'), btn(`${icon("plus")} ${t('works.newWork')}`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>${t('works.colName')}</span><span>${t('works.colStatus')}</span><span>${t('works.colQuick')}</span><span></span></div>${all.map((w) => `<div class="work-row"><a class="work-name" data-action="open-work" data-id="${esc(w.id)}" href="#/work/${encodeURIComponent(w.id)}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></a><div class="work-status">${workStatus(w)}${controlMarkup(workControls.get(w.id))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="${esc(t('works.moreAria', { name: w.name }))}"`)}</div>`).join("")}</div>` : empty("search", t('works.noMatchTitle'), t('works.noMatchBody'), btn(t('works.clearSearch'), "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} ${t('works.ownOnly')}</span><span>${confirmed ? t('works.count', { count: adapter.state.works.length }) : t('works.countUnread')} <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>${t('works.helpTitle')}</strong><p>${t('works.helpBody')}</p></div></div></main>`;
 }
 function quickAction(w) {
     if (route()[0] === 'works' && controlReady(workControls.get(w.id), w))
-        return workLink('Open Work', w.id, 'primary small');
+        return workLink(t('quick.openWork'), w.id, 'primary small');
     const state = adapter.project(w), action = state.action;
     if (action === 'stop')
-        return route()[0] === 'works' ? state.usable ? workLink('Open Work', w.id, 'quiet small') : btn(`${icon('refresh', 15)} Check status`, 'check-work', 'quiet small', `data-id="${esc(w.id)}"`) : '';
-    const label = { start: 'Start Work', retry: 'Retry Work', check: 'Check status' }[action];
+        return route()[0] === 'works' ? state.usable ? workLink(t('quick.openWork'), w.id, 'quiet small') : btn(`${icon('refresh', 15)} ${t('quick.checkStatus')}`, 'check-work', 'quiet small', `data-id="${esc(w.id)}"`) : '';
+    const label = { start: t('action.startWork'), retry: t('action.retryWork'), check: t('quick.checkStatus') }[action];
     return btn(`${icon(action === 'start' ? 'play' : 'refresh', 15)} ${label}`, action === 'check' ? 'check-work' : 'start-work', 'quiet small', `data-id="${esc(w.id)}"`);
 }
 function workStatus(w) {
     const state = adapter.project(w);
-    return `${badge(state.label)}${state.explanation ? `<small>${esc(state.explanation)}</small>` : w.status === 'Degraded' ? '<small>A capability needs attention</small>' : ''}`;
+    return `${badge(state.label)}${state.explanation ? `<small>${esc(state.explanation)}</small>` : w.status === 'Degraded' ? `<small>${t('work.capabilityAttention')}</small>` : ''}`;
 }
 function workRouteFeedback(w) {
     const pending = [...actions.records.values()].filter(record => record.work === w.id && record.view === location.hash && record.pending && (record.key.startsWith('route:') || ['open-work', 'retry-work-read'].includes(record.action || '')));
     if (!pending.length)
         return '';
     const slow = pending.some(record => Date.now() - record.started >= 10000);
-    const label = slow ? 'Still reading Work…' : 'Reading Work…';
-    return `<span class="work-read-feedback" role="status" aria-busy="true" aria-label="${label}">${pendingDots()}${slow ? `<small>${label}</small>` : ''}</span>`;
+    const label = slow ? t('work.stillReading') : t('work.reading');
+    return `<span class="work-read-feedback" role="status" aria-busy="true" aria-label="${esc(label)}">${pendingDots()}${slow ? `<small>${esc(label)}</small>` : ''}</span>`;
 }
 function workHeader(w, standalone = false) {
-    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), standalone ? "back-work" : "back-works", "icon-button quiet", `aria-label="${standalone ? "Back to Work" : "Back to Works"}"`)}<span class="header-divider"></span><span class="work-icon small ${w.color}">${icon(w.icon, 19)}</span><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}${workRouteFeedback(w)}${view.modal !== "connection" ? coreConnectionStatus() : ""}</div><div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="Work options"`)}</div></header>`;
+    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), standalone ? "back-work" : "back-works", "icon-button quiet", `aria-label="${esc(standalone ? t('work.backToWork') : t('work.backToWorks'))}"`)}<span class="header-divider"></span><span class="work-icon small ${w.color}">${icon(w.icon, 19)}</span><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}${workRouteFeedback(w)}${view.modal !== "connection" ? coreConnectionStatus() : ""}</div><div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="${esc(t('work.optionsAria'))}"`)}</div></header>`;
 }
 function workPage(w) {
     const settings = route()[2] === "settings", panels = workspacePanels.get(w.id);
     const serviceArea = view.tab === 'Services', narrow = innerWidth < 900;
     const hiddenChat = view.layout === 'service-only' || serviceArea && view.layout === 'workspace' && (narrow ? !panels.narrowChat : panels.collapsed);
     const narrowChat = serviceArea && narrow && !hiddenChat && view.layout !== 'chat-only';
-    return `${workHeader(w)}${controlMarkup(workControls.get(w.id))}<nav class="work-tabs" aria-label="Work areas"><div>${["Services", "Files", "Chat"].map((t) => btn(`${icon(t === "Services" ? "grid" : t === "Files" ? "folder" : "chat", 17)} ${t}`, `tab-${t}`, !settings && view.tab === t ? "tab active" : "tab")).join("")}</div><div class="work-tools">${btn(`${icon('note', 17)} <span>Pi Requests</span>`, 'pi-requests', 'tab work-requests', 'aria-label="Pi requests for this Work" title="Pi requests for this Work"')}${btn(`${icon("settings", 17)} Settings`, "settings", settings ? "tab active" : "tab")}</div></nav>${serviceNotice(w)}${!settings && adapter.project(w).retainWorkspace && !adapter.project(w).usable ? feedback("Current Work status is not confirmed. Your open workspace is retained; new runtime and file changes are unavailable until checked.", "warning", btn("Check Work", "check-work", "small", `data-id="${esc(w.id)}"`)) : ""}${settings ? settingsPage(w) : !adapter.project(w).retainWorkspace ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${hiddenChat ? "chat-hidden" : ""} ${serviceArea ? "service-workspace" : ""} ${narrowChat ? "narrow-chat" : ""}"><section id="workspace-main" class="main-panel" ${view.layout === "chat-only" ? "inert" : ""}>${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="vertical" aria-label="Resize Service and Chat" aria-controls="workspace-main workspace-chat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" title="Drag or use arrow keys. Enter resets split." tabindex="${serviceArea && !narrow && !hiddenChat && view.layout !== 'chat-only' ? 0 : -1}"></div><aside id="workspace-chat" class="agent-side" ${hiddenChat ? "inert" : ""}>${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
+    return `${workHeader(w)}${controlMarkup(workControls.get(w.id))}<nav class="work-tabs" aria-label="${esc(t('work.areasAria'))}"><div>${[['Services', t('work.tabServices'), 'grid'], ['Files', t('work.tabFiles'), 'folder'], ['Chat', t('work.tabChat'), 'chat']].map(([value, label, symbol]) => btn(`${icon(symbol, 17)} ${label}`, `tab-${value}`, !settings && view.tab === value ? "tab active" : "tab")).join("")}</div><div class="work-tools">${btn(`${icon('note', 17)} <span>${t('work.piRequests')}</span>`, 'pi-requests', 'tab work-requests', `aria-label="${esc(t('work.piRequestsAria'))}" title="${esc(t('work.piRequestsAria'))}"`)}${btn(`${icon("settings", 17)} ${t('work.settings')}`, "settings", settings ? "tab active" : "tab")}</div></nav>${serviceNotice(w)}${!settings && adapter.project(w).retainWorkspace && !adapter.project(w).usable ? feedback(t('work.statusUnconfirmed'), "warning", btn(t('work.checkWork'), "check-work", "small", `data-id="${esc(w.id)}"`)) : ""}${settings ? settingsPage(w) : !adapter.project(w).retainWorkspace ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${hiddenChat ? "chat-hidden" : ""} ${serviceArea ? "service-workspace" : ""} ${narrowChat ? "narrow-chat" : ""}"><section id="workspace-main" class="main-panel" ${view.layout === "chat-only" ? "inert" : ""}>${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="vertical" aria-label="${esc(t('work.resizeAria'))}" aria-controls="workspace-main workspace-chat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" title="${esc(t('work.resizeTitle'))}" tabindex="${serviceArea && !narrow && !hiddenChat && view.layout !== 'chat-only' ? 0 : -1}"></div><aside id="workspace-chat" class="agent-side" ${hiddenChat ? "inert" : ""}>${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
 }
 function workState(w) {
     const state = adapter.project(w);
     const stopped = state.action === 'start';
-    const title = stopped ? 'This Work is stopped' : { Preparing: 'Preparing your Work', Starting: 'Starting your Work', Stopping: 'Stopping your Work', Unknown: 'Work status is unknown' }[state.label] || state.label;
-    const details = state.operationIds.length ? btn('Operation details', 'work-operations', '', `data-id="${esc(w.id)}"`) : '';
-    return `<main class="work-state">${!workControls.has(w.id) && state.operationIds.some(id => operationBusy(adapter.getOperation(id))) ? pendingStatus(state.label + ' Work…') : ''}${empty(stopped ? 'stop' : w.status === 'Failed' ? 'info' : 'clock', title, stopped ? 'Your workspace data is preserved. Start the Work to use its Services, files, and Agent.' : esc(state.explanation || w.error || 'Waiting for the original operation to reach a confirmed result.'), `<div class="actions">${quickAction(w)}${btn('Settings', 'settings')}${details}${state.exportable ? btn(`${icon('download')} Export Work`, 'export', '', `data-id="${esc(w.id)}"`) : ''}</div>`)}
-    <details class="state-footnote"><summary>State details</summary><p>Target: ${esc(w.desired)} · Last confirmed: ${esc(w.status)} · Checked ${esc(w.checkedAt || 'Not confirmed')}</p></details></main>`;
+    const title = stopped ? t('state.stoppedTitle') : { Preparing: t('state.preparing'), Starting: t('state.starting'), Stopping: t('state.stopping'), Unknown: t('state.unknown') }[state.label] || state.label;
+    const details = state.operationIds.length ? btn(t('control.operationDetails'), 'work-operations', '', `data-id="${esc(w.id)}"`) : '';
+    return `<main class="work-state">${!workControls.has(w.id) && state.operationIds.some(id => operationBusy(adapter.getOperation(id))) ? pendingStatus(t('state.working', { state: state.label })) : ''}${empty(stopped ? 'stop' : w.status === 'Failed' ? 'info' : 'clock', title, stopped ? t('state.stoppedBody') : esc(state.explanation || w.error || t('state.waitingBody')), `<div class="actions">${quickAction(w)}${btn(t('work.settings'), 'settings')}${details}${state.exportable ? btn(`${icon('download')} ${t('state.exportWork')}`, 'export', '', `data-id="${esc(w.id)}"`) : ''}</div>`)}
+    <details class="state-footnote"><summary>${t('state.details')}</summary><p>${t('state.target', { value: esc(stateText(w.desired)) })} · ${t('state.lastConfirmed', { value: esc(stateText(w.status)) })} · ${t('state.checked', { value: esc(w.checkedAt || t('common.notConfirmed')) })}</p></details></main>`;
 }
 function serviceUnavailableReason(service) {
     if (service.temporary?.mode === 'once' && service.observed === 'Completed')
-        return 'The one-time command completed. Check its confirmed exit code and cleanup status.';
+        return t('merge.onceCompleted');
     if (service.temporary?.mode === 'once' && service.observed === 'Running')
-        return 'The one-time command is running. Its result is not confirmed yet.';
+        return t('merge.onceRunning');
     if (!service.enabled)
-        return 'This Service is disabled. Starting the Work does not re-enable it. Enable it explicitly from Manage services.';
+        return t('service.disabledReason');
     if (service.observed === 'Starting')
-        return 'This Service is starting. Its application entry will open after readiness is confirmed.';
+        return t('service.startingReason');
     if (service.observed === 'Recovering')
-        return 'This Service is recovering. Check its details for the original failure and current status.';
+        return t('merge.recoveringReason');
     if (service.observed === 'Failed')
-        return 'This Service failed. Check its details and logs before an explicit retry.';
+        return t('service.failedReason');
     if (service.observed === 'Stopped')
-        return 'This Service is stopped. Check its current details before starting it.';
-    return 'This Service state is not confirmed. Check its current details; an application entry is not available yet.';
+        return t('service.stoppedReason');
+    return t('service.unconfirmedReason');
 }
 /** Only a confirmed Service catalog may describe Service facts; a failed or absent read says nothing. */
 function serviceCatalogConfirmed(w) {
@@ -830,61 +851,61 @@ function serviceNotice(w) {
         return '';
     const { failed, starting, recovering, unknown } = serviceFacts(w);
     if (failed.length) {
-        const summary = failed.length === 1 ? `${esc(failed[0].name)} failed: ${esc(serviceFailureReason(failed[0]))}` : `${failed.length} Services failed`;
+        const summary = failed.length === 1 ? t('merge.failedOne', { name: esc(failed[0].name), reason: esc(serviceFailureReason(failed[0])) }) : t('service.failedMany', { count: failed.length });
         const entry = failed.length === 1
-            ? btn('View details', 'service-details', 'text-button', `data-id="${esc(failed[0].id)}"`)
-            : btn('View details', 'manage-services', 'text-button');
-        return `<div class="work-notice">${icon('info', 15)} ${summary}. Check the status of other Services and the Agent. ${entry}</div>`;
+            ? btn(t('service.viewDetails'), 'service-details', 'text-button', `data-id="${esc(failed[0].id)}"`)
+            : btn(t('service.viewDetails'), 'manage-services', 'text-button');
+        return `<div class="work-notice">${icon('info', 15)} ${summary}. ${t('merge.checkOthers')} ${entry}</div>`;
     }
     if (recovering.length) {
-        const summary = recovering.length === 1 ? `${esc(recovering[0].name)} is recovering${recovering[0].diagnostic?.message ? `: ${esc(recovering[0].diagnostic.message)}` : ''}` : `${recovering.length} Services are recovering`;
-        const entry = recovering.length === 1 ? btn('View details', 'service-details', 'text-button', `data-id="${esc(recovering[0].id)}"`) : btn('View details', 'manage-services', 'text-button');
+        const summary = recovering.length === 1 ? t('merge.recoveringOne', { name: esc(recovering[0].name) }) + (recovering[0].diagnostic?.message ? `: ${esc(recovering[0].diagnostic.message)}` : '') : t('merge.recoveringMany', { count: recovering.length });
+        const entry = recovering.length === 1 ? btn(t('service.viewDetails'), 'service-details', 'text-button', `data-id="${esc(recovering[0].id)}"`) : btn(t('service.viewDetails'), 'manage-services', 'text-button');
         return `<div class="work-notice">${icon('info', 15)} ${summary}. ${entry}</div>`;
     }
     if (unknown.length) {
-        const summary = unknown.length === 1 ? `${esc(unknown[0].name)}: ${esc(unknown[0].diagnostic?.message || 'Service status is not confirmed.')}` : `${unknown.length} Service states are not confirmed`;
-        const entry = unknown.length === 1 ? btn('View details', 'service-details', 'text-button', `data-id="${esc(unknown[0].id)}"`) : btn('View details', 'manage-services', 'text-button');
+        const summary = unknown.length === 1 ? `${esc(unknown[0].name)}: ${esc(unknown[0].diagnostic?.message || t('merge.statusUnconfirmed'))}` : t('merge.unknownMany', { count: unknown.length });
+        const entry = unknown.length === 1 ? btn(t('service.viewDetails'), 'service-details', 'text-button', `data-id="${esc(unknown[0].id)}"`) : btn(t('service.viewDetails'), 'manage-services', 'text-button');
         return `<div class="work-notice">${icon('info', 15)} ${summary}. ${entry}</div>`;
     }
     if (starting.length) {
-        const summary = starting.length === 1 ? `${esc(starting[0].name)} is starting` : `${starting.length} Services are starting`;
-        return `<div class="work-notice">${icon('clock', 15)} ${summary}. Starting is not a failure; check the status of other Services.</div>`;
+        const summary = starting.length === 1 ? t('service.startingOne', { name: esc(starting[0].name) }) : t('service.startingMany', { count: starting.length });
+        return `<div class="work-notice">${icon('clock', 15)} ${summary}. ${t('service.startingNotFailure')}</div>`;
     }
-    return `<div class="work-notice">${icon('info', 15)} Some Services are not ready. Available Services remain usable. ${btn('View details', 'manage-services', 'text-button')}</div>`;
+    return `<div class="work-notice">${icon('info', 15)} ${t('service.someNotReady')} ${btn(t('service.viewDetails'), 'manage-services', 'text-button')}</div>`;
 }
 function serviceFailureTitle(s) {
     const stage = s.diagnostic?.stage;
-    return stage === 'service-start' || stage === 'service-readiness' ? `${esc(s.name)} failed to start` : `${esc(s.name)} failed`;
+    return stage === 'service-start' || stage === 'service-readiness' ? t('service.failedToStart', { name: esc(s.name) }) : t('service.failed', { name: esc(s.name) });
 }
 /** A historical lastError never presents a confirmed Ready or newly Starting Service as failed. */
 function serviceFailureReason(s) {
-    return s.diagnostic?.message || s.error || 'This Service failed.';
+    return s.diagnostic?.message || s.error || t('service.failureDefault');
 }
 /** The four-square booting placeholder is limited to a confirmed, enabled, runnable Starting Service. */
 function serviceStartupConfirmed(w, s) {
     return s.enabled && s.observed === 'Starting' && serviceCatalogConfirmed(w) && adapter.project(w).usable;
 }
 function serviceStartupPlaceholder(s, action) {
-    return `<div class="empty startup-placeholder" role="status" aria-busy="true" aria-label="${esc(s.name)} is starting">${icon('grid', 32)}<h2>${esc(s.name)} is starting</h2><p>${esc(serviceUnavailableReason(s))}</p>${action}</div>`;
+    return `<div class="empty startup-placeholder" role="status" aria-busy="true" aria-label="${esc(t('service.startingName', { name: s.name }))}">${icon('grid', 32)}<h2>${esc(t('service.startingName', { name: s.name }))}</h2><p>${esc(serviceUnavailableReason(s))}</p>${action}</div>`;
 }
 function serviceStatePlaceholder(w, s) {
     if (!s.enabled)
-        return empty('grid', `${esc(s.name)} is disabled`, esc(serviceUnavailableReason(s)), btn('Manage services', 'manage-services', 'primary'));
+        return empty('grid', `${esc(t('service.disabledName', { name: s.name }))}`, esc(serviceUnavailableReason(s)), btn(t('service.manage'), 'manage-services', 'primary'));
     if (s.observed === 'Failed')
-        return empty('grid', serviceFailureTitle(s), `${esc(serviceFailureReason(s))} Check its details and logs before an explicit retry.`, btn('View details', 'service-details', 'primary', `data-id="${esc(s.id)}"`) + btn('Manage services', 'manage-services'));
+        return empty('grid', serviceFailureTitle(s), `${esc(t('service.failureBody', { reason: serviceFailureReason(s) }))}`, btn(t('service.viewDetails'), 'service-details', 'primary', `data-id="${esc(s.id)}"`) + btn(t('service.manage'), 'manage-services'));
     if (serviceStartupConfirmed(w, s))
-        return serviceStartupPlaceholder(s, btn('Manage services', 'manage-services'));
-    return empty('grid', `${esc(s.name)} is ${esc(s.observed.toLowerCase())}`, esc(serviceUnavailableReason(s)), btn('Manage services', 'manage-services', 'primary'));
+        return serviceStartupPlaceholder(s, btn(t('service.manage'), 'manage-services'));
+    return empty('grid', `${esc(t('service.stateName', { name: s.name, state: stateText(s.observed.toLowerCase()) }))}`, esc(serviceUnavailableReason(s)), btn(t('service.manage'), 'manage-services', 'primary'));
 }
 function serviceFallbackHeader(w) {
-    return `<div class="service-toolbar"><span class="service-selector">Services</span><div class="actions focus-actions">${workspaceChatToggle(w)}${focusControls(w)}</div></div>`;
+    return `<div class="service-toolbar"><span class="service-selector">${t('work.tabServices')}</span><div class="actions focus-actions">${workspaceChatToggle(w)}${focusControls(w)}</div></div>`;
 }
 function serviceViewport(w, service) {
     const key = `${w.id}:${service.id}:${view.port}`, url = adapter.serviceEntryUrl(w.id, service.id, view.port);
     // The entry probe normalizes ticket URLs while reconciliation retains the live
     // iframe. Never gate application visibility on src equality or window.load:
     // a usable application may still have unfinished subresources.
-    return `<div class="service-viewport"><iframe data-service-key="${esc(key)}" class="real-service-frame" title="${esc(service.name)} application" src="${esc(url)}"></iframe></div>`;
+    return `<div class="service-viewport"><iframe data-service-key="${esc(key)}" class="real-service-frame" title="${esc(t('service.applicationTitle', { name: service.name }))}" src="${esc(url)}"></iframe></div>`;
 }
 function observeServiceFrames() {
     for (const frame of root.querySelectorAll('iframe[data-service-key]'))
@@ -903,28 +924,28 @@ function observeServiceFrames() {
 }
 function services(w) {
     if (!w.resourceChecked?.services && !w.resourceErrors?.services)
-        return `${serviceFallbackHeader(w)}${readPlaceholder('Loading Services…', 'service')}`;
+        return `${serviceFallbackHeader(w)}${readPlaceholder(t('service.loading'), 'service')}`;
     const s = route()[0] === "app" ? w.services.find(service => service.id === route()[2]) : activeService(w);
     if (s && route()[0] !== "app" && !s.ports.includes(view.port))
         view.port = s.ports[0] || 0;
     if (w.resourceErrors?.services && !w.resourceChecked?.services)
-        return serviceFallbackHeader(w) + feedback(esc(w.resourceErrors.services), "warning", btn("Retry Services", "retry-services"));
+        return serviceFallbackHeader(w) + feedback(esc(w.resourceErrors.services), "warning", btn(t('service.retry'), "retry-services"));
     if ((!s || !s.ports.length) && w.resourceErrors?.services)
-        return serviceFallbackHeader(w) + feedback(`Service availability could not be confirmed. ${esc(w.resourceErrors.services)}`, 'warning', btn('Retry Services', 'retry-services', 'small'));
+        return serviceFallbackHeader(w) + feedback(`${t('service.availabilityUnconfirmed')} ${esc(w.resourceErrors.services)}`, 'warning', btn(t('service.retry'), 'retry-services', 'small'));
     if (!s || !s.ports.length)
-        return serviceFallbackHeader(w) + empty("grid", "No Web Service is ready", "Ask the Agent to build a tool. Service definitions are created by the Agent workflow.", btn("Focus chat", "tab-Chat", "primary") + (w.services.length ? btn("Manage services", "manage-services") : ""));
+        return serviceFallbackHeader(w) + empty("grid", t('service.noneReady'), t('service.noneReadyBody'), btn(t('service.focusChat'), "tab-Chat", "primary") + (w.services.length ? btn(t('service.manage'), "manage-services") : ""));
     const serviceKey = `${w.id}:${s.id}:${view.port}`;
     const keepStartingFrame = s.observed === 'Starting' && s.enabled && s.ports.includes(view.port) && w.desired === 'running'
         && (w.status === 'Ready' || w.status === 'Degraded')
         && [...root.querySelectorAll('iframe[data-service-key]')].some(frame => frame.dataset.serviceKey === serviceKey);
-    return `${w.resourceErrors?.services ? feedback(esc(w.resourceErrors.services), "warning", btn("Retry Services", "retry-services", "small")) : ""}<div class="service-toolbar"><div class="service-selector">${btn(`${icon('grid', 16)}<span class="service-name">${esc(s.name)}</span>${badge(s.enabled ? s.observed : 'Disabled')}${icon('down', 13)}`, 'service-picker', 'quiet service-trigger', `id="service-select" data-service-id="${esc(s.id)}" aria-label="Service: ${esc(s.name)}" aria-haspopup="dialog" title="Switch service"`)}</div><div class="actions focus-actions">${adapter.requestPresence.get(`${w.id}:${s.name}`)?.hasRecords ? btn(icon("note", 17), "service-requests", "icon-button quiet", 'aria-label="Agent requests" title="Agent requests"') : ""}${workspaceChatToggle(w)}${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", 'aria-label="Open application in new tab"')}${btn(icon("more"), "service-menu", "icon-button quiet", 'aria-label="Service options"')}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn(adapter.hosted ? "Copy access link" : "Copy local link", "copy-local", "small")) : ""}${s.enabled && s.observed === "Ready" && adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", "This app opens in its own tab", "The application’s security policy does not allow embedding. Its security policy remains unchanged.", btn(`${icon("external")} Open application tab`, "open-app", "primary")) : (!s.enabled || s.observed !== "Ready") && !keepStartingFrame ? serviceStatePlaceholder(w, s) : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", "Application entry unavailable", esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn("Retry", "retry-service-entry", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? serviceViewport(w, s) : (adapter.serviceEntryPending(w.id, s.id, view.port) || adapter.project(w).usable && s.enabled && s.observed === 'Ready' && s.ports.includes(view.port)) ? readPlaceholder(`Opening ${s.name}…`, 'service') : empty("grid", "Application entry not confirmed", s.ports.includes(view.port) ? "Check the current Work and Service status, then retry this entry." : "The requested port is no longer declared by this Service. Select a declared entry in Service details or return to the Work.", btn("Retry", "retry-service-entry", "primary", s.ports.includes(view.port) ? "" : "disabled"))}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || "Preview not confirmed. Check the preview or open it independently."), "warning", btn("Check preview", "check-preview", "small") + btn("Open in new tab", "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} Private Service connection ${w.resourceChecked?.services ? ` · Retrieved ${esc(new Date(w.resourceChecked.services).toLocaleTimeString())}` : ""}</span><span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div>`;
+    return `${w.resourceErrors?.services ? feedback(esc(w.resourceErrors.services), "warning", btn(t('service.retry'), "retry-services", "small")) : ""}<div class="service-toolbar"><div class="service-selector">${btn(`${icon('grid', 16)}<span class="service-name">${esc(s.name)}</span>${badge(s.enabled ? s.observed : 'Disabled')}${icon('down', 13)}`, 'service-picker', 'quiet service-trigger', `id="service-select" data-service-id="${esc(s.id)}" aria-label="${esc(t('service.pickerAria', { name: s.name }))}" aria-haspopup="dialog" title="${esc(t('service.switch'))}"`)}</div><div class="actions focus-actions">${adapter.requestPresence.get(`${w.id}:${s.name}`)?.hasRecords ? btn(icon("note", 17), "service-requests", "icon-button quiet", `aria-label="${esc(t('service.agentRequests'))}" title="${esc(t('service.agentRequests'))}"`) : ""}${workspaceChatToggle(w)}${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", `aria-label="${esc(t('service.openNewTab'))}"`)}${btn(icon("more"), "service-menu", "icon-button quiet", `aria-label="${esc(t('service.options'))}"`)}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn(adapter.hosted ? t('service.copyAccessLink') : t('service.copyLocalLink'), "copy-local", "small")) : ""}${s.enabled && s.observed === "Ready" && adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", t('service.opensOwnTab'), t('service.embedDenied'), btn(`${icon("external")} ${t('service.openApplicationTab')}`, "open-app", "primary")) : (!s.enabled || s.observed !== "Ready") && !keepStartingFrame ? serviceStatePlaceholder(w, s) : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", t('service.entryUnavailable'), esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn(t('common.retry'), "retry-service-entry", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? serviceViewport(w, s) : (adapter.serviceEntryPending(w.id, s.id, view.port) || adapter.project(w).usable && s.enabled && s.observed === 'Ready' && s.ports.includes(view.port)) ? readPlaceholder(t('service.opening', { name: s.name }), 'service') : empty("grid", t('service.entryNotConfirmed'), s.ports.includes(view.port) ? t('service.entryCheckStatus') : t('service.portNotDeclared'), btn(t('common.retry'), "retry-service-entry", "primary", s.ports.includes(view.port) ? "" : "disabled"))}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || t('service.previewUnconfirmed')), "warning", btn(t('service.checkPreview'), "check-preview", "small") + btn(t('service.openNewTab'), "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} ${t('service.privateConnection')} ${w.resourceChecked?.services ? ` · ${t('service.retrieved', { time: esc(formatTime(w.resourceChecked.services)) })}` : ""}</span><span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div>`;
 }
 function conversationHistoryControls(w, session) {
     const state = session.history;
     if (!state)
         return '';
-    const error = state.error ? feedback(esc(state.error), 'warning', btn(state.expired ? 'Reload recent messages' : 'Retry history', 'reload-history', 'small')) : '';
-    const earlier = state.hasMore ? btn(state.loading ? pendingDots() + ' Loading earlier messages…' : 'Load earlier messages', 'load-earlier-history', 'small quiet', `${state.loading || state.expired || !adapter.project(w).usable ? 'disabled' : ''} ${state.loading ? 'aria-busy="true"' : ''}`) : '';
+    const error = state.error ? feedback(esc(state.error), 'warning', btn(state.expired ? t('chat.reloadRecent') : t('chat.retryHistory'), 'reload-history', 'small')) : '';
+    const earlier = state.hasMore ? btn(state.loading ? pendingDots() + ' ' + t('chat.loadingEarlier') : t('chat.loadEarlier'), 'load-earlier-history', 'small quiet', `${state.loading || state.expired || !adapter.project(w).usable ? 'disabled' : ''} ${state.loading ? 'aria-busy="true"' : ''}`) : '';
     return `<div class="history-pagination">${earlier}${error}</div>`;
 }
 function agent(w, focus) {
@@ -964,74 +985,76 @@ function agent(w, focus) {
     const imageWaiting = draftImages.length > 0 && (!w.resourceChecked?.agent || session?.loading && !session.checkedAt || draftImages.some(image => image.reading));
     const webDraft = !view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
     const stopAndSend = supported && active && !activeUnconfirmed && !webDraft;
-    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(readingConversation && !initialConversation ? pendingDots() : icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="Sessions" title="${readingConversation ? 'Reading conversations…' : 'Sessions'}" ${readingConversation ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", 'aria-label="Agent options"')}</div></div>${(view.layout === "chat-only" || view.layout === 'service-chat' && innerWidth < 900) && view.fullscreenError ? feedback(esc(view.fullscreenError), "warning") : ""}<div class="session-line"><button id="session-current-trigger" data-action="sessions" ${readingSessions && !session ? 'aria-label="Loading conversations" aria-busy="true"' : ''}>${readingSessions && !session ? esc('Loading conversations…') : esc(sessionDisplayName(w, session))}${icon("down", 12)}</button></div>${historyNotice ? `<small class="muted history-compatibility" role="status">${esc(historyNotice)}</small>` : ''}<div class="messages" id="messages" data-reading-key="${esc(draftKey(w, session?.id || ""))}">${focus && unavailableServicesReason(w) ? feedback(esc(unavailableServicesReason(w)), 'info', btn('Manage services', 'manage-services', 'small')) : ''}${conversationError ? readFailure('Conversation could not be read', conversationError, 'retry-conversation', readingConversation) : ''}${session ? conversationHistoryControls(w, session) : ''}${initialConversation ? readPlaceholder('Loading conversation…', 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>What would you like to make?</h2><p>Build a tool, work with your files, or explore an idea together.</p><button data-action="suggest-message">Build a notes app ${icon("chevron", 15)}</button><button data-action="suggest-files">Help me explore my files ${icon("chevron", 15)}</button></div>` : messageMarkup(w, session.id, session.messages)}${session ? unmatchedExecutions(w, session.id, session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} Open service`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} Back to latest`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${session?.legacy ? feedback("This Session’s context is no longer compatible. Your draft is kept.", "warning", btn("New session", "new-session", "small")) : ""}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || "Conversation status is not confirmed."), observed?.error ? "warning" : "info", btn("Check status", "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? `A Run from Service ${esc(activeRun.source.serviceName || "")} is active.` : "A Run is active in another Session.", "warning", btn("View active Run", "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer">${imageDraftMarkup(w, draftKey(w, session?.id || ""))}<textarea id="composer" rows="3" placeholder="Ask anything about this Work" aria-label="Message the Agent" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w, session?.id || "")}<div class="composer-actions">${btn(icon("upload", 16), "add-chat-images", "icon-button quiet", 'title="Add images" aria-label="Add images"')}${btn(icon("settings", 16), "chat-input-options", "icon-button quiet chat-input-options", `title="Input options" aria-label="Input options" aria-haspopup="dialog" aria-expanded="${view.modal === 'chat-input-options'}"`)}${btn(stopAndSend ? "Stop and send" : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? "Checking conversation status" : stopAndSend ? "Stop and send" : "Send message"}" ${checkingActive ? 'aria-busy="true" data-read-busy="true" title="Checking conversation status…"' : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w, draft)}</div></div>${modelFeedback(w, session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/") ? btn(view.literalSlash ? "Command mode" : "Send as text", "toggle-slash-mode", "text-button", `aria-pressed="${view.literalSlash}"`) : ""}${draft.trimStart().startsWith("/") && !view.literalSlash ? "Commands use their own arguments; Service identity is not added." : "Enter to send · Shift+Enter for a new line"}</div></div></section>`;
+    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(readingConversation && !initialConversation ? pendingDots() : icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="${esc(t('agent.sessions'))}" title="${readingConversation ? esc(t('agent.readingConversations')) : esc(t('agent.sessions'))}" ${readingConversation ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", `aria-label="${esc(t('agent.options'))}"`)}</div></div>${(view.layout === "chat-only" || view.layout === 'service-chat' && innerWidth < 900) && view.fullscreenError ? feedback(esc(view.fullscreenError), "warning") : ""}<div class="session-line"><button id="session-current-trigger" data-action="sessions" ${readingSessions && !session ? `aria-label="${esc(t('agent.loadingConversationsAria'))}" aria-busy="true"` : ''}>${readingSessions && !session ? esc(t('agent.loadingConversations')) : esc(sessionDisplayName(w, session))}${icon("down", 12)}</button></div>${historyNotice ? `<small class="muted history-compatibility" role="status">${esc(historyNotice)}</small>` : ''}<div class="messages" id="messages" data-reading-key="${esc(draftKey(w, session?.id || ""))}">${focus && unavailableServicesReason(w) ? feedback(esc(unavailableServicesReason(w)), 'info', btn(t('service.manage'), 'manage-services', 'small')) : ''}${conversationError ? readFailure(t('agent.conversationReadFailed'), conversationError, 'retry-conversation', readingConversation) : ''}${session ? conversationHistoryControls(w, session) : ''}${initialConversation ? readPlaceholder(t('agent.loadingConversation'), 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>${t('chat.welcomeTitle')}</h2><p>${t('chat.welcomeBody')}</p><button data-action="suggest-message">${t('chat.suggestBuild')} ${icon("chevron", 15)}</button><button data-action="suggest-files">${t('chat.suggestFiles')} ${icon("chevron", 15)}</button></div>` : messageMarkup(w, session.id, session.messages)}${session ? unmatchedExecutions(w, session.id, session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} ${t('chat.openService')}`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} ${t('chat.backToLatest')}`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${session?.legacy ? feedback(t('chat.legacyContext'), "warning", btn(t('chat.newSession'), "new-session", "small")) : ""}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || t('chat.statusUnconfirmed')), observed?.error ? "warning" : "info", btn(t('chat.checkStatus'), "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? t('chat.runFromService', { name: esc(activeRun.source.serviceName || "") }) : t('chat.runOtherSession'), "warning", btn(t('chat.viewActiveRun'), "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer">${imageDraftMarkup(w, draftKey(w, session?.id || ""))}<textarea id="composer" rows="3" placeholder="${esc(t('chat.composerPlaceholder'))}" aria-label="${esc(t('chat.composerAria'))}" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w, session?.id || "")}<div class="composer-actions">${btn(icon("upload", 16), "add-chat-images", "icon-button quiet", `title="${esc(t('chat.addImages'))}" aria-label="${esc(t('chat.addImages'))}"`)}${btn(icon("settings", 16), "chat-input-options", "icon-button quiet chat-input-options", `title="${esc(t('chat.inputOptions'))}" aria-label="${esc(t('chat.inputOptions'))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'chat-input-options'}"`)}${btn(stopAndSend ? t('chat.stopAndSend') : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? esc(t('chat.checkingStatus')) : stopAndSend ? esc(t('chat.stopAndSend')) : esc(t('chat.sendMessage'))}" ${checkingActive ? `aria-busy="true" data-read-busy="true" title="${esc(t('chat.checkingStatusEllipsis'))}"` : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w, draft)}</div></div>${modelFeedback(w, session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/") ? btn(view.literalSlash ? t('chat.commandMode') : t('chat.sendAsText'), "toggle-slash-mode", "text-button", `aria-pressed="${view.literalSlash}"`) : ""}${draft.trimStart().startsWith("/") && !view.literalSlash ? t('chat.commandHint') : t('chat.enterHint')}</div></div></section>`;
 }
 function modelComposer(w, sessionId) {
     const { name, thinking, state, initialLoading } = chatSettings(w, sessionId);
     if (initialLoading)
-        return btn(view.modal === 'chat-response-settings' ? 'Loading response settings…' : pendingStatus('Loading response settings…'), 'open-chat-settings', 'quiet response-settings-trigger', 'id="response-settings-trigger" aria-label="Loading response settings" aria-busy="true" aria-haspopup="dialog"');
-    return btn(`<span class="response-model-name">${esc(name)}</span><span class="response-thinking">· ${esc(thinking)}</span>${icon('down', 12)}`, 'open-chat-settings', 'quiet response-settings-trigger', `id="response-settings-trigger" title="${esc(name)}${state.ref === null ? ' · Work default' : ''} · Thinking ${esc(thinking)}" aria-label="Response settings: ${esc(name)}; Thinking ${esc(thinking)}. For your next message${sessionId ? '' : '. For new session'}" aria-haspopup="dialog"`);
+        return btn(view.modal === 'chat-response-settings' ? t('chat.loadingResponseSettings') : pendingStatus(t('chat.loadingResponseSettings')), 'open-chat-settings', 'quiet response-settings-trigger', `id="response-settings-trigger" aria-label="${esc(t('chat.loadingResponseSettingsAria'))}" aria-busy="true" aria-haspopup="dialog"`);
+    return btn(`<span class="response-model-name">${esc(name)}</span><span class="response-thinking">· ${esc(thinking)}</span>${icon('down', 12)}`, 'open-chat-settings', 'quiet response-settings-trigger', `id="response-settings-trigger" title="${state.ref === null ? esc(t('chat.titleWithDefault', { name, thinking })) : esc(t('chat.title', { name, thinking }))}" aria-label="${sessionId ? esc(t('chat.settingsAria', { name, thinking })) : esc(t('chat.settingsAriaNewSession', { name, thinking }))}" aria-haspopup="dialog"`);
 }
 function sessionDisplayName(w, session) {
     if (!session)
-        return w.resourceErrors?.agent ? 'Sessions unavailable' : !w.resourceChecked?.agent ? 'Loading conversations…' : 'No Session yet';
-    return session.title === `Session ${session.id}` ? `Session ${w.sessions.indexOf(session) + 1}` : session.title;
+        return w.resourceErrors?.agent ? t('chat.sessionsUnavailable') : !w.resourceChecked?.agent ? t('agent.loadingConversations') : t('chat.noSessionYet');
+    return session.title === `Session ${session.id}` ? t('chat.sessionNumber', { index: w.sessions.indexOf(session) + 1 }) : session.title; // i18n-exempt: generated server session title, compared not displayed
 }
 function modelDisplayName(model) {
     if (!model)
-        return 'Unavailable model';
-    return /^Runtime(?: model)? revision\b/i.test(model.label || '') ? model.model || 'Work model' : model.label || model.model || 'Work model';
+        return t('model.unavailable');
+    return /^Runtime(?: model)? revision\b/i.test(model.label || '') ? model.model || t('model.workModel') : model.label || model.model || t('model.workModel');
 }
 function capturedDefaultName(model) {
     const label = modelDisplayName(model);
     return model.model && label !== model.model ? `${label} (${model.model})` : label;
 }
-function thinkingName(level) { return level === null ? 'Normal' : level ? level[0].toUpperCase() + level.slice(1) : 'Unavailable'; }
+function thinkingName(level) { if (level === null)
+    return t('thinking.normal'); if (!level)
+    return t('thinking.unavailable'); const keys = { off: 'thinking.off', low: 'thinking.low', medium: 'thinking.medium', high: 'thinking.high' }; return keys[level] ? t(keys[level]) : level[0].toUpperCase() + level.slice(1); }
 function chatSettings(w, sessionId) {
     const catalog = adapter.models.get(w.id), state = adapter.modelSelection(w.id, sessionId), session = w.sessions.find(s => s.id === sessionId);
     const model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
     if (!catalog?.confirmed && !catalog?.error && (catalog?.loading || !w.resourceChecked?.agent) && state.phase === 'clean')
-        return { catalog, state, model, name: 'Loading models…', thinking: 'Loading…', editable: false, thinkingEditable: false, status: 'Loading models…', initialLoading: true, recovery: undefined };
-    const name = model ? (state.ref === null ? capturedDefaultName(model) : modelDisplayName(model)) : session?.modelPreference?.modelRef === state.ref ? (state.ref === null && session.modelPreference ? capturedDefaultName(session.modelPreference) : modelDisplayName(session.modelPreference)) : state.ref === null ? 'Work default' : 'Unavailable model';
+        return { catalog, state, model, name: t('model.loadingModels'), thinking: t('thinking.loading'), editable: false, thinkingEditable: false, status: t('model.loadingModels'), initialLoading: true, recovery: undefined };
+    const name = model ? (state.ref === null ? capturedDefaultName(model) : modelDisplayName(model)) : session?.modelPreference?.modelRef === state.ref ? (state.ref === null && session.modelPreference ? capturedDefaultName(session.modelPreference) : modelDisplayName(session.modelPreference)) : state.ref === null ? t('chat.workDefault') : t('model.unavailable');
     const capability = adapter.chatCapabilities.get(w.id), levels = model?.thinkingLevels;
     const canThink = (capability ?? 0) >= 1 && (!!levels?.length || model?.thinkingAvailability === 'unknown');
-    const thinking = capability === 0 ? 'Unavailable' : model?.thinkingAvailability === 'unknown' ? (state.thinking === null ? 'Normal · Thinking unconfirmed' : 'Confirm Normal') : canThink ? thinkingName(state.thinking) : 'Unconfirmed';
+    const thinking = capability === 0 ? t('thinking.unavailable') : model?.thinkingAvailability === 'unknown' ? (state.thinking === null ? t('thinking.normalUnconfirmed') : t('thinking.confirmNormal')) : canThink ? thinkingName(state.thinking) : t('thinking.unconfirmed');
     const editable = state.phase !== 'unknown' && !!catalog?.confirmed && !catalog.error;
     const thinkingEditable = editable && canThink && !(levels?.length === 1 && levels[0] === state.thinking);
     const status = [];
     if (state.phase === 'saving')
-        status.push('Saving…');
+        status.push(t('chat.saving'));
     else if (state.phase === 'unknown')
-        status.push('Unconfirmed.');
+        status.push(t('chat.unconfirmedSentence'));
     else if (state.phase === 'dirty' && sessionId)
-        status.push('Not saved.');
+        status.push(t('chat.notSaved'));
     if (state.error && state.phase !== 'clean')
         status.push(state.error);
     if (catalog?.loading)
-        status.push('Loading models…');
+        status.push(t('model.loadingModels'));
     if (catalog?.error)
-        status.push(`Models are unconfirmed. ${catalog.error}`);
+        status.push(`${t('model.unconfirmedWithError')} ${catalog.error}`);
     else if (catalog?.confirmed && !catalog.defaultModel && !catalog.models.length)
-        status.push(catalog.defaultUnavailableReason || 'No models are available. Ask an administrator to enable a model in AI models.');
+        status.push(catalog.defaultUnavailableReason || t('model.noneAvailable'));
     else if (catalog?.confirmed && !catalog.defaultModel && state.ref === null)
-        status.push(catalog.defaultUnavailableReason || 'Work default is unavailable. Choose an available model.');
+        status.push(catalog.defaultUnavailableReason || t('model.defaultUnavailable'));
     else if (!catalog?.confirmed && !catalog?.loading)
-        status.push('Models are unconfirmed.');
+        status.push(t('model.unconfirmed'));
     if (!catalog?.confirmed || catalog.error)
-        status.push('Displayed values are last known settings.');
+        status.push(t('model.lastKnown'));
     else if (!model || session?.modelPreference?.availability === 'unavailable')
-        status.push('Saved settings unavailable. Choose an available model.');
+        status.push(t('model.savedUnavailable'));
     if (capability === 0)
-        status.push('Thinking unavailable in this Work. Update the Work Agent image and Apply to enable model and Thinking settings.');
+        status.push(t('thinking.unavailableInWork'));
     else if (catalog?.confirmed && !catalog.error && !canThink)
-        status.push('Thinking capabilities are unconfirmed.');
+        status.push(t('thinking.capabilitiesUnconfirmed'));
     else if (levels?.length === 1 && levels[0] === 'off')
-        status.push('Thinking is not supported by this model.');
+        status.push(t('thinking.notSupported'));
     if (capability === 1)
-        status.push('This Work uses legacy model settings. Update the Work Agent image and Apply for full multi-provider support.');
+        status.push(t('model.legacySettings'));
     if (!sessionId)
-        status.push('For new session.');
-    const recovery = state.phase === 'unknown' ? { label: 'Check chat settings', action: 'check-session-model' } : !catalog?.loading && (catalog?.error || !catalog?.confirmed) ? { label: 'Retry models', action: 'load-models' } : state.phase === 'dirty' && sessionId ? { label: 'Retry settings', action: 'save-model' } : undefined;
+        status.push(t('chat.forNewSession'));
+    const recovery = state.phase === 'unknown' ? { label: t('chat.checkChatSettings'), action: 'check-session-model' } : !catalog?.loading && (catalog?.error || !catalog?.confirmed) ? { label: t('model.retryModels'), action: 'load-models' } : state.phase === 'dirty' && sessionId ? { label: t('chat.retrySettings'), action: 'save-model' } : undefined;
     return { catalog, state, model, name, thinking, editable, thinkingEditable, status: status.join(' '), recovery };
 }
 function modelFeedback(w, sessionId, inPanel = false) {
@@ -1076,7 +1099,7 @@ function confirmPendingChatCommand() {
 }
 function submissionMarkup(w) {
     const intent = adapter.chatSubmissions.get(w.id);
-    return intent ? feedback(`${esc(intent.error || (intent.cancelRunId ? 'Stopping the previous Run… Waiting up to 5 seconds before sending.' : 'Waiting for acceptance…'))}<details class="chat-submission-details"><summary>Submission details</summary><p>Original ${esc(intent.kind)} key <code>${esc(intent.key)}</code></p></details>`, 'warning', btn('Check original submission', 'check-chat-submission', 'small')) : '';
+    return intent ? feedback(`${esc(intent.error || (intent.cancelRunId ? t('chat.stoppingPreviousRun') : t('chat.waitingAcceptance')))}<details class="chat-submission-details"><summary>${t('chat.submissionDetails')}</summary><p>${t('chat.submissionOriginalKey', { kind: esc(intent.kind) })} <code>${esc(intent.key)}</code></p></details>`, 'warning', btn(t('chat.checkOriginalSubmission'), 'check-chat-submission', 'small')) : '';
 }
 function layoutButton(symbol, label, action, extra = '') {
     return btn(icon(symbol, 16), action, 'icon-button quiet', `title="${esc(label)}" aria-label="${esc(label)}" ${extra}`);
@@ -1085,18 +1108,18 @@ function focusControls(w, showError = true) {
     const standalone = route()[0] === 'app', focused = view.layout !== 'workspace', chat = view.layout === 'chat-only';
     const service = activeService(w);
     const available = !!service && service.observed === 'Ready' && !!adapter.serviceEntryUrl(w.id, service.id, view.port) && adapter.serviceEmbed(w.id, service.id, view.port) !== 'denied';
-    return focused ? `${chat ? layoutButton('arrow', 'Restore layout', 'restore-layout') : !standalone ? layoutButton('panel-right', view.layout === 'service-chat' ? 'Hide chat' : 'Show chat', 'focus-toggle-chat', `aria-pressed="${view.layout === 'service-chat'}"`) : ''}${layoutButton('close', 'Exit focus', 'exit-service-focus')}${view.layout === 'service-only' && w.run ? `<small class="focus-run-status">Run ${esc(w.run.status)}${w.run.error ? ' · needs attention' : ''}</small>` : ''}${showError && view.fullscreenError ? `<small class="fullscreen-error" role="status">${esc(view.fullscreenError)}</small>` : ''}` : layoutButton('focus', 'Focus', 'service-focus', `aria-pressed="false" ${available ? '' : 'disabled'}`);
+    return focused ? `${chat ? layoutButton('arrow', t('focus.restoreLayout'), 'restore-layout') : !standalone ? layoutButton('panel-right', view.layout === 'service-chat' ? t('focus.hideChat') : t('focus.showChat'), 'focus-toggle-chat', `aria-pressed="${view.layout === 'service-chat'}"`) : ''}${layoutButton('close', t('focus.exitFocus'), 'exit-service-focus')}${view.layout === 'service-only' && w.run ? `<small class="focus-run-status">${t(w.run.error ? 'focus.runNeedsAttention' : 'focus.runStatus', { status: esc(stateText(w.run.status)) })}</small>` : ''}${showError && view.fullscreenError ? `<small class="fullscreen-error" role="status">${esc(view.fullscreenError)}</small>` : ''}` : layoutButton('focus', t('focus.focus'), 'service-focus', `aria-pressed="false" ${available ? '' : 'disabled'}`);
 }
 function browserFullscreenAction() {
     if (view.layout === 'workspace' && document.fullscreenElement !== root)
         return '';
-    const full = document.fullscreenElement === root, label = full ? 'Exit browser full screen' : 'Browser full screen';
+    const full = document.fullscreenElement === root, label = full ? t('focus.exitFullscreen') : t('focus.browserFullscreen');
     return btn(`${icon('focus', 16)} ${label}`, 'service-fullscreen', '', `title="${label}" aria-label="${label}" aria-pressed="${full}"`);
 }
 function agentLayoutControls(w) {
     if (view.layout === 'chat-only')
         return focusControls(w, false);
-    return `${view.layout === 'service-chat' && innerWidth < 900 ? focusControls(w, false) : ''}${layoutButton('focus', 'Focus chat', 'focus-chat', 'aria-pressed="false"')}`;
+    return `${view.layout === 'service-chat' && innerWidth < 900 ? focusControls(w, false) : ''}${layoutButton('focus', t('focus.focusChat'), 'focus-chat', 'aria-pressed="false"')}`;
 }
 function captureLayoutReturn(anchor) {
     return { workId: current()?.id || '', tab: view.tab, layout: view.layout === 'chat-only' ? 'workspace' : view.layout, anchor, selector: focusKey(anchor) };
@@ -1158,7 +1181,7 @@ async function exitWorkspaceFocus() {
         }
         catch {
             if (valid()) {
-                view.fullscreenError = 'Full screen could not be closed. Exit full screen and try again.';
+                view.fullscreenError = t('focus.fullscreenCloseFailed');
                 render();
             }
             return false;
@@ -1191,7 +1214,8 @@ function backToRequests() {
         root.querySelector(nav.focus)?.focus({ preventScroll: true });
 }
 function requestStateLabel(state) {
-    return { pending: 'Pending', running: 'Running', waiting_result: 'Waiting for result', waiting_apply: 'Waiting for apply', needs_attention: 'Needs attention', completed: 'Completed', cancelled: 'Cancelled', cancelling: 'Cancelling', failed: 'Failed' }[state] || state;
+    const keys = { pending: 'request.pending', running: 'request.running', waiting_result: 'request.waitingResult', waiting_apply: 'request.waitingApply', needs_attention: 'request.needsAttention', completed: 'request.completed', cancelled: 'request.cancelled', cancelling: 'request.cancelling', failed: 'request.failed' };
+    return keys[state] ? t(keys[state]) : state;
 }
 function activityBusy(w, sessionId, messages) {
     const observed = adapter.activeRuns.get(w.id);
@@ -1205,14 +1229,14 @@ function executionMarkup(w, sessionId, runId) {
     const cancellable = active?.id === runId && ['accepted', 'running', 'cancelling'].includes(active.status);
     const running = !!run && !run.error && (w.run?.id === runId || !observed?.error && activeObserved?.id === runId) && ['accepted', 'running', 'cancelling'].includes(run.status);
     const activityRunning = activityBusy(w, sessionId, w.sessions.find(session => session.id === sessionId)?.messages.filter(message => message.runId === runId) ?? []);
-    return `<div class="message-execution" data-message-key="${esc(`${adapter.identityEpoch}:${w.id}:${sessionId}:execution:${runId}`)}"><div class="execution-summary">${run ? running && !activityRunning ? pendingStatus(`Run ${run.status}`) : badge(`Run ${run.status}`) : '<span>Execution</span>'}${btn('Details', 'run-details', 'text-button', `data-run-id="${esc(runId)}" aria-label="Run details"`)}${cancellable ? btn(active.cancellationRequested || active.status === 'cancelling' ? 'Cancelling…' : 'Cancel run', 'cancel-run', 'text-button', `data-run-id="${esc(runId)}" ${active.cancellationRequested || active.status === 'cancelling' ? 'disabled' : ''}`) : ''}</div>${run?.error ? feedback(esc(run.error), 'warning') : ''}${modelFailureHelp(run)}${run && run.id === w.run?.id && ['interrupted', 'accepted', 'running', 'cancelling'].includes(run.status) && (run.error || run.status === 'interrupted') ? btn('Resume original Run', 'resume-run', 'text-button', `data-run-id="${esc(runId)}"`) : ''}</div>`;
+    return `<div class="message-execution" data-message-key="${esc(`${adapter.identityEpoch}:${w.id}:${sessionId}:execution:${runId}`)}"><div class="execution-summary">${run ? running && !activityRunning ? pendingStatus(t('execution.runStatus', { status: stateText(run.status) })) : badge(t('execution.runStatus', { status: stateText(run.status) })) : `<span>${t('execution.execution')}</span>`}${btn(t('common.details'), 'run-details', 'text-button', `data-run-id="${esc(runId)}" aria-label="${esc(t('execution.runDetails'))}"`)}${cancellable ? btn(active.cancellationRequested || active.status === 'cancelling' ? t('execution.cancelling') : t('execution.cancelRun'), 'cancel-run', 'text-button', `data-run-id="${esc(runId)}" ${active.cancellationRequested || active.status === 'cancelling' ? 'disabled' : ''}`) : ''}</div>${run?.error ? feedback(esc(run.error), 'warning') : ''}${modelFailureHelp(run)}${run && run.id === w.run?.id && ['interrupted', 'accepted', 'running', 'cancelling'].includes(run.status) && (run.error || run.status === 'interrupted') ? btn(t('execution.resume'), 'resume-run', 'text-button', `data-run-id="${esc(runId)}"`) : ''}</div>`;
 }
 function modelFailureHelp(run) {
     if (!run || !['MODEL_AUTHENTICATION_FAILED', 'MODEL_PERMISSION_DENIED'].includes(run.errorCode ?? ''))
         return '';
     if (adapter.state.core.role !== 'admin')
-        return '<p class="muted">Ask an administrator to check the model configuration before submitting a new Run.</p>';
-    return adapter.hosted ? '<p class="muted">Check the model configuration in <a href="/admin">Administration</a>, then submit a new Run.</p>' : '<p class="muted">Open Administration on the connected Core to check the model configuration, then submit a new Run.</p>';
+        return `<p class="muted">${t('merge.askAdmin')}</p>`;
+    return adapter.hosted ? `<p class="muted">${t('merge.hostedAdminBefore')} <a href="/admin">${t('merge.admin')}</a>${t('merge.hostedAdminAfter')}</p>` : `<p class="muted">${t('merge.localAdmin')}</p>`;
 }
 function unmatchedExecutions(w, sessionId, messages) {
     const bound = new Set(messages.map(message => message.runId).filter(Boolean));
@@ -1226,13 +1250,13 @@ function unmatchedExecutions(w, sessionId, messages) {
     if (!missing.length)
         return '';
     const current = missing.filter(run => run.error || ['accepted', 'running', 'cancelling', 'failed', 'interrupted'].includes(run.status)), history = missing.filter(run => !current.includes(run));
-    return `<div class="unmatched-executions">${current.map(run => executionMarkup(w, sessionId, run.id)).join('')}${history.length ? `<details><summary>Session executions · ${history.length}</summary>${history.map(run => executionMarkup(w, sessionId, run.id)).join('')}</details>` : ''}</div>`;
+    return `<div class="unmatched-executions">${current.map(run => executionMarkup(w, sessionId, run.id)).join('')}${history.length ? `<details><summary>${t('execution.sessionExecutions', { count: history.length })}</summary>${history.map(run => executionMarkup(w, sessionId, run.id)).join('')}</details>` : ''}</div>`;
 }
 function workspaceChatToggle(w) {
     if (route()[0] === 'app' || view.layout !== 'workspace' || view.tab !== 'Services')
         return '';
     const panels = workspacePanels.get(w.id), hidden = innerWidth < 900 ? !panels.narrowChat : panels.collapsed;
-    return layoutButton('panel-right', hidden ? 'Show chat' : 'Hide chat', 'toggle-workspace-chat', `aria-expanded="${!hidden}" aria-controls="workspace-chat"`);
+    return layoutButton('panel-right', hidden ? t('focus.showChat') : t('focus.hideChat'), 'toggle-workspace-chat', `aria-expanded="${!hidden}" aria-controls="workspace-chat"`);
 }
 let preserveChatReading = false;
 function rememberChatPosition() {
@@ -1265,7 +1289,15 @@ function applyWorkspaceSizing() {
     separator.setAttribute('aria-valuenow', String(Math.round(geometry.ratio * 100)));
     separator.setAttribute('aria-valuemin', String(Math.round(geometry.minimum / geometry.available * 100)));
     separator.setAttribute('aria-valuemax', String(Math.round(geometry.maximum / geometry.available * 100)));
-    separator.setAttribute('aria-valuetext', `${Math.round(geometry.ratio * 100)}% Service, ${100 - Math.round(geometry.ratio * 100)}% Chat`);
+    separator.setAttribute('aria-valuetext', t('work.splitValue', { service: Math.round(geometry.ratio * 100), chat: 100 - Math.round(geometry.ratio * 100) }));
+}
+/** Presentation for internal tool status identifiers; comparisons keep the raw values. */
+function toolStatusText(status) {
+    return status === 'Result not confirmed' ? t('activity.resultUnconfirmed') // i18n-exempt: internal tool status identifier
+        : status === 'Running' ? t('activity.running')
+            : status === 'Completed' ? t('activity.completed')
+                : status === 'Failed' ? t('activity.statusFailed')
+                    : status || '';
 }
 function messageMarkup(w, sessionId, messages) {
     const groups = activityGroups(messages), anchors = executionAnchors(groups);
@@ -1275,9 +1307,11 @@ function messageMarkup(w, sessionId, messages) {
         if (group.activity) {
             const running = group.messages.some(m => m.tool?.status === 'Running'), failures = group.messages.filter(m => m.tool?.status === 'Failed'), unknown = group.messages.some(m => m.tool?.status?.includes('confirmed'));
             const busy = activityBusy(w, sessionId, group.messages);
-            return `<details class="activity" data-message-key="${esc(key)}" data-activity-key="${esc(key)}" ${expandedActivity.get(key) ? 'open' : ''} aria-busy="${busy}"><summary>${busy ? pendingDots() : icon('terminal', 14)} Activity · ${group.messages.length} ${group.messages.length === 1 ? 'tool' : 'tools'} · ${failures.length ? 'Needs attention' : running ? 'Running' : unknown ? 'Result not confirmed' : 'Completed'}${busy && failures.length ? ' · Running' : ''}${failures.length ? ` · ${failures.length} failed<small class="activity-error">${esc(failures[0]?.tool?.content?.slice(0, 160) || 'A tool failed. Open Activity to review the result.')}</small>` : ''}</summary>${group.messages.map(m => `<details class="tool-event" data-message-key="${esc(`${key}:${m.tool?.id || m.id}`)}" data-activity-key="${esc(`${key}:${m.tool?.id || m.id}`)}" ${expandedActivity.get(`${key}:${m.tool?.id || m.id}`) ? "open" : ""}><summary>${esc(m.tool?.name)} · ${esc(m.tool?.status)}</summary>${m.historyIncomplete ? '<small class="history-partial">Part of this saved result is not loaded.</small>' : ''}<pre>${esc(m.tool?.content)}</pre></details>`).join('')}</details>${execution}`;
+            const activityState = failures.length ? t('activity.needsAttention') : running ? t('activity.running') : unknown ? t('activity.resultUnconfirmed') : t('activity.completed');
+            const activitySummary = t(group.messages.length === 1 ? 'activity.summaryOne' : 'activity.summaryMany', { count: group.messages.length, state: activityState }) + (busy && failures.length ? t('activity.stillRunning') : '');
+            return `<details class="activity" data-message-key="${esc(key)}" data-activity-key="${esc(key)}" ${expandedActivity.get(key) ? 'open' : ''} aria-busy="${busy}"><summary>${busy ? pendingDots() : icon('terminal', 14)} ${activitySummary}${failures.length ? `${t('activity.failedCount', { count: failures.length })}<small class="activity-error">${esc(failures[0]?.tool?.content?.slice(0, 160) || t('activity.toolFailed'))}</small>` : ''}</summary>${group.messages.map(m => `<details class="tool-event" data-message-key="${esc(`${key}:${m.tool?.id || m.id}`)}" data-activity-key="${esc(`${key}:${m.tool?.id || m.id}`)}" ${expandedActivity.get(`${key}:${m.tool?.id || m.id}`) ? "open" : ""}><summary>${esc(m.tool?.name)} · ${esc(toolStatusText(m.tool?.status))}</summary>${m.historyIncomplete ? `<small class="history-partial">${t('activity.partialResult')}</small>` : ''}<pre>${esc(m.tool?.content)}</pre></details>`).join('')}</details>${execution}`;
         }
-        return group.messages.map(m => `<div class="message ${m.role}" data-message-key="${esc(key)}">${m.role === 'assistant' ? `<div class="message-author">${icon('spark', 14)} piwork</div>` : ''}<div class="message-text${m.role === 'assistant' ? ' chat-markdown' : ''}">${m.historyIncomplete ? '<small class="history-partial">Part of this message is not loaded. Load earlier messages to read it.</small>' : ''}${m.role === 'assistant' && !m.historyIncomplete ? renderChatMarkdown(m.text, { workId: w.id }) : esc(m.text)}</div>${m.images?.length ? `<div class="chat-message-images">${m.images.map(image => historyImageMarkup(w, sessionId, m.runId, image)).join('')}</div>` : ''}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${fileReadPending(m.source) ? pendingDots() : icon('file', 13)} ${esc(m.source)}</button>` : ''}</div>`).join('') + execution;
+        return group.messages.map(m => `<div class="message ${m.role}" data-message-key="${esc(key)}">${m.role === 'assistant' ? `<div class="message-author">${icon('spark', 14)} piwork</div>` : ''}<div class="message-text${m.role === 'assistant' ? ' chat-markdown' : ''}">${m.historyIncomplete ? `<small class="history-partial">${t('chat.partialMessage')}</small>` : ''}${m.role === 'assistant' && !m.historyIncomplete ? renderChatMarkdown(m.text, { workId: w.id }) : esc(m.text)}</div>${m.images?.length ? `<div class="chat-message-images">${m.images.map(image => historyImageMarkup(w, sessionId, m.runId, image)).join('')}</div>` : ''}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${fileReadPending(m.source) ? pendingDots() : icon('file', 13)} ${esc(m.source)}</button>` : ''}</div>`).join('') + execution;
     }).join('');
 }
 const webCommands = ['new', 'resume', 'model', 'thinking', 'settings'];
@@ -1287,7 +1321,7 @@ function commandChoices(w, draft) {
         return [];
     const query = paletteToken(draft).toLowerCase();
     const directory = adapter.commands.get(w.id);
-    return [...webCommands.map(name => ({ command: `/${name}`, kind: 'web', description: { new: 'Start a new Session', resume: 'Choose a saved Session', model: 'Choose a model', thinking: 'Choose a Thinking level', settings: 'Open Work settings' }[name] || '', sourceName: 'Desktop' })), ...(directory?.confirmed && !directory.error ? directory.items : [])].filter(command => command.command.slice(1).toLowerCase().includes(query)).slice(0, 30);
+    return [...webCommands.map(name => ({ command: `/${name}`, kind: 'web', description: { new: t('command.new'), resume: t('command.resume'), model: t('command.model'), thinking: t('command.thinking'), settings: t('command.settings') }[name] || '', sourceName: 'Desktop' })), ...(directory?.confirmed && !directory.error ? directory.items : [])].filter(command => command.command.slice(1).toLowerCase().includes(query)).slice(0, 30);
 }
 function commandPalette(w, draft) {
     const items = commandChoices(w, draft);
@@ -1298,7 +1332,7 @@ function commandPalette(w, draft) {
             void adapter.loadCommands(w.id); });
     view.commandIndex = Math.min(view.commandIndex, Math.max(0, items.length - 1));
     const directory = adapter.commands.get(w.id);
-    return `<div class="command-palette menu-list" role="listbox" aria-label="Slash commands">${items.map((command, index) => `${index === 0 || items[index - 1]?.kind !== command.kind ? `<small>${esc(command.kind === 'web' ? 'Workspace' : command.kind === 'skill' ? 'Skills' : 'Prompt templates')}</small>` : ''}<button class="button" data-action="choose-command" data-command="${esc(command.command)}" role="option" aria-selected="${index === view.commandIndex}"><strong>${esc(command.command)}</strong><span>${esc(command.description)}</span><small>${esc(command.sourceName)}</small></button>`).join('')}${directory?.loading ? pendingStatus('Loading resource commands…', 'load-commands') : directory?.error ? `<p role="status">${esc(directory.error)} ${btn('Retry', 'load-commands', 'text-button')}</p>` : directory?.confirmed && !directory.items.length ? '<p>No resource commands in this Work.</p>' : ''}${!items.length ? '<p>No matching commands. Choose another command or send as text.</p>' : ''}</div>`;
+    return `<div class="command-palette menu-list" role="listbox" aria-label="${esc(t('command.paletteAria'))}">${items.map((command, index) => `${index === 0 || items[index - 1]?.kind !== command.kind ? `<small>${esc(command.kind === 'web' ? t('command.groupWorkspace') : command.kind === 'skill' ? t('command.groupSkills') : t('command.groupTemplates'))}</small>` : ''}<button class="button" data-action="choose-command" data-command="${esc(command.command)}" role="option" aria-selected="${index === view.commandIndex}"><strong>${esc(command.command)}</strong><span>${esc(command.description)}</span><small>${esc(command.sourceName)}</small></button>`).join('')}${directory?.loading ? pendingStatus(t('command.loading'), 'load-commands') : directory?.error ? `<p role="status">${esc(directory.error)} ${btn(t('common.retry'), 'load-commands', 'text-button')}</p>` : directory?.confirmed && !directory.items.length ? `<p>${t('command.none')}</p>` : ''}${!items.length ? `<p>${t('command.noMatch')}</p>` : ''}</div>`;
 }
 function fillCommand(command) {
     const work = current();
@@ -1321,53 +1355,53 @@ function fillCommand(command) {
 function fileReadPending(path) {
     return [...actions.records.values()].some(record => record.pending && record.work === current()?.id && record.view === location.hash && ['open-file', 'open-source', 'retry-file-preview'].includes(record.action || '') && record.resource === path);
 }
-function fileRefreshButton(w, idleLabel = 'Refresh files') {
+function fileRefreshButton(w, idleLabel = t('files.refresh')) {
     const record = [...actions.records.values()].filter(item => ['refresh-files', 'file-path'].includes(item.action || '') && item.work === w.id && (item.resource === (view.file || view.path) || item.origin === (view.file || view.path)) && item.view === location.hash).sort((a, b) => b.token - a.token)[0];
     const pending = !!record?.pending || !!adapter.directories.get(`${w.id}:${view.path}`)?.loading;
-    const label = pending ? (record && Date.now() - record.started >= 10000 ? 'Still reading files…' : 'Reading files…') : idleLabel;
+    const label = pending ? (record && Date.now() - record.started >= 10000 ? t('files.stillReading') : t('files.reading')) : idleLabel;
     return btn(pending && !!adapter.directories.get(`${w.id}:${view.path}`)?.checkedAt ? pendingDots() : icon('refresh', 16), 'refresh-files', `icon-button quiet file-refresh ${pending ? 'is-reading' : ''}`, `aria-label="${label}" title="${label}" ${pending ? 'aria-disabled="true" aria-busy="true" data-read-busy="true"' : ''}`);
 }
 function files(w) {
     if (view.file)
         return fileTarget(w);
     const directory = adapter.directories.get(`${w.id}:${view.path}`);
-    const filesError = directory?.error || (!directory && view.path === '/' ? w.resourceErrors?.files : '') || (adapter.state.scenario === 'files-failed' ? 'The file capability could not be reached.' : '');
+    const filesError = directory?.error || (!directory && view.path === '/' ? w.resourceErrors?.files : '') || (adapter.state.scenario === 'files-failed' ? t('files.capabilityUnreachable') : '');
     const initialRead = !directory?.checkedAt && !filesError;
     const list = w.files.filter((x) => {
         const parent = x.path.slice(0, x.path.lastIndexOf("/")) || "/";
         return parent === view.path;
     });
     const toolbarActions = view.selected.length
-        ? `<span class="selection-count" role="status">${view.selected.length} selected</span>${btn(icon("copy", 16), "file-copy", "icon-button quiet", 'aria-label="Copy selected files" title="Copy selected files"')}${btn(icon("move", 16), "file-move", "icon-button quiet", 'aria-label="Move selected files" title="Move selected files"')}${btn(icon("trash", 16), "file-delete", "icon-button quiet danger", 'aria-label="Delete selected files" title="Delete selected files"')}${btn(icon("close", 16), "clear-selection", "icon-button quiet", 'aria-label="Clear selection" title="Clear selection"')}`
-        : `${fileRefreshButton(w)}<div class="file-add-anchor">${btn(icon('more', 16), 'file-add', 'icon-button quiet', `id="file-add-trigger" aria-label="More file actions" title="More file actions" aria-haspopup="menu" aria-expanded="${!!fileActionsContext}" aria-controls="file-actions"`)}${fileActionsContext ? `<div id="file-actions" class="file-actions-menu" role="menu" aria-label="File actions">${btn(`${icon('upload', 16)} Upload files`, 'upload', '', 'role="menuitem" tabindex="-1"')}${btn(`${icon('folder', 16)} New folder`, 'new-folder', '', 'role="menuitem" tabindex="-1"')}<div class="file-actions-separator" role="separator"></div>${btn(`${icon('external', 16)} Connect with WebDAV`, 'webdav', '', 'role="menuitem" tabindex="-1"')}</div>` : ''}</div>`;
-    return `${filesRestoreNotice ? feedback(esc(filesRestoreNotice), "warning") : ""}${filesError ? readFailure(`Could not read ${view.path}`, filesError, "refresh-files", !!directory?.loading) : ""}${uploadProgressMarkup()}<div class="files-toolbar"><div class="breadcrumbs"><button data-action="file-path" data-path="/">${icon("folder", 16)} Workspace</button>${view.path
+        ? `<span class="selection-count" role="status">${t('files.selectedCount', { count: view.selected.length })}</span>${btn(icon("copy", 16), "file-copy", "icon-button quiet", `aria-label="${esc(t('files.copySelected'))}" title="${esc(t('files.copySelected'))}"`)}${btn(icon("move", 16), "file-move", "icon-button quiet", `aria-label="${esc(t('files.moveSelected'))}" title="${esc(t('files.moveSelected'))}"`)}${btn(icon("trash", 16), "file-delete", "icon-button quiet danger", `aria-label="${esc(t('files.deleteSelected'))}" title="${esc(t('files.deleteSelected'))}"`)}${btn(icon("close", 16), "clear-selection", "icon-button quiet", `aria-label="${esc(t('files.clearSelection'))}" title="${esc(t('files.clearSelection'))}"`)}`
+        : `${fileRefreshButton(w)}<div class="file-add-anchor">${btn(icon('more', 16), 'file-add', 'icon-button quiet', `id="file-add-trigger" aria-label="${esc(t('files.moreActions'))}" title="${esc(t('files.moreActions'))}" aria-haspopup="menu" aria-expanded="${!!fileActionsContext}" aria-controls="file-actions"`)}${fileActionsContext ? `<div id="file-actions" class="file-actions-menu" role="menu" aria-label="${esc(t('files.actionsMenu'))}">${btn(`${icon('upload', 16)} ${t('files.upload')}`, 'upload', '', 'role="menuitem" tabindex="-1"')}${btn(`${icon('folder', 16)} ${t('files.newFolder')}`, 'new-folder', '', 'role="menuitem" tabindex="-1"')}<div class="file-actions-separator" role="separator"></div>${btn(`${icon('external', 16)} ${t('files.connectWebdav')}`, 'webdav', '', 'role="menuitem" tabindex="-1"')}</div>` : ''}</div>`;
+    return `${filesRestoreNotice ? feedback(esc(filesRestoreNotice), "warning") : ""}${filesError ? readFailure(t('files.couldNotRead', { path: view.path }), filesError, "refresh-files", !!directory?.loading) : ""}${uploadProgressMarkup()}<div class="files-toolbar"><div class="breadcrumbs"><button data-action="file-path" data-path="/">${icon("folder", 16)} ${t('files.workspace')}</button>${view.path
         .split("/")
         .filter(Boolean)
         .map((p, i, a) => `${icon("chevron", 12)}<button data-action="file-path" data-path="/${esc(a.slice(0, i + 1).join("/"))}">${esc(p)}</button>`)
-        .join("")}</div><div class="actions file-toolbar-actions">${toolbarActions}</div></div>${initialRead ? readPlaceholder(`Loading ${view.path}…`) : !directory?.checkedAt && filesError ? '' : list.length ? `<div class="file-table"><div class="file-head"><span></span><span>NAME</span><span>SIZE</span><span>MODIFIED</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="Select ${esc(f.name)}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${fileReadPending(f.path) ? pendingDots() : icon(f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? "Special item" : f.kind === "directory" ? "Folder" : f.preview?.kind === "text" ? "UTF-8 text" : f.preview?.kind === "image" ? "Image" : f.preview?.kind === "download-only" ? "Download only" : "File"}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="Actions for ${esc(f.name)}"`)}</div>`).join("")}</div>` : empty("folder", "This folder is empty", "Upload files or create a folder to get started.", btn("Upload files", "upload", "primary"))}${transferResults()}`;
+        .join("")}</div><div class="actions file-toolbar-actions">${toolbarActions}</div></div>${initialRead ? readPlaceholder(t('files.loadingPath', { path: view.path })) : !directory?.checkedAt && filesError ? '' : list.length ? `<div class="file-table"><div class="file-head"><span></span><span>${t('files.colName')}</span><span>${t('files.colSize')}</span><span>${t('files.colModified')}</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="${esc(t('files.selectName', { name: f.name }))}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${fileReadPending(f.path) ? pendingDots() : icon(f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? t('files.kindSpecial') : f.kind === "directory" ? t('files.kindFolder') : f.preview?.kind === "text" ? t('files.kindText') : f.preview?.kind === "image" ? t('files.kindImage') : f.preview?.kind === "download-only" ? t('files.kindDownloadOnly') : t('files.kindFile')}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="${esc(t('files.actionsFor', { name: f.name }))}"`)}</div>`).join("")}</div>` : empty("folder", t('files.emptyTitle'), t('files.emptyBody'), btn(t('files.upload'), "upload", "primary"))}${transferResults()}`;
 }
 function fileTargetBackLink() {
-    return btn(`${icon("arrow", 16)} Back to files`, "close-file", "quiet small");
+    return btn(`${icon("arrow", 16)} ${t('files.backToFiles')}`, "close-file", "quiet small");
 }
 function fileTarget(w) {
     const path = view.file, f = w.files.find(item => item.path === path);
     const name = f?.name || path.slice(path.lastIndexOf('/') + 1) || path;
     const source = fileSourceReturn && fileSourceReturn.epoch === adapter.identityEpoch && fileSourceReturn.workId === w.id
         && fileSourceReturn.path === path && fileSourceReturn.modal === 'pi-request-detail';
-    const toolbar = `<div class="files-toolbar file-target-toolbar"><div class="file-target-heading"><strong>${esc(name)}</strong><span class="mono muted">${esc(path)}</span></div><div class="actions file-toolbar-actions">${fileRefreshButton(w, 'Refresh file')}${source ? btn(`${icon("arrow", 16)} Back to request`, "back-to-file-source", "quiet small") : ''}${fileTargetBackLink()}</div></div>`;
-    const retry = `${btn("Retry", "retry-file-preview", "small")}${btn("Back to files", "close-file", "primary")}`;
+    const toolbar = `<div class="files-toolbar file-target-toolbar"><div class="file-target-heading"><strong>${esc(name)}</strong><span class="mono muted">${esc(path)}</span></div><div class="actions file-toolbar-actions">${fileRefreshButton(w, t('files.refreshFile'))}${source ? btn(`${icon("arrow", 16)} ${t('files.backToRequest')}`, "back-to-file-source", "quiet small") : ''}${fileTargetBackLink()}</div></div>`;
+    const retry = `${btn(t('common.retry'), "retry-file-preview", "small")}${btn(t('files.backToFiles'), "close-file", "primary")}`;
     if (view.fileStatus === 'loading' || !f && view.fileStatus === 'idle')
-        return `${toolbar}${readPlaceholder(`Reading ${name}…`, 'file')}`;
+        return `${toolbar}${readPlaceholder(t('files.readingName', { name }), 'file')}`;
     if (view.fileStatus === 'missing')
-        return `${toolbar}${dirty() ? feedback('Your unsaved draft is kept in this page, but the saved file is no longer available.', 'warning') : ''}${empty("file", "File not found", `${esc(path)} is not in this Work’s current workspace. It may have been moved or deleted.`, retry)}`;
+        return `${toolbar}${dirty() ? feedback(t('files.unsavedDraftKept'), 'warning') : ''}${empty("file", t('files.notFound'), t('files.notInWorkspaceMaybeMoved', { path: esc(path) }), retry)}`;
     if (view.fileStatus === 'unavailable')
-        return `${toolbar}${feedback(esc(view.fileError || 'This file cannot be opened right now.'), 'warning', retry)}`;
+        return `${toolbar}${feedback(esc(view.fileError || t('files.cannotOpenNow')), 'warning', retry)}`;
     if (view.fileStatus === 'error')
-        return `${toolbar}${feedback(esc(view.fileError || 'The file could not be read.'), 'warning', retry)}`;
+        return `${toolbar}${feedback(esc(view.fileError || t('files.couldNotReadFile')), 'warning', retry)}`;
     if (!f)
-        return `${toolbar}${empty("file", "File not found", `${esc(path)} is not in this Work’s current workspace.`, retry)}`;
+        return `${toolbar}${empty("file", t('files.notFound'), t('files.notInWorkspace', { path: esc(path) }), retry)}`;
     if (f.kind === 'special')
-        return `${toolbar}${empty("terminal", "This is a special filesystem item", "Links and special items cannot be opened as ordinary files.", fileTargetBackLink())}`;
+        return `${toolbar}${empty("terminal", t('files.specialTitle'), t('files.specialBody'), fileTargetBackLink())}`;
     const preview = f.preview;
     const keepDraft = view.fileEditable && (dirty() || view.fileReread !== null || view.fileWriteUncertain);
     if (keepDraft || preview?.kind === 'text')
@@ -1376,22 +1410,22 @@ function fileTarget(w) {
         return `${toolbar}${imagePreview(f, preview)}`;
     if (preview?.kind === 'download-only')
         return `${toolbar}${downloadOnlyPreview(f, preview)}`;
-    return `${toolbar}${readPlaceholder(`Reading ${name}…`, 'file')}`;
+    return `${toolbar}${readPlaceholder(t('files.readingName', { name }), 'file')}`;
 }
 function imagePreview(f, preview) {
-    const label = preview.mimeType === 'image/png' ? 'PNG image' : preview.mimeType === 'image/jpeg' ? 'JPEG image' : 'WebP image';
-    return `<figure class="file-image-preview"><img src="${esc(preview.url)}" alt="${esc(f.name)}"><figcaption>${esc(label)} · ${preview.width}×${preview.height} · ${size(f.size)}${f.modified ? ` · ${esc(f.modified)}` : ''}</figcaption></figure><div class="editor-footer"><span>Read-only preview of the current file</span><div class="actions">${btn("Download file", "download-file", "primary", `data-path="${esc(f.path)}"`)}</div></div>`;
+    const label = preview.mimeType === 'image/png' ? t('files.imagePng') : preview.mimeType === 'image/jpeg' ? t('files.imageJpeg') : t('files.imageWebp');
+    return `<figure class="file-image-preview"><img src="${esc(preview.url)}" alt="${esc(f.name)}"><figcaption>${esc(label)} · ${preview.width}×${preview.height} · ${size(f.size)}${f.modified ? ` · ${esc(f.modified)}` : ''}</figcaption></figure><div class="editor-footer"><span>${t('files.readOnlyPreview')}</span><div class="actions">${btn(t('files.downloadFile'), "download-file", "primary", `data-path="${esc(f.path)}"`)}</div></div>`;
 }
 function downloadOnlyPreview(f, preview) {
     const reason = preview.reason === 'oversized'
-        ? 'This file exceeds the preview limits (10 MiB, 8192 pixels per side and 40 million pixels).'
+        ? t('files.oversized')
         : preview.reason === 'document'
-            ? 'PDF, GIF and archive files are not previewed here. Download the original file to open it with a compatible application.'
+            ? t('files.document')
             : preview.reason === 'unsupported'
-                ? 'This file is not a valid PNG, JPEG or WebP image that this browser can decode.'
-                : 'This file is not UTF-8 text, so it cannot be opened in the editor.';
+                ? t('files.unsupported')
+                : t('files.notUtf8');
     const details = `${size(f.size)}${f.modified ? ` · ${esc(f.modified)}` : ''}`;
-    return empty("file", "Download to open this file", `${esc(reason)} ${details}. The saved file is still available.`, btn(`${icon("download")} Download file`, "download-file", "primary", `data-path="${esc(f.path)}"`));
+    return empty("file", t('files.downloadToOpen'), `${esc(reason)} ${details}. ${t('files.savedAvailable')}`, btn(`${icon("download")} ${t('files.downloadFile')}`, "download-file", "primary", `data-path="${esc(f.path)}"`));
 }
 const decodePaths = (value) => value ? JSON.parse(value) : [];
 const size = (n) => n >= 1048576
@@ -1399,59 +1433,73 @@ const size = (n) => n >= 1048576
     : n >= 1024
         ? `${(n / 1024).toFixed(1)} KB`
         : `${n} B`;
+/** Keep untrusted server prose out of the primary result while retaining safe codes. */
+function transferResultMessage(result) {
+    if (result.httpStatus === undefined)
+        return esc(result.status === 'unknown' ? t('fileResults.unknownMessage') : result.message);
+    if (result.notSubmitted)
+        return esc(t('d.error.targetCheckStatus', { status: result.httpStatus }));
+    const summary = result.httpStatus === 412 ? t('d.error.targetChanged')
+        : result.status === 'succeeded' ? t('d.files.resultConfirmed')
+            : result.status === 'unknown' ? t('d.files.resultUnconfirmed', { status: result.httpStatus })
+                : t('d.files.requestFailed', { status: result.httpStatus });
+    const code = String(result.message);
+    return `${esc(summary)}${/^[A-Z][A-Z0-9_]{2,79}$/.test(code) ? ` <code>${esc(code)}</code>` : ''}`;
+}
 function transferResults() {
     const results = current() ? adapter.transfersByWork.get(current().id) || [] : [];
     return results.some(result => result.status !== "succeeded")
-        ? `<section class="transfer-results"><h3>Transfer results <span>${results.some((r) => r.status !== "succeeded") ? "Some paths need attention" : ""}</span></h3>${results.map((r) => `<div class="transfer-row">${icon(r.status === "succeeded" ? "check" : "info", 14)}<code>${esc(r.path)}</code><span>${esc(r.message)}</span></div>`).join("")}${results.some((r) => r.status === "unknown") ? btn("Refresh to verify target", "refresh-files", "small") : ""}</section>`
+        ? `<section class="transfer-results"><h3>${t('transfer.results')} <span>${results.some((r) => r.status !== "succeeded") ? t('transfer.someNeedAttention') : ""}</span></h3>${results.map((r) => `<div class="transfer-row">${icon(r.status === "succeeded" ? "check" : "info", 14)}<code>${esc(r.path)}</code><span>${transferResultMessage(r)}</span></div>`).join("")}${results.some((r) => r.status === "unknown") ? btn(t('transfer.refreshToVerify'), "refresh-files", "small") : ""}</section>`
         : "";
 }
 function textEditor(f) {
     const editable = view.fileEditable;
     const reread = view.fileReread?.preview?.kind === 'text' ? view.fileReread.preview.content : null;
     const rereadOther = !!view.fileReread && view.fileReread.preview?.kind !== 'text';
-    return `<div class="editor-toolbar"><strong>${esc(f.name)}</strong>${editable ? badge(dirty() ? "Unsaved" : "Saved") : ""}</div>${editable ? `${!view.fileBaseline ? feedback("No modification time is available. Concurrent changes cannot be protected.", "warning", btn("Allow unprotected overwrite", "allow-unprotected-file", "small")) : ""}${view.fileWriteUncertain ? feedback("The previous write needs review. Reread the target before saving again.", "warning", btn("Reread saved version", "refresh-files", "small")) : ""}${rereadOther ? feedback("The saved target is no longer editable text. Your draft is kept in this page.", "warning", btn("Download saved version", "download-file", "small", `data-path="${esc(f.path)}"`)) : ""}${reread !== null ? `<section class="file-reread"><h3>Current saved version · read only</h3><pre>${esc(reread)}</pre>${btn("Overwrite this reread version", "use-reread-version", "small")}</section>` : ""}<textarea id="file-editor" class="file-editor" spellcheck="false" aria-label="Edit ${esc(f.name)}">${esc(view.fileDraft)}</textarea><div class="editor-footer"><span>UTF-8 · ${size(new TextEncoder().encode(view.fileDraft).length)} / 1 MiB limit · Version checks have second precision</span><div class="actions">${btn("Download saved version", "download-file", "quiet", `data-path="${esc(f.path)}"`)}${btn("Discard", "discard-file", "quiet", dirty() ? "" : "disabled")}${btn("Save file", "save-file", "primary", dirty() ? "" : "disabled")}</div></div>` : empty("file", "Download to open this file", "The in-browser editor supports UTF-8 text up to 1 MiB.", btn(`${icon("download")} Download file`, "download-file", "primary", `data-path="${esc(f.path)}"`))}`;
+    return `<div class="editor-toolbar"><strong>${esc(f.name)}</strong>${editable ? badge(dirty() ? t('editor.unsaved') : t('editor.saved')) : ""}</div>${editable ? `${!view.fileBaseline ? feedback(t('editor.noModificationTime'), "warning", btn(t('editor.allowUnprotected'), "allow-unprotected-file", "small")) : ""}${view.fileWriteUncertain ? feedback(t('editor.previousWriteReview'), "warning", btn(t('editor.rereadSaved'), "refresh-files", "small")) : ""}${rereadOther ? feedback(t('editor.noLongerEditable'), "warning", btn(t('editor.downloadSaved'), "download-file", "small", `data-path="${esc(f.path)}"`)) : ""}${reread !== null ? `<section class="file-reread"><h3>${t('editor.currentSavedVersion')}</h3><pre>${esc(reread)}</pre>${btn(t('editor.overwriteReread'), "use-reread-version", "small")}</section>` : ""}<textarea id="file-editor" class="file-editor" spellcheck="false" aria-label="${esc(t('editor.editName', { name: f.name }))}">${esc(view.fileDraft)}</textarea><div class="editor-footer"><span>${t('editor.footer', { size: size(new TextEncoder().encode(view.fileDraft).length) })}</span><div class="actions">${btn(t('editor.downloadSaved'), "download-file", "quiet", `data-path="${esc(f.path)}"`)}${btn(t('editor.discard'), "discard-file", "quiet", dirty() ? "" : "disabled")}${btn(t('editor.saveFile'), "save-file", "primary", dirty() ? "" : "disabled")}</div></div>` : empty("file", t('files.downloadToOpen'), t('editor.editorLimit'), btn(`${icon("download")} ${t('files.downloadFile')}`, "download-file", "primary", `data-path="${esc(f.path)}"`))}`;
 }
 function settingsPage(w) {
     const configurationError = w.resourceErrors?.configuration;
     if (!w.resourceChecked?.configuration && !configurationError && !view.configDirty)
-        return `<main class="settings-page">${btn(`${icon('arrow', 16)} Back to Work`, 'back-work', 'quiet settings-back')}<h1>Work settings</h1>${readPlaceholder('Loading Work settings…')}</main>`;
+        return `<main class="settings-page">${btn(`${icon('arrow', 16)} ${t('settings.backToWork')}`, 'back-work', 'quiet settings-back')}<h1>${t('settings.title')}</h1>${readPlaceholder(t('settings.loading'))}</main>`;
     if (configurationError && !view.config && !w.resourceChecked?.configuration)
-        return `<main class="settings-page">${btn(`${icon("arrow", 16)} Back to Work`, "back-work", "quiet settings-back")}<h1>Work settings</h1>${feedback(esc(configurationError), "warning", btn("Refresh configuration", "refresh-config", "primary"))}</main>`;
+        return `<main class="settings-page">${btn(`${icon("arrow", 16)} ${t('settings.backToWork')}`, "back-work", "quiet settings-back")}<h1>${t('settings.title')}</h1>${feedback(esc(configurationError), "warning", btn(t('settings.refreshConfiguration'), "refresh-config", "primary"))}</main>`;
     if (!view.config)
         view.config = structuredClone(w.config);
     const c = view.config, pending = w.config.pendingApply === true;
     const applyRecord = [...actions.records.values()].filter(item => item.work === w.id && item.action === 'apply-config').sort((a, b) => b.token - a.token)[0];
-    const applyOperations = adapter.state.operations.filter(item => item.workId === w.id && ['Apply configuration', 'Apply Work configuration', 'apply-work-configuration'].includes(item.kind));
+    const applyOperations = adapter.state.operations.filter(item => item.workId === w.id && ['Apply configuration', 'Apply Work configuration', 'apply-work-configuration'].includes(item.kind)); // i18n-exempt: server operation kinds
     const applyOperation = applyRecord ? applyOperations.find(item => !!applyRecord.businessId && item.id === applyRecord.businessId) : [...applyOperations].sort((a, b) => (Date.parse(b.created) || 0) - (Date.parse(a.created) || 0))[0];
     const applying = !!applyRecord?.pending || !!applyOperation && ['accepted', 'pending', 'preparing', 'running'].includes(applyOperation.state);
     const applyBusy = !!applyRecord?.pending || operationBusy(applyOperation);
-    const applyError = applyRecord?.error || (applyOperation?.state === 'failed' ? applyOperation.error || 'Apply failed' : '');
+    const applyError = applyRecord?.error || (applyOperation?.state === 'failed' ? applyOperation.error || t('settings.applyFailed') : '');
     const unknown = !!applyRecord?.blocked || applyOperation?.state === 'unknown';
     const attention = view.configDirty || pending || applying || applyError || unknown || configurationError;
-    const stateLabel = view.configDirty ? 'Unsaved changes' : applyRecord?.pending ? 'Submitting Apply' : applying && !applyBusy ? 'Apply observation paused or unconfirmed' : applying ? 'Applying' : unknown ? 'Apply not confirmed' : applyError ? 'Apply failed' : pending ? 'Not applied' : 'Configuration in use';
-    const stateBody = view.configDirty ? 'Save your draft before applying.' : applying ? 'Using the previous active configuration.' : unknown ? 'Check the original Apply before trying again.' : applyError ? esc(applyError) : pending ? 'Saved changes are not active yet.' : '';
-    const statusActions = `${btn(icon('refresh', 15), 'refresh-config', 'icon-button quiet', 'aria-label="Refresh configuration status" title="Refresh configuration status"')}${applyOperation && (applying || unknown || applyError) ? btn('Check Apply', 'operation', 'small', `data-id="${esc(applyOperation.id)}"`) : ''}${view.configDirty ? btn('Save changes', 'save-config', 'primary') : pending && !applying && !unknown ? btn('Apply changes', 'apply-config', 'primary', adapter.project(w).usable ? '' : 'disabled title="Start or check this Work before applying saved settings"') : ''}`;
-    return `<main class="settings-page">${configurationError ? feedback(`${esc(configurationError)} Last confirmed configuration and your draft are preserved.`, "warning") : ""}<div class="settings-navigation">${btn(`${icon('arrow', 16)} Back to Work`, 'back-work', 'quiet settings-back')}</div><div class="settings-heading"><h1>Work settings</h1>${!attention ? `<div class="configuration-compact">${badge('Configuration in use')}${statusActions}</div>` : ''}</div>${attention ? `<div class="configuration-state"><div><strong>${applyBusy ? pendingStatus(stateLabel, "apply-config") : esc(stateLabel)}</strong><span>${stateBody}</span></div><div class="actions">${statusActions}</div></div>` : ''}<nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((t) => btn(t, "settings-section", view.settingsTab === t ? "tab active" : "tab", `data-tab="${t}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>Instructions for your Agent</h2><p>AGENTS.md is included with this Work’s capability configuration.</p></div>${btn(`${icon("upload", 15)} Import file`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? "Previous active configuration" : "Configuration in use"}</span><span>Saved configuration</span></div><label class="field">Desired AGENTS.md<textarea id="agents-editor" class="code-editor" rows="13">${esc(c.agents)}</textarea></label><details class="details-box"><summary>Current active content</summary><pre>${esc(w.config.active?.agentsMd ?? "No active configuration is reported")}</pre></details>` : `<div class="section-heading"><div><h2>Advanced configuration</h2><p>Public runtime configuration. Platform secrets are never displayed.</p></div>${btn(`${icon("upload", 15)} Import JSON`, "import-json", "small")}</div><label class="field">Configuration JSON<textarea id="advanced-editor" aria-label="Configuration JSON" class="code-editor" rows="17" spellcheck="false">${esc(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">Includes the image, model reference, MCP, resources, and tool policy. Validate against the current Core contract before production use.</p>`}</div>${view.configDirty ? `<div class="settings-savebar"><span>You have unsaved changes</span><div class="actions">${btn("Discard changes", "discard-config")}${btn("Save changes", "save-config", "primary")}</div></div>` : ""}</main>`;
+    const stateLabel = view.configDirty ? t('settings.unsavedChanges') : applyRecord?.pending ? t('settings.submittingApply') : applying && !applyBusy ? t('settings.applyPaused') : applying ? t('settings.applying') : unknown ? t('settings.applyNotConfirmed') : applyError ? t('settings.applyFailed') : pending ? t('settings.notApplied') : t('settings.configInUse');
+    const stateBody = view.configDirty ? t('settings.saveDraftBeforeApply') : applying ? t('settings.usingPrevious') : unknown ? t('settings.checkOriginalApply') : applyError ? esc(applyError) : pending ? t('settings.savedNotActive') : '';
+    const statusActions = `${btn(icon('refresh', 15), 'refresh-config', 'icon-button quiet', `aria-label="${esc(t('settings.refreshStatus'))}" title="${esc(t('settings.refreshStatus'))}"`)}${applyOperation && (applying || unknown || applyError) ? btn(t('settings.checkApply'), 'operation', 'small', `data-id="${esc(applyOperation.id)}"`) : ''}${view.configDirty ? btn(t('settings.saveChanges'), 'save-config', 'primary') : pending && !applying && !unknown ? btn(t('settings.applyChanges'), 'apply-config', 'primary', adapter.project(w).usable ? '' : `disabled title="${esc(t('settings.applyDisabledTitle'))}"`) : ''}`;
+    const languageSection = `<section class="settings-language" aria-label="${esc(t('lang.menu'))}"><h2>${t('lang.menu')}</h2>${languageTrigger('quiet', 'settings')}</section>`;
+    return `<main class="settings-page">${configurationError ? feedback(`${esc(configurationError)} ${t('settings.configPreserved')}`, "warning") : ""}<div class="settings-navigation">${btn(`${icon('arrow', 16)} ${t('settings.backToWork')}`, 'back-work', 'quiet settings-back')}</div><div class="settings-heading"><h1>${t('settings.title')}</h1>${!attention ? `<div class="configuration-compact">${badge(t('settings.configInUse'))}${statusActions}</div>` : ''}</div>${attention ? `<div class="configuration-state"><div><strong>${applyBusy ? pendingStatus(stateLabel, "apply-config") : esc(stateLabel)}</strong><span>${stateBody}</span></div><div class="actions">${statusActions}</div></div>` : ''}<nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((tab) => btn(tab === "Skills" ? t('settings.tabSkills') : tab === "Pi Packages" ? t('settings.tabPackages') : tab === "AGENTS.md" ? t('settings.tabAgents') : t('settings.tabAdvanced'), "settings-section", view.settingsTab === tab ? "tab active" : "tab", `data-tab="${tab}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>${t('settings.agentsTitle')}</h2><p>${t('settings.agentsBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importFile')}`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? t('settings.previousActive') : t('settings.configInUse')}</span><span>${t('settings.savedConfiguration')}</span></div><label class="field">${t('settings.desiredAgents')}<textarea id="agents-editor" class="code-editor" rows="13">${esc(c.agents)}</textarea></label><details class="details-box"><summary>${t('settings.currentActiveContent')}</summary><pre>${esc(w.config.active?.agentsMd ?? t('settings.noActiveConfig'))}</pre></details>` : `<div class="section-heading"><div><h2>${t('settings.advancedTitle')}</h2><p>${t('settings.advancedBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importJson')}`, "import-json", "small")}</div><label class="field">${t('settings.configurationJson')}<textarea id="advanced-editor" aria-label="${esc(t('settings.configurationJson'))}" class="code-editor" rows="17" spellcheck="false">${esc(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">${t('settings.advancedHelp')}</p>`}</div>${view.configDirty ? `<div class="settings-savebar"><span>${t('settings.unsavedBar')}</span><div class="actions">${btn(t('settings.discardChanges'), "discard-config")}${btn(t('settings.saveChanges'), "save-config", "primary")}</div></div>` : ""}${languageSection}</main>`;
 }
 function catalogFeedback(name) {
     const status = adapter.catalog[name];
-    return (status.loading ? feedback(pendingStatus(`Checking ${name} catalog. Saved copies and selections are preserved.`, "check-catalog")) : '') + (status.error ? feedback(`${esc(status.error)} Saved Work copies and selections are preserved.`, 'warning') : '');
+    return (status.loading ? feedback(pendingStatus(name === 'skills' ? t('settings.checkingSkillsCatalog') : t('settings.checkingPackagesCatalog'), "check-catalog")) : '') + (status.error ? feedback(`${esc(status.error)} ${t('settings.catalogPreserved')}`, 'warning') : '');
 }
 function skillsSettings(w, c) {
-    return `<div class="section-heading"><div><h2>Skills</h2><p>Choose the capabilities available to this Work.</p></div>${btn("Check catalog", "check-catalog", "quiet small")}${btn("Clear selection", "clear-skills", "quiet small")}</div>${catalogFeedback("skills")}<div class="selection-note">${icon("info", 15)} Checked Skills keep this Work’s saved copy. Select “Use current Core copy” to replace it.</div><div class="capability-list">${adapter
+    return `<div class="section-heading"><div><h2>${t('settings.skillsTitle')}</h2><p>${t('settings.skillsBody')}</p></div>${btn(t('settings.checkCatalog'), "check-catalog", "quiet small")}${btn(t('settings.clearSelection'), "clear-skills", "quiet small")}</div>${catalogFeedback("skills")}<div class="selection-note">${icon("info", 15)} ${t('settings.skillsNote')}</div><div class="capability-list">${adapter
         .getSkills()
-        .map((s) => `<article class="capability"><label class="capability-check"><input type="checkbox" data-skill="${esc(s.id)}" ${c.skills.includes(s.id) ? "checked" : ""}><span class="capability-icon">${icon(s.id === "data-analysis" ? "counter" : s.id === "web-tools" ? "grid" : "note", 20)}</span><span><strong>${esc(s.name)}</strong><small>${esc(s.description || "Description not provided")}</small></span></label><div class="capability-meta"><span>${s.version ? `v${s.version}` : "Version not provided"}</span>${btn("Details", "skill-detail", "text-button", `data-id="${s.id}"`)}</div><div class="capability-status"><span>${c.skills.includes(s.id) ? "Selected Work copy" : "Not selected"}</span>${w.config.skills.includes(s.id) ? `<span>${skillState(w, s.id, "loaded")}</span><span>${skillState(w, s.id, "modelVisible")}</span>` : ""}${btn("Use current Core copy", "core-skill-copy", "text-button", `data-id="${s.id}" ${adapter.catalog.skills.error || !adapter.catalog.skills.confirmed || !adapter.getSkills().some(entry => entry.id === s.id && entry.description !== "Saved Work copy; unavailable in current Core catalog") ? "disabled" : ""}`)}</div></article>`)
+        .map((s) => `<article class="capability"><label class="capability-check"><input type="checkbox" data-skill="${esc(s.id)}" ${c.skills.includes(s.id) ? "checked" : ""}><span class="capability-icon">${icon(s.id === "data-analysis" ? "counter" : s.id === "web-tools" ? "grid" : "note", 20)}</span><span><strong>${esc(s.name)}</strong><small>${esc(s.description === 'Saved Work copy; unavailable in current Core catalog' ? t('settings.savedCopyUnavailable') : s.description || t('settings.descriptionNotProvided'))}</small></span></label><div class="capability-meta"><span>${s.version ? `v${s.version}` : t('settings.versionNotProvided')}</span>${btn(t('common.details'), "skill-detail", "text-button", `data-id="${s.id}"`)}</div><div class="capability-status"><span>${c.skills.includes(s.id) ? t('settings.selectedWorkCopy') : t('settings.notSelected')}</span>${w.config.skills.includes(s.id) ? `<span>${skillState(w, s.id, "loaded")}</span><span>${skillState(w, s.id, "modelVisible")}</span>` : ""}${btn(t('settings.useCoreCopy'), "core-skill-copy", "text-button", `data-id="${s.id}" ${adapter.catalog.skills.error || !adapter.catalog.skills.confirmed || !adapter.getSkills().some(entry => entry.id === s.id && entry.description !== "Saved Work copy; unavailable in current Core catalog") ? "disabled" : ""}`)}</div></article>`)
         .join("")}</div>`;
 }
 function packagesSettings(w, c) {
-    return `<div class="section-heading"><div><h2>Pi Packages</h2><p>Agent capabilities installed for this Work.</p></div>${btn(`${icon("plus", 15)} Install package`, "install-package", "primary small")}</div><div class="capability-list package-list">${c.packages.length ? c.packages.map((p) => `<article class="capability package-capability"><div class="capability-check package-identity"><span class="capability-icon">${icon("grid", 20)}</span><span class="package-copy"><strong>${esc(p.name)}</strong><small>${esc(p.source)}</small></span></div>${btn("Details", "package-detail", "quiet small package-details", `data-id="${esc(p.name)}"`)}<div class="package-status">${badge(p.enabled ? "Enabled" : "Disabled")}<span>${packageStatus(w, p.name)}</span></div><div class="package-actions">${btn(p.enabled ? "Disable" : "Enable", "toggle-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn("Update source", "update-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn("Remove", "remove-package", "small danger", `data-id="${esc(p.name)}"`)}</div></article>`).join("") : empty("grid", "No packages selected", "Install a Pi Package or leave this Work without additional packages.")}${catalogFeedback("packages")}<div class="catalog-heading"><h3>Available from Core</h3><div class="catalog-actions">${btn("Check catalog", "check-catalog", "quiet small")}${btn("Clear Work selection", "clear-packages", "quiet small")}</div></div>${adapter
+    return `<div class="section-heading"><div><h2>${t('settings.packagesTitle')}</h2><p>${t('settings.packagesBody')}</p></div>${btn(`${icon("plus", 15)} ${t('settings.installPackage')}`, "install-package", "primary small")}</div><div class="capability-list package-list">${c.packages.length ? c.packages.map((p) => `<article class="capability package-capability"><div class="capability-check package-identity"><span class="capability-icon">${icon("grid", 20)}</span><span class="package-copy"><strong>${esc(p.name)}</strong><small>${esc(p.source)}</small></span></div>${btn(t('common.details'), "package-detail", "quiet small package-details", `data-id="${esc(p.name)}"`)}<div class="package-status">${badge(p.enabled ? 'Enabled' : 'Disabled')}<span>${packageStatus(w, p.name)}</span></div><div class="package-actions">${btn(p.enabled ? t('settings.disable') : t('settings.enable'), "toggle-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.updateSource'), "update-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.remove'), "remove-package", "small danger", `data-id="${esc(p.name)}"`)}</div></article>`).join("") : empty("grid", t('settings.noPackagesTitle'), t('settings.noPackagesBody'))}${catalogFeedback("packages")}<div class="catalog-heading"><h3>${t('settings.availableFromCore')}</h3><div class="catalog-actions">${btn(t('settings.checkCatalog'), "check-catalog", "quiet small")}${btn(t('settings.clearWorkSelection'), "clear-packages", "quiet small")}</div></div>${adapter
         .getPackages()
-        .map((p) => `<div class="catalog-row package-catalog-row"><span class="capability-icon">${icon("grid", 20)}</span><div class="package-copy"><strong>${esc(p.name)}</strong><p>${esc(p.description || "Description not provided")} · ${p.version || "Version not provided"}</p></div>${btn("Select", "select-package", "small", `data-id="${esc(p.name)}" ${adapter.catalog.packages.error || !adapter.catalog.packages.confirmed ? "disabled" : ""}`)}</div>`)
+        .map((p) => `<div class="catalog-row package-catalog-row"><span class="capability-icon">${icon("grid", 20)}</span><div class="package-copy"><strong>${esc(p.name)}</strong><p>${esc(p.description || t('settings.descriptionNotProvided'))} · ${p.version || t('settings.versionNotProvided')}</p></div>${btn(t('settings.select'), "select-package", "small", `data-id="${esc(p.name)}" ${adapter.catalog.packages.error || !adapter.catalog.packages.confirmed ? "disabled" : ""}`)}</div>`)
         .join("")}</div>`;
 }
 function requestCancellable(request) { return canCancelPiRequest(request, true) || request.disposition === 'live' && request.state === 'cancelling'; }
 function runFacts(run) {
-    return `<dl><dt>Run status</dt><dd>${badge(run.status)}</dd><dt>Actual model</dt><dd>${esc(modelDisplayName(run.actualModel))}</dd><dt>Thinking</dt><dd>${esc(run.thinkingLevel === null ? 'Normal (Thinking unconfirmed)' : run.thinkingLevel || 'off')}</dd><dt>Source</dt><dd>${esc(run.source?.kind === 'service' ? `Service: ${run.source.serviceName || 'automatic'}` : run.source?.kind === 'chat' ? 'Chat' : 'Unknown')}${run.source?.requestId ? ` · Request <code>${esc(run.source.requestId)}</code>` : ''}${run.source?.phase ? ` · ${esc(run.source.phase)}` : ''}</dd><dt>Submitted</dt><dd>${esc(run.created || 'Unavailable')}</dd>${run.finished ? `<dt>Finished</dt><dd>${esc(run.finished)}</dd>` : ''}</dl>`;
+    return `<dl><dt>${t('run.status')}</dt><dd>${badge(run.status)}</dd><dt>${t('run.actualModel')}</dt><dd>${esc(modelDisplayName(run.actualModel))}</dd><dt>${t('run.thinking')}</dt><dd>${esc(run.thinkingLevel === null ? t('run.normalUnconfirmed') : run.thinkingLevel || t('thinking.off'))}</dd><dt>${t('run.source')}</dt><dd>${esc(run.source?.kind === 'service' ? t('run.sourceService', { name: run.source.serviceName || t('run.automatic') }) : run.source?.kind === 'chat' ? t('run.sourceChat') : t('run.sourceUnknown'))}${run.source?.requestId ? ` · ${t('run.request')} <code>${esc(run.source.requestId)}</code>` : ''}${run.source?.phase ? ` · ${esc(run.source.phase)}` : ''}</dd><dt>${t('run.submitted')}</dt><dd>${esc(run.created || t('common.unavailable'))}</dd>${run.finished ? `<dt>${t('run.finished')}</dt><dd>${esc(run.finished)}</dd>` : ''}</dl>`;
 }
 function dismissAnchoredOverlay() {
     if (!anchoredOverlay(view.modal))
@@ -1503,78 +1551,78 @@ function exportPanel(target) {
     const job = snap ? adapter.downloads.get(snap.id) : undefined;
     const active = target ? exportFlows.forWork(target.id) : undefined;
     const busy = !!active && !active.terminal;
-    const phases = { checking: 'Checking Work', stopping: 'Waiting for Work to stop', exporting: 'Starting export', snapshot: 'Creating package', preparing: 'Transferring and verifying', ready: 'Ready to download', delivered: 'Download started', unknown: 'Check export status', failed: 'Export needs attention', revoked: 'Access ended' };
-    const title = flow ? phases[flow.phase] || flow.phase : 'Work package';
+    const phases = { checking: t('export.phase.checking'), stopping: t('export.phase.stopping'), exporting: t('export.phase.exporting'), snapshot: t('export.phase.snapshot'), preparing: t('export.phase.preparing'), ready: t('export.phase.ready'), delivered: t('export.phase.delivered'), unknown: t('export.phase.unknown'), failed: t('export.phase.failed'), revoked: t('export.phase.revoked') };
+    const title = flow ? phases[flow.phase] || flow.phase : t('export.packageTitle');
     const canSave = snap?.status === 'verified' && job?.ready && exportSnapshotAvailable(snap);
-    const details = `${flow?.stopOperationId ? `<dt>Stop</dt><dd>${btn(esc(flow.stopOperationId), 'operation', 'text-button', `data-id="${esc(flow.stopOperationId)}"`)}</dd>` : ''}${flow?.exportOperationId || snap?.operationId ? `<dt>Export</dt><dd>${btn(esc(flow?.exportOperationId || snap?.operationId), 'operation', 'text-button', `data-id="${esc(flow?.exportOperationId || snap?.operationId)}"`)}</dd>` : ''}${snap ? `<dt>Snapshot</dt><dd><code>${esc(snap.id)}</code></dd><dt>Status</dt><dd>${badge(snap.status)}</dd><dt>Size</dt><dd>${esc(snap.size || 'Not provided')}</dd><dt>Expires</dt><dd>${esc(snap.expiresAt || 'Not provided')}</dd>` : ''}`;
+    const details = `${flow?.stopOperationId ? `<dt>${t('export.stopLabel')}</dt><dd>${btn(esc(flow.stopOperationId), 'operation', 'text-button', `data-id="${esc(flow.stopOperationId)}"`)}</dd>` : ''}${flow?.exportOperationId || snap?.operationId ? `<dt>${t('export.exportLabel')}</dt><dd>${btn(esc(flow?.exportOperationId || snap?.operationId), 'operation', 'text-button', `data-id="${esc(flow?.exportOperationId || snap?.operationId)}"`)}</dd>` : ''}${snap ? `<dt>${t('export.snapshotLabel')}</dt><dd><code>${esc(snap.id)}</code></dd><dt>${t('export.statusLabel')}</dt><dd>${badge(snap.status)}</dd><dt>${t('export.sizeLabel')}</dt><dd>${esc(snap.size || t('text.notProvided'))}</dd><dt>${t('export.expiresLabel')}</dt><dd>${esc(snap.expiresAt || t('text.notProvided'))}</dd>` : ''}`;
     const known = target ? adapter.state.snapshots.filter(value => value.workId === target.id && value.id !== selectedID) : [];
-    const controls = flow && !flow.terminal ? `${btn('Check status', 'check-export-flow', 'small', `data-id="${esc(flow.id)}"`)}${!flow.terminal ? btn(flow.paused ? 'Resume' : 'Pause', flow.paused ? 'resume-export-flow' : 'pause-export-flow', 'small', `data-id="${esc(flow.id)}"`) : ''}` : '';
+    const controls = flow && !flow.terminal ? `${btn(t('quick.checkStatus'), 'check-export-flow', 'small', `data-id="${esc(flow.id)}"`)}${!flow.terminal ? btn(flow.paused ? t('export.resume') : t('export.pause'), flow.paused ? 'resume-export-flow' : 'pause-export-flow', 'small', `data-id="${esc(flow.id)}"`) : ''}` : '';
     const error = flow?.error || snap?.error || job?.error || job?.observationError;
-    const unavailable = snap?.status === 'expired' ? 'This package has expired. Export current Work to create another.' : snap?.status === 'unavailable' ? 'This snapshot has no downloadable package. Check its details.' : '';
+    const unavailable = snap?.status === 'expired' ? t('export.packageExpired') : snap?.status === 'unavailable' ? t('export.packageUnavailable') : '';
     const waiting = !!flow && !flow.paused && ['checking', 'stopping', 'exporting', 'snapshot', 'preparing'].includes(flow.phase) && !error;
-    const body = `<p class="export-work-name">${esc(flow?.workName || target?.name || snap?.workId)}</p><p class="export-summary" role="status">${waiting ? pendingStatus(title, "export prepare-export download-work check-export-flow resume-export-flow save-export-file check-download") + " " : ""}${flow?.paused ? 'Paused. Resume in Details when you are ready.' : flow?.phase === 'delivered' ? 'Check your browser to confirm the file was saved.' : !flow ? 'This package contains the Work as captured in this snapshot.' : 'You can keep working while this export finishes.'}</p>${error || unavailable ? feedback(esc(error || unavailable), 'warning') : ''}<p class="export-privacy">${icon('lock', 14)} Work packages may include private files and credentials.</p><details class="export-details"><summary>Details</summary>${details ? `<dl class="export-snapshot">${details}</dl>` : ''}${snap ? downloadProgressMarkup(snap.id) : ''}${controls ? `<div class="actions">${controls}</div>` : ''}${known.length ? `<h3>Other saved packages</h3><div class="menu-list">${known.map(value => btn(`${esc(value.id)} · ${esc(value.status)}`, 'view-snapshot', '', `data-id="${esc(value.id)}" data-work-id="${esc(value.workId)}"`)).join('')}</div>` : ''}<p class="muted">Closing only hides progress. Reloading or changing account ends automatic delivery. Pause holds later steps.</p></details>`;
-    const retry = flow && flow.phase === 'unknown' && !canSave ? btn('Check status', 'check-export-flow', 'primary', `data-id="${esc(flow.id)}"`) : '';
-    const download = canSave ? btn(flow?.autoDeliveryConsumed ? 'Download again' : 'Save file', 'save-export-file', 'primary', `data-id="${esc(snap.id)}"`) : (!flow || flow.phase === 'failed' && !!job?.terminalFailure) && snap?.status === 'verified' && exportSnapshotAvailable(snap) ? btn(job?.terminalFailure ? 'Retry download' : 'Download this snapshot', 'download-work', 'primary', `data-id="${esc(snap.id)}" ${busy && active?.snapshotId !== snap.id ? 'disabled' : ''}`) : '';
-    const fresh = !flow && target && ['expired', 'unavailable'].includes(snap?.status || '') ? btn('Export current Work', 'prepare-export', 'primary', `data-id="${esc(target.id)}" ${busy ? 'disabled' : ''}`) : '';
-    return { title, body, footer: `${btn(flow && !flow.terminal ? 'Hide' : 'Close', 'close-modal')}${download || fresh || retry}` };
+    const body = `<p class="export-work-name">${esc(flow?.workName || target?.name || snap?.workId)}</p><p class="export-summary" role="status">${waiting ? pendingStatus(title, "export prepare-export download-work check-export-flow resume-export-flow save-export-file check-download") + " " : ""}${flow?.paused ? t('export.pausedBody') : flow?.phase === 'delivered' ? t('export.deliveredBody') : !flow ? t('export.packageBody') : t('export.keepWorking')}</p>${error || unavailable ? feedback(esc(error || unavailable), 'warning') : ''}<p class="export-privacy">${icon('lock', 14)} ${t('export.privacy')}</p><details class="export-details"><summary>${t('common.details')}</summary>${details ? `<dl class="export-snapshot">${details}</dl>` : ''}${snap ? downloadProgressMarkup(snap.id) : ''}${controls ? `<div class="actions">${controls}</div>` : ''}${known.length ? `<h3>${t('export.otherPackages')}</h3><div class="menu-list">${known.map(value => btn(`${esc(value.id)} · ${esc(value.status)}`, 'view-snapshot', '', `data-id="${esc(value.id)}" data-work-id="${esc(value.workId)}"`)).join('')}</div>` : ''}<p class="muted">${t('export.closingNote')}</p></details>`;
+    const retry = flow && flow.phase === 'unknown' && !canSave ? btn(t('quick.checkStatus'), 'check-export-flow', 'primary', `data-id="${esc(flow.id)}"`) : '';
+    const download = canSave ? btn(flow?.autoDeliveryConsumed ? t('export.downloadAgain') : t('editor.saveFile'), 'save-export-file', 'primary', `data-id="${esc(snap.id)}"`) : (!flow || flow.phase === 'failed' && !!job?.terminalFailure) && snap?.status === 'verified' && exportSnapshotAvailable(snap) ? btn(job?.terminalFailure ? t('export.retryDownload') : t('export.downloadSnapshot'), 'download-work', 'primary', `data-id="${esc(snap.id)}" ${busy && active?.snapshotId !== snap.id ? 'disabled' : ''}`) : '';
+    const fresh = !flow && target && ['expired', 'unavailable'].includes(snap?.status || '') ? btn(t('export.exportCurrentWork'), 'prepare-export', 'primary', `data-id="${esc(target.id)}" ${busy ? 'disabled' : ''}`) : '';
+    return { title, body, footer: `${btn(flow && !flow.terminal ? t('export.hide') : t('common.close'), 'close-modal')}${download || fresh || retry}` };
 }
 function modalMarkup() {
     const w = adapter.getWork(view.data.workId || view.data.id || route()[1] || "");
     const target = w || current();
     let title = "", body = "", footer = "";
-    const cancel = () => btn("Cancel", "close-modal");
-    const close = () => btn("Close", "close-modal");
+    const cancel = () => btn(t('common.cancel'), "close-modal");
+    const close = () => btn(t('common.close'), "close-modal");
     switch (view.modal) {
         case 'chat-response-settings': {
             if (!target)
                 break;
             const { catalog, state, model, name, thinking, editable, thinkingEditable } = chatSettings(target, view.data.sessionId || '');
             const expanded = view.data.expanded, levels = expanded === 'thinking';
-            title = 'Response settings';
-            const options = !editable || levels && !thinkingEditable ? [] : levels ? (model?.thinkingAvailability === 'unknown' ? [{ value: 'normal', name: 'Normal', note: 'No additional Thinking requested; capability unconfirmed.', selected: state.thinking === null }] : (model?.thinkingLevels || []).map(level => ({ value: level, name: thinkingName(level), note: '', selected: level === state.thinking }))) :
-                [...(catalog?.defaultModel ? [catalog.defaultModel] : []), ...(catalog?.models || []).filter(m => m.modelRef !== null)].map(m => ({ value: m.modelRef || '', name: m.modelRef === null ? capturedDefaultName(m) : modelDisplayName(m), note: m.modelRef === null ? 'Use Work default' : m.model + ' · ' + m.provider + ' · ' + m.modelRef.slice(-8), selected: m.modelRef === state.ref }));
+            title = t('response.title');
+            const options = !editable || levels && !thinkingEditable ? [] : levels ? (model?.thinkingAvailability === 'unknown' ? [{ value: 'normal', name: t('thinking.normal'), note: t('response.normalNote'), selected: state.thinking === null }] : (model?.thinkingLevels || []).map(level => ({ value: level, name: thinkingName(level), note: '', selected: level === state.thinking }))) :
+                [...(catalog?.defaultModel ? [catalog.defaultModel] : []), ...(catalog?.models || []).filter(m => m.modelRef !== null)].map(m => ({ value: m.modelRef || '', name: m.modelRef === null ? capturedDefaultName(m) : modelDisplayName(m), note: m.modelRef === null ? t('response.useWorkDefault') : m.model + ' · ' + m.provider + ' · ' + m.modelRef.slice(-8), selected: m.modelRef === state.ref }));
             const row = (kind, label, value, enabled, note = '') => btn(`<span class="response-setting-label">${label}</span><span class="response-setting-value">${esc(value)}${note ? `<small>${note}</small>` : ''}</span>${icon('down', 14)}`, 'toggle-chat-setting', 'quiet response-setting-row', `id="${kind}-select" data-kind="${kind}" value="${esc(kind === 'model' ? state.ref || '' : state.thinking ?? 'normal')}" aria-label="${label}: ${esc(value)}" aria-expanded="${expanded === kind}" aria-haspopup="listbox" aria-controls="response-${kind}-options" aria-describedby="response-settings-status" ${enabled ? '' : 'disabled'}`);
-            body = `<p class="muted response-settings-subtitle">For your next message${view.data.sessionId ? '' : ' · For new session'}</p><div class="response-setting-group">${row('model', 'Model', name, editable, state.ref === null ? 'Work default' : '')}${row('thinking', 'Thinking', thinking, thinkingEditable)}</div>${modelFeedback(target, view.data.sessionId || '', true)}${expanded && options.length ? `<div class="response-setting-options"><p class="muted">${levels ? 'Thinking' : 'Model'}</p><div id="response-${expanded}-options" class="menu-list chat-picker-menu" role="listbox" aria-label="${levels ? 'Thinking levels' : 'Models'}">${options.map(option => btn(`<span>${esc(option.name)}${option.note ? `<small>${esc(option.note)}</small>` : ''}</span>${option.selected ? icon('check', 16) : ''}`, 'choose-chat-setting', '', `role="option" aria-selected="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${expanded}"`)).join('')}</div></div>` : ''}`;
+            body = `<p class="muted response-settings-subtitle">${t('response.forNextMessage')}${view.data.sessionId ? '' : ` · ${t('response.forNewSession')}`}</p><div class="response-setting-group">${row('model', t('response.model'), name, editable, state.ref === null ? t('chat.workDefault') : '')}${row('thinking', t('response.thinking'), thinking, thinkingEditable)}</div>${modelFeedback(target, view.data.sessionId || '', true)}${expanded && options.length ? `<div class="response-setting-options"><p class="muted">${levels ? t('response.thinking') : t('response.model')}</p><div id="response-${expanded}-options" class="menu-list chat-picker-menu" role="listbox" aria-label="${levels ? t('response.thinkingLevels') : t('response.models')}">${options.map(option => btn(`<span>${esc(option.name)}${option.note ? `<small>${esc(option.note)}</small>` : ''}</span>${option.selected ? icon('check', 16) : ''}`, 'choose-chat-setting', '', `role="option" aria-selected="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${expanded}"`)).join('')}</div></div>` : ''}`;
             footer = close();
             break;
         }
         case 'chat-input-options':
-            title = 'Input options';
-            body = `<label class="check-row"><input id="include-identity" type="checkbox" ${view.includeIdentity ? 'checked' : ''}> Include Service identity</label>${current() && (view.drafts[draftKey(current())] || '').trimStart().startsWith('/') && !view.literalSlash ? '<p class="muted">Service identity is not added to commands. Only command arguments are sent.</p>' : ''}<p class="muted">Adds the selected Service name and port to ordinary messages.</p><details><summary>What is included?</summary><p>Identity only. No page content, cookies, or unsaved application inputs.</p></details>`;
+            title = t('chat.inputOptions');
+            body = `<label class="check-row"><input id="include-identity" type="checkbox" ${view.includeIdentity ? 'checked' : ''}> ${t('inputOptions.includeIdentity')}</label>${current() && (view.drafts[draftKey(current())] || '').trimStart().startsWith('/') && !view.literalSlash ? `<p class="muted">${t('inputOptions.commandsNote')}</p>` : ''}<p class="muted">${t('inputOptions.ordinaryNote')}</p><details><summary>${t('inputOptions.whatIncluded')}</summary><p>${t('inputOptions.identityOnly')}</p></details>`;
             footer = close();
             break;
         case "account":
-            title = esc(adapter.state.core.account || "Account");
-            body = `<p class="account-context"><span>Role: ${esc(adapter.state.core.role === 'admin' ? 'Administrator' : adapter.state.core.role)}</span><span title="${esc(adapter.state.core.address)}">Core: ${esc(adapter.state.core.address)}</span></p><div class="menu-list">${btn(`${icon("info")} About Piwork`, "about-piwork")}${btn(`${icon("clock")} Known operations`, "operations")}${adapter.state.core.role === "admin" ? btn(`${icon("download")} Export logs`, "export-logs") : ""}</div><div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} Administration</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} Quick setup</a>` : "") : `${btn(`${icon("refresh")} Switch Core`, "switch-core")}`}${btn(`${icon("logout")} Sign out`, "sign-out", "danger")}</div>`;
+            title = esc(adapter.state.core.account || t('topbar.account'));
+            body = `<p class="account-context"><span>${t('account.roleLine', { role: esc(adapter.state.core.role === 'admin' ? t('account.administrator') : adapter.state.core.role) })}</span><span title="${esc(adapter.state.core.address)}">${t('account.coreLine', { address: esc(adapter.state.core.address) })}</span></p><div class="menu-list">${btn(`${icon("info")} ${t('account.about')}`, "about-piwork")}${btn(`${icon("clock")} ${t('account.knownOperations')}`, "operations")}${adapter.state.core.role === "admin" ? btn(`${icon("download")} ${t('account.exportLogs')}`, "export-logs") : ""}</div>${languageMenuItems()}<div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} ${t('account.administration')}</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} ${t('account.quickSetup')}</a>` : "") : `${btn(`${icon("refresh")} ${t('account.switchCore')}`, "switch-core")}`}${btn(`${icon("logout")} ${t('account.signOut')}`, "sign-out", "danger")}</div>`;
             break;
         case "connection":
-            title = "Core connection";
-            body = `${coreConnectionStatus()}<dl><dt>Core</dt><dd>${esc(adapter.state.core.address)}</dd><dt>Last checked</dt><dd>${esc(adapter.state.lastChecked || "Not provided")}</dd></dl><h3>Capabilities</h3><div class="status-grid">${[["Core", adapter.status.health], ["Runtime", adapter.status.readiness], ["Services", adapter.status.service], ["Files", adapter.status.files]].map(([name, state]) => `<span>${name} ${badge(state?.available ? "Available" : "Unavailable")}</span>`).join("")}</div><p class="muted">Reachability and capability availability are reported separately.</p>`;
-            footer = `${adapter.hosted ? '' : btn("Switch Core", "switch-core")}${btn("Check connection", "check-connection", "primary")}`;
+            title = t('connection.title');
+            body = `${coreConnectionStatus()}<dl><dt>${t('term.core')}</dt><dd>${esc(adapter.state.core.address)}</dd><dt>${t('connection.lastChecked')}</dt><dd>${esc(adapter.state.lastChecked || t('text.notProvided'))}</dd></dl><h3>${t('connection.capabilities')}</h3><div class="status-grid">${[[t('term.core'), adapter.status.health], [t('term.runtime'), adapter.status.readiness], [t('connection.services'), adapter.status.service], [t('connection.files'), adapter.status.files]].map(([name, state]) => `<span>${name} ${badge(state?.available ? t('connection.available') : t('connection.unavailable'))}</span>`).join("")}</div><p class="muted">${t('connection.separate')}</p>`;
+            footer = `${adapter.hosted ? '' : btn(t('account.switchCore'), "switch-core")}${btn(t('connection.check'), "check-connection", "primary")}`;
             break;
         case "switch-core":
-            title = "Switch Core";
-            body = `<p>Choose a Core and continue with its own account. Known operations remain isolated by Core and user.</p><label class="field">Core address<input id="auth-core" value="${esc(view.coreAddress)}"></label><p class="muted">Switching Core clears the current view and verifies any stored account for the new Core.</p>${defaultCorePreferences()}`;
-            footer = `${cancel()}${btn("Connect to Core", "confirm-switch-core", "primary")}`;
+            title = t('account.switchCore');
+            body = `<p>${t('switchCore.body')}</p><label class="field">${t('switchCore.address')}<input id="auth-core" value="${esc(view.coreAddress)}"></label><p class="muted">${t('switchCore.clears')}</p>${defaultCorePreferences()}`;
+            footer = `${cancel()}${btn(t('switchCore.connect'), "confirm-switch-core", "primary")}`;
             break;
         case "work-menu":
-            title = target ? esc(target.name) : "Work options";
-            body = `<div class="menu-list">${btn(`${icon("info")} Work information`, "work-info", "", `data-id="${target?.id}"`)}${btn(`${icon("settings")} Settings`, "settings", "", `data-id="${target?.id}"`)}${btn(`${icon("download")} Export Work`, "export", "", `data-id="${target?.id}"`)}${target && adapter.project(target).action === "stop" ? btn(`${icon("stop")} Stop Work`, "stop-work", "", `data-id="${esc(target.id)}"`) : ""}${btn(`${icon("trash")} Delete Work`, "delete-work", "danger", `data-id="${target?.id}"`)}</div>`;
+            title = target ? esc(target.name) : t('workMenu.options');
+            body = `<div class="menu-list">${btn(`${icon("info")} ${t('workMenu.info')}`, "work-info", "", `data-id="${target?.id}"`)}${btn(`${icon("settings")} ${t('workMenu.settings')}`, "settings", "", `data-id="${target?.id}"`)}${btn(`${icon("download")} ${t('workMenu.export')}`, "export", "", `data-id="${target?.id}"`)}${target && adapter.project(target).action === "stop" ? btn(`${icon("stop")} ${t('workMenu.stop')}`, "stop-work", "", `data-id="${esc(target.id)}"`) : ""}${btn(`${icon("trash")} ${t('workMenu.delete')}`, "delete-work", "danger", `data-id="${target?.id}"`)}</div>${languageMenuItems()}`;
             break;
         case "work-info":
             if (!target)
                 break;
-            title = "Work information";
-            body = `<dl class="property-list"><dt>Name</dt><dd>${esc(target.name)}</dd><dt>Status</dt><dd>${badge(target.status)}</dd><dt>Desired state</dt><dd>${target.desired}</dd><dt>Work ID</dt><dd class="property-value-action"><code>${target.id}</code>${btn(icon("copy", 15), "copy", "icon-button quiet", `data-copy="${target.id}" aria-label="Copy full Work ID"`)}</dd><dt>Network identity</dt><dd class="property-value-action"><code>${esc(target.network || "Not provided")}</code>${btn(icon("copy", 15), "copy", "icon-button quiet", `data-copy="${target.network}" aria-label="Copy network identity"`)}</dd><dt>Owner</dt><dd>${esc(adapter.state.core.account)}</dd></dl>`;
-            footer = `${close()}${[...actions.records.values()].some(record => record.blocked && record.kind === 'lifecycle' && record.work === target.id) ? btn('Check original Work', 'check-work', '', `data-id="${esc(target.id)}"`) : ''}`;
+            title = t('workMenu.info');
+            body = `<dl class="property-list"><dt>${t('workInfo.name')}</dt><dd>${esc(target.name)}</dd><dt>${t('workInfo.status')}</dt><dd>${badge(target.status)}</dd><dt>${t('workInfo.desired')}</dt><dd>${target.desired}</dd><dt>${t('workInfo.id')}</dt><dd class="property-value-action"><code>${target.id}</code>${btn(icon("copy", 15), "copy", "icon-button quiet", `data-copy="${target.id}" aria-label="${esc(t('workInfo.copyId'))}"`)}</dd><dt>${t('workInfo.network')}</dt><dd class="property-value-action"><code>${esc(target.network || t('text.notProvided'))}</code>${btn(icon("copy", 15), "copy", "icon-button quiet", `data-copy="${target.network}" aria-label="${esc(t('workInfo.copyNetwork'))}"`)}</dd><dt>${t('workInfo.owner')}</dt><dd>${esc(adapter.state.core.account)}</dd></dl>`;
+            footer = `${close()}${[...actions.records.values()].some(record => record.blocked && record.kind === 'lifecycle' && record.work === target.id) ? btn(t('workInfo.checkOriginal'), 'check-work', '', `data-id="${esc(target.id)}"`) : ''}`;
             break;
         case "new-work":
-            title = "New Work";
-            body = `<p>Give your Work a name. It will inherit your Core’s defaults.</p><label class="field">Name<input id="create-name" placeholder="e.g. Reading notes" value="${esc(view.createName)}" aria-label="Name" ${currentNameError() ? 'aria-invalid="true" aria-describedby="create-name-error"' : ""} autofocus required maxlength="120">${nameFieldError("create-name-error")}</label><button class="advanced-toggle" data-action="toggle-create-advanced">${icon(view.createAdvanced ? "down" : "chevron", 14)} Advanced configuration <span>Optional</span></button>${view.createAdvanced
-                ? `<div class="advanced-form"><label class="field">Base image<input id="create-image" placeholder="Use Core default" value="${esc(view.createImage)}"></label><label class="field">Skills<select id="create-skill-mode">${[
-                    ["defaults", "Use defaults"],
-                    ["choose", "Choose"],
-                    ["none", "None"],
+            title = t('works.newWork');
+            body = `<p>${t('create.body')}</p><label class="field">${t('workInfo.name')}<input id="create-name" placeholder="${esc(t('create.namePlaceholder'))}" value="${esc(view.createName)}" aria-label="${esc(t('workInfo.name'))}" ${currentNameError() ? 'aria-invalid="true" aria-describedby="create-name-error"' : ""} autofocus required maxlength="120">${nameFieldError("create-name-error")}</label><button class="advanced-toggle" data-action="toggle-create-advanced">${icon(view.createAdvanced ? "down" : "chevron", 14)} ${t('create.advanced')} <span>${t('create.optional')}</span></button>${view.createAdvanced
+                ? `<div class="advanced-form"><label class="field">${t('create.baseImage')}<input id="create-image" placeholder="${esc(t('create.useCoreDefault'))}" value="${esc(view.createImage)}"></label><label class="field">${t('create.skills')}<select id="create-skill-mode">${[
+                    ["defaults", t('create.useDefaults')],
+                    ["choose", t('create.choose')],
+                    ["none", t('create.none')],
                 ]
                     .map(([v, l]) => `<option value="${v}" ${view.createSkillMode === v ? "selected" : ""}>${l}</option>`)
                     .join("")}</select></label>${view.createSkillMode === "choose"
@@ -1582,10 +1630,10 @@ function modalMarkup() {
                         .getSkills()
                         .map((s) => `<label class="check-row"><input type="checkbox" data-create-skill="${esc(s.id)}" ${view.createSkills.includes(s.id) ? "checked" : ""}>${esc(s.name)}</label>`)
                         .join("")
-                    : ""}<label class="field">Pi Packages<select id="create-package-mode">${[
-                    ["defaults", "Use defaults"],
-                    ["choose", "Choose"],
-                    ["none", "None"],
+                    : ""}<label class="field">${t('create.packages')}<select id="create-package-mode">${[
+                    ["defaults", t('create.useDefaults')],
+                    ["choose", t('create.choose')],
+                    ["none", t('create.none')],
                 ]
                     .map(([v, l]) => `<option value="${v}" ${view.createPackageMode === v ? "selected" : ""}>${l}</option>`)
                     .join("")}</select></label>${view.createPackageMode === "choose"
@@ -1593,101 +1641,101 @@ function modalMarkup() {
                         .getPackages()
                         .map((p) => `<label class="check-row"><input type="checkbox" data-create-package="${esc(p.name)}" ${view.createPackages.includes(p.name) ? "checked" : ""}>${esc(p.name)}</label>`)
                         .join("")
-                    : ""}<label class="field">AGENTS.md<textarea id="create-agents" rows="4" placeholder="Use Core default instructions">${esc(view.createAgents)}</textarea></label>${btn("Import AGENTS.md file", "create-import-agents", "small")}<label class="field">Full configuration JSON<textarea id="create-json" rows="4" class="mono" placeholder="Optional public configuration overrides">${esc(view.createJson)}</textarea></label></div>`
-                : ""}<div class="merge-summary"><strong>Configuration to create</strong><span>Image: ${esc(view.createImage || "Core default")}</span><span>Skills: ${view.createSkillMode === "defaults" ? "Core defaults" : view.createSkillMode === "none" ? "None" : esc(view.createSkills.join(", ") || "None chosen")}</span><span>Pi Packages: ${view.createPackageMode === "defaults" ? "Core defaults" : view.createPackageMode === "none" ? "None" : esc(view.createPackages.join(", ") || "None chosen")}</span><span>Advanced fields override Core defaults; explicit selections override those fields.</span></div>`;
-            footer = `${cancel()}${btn("Create Work", "create-work", "primary", createSubmissionBlocked(actions.records.values(), view.createName) ? "disabled" : "")}`;
+                    : ""}<label class="field">AGENTS.md<textarea id="create-agents" rows="4" placeholder="${esc(t('create.agentsPlaceholder'))}">${esc(view.createAgents)}</textarea></label>${btn(t('create.importAgents'), "create-import-agents", "small")}<label class="field">${t('create.fullJson')}<textarea id="create-json" rows="4" class="mono" placeholder="${esc(t('create.jsonPlaceholder'))}">${esc(view.createJson)}</textarea></label></div>`
+                : ""}<div class="merge-summary"><strong>${t('create.summaryTitle')}</strong><span>${t('create.summaryImage', { value: esc(view.createImage || t('create.coreDefault')) })}</span><span>${t('create.summarySkills', { value: view.createSkillMode === "defaults" ? t('create.coreDefaults') : view.createSkillMode === "none" ? t('create.none') : esc(view.createSkills.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.summaryPackages', { value: view.createPackageMode === "defaults" ? t('create.coreDefaults') : view.createPackageMode === "none" ? t('create.none') : esc(view.createPackages.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.overrideNote')}</span></div>`;
+            footer = `${cancel()}${btn(t('create.submit'), "create-work", "primary", createSubmissionBlocked(actions.records.values(), view.createName) ? "disabled" : "")}`;
             break;
         case "stop-work":
-            title = `Stop ${esc(target?.name)}?`;
-            body = `<p>This stops the current Run, all running Services, and workspace file connections for this Work.</p><p>Your persistent workspace data is preserved. Enabled Services can resume the next time you start the Work.</p><div class="impact-box">Entire Work · Services · Agent · Files</div>`;
-            body += view.data.exportAfterStop ? '<p>After the original stop is confirmed, this explicit choice generates a full .work package and starts its verified download. Packages may include private data and credentials.</p>' : '';
-            footer = `${cancel()}${btn(view.data.exportAfterStop ? "Stop and export" : "Stop Work", "confirm-stop", "danger-solid", `data-id="${target?.id}" ${view.data.exportAfterStop ? 'data-export-stop="true"' : ''}`)}`;
+            title = t('stopWork.title', { name: esc(target?.name) });
+            body = `<p>${t('stopWork.body')}</p><p>${t('stopWork.preserved')}</p><div class="impact-box">${t('stopWork.impact')}</div>`;
+            body += view.data.exportAfterStop ? `<p>${t('stopWork.exportAfter')}</p>` : '';
+            footer = `${cancel()}${btn(view.data.exportAfterStop ? t('stopWork.stopAndExport') : t('workMenu.stop'), "confirm-stop", "danger-solid", `data-id="${target?.id}" ${view.data.exportAfterStop ? 'data-export-stop="true"' : ''}`)}`;
             break;
         case "delete-work":
-            title = `Delete ${esc(target?.name)}?`;
-            body = `<p>The Work entry will be removed. Persistent data is retained by default, but there is no undo in this UI.</p><p>This is different from stopping a Work. Export a package first if you need a portable copy.</p><label class="check-row"><input id="delete-confirm" type="checkbox" ${view.deleteConfirmed ? "checked" : ""}>I understand there is no UI undo</label>`;
-            footer = `${cancel()}${btn("Delete Work", "confirm-delete", "danger-solid", `data-id="${target?.id}" ${view.deleteConfirmed ? "" : "disabled"}`)}`;
+            title = t('deleteWork.title', { name: esc(target?.name) });
+            body = `<p>${t('deleteWork.body')}</p><p>${t('deleteWork.differs')}</p><label class="check-row"><input id="delete-confirm" type="checkbox" ${view.deleteConfirmed ? "checked" : ""}>${t('deleteWork.ack')}</label>`;
+            footer = `${cancel()}${btn(t('workMenu.delete'), "confirm-delete", "danger-solid", `data-id="${target?.id}" ${view.deleteConfirmed ? "" : "disabled"}`)}`;
             break;
         case "sessions":
-            title = "Sessions";
-            body = `<p class="session-picker-context">Conversations in <strong>${esc(target?.name)}</strong></p><div class="session-picker-actions">${btn(`${icon("plus", 16)} New session`, "new-session")}</div>${target?.resourceLoading?.agent && target.sessions.length ? pendingStatus("Reading conversations…", "sessions retry-conversation") : ""}<div class="session-list" role="listbox" aria-label="Sessions">${target?.sessions.map((s) => `<button role="option" aria-selected="${s.id === view.session}" data-action="select-session" data-id="${esc(s.id)}" class="${s.id === view.session ? "selected" : ""}"><span class="session-choice-main">${icon("chat", 17)}<span class="session-choice-copy"><span class="session-choice-title">${esc(sessionDisplayName(target, s))}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : ""}</span></span>${s.id === view.session ? `<span class="session-choice-check" aria-hidden="true">${icon("check", 16)}</span>` : ""}</button>`).join("") || (target?.resourceLoading?.agent ? readPlaceholder("Loading conversations…") : target?.resourceErrors?.agent ? "" : "<p>No Sessions yet.</p>")}</div>${target?.resourceErrors?.agent ? readFailure("Conversations could not be read", target.resourceErrors.agent, "retry-conversation", !!target.resourceLoading?.agent) : ""}<p class="session-picker-note">Switching Sessions does not stop an active Run.</p>`;
+            title = t('agent.sessions');
+            body = `<p class="session-picker-context">${t('sessions.context', { name: `<strong>${esc(target?.name)}</strong>` })}</p><div class="session-picker-actions">${btn(`${icon("plus", 16)} ${t('chat.newSession')}`, "new-session")}</div>${target?.resourceLoading?.agent && target.sessions.length ? pendingStatus(t('agent.readingConversations'), "sessions retry-conversation") : ""}<div class="session-list" role="listbox" aria-label="${esc(t('agent.sessions'))}">${target?.sessions.map((s) => `<button role="option" aria-selected="${s.id === view.session}" data-action="select-session" data-id="${esc(s.id)}" class="${s.id === view.session ? "selected" : ""}"><span class="session-choice-main">${icon("chat", 17)}<span class="session-choice-copy"><span class="session-choice-title">${esc(sessionDisplayName(target, s))}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : ""}</span></span>${s.id === view.session ? `<span class="session-choice-check" aria-hidden="true">${icon("check", 16)}</span>` : ""}</button>`).join("") || (target?.resourceLoading?.agent ? readPlaceholder(t('agent.loadingConversations')) : target?.resourceErrors?.agent ? "" : `<p>${t('sessions.none')}</p>`)}</div>${target?.resourceErrors?.agent ? readFailure(t('sessions.readFailed'), target.resourceErrors.agent, "retry-conversation", !!target.resourceLoading?.agent) : ""}<p class="session-picker-note">${t('sessions.note')}</p>`;
             break;
         case "agent-menu":
-            title = "Agent options";
-            body = `<div class="menu-list">${btn(`${icon("clock")} Sessions`, "sessions")}${btn(`${icon("plus")} New session`, "new-session")}${btn(`${icon("note")} Pi requests for this Work`, "pi-requests")}${view.layout === 'chat-only' ? btn(`${icon("arrow")} Restore layout`, "restore-layout") : btn(`${icon("focus")} Focus chat`, "focus-chat")}${browserFullscreenAction()}</div>`;
+            title = t('agent.options');
+            body = `<div class="menu-list">${btn(`${icon("clock")} ${t('agent.sessions')}`, "sessions")}${btn(`${icon("plus")} ${t('chat.newSession')}`, "new-session")}${btn(`${icon("note")} ${t('work.piRequestsAria')}`, "pi-requests")}${view.layout === 'chat-only' ? btn(`${icon("arrow")} ${t('focus.restoreLayout')}`, "restore-layout") : btn(`${icon("focus")} ${t('focus.focusChat')}`, "focus-chat")}${browserFullscreenAction()}</div>`;
             break;
         case "about-piwork": {
             const info = adapter.about;
-            title = "About Piwork";
-            body = `${info.localLoading || info.coreLoading ? pendingStatus("Loading version information…", "refresh-about about-piwork") : ""}${productInfoMarkup('Desktop (piwork-cli)', info.local, info.localLoading, info.localError)}${productInfoMarkup('Core', info.core, info.coreLoading, info.coreError)}${info.core && info.coreError ? `<p class="muted">Last confirmed ${esc(info.coreChecked)}</p>` : ''}`;
-            footer = `${close()}${btn('Refresh', 'refresh-about', 'quiet')}`;
+            title = t('account.about');
+            body = `${info.localLoading || info.coreLoading ? pendingStatus(t('about.loading'), "refresh-about about-piwork") : ""}${productInfoMarkup('Desktop (piwork-cli)', info.local, info.localLoading, info.localError)}${productInfoMarkup(t('term.core'), info.core, info.coreLoading, info.coreError)}${info.core && info.coreError ? `<p class="muted">${t('about.lastConfirmed', { time: esc(info.coreChecked) })}</p>` : ''}`;
+            footer = `${close()}${btn(t('about.refresh'), 'refresh-about', 'quiet')}`;
             break;
         }
         case "chat-image-preview":
-            title = "Image preview";
-            body = `${target && !adapter.project(target).usable ? '<p class="muted">Previously loaded image. Start this Work to read current history.</p>' : ''}<img class="chat-image-preview" src="${esc(view.data.url)}" alt="Sent image">`;
+            title = t('imagePreview.title');
+            body = `${target && !adapter.project(target).usable ? `<p class="muted">${t('imagePreview.previous')}</p>` : ''}<img class="chat-image-preview" src="${esc(view.data.url)}" alt="${esc(t('imagePreview.alt'))}">`;
             footer = close();
             break;
         case "run-details": {
-            title = "Run details";
+            title = t('execution.runDetails');
             const runId = view.data.runId, run = target ? (adapter.runDetails.get(`${target.id}:${runId}`) || (target.run?.id === runId ? target.run : target.sessions.flatMap(s => s.runs || []).find(r => r.id === runId))) : undefined;
             const observed = target && adapter.activeRuns.get(target.id), active = target && (adapter.cancelAndSendCapabilities.get(target.id) === 1 ? observed?.confirmed && !observed.error ? observed.run : undefined : target.run);
             const cancellable = !!run && active?.id === run.id && ['accepted', 'running', 'cancelling'].includes(active.status);
             const history = target?.sessions.find(s => s.id === view.session)?.runs || [];
-            body = run ? `${runFacts(run)}${run.error ? feedback(esc(run.error), 'warning') : ''}${modelFailureHelp(run)}${target ? temporaryCleanupMarkup(target.id, 'run', run.id) : ''}<details><summary>Technical details</summary><dl><dt>Run ID</dt><dd><code>${esc(run.id)}</code></dd><dt>Session ID</dt><dd><code>${esc(run.sessionId)}</code></dd><dt>Event cursor</dt><dd>${run.cursor}</dd></dl></details><p class="muted">One active Run per Work. Closing details does not cancel execution.</p>` : '<p>Run details have not been confirmed.</p>';
+            body = run ? `${runFacts(run)}${run.error ? feedback(esc(run.error), 'warning') : ''}${modelFailureHelp(run)}${target ? temporaryCleanupMarkup(target.id, 'run', run.id) : ''}<details><summary>${t('runDetails.technical')}</summary><dl><dt>${t('runDetails.runId')}</dt><dd><code>${esc(run.id)}</code></dd><dt>${t('runDetails.sessionId')}</dt><dd><code>${esc(run.sessionId)}</code></dd><dt>${t('runDetails.cursor')}</dt><dd>${run.cursor}</dd></dl></details><p class="muted">${t('runDetails.note')}</p>` : `<p>${t('runDetails.unconfirmed')}</p>`;
             if (history.length)
-                body += `<details><summary>Earlier execution details</summary>${history.map(r => `<p>${btn(`${esc(r.status)} · ${esc(r.created || 'Time unavailable')} · ${esc(modelDisplayName(r.actualModel))}`, 'run-details', 'text-button', `data-run-id="${esc(r.id)}"`)}</p>`).join('')}</details>`;
-            footer = `${close()}${run && cancellable ? btn(run.cancellationRequested || run.status === 'cancelling' ? 'Cancelling…' : 'Cancel run', 'cancel-run', 'danger', `data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status === 'cancelling' ? 'disabled' : ''}`) : ''}`;
+                body += `<details><summary>${t('runDetails.earlier')}</summary>${history.map(r => `<p>${btn(`${esc(stateText(r.status))} · ${esc(r.created || t('runDetails.timeUnavailable'))} · ${esc(modelDisplayName(r.actualModel))}`, 'run-details', 'text-button', `data-run-id="${esc(r.id)}"`)}</p>`).join('')}</details>`;
+            footer = `${close()}${run && cancellable ? btn(run.cancellationRequested || run.status === 'cancelling' ? t('execution.cancelling') : t('execution.cancelRun'), 'cancel-run', 'danger', `data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status === 'cancelling' ? 'disabled' : ''}`) : ''}`;
             break;
         }
         case 'service-picker': {
-            title = 'Switch service';
+            title = t('service.switch');
             const selected = target && activeService(target);
-            body = `<div class="service-picker-list" role="listbox" aria-label="Services">${target?.services.filter(item => item.ports.length && item.observed !== 'Removed').map(item => btn(`<span class="service-choice-copy"><strong>${esc(item.name)}</strong>${!item.enabled || item.observed !== 'Ready' ? `<small>${esc(item.error || (!item.enabled ? 'Disabled · use Manage services' : item.observed === 'Starting' ? 'Starting · waiting for readiness' : item.observed === 'Failed' ? 'Failed · check details and logs' : 'Stopped · use Manage services'))}</small>` : ''}</span>${badge(item.enabled ? item.observed : 'Disabled')}<span class="choice-check">${item.id === selected?.id ? icon('check', 16) : ''}</span>`, 'select-service', 'quiet service-choice', `role="option" aria-selected="${item.id === selected?.id}" data-id="${esc(item.id)}"`)).join('') || '<p>No Web Services.</p>'}</div>`;
-            footer = btn(`${icon('settings', 16)} Manage services`, 'manage-services', 'quiet');
+            body = `<div class="service-picker-list" role="listbox" aria-label="${esc(t('service.listAria'))}">${target?.services.filter(item => item.ports.length && item.observed !== 'Removed').map(item => btn(`<span class="service-choice-copy"><strong>${esc(item.name)}</strong>${!item.enabled || item.observed !== 'Ready' ? `<small>${esc(item.error || (!item.enabled ? t('service.pickerDisabled') : item.observed === 'Starting' ? t('service.pickerStarting') : item.observed === 'Failed' ? t('service.pickerFailed') : t('service.pickerStopped')))}</small>` : ''}</span>${badge(item.enabled ? item.observed : 'Disabled')}<span class="choice-check">${item.id === selected?.id ? icon('check', 16) : ''}</span>`, 'select-service', 'quiet service-choice', `role="option" aria-selected="${item.id === selected?.id}" data-id="${esc(item.id)}"`)).join('') || `<p>${t('service.pickerEmpty')}</p>`}</div>`;
+            footer = btn(`${icon('settings', 16)} ${t('service.manage')}`, 'manage-services', 'quiet');
             break;
         }
         case "service-menu":
-            title = "Service options";
-            body = `<div class="menu-list">${btn(`${icon("external")} Open in new tab`, "open-app")}${btn(`${icon("focus")} Open independent window`, "open-window")}${btn(`${icon("copy")} Copy domain`, "copy-domain")}${btn(`${icon("copy")} ${adapter.hosted ? "Copy access link" : "Copy local link"}`, "copy-local")}${btn(`${icon("settings")} Manage services`, "manage-services")}${btn(`${icon("note")} Pi requests for this Work`, "pi-requests")}${route()[0] === 'work' ? btn(`${icon("reset")} Reset split`, "reset-workspace-split") + btn(`${icon("focus")} Focus chat`, "focus-chat") : ''}${browserFullscreenAction()}</div><p class="muted">${adapter.hosted ? "Services share the workbench origin and must be trusted: their scripts can use your current UI permissions. Apps must support their Service URL prefix. Server-response Cookies are partitioned; JavaScript Cookies are not synchronized or isolated. Access links require normal sign-in." : "A local link works on this computer while Desktop CLI is running and signed in. It is not a public share link."}</p>`;
+            title = t('service.options');
+            body = `<div class="menu-list">${btn(`${icon("external")} ${t('service.openNewTab')}`, "open-app")}${btn(`${icon("focus")} ${t('service.openWindow')}`, "open-window")}${btn(`${icon("copy")} ${t('service.copyDomain')}`, "copy-domain")}${btn(`${icon("copy")} ${adapter.hosted ? t('service.copyAccessLink') : t('service.copyLocalLink')}`, "copy-local")}${btn(`${icon("settings")} ${t('service.manage')}`, "manage-services")}${btn(`${icon("note")} ${t('work.piRequestsAria')}`, "pi-requests")}${route()[0] === 'work' ? btn(`${icon("reset")} ${t('service.resetSplit')}`, "reset-workspace-split") + btn(`${icon("focus")} ${t('focus.focusChat')}`, "focus-chat") : ''}${browserFullscreenAction()}</div><p class="muted">${adapter.hosted ? t('service.menuHostedNote') : t('service.menuLocalNote')}</p>`;
             break;
         case "manage-services":
-            title = "Manage services";
-            body = `<p>Service definitions are created and updated by the Agent.</p><div class="service-list">${target?.services.map((s) => `<button data-action="service-details" data-id="${s.id}"><span class="service-list-icon">${icon(s.ports.length ? "grid" : "terminal", 20)}</span><span><strong>${esc(s.name)}</strong><small>${s.ports.length ? `${s.ports.length} declared Web ${s.ports.length === 1 ? "port" : "ports"}` : "No Web entry"} · ${s.enabled ? "Enabled" : "Disabled"}</small></span>${badge(s.observed)}${icon("chevron", 15)}</button>`).join("") || "<p>No Services have been defined.</p>"}</div>`;
+            title = t('service.manage');
+            body = `<p>${t('service.definitionsAgent')}</p><div class="service-list">${target?.services.map((s) => `<button data-action="service-details" data-id="${s.id}"><span class="service-list-icon">${icon(s.ports.length ? "grid" : "terminal", 20)}</span><span><strong>${esc(s.name)}</strong><small>${s.ports.length ? t(s.ports.length === 1 ? 'service.declaredPortOne' : 'service.declaredPortMany', { count: s.ports.length }) : t('service.noWebEntry')} · ${s.enabled ? t('stateValue.enabled') : t('stateValue.disabled')}</small></span>${badge(s.observed)}${icon("chevron", 15)}</button>`).join("") || `<p>${t('service.noneDefined')}</p>`}</div>`;
             footer = close();
             break;
         case "service-details": {
             const s = target?.services.find((s) => s.id === view.data.serviceId);
-            title = s ? esc(s.name) : "Service removed";
+            title = s ? esc(s.name) : t('service.removed');
             body = s
                 ? serviceDetails(s, target)
-                : `${target ? controlMarkup(serviceControls.get(`${target.id}:${view.data.serviceId}`)) : ""}<p>The Service definition was removed. Workspace files were not deleted.</p>${target ? temporaryCleanupMarkup(target.id, 'service', view.data.serviceId) : ''}`;
-            footer = `${close()}${btn("Back to services", "manage-services")}`;
+                : `${target ? controlMarkup(serviceControls.get(`${target.id}:${view.data.serviceId}`)) : ""}<p>${t('service.removedBody')}</p>${target ? temporaryCleanupMarkup(target.id, 'service', view.data.serviceId) : ''}`;
+            footer = `${close()}${btn(t('service.backToServices'), "manage-services")}`;
             break;
         }
         case "service-control": {
             const s = target?.services.find((s) => s.id === view.data.serviceId);
-            title = `${view.data.control === "remove" ? "Remove" : "Stop"} ${esc(s?.name)}?`;
+            title = t(view.data.control === "remove" ? 'serviceControl.removeTitle' : 'serviceControl.stopTitle', { name: esc(s?.name) });
             body =
                 view.data.control === "remove"
-                    ? "<p>Remove this Service definition. Shared workspace files are preserved. Starting a Service cannot undo its removal.</p>"
-                    : "<p>Stopping this Service persistently disables it. Starting the Work again will not re-enable it. Other Services and the Agent keep running.</p>";
-            footer = `${cancel()}${btn(view.data.control === "remove" ? "Remove Service" : "Stop Service", "confirm-service-control", "danger-solid")}`;
+                    ? `<p>${t('serviceControl.removeBody')}</p>`
+                    : `<p>${t('serviceControl.stopBody')}</p>`;
+            footer = `${cancel()}${btn(view.data.control === "remove" ? t('serviceControl.remove') : t('serviceControl.stop'), "confirm-service-control", "danger-solid")}`;
             break;
         }
         case "pi-requests": {
             const serviceContext = view.data.source === 'service';
-            title = serviceContext ? 'Agent requests' : 'Pi requests';
+            title = serviceContext ? t('service.agentRequests') : t('pi.title');
             const page = target ? adapter.requestPage(target.id, view.data.serviceName || '') : undefined;
-            body = `<p class="request-work-name">${esc(target?.name || 'Current Work')}${serviceContext ? ' · Service requests' : ' · All Work requests'}</p><div class="request-filter"><label class="field">Source<select id="pi-service-filter"><option value="">All Services and Chat</option>${target?.services.map(item => `<option value="${esc(item.name)}" ${item.name === view.data.serviceName ? 'selected' : ''}>${esc(item.name)}</option>`).join('') || ''}</select></label>${btn(icon('refresh', 16), 'pi-requests', 'icon-button quiet', 'aria-label="Refresh requests" title="Refresh requests"')}</div>${page?.loading ? pendingStatus('Reading requests…', 'pi-requests service-requests next-pi-requests') : ''}${page?.error ? feedback(esc(page.error), 'warning') : ''}<div class="request-list">${page?.items.map(request => `<article class="request-row">${btn(`<span class="request-copy"><strong>${esc(request.goal)}</strong><small>${esc(request.source.kind === 'service' ? `Service: ${request.source.serviceName}` : 'Chat')}</small></span>${icon('chevron', 16)}<span class="request-row-meta">${badge(requestStateLabel(request.state))}<small>Updated ${esc(request.updatedAt)}</small></span>${request.disposition !== 'live' ? '<small class="request-historical">Historical · Read only</small>' : ''}`, 'pi-request-detail', 'quiet request-row-button', `data-id="${esc(request.requestId)}"`)}${target && adapter.requestReadErrors.get(`${target.id}:${request.requestId}`) ? feedback(esc(adapter.requestReadErrors.get(`${target.id}:${request.requestId}`)), 'warning') : ''}</article>`).join('') || (page?.loading ? 'Reading requests…' : 'No requests in this view.')}</div>`;
-            footer = `${close()}${page?.nextCursor ? btn('More requests', 'next-pi-requests') : ''}`;
+            body = `<p class="request-work-name">${esc(target?.name || t('pi.currentWork'))}${serviceContext ? t('pi.serviceContext') : t('pi.allWorkContext')}</p><div class="request-filter"><label class="field">${t('pi.source')}<select id="pi-service-filter"><option value="">${t('pi.allSources')}</option>${target?.services.map(item => `<option value="${esc(item.name)}" ${item.name === view.data.serviceName ? 'selected' : ''}>${esc(item.name)}</option>`).join('') || ''}</select></label>${btn(icon('refresh', 16), 'pi-requests', 'icon-button quiet', `aria-label="${esc(t('pi.refresh'))}" title="${esc(t('pi.refresh'))}"`)}</div>${page?.loading ? pendingStatus(t('pi.reading'), 'pi-requests service-requests next-pi-requests') : ''}${page?.error ? feedback(esc(page.error), 'warning') : ''}<div class="request-list">${page?.items.map(request => `<article class="request-row">${btn(`<span class="request-copy"><strong>${esc(request.goal)}</strong><small>${esc(request.source.kind === 'service' ? t('run.sourceService', { name: request.source.serviceName }) : t('run.sourceChat'))}</small></span>${icon('chevron', 16)}<span class="request-row-meta">${badge(requestStateLabel(request.state))}<small>${t('pi.updated', { time: esc(request.updatedAt) })}</small></span>${request.disposition !== 'live' ? `<small class="request-historical">${t('pi.historical')}</small>` : ''}`, 'pi-request-detail', 'quiet request-row-button', `data-id="${esc(request.requestId)}"`)}${target && adapter.requestReadErrors.get(`${target.id}:${request.requestId}`) ? feedback(esc(adapter.requestReadErrors.get(`${target.id}:${request.requestId}`)), 'warning') : ''}</article>`).join('') || (page?.loading ? t('pi.reading') : t('pi.empty'))}</div>`;
+            footer = `${close()}${page?.nextCursor ? btn(t('pi.more'), 'next-pi-requests') : ''}`;
             break;
         }
         case "pi-request-detail": {
-            title = view.data.source === 'service' ? 'Agent request' : 'Pi request';
+            title = view.data.source === 'service' ? t('pi.agentRequest') : t('pi.request');
             const detail = target ? adapter.requestDetails.get(`${target.id}:${view.data.requestId}`) : undefined, r = detail?.request;
             if (!r) {
-                body = view.modalError ? '' : pendingStatus('Reading the original request…', 'pi-request-detail');
+                body = view.modalError ? '' : pendingStatus(t('pi.readingOne'), 'pi-request-detail');
                 footer = close();
                 break;
             }
@@ -1695,115 +1743,115 @@ function modalMarkup() {
             const cancellation = target && adapter.requestCancellation(target.id, r.requestId);
             const waiting = ['waiting_result', 'waiting_apply'].includes(r.state);
             const live = r.disposition === 'live', editable = live && !!target && adapter.project(target).usable, responses = target ? adapter.requestResponses.get(`${target.id}:${r.requestId}`) : undefined;
-            body = `<div class="request-overview"><h3>${esc(r.goal)}</h3><p>${esc(r.source.kind === 'service' ? `Service: ${r.source.serviceName}` : 'Chat')}</p>${live && !detail.readError && !r.error && cancellation?.phase !== 'unknown' && ['pending', 'running', 'cancelling'].includes(r.state) ? pendingStatus(requestStateLabel(r.state)) : badge(requestStateLabel(r.state))}<small>${detail.checkedAt ? 'Last confirmed' : 'Updated'} ${esc(detail.checkedAt || r.updatedAt)}</small></div>${detail.readError ? feedback(`Status not confirmed: ${esc(detail.readError)}`, 'warning') : ''}${!live ? '<p class="muted">Historical · Read only</p>' : ''}<section class="request-result"><h3>Result &amp; next step</h3>${r.result ? `<p class="request-text">${esc(r.result)}</p>` : ''}${waiting && r.waitRef ? feedback(`Waiting for ${esc(r.waitRef.kind)} · Chat remains available.<small>Deadline ${esc(r.waitRef.deadlineAt)}</small>`, 'warning') : ''}${r.error ? feedback(esc(r.error.message), 'warning') : ''}${!r.result && (!waiting || !r.waitRef) && !r.error ? '<p>No result reported yet.</p>' : ''}${retryIntent ? feedback(esc(retryIntent.error || 'Retry result unknown. Check status to verify the original submission.'), 'warning') : ''}</section>${responses?.visibleLoading ? pendingStatus("Reading executions…", "pi-request-detail") : ""}<details class="request-executions"><summary>Executions <span>${r.runIds.length}</span></summary>${r.runIds.map((runId, index) => { const run = responses?.runs.find(item => item.id === runId); return `<details class="request-execution"><summary>Execution ${index + 1} ${run ? badge(run.status) : '<span>Not confirmed</span>'}</summary>${run ? `${runFacts(run)}${responses?.checked[run.id] ? `<small>Last confirmed ${esc(responses.checked[run.id])}</small>` : ''}${run.finalText ? `<div class="request-text chat-markdown">${target ? renderChatMarkdown(run.finalText, { workId: target.id }) : esc(run.finalText)}</div>` : '<p>No saved reply.</p>'}${run.error ? feedback(esc(run.error), 'warning') : ''}` : `<p>${responses?.loading ? 'Reading execution…' : 'Execution has not been confirmed.'}</p>`}</details>`; }).join('') || '<p>No Run admitted.</p>'}<p class="muted">A successful Run does not mean the request is complete.</p></details>${responses?.errors.map(error => feedback(esc(error), 'warning')).join('') || ''}<details class="request-evidence"><summary>Evidence &amp; technical details</summary><p>Request ID <code>${esc(r.requestId)}</code></p>${r.waitRef ? `<p>Wait reference <code>${esc(r.waitRef.id)}</code></p>` : ''}${detail.evidence.items.map((e) => `<article class="capability"><strong>${esc(e.kind)} · ${e.verified ? 'Verified' : 'Observed'}</strong><p>${esc(e.summary)}</p><small>${esc(e.observedAt)} · ${esc(e.objectRef)}${e.stateVersion ? ` · State ${esc(e.stateVersion)}` : ''}${e.codeVersion ? ` · Code ${esc(e.codeVersion)}` : ''}</small></article>`).join('') || '<p>No evidence yet.</p>'}${detail.evidence.nextCursor ? btn('More evidence', 'next-pi-evidence', 'small') : ''}</details>`;
+            body = `<div class="request-overview"><h3>${esc(r.goal)}</h3><p>${esc(r.source.kind === 'service' ? t('run.sourceService', { name: r.source.serviceName }) : t('run.sourceChat'))}</p>${live && !detail.readError && !r.error && cancellation?.phase !== 'unknown' && ['pending', 'running', 'cancelling'].includes(r.state) ? pendingStatus(requestStateLabel(r.state)) : badge(requestStateLabel(r.state))}<small>${detail.checkedAt ? t('pi.lastConfirmed') : t('pi.updatedLabel')} ${esc(detail.checkedAt || r.updatedAt)}</small></div>${detail.readError ? feedback(t('pi.statusNotConfirmed', { error: esc(detail.readError) }), 'warning') : ''}${!live ? `<p class="muted">${t('pi.historical')}</p>` : ''}<section class="request-result"><h3>${t('pi.resultHeading')}</h3>${r.result ? `<p class="request-text">${esc(r.result)}</p>` : ''}${waiting && r.waitRef ? feedback(`${t('pi.waitingFor', { kind: esc(r.waitRef.kind) })}<small>${t('pi.deadline', { time: esc(r.waitRef.deadlineAt) })}</small>`, 'warning') : ''}${r.error ? feedback(esc(r.error.message), 'warning') : ''}${!r.result && (!waiting || !r.waitRef) && !r.error ? `<p>${t('pi.noResult')}</p>` : ''}${retryIntent ? feedback(esc(retryIntent.error || t('pi.retryUnknown')), 'warning') : ''}</section>${responses?.visibleLoading ? pendingStatus(t('pi.readingExecutions'), "pi-request-detail") : ""}<details class="request-executions"><summary>${t('pi.executions')} <span>${r.runIds.length}</span></summary>${r.runIds.map((runId, index) => { const run = responses?.runs.find(item => item.id === runId); return `<details class="request-execution"><summary>${t('pi.executionNumber', { index: index + 1 })} ${run ? badge(run.status) : `<span>${t('common.notConfirmed')}</span>`}</summary>${run ? `${runFacts(run)}${responses?.checked[run.id] ? `<small>${t('pi.lastConfirmed', { time: esc(responses.checked[run.id]) })}</small>` : ''}${run.finalText ? `<div class="request-text chat-markdown">${target ? renderChatMarkdown(run.finalText, { workId: target.id }) : esc(run.finalText)}</div>` : `<p>${t('pi.noReply')}</p>`}${run.error ? feedback(esc(run.error), 'warning') : ''}` : `<p>${responses?.loading ? t('pi.readingExecution') : t('pi.executionUnconfirmed')}</p>`}</details>`; }).join('') || `<p>${t('pi.noRun')}</p>`}<p class="muted">${t('pi.successNote')}</p></details>${responses?.errors.map(error => feedback(esc(error), 'warning')).join('') || ''}<details class="request-evidence"><summary>${t('pi.evidenceHeading')}</summary><p>${t('pi.requestId')} <code>${esc(r.requestId)}</code></p>${r.waitRef ? `<p>${t('pi.waitReference')} <code>${esc(r.waitRef.id)}</code></p>` : ''}${detail.evidence.items.map((e) => `<article class="capability"><strong>${esc(e.kind)} · ${e.verified ? t('pi.verified') : t('pi.observed')}</strong><p>${esc(e.summary)}</p><small>${esc(e.observedAt)} · ${esc(e.objectRef)}${e.stateVersion ? ` · ${t('pi.state', { value: esc(e.stateVersion) })}` : ''}${e.codeVersion ? ` · ${t('pi.code', { value: esc(e.codeVersion) })}` : ''}</small></article>`).join('') || `<p>${t('pi.noEvidence')}</p>`}${detail.evidence.nextCursor ? btn(t('pi.moreEvidence'), 'next-pi-evidence', 'small') : ''}</details>`;
             if (cancellation)
-                body += feedback(cancellation.phase === 'accepted' ? `Cancellation requested. Refresh the original request to check its current state.${cancellation.error ? ` ${esc(cancellation.error)}` : ''}` : cancellation.phase === 'unknown' ? `Cancellation result is unknown. Refresh the original request; it will not be submitted again. ${esc(cancellation.error)}` : 'Requesting cancellation…', cancellation.phase === 'unknown' || cancellation.error ? 'warning' : 'info');
-            footer = `${close()}${btn('Check status', 'pi-request-detail', 'small', `data-id="${esc(r.requestId)}"`)}${view.data.source !== 'service' && editable && ['failed', 'cancelled', 'needs_attention'].includes(r.state) ? btn('Retry with new request', 'retry-pi-request', 'primary', retryIntent ? 'disabled' : '') : ''}${editable && requestCancellable(r) ? btn(r.state === 'cancelling' ? 'Cancelling…' : 'Cancel request', 'cancel-pi-request', 'danger', r.state === 'cancelling' || cancellation ? 'disabled' : '') : ''}`;
+                body += feedback(cancellation.phase === 'accepted' ? `${t('pi.cancelAccepted')}${cancellation.error ? ` ${esc(cancellation.error)}` : ''}` : cancellation.phase === 'unknown' ? `${t('pi.cancelUnknown')} ${esc(cancellation.error)}` : t('pi.requestingCancellation'), cancellation.phase === 'unknown' || cancellation.error ? 'warning' : 'info');
+            footer = `${close()}${btn(t('pi.checkStatus'), 'pi-request-detail', 'small', `data-id="${esc(r.requestId)}"`)}${view.data.source !== 'service' && editable && ['failed', 'cancelled', 'needs_attention'].includes(r.state) ? btn(t('pi.retryNew'), 'retry-pi-request', 'primary', retryIntent ? 'disabled' : '') : ''}${editable && requestCancellable(r) ? btn(r.state === 'cancelling' ? t('execution.cancelling') : t('pi.cancelRequest'), 'cancel-pi-request', 'danger', r.state === 'cancelling' || cancellation ? 'disabled' : '') : ''}`;
             break;
         }
         case "file-menu": {
             const f = target?.files.find((f) => f.path === view.data.path);
-            title = esc(f?.name || "File");
-            body = `<div class="menu-list">${btn(`${icon(f?.kind === 'directory' ? 'folder' : 'file')} Open`, "open-file", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("download")} Download file`, "download-file", "", `data-path="${esc(f?.path)}" ${f?.kind === "directory" || f?.kind === "special" ? "disabled" : ""}`)}${btn(`${icon("edit")} Rename`, "file-rename", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("move")} Move`, "file-move", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("copy")} Copy`, "file-copy", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("trash")} Delete`, "file-delete", "danger", `data-path="${esc(f?.path)}"`)}</div>`;
+            title = esc(f?.name || t('files.kindFile'));
+            body = `<div class="menu-list">${btn(`${icon(f?.kind === 'directory' ? 'folder' : 'file')} ${t('fileMenu.open')}`, "open-file", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("download")} ${t('files.downloadFile')}`, "download-file", "", `data-path="${esc(f?.path)}" ${f?.kind === "directory" || f?.kind === "special" ? "disabled" : ""}`)}${btn(`${icon("edit")} ${t('fileMenu.rename')}`, "file-rename", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("move")} ${t('fileMenu.move')}`, "file-move", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("copy")} ${t('common.copy')}`, "file-copy", "", `data-path="${esc(f?.path)}"`)}${btn(`${icon("trash")} ${t('fileMenu.delete')}`, "file-delete", "danger", `data-path="${esc(f?.path)}"`)}</div>`;
             break;
         }
         case "upload-overwrite": {
             const review = uploadReview(modalTransfers), paths = (rows) => rows.map(row => `<code>${esc(row.path)}</code>`).join(', ');
-            title = 'Review uploads';
-            body = `${review.overwrite.length ? `<p>Replace these confirmed existing files: ${paths(review.overwrite)}? The checked versions are listed below. Targets without modification times cannot protect against concurrent changes.</p>` : ''}${review.retry.length ? `<p>These uploads failed and can be checked again: ${paths(review.retry)}. Retrying does not authorize replacing an existing file.</p>` : ''}${review.unknown.length ? '<p>The original upload result is unknown. Refresh the original paths before choosing files again; no unknown upload will be repeated here.</p>' : ''}`;
-            footer = `${cancel()}${review.retry.length ? btn('Retry failed uploads', 'confirm-upload-overwrite', 'primary', 'data-upload-mode="retry"') : ''}${review.overwrite.length ? btn('Overwrite confirmed files', 'confirm-upload-overwrite', 'danger', 'data-upload-mode="overwrite"') : ''}`;
+            title = t('upload.title');
+            body = `${review.overwrite.length ? `<p>${t('upload.overwrite', { paths: paths(review.overwrite) })}</p>` : ''}${review.retry.length ? `<p>${t('upload.retry', { paths: paths(review.retry) })}</p>` : ''}${review.unknown.length ? `<p>${t('upload.unknown')}</p>` : ''}`;
+            footer = `${cancel()}${review.retry.length ? btn(t('upload.retryButton'), 'confirm-upload-overwrite', 'primary', 'data-upload-mode="retry"') : ''}${review.overwrite.length ? btn(t('upload.overwriteButton'), 'confirm-upload-overwrite', 'danger', 'data-upload-mode="overwrite"') : ''}`;
             break;
         }
         case "new-folder":
-            title = "New folder";
-            body = `<p>Create inside <code>${esc(view.path)}</code></p><label class="field">Folder name<input id="form-name" value="${esc(view.formName)}" placeholder="e.g. research"></label>`;
-            footer = `${cancel()}${btn("Create folder", "confirm-folder", "primary")}`;
+            title = t('files.newFolder');
+            body = `<p>${t('folder.inside', { path: `<code>${esc(view.path)}</code>` })}</p><label class="field">${t('folder.name')}<input id="form-name" value="${esc(view.formName)}" placeholder="${esc(t('folder.placeholder'))}"></label>`;
+            footer = `${cancel()}${btn(t('folder.create'), "confirm-folder", "primary")}`;
             break;
         case "file-transfer":
-            title = `${view.data.transfer === "rename" ? "Rename" : view.data.transfer === "copy" ? "Copy" : "Move"} ${decodePaths(view.data.paths).length > 1 ? "selected items" : "item"}`;
+            title = `${t(view.data.transfer === "rename" ? 'fileMenu.rename' : view.data.transfer === "copy" ? 'common.copy' : 'fileMenu.move')} ${decodePaths(view.data.paths).length > 1 ? t('transfer.selectedItems') : t('transfer.item')}`;
             body = `<div class="path-list">${decodePaths(view.data.paths)
                 .map((p) => `<code>${esc(p)}</code>`)
                 .join("")}</div>${view.data.transfer === "rename"
-                ? `<label class="field">New name<input id="form-name" value="${esc(view.formName)}" placeholder="Enter a file or folder name"></label>`
-                : `<label class="field">Destination folder<select id="form-destination"><option value="/">Workspace /</option>${target?.files
+                ? `<label class="field">${t('transfer.newName')}<input id="form-name" value="${esc(view.formName)}" placeholder="${esc(t('transfer.namePlaceholder'))}"></label>`
+                : `<label class="field">${t('transfer.destination')}<select id="form-destination"><option value="/">${t('transfer.workspaceRoot')}</option>${target?.files
                     .filter((f) => f.kind === "directory")
                     .map((f) => `<option value="${esc(f.path)}" ${view.formDestination === f.path ? "selected" : ""}>${esc(f.path)}</option>`)
-                    .join("")}</select></label>`}<p class="muted">The destination must be inside this same Work.</p>${view.formOverwrite ? feedback(`These exact destinations already exist: <code>${esc(view.data.overwritePath)}</code>. Continuing replaces every listed target, including its child paths.`, "warning") : ""}`;
-            footer = `${cancel()}${btn(view.formOverwrite ? "Overwrite target" : view.data.transfer === "copy" ? "Copy here" : view.data.transfer === "rename" ? "Rename" : "Move here", "confirm-transfer", view.formOverwrite ? "danger-solid" : "primary", fileAttempt?.ledger.hasResults ? "disabled" : "")}`;
+                    .join("")}</select></label>`}<p class="muted">${t('transfer.destinationNote')}</p>${view.formOverwrite ? feedback(t('transfer.overwriteWarning', { path: `<code>${esc(view.data.overwritePath)}</code>` }), "warning") : ""}`;
+            footer = `${cancel()}${btn(view.formOverwrite ? t('transfer.overwrite') : view.data.transfer === "copy" ? t('transfer.copyHere') : view.data.transfer === "rename" ? t('fileMenu.rename') : t('transfer.moveHere'), "confirm-transfer", view.formOverwrite ? "danger-solid" : "primary", fileAttempt?.ledger.hasResults ? "disabled" : "")}`;
             break;
         case "file-delete":
-            title = "Delete selected files?";
-            body = `<p>Remove these paths from this Work’s workspace.</p><div class="path-list">${decodePaths(view.data.paths)
+            title = t('deleteFiles.title');
+            body = `<p>${t('deleteFiles.body')}</p><div class="path-list">${decodePaths(view.data.paths)
                 .map((p) => `<code>${esc(p)}</code>`)
-                .join("")}</div><p class="danger-text">Folders are deleted recursively, including every child path. Deleted files and folders cannot be restored from this UI. The workspace root cannot be deleted.</p>`;
-            footer = `${cancel()}${btn("Delete paths", "confirm-file-delete", "danger-solid", fileAttempt?.ledger.hasResults ? "disabled" : "")}`;
+                .join("")}</div><p class="danger-text">${t('deleteFiles.warning')}</p>`;
+            footer = `${cancel()}${btn(t('deleteFiles.confirm'), "confirm-file-delete", "danger-solid", fileAttempt?.ledger.hasResults ? "disabled" : "")}`;
             break;
         case "dirty-file":
-            title = "Save your file changes?";
-            body = `<p>You have unsaved changes to <code>${esc(view.file)}</code>.</p><p>Keep editing, discard the draft, or save the file before leaving.</p>`;
-            footer = `${btn("Keep editing", "close-modal")}${btn("Discard", "dirty-discard", "danger")}${btn("Save file", "dirty-save", "primary")}`;
+            title = t('dirtyFile.title');
+            body = `<p>${t('dirtyFile.body', { path: `<code>${esc(view.file)}</code>` })}</p><p>${t('dirtyFile.note')}</p>`;
+            footer = `${btn(t('dirty.keepEditing'), "close-modal")}${btn(t('editor.discard'), "dirty-discard", "danger")}${btn(t('editor.saveFile'), "dirty-save", "primary")}`;
             break;
         case "dirty-settings":
-            title = "Save configuration changes?";
+            title = t('dirtySettings.title');
             body =
-                "<p>Your unsaved configuration draft has not changed this Work. Saving modifies desired configuration only; Apply remains a separate action.</p>";
-            footer = `${btn("Keep editing", "close-modal")}${btn("Discard", "dirty-config-discard", "danger")}${btn("Save changes", "dirty-config-save", "primary")}`;
+                `<p>${t('dirtySettings.body')}</p>`;
+            footer = `${btn(t('dirty.keepEditing'), "close-modal")}${btn(t('editor.discard'), "dirty-config-discard", "danger")}${btn(t('settings.saveChanges'), "dirty-config-save", "primary")}`;
             break;
         case "webdav":
-            title = "Connect with WebDAV";
-            body = `<p>Optional for external file clients. Browser Files does not require a proxy.</p><ol class="steps"><li>Start <code>piwork-cli proxy</code> independently in your terminal.</li><li>Use the username and actual listening port printed by that proxy.</li><li>Get the temporary password from the same startup terminal. It is never shown or stored here.</li></ol><label class="field">Address pattern<code class="copy-field">http://127.0.0.1:&lt;printed-port&gt;/works/${esc(target?.id)}/files/</code></label><p class="muted">Use the actual proxy startup output. File locking and system mounts are not promised.</p>`;
+            title = t('files.connectWebdav');
+            body = `<p>${t('webdav.note')}</p><ol class="steps"><li>${t('webdav.step1', { command: '<code>piwork-cli proxy</code>' })}</li><li>${t('webdav.step2')}</li><li>${t('webdav.step3')}</li></ol><label class="field">${t('webdav.address')}<code class="copy-field">http://127.0.0.1:&lt;printed-port&gt;/works/${esc(target?.id)}/files/</code></label><p class="muted">${t('webdav.footnote')}</p>`;
             footer = close();
             break;
         case "refresh-core-skills":
-            title = "Refresh selected Core copies";
-            body = "<p>This Core operation refreshes the complete selected Skill set from Core. Existing local copies will be replaced. Save or discard any other unsaved settings before continuing.</p>";
-            footer = `${cancel()}${btn("Refresh copies", "confirm-core-skills", "primary", view.configDirty ? "disabled" : "")}`;
+            title = t('coreSkills.title');
+            body = `<p>${t('coreSkills.body')}</p>`;
+            footer = `${cancel()}${btn(t('coreSkills.refresh'), "confirm-core-skills", "primary", view.configDirty ? "disabled" : "")}`;
             break;
         case "skill-detail": {
             const s = adapter.getSkills().find((x) => x.id === view.data.id);
-            title = esc(s?.name || "Skill");
-            body = `<dl><dt>Description</dt><dd>${esc(s?.description || "Not provided")}</dd><dt>Version</dt><dd>${esc(s?.version || "Not provided")}</dd><dt>Loaded</dt><dd>${target ? skillState(target, view.data.id, "loaded") : "Not provided"}</dd><dt>Visible to model</dt><dd>${target ? skillState(target, view.data.id, "modelVisible") : "Not provided"}</dd></dl><p class="muted">Loaded and visible to the model are separate states. Applying configuration does not create missing metadata.</p>`;
+            title = esc(s?.name || t('term.skill'));
+            body = `<dl><dt>${t('skillDetail.description')}</dt><dd>${esc(s?.description || t('text.notProvided'))}</dd><dt>${t('skillDetail.version')}</dt><dd>${esc(s?.version || t('text.notProvided'))}</dd><dt>${t('skillDetail.loaded')}</dt><dd>${target ? skillState(target, view.data.id, "loaded") : t('text.notProvided')}</dd><dt>${t('skillDetail.visible')}</dt><dd>${target ? skillState(target, view.data.id, "modelVisible") : t('text.notProvided')}</dd></dl><p class="muted">${t('skillDetail.note')}</p>`;
             footer = close();
             break;
         }
         case "remove-package-confirm":
-            title = "Remove Pi Package";
-            body = `<p>Remove ${esc(view.data.id)} from this Work? The operation updates its saved configuration; the active runtime remains until Apply.</p>`;
-            footer = `${cancel()}${btn("Remove package", "confirm-remove-package", "danger")}`;
+            title = t('package.removeTitle');
+            body = `<p>${t('package.removeBody', { name: esc(view.data.id) })}</p>`;
+            footer = `${cancel()}${btn(t('package.removeButton'), "confirm-remove-package", "danger")}`;
             break;
         case "package-detail": {
             const p = adapter.getPackages().find((x) => x.name === view.data.id);
             const entry = target?.packageEntries?.find(p => p.name === view.data.id);
             title = esc(view.data.id);
-            body = `${target?.resourceErrors?.packages ? feedback(`Package observation unavailable. Last confirmed details: ${esc(target.resourceErrors.packages)}`, "warning") : ""}${view.data.id === "piwork-brain" ? `<p>Editable source: <code>.pi/packages/piwork-brain/</code></p>${btn("Open brain source", "open-source", "small", 'data-path="/.pi/packages/piwork-brain/brain.md"')}${brainCandidateDetails(entry)}` : `<pre class="code-editor">${esc(JSON.stringify(entry ?? p ?? { name: view.data.id }, null, 2))}</pre>`}<p class="muted">Installed, selected, active, and loaded states are reported separately.</p>`;
-            footer = `${close()}${target ? btn("Refresh package", "refresh-package-detail", "small") : ""}`;
+            body = `${target?.resourceErrors?.packages ? feedback(t('package.observationUnavailable', { error: esc(target.resourceErrors.packages) }), "warning") : ""}${view.data.id === "piwork-brain" ? `<p>${t('package.editableSource', { path: '<code>.pi/packages/piwork-brain/</code>' })}</p>${btn(t('package.openBrain'), "open-source", "small", 'data-path="/.pi/packages/piwork-brain/brain.md"')}${brainCandidateDetails(entry)}` : `<pre class="code-editor">${esc(JSON.stringify(entry ?? p ?? { name: view.data.id }, null, 2))}</pre>`}<p class="muted">${t('package.statesNote')}</p>`;
+            footer = `${close()}${target ? btn(t('package.refresh'), "refresh-package-detail", "small") : ""}`;
             break;
         }
         case "install-package":
-            title = view.data.update ? "Update package source" : "Install Pi Package";
-            body = `${uploadProgressMarkup()}<p>Choose the package source explicitly. Installing does not mean the model has loaded it.</p><label class="field">Source type<select id="install-type">${["Core", "npm", "Git", "Local directory", "ZIP"].map((t) => `<option ${view.installType === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>${view.installType === "Core"
-                ? `<label class="field">Current Core copy<select id="install-name">${adapter
+            title = view.data.update ? t('package.updateTitle') : t('package.installTitle');
+            body = `${uploadProgressMarkup()}<p>${t('package.chooseSource')}</p><label class="field">${t('package.sourceType')}<select id="install-type">${["Core", "npm", "Git", "Local directory", "ZIP"].map((option) => `<option ${view.installType === option ? "selected" : ""}>${option}</option>`).join("")}</select></label>${view.installType === "Core"
+                ? `<label class="field">${t('package.currentCoreCopy')}<select id="install-name">${adapter
                     .getPackages()
                     .map((p) => `<option ${view.installName === p.name ? "selected" : ""}>${esc(p.name)}</option>`)
                     .join("")}</select></label>`
                 : view.installType === "npm" || view.installType === "Git"
-                    ? `<label class="field">${view.installType === "npm" ? "npm package reference" : "Git source"}<input id="install-source" value="${esc(view.installSource)}" placeholder="${view.installType === "npm" ? "@scope/package@version" : "Repository URL and optional ref"}"></label>`
-                    : `<div class="file-drop">${icon("upload", 26)}<strong>${view.installSource ? esc(view.installSource) : `Select a ${view.installType === "ZIP" ? "ZIP archive" : "local directory"}`}</strong>${btn("Choose local source", "choose-package-source")}</div>${view.installType === "Local directory" ? feedback("Directory upload does not preserve executable bits or symbolic links. Use a ZIP when those attributes matter.", "warning") : ""}`}<p class="muted">Upload and validation happen before acceptance. Core prepares the package asynchronously; installing Agent capabilities may execute package preparation code in its isolated helper.</p>`;
-            footer = `${cancel()}${btn(view.data.update ? "Update package" : "Install package", "confirm-install", "primary")}`;
+                    ? `<label class="field">${view.installType === "npm" ? t('package.npmReference') : t('package.gitSource')}<input id="install-source" value="${esc(view.installSource)}" placeholder="${view.installType === "npm" ? "@scope/package@version" : esc(t('package.gitPlaceholder'))}"></label>`
+                    : `<div class="file-drop">${icon("upload", 26)}<strong>${view.installSource ? esc(view.installSource) : (view.installType === "ZIP" ? t('package.selectZip') : t('package.selectDirectory'))}</strong>${btn(t('package.chooseLocal'), "choose-package-source")}</div>${view.installType === "Local directory" ? feedback(t('package.directoryWarning'), "warning") : ""}`}<p class="muted">${t('package.installNote')}</p>`;
+            footer = `${cancel()}${btn(view.data.update ? t('package.updateButton') : t('settings.installPackage'), "confirm-install", "primary")}`;
             break;
         case "log-export": {
-            title = "Export logs";
+            title = t('logs.title');
             const state = adapter.logExport;
             if (!state) {
-                body = `<p>No export is in progress. Export Core logs and logs from all your Works without stopping any Work.</p>`;
-                footer = `${close()}${adapter.state.core.role === "admin" ? btn("Export logs", "export-logs-again", "primary") : ""}`;
+                body = `<p>${t('logs.none')}</p>`;
+                footer = `${close()}${adapter.state.core.role === "admin" ? btn(t('logs.title'), "export-logs-again", "primary") : ""}`;
                 break;
             }
-            const label = state.phase === "creating" ? "Preparing export" : state.phase === "collecting" ? "Collecting logs" : state.phase === "packing" ? "Creating archive" : state.phase === "ready" ? (state.delivered ? "Download started" : "Ready to download") : state.phase === "unknown" ? "Export creation not confirmed" : state.phase === "expired" ? "Export expired" : "Export failed";
-            const progress = state.total ? ` · ${state.processed}/${state.total} sources` : "";
+            const label = state.phase === "creating" ? t('logs.preparing') : state.phase === "collecting" ? t('logs.collecting') : state.phase === "packing" ? t('logs.packing') : state.phase === "ready" ? (state.delivered ? t('logs.delivered') : t('logs.ready')) : state.phase === "unknown" ? t('logs.unknown') : state.phase === "expired" ? t('logs.expired') : t('logs.failed');
+            const progress = state.total ? t('logs.sources', { processed: state.processed, total: state.total }) : "";
             const warnings = state.warnings.length ? `<div class="menu-list">${state.warnings.slice(0, 5).map(w => `<p>${esc(w.message)}</p>`).join("")}</div>` : "";
-            body = `<p>Core logs and logs from all your Works. This export does not stop, start or apply any Work.</p><p role="status">${pendingStatus(label, 'check-log-export download-log-export')}${progress}</p>${state.error ? feedback(esc(state.error), state.phase === "failed" || state.phase === "interrupted" ? "warning" : "info") : ""}${state.phase === "ready" ? `<p>${esc(state.filename)} · ${state.size} bytes${state.expiresAt ? ` · expires ${esc(new Date(state.expiresAt).toLocaleString())}` : ""}</p>` : ""}${state.phase === "ready" && state.complete === false ? `<p role="status">${state.warningCount} gap(s) recorded. The archive manifest lists each source.</p>` : ""}${warnings}<p class="muted">${icon("lock", 14)} Closing this panel does not cancel the Core task. A download starts in your browser; check your browser to confirm it was saved.</p>`;
-            footer = `${close()}${state.phase === "ready" && state.filename ? btn("Download again", "download-log-export", "primary") : ""}${state.phase === "unknown" ? btn("Retry same key", "retry-log-export", "primary") : ""}${["collecting", "packing", "creating"].includes(state.phase) || (state.id && state.error) ? btn("Check status", "check-log-export") : ""}${["failed", "interrupted", "expired"].includes(state.phase) ? btn("Export again", "export-logs-again", "primary") : ""}`;
+            body = `<p>${t('logs.body')}</p><p role="status">${pendingStatus(label, 'check-log-export download-log-export')}${progress}</p>${state.error ? feedback(esc(state.error), state.phase === "failed" || state.phase === "interrupted" ? "warning" : "info") : ""}${state.phase === "ready" ? `<p>${esc(state.filename)} · ${t('logs.size', { size: formatNumber(state.size) })}${state.expiresAt ? t('logs.expires', { time: esc(formatDateTime(state.expiresAt)) }) : ""}</p>` : ""}${state.phase === "ready" && state.complete === false ? `<p role="status">${t('logs.gaps', { count: state.warningCount })}</p>` : ""}${warnings}<p class="muted">${icon("lock", 14)} ${t('logs.footnote')}</p>`;
+            footer = `${close()}${state.phase === "ready" && state.filename ? btn(t('logs.downloadAgain'), "download-log-export", "primary") : ""}${state.phase === "unknown" ? btn(t('logs.retrySame'), "retry-log-export", "primary") : ""}${["collecting", "packing", "creating"].includes(state.phase) || (state.id && state.error) ? btn(t('quick.checkStatus'), "check-log-export") : ""}${["failed", "interrupted", "expired"].includes(state.phase) ? btn(t('logs.exportAgain'), "export-logs-again", "primary") : ""}`;
             break;
         }
         case "export": {
@@ -1814,46 +1862,48 @@ function modalMarkup() {
             break;
         }
         case "import":
-            title = "Import Work";
-            body = `<p>${adapter.hosted ? "Upload a .work package for inspection on this server. Import starts only after you confirm." : "Inspect the actual <code>.work</code> package using the local CLI. No file is sent to Core until you confirm import."}</p><div class="file-drop">${icon("upload", 28)}<strong>${esc(view.inspectFilename || "Choose a Work package")}</strong>${btn("Choose .work file", "choose-work-file", "", adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? "disabled" : "")}</div>${adapter.transferProgress ? feedback(`${['receiving', 'uploading', 'validating', 'inspecting', 'verifying'].includes(adapter.transferProgress.phase) ? pendingStatus(`Transfer: ${adapter.transferProgress.phase}`, 'work-file-input confirm-import') : ''}${progressText(adapter.transferProgress)}${adapter.transferProgress.error ? ` · ${esc(adapter.transferProgress.error)}` : ''}`) : ""}${adapter.inspection ? `${feedback(adapter.hosted ? "Package format and contents verified on this server." : "Package format and contents verified locally.", "success")}<div class="inspection-summary"><h3>Verified package summary</h3><pre>${esc(JSON.stringify(adapter.inspection, null, 2))}</pre><p>Import creates a stopped Work. Private files may contain business data or credentials. No code starts automatically.</p></div><label class="field">Work name <span>Optional</span><input id="import-name" value="${esc(view.importName)}" aria-label="Work name" aria-describedby="import-name-help${currentNameError() ? ' import-name-error' : ''}" ${currentNameError() ? 'aria-invalid="true"' : ""} placeholder="Leave blank to use the package name"><span id="import-name-help">Leave blank to use the package name. Core adds a suffix if that name is unavailable.</span>${nameFieldError("import-name-error", true)}</label>` : ""}`;
-            body += adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? feedback(`Original import: ${esc(adapter.inspectionContext.importState)} · <code>${esc(adapter.inspectionTransfer)}</code>. Check known operations; closing does not cancel or resubmit it.`, "warning", btn("Check original import", "check-inspection-import", "small") + btn("Known operations", "operations", "small")) : "";
-            footer = `${cancel()}${adapter.inspection && adapter.inspectionContext?.importState === "unsubmitted" ? btn(adapter.state.signedIn ? "Import Work" : "Sign in to import", adapter.state.signedIn ? "confirm-import" : "import-sign-in", "primary") : ""}`;
+            title = t('import.title');
+            body = `<p>${adapter.hosted ? t('import.hostedBody') : t('import.localBody', { package: '<code>.work</code>' })}</p><div class="file-drop">${icon("upload", 28)}<strong>${esc(view.inspectFilename || t('import.choosePackage'))}</strong>${btn(t('import.chooseFile'), "choose-work-file", "", adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? "disabled" : "")}</div>${adapter.transferProgress ? feedback(`${['receiving', 'uploading', 'validating', 'inspecting', 'verifying'].includes(adapter.transferProgress.phase) ? pendingStatus(t('import.transfer', { phase: adapter.transferProgress.phase }), 'work-file-input confirm-import') : ''}${progressText(adapter.transferProgress)}${adapter.transferProgress.error ? ` · ${esc(adapter.transferProgress.error)}` : ''}`) : ""}${adapter.inspection ? `${feedback(adapter.hosted ? t('import.verifiedServer') : t('import.verifiedLocal'), "success")}<div class="inspection-summary"><h3>${t('import.summary')}</h3><pre>${esc(JSON.stringify(adapter.inspection, null, 2))}</pre><p>${t('import.note')}</p></div><label class="field">${t('import.workName')} <span>${t('create.optional')}</span><input id="import-name" value="${esc(view.importName)}" aria-label="${t('import.workName')}" aria-describedby="import-name-help${currentNameError() ? ' import-name-error' : ''}" ${currentNameError() ? 'aria-invalid="true"' : ""} placeholder="${t('import.namePlaceholder')}"><span id="import-name-help">${t('import.nameHelp')}</span>${nameFieldError("import-name-error", true)}</label>` : ""}`;
+            body += adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? feedback(t('import.original', { state: esc(adapter.inspectionContext.importState), transfer: `<code>${esc(adapter.inspectionTransfer)}</code>` }), "warning", btn(t('import.checkOriginal'), "check-inspection-import", "small") + btn(t('ops.known'), "operations", "small")) : "";
+            footer = `${cancel()}${adapter.inspection && adapter.inspectionContext?.importState === "unsubmitted" ? btn(adapter.state.signedIn ? t('import.title') : t('import.signIn'), adapter.state.signedIn ? "confirm-import" : "import-sign-in", "primary") : ""}`;
             break;
         case "operations": {
-            title = view.data.workId ? "Related operations" : "Known operations";
+            title = view.data.workId ? t('ops.related') : t('ops.known');
             const scope = `${adapter.state.core.address} · ${adapter.state.core.account}`;
             const operations = adapter.state.operations.filter((o) => o.scope === scope && (!view.data.workId || o.workId === view.data.workId));
-            body = `<p>${adapter.hosted ? "Known operations for this installation and account. Find an original ID to resume observation." : "Records known by this local CLI, for the current Core and account. This is not a global server history."}</p><label class="field">Find an Operation by ID<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn("Check status", "lookup-operation")}</div></label><label class="field">Find an original snapshot ID<div class="input-action"><input id="snapshot-query" value="${esc(view.snapshotQuery)}" placeholder="snapshot-…">${btn("Find snapshot", "lookup-snapshot")}</div></label><div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${op.id}"><span>${icon("clock", 17)}<span><strong>${esc(op.kind)}</strong><small>${op.id} · ${op.updated}</small></span></span>${badge(op.state)}</button>`).join("") : '<p class="muted">No operations are known in this Desktop session.</p>'}</div><p class="muted">${adapter.hosted ? "Records contain IDs and status for this account only. Clearing completed records does not cancel server work." : "Records contain IDs and status only. The CLI stores minimal Operation IDs for the current Core and account. Clearing completed records does not cancel server work."}</p>`;
-            footer = `${close()}${btn("Clear local records", "clear-operations", "quiet", operations.length ? "" : "disabled")}`;
+            body = `<p>${adapter.hosted ? t('ops.hostedBody') : t('ops.localBody')}</p><label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), "lookup-operation")}</div></label><label class="field">${t('ops.findSnapshot')}<div class="input-action"><input id="snapshot-query" value="${esc(view.snapshotQuery)}" placeholder="snapshot-…">${btn(t('ops.findSnapshotButton'), "lookup-snapshot")}</div></label><div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${op.id}"><span>${icon("clock", 17)}<span><strong>${esc(op.kind)}</strong><small>${op.id} · ${op.updated}</small></span></span>${badge(op.state)}</button>`).join("") : `<p class="muted">${t('ops.none')}</p>`}</div><p class="muted">${adapter.hosted ? t('ops.hostedNote') : t('ops.localNote')}</p>`;
+            footer = `${close()}${btn(t('ops.clear'), "clear-operations", "quiet", operations.length ? "" : "disabled")}`;
             break;
         }
         case "operation": {
             const op = adapter.getOperation(view.data.id);
-            title = op ? esc(op.kind) : "Operation not found";
+            title = op ? esc(op.kind) : t('ops.notFoundTitle');
             body = op
-                ? `${phase(op)}${importNameFeedback(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">Work: ${workStatus(adapter.getWork(op.workId))}${quickAction(adapter.getWork(op.workId))}</div>` : ""}${feedback(`${esc(op.phase)}. ${op.state === "accepted" || op.state === "preparing" ? "Accepted does not mean completed. Closing this panel will not cancel it." : op.state === "unknown" ? "Check this original Operation; do not repeat the request." : op.state === "succeeded" ? "The original Operation reached a confirmed result." : ""}`, op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>Operation ID</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="Copy Operation ID"`)}</dd><dt>Work ID</dt><dd><code>${op.workId}</code></dd><dt>State</dt><dd>${badge(op.state)}</dd><dt>Last confirmed</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>Snapshot ID</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}${op.observationError ? feedback(`Observation interrupted. ${esc(op.observationError)}`, "warning") : ""}${op.localRecordSaved === false ? feedback("Accepted, but the local record could not be saved. Copy the Operation ID; automatic recovery after reload is not guaranteed.", "warning") : ""}`
-                : "<p>This Operation is not known for the current Core and user. Verify the ID or check the original Work.</p>";
-            if (op?.kind === 'Import Work' && op.state === 'succeeded') {
+                ? `${phase(op)}${importNameFeedback(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">${t('ops.workLine', { status: workStatus(adapter.getWork(op.workId)) + quickAction(adapter.getWork(op.workId)) })}</div>` : ""}${feedback(t('ops.phaseNote', { phase: esc(op.phase), note: op.state === "accepted" || op.state === "preparing" ? t('ops.acceptedNote') : op.state === "unknown" ? t('ops.unknownNote') : op.state === "succeeded" ? t('ops.succeededNote') : "" }), op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>${t('ops.operationId')}</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="${t('ops.copyId')}"`)}</dd><dt>${t('ops.workId')}</dt><dd><code>${op.workId}</code></dd><dt>${t('ops.state')}</dt><dd>${badge(op.state)}</dd><dt>${t('ops.lastConfirmed')}</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>${t('ops.snapshotId')}</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}${op.observationError ? feedback(t('ops.observationInterrupted', { error: esc(op.observationError) }), "warning") : ""}${op.localRecordSaved === false ? feedback(t('ops.localSaveFailed'), "warning") : ""}`
+                : `<p>${t('ops.notKnown')}</p>`;
+            if (op?.kind === 'Import Work' && op.state === 'succeeded') { // i18n-exempt: server operation kind
                 const imported = adapter.getWork(op.workId), start = importStarts.get(op.id);
                 const stopped = imported?.status === 'Stopped' && imported.desired === 'stopped' && !imported.statusError;
-                title = start ? 'Imported Work · Start progress' : stopped ? 'Imported · Not started' : 'Imported Work';
-                body = `<p>${start ? 'Your explicit Start request remains bound to this imported Work.' : stopped ? 'The package was imported successfully. Start it when you are ready, or view the stopped Work.' : 'Import completed. Check the Work’s current status before starting or opening it.'}</p>${start ? `<dl><dt>Original import</dt><dd><code>${esc(op.id)}</code></dd><dt>Original Start</dt><dd>${start.startId ? `<code>${esc(start.startId)}</code>` : esc(start.phase)}</dd></dl>${controlMarkup(workControls.get(op.workId))}` : ''}${body}`;
+                title = start ? t('ops.importStartProgress') : stopped ? t('ops.importNotStarted') : t('ops.importedWork');
+                body = `<p>${start ? t('ops.importStartBody') : stopped ? t('ops.importStoppedBody') : t('ops.importDoneBody')}</p>${start ? `<dl><dt>${t('ops.originalImport')}</dt><dd><code>${esc(op.id)}</code></dd><dt>${t('ops.originalStart')}</dt><dd>${start.startId ? `<code>${esc(start.startId)}</code>` : esc(start.phase)}</dd></dl>${controlMarkup(workControls.get(op.workId))}` : ''}${body}`;
             }
-            footer = `${close()}${op ? btn("Check status", "check-operation", "", `data-id="${op.id}"`) : ""}${op && !["succeeded", "failed", "superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? "Resume checking" : "Pause checking", adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${op.id}"`) : ""}${op?.state === "succeeded" && op.kind === "Import Work" ? importExitButtons(op) : op?.state === "succeeded" && op.kind === "Create Work" ? workLink('Open Work', op.workId, 'primary') : op?.snapshotId ? btn("View original snapshot", "view-snapshot", "primary", `data-id="${esc(op.snapshotId)}" data-work-id="${esc(op.workId)}"`) : ""}`;
+            footer = `${close()}${op ? btn(t('quick.checkStatus'), "check-operation", "", `data-id="${op.id}"`) : ""}${op && !["succeeded", "failed", "superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? t('ops.resume') : t('ops.pause'), adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${op.id}"`) : ""}${op?.state === "succeeded" && op.kind === "Import Work" ? importExitButtons(op) : op?.state === "succeeded" && op.kind === "Create Work" ? workLink(t('quick.openWork'), op.workId, 'primary') : op?.snapshotId ? btn(t('ops.viewSnapshot'), "view-snapshot", "primary", `data-id="${esc(op.snapshotId)}" data-work-id="${esc(op.workId)}"`) : ""}`;
             break;
         }
     }
     const role = overlayRole(view.modal);
     if (role === 'menu') {
-        body = body.replaceAll('<div class="menu-list', '<div role="group" class="menu-list').replaceAll('<button ', '<button role="menuitem" tabindex="-1" ');
+        // Command rows get a menu role only when they do not already carry one;
+        // language rows keep their radio-menu semantics.
+        body = body.replaceAll('<div class="menu-list', '<div role="group" class="menu-list').replace(/<button (?![^>]*\brole=)/g, '<button role="menuitem" tabindex="-1" ');
         return `<dialog id="modal" role="menu" aria-label="${title}" class="modal anchored-overlay command-dropdown"><div class="dropdown-title">${title}</div><div class="modal-body">${view.modalError ? feedback(esc(view.modalError), 'warning') : ''}${body}</div></dialog>`;
     }
-    return `<dialog id="modal" aria-modal="${role !== 'modal' || view.modal === 'export' || isRequestInspector() && innerWidth >= 900 ? 'false' : 'true'}" aria-labelledby="modal-title" class="modal ${role === 'popover' ? 'anchored-overlay selection-popover' : role === 'drawer' ? 'inspector-drawer' : ''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal === 'new-folder' || view.modal === 'file-transfer' && view.data.transfer === 'rename' ? 'modal-name' : ''} ${view.modal === "new-work" ? "modal-create" : ""} ${view.modal === 'chat-response-settings' ? 'chat-response-settings' : ''} ${view.modal === 'sessions' ? 'session-picker' : ''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow', 16)} Requests`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", 'aria-label="Close dialog"')}</div><div class="modal-body">${view.modalError && view.modal !== "new-work" && !(view.modal === 'sessions' && view.modalError === target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal === "new-work" ? "create-action-status" : ""}" data-action-status-slot>${view.modal === "new-work" && view.modalError ? feedback(esc(view.modalError), "warning") : ""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
+    return `<dialog id="modal" aria-modal="${role !== 'modal' || view.modal === 'export' || isRequestInspector() && innerWidth >= 900 ? 'false' : 'true'}" aria-labelledby="modal-title" class="modal ${role === 'popover' ? 'anchored-overlay selection-popover' : role === 'drawer' ? 'inspector-drawer' : ''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal === 'new-folder' || view.modal === 'file-transfer' && view.data.transfer === 'rename' ? 'modal-name' : ''} ${view.modal === "new-work" ? "modal-create" : ""} ${view.modal === 'chat-response-settings' ? 'chat-response-settings' : ''} ${view.modal === 'sessions' ? 'session-picker' : ''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow', 16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}"`)}</div><div class="modal-body">${view.modalError && view.modal !== "new-work" && !(view.modal === 'sessions' && view.modalError === target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal === "new-work" ? "create-action-status" : ""}" data-action-status-slot>${view.modal === "new-work" && view.modalError ? feedback(esc(view.modalError), "warning") : ""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
 function importExitButtons(op) {
     const work = adapter.getWork(op.workId), start = importStarts.get(op.id);
     const allow = importCanStart(op, work, work ? adapter.project(work).action : '', !!start);
-    return `${work ? workLink('View Work', work.id) : ''}${allow ? btn('Start and open', 'start-import-open', 'primary', `data-id="${esc(op.workId)}" data-import-id="${esc(op.id)}"`) : start && work && controlReady(workControls.get(work.id), work) ? btn('Open Work', 'open-work', 'primary', `data-id="${esc(work.id)}"`) : ''}`;
+    return `${work ? workLink(t('import.viewWork'), work.id) : ''}${allow ? btn(t('import.startAndOpen'), 'start-import-open', 'primary', `data-id="${esc(op.workId)}" data-import-id="${esc(op.id)}"`) : start && work && controlReady(workControls.get(work.id), work) ? btn(t('quick.openWork'), 'open-work', 'primary', `data-id="${esc(work.id)}"`) : ''}`;
 }
 /** Safe technical fields are text only; a correlation id never links to another Operation. */
 function serviceDiagnostics(s) {
@@ -1861,54 +1911,54 @@ function serviceDiagnostics(s) {
     if (!diagnostic)
         return '';
     const rows = [
-        diagnostic.code ? `<dt>Error code</dt><dd><code>${esc(diagnostic.code)}</code></dd>` : '',
-        diagnostic.stage ? `<dt>Failed stage</dt><dd><code>${esc(diagnostic.stage)}</code></dd>` : '',
-        diagnostic.exitCode !== undefined ? `<dt>Exit code</dt><dd><code>${diagnostic.exitCode}</code></dd>` : '',
-        diagnostic.remediation ? `<dt>Suggested fix</dt><dd>${esc(diagnostic.remediation)}</dd>` : '',
-        diagnostic.correlationId ? `<dt>Correlation ID</dt><dd><code>${esc(diagnostic.correlationId)}</code></dd>` : '',
-        diagnostic.retryable !== undefined ? `<dt>Retryable</dt><dd>${diagnostic.retryable ? 'Yes' : 'No'}</dd>` : '',
-        diagnostic.cause?.message ? `<dt>Original failure</dt><dd>${esc(diagnostic.cause.message)}${diagnostic.cause.exitCode !== undefined ? ` · Exit code ${diagnostic.cause.exitCode}` : ''}</dd>` : '',
+        diagnostic.code ? `<dt>${t('diag.errorCode')}</dt><dd><code>${esc(diagnostic.code)}</code></dd>` : '',
+        diagnostic.stage ? `<dt>${t('diag.stage')}</dt><dd><code>${esc(diagnostic.stage)}</code></dd>` : '',
+        diagnostic.exitCode !== undefined ? `<dt>${t('diag.exitCode')}</dt><dd><code>${diagnostic.exitCode}</code></dd>` : '',
+        diagnostic.remediation ? `<dt>${t('diag.remediation')}</dt><dd>${esc(diagnostic.remediation)}</dd>` : '',
+        diagnostic.correlationId ? `<dt>${t('diag.correlationId')}</dt><dd><code>${esc(diagnostic.correlationId)}</code></dd>` : '',
+        diagnostic.retryable !== undefined ? `<dt>${t('diag.retryable')}</dt><dd>${diagnostic.retryable ? t('diag.yes') : t('diag.no')}</dd>` : '',
+        diagnostic.cause?.message ? `<dt>${t('merge.originalFailure')}</dt><dd>${esc(diagnostic.cause.message)}${diagnostic.cause.exitCode !== undefined ? ` · ${t('merge.exitCodeValue', { code: diagnostic.cause.exitCode })}` : ''}</dd>` : '',
     ].join('');
-    return rows ? `<details class="service-diagnostics"><summary>Technical diagnostics</summary><dl class="property-list">${rows}</dl></details>` : '';
+    return rows ? `<details class="service-diagnostics"><summary>${t('diag.title')}</summary><dl class="property-list">${rows}</dl></details>` : '';
 }
 function serviceExplanation(s) {
     if (s.temporary?.mode === 'once' && s.observed === 'Failed')
-        return `<div class="service-explanation"><h3>${esc(s.name)} failed</h3><p>The one-time command exited${s.temporary.exitCode !== undefined ? ` with code ${s.temporary.exitCode}` : ' with an unconfirmed result'}. Check its output and cleanup status; it will not be replayed.</p></div>`;
+        return `<div class="service-explanation"><h3>${serviceFailureTitle(s)}</h3><p>${s.temporary.exitCode !== undefined ? t('merge.onceFailedCode', { code: s.temporary.exitCode }) : t('merge.onceFailedUnknown')}</p>${s.enabled && s.diagnostic?.message ? `<p>${esc(s.diagnostic.message)}</p>` : ''}</div>`;
     if (s.observed === 'Failed')
-        return `<div class="service-explanation"><h3>${serviceFailureTitle(s)}</h3><p>${esc(serviceFailureReason(s))}</p>${s.diagnostic?.remediation ? '' : '<p>Check the log snapshot below, then retry this Service explicitly.</p>'}</div>`;
+        return `<div class="service-explanation"><h3>${serviceFailureTitle(s)}</h3><p>${esc(serviceFailureReason(s))}</p>${s.diagnostic?.remediation ? '' : `<p>${t('service.checkLogs')}</p>`}</div>`;
     if (!s.enabled || s.observed !== 'Ready')
-        return `<div class="service-explanation"><h3>${esc(s.name)} is ${s.enabled ? esc(s.observed.toLowerCase()) : 'disabled'}</h3><p>${esc(serviceUnavailableReason(s))}</p>${s.enabled && s.diagnostic?.message ? `<p>${esc(s.diagnostic.message)}</p>` : ''}</div>`;
+        return `<div class="service-explanation"><h3>${t('service.stateLine', { name: esc(s.name), state: s.enabled ? esc(stateText(s.observed.toLowerCase())) : t('service.disabled') })}</h3><p>${esc(serviceUnavailableReason(s))}</p>${s.enabled && s.diagnostic?.message ? `<p>${esc(s.diagnostic.message)}</p>` : ''}</div>`;
     return '';
 }
 function temporaryCleanupMarkup(workId, kind, ref) {
     const state = adapter.temporaryCleanups.get(`${workId}:${kind}:${ref}`);
     if (!state)
         return '';
-    const refresh = btn('Refresh cleanup', 'refresh-temporary-cleanups', 'small', `data-kind="${kind}" data-ref="${esc(ref)}"`);
+    const refresh = btn(t('merge.refreshCleanup'), 'refresh-temporary-cleanups', 'small', `data-kind="${kind}" data-ref="${esc(ref)}"`);
     if (state.loading)
-        return `<section class="service-explanation"><h3>Temporary Service cleanup</h3><p>Checking cleanup status…</p></section>`;
+        return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3><p>${t('merge.checkingCleanup')}</p></section>`;
     if (state.error)
-        return `<section class="service-explanation"><h3>Temporary Service cleanup</h3><p>Cleanup status is not confirmed.</p>${feedback(esc(state.error), 'warning')}${refresh}</section>`;
+        return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3><p>${t('merge.cleanupUnconfirmed')}</p>${feedback(esc(state.error), 'warning')}${refresh}</section>`;
     if (!state.items.length)
-        return kind === 'service' ? `<section class="service-explanation"><h3>Temporary Service cleanup</h3><p>No cleanup record is confirmed.</p>${refresh}</section>` : '';
-    const labels = { requested: 'Requested', running: 'In progress', pending: 'Waiting to retry', completed: 'Confirmed complete' };
-    const reasons = { DOCKER_UNAVAILABLE: 'Docker is unavailable.', TEMPORARY_CREATE_UNCONFIRMED: 'The original container creation has not been confirmed.', WORK_OPERATION_FAILED: 'The cleanup step could not be confirmed.', DIAGNOSTIC_PERSIST_FAILED: 'The cleanup record could not be persisted.' };
-    const triggers = { 'run-succeeded': 'Run completed', 'run-failed': 'Run failed', 'run-cancelled': 'Run cancelled', 'run-interrupted': 'Agent interrupted', 'agent-replaced': 'Agent replaced', 'work-stop': 'Work stopped', 'work-delete': 'Work deleted', 'core-shutdown': 'Core shutdown', explicit: 'Explicit request' };
-    const stages = { request: 'Cleanup requested', inspect: 'Check original instance', stop: 'Stop instance', remove: 'Remove instance', release: 'Release capacity', retry: 'Retry', logs: 'Archive service output' };
-    const outcomes = { started: 'Started', succeeded: 'Confirmed', failed: 'Failed', unconfirmed: 'Not confirmed' };
-    const items = state.items.map(item => `<article><p><strong>${esc(item.serviceId)}</strong> · ${esc(labels[item.state] || 'Status not confirmed')} · ${esc(stages[item.stage] || item.stage)}</p><p>Triggered by ${esc(triggers[item.trigger] || 'an unconfirmed event')}.</p>${item.errorCode ? `<p>${esc(reasons[item.errorCode] || 'The cleanup reason is not confirmed.')}</p>` : ''}${item.logState === 'unavailable' ? '<p>Service output could not be archived.</p>' : item.logState === 'partial' ? '<p>Service output was only partially archived.</p>' : ''}${item.operationId ? btn('View cleanup operation', 'check-operation', 'text-button', `data-id="${esc(item.operationId)}"`) : ''}<details><summary>Cleanup log${item.truncated ? ' · older entries truncated' : ''}</summary>${item.events.map(event => `<p>${esc(event.at)} · ${esc(stages[event.stage] || event.stage)} · ${esc(outcomes[event.outcome] || event.outcome)}${event.code ? ` · ${esc(event.code)}` : ''}</p>`).join('')}</details></article>`).join('');
-    return `<section class="service-explanation"><h3>Temporary Service cleanup</h3>${items}${state.truncated ? '<p>Older cleanup records were truncated.</p>' : ''}${refresh}</section>`;
+        return kind === 'service' ? `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3><p>${t('merge.noCleanup')}</p>${refresh}</section>` : '';
+    const labels = { requested: t('merge.requested'), running: t('merge.inProgress'), pending: t('merge.waitingRetry'), completed: t('merge.confirmedComplete') };
+    const reasons = { DOCKER_UNAVAILABLE: t('merge.dockerUnavailable'), TEMPORARY_CREATE_UNCONFIRMED: t('merge.createUnconfirmed'), WORK_OPERATION_FAILED: t('merge.cleanupStepFailed'), DIAGNOSTIC_PERSIST_FAILED: t('merge.cleanupPersistFailed') };
+    const triggers = { 'run-succeeded': t('merge.runSucceeded'), 'run-failed': t('merge.runFailed'), 'run-cancelled': t('merge.runCancelled'), 'run-interrupted': t('merge.agentInterrupted'), 'agent-replaced': t('merge.agentReplaced'), 'work-stop': t('merge.workStopped'), 'work-delete': t('merge.workDeleted'), 'core-shutdown': t('merge.coreShutdown'), explicit: t('merge.explicitRequest') };
+    const stages = { request: t('merge.cleanupRequested'), inspect: t('merge.inspectInstance'), stop: t('merge.stopInstance'), remove: t('merge.removeInstance'), release: t('merge.releaseCapacity'), retry: t('merge.retry'), logs: t('merge.archiveOutput') };
+    const outcomes = { started: t('merge.started'), succeeded: t('merge.confirmed'), failed: t('merge.failed'), unconfirmed: t('merge.notConfirmed') };
+    const items = state.items.map(item => `<article><p><strong>${esc(item.serviceId)}</strong> · ${esc(labels[item.state] || t('merge.statusNotConfirmed'))} · ${esc(stages[item.stage] || item.stage)}</p><p>${t('merge.triggeredBy', { event: esc(triggers[item.trigger] || t('merge.unconfirmedEvent')) })}</p>${item.errorCode ? `<p>${esc(reasons[item.errorCode] || t('merge.reasonUnconfirmed'))}</p>` : ''}${item.logState === 'unavailable' ? `<p>${t('merge.outputUnavailable')}</p>` : item.logState === 'partial' ? `<p>${t('merge.outputPartial')}</p>` : ''}${item.operationId ? btn(t('merge.viewOperation'), 'check-operation', 'text-button', `data-id="${esc(item.operationId)}"`) : ''}<details><summary>${t('merge.cleanupLog')}${item.truncated ? t('merge.olderEntries') : ''}</summary>${item.events.map(event => `<p>${esc(event.at)} · ${esc(stages[event.stage] || event.stage)} · ${esc(outcomes[event.outcome] || event.outcome)}${event.code ? ` · ${esc(event.code)}` : ''}</p>`).join('')}</details></article>`).join('');
+    return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3>${items}${state.truncated ? `<p>${t('merge.olderRecords')}</p>` : ''}${refresh}</section>`;
 }
 function serviceDetails(s, w) {
     const logs = adapter.serviceLogs(w.id, s.id), control = serviceControls.get(`${w.id}:${s.id}`);
     const op = control?.operationId ? adapter.getOperation(control.operationId) : undefined, port = s.ports.includes(view.port) ? view.port : s.ports[0];
-    const open = serviceCompletionReady(op, w.id, adapter.project(w).usable, s, port) ? btn('Open Service', 'open-controlled-service', 'primary', `data-service-id="${esc(s.id)}" data-port="${port}"`) : '';
+    const open = serviceCompletionReady(op, w.id, adapter.project(w).usable, s, port) ? btn(t('service.open'), 'open-controlled-service', 'primary', `data-service-id="${esc(s.id)}" data-port="${port}"`) : '';
     const currentService = route()[0] === 'app' ? w.services.find(item => item.id === route()[2]) : activeService(w);
     const entryChoice = s.ports.length > 1 && currentService?.id === s.id
-        ? `<label class="field">Web entry<select id="port-select" data-service-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || s.observed !== 'Ready' ? 'disabled' : ''}>${s.ports.map(item => `<option value="${item}" ${item === port ? 'selected' : ''}>Port ${item}</option>`).join('')}</select></label>` : '';
-    const ordinaryControls = s.temporary ? '' : `${btn("Start", "service-action", "small", `data-control="start" data-id="${s.id}" ${!adapter.project(w).usable || s.observed === "Ready" ? "disabled" : ""}`)}${btn("Stop", "service-action", "small", `data-control="stop" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled ? "disabled" : ""}`)}${btn("Restart", "service-action", "small", `data-control="restart" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn("Retry", "service-action", "small", `data-control="retry" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}`;
-    const temporaryFacts = s.temporary ? `<dt>Lifetime</dt><dd>Run temporary · ${esc(s.temporary.mode)}</dd>${s.temporary.exitCode !== undefined ? `<dt>Exit code</dt><dd>${s.temporary.exitCode}</dd>` : ''}` : '';
-    return `${controlMarkup(control)}${open}${entryChoice}${serviceExplanation(s)}<dl class="property-list"><dt>Domain</dt><dd><code>${esc(s.domain)}</code></dd><dt>Declared Web ports</dt><dd>${s.ports.length ? s.ports.join(", ") : "No Web ports declared"}</dd><dt>Enabled</dt><dd>${s.enabled ? "Yes" : "No · persists across Work restarts"}</dd><dt>Observed</dt><dd>${badge(s.observed)}</dd>${temporaryFacts}</dl>${serviceDiagnostics(s)}${s.temporary ? temporaryCleanupMarkup(w.id, 'service', s.id) : ''}<div class="service-controls">${ordinaryControls}${btn("Remove", "service-action", "small danger", `data-control="remove" data-id="${s.id}" ${!adapter.project(w).usable ? "disabled" : ""}`)}</div><div class="logs-heading"><h3>Log snapshot</h3>${btn(`${icon("refresh", 14)} Refresh logs`, "refresh-logs", "small")}</div>${logs?.loading ? pendingStatus(`Reading ${s.name} log snapshot…`, 'service-details refresh-logs') : ""}${logs?.error ? feedback(esc(logs.error), "warning", btn("Retry logs", "refresh-logs", "small")) : ""}<pre class="logs">${esc(logs?.value?.text ?? logs?.value?.reason ?? "Logs have not been retrieved.")}</pre><p class="muted small-text">${esc(logs?.value?.status ?? "Not retrieved")} · Collected ${esc(logs?.value?.collectedAt ?? "Not provided")} · ${logs?.value?.truncated ? "Output truncated" : "Bounded snapshot"}. This is not a live stream.</p>`;
+        ? `<label class="field">${t('service.webEntry')}<select id="port-select" data-service-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || s.observed !== 'Ready' ? 'disabled' : ''}>${s.ports.map(item => `<option value="${item}" ${item === port ? 'selected' : ''}>${t('service.port', { port: item })}</option>`).join('')}</select></label>` : '';
+    const ordinaryControls = s.temporary ? '' : `${btn(t('service.start'), "service-action", "small", `data-control="start" data-id="${s.id}" ${!adapter.project(w).usable || s.observed === "Ready" ? "disabled" : ""}`)}${btn(t('service.stop'), "service-action", "small", `data-control="stop" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled ? "disabled" : ""}`)}${btn(t('service.restart'), "service-action", "small", `data-control="restart" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn(t('service.retryAction'), "service-action", "small", `data-control="retry" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}`;
+    const temporaryFacts = s.temporary ? `<dt>${t('merge.lifetime')}</dt><dd>${t('merge.runTemporary')} · ${esc(s.temporary.mode)}</dd>${s.temporary.exitCode !== undefined ? `<dt>${t('diag.exitCode')}</dt><dd>${s.temporary.exitCode}</dd>` : ''}` : '';
+    return `${controlMarkup(control)}${open}${entryChoice}${serviceExplanation(s)}<dl class="property-list"><dt>${t('service.domain')}</dt><dd><code>${esc(s.domain)}</code></dd><dt>${t('service.declaredPortsTitle')}</dt><dd>${s.ports.length ? s.ports.join(", ") : t('service.noPorts')}</dd><dt>${t('service.enabled')}</dt><dd>${s.enabled ? t('service.enabledPersists') : t('service.disabledPersists')}</dd><dt>${t('service.observed')}</dt><dd>${badge(s.observed)}</dd>${temporaryFacts}</dl>${serviceDiagnostics(s)}${s.temporary ? temporaryCleanupMarkup(w.id, 'service', s.id) : ''}<div class="service-controls">${ordinaryControls}${btn(t('service.remove'), "service-action", "small danger", `data-control="remove" data-id="${s.id}" ${!adapter.project(w).usable ? "disabled" : ""}`)}</div><div class="logs-heading"><h3>${t('service.logTitle')}</h3>${btn(`${icon("refresh", 14)} ${t('service.refreshLogs')}`, "refresh-logs", "small")}</div>${logs?.loading ? pendingStatus(t('service.readingLogs', { name: esc(s.name) }), 'service-details refresh-logs') : ""}${logs?.error ? feedback(esc(logs.error), "warning", btn(t('service.retryLogs'), "refresh-logs", "small")) : ""}<pre class="logs">${esc(logs?.value?.text ?? logs?.value?.reason ?? t('service.noLogs'))}</pre><p class="muted small-text">${esc(logs?.value?.status ?? t('service.notRetrieved'))} · ${t('service.collected', { time: esc(logs?.value?.collectedAt ?? t('text.notProvided')) })} · ${logs?.value?.truncated ? t('service.truncated') : t('service.bounded')}. ${t('service.notLive')}</p>`;
 }
 let focusReturn = "";
 function focusKey(el) {
@@ -1950,10 +2000,10 @@ function targetWork(el) {
 function assertFileAdmission(workId, targets) {
     const work = adapter.getWork(workId);
     if (!work || !adapter.project(work).usable)
-        throw new Error('This Work is not ready for new file changes. Check its current state.');
+        throw new Error(t('fileResults.notReady'));
     const conflict = unknownFiles.conflict(workId, targets);
     if (conflict)
-        throw new Error(`The earlier result for ${conflict.paths.join(' and ')} is unknown. Refresh its original directories before a new action.`);
+        throw new Error(t('fileResults.earlierUnknown', { paths: conflict.paths.join(t('fileResults.pathJoin')) }));
 }
 function retainFileResults(workId, targets, rows, record) {
     const normalized = new FileMutationResults(targets);
@@ -1978,7 +2028,7 @@ function confirmFileAttempt(record, results) {
     // Only retainFileResults binds a lock to an actually submitted unknown path.
     // A cumulative summary must not copy an earlier unknown into a later retry.
     record.successFeedback = results.length && results.every(result => result.status === 'succeeded') ? 'toast' : undefined;
-    actions.confirm(record, `${results.filter(result => result.status === 'succeeded').length} paths confirmed; ${results.filter(result => result.status !== 'succeeded').length} need review`);
+    actions.confirm(record, t('fileResults.summary', { confirmed: results.filter(result => result.status === 'succeeded').length, review: results.filter(result => result.status !== 'succeeded').length }));
 }
 async function performFileAttempt(attempt, targets, record) {
     const epoch = adapter.identityEpoch, origin = viewKey();
@@ -2014,10 +2064,10 @@ async function performFileAttempt(attempt, targets, record) {
     if (results.length && results.every(result => result.status === 'succeeded')) {
         view.selected = [];
         closeModal();
-        toast('File changes saved.');
+        toast(t('fileResults.saved'));
     }
     else {
-        view.modalError = 'Review each path below. Select only confirmed failures to retry; unknown results require a read-only refresh.';
+        view.modalError = t('fileResults.review');
         render();
     }
 }
@@ -2034,19 +2084,19 @@ function fileModalResults() {
                     : joinPath(view.formDestination, source.split('/').pop()),
             } : {}) }));
         const locks = [...new Set(targets.map(target => unknownFiles.conflict(current().id, [target])).filter(lock => !!lock))];
-        rows = locks.flatMap(lock => lock.paths.map(path => ({ path, status: 'unknown', message: 'An earlier change to this original path has an unknown result. Reread before another explicit action.' })));
+        rows = locks.flatMap(lock => lock.paths.map(path => ({ path, status: 'unknown', message: t('fileResults.unknownMessage') })));
     }
     if (!rows.length)
         return '';
     const eligible = fileAttempt?.ledger.retryTargets(fileAttempt.ledger.targets.map(target => target.source)) || [];
-    return `<section class="transfer-results"><h3>Path results</h3>${rows.map(row => `<div class="transfer-row"><code>${esc(row.path)}</code><span>${esc(row.status)} · ${esc(row.message)}</span></div>`).join('')}${eligible.map(target => `<label class="check-row"><input type="checkbox" data-retry-source="${esc(target.source)}" ${fileAttempt?.selected.has(target.source) ? 'checked' : ''}> Retry ${esc(target.source)}</label>`).join('')}${eligible.length ? btn('Retry selected failed paths', 'retry-selected-files', 'small', fileAttempt?.selected.size ? '' : 'disabled') : ''}${rows.some(row => row.status === 'unknown') ? feedback('The original result is unknown. Refresh the source and destination before a new explicit action.', 'warning', btn('Refresh original paths', 'refresh-files', 'small')) : ''}</section>`;
+    return `<section class="transfer-results"><h3>${t('fileResults.title')}</h3>${rows.map(row => `<div class="transfer-row"><code>${esc(row.path)}</code><span>${esc(stateText(row.status))} · ${transferResultMessage(row)}</span></div>`).join('')}${eligible.map(target => `<label class="check-row"><input type="checkbox" data-retry-source="${esc(target.source)}" ${fileAttempt?.selected.has(target.source) ? 'checked' : ''}> ${t('fileResults.retry', { path: esc(target.source) })}</label>`).join('')}${eligible.length ? btn(t('fileResults.retrySelected'), 'retry-selected-files', 'small', fileAttempt?.selected.size ? '' : 'disabled') : ''}${rows.some(row => row.status === 'unknown') ? feedback(t('fileResults.unknown'), 'warning', btn(t('fileResults.refresh'), 'refresh-files', 'small')) : ''}</section>`;
 }
 async function saveFile(record) {
     const w = current();
     if (!w)
         return false;
     if (view.fileWriteUncertain)
-        throw new Error("Reread the saved version and explicitly approve its baseline before retrying.");
+        throw new Error(t('save.reread'));
     assertFileAdmission(w.id, [{ source: view.file }]);
     const content = view.fileDraft;
     const path = view.file, key = location.hash, epoch = adapter.identityEpoch;
@@ -2055,7 +2105,7 @@ async function saveFile(record) {
             return;
         if (record && actions.current(record)) {
             record.successFeedback = 'toast';
-            actions.confirm(record, 'Saved');
+            actions.confirm(record, t('save.savedShort'));
             if (!confirmed.modified) {
                 record.refresh = 'refreshing';
                 render();
@@ -2064,7 +2114,7 @@ async function saveFile(record) {
         if (key === location.hash && view.file === path) {
             view.fileOriginal = content;
             view.fileBaseline = confirmed.modified || '';
-            toast('File saved. Confirming the saved version.');
+            toast(t('save.savedConfirming'));
         }
     });
     if (epoch !== adapter.identityEpoch)
@@ -2081,7 +2131,7 @@ async function saveFile(record) {
         view.fileBaseline = result.modified ?? "";
         view.fileUnprotected = false;
         view.fileReread = null;
-        toast(result.message === "Confirmed" ? "File saved." : result.message);
+        toast(result.message === "Confirmed" ? t('save.saved') : result.message);
         return true;
     }
     view.fileWriteUncertain = result.status === "unknown" || result.httpStatus === 412;
@@ -2098,7 +2148,7 @@ async function saveConfig(record) {
     const submitted = structuredClone(view.config), version = JSON.stringify(view.config), key = location.hash;
     await adapter.saveConfiguration(w.id, submitted);
     if (record) {
-        actions.confirm(record, 'Settings saved');
+        actions.confirm(record, t('save.settingsSaved'));
         void actions.refresh(record, () => adapter.loadConfiguration(w.id));
     }
     if (key !== location.hash)
@@ -2107,7 +2157,7 @@ async function saveConfig(record) {
         view.config = structuredClone(submitted);
         view.configDirty = false;
     }
-    toast("Changes saved. Apply changes to use them.");
+    toast(t('save.changesSaved'));
     return true;
 }
 function validateConfigDraft() {
@@ -2122,7 +2172,7 @@ function validateConfigDraft() {
         view.settingsTab = "Advanced";
         render();
         root.querySelector("#advanced-editor")?.focus();
-        toast("Fix the configuration JSON or discard the draft before continuing.");
+        toast(t('save.fixJson'));
         return false;
     }
 }
@@ -2133,7 +2183,7 @@ function downloadBlob(name, contents, type = "text/plain") {
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast("Download started. Check your browser to confirm the file was saved.");
+    toast(t('download.started'));
 }
 async function handleAction(action, el, record) {
     const ownedView = () => record?.kind === 'identity' ? location.hash : record && ['lifecycle', 'transfer'].includes(record.kind) ? `${location.hash}:${modalChoice}` : viewKey();
@@ -2141,10 +2191,10 @@ async function handleAction(action, el, record) {
         throw new ViewChanged(); return value; };
     const accept = (op) => { if (record) {
         record.businessId = op.id;
-        actions.confirm(record, `Accepted · ${op.id}`);
+        actions.confirm(record, t('action.accepted', { id: op.id }));
         if (op.workId)
             void actions.refresh(record, () => op.kind === 'Delete Work' ? adapter.listWorks() : adapter.loadWork(op.workId));
-    } };
+    } }; // i18n-exempt: server operation kind
     const show = (op) => { accept(op); runAndShow(op); };
     const filesConfirmed = (results) => {
         if (record) {
@@ -2154,7 +2204,7 @@ async function handleAction(action, el, record) {
                 void actions.refresh(record, () => adapter.loadDirectory(currentWork.id, view.path));
         }
         if (results.some(result => result.status !== 'succeeded')) {
-            view.modalError = 'Some paths were not confirmed. Review per-path results before submitting again.';
+            view.modalError = t('fileResults.someNotConfirmed');
             render();
             return false;
         }
@@ -2164,8 +2214,21 @@ async function handleAction(action, el, record) {
     const currentWork = current();
     const s = currentWork ? activeService(currentWork) : undefined;
     if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'cancel-pi-request', 'retry-pi-request'].includes(action))
-        throw new Error('This Work is not ready for new runtime or file changes. Check its current state.');
+        throw new Error(t('fileResults.notReadyRuntime'));
     switch (action) {
+        case 'language': {
+            const fromMenu = view.modal === 'account' || view.modal === 'work-menu';
+            const destination = view.modal === 'account' ? '[data-action="account"]' : '[data-action="work-menu"]';
+            const key = el.dataset.languageTrigger || 'topbar';
+            const trigger = root.querySelector(`[data-language-trigger="${key}"]`) || el;
+            languagePicker.open(trigger, {
+                anchorRect: fromMenu ? root.querySelector(destination)?.getBoundingClientRect() : undefined,
+                beforeOpen: () => { if (fromMenu)
+                    closeModal(false); },
+                restoreFocus: () => root.querySelector(fromMenu ? destination : `[data-language-trigger="${key}"]`),
+            });
+            break;
+        }
         case 'save-default-core':
             await adapter.savePreferences(view.coreAddress || adapter.state.core.address);
             break;
@@ -2297,7 +2360,7 @@ async function handleAction(action, el, record) {
                 view.fullscreenError = '';
             }
             catch {
-                view.fullscreenError = document.fullscreenElement === root ? 'Full screen could not be closed. Try again.' : 'Full screen could not be opened. Focus remains available.';
+                view.fullscreenError = document.fullscreenElement === root ? t('action.fullscreenClose') : t('action.fullscreenOpen');
             }
             render();
             break;
@@ -2434,14 +2497,14 @@ async function handleAction(action, el, record) {
                 importSignInSuspended = false;
                 closeModal();
             }
-            toast("Signed in.");
+            toast(t('action.signedIn'));
             break;
         }
         case "import-sign-in":
             importSignInSuspended = true;
             view.modal = "";
             render();
-            toast("Sign in to continue importing the inspected package.");
+            toast(t('action.signInImport'));
             break;
         case "sign-out": {
             const result = await stay(adapter.signOut());
@@ -2458,11 +2521,11 @@ async function handleAction(action, el, record) {
             view.configDirty = false;
             view.file = "";
             closeModal();
-            toast(result.credentialCleared === false ? `Local identity cleared; saved credential cleanup is incomplete. Run ${adapter.logoutCommand()}.` : result.remoteRevocationConfirmed ? "Signed out. Sign in again to continue." : "Local identity and saved credential cleared. Remote revocation could not be confirmed.");
+            toast(result.credentialCleared === false ? t('action.signOutCleanup', { command: adapter.logoutCommand() }) : result.remoteRevocationConfirmed ? t('action.signedOut') : t('action.signedOutUnconfirmed'));
             break;
         }
         case "reconnect":
-            toast("Start piwork-cli desktop and reload this address.");
+            toast(t('action.reconnect'));
             break;
         case "confirm-switch-core":
             await stay(adapter.switchCore(view.coreAddress));
@@ -2499,7 +2562,7 @@ async function handleAction(action, el, record) {
             break;
         case "check-connection":
             await stay(adapter.checkConnection());
-            toast("Connection checked.");
+            toast(t('action.connectionChecked'));
             break;
         case "start-work":
             if (w)
@@ -2509,7 +2572,7 @@ async function handleAction(action, el, record) {
             const op = adapter.getOperation(el.dataset.importId || '');
             const importedWork = op && adapter.getWork(op.workId);
             if (!importCanStart(op, importedWork, importedWork ? adapter.project(importedWork).action : '', !!op && importStarts.has(op.id)))
-                throw new Error('Check the original imported Work before starting it.');
+                throw new Error(t('action.checkImported'));
             const intent = { workId: importedWork.id, importId: op.id, epoch: adapter.identityEpoch, origin: location.hash, choice: modalChoice, selection: `${areaChoice}:${serviceChoice}:${sessionChoice}:${fileChoice}`, consumed: false, phase: 'pending' };
             importStarts.set(op.id, intent);
             await submitWorkStart(importedWork, record, intent);
@@ -2565,7 +2628,7 @@ async function handleAction(action, el, record) {
             const serviceId = el.dataset.serviceId, service = currentWork.services.find(item => item.id === serviceId);
             const control = serviceControls.get(`${currentWork.id}:${serviceId}`), op = control?.operationId && adapter.getOperation(control.operationId), port = Number(el.dataset.port);
             if (!serviceCompletionReady(op || undefined, currentWork.id, adapter.project(currentWork).usable, service, port))
-                throw new Error('Check this Service’s current readiness before opening.');
+                throw new Error(t('action.checkServiceReadiness'));
             await guard(async () => {
                 areaChoice++;
                 serviceChoice++;
@@ -2638,7 +2701,7 @@ async function handleAction(action, el, record) {
             else {
                 if (ids.length > 1)
                     openModal('operations', { workId: w.id });
-                toast('Work status checked.');
+                toast(t('action.workChecked'));
             }
             break;
         }
@@ -2648,7 +2711,7 @@ async function handleAction(action, el, record) {
             break;
         case "create-work": {
             if (!view.createName.trim()) {
-                view.modalError = "Enter a name for your Work.";
+                view.modalError = t('create.enterName');
                 render();
                 break;
             }
@@ -2659,10 +2722,10 @@ async function handleAction(action, el, record) {
                     data = JSON.parse(view.createJson);
                 }
                 catch {
-                    throw Error("Configuration JSON is invalid. Your entered values are preserved.");
+                    throw Error(t('create.invalidJson'));
                 }
                 if (typeof data !== "object" || Array.isArray(data) || !data)
-                    throw Error("Configuration must be a JSON object.");
+                    throw Error(t('create.jsonObject'));
                 config.advanced = JSON.stringify(data, null, 2);
             }
             if (view.createSkillMode !== "defaults")
@@ -2689,7 +2752,7 @@ async function handleAction(action, el, record) {
                 createDraft.accept(token);
             if (record) {
                 record.businessId = op.id;
-                actions.confirm(record, `Accepted · ${op.id}`);
+                actions.confirm(record, t('action.accepted', { id: op.id }));
             }
             if (origin !== ownedView())
                 throw new ViewChanged();
@@ -2778,7 +2841,7 @@ async function handleAction(action, el, record) {
                 view.session = await stay(adapter.newSession(currentWork.id));
                 if (record) {
                     record.businessId = view.session;
-                    actions.confirm(record, 'Session created');
+                    actions.confirm(record, t('action.sessionCreated'));
                 }
                 closeModal();
                 render();
@@ -2792,8 +2855,8 @@ async function handleAction(action, el, record) {
                 textDraftRevisions.set(draftKey(currentWork), (textDraftRevisions.get(draftKey(currentWork)) || 0) + 1);
                 view.drafts[draftKey(currentWork)] =
                     action === "suggest-message"
-                        ? "Build a simple notes app and save its data in the shared workspace."
-                        : "List the shared workspace files and help me analyze the data I choose.";
+                        ? t('suggest.notes')
+                        : t('suggest.files');
                 render();
                 root.querySelector("#composer")?.focus();
             }
@@ -2847,7 +2910,7 @@ async function handleAction(action, el, record) {
             const request = currentWork && (adapter.requestDetails.get(`${currentWork.id}:${requestId}`)?.request
                 ?? adapter.requestPage(currentWork.id, view.data.serviceName || '')?.items.find(item => item.requestId === requestId));
             if (!canCancelPiRequest(request, !!currentWork && adapter.project(currentWork).usable) || currentWork && adapter.requestCancellation(currentWork.id, requestId))
-                throw new Error('Check the original live request before cancelling.');
+                throw new Error(t('pi.checkLiveRequest'));
             if (currentWork)
                 await stay(adapter.cancelRequest(currentWork.id, requestId));
             break;
@@ -2928,13 +2991,13 @@ async function handleAction(action, el, record) {
                         throw new Error(reason);
                 }
                 if (images.length && text.trimStart().startsWith('/') && !view.literalSlash)
-                    throw new Error('Images require Send as text. Your draft is kept.');
+                    throw new Error(t('chat.imagesText'));
                 if (text.trimStart().startsWith('/') && !view.literalSlash) {
                     const match = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
                     const name = match?.[1] || '';
                     if (webCommands.includes(name)) {
                         if (match?.[2]?.trim())
-                            throw new Error('This workspace command does not accept arguments. Your draft is kept.');
+                            throw new Error(t('chat.commandNoArgs'));
                         if (name === 'new') {
                             view.session = await stay(adapter.newSession(currentWork.id));
                         }
@@ -2960,10 +3023,10 @@ async function handleAction(action, el, record) {
                         return;
                     }
                     if ((adapter.chatCapabilities.get(currentWork.id) ?? 0) < 1)
-                        throw new Error('Resource commands are unavailable in this Work. Choose Send as text to send a literal slash.');
+                        throw new Error(t('chat.resourceUnavailable'));
                     const directory = adapter.commands.get(currentWork.id);
                     if (!directory?.confirmed || directory.error || !directory.items.some(command => command.command === `/${name}`))
-                        throw new Error('Unknown resource command. Choose an available command or Send as text.');
+                        throw new Error(t('chat.unknownCommand'));
                 }
                 if (!view.session) {
                     view.session = await stay(adapter.newSession(currentWork.id));
@@ -2985,7 +3048,7 @@ async function handleAction(action, el, record) {
                 pendingImageSubmissions.delete(currentWork.id);
                 if (record) {
                     record.businessId = submittedRunId;
-                    actions.confirm(record, 'Message accepted');
+                    actions.confirm(record, t('chat.messageAccepted'));
                 }
                 view.scrollPinned = true;
                 render();
@@ -3000,7 +3063,7 @@ async function handleAction(action, el, record) {
                 await stay(adapter.cancelRun(currentWork.id, targetRunId));
                 if (record) {
                     record.businessId = targetRunId;
-                    actions.confirm(record, 'Cancellation requested');
+                    actions.confirm(record, t('action.cancellationRequested'));
                 }
             }
             break;
@@ -3014,7 +3077,7 @@ async function handleAction(action, el, record) {
                 await stay(adapter.resumeRunConnection(currentWork.id));
                 if (record) {
                     record.businessId = currentWork.run?.id;
-                    actions.confirm(record, 'Reconnected');
+                    actions.confirm(record, t('action.reconnected'));
                 }
             }
             break;
@@ -3047,7 +3110,7 @@ async function handleAction(action, el, record) {
                 const path = el.dataset.path;
                 const link = filesDeepLink(currentWork.id, path);
                 if (!link) {
-                    toast("This file reference is not valid.");
+                    toast(t('action.invalidFileRef'));
                     break;
                 }
                 sourceGuardReturn = (dirty() || view.configDirty) && view.modal ? { epoch: adapter.identityEpoch, route: location.hash, modal: view.modal, data: { ...view.data }, focus: focusKey(el) } : undefined;
@@ -3088,7 +3151,7 @@ async function handleAction(action, el, record) {
         case "copy-local":
             if (currentWork && s) {
                 await copy(adapter.localLink(currentWork.id, s.id, view.port));
-                toast(adapter.hosted ? "Access link copied. Open it in an authorized browser session." : "Local Work link copied. It requires this CLI and signed-in browser session.");
+                toast(adapter.hosted ? t('service.accessCopied') : t('service.localCopied'));
             }
             break;
         case "open-app":
@@ -3096,7 +3159,7 @@ async function handleAction(action, el, record) {
             if (currentWork && s) {
                 const opened = window.open('about:blank', '_blank', action === 'open-window' ? 'width=1120,height=820' : undefined);
                 if (!opened) {
-                    view.serviceOpenError = 'The browser blocked this window. Allow popups or copy the protected local link.';
+                    view.serviceOpenError = t('service.blockedWindow');
                     render();
                     throw new Error(view.serviceOpenError);
                 }
@@ -3197,7 +3260,7 @@ async function handleAction(action, el, record) {
                             if (epoch !== adapter.identityEpoch || openPath !== view.file)
                                 throw new ViewChanged();
                             view.fileStatus = "unavailable";
-                            view.fileError = "The file read was interrupted because this Work is no longer available.";
+                            view.fileError = t('fileRead.interrupted');
                         }
                         else {
                             if (epoch !== adapter.identityEpoch || openPath !== view.file)
@@ -3288,7 +3351,7 @@ async function handleAction(action, el, record) {
             break;
         case "allow-unprotected-file":
             view.fileUnprotected = true;
-            toast("Unprotected overwrite approved for the next save.");
+            toast(t('save.unprotected'));
             break;
         case "use-reread-version":
             if (view.fileReread?.preview?.kind === "text") {
@@ -3332,11 +3395,11 @@ async function handleAction(action, el, record) {
         case "confirm-upload-overwrite":
             if (currentWork) {
                 if (!pendingUploadTarget || pendingUploadTarget.epoch !== adapter.identityEpoch || pendingUploadTarget.workId !== currentWork.id || pendingUploadTarget.directory !== view.path)
-                    throw new Error('The upload target changed. Choose these files again in the intended Work and directory.');
+                    throw new Error(t('upload.targetChanged'));
                 const overwrite = el.dataset.uploadMode === 'overwrite', review = uploadReview(modalTransfers), eligible = overwrite ? review.overwrite : review.retry;
                 const directory = pendingUploadTarget.directory, files = pendingUploadFiles.filter(file => eligible.some(row => row.path === joinPath(directory, file.name))), targets = files.map(file => ({ source: joinPath(directory, file.name) }));
                 if (!files.length)
-                    throw new Error('No confirmed eligible upload remains. Refresh the original paths.');
+                    throw new Error(t('upload.noEligible'));
                 const epoch = adapter.identityEpoch, origin = viewKey();
                 assertFileAdmission(currentWork.id, targets);
                 const rows = await adapter.upload(currentWork.id, directory, files, overwrite);
@@ -3350,10 +3413,10 @@ async function handleAction(action, el, record) {
                 pendingUploadFiles = pendingUploadFiles.filter(file => modalTransfers.some(row => row.path === joinPath(directory, file.name) && row.status !== 'succeeded'));
                 if (!pendingUploadFiles.length && modalTransfers.length && modalTransfers.every(row => row.status === 'succeeded')) {
                     closeModal();
-                    toast('Upload complete.');
+                    toast(t('upload.complete'));
                 }
                 else {
-                    view.modalError = 'Some uploads need review. Successful paths will not be submitted again.';
+                    view.modalError = t('upload.review');
                     render();
                 }
             }
@@ -3373,7 +3436,7 @@ async function handleAction(action, el, record) {
                 modalTransfers = retained;
                 if (filesConfirmed(retained)) {
                     closeModal();
-                    toast('Folder created.');
+                    toast(t('files.folderCreated'));
                 }
             }
             break;
@@ -3382,7 +3445,7 @@ async function handleAction(action, el, record) {
         case "file-move": {
             const paths = el.dataset.path ? [el.dataset.path] : view.selected;
             if (!paths.length)
-                throw Error("Select a file or folder first.");
+                throw Error(t('files.selectFirst'));
             openModal("file-transfer", {
                 paths: JSON.stringify(paths),
                 transfer: action.slice(5),
@@ -3398,7 +3461,7 @@ async function handleAction(action, el, record) {
         case "confirm-transfer":
             if (currentWork) {
                 if (fileAttempt?.ledger.hasResults)
-                    throw new Error('Select only the confirmed failed paths to retry.');
+                    throw new Error(t('fileResults.retryOnly'));
                 const paths = decodePaths(view.data.paths);
                 const targets = paths.map(source => ({ source, destination: view.data.transfer === 'rename'
                         ? joinPath(source.slice(0, source.lastIndexOf('/')) || '/', validateName(view.formName))
@@ -3420,21 +3483,21 @@ async function handleAction(action, el, record) {
             if (fileAttempt && currentWork?.id === fileAttempt.workId) {
                 const attempt = fileAttempt, targets = attempt.ledger.retryTargets([...attempt.selected]);
                 if (!targets.length)
-                    throw new Error('Select a confirmed failed path to retry. Unknown or successful paths cannot be repeated.');
+                    throw new Error(t('fileResults.retrySelect'));
                 await performFileAttempt(attempt, targets, record);
             }
             break;
         case "file-delete": {
             const paths = el.dataset.path ? [el.dataset.path] : view.selected;
             if (!paths.length)
-                throw Error("Select a file or folder first.");
+                throw Error(t('files.selectFirst'));
             openModal("file-delete", { paths: JSON.stringify(paths) });
             break;
         }
         case "confirm-file-delete":
             if (currentWork) {
                 if (fileAttempt?.ledger.hasResults)
-                    throw new Error('Select only the confirmed failed paths to retry.');
+                    throw new Error(t('fileResults.retryOnly'));
                 const targets = decodePaths(view.data.paths).map(source => ({ source }));
                 assertFileAdmission(currentWork.id, targets);
                 const attempt = { workId: currentWork.id, operation: 'delete', overwrite: false, ledger: new FileMutationResults(targets), selected: new Set(), feedbackRecords: new Set() };
@@ -3444,7 +3507,7 @@ async function handleAction(action, el, record) {
             break;
         case "upload":
             if (!currentWork || !adapter.project(currentWork).usable)
-                throw new Error('Confirm the current Work before choosing files to upload.');
+                throw new Error(t('upload.confirmWork'));
             uploadPickerTarget = { epoch: adapter.identityEpoch, workId: currentWork.id, directory: view.path };
             root.querySelector("#upload-input")?.click();
             break;
@@ -3527,16 +3590,16 @@ async function handleAction(action, el, record) {
                     view.configDirty = false;
                 }
                 if (record) {
-                    actions.confirm(record, 'Skill copy saved');
+                    actions.confirm(record, t('action.skillCopySaved'));
                     void actions.refresh(record, () => adapter.loadConfiguration(currentWork.id));
                 }
                 closeModal();
-                toast("Current Core copies saved. Apply changes to load them.");
+                toast(t('action.coreCopiesSaved'));
             }
             break;
         case "check-catalog":
             const available = await stay(adapter.checkCatalog());
-            toast(available ? "Core catalogs confirmed. Existing selections preserved." : `Catalog check incomplete: ${[adapter.catalog.skills.error, adapter.catalog.packages.error].filter(Boolean).join(" ")}`);
+            toast(available ? t('action.catalogsConfirmed') : t('action.catalogIncomplete', { error: [adapter.catalog.skills.error, adapter.catalog.packages.error].filter(Boolean).join(" ") }));
             break;
         case "skill-detail":
         case "package-detail":
@@ -3614,7 +3677,7 @@ async function handleAction(action, el, record) {
         case "confirm-install":
             if (currentWork) {
                 if (view.installType !== "Core" && !view.installSource)
-                    throw Error("Choose or enter a package source.");
+                    throw Error(t('package.chooseSourceError'));
                 const name = view.data.updateTarget ||
                     (view.installType === "Core" ? view.installName : view.installSource);
                 show(await stay(adapter.installPackage(currentWork.id, name, `${view.installType}: ${view.installType === "Core" ? "current Core copy" : view.installSource}`, packageFiles, view.data.updateTarget)));
@@ -3670,14 +3733,14 @@ async function handleAction(action, el, record) {
         case 'view-snapshot': {
             const snap = await stay(adapter.fetchSnapshot(el.dataset.id));
             if (el.dataset.workId && snap.workId !== el.dataset.workId)
-                throw new Error('This snapshot does not belong to the original Work.');
+                throw new Error(t('export.snapshotMismatch'));
             openModal('export', { id: snap.workId, snapshotId: snap.id });
             break;
         }
         case 'download-work': {
             const snap = adapter.getSnapshot(el.dataset.id);
             if (!snap)
-                throw new Error('Check the exact original snapshot first.');
+                throw new Error(t('export.checkSnapshot'));
             openExportFlow(exportFlows.start(snap.workId, { mode: 'existing', snapshotId: snap.id }), record);
             break;
         }
@@ -3694,7 +3757,7 @@ async function handleAction(action, el, record) {
             const id = el.dataset.id, snap = await stay(adapter.fetchSnapshot(id));
             const job = await stay(adapter.checkDownload(id));
             if (adapter.getSnapshot(id) !== snap || adapter.downloads.get(id) !== job || !exportSnapshotAvailable(snap) || !job?.ready || job.snapshotId !== snap.id || job.workId !== snap.workId)
-                throw new Error('The original snapshot and transfer are not confirmed for download.');
+                throw new Error(t('export.notConfirmed'));
             downloadURL(`/_desktop/api/downloads/${encodeURIComponent(job.transferId)}/content`, adapter.getWork(snap.workId)?.name || snap.workId);
             break;
         }
@@ -3734,7 +3797,7 @@ async function handleAction(action, el, record) {
                 openModal("operation", { id: op.id });
             }
             else
-                throw Error("Operation not found for this Core and user. Verify the original ID.");
+                throw Error(t('ops.lookupMissing'));
             break;
         }
         case "lookup-snapshot": {
@@ -3742,7 +3805,7 @@ async function handleAction(action, el, record) {
             if (snap)
                 openModal("export", { id: snap.workId, snapshotId: snap.id });
             else
-                throw Error("Snapshot not found. Check its exact original ID and Core.");
+                throw Error(t('export.snapshotMissing'));
             break;
         }
         case "clear-operations":
@@ -3756,7 +3819,7 @@ function joinPath(parent, name) {
 function validateName(name) {
     const result = name.trim();
     if (!validLocalName(result))
-        throw Error("Enter a name without path separators.");
+        throw Error(t('name.noPathSeparators'));
     return result;
 }
 function focusNameField(start, end) {
@@ -3803,7 +3866,7 @@ async function showDirectoryOrAncestor(w, start) {
         }
     }
     if (path !== original)
-        filesRestoreNotice = `The file’s folder is no longer available. Opened ${path} instead.`;
+        filesRestoreNotice = t('files.folderUnavailableMoved', { path });
 }
 function applyFilePreview(f) {
     view.file = f.path;
@@ -3842,7 +3905,7 @@ async function openFile(w, path) {
             throw new ViewChanged();
         const f = w.files.find((f) => f.path === path);
         if (!f)
-            throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', 404);
+            throw new DesktopError('FILE_NOT_FOUND', t('files.noLongerInWorkspace'), 404);
         if (f.kind === "directory") {
             view.path = f.path;
             view.file = "";
@@ -3865,7 +3928,7 @@ async function openFile(w, path) {
             // Work stop or an external cancel without a newer target: never keep
             // claiming the target is still loading.
             view.fileStatus = "unavailable";
-            view.fileError = "The file read was interrupted because this Work is no longer available.";
+            view.fileError = t('fileRead.interrupted');
             throw error;
         }
         if (key !== viewKey() || epoch !== adapter.identityEpoch || choice !== fileChoice)
@@ -3882,10 +3945,10 @@ async function openFile(w, path) {
 async function copy(text) {
     try {
         await navigator.clipboard.writeText(text);
-        toast("Copied to clipboard.");
+        toast(t('clipboard.copied'));
     }
     catch {
-        toast(`Clipboard unavailable. Copy this value: ${text}`);
+        toast(t('clipboard.unavailable', { value: text }));
     }
 }
 function visibleActionRecord(record) {
@@ -3958,6 +4021,16 @@ function render() {
         chatReading.set(messages.dataset.readingKey, { scroll, pinned: view.scrollPinned, anchor: readingAnchor });
     const modalScroll = root.querySelector(".modal-body")?.scrollTop || 0;
     const r = route();
+    // One place decides the browser title (and <html lang>) from the current route.
+    const titleWork = (r[0] === 'work' || r[0] === 'app') ? adapter.getWork(r[1]) : undefined;
+    if (!adapter.state.signedIn || adapter.state.scenario === "cli-closed")
+        applyDocumentTitle(t('doc.connect'));
+    else if (r[0] === 'app')
+        applyDocumentTitle(titleWork ? t('doc.app', { name: titleWork.name }) : t('doc.works'));
+    else if (r[0] === 'work')
+        applyDocumentTitle(titleWork ? r[2] === 'settings' ? t('doc.workSettings', { name: titleWork.name }) : t('doc.work', { name: titleWork.name }) : t('doc.works'));
+    else
+        applyDocumentTitle(t('doc.works'));
     if (workspaceReturn && (workspaceReturn.workId !== r[1] || !['work', 'app'].includes(r[0])))
         resetWorkspaceFocus();
     root.classList.toggle('workspace-page', ['work', 'app'].includes(r[0]) && !!current() && r[2] !== 'settings');
@@ -3966,7 +4039,7 @@ function render() {
     root.classList.toggle('chat-focused', view.layout === 'chat-only');
     let html = "";
     if (adapter.state.scenario === "cli-closed")
-        html = `${topbar()}<main class="auth-main">${empty("terminal", adapter.hosted ? "Server connection closed" : "Desktop’s local connection has closed", adapter.hosted ? "Check that the Piwork server is running, then reload this page." : "Start piwork-cli desktop again, then reload this ordinary address. A browser-only retry cannot restart the CLI.", "")}</main>`;
+        html = `${topbar()}<main class="auth-main">${empty("terminal", adapter.hosted ? t('standalone.serverClosed') : t('standalone.desktopClosed'), adapter.hosted ? t('standalone.serverClosedBody') : t('standalone.desktopClosedBody'), "")}</main>`;
     else if (!adapter.state.signedIn)
         html = signIn();
     else if (r[0] === "app") {
@@ -3974,7 +4047,7 @@ function render() {
         if (w) {
             view.service = r[2];
             view.port = Number(r[3]);
-            html = `${workHeader(w, true)}<div class="standalone-label">Independent application window · Closing this tab does not stop the Service</div><main class="standalone-app">${!adapter.project(w).retainWorkspace ? `${view.layout !== 'workspace' ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ''}${workState(w)}` : services(w)}</main>`;
+            html = `${workHeader(w, true)}<div class="standalone-label">${t('standalone.windowNote')}</div><main class="standalone-app">${!adapter.project(w).retainWorkspace ? `${view.layout !== 'workspace' ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ''}${workState(w)}` : services(w)}</main>`;
         }
         else
             html = standaloneWorkUnavailable(r);
@@ -3983,7 +4056,7 @@ function render() {
         const w = adapter.getWork(r[1]);
         html = w
             ? workPage(w)
-            : workReadPending(r[1]) ? `${topbar()}<main class="work-loading">${readPlaceholder('Loading Work…', 'service')}${btn('Back to Works', 'back-works')}</main>` : `${topbar()}${empty("grid", workReadErrors.get(r[1])?.missing ? "Work not found" : "Work unavailable", esc(workReadErrors.get(r[1])?.message || "Read this Work again to confirm its current availability."), btn("Retry", "retry-work-read", "primary") + btn("Back to Works", "back-works"))}`;
+            : workReadPending(r[1]) ? `${topbar()}<main class="work-loading">${readPlaceholder(t('work.loading'), 'service')}${btn(t('work.backToWorks'), 'back-works')}</main>` : `${topbar()}${empty("grid", workReadErrors.get(r[1])?.missing ? t('work.notFoundTitle') : t('work.unavailableTitle'), esc(workReadErrors.get(r[1])?.message || t('work.readAgainHint')), btn(t('common.retry'), "retry-work-read", "primary") + btn(t('work.backToWorks'), "back-works"))}`;
     }
     else
         html = works();
@@ -3998,7 +4071,7 @@ function render() {
         modalChoice++;
     }
     // Action status nodes are reconciled by their owner; retain them without moving iframe ancestors.
-    reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn("Retry cleanup", "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
+    reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn(t('standalone.retryCleanup'), "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
     observeServiceFrames();
     renderActionStates(root, actions, location.hash, el => actionIntent(el), visibleActionRecord);
     for (const el of root.querySelectorAll('[data-history-image]'))
@@ -4088,7 +4161,7 @@ function render() {
                         const b = document.createElement("button");
                         b.className = "button back-latest";
                         b.dataset.action = "scroll-bottom";
-                        b.textContent = "Back to latest";
+                        b.textContent = t('chat.backToLatest');
                         next.after(b);
                     }
                 }
@@ -4116,7 +4189,7 @@ function updatePendingNotices() {
         if (!node.querySelector('.pending-wait-message')) {
             const notice = document.createElement('small');
             notice.className = 'pending-wait-message';
-            notice.textContent = 'Still waiting for this step to finish. You can leave this view and check the original target later.';
+            notice.textContent = t('pending.stillWaitingLong');
             node.append(notice);
         }
     }
@@ -4295,7 +4368,7 @@ root.addEventListener("click", (e) => {
         if (view.modal) {
             const nameConflict = submittedName !== undefined && error instanceof DesktopError && error.code === 'WORK_NAME_CONFLICT';
             view.modalNameError = nameConflict ? { name: submittedName, message: error.message } : null;
-            view.modalError = nameConflict ? currentNameError() ? '' : `The request for Work name "${submittedName}" was rejected. ${error.message}`
+            view.modalError = nameConflict ? currentNameError() ? '' : t('name.requestRejected', { name: submittedName, detail: error.message })
                 : error instanceof Error ? error.message : String(error);
             render();
             if (currentNameError())
@@ -4502,7 +4575,7 @@ root.addEventListener("change", (e) => {
         const selection = ++selectionRequest;
         fileSelections.set(input.id, selection);
         const intent = { key: `file-input:${w?.id || 'local'}:${input.id}${input.id === 'upload-input' ? '' : ':' + selection}`, action: input.id, kind: input.id === 'upload-input' ? 'files' : 'read', work: w?.id, resource: input.id,
-            label: input.id === 'upload-input' ? 'Checking upload targets' : 'Reading selected file', target: `${w?.name || (adapter.hosted ? 'Server' : 'Local CLI')} · ${input.files?.[0]?.name || 'Selected files'}`, view: location.hash };
+            label: input.id === 'upload-input' ? t('actions.checkingUploadTargets') : t('actions.readingSelectedFile'), target: `${w?.name || (adapter.hosted ? t('target.server') : t('target.localCli'))} · ${input.files?.[0]?.name || t('target.selectedFiles')}`, view: location.hash };
         const origin = viewKey();
         void dispatchAction(input, record => handleFiles(input, record), intent).catch((err) => {
             if (err instanceof ViewChanged || origin !== viewKey())
@@ -4523,7 +4596,7 @@ async function handleFiles(input, record) {
         const selected = uploadPickerTarget;
         uploadPickerTarget = undefined;
         if (!w || !selected || selected.epoch !== epoch || selected.workId !== w.id || selected.directory !== view.path)
-            throw new Error('Upload not submitted: the original Work, directory, or identity changed while choosing files. Return to the intended Work and choose files again.');
+            throw new Error(t('upload.targetChangedDetailed'));
         pendingUploadTarget = selected;
         const directory = selected.directory, targets = files.map(file => ({ source: joinPath(directory, file.name) }));
         assertFileAdmission(w.id, targets);
@@ -4542,12 +4615,12 @@ async function handleFiles(input, record) {
             modalTransfers = results;
         }
         else if (results.length && results.every(row => row.status === "succeeded"))
-            toast("Upload complete.");
+            toast(t('upload.complete'));
         render();
     }
     else if (input.id === "work-file-input") {
         if (!files[0].name.endsWith(".work"))
-            throw Error("Choose a file with the .work extension.");
+            throw Error(t('import.chooseWorkExtension'));
         const transfer = await adapter.inspectWork(files[0]);
         if (!transfer || transfer !== adapter.inspectionTransfer)
             return;
@@ -4561,13 +4634,13 @@ async function handleFiles(input, record) {
         packageFiles = files;
         view.installSource =
             files.length > 1
-                ? `${files.length} local directory files`
+                ? t('package.localDirectoryFiles', { count: files.length })
                 : files[0].name;
         render();
     }
     else {
         if (files[0].size > 1048576)
-            throw Error("Configuration file exceeds the 1 MiB import limit.");
+            throw Error(t('configImport.tooLarge'));
         let text;
         try {
             text = new TextDecoder("utf-8", { fatal: true }).decode(await files[0].arrayBuffer());
@@ -4575,7 +4648,7 @@ async function handleFiles(input, record) {
         catch {
             if (!valid())
                 throw new ViewChanged();
-            throw Error("This configuration file is not valid UTF-8. Your existing draft is preserved.");
+            throw Error(t('configImport.notUtf8'));
         }
         if (!valid())
             throw new ViewChanged();
@@ -4622,7 +4695,7 @@ root.addEventListener("keydown", (e) => {
         e.preventDefault();
         launcher.click();
         if (e.key === 'ArrowUp')
-            root.querySelector('#modal [role=menuitem]:last-child')?.focus();
+            [...root.querySelectorAll('#modal [role=menuitem],#modal [role=menuitemradio]')].filter(node => !node.hasAttribute('disabled')).at(-1)?.focus();
         return;
     }
     if (e.isComposing || composition) {
@@ -4637,7 +4710,7 @@ root.addEventListener("keydown", (e) => {
         return;
     }
     if (dialog?.open && overlayRole(view.modal) === 'menu' && dialog.contains(e.target)) {
-        const options = [...dialog.querySelectorAll('[role=menuitem]:not([disabled])')];
+        const options = [...dialog.querySelectorAll('[role=menuitem]:not([disabled]),[role=menuitemradio]:not([disabled])')];
         const index = options.indexOf(document.activeElement), next = menuDestination(e.key, index, options.length);
         if (next >= 0) {
             e.preventDefault();
@@ -4810,6 +4883,7 @@ function handleRouteNavigation() {
     void loadRoute().catch(error => toast(error.message));
     render();
 }
+window.addEventListener("hashchange", () => languagePicker.close());
 window.addEventListener("hashchange", handleRouteNavigation);
 window.addEventListener("pagehide", () => { actions.clear(); adapter.stopDownloadObservers(); adapter.stopRunObservers(); adapter.abandonInspectionOnUnload(); adapter.stopFileReads(); });
 window.addEventListener("beforeunload", (e) => {
@@ -4904,7 +4978,7 @@ void initialization.then(async () => { view.coreAddress = adapter.state.core.add
     void adapter.loadPreferences(); await loadRoute(); }).catch(error => reportInitializationFailure(error, initializationContext.epoch, initializationContext.route));
 let packageFiles = [];
 let pendingUploadFiles = [];
-function downloadURL(url, workName = '') { const link = document.createElement('a'); link.href = url; link.download = ''; link.click(); toast(`${workName ? workName + ' · ' : ''}Download started. Check your browser to confirm it was saved.`); }
+function downloadURL(url, workName = '') { const link = document.createElement('a'); link.href = url; link.download = ''; link.click(); toast(`${workName ? workName + ' · ' : ''}${t('download.startedBrowser')}`); }
 let routeLoad = 0;
 const workReadErrors = new Map();
 function reportInitializationFailure(error, epoch, origin) {
@@ -4917,9 +4991,9 @@ function reportInitializationFailure(error, epoch, origin) {
 }
 function standaloneWorkUnavailable(r) {
     const error = workReadErrors.get(r[1]);
-    const identity = `Work ${r[1]} · Service ${r[2]} · Port ${r[3]}`;
-    const exits = workLink('Back to Work', r[1]) + btn('Back to Works', 'back-works');
-    return `${topbar()}<main class="standalone-app"><p>${esc(identity)}</p>${workReadPending(r[1]) ? readPlaceholder('Loading Work…', 'service') + exits : empty('grid', error?.missing ? 'Work not found' : 'Work unavailable', esc(error?.message || adapter.worksError || 'Read this Work again to confirm its current availability.'), btn('Retry', 'retry-work-read', 'primary') + exits)}</main>`;
+    const identity = t('standalone.identity', { work: r[1], service: r[2], port: r[3] });
+    const exits = workLink(t('work.backToWork'), r[1]) + btn(t('work.backToWorks'), 'back-works');
+    return `${topbar()}<main class="standalone-app"><p>${esc(identity)}</p>${workReadPending(r[1]) ? readPlaceholder(t('work.loading'), 'service') + exits : empty('grid', error?.missing ? t('work.notFoundTitle') : t('work.unavailableTitle'), esc(error?.message || adapter.worksError || t('work.readAgainHint')), btn(t('common.retry'), 'retry-work-read', 'primary') + exits)}</main>`;
 }
 function workReadPending(workId) {
     if ([...actions.records.values()].some(record => record.work === workId && record.pending))
@@ -4963,7 +5037,7 @@ async function loadRoute() {
         view.noteLoaded = '';
     }
     const choices = { area: areaChoice, service: serviceChoice, session: sessionChoice, file: fileChoice, modal: modalChoice };
-    const record = actions.begin({ key: `route:${r[1]}:${version}`, kind: 'read', work: r[1], label: 'Loading Work', target: r[1], view: location.hash });
+    const record = actions.begin({ key: `route:${r[1]}:${version}`, kind: 'read', work: r[1], label: t('actions.loadingWork'), target: r[1], view: location.hash });
     render();
     try {
         const work = await adapter.loadWork(r[1], r[0] !== 'app');
@@ -4996,7 +5070,7 @@ async function loadRoute() {
                 else {
                     view.file = filesTarget.path;
                     view.fileStatus = 'unavailable';
-                    view.fileError = 'This Work is not running. Start it to open its files.';
+                    view.fileError = t('files.workNotRunning');
                 }
                 if (!valid())
                     return;
@@ -5005,7 +5079,7 @@ async function loadRoute() {
                 view.path = '/';
                 view.file = '';
                 view.fileStatus = 'idle';
-                filesRestoreNotice = 'This file link is not valid.';
+                filesRestoreNotice = t('files.invalidLink');
                 if (adapter.project(work).usable)
                     await adapter.loadDirectory(work.id, '/').catch(() => undefined);
                 if (!valid())
@@ -5062,8 +5136,17 @@ function reconcileHTML(parent, html) {
     };
     const patch = (target, incoming) => {
         if (target instanceof Element && incoming instanceof Element) {
-            if (target instanceof HTMLIFrameElement)
+            if (target instanceof HTMLIFrameElement) {
+                // Keep the mounted document: never touch src/srcdoc, but sync the
+                // accessible presentation (title, aria-*) with the current language.
+                for (const attr of Array.from(incoming.attributes)) {
+                    if (attr.name === 'src' || attr.name === 'srcdoc')
+                        continue;
+                    if (target.getAttribute(attr.name) !== attr.value)
+                        target.setAttribute(attr.name, attr.value);
+                }
                 return;
+            }
             for (const attr of Array.from(target.attributes))
                 if (!incoming.hasAttribute(attr.name) && !((target instanceof HTMLDialogElement || target instanceof HTMLDetailsElement) && attr.name === 'open') && attr.name !== 'data-observed' && attr.name !== 'data-bound' && attr.name !== 'data-scroll-bound')
                     target.removeAttribute(attr.name);
@@ -5135,22 +5218,22 @@ function reconcileHTML(parent, html) {
     };
     children(parent, template.content);
 }
-function skillState(work, name, field) { const runtime = work.config.runtime?.skills?.find((s) => s.name === name); const value = runtime?.[field]; return value === undefined ? "Not provided" : field === "loaded" ? value ? "Loaded" : "Not loaded" : value ? "Visible to model" : "Not visible to model"; }
+function skillState(work, name, field) { const runtime = work.config.runtime?.skills?.find((s) => s.name === name); const value = runtime?.[field]; return value === undefined ? t('text.notProvided') : field === "loaded" ? value ? t('runtimeSkill.loaded') : t('runtimeSkill.notLoaded') : value ? t('runtimeSkill.visible') : t('runtimeSkill.notVisible'); }
 function brainBehavior(adoption) {
-    return adoption === "verified" ? "Behavior verified" : adoption === "failed" ? "Behavior checks failed" : adoption === "not-confirmed" ? "Behavior not confirmed" : "Behavior observation unavailable";
+    return adoption === "verified" ? t('brain.verified') : adoption === "failed" ? t('brain.failed') : adoption === "not-confirmed" ? t('brain.notConfirmed') : t('brain.unavailable');
 }
-function packageStatus(work, name) { const p = work.packageEntries?.find(p => p.name === name); return p ? `${p.pendingApply ? "Saved · Not applied" : "Saved"} · ${p.runtime?.loaded === true ? "Loaded" : p.runtime?.loaded === false ? "Not loaded" : "Loading unconfirmed"}${p.candidate ? ` · Work files candidate: ${p.candidate.preparation} · ${brainBehavior(p.candidate.adoption)}${p.candidate.apply?.state === "failed" ? " · Apply failed" : ""}` : ""}` : "Saved selection · Runtime not provided"; }
+function packageStatus(work, name) { const p = work.packageEntries?.find(p => p.name === name); return p ? `${p.pendingApply ? t('packageStatus.savedNotApplied') : t('packageStatus.saved')} · ${p.runtime?.loaded === true ? t('packageStatus.loaded') : p.runtime?.loaded === false ? t('packageStatus.notLoaded') : t('packageStatus.loadingUnconfirmed')}${p.candidate ? t('packageStatus.candidate', { preparation: p.candidate.preparation, behavior: brainBehavior(p.candidate.adoption) }) + (p.candidate.apply?.state === "failed" ? t('packageStatus.applyFailedSuffix') : "") : ""}` : t('packageStatus.runtimeNotProvided'); }
 function brainCandidateDetails(entry) {
     const candidate = entry?.candidate;
     if (!candidate)
-        return "<p>No candidate details available.</p>";
+        return `<p>${t('candidate.none')}</p>`;
     const baseline = candidate.baseline, verification = candidate.verification, apply = candidate.apply;
-    const selection = (enabled, matches) => typeof enabled !== "boolean" || typeof matches !== "boolean" ? "Baseline observation unavailable" : `${enabled ? "Enabled" : "Disabled"} at acceptance · ${matches ? "Still matches" : "Changed since acceptance"}`;
+    const selection = (enabled, matches) => typeof enabled !== "boolean" || typeof matches !== "boolean" ? t('candidate.baselineUnavailable') : t('candidate.selectionState', { state: enabled ? t('stateValue.enabled') : t('stateValue.disabled'), match: matches ? t('candidate.stillMatches') : t('candidate.changedSinceAcceptance') });
     const operation = (id, label) => btn(esc(label), "operation", "inline-link", `data-id="${esc(id)}"`);
     const applyKnown = apply?.availability === "available" && apply.operationId && apply.state;
-    const applyState = applyKnown ? `${apply.state === "failed" ? "Apply failed" : `Apply ${apply.state}`} · ${operation(apply.operationId, apply.operationId)}` : apply?.availability === "not-applied" ? "No matching Apply" : "Apply observation unavailable";
-    const preparation = candidate.preparation === "succeeded" ? "Published" : ["failed", "superseded", "cleanup-pending"].includes(candidate.preparation) ? candidate.preparation : "Preparing";
-    return `<h3>Candidate from ${esc(candidate.source)}</h3><dl><dt>Active selection at acceptance</dt><dd>${esc(selection(baseline?.activeSelected, baseline?.activeMatchesCurrent))}</dd><dt>Saved selection at acceptance</dt><dd>${esc(selection(baseline?.desiredSelected, baseline?.desiredMatchesCurrent))}</dd><dt>Fixed verification goal</dt><dd>${esc(verification?.goal ?? "Verification observation unavailable")}</dd><dt>Capability</dt><dd>${esc(verification?.toolName ?? "Unavailable")}</dd><dt>Input summary</dt><dd><pre>${esc(verification?.inputSummary ?? "Unavailable")}</pre></dd><dt>Required checks</dt><dd>${Array.isArray(verification?.checkNames) ? verification.checkNames.map((name) => `<div>${esc(name)}</div>`).join("") : "Unavailable"}</dd><dt>Preparation / publication</dt><dd>${esc(preparation)} · ${operation(candidate.operationId, "Preparation operation")}</dd><dt>Candidate saved</dt><dd>${candidate.desired ? "Yes" : "No"}</dd><dt>Candidate active</dt><dd>${candidate.active ? "Yes" : "No"}</dd><dt>Loaded</dt><dd>${entry?.runtime?.availability !== "available" ? "Loading observation unavailable" : entry.runtime.loaded === true ? "Yes" : entry.runtime.loaded === false ? "No" : "Loading unconfirmed"}</dd><dt>Original Apply</dt><dd>${applyState}</dd><dt>SDK behavior</dt><dd>${esc(brainBehavior(candidate.adoption))}</dd></dl>${apply?.error ? feedback(`${esc(apply.error.code)}: ${esc(apply.error.message)}`, "warning") : ""}${btn("Original request", "pi-request-detail", "small", `data-id="${esc(candidate.requestId)}"`)}`;
+    const applyState = applyKnown ? `${apply.state === "failed" ? t('candidate.applyFailed') : t('candidate.applyState', { state: apply.state })} · ${operation(apply.operationId, apply.operationId)}` : apply?.availability === "not-applied" ? t('candidate.noMatchingApply') : t('candidate.applyUnavailable');
+    const preparation = candidate.preparation === "succeeded" ? t('candidate.published') : ["failed", "superseded", "cleanup-pending"].includes(candidate.preparation) ? candidate.preparation : t('candidate.preparing');
+    return `<h3>${t('candidate.heading', { source: esc(candidate.source) })}</h3><dl><dt>${t('candidate.activeSelection')}</dt><dd>${esc(selection(baseline?.activeSelected, baseline?.activeMatchesCurrent))}</dd><dt>${t('candidate.savedSelection')}</dt><dd>${esc(selection(baseline?.desiredSelected, baseline?.desiredMatchesCurrent))}</dd><dt>${t('candidate.verificationGoal')}</dt><dd>${esc(verification?.goal ?? t('candidate.verificationUnavailable'))}</dd><dt>${t('candidate.capability')}</dt><dd>${esc(verification?.toolName ?? t('common.unavailable'))}</dd><dt>${t('candidate.inputSummary')}</dt><dd><pre>${esc(verification?.inputSummary ?? t('common.unavailable'))}</pre></dd><dt>${t('candidate.requiredChecks')}</dt><dd>${Array.isArray(verification?.checkNames) ? verification.checkNames.map((name) => `<div>${esc(name)}</div>`).join("") : t('common.unavailable')}</dd><dt>${t('candidate.preparation')}</dt><dd>${esc(preparation)} · ${operation(candidate.operationId, t('candidate.preparationOperation'))}</dd><dt>${t('candidate.saved')}</dt><dd>${candidate.desired ? t('candidate.yes') : t('candidate.no')}</dd><dt>${t('candidate.active')}</dt><dd>${candidate.active ? t('candidate.yes') : t('candidate.no')}</dd><dt>${t('candidate.loaded')}</dt><dd>${entry?.runtime?.availability !== "available" ? t('candidate.loadingUnavailable') : entry.runtime.loaded === true ? t('candidate.yes') : entry.runtime.loaded === false ? t('candidate.no') : t('packageStatus.loadingUnconfirmed')}</dd><dt>${t('candidate.originalApply')}</dt><dd>${applyState}</dd><dt>${t('candidate.sdkBehavior')}</dt><dd>${esc(brainBehavior(candidate.adoption))}</dd></dl>${apply?.error ? feedback(`${esc(apply.error.code)}: ${esc(apply.error.message)}`, "warning") : ""}${btn(t('candidate.originalRequest'), "pi-request-detail", "small", `data-id="${esc(candidate.requestId)}"`)}`;
 }
 function prepareSelectedEntry() {
     const work = current();
@@ -5176,7 +5259,7 @@ setInterval(() => {
 }, 5000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && adapter.state.signedIn && route()[0] === 'works')
     void adapter.listWorks().catch(() => undefined); exportFlows.setVisible(document.visibilityState === 'visible'); observeCurrentPage(); });
-window.addEventListener('pagehide', () => { exportFlows.revoke('This page ended. Find the original snapshot to download explicitly.'); adapter.observePage('', false); });
+window.addEventListener('pagehide', () => { exportFlows.revoke(t('export.pageEnded')); adapter.observePage('', false); });
 function consumeWebSelection(kind) { if (pendingWebCommand?.kind === kind) {
     if (view.drafts[pendingWebCommand.key] === pendingWebCommand.text)
         view.drafts[pendingWebCommand.key] = '';
@@ -5213,7 +5296,7 @@ root.addEventListener('change', event => { const input = event.target; if (input
 window.addEventListener('pagehide', () => { imageDrafts.clear(); adapter.stopImageReads(); imageObserver.disconnect(); });
 function productInfoMarkup(label, info, loading, error) {
     const build = info?.build, notes = info?.releaseNotes;
-    return `<section class="product-info"><h3>${esc(label)}</h3>${loading ? '<p>Loading version…</p>' : ''}${error ? feedback(esc(error), 'warning') : ''}${build ? `<dl><dt>Version</dt><dd>${esc(build.version)}</dd><dt>Build</dt><dd><code>${esc(build.commit)}</code>${build.modified ? ' · Modified' : ''}</dd><dt>Platform</dt><dd>${esc(build.os)} / ${esc(build.architecture)}</dd></dl><details><summary>Release notes</summary>${notes ? `<h4>${esc(notes.title)} · ${esc(notes.version)}</h4>${notes.publishedAt ? `<p>${esc(notes.publishedAt)}</p>` : ''}${(notes.sections ?? []).map((section) => `<h4>${esc(section.title)}</h4><ul>${section.items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>`).join('')}` : '<p>Release notes are not available for this build.</p>'}</details>` : ''}<p><a href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">All releases</a></p></section>`;
+    return `<section class="product-info"><h3>${esc(label)}</h3>${loading ? `<p>${t('product.loadingVersion')}</p>` : ''}${error ? feedback(esc(error), 'warning') : ''}${build ? `<dl><dt>${t('product.version')}</dt><dd>${esc(build.version)}</dd><dt>${t('product.build')}</dt><dd><code>${esc(build.commit)}</code>${build.modified ? t('product.modified') : ''}</dd><dt>${t('product.platform')}</dt><dd>${esc(build.os)} / ${esc(build.architecture)}</dd></dl><details><summary>${t('product.releaseNotes')}</summary>${notes ? `<h4>${esc(notes.title)} · ${esc(notes.version)}</h4>${notes.publishedAt ? `<p>${esc(notes.publishedAt)}</p>` : ''}${(notes.sections ?? []).map((section) => `<h4>${esc(section.title)}</h4><ul>${section.items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>`).join('')}` : `<p>${t('product.releaseNotesUnavailable')}</p>`}</details>` : ''}<p><a href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">${t('product.allReleases')}</a></p></section>`;
 }
 window.addEventListener("hashchange", () => { adapter.stopImageReads(); adapter.stopFileReads(); });
 function consumeImageSubmission(workId, submitted) {

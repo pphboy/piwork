@@ -1,5 +1,6 @@
 import { Marked, Renderer } from './marked.js';
 import { fileReferenceLink } from './file-reference.js';
+import { t } from './locale.js';
 const MAX_MARKDOWN_LENGTH = 64 * 1024;
 const MAX_MARKDOWN_LINES = 4096;
 const MAX_MARKDOWN_MARKERS = 4096;
@@ -34,11 +35,13 @@ class ChatRenderer extends Renderer {
     }
     code({ text, lang }) {
         const language = (lang || '').split(/\s/, 1)[0];
-        const label = language ? ` aria-label="${escapeHTML(language)} code"` : ' aria-label="Code"';
+        const label = language
+            ? ` aria-label="${escapeHTML(t('d.chat.codeLabelLanguage', { language }))}"`
+            : ` aria-label="${escapeHTML(t('d.chat.codeLabel'))}"`;
         return `<pre class="chat-markdown-code" tabindex="0"${label}><code>${escapeHTML(text)}\n</code></pre>\n`;
     }
     table(token) {
-        return `<div class="chat-markdown-table" tabindex="0" role="region" aria-label="Table">${super.table(token)}</div>\n`;
+        return `<div class="chat-markdown-table" tabindex="0" role="region" aria-label="${escapeHTML(t('d.chat.tableLabel'))}">${super.table(token)}</div>\n`;
     }
     link({ href, title, tokens }) {
         const label = this.parser.parseInline(tokens);
@@ -46,7 +49,7 @@ class ChatRenderer extends Renderer {
         // and the reply's real Work both validate. Otherwise it stays label text.
         const file = fileReferenceLink(href, this.workId);
         if (file)
-            return `<a class="chat-file-link" href="${escapeHTML(file.href)}" data-path="${escapeHTML(file.path)}" title="Open in Files">${label}</a>`;
+            return `<a class="chat-file-link" href="${escapeHTML(file.href)}" data-path="${escapeHTML(file.path)}" title="${escapeHTML(t('d.chat.openInFiles'))}">${label}</a>`;
         const destination = safeLink(href);
         if (!destination)
             return label;
@@ -55,7 +58,8 @@ class ChatRenderer extends Renderer {
     image({ text }) {
         // Do not fetch model-provided remote images or tracking URLs. Actual chat
         // attachments use the existing authenticated image pipeline separately.
-        return `<span class="chat-markdown-image">[Image: ${escapeHTML(text || 'image')}]</span>`;
+        const alt = escapeHTML(text || t('d.chat.imageFallback'));
+        return `<span class="chat-markdown-image">${t('d.chat.imageLabel', { text: alt })}</span>`;
     }
 }
 /** Safe GFM for assistant prose, including incomplete streamed fences.

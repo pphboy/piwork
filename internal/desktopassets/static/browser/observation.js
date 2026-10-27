@@ -1,10 +1,11 @@
+import { t } from './locale.js';
 export class ObservationDeferred extends Error {
 }
 export class ObservationStopped extends Error {
 }
 export class ObservationTimeout extends Error {
     code = 'READ_TIMEOUT';
-    constructor() { super('The status read timed out. Check the original object again.'); }
+    constructor() { super(t('d.error.observationTimeout')); }
 }
 /** Only metadata GETs enter this coordinator. It never owns a mutation or remote cancellation. */
 export class MetadataReads {
@@ -27,7 +28,7 @@ export class MetadataReads {
         state.paused = false;
     } }
     cancel() { for (const controller of this.controllers)
-        controller.abort(new ObservationStopped('Observation ended.')); }
+        controller.abort(new ObservationStopped(t('d.error.observationEnded'))); }
     clear() { this.cancel(); this.states.clear(); this.pending.clear(); }
     nextDelay(defaultMs = 2000, keys) {
         const waits = [...this.states].filter(([key]) => !keys || keys.includes(key)).map(([, state]) => state).filter(state => !state.paused && state.failures).map(state => state.nextAt > this.now() ? state.nextAt - this.now() : defaultMs);
@@ -45,7 +46,7 @@ export class MetadataReads {
         if (explicit)
             Object.assign(state, { failures: 0, nextAt: 0, paused: false });
         if (!this.canRead(key))
-            return Promise.reject(new ObservationDeferred(state.error || 'Status checking is paused.'));
+            return Promise.reject(new ObservationDeferred(state.error || t('d.error.statusPaused')));
         const owned = state, controller = new AbortController();
         this.controllers.add(controller);
         const task = (async () => {

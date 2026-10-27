@@ -71,7 +71,7 @@ test('successful logout clears only piwork:web: sessionStorage keys',async({page
 
 test('failed logout preserves sessionStorage and stays on the current view',async({page})=>{
  await waiting(page,{handle:r=>r.path==='logout'?{status:502,json:{message:'Synthetic sign-out failure'}}:null});await seed(page);const before=await storage(page);
- await signOut(page).click();await expect(page.locator('#setup-notice')).toContainText('Synthetic sign-out failure');await expect(signOut(page)).toBeEnabled();
+ await signOut(page).click();await expect(page.locator('#setup-notice')).toContainText('The request failed. Check the current state before continuing.');await expect(page.locator('#setup-notice')).not.toContainText('Synthetic sign-out failure');await expect(signOut(page)).toBeEnabled();
  expect(await storage(page)).toEqual(before);await expect(page).toHaveURL(base+'/setup');
 });
 
@@ -84,6 +84,6 @@ test('late logout success after pagehide/pageshow cannot clear newer storage or 
  await signOut(page).click();await expect.poll(()=>writes).toBe(2);
  const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/_web/api/logout');oldWrite.resolve();await(await response).finished();await page.evaluate(()=>new Promise(done=>setTimeout(done,0)));
  expect(await storage(page)).toEqual(newer);await expect(page).toHaveURL(base+'/setup');await expect(signOut(page)).toBeDisabled();await expect(page.locator('#setup-notice')).toHaveText('');
- newWrite.resolve();await expect(page.locator('#setup-notice')).toContainText('Synthetic current sign-out failure');await expect(signOut(page)).toBeEnabled();expect(await storage(page)).toEqual(newer);await expect(page).toHaveURL(base+'/setup');
+ newWrite.resolve();await expect(page.locator('#setup-notice')).toContainText('The request failed. Check the current state before continuing.');await expect(page.locator('#setup-notice')).not.toContainText('Synthetic current sign-out failure');await expect(signOut(page)).toBeEnabled();expect(await storage(page)).toEqual(newer);await expect(page).toHaveURL(base+'/setup');
  expect(state.requests.filter(r=>r.method!=='GET').map(r=>r.path)).toEqual(['logout','logout']);
 });

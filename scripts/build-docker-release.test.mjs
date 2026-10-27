@@ -12,6 +12,8 @@ function fixture(t) {
   for (const name of ['cmd', 'internal/releaseinfo', 'internal/corestore', 'proto', 'packages', 'apps/desktop-webui/src', 'apps/desktop-webui/public', 'apps/desktop-webui/scripts', 'scripts', 'config', 'deploy/docker', 'examples/single-host', 'apps/ui-shared/assets']) mkdirSync(join(base, name), { recursive: true });
   for (const name of ['apps/desktop-webui/tsconfig.json', 'apps/desktop-webui/package.json', 'scripts/sync-desktop-assets.mjs', 'package-lock.json']) writeFileSync(join(base, name), '{}');
   writeFileSync(join(base,'apps/ui-shared/browser-crypto.js'),'synthetic browser crypto');
+  writeFileSync(join(base,'apps/ui-shared/i18n.js'),'synthetic shared language runtime');
+  writeFileSync(join(base,'apps/ui-shared/boot.js'),'synthetic boot module');
   writeFileSync(join(base,'apps/ui-shared/tokens.css'),'synthetic shared tokens');
   writeFileSync(join(base,'apps/ui-shared/controls.css'),'synthetic shared controls');
   writeFileSync(join(base, 'package.json'), '{"version":"0.0.1"}');

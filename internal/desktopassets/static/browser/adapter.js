@@ -1,4 +1,5 @@
 import { randomUUID, sha256Hex } from './browser-crypto.js';
+import { LocalizedMessage, t } from './locale.js';
 import { historyMessages, resultText, upsertTool } from './chat-projection.js';
 import { HistoryProjection } from './history-projection.js';
 import { synchronizeConfiguration } from './configuration.js';
@@ -14,17 +15,57 @@ export class DesktopError extends Error {
     code;
     httpStatus;
     field;
-    constructor(code, message, httpStatus, field) {
-        super(message);
+    messageKey;
+    params;
+    /** Untrusted server diagnostic kept beside the localized main message. */
+    raw;
+    constructor(code, message, httpStatus, field, messageKey, params, raw) {
+        super(messageKey ? t(messageKey, params) + (raw ? ` ${raw}` : '') : message);
         this.code = code;
         this.httpStatus = httpStatus;
         this.field = field;
+        this.messageKey = messageKey;
+        this.params = params;
+        this.raw = raw || undefined;
     }
+}
+/** Create a localized error whose text is re-rendered from its catalog key. */
+function failure(code, key, params, httpStatus, field, raw) {
+    return new DesktopError(code, key, httpStatus, field, key, params, raw);
+}
+const localizedMessages = new Map();
+/** Intern by key, params and raw so one cached feedback value keeps a stable identity. */
+function localized(key, params, raw) {
+    const paramKey = params ? JSON.stringify(Object.keys(params).sort().map(name => [name, params[name]])) : '';
+    const id = `${key}\u0000${paramKey}\u0000${raw ?? ''}`;
+    let value = localizedMessages.get(id);
+    if (!value) {
+        value = new LocalizedMessage(key, params, raw);
+        localizedMessages.set(id, value);
+    }
+    return value;
+}
+/** A cached localized value for fields still typed as string in the view models. */
+const localizedText = (key, params) => localized(key, params);
+/**
+ * Render a user-facing error in the current locale. Locally produced errors
+ * carry a catalog key; unknown server text is returned as diagnostic data only.
+ */
+export function describeError(error) {
+    return String(errorFeedback(error));
+}
+function errorFeedback(error) {
+    const value = error;
+    if (value?.messageKey)
+        return localized(value.messageKey, value.params, value.raw);
+    return value?.message || String(error ?? '');
 }
 const part = encodeURIComponent;
 const runStates = ['interrupted', 'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'];
 const blankConfig = () => ({ skills: [], packages: [], agents: '', advanced: '{}', revision: 0, activeRevision: 0, loaded: false, modelVisible: false });
-const errorText = (error) => error instanceof Error ? error.message : String(error);
+// The runtime value may be an interned LocalizedMessage; the cast keeps existing
+// model fields (typed string) and String/esc interpolation working unchanged.
+const errorText = (error) => errorFeedback(error);
 const stateLabel = (value) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', recovering: 'Recovering', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
 const diagnosticText = (value) => typeof value === 'string' ? value : '';
 /** Copy only the typed public diagnostic fields; never stringify an unknown object or infer a stage. */
@@ -72,7 +113,7 @@ export class DesktopAdapter {
         this.historyProjections.set(key, value);
     } return value; }
     historyNotice(id) {
-        return this.historySupport.get(id) === false ? 'Paged history is unavailable for this Work. Legacy history reads have size limits. Update Core and the Work Agent image as needed, then explicitly Apply the compatible Agent image to enable paged history.' : '';
+        return this.historySupport.get(id) === false ? t('d.error.historyNotice') : '';
     }
     legacyHistoryLimit(id, error) {
         return this.historySupport.get(id) === false && error instanceof DesktopError && ['RESPONSE_TOO_LARGE', 'RATE_LIMITED', 'HISTORY_UNSUPPORTED'].includes(error.code);
@@ -86,7 +127,7 @@ export class DesktopAdapter {
             if (epoch !== this.epoch)
                 return false;
             if (value.contractVersion !== 1 || value.profile !== 'session-history-v1' || value.pageBytes !== 524288)
-                throw new DesktopError('INVALID_RESPONSE', 'History capabilities are incomplete.');
+                throw failure('INVALID_RESPONSE', 'd.error.historyCapabilities');
             this.historySupport.set(id, true);
             return true;
         }
@@ -103,13 +144,13 @@ export class DesktopAdapter {
     async historyPage(id, sessionId, query, signal) {
         const value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}/history?${query}`, 'GET', undefined, signal);
         if (value.contractVersion !== 1 || value.session?.workId !== id || value.session?.sessionId !== sessionId || typeof value.snapshotId !== 'string' || !Array.isArray(value.segments) || !Array.isArray(value.runs) || value.hasMore !== (typeof value.nextCursor === 'string' && !!value.nextCursor))
-            throw new DesktopError('INVALID_RESPONSE', 'History page does not match this conversation.');
+            throw failure('INVALID_RESPONSE', 'd.error.historyPageMismatch');
         if (query.has('snapshot') && query.get('snapshot') !== value.snapshotId || query.has('cursor') && query.get('cursor') === value.nextCursor)
-            throw new DesktopError('INVALID_RESPONSE', 'History range did not advance within the requested snapshot.');
+            throw failure('INVALID_RESPONSE', 'd.error.historyRangeNoAdvance');
         return value;
     }
     async loadEarlierHistory(id, sessionId, reload = false) { const work = this.getWork(id); if (!work || !this.project(work).usable)
-        throw new DesktopError('WORK_UNAVAILABLE', 'Start the Work explicitly before reading more history.'); return this.loadPagedSession(id, sessionId, !reload); }
+        throw failure('WORK_UNAVAILABLE', 'd.error.startBeforeHistory'); return this.loadPagedSession(id, sessionId, !reload); }
     loadPagedSession(id, sessionId, earlier = false) {
         const key = `${id}:${sessionId}:${earlier}`, pending = this.historyReads.get(key);
         if (pending)
@@ -183,7 +224,7 @@ export class DesktopAdapter {
         if (!run.resultRef)
             return '';
         if (run.resultRef.workId !== id || run.resultRef.sessionId !== run.sessionId || run.resultRef.runId !== run.id)
-            throw new DesktopError('INVALID_RESPONSE', 'Result reference does not match the original Run.');
+            throw failure('INVALID_RESPONSE', 'd.error.resultRefMismatch');
         const query = new URLSearchParams({ direction: 'newer', content: 'result', runId: run.id, ...(run.resultRef.snapshot ? { snapshot: run.resultRef.snapshot } : {}) });
         let cursor = null, block = '', offset = 0, complete = false;
         const text = [];
@@ -195,23 +236,23 @@ export class DesktopAdapter {
                 query.set('snapshot', page.snapshotId);
             for (const part of page.segments) {
                 if (part.runId !== run.id || !['text', 'run-result'].includes(part.type) || part.blockId !== block && block && !complete)
-                    throw new DesktopError('INVALID_RESPONSE', 'Result contains conflicting ranges.');
+                    throw failure('INVALID_RESPONSE', 'd.error.resultConflictingRanges');
                 if (part.blockId !== block) {
                     block = part.blockId;
                     offset = 0;
                 }
                 if (part.byteOffset !== offset)
-                    throw new DesktopError('RESPONSE_INCOMPLETE', 'Result contains a missing range.');
+                    throw failure('RESPONSE_INCOMPLETE', 'd.error.resultMissingRange');
                 text.push(part.text);
                 offset += new TextEncoder().encode(part.text).length;
                 complete = part.complete;
             }
             if (page.nextCursor === cursor && cursor)
-                throw new DesktopError('INVALID_RESPONSE', 'Result cursor did not advance.');
+                throw failure('INVALID_RESPONSE', 'd.error.resultCursor');
             cursor = page.nextCursor;
         } while (cursor);
         if (!block || !complete)
-            throw new DesktopError('RESPONSE_INCOMPLETE', 'The saved result is incomplete.');
+            throw failure('RESPONSE_INCOMPLETE', 'd.error.savedResultIncomplete');
         return text.join('');
     }
     async loadSavedRun(id, run, signal) {
@@ -272,7 +313,7 @@ export class DesktopAdapter {
             this.emit();
         } });
         if (!this.state.signedIn) {
-            this.about.coreError = 'Sign in to read the connected Core version.';
+            this.about.coreError = localizedText('d.error.signInCoreVersion');
             return;
         }
         this.about.coreLoading = true;
@@ -281,7 +322,7 @@ export class DesktopAdapter {
             this.about.core = value;
             this.about.coreChecked = new Date().toISOString();
         } }).catch(error => { if (epoch === this.epoch)
-            this.about.coreError = error.httpStatus === 404 ? 'This Core does not support version information.' : errorText(error); }).finally(() => { if (epoch === this.epoch) {
+            this.about.coreError = error.httpStatus === 404 ? localizedText('d.error.coreVersionUnsupported') : errorText(error); }).finally(() => { if (epoch === this.epoch) {
             this.about.coreLoading = false;
             this.emit();
         } });
@@ -305,12 +346,12 @@ export class DesktopAdapter {
             if (epoch !== this.epoch)
                 return;
             if (value.profile !== 'chat-images-v1')
-                throw new Error('Image input is not supported by this Work.');
+                throw new Error(t('d.error.imageUnsupported'));
             state.value = value;
         }
         catch (error) {
             if (epoch === this.epoch)
-                state.error = [404, 501].includes(error.httpStatus || 0) ? 'Image input is unavailable. Update Core or the Work Agent as needed, then explicitly Apply the compatible Agent image.' : errorText(error);
+                state.error = [404, 501].includes(error.httpStatus || 0) ? localizedText('d.error.imageUnavailable') : errorText(error);
         }
         finally {
             if (epoch === this.epoch) {
@@ -334,12 +375,12 @@ export class DesktopAdapter {
     imageInputReason(id, sessionId) {
         const capability = this.imageCapabilities.get(id);
         if (!capability || capability.loading)
-            return 'Checking image input support…';
+            return t('d.error.imageChecking');
         if (!capability.value)
-            return capability.error || 'Update the Work Agent and Apply to use image input.';
+            return capability.error || t('d.error.imageUpdateAgent');
         const ref = this.modelSelection(id, sessionId).ref;
         const model = ref === null ? capability.value.defaultModel : capability.value.models.find((m) => m.modelRef === ref);
-        return model?.availability === 'supported' ? '' : model?.availability === 'unsupported' ? 'This model does not support images. Choose an image-capable model.' : 'Image capability is unconfirmed. Choose an image-capable model.';
+        return model?.availability === 'supported' ? '' : model?.availability === 'unsupported' ? t('d.error.imageModelUnsupported') : t('d.error.imageUnconfirmed');
     }
     historyImageKey(id, session, run, index) { return `${id}:${session}:${run}:${index}`; }
     loadHistoryImage(id, session, run, image) {
@@ -361,16 +402,16 @@ export class DesktopAdapter {
                     const value = await response.json().catch(() => ({}));
                     if (response.status === 401)
                         await this.checkSession().catch(() => undefined);
-                    throw new Error(value.message || value.code || 'Image could not be read.');
+                    throw failure('IMAGE_READ_FAILED', 'd.error.imageReadFailed', undefined, response.status, undefined, typeof value.message === 'string' && value.message ? value.message : undefined);
                 }
                 if (response.headers.get('Content-Type') !== image.mimeType || Number(response.headers.get('Content-Length')) !== image.byteSize || image.byteSize > 5 * 1024 ** 2)
-                    throw new Error('The image response could not be verified.');
+                    throw new Error(t('d.error.imageResponseUnverified'));
                 const blob = await response.blob();
                 if (blob.size !== image.byteSize)
-                    throw new Error('The image response is incomplete.');
+                    throw new Error(t('d.error.imageResponseIncomplete'));
                 const hash = await sha256Hex(new Uint8Array(await blob.arrayBuffer()));
                 if (hash !== image.sha256)
-                    throw new Error('The saved image is corrupt.');
+                    throw new Error(t('d.error.imageCorrupt'));
                 if (epoch !== this.epoch || controller.signal.aborted)
                     return;
                 state.url = URL.createObjectURL(blob);
@@ -506,20 +547,20 @@ export class DesktopAdapter {
                 ...(method === 'PUT' ? { body: JSON.stringify({ coreUrl }) } : {}) });
         }
         catch {
-            throw new DesktopError(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'Default Core could not be read. Check the connection and try reading again.' : 'The response was lost. Read the saved default before making another change.');
+            throw failure(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'd.error.preferencesReadFailed' : 'd.error.preferencesResponseLost');
         }
         const value = await response.json().catch(() => null);
         if (csrf !== this.csrf)
-            throw new DesktopError(method === 'GET' ? 'LOCAL_AUTH_REQUIRED' : 'RESULT_UNKNOWN', 'The session changed. Read the saved default again before making another change.');
+            throw failure(method === 'GET' ? 'LOCAL_AUTH_REQUIRED' : 'RESULT_UNKNOWN', 'd.error.preferencesSessionChanged');
         if (!response.ok) {
             const code = value?.code || (method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN');
             if (['LOCAL_AUTH_REQUIRED', 'LOCAL_CSRF_OR_AUTH_REQUIRED'].includes(code))
                 await this.checkSession().catch(() => undefined);
-            const message = { INVALID_DESKTOP_PREFERENCES: 'Enter an HTTP(S) Core origin without credentials, a path, query, or fragment.', DESKTOP_PREFERENCES_BUSY: 'Another instance is saving the default. Wait, read it again, then retry.', DESKTOP_PREFERENCES_UNAVAILABLE: 'The saved default is corrupt or storage is unsafe or unavailable. Restore automatic selection for a corrupt record; check the storage location for permission errors.', DESKTOP_PREFERENCES_OUTCOME_UNKNOWN: 'The change was committed but could not be confirmed. Read the saved default before making another change.' }[code] || 'Default Core could not be confirmed. Check the connection and read again.';
-            throw new DesktopError(code, message, response.status);
+            const key = { INVALID_DESKTOP_PREFERENCES: 'd.error.preferencesInvalidOrigin', DESKTOP_PREFERENCES_BUSY: 'd.error.preferencesBusy', DESKTOP_PREFERENCES_UNAVAILABLE: 'd.error.preferencesUnavailable', DESKTOP_PREFERENCES_OUTCOME_UNKNOWN: 'd.error.preferencesOutcomeUnknown' }[code] || 'd.error.preferencesUnconfirmed';
+            throw failure(code, key, undefined, response.status);
         }
         if (!value || Object.keys(value).length !== 1 || !('coreUrl' in value) || value.coreUrl !== null && typeof value.coreUrl !== 'string')
-            throw new DesktopError(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', 'The response could not be verified. Read the saved default again.');
+            throw failure(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', 'd.error.preferencesUnverified');
         return value.coreUrl;
     }
     async loadPreferences() {
@@ -564,7 +605,7 @@ export class DesktopAdapter {
                     throw new Error();
             }
             catch {
-                this.preferences.error = 'Enter an HTTP(S) Core origin without credentials, a path, query, or fragment.';
+                this.preferences.error = localizedText('d.error.preferencesInvalidOrigin');
                 this.emit();
                 return;
             }
@@ -581,7 +622,7 @@ export class DesktopAdapter {
             const saved = await this.preferenceRequest(coreUrl === null ? 'DELETE' : 'PUT', coreUrl ?? undefined);
             if (sequence !== this.preferenceSequence)
                 return;
-            Object.assign(this.preferences, { phase: 'idle', confirmed: true, coreUrl: saved, notice: saved === null ? 'Automatic selection restored for next launch.' : 'Default Core saved for next launch.', waiting: false });
+            Object.assign(this.preferences, { phase: 'idle', confirmed: true, coreUrl: saved, notice: saved === null ? localizedText('d.error.preferencesRestored') : localizedText('d.error.preferencesSaved'), waiting: false });
             this.preferenceNotice = setTimeout(() => { if (sequence === this.preferenceSequence) {
                 this.preferences.notice = '';
                 this.emit();
@@ -616,7 +657,7 @@ export class DesktopAdapter {
         const previous = this.terminalEvidence.get(operation.id);
         this.terminalEvidence.set(operation.id, { operation: { ...operation }, generation: previous?.generation ?? (intent?.operationId === operation.id ? intent.sequence : this.workMutations.get(operation.workId) || 0) });
     }
-    getSkills() { const copies = this.state.works.flatMap(work => work.config.skills).filter((name, i, all) => all.indexOf(name) === i && !this.skills.some(s => s.id === name)); return [...this.skills, ...copies.map(name => ({ id: name, name, description: 'Saved Work copy; unavailable in current Core catalog', version: null, loaded: null, modelVisible: null }))]; }
+    getSkills() { const copies = this.state.works.flatMap(work => work.config.skills).filter((name, i, all) => all.indexOf(name) === i && !this.skills.some(s => s.id === name)); return [...this.skills, ...copies.map(name => ({ id: name, name, description: 'Saved Work copy; unavailable in current Core catalog', version: null, loaded: null, modelVisible: null }))]; } // i18n-exempt: app.ts 用作本地占位 Skill 的比较哨兵
     getPackages() { return this.packages; }
     getSnapshot(id) { return this.state.snapshots.find(snapshot => snapshot.id === id); }
     logExport = null;
@@ -697,7 +738,7 @@ export class DesktopAdapter {
         try {
             const value = await this.request(`log-exports/${part(state.id)}`);
             if (epoch !== this.epoch || this.logExport !== state)
-                throw new DesktopError('CONNECTION_CHANGED', 'The original export identity ended.');
+                throw failure('CONNECTION_CHANGED', 'd.error.exportIdentityEnded');
             const progress = value.progress || {};
             const result = value.result || {};
             Object.assign(state, {
@@ -923,7 +964,7 @@ export class DesktopAdapter {
     }
     mergeWork(raw, sequence, mutation, recoverAccess = false) {
         if (!raw || typeof raw.id !== 'string' || typeof raw.observedState !== 'string' || !['running', 'stopped', 'deleted'].includes(raw.desiredState))
-            throw new DesktopError('INVALID_RESPONSE', 'The Work status response is incomplete.');
+            throw failure('INVALID_RESPONSE', 'd.error.workStatusIncomplete');
         const old = this.getWork(raw.id);
         if (mutation !== (this.workMutations.get(raw.id) || 0) || sequence < (this.workReads.get(raw.id) || 0))
             return old;
@@ -967,33 +1008,33 @@ export class DesktopAdapter {
             response = await fetch(`/_desktop/api/${path}`, { method, credentials: 'same-origin', signal, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-Piwork-Csrf': this.csrf, ...headers }, ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }) });
         }
         catch {
-            throw new DesktopError(method === 'GET' ? 'CORE_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? (this.hosted ? 'The server connection is unavailable. Check the server and retry this read.' : 'The local connection is unavailable. Check the CLI and Core.') : 'The response was lost. Check known operations before submitting again.');
+            throw failure(method === 'GET' ? 'CORE_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? (this.hosted ? 'd.error.serverUnavailable' : 'd.error.localUnavailable') : 'd.error.responseLostOperations');
         }
         if (epoch !== this.epoch)
-            throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This response was discarded.');
+            throw failure('CONNECTION_CHANGED', 'd.error.coreAccountChanged');
         const value = await response.json().catch(() => null);
         if (epoch !== this.epoch)
-            throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while reading the response.');
+            throw failure('CONNECTION_CHANGED', 'd.error.identityChangedReading');
         if (!response.ok) {
             const code = value?.code ?? `HTTP_${response.status}`;
             if (path !== 'session' && ['LOCAL_AUTH_REQUIRED', 'LOCAL_CSRF_OR_AUTH_REQUIRED'].includes(code)) {
                 if (authSequence !== this.authSequence)
-                    throw new DesktopError('CONNECTION_CHANGED', 'A newer sign-in flow owns this response.');
+                    throw failure('CONNECTION_CHANGED', 'd.error.signInOwnsResponse');
                 const pending = this.checkSession(), sequence = this.authSequence;
                 await pending.catch(() => undefined);
                 if (sequence !== this.authSequence)
-                    throw new DesktopError('CONNECTION_CHANGED', 'A newer sign-in flow owns this readback.');
-                throw new DesktopError(code, this.state.sessionState === 'ready' ? 'The session was refreshed. The original action was rejected locally; submit it explicitly again if needed.' : 'The browser session could not be restored. Retry the connection before submitting again.', response.status);
+                    throw failure('CONNECTION_CHANGED', 'd.error.signInOwnsReadback');
+                throw failure(code, this.state.sessionState === 'ready' ? 'd.error.sessionRefreshed' : 'd.error.browserSessionRestore', undefined, response.status);
             }
             else if (response.status === 401 && path !== 'login' && path !== 'session') {
                 if (authSequence !== this.authSequence)
-                    throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this response.');
+                    throw failure('CONNECTION_CHANGED', 'd.error.authOwnsResponse');
                 const pending = this.checkSession(), sequence = this.authSequence;
                 const session = await pending;
                 if (sequence !== this.authSequence)
-                    throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this readback.');
+                    throw failure('CONNECTION_CHANGED', 'd.error.authOwnsReadback');
                 if (session.state === 'offline')
-                    throw new DesktopError('CORE_UNAVAILABLE', 'Core is unreachable. Last confirmed data is preserved.');
+                    throw failure('CORE_UNAVAILABLE', 'd.error.coreUnreachable');
                 if (session.state === 'signed-out') {
                     if (epoch === this.epoch)
                         this.clearIdentity();
@@ -1002,15 +1043,18 @@ export class DesktopAdapter {
                     this.emit();
                 }
             }
-            const serviceErrors = {
-                SERVICE_ENTRY_LIMIT: 'The server has reached its active Service entry limit. Close unused browser sessions before retrying.',
-                SERVICE_GENERATION_CHANGED: 'The Work or Service restarted. Reopen its current entry from this Work.',
+            const serviceKeys = {
+                SERVICE_ENTRY_LIMIT: 'd.error.serviceEntryLimit',
+                SERVICE_GENERATION_CHANGED: 'd.error.workOrServiceRestarted',
             };
-            const message = serviceErrors[code] || (code === 'WORK_NAME_CONFLICT' ? 'This Work name is already in use or reserved. Choose a different name.' : value?.message ?? `Request failed (${response.status}).`);
-            throw new DesktopError(code, message, response.status, value?.field === 'name' ? 'name' : undefined);
+            const mapped = serviceKeys[code];
+            const key = mapped ?? (code === 'WORK_NAME_CONFLICT' ? 'd.error.workNameConflict' : 'd.error.requestFailed');
+            // A server sentence is an untrusted diagnostic beside the localized main message.
+            const raw = !mapped && code !== 'WORK_NAME_CONFLICT' && typeof value?.message === 'string' && value.message ? value.message : undefined;
+            throw failure(code, key, key === 'd.error.requestFailed' ? { status: response.status } : undefined, response.status, value?.field === 'name' ? 'name' : undefined, raw);
         }
         if (!value || typeof value !== 'object')
-            throw new DesktopError('INVALID_RESPONSE', 'The server returned an invalid response.');
+            throw failure('INVALID_RESPONSE', 'd.error.invalidResponse');
         return value;
     }
     acceptSession(value) {
@@ -1048,16 +1092,16 @@ export class DesktopAdapter {
     unavailableSession(error) {
         this.state.sessionState = 'unavailable';
         this.state.sessionError = error instanceof DesktopError && error.code === 'LOCAL_SESSION_CAPACITY'
-            ? 'Desktop has reached 128 active browser sessions. Wait for an unused session to expire, then retry the connection.'
+            ? t('d.error.sessionCapacity')
             : error instanceof DesktopError && error.code === 'LOCAL_SESSION_UNAVAILABLE'
-                ? 'Desktop could not create a browser session. Retry the connection.'
+                ? t('d.error.sessionCreateFailed')
                 : errorText(error);
         this.emit();
     }
     sessionRead(signal) {
         return this.request('session', 'GET', undefined, signal).then(value => {
             if (!['signed-out', 'authenticated', 'offline'].includes(value.state) || typeof value.csrf !== 'string' || !value.csrf || !Number.isInteger(value.generation) || typeof value.coreUrl !== 'string')
-                throw new DesktopError('INVALID_RESPONSE', 'The session response could not be verified. Retry the connection.');
+                throw failure('INVALID_RESPONSE', 'd.error.sessionResponseUnverified');
             return value;
         });
     }
@@ -1070,13 +1114,13 @@ export class DesktopAdapter {
             try {
                 let value = await this.sessionRead(controller.signal);
                 if (epoch !== this.epoch || sequence !== this.authSequence)
-                    throw new DesktopError('CONNECTION_CHANGED', 'An older session read was discarded.');
+                    throw failure('CONNECTION_CHANGED', 'd.error.olderSessionDiscarded');
                 if (value.sessionCreated === true) {
                     const confirmed = await this.sessionRead(controller.signal);
                     if (epoch !== this.epoch || sequence !== this.authSequence)
-                        throw new DesktopError('CONNECTION_CHANGED', 'An older session read was discarded.');
+                        throw failure('CONNECTION_CHANGED', 'd.error.olderSessionDiscarded');
                     if (confirmed.sessionCreated === true || confirmed.csrf !== value.csrf)
-                        throw new DesktopError('SESSION_COOKIE_UNAVAILABLE', 'This browser did not retain its session Cookie. Allow cookies for this Desktop, then retry the connection.');
+                        throw failure('SESSION_COOKIE_UNAVAILABLE', 'd.error.sessionCookie');
                     value = confirmed;
                 }
                 this.acceptSession(value);
@@ -1093,7 +1137,7 @@ export class DesktopAdapter {
             }
             catch (error) {
                 if (epoch !== this.epoch || sequence !== this.authSequence)
-                    throw new DesktopError('CONNECTION_CHANGED', 'An older session read was discarded.');
+                    throw failure('CONNECTION_CHANGED', 'd.error.olderSessionDiscarded');
                 if (!(error instanceof DesktopError && error.code === 'CONNECTION_CHANGED'))
                     this.unavailableSession(error);
                 throw error;
@@ -1117,7 +1161,7 @@ export class DesktopAdapter {
         const pending = this.checkSession(), sequence = this.authSequence;
         const slow = setTimeout(() => {
             if (sequence === this.authSequence && this.state.sessionState === 'loading') {
-                this.state.sessionError = 'Still reading your Desktop session. You can retry the connection if the server is unavailable.';
+                this.state.sessionError = localizedText('d.error.stillReadingSession');
                 this.emit();
             }
         }, 10000);
@@ -1248,11 +1292,11 @@ export class DesktopAdapter {
         try {
             const { value, sequence } = await this.readMetadata('works', explicit);
             if (epoch !== this.epoch)
-                throw new ObservationStopped('The identity changed.');
+                throw new ObservationStopped(t('d.error.identityChanged'));
             if (sequence < this.worksReadSequence)
                 return;
             if (!Array.isArray(value.works))
-                throw new DesktopError('INVALID_RESPONSE', 'The Work list response is incomplete. Retry loading the list.');
+                throw failure('INVALID_RESPONSE', 'd.error.workListIncomplete');
             this.worksReadSequence = sequence;
             const ids = new Set(value.works.map((raw) => raw.id));
             for (const raw of value.works)
@@ -1320,7 +1364,7 @@ export class DesktopAdapter {
                 if (epoch !== this.epoch)
                     return;
                 if (!Array.isArray(value[name]) || value[name].some((entry) => !entry || typeof entry.name !== 'string'))
-                    throw new Error(`The ${name} catalog response is incomplete.`);
+                    throw new Error(t('d.error.catalogIncomplete', { name }));
                 if (name === 'skills')
                     this.skills = value.skills.map((entry) => ({ id: entry.name, name: entry.name, description: null, version: null, loaded: null, modelVisible: null }));
                 else
@@ -1346,9 +1390,9 @@ export class DesktopAdapter {
             const { value: raw, sequence: readSequence } = await this.readMetadata(`works/${part(id)}`, explicit);
             const sequence = readSequence;
             if (epoch !== this.epoch)
-                throw new ObservationStopped('The identity changed.');
+                throw new ObservationStopped(t('d.error.identityChanged'));
             if (raw.id !== id)
-                throw new DesktopError('INVALID_RESPONSE', 'The Work status response does not match the original Work.');
+                throw failure('INVALID_RESPONSE', 'd.error.workStatusMismatch');
             const previous = this.getWork(id), wasUsable = previous && this.project(previous).usable;
             const work = this.mergeWork(raw, sequence, mutation, true);
             if (work && sequence === this.workReads.get(id) && mutation === (this.workMutations.get(id) || 0) && !work.accessRevoked)
@@ -1387,7 +1431,7 @@ export class DesktopAdapter {
     async loadWork(id, includeChat = true) {
         const work = await this.refreshWorkStatus(id);
         if (!work)
-            throw new DesktopError('NOT_FOUND', 'The Work is no longer available.', 404);
+            throw failure('NOT_FOUND', 'd.error.workUnavailable', undefined, 404);
         work.resourceErrors = {};
         const tasks = [['services', () => this.loadServices(id)], ['configuration', () => this.loadConfiguration(id)], ['packages', () => this.loadPackages(id)]];
         for (const [name, action] of tasks) {
@@ -1433,7 +1477,7 @@ export class DesktopAdapter {
             if (!current())
                 return;
             if (!Array.isArray(value.services))
-                throw new DesktopError('INVALID_RESPONSE', 'Service listing is incomplete.');
+                throw failure('INVALID_RESPONSE', 'd.error.serviceListingIncomplete');
             (work.resourceChecked ??= {}).services = new Date().toISOString();
             work.services = value.services.map(mapService);
             if (work.resourceErrors)
@@ -1472,7 +1516,7 @@ export class DesktopAdapter {
         try {
             const value = await this.request(`works/${part(id)}/configuration`);
             const raw = value.desired;
-            work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: JSON.stringify(raw, null, 2), pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false };
+            work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: JSON.stringify(raw, null, 2), pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false }; // i18n-exempt: Pi Package source 协议值，不是显示文案
             (work.resourceChecked ??= {}).configuration = new Date().toISOString();
             if (work.resourceErrors)
                 delete work.resourceErrors.configuration;
@@ -1491,7 +1535,7 @@ export class DesktopAdapter {
     async loadPackages(id) { const work = this.getWork(id); (work.resourceLoading ??= {}).packages = true; this.emit(); try {
         const value = await this.request(`works/${part(id)}/packages`);
         if (!Array.isArray(value.packages))
-            throw new DesktopError('INVALID_RESPONSE', 'Package listing is incomplete.');
+            throw failure('INVALID_RESPONSE', 'd.error.packageListingIncomplete');
         (work.resourceChecked ??= {}).packages = new Date().toISOString();
         work.packageEntries = value.packages;
         delete work.resourceErrors?.packages;
@@ -1517,7 +1561,7 @@ export class DesktopAdapter {
             if (epoch !== this.epoch || version !== this.interactionVersion)
                 return;
             if (!Array.isArray(value.items) || value.items.some((r) => r.source?.kind !== 'service' || r.source.serviceName !== serviceName))
-                throw new DesktopError('INVALID_RESPONSE', 'The Service request scope could not be confirmed.');
+                throw failure('INVALID_RESPONSE', 'd.error.serviceRequestScope');
             Object.assign(state, { confirmed: true, hasRecords: value.items.length > 0, error: '' });
         }
         catch (error) {
@@ -1549,7 +1593,7 @@ export class DesktopAdapter {
                 return;
             const raw = value.run;
             if (raw !== null && (!raw?.runId || !raw.sessionId || raw.workId !== id || ![1, 2, 3].includes(raw.state)))
-                throw new DesktopError('INVALID_RESPONSE', 'The active Run could not be confirmed.');
+                throw failure('INVALID_RESPONSE', 'd.error.activeRunUnconfirmed');
             Object.assign(state, { confirmed: true, error: '', run: raw === null ? null : this.runRecord(raw, raw.sessionId) });
         }
         catch (error) {
@@ -1571,7 +1615,7 @@ export class DesktopAdapter {
             return;
         const { value } = await this.readMetadata(`works/${part(id)}/runs/${part(runId)}`, explicit), raw = value.run ?? value;
         if (raw.runId !== runId || raw.workId !== id || !raw.sessionId)
-            throw new DesktopError('INVALID_RESPONSE', 'Run details do not match the original Run.');
+            throw failure('INVALID_RESPONSE', 'd.error.runDetailsMismatch');
         if (epoch !== this.epoch)
             return;
         const run = this.runRecord(raw, raw.sessionId);
@@ -1600,11 +1644,11 @@ export class DesktopAdapter {
                 const value = await this.request(path);
                 const raw = kind === 'run' ? value.items : [value];
                 if (!Array.isArray(raw) || raw.length > 256)
-                    throw new DesktopError('INVALID_RESPONSE', 'Cleanup records are incomplete.');
+                    throw failure('INVALID_RESPONSE', 'd.error.cleanupIncomplete');
                 const items = raw.map((item) => {
                     if (!item || item.workId !== workId || typeof item.serviceId !== 'string' || typeof item.runId !== 'string' || typeof item.createOperationId !== 'string' ||
                         kind === 'run' && item.runId !== ref || kind === 'service' && item.serviceId !== ref || !Array.isArray(item.events) || item.events.length > 32)
-                        throw new DesktopError('INVALID_RESPONSE', 'Cleanup record identity is invalid.');
+                        throw failure('INVALID_RESPONSE', 'd.error.cleanupIdentity');
                     return { workId, serviceId: item.serviceId, runId: item.runId, createOperationId: item.createOperationId, ...(typeof item.operationId === 'string' && item.operationId ? { operationId: item.operationId } : {}),
                         state: diagnosticText(item.state), stage: diagnosticText(item.stage), trigger: diagnosticText(item.trigger), ...(diagnosticText(item.errorCode) ? { errorCode: diagnosticText(item.errorCode) } : {}),
                         ...(diagnosticText(item.logState) ? { logState: diagnosticText(item.logState) } : {}), updatedAt: diagnosticText(item.updatedAt), truncated: item.truncated === true,
@@ -1651,7 +1695,7 @@ export class DesktopAdapter {
         try {
             const { value } = await this.readMetadata(`works/${part(id)}/agent-requests?${query}`, true);
             if (!Array.isArray(value.items))
-                throw new DesktopError('INVALID_RESPONSE', 'Pi request page is incomplete.');
+                throw failure('INVALID_RESPONSE', 'd.error.requestPageIncomplete');
             if (epoch !== this.epoch)
                 return;
             state.items = more ? [...state.items, ...value.items] : value.items;
@@ -1680,7 +1724,7 @@ export class DesktopAdapter {
         const query = new URLSearchParams({ limit: '25', ...(cursor ? { cursor } : {}) });
         const { value } = await this.readMetadata(`works/${part(id)}/agent-requests/${part(requestId)}?${query}`, explicit);
         if (value.request?.requestId !== requestId || !Array.isArray(value.request.runIds) || !Array.isArray(value.evidence?.items))
-            throw new DesktopError('INVALID_RESPONSE', 'Pi request detail does not match the original ID.');
+            throw failure('INVALID_RESPONSE', 'd.error.requestDetailMismatch');
         if (epoch !== this.epoch || version !== this.interactionVersion)
             return;
         if (more) {
@@ -1751,7 +1795,7 @@ export class DesktopAdapter {
                 delete state.errorsByRun[runId];
             }
             else if (result.status === 'rejected')
-                state.errorsByRun[runId] = `Run ${runId}: reply refresh failed; ${prior.has(runId) ? 'last confirmed content retained' : 'reply has not been confirmed'}. ${errorText(result.reason)}`;
+                state.errorsByRun[runId] = t('d.error.runReplyRefreshFailed', { runId, state: t(prior.has(runId) ? 'd.error.replyRetained' : 'd.error.replyUnconfirmed'), detail: errorText(result.reason) });
         });
         state.runs = [...allowed].flatMap(runId => prior.has(runId) ? [prior.get(runId)] : []);
         state.errors = [...allowed].flatMap(runId => state.errorsByRun[runId] ? [state.errorsByRun[runId]] : []);
@@ -1763,7 +1807,7 @@ export class DesktopAdapter {
     async cancelRequest(id, requestId) {
         const key = `${id}:${requestId}`, epoch = this.epoch;
         if (this.requestCancellations.has(key))
-            throw new DesktopError('REQUEST_CANCEL_SUBMITTED', 'Cancellation was already submitted. Refresh the original request; do not cancel it again.');
+            throw failure('REQUEST_CANCEL_SUBMITTED', 'd.error.cancellationSubmitted');
         const cancellation = { phase: 'pending', error: '' };
         this.requestCancellations.set(key, cancellation);
         this.cancellingRequests.add(key);
@@ -1772,9 +1816,9 @@ export class DesktopAdapter {
         try {
             value = await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/cancel`, 'POST', {});
             if (value.requestId !== requestId)
-                throw new DesktopError('RESULT_UNKNOWN', 'Cancellation receipt could not be matched. Refresh the original request.');
+                throw failure('RESULT_UNKNOWN', 'd.error.cancellationReceipt');
             if (epoch !== this.epoch)
-                throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This response was discarded.');
+                throw failure('CONNECTION_CHANGED', 'd.error.coreAccountChanged');
             cancellation.phase = 'accepted';
             this.emit();
         }
@@ -1809,21 +1853,21 @@ export class DesktopAdapter {
     async retryRequest(id, requestId) {
         const original = await this.loadRequest(id, requestId);
         if (!original)
-            throw new DesktopError('CONNECTION_CHANGED', 'The original request belongs to a previous view.');
+            throw failure('CONNECTION_CHANGED', 'd.error.originalRequestPreviousView');
         if (original.request.disposition !== 'live' || !['failed', 'cancelled', 'needs_attention'].includes(original.request.state))
-            throw new DesktopError('REQUEST_RETRY_NOT_ALLOWED', 'Only an eligible live terminal request can be retried.');
+            throw failure('REQUEST_RETRY_NOT_ALLOWED', 'd.error.retryNotAllowed');
         const key = `${id}:${requestId}`, epoch = this.epoch;
         if (this.requestRetries.get(key)?.unknown)
-            throw new DesktopError('RESULT_UNKNOWN', 'Previous Retry is unknown. Check status using the original key.');
+            throw failure('RESULT_UNKNOWN', 'd.error.retryUnknown');
         const intent = { submissionKey: randomUUID(), error: '', unknown: true };
         this.requestRetries.set(key, intent);
         this.emit();
         try {
             const value = await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/retry`, 'POST', { submissionKey: intent.submissionKey });
             if (epoch !== this.epoch)
-                throw new DesktopError('CONNECTION_CHANGED', 'The Retry belongs to the previous identity.');
+                throw failure('CONNECTION_CHANGED', 'd.error.retryIdentity');
             if (value.retryOf !== requestId || typeof value.requestId !== 'string' || value.requestId === requestId)
-                throw new DesktopError('INVALID_RESPONSE', 'Retry receipt needs original submission readback.');
+                throw failure('INVALID_RESPONSE', 'd.error.retryReceipt');
             if (this.requestRetries.get(key) === intent)
                 this.requestRetries.delete(key);
             this.emit();
@@ -1850,18 +1894,18 @@ export class DesktopAdapter {
             if (value.workId !== id || value.requestId !== requestId || value.submissionKey !== intent.submissionKey ||
                 !['accepted', 'not-found'].includes(value.status) || value.status === 'not-found' && value.request !== null ||
                 value.status === 'accepted' && (!value.request || value.request.retryOf !== requestId || typeof value.request.requestId !== 'string' || value.request.requestId === requestId))
-                throw new DesktopError('INVALID_RESPONSE', 'Retry lookup does not match the original request and key.');
+                throw failure('INVALID_RESPONSE', 'd.error.retryLookupMismatch');
             if (value.status === 'accepted') {
                 this.requestRetries.delete(key);
                 this.emit();
                 return value.request;
             }
-            intent.error = 'Retry result remains unknown: no mapping confirmed for the original key.';
+            intent.error = localizedText('d.error.retryUnknownNoMapping');
             this.emit();
         }
         catch (error) {
             if (epoch === this.epoch && this.requestRetries.get(key) === intent) {
-                intent.error = `Retry result remains unknown: ${errorText(error)}`;
+                intent.error = localizedText('d.error.retryUnknownDetail', { detail: errorText(error) });
                 this.emit();
             }
             throw error;
@@ -1910,9 +1954,9 @@ export class DesktopAdapter {
             }
             const value = await this.request(`works/${part(id)}/${(this.chatCapabilities.get(id) ?? 0) >= 1 ? 'chat-models' : 'models'}`);
             if (value.availability === 'unavailable')
-                throw new DesktopError('MODEL_LIST_UNAVAILABLE', 'Available models could not be confirmed.');
+                throw failure('MODEL_LIST_UNAVAILABLE', 'd.error.modelsUnconfirmed');
             if (!Array.isArray(value.models) || !value.defaultModel && value.contractVersion !== 2 && value.contractVersion !== 3)
-                throw new DesktopError('INVALID_RESPONSE', 'Model list is incomplete.');
+                throw failure('INVALID_RESPONSE', 'd.error.modelListIncomplete');
             if (epoch !== this.epoch)
                 return;
             Object.assign(state, { confirmed: true, models: value.models, defaultModel: value.defaultModel ?? undefined, defaultUnavailableReason: value.defaultUnavailableReason, unavailableModels: value.unavailableModels, checkedAt: value.checkedAt, error: '' });
@@ -1941,7 +1985,7 @@ export class DesktopAdapter {
     selectModel(id, sessionId, ref) {
         const state = this.modelSelection(id, sessionId);
         if (state.phase === 'unknown')
-            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Check the original Session model first.');
+            throw failure('MODEL_NOT_CONFIRMED', 'd.error.checkSessionModel');
         state.ref = ref;
         const catalog = this.models.get(id), model = ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === ref);
         if (model?.thinkingAvailability === 'unknown') {
@@ -1949,7 +1993,7 @@ export class DesktopAdapter {
                 if (!sessionId && !state.revision)
                     state.thinking = null;
                 else {
-                    state.error = 'Thinking is unconfirmed. Choose Normal in Thinking to confirm this model.';
+                    state.error = localizedText('d.error.thinkingUnconfirmed');
                     state.phase = 'dirty';
                     state.revision++;
                     this.emit();
@@ -1959,7 +2003,7 @@ export class DesktopAdapter {
         }
         else if (model?.thinkingLevels && (state.thinking === null || !model.thinkingLevels.includes(state.thinking))) {
             state.thinking = model.defaultThinkingLevel ?? 'off';
-            state.error = 'Thinking adjusted to a supported level for this model.';
+            state.error = localizedText('d.error.thinkingAdjusted');
         }
         else
             state.error = '';
@@ -1973,10 +2017,10 @@ export class DesktopAdapter {
     selectThinking(id, sessionId, thinking) {
         const state = this.modelSelection(id, sessionId);
         if (state.phase === 'unknown')
-            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Check the original settings first.');
+            throw failure('MODEL_NOT_CONFIRMED', 'd.error.checkOriginalSettings');
         const catalog = this.models.get(id), model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
         if ((this.chatCapabilities.get(id) ?? 0) < 1 || !(thinking === null ? model?.thinkingAvailability === 'unknown' : model?.thinkingLevels?.includes(thinking)))
-            throw new DesktopError('THINKING_LEVEL_UNSUPPORTED', 'Choose a supported Thinking level.');
+            throw failure('THINKING_LEVEL_UNSUPPORTED', 'd.error.chooseThinking');
         state.thinking = thinking;
         if (state.phase !== 'saving')
             state.phase = 'dirty';
@@ -1990,7 +2034,7 @@ export class DesktopAdapter {
         if (version !== (this.sessionVersions.get(id) || 0))
             return;
         if (!raw || raw.sessionId !== session.id || raw.workId !== id)
-            throw new DesktopError('INVALID_RESPONSE', 'Session model response belongs to another object.');
+            throw failure('INVALID_RESPONSE', 'd.error.sessionModelOther');
         session.modelPreference = raw.modelPreference ?? null;
         session.thinkingLevel = raw.thinkingLevel === undefined ? 'off' : raw.thinkingLevel;
         session.source = raw.source;
@@ -2026,7 +2070,7 @@ export class DesktopAdapter {
             return;
         const catalog = this.models.get(id), model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
         if (!catalog?.confirmed || !model)
-            throw new DesktopError('MODEL_UNAVAILABLE', 'Choose an available model.');
+            throw failure('MODEL_UNAVAILABLE', 'd.error.chooseModel');
         const revision = state.revision, ref = state.ref, thinking = state.thinking;
         state.phase = 'saving';
         this.emit();
@@ -2038,7 +2082,7 @@ export class DesktopAdapter {
                 if (epoch !== this.epoch)
                     return;
                 if (raw.sessionId !== sessionId || modern && (raw.modelRef !== ref || raw.thinkingLevel !== thinking) || !modern && raw.workId !== id)
-                    throw new DesktopError('INVALID_RESPONSE', 'The original Session settings could not be confirmed.');
+                    throw failure('INVALID_RESPONSE', 'd.error.sessionSettingsUnconfirmed');
                 const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
                 if (session) {
                     session.modelPreference = modern ? { ...raw.model, availability: raw.availability } : raw.modelPreference ?? null;
@@ -2052,7 +2096,7 @@ export class DesktopAdapter {
                 if (epoch === this.epoch) {
                     const code = error.code;
                     state.phase = ['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'CORE_UNAVAILABLE', 'REQUEST_TIMEOUT', 'RUNTIME_UNAVAILABLE', 'CONNECTION_CHANGED'].includes(code) ? 'unknown' : 'dirty';
-                    state.error = state.phase === 'unknown' ? 'Settings are unconfirmed. Check original settings before sending. No change will be resent.' : errorText(error);
+                    state.error = state.phase === 'unknown' ? t('d.error.settingsUnconfirmed') : errorText(error);
                 }
                 throw error;
             }
@@ -2105,10 +2149,10 @@ export class DesktopAdapter {
         this.emit();
         try {
             if ((this.chatCapabilities.get(id) ?? 0) < 1)
-                throw new DesktopError('CHAT_OPTIONS_UNSUPPORTED', 'Resource commands and Thinking require a Work with chat controls.');
+                throw failure('CHAT_OPTIONS_UNSUPPORTED', 'd.error.chatControlsUnsupported');
             const value = await this.request(`works/${part(id)}/commands`);
             if (value.contractVersion !== 1 || !Array.isArray(value.commands))
-                throw new DesktopError('INVALID_RESPONSE', 'The command directory is incomplete.');
+                throw failure('INVALID_RESPONSE', 'd.error.commandDirectoryIncomplete');
             Object.assign(state, { items: value.commands, confirmed: true, error: '', checkedAt: value.checkedAt });
         }
         catch (error) {
@@ -2126,10 +2170,10 @@ export class DesktopAdapter {
         try {
             const value = await this.request(`works/${part(id)}/sessions`);
             if (!Array.isArray(value.sessions))
-                throw new DesktopError('INVALID_RESPONSE', 'Session listing is incomplete.');
+                throw failure('INVALID_RESPONSE', 'd.error.sessionListingIncomplete');
             (work.resourceChecked ??= {}).agent = new Date().toISOString();
             const existing = new Map(work.sessions.map(session => [session.id, session]));
-            work.sessions = value.sessions.map((raw) => { const saved = existing.get(raw.sessionId), session = saved ?? { id: raw.sessionId, title: raw.title ?? `Session ${raw.sessionId}`, messages: [], runs: [] }; session.title = raw.title ?? `Session ${raw.sessionId}`; if (!saved || version === (this.sessionVersions.get(id) || 0)) {
+            work.sessions = value.sessions.map((raw) => { const saved = existing.get(raw.sessionId), session = saved ?? { id: raw.sessionId, title: raw.title ?? t('d.session.defaultTitle', { id: raw.sessionId }), messages: [], runs: [] }; session.title = raw.title ?? t('d.session.defaultTitle', { id: raw.sessionId }); if (!saved || version === (this.sessionVersions.get(id) || 0)) {
                 session.modelPreference = raw.modelPreference ?? null;
                 session.thinkingLevel = raw.thinkingLevel === undefined ? 'off' : raw.thinkingLevel;
                 session.source = raw.source;
@@ -2291,7 +2335,7 @@ export class DesktopAdapter {
                 if (!current() || !this.serviceEntryAdmitted(workId, serviceId, port))
                     return;
                 if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port || !value.entryId || !value.entryUrl || !value.origin)
-                    throw new DesktopError('INVALID_RESPONSE', 'The application entry does not match the requested Work, Service and port.');
+                    throw failure('INVALID_RESPONSE', 'd.error.entryMismatch');
                 this.entries.set(key, value);
                 this.entryErrors.delete(key);
                 this.entryServiceGrants.set(key, serviceVersion);
@@ -2347,7 +2391,7 @@ export class DesktopAdapter {
                 if (!current())
                     return;
                 if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port)
-                    throw new DesktopError('SERVICE_IDENTITY_CHANGED', 'The application entry identity changed.', 403);
+                    throw failure('SERVICE_IDENTITY_CHANGED', 'd.error.entryIdentityChanged', undefined, 403);
                 entry.embed = value.embed === 'blocked' ? 'denied' : value.embed;
                 entry.entryUrl = entry.origin + (entry.basePath ?? '/');
                 entry.checkError = '';
@@ -2383,14 +2427,14 @@ export class DesktopAdapter {
         const key = `${workId}:${serviceId}:${port}`, epoch = this.epoch, version = this.entryVersions.get(key) || 0, serviceVersion = this.serviceDenials.get(workId)?.version || 0;
         const current = () => epoch === this.epoch && version === (this.entryVersions.get(key) || 0) && serviceVersion === (this.serviceDenials.get(workId)?.version || 0);
         if (!this.serviceEntryAdmitted(workId, serviceId, port))
-            throw new DesktopError('SERVICE_ENTRY_UNAVAILABLE', 'Confirm the Work and Service status before opening the application.');
+            throw failure('SERVICE_ENTRY_UNAVAILABLE', 'd.error.confirmBeforeOpen');
         try {
             // A new tab needs its own one-use bootstrap ticket, not an iframe's cached ticket.
             const value = await this.request('service-entries', 'POST', { workId, serviceId, port });
             if (!current() || !this.serviceEntryAdmitted(workId, serviceId, port))
-                throw new DesktopError('CONNECTION_CHANGED', 'Application access changed while preparing the entry.');
+                throw failure('CONNECTION_CHANGED', 'd.error.accessChanged');
             if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port || !value.entryId || !value.entryUrl || !value.origin)
-                throw new DesktopError('INVALID_RESPONSE', 'The application entry does not match the requested Work, Service and port.');
+                throw failure('INVALID_RESPONSE', 'd.error.entryMismatch');
             this.entryErrors.delete(key);
             this.entryServiceGrants.set(key, serviceVersion);
             return value.entryUrl;
@@ -2443,8 +2487,8 @@ export class DesktopAdapter {
     }
     accepted(value, workId, kind) {
         if (!value.operationId)
-            throw new DesktopError('INVALID_RESPONSE', 'The acceptance response has no Operation ID. Check known operations.');
-        const operation = { id: value.operationId, workId: value.workId ?? workId, kind, action: lifecycleAction(kind), state: 'accepted', phase: 'Accepted', created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId, localRecordSaved: value.localRecordSaved };
+            throw failure('INVALID_RESPONSE', 'd.error.acceptanceNoOperation');
+        const operation = { id: value.operationId, workId: value.workId ?? workId, kind, action: lifecycleAction(kind), state: 'accepted', phase: t('d.operation.accepted'), created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId, localRecordSaved: value.localRecordSaved };
         if (operation.action && operation.workId) {
             const sequence = ++this.mutationSequence;
             this.workMutations.set(operation.workId, sequence);
@@ -2458,7 +2502,7 @@ export class DesktopAdapter {
             this.requireWorkSync(operation.workId);
         }
         if (kind === 'Import Work' && typeof value.name === 'string' && value.name)
-            operation.importName = value.name;
+            operation.importName = value.name; // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
         this.state.operations.unshift(operation);
         if (operation.snapshotId)
             this.state.snapshots.unshift({ id: operation.snapshotId, operationId: operation.id, workId, status: 'preparing', filename: `${workId}.work`, size: '' });
@@ -2478,7 +2522,7 @@ export class DesktopAdapter {
             payload.agentsMd = config.agents;
         if (config.advanced)
             payload.configuration = JSON.parse(config.advanced);
-        return this.accepted(await this.request('works', 'POST', payload), '', 'Create Work');
+        return this.accepted(await this.request('works', 'POST', payload), '', 'Create Work'); // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
     }
     async lifecycle(id, action) { return this.accepted(await this.request(`works/${part(id)}/${action}`, 'POST'), id, `${action[0].toUpperCase()}${action.slice(1)} Work`); }
     async operateService(id, serviceId, action) { return this.accepted(await this.request(`works/${part(id)}/services/${part(serviceId)}/${action}`, 'POST'), id, `${action} Service`); }
@@ -2496,9 +2540,9 @@ export class DesktopAdapter {
             throw error;
         }
         if (value.operationId !== id && value.operationId !== undefined)
-            throw new DesktopError('INVALID_RESPONSE', 'The Operation response does not match the original ID.');
+            throw failure('INVALID_RESPONSE', 'd.error.operationMismatch');
         if (operation?.workId && value.workId && operation.workId !== value.workId)
-            throw new DesktopError('INVALID_RESPONSE', 'The Operation belongs to another Work.');
+            throw failure('INVALID_RESPONSE', 'd.error.operationOtherWork');
         if (!operation) {
             operation = { id, workId: value.workId || '', kind: value.kind || value.type || 'Operation', state: 'unknown', phase: '', created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}` };
             this.state.operations.push(operation);
@@ -2523,7 +2567,7 @@ export class DesktopAdapter {
         const value = await this.request('known-operations');
         for (const record of value.operations ?? [])
             if (!this.state.operations.some(o => o.id === record.operationId)) {
-                this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', kind: record.type, action: lifecycleAction(record.type), state: 'unknown', phase: 'Check original operation', created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
+                this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', kind: record.type, action: lifecycleAction(record.type), state: 'unknown', phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
             }
         for (const work of this.state.works)
             this.associateOperations(work);
@@ -2666,7 +2710,7 @@ export class DesktopAdapter {
                                 return;
                             if (detail)
                                 detail.readError = errorText(error);
-                            this.requestReadErrors.set(`${workId}:${originalId}`, `Cancellation status not confirmed: ${errorText(error)}`);
+                            this.requestReadErrors.set(`${workId}:${originalId}`, t('d.error.cancellationStatus', { detail: errorText(error) }));
                             this.emit();
                         });
                     }
@@ -2714,17 +2758,17 @@ export class DesktopAdapter {
     acceptChatSession(id, value) {
         const sessionId = value.sessionId ?? value.session?.sessionId;
         if (typeof sessionId !== 'string' || !sessionId)
-            throw new DesktopError('INVALID_RESPONSE', 'Session acceptance has no ID. Check the original submission.');
+            throw failure('INVALID_RESPONSE', 'd.error.sessionAcceptanceNoId');
         this.sessionVersions.set(id, (this.sessionVersions.get(id) || 0) + 1);
         const work = this.getWork(id);
         if (!work.sessions.some(s => s.id === sessionId))
-            work.sessions.unshift({ id: sessionId, title: `Session ${sessionId}`, messages: [], modelPreference: value.modelPreference ?? null, thinkingLevel: value.thinkingLevel === undefined ? 'off' : value.thinkingLevel, source: value.source, runs: [] });
+            work.sessions.unshift({ id: sessionId, title: t('d.session.defaultTitle', { id: sessionId }), messages: [], modelPreference: value.modelPreference ?? null, thinkingLevel: value.thinkingLevel === undefined ? 'off' : value.thinkingLevel, source: value.source, runs: [] });
         this.emit();
         return sessionId;
     }
     async newSession(id) {
         if (this.chatSubmissions.has(id))
-            throw new DesktopError('RESULT_UNKNOWN', 'Check the original chat submission first.');
+            throw failure('RESULT_UNKNOWN', 'd.error.checkOriginalSubmission');
         const draft = { ...this.modelSelection(id, '') }, intent = { kind: 'session', key: randomUUID(), error: '', pair: { ref: draft.ref, thinking: draft.thinking, revision: draft.revision } };
         this.chatSubmissions.set(id, intent);
         this.emit();
@@ -2747,7 +2791,7 @@ export class DesktopAdapter {
                 await this.loadSessions(id).catch(() => undefined);
                 const active = this.getWork(id)?.run;
                 if (code === 'WORK_BUSY' || active && ['accepted', 'running', 'cancelling'].includes(active.status))
-                    error = new DesktopError('WORK_BUSY', 'A Run is already active in this Work. Wait for it to finish or use Cancel run.');
+                    error = failure('WORK_BUSY', 'd.error.runAlreadyActive');
             }
             intent.error = errorText(error);
             throw error;
@@ -2769,23 +2813,23 @@ export class DesktopAdapter {
         if (this.chatSubmissions.get(id) !== intent)
             return;
         if (value.kind !== intent.kind || value.key !== intent.key)
-            throw new DesktopError('INVALID_RESPONSE', 'The original submission could not be confirmed.');
+            throw failure('INVALID_RESPONSE', 'd.error.submissionUnconfirmed');
         if (value.status !== 'accepted') {
-            intent.error = 'Original submission not found yet. It may still be in flight. Check again; do not resubmit.';
+            intent.error = localizedText('d.error.submissionNotFound');
             this.emit();
             return;
         }
         if (intent.kind === 'session') {
             if (value.session?.workId !== id)
-                throw new DesktopError('INVALID_RESPONSE', 'The original Session ownership could not be confirmed.');
+                throw failure('INVALID_RESPONSE', 'd.error.sessionOwnership');
             const sessionId = this.acceptChatSession(id, value.session);
             const state = this.modelSelection(id, sessionId);
             if (intent.pair && (intent.pair.revision || (this.chatCapabilities.get(id) ?? 0) >= 1 && (state.ref !== intent.pair.ref || state.thinking !== intent.pair.thinking)))
-                Object.assign(state, { ...intent.pair, revision: Math.max(1, intent.pair.revision), phase: 'dirty', error: 'Your selected settings are kept. Confirm them before sending.' });
+                Object.assign(state, { ...intent.pair, revision: Math.max(1, intent.pair.revision), phase: 'dirty', error: t('d.error.selectedSettingsKept') });
         }
         else {
             if (value.run?.workId !== id || value.run?.sessionId !== intent.sessionId || value.run?.submissionKey !== intent.key)
-                throw new DesktopError('INVALID_RESPONSE', 'The original Run identity could not be confirmed.');
+                throw failure('INVALID_RESPONSE', 'd.error.runIdentity');
             const work = this.getWork(id);
             work.run = this.runRecord(value.run, value.run.sessionId);
             await this.loadSession(id, value.run.sessionId);
@@ -2798,20 +2842,20 @@ export class DesktopAdapter {
     }
     async send(id, sessionId, text, includeIdentity, inputMode, images = [], cancelRunId) {
         if (!text.trim() && !images.length)
-            throw new Error('Write a message or add an image first.');
+            throw new Error(t('d.error.writeMessageFirst'));
         const work = this.getWork(id);
         if (images.length) {
             const reason = this.imageInputReason(id, sessionId);
             if (reason)
                 throw new Error(reason);
             if (inputMode !== 'text')
-                throw new Error('Images require Send as text.');
+                throw new Error(t('d.error.imagesRequireText'));
         }
         if (!this.modelReady(id, sessionId))
-            throw new DesktopError('MODEL_NOT_CONFIRMED', 'Confirm the Session model and Thinking settings before sending.');
+            throw failure('MODEL_NOT_CONFIRMED', 'd.error.confirmModelBeforeSend');
         const prompt = includeIdentity && inputMode !== 'command' ? `${text}\n\nSelected Service: ${work.services.find(s => s.id === this.selectedService)?.domain ?? ''}` : text;
         if (cancelRunId && this.cancelAndSendCapabilities.get(id) !== 1)
-            throw new DesktopError('CANCEL_AND_SEND_UNSUPPORTED', 'Stop and send is unavailable in this Work.');
+            throw failure('CANCEL_AND_SEND_UNSUPPORTED', 'd.error.stopAndSendUnavailable');
         const epoch = this.epoch;
         const intent = { kind: 'run', key: randomUUID(), sessionId, cancelRunId, error: '' };
         this.chatSubmissions.set(id, intent);
@@ -2819,13 +2863,13 @@ export class DesktopAdapter {
         try {
             const descriptors = await Promise.all(images.map(async (image, imageIndex) => { const bytes = Uint8Array.from(atob(image.data), c => c.charCodeAt(0)); const sha256 = await sha256Hex(bytes); return { imageIndex, mimeType: image.mimeType, byteSize: bytes.length, sha256 }; }));
             if (epoch !== this.epoch || this.chatSubmissions.get(id) !== intent)
-                throw new DesktopError('CONNECTION_CHANGED', 'The image submission belongs to a previous identity.');
+                throw failure('CONNECTION_CHANGED', 'd.error.imageSubmissionIdentity');
             const value = await this.request(`works/${part(id)}/runs`, 'POST', { sessionId, prompt, submissionKey: intent.key, ...(inputMode ? { inputMode } : {}), ...(images.length ? { images } : {}), ...(cancelRunId ? { cancelRunId } : {}) });
             const raw = value.run;
             if (epoch !== this.epoch || this.chatSubmissions.get(id) !== intent)
-                throw new DesktopError('CONNECTION_CHANGED', 'This submission belongs to a previous identity.');
+                throw failure('CONNECTION_CHANGED', 'd.error.submissionIdentity');
             if (!raw?.runId || raw.sessionId !== sessionId)
-                throw new DesktopError('INVALID_RESPONSE', 'Run acceptance has no original ID.');
+                throw failure('INVALID_RESPONSE', 'd.error.runAcceptanceNoId');
             const acceptedWork = this.getWork(id) ?? work;
             const acceptedSession = acceptedWork.sessions.find(s => s.id === sessionId) ?? work.sessions.find(s => s.id === sessionId);
             if (!acceptedWork.sessions.includes(acceptedSession))
@@ -2853,7 +2897,7 @@ export class DesktopAdapter {
                     await this.loadSessions(id).catch(() => undefined);
                 const active = this.cancelAndSendCapabilities.get(id) === 1 ? this.activeRuns.get(id)?.run : this.getWork(id)?.run;
                 if (code === 'WORK_BUSY' || code === 'RATE_LIMITED' && active && ['accepted', 'running', 'cancelling'].includes(active.status))
-                    error = new DesktopError('WORK_BUSY', this.cancelAndSendCapabilities.get(id) === 1 ? 'A Run is already active in this Work. Check its status and choose Stop and send again.' : 'A Run is already active in this Work. Wait for it to finish or use Cancel run.');
+                    error = failure('WORK_BUSY', this.cancelAndSendCapabilities.get(id) === 1 ? 'd.error.runAlreadyActiveStopAndSend' : 'd.error.runAlreadyActive');
             }
             intent.error = errorText(error);
             throw error;
@@ -2923,14 +2967,14 @@ export class DesktopAdapter {
                     return;
                 observer.failures = 0;
                 retry = ['accepted', 'running', 'cancelling'].includes(run.status);
-                run.error = run.executionError ?? (retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined);
+                run.error = run.executionError ?? (retry ? t('d.error.eventCursorExpired') : undefined);
             }
             else {
                 const history = await this.request(`works/${part(id)}/sessions/${part(run.sessionId)}${profile}`, 'GET', undefined, controller.signal);
                 if (!current())
                     return;
                 if (!Array.isArray(history.messages))
-                    throw new Error('Saved session history is incomplete.');
+                    throw new Error(t('d.error.savedHistoryIncomplete'));
                 const session = this.getWork(id)?.sessions.find(s => s.id === run.sessionId);
                 if (session) {
                     session.messages = historyMessages(history.messages, session.messages);
@@ -2940,14 +2984,14 @@ export class DesktopAdapter {
                 }
                 observer.failures = 0;
                 retry = ['accepted', 'running', 'cancelling'].includes(run.status);
-                run.error = run.executionError ?? (retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined);
+                run.error = run.executionError ?? (retry ? t('d.error.eventCursorExpired') : undefined);
             }
         }
         catch (error) {
             if (!current())
                 return;
             const legacyLimit = this.legacyHistoryLimit(id, error);
-            run.error = [run.executionError, `History recovery failed: ${errorText(error)}. Reread the original Run; do not resend the prompt.`, legacyLimit ? this.historyNotice(id) : ''].filter(Boolean).join(' ');
+            run.error = [run.executionError, t('d.error.historyRecoveryFailed', { detail: errorText(error) }), legacyLimit ? this.historyNotice(id) : ''].filter(Boolean).join(' ');
             delay = Math.min(30000, 2000 * 2 ** Math.min(observer.failures++, 4));
             // Terminal history errors require explicit readback; do not claim completion
             // or poll an inaccessible/deleted Run indefinitely.
@@ -2967,7 +3011,7 @@ export class DesktopAdapter {
             let connected = false;
             void this.resumeRun(id, () => { connected = true; resolve(); }).then(() => {
                 if (!connected)
-                    reject(new Error(this.getWork(id)?.run?.error || 'Run connection was not confirmed. Read the original Run.'));
+                    reject(new Error(this.getWork(id)?.run?.error || t('d.error.runConnectionUnconfirmed')));
             }, reject);
         });
     }
@@ -3013,8 +3057,8 @@ export class DesktopAdapter {
                         connected?.();
                     return;
                 }
-                const failure = await response.json().catch(() => null);
-                throw new DesktopError(typeof failure?.code === 'string' ? failure.code : 'RUN_STREAM_UNAVAILABLE', typeof failure?.message === 'string' ? failure.message : `Run stream failed (${response.status}).`, response.status);
+                const descriptor = await response.json().catch(() => null);
+                throw failure(typeof descriptor?.code === 'string' ? descriptor.code : 'RUN_STREAM_UNAVAILABLE', 'd.error.runStreamFailed', { status: response.status }, response.status, undefined, typeof descriptor?.message === 'string' && descriptor.message ? descriptor.message : undefined);
             }
             connected?.();
             const reader = response.body.getReader();
@@ -3036,16 +3080,16 @@ export class DesktopAdapter {
                         this.historyEventParts.set(key, pending);
                     }
                     if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(total) || offset < 0 || offset + bytes > total || frame.complete !== (offset + bytes === total))
-                        throw new Error('Run event fragment is invalid.');
+                        throw new Error(t('d.error.runEventFragmentInvalid'));
                     if (pending.parts.has(offset)) {
                         if (pending.parts.get(offset) !== frame.delta)
-                            throw new Error('Run event changed while reconnecting.');
+                            throw new Error(t('d.error.runEventChanged'));
                         if (frame.complete)
                             run.cursor = sequence;
                         return;
                     }
                     if (offset !== pending.offset)
-                        throw new Error('Run event fragment is incomplete.');
+                        throw new Error(t('d.error.runEventIncomplete'));
                     pending.parts.set(offset, frame.delta ?? '');
                     pending.offset += bytes;
                     if (frame.complete)
@@ -3090,7 +3134,7 @@ export class DesktopAdapter {
                 }
                 buffer += decoder.decode(value, { stream: true });
                 if (buffer.length > 2_097_152)
-                    throw new Error('Run event exceeded the supported size.');
+                    throw new Error(t('d.error.runEventTooLarge'));
                 let index;
                 while ((index = buffer.indexOf('\n')) !== -1) {
                     consume(buffer.slice(0, index));
@@ -3113,7 +3157,7 @@ export class DesktopAdapter {
                     await this.recoverRunHistory(id, observer);
                 }
                 else
-                    run.error = 'Event stream ended. Resume this Run to continue from its cursor.';
+                    run.error = localizedText('d.error.eventStreamEnded');
             }
             else {
                 run.error = run.executionError;
@@ -3131,7 +3175,7 @@ export class DesktopAdapter {
             if (!controller.signal.aborted && epoch === this.epoch) {
                 const legacyLimit = this.legacyHistoryLimit(id, error);
                 retry = !legacyLimit;
-                run.error = [run.executionError, `${errorText(error)} Resume the original Run; do not send the prompt again.`, legacyLimit ? this.historyNotice(id) : ''].filter(Boolean).join(' ');
+                run.error = [run.executionError, t('d.error.resumeOriginalRun', { detail: errorText(error) }), legacyLimit ? this.historyNotice(id) : ''].filter(Boolean).join(' ');
                 this.emit();
             }
         }
@@ -3148,7 +3192,7 @@ export class DesktopAdapter {
         }
     }
     fileURL(id, path) { if (!path.startsWith('/') || path.split('/').some(p => p === '.' || p === '..' || /[\\\x00]/.test(p)))
-        throw new Error('Invalid workspace path.'); return `/_desktop/files/works/${part(id)}/files/${path.slice(1).split('/').map(part).join('/')}`; }
+        throw new Error(t('d.error.invalidWorkspacePath')); return `/_desktop/files/works/${part(id)}/files/${path.slice(1).split('/').map(part).join('/')}`; }
     directoryLoads = new Map();
     fileReaders = new Map();
     fileReadGenerations = new Map();
@@ -3191,8 +3235,9 @@ export class DesktopAdapter {
     fileError(response, fallback) {
         // A bounded status/header only; never read or expose an unbounded body.
         const code = response.headers.get('X-Piwork-File-Error') || '';
-        const message = code ? `The file request was rejected (${code}).` : `${fallback} (${response.status}).`;
-        return new DesktopError(code || 'FILE_READ_FAILED', message, response.status);
+        return code
+            ? failure(code, 'd.error.fileRequestRejected', { code }, response.status)
+            : failure('FILE_READ_FAILED', 'd.error.fileRequestFailed', { fallback, status: response.status }, response.status);
     }
     /** File auth failures share the existing session check/revocation path. */
     async fileAuth(response) {
@@ -3217,26 +3262,26 @@ export class DesktopAdapter {
     async checkTarget(id, path, signal) {
         const epoch = this.epoch, work = this.getWork(id);
         if (!work)
-            throw new DesktopError('WORK_NOT_FOUND', 'This Work is no longer available.', 404);
+            throw failure('WORK_NOT_FOUND', 'd.error.thisWorkUnavailable', undefined, 404);
         const parent = path.slice(0, path.lastIndexOf('/')) || '/';
         const parentURL = this.fileURL(id, parent).replace(/\/?$/, '/'), url = this.fileURL(id, path);
         const response = await fetch(url, { method: 'PROPFIND', credentials: 'same-origin', signal,
             headers: { Depth: '0', 'X-Piwork-Csrf': this.csrf } });
         if (epoch !== this.epoch)
-            throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This file check was discarded.');
+            throw failure('CONNECTION_CHANGED', 'd.error.fileCheckDiscarded');
         if (response.status === 404 || response.status === 410) {
             this.removeFileEntry(id, path);
             this.emit();
-            throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', response.status);
+            throw failure('FILE_NOT_FOUND', 'd.error.fileNotInWorkspace', undefined, response.status);
         }
         if (!response.ok) {
             await this.fileAuth(response);
-            throw this.fileError(response, 'The current file could not be checked');
+            throw this.fileError(response, localizedText('d.error.currentFileCheckFailed'));
         }
         const findTarget = (rows) => rows.find(item => item.href === url) ?? rows.find(item => item.name === path.slice(path.lastIndexOf('/') + 1));
         let entries = parseEntries(await response.text(), parentURL);
         if (epoch !== this.epoch)
-            throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while checking the target.');
+            throw failure('CONNECTION_CHANGED', 'd.error.identityChangedTarget');
         let entry = findTarget(entries);
         if (!entry) {
             // Some backends answer Depth 0 with the containing folder. The parent
@@ -3244,15 +3289,15 @@ export class DesktopAdapter {
             const listing = await fetch(parentURL, { method: 'PROPFIND', credentials: 'same-origin', signal,
                 headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
             if (epoch !== this.epoch)
-                throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while checking the target.');
+                throw failure('CONNECTION_CHANGED', 'd.error.identityChangedTarget');
             if (listing.status === 404 || listing.status === 410) {
                 this.removeFileEntry(id, path);
                 this.emit();
-                throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', listing.status);
+                throw failure('FILE_NOT_FOUND', 'd.error.fileNotInWorkspace', undefined, listing.status);
             }
             if (!listing.ok) {
                 await this.fileAuth(listing);
-                throw this.fileError(listing, 'The current file could not be checked');
+                throw this.fileError(listing, localizedText('d.error.currentFileCheckFailed'));
             }
             entries = parseEntries(await listing.text(), parentURL);
             entry = findTarget(entries);
@@ -3260,7 +3305,7 @@ export class DesktopAdapter {
         if (!entry) {
             this.removeFileEntry(id, path);
             this.emit();
-            throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', 404);
+            throw failure('FILE_NOT_FOUND', 'd.error.fileNotInWorkspace', undefined, 404);
         }
         const fresh = { path, name: entry.name, kind: entry.directory ? 'directory' : entry.kind === 'file' ? 'file' : 'special',
             size: entry.size ?? 0, modified: entry.modified ?? '' };
@@ -3280,7 +3325,7 @@ export class DesktopAdapter {
     async boundedBody(response, signal) {
         const reader = response.body?.getReader();
         if (!reader)
-            throw new DesktopError('FILE_READ_FAILED', 'The file content is unavailable.');
+            throw failure('FILE_READ_FAILED', 'd.error.fileContentUnavailable');
         const chunks = [];
         let size = 0, image = false, decided = false;
         const cancel = async () => { await reader.cancel().catch(() => undefined); };
@@ -3297,12 +3342,12 @@ export class DesktopAdapter {
                 }
                 if (size > (image ? FILE_IMAGE_MAX_BYTES : 1_048_576)) {
                     await cancel();
-                    throw new DesktopError(image ? 'FILE_PREVIEW_TOO_LARGE' : 'FILE_TEXT_TOO_LARGE', image ? 'This image exceeds the 10 MiB preview limit.' : 'This file exceeds the 1 MiB text limit.', 413);
+                    throw failure(image ? 'FILE_PREVIEW_TOO_LARGE' : 'FILE_TEXT_TOO_LARGE', image ? 'd.error.imagePreviewTooLarge' : 'd.error.textPreviewTooLarge', undefined, 413);
                 }
                 if (signal.aborted) {
                     await cancel();
                     throw new DOMException('The file read was replaced.', 'AbortError');
-                }
+                } // i18n-exempt: AbortError 诊断原因，不是界面文案
             }
         }
         catch (error) {
@@ -3336,7 +3381,7 @@ export class DesktopAdapter {
     async readFile(id, path, external) {
         const epoch = this.epoch, work = this.getWork(id);
         if (!work)
-            throw new DesktopError('WORK_NOT_FOUND', 'This Work is no longer available.', 404);
+            throw failure('WORK_NOT_FOUND', 'd.error.thisWorkUnavailable', undefined, 404);
         const previous = this.fileReaders.get(id);
         if (previous)
             previous.controller.abort();
@@ -3348,7 +3393,7 @@ export class DesktopAdapter {
         this.fileReadGenerations.set(id, generation);
         const current = () => epoch === this.epoch && this.fileReadGenerations.get(id) === generation && !controller.signal.aborted;
         const abortIfStale = () => { if (!current())
-            throw new DOMException('The file read was replaced.', 'AbortError'); };
+            throw new DOMException('The file read was replaced.', 'AbortError'); }; // i18n-exempt: AbortError 诊断原因，不是界面文案
         try {
             const target = await this.checkTarget(id, path, controller.signal);
             abortIfStale();
@@ -3369,7 +3414,7 @@ export class DesktopAdapter {
             const response = await fetch(this.fileURL(id, path), { credentials: 'same-origin', signal: controller.signal });
             if (!response.ok) {
                 await this.fileAuth(response);
-                throw this.fileError(response, 'The file could not be read');
+                throw this.fileError(response, localizedText('d.error.fileReadFailed'));
             }
             const declared = Number(response.headers.get('content-length'));
             if (Number.isFinite(declared) && declared > FILE_IMAGE_MAX_BYTES) {
@@ -3422,7 +3467,7 @@ export class DesktopAdapter {
             if (!file) {
                 if (preview.kind === 'image')
                     URL.revokeObjectURL(preview.url);
-                throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', 404);
+                throw failure('FILE_NOT_FOUND', 'd.error.fileNotInWorkspace', undefined, 404);
             }
             this.releasePreview(file);
             file.preview = preview;
@@ -3441,7 +3486,7 @@ export class DesktopAdapter {
         try {
             const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
             if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content))
-                throw new Error('Binary control bytes');
+                throw new Error('Binary control bytes'); // i18n-exempt: 内部判定信号，仅用于切换 download-only 展示
             return { kind: 'text', content };
         }
         catch {
@@ -3479,14 +3524,14 @@ export class DesktopAdapter {
             bitmap?.close();
         }
         if (signal.aborted)
-            throw new DOMException('The file read was replaced.', 'AbortError');
+            throw new DOMException('The file read was replaced.', 'AbortError'); // i18n-exempt: AbortError 诊断原因，不是界面文案
         return { kind: 'image', mimeType: mime, url: URL.createObjectURL(blob), width, height };
     }
     async loadDirectory(id, path = '/') {
         const epoch = this.epoch;
         const work = this.getWork(id);
         if (!work)
-            throw new DesktopError('WORK_NOT_FOUND', 'This Work is no longer available.', 404);
+            throw failure('WORK_NOT_FOUND', 'd.error.thisWorkUnavailable', undefined, 404);
         const key = `${id}:${path}`, state = this.directories.get(key) || { loading: false, checkedAt: '', error: '' };
         const generation = (this.directoryLoads.get(key) || 0) + 1;
         this.directoryLoads.set(key, generation);
@@ -3498,11 +3543,11 @@ export class DesktopAdapter {
             const response = await fetch(base, { method: 'PROPFIND', credentials: 'same-origin', headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
             if (!response.ok) {
                 await this.fileAuth(response);
-                throw this.fileError(response, 'Workspace cannot be read');
+                throw this.fileError(response, localizedText('d.error.workspaceReadFailed'));
             }
             const text = await response.text();
             if (epoch !== this.epoch || this.directoryLoads.get(key) !== generation)
-                throw new DesktopError('CONNECTION_CHANGED', 'The connection changed; the file listing was discarded.');
+                throw failure('CONNECTION_CHANGED', 'd.error.fileListingDiscarded');
             const entries = parseEntries(text, base);
             state.checkedAt = new Date().toISOString();
             state.error = '';
@@ -3544,7 +3589,7 @@ export class DesktopAdapter {
                 progress(0, undefined, true); };
             xhr.onload = () => {
                 if (epoch !== this.epoch) {
-                    reject(new DesktopError('CONNECTION_CHANGED', 'The identity changed during upload.'));
+                    reject(failure('CONNECTION_CHANGED', 'd.error.uploadIdentity'));
                     return;
                 }
                 const resultHeaders = new Headers();
@@ -3555,53 +3600,53 @@ export class DesktopAdapter {
                 }
                 resolve(new Response(xhr.status === 204 || xhr.status === 205 ? null : xhr.responseText, { status: xhr.status, headers: resultHeaders }));
             };
-            xhr.onerror = () => reject(new DesktopError('RESULT_UNKNOWN', 'Upload response lost. Check the original target before submitting again.'));
+            xhr.onerror = () => reject(failure('RESULT_UNKNOWN', 'd.error.uploadResponseLost'));
             xhr.onabort = xhr.onerror;
             xhr.send(body);
         });
     }
     async writeFile(id, path, method, body, headers = {}) {
         if (path === '/' && method !== 'MKCOL')
-            throw new Error('The workspace root cannot be mutated.');
+            throw new Error(t('d.error.rootCannotMutate'));
         const epoch = this.epoch;
         let response;
         try {
             response = body instanceof File
                 ? await this.uploadResponse(this.fileURL(id, path), method, body, { ...headers, 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => { const progress = this.uploadProgress.get(id); if (epoch === this.epoch && progress) {
-                    Object.assign(progress, sentAll ? { phase: 'Waiting for confirmation' } : { phase: 'Uploading', transferred: sent, total });
+                    Object.assign(progress, sentAll ? { phase: t('d.action.waitingConfirmation') } : { phase: t('d.action.uploading'), transferred: sent, total });
                     this.emit();
                 } })
                 : await fetch(this.fileURL(id, path), { method, credentials: 'same-origin', headers: { ...headers, 'X-Piwork-Csrf': this.csrf }, body });
         }
         catch {
-            return [{ path, status: 'unknown', message: 'Response lost. Refresh source and destination before trying again.' }];
+            return [{ path, status: 'unknown', message: t('d.error.transferResponseLost') }];
         }
         if (epoch !== this.epoch)
-            throw new Error('The connection changed; file results must be checked under the original account.');
+            throw new Error(t('d.error.fileResultsConnection'));
         if (response.status === 207) {
             try {
                 return mutationResults(await response.text(), this.fileURL(id, '/')).results;
             }
             catch {
-                return [{ path, status: 'unknown', message: 'The per-path result could not be verified. Refresh affected paths before trying again.' }];
+                return [{ path, status: 'unknown', message: t('d.error.perPathUnverified') }];
             }
         }
         if (!response.ok) {
             const value = await response.json().catch(() => ({}));
             const uncertain = response.status === 408 || response.status >= 500;
-            const reason = value.message ?? response.headers.get('X-Piwork-File-Error') ?? `Request failed (${response.status}).`;
+            const reason = value.message ?? response.headers.get('X-Piwork-File-Error') ?? t('d.error.requestFailed', { status: response.status });
             return [{ path, status: uncertain ? 'unknown' : 'failed', httpStatus: response.status, message: uncertain
-                        ? `${reason} The write result is unknown. Refresh source and destination before trying again.`
-                        : response.status === 412 ? 'The target changed. Your input is kept. Reread the target and explicitly confirm its version before retrying.' : reason }];
+                        ? t('d.error.writeUnknown', { reason })
+                        : response.status === 412 ? t('d.error.targetChanged') : reason }];
         }
-        return [{ path, status: 'succeeded', message: 'Confirmed', modified: fileVersion(response.headers.get('Last-Modified')) }];
+        return [{ path, status: 'succeeded', message: t('d.error.confirmed'), modified: fileVersion(response.headers.get('Last-Modified')) }];
     }
     async saveFile(id, path, content, baseline, unprotectedConsent = false, confirmed) {
         if (new TextEncoder().encode(content).length > 1_048_576)
-            throw new Error('Text exceeds the 1 MiB editor limit.');
+            throw new Error(t('d.error.textEditorLimit'));
         const modified = fileVersion(baseline);
         if (!modified && !unprotectedConsent)
-            throw new Error('No modification time is available. Explicitly approve an unprotected overwrite first.');
+            throw new Error(t('d.error.noModificationTime'));
         const results = await this.writeFile(id, path, 'PUT', content, { 'Content-Type': 'text/plain; charset=utf-8', ...(modified ? { 'If-Unmodified-Since': modified } : {}) });
         const result = results[0];
         this.state.transfers = results;
@@ -3623,7 +3668,7 @@ export class DesktopAdapter {
                         result.modified = fileVersion(fresh.modified);
                 }
                 catch {
-                    result.message = 'Saved, but the new version could not be confirmed. Reread before the next write.';
+                    result.message = localizedText('d.error.savedVersionUnconfirmed');
                 }
             }
             if (file)
@@ -3654,7 +3699,7 @@ export class DesktopAdapter {
     }
     fileAdmissionReason(id) {
         const work = this.getWork(id);
-        return !work ? 'The original Work is no longer available.' : !this.project(work).usable ? this.project(work).explanation || 'Confirm the Work is running before submitting file changes.' : '';
+        return !work ? t('d.error.originalWorkUnavailable') : !this.project(work).usable ? this.project(work).explanation || t('d.error.confirmWorkRunning') : '';
     }
     async upload(id, directory, files, overwrite = false) {
         const epoch = this.epoch, results = [];
@@ -3666,21 +3711,21 @@ export class DesktopAdapter {
         try {
             for (const [index, file] of files.entries()) {
                 if (!file.name || /[\\/\x00]/.test(file.name))
-                    throw new Error('Invalid upload file name.');
+                    throw new Error(t('d.error.invalidUploadName'));
                 const path = (directory === '/' ? '' : directory) + '/' + file.name, key = `${id}:${path}`;
-                const admission = () => epoch !== this.epoch ? 'The connection changed; upload was stopped.' : this.fileAdmissionReason(id);
+                const admission = () => epoch !== this.epoch ? t('d.error.uploadStopped') : this.fileAdmissionReason(id);
                 let reason = admission();
                 if (reason) {
-                    results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` });
+                    results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.notSubmitted', { reason }) });
                     publish();
                     continue;
                 }
-                this.uploadProgress.set(id, { workId: id, path, phase: 'Checking target', index: index + 1, count: files.length });
+                this.uploadProgress.set(id, { workId: id, path, phase: t('d.action.checkingTarget'), index: index + 1, count: files.length });
                 this.emit();
                 // Emitting progress may itself reveal a newer accepted control. Check at dispatch.
                 reason = admission();
                 if (reason) {
-                    results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` });
+                    results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.notSubmitted', { reason }) });
                     publish();
                     continue;
                 }
@@ -3689,18 +3734,18 @@ export class DesktopAdapter {
                     existing = await fetch(this.fileURL(id, path), { method: 'HEAD', credentials: 'same-origin' });
                 }
                 catch {
-                    results.push({ path, status: 'failed', notSubmitted: true, message: 'Target check failed. No upload was submitted; original input is kept.' });
+                    results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.targetCheckFailed') });
                     publish();
                     continue;
                 }
                 reason = admission();
                 if (reason) {
-                    results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` });
+                    results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.notSubmitted', { reason }) });
                     publish();
                     continue;
                 }
                 if (!existing.ok && existing.status !== 404) {
-                    results.push({ path, status: 'failed', notSubmitted: true, httpStatus: existing.status, message: `Target check failed (${existing.status}). No upload was submitted.` });
+                    results.push({ path, status: 'failed', notSubmitted: true, httpStatus: existing.status, message: t('d.error.targetCheckStatus', { status: existing.status }) });
                     publish();
                     continue;
                 }
@@ -3708,14 +3753,14 @@ export class DesktopAdapter {
                 const intent = this.uploadIntents.get(key);
                 if (!absent && (!overwrite || !intent || intent.file !== file || intent.absent || intent.modified !== version)) {
                     this.uploadIntents.set(key, { file, modified: version, absent: false });
-                    results.push({ path, status: 'failed', notSubmitted: true, needsConsent: true, message: intent && overwrite ? 'Target changed since confirmation. Confirm the newly checked version again.' : version ? 'Target exists. Confirm overwrite of this checked version.' : 'Target exists without a modification time. Overwrite cannot protect against concurrent changes; explicit consent is required.' });
+                    results.push({ path, status: 'failed', notSubmitted: true, needsConsent: true, message: intent && overwrite ? t('d.error.targetChangedSinceConfirm') : version ? t('d.error.targetExists') : t('d.error.targetExistsNoTime') });
                     publish();
                     continue;
                 }
                 const headers = { 'Content-Type': file.type || 'application/octet-stream', ...(absent ? { 'If-None-Match': '*' } : version ? { 'If-Unmodified-Since': intent.modified } : {}) };
                 reason = admission();
                 if (reason) {
-                    results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` });
+                    results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.notSubmitted', { reason }) });
                     publish();
                     continue;
                 }
@@ -3737,7 +3782,7 @@ export class DesktopAdapter {
     }
     async saveConfiguration(id, config) { const raw = synchronizeConfiguration(config); await this.request(`works/${part(id)}/configuration`, 'PUT', { configuration: raw }); this.getWork(id).config = structuredClone(config); this.emit(); }
     async replaceSkill(id, name) { const work = this.getWork(id); const skills = Array.from(new Set([...work.config.skills, name])); await this.request(`works/${part(id)}/configuration/skills`, 'PUT', { skills }); work.config = { ...work.config, skills }; this.emit(); }
-    async applyConfiguration(id) { return this.accepted(await this.request(`works/${part(id)}/configuration/apply`, 'POST'), id, 'Apply configuration'); }
+    async applyConfiguration(id) { return this.accepted(await this.request(`works/${part(id)}/configuration/apply`, 'POST'), id, 'Apply configuration'); } // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
     async installPackage(id, name, sourceLabel, files, updateTarget) {
         const kind = sourceLabel.split(': ')[0];
         const spec = sourceLabel.slice(kind.length + 2);
@@ -3748,28 +3793,28 @@ export class DesktopAdapter {
             source = { kind: kind === 'Git' ? 'git' : 'npm', spec };
         else {
             if (!files?.length)
-                throw new Error('Choose the actual package files.');
+                throw new Error(t('d.error.choosePackageFiles'));
             const form = new FormData();
             form.set('kind', kind === 'ZIP' ? 'zip' : 'local');
             for (const file of files)
                 form.append(kind === 'ZIP' ? 'zip' : 'files', file, file.webkitRelativePath || file.name);
             const epoch = this.epoch;
-            this.uploadProgress.set(id, { workId: id, path: name, phase: 'Uploading package' });
+            this.uploadProgress.set(id, { workId: id, path: name, phase: t('d.action.uploadingPackage') });
             this.emit();
             const response = await this.uploadResponse(`/_desktop/api/works/${part(id)}/package-uploads`, 'POST', form, { 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => { const progress = this.uploadProgress.get(id); if (epoch === this.epoch && progress) {
-                Object.assign(progress, sentAll ? { phase: 'Validating and forwarding' } : { phase: 'Uploading package', transferred: sent, total });
+                Object.assign(progress, sentAll ? { phase: t('d.action.validatingForwarding') } : { phase: t('d.action.uploadingPackage'), transferred: sent, total });
                 this.emit();
             } });
             const value = await response.json();
             if (!response.ok)
-                throw new Error(value.message ?? 'Package upload failed.');
+                throw failure('PACKAGE_UPLOAD_FAILED', 'd.error.packageUploadFailed', undefined, response.status, undefined, typeof value.message === 'string' && value.message ? value.message : undefined);
             source = { kind: 'upload', uploadId: value.uploadId };
             this.uploadProgress.delete(id);
             this.emit();
         }
-        return this.accepted(await this.request(`works/${part(id)}/packages${updateTarget ? `/${part(updateTarget)}/update` : ''}`, 'POST', { source }), id, updateTarget ? 'Update Pi Package' : 'Install Pi Package');
+        return this.accepted(await this.request(`works/${part(id)}/packages${updateTarget ? `/${part(updateTarget)}/update` : ''}`, 'POST', { source }), id, updateTarget ? 'Update Pi Package' : 'Install Pi Package'); // i18n-exempt: Operation kind 协议值
     }
-    async removePackage(id, name) { return this.accepted(await this.request(`works/${part(id)}/packages/${part(name)}`, 'DELETE'), id, 'Remove Pi Package'); }
+    async removePackage(id, name) { return this.accepted(await this.request(`works/${part(id)}/packages/${part(name)}`, 'DELETE'), id, 'Remove Pi Package'); } // i18n-exempt: Operation kind 协议值
     async cleanupInspection(id) {
         const pending = this.cleanupPending.get(id);
         if (!pending || pending.localSession !== this.csrf)
@@ -3781,11 +3826,11 @@ export class DesktopAdapter {
             if (response.ok || response.status === 404)
                 this.cleanupPending.delete(id);
             else
-                pending.message = `Cleanup not confirmed (${response.status}). Retry releasing this local transfer.`;
+                pending.message = localizedText('d.error.cleanupUnconfirmed', { status: response.status });
         }
         catch {
             if (this.cleanupPending.get(id) === pending)
-                pending.message = 'Cleanup response lost. Retry releasing this local transfer.';
+                pending.message = localizedText('d.error.cleanupResponseLost');
         }
         this.emit();
     }
@@ -3801,7 +3846,7 @@ export class DesktopAdapter {
         this.inspection = null;
         this.inspectionTransfer = '';
         this.transferProgress = null;
-        this.cleanupPending.set(context.id, { message: 'Releasing local transfer…', localSession: context.localSession });
+        this.cleanupPending.set(context.id, { message: t('d.error.releasingTransfer'), localSession: context.localSession });
         this.emit();
         await this.cleanupInspection(context.id);
     }
@@ -3814,7 +3859,7 @@ export class DesktopAdapter {
     }
     async inspectWork(file) {
         if (this.inspectionContext && this.inspectionContext.importState !== 'unsubmitted')
-            throw new Error('The original import is already submitted or unknown. Recover it by its original transfer/Operation ID before choosing another package.');
+            throw new Error(t('d.error.importAlreadySubmitted'));
         const selection = ++this.inspectionSelection;
         await this.abandonInspection(false);
         if (selection !== this.inspectionSelection)
@@ -3853,10 +3898,10 @@ export class DesktopAdapter {
                 xhr.onload = () => {
                     if (!current()) {
                         if (context.importState === 'unsubmitted' && context.localSession === this.csrf) {
-                            this.cleanupPending.set(context.id, { message: 'Releasing late local transfer…', localSession: context.localSession });
+                            this.cleanupPending.set(context.id, { message: t('d.error.releasingLateTransfer'), localSession: context.localSession });
                             void this.cleanupInspection(context.id);
                         }
-                        reject(new Error('This inspection was abandoned.'));
+                        reject(failure('INSPECTION_ABANDONED', 'd.error.inspectionAbandoned'));
                         return;
                     }
                     let value;
@@ -3864,16 +3909,16 @@ export class DesktopAdapter {
                         value = JSON.parse(xhr.responseText);
                     }
                     catch {
-                        reject(new Error('Inspection result could not be read. Original transfer ID is kept for cleanup.'));
+                        reject(new Error(t('d.error.inspectionUnreadable')));
                         return;
                     }
                     if (xhr.status >= 200 && xhr.status < 300 && value.summary && value.transferId === context.id)
                         resolve(value);
                     else
-                        reject(new Error(value.message ?? value.code ?? 'Package inspection failed.'));
+                        reject(failure('PACKAGE_INSPECTION_FAILED', 'd.error.packageInspectionFailed', undefined, xhr.status, undefined, typeof value.message === 'string' && value.message ? value.message : undefined));
                 };
-                xhr.onerror = () => reject(new Error('Local transfer was interrupted. Original transfer ID is kept for cleanup.'));
-                xhr.onabort = () => reject(new Error('Local upload cancelled.'));
+                xhr.onerror = () => reject(new Error(t('d.error.localTransferInterrupted')));
+                xhr.onabort = () => reject(new Error(t('d.error.localUploadCancelled')));
                 xhr.send(file);
             });
             if (!current())
@@ -3913,25 +3958,25 @@ export class DesktopAdapter {
     async importWork(name) {
         const context = this.inspectionContext;
         if (!context?.ready || !this.inspectionTransfer)
-            throw new Error('Inspect the actual .work package first.');
+            throw new Error(t('d.error.inspectPackageFirst'));
         if (context.importState !== 'unsubmitted')
-            throw new Error(`Import is ${context.importState}. Recover the original transfer ${context.id} or known Operation; do not submit again.`);
+            throw new Error(t('d.error.importState', { state: context.importState, id: context.id }));
         if (context.core !== this.state.core.address || context.localSession !== this.csrf || !this.state.signedIn)
-            throw new Error('Sign in to the original Core before importing.');
+            throw new Error(t('d.error.signInBeforeImport'));
         const sourceName = !name && typeof this.inspection?.sourceName === 'string' ? this.inspection.sourceName : undefined;
         context.importState = 'submitting';
         this.emit();
         try {
             const value = await this.request('work-imports', 'POST', { transferId: context.id, ...(name ? { name } : {}) });
             if (this.inspectionContext !== context)
-                throw new DesktopError('CONNECTION_CHANGED', 'The identity changed during import.');
+                throw failure('CONNECTION_CHANGED', 'd.error.importIdentity');
             // Missing acceptance identity is also unknown; never offer a second POST.
             const operation = this.accepted(value, '', 'Import Work');
             operation.importSourceName = sourceName;
             context.operationId = operation.id;
             context.importState = 'accepted';
             this.emit();
-            return operation;
+            return operation; // i18n-exempt: Operation kind 协议值
         }
         catch (error) {
             if (this.inspectionContext === context) {
@@ -3947,20 +3992,20 @@ export class DesktopAdapter {
     async prepareExport(id) {
         const value = await this.request(`works/${part(id)}/exports`, 'POST');
         if (value.workId !== id || typeof value.snapshotId !== 'string' || !value.snapshotId || typeof value.operationId !== 'string' || !value.operationId)
-            throw new DesktopError('RESULT_UNKNOWN', 'Export acceptance is incomplete or does not match the original Work. Check known operations; do not repeat Export.');
-        return this.accepted(value, id, 'Export Work');
+            throw failure('RESULT_UNKNOWN', 'd.error.exportAcceptanceIncomplete');
+        return this.accepted(value, id, 'Export Work'); // i18n-exempt: Operation kind 协议值
     }
     async fetchSnapshot(id, explicit = true) {
         const epoch = this.epoch;
         const { value } = await this.readMetadata(`work-snapshots/${part(id)}`, explicit);
         if (epoch !== this.epoch)
-            throw new DesktopError('CONNECTION_CHANGED', 'The original snapshot identity ended.');
+            throw failure('CONNECTION_CHANGED', 'd.error.snapshotIdentityEnded');
         const known = this.getSnapshot(id);
         if (value.snapshotId !== id || typeof value.workId !== 'string' || !value.workId || typeof value.operationId !== 'string' || !value.operationId ||
             known && (known.workId !== value.workId || known.operationId !== value.operationId))
-            throw new DesktopError('SNAPSHOT_MISMATCH', 'The snapshot does not match its original ID, Work and Operation.');
+            throw failure('SNAPSHOT_MISMATCH', 'd.error.snapshotMismatch');
         if (!['accepted', 'pending', 'preparing', 'running', 'succeeded', 'failed', 'superseded'].includes(value.state))
-            throw new DesktopError('INVALID_RESPONSE', 'Snapshot status could not be confirmed.');
+            throw failure('INVALID_RESPONSE', 'd.error.snapshotStatusUnconfirmed');
         // Package facts are immutable. Missing later metadata cannot revive an expired package.
         const expiresAt = typeof known?.expiresAt === 'string' && (typeof value.expiresAt !== 'string' || Date.parse(value.expiresAt) >= Date.parse(known.expiresAt)) ? known.expiresAt : typeof value.expiresAt === 'string' ? value.expiresAt : known?.expiresAt ?? value.expiresAt;
         const packageSize = typeof value.size === 'number' && Number.isFinite(value.size) && value.size >= 0 ? value.size : known?.packageSize ?? value.size;
@@ -3970,8 +4015,8 @@ export class DesktopAdapter {
         const snapshot = known ?? { id, workId: value.workId, operationId: value.operationId, status: 'preparing', filename: `${value.workId}.work`, size: '' };
         Object.assign(snapshot, { expiresAt, packageSize, digest,
             status: expired ? 'expired' : unavailable ? 'unavailable' : ['failed', 'superseded'].includes(value.state) ? 'failed' : value.state === 'succeeded' ? 'verified' : 'preparing',
-            size: typeof packageSize === 'number' ? `${packageSize} bytes` : '',
-            error: value.error?.message ?? (typeof value.error === 'string' ? value.error : unavailable ? 'The original snapshot package is unavailable. Check its metadata or explicitly create a new Export.' : undefined) });
+            size: typeof packageSize === 'number' ? t('d.error.sizeBytes', { size: packageSize }) : '',
+            error: value.error?.message ?? (typeof value.error === 'string' ? value.error : unavailable ? localizedText('d.error.snapshotUnavailable') : undefined) });
         if (!known)
             this.state.snapshots.push(snapshot);
         this.emit();
@@ -3985,12 +4030,12 @@ export class DesktopAdapter {
             value.workId !== undefined && value.workId !== job.workId || value.kind !== undefined && value.kind !== 'download' ||
             value.ready && (value.snapshotId !== job.snapshotId || value.workId !== job.workId ||
                 snapshot?.packageSize != null && value.size !== snapshot.packageSize || snapshot?.digest != null && value.digest !== snapshot.digest))
-            throw new DesktopError('SNAPSHOT_MISMATCH', 'The transfer does not match the original Work and snapshot.');
+            throw failure('SNAPSHOT_MISMATCH', 'd.error.transferMismatch');
     }
     async checkDownload(snapshotID, explicit = true) {
         const job = this.downloads.get(snapshotID);
         if (!job)
-            throw new Error('No original transfer is known for this snapshot.');
+            throw new Error(t('d.error.noOriginalTransfer'));
         const epoch = this.epoch;
         try {
             const value = await this.metadata.read(this.metadataKey(`downloads/${part(job.transferId)}`), async (signal) => {
@@ -4005,7 +4050,7 @@ export class DesktopAdapter {
                 }
             }, explicit);
             if (epoch !== this.epoch || this.downloads.get(snapshotID) !== job)
-                throw new DesktopError('CONNECTION_CHANGED', 'Original transfer access ended.');
+                throw failure('CONNECTION_CHANGED', 'd.error.transferAccessEnded');
             if (!value)
                 return job;
             this.validateDownload(value, job);
@@ -4060,7 +4105,7 @@ export class DesktopAdapter {
     retryDownloadSnapshot(id) {
         const job = this.downloads.get(id);
         if (!job?.terminalFailure || job.pending || this.downloadRequests.has(id))
-            return Promise.reject(new DesktopError('RESULT_UNKNOWN', 'Only a confirmed failed preparation can be retried explicitly.'));
+            return Promise.reject(failure('RESULT_UNKNOWN', 'd.error.onlyFailedRetry'));
         const observer = this.downloadObservers.get(id);
         if (observer)
             observer.active = false;
@@ -4077,12 +4122,12 @@ export class DesktopAdapter {
             return known;
         }
         if (old)
-            return Promise.reject(new DesktopError('RESULT_UNKNOWN', 'An original transfer is already known. Check transfer before preparing again.'));
+            return Promise.reject(failure('RESULT_UNKNOWN', 'd.error.transferAlreadyKnown'));
         const snapshot = this.getSnapshot(id);
         if (!snapshot || snapshot.status !== 'verified' || snapshot.expiresAt && Date.parse(snapshot.expiresAt) <= Date.now())
-            return Promise.reject(new DesktopError('SNAPSHOT_NOT_READY', 'Check this original snapshot before preparing its download.'));
+            return Promise.reject(failure('SNAPSHOT_NOT_READY', 'd.error.checkSnapshotBeforeDownload'));
         const epoch = this.epoch;
-        const job = { transferId: randomUUID(), snapshotId: id, workId: snapshot.workId, phase: 'Preparing', pending: true, seen: false, transferred: 0 };
+        const job = { transferId: randomUUID(), snapshotId: id, workId: snapshot.workId, phase: t('d.export.downloadPreparing'), pending: true, seen: false, transferred: 0 };
         this.downloads.set(id, job);
         this.emit();
         this.observeDownload(id);
@@ -4091,24 +4136,24 @@ export class DesktopAdapter {
             try {
                 const value = await this.requestOnce(`work-snapshots/${part(id)}/downloads`, 'POST', {}, undefined, { 'X-Piwork-Transfer-Id': job.transferId });
                 if (epoch !== this.epoch || this.downloads.get(id) !== job)
-                    throw new DesktopError('CONNECTION_CHANGED', 'The identity changed. Original transfer access ended.');
+                    throw failure('CONNECTION_CHANGED', 'd.error.identityChangedTransfer');
                 this.validateDownload(value, job);
                 if (!value.ready)
-                    throw new DesktopError('RESULT_UNKNOWN', 'Download confirmation was incomplete. Check the original transfer.');
+                    throw failure('RESULT_UNKNOWN', 'd.error.downloadConfirmationIncomplete');
                 // Native ready POST publishes size only after full verification; it omits progress fields.
                 Object.assign(job, value, { phase: 'ready', transferred: value.size, total: value.size, checkedAt: new Date().toISOString(), observationError: '', error: '', terminalFailure: false });
                 return `/_desktop/api/downloads/${part(job.transferId)}/content`;
             }
             catch (error) {
-                const failure = error instanceof DesktopError ? error : new DesktopError('RESULT_UNKNOWN', 'Download response lost. Check the original transfer.');
+                const rejected = error instanceof DesktopError ? error : failure('RESULT_UNKNOWN', 'd.error.downloadResponseLost');
                 if (epoch === this.epoch && this.downloads.get(id) === job && !job.ready) {
                     // These public CLI failures conclusively rejected/removed preparation. Unknown transport results remain locked.
-                    const terminalFailure = ['TRANSFER_STORAGE_FULL', 'PACKAGE_CHANGED', 'SNAPSHOT_MISMATCH', 'SNAPSHOT_NOT_READY', 'PACKAGE_EXPIRED', 'PACKAGE_INVALID', 'PACKAGE_LIMIT_EXCEEDED'].includes(failure.code) && failure.httpStatus !== undefined ||
-                        failure.code === 'TRANSFER_BUSY' && failure.httpStatus === 429 || ['CORE_UNAVAILABLE', 'TRANSFER_UNAVAILABLE'].includes(failure.code) && failure.httpStatus === 503 ||
-                        failure.code === 'SNAPSHOT_DOWNLOAD_FAILED' && failure.httpStatus !== undefined && failure.httpStatus >= 400 && failure.httpStatus <= 599;
-                    Object.assign(job, { error: errorText(failure), errorCode: failure.code, terminalFailure, phase: terminalFailure ? 'failed' : 'Not confirmed' });
+                    const terminalFailure = ['TRANSFER_STORAGE_FULL', 'PACKAGE_CHANGED', 'SNAPSHOT_MISMATCH', 'SNAPSHOT_NOT_READY', 'PACKAGE_EXPIRED', 'PACKAGE_INVALID', 'PACKAGE_LIMIT_EXCEEDED'].includes(rejected.code) && rejected.httpStatus !== undefined ||
+                        rejected.code === 'TRANSFER_BUSY' && rejected.httpStatus === 429 || ['CORE_UNAVAILABLE', 'TRANSFER_UNAVAILABLE'].includes(rejected.code) && rejected.httpStatus === 503 ||
+                        rejected.code === 'SNAPSHOT_DOWNLOAD_FAILED' && rejected.httpStatus !== undefined && rejected.httpStatus >= 400 && rejected.httpStatus <= 599;
+                    Object.assign(job, { error: errorText(rejected), errorCode: rejected.code, terminalFailure, phase: terminalFailure ? 'failed' : t('d.action.notConfirmed') });
                 }
-                throw failure;
+                throw rejected;
             }
             finally {
                 if (epoch === this.epoch && this.downloads.get(id) === job) {

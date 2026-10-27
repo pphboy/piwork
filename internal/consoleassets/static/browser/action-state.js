@@ -1,4 +1,5 @@
 import { pendingDots } from './pending.js';
+import { t } from './locale.js';
 /** In-memory request coordination; never a queue or a remote task cancellation API. */
 export class ActionState {
     changed;
@@ -32,6 +33,7 @@ export class ActionState {
     current(record) { return record.generation === this.generation && this.records.get(record.key) === record; }
     update(record, phase) { if (this.current(record)) {
         record.phase = phase;
+        record.phaseKey = undefined;
         this.changed();
     } }
     confirm(record, result) {
@@ -40,6 +42,7 @@ export class ActionState {
         record.pending = false;
         record.result = result;
         record.phase = result;
+        record.phaseKey = undefined;
         record.checkedAt = new Date(this.now()).toISOString();
         this.changed();
     }
@@ -49,15 +52,16 @@ export class ActionState {
         record.pending = false;
         record.checkedAt = new Date(this.now()).toISOString();
         if (!record.result && !record.error)
-            record.phase = 'Checked';
+            record.phaseKey = 'action.checked';
         this.changed();
     }
     fail(record, error) {
         if (!this.current(record))
             return;
         record.pending = false;
-        record.error = error instanceof Error ? error.message : String(error);
-        record.phase = 'Not confirmed';
+        record.errorText = () => error instanceof Error ? error.message : String(error);
+        record.error = record.errorText();
+        record.phaseKey = 'common.notConfirmed';
         const code = error?.code;
         record.blocked = record.kind !== 'read' && record.kind !== 'identity' && ['RESULT_UNKNOWN', 'INVALID_RESPONSE'].includes(code || '');
         this.changed();
@@ -66,7 +70,7 @@ export class ActionState {
         for (const record of this.records.values())
             if (record.work === work && (!view || record.view === view) && kinds.includes(record.kind) && record.blocked) {
                 record.blocked = false;
-                record.phase = 'Previous result unknown; current object checked';
+                record.phaseKey = 'action.previousResultUnknown';
             }
         this.changed();
     }
@@ -75,6 +79,7 @@ export class ActionState {
             return;
         record.refresh = 'refreshing';
         record.refreshError = undefined;
+        record.refreshErrorText = undefined;
         this.tick();
         this.changed();
         try {
@@ -87,7 +92,8 @@ export class ActionState {
         catch (error) {
             if (this.current(record)) {
                 record.refresh = 'failed';
-                record.refreshError = error instanceof Error ? error.message : String(error);
+                record.refreshErrorText = () => error instanceof Error ? error.message : String(error);
+                record.refreshError = record.refreshErrorText();
             }
         }
         finally {
@@ -97,7 +103,9 @@ export class ActionState {
     }
     message(record) {
         const elapsed = Math.floor((this.now() - record.started) / 1000);
-        return `${record.target} · ${record.phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · Still waiting (${elapsed}s)` : ''}${record.error ? ` · ${record.error}` : ''}${record.refresh === 'refreshing' ? ' · Refreshing' : record.refresh === 'failed' ? ` · Confirmed result retained; refresh not confirmed: ${record.refreshError}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
+        const phase = record.phaseKey ? t(record.phaseKey) : record.resultText && record.phase === record.result ? record.resultText() : record.phase;
+        const error = record.errorText?.() ?? record.error;
+        return `${record.target} · ${phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · ${t('action.stillWaiting', { seconds: elapsed })}` : ''}${error ? ` · ${error}` : ''}${record.refresh === 'refreshing' ? ` · ${t('action.refreshing')}` : record.refresh === 'failed' ? ` · ${t('action.refreshFailed', { error: record.refreshErrorText?.() ?? record.refreshError ?? '' })}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
     }
     clear() { this.generation++; this.records.clear(); clearTimeout(this.timer); this.timer = undefined; this.changed(); }
     tick() {
@@ -151,12 +159,17 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
         node.setAttribute('aria-live', 'polite');
         node.setAttribute('aria-busy', String(record.pending || record.refresh === 'refreshing'));
         const visible = { ...record };
-        if (record.error && pageText.includes(record.error))
+        const error = record.errorText?.() ?? record.error, result = record.resultText?.() ?? record.result;
+        if (error && pageText.includes(error)) {
             visible.error = undefined;
-        if (record.result && pageText.includes(record.result)) {
-            visible.result = undefined;
-            visible.phase = 'Confirmed';
+            visible.errorText = undefined;
         }
+        if (result && pageText.includes(result)) {
+            visible.result = undefined;
+            visible.phaseKey = 'action.confirmed';
+        }
+        if (!visible.phaseKey && record.phase === record.label && anchor)
+            visible.phase = intentFor(anchor)?.label ?? record.phase;
         const pending = record.pending || record.refresh === 'refreshing';
         const message = actions.message(visible);
         if (node.dataset.pending !== String(pending)) {

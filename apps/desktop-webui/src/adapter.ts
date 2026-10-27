@@ -1,4 +1,5 @@
 import { randomUUID, sha256Hex } from './browser-crypto.js';
+import { LocalizedMessage, t } from './locale.js';
 import { historyMessages, resultText, upsertTool } from './chat-projection.js';
 import { HistoryProjection } from './history-projection.js';
 import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, FilePreview, RunStatus, RunModel, Session, Run, Service, ServiceDiagnostic, TemporaryCleanup } from './models.js';
@@ -23,11 +24,59 @@ export interface LogExportState {
 interface InspectionContext { id: string; nonce: number; core: string; localSession: string; anonymous: boolean; ready: boolean; importState: 'unsubmitted' | 'submitting' | 'unknown' | 'accepted'; xhr?: XMLHttpRequest; operationId?: string }
 interface UploadIntent { file: File; modified: string; absent: boolean }
 
-export class DesktopError extends Error { constructor(public code: string, message: string, public httpStatus?: number, public field?: string) { super(message); } }
+export class DesktopError extends Error {
+  messageKey?: string;
+  params?: Record<string, string | number>;
+  /** Untrusted server diagnostic kept beside the localized main message. */
+  raw?: string;
+  constructor(
+    public code: string,
+    message: string,
+    public httpStatus?: number,
+    public field?: string,
+    messageKey?: string,
+    params?: Record<string, string | number>,
+    raw?: string,
+  ) {
+    super(messageKey ? t(messageKey, params) + (raw ? ` ${raw}` : '') : message);
+    this.messageKey = messageKey;
+    this.params = params;
+    this.raw = raw || undefined;
+  }
+}
+/** Create a localized error whose text is re-rendered from its catalog key. */
+function failure(code: string, key: string, params?: Record<string, string | number>, httpStatus?: number, field?: string, raw?: string) {
+  return new DesktopError(code, key, httpStatus, field, key, params, raw);
+}
+const localizedMessages = new Map<string, LocalizedMessage>();
+/** Intern by key, params and raw so one cached feedback value keeps a stable identity. */
+function localized(key: string, params?: Record<string, string | number>, raw?: string): LocalizedMessage {
+  const paramKey = params ? JSON.stringify(Object.keys(params).sort().map(name => [name, params[name]])) : '';
+  const id = `${key}\u0000${paramKey}\u0000${raw ?? ''}`;
+  let value = localizedMessages.get(id);
+  if (!value) { value = new LocalizedMessage(key, params, raw); localizedMessages.set(id, value); }
+  return value;
+}
+/** A cached localized value for fields still typed as string in the view models. */
+const localizedText = (key: string, params?: Record<string, string | number>) => localized(key, params) as unknown as string;
+/**
+ * Render a user-facing error in the current locale. Locally produced errors
+ * carry a catalog key; unknown server text is returned as diagnostic data only.
+ */
+export function describeError(error: unknown): string {
+  return String(errorFeedback(error));
+}
+function errorFeedback(error: unknown): string | LocalizedMessage {
+  const value = error as { messageKey?: string; params?: Record<string, string | number>; raw?: string; message?: string } | null;
+  if (value?.messageKey) return localized(value.messageKey, value.params, value.raw);
+  return value?.message || String(error ?? '');
+}
 const part = encodeURIComponent;
 const runStates: RunStatus[] = ['interrupted', 'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'];
 const blankConfig = (): Configuration => ({ skills: [], packages: [], agents: '', advanced: '{}', revision: 0, activeRevision: 0, loaded: false, modelVisible: false });
-const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+// The runtime value may be an interned LocalizedMessage; the cast keeps existing
+// model fields (typed string) and String/esc interpolation working unchanged.
+const errorText = (error: unknown) => errorFeedback(error) as unknown as string;
 const stateLabel = (value: string) => ({ ready: 'Ready', running: 'Ready', stopped: 'Stopped', degraded: 'Degraded', starting: 'Starting', recovering: 'Recovering', stopping: 'Stopping', failed: 'Failed', removed: 'Removed' }[value] ?? 'Unknown');
 const diagnosticText = (value: unknown) => typeof value === 'string' ? value : '';
 /** Copy only the typed public diagnostic fields; never stringify an unknown object or infer a stage. */
@@ -62,7 +111,7 @@ export class DesktopAdapter {
   private historyEventParts = new Map<string, {offset:number;parts:Map<number,string>}>();
   private historyProjection(id:string,session:string) {const key=`${id}:${session}`;let value=this.historyProjections.get(key);if(!value){value=new HistoryProjection();this.historyProjections.set(key,value);}return value;}
   historyNotice(id:string) {
-    return this.historySupport.get(id)===false?'Paged history is unavailable for this Work. Legacy history reads have size limits. Update Core and the Work Agent image as needed, then explicitly Apply the compatible Agent image to enable paged history.':'';
+    return this.historySupport.get(id)===false?t('d.error.historyNotice'):'';
   }
   private legacyHistoryLimit(id:string,error:unknown) {
     return this.historySupport.get(id)===false&&error instanceof DesktopError&&['RESPONSE_TOO_LARGE','RATE_LIMITED','HISTORY_UNSUPPORTED'].includes(error.code);
@@ -71,18 +120,18 @@ export class DesktopAdapter {
     if(this.historySupport.get(id))return true;
     const epoch=this.epoch;
     try {const value=await this.request(`works/${part(id)}/history-capabilities`);if(epoch!==this.epoch)return false;
-      if(value.contractVersion!==1||value.profile!=='session-history-v1'||value.pageBytes!==524288)throw new DesktopError('INVALID_RESPONSE','History capabilities are incomplete.');
+      if(value.contractVersion!==1||value.profile!=='session-history-v1'||value.pageBytes!==524288)throw failure('INVALID_RESPONSE','d.error.historyCapabilities');
       this.historySupport.set(id,true);return true;
     }catch(error){if(epoch===this.epoch&&[404,501].includes((error as DesktopError).httpStatus ?? 0)){this.historySupport.set(id,false);return false;}throw error;}
   }
   private cancelHistoryReads() {for(const controller of this.historyControllers)controller.abort();this.historyControllers.clear();this.historyReads.clear();}
   private async historyPage(id:string,sessionId:string,query:URLSearchParams,signal?:AbortSignal) {
     const value=await this.request(`works/${part(id)}/sessions/${part(sessionId)}/history?${query}`,'GET',undefined,signal);
-    if(value.contractVersion!==1||value.session?.workId!==id||value.session?.sessionId!==sessionId||typeof value.snapshotId!=='string'||!Array.isArray(value.segments)||!Array.isArray(value.runs)||value.hasMore!==(typeof value.nextCursor==='string'&&!!value.nextCursor))throw new DesktopError('INVALID_RESPONSE','History page does not match this conversation.');
-    if(query.has('snapshot')&&query.get('snapshot')!==value.snapshotId||query.has('cursor')&&query.get('cursor')===value.nextCursor)throw new DesktopError('INVALID_RESPONSE','History range did not advance within the requested snapshot.');
+    if(value.contractVersion!==1||value.session?.workId!==id||value.session?.sessionId!==sessionId||typeof value.snapshotId!=='string'||!Array.isArray(value.segments)||!Array.isArray(value.runs)||value.hasMore!==(typeof value.nextCursor==='string'&&!!value.nextCursor))throw failure('INVALID_RESPONSE','d.error.historyPageMismatch');
+    if(query.has('snapshot')&&query.get('snapshot')!==value.snapshotId||query.has('cursor')&&query.get('cursor')===value.nextCursor)throw failure('INVALID_RESPONSE','d.error.historyRangeNoAdvance');
     return value;
   }
-  async loadEarlierHistory(id:string,sessionId:string,reload=false) {const work=this.getWork(id);if(!work||!this.project(work).usable)throw new DesktopError('WORK_UNAVAILABLE','Start the Work explicitly before reading more history.');return this.loadPagedSession(id,sessionId,!reload);}
+  async loadEarlierHistory(id:string,sessionId:string,reload=false) {const work=this.getWork(id);if(!work||!this.project(work).usable)throw failure('WORK_UNAVAILABLE','d.error.startBeforeHistory');return this.loadPagedSession(id,sessionId,!reload);}
   private loadPagedSession(id:string,sessionId:string,earlier=false):Promise<Data> {
     const key=`${id}:${sessionId}:${earlier}`,pending=this.historyReads.get(key);if(pending)return pending;
     const promise=(async()=>{
@@ -113,15 +162,15 @@ export class DesktopAdapter {
   }
   private async readRunResult(id:string,run:Run,signal?:AbortSignal) {
     if(!run.resultRef)return '';
-    if(run.resultRef.workId!==id||run.resultRef.sessionId!==run.sessionId||run.resultRef.runId!==run.id)throw new DesktopError('INVALID_RESPONSE','Result reference does not match the original Run.');
+    if(run.resultRef.workId!==id||run.resultRef.sessionId!==run.sessionId||run.resultRef.runId!==run.id)throw failure('INVALID_RESPONSE','d.error.resultRefMismatch');
     const query=new URLSearchParams({direction:'newer',content:'result',runId:run.id,...(run.resultRef.snapshot?{snapshot:run.resultRef.snapshot}:{})});
     let cursor:string|null=null,block='',offset=0,complete=false;const text:string[]=[];
     do{if(cursor)query.set('cursor',cursor);const page=await this.historyPage(id,run.sessionId,query,signal);if(!query.has('snapshot'))query.set('snapshot',page.snapshotId);
-      for(const part of page.segments){if(part.runId!==run.id||!['text','run-result'].includes(part.type)||part.blockId!==block&&block&&!complete)throw new DesktopError('INVALID_RESPONSE','Result contains conflicting ranges.');
-        if(part.blockId!==block){block=part.blockId;offset=0;}if(part.byteOffset!==offset)throw new DesktopError('RESPONSE_INCOMPLETE','Result contains a missing range.');text.push(part.text);offset+=new TextEncoder().encode(part.text).length;complete=part.complete;}
-      if(page.nextCursor===cursor&&cursor)throw new DesktopError('INVALID_RESPONSE','Result cursor did not advance.');cursor=page.nextCursor;
+      for(const part of page.segments){if(part.runId!==run.id||!['text','run-result'].includes(part.type)||part.blockId!==block&&block&&!complete)throw failure('INVALID_RESPONSE','d.error.resultConflictingRanges');
+        if(part.blockId!==block){block=part.blockId;offset=0;}if(part.byteOffset!==offset)throw failure('RESPONSE_INCOMPLETE','d.error.resultMissingRange');text.push(part.text);offset+=new TextEncoder().encode(part.text).length;complete=part.complete;}
+      if(page.nextCursor===cursor&&cursor)throw failure('INVALID_RESPONSE','d.error.resultCursor');cursor=page.nextCursor;
     }while(cursor);
-    if(!block||!complete)throw new DesktopError('RESPONSE_INCOMPLETE','The saved result is incomplete.');return text.join('');
+    if(!block||!complete)throw failure('RESPONSE_INCOMPLETE','d.error.savedResultIncomplete');return text.join('');
   }
   private async loadSavedRun(id:string,run:Run,signal?:AbortSignal) {
     const epoch=this.epoch,session=this.getWork(id)?.sessions.find(s=>s.id===run.sessionId);if(!session)return;
@@ -147,9 +196,9 @@ export class DesktopAdapter {
   loadAbout() {
     const epoch=this.epoch;this.about.localLoading=true;this.about.localError='';this.emit();
     void this.request('about').then(value=>{if(epoch===this.epoch)this.about.local=value;}).catch(error=>{if(epoch===this.epoch)this.about.localError=errorText(error);}).finally(()=>{if(epoch===this.epoch){this.about.localLoading=false;this.emit();}});
-    if(!this.state.signedIn){this.about.coreError='Sign in to read the connected Core version.';return;}
+    if(!this.state.signedIn){this.about.coreError=localizedText('d.error.signInCoreVersion');return;}
     this.about.coreLoading=true;this.about.coreError='';
-    void this.request('core-about').then(value=>{if(epoch===this.epoch){this.about.core=value;this.about.coreChecked=new Date().toISOString();}}).catch(error=>{if(epoch===this.epoch)this.about.coreError=(error as DesktopError).httpStatus===404?'This Core does not support version information.':errorText(error);}).finally(()=>{if(epoch===this.epoch){this.about.coreLoading=false;this.emit();}});
+    void this.request('core-about').then(value=>{if(epoch===this.epoch){this.about.core=value;this.about.coreChecked=new Date().toISOString();}}).catch(error=>{if(epoch===this.epoch)this.about.coreError=(error as DesktopError).httpStatus===404?localizedText('d.error.coreVersionUnsupported'):errorText(error);}).finally(()=>{if(epoch===this.epoch){this.about.coreLoading=false;this.emit();}});
   }
   imageCapabilities = new Map<string,{loading:boolean;error:string;value?:Data}>();
   imageLoads = new Map<string,{phase:'loading'|'ready'|'error';url?:string;error?:string}>();
@@ -159,8 +208,8 @@ export class DesktopAdapter {
   async loadImageCapabilities(id:string) {
     if(this.imageCapabilities.has(id)){if(this.imageCapabilities.get(id)?.loading)await this.request(`works/${part(id)}/chat-image-capabilities`).catch(()=>undefined);return;}
     const state={loading:true,error:'',value:undefined as Data|undefined},epoch=this.epoch;this.imageCapabilities.set(id,state);this.emit();
-    try {const value=await this.request(`works/${part(id)}/chat-image-capabilities`);if(epoch!==this.epoch)return;if(value.profile!=='chat-images-v1')throw new Error('Image input is not supported by this Work.');state.value=value;}
-    catch(error){if(epoch===this.epoch)state.error=[404,501].includes((error as DesktopError).httpStatus || 0)?'Image input is unavailable. Update Core or the Work Agent as needed, then explicitly Apply the compatible Agent image.':errorText(error);}
+    try {const value=await this.request(`works/${part(id)}/chat-image-capabilities`);if(epoch!==this.epoch)return;if(value.profile!=='chat-images-v1')throw new Error(t('d.error.imageUnsupported'));state.value=value;}
+    catch(error){if(epoch===this.epoch)state.error=[404,501].includes((error as DesktopError).httpStatus || 0)?localizedText('d.error.imageUnavailable'):errorText(error);}
     finally{if(epoch===this.epoch){state.loading=false;this.emit();const selected=this.chatSelection.startsWith(`${id}:`)?this.chatSelection.slice(id.length+1):'',session=this.getWork(id)?.sessions.find(s=>s.id===selected);if(state.value&&session?.checkedAt&&!session.imageProfile)void this.loadSession(id,selected).catch(()=>undefined);}}
   }
   async refreshImageCapabilities(id:string) {
@@ -168,11 +217,11 @@ export class DesktopAdapter {
     if(epoch!==this.epoch)return;this.imageCapabilities.delete(id);return this.loadImageCapabilities(id);
   }
   imageInputReason(id:string,sessionId:string):string {
-    const capability=this.imageCapabilities.get(id);if(!capability || capability.loading)return 'Checking image input support…';
-    if(!capability.value)return capability.error || 'Update the Work Agent and Apply to use image input.';
+    const capability=this.imageCapabilities.get(id);if(!capability || capability.loading)return t('d.error.imageChecking');
+    if(!capability.value)return capability.error || t('d.error.imageUpdateAgent');
     const ref=this.modelSelection(id,sessionId).ref;
     const model=ref===null?capability.value.defaultModel:capability.value.models.find((m:Data)=>m.modelRef===ref);
-    return model?.availability==='supported'?'':model?.availability==='unsupported'?'This model does not support images. Choose an image-capable model.':'Image capability is unconfirmed. Choose an image-capable model.';
+    return model?.availability==='supported'?'':model?.availability==='unsupported'?t('d.error.imageModelUnsupported'):t('d.error.imageUnconfirmed');
   }
   historyImageKey(id:string,session:string,run:string,index:number){return `${id}:${session}:${run}:${index}`;}
   loadHistoryImage(id:string,session:string,run:string,image:HistoryImage) {
@@ -180,10 +229,10 @@ export class DesktopAdapter {
     const state={phase:'loading' as 'loading'|'ready'|'error',url:undefined as string|undefined,error:''},epoch=this.epoch;this.imageLoads.set(key,state);this.emit();
     const start=async()=>{this.imageActive++;const controller=new AbortController();this.imageControllers.add(controller);
       try {if(epoch!==this.epoch)return;const response=await fetch(`/_desktop/api/works/${part(id)}/sessions/${part(session)}/runs/${part(run)}/images/${image.imageIndex}`,{credentials:'same-origin',signal:controller.signal});
-        if(!response.ok){const value=await response.json().catch(()=>({}));if(response.status===401)await this.checkSession().catch(()=>undefined);throw new Error(value.message || value.code || 'Image could not be read.');}
-        if(response.headers.get('Content-Type')!==image.mimeType || Number(response.headers.get('Content-Length'))!==image.byteSize || image.byteSize>5*1024**2)throw new Error('The image response could not be verified.');
-        const blob=await response.blob();if(blob.size!==image.byteSize)throw new Error('The image response is incomplete.');
-        const hash=await sha256Hex(new Uint8Array(await blob.arrayBuffer()));if(hash!==image.sha256)throw new Error('The saved image is corrupt.');
+        if(!response.ok){const value=await response.json().catch(()=>({}));if(response.status===401)await this.checkSession().catch(()=>undefined);throw failure('IMAGE_READ_FAILED','d.error.imageReadFailed', undefined, response.status, undefined, typeof value.message==='string'&&value.message?value.message:undefined);}
+        if(response.headers.get('Content-Type')!==image.mimeType || Number(response.headers.get('Content-Length'))!==image.byteSize || image.byteSize>5*1024**2)throw new Error(t('d.error.imageResponseUnverified'));
+        const blob=await response.blob();if(blob.size!==image.byteSize)throw new Error(t('d.error.imageResponseIncomplete'));
+        const hash=await sha256Hex(new Uint8Array(await blob.arrayBuffer()));if(hash!==image.sha256)throw new Error(t('d.error.imageCorrupt'));
         if(epoch!==this.epoch||controller.signal.aborted)return;state.url=URL.createObjectURL(blob);state.phase='ready';
       }catch(error){if(epoch===this.epoch&&!controller.signal.aborted){state.phase='error';state.error=errorText(error);}}
       finally{this.imageControllers.delete(controller);this.imageActive--;this.imageQueue.shift()?.();if(epoch===this.epoch)this.emit();}
@@ -295,16 +344,16 @@ export class DesktopAdapter {
       response = await fetch('/_desktop/api/preferences', { method, credentials: 'same-origin',
         headers: method === 'GET' ? {} : { 'X-Piwork-Csrf': csrf, ...(method === 'PUT' ? { 'Content-Type': 'application/json' } : {}) },
         ...(method === 'PUT' ? { body: JSON.stringify({ coreUrl }) } : {}) });
-    } catch { throw new DesktopError(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'Default Core could not be read. Check the connection and try reading again.' : 'The response was lost. Read the saved default before making another change.'); }
+    } catch { throw failure(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'd.error.preferencesReadFailed' : 'd.error.preferencesResponseLost'); }
     const value = await response.json().catch(() => null);
-    if (csrf !== this.csrf) throw new DesktopError(method === 'GET' ? 'LOCAL_AUTH_REQUIRED' : 'RESULT_UNKNOWN', 'The session changed. Read the saved default again before making another change.');
+    if (csrf !== this.csrf) throw failure(method === 'GET' ? 'LOCAL_AUTH_REQUIRED' : 'RESULT_UNKNOWN', 'd.error.preferencesSessionChanged');
     if (!response.ok) {
       const code = value?.code || (method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN');
       if (['LOCAL_AUTH_REQUIRED', 'LOCAL_CSRF_OR_AUTH_REQUIRED'].includes(code)) await this.checkSession().catch(() => undefined);
-      const message = ({ INVALID_DESKTOP_PREFERENCES: 'Enter an HTTP(S) Core origin without credentials, a path, query, or fragment.', DESKTOP_PREFERENCES_BUSY: 'Another instance is saving the default. Wait, read it again, then retry.', DESKTOP_PREFERENCES_UNAVAILABLE: 'The saved default is corrupt or storage is unsafe or unavailable. Restore automatic selection for a corrupt record; check the storage location for permission errors.', DESKTOP_PREFERENCES_OUTCOME_UNKNOWN: 'The change was committed but could not be confirmed. Read the saved default before making another change.' } as Record<string,string>)[code] || 'Default Core could not be confirmed. Check the connection and read again.';
-      throw new DesktopError(code, message, response.status);
+      const key = ({ INVALID_DESKTOP_PREFERENCES: 'd.error.preferencesInvalidOrigin', DESKTOP_PREFERENCES_BUSY: 'd.error.preferencesBusy', DESKTOP_PREFERENCES_UNAVAILABLE: 'd.error.preferencesUnavailable', DESKTOP_PREFERENCES_OUTCOME_UNKNOWN: 'd.error.preferencesOutcomeUnknown' } as Record<string,string>)[code] || 'd.error.preferencesUnconfirmed';
+      throw failure(code, key, undefined, response.status);
     }
-    if (!value || Object.keys(value).length !== 1 || !('coreUrl' in value) || value.coreUrl !== null && typeof value.coreUrl !== 'string') throw new DesktopError(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', 'The response could not be verified. Read the saved default again.');
+    if (!value || Object.keys(value).length !== 1 || !('coreUrl' in value) || value.coreUrl !== null && typeof value.coreUrl !== 'string') throw failure(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', 'd.error.preferencesUnverified');
     return value.coreUrl;
   }
   async loadPreferences() {
@@ -329,7 +378,7 @@ export class DesktopAdapter {
       try {
         const url = new URL(coreUrl);
         if (!['http:','https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error();
-      } catch { this.preferences.error = 'Enter an HTTP(S) Core origin without credentials, a path, query, or fragment.'; this.emit(); return; }
+      } catch { this.preferences.error = localizedText('d.error.preferencesInvalidOrigin'); this.emit(); return; }
     }
     const sequence = ++this.preferenceSequence;
     clearTimeout(this.preferenceNotice);
@@ -338,7 +387,7 @@ export class DesktopAdapter {
     try {
       const saved = await this.preferenceRequest(coreUrl === null ? 'DELETE' : 'PUT', coreUrl ?? undefined);
       if (sequence !== this.preferenceSequence) return;
-      Object.assign(this.preferences, { phase: 'idle', confirmed: true, coreUrl: saved, notice: saved === null ? 'Automatic selection restored for next launch.' : 'Default Core saved for next launch.', waiting: false });
+      Object.assign(this.preferences, { phase: 'idle', confirmed: true, coreUrl: saved, notice: saved === null ? localizedText('d.error.preferencesRestored') : localizedText('d.error.preferencesSaved'), waiting: false });
       this.preferenceNotice = setTimeout(() => { if (sequence === this.preferenceSequence) { this.preferences.notice = ''; this.emit(); } }, 3000);
     } catch (error) {
       if (sequence !== this.preferenceSequence) return;
@@ -361,7 +410,7 @@ export class DesktopAdapter {
     const previous = this.terminalEvidence.get(operation.id);
     this.terminalEvidence.set(operation.id, { operation: { ...operation }, generation: previous?.generation ?? (intent?.operationId === operation.id ? intent.sequence : this.workMutations.get(operation.workId) || 0) });
   }
-  getSkills() { const copies = this.state.works.flatMap(work => work.config.skills).filter((name, i, all) => all.indexOf(name) === i && !this.skills.some(s => s.id === name)); return [...this.skills, ...copies.map(name => ({ id: name, name, description: 'Saved Work copy; unavailable in current Core catalog', version: null, loaded: null, modelVisible: null }))]; }
+  getSkills() { const copies = this.state.works.flatMap(work => work.config.skills).filter((name, i, all) => all.indexOf(name) === i && !this.skills.some(s => s.id === name)); return [...this.skills, ...copies.map(name => ({ id: name, name, description: 'Saved Work copy; unavailable in current Core catalog', version: null, loaded: null, modelVisible: null }))]; } // i18n-exempt: app.ts 用作本地占位 Skill 的比较哨兵
   getPackages() { return this.packages; }
   getSnapshot(id: string) { return this.state.snapshots.find(snapshot => snapshot.id === id); }
 
@@ -415,7 +464,7 @@ export class DesktopAdapter {
     const epoch = this.epoch;
     try {
       const value = await this.request(`log-exports/${part(state.id)}`);
-      if (epoch !== this.epoch || this.logExport !== state) throw new DesktopError('CONNECTION_CHANGED', 'The original export identity ended.');
+      if (epoch !== this.epoch || this.logExport !== state) throw failure('CONNECTION_CHANGED','d.error.exportIdentityEnded');
       const progress = value.progress || {};
       const result = value.result || {};
       Object.assign(state, {
@@ -511,7 +560,7 @@ export class DesktopAdapter {
     work.operationId = work.lifecycleIntent?.operationId ?? (outstanding.length === 1 ? outstanding[0].id : related.length === 1 ? related[0].id : undefined);
   }
   private mergeWork(raw: Data, sequence: number, mutation: number, recoverAccess = false): Work | undefined {
-    if (!raw || typeof raw.id !== 'string' || typeof raw.observedState !== 'string' || !['running', 'stopped', 'deleted'].includes(raw.desiredState)) throw new DesktopError('INVALID_RESPONSE', 'The Work status response is incomplete.');
+    if (!raw || typeof raw.id !== 'string' || typeof raw.observedState !== 'string' || !['running', 'stopped', 'deleted'].includes(raw.desiredState)) throw failure('INVALID_RESPONSE','d.error.workStatusIncomplete');
     const old = this.getWork(raw.id);
     if (mutation !== (this.workMutations.get(raw.id) || 0) || sequence < (this.workReads.get(raw.id) || 0)) return old;
     if (old?.controlVersion !== undefined && raw.controlVersion !== undefined && raw.controlVersion < old.controlVersion) return old;
@@ -535,38 +584,41 @@ export class DesktopAdapter {
     const epoch = this.epoch, authSequence = this.authSequence;
     let response: Response;
     try { response = await fetch(`/_desktop/api/${path}`, { method, credentials: 'same-origin', signal, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-Piwork-Csrf': this.csrf, ...headers }, ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }) }); }
-    catch { throw new DesktopError(method === 'GET' ? 'CORE_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? (this.hosted ? 'The server connection is unavailable. Check the server and retry this read.' : 'The local connection is unavailable. Check the CLI and Core.') : 'The response was lost. Check known operations before submitting again.'); }
-    if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This response was discarded.');
+    catch { throw failure(method === 'GET' ? 'CORE_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? (this.hosted ? 'd.error.serverUnavailable' : 'd.error.localUnavailable') : 'd.error.responseLostOperations'); }
+    if (epoch !== this.epoch) throw failure('CONNECTION_CHANGED','d.error.coreAccountChanged');
     const value = await response.json().catch(() => null);
-    if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while reading the response.');
+    if (epoch !== this.epoch) throw failure('CONNECTION_CHANGED','d.error.identityChangedReading');
     if (!response.ok) {
       const code = value?.code ?? `HTTP_${response.status}`;
       if (path !== 'session' && ['LOCAL_AUTH_REQUIRED','LOCAL_CSRF_OR_AUTH_REQUIRED'].includes(code)) {
-        if (authSequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer sign-in flow owns this response.');
+        if (authSequence !== this.authSequence) throw failure('CONNECTION_CHANGED','d.error.signInOwnsResponse');
         const pending = this.checkSession(), sequence = this.authSequence;
         await pending.catch(() => undefined);
-        if (sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer sign-in flow owns this readback.');
-        throw new DesktopError(code, this.state.sessionState === 'ready' ? 'The session was refreshed. The original action was rejected locally; submit it explicitly again if needed.' : 'The browser session could not be restored. Retry the connection before submitting again.', response.status);
+        if (sequence !== this.authSequence) throw failure('CONNECTION_CHANGED','d.error.signInOwnsReadback');
+        throw failure(code, this.state.sessionState === 'ready' ? 'd.error.sessionRefreshed' : 'd.error.browserSessionRestore', undefined, response.status);
       }
       else if (response.status === 401 && path !== 'login' && path !== 'session') {
-        if (authSequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this response.');
+        if (authSequence !== this.authSequence) throw failure('CONNECTION_CHANGED','d.error.authOwnsResponse');
         const pending = this.checkSession(), sequence = this.authSequence;
         const session = await pending;
-        if (sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'A newer authentication flow owns this readback.');
-        if (session.state === 'offline') throw new DesktopError('CORE_UNAVAILABLE', 'Core is unreachable. Last confirmed data is preserved.');
+        if (sequence !== this.authSequence) throw failure('CONNECTION_CHANGED','d.error.authOwnsReadback');
+        if (session.state === 'offline') throw failure('CORE_UNAVAILABLE','d.error.coreUnreachable');
         if (session.state === 'signed-out') {
           if (epoch === this.epoch) this.clearIdentity();
           this.state.signedIn = false; this.state.scenario = 'auth-expired'; this.emit();
         }
       }
-      const serviceErrors:Record<string,string> = {
-        SERVICE_ENTRY_LIMIT:'The server has reached its active Service entry limit. Close unused browser sessions before retrying.',
-        SERVICE_GENERATION_CHANGED:'The Work or Service restarted. Reopen its current entry from this Work.',
+      const serviceKeys:Record<string,string> = {
+        SERVICE_ENTRY_LIMIT:'d.error.serviceEntryLimit',
+        SERVICE_GENERATION_CHANGED:'d.error.workOrServiceRestarted',
       };
-      const message = serviceErrors[code] || (code === 'WORK_NAME_CONFLICT' ? 'This Work name is already in use or reserved. Choose a different name.' : value?.message ?? `Request failed (${response.status}).`);
-      throw new DesktopError(code, message, response.status, value?.field === 'name' ? 'name' : undefined);
+      const mapped = serviceKeys[code];
+      const key = mapped ?? (code === 'WORK_NAME_CONFLICT' ? 'd.error.workNameConflict' : 'd.error.requestFailed');
+      // A server sentence is an untrusted diagnostic beside the localized main message.
+      const raw = !mapped && code !== 'WORK_NAME_CONFLICT' && typeof value?.message === 'string' && value.message ? value.message : undefined;
+      throw failure(code, key, key === 'd.error.requestFailed' ? { status: response.status } : undefined, response.status, value?.field === 'name' ? 'name' : undefined, raw);
     }
-    if (!value || typeof value !== 'object') throw new DesktopError('INVALID_RESPONSE', 'The server returned an invalid response.');
+    if (!value || typeof value !== 'object') throw failure('INVALID_RESPONSE','d.error.invalidResponse');
     return value;
   }
   private acceptSession(value: Data) {
@@ -591,15 +643,15 @@ export class DesktopAdapter {
   private unavailableSession(error: unknown) {
     this.state.sessionState = 'unavailable';
     this.state.sessionError = error instanceof DesktopError && error.code === 'LOCAL_SESSION_CAPACITY'
-      ? 'Desktop has reached 128 active browser sessions. Wait for an unused session to expire, then retry the connection.'
+      ? t('d.error.sessionCapacity')
       : error instanceof DesktopError && error.code === 'LOCAL_SESSION_UNAVAILABLE'
-        ? 'Desktop could not create a browser session. Retry the connection.'
+        ? t('d.error.sessionCreateFailed')
         : errorText(error);
     this.emit();
   }
   private sessionRead(signal: AbortSignal): Promise<Data> {
     return this.request('session', 'GET', undefined, signal).then(value => {
-      if (!['signed-out', 'authenticated', 'offline'].includes(value.state) || typeof value.csrf !== 'string' || !value.csrf || !Number.isInteger(value.generation) || typeof value.coreUrl !== 'string') throw new DesktopError('INVALID_RESPONSE', 'The session response could not be verified. Retry the connection.');
+      if (!['signed-out', 'authenticated', 'offline'].includes(value.state) || typeof value.csrf !== 'string' || !value.csrf || !Number.isInteger(value.generation) || typeof value.coreUrl !== 'string') throw failure('INVALID_RESPONSE','d.error.sessionResponseUnverified');
       return value;
     });
   }
@@ -610,11 +662,11 @@ export class DesktopAdapter {
     pending = (async () => {
       try {
         let value = await this.sessionRead(controller.signal);
-        if (epoch !== this.epoch || sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'An older session read was discarded.');
+        if (epoch !== this.epoch || sequence !== this.authSequence) throw failure('CONNECTION_CHANGED','d.error.olderSessionDiscarded');
         if (value.sessionCreated === true) {
           const confirmed = await this.sessionRead(controller.signal);
-          if (epoch !== this.epoch || sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'An older session read was discarded.');
-          if (confirmed.sessionCreated === true || confirmed.csrf !== value.csrf) throw new DesktopError('SESSION_COOKIE_UNAVAILABLE', 'This browser did not retain its session Cookie. Allow cookies for this Desktop, then retry the connection.');
+          if (epoch !== this.epoch || sequence !== this.authSequence) throw failure('CONNECTION_CHANGED','d.error.olderSessionDiscarded');
+          if (confirmed.sessionCreated === true || confirmed.csrf !== value.csrf) throw failure('SESSION_COOKIE_UNAVAILABLE','d.error.sessionCookie');
           value = confirmed;
         }
         this.acceptSession(value);
@@ -626,7 +678,7 @@ export class DesktopAdapter {
         if (epoch !== acceptedEpoch && acceptedEpoch === this.epoch && sequence === this.authSequence && this.state.signedIn && !connectionOwned) void this.readConnection().catch(() => undefined);
         return value;
       } catch (error) {
-        if (epoch !== this.epoch || sequence !== this.authSequence) throw new DesktopError('CONNECTION_CHANGED', 'An older session read was discarded.');
+        if (epoch !== this.epoch || sequence !== this.authSequence) throw failure('CONNECTION_CHANGED','d.error.olderSessionDiscarded');
         if (!(error instanceof DesktopError && error.code === 'CONNECTION_CHANGED')) this.unavailableSession(error);
         throw error;
       } finally { if (this.authCheck?.pending === pending) this.authCheck = undefined; }
@@ -640,7 +692,7 @@ export class DesktopAdapter {
     const pending = this.checkSession(), sequence = this.authSequence;
     const slow = setTimeout(() => {
       if (sequence === this.authSequence && this.state.sessionState === 'loading') {
-        this.state.sessionError = 'Still reading your Desktop session. You can retry the connection if the server is unavailable.'; this.emit();
+        this.state.sessionError = localizedText('d.error.stillReadingSession'); this.emit();
       }
     }, 10000);
     try { await pending; }
@@ -719,9 +771,9 @@ export class DesktopAdapter {
     const epoch = this.epoch, mutations = new Map(this.workMutations); this.worksLoading = true; this.emit();
     try {
       const { value, sequence } = await this.readMetadata('works', explicit);
-      if (epoch !== this.epoch) throw new ObservationStopped('The identity changed.');
+      if (epoch !== this.epoch) throw new ObservationStopped(t('d.error.identityChanged'));
       if (sequence < this.worksReadSequence) return;
-      if (!Array.isArray(value.works)) throw new DesktopError('INVALID_RESPONSE', 'The Work list response is incomplete. Retry loading the list.');
+      if (!Array.isArray(value.works)) throw failure('INVALID_RESPONSE','d.error.workListIncomplete');
       this.worksReadSequence = sequence;
       const ids = new Set(value.works.map((raw: Data) => raw.id));
       for (const raw of value.works) this.mergeWork(raw, sequence, mutations.get(raw.id) || 0);
@@ -763,7 +815,7 @@ export class DesktopAdapter {
       try {
         const value = await this.request(name);
         if (epoch !== this.epoch) return;
-        if (!Array.isArray(value[name]) || value[name].some((entry: Data) => !entry || typeof entry.name !== 'string')) throw new Error(`The ${name} catalog response is incomplete.`);
+        if (!Array.isArray(value[name]) || value[name].some((entry: Data) => !entry || typeof entry.name !== 'string')) throw new Error(t('d.error.catalogIncomplete', { name }));
         if (name === 'skills') this.skills = value.skills.map((entry: Data) => ({ id: entry.name, name: entry.name, description: null, version: null, loaded: null, modelVisible: null }));
         else this.packages = value.packages.map((entry: Data) => ({ ...entry, description: entry.description ?? null, version: entry.version ?? null }));
         Object.assign(status, { error: '', confirmed: true, checkedAt: new Date().toISOString() });
@@ -777,8 +829,8 @@ export class DesktopAdapter {
     try {
       const { value: raw, sequence: readSequence } = await this.readMetadata(`works/${part(id)}`, explicit);
       const sequence = readSequence;
-      if (epoch !== this.epoch) throw new ObservationStopped('The identity changed.');
-      if (raw.id !== id) throw new DesktopError('INVALID_RESPONSE', 'The Work status response does not match the original Work.');
+      if (epoch !== this.epoch) throw new ObservationStopped(t('d.error.identityChanged'));
+      if (raw.id !== id) throw failure('INVALID_RESPONSE','d.error.workStatusMismatch');
       const previous = this.getWork(id), wasUsable = previous && this.project(previous).usable;
       const work = this.mergeWork(raw, sequence, mutation, true);
       if (work && sequence === this.workReads.get(id) && mutation === (this.workMutations.get(id) || 0) && !work.accessRevoked) work.statusError = undefined;
@@ -804,7 +856,7 @@ export class DesktopAdapter {
   }
   async loadWork(id: string, includeChat = true) {
     const work = await this.refreshWorkStatus(id);
-    if (!work) throw new DesktopError('NOT_FOUND', 'The Work is no longer available.', 404);
+    if (!work) throw failure('NOT_FOUND','d.error.workUnavailable', undefined, 404);
     work.resourceErrors = {};
     const tasks = [['services', () => this.loadServices(id)], ['configuration', () => this.loadConfiguration(id)], ['packages', () => this.loadPackages(id)]] as const;
     for (const [name, action] of tasks) { try { await action(); } catch (error) { work.resourceErrors[name] = errorText(error); } }
@@ -827,7 +879,7 @@ export class DesktopAdapter {
       // The outer coordinator scopes deduplication to the current control generation.
       const value = await this.requestOnce(`works/${part(id)}/services`);
       if (!current()) return;
-      if (!Array.isArray(value.services)) throw new DesktopError('INVALID_RESPONSE', 'Service listing is incomplete.');
+      if (!Array.isArray(value.services)) throw failure('INVALID_RESPONSE','d.error.serviceListingIncomplete');
       (work.resourceChecked ??= {}).services = new Date().toISOString();
       work.services = value.services.map(mapService);
       if (work.resourceErrors) delete work.resourceErrors.services;
@@ -851,10 +903,10 @@ export class DesktopAdapter {
   }
   async loadConfiguration(id: string) {
     const work = this.getWork(id)!; (work.resourceLoading ??= {}).configuration = true; this.emit(); try { const value = await this.request(`works/${part(id)}/configuration`); const raw = value.desired;
-    work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p: Data) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: JSON.stringify(raw, null, 2), pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false };
+    work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p: Data) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: JSON.stringify(raw, null, 2), pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false }; // i18n-exempt: Pi Package source 协议值，不是显示文案
     (work.resourceChecked ??= {}).configuration = new Date().toISOString(); if (work.resourceErrors) delete work.resourceErrors.configuration; this.emit(); return work.config;
   } catch (error) { (work.resourceErrors ??= {}).configuration = errorText(error); throw error; } finally { work.resourceLoading.configuration = false; this.emit(); }}
-  async loadPackages(id: string) { const work = this.getWork(id)!; (work.resourceLoading ??= {}).packages = true; this.emit(); try { const value = await this.request(`works/${part(id)}/packages`); if (!Array.isArray(value.packages)) throw new DesktopError('INVALID_RESPONSE', 'Package listing is incomplete.'); (work.resourceChecked ??= {}).packages = new Date().toISOString(); work.packageEntries = value.packages; delete work.resourceErrors?.packages; } catch (error) { (work.resourceErrors ??= {}).packages = errorText(error); throw error; } finally { work.resourceLoading.packages = false; this.emit(); }}
+  async loadPackages(id: string) { const work = this.getWork(id)!; (work.resourceLoading ??= {}).packages = true; this.emit(); try { const value = await this.request(`works/${part(id)}/packages`); if (!Array.isArray(value.packages)) throw failure('INVALID_RESPONSE','d.error.packageListingIncomplete'); (work.resourceChecked ??= {}).packages = new Date().toISOString(); work.packageEntries = value.packages; delete work.resourceErrors?.packages; } catch (error) { (work.resourceErrors ??= {}).packages = errorText(error); throw error; } finally { work.resourceLoading.packages = false; this.emit(); }}
   requestPage(id: string,serviceName='') { return this.requests.get(`${id}:${serviceName}`); }
   async loadRequestPresence(id: string, serviceName: string, explicit=false) {
     const key=`${id}:${serviceName}`,epoch=this.epoch,version=this.interactionVersion;
@@ -863,7 +915,7 @@ export class DesktopAdapter {
     try {
       const {value}=await this.readMetadata(`works/${part(id)}/agent-requests?${new URLSearchParams({serviceName,limit:'1'})}`,explicit);
       if(epoch!==this.epoch || version!==this.interactionVersion)return;
-      if(!Array.isArray(value.items) || value.items.some((r:Data)=>r.source?.kind!=='service'||r.source.serviceName!==serviceName))throw new DesktopError('INVALID_RESPONSE','The Service request scope could not be confirmed.');
+      if(!Array.isArray(value.items) || value.items.some((r:Data)=>r.source?.kind!=='service'||r.source.serviceName!==serviceName))throw failure('INVALID_RESPONSE','d.error.serviceRequestScope');
       Object.assign(state,{confirmed:true,hasRecords:value.items.length>0,error:''});
     }catch(error){if(epoch===this.epoch && version===this.interactionVersion && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred))state.error=errorText(error);}
     finally{if(epoch===this.epoch){state.loading=false;this.emit();}}
@@ -877,7 +929,7 @@ export class DesktopAdapter {
       const {value}=await this.readMetadata(`works/${part(id)}/runs/active`,explicit);
       if(epoch!==this.epoch || version!==this.interactionVersion || revision!==(this.activeRevisions.get(id) || 0))return;
       const raw=value.run;
-      if(raw!==null && (!raw?.runId || !raw.sessionId || raw.workId!==id || ![1,2,3].includes(raw.state)))throw new DesktopError('INVALID_RESPONSE','The active Run could not be confirmed.');
+      if(raw!==null && (!raw?.runId || !raw.sessionId || raw.workId!==id || ![1,2,3].includes(raw.state)))throw failure('INVALID_RESPONSE','d.error.activeRunUnconfirmed');
       Object.assign(state,{confirmed:true,error:'',run:raw===null?null:this.runRecord(raw,raw.sessionId)});
     }catch(error){if(epoch===this.epoch && version===this.interactionVersion && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred))state.error=errorText(error);}
     finally{if(epoch===this.epoch){state.loading=false;state.visibleLoading=false;this.emit();}}
@@ -885,7 +937,7 @@ export class DesktopAdapter {
   async loadRunDetails(id: string, runId: string, explicit=true) {
     const epoch=this.epoch;await this.supportsHistory(id);if(epoch!==this.epoch)return;
     const {value}=await this.readMetadata(`works/${part(id)}/runs/${part(runId)}`,explicit),raw=value.run ?? value;
-    if(raw.runId!==runId || raw.workId!==id || !raw.sessionId)throw new DesktopError('INVALID_RESPONSE','Run details do not match the original Run.');
+    if(raw.runId!==runId || raw.workId!==id || !raw.sessionId)throw failure('INVALID_RESPONSE','d.error.runDetailsMismatch');
     if(epoch!==this.epoch)return;
     const run=this.runRecord(raw,raw.sessionId);if(run.resultRef){run.finalText=await this.readRunResult(id,run);if(epoch!==this.epoch)return;}this.runDetails.set(`${id}:${runId}`,run);this.emit();return run;
   }
@@ -900,10 +952,10 @@ export class DesktopAdapter {
         const path = kind === 'run' ? `works/${part(workId)}/temporary-cleanups?runId=${part(ref)}` : `works/${part(workId)}/temporary-cleanups/${part(ref)}`;
         const value = await this.request(path);
         const raw = kind === 'run' ? value.items : [value];
-        if (!Array.isArray(raw) || raw.length > 256) throw new DesktopError('INVALID_RESPONSE', 'Cleanup records are incomplete.');
+        if (!Array.isArray(raw) || raw.length > 256) throw failure('INVALID_RESPONSE', 'd.error.cleanupIncomplete');
         const items: TemporaryCleanup[] = raw.map((item: Data) => {
           if (!item || item.workId !== workId || typeof item.serviceId !== 'string' || typeof item.runId !== 'string' || typeof item.createOperationId !== 'string' ||
-              kind === 'run' && item.runId !== ref || kind === 'service' && item.serviceId !== ref || !Array.isArray(item.events) || item.events.length > 32) throw new DesktopError('INVALID_RESPONSE', 'Cleanup record identity is invalid.');
+              kind === 'run' && item.runId !== ref || kind === 'service' && item.serviceId !== ref || !Array.isArray(item.events) || item.events.length > 32) throw failure('INVALID_RESPONSE', 'd.error.cleanupIdentity');
           return { workId, serviceId: item.serviceId, runId: item.runId, createOperationId: item.createOperationId, ...(typeof item.operationId === 'string' && item.operationId ? { operationId: item.operationId } : {}),
             state: diagnosticText(item.state), stage: diagnosticText(item.stage), trigger: diagnosticText(item.trigger), ...(diagnosticText(item.errorCode) ? { errorCode: diagnosticText(item.errorCode) } : {}),
             ...(diagnosticText(item.logState) ? { logState: diagnosticText(item.logState) } : {}), updatedAt: diagnosticText(item.updatedAt), truncated: item.truncated === true,
@@ -926,7 +978,7 @@ export class DesktopAdapter {
     const key=`${id}:${serviceName}`,state=this.requests.get(key) ?? {loading:false,error:'',items:[],nextCursor:null},epoch=this.epoch;
     if(state.loading)return;this.requests.set(key,state);state.loading=true;state.error='';this.emit();
     const query=new URLSearchParams({limit:'25',...(serviceName?{serviceName}:{}),...(more && state.nextCursor?{cursor:state.nextCursor}:{})});
-    try {const {value}=await this.readMetadata(`works/${part(id)}/agent-requests?${query}`,true);if(!Array.isArray(value.items))throw new DesktopError('INVALID_RESPONSE','Pi request page is incomplete.');if(epoch!==this.epoch)return;state.items=more?[...state.items,...value.items]:value.items;state.nextCursor=value.nextCursor;state.checkedAt=value.checkedAt;
+    try {const {value}=await this.readMetadata(`works/${part(id)}/agent-requests?${query}`,true);if(!Array.isArray(value.items))throw failure('INVALID_RESPONSE','d.error.requestPageIncomplete');if(epoch!==this.epoch)return;state.items=more?[...state.items,...value.items]:value.items;state.nextCursor=value.nextCursor;state.checkedAt=value.checkedAt;
       if(serviceName&&!more)this.requestPresence.set(key,{confirmed:true,loading:false,hasRecords:value.items.length>0,error:''});
     }catch(error){if(epoch===this.epoch)state.error=errorText(error);throw error;}finally{if(epoch===this.epoch){state.loading=false;this.emit();}}
   }
@@ -936,7 +988,7 @@ export class DesktopAdapter {
     const epoch=this.epoch,version=this.interactionVersion;
     const query=new URLSearchParams({limit:'25',...(cursor?{cursor}:{})});
     const {value}=await this.readMetadata(`works/${part(id)}/agent-requests/${part(requestId)}?${query}`,explicit);
-    if(value.request?.requestId!==requestId || !Array.isArray(value.request.runIds) || !Array.isArray(value.evidence?.items))throw new DesktopError('INVALID_RESPONSE','Pi request detail does not match the original ID.');
+    if(value.request?.requestId!==requestId || !Array.isArray(value.request.runIds) || !Array.isArray(value.evidence?.items))throw failure('INVALID_RESPONSE','d.error.requestDetailMismatch');
     if(epoch!==this.epoch || version!==this.interactionVersion)return;
     if(more){
       // A delayed evidence page cannot confirm status or replace newer request facts.
@@ -970,7 +1022,7 @@ export class DesktopAdapter {
     results.forEach((result,index)=>{
       const runId=runIds[index];if(!allowed.has(runId))return;
       if(result.status==='fulfilled' && result.value){prior.set(runId,result.value);state.checked[runId]=new Date().toISOString();delete state.errorsByRun[runId];}
-      else if(result.status==='rejected')state.errorsByRun[runId]=`Run ${runId}: reply refresh failed; ${prior.has(runId)?'last confirmed content retained':'reply has not been confirmed'}. ${errorText(result.reason)}`;
+      else if(result.status==='rejected')state.errorsByRun[runId]=t('d.error.runReplyRefreshFailed', { runId, state: t(prior.has(runId)?'d.error.replyRetained':'d.error.replyUnconfirmed'), detail: errorText(result.reason) });
     });
     state.runs=[...allowed].flatMap(runId=>prior.has(runId)?[prior.get(runId)!]:[]);
     state.errors=[...allowed].flatMap(runId=>state.errorsByRun[runId]?[state.errorsByRun[runId]]:[]);this.emit();
@@ -980,14 +1032,14 @@ export class DesktopAdapter {
   requestCancellation(id: string, requestId: string) { return this.requestCancellations.get(`${id}:${requestId}`); }
   async cancelRequest(id: string,requestId: string) {
     const key = `${id}:${requestId}`, epoch = this.epoch;
-    if (this.requestCancellations.has(key)) throw new DesktopError('REQUEST_CANCEL_SUBMITTED', 'Cancellation was already submitted. Refresh the original request; do not cancel it again.');
+    if (this.requestCancellations.has(key)) throw failure('REQUEST_CANCEL_SUBMITTED','d.error.cancellationSubmitted');
     const cancellation = { phase: 'pending' as 'pending' | 'accepted' | 'unknown', error: '' };
     this.requestCancellations.set(key, cancellation); this.cancellingRequests.add(key); this.emit();
     let value: Data;
     try {
       value = await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/cancel`, 'POST', {});
-      if (value.requestId !== requestId) throw new DesktopError('RESULT_UNKNOWN', 'Cancellation receipt could not be matched. Refresh the original request.');
-      if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This response was discarded.');
+      if (value.requestId !== requestId) throw failure('RESULT_UNKNOWN','d.error.cancellationReceipt');
+      if (epoch !== this.epoch) throw failure('CONNECTION_CHANGED','d.error.coreAccountChanged');
       cancellation.phase = 'accepted'; this.emit();
     } catch (error) {
       if (epoch === this.epoch) {
@@ -1006,15 +1058,15 @@ export class DesktopAdapter {
   }
   async retryRequest(id: string,requestId: string) {
     const original=await this.loadRequest(id,requestId);
-    if(!original)throw new DesktopError('CONNECTION_CHANGED','The original request belongs to a previous view.');
-    if(original.request.disposition!=='live' || !['failed','cancelled','needs_attention'].includes(original.request.state))throw new DesktopError('REQUEST_RETRY_NOT_ALLOWED','Only an eligible live terminal request can be retried.');
+    if(!original)throw failure('CONNECTION_CHANGED','d.error.originalRequestPreviousView');
+    if(original.request.disposition!=='live' || !['failed','cancelled','needs_attention'].includes(original.request.state))throw failure('REQUEST_RETRY_NOT_ALLOWED','d.error.retryNotAllowed');
     const key=`${id}:${requestId}`,epoch=this.epoch;
-    if(this.requestRetries.get(key)?.unknown)throw new DesktopError('RESULT_UNKNOWN','Previous Retry is unknown. Check status using the original key.');
+    if(this.requestRetries.get(key)?.unknown)throw failure('RESULT_UNKNOWN','d.error.retryUnknown');
     const intent={submissionKey:randomUUID(),error:'',unknown:true};this.requestRetries.set(key,intent);this.emit();
     try {
       const value=await this.request(`works/${part(id)}/agent-requests/${part(requestId)}/retry`,'POST',{submissionKey:intent.submissionKey});
-      if(epoch!==this.epoch)throw new DesktopError('CONNECTION_CHANGED','The Retry belongs to the previous identity.');
-      if(value.retryOf!==requestId || typeof value.requestId!=='string' || value.requestId===requestId)throw new DesktopError('INVALID_RESPONSE','Retry receipt needs original submission readback.');
+      if(epoch!==this.epoch)throw failure('CONNECTION_CHANGED','d.error.retryIdentity');
+      if(value.retryOf!==requestId || typeof value.requestId!=='string' || value.requestId===requestId)throw failure('INVALID_RESPONSE','d.error.retryReceipt');
       if(this.requestRetries.get(key)===intent)this.requestRetries.delete(key);this.emit();return value;
     } catch(error) {
       if(epoch===this.epoch && this.requestRetries.get(key)===intent){
@@ -1034,10 +1086,10 @@ export class DesktopAdapter {
       if(value.workId!==id || value.requestId!==requestId || value.submissionKey!==intent.submissionKey ||
         !['accepted','not-found'].includes(value.status) || value.status==='not-found' && value.request!==null ||
         value.status==='accepted' && (!value.request || value.request.retryOf!==requestId || typeof value.request.requestId!=='string' || value.request.requestId===requestId))
-        throw new DesktopError('INVALID_RESPONSE','Retry lookup does not match the original request and key.');
+        throw failure('INVALID_RESPONSE','d.error.retryLookupMismatch');
       if(value.status==='accepted'){this.requestRetries.delete(key);this.emit();return value.request;}
-      intent.error='Retry result remains unknown: no mapping confirmed for the original key.';this.emit();
-    } catch(error){if(epoch===this.epoch && this.requestRetries.get(key)===intent){intent.error=`Retry result remains unknown: ${errorText(error)}`;this.emit();}throw error;}
+      intent.error=localizedText('d.error.retryUnknownNoMapping');this.emit();
+    } catch(error){if(epoch===this.epoch && this.requestRetries.get(key)===intent){intent.error=localizedText('d.error.retryUnknownDetail', { detail: errorText(error) });this.emit();}throw error;}
   }
   private runRecord(raw: Data,sessionId: string): Run { return { id:raw.runId,sessionId,status:runStates[raw.state] ?? 'interrupted',cursor:0,resultRef:raw.resultRef,created:raw.acceptedAt ?? '',finished:raw.finishedAt,finalText:raw.finalText,error:raw.error?.message,executionError:raw.error?.message,errorCode:typeof raw.error?.code === 'string' ? raw.error.code : undefined,errorRetryable:typeof raw.error?.retryable === 'boolean' ? raw.error.retryable : undefined,actualModel:raw.actualModel ?? null,thinkingLevel:raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel,source:raw.source,adoptedExperienceVersion:raw.adoptedExperienceVersion }; }
   modelSelection(id: string,sessionId: string) {
@@ -1056,27 +1108,27 @@ export class DesktopAdapter {
       try {const capabilities=await this.request(`works/${part(id)}/chat-capabilities`);if(epoch!==this.epoch)return;this.chatCapabilities.set(id,capabilities.contractVersion===3?3:capabilities.contractVersion===2?2:capabilities.contractVersion===1?1:0);this.cancelAndSendCapabilities.set(id,capabilities.cancelAndSendContractVersion===1?1:0);if(this.visibleWorkId===id && this.visibleChat)void this.loadActiveRun(id,true);}
       catch(error) {if((error as DesktopError).code==='CONNECTION_CHANGED')throw error;if(epoch!==this.epoch)return;this.chatCapabilities.set(id,0);if(!this.cancelAndSendCapabilities.has(id))this.cancelAndSendCapabilities.set(id,0);}
       const value=await this.request(`works/${part(id)}/${(this.chatCapabilities.get(id) ?? 0)>=1?'chat-models':'models'}`);
-      if(value.availability==='unavailable')throw new DesktopError('MODEL_LIST_UNAVAILABLE','Available models could not be confirmed.');
-      if(!Array.isArray(value.models) || !value.defaultModel && value.contractVersion!==2 && value.contractVersion!==3)throw new DesktopError('INVALID_RESPONSE','Model list is incomplete.');
+      if(value.availability==='unavailable')throw failure('MODEL_LIST_UNAVAILABLE','d.error.modelsUnconfirmed');
+      if(!Array.isArray(value.models) || !value.defaultModel && value.contractVersion!==2 && value.contractVersion!==3)throw failure('INVALID_RESPONSE','d.error.modelListIncomplete');
       if(epoch!==this.epoch)return;Object.assign(state,{confirmed:true,models:value.models,defaultModel:value.defaultModel ?? undefined,defaultUnavailableReason:value.defaultUnavailableReason,unavailableModels:value.unavailableModels,checkedAt:value.checkedAt,error:''});await this.loadCommands(id);
       const draft=this.modelSelections.get(`${id}:`);if(draft&&!draft.revision&&state.defaultModel)draft.thinking=state.defaultModel.defaultThinkingLevel===undefined?'off':state.defaultModel.defaultThinkingLevel;
       const selected=this.chatSelection?.startsWith(`${id}:`)?this.chatSelection.slice(id.length+1):'';if(selected)await this.readSessionOptions(id,selected);
     } catch(error){if(epoch===this.epoch)state.error=errorText(error);throw error;}finally{if(epoch===this.epoch){state.loading=false;this.emit();if(!state.error)void this.refreshImageCapabilities(id);}}
   }
-  selectModel(id: string,sessionId: string,ref: string|null) {const state=this.modelSelection(id,sessionId);if(state.phase==='unknown')throw new DesktopError('MODEL_NOT_CONFIRMED','Check the original Session model first.');state.ref=ref;const catalog=this.models.get(id),model=ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===ref);
+  selectModel(id: string,sessionId: string,ref: string|null) {const state=this.modelSelection(id,sessionId);if(state.phase==='unknown')throw failure('MODEL_NOT_CONFIRMED','d.error.checkSessionModel');state.ref=ref;const catalog=this.models.get(id),model=ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===ref);
     if(model?.thinkingAvailability==='unknown'){
-      if(state.thinking!==null){if(!sessionId && !state.revision)state.thinking=null;else {state.error='Thinking is unconfirmed. Choose Normal in Thinking to confirm this model.';state.phase='dirty';state.revision++;this.emit();return;}}
-    }else if(model?.thinkingLevels && (state.thinking===null || !model.thinkingLevels.includes(state.thinking))){state.thinking=model.defaultThinkingLevel ?? 'off';state.error='Thinking adjusted to a supported level for this model.';}else state.error='';
+      if(state.thinking!==null){if(!sessionId && !state.revision)state.thinking=null;else {state.error=localizedText('d.error.thinkingUnconfirmed');state.phase='dirty';state.revision++;this.emit();return;}}
+    }else if(model?.thinkingLevels && (state.thinking===null || !model.thinkingLevels.includes(state.thinking))){state.thinking=model.defaultThinkingLevel ?? 'off';state.error=localizedText('d.error.thinkingAdjusted');}else state.error='';
     if(state.phase!=='saving')state.phase='dirty';state.revision++;this.emit();if(sessionId)void this.saveModel(id,sessionId).catch(()=>undefined);}
   selectThinking(id:string,sessionId:string,thinking:string|null) {
-    const state=this.modelSelection(id,sessionId);if(state.phase==='unknown')throw new DesktopError('MODEL_NOT_CONFIRMED','Check the original settings first.');
+    const state=this.modelSelection(id,sessionId);if(state.phase==='unknown')throw failure('MODEL_NOT_CONFIRMED','d.error.checkOriginalSettings');
     const catalog=this.models.get(id),model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
-    if((this.chatCapabilities.get(id) ?? 0)<1 || !(thinking===null ? model?.thinkingAvailability==='unknown' : model?.thinkingLevels?.includes(thinking)))throw new DesktopError('THINKING_LEVEL_UNSUPPORTED','Choose a supported Thinking level.');
+    if((this.chatCapabilities.get(id) ?? 0)<1 || !(thinking===null ? model?.thinkingAvailability==='unknown' : model?.thinkingLevels?.includes(thinking)))throw failure('THINKING_LEVEL_UNSUPPORTED','d.error.chooseThinking');
     state.thinking=thinking;if(state.phase!=='saving')state.phase='dirty';state.error='';state.revision++;this.emit();if(sessionId)void this.saveModel(id,sessionId).catch(()=>undefined);
   }
   private confirmSessionModel(id:string,session:Session,raw:Data,version=this.sessionVersions.get(id)||0) {
     if(version!==(this.sessionVersions.get(id)||0))return;
-    if(!raw || raw.sessionId!==session.id || raw.workId!==id)throw new DesktopError('INVALID_RESPONSE','Session model response belongs to another object.');
+    if(!raw || raw.sessionId!==session.id || raw.workId!==id)throw failure('INVALID_RESPONSE','d.error.sessionModelOther');
     session.modelPreference=raw.modelPreference ?? null;session.thinkingLevel=raw.thinkingLevel === undefined ? 'off' : raw.thinkingLevel;session.source=raw.source;
     const state=this.modelSelections.get(`${id}:${session.id}`);
     if(state && (state.phase==='clean')){state.ref=session.modelPreference?.modelRef ?? null;state.thinking=session.thinkingLevel === undefined ? 'off' : session.thinkingLevel;state.phase='clean';state.error='';}
@@ -1096,18 +1148,18 @@ export class DesktopAdapter {
     const state=this.modelSelection(id,sessionId),epoch=this.epoch;
     if(state.phase!=='dirty')return;
     const catalog=this.models.get(id),model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
-    if(!catalog?.confirmed || !model)throw new DesktopError('MODEL_UNAVAILABLE','Choose an available model.');
+    if(!catalog?.confirmed || !model)throw failure('MODEL_UNAVAILABLE','d.error.chooseModel');
     const revision=state.revision,ref=state.ref,thinking=state.thinking;
     state.phase='saving';this.emit();
     let save!:Promise<void>;save=(async()=>{try {
       const modern=(this.chatCapabilities.get(id) ?? 0)>=1;
       const raw=await this.request(`works/${part(id)}/sessions/${part(sessionId)}/${modern?'chat-options':'model'}`,'PATCH',modern?{modelRef:ref,thinkingLevel:thinking}:{modelRef:ref});
       if(epoch!==this.epoch)return;
-      if(raw.sessionId!==sessionId || modern && (raw.modelRef!==ref || raw.thinkingLevel!==thinking) || !modern && raw.workId!==id)throw new DesktopError('INVALID_RESPONSE','The original Session settings could not be confirmed.');
+      if(raw.sessionId!==sessionId || modern && (raw.modelRef!==ref || raw.thinkingLevel!==thinking) || !modern && raw.workId!==id)throw failure('INVALID_RESPONSE','d.error.sessionSettingsUnconfirmed');
       const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);
       if(session){session.modelPreference=modern?{...raw.model,availability:raw.availability}:raw.modelPreference ?? null;session.thinkingLevel=modern?raw.thinkingLevel:'off';}
       this.sessionVersions.set(id,(this.sessionVersions.get(id)||0)+1);state.confirmedRevision=revision;state.phase=state.revision===revision?'clean':'dirty';
-    }catch(error){if(epoch===this.epoch){const code=(error as DesktopError).code;state.phase=['RESULT_UNKNOWN','INVALID_RESPONSE','CORE_UNAVAILABLE','REQUEST_TIMEOUT','RUNTIME_UNAVAILABLE','CONNECTION_CHANGED'].includes(code)?'unknown':'dirty';state.error=state.phase==='unknown'?'Settings are unconfirmed. Check original settings before sending. No change will be resent.':errorText(error);}throw error;}
+    }catch(error){if(epoch===this.epoch){const code=(error as DesktopError).code;state.phase=['RESULT_UNKNOWN','INVALID_RESPONSE','CORE_UNAVAILABLE','REQUEST_TIMEOUT','RUNTIME_UNAVAILABLE','CONNECTION_CHANGED'].includes(code)?'unknown':'dirty';state.error=state.phase==='unknown'?t('d.error.settingsUnconfirmed'):errorText(error);}throw error;}
     finally {if(this.pairSaves.get(key)===save)this.pairSaves.delete(key);if(epoch===this.epoch){this.emit();if(state.phase==='dirty' && state.confirmedRevision===revision && this.chatSelection===key)void this.saveModel(id,sessionId).catch(()=>undefined);}}
     })();this.pairSaves.set(key,save);return save;
   }
@@ -1120,12 +1172,12 @@ export class DesktopAdapter {
   }
   async loadCommands(id:string) {
     const state={loading:true,confirmed:false,error:'',items:[] as Data[],...this.commands.get(id)};state.loading=true;this.commands.set(id,state);this.emit();
-    try {if((this.chatCapabilities.get(id) ?? 0)<1)throw new DesktopError('CHAT_OPTIONS_UNSUPPORTED','Resource commands and Thinking require a Work with chat controls.');const value=await this.request(`works/${part(id)}/commands`);if(value.contractVersion!==1 || !Array.isArray(value.commands))throw new DesktopError('INVALID_RESPONSE','The command directory is incomplete.');Object.assign(state,{items:value.commands,confirmed:true,error:'',checkedAt:value.checkedAt});}
+    try {if((this.chatCapabilities.get(id) ?? 0)<1)throw failure('CHAT_OPTIONS_UNSUPPORTED','d.error.chatControlsUnsupported');const value=await this.request(`works/${part(id)}/commands`);if(value.contractVersion!==1 || !Array.isArray(value.commands))throw failure('INVALID_RESPONSE','d.error.commandDirectoryIncomplete');Object.assign(state,{items:value.commands,confirmed:true,error:'',checkedAt:value.checkedAt});}
     catch(error){state.error=errorText(error);}finally{state.loading=false;this.emit();}
   }
   async loadSessions(id: string) {
     const work=this.getWork(id)!,version=this.sessionVersions.get(id) || 0; (work.resourceLoading ??= {}).agent = true; this.emit(); try { const value = await this.request(`works/${part(id)}/sessions`);
-    if (!Array.isArray(value.sessions)) throw new DesktopError('INVALID_RESPONSE', 'Session listing is incomplete.'); (work.resourceChecked ??= {}).agent = new Date().toISOString(); const existing = new Map(work.sessions.map(session => [session.id, session])); work.sessions = value.sessions.map((raw: Data) => {const saved=existing.get(raw.sessionId),session:Session=saved??{id:raw.sessionId,title:raw.title??`Session ${raw.sessionId}`,messages:[],runs:[]};session.title=raw.title??`Session ${raw.sessionId}`;if(!saved||version===(this.sessionVersions.get(id)||0)){session.modelPreference=raw.modelPreference??null;session.thinkingLevel=raw.thinkingLevel===undefined?'off':raw.thinkingLevel;session.source=raw.source;}return session;});
+    if (!Array.isArray(value.sessions)) throw failure('INVALID_RESPONSE','d.error.sessionListingIncomplete'); (work.resourceChecked ??= {}).agent = new Date().toISOString(); const existing = new Map(work.sessions.map(session => [session.id, session])); work.sessions = value.sessions.map((raw: Data) => {const saved=existing.get(raw.sessionId),session:Session=saved??{id:raw.sessionId,title:raw.title??t('d.session.defaultTitle', { id: raw.sessionId }),messages:[],runs:[]};session.title=raw.title??t('d.session.defaultTitle', { id: raw.sessionId });if(!saved||version===(this.sessionVersions.get(id)||0)){session.modelPreference=raw.modelPreference??null;session.thinkingLevel=raw.thinkingLevel===undefined?'off':raw.thinkingLevel;session.source=raw.source;}return session;});
     if(version!==(this.sessionVersions.get(id)||0))for(const previous of existing.values()){const current=work.sessions.find(s=>s.id===previous.id);if(!current)work.sessions.push(previous);else {current.modelPreference=previous.modelPreference;current.thinkingLevel=previous.thinkingLevel;}}
     if (work.sessions[0] && !this.streams.has(id)) await this.loadSession(id, work.sessions[0].id); if (work.resourceErrors) delete work.resourceErrors.agent; this.emit();
   } catch (error) { (work.resourceErrors ??= {}).agent = errorText(error); throw error; } finally { work.resourceLoading.agent = false; this.emit(); }}
@@ -1196,7 +1248,7 @@ export class DesktopAdapter {
       try {
         const value = await this.request('service-entries', 'POST', { workId, serviceId, port });
         if (!current() || !this.serviceEntryAdmitted(workId, serviceId, port)) return;
-        if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port || !value.entryId || !value.entryUrl || !value.origin) throw new DesktopError('INVALID_RESPONSE', 'The application entry does not match the requested Work, Service and port.');
+        if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port || !value.entryId || !value.entryUrl || !value.origin) throw failure('INVALID_RESPONSE','d.error.entryMismatch');
         this.entries.set(key, value); this.entryErrors.delete(key); this.entryServiceGrants.set(key, serviceVersion);
         void this.serviceFrameLoaded(workId, serviceId, port).catch(error => {
           if (current() && this.entries.get(key) === value) { value.checked = true; value.checkError = errorText(error); this.emit(); }
@@ -1224,7 +1276,7 @@ export class DesktopAdapter {
       for (let attempt = 0; attempt < 12 && current(); attempt++) {
         const value = await this.request(`service-entries/${part(entry.entryId)}`);
         if (!current()) return;
-        if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port) throw new DesktopError('SERVICE_IDENTITY_CHANGED', 'The application entry identity changed.', 403);
+        if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port) throw failure('SERVICE_IDENTITY_CHANGED','d.error.entryIdentityChanged', undefined, 403);
         entry.embed = value.embed === 'blocked' ? 'denied' : value.embed;
         entry.entryUrl = entry.origin + (entry.basePath ?? '/'); entry.checkError = ''; this.emit();
         if (value.embed !== 'unknown') { entry.checked = true; this.emit(); return; }
@@ -1245,12 +1297,12 @@ export class DesktopAdapter {
   async directServiceURL(workId: string, serviceId: string, port: number) {
     const key = `${workId}:${serviceId}:${port}`, epoch = this.epoch, version = this.entryVersions.get(key) || 0, serviceVersion = this.serviceDenials.get(workId)?.version || 0;
     const current = () => epoch === this.epoch && version === (this.entryVersions.get(key) || 0) && serviceVersion === (this.serviceDenials.get(workId)?.version || 0);
-    if (!this.serviceEntryAdmitted(workId, serviceId, port)) throw new DesktopError('SERVICE_ENTRY_UNAVAILABLE', 'Confirm the Work and Service status before opening the application.');
+    if (!this.serviceEntryAdmitted(workId, serviceId, port)) throw failure('SERVICE_ENTRY_UNAVAILABLE','d.error.confirmBeforeOpen');
     try {
       // A new tab needs its own one-use bootstrap ticket, not an iframe's cached ticket.
       const value = await this.request('service-entries', 'POST', { workId, serviceId, port });
-      if (!current() || !this.serviceEntryAdmitted(workId, serviceId, port)) throw new DesktopError('CONNECTION_CHANGED', 'Application access changed while preparing the entry.');
-      if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port || !value.entryId || !value.entryUrl || !value.origin) throw new DesktopError('INVALID_RESPONSE', 'The application entry does not match the requested Work, Service and port.');
+      if (!current() || !this.serviceEntryAdmitted(workId, serviceId, port)) throw failure('CONNECTION_CHANGED','d.error.accessChanged');
+      if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port || !value.entryId || !value.entryUrl || !value.origin) throw failure('INVALID_RESPONSE','d.error.entryMismatch');
       this.entryErrors.delete(key); this.entryServiceGrants.set(key, serviceVersion);
       return value.entryUrl as string;
     } catch (error) {
@@ -1276,8 +1328,8 @@ export class DesktopAdapter {
     this.logRequests.set(key, pending); this.emit(); return pending;
   }
   private accepted(value: Data, workId: string, kind: string) {
-    if (!value.operationId) throw new DesktopError('INVALID_RESPONSE', 'The acceptance response has no Operation ID. Check known operations.');
-    const operation: Operation = { id: value.operationId, workId: value.workId ?? workId, kind, action: lifecycleAction(kind), state: 'accepted', phase: 'Accepted', created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId, localRecordSaved: value.localRecordSaved };
+    if (!value.operationId) throw failure('INVALID_RESPONSE','d.error.acceptanceNoOperation');
+    const operation: Operation = { id: value.operationId, workId: value.workId ?? workId, kind, action: lifecycleAction(kind), state: 'accepted', phase: t('d.operation.accepted'), created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId, localRecordSaved: value.localRecordSaved };
     if (operation.action && operation.workId) {
       const sequence = ++this.mutationSequence; this.workMutations.set(operation.workId, sequence);
       const work = this.getWork(operation.workId);
@@ -1285,7 +1337,7 @@ export class DesktopAdapter {
       if (['stop', 'delete'].includes(operation.action)) this.revokeWorkEntries(operation.workId);
       this.requireWorkSync(operation.workId);
     }
-    if (kind === 'Import Work' && typeof value.name === 'string' && value.name) operation.importName = value.name;
+    if (kind === 'Import Work' && typeof value.name === 'string' && value.name) operation.importName = value.name; // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
     this.state.operations.unshift(operation); if (operation.snapshotId) this.state.snapshots.unshift({ id: operation.snapshotId, operationId: operation.id, workId, status: 'preparing', filename: `${workId}.work`, size: '' });
     this.scheduleOperationPoll(); this.emit(); return operation;
   }
@@ -1296,7 +1348,7 @@ export class DesktopAdapter {
     if (config.packages !== undefined) payload.packages = config.packages.map(p => ({ name: p.name, enabled: p.enabled }));
     if (config.agents !== undefined) payload.agentsMd = config.agents;
     if (config.advanced) payload.configuration = JSON.parse(config.advanced);
-    return this.accepted(await this.request('works', 'POST', payload), '', 'Create Work');
+    return this.accepted(await this.request('works', 'POST', payload), '', 'Create Work'); // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
   }
   async lifecycle(id: string, action: 'start' | 'stop' | 'retry' | 'delete') { return this.accepted(await this.request(`works/${part(id)}/${action}`, 'POST'), id, `${action[0].toUpperCase()}${action.slice(1)} Work`); }
   async operateService(id: string, serviceId: string, action: string) { return this.accepted(await this.request(`works/${part(id)}/services/${part(serviceId)}/${action}`, 'POST'), id, `${action} Service`); }
@@ -1305,8 +1357,8 @@ export class DesktopAdapter {
     let value: Data;
     try { value = (await this.readMetadata(`operations/${part(id)}`, explicit)).value; }
     catch (error) { if (operation && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) { operation.observationError = errorText(error); this.emit(); } throw error; }
-    if (value.operationId !== id && value.operationId !== undefined) throw new DesktopError('INVALID_RESPONSE', 'The Operation response does not match the original ID.');
-    if (operation?.workId && value.workId && operation.workId !== value.workId) throw new DesktopError('INVALID_RESPONSE', 'The Operation belongs to another Work.');
+    if (value.operationId !== id && value.operationId !== undefined) throw failure('INVALID_RESPONSE','d.error.operationMismatch');
+    if (operation?.workId && value.workId && operation.workId !== value.workId) throw failure('INVALID_RESPONSE','d.error.operationOtherWork');
     if (!operation) {
       operation = { id, workId: value.workId || '', kind: value.kind || value.type || 'Operation', state: 'unknown', phase: '', created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}` };
       this.state.operations.push(operation);
@@ -1324,7 +1376,7 @@ export class DesktopAdapter {
   async recoverOperations() {
     const value = await this.request('known-operations');
     for (const record of value.operations ?? []) if (!this.state.operations.some(o => o.id === record.operationId)) {
-      this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', kind: record.type, action: lifecycleAction(record.type), state: 'unknown', phase: 'Check original operation', created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
+      this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', kind: record.type, action: lifecycleAction(record.type), state: 'unknown', phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
     }
     for (const work of this.state.works) this.associateOperations(work);
     this.scheduleOperationPoll(); this.emit();
@@ -1418,7 +1470,7 @@ export class DesktopAdapter {
             void this.loadRequest(workId,originalId,false,entering).catch(error=>{
               if(version!==this.interactionVersion || error instanceof ObservationStopped || error instanceof ObservationDeferred)return;
               if(detail)detail.readError=errorText(error);
-              this.requestReadErrors.set(`${workId}:${originalId}`,`Cancellation status not confirmed: ${errorText(error)}`);
+              this.requestReadErrors.set(`${workId}:${originalId}`, t('d.error.cancellationStatus', { detail: errorText(error) }));
               this.emit();
             });
           }
@@ -1454,15 +1506,15 @@ export class DesktopAdapter {
     this.finishWorkSync(); this.emit();
   }
   private acceptChatSession(id:string,value:Data) {
-    const sessionId=value.sessionId ?? value.session?.sessionId;if(typeof sessionId!=='string'||!sessionId)throw new DesktopError('INVALID_RESPONSE','Session acceptance has no ID. Check the original submission.');
-    this.sessionVersions.set(id,(this.sessionVersions.get(id)||0)+1);const work=this.getWork(id)!;if(!work.sessions.some(s=>s.id===sessionId))work.sessions.unshift({id:sessionId,title:`Session ${sessionId}`,messages:[],modelPreference:value.modelPreference ?? null,thinkingLevel:value.thinkingLevel === undefined ? 'off' : value.thinkingLevel,source:value.source,runs:[]});this.emit();return sessionId;
+    const sessionId=value.sessionId ?? value.session?.sessionId;if(typeof sessionId!=='string'||!sessionId)throw failure('INVALID_RESPONSE','d.error.sessionAcceptanceNoId');
+    this.sessionVersions.set(id,(this.sessionVersions.get(id)||0)+1);const work=this.getWork(id)!;if(!work.sessions.some(s=>s.id===sessionId))work.sessions.unshift({id:sessionId,title:t('d.session.defaultTitle', { id: sessionId }),messages:[],modelPreference:value.modelPreference ?? null,thinkingLevel:value.thinkingLevel === undefined ? 'off' : value.thinkingLevel,source:value.source,runs:[]});this.emit();return sessionId;
   }
   async newSession(id:string) {
-    if(this.chatSubmissions.has(id))throw new DesktopError('RESULT_UNKNOWN','Check the original chat submission first.');
+    if(this.chatSubmissions.has(id))throw failure('RESULT_UNKNOWN','d.error.checkOriginalSubmission');
     const draft={...this.modelSelection(id,'')},intent={kind:'session' as const,key:randomUUID(),error:'',pair:{ref:draft.ref,thinking:draft.thinking,revision:draft.revision}};this.chatSubmissions.set(id,intent);this.emit();
     try {const value=await this.request(`works/${part(id)}/sessions`,'POST',{idempotencyKey:intent.key});const sessionId=this.acceptChatSession(id,value);this.chatSubmissions.delete(id);
       const state=this.modelSelection(id,sessionId);if(draft.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==draft.ref || state.thinking!==draft.thinking)){Object.assign(state,{ref:draft.ref,thinking:draft.thinking,phase:'dirty',revision:Math.max(1,draft.revision)});void this.saveModel(id,sessionId).catch(()=>undefined);}return sessionId;
-    }catch(error){const code=(error as DesktopError).code;if(!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(code==='WORK_BUSY'||code==='RATE_LIMITED'){await this.loadSessions(id).catch(()=>undefined);const active=this.getWork(id)?.run;if(code==='WORK_BUSY'||active&&['accepted','running','cancelling'].includes(active.status))error=new DesktopError('WORK_BUSY','A Run is already active in this Work. Wait for it to finish or use Cancel run.');}intent.error=errorText(error);throw error;}finally{this.emit();}
+    }catch(error){const code=(error as DesktopError).code;if(!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(code==='WORK_BUSY'||code==='RATE_LIMITED'){await this.loadSessions(id).catch(()=>undefined);const active=this.getWork(id)?.run;if(code==='WORK_BUSY'||active&&['accepted','running','cancelling'].includes(active.status))error=failure('WORK_BUSY','d.error.runAlreadyActive');}intent.error=errorText(error);throw error;}finally{this.emit();}
   }
   async recoverChatSubmission(id:string) {
     const intent=this.chatSubmissions.get(id);if(!intent)return;
@@ -1471,33 +1523,33 @@ export class DesktopAdapter {
     if(epoch!==this.epoch || this.chatSubmissions.get(id)!==intent)return;
     const value=await this.request(`works/${part(id)}/${intent.kind==='session'?'sessions':'runs'}/submissions/${part(intent.key)}`);
     if(this.chatSubmissions.get(id)!==intent)return;
-    if(value.kind!==intent.kind || value.key!==intent.key)throw new DesktopError('INVALID_RESPONSE','The original submission could not be confirmed.');
-    if(value.status!=='accepted'){intent.error='Original submission not found yet. It may still be in flight. Check again; do not resubmit.';this.emit();return;}
+    if(value.kind!==intent.kind || value.key!==intent.key)throw failure('INVALID_RESPONSE','d.error.submissionUnconfirmed');
+    if(value.status!=='accepted'){intent.error=localizedText('d.error.submissionNotFound');this.emit();return;}
     if(intent.kind==='session'){
-      if(value.session?.workId!==id)throw new DesktopError('INVALID_RESPONSE','The original Session ownership could not be confirmed.');
+      if(value.session?.workId!==id)throw failure('INVALID_RESPONSE','d.error.sessionOwnership');
       const sessionId=this.acceptChatSession(id,value.session);
-      const state=this.modelSelection(id,sessionId);if(intent.pair && (intent.pair.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==intent.pair.ref || state.thinking!==intent.pair.thinking)))Object.assign(state,{...intent.pair,revision:Math.max(1,intent.pair.revision),phase:'dirty',error:'Your selected settings are kept. Confirm them before sending.'});
+      const state=this.modelSelection(id,sessionId);if(intent.pair && (intent.pair.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==intent.pair.ref || state.thinking!==intent.pair.thinking)))Object.assign(state,{...intent.pair,revision:Math.max(1,intent.pair.revision),phase:'dirty',error:t('d.error.selectedSettingsKept')});
     }
-    else {if(value.run?.workId!==id || value.run?.sessionId!==intent.sessionId || value.run?.submissionKey!==intent.key)throw new DesktopError('INVALID_RESPONSE','The original Run identity could not be confirmed.');const work=this.getWork(id)!;work.run=this.runRecord(value.run,value.run.sessionId);await this.loadSession(id,value.run.sessionId);void this.resumeRun(id);}
+    else {if(value.run?.workId!==id || value.run?.sessionId!==intent.sessionId || value.run?.submissionKey!==intent.key)throw failure('INVALID_RESPONSE','d.error.runIdentity');const work=this.getWork(id)!;work.run=this.runRecord(value.run,value.run.sessionId);await this.loadSession(id,value.run.sessionId);void this.resumeRun(id);}
     if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();return value;
   }
   async send(id:string,sessionId:string,text:string,includeIdentity:boolean,inputMode?:'text'|'command',images:ImageInput[]=[],cancelRunId?:string) {
-    if(!text.trim()&&!images.length)throw new Error('Write a message or add an image first.');const work=this.getWork(id)!;
-    if(images.length){const reason=this.imageInputReason(id,sessionId);if(reason)throw new Error(reason);if(inputMode!=='text')throw new Error('Images require Send as text.');}
-    if(!this.modelReady(id,sessionId))throw new DesktopError('MODEL_NOT_CONFIRMED','Confirm the Session model and Thinking settings before sending.');
+    if(!text.trim()&&!images.length)throw new Error(t('d.error.writeMessageFirst'));const work=this.getWork(id)!;
+    if(images.length){const reason=this.imageInputReason(id,sessionId);if(reason)throw new Error(reason);if(inputMode!=='text')throw new Error(t('d.error.imagesRequireText'));}
+    if(!this.modelReady(id,sessionId))throw failure('MODEL_NOT_CONFIRMED','d.error.confirmModelBeforeSend');
     const prompt=includeIdentity && inputMode!=='command'?`${text}\n\nSelected Service: ${work.services.find(s=>s.id===this.selectedService)?.domain ?? ''}`:text;
-    if(cancelRunId && this.cancelAndSendCapabilities.get(id)!==1)throw new DesktopError('CANCEL_AND_SEND_UNSUPPORTED','Stop and send is unavailable in this Work.');
+    if(cancelRunId && this.cancelAndSendCapabilities.get(id)!==1)throw failure('CANCEL_AND_SEND_UNSUPPORTED','d.error.stopAndSendUnavailable');
     const epoch=this.epoch;const intent={kind:'run' as const,key:randomUUID(),sessionId,cancelRunId,error:''};this.chatSubmissions.set(id,intent);this.emit();
     try {const descriptors=await Promise.all(images.map(async(image,imageIndex)=>{const bytes=Uint8Array.from(atob(image.data),c=>c.charCodeAt(0));const sha256=await sha256Hex(bytes);return {imageIndex,mimeType:image.mimeType,byteSize:bytes.length,sha256};}));
-      if(epoch!==this.epoch||this.chatSubmissions.get(id)!==intent)throw new DesktopError('CONNECTION_CHANGED','The image submission belongs to a previous identity.');
+      if(epoch!==this.epoch||this.chatSubmissions.get(id)!==intent)throw failure('CONNECTION_CHANGED','d.error.imageSubmissionIdentity');
       const value=await this.request(`works/${part(id)}/runs`,'POST',{sessionId,prompt,submissionKey:intent.key,...(inputMode?{inputMode}:{}),...(images.length?{images}:{}),...(cancelRunId?{cancelRunId}:{})});const raw=value.run;
-      if(epoch!==this.epoch || this.chatSubmissions.get(id)!==intent)throw new DesktopError('CONNECTION_CHANGED','This submission belongs to a previous identity.');
-      if(!raw?.runId || raw.sessionId!==sessionId)throw new DesktopError('INVALID_RESPONSE','Run acceptance has no original ID.');
+      if(epoch!==this.epoch || this.chatSubmissions.get(id)!==intent)throw failure('CONNECTION_CHANGED','d.error.submissionIdentity');
+      if(!raw?.runId || raw.sessionId!==sessionId)throw failure('INVALID_RESPONSE','d.error.runAcceptanceNoId');
       const acceptedWork=this.getWork(id) ?? work;const acceptedSession=acceptedWork.sessions.find(s=>s.id===sessionId) ?? work.sessions.find(s=>s.id===sessionId)!;if(!acceptedWork.sessions.includes(acceptedSession))acceptedWork.sessions.push(acceptedSession);acceptedWork.run=this.runRecord(raw,sessionId);(acceptedSession.runs ??=[]).push(acceptedWork.run);
       this.activeRevisions.set(id,(this.activeRevisions.get(id) || 0)+1);
       if(this.cancelAndSendCapabilities.get(id)===1)this.activeRuns.set(id,{confirmed:true,loading:false,run:acceptedWork.run,error:''});
       acceptedSession.messages.push({id:`${raw.runId}-user`,runId:raw.runId,role:'user',text,...(descriptors.length?{images:descriptors}:{})});if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();void this.resumeRun(id);return raw.runId as string;
-    }catch(error){const code=(error as DesktopError).code;if(this.chatSubmissions.get(id)===intent&&!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(epoch===this.epoch&&(code==='WORK_BUSY'||code==='RATE_LIMITED'||code==='CANCEL_TIMEOUT')){if(this.cancelAndSendCapabilities.get(id)===1)await this.loadActiveRun(id,true);else await this.loadSessions(id).catch(()=>undefined);const active=this.cancelAndSendCapabilities.get(id)===1?this.activeRuns.get(id)?.run:this.getWork(id)?.run;if(code==='WORK_BUSY'||code==='RATE_LIMITED' && active && ['accepted','running','cancelling'].includes(active.status))error=new DesktopError('WORK_BUSY',this.cancelAndSendCapabilities.get(id)===1?'A Run is already active in this Work. Check its status and choose Stop and send again.':'A Run is already active in this Work. Wait for it to finish or use Cancel run.');}intent.error=errorText(error);throw error;}finally{this.emit();}
+    }catch(error){const code=(error as DesktopError).code;if(this.chatSubmissions.get(id)===intent&&!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(epoch===this.epoch&&(code==='WORK_BUSY'||code==='RATE_LIMITED'||code==='CANCEL_TIMEOUT')){if(this.cancelAndSendCapabilities.get(id)===1)await this.loadActiveRun(id,true);else await this.loadSessions(id).catch(()=>undefined);const active=this.cancelAndSendCapabilities.get(id)===1?this.activeRuns.get(id)?.run:this.getWork(id)?.run;if(code==='WORK_BUSY'||code==='RATE_LIMITED' && active && ['accepted','running','cancelling'].includes(active.status))error=failure('WORK_BUSY',this.cancelAndSendCapabilities.get(id)===1?'d.error.runAlreadyActiveStopAndSend':'d.error.runAlreadyActive');}intent.error=errorText(error);throw error;}finally{this.emit();}
   }
   selectedService = '';
   async cancelRun(id: string,runId=this.getWork(id)?.run?.id) {
@@ -1531,11 +1583,11 @@ export class DesktopAdapter {
       const profile=this.imageCapabilities.get(id)?.value || this.getWork(id)?.sessions.find(s=>s.id===run.sessionId)?.imageProfile?'?imageProfile=chat-images-v1':'';
       if(this.historySupport.get(id)) {
         run.resultRef=raw.resultRef;await this.loadSavedRun(id,run,controller.signal);if(!current())return;
-        observer.failures=0;retry=['accepted','running','cancelling'].includes(run.status);run.error=run.executionError??(retry?'The event cursor expired. Recovering through saved Run and Session history.':undefined);
+        observer.failures=0;retry=['accepted','running','cancelling'].includes(run.status);run.error=run.executionError??(retry?t('d.error.eventCursorExpired'):undefined);
       } else {
       const history = await this.request(`works/${part(id)}/sessions/${part(run.sessionId)}${profile}`, 'GET', undefined, controller.signal);
       if (!current()) return;
-      if (!Array.isArray(history.messages)) throw new Error('Saved session history is incomplete.');
+      if (!Array.isArray(history.messages)) throw new Error(t('d.error.savedHistoryIncomplete'));
       const session = this.getWork(id)?.sessions.find(s => s.id === run.sessionId);
       if (session) {
         session.messages = historyMessages(history.messages,session.messages);
@@ -1544,12 +1596,12 @@ export class DesktopAdapter {
       }
       observer.failures = 0;
       retry = ['accepted', 'running', 'cancelling'].includes(run.status);
-      run.error = run.executionError ?? (retry ? 'The event cursor expired. Recovering through saved Run and Session history.' : undefined);
+      run.error = run.executionError ?? (retry ? t('d.error.eventCursorExpired') : undefined);
       }
     } catch (error) {
       if (!current()) return;
       const legacyLimit=this.legacyHistoryLimit(id,error);
-      run.error = [run.executionError, `History recovery failed: ${errorText(error)}. Reread the original Run; do not resend the prompt.`,legacyLimit?this.historyNotice(id):''].filter(Boolean).join(' ');
+      run.error = [run.executionError, t('d.error.historyRecoveryFailed', { detail: errorText(error) }),legacyLimit?this.historyNotice(id):''].filter(Boolean).join(' ');
       delay = Math.min(30000, 2000 * 2 ** Math.min(observer.failures++, 4));
       // Terminal history errors require explicit readback; do not claim completion
       // or poll an inaccessible/deleted Run indefinitely.
@@ -1564,7 +1616,7 @@ export class DesktopAdapter {
     return new Promise((resolve, reject) => {
       let connected = false;
       void this.resumeRun(id, () => { connected = true; resolve(); }).then(() => {
-        if (!connected) reject(new Error(this.getWork(id)?.run?.error || 'Run connection was not confirmed. Read the original Run.'));
+        if (!connected) reject(new Error(this.getWork(id)?.run?.error || t('d.error.runConnectionUnconfirmed')));
       }, reject);
     });
   }
@@ -1582,8 +1634,8 @@ export class DesktopAdapter {
       if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run) return;
       if (!response.ok) {
         if (response.status === 410) { run.historyRecovery = true; const observer = { controller, run, epoch, failures: 0 }; this.historyObservers.set(id, observer); await this.recoverRunHistory(id, observer); if (!observer.failures) connected?.(); return; }
-        const failure=await response.json().catch(()=>null);
-        throw new DesktopError(typeof failure?.code==='string'?failure.code:'RUN_STREAM_UNAVAILABLE',typeof failure?.message==='string'?failure.message:`Run stream failed (${response.status}).`,response.status);
+        const descriptor=await response.json().catch(()=>null);
+        throw failure(typeof descriptor?.code==='string'?descriptor.code:'RUN_STREAM_UNAVAILABLE','d.error.runStreamFailed', { status: response.status }, response.status, undefined, typeof descriptor?.message==='string'&&descriptor.message?descriptor.message:undefined);
       }
       connected?.();
       const reader = response.body!.getReader(); const decoder = new TextDecoder(); let buffer = '';
@@ -1592,26 +1644,26 @@ export class DesktopAdapter {
         if(frame?.byteOffset!==undefined){
           const key=`${id}:${run.id}:${sequence}`,offset=Number(frame.byteOffset),total=Number(frame.totalBytes),bytes=new TextEncoder().encode(frame.delta??'').length;
           let pending=this.historyEventParts.get(key);if(!pending){pending={offset:0,parts:new Map()};this.historyEventParts.set(key,pending);}
-          if(!Number.isSafeInteger(offset)||!Number.isSafeInteger(total)||offset<0||offset+bytes>total||frame.complete!==(offset+bytes===total))throw new Error('Run event fragment is invalid.');
-          if(pending.parts.has(offset)){if(pending.parts.get(offset)!==frame.delta)throw new Error('Run event changed while reconnecting.');if(frame.complete)run.cursor=sequence;return;}
-          if(offset!==pending.offset)throw new Error('Run event fragment is incomplete.');pending.parts.set(offset,frame.delta??'');pending.offset+=bytes;if(frame.complete)run.cursor=sequence;
+          if(!Number.isSafeInteger(offset)||!Number.isSafeInteger(total)||offset<0||offset+bytes>total||frame.complete!==(offset+bytes===total))throw new Error(t('d.error.runEventFragmentInvalid'));
+          if(pending.parts.has(offset)){if(pending.parts.get(offset)!==frame.delta)throw new Error(t('d.error.runEventChanged'));if(frame.complete)run.cursor=sequence;return;}
+          if(offset!==pending.offset)throw new Error(t('d.error.runEventIncomplete'));pending.parts.set(offset,frame.delta??'');pending.offset+=bytes;if(frame.complete)run.cursor=sequence;
         }else run.cursor = sequence;
         const session = work.sessions.find(s => s.id === run.sessionId); if (!session) return;
         const kind = event.kind; if (kind?.$case === 'text') { let message = session.messages.at(-1); if (!message || message.role !== 'assistant' || message.tool) { message = { id:`${run.id}-text-${sequence}`,runId:run.id,role: 'assistant', text: '' }; session.messages.push(message); } message.text += kind.text.delta ?? ''; }
         else if (kind?.$case === 'tool') { const tool = kind.tool; upsertTool(session.messages,{id:`${run.id}-tool-${tool.toolCallId}`,runId:run.id,role:'assistant',text:'',tool:{id:tool.toolCallId,name:tool.toolName,status:tool.phase==='tool-end'?(tool.isError?'Failed':'Completed'):'Running',isError:tool.isError,content:resultText(tool.result,tool.toolName)}}); }
         else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted';run.resultRef=kind.state.resultRef; run.error = run.executionError = kind.state.error?.message;run.errorCode=typeof kind.state.error?.code==='string'?kind.state.error.code:undefined;run.errorRetryable=typeof kind.state.error?.retryable==='boolean'?kind.state.error.retryable:undefined; if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); }
         this.emit(); };
-      while (epoch === this.epoch && !controller.signal.aborted && this.streams.get(id) === controller && this.getWork(id)?.run === run) { const { value, done } = await reader.read(); if (done) { buffer += decoder.decode(); if (buffer.trim()) consume(buffer); break; } buffer += decoder.decode(value, { stream: true }); if (buffer.length > 2_097_152) throw new Error('Run event exceeded the supported size.'); let index; while ((index = buffer.indexOf('\n')) !== -1) { consume(buffer.slice(0, index)); buffer = buffer.slice(index + 1); } }
+      while (epoch === this.epoch && !controller.signal.aborted && this.streams.get(id) === controller && this.getWork(id)?.run === run) { const { value, done } = await reader.read(); if (done) { buffer += decoder.decode(); if (buffer.trim()) consume(buffer); break; } buffer += decoder.decode(value, { stream: true }); if (buffer.length > 2_097_152) throw new Error(t('d.error.runEventTooLarge')); let index; while ((index = buffer.indexOf('\n')) !== -1) { consume(buffer.slice(0, index)); buffer = buffer.slice(index + 1); } }
       if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run) return;
       const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`); run.status = runStates[(value.run ?? value).state] ?? 'interrupted'; run.executionError = (value.run ?? value).error?.message;run.errorCode=typeof (value.run??value).error?.code==='string'?(value.run??value).error.code:undefined;run.errorRetryable=typeof (value.run??value).error?.retryable==='boolean'?(value.run??value).error.retryable:undefined;run.resultRef=(value.run??value).resultRef;
       if (['accepted', 'running', 'cancelling'].includes(run.status)) {
         if(this.historySupport.get(id)&&[...this.historyEventParts.keys()].some(key=>key.startsWith(`${id}:${run.id}:`))){run.historyRecovery=true;const observer={controller,run,epoch,failures:0};this.historyObservers.set(id,observer);await this.recoverRunHistory(id,observer);}
-        else run.error = 'Event stream ended. Resume this Run to continue from its cursor.';
+        else run.error = localizedText('d.error.eventStreamEnded');
       }
       else { run.error = run.executionError; this.reconnectAttempts.delete(id); if(this.historySupport.get(id))await this.loadSavedRun(id,run,controller.signal);else await this.loadSession(id, run.sessionId); await this.loadServices(id).catch(() => undefined); await this.loadConfiguration(id).catch(() => undefined); } this.emit();
     } catch (error) { if (!controller.signal.aborted && epoch === this.epoch) {
       const legacyLimit=this.legacyHistoryLimit(id,error);retry=!legacyLimit;
-      run.error = [run.executionError, `${errorText(error)} Resume the original Run; do not send the prompt again.`,legacyLimit?this.historyNotice(id):''].filter(Boolean).join(' '); this.emit();
+      run.error = [run.executionError, t('d.error.resumeOriginalRun', { detail: errorText(error) }),legacyLimit?this.historyNotice(id):''].filter(Boolean).join(' '); this.emit();
     } }
     finally {
       if (this.streams.get(id) === controller) {
@@ -1623,7 +1675,7 @@ export class DesktopAdapter {
       }
     }
   }
-  fileURL(id: string, path: string) { if (!path.startsWith('/') || path.split('/').some(p => p === '.' || p === '..' || /[\\\x00]/.test(p))) throw new Error('Invalid workspace path.'); return `/_desktop/files/works/${part(id)}/files/${path.slice(1).split('/').map(part).join('/')}`; }
+  fileURL(id: string, path: string) { if (!path.startsWith('/') || path.split('/').some(p => p === '.' || p === '..' || /[\\\x00]/.test(p))) throw new Error(t('d.error.invalidWorkspacePath')); return `/_desktop/files/works/${part(id)}/files/${path.slice(1).split('/').map(part).join('/')}`; }
   private directoryLoads = new Map<string, number>();
   private fileReaders = new Map<string, { controller: AbortController; path: string }>();
   private fileReadGenerations = new Map<string, number>();
@@ -1649,8 +1701,9 @@ export class DesktopAdapter {
   private fileError(response: Response, fallback: string): DesktopError {
     // A bounded status/header only; never read or expose an unbounded body.
     const code = response.headers.get('X-Piwork-File-Error') || '';
-    const message = code ? `The file request was rejected (${code}).` : `${fallback} (${response.status}).`;
-    return new DesktopError(code || 'FILE_READ_FAILED', message, response.status);
+    return code
+      ? failure(code,'d.error.fileRequestRejected',{ code },response.status)
+      : failure('FILE_READ_FAILED','d.error.fileRequestFailed',{ fallback, status: response.status },response.status);
   }
   /** File auth failures share the existing session check/revocation path. */
   private async fileAuth(response: Response): Promise<void> {
@@ -1669,38 +1722,38 @@ export class DesktopAdapter {
   }
   private async checkTarget(id: string, path: string, signal: AbortSignal): Promise<WorkspaceFile> {
     const epoch = this.epoch, work = this.getWork(id);
-    if (!work) throw new DesktopError('WORK_NOT_FOUND', 'This Work is no longer available.', 404);
+    if (!work) throw failure('WORK_NOT_FOUND','d.error.thisWorkUnavailable', undefined, 404);
     const parent = path.slice(0, path.lastIndexOf('/')) || '/';
     const parentURL = this.fileURL(id, parent).replace(/\/?$/, '/'), url = this.fileURL(id, path);
     const response = await fetch(url, { method: 'PROPFIND', credentials: 'same-origin', signal,
       headers: { Depth: '0', 'X-Piwork-Csrf': this.csrf } });
-    if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The Core or account changed. This file check was discarded.');
+    if (epoch !== this.epoch) throw failure('CONNECTION_CHANGED','d.error.fileCheckDiscarded');
     if (response.status === 404 || response.status === 410) {
       this.removeFileEntry(id, path); this.emit();
-      throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', response.status);
+      throw failure('FILE_NOT_FOUND','d.error.fileNotInWorkspace', undefined, response.status);
     }
-    if (!response.ok) { await this.fileAuth(response); throw this.fileError(response, 'The current file could not be checked'); }
+    if (!response.ok) { await this.fileAuth(response); throw this.fileError(response, localizedText('d.error.currentFileCheckFailed')); }
     const findTarget = (rows: ReturnType<typeof parseEntries>) => rows.find(item => item.href === url) ?? rows.find(item => item.name === path.slice(path.lastIndexOf('/') + 1));
     let entries = parseEntries(await response.text(), parentURL);
-    if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while checking the target.');
+    if (epoch !== this.epoch) throw failure('CONNECTION_CHANGED','d.error.identityChangedTarget');
     let entry = findTarget(entries);
     if (!entry) {
       // Some backends answer Depth 0 with the containing folder. The parent
       // listing still proves the target's current metadata, not its bytes.
       const listing = await fetch(parentURL, { method: 'PROPFIND', credentials: 'same-origin', signal,
         headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
-      if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The identity changed while checking the target.');
+      if (epoch !== this.epoch) throw failure('CONNECTION_CHANGED','d.error.identityChangedTarget');
       if (listing.status === 404 || listing.status === 410) {
         this.removeFileEntry(id, path); this.emit();
-        throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', listing.status);
+        throw failure('FILE_NOT_FOUND','d.error.fileNotInWorkspace', undefined, listing.status);
       }
-      if (!listing.ok) { await this.fileAuth(listing); throw this.fileError(listing, 'The current file could not be checked'); }
+      if (!listing.ok) { await this.fileAuth(listing); throw this.fileError(listing, localizedText('d.error.currentFileCheckFailed')); }
       entries = parseEntries(await listing.text(), parentURL);
       entry = findTarget(entries);
     }
     if (!entry) {
       this.removeFileEntry(id, path); this.emit();
-      throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', 404);
+      throw failure('FILE_NOT_FOUND','d.error.fileNotInWorkspace', undefined, 404);
     }
     const fresh: WorkspaceFile = { path, name: entry.name, kind: entry.directory ? 'directory' : entry.kind === 'file' ? 'file' : 'special',
       size: entry.size ?? 0, modified: entry.modified ?? '' };
@@ -1713,7 +1766,7 @@ export class DesktopAdapter {
   }
   private async boundedBody(response: Response, signal: AbortSignal): Promise<Uint8Array> {
     const reader = response.body?.getReader();
-    if (!reader) throw new DesktopError('FILE_READ_FAILED', 'The file content is unavailable.');
+    if (!reader) throw failure('FILE_READ_FAILED','d.error.fileContentUnavailable');
     const chunks: Uint8Array[] = []; let size = 0, image = false, decided = false;
     const cancel = async () => { await reader.cancel().catch(() => undefined); };
     try {
@@ -1724,10 +1777,10 @@ export class DesktopAdapter {
         if (!decided && size >= 12) { image = detectImageMime(this.head(chunks, 12)) !== undefined; decided = true; }
         if (size > (image ? FILE_IMAGE_MAX_BYTES : 1_048_576)) {
           await cancel();
-          throw new DesktopError(image ? 'FILE_PREVIEW_TOO_LARGE' : 'FILE_TEXT_TOO_LARGE',
-            image ? 'This image exceeds the 10 MiB preview limit.' : 'This file exceeds the 1 MiB text limit.', 413);
+          throw failure(image ? 'FILE_PREVIEW_TOO_LARGE' : 'FILE_TEXT_TOO_LARGE',
+            image ? 'd.error.imagePreviewTooLarge' : 'd.error.textPreviewTooLarge', undefined, 413);
         }
-        if (signal.aborted) { await cancel(); throw new DOMException('The file read was replaced.', 'AbortError'); }
+        if (signal.aborted) { await cancel(); throw new DOMException('The file read was replaced.', 'AbortError'); } // i18n-exempt: AbortError 诊断原因，不是界面文案
       }
     } catch (error) { await cancel(); throw error; }
     const bytes = new Uint8Array(size); let offset = 0;
@@ -1745,7 +1798,7 @@ export class DesktopAdapter {
    */
   async readFile(id: string, path: string, external?: AbortSignal) {
     const epoch = this.epoch, work = this.getWork(id);
-    if (!work) throw new DesktopError('WORK_NOT_FOUND', 'This Work is no longer available.', 404);
+    if (!work) throw failure('WORK_NOT_FOUND','d.error.thisWorkUnavailable', undefined, 404);
     const previous = this.fileReaders.get(id); if (previous) previous.controller.abort();
     const controller = new AbortController();
     const forward = () => controller.abort();
@@ -1754,7 +1807,7 @@ export class DesktopAdapter {
     const generation = (this.fileReadGenerations.get(id) || 0) + 1;
     this.fileReadGenerations.set(id, generation);
     const current = () => epoch === this.epoch && this.fileReadGenerations.get(id) === generation && !controller.signal.aborted;
-    const abortIfStale = () => { if (!current()) throw new DOMException('The file read was replaced.', 'AbortError'); };
+    const abortIfStale = () => { if (!current()) throw new DOMException('The file read was replaced.', 'AbortError'); }; // i18n-exempt: AbortError 诊断原因，不是界面文案
     try {
       const target = await this.checkTarget(id, path, controller.signal);
       abortIfStale();
@@ -1766,7 +1819,7 @@ export class DesktopAdapter {
         this.emit(); return { ...file };
       }
       const response = await fetch(this.fileURL(id, path), { credentials: 'same-origin', signal: controller.signal });
-      if (!response.ok) { await this.fileAuth(response); throw this.fileError(response, 'The file could not be read'); }
+      if (!response.ok) { await this.fileAuth(response); throw this.fileError(response, localizedText('d.error.fileReadFailed')); }
       const declared = Number(response.headers.get('content-length'));
       if (Number.isFinite(declared) && declared > FILE_IMAGE_MAX_BYTES) {
         await response.body?.cancel().catch(() => undefined);
@@ -1794,7 +1847,7 @@ export class DesktopAdapter {
       else preview = this.textPreview(bytes);
       try { abortIfStale(); } catch (error) { if (preview.kind === 'image') URL.revokeObjectURL(preview.url); throw error; }
       const file = this.getWork(id)!.files.find(item => item.path === path);
-      if (!file) { if (preview.kind === 'image') URL.revokeObjectURL(preview.url); throw new DesktopError('FILE_NOT_FOUND', 'This file is no longer in the workspace.', 404); }
+      if (!file) { if (preview.kind === 'image') URL.revokeObjectURL(preview.url); throw failure('FILE_NOT_FOUND','d.error.fileNotInWorkspace', undefined, 404); }
       this.releasePreview(file); file.preview = preview;
       file.size = bytes.byteLength;
       file.modified = fileVersion(response.headers.get('Last-Modified')) || file.modified;
@@ -1807,7 +1860,7 @@ export class DesktopAdapter {
   private textPreview(bytes: Uint8Array): FilePreview {
     try {
       const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-      if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content)) throw new Error('Binary control bytes');
+      if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content)) throw new Error('Binary control bytes'); // i18n-exempt: 内部判定信号，仅用于切换 download-only 展示
       return { kind: 'text', content };
     } catch { return { kind: 'download-only', reason: 'binary' }; }
   }
@@ -1827,20 +1880,20 @@ export class DesktopAdapter {
     try { bitmap = await createImageBitmap(blob); }
     catch { return { kind: 'download-only', reason: 'unsupported' }; }
     finally { bitmap?.close(); }
-    if (signal.aborted) throw new DOMException('The file read was replaced.', 'AbortError');
+    if (signal.aborted) throw new DOMException('The file read was replaced.', 'AbortError'); // i18n-exempt: AbortError 诊断原因，不是界面文案
     return { kind: 'image', mimeType: mime, url: URL.createObjectURL(blob), width, height };
   }
   async loadDirectory(id: string, path = '/') {
-    const epoch = this.epoch; const work = this.getWork(id); if (!work) throw new DesktopError('WORK_NOT_FOUND', 'This Work is no longer available.', 404);
+    const epoch = this.epoch; const work = this.getWork(id); if (!work) throw failure('WORK_NOT_FOUND','d.error.thisWorkUnavailable', undefined, 404);
     const key = `${id}:${path}`, state = this.directories.get(key) || { loading: false, checkedAt: '', error: '' };
     const generation = (this.directoryLoads.get(key) || 0) + 1; this.directoryLoads.set(key, generation);
     this.directories.set(key, state); state.loading = true; this.emit();
     try {
       const base = this.fileURL(id, path).replace(/\/?$/, '/');
       const response = await fetch(base, { method: 'PROPFIND', credentials: 'same-origin', headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
-      if (!response.ok) { await this.fileAuth(response); throw this.fileError(response, 'Workspace cannot be read'); }
+      if (!response.ok) { await this.fileAuth(response); throw this.fileError(response, localizedText('d.error.workspaceReadFailed')); }
       const text = await response.text();
-      if (epoch !== this.epoch || this.directoryLoads.get(key) !== generation) throw new DesktopError('CONNECTION_CHANGED', 'The connection changed; the file listing was discarded.');
+      if (epoch !== this.epoch || this.directoryLoads.get(key) !== generation) throw failure('CONNECTION_CHANGED','d.error.fileListingDiscarded');
       const entries = parseEntries(text, base); state.checkedAt = new Date().toISOString(); state.error = '';
       const children: WorkspaceFile[] = entries.filter(e => e.name !== '/').map(e => ({ path: (path === '/' ? '' : path) + '/' + e.name, name: e.name,
         kind: e.directory ? 'directory' : e.kind === 'file' ? 'file' : 'special', size: e.size ?? 0, modified: e.modified ?? '' }));
@@ -1861,39 +1914,39 @@ export class DesktopAdapter {
       xhr.upload.onprogress = event => progress(event.loaded, event.lengthComputable ? event.total : undefined);
       xhr.upload.onload = () => { if (epoch === this.epoch) progress(0, undefined, true); };
       xhr.onload = () => {
-        if (epoch !== this.epoch) { reject(new DesktopError('CONNECTION_CHANGED', 'The identity changed during upload.')); return; }
+        if (epoch !== this.epoch) { reject(failure('CONNECTION_CHANGED','d.error.uploadIdentity')); return; }
         const resultHeaders = new Headers(); for (const line of xhr.getAllResponseHeaders().trim().split(/[\r\n]+/)) { const at = line.indexOf(':'); if (at > 0) resultHeaders.append(line.slice(0, at), line.slice(at + 1).trim()); }
         resolve(new Response(xhr.status === 204 || xhr.status === 205 ? null : xhr.responseText, { status: xhr.status, headers: resultHeaders }));
       };
-      xhr.onerror = () => reject(new DesktopError('RESULT_UNKNOWN', 'Upload response lost. Check the original target before submitting again.'));
+      xhr.onerror = () => reject(failure('RESULT_UNKNOWN','d.error.uploadResponseLost'));
       xhr.onabort = xhr.onerror; xhr.send(body);
     });
   }
   private async writeFile(id: string, path: string, method: string, body?: BodyInit, headers: Record<string, string> = {}): Promise<TransferResult[]> {
-    if (path === '/' && method !== 'MKCOL') throw new Error('The workspace root cannot be mutated.');
+    if (path === '/' && method !== 'MKCOL') throw new Error(t('d.error.rootCannotMutate'));
     const epoch = this.epoch; let response: Response; try { response = body instanceof File
-      ? await this.uploadResponse(this.fileURL(id, path), method, body, { ...headers, 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => { const progress = this.uploadProgress.get(id); if (epoch === this.epoch && progress) { Object.assign(progress, sentAll ? { phase: 'Waiting for confirmation' } : { phase: 'Uploading', transferred: sent, total }); this.emit(); } })
+      ? await this.uploadResponse(this.fileURL(id, path), method, body, { ...headers, 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => { const progress = this.uploadProgress.get(id); if (epoch === this.epoch && progress) { Object.assign(progress, sentAll ? { phase: t('d.action.waitingConfirmation') } : { phase: t('d.action.uploading'), transferred: sent, total }); this.emit(); } })
       : await fetch(this.fileURL(id, path), { method, credentials: 'same-origin', headers: { ...headers, 'X-Piwork-Csrf': this.csrf }, body }); }
-    catch { return [{ path, status: 'unknown', message: 'Response lost. Refresh source and destination before trying again.' }]; }
-    if (epoch !== this.epoch) throw new Error('The connection changed; file results must be checked under the original account.');
+    catch { return [{ path, status: 'unknown', message: t('d.error.transferResponseLost') }]; }
+    if (epoch !== this.epoch) throw new Error(t('d.error.fileResultsConnection'));
     if (response.status === 207) {
       try { return mutationResults(await response.text(), this.fileURL(id, '/')).results; }
-      catch { return [{ path, status: 'unknown', message: 'The per-path result could not be verified. Refresh affected paths before trying again.' }]; }
+      catch { return [{ path, status: 'unknown', message: t('d.error.perPathUnverified') }]; }
     }
     if (!response.ok) {
       const value = await response.json().catch(() => ({}));
       const uncertain = response.status === 408 || response.status >= 500;
-      const reason = value.message ?? response.headers.get('X-Piwork-File-Error') ?? `Request failed (${response.status}).`;
+      const reason = value.message ?? response.headers.get('X-Piwork-File-Error') ?? t('d.error.requestFailed', { status: response.status });
       return [{ path, status: uncertain ? 'unknown' : 'failed', httpStatus: response.status, message: uncertain
-        ? `${reason} The write result is unknown. Refresh source and destination before trying again.`
-        : response.status === 412 ? 'The target changed. Your input is kept. Reread the target and explicitly confirm its version before retrying.' : reason }];
+        ? t('d.error.writeUnknown', { reason })
+        : response.status === 412 ? t('d.error.targetChanged') : reason }];
     }
-    return [{ path, status: 'succeeded', message: 'Confirmed', modified: fileVersion(response.headers.get('Last-Modified')) }];
+    return [{ path, status: 'succeeded', message: t('d.error.confirmed'), modified: fileVersion(response.headers.get('Last-Modified')) }];
   }
   async saveFile(id: string, path: string, content: string, baseline: string, unprotectedConsent = false, confirmed?: (result: TransferResult) => void) {
-    if (new TextEncoder().encode(content).length > 1_048_576) throw new Error('Text exceeds the 1 MiB editor limit.');
+    if (new TextEncoder().encode(content).length > 1_048_576) throw new Error(t('d.error.textEditorLimit'));
     const modified = fileVersion(baseline);
-    if (!modified && !unprotectedConsent) throw new Error('No modification time is available. Explicitly approve an unprotected overwrite first.');
+    if (!modified && !unprotectedConsent) throw new Error(t('d.error.noModificationTime'));
     const results = await this.writeFile(id, path, 'PUT', content, { 'Content-Type': 'text/plain; charset=utf-8', ...(modified ? { 'If-Unmodified-Since': modified } : {}) });
     const result = results[0]; this.state.transfers = results; this.transfersByWork.set(id, results);
     if (result.status === 'succeeded') {
@@ -1903,7 +1956,7 @@ export class DesktopAdapter {
       // GET with the saved bytes when PUT does not return a version.
       if (!result.modified) {
         try { const fresh = await this.readFile(id, path); if (fresh.preview?.kind === 'text' && fresh.preview.content === content) result.modified = fileVersion(fresh.modified); }
-        catch { result.message = 'Saved, but the new version could not be confirmed. Reread before the next write.'; }
+        catch { result.message = localizedText('d.error.savedVersionUnconfirmed'); }
       }
       if (file) file.modified = result.modified ?? '';
     }
@@ -1919,37 +1972,37 @@ export class DesktopAdapter {
   }
   private fileAdmissionReason(id: string) {
     const work = this.getWork(id);
-    return !work ? 'The original Work is no longer available.' : !this.project(work).usable ? this.project(work).explanation || 'Confirm the Work is running before submitting file changes.' : '';
+    return !work ? t('d.error.originalWorkUnavailable') : !this.project(work).usable ? this.project(work).explanation || t('d.error.confirmWorkRunning') : '';
   }
   async upload(id: string, directory: string, files: File[], overwrite = false) {
     const epoch = this.epoch, results: TransferResult[] = [];
     const publish = () => { if (epoch === this.epoch) { this.state.transfers = [...results]; this.transfersByWork.set(id, [...results]); this.emit(); } };
     try {
       for (const [index, file] of files.entries()) {
-        if (!file.name || /[\\/\x00]/.test(file.name)) throw new Error('Invalid upload file name.');
+        if (!file.name || /[\\/\x00]/.test(file.name)) throw new Error(t('d.error.invalidUploadName'));
         const path = (directory === '/' ? '' : directory) + '/' + file.name, key = `${id}:${path}`;
-        const admission = () => epoch !== this.epoch ? 'The connection changed; upload was stopped.' : this.fileAdmissionReason(id);
+        const admission = () => epoch !== this.epoch ? t('d.error.uploadStopped') : this.fileAdmissionReason(id);
         let reason = admission();
-        if (reason) { results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` }); publish(); continue; }
-        this.uploadProgress.set(id, { workId: id, path, phase: 'Checking target', index: index + 1, count: files.length }); this.emit();
+        if (reason) { results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.notSubmitted', { reason }) }); publish(); continue; }
+        this.uploadProgress.set(id, { workId: id, path, phase: t('d.action.checkingTarget'), index: index + 1, count: files.length }); this.emit();
         // Emitting progress may itself reveal a newer accepted control. Check at dispatch.
         reason = admission();
-        if (reason) { results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` }); publish(); continue; }
+        if (reason) { results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.notSubmitted', { reason }) }); publish(); continue; }
         let existing: Response;
         try { existing = await fetch(this.fileURL(id, path), { method: 'HEAD', credentials: 'same-origin' }); }
-        catch { results.push({ path, status: 'failed', notSubmitted: true, message: 'Target check failed. No upload was submitted; original input is kept.' }); publish(); continue; }
+        catch { results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.targetCheckFailed') }); publish(); continue; }
         reason = admission();
-        if (reason) { results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` }); publish(); continue; }
-        if (!existing.ok && existing.status !== 404) { results.push({ path, status: 'failed', notSubmitted: true, httpStatus: existing.status, message: `Target check failed (${existing.status}). No upload was submitted.` }); publish(); continue; }
+        if (reason) { results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.notSubmitted', { reason }) }); publish(); continue; }
+        if (!existing.ok && existing.status !== 404) { results.push({ path, status: 'failed', notSubmitted: true, httpStatus: existing.status, message: t('d.error.targetCheckStatus', { status: existing.status }) }); publish(); continue; }
         const version = fileVersion(existing.headers.get('Last-Modified')), absent = existing.status === 404;
         const intent = this.uploadIntents.get(key);
         if (!absent && (!overwrite || !intent || intent.file !== file || intent.absent || intent.modified !== version)) {
           this.uploadIntents.set(key, { file, modified: version, absent: false });
-          results.push({ path, status: 'failed', notSubmitted: true, needsConsent: true, message: intent && overwrite ? 'Target changed since confirmation. Confirm the newly checked version again.' : version ? 'Target exists. Confirm overwrite of this checked version.' : 'Target exists without a modification time. Overwrite cannot protect against concurrent changes; explicit consent is required.' }); publish(); continue;
+          results.push({ path, status: 'failed', notSubmitted: true, needsConsent: true, message: intent && overwrite ? t('d.error.targetChangedSinceConfirm') : version ? t('d.error.targetExists') : t('d.error.targetExistsNoTime') }); publish(); continue;
         }
         const headers: Record<string, string> = { 'Content-Type': file.type || 'application/octet-stream', ...(absent ? { 'If-None-Match': '*' } : version ? { 'If-Unmodified-Since': intent!.modified } : {}) };
         reason = admission();
-        if (reason) { results.push({ path, status: 'failed', notSubmitted: true, message: `Not submitted. ${reason}` }); publish(); continue; }
+        if (reason) { results.push({ path, status: 'failed', notSubmitted: true, message: t('d.error.notSubmitted', { reason }) }); publish(); continue; }
         const written = await this.writeFile(id, path, 'PUT', file, headers); results.push(...written); publish();
         if (written.every(r => r.status === 'succeeded')) this.uploadIntents.delete(key);
         // Unknown PUTs retain their original evidence; no PUT is automatically repeated.
@@ -1959,26 +2012,26 @@ export class DesktopAdapter {
   }
   async saveConfiguration(id: string, config: Configuration) { const raw = synchronizeConfiguration(config); await this.request(`works/${part(id)}/configuration`, 'PUT', { configuration: raw }); this.getWork(id)!.config = structuredClone(config); this.emit(); }
   async replaceSkill(id: string, name: string) { const work = this.getWork(id)!; const skills = Array.from(new Set([...work.config.skills, name])); await this.request(`works/${part(id)}/configuration/skills`, 'PUT', { skills }); work.config = { ...work.config, skills }; this.emit(); }
-  async applyConfiguration(id: string) { return this.accepted(await this.request(`works/${part(id)}/configuration/apply`, 'POST'), id, 'Apply configuration'); }
+  async applyConfiguration(id: string) { return this.accepted(await this.request(`works/${part(id)}/configuration/apply`, 'POST'), id, 'Apply configuration'); } // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
   async installPackage(id: string, name: string, sourceLabel: string, files?: File[], updateTarget?: string) {
     const kind = sourceLabel.split(': ')[0]; const spec = sourceLabel.slice(kind.length + 2); let source: Data;
     if (kind === 'Core') source = { kind: 'core', name };
     else if (kind === 'npm' || kind === 'Git') source = { kind: kind === 'Git' ? 'git' : 'npm', spec };
-    else { if (!files?.length) throw new Error('Choose the actual package files.'); const form = new FormData(); form.set('kind', kind === 'ZIP' ? 'zip' : 'local'); for (const file of files) form.append(kind === 'ZIP' ? 'zip' : 'files', file, file.webkitRelativePath || file.name);
-      const epoch = this.epoch; this.uploadProgress.set(id, { workId: id, path: name, phase: 'Uploading package' }); this.emit();
-      const response = await this.uploadResponse(`/_desktop/api/works/${part(id)}/package-uploads`, 'POST', form, { 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => { const progress = this.uploadProgress.get(id); if (epoch === this.epoch && progress) { Object.assign(progress, sentAll ? { phase: 'Validating and forwarding' } : { phase: 'Uploading package', transferred: sent, total }); this.emit(); } });
-      const value = await response.json(); if (!response.ok) throw new Error(value.message ?? 'Package upload failed.'); source = { kind: 'upload', uploadId: value.uploadId }; this.uploadProgress.delete(id); this.emit(); }
-    return this.accepted(await this.request(`works/${part(id)}/packages${updateTarget ? `/${part(updateTarget)}/update` : ''}`, 'POST', { source }), id, updateTarget ? 'Update Pi Package' : 'Install Pi Package');
+    else { if (!files?.length) throw new Error(t('d.error.choosePackageFiles')); const form = new FormData(); form.set('kind', kind === 'ZIP' ? 'zip' : 'local'); for (const file of files) form.append(kind === 'ZIP' ? 'zip' : 'files', file, file.webkitRelativePath || file.name);
+      const epoch = this.epoch; this.uploadProgress.set(id, { workId: id, path: name, phase: t('d.action.uploadingPackage') }); this.emit();
+      const response = await this.uploadResponse(`/_desktop/api/works/${part(id)}/package-uploads`, 'POST', form, { 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => { const progress = this.uploadProgress.get(id); if (epoch === this.epoch && progress) { Object.assign(progress, sentAll ? { phase: t('d.action.validatingForwarding') } : { phase: t('d.action.uploadingPackage'), transferred: sent, total }); this.emit(); } });
+      const value = await response.json(); if (!response.ok) throw failure('PACKAGE_UPLOAD_FAILED','d.error.packageUploadFailed', undefined, response.status, undefined, typeof value.message==='string'&&value.message?value.message:undefined); source = { kind: 'upload', uploadId: value.uploadId }; this.uploadProgress.delete(id); this.emit(); }
+    return this.accepted(await this.request(`works/${part(id)}/packages${updateTarget ? `/${part(updateTarget)}/update` : ''}`, 'POST', { source }), id, updateTarget ? 'Update Pi Package' : 'Install Pi Package'); // i18n-exempt: Operation kind 协议值
   }
-  async removePackage(id: string, name: string) { return this.accepted(await this.request(`works/${part(id)}/packages/${part(name)}`, 'DELETE'), id, 'Remove Pi Package'); }
+  async removePackage(id: string, name: string) { return this.accepted(await this.request(`works/${part(id)}/packages/${part(name)}`, 'DELETE'), id, 'Remove Pi Package'); } // i18n-exempt: Operation kind 协议值
   async cleanupInspection(id: string) {
     const pending = this.cleanupPending.get(id); if (!pending || pending.localSession !== this.csrf) return;
     try {
       const response = await fetch(`/_desktop/api/work-packages/${part(id)}`, { method: 'DELETE', credentials: 'same-origin', headers: { 'X-Piwork-Csrf': pending.localSession } });
       if (this.cleanupPending.get(id) !== pending) return;
       if (response.ok || response.status === 404) this.cleanupPending.delete(id);
-      else pending.message = `Cleanup not confirmed (${response.status}). Retry releasing this local transfer.`;
-    } catch { if (this.cleanupPending.get(id) === pending) pending.message = 'Cleanup response lost. Retry releasing this local transfer.'; }
+      else pending.message = localizedText('d.error.cleanupUnconfirmed', { status: response.status });
+    } catch { if (this.cleanupPending.get(id) === pending) pending.message = localizedText('d.error.cleanupResponseLost'); }
     this.emit();
   }
   async abandonInspection(invalidateSelection = true) {
@@ -1987,7 +2040,7 @@ export class DesktopAdapter {
     if (!context || context.importState !== 'unsubmitted') return;
     this.inspectionContext = null; this.inspectionNonce++; context.xhr?.abort();
     this.inspection = null; this.inspectionTransfer = ''; this.transferProgress = null;
-    this.cleanupPending.set(context.id, { message: 'Releasing local transfer…', localSession: context.localSession }); this.emit();
+    this.cleanupPending.set(context.id, { message: t('d.error.releasingTransfer'), localSession: context.localSession }); this.emit();
     await this.cleanupInspection(context.id);
   }
   abandonInspectionOnUnload() {
@@ -1995,7 +2048,7 @@ export class DesktopAdapter {
     if (context?.importState === 'unsubmitted') { context.xhr?.abort(); void fetch(`/_desktop/api/work-packages/${part(context.id)}`, { method: 'DELETE', credentials: 'same-origin', keepalive: true, headers: { 'X-Piwork-Csrf': context.localSession } }).catch(() => undefined); }
   }
   async inspectWork(file: File) {
-    if (this.inspectionContext && this.inspectionContext.importState !== 'unsubmitted') throw new Error('The original import is already submitted or unknown. Recover it by its original transfer/Operation ID before choosing another package.');
+    if (this.inspectionContext && this.inspectionContext.importState !== 'unsubmitted') throw new Error(t('d.error.importAlreadySubmitted'));
     const selection = ++this.inspectionSelection;
     await this.abandonInspection(false);
     if (selection !== this.inspectionSelection) return;
@@ -2010,12 +2063,12 @@ export class DesktopAdapter {
         const xhr = new XMLHttpRequest(); context.xhr = xhr; xhr.open('POST', '/_desktop/api/work-packages'); xhr.withCredentials = true;
         xhr.setRequestHeader('Content-Type', 'application/vnd.piwork.work-package'); xhr.setRequestHeader('X-Piwork-Csrf', context.localSession); xhr.setRequestHeader('X-Piwork-Transfer-Id', context.id);
         xhr.onload = () => {
-          if (!current()) { if (context.importState === 'unsubmitted' && context.localSession === this.csrf) { this.cleanupPending.set(context.id, { message: 'Releasing late local transfer…', localSession: context.localSession }); void this.cleanupInspection(context.id); } reject(new Error('This inspection was abandoned.')); return; }
-          let value: Data; try { value = JSON.parse(xhr.responseText); } catch { reject(new Error('Inspection result could not be read. Original transfer ID is kept for cleanup.')); return; }
-          if (xhr.status >= 200 && xhr.status < 300 && value.summary && value.transferId === context.id) resolve(value); else reject(new Error(value.message ?? value.code ?? 'Package inspection failed.'));
+          if (!current()) { if (context.importState === 'unsubmitted' && context.localSession === this.csrf) { this.cleanupPending.set(context.id, { message: t('d.error.releasingLateTransfer'), localSession: context.localSession }); void this.cleanupInspection(context.id); } reject(failure('INSPECTION_ABANDONED','d.error.inspectionAbandoned')); return; }
+          let value: Data; try { value = JSON.parse(xhr.responseText); } catch { reject(new Error(t('d.error.inspectionUnreadable'))); return; }
+          if (xhr.status >= 200 && xhr.status < 300 && value.summary && value.transferId === context.id) resolve(value); else reject(failure('PACKAGE_INSPECTION_FAILED','d.error.packageInspectionFailed', undefined, xhr.status, undefined, typeof value.message==='string'&&value.message?value.message:undefined));
         };
-        xhr.onerror = () => reject(new Error('Local transfer was interrupted. Original transfer ID is kept for cleanup.'));
-        xhr.onabort = () => reject(new Error('Local upload cancelled.')); xhr.send(file);
+        xhr.onerror = () => reject(new Error(t('d.error.localTransferInterrupted')));
+        xhr.onabort = () => reject(new Error(t('d.error.localUploadCancelled'))); xhr.send(file);
       });
       if (!current()) return;
       context.ready = true; this.inspection = value.summary; this.transferProgress = { phase: 'ready', transferred: file.size, total: file.size }; return context.id;
@@ -2033,16 +2086,16 @@ export class DesktopAdapter {
   }
   async importWork(name: string) {
     const context = this.inspectionContext;
-    if (!context?.ready || !this.inspectionTransfer) throw new Error('Inspect the actual .work package first.');
-    if (context.importState !== 'unsubmitted') throw new Error(`Import is ${context.importState}. Recover the original transfer ${context.id} or known Operation; do not submit again.`);
-    if (context.core !== this.state.core.address || context.localSession !== this.csrf || !this.state.signedIn) throw new Error('Sign in to the original Core before importing.');
+    if (!context?.ready || !this.inspectionTransfer) throw new Error(t('d.error.inspectPackageFirst'));
+    if (context.importState !== 'unsubmitted') throw new Error(t('d.error.importState', { state: context.importState, id: context.id }));
+    if (context.core !== this.state.core.address || context.localSession !== this.csrf || !this.state.signedIn) throw new Error(t('d.error.signInBeforeImport'));
     const sourceName = !name && typeof this.inspection?.sourceName === 'string' ? this.inspection.sourceName : undefined;
     context.importState = 'submitting'; this.emit();
     try {
       const value = await this.request('work-imports', 'POST', { transferId: context.id, ...(name ? { name } : {}) });
-      if (this.inspectionContext !== context) throw new DesktopError('CONNECTION_CHANGED', 'The identity changed during import.');
+      if (this.inspectionContext !== context) throw failure('CONNECTION_CHANGED','d.error.importIdentity');
       // Missing acceptance identity is also unknown; never offer a second POST.
-      const operation = this.accepted(value, '', 'Import Work'); operation.importSourceName = sourceName; context.operationId = operation.id; context.importState = 'accepted'; this.emit(); return operation;
+      const operation = this.accepted(value, '', 'Import Work'); operation.importSourceName = sourceName; context.operationId = operation.id; context.importState = 'accepted'; this.emit(); return operation; // i18n-exempt: Operation kind 协议值
     } catch (error) {
       if (this.inspectionContext === context) { context.importState = 'unknown'; this.emit();
         // The CLI may have attempted Core Import even when a gateway returned an
@@ -2054,19 +2107,19 @@ export class DesktopAdapter {
   async prepareExport(id: string) {
     const value = await this.request(`works/${part(id)}/exports`, 'POST');
     if (value.workId !== id || typeof value.snapshotId !== 'string' || !value.snapshotId || typeof value.operationId !== 'string' || !value.operationId)
-      throw new DesktopError('RESULT_UNKNOWN', 'Export acceptance is incomplete or does not match the original Work. Check known operations; do not repeat Export.');
-    return this.accepted(value, id, 'Export Work');
+      throw failure('RESULT_UNKNOWN','d.error.exportAcceptanceIncomplete');
+    return this.accepted(value, id, 'Export Work'); // i18n-exempt: Operation kind 协议值
   }
   async fetchSnapshot(id: string, explicit = true) {
     const epoch = this.epoch;
     const { value } = await this.readMetadata(`work-snapshots/${part(id)}`, explicit);
-    if (epoch !== this.epoch) throw new DesktopError('CONNECTION_CHANGED', 'The original snapshot identity ended.');
+    if (epoch !== this.epoch) throw failure('CONNECTION_CHANGED','d.error.snapshotIdentityEnded');
     const known = this.getSnapshot(id);
     if (value.snapshotId !== id || typeof value.workId !== 'string' || !value.workId || typeof value.operationId !== 'string' || !value.operationId ||
         known && (known.workId !== value.workId || known.operationId !== value.operationId))
-      throw new DesktopError('SNAPSHOT_MISMATCH', 'The snapshot does not match its original ID, Work and Operation.');
+      throw failure('SNAPSHOT_MISMATCH','d.error.snapshotMismatch');
     if (!['accepted', 'pending', 'preparing', 'running', 'succeeded', 'failed', 'superseded'].includes(value.state))
-      throw new DesktopError('INVALID_RESPONSE', 'Snapshot status could not be confirmed.');
+      throw failure('INVALID_RESPONSE','d.error.snapshotStatusUnconfirmed');
     // Package facts are immutable. Missing later metadata cannot revive an expired package.
     const expiresAt = typeof known?.expiresAt === 'string' && (typeof value.expiresAt !== 'string' || Date.parse(value.expiresAt) >= Date.parse(known.expiresAt)) ? known.expiresAt : typeof value.expiresAt === 'string' ? value.expiresAt : known?.expiresAt ?? value.expiresAt;
     const packageSize = typeof value.size === 'number' && Number.isFinite(value.size) && value.size >= 0 ? value.size : known?.packageSize ?? value.size;
@@ -2076,8 +2129,8 @@ export class DesktopAdapter {
     const snapshot: Snapshot = known ?? { id, workId: value.workId, operationId: value.operationId, status: 'preparing', filename: `${value.workId}.work`, size: '' };
     Object.assign(snapshot, { expiresAt, packageSize, digest,
       status: expired ? 'expired' : unavailable ? 'unavailable' : ['failed', 'superseded'].includes(value.state) ? 'failed' : value.state === 'succeeded' ? 'verified' : 'preparing',
-      size: typeof packageSize === 'number' ? `${packageSize} bytes` : '',
-      error: value.error?.message ?? (typeof value.error === 'string' ? value.error : unavailable ? 'The original snapshot package is unavailable. Check its metadata or explicitly create a new Export.' : undefined) });
+      size: typeof packageSize === 'number' ? t('d.error.sizeBytes', { size: packageSize }) : '',
+      error: value.error?.message ?? (typeof value.error === 'string' ? value.error : unavailable ? localizedText('d.error.snapshotUnavailable') : undefined) });
     if (!known) this.state.snapshots.push(snapshot);
     this.emit(); return snapshot;
   }
@@ -2088,10 +2141,10 @@ export class DesktopAdapter {
         value.workId !== undefined && value.workId !== job.workId || value.kind !== undefined && value.kind !== 'download' ||
         value.ready && (value.snapshotId !== job.snapshotId || value.workId !== job.workId ||
           snapshot?.packageSize != null && value.size !== snapshot.packageSize || snapshot?.digest != null && value.digest !== snapshot.digest))
-      throw new DesktopError('SNAPSHOT_MISMATCH', 'The transfer does not match the original Work and snapshot.');
+      throw failure('SNAPSHOT_MISMATCH','d.error.transferMismatch');
   }
   async checkDownload(snapshotID: string, explicit = true) {
-    const job = this.downloads.get(snapshotID); if (!job) throw new Error('No original transfer is known for this snapshot.');
+    const job = this.downloads.get(snapshotID); if (!job) throw new Error(t('d.error.noOriginalTransfer'));
     const epoch = this.epoch;
     try {
       const value = await this.metadata.read(this.metadataKey(`downloads/${part(job.transferId)}`), async signal => {
@@ -2102,7 +2155,7 @@ export class DesktopAdapter {
           throw error;
         }
       }, explicit);
-      if (epoch !== this.epoch || this.downloads.get(snapshotID) !== job) throw new DesktopError('CONNECTION_CHANGED', 'Original transfer access ended.');
+      if (epoch !== this.epoch || this.downloads.get(snapshotID) !== job) throw failure('CONNECTION_CHANGED','d.error.transferAccessEnded');
       if (!value) return job;
       this.validateDownload(value, job);
       if (!job.ready && !job.terminalFailure) Object.assign(job, value, { seen: true, checkedAt: new Date().toISOString(), observationError: '', error: '' });
@@ -2129,7 +2182,7 @@ export class DesktopAdapter {
   }
   retryDownloadSnapshot(id: string): Promise<string> {
     const job = this.downloads.get(id);
-    if (!job?.terminalFailure || job.pending || this.downloadRequests.has(id)) return Promise.reject(new DesktopError('RESULT_UNKNOWN', 'Only a confirmed failed preparation can be retried explicitly.'));
+    if (!job?.terminalFailure || job.pending || this.downloadRequests.has(id)) return Promise.reject(failure('RESULT_UNKNOWN','d.error.onlyFailedRetry'));
     const observer = this.downloadObservers.get(id); if (observer) observer.active = false;
     this.downloadObservers.delete(id); this.downloads.delete(id);
     return this.downloadSnapshot(id);
@@ -2138,31 +2191,31 @@ export class DesktopAdapter {
     const old = this.downloads.get(id), known = this.downloadRequests.get(id);
     if (old?.ready) return Promise.resolve(`/_desktop/api/downloads/${part(old.transferId)}/content`);
     if (known) { this.observeDownload(id); return known; }
-    if (old) return Promise.reject(new DesktopError('RESULT_UNKNOWN', 'An original transfer is already known. Check transfer before preparing again.'));
+    if (old) return Promise.reject(failure('RESULT_UNKNOWN','d.error.transferAlreadyKnown'));
     const snapshot = this.getSnapshot(id);
     if (!snapshot || snapshot.status !== 'verified' || snapshot.expiresAt && Date.parse(snapshot.expiresAt) <= Date.now())
-      return Promise.reject(new DesktopError('SNAPSHOT_NOT_READY', 'Check this original snapshot before preparing its download.'));
-    const epoch = this.epoch; const job: Data = { transferId: randomUUID(), snapshotId: id, workId: snapshot.workId, phase: 'Preparing', pending: true, seen: false, transferred: 0 };
+      return Promise.reject(failure('SNAPSHOT_NOT_READY','d.error.checkSnapshotBeforeDownload'));
+    const epoch = this.epoch; const job: Data = { transferId: randomUUID(), snapshotId: id, workId: snapshot.workId, phase: t('d.export.downloadPreparing'), pending: true, seen: false, transferred: 0 };
     this.downloads.set(id, job); this.emit(); this.observeDownload(id);
     let pending!: Promise<string>; pending = (async () => {
       try {
         const value = await this.requestOnce(`work-snapshots/${part(id)}/downloads`, 'POST', {}, undefined, { 'X-Piwork-Transfer-Id': job.transferId });
-        if (epoch !== this.epoch || this.downloads.get(id) !== job) throw new DesktopError('CONNECTION_CHANGED', 'The identity changed. Original transfer access ended.');
+        if (epoch !== this.epoch || this.downloads.get(id) !== job) throw failure('CONNECTION_CHANGED','d.error.identityChangedTransfer');
         this.validateDownload(value, job);
-        if (!value.ready) throw new DesktopError('RESULT_UNKNOWN', 'Download confirmation was incomplete. Check the original transfer.');
+        if (!value.ready) throw failure('RESULT_UNKNOWN','d.error.downloadConfirmationIncomplete');
         // Native ready POST publishes size only after full verification; it omits progress fields.
         Object.assign(job, value, { phase: 'ready', transferred: value.size, total: value.size, checkedAt: new Date().toISOString(), observationError: '', error: '', terminalFailure: false });
         return `/_desktop/api/downloads/${part(job.transferId)}/content`;
       } catch (error) {
-        const failure = error instanceof DesktopError ? error : new DesktopError('RESULT_UNKNOWN', 'Download response lost. Check the original transfer.');
+        const rejected = error instanceof DesktopError ? error : failure('RESULT_UNKNOWN','d.error.downloadResponseLost');
         if (epoch === this.epoch && this.downloads.get(id) === job && !job.ready) {
           // These public CLI failures conclusively rejected/removed preparation. Unknown transport results remain locked.
-          const terminalFailure = ['TRANSFER_STORAGE_FULL', 'PACKAGE_CHANGED', 'SNAPSHOT_MISMATCH', 'SNAPSHOT_NOT_READY', 'PACKAGE_EXPIRED', 'PACKAGE_INVALID', 'PACKAGE_LIMIT_EXCEEDED'].includes(failure.code) && failure.httpStatus !== undefined ||
-            failure.code === 'TRANSFER_BUSY' && failure.httpStatus === 429 || ['CORE_UNAVAILABLE', 'TRANSFER_UNAVAILABLE'].includes(failure.code) && failure.httpStatus === 503 ||
-            failure.code === 'SNAPSHOT_DOWNLOAD_FAILED' && failure.httpStatus !== undefined && failure.httpStatus >= 400 && failure.httpStatus <= 599;
-          Object.assign(job, { error: errorText(failure), errorCode: failure.code, terminalFailure, phase: terminalFailure ? 'failed' : 'Not confirmed' });
+          const terminalFailure = ['TRANSFER_STORAGE_FULL', 'PACKAGE_CHANGED', 'SNAPSHOT_MISMATCH', 'SNAPSHOT_NOT_READY', 'PACKAGE_EXPIRED', 'PACKAGE_INVALID', 'PACKAGE_LIMIT_EXCEEDED'].includes(rejected.code) && rejected.httpStatus !== undefined ||
+            rejected.code === 'TRANSFER_BUSY' && rejected.httpStatus === 429 || ['CORE_UNAVAILABLE', 'TRANSFER_UNAVAILABLE'].includes(rejected.code) && rejected.httpStatus === 503 ||
+            rejected.code === 'SNAPSHOT_DOWNLOAD_FAILED' && rejected.httpStatus !== undefined && rejected.httpStatus >= 400 && rejected.httpStatus <= 599;
+          Object.assign(job, { error: errorText(rejected), errorCode: rejected.code, terminalFailure, phase: terminalFailure ? 'failed' : t('d.action.notConfirmed') });
         }
-        throw failure;
+        throw rejected;
       } finally {
         if (epoch === this.epoch && this.downloads.get(id) === job) { job.pending = false; this.emit(); }
         if (this.downloadRequests.get(id) === pending) this.downloadRequests.delete(id);

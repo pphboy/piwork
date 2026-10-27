@@ -1,3 +1,4 @@
+const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
 const { unavailableServicesReason } = await import(new URL('../browser/work-navigation.js',import.meta.url).href);
 import test from 'node:test';
@@ -23,7 +24,7 @@ test('menu keyboard traversal wraps and supports Home and End without selection 
 });
 test('outside dismissal removes only the local overlay and never renders, focuses or suppresses the next click',()=>{
  let closes=0,removes=0;const attrs:any={};const trigger={setAttribute:(k:string,v:string)=>attrs[k]=v,removeAttribute:(k:string)=>delete attrs[k]},dialog={close:()=>closes++,remove:()=>removes++};
- const c:any={anchoredOverlay,view:{modal:'service-picker',data:{id:'original'},modalError:'',modalNameError:null},modalChoice:1,overlayAnchor:'#service-select',pendingWebCommand:undefined,root:{querySelector:(key:string)=>key==='#modal'?dialog:trigger}};
+ const c:any={...localeSandbox,anchoredOverlay,view:{modal:'service-picker',data:{id:'original'},modalError:'',modalNameError:null},modalChoice:1,overlayAnchor:'#service-select',pendingWebCommand:undefined,root:{querySelector:(key:string)=>key==='#modal'?dialog:trigger}};
  vm.createContext(c);vm.runInContext(extract('dismissAnchoredOverlay'),c);c.dismissAnchoredOverlay();assert.equal(c.view.modal,'');assert.equal(c.modalChoice,2);assert.equal(closes,1);assert.equal(removes,1);assert.equal(attrs['aria-expanded'],'false');assert.equal(c.view.data.id,'original');
  assert.doesNotMatch(extract('dismissAnchoredOverlay'),/render\(|\.focus\(|preventDefault|setTimeout/);
 });
@@ -38,7 +39,7 @@ test('narrow chat preserves the same Service header and its original iframe ance
 const {uploadReview}=await import(new URL('../browser/file-results.js',import.meta.url).href);
 function rendererFixture(){
  const work:any={id:'a',name:'A',services:[],sessions:[],resourceChecked:{services:'now',agent:'now'},resourceErrors:{}};
- const c:any={pendingDots,unavailableServicesReason,overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,historyNotice:()=>'',directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
+ const c:any={...localeSandbox,pendingDots,unavailableServicesReason,overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,historyNotice:()=>'',directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
  vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);for(const name of ['modalMarkup','serviceUnavailableReason','serviceCatalogConfirmed','serviceFacts','serviceNotice','serviceFailureTitle','serviceFailureReason','serviceStartupConfirmed','serviceStartupPlaceholder','serviceStatePlaceholder','serviceFallbackHeader','serviceViewport','services','conversationHistoryControls','agent'])vm.runInContext(extract(name),c);return{c,work};
 }
 test('upload review separates proven overwrites, failed checks and unknown writes without false destructive consent',()=>{
@@ -62,7 +63,7 @@ test('failed first conversation reads do not show starter welcome while model-on
  work.sessions=[{id:'s',messages:[{}],checkedAt:'2026-10-14T00:00:00Z',loading:true}];html=c.agent(work,false);assert.match(html,/Preserved history/);assert.doesNotMatch(html,/Loading conversation/);
 });
 test('navigation uses real Work URLs and modified clicks preserve native browser behavior',()=>{
- const c:any={};vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);const html=vm.runInContext("workLink('Open Work','a/b?c','primary')",c);assert.match(html,/href="#\/work\/a%2Fb%3Fc"/);assert.match(source,/if \(e.ctrlKey \|\| e.metaKey \|\| e.shiftKey \|\| e.altKey \|\| e.button !== 0\)/);
+ const c:any={...localeSandbox,};vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);const html=vm.runInContext("workLink('Open Work','a/b?c','primary')",c);assert.match(html,/href="#\/work\/a%2Fb%3Fc"/);assert.match(source,/if \(e.ctrlKey \|\| e.metaKey \|\| e.shiftKey \|\| e.altKey \|\| e.button !== 0\)/);
 });
 test('drawer transitions explicitly focus their new Close only during open; menu failure feedback survives',()=>{
  assert.match(extract('openModal'),/overlayRole\(name\) === 'drawer'/);assert.match(extract('openModal'),/data-action=close-modal/);assert.match(source,/menuCommand && !menuFailed/);assert.match(extract('modalMarkup'),/view.modalError \? feedback/);
@@ -198,7 +199,7 @@ test('first-read reveal is CSS-only, static, and does not reintroduce modal anim
 
 
 test('cold Work deep link stays pending through bootstrap, but real failures and completed route reads do not',()=>{
- const c:any={routeLoad:0,workReadErrors:new Map(),actions:{records:new Map()},adapter:{worksError:'',state:{scenario:'normal'}}};vm.createContext(c);vm.runInContext(extract('workReadPending'),c);
+ const c:any={...localeSandbox,routeLoad:0,workReadErrors:new Map(),actions:{records:new Map()},adapter:{worksError:'',state:{scenario:'normal'}}};vm.createContext(c);vm.runInContext(extract('workReadPending'),c);
  for(const scenario of ['loading','normal','empty']){c.adapter.state.scenario=scenario;assert.equal(c.workReadPending('a'),true);}
  for(const scenario of ['core-offline','env-not-ready','list-error']){c.adapter.state.scenario=scenario;assert.equal(c.workReadPending('a'),false);}
  c.adapter.state.scenario='normal';c.adapter.worksError='List timed out';assert.equal(c.workReadPending('a'),false);c.adapter.worksError='';
@@ -228,7 +229,7 @@ test('both initialization entries bind failure recovery after synchronous ticket
 
 
 test('independent application preserves exact target, recovery and real read state without a Work',()=>{
- const c:any={workReadErrors:new Map(),adapter:{worksError:''},esc:(s:string)=>s.replace(/</g,'&lt;'),topbar:()=>'',workLink:(label:string,id:string)=>`<a href="#/work/${encodeURIComponent(id)}">${label}</a>`,btn:(label:string,action:string)=>`<button data-action="${action}">${label}</button>`,readPlaceholder:()=>'<div aria-busy="true">skeleton</div>',empty:(_icon:string,title:string,description:string,actions:string)=>`${title} ${description} ${actions}`,workReadPending:()=>true};
+ const c:any={...localeSandbox,workReadErrors:new Map(),adapter:{worksError:''},esc:(s:string)=>s.replace(/</g,'&lt;'),topbar:()=>'',workLink:(label:string,id:string)=>`<a href="#/work/${encodeURIComponent(id)}">${label}</a>`,btn:(label:string,action:string)=>`<button data-action="${action}">${label}</button>`,readPlaceholder:()=>'<div aria-busy="true">skeleton</div>',empty:(_icon:string,title:string,description:string,actions:string)=>`${title} ${description} ${actions}`,workReadPending:()=>true};
  vm.createContext(c);vm.runInContext(extract('standaloneWorkUnavailable'),c);
  const route=['app','work-a','service-b','8080'];let html=c.standaloneWorkUnavailable(route);
  assert.match(html,/Work work-a · Service service-b · Port 8080/);assert.match(html,/aria-busy="true"/);assert.match(html,/#\/work\/work-a/);assert.doesNotMatch(html,/Work unavailable|retry-work-read|iframe/);
@@ -236,7 +237,7 @@ test('independent application preserves exact target, recovery and real read sta
  assert.match(extract('render'),/else\s+html = standaloneWorkUnavailable\(r\)/);
 });
 test('independent cold bootstrap errors are scoped to the original identity and route',()=>{
- const c:any={Error,routeLoad:0,location:{hash:'#/app/a/s/80'},route:()=>['app','a','s','80'],workReadErrors:new Map(),adapter:{identityEpoch:2,getWork:()=>undefined},toast:()=>{}};vm.createContext(c);vm.runInContext(extract('reportInitializationFailure'),c);
+ const c:any={...localeSandbox,Error,routeLoad:0,location:{hash:'#/app/a/s/80'},route:()=>['app','a','s','80'],workReadErrors:new Map(),adapter:{identityEpoch:2,getWork:()=>undefined},toast:()=>{}};vm.createContext(c);vm.runInContext(extract('reportInitializationFailure'),c);
  c.reportInitializationFailure(new Error('Metadata unavailable'),2,c.location.hash);assert.equal(c.workReadErrors.get('a').message,'Metadata unavailable');c.workReadErrors.clear();c.reportInitializationFailure(new Error('Stale'),1,c.location.hash);c.reportInitializationFailure(new Error('Stale'),2,'#/app/a/s/81');assert.equal(c.workReadErrors.size,0);
 });
 

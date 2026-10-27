@@ -1,5 +1,6 @@
 import { randomUUID } from './browser-crypto.js';
 import { imageDimensions, imageWithinLimits } from './image-content.js';
+import { t } from './locale.js';
 export class ImageDrafts {
     changed;
     drafts = new Map();
@@ -23,7 +24,7 @@ export class ImageDrafts {
         for (const image of images)
             URL.revokeObjectURL(image.url); this.drafts.clear(); this.owners.clear(); }
     capture(key) { const images = this.get(key); if (images.some(i => i.reading))
-        throw new Error('Images are still being checked.'); return images; }
+        throw new Error(t('d.images.stillChecking')); return images; }
     consume(key, snapshot) { for (const image of snapshot)
         if (this.owners.has(image.id))
             this.remove(key, image.id); }
@@ -33,15 +34,15 @@ export class ImageDrafts {
             if (generation !== this.generation || !current())
                 break;
             if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-                errors.push(`${file.name}: Use PNG, JPEG or WebP.`);
+                errors.push(t('d.images.type', { name: file.name }));
                 continue;
             }
             const existing = this.get(key);
             if (file.size === 0 || file.size > 5 * 1024 ** 2 || existing.length >= 4 || existing.reduce((n, i) => n + i.bytes, 0) + file.size > 10 * 1024 ** 2) {
-                errors.push(`${file.name}: Up to 4 images, 5 MiB each and 10 MiB total.`);
+                errors.push(t('d.images.limits', { name: file.name }));
                 continue;
             }
-            const item = { id: randomUUID(), name: file.name || 'Pasted image', bytes: file.size, url: URL.createObjectURL(file), reading: true };
+            const item = { id: randomUUID(), name: file.name || t('d.images.pasted'), bytes: file.size, url: URL.createObjectURL(file), reading: true };
             this.drafts.set(key, [...existing, item]);
             this.owners.set(item.id, key);
             this.changed();
@@ -65,7 +66,7 @@ export class ImageDrafts {
             catch {
                 this.remove(key, item.id);
                 if (generation === this.generation && current())
-                    errors.push(`${item.name}: The image is invalid or exceeds 8192 pixels per side / 40 million pixels.`);
+                    errors.push(t('d.images.invalid', { name: item.name }));
             }
         }
         return errors;
@@ -74,6 +75,6 @@ export class ImageDrafts {
 function checkDimensions(mime, b) {
     const { width, height } = imageDimensions(mime, b);
     if (!imageWithinLimits(width, height))
-        throw new Error('Invalid image dimensions');
+        throw new Error(t('d.images.invalidDimensions'));
 }
 //# sourceMappingURL=images.js.map

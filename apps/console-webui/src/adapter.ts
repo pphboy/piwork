@@ -1,12 +1,22 @@
 import {modelErrors} from './model-form.js';
+import {t,LocalizedMessage,messageText,type Feedback} from './locale.js';
 import type { Defaults, Operation, Package, Runtime, Skill, Store, User } from "./models.js";
 
 type Data = Record<string, any>;
 export type Scenario = string;
 export class ConsoleError extends Error {
-  constructor(public code: string, message: string, public retryAfterMs = 0, public correlationId = "", public field = "") { super(message); }
+  readonly feedback:Feedback;
+  constructor(public code: string, message: Feedback, public retryAfterMs = 0, public correlationId = "", public field = "") {
+    super(messageText(message));
+    this.feedback=message;
+    if(message!=null&&typeof message!=='string')this.setLocalizedMessage(message);
+  }
+  /** Re-render a locally generated message in the current language. */
+  private setLocalizedMessage(message:Feedback){
+    Object.defineProperty(this,'message',{get:()=>messageText(message),configurable:true});
+  }
 }
-export type Health = { reachable: boolean; healthy: boolean; ready: boolean; reason: string; checkedAt: string; checks: { name: string; state: string; detail: string }[] };
+export type Health = { reachable: boolean; healthy: boolean; ready: boolean; reason: string; checkedAt: string; checks: { name: string; state: boolean | null; detail: string }[] };
 export type UploadSelection = { name: string; files: File[]; bytes: number; summary: string };
 export type PackageIntent = { key: string; kind: Package["sourceKind"]; source: string; name: string; addDefault: boolean; target?: string };
 
@@ -15,28 +25,28 @@ const codeAliases: Record<string, string> = {
   PI_PACKAGE_IN_DEFAULTS: "DEFAULT_REFERENCE", PI_PACKAGE_BUSY: "PACKAGE_BUSY",
   LAST_ADMINISTRATOR: "LAST_ADMIN", AUTH_REQUIRED: "SESSION_EXPIRED",
 };
-const explanations: Record<string, string> = {
-  MODEL_IN_USE: "Remove configuration dependencies before deleting this provider or model. Existing Work may need a different model and Apply.",
-  MODEL_TEST_BUSY: "A model Test is already running. Wait for its result before testing again.",
-  DEFAULT_WORK_NOT_CONFIGURED: "Choose a model in Runtime before setting defaults. The Agent image is supplied by this release.",
-  CORE_UNREACHABLE: "Core could not be reached. Check the connection and try again.",
-  SESSION_EXPIRED: "Your administrator session expired or was revoked. Sign in again.",
-  ADMIN_ONLY: "Only administrators can access this console. Use the user CLI or Desktop for your own Work.",
-  AUTHENTICATION_FAILED: "The account or password is incorrect, or the account is unavailable.",
-  LAST_ADMIN: "At least one enabled administrator must remain.",
-  DEFAULT_REFERENCE: "Remove this resource from Default Work before disabling or removing it.",
-  PACKAGE_BUSY: "A Core package operation is still running. Wait, then refresh this entry.",
-  OPERATION_UNAVAILABLE: "This Operation is unavailable. Only known Core package Operations can be queried.",
+const explanations: Record<string, LocalizedMessage> = {
+  MODEL_IN_USE: new LocalizedMessage('adapter.explain.MODEL_IN_USE'),
+  MODEL_TEST_BUSY: new LocalizedMessage('adapter.explain.MODEL_TEST_BUSY'),
+  DEFAULT_WORK_NOT_CONFIGURED: new LocalizedMessage('adapter.explain.DEFAULT_WORK_NOT_CONFIGURED'),
+  CORE_UNREACHABLE: new LocalizedMessage('adapter.explain.CORE_UNREACHABLE'),
+  SESSION_EXPIRED: new LocalizedMessage('adapter.explain.SESSION_EXPIRED'),
+  ADMIN_ONLY: new LocalizedMessage('adapter.explain.ADMIN_ONLY'),
+  AUTHENTICATION_FAILED: new LocalizedMessage('adapter.explain.AUTHENTICATION_FAILED'),
+  LAST_ADMIN: new LocalizedMessage('adapter.explain.LAST_ADMIN'),
+  DEFAULT_REFERENCE: new LocalizedMessage('adapter.explain.DEFAULT_REFERENCE'),
+  PACKAGE_BUSY: new LocalizedMessage('adapter.explain.PACKAGE_BUSY'),
+  OPERATION_UNAVAILABLE: new LocalizedMessage('adapter.explain.OPERATION_UNAVAILABLE'),
 };
-const invalidFields: Record<string,string> = {
-  baseUrl: 'Base URL is invalid. Enter an HTTPS URL (or loopback HTTP), without credentials, query or fragment. Messages accepts a service root or a Base URL ending in /v1.',
-  credential: 'API Key is invalid. Enter a nonempty Key on a single line. Leave the edit field blank only to keep a saved Key.',
-  model: 'Model ID is invalid. Enter the exact model identifier, up to 256 characters.',
-  modelRef: 'The selected model is invalid or unavailable. Read current data and select an enabled, compatible model.',
-  name: 'Name is invalid. Enter a nonempty name, up to 128 characters.',
-  api: 'API type is invalid. Choose OpenAI Responses or Anthropic Messages.',
-  agentImage: 'The release Agent image could not be confirmed. Read current runtime or repair the server release.',
-  capabilities: 'Model capabilities are invalid. Check the compatible SDK template or explicit definition JSON.',
+const invalidFields: Record<string,LocalizedMessage> = {
+  baseUrl: new LocalizedMessage('adapter.invalid.baseUrl'),
+  credential: new LocalizedMessage('adapter.invalid.credential'),
+  model: new LocalizedMessage('adapter.invalid.model'),
+  modelRef: new LocalizedMessage('adapter.invalid.modelRef'),
+  name: new LocalizedMessage('adapter.invalid.name'),
+  api: new LocalizedMessage('adapter.invalid.api'),
+  agentImage: new LocalizedMessage('adapter.invalid.agentImage'),
+  capabilities: new LocalizedMessage('adapter.invalid.capabilities'),
 };
 
 function errorFrom(value: Data, status: number, write: boolean, login = false): ConsoleError {
@@ -45,9 +55,10 @@ function errorFrom(value: Data, status: number, write: boolean, login = false): 
   const uncertain = write && status >= 500 && !["CORE_UNAVAILABLE", "CORE_ADMIN_API_UNAVAILABLE"].includes(raw);
   const field=typeof value.field==='string'?value.field:typeof value.error?.field==='string'?value.error.field:'';
   const fieldMessage=code==='INVALID_REQUEST'?invalidFields[field.split('.')[0]]:undefined;
+  const fallback:Feedback=uncertain ? new LocalizedMessage('adapter.error.resultUnknown')
+      : fieldMessage ?? (code==='INVALID_REQUEST'?new LocalizedMessage('adapter.error.invalidRequest'):undefined) ?? explanations[code] ?? new LocalizedMessage('adapter.error.unknown',{code});
   return new ConsoleError(uncertain ? "RESULT_UNKNOWN" : code,
-    uncertain ? "The write result is unknown. Read the current object before submitting again."
-      : fieldMessage ?? (code==='INVALID_REQUEST'?'Configuration is invalid. Check the required fields and supported options.':undefined) ?? explanations[code] ?? (typeof value.message === "string" && /^[\x20-\x7e\r\n]*$/.test(value.message) ? value.message : `${code}. Refresh the current object before retrying.`),
+    fallback,
     Number(value.retryAfterMs ?? 60000), typeof value.correlationId === "string" ? value.correlationId : "",field);
 }
 
@@ -57,7 +68,7 @@ function userView(value: Data): User {
 }
 function runtimeView(value: Data): Runtime | null {
   if (value?.configured === false) return null;
-  if (value?.configured !== true || typeof value.agentImage !== "string" || typeof value.model?.provider !== "string" || typeof value.model?.id !== "string" || typeof value.model?.credentialAvailable !== "boolean") throw new ConsoleError("INVALID_RESPONSE", "The runtime response is incomplete. Read current runtime before submitting again.");
+  if (value?.configured !== true || typeof value.agentImage !== "string" || typeof value.model?.provider !== "string" || typeof value.model?.id !== "string" || typeof value.model?.credentialAvailable !== "boolean") throw new ConsoleError("INVALID_RESPONSE", new LocalizedMessage("adapter.error.runtimeIncomplete"));
   return { ...(typeof value.modelRef==='string'?{modelRef:value.modelRef}:{}), agentImage: value.agentImage, provider: value.model.provider, modelId: value.model.id,
     baseUrl: value.model.baseUrl ?? "", credentialAvailable: value.model.credentialAvailable, updatedAt: value.updatedAt };
 }
@@ -66,19 +77,19 @@ function defaultsView(value: Data): Defaults | null {
   const c = value.configuration;
   return { agentImage: value.baseImage ?? c.agentImage ?? "", skills: c.skills ?? [],
     packages: (c.packages ?? []).map((p: Data | string) => typeof p === "string" ? p : p.name),
-    agentsMd: c.agentsMd ?? "", networkMode: c.networkMode ?? "Not provided", workspacePolicy: c.workspacePolicy ?? "Not provided",
+    agentsMd: c.agentsMd ?? "", networkMode: c.networkMode ?? t('ui.notProvided'), workspacePolicy: c.workspacePolicy ?? t('ui.notProvided'),
     updatedAt: value.updatedAt ?? "", publicConfiguration: c };
 }
 function packageView(value: Data): Package {
   const source = value.sourceKind;
   return { name: value.name, enabled: value.enabled, version: value.version ?? null,
     sourceKind: source === "git" ? "Git" : source === "local" ? "Local directory" : source === "zip" || source === "upload" ? "ZIP" : "npm",
-    resolvedSource: typeof value.resolvedSource === "string" ? value.resolvedSource : value.resolvedSource ? JSON.stringify(value.resolvedSource) : "Not provided",
+    resolvedSource: typeof value.resolvedSource === "string" ? value.resolvedSource : value.resolvedSource ? JSON.stringify(value.resolvedSource) : t('ui.notProvided'),
     updatedAt: value.updatedAt ?? "", resources: value.resourceCounts ? Object.values(value.resourceCounts).reduce<number>((n, x) => n + Number(x), 0) : null };
 }
 function operationView(value: Data, intent?: PackageIntent): Operation {
-  if (typeof value.operationId !== "string" || typeof value.state !== "string") throw new ConsoleError("INVALID_RESPONSE", "Core returned an invalid Operation. Check the original ID.");
-  return { id: value.operationId, packageName: value.packageName ?? value.name ?? value.result?.name ?? "Identity pending Core confirmation",
+  if (typeof value.operationId !== "string" || typeof value.state !== "string") throw new ConsoleError("INVALID_RESPONSE", new LocalizedMessage("adapter.error.operationInvalid"));
+  return { id: value.operationId, packageName: value.packageName ?? value.name ?? value.result?.name ?? t('adapter.value.identityPending'),
     state: ["succeeded", "failed", "superseded"].includes(value.state) ? value.state as Operation["state"] : "running",
     packagePhase: value.packagePhase ?? "", createdAt: value.createdAt ?? "", updatedAt: value.updatedAt ?? "",
     result: value.result ? JSON.stringify(value.result, null, 2) : null,
@@ -118,13 +129,13 @@ export class ConsoleAdapter {
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
     } catch {
       throw new ConsoleError(method === "GET" ? "CORE_UNREACHABLE" : "RESULT_UNKNOWN",
-        method === "GET" ? explanations.CORE_UNREACHABLE! : "The write response was lost. Read the current object before submitting again.");
+        method === "GET" ? new LocalizedMessage('adapter.explain.CORE_UNREACHABLE') : new LocalizedMessage('adapter.error.writeLost'));
     }
-    if (epoch !== this.epoch) throw new ConsoleError("SESSION_CHANGED", "The account changed. The old response was discarded.");
+    if (epoch !== this.epoch) throw new ConsoleError("SESSION_CHANGED", new LocalizedMessage('adapter.error.accountChanged'));
     if (response.status === 204) return {};
     const value = await response.json().catch(() => null) as Data | null;
-    if (epoch !== this.epoch) throw new ConsoleError('SESSION_CHANGED', 'The account changed while reading the response.');
-    if (!value || typeof value !== "object") throw new ConsoleError(method === "GET" ? "INVALID_RESPONSE" : "RESULT_UNKNOWN", "The server returned an invalid response. Read current data before submitting again.");
+    if (epoch !== this.epoch) throw new ConsoleError('SESSION_CHANGED', new LocalizedMessage('adapter.error.accountChangedRead'));
+    if (!value || typeof value !== "object") throw new ConsoleError(method === "GET" ? "INVALID_RESPONSE" : "RESULT_UNKNOWN", new LocalizedMessage('adapter.error.invalidResponse'));
     if (!response.ok) {
       const error = errorFrom(value, response.status, method !== "GET", login);
       if (error.code === "SESSION_EXPIRED") { this.clearIdentity(); if (document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted') location.assign('/login'); }
@@ -148,7 +159,7 @@ export class ConsoleAdapter {
   }
   async guard(_write = false) {
     await this.initialize();
-    if (!this.session) throw new ConsoleError("SESSION_EXPIRED", explanations.SESSION_EXPIRED!);
+    if (!this.session) throw new ConsoleError("SESSION_EXPIRED", new LocalizedMessage('adapter.explain.SESSION_EXPIRED'));
   }
   async login(account: string, password: string) {
     if (!this.csrf) await this.initialize();
@@ -158,21 +169,21 @@ export class ConsoleAdapter {
   }
   async connection() {
     const value = await this.request("availability"); this.availability = value;
-    if (!value.reachable) throw new ConsoleError("CORE_UNREACHABLE", explanations.CORE_UNREACHABLE!);
+    if (!value.reachable) throw new ConsoleError("CORE_UNREACHABLE", new LocalizedMessage('adapter.explain.CORE_UNREACHABLE'));
     return value;
   }
   async signOut() { await this.request("logout", "POST", {}); this.clearIdentity(); await this.initialize(); }
   async health(): Promise<Health> {
     const [status, process] = await Promise.all([this.request("admin/status"), this.request("health")]);
     this.lastHealth = { reachable: true, healthy: process.healthy === true, ready: status.ready === true,
-      reason: status.state ?? "Unknown", checkedAt: new Date().toISOString(),
-      checks: Object.entries(status.checks ?? {}).map(([name, state]) => ({ name, state: state === true ? "Ready" : state === false ? "Not ready" : "Unknown", detail: "" })) };
+      reason: typeof status.state === 'string' ? status.state : '', checkedAt: new Date().toISOString(),
+      checks: Object.entries(status.checks ?? {}).map(([name, state]) => ({ name, state: state === true ? true : state === false ? false : null, detail: "" })) };
     return this.lastHealth;
   }
   async users() { this.store.users = (await this.request("admin/users")).users.map(userView); return this.store.users; }
   async createUser(input: { account: string; password: string; role: User["role"] }) {
     const value = await this.request("admin/users", "POST", { ...input, role: input.role === "Administrator" ? "admin" : "user" });
-    if (typeof value.id !== "string" || value.account !== input.account || typeof value.enabled !== "boolean") throw new ConsoleError("RESULT_UNKNOWN", "The account acceptance response is incomplete. Refresh Users before submitting again.");
+    if (typeof value.id !== "string" || value.account !== input.account || typeof value.enabled !== "boolean") throw new ConsoleError("RESULT_UNKNOWN", new LocalizedMessage('adapter.error.createUser'));
     return userView(value);
   }
   async userAction(id: string, action: "enable" | "disable" | "reset", password?: string) {
@@ -184,22 +195,22 @@ export class ConsoleAdapter {
   async runtime() { this.store.runtime = runtimeView(await this.request("admin/runtime")); return this.store.runtime; }
   async runtimeDefaults() {
     const value=await this.request('admin/runtime-defaults');
-    if(typeof value.agentImage!=='string'||!value.agentImage)throw new ConsoleError('RELEASE_DEFAULTS_UNAVAILABLE','The server release Agent image is unavailable. Repair the server release, then read current state.');
+    if(typeof value.agentImage!=='string'||!value.agentImage)throw new ConsoleError('RELEASE_DEFAULTS_UNAVAILABLE',new LocalizedMessage('adapter.error.releaseAgent'));
     return value.agentImage as string;
   }
   async modelRequest(resource:string,method='GET',body?:unknown) {
     try{return await this.request(`admin/${resource}`,method,body);}
-    catch(error){if((resource==='models'||resource.startsWith('models/')||resource==='model-tests')&&error instanceof ConsoleError&&error.code==='INVALID_REQUEST'&&modelErrors[error.field.split('.')[0]])throw new ConsoleError('INVALID_REQUEST',modelErrors[error.field.split('.')[0]],error.retryAfterMs,error.correlationId,error.field);if(resource==='model-tests'&&error instanceof ConsoleError&&error.code==='RESULT_UNKNOWN')throw new ConsoleError('TEST_RESULT_UNAVAILABLE','The Test result could not be confirmed. Check the Core connection and explicitly test again. No configuration was saved.',error.retryAfterMs,error.correlationId);throw error;}
+    catch(error){if((resource==='models'||resource.startsWith('models/')||resource==='model-tests')&&error instanceof ConsoleError&&error.code==='INVALID_REQUEST'&&modelErrors[error.field.split('.')[0]])throw new ConsoleError('INVALID_REQUEST',modelErrors[error.field.split('.')[0]],error.retryAfterMs,error.correlationId,error.field);if(resource==='model-tests'&&error instanceof ConsoleError&&error.code==='RESULT_UNKNOWN')throw new ConsoleError('TEST_RESULT_UNAVAILABLE',new LocalizedMessage('adapter.error.testUnconfirmed'),error.retryAfterMs,error.correlationId);throw error;}
   }
   async saveRuntimeSelection(modelRef:string) {
     const value=await this.request('admin/runtime','PUT',{modelRef});
-    try{this.store.runtime=runtimeView(value.runtime);}catch{throw new ConsoleError('RESULT_UNKNOWN','Read current runtime before saving again.');}
+    try{this.store.runtime=runtimeView(value.runtime);}catch{throw new ConsoleError('RESULT_UNKNOWN',new LocalizedMessage('adapter.error.readRuntime'));}
     return this.store.runtime;
   }
   async saveRuntime(input: Omit<Runtime, "updatedAt" | "credentialAvailable">, apiKey: string) {
     const value = await this.request("admin/runtime", "PUT", { provider: input.provider, model: input.modelId,
       ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}), credential: apiKey });
-    try { this.store.runtime = runtimeView(value.runtime); } catch { throw new ConsoleError("RESULT_UNKNOWN", "The runtime acceptance response is incomplete. Read current runtime before submitting again."); } return this.store.runtime;
+    try { this.store.runtime = runtimeView(value.runtime); } catch { throw new ConsoleError("RESULT_UNKNOWN", new LocalizedMessage('adapter.error.runtimeAcceptIncomplete')); } return this.store.runtime;
   }
   async defaults() { this.store.defaults = defaultsView(await this.request("admin/default-work")); return this.store.defaults; }
   async saveDefaults(patch: Partial<Pick<Defaults, "agentImage" | "skills" | "packages" | "agentsMd">>) {
@@ -209,7 +220,7 @@ export class ConsoleAdapter {
   }
   async skills() {
     this.store.skills = (await this.request("admin/skills")).skills.map((s: Data): Skill => ({ name: s.name, enabled: s.enabled,
-      source: s.source ?? "Not provided", updatedAt: s.updatedAt ?? "", files: s.fileCount, bytes: s.totalBytes }));
+      source: s.source ?? t('ui.notProvided'), updatedAt: s.updatedAt ?? "", files: s.fileCount, bytes: s.totalBytes }));
     return this.store.skills;
   }
   async packages() { this.store.packages = (await this.request("admin/packages")).packages.map(packageView); return this.store.packages; }
@@ -223,9 +234,9 @@ export class ConsoleAdapter {
       const xhr = new XMLHttpRequest(); xhr.open(method, `/console/api/${path}`); xhr.withCredentials = true; xhr.setRequestHeader("X-Csrf-Token", this.csrf);
       if (body instanceof File) { xhr.setRequestHeader("Content-Type", "application/zip"); xhr.setRequestHeader("X-Piwork-Package-Name", encodeURIComponent(body.name)); }
       xhr.upload.onprogress = e => progress?.(e.loaded, e.lengthComputable ? e.total : 0);
-      xhr.onload = () => { if (epoch !== this.epoch) { reject(new ConsoleError("SESSION_CHANGED", "The account changed. The upload response was discarded.")); return; } let value: Data = {}; try { value = JSON.parse(xhr.responseText); } catch { /* handled below */ }
+      xhr.onload = () => { if (epoch !== this.epoch) { reject(new ConsoleError("SESSION_CHANGED", new LocalizedMessage('adapter.error.accountChangedUpload'))); return; } let value: Data = {}; try { value = JSON.parse(xhr.responseText); } catch { /* handled below */ }
         if (xhr.status >= 200 && xhr.status < 300) resolve(value); else reject(errorFrom(value, xhr.status, true)); };
-      xhr.onerror = () => reject(new ConsoleError("RESULT_UNKNOWN", "The upload response was lost. Check the current object before retrying."));
+      xhr.onerror = () => reject(new ConsoleError("RESULT_UNKNOWN", new LocalizedMessage('adapter.error.uploadLost')));
       xhr.onabort = xhr.onerror; xhr.send(body);
     });
   }
@@ -233,7 +244,7 @@ export class ConsoleAdapter {
     const body = new FormData(); body.append("directoryName", selection.name);
     for (const file of selection.files) body.append("files", file, encodeURIComponent(file.webkitRelativePath.split("/").slice(1).join("/")));
     const value = await this.upload(`admin/skills${target ? `/${encodeURIComponent(target)}` : ""}`, body, target ? "PUT" : "POST", progress);
-    if (typeof value.name !== 'string') throw new ConsoleError('RESULT_UNKNOWN', 'Skill confirmation is incomplete. Read the current Skill before uploading again.');
+    if (typeof value.name !== 'string') throw new ConsoleError('RESULT_UNKNOWN', new LocalizedMessage('adapter.error.skillConfirm'));
     return { name: value.name as string };
   }
   async submitPackage(intent: PackageIntent, progress?: (sent: number, total: number) => void, _bytes = 0, selection?: UploadSelection) {
@@ -241,7 +252,7 @@ export class ConsoleAdapter {
     if (!saved) {
       let source: Data;
       if (intent.kind === "ZIP" || intent.kind === "Local directory") {
-        if (!selection) throw new ConsoleError("FILES_REQUIRED", "Choose the package files again before submitting.");
+        if (!selection) throw new ConsoleError("FILES_REQUIRED", new LocalizedMessage('adapter.error.filesRequired'));
         const body = new FormData();
         if (intent.kind === "ZIP") body.append("zip", selection.files[0]!);
         else { body.append("directoryName", selection.files[0]!.webkitRelativePath.split("/")[0]!);
@@ -250,12 +261,12 @@ export class ConsoleAdapter {
         source = { kind: "upload", uploadId: upload.uploadId };
       } else source = { kind: intent.kind === "Git" ? "git" : "npm", spec: intent.source };
       saved = { source, intent: { ...intent } }; this.intents.set(intent.key, saved);
-    } else if (JSON.stringify(saved.intent) !== JSON.stringify(intent)) throw new ConsoleError("INTENT_CONFLICT", "This key belongs to a different submission. Start a new explicit intent.");
+    } else if (JSON.stringify(saved.intent) !== JSON.stringify(intent)) throw new ConsoleError("INTENT_CONFLICT", new LocalizedMessage('adapter.error.intentConflict'));
     let accepted: Data;
     try { accepted = await this.request(`admin/packages${intent.target ? `/${encodeURIComponent(intent.target)}/update` : ""}`, "POST",
       { source: saved.source, idempotencyKey: intent.key, ...(!intent.target && intent.addDefault ? { addToDefaults: true } : {}) }); }
-    catch (e) { if (e instanceof ConsoleError && ["RESULT_UNKNOWN", "CORE_UNREACHABLE"].includes(e.code)) throw new ConsoleError("ACCEPTANCE_UNKNOWN", "The acceptance response was lost. Resume this submission with the same source and key."); throw e; }
-    if (typeof accepted.operationId !== "string" || !accepted.operationId) throw new ConsoleError("ACCEPTANCE_UNKNOWN", "The acceptance response has no Operation ID. Recover using this same submission key.");
+    catch (e) { if (e instanceof ConsoleError && ["RESULT_UNKNOWN", "CORE_UNREACHABLE"].includes(e.code)) throw new ConsoleError("ACCEPTANCE_UNKNOWN", new LocalizedMessage('adapter.error.acceptanceLost')); throw e; }
+    if (typeof accepted.operationId !== "string" || !accepted.operationId) throw new ConsoleError("ACCEPTANCE_UNKNOWN", new LocalizedMessage('adapter.error.acceptanceNoId'));
     const op = operationView({ operationId: accepted.operationId, state: "accepted", packagePhase: "" }, intent); this.store.operations = [op]; return op;
   }
   async operation(id: string, intent?: PackageIntent): Promise<Operation> {
@@ -272,22 +283,22 @@ export async function inspectSkillFiles(
   target?: string,
 ): Promise<UploadSelection> {
   if (!files.length)
-    throw new ConsoleError("NO_FILES", "Choose a Skill directory.");
+    throw new ConsoleError("NO_FILES", new LocalizedMessage('adapter.inspect.noFilesSkill'));
   const name = files[0].webkitRelativePath.split("/")[0];
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name))
     throw new ConsoleError(
       "NAME_INVALID",
-      "Directory names must use 1–64 lowercase letters, numbers, or hyphens, starting with a letter or number.",
+      new LocalizedMessage('adapter.inspect.nameInvalid'),
     );
   if (target && name !== target)
     throw new ConsoleError(
       "NAME_MISMATCH",
-      `Select the directory named ${target}.`,
+      new LocalizedMessage('adapter.inspect.nameMismatch', {target}),
     );
   if (!files.some((f) => f.webkitRelativePath === `${name}/SKILL.md`))
     throw new ConsoleError(
       "MANIFEST_MISSING",
-      "The selected directory must contain SKILL.md at its root.",
+      new LocalizedMessage('adapter.inspect.skillManifest'),
     );
   const bytes = files.reduce((n, f) => n + f.size, 0);
   if (
@@ -297,25 +308,25 @@ export async function inspectSkillFiles(
   )
     throw new ConsoleError(
       "UPLOAD_LIMIT",
-      "Skill limits: 2,048 files, 8 MiB per file, and 32 MiB total.",
+      new LocalizedMessage('adapter.inspect.skillLimit'),
     );
-  return { name, files, bytes, summary: `${files.length} files` };
+  return { name, files, bytes, summary: t('adapter.summary.files', {count: files.length}) };
 }
 export async function inspectPackageFiles(
   files: File[],
   kind: Package["sourceKind"],
 ): Promise<UploadSelection> {
   if (!files.length)
-    throw new ConsoleError("NO_FILES", "Choose a file or directory.");
+    throw new ConsoleError("NO_FILES", new LocalizedMessage('adapter.inspect.noFilesPackage'));
   const bytes = files.reduce((n, f) => n + f.size, 0);
   if (kind === "ZIP") {
     if (!files[0].name.toLowerCase().endsWith(".zip"))
       throw new ConsoleError(
         "ZIP_REQUIRED",
-        "Choose a ZIP file. A .work file is not a Pi Package.",
+        new LocalizedMessage('adapter.inspect.zipRequired'),
       );
     if (bytes > 256 * 1024 * 1024)
-      throw new ConsoleError("UPLOAD_LIMIT", "ZIP must be at most 256 MiB.");
+      throw new ConsoleError("UPLOAD_LIMIT", new LocalizedMessage('adapter.inspect.zipLimit'));
     const name = await inspectZipName(files[0]);
     return { name, files, bytes, summary: files[0].name };
   }
@@ -326,7 +337,7 @@ export async function inspectPackageFiles(
   if (!manifest)
     throw new ConsoleError(
       "MANIFEST_MISSING",
-      "The selected directory must have package.json at its root.",
+      new LocalizedMessage('adapter.inspect.packageManifest'),
     );
   if (
     manifest.size > 1048576 ||
@@ -338,7 +349,7 @@ export async function inspectPackageFiles(
   )
     throw new ConsoleError(
       "UPLOAD_LIMIT",
-      "Package content exceeds the documented file, depth, manifest, or size limits.",
+      new LocalizedMessage('adapter.inspect.packageLimit'),
     );
   let data;
   try {
@@ -346,19 +357,19 @@ export async function inspectPackageFiles(
   } catch {
     throw new ConsoleError(
       "MANIFEST_INVALID",
-      "package.json is not valid JSON.",
+      new LocalizedMessage('adapter.inspect.manifestJson'),
     );
   }
   if (typeof data.name !== "string" || !data.name.trim())
     throw new ConsoleError(
       "NAME_MISSING",
-      "package.json must declare a package name.",
+      new LocalizedMessage('adapter.inspect.nameMissing'),
     );
   return {
     name: data.name,
     files,
     bytes,
-    summary: `${root} · ${files.length} files`,
+    summary: t('adapter.summary.rootFiles', {root, count: files.length}),
   };
 }
 /** Browser manifest preflight; full trust/security validation still belongs to Core. */
@@ -378,7 +389,7 @@ async function inspectZipName(file: File): Promise<string> {
   if (end < 0)
     throw new ConsoleError(
       "ZIP_INVALID",
-      "Could not read this ZIP. The existing selection was preserved.",
+      new LocalizedMessage('adapter.inspect.zipRead'),
     );
   const count = view.getUint16(end + 10, true);
   let pos = view.getUint32(end + 16, true),
@@ -428,7 +439,7 @@ async function inspectZipName(file: File): Promise<string> {
   } catch {
     throw new ConsoleError(
       "ZIP_INVALID",
-      "ZIP structure, paths, or expanded limits are invalid. Choose a valid Package ZIP.",
+      new LocalizedMessage('adapter.inspect.zipInvalid'),
     );
   }
   const manifests = entries.filter(
@@ -437,7 +448,7 @@ async function inspectZipName(file: File): Promise<string> {
   if (manifests.length !== 1)
     throw new ConsoleError(
       "MANIFEST_MISSING",
-      "ZIP must contain package.json at one legal root. Package identity comes from that manifest.",
+      new LocalizedMessage('adapter.inspect.manifestRoot'),
     );
   const manifest = manifests[0];
   const root =
@@ -445,12 +456,12 @@ async function inspectZipName(file: File): Promise<string> {
   if (root && entries.some((e) => !e.name.startsWith(root)))
     throw new ConsoleError(
       "ZIP_ROOT_INVALID",
-      "ZIP must have a single package root.",
+      new LocalizedMessage('adapter.inspect.zipRoot'),
     );
   if (manifest.size > 1048576 || manifest.flags & 1)
     throw new ConsoleError(
       "MANIFEST_INVALID",
-      "package.json must be at most 1 MiB and the ZIP must not be encrypted.",
+      new LocalizedMessage('adapter.inspect.manifestLimit'),
     );
   try {
     if (view.getUint32(manifest.offset, true) !== 0x04034b50)
@@ -496,7 +507,7 @@ async function inspectZipName(file: File): Promise<string> {
   } catch {
     throw new ConsoleError(
       "MANIFEST_INVALID",
-      "Could not read package.json from this ZIP. Use a standard unencrypted ZIP with a UTF-8 manifest.",
+      new LocalizedMessage('adapter.inspect.manifestRead'),
     );
   }
 }

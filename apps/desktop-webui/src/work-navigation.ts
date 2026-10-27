@@ -1,4 +1,5 @@
 import type { Work } from './models.js';
+import { t, stateText } from './locale.js';
 export interface WorkSelection { area: string; path: string; file: string; service: string; port: number; session: string }
 export function restoreSelection(previous?: WorkSelection): WorkSelection {
   return { area: previous && ['Services', 'Chat', 'Files'].includes(previous.area) ? previous.area : 'Services',
@@ -18,6 +19,11 @@ export function initialWorkArea(previous: WorkSelection | undefined, work: Work,
 }
 export function unavailableServicesReason(work: Work): string {
   if (!work.resourceChecked?.services || work.resourceErrors?.services || work.services.some(service => service.enabled && service.observed === 'Ready' && service.ports.length)) return '';
-  if (!work.services.length) return 'This Work has no Services. You can ask the Agent to build an application.';
-  return 'No Web Service is ready. ' + work.services.map(service => `${service.name}: ${!service.enabled ? 'disabled' : service.observed.toLowerCase()}${!service.ports.length ? ' · no declared Web entry' : ''}${service.error ? ` · ${service.error}` : ''}`).join('; ');
+  if (!work.services.length) return t('d.nav.noServices');
+  return t('d.nav.noWebService') + work.services.map(service => t('d.nav.serviceState', {
+    name: service.name,
+    state: !service.enabled ? t('d.nav.disabled') : stateText(service.observed.toLowerCase()),
+    entry: !service.ports.length ? t('d.nav.noEntry') : '',
+    error: service.error ? ` · ${service.error}` : '',
+  })).join('; ');
 }
