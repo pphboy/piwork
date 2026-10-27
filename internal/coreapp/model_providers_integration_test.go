@@ -41,11 +41,12 @@ type modelGatewayRequest struct {
 	Body                map[string]any
 }
 type modelGateway struct {
-	URL      string
-	mu       sync.Mutex
-	requests []modelGatewayRequest
-	hold     chan struct{}
-	started  chan struct{}
+	URL        string
+	mu         sync.Mutex
+	requests   []modelGatewayRequest
+	hold       chan struct{}
+	started    chan struct{}
+	allowedKey string
 }
 
 func (g *modelGateway) count() int { g.mu.Lock(); defer g.mu.Unlock(); return len(g.requests) }
@@ -125,6 +126,7 @@ func nativeModelGateway(t *testing.T) (*modelGateway, string) {
 		reasoning, _ := body["reasoning"].(map[string]any)
 		g.mu.Lock()
 		g.requests = append(g.requests, modelGatewayRequest{api, model, auth, thinking, reasoning, stream, r.URL.Path, body})
+		allowedKey := g.allowedKey
 		var held chan struct{}
 		if stream && api == "openai-responses" && g.hold != nil {
 			held = g.hold
@@ -139,7 +141,7 @@ func nativeModelGateway(t *testing.T) (*modelGateway, string) {
 				return
 			}
 		}
-		if stream && auth == "synthetic-invalid-key" {
+		if stream && (auth == "synthetic-invalid-key" || allowedKey != "" && auth != allowedKey) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Private-Fixture", "synthetic-header-secret")
 			w.WriteHeader(http.StatusUnauthorized)

@@ -2,7 +2,9 @@ package corestore
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"time"
 )
@@ -48,43 +50,51 @@ var retryBackoff = [...]time.Duration{time.Second, 5 * time.Second, 15 * time.Se
 // transaction. Process restart cannot grant a fresh retry budget.
 func (s *Store) RecordRuntimeFailure(ctx context.Context, workID string, generation int64, at time.Time) (RuntimeGeneration, error) {
 	var output RuntimeGeneration
-	now := at.UTC().Format(time.RFC3339Nano)
 	err := s.Write(ctx, func(tx *sql.Tx) error {
-		current, err := readRuntimeGeneration(tx, workID, generation)
-		if err != nil {
-			return err
-		}
-		windowStart := at.UTC()
-		count := current.RetryCount
-		if current.RetryWindowStartedAt == nil {
-			count = 0
-		} else {
-			parsed, err := time.Parse(time.RFC3339Nano, *current.RetryWindowStartedAt)
-			if err != nil {
-				return ErrStorage
-			}
-			if at.Sub(parsed) >= 10*time.Minute {
-				count = 0
-			} else {
-				windowStart = parsed
-			}
-		}
-		state := "recovering"
-		var next *string
-		if count < len(retryBackoff) {
-			deadline := at.UTC().Add(retryBackoff[count]).Format(time.RFC3339Nano)
-			next = &deadline
-			count++
-		} else {
-			state = "failed"
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET state=?,retry_count=?,retry_window_started_at=?,next_retry_at=?,ready_since=NULL,updated_at=?
-			WHERE work_id=? AND generation=?`, state, count, windowStart.Format(time.RFC3339Nano), next, now, workID, generation); err != nil {
-			return err
-		}
-		output, err = readRuntimeGeneration(tx, workID, generation)
+		var err error
+		output, err = RecordRuntimeFailureTx(ctx, tx, workID, generation, at)
 		return err
 	})
+	return output, err
+}
+
+// RecordRuntimeFailureTx updates the budget within the caller's fencing transaction.
+func RecordRuntimeFailureTx(ctx context.Context, tx *sql.Tx, workID string, generation int64, at time.Time) (RuntimeGeneration, error) {
+	var output RuntimeGeneration
+	now := at.UTC().Format(time.RFC3339Nano)
+	current, err := readRuntimeGeneration(tx, workID, generation)
+	if err != nil {
+		return output, err
+	}
+	windowStart := at.UTC()
+	count := current.RetryCount
+	if current.RetryWindowStartedAt == nil {
+		count = 0
+	} else {
+		parsed, err := time.Parse(time.RFC3339Nano, *current.RetryWindowStartedAt)
+		if err != nil {
+			return output, ErrStorage
+		}
+		if at.Sub(parsed) >= 10*time.Minute {
+			count = 0
+		} else {
+			windowStart = parsed
+		}
+	}
+	state := "recovering"
+	var next *string
+	if count < len(retryBackoff) {
+		deadline := at.UTC().Add(retryBackoff[count]).Format(time.RFC3339Nano)
+		next = &deadline
+		count++
+	} else {
+		state = "failed"
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET state=?,retry_count=?,retry_window_started_at=?,next_retry_at=?,ready_since=NULL,updated_at=?
+		WHERE work_id=? AND generation=?`, state, count, windowStart.Format(time.RFC3339Nano), next, now, workID, generation); err != nil {
+		return output, err
+	}
+	output, err = readRuntimeGeneration(tx, workID, generation)
 	return output, err
 }
 
@@ -98,6 +108,51 @@ func (s *Store) ResetRuntimeRetryBudget(ctx context.Context, workID string, gene
 			return err
 		}
 		var err error
+		output, err = readRuntimeGeneration(tx, workID, generation)
+		return err
+	})
+	return output, err
+}
+
+// ResetRuntimeRetryBudgetOnce binds the budget reset to an accepted Retry, so
+// replaying its worker after a Core crash cannot replenish the budget again.
+func (s *Store) ResetRuntimeRetryBudgetOnce(ctx context.Context, workID string, generation int64, operationID string, at time.Time) (RuntimeGeneration, error) {
+	var output RuntimeGeneration
+	sum := sha256.Sum256([]byte(operationID))
+	key := "runtime_retry_reset_" + hex.EncodeToString(sum[:])
+	err := s.Write(ctx, func(tx *sql.Tx) error {
+		var operationWork, kind, state string
+		var target, control int64
+		err := tx.QueryRow(`SELECT o.work_id,o.kind,o.state,o.target_version,w.control_version FROM operations o JOIN works w ON w.id=o.work_id WHERE o.id=? AND w.deleted_at IS NULL`, operationID).Scan(&operationWork, &kind, &state, &target, &control)
+		if err != nil || operationWork != workID || kind != "retry-work" || state != "running" && state != "pending" || target != control {
+			return ErrRevisionConflict
+		}
+		var marker struct {
+			WorkID      string `json:"workId"`
+			OperationID string `json:"operationId"`
+		}
+		found, err := readPrivateRuntimeRecord(tx, key, &marker)
+		if err != nil {
+			return err
+		}
+		if found {
+			if marker.WorkID != workID || marker.OperationID != operationID {
+				return ErrStorage
+			}
+			output, err = readRuntimeGeneration(tx, workID, generation)
+			return err
+		}
+		if _, err := readRuntimeGeneration(tx, workID, generation); err != nil {
+			return err
+		}
+		now := at.UTC().Format(time.RFC3339Nano)
+		if _, err := tx.Exec(`UPDATE runtime_generations SET state='preparing',retry_count=0,retry_window_started_at=NULL,next_retry_at=NULL,ready_since=NULL,updated_at=? WHERE work_id=? AND generation=?`, now, workID, generation); err != nil {
+			return err
+		}
+		marker.WorkID, marker.OperationID = workID, operationID
+		if err := insertPrivateRuntimeRecord(tx, key, marker); err != nil {
+			return err
+		}
 		output, err = readRuntimeGeneration(tx, workID, generation)
 		return err
 	})

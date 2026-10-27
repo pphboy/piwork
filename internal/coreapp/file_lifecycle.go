@@ -204,7 +204,5 @@ func (a *Application) restoreAfterFileCleanup(ctx context.Context, workID string
 	if record, err := a.Store.RuntimeGeneration(ctx, workID, generation); err == nil && !runtimeRetryPermitted(record, time.Now().UTC()) {
 		return
 	}
-	if _, err := a.startCapturedWork(ctx, workID, generation, instance); err != nil && ctx.Err() == nil && !errors.Is(err, errWorkSuperseded) {
-		_ = a.recordRecoveryFailure(ctx, workID, generation)
-	}
+	_, _, _ = a.startCapturedWorkForRecovery(ctx, workID, generation, instance, work.ControlVersion)
 }

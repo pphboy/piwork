@@ -17,6 +17,7 @@ import (
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
 	"piwork/internal/dockerengine"
+	"piwork/internal/internaltls"
 )
 
 const (
@@ -396,12 +397,47 @@ func (a *Application) logArchiveSecrets(ctx context.Context, source corestore.Lo
 		if err := json.Unmarshal([]byte(profileJSON.String), &profile); err != nil {
 			return nil, err
 		}
+		var profileSecret []byte
 		if profile.Model.CredentialRef != "" {
 			secret, err := a.files.ReadSecret(profile.Model.CredentialRef)
 			if err != nil {
 				return nil, err
 			}
 			add(string(secret))
+			profileSecret = secret
+		}
+		var binding corestore.RuntimeLaunchBinding
+		var bound bool
+		err = a.Store.Read(ctx, func(tx *sql.Tx) error {
+			var err error
+			binding, bound, err = corestore.ReadRuntimeLaunchTx(tx, source.WorkID, source.Generation)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+		if bound {
+			if binding.InstanceID != source.InstanceID {
+				return nil, corestore.ErrStorage
+			}
+			if binding.CredentialRef != "" {
+				secret, err := a.files.ReadSecret(binding.CredentialRef)
+				if err != nil {
+					return nil, err
+				}
+				add(string(secret))
+			}
+		} else if len(profileSecret) != 0 {
+			// Older generations have no binding. Only archive when their actual
+			// published credential proves the captured profile is sufficient.
+			if a.agentTLS == nil {
+				return nil, corestore.ErrStorage
+			}
+			scope := internaltls.Scope{InstallationID: a.Store.InstallationID(), WorkID: source.WorkID, Generation: source.Generation, InstanceID: source.InstanceID}
+			state, err := a.agentTLS.CheckModelCredential(ctx, scope, profileSecret)
+			if err != nil || state != internaltls.ModelCredentialSame {
+				return nil, corestore.ErrStorage
+			}
 		}
 	} else {
 		return nil, corestore.ErrStorage

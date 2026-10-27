@@ -63,92 +63,93 @@ type Options struct {
 }
 type Status = contracts.CoreStatus
 type Application struct {
-	prepareBrainForTest   func(context.Context) (packageprepare.Result, error)
-	fullLogReaderForTest  fullLogReader
-	logLimitsForTest      *logExportLimits
-	logExportFaultForTest func(stage string) error
-	logVerifyForTest      func(context.Context) error
-	Store                 *corestore.Store
-	Identity              *identity.Service
-	logs                  *corelogs.Manager
-	logsRoot              *safefs.Root
-	previousLogOutput     io.Writer
-	Settings              *Settings
-	files                 *corestore.PlatformFiles
-	inspectionRoot        *safefs.Root
-	engine                *dockerengine.Engine
-	inspector             *dockerengine.ImageInspector
-	dockerRuntime         *dockerengine.Runtime
-	agentTLS              *internaltls.Manager
-	workRuntime           *workruntime.Runtime
-	agentRoutes           workruntime.Routes
-	options               Options
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	mu                    sync.Mutex
-	skillMu               sync.Mutex
-	skillUploads          atomic.Int32
-	packageUploads        atomic.Int32
-	packageWG             sync.WaitGroup
-	packageSlots          chan struct{}
-	environmentCache      *preparationcache.Cache[environmentKey, contracts.PiPackagePreparedEnvironment]
-	environmentSlots      chan struct{}
-	envRuntimeForTest     environmentProbeRuntime
-	envInspectForTest     func(context.Context, string) error
-	packageRunning        sync.Map
-	modelTests            sync.Map
-	modelTestTimeout      time.Duration
-	modelRegistryFault    func(string) error
-	packageStorageMu      sync.Mutex
-	bundledBrainPreparing atomic.Bool
-	packagesRecovered     bool
-	fileMu                sync.Mutex
-	fileImageCaptured     bool
-	fileImageID           string
-	fileEpoch             int64
-	fileJobs              sync.Map
-	fileRecoveryLocks     sync.Map
-	fileRecoveryActive    sync.Map
-	fileWG                sync.WaitGroup
-	snapshotMu            sync.Mutex
-	snapshotStorageMu     sync.Mutex
-	snapshotImageCaptured bool
-	snapshotImageID       string
-	snapshotsRecovered    bool
-	snapshotRunning       sync.Map
-	snapshotTransfers     sync.Map
-	snapshotWG            sync.WaitGroup
-	logExportWG           sync.WaitGroup
-	logDownloadMu         sync.Mutex // log task admission, download leases and GC
-	logBoundaries         map[string]*corelogs.Boundary
-	logDownloads          int
-	logUserDownloads      map[string]int
-	logExportsDownloading map[string]int
-	archiveSlots          chan struct{}
-	workLocks             sync.Map
-	workQueueMu           sync.Mutex
-	workQueues            map[string]chan struct{}
-	workWG                sync.WaitGroup
-	workApplyWorkers      sync.Map
-	serviceEffects        sync.Map
-	serviceRecovering     sync.Map
-	recoveryOnce          sync.Once
-	recoveryWG            sync.WaitGroup
-	state                 string
-	shutdownMu            sync.Mutex
-	shutdownComplete      bool
-	status                Status
-	closed                bool
-	refresh               chan struct{}
-	refreshWG             sync.WaitGroup
-	preparation           *runtimePreparation
-	server                *http.Server
-	listener              net.Listener
-	serving               bool
-	serveDone             chan error
-	serviceServer         *grpc.Server
-	serviceListener       net.Listener
-	serviceGateway        *serviceGateway
+	prepareBrainForTest    func(context.Context) (packageprepare.Result, error)
+	fullLogReaderForTest   fullLogReader
+	logLimitsForTest       *logExportLimits
+	logExportFaultForTest  func(stage string) error
+	logVerifyForTest       func(context.Context) error
+	workResumeFaultForTest func(string) error
+	Store                  *corestore.Store
+	Identity               *identity.Service
+	logs                   *corelogs.Manager
+	logsRoot               *safefs.Root
+	previousLogOutput      io.Writer
+	Settings               *Settings
+	files                  *corestore.PlatformFiles
+	inspectionRoot         *safefs.Root
+	engine                 *dockerengine.Engine
+	inspector              *dockerengine.ImageInspector
+	dockerRuntime          *dockerengine.Runtime
+	agentTLS               *internaltls.Manager
+	workRuntime            *workruntime.Runtime
+	agentRoutes            workruntime.Routes
+	options                Options
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	mu                     sync.Mutex
+	skillMu                sync.Mutex
+	skillUploads           atomic.Int32
+	packageUploads         atomic.Int32
+	packageWG              sync.WaitGroup
+	packageSlots           chan struct{}
+	environmentCache       *preparationcache.Cache[environmentKey, contracts.PiPackagePreparedEnvironment]
+	environmentSlots       chan struct{}
+	envRuntimeForTest      environmentProbeRuntime
+	envInspectForTest      func(context.Context, string) error
+	packageRunning         sync.Map
+	modelTests             sync.Map
+	modelTestTimeout       time.Duration
+	modelRegistryFault     func(string) error
+	packageStorageMu       sync.Mutex
+	bundledBrainPreparing  atomic.Bool
+	packagesRecovered      bool
+	fileMu                 sync.Mutex
+	fileImageCaptured      bool
+	fileImageID            string
+	fileEpoch              int64
+	fileJobs               sync.Map
+	fileRecoveryLocks      sync.Map
+	fileRecoveryActive     sync.Map
+	fileWG                 sync.WaitGroup
+	snapshotMu             sync.Mutex
+	snapshotStorageMu      sync.Mutex
+	snapshotImageCaptured  bool
+	snapshotImageID        string
+	snapshotsRecovered     bool
+	snapshotRunning        sync.Map
+	snapshotTransfers      sync.Map
+	snapshotWG             sync.WaitGroup
+	logExportWG            sync.WaitGroup
+	logDownloadMu          sync.Mutex // log task admission, download leases and GC
+	logBoundaries          map[string]*corelogs.Boundary
+	logDownloads           int
+	logUserDownloads       map[string]int
+	logExportsDownloading  map[string]int
+	archiveSlots           chan struct{}
+	workLocks              sync.Map
+	workQueueMu            sync.Mutex
+	workQueues             map[string]chan struct{}
+	workWG                 sync.WaitGroup
+	workApplyWorkers       sync.Map
+	serviceEffects         sync.Map
+	serviceRecovering      sync.Map
+	recoveryOnce           sync.Once
+	recoveryWG             sync.WaitGroup
+	state                  string
+	shutdownMu             sync.Mutex
+	shutdownComplete       bool
+	status                 Status
+	closed                 bool
+	refresh                chan struct{}
+	refreshWG              sync.WaitGroup
+	preparation            *runtimePreparation
+	server                 *http.Server
+	listener               net.Listener
+	serving                bool
+	serveDone              chan error
+	serviceServer          *grpc.Server
+	serviceListener        net.Listener
+	serviceGateway         *serviceGateway
 }
 
 func New(ctx context.Context, options Options) (_ *Application, returned error) {

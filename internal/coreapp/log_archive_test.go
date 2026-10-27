@@ -340,14 +340,16 @@ func TestArchiveUsesOriginalAgentConfigRevisionSecrets(t *testing.T) {
 				return err
 			}
 		}
-		_, err := tx.Exec(`UPDATE works SET active_revision=2,desired_revision=2 WHERE id=?`, service.WorkID)
-		return err
+		if _, err := tx.Exec(`UPDATE works SET active_revision=2,desired_revision=2 WHERE id=?`, service.WorkID); err != nil {
+			return err
+		}
+		return corestore.PutRuntimeLaunchTx(tx, corestore.RuntimeLaunchBinding{Version: 1, WorkID: service.WorkID, Generation: 7, InstanceID: "agent-old", ControlVersion: 1, ContextID: "context-original", ImageID: "sha256:" + strings.Repeat("a", 64), ModelRef: "model-ref-original", CredentialRef: newRef})
 	}); err != nil {
 		t.Fatal(err)
 	}
 	source, err := a.Store.RegisterLogSource(ctx, corestore.LogSourceRegistration{
 		SourceID: "log-source-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", OwnerUserID: service.OwnerUserID, WorkID: service.WorkID,
-		Kind: "agent", Generation: 7, ConfigRevision: 1, InstanceID: "old-agent-instance", CreatedAt: "2026-10-21T00:00:00Z",
+		Kind: "agent", Generation: 7, ConfigRevision: 1, InstanceID: "agent-old", CreatedAt: "2026-10-21T00:00:00Z",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -356,7 +358,7 @@ func TestArchiveUsesOriginalAgentConfigRevisionSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.fullLogReaderForTest = &fakeFullLogReader{stdout: [][]byte{[]byte("2026-10-21T00:00:01Z " + oldValue + "\n")}}
+	a.fullLogReaderForTest = &fakeFullLogReader{stdout: [][]byte{[]byte("2026-10-21T00:00:01Z " + oldValue + " NEW_INSTANCE_SECRET\n")}}
 	archived, _ := a.archiveLogSource(ctx, source, dockerengine.ContainerIdentity{WorkID: source.WorkID, Kind: "agent", LogicalID: "agentd"}, time.Second)
 	if archived.State != "archived" {
 		t.Fatalf("archive failed: %#v", archived)
@@ -365,7 +367,7 @@ func TestArchiveUsesOriginalAgentConfigRevisionSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), oldValue) || !strings.Contains(string(raw), "[redacted]") {
+	if strings.Contains(string(raw), oldValue) || strings.Contains(string(raw), "NEW_INSTANCE_SECRET") || strings.Count(string(raw), "[redacted]") != 2 {
 		t.Fatalf("original Agent credential was not redacted from the archive: %q", raw)
 	}
 }
