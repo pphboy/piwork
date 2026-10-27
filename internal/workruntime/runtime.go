@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/netip"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -46,16 +47,19 @@ type Model struct {
 }
 
 type StartSpec struct {
-	Scope              internaltls.Scope
-	ImageID            string
-	ContextID          string
-	ContextDirectory   string
-	Model              Model
-	InitializationOnly bool
-	HistoryMigration   *contracts.WorkHistoryMigration
-	workHistorySchema  int64
-	CorrelationID      string
-	Observe            func(diagnostics.Event) error `json:"-"`
+	Scope                      internaltls.Scope
+	ImageID                    string
+	ContextID                  string
+	ContextDirectory           string
+	Model                      Model
+	InitializationOnly         bool
+	HistoryMigration           *contracts.WorkHistoryMigration
+	workHistorySchema          int64
+	CorrelationID              string
+	Observe                    func(diagnostics.Event) error `json:"-"`
+	AfterCredentialPublication func(context.Context) error   `json:"-"`
+	AfterContainerCreate       func(context.Context) error   `json:"-"`
+	AdoptExisting              bool                          `json:"-"`
 }
 
 type Started struct {
@@ -277,6 +281,11 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 		}
 		mounts = append(mounts, dockerengine.ContainerMount{Type: "bind", Source: secret, Target: "/run/secrets/model-api-key", ReadOnly: true})
 	}
+	if spec.AfterCredentialPublication != nil {
+		if err := spec.AfterCredentialPublication(ctx); err != nil {
+			return result, err
+		}
+	}
 	agent := agentIdentity(spec.Scope, spec.ContextID)
 	ensured, err := r.Docker.EnsureContainer(ctx, dockerengine.ContainerSpec{
 		Identity: agent, Image: spec.ImageID, Command: []string{"--config", "/etc/piwork/runtime.json"},
@@ -288,6 +297,11 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 		return result, err
 	}
 	containerID = ensured.ID
+	if spec.AfterContainerCreate != nil {
+		if err := spec.AfterContainerCreate(ctx); err != nil {
+			return result, err
+		}
+	}
 	view, err := r.Docker.StartContainer(ctx, agent)
 	if err != nil {
 		return result, err
@@ -328,6 +342,114 @@ func (r *Runtime) Start(ctx context.Context, spec StartSpec) (result Started, er
 		return result, err
 	}
 	return Started{ContainerID: ensured.ID, Address: address, Client: client, LogPolicyVersion: ensured.LogPolicyVersion, scope: spec.Scope, contextID: spec.ContextID, verified: true, readiness: readiness}, nil
+}
+
+// Adopt verifies a running exact-identity Agent without publishing material or
+// creating a container. Its credential mount remains generation-owned.
+func (r *Runtime) Adopt(ctx context.Context, spec StartSpec) (Started, error) {
+	var result Started
+	if r == nil || r.Docker == nil || r.Inspector == nil || r.TLS == nil {
+		return result, ErrContext
+	}
+	captured, err := readCaptured(spec)
+	if err != nil {
+		return result, err
+	}
+	capabilities, err := r.Inspector.InspectNativeAgent(ctx, spec.ImageID)
+	if err != nil {
+		return result, err
+	}
+	spec.workHistorySchema = capabilities.WorkHistorySchema
+	files, err := r.TLS.ExistingAgentFiles(ctx, spec.Scope)
+	if err != nil {
+		return result, err
+	}
+	endpoint := r.Endpoint
+	if endpoint == "" {
+		endpoint = "piwork-core:7172"
+	}
+	expected := agentConfig(spec, captured.config, files.Identity)
+	expected.CorrelationId = files.AgentConfig.CorrelationId
+	expected.ServiceControl.Present = true
+	expected.ServiceControl.Value.Endpoint = endpoint
+	expected.ServiceControl.Value.ServerName = "piwork-core"
+	expected.ServiceControl.Value.CaCertificatePath = "/etc/piwork/control/installation-ca.crt"
+	expected.ServiceControl.Value.ClientCertificatePath = "/etc/piwork/control/agent-service-client.crt"
+	expected.ServiceControl.Value.ClientPrivateKeyPath = "/etc/piwork/control/agent-service-client.key"
+	control := files.ServiceConfig.ServiceControl
+	if !reflect.DeepEqual(expected, files.AgentConfig) || control.Endpoint != endpoint || control.ServerName != "piwork-core" || control.CACertificatePath != "/etc/piwork/control/installation-ca.crt" || control.ClientCertificatePath != "/etc/piwork/control/agent-service-client.crt" || control.ClientPrivateKeyPath != "/etc/piwork/control/agent-service-client.key" {
+		return result, ErrContext
+	}
+	agent := agentIdentity(spec.Scope, spec.ContextID)
+	view, err := r.Docker.InspectContainer(ctx, agent)
+	if err != nil || view == nil || view.State == nil || !view.State.Running || view.HostConfig == nil || view.NetworkSettings == nil || len(view.NetworkSettings.Networks) != 1 {
+		if err == nil {
+			err = dockerengine.ErrStateUnknown
+		}
+		return result, err
+	}
+	networkName := string(view.HostConfig.NetworkMode)
+	if _, err := r.Docker.InspectNetwork(ctx, networkName, spec.Scope.WorkID); err != nil {
+		return result, err
+	}
+	var private, workspace string
+	for _, item := range view.HostConfig.Mounts {
+		if string(item.Type) == "volume" {
+			switch item.Target {
+			case "/var/data":
+				private = item.Source
+			case "/var/data/workspace":
+				workspace = item.Source
+			}
+		}
+	}
+	if _, err := r.Docker.InspectVolume(ctx, private, spec.Scope.WorkID, "work-private"); err != nil {
+		return result, err
+	}
+	if _, err := r.Docker.InspectVolume(ctx, workspace, spec.Scope.WorkID, "work-workspace"); err != nil {
+		return result, err
+	}
+	identity := files.Identity
+	mounts := []dockerengine.ContainerMount{
+		{Type: "volume", Source: private, Target: "/var/data", CopyImageData: true},
+		{Type: "volume", Source: workspace, Target: "/var/data/workspace", CopyImageData: true},
+		{Type: "bind", Source: spec.ContextDirectory, Target: "/run/piwork", ReadOnly: true},
+		{Type: "bind", Source: files.AgentConfigPath, Target: "/etc/piwork/runtime.json", ReadOnly: true},
+		{Type: "bind", Source: files.ServiceConfigPath, Target: "/etc/piwork/service-control.json", ReadOnly: true},
+		{Type: "bind", Source: identity.CACertificatePath, Target: "/etc/piwork/tls/installation-ca.crt", ReadOnly: true},
+		{Type: "bind", Source: identity.ServerCertificatePath, Target: "/etc/piwork/tls/agent-server.crt", ReadOnly: true},
+		{Type: "bind", Source: identity.ServerPrivateKeyPath, Target: "/etc/piwork/tls/agent-server.key", ReadOnly: true},
+		{Type: "bind", Source: identity.CACertificatePath, Target: "/etc/piwork/control/installation-ca.crt", ReadOnly: true},
+		{Type: "bind", Source: identity.ServiceClientCertificatePath, Target: "/etc/piwork/control/agent-service-client.crt", ReadOnly: true},
+		{Type: "bind", Source: identity.ServiceClientPrivateKeyPath, Target: "/etc/piwork/control/agent-service-client.key", ReadOnly: true},
+		{Type: "tmpfs", Target: "/tmp"},
+	}
+	if files.CredentialPath != "" {
+		mounts = append(mounts, dockerengine.ContainerMount{Type: "bind", Source: files.CredentialPath, Target: "/run/secrets/model-api-key", ReadOnly: true})
+	}
+	view, err = r.Docker.ValidateRunningContainer(ctx, dockerengine.ContainerSpec{
+		Identity: agent, Image: spec.ImageID, Command: []string{"--config", "/etc/piwork/runtime.json"},
+		User: "10001:10001", CPUMillis: captured.config.Resources.AgentCpuMillis, MemoryBytes: captured.config.Resources.AgentMemoryBytes,
+		WorkingDirectory: "/var/data/workspace", ControlHost: "piwork-core",
+		Network: &dockerengine.ContainerNetwork{Name: networkName, WorkID: spec.Scope.WorkID, Aliases: []string{"agentd"}}, Mounts: mounts,
+	})
+	if err != nil {
+		return result, err
+	}
+	address, err := solePrivateAddress(view, networkName)
+	if err != nil {
+		return result, err
+	}
+	client, err := agentclient.OpenExisting(ctx, r.TLS, spec.Scope, address)
+	if err != nil {
+		return result, err
+	}
+	readiness, err := waitReady(ctx, r.Docker, agent, view.ID, client, spec, captured)
+	if err != nil {
+		client.Close()
+		return result, err
+	}
+	return Started{ContainerID: view.ID, Address: address, Client: client, LogPolicyVersion: dockerengine.ObservedContainerLogPolicyVersion(view.HostConfig), scope: spec.Scope, contextID: spec.ContextID, verified: true, readiness: readiness}, nil
 }
 
 func (r *Runtime) collectInitializationDiagnostics(ctx context.Context, spec StartSpec, agent dockerengine.ContainerIdentity, containerID string) error {

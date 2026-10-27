@@ -5,6 +5,7 @@ package agentclient
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,11 +42,26 @@ type Client struct {
 // Open binds an AgentService channel to one inspected Docker IP and one
 // generation-scoped mTLS identity. A DNS name or caller-chosen port is rejected.
 func Open(ctx context.Context, manager *internaltls.Manager, scope internaltls.Scope, ip string) (*Client, error) {
+	return open(ctx, manager, scope, ip, false)
+}
+
+// OpenExisting only reads published TLS identity when reconnecting to a
+// running instance; it cannot rotate its mounted credentials.
+func OpenExisting(ctx context.Context, manager *internaltls.Manager, scope internaltls.Scope, ip string) (*Client, error) {
+	return open(ctx, manager, scope, ip, true)
+}
+
+func open(ctx context.Context, manager *internaltls.Manager, scope internaltls.Scope, ip string, existing bool) (*Client, error) {
 	address, err := netip.ParseAddr(ip)
 	if manager == nil || err != nil || address.IsUnspecified() || address.IsLoopback() || address.IsMulticast() || scope.WorkID == "" || scope.Generation <= 0 || scope.InstanceID == "" {
 		return nil, ErrAddress
 	}
-	config, err := manager.AgentClientConfig(ctx, scope)
+	var config *tls.Config
+	if existing {
+		config, err = manager.ExistingAgentClientConfig(ctx, scope)
+	} else {
+		config, err = manager.AgentClientConfig(ctx, scope)
+	}
 	if err != nil {
 		return nil, err
 	}

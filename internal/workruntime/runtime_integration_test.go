@@ -187,6 +187,37 @@ func TestNativeCoreStartsRealTSAgent(t *testing.T) {
 		t.Fatal("real TS Agent startup:", err)
 	}
 	defer started.Client.Close()
+	files, err := manager.ExistingAgentFiles(ctx, spec.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{files.AgentConfigPath, files.ServiceConfigPath, files.Identity.CACertificatePath, files.Identity.ServerCertificatePath, files.Identity.ServerPrivateKeyPath, files.Identity.ClientCertificatePath, files.Identity.ClientPrivateKeyPath}
+	material := make(map[string][]byte, len(paths))
+	for _, path := range paths {
+		material[path], err = os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	adopted, err := runtime.Adopt(ctx, spec)
+	if err != nil {
+		t.Fatal("running Agent adoption failed", err)
+	}
+	if adopted.ContainerID != started.ContainerID || adopted.VerifiedReadiness() == nil {
+		t.Fatal("adoption did not verify the original container")
+	}
+	adopted.Client.Close()
+	for _, path := range paths {
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(after, material[path]) {
+			t.Fatal("Agent adoption changed existing material", err)
+		}
+	}
+	wrongScope := spec
+	wrongScope.Scope.InstanceID = "agent-foreign"
+	if _, err := runtime.Adopt(ctx, wrongScope); err == nil {
+		t.Fatal("foreign Agent identity was adopted")
+	}
 	var routes Routes
 	if _, err := routes.Agent(spec.Scope, spec.ContextID); !errors.Is(err, ErrRouteUnavailable) {
 		t.Fatal("route appeared before readiness publication", err)
