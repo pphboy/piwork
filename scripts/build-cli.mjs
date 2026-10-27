@@ -24,14 +24,14 @@ export function desktopInputHash(base = root) {
     if (entry.isDirectory()) visit(child); else if (entry.isFile()) files.push(child); else throw new Error(`unsupported build input: ${child}`);
   } };
   for (const name of ['apps/desktop-webui/src', 'apps/desktop-webui/public', 'apps/desktop-webui/scripts']) visit(name);
-  files.push('apps/desktop-webui/tsconfig.json', 'apps/desktop-webui/package.json', 'scripts/sync-desktop-assets.mjs', 'package-lock.json', 'apps/ui-shared/assets/piwork-logo.png', 'apps/ui-shared/browser-crypto.js', 'apps/ui-shared/i18n.js', 'apps/ui-shared/boot.js', 'apps/ui-shared/tokens.css', 'apps/ui-shared/controls.css');
+  files.push('apps/desktop-webui/tsconfig.json', 'apps/desktop-webui/package.json', 'scripts/sync-desktop-assets.mjs', 'package-lock.json', 'apps/ui-shared/assets/piwork-logo.png', 'apps/ui-shared/browser-crypto.js', 'apps/ui-shared/i18n.js', 'apps/ui-shared/boot.js', 'apps/ui-shared/boot-watchdog.js', 'apps/ui-shared/prepare-boot.mjs', 'apps/ui-shared/read-deadline.js', 'apps/ui-shared/tokens.css', 'apps/ui-shared/controls.css');
   const hash = createHash('sha256');
   for (const name of files.sort()) { const data = readFileSync(join(base,name)); hash.update(`${name}\0${data.length}\0`); hash.update(data); }
   return hash.digest('hex');
 }
 export function consoleInputHash(base = root) {
   const hash = createHash('sha256');
-  const files = ['apps/console-webui/package.json', 'apps/console-webui/tsconfig.json', 'scripts/sync-console-assets.mjs', 'package-lock.json', 'apps/ui-shared/assets/piwork-logo.png', 'apps/ui-shared/browser-crypto.js', 'apps/ui-shared/i18n.js', 'apps/ui-shared/boot.js', 'apps/ui-shared/tokens.css', 'apps/ui-shared/controls.css'];
+  const files = ['apps/console-webui/package.json', 'apps/console-webui/tsconfig.json', 'scripts/sync-console-assets.mjs', 'package-lock.json', 'apps/ui-shared/assets/piwork-logo.png', 'apps/ui-shared/browser-crypto.js', 'apps/ui-shared/i18n.js', 'apps/ui-shared/boot.js', 'apps/ui-shared/boot-watchdog.js', 'apps/ui-shared/prepare-boot.mjs', 'apps/ui-shared/read-deadline.js', 'apps/ui-shared/tokens.css', 'apps/ui-shared/controls.css'];
   const visit = name => { for (const entry of readdirSync(join(base,name), {withFileTypes:true})) {
     const child = `${name}/${entry.name}`;
     if (entry.isDirectory()) visit(child); else if (entry.isFile()) files.push(child); else throw new Error(`unsupported build input: ${child}`);

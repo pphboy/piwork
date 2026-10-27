@@ -72,6 +72,160 @@ test.afterAll(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
+async function shortenReadDeadline(page, path) {
+  await page.addInitScript(({ path }) => {
+    const later = window.setTimeout.bind(window);
+    window.setTimeout = (callback, delay, ...args) => later(callback, delay === 10000 ? 500 : delay, ...args);
+    const original = window.fetch.bind(window);
+    let first = true;
+    window.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (first && url.includes(path)) {
+        first = false;
+        return new Promise(resolve => { window.finishOldRead = () => resolve(new Response('{"administratorInitialized":false}', { headers: { 'content-type': 'application/json' } })); });
+      }
+      return original(input, init);
+    };
+  }, { path });
+}
+
+test('setup timeout releases the read lock and ignores an old response', async ({ page }) => {
+  const requests = [];
+  await mockSetup(page, requests);
+  await shortenReadDeadline(page, '/_web/api/state');
+  await page.goto(base + '/setup');
+  const retry = page.locator('[data-action="refresh"]');
+  await expect(retry).toBeEnabled();
+  await retry.click();
+  await expect(page.locator('#credentials')).toBeVisible();
+  await page.locator('#account').fill('draft account');
+  await page.evaluate(() => window.finishOldRead());
+  await expect(page.locator('#account')).toHaveValue('draft account');
+  await expect(page.locator('#confirm-password')).toHaveCount(0);
+  expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
+});
+
+test('administrator session timeout exposes retry and discards the stale read', async ({ page }) => {
+  await mockConsole(page);
+  await shortenReadDeadline(page, '/console/api/session');
+  await page.goto(base + '/login');
+  await expect(page.locator('[data-startup-status]')).toContainText('could not be confirmed');
+  await page.locator('[data-startup-retry]').click();
+  await expect(page.locator('#login-form')).toBeVisible();
+  await page.locator('#account').fill('new account');
+  await page.evaluate(() => window.finishOldRead());
+  await expect(page.locator('#account')).toHaveValue('new account');
+});
+
+test('setup and administrator recover automatically from one failed initial read without writes', async ({ page }) => {
+  const requests = [];
+  await mockSetup(page, requests);
+  let setupReads = 0;
+  await page.route('**/_web/api/state', route => ++setupReads === 1 ? route.abort('connectionrefused') : route.fallback());
+  await page.goto(base + '/setup');
+  await expect(page.locator('#credentials')).toBeVisible();
+  expect(setupReads).toBe(2);
+  expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
+  await page.unrouteAll();
+  await mockConsole(page);
+  let sessions = 0;
+  await page.route('**/console/api/session', route => ++sessions === 1 ? route.abort('connectionrefused') : route.fallback());
+  await page.goto(base + '/login');
+  await expect(page.locator('#login-form')).toBeVisible();
+  expect(sessions).toBe(2);
+});
+
+test('setup stops automatic read recovery after two retries and keeps manual navigation', async ({ page }) => {
+  await mockSetup(page);
+  let reads = 0;
+  await page.route('**/_web/api/state', route => { reads++; return route.abort('connectionrefused'); });
+  await page.goto(base + '/setup');
+  await expect.poll(() => reads, { timeout: 7000 }).toBe(3);
+  await page.waitForTimeout(1200);
+  expect(reads).toBe(3);
+  await expect(page.locator('[data-action="refresh"]')).toBeEnabled();
+  await expect(page.getByRole('link', { name: 'Piwork workbench' })).toHaveAttribute('href', '/');
+});
+
+test('lost login response stays locked until a readback confirms the session', async ({ page }) => {
+  const requests = [];
+  await mockSetup(page, requests);
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    let submitted = false, allowRead = false;
+    window.loginPosts = 0;
+    window.allowReadback = () => { allowRead = true; };
+    window.fetch = (input, init = {}) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url.endsWith('/_web/api/login') && init.method === 'POST') {
+        submitted = true; window.loginPosts++; return Promise.reject(new TypeError('response lost'));
+      }
+      if (submitted && !allowRead && url.endsWith('/_web/api/state')) return Promise.reject(new TypeError('offline'));
+      return original(input, init);
+    };
+  });
+  await page.goto(base + '/setup');
+  await expect(page.locator('#credentials')).toBeVisible();
+  await page.locator('#account').fill('owner');
+  await page.locator('#password').fill('synthetic-password');
+  await page.locator('#credentials button[type=submit]').click();
+  await expect(page.locator('#setup-notice')).toContainText('result is not confirmed');
+  await expect(page.locator('#credentials button[type=submit]')).toBeDisabled();
+  await page.evaluate(() => window.allowReadback());
+  await page.locator('#credential-recovery [data-action="refresh"]').click();
+  await expect(page.locator('#credentials button[type=submit]')).toBeEnabled();
+  expect(await page.evaluate(() => window.loginPosts)).toBe(1);
+  expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
+});
+
+test('Console lost login response requires a session readback before another submission', async ({ page }) => {
+  await mockConsole(page);
+  let sent = false, allowReadback = false, posts = 0;
+  await page.route('**/console/api/session', route => sent && !allowReadback ? route.abort('connectionrefused') : route.fallback());
+  await page.route('**/console/api/login', route => { sent = true; posts++; return route.abort('connectionrefused'); });
+  await page.goto(base + '/login');
+  await expect(page.locator('#login-form')).toBeVisible();
+  await page.locator('#account').fill('owner');
+  await page.locator('#password').fill('synthetic-password');
+  await page.locator('#login-form button[type=submit]').click();
+  await expect(page.locator('#login-form button[type=submit]')).toBeDisabled();
+  await expect(page.locator('#login-error')).toContainText('not confirmed');
+  allowReadback = true;
+  await page.locator('[data-action="check-login"]').click();
+  await expect(page.locator('#login-form button[type=submit]')).toBeEnabled();
+  await expect(page.locator('#account')).toHaveValue('owner');
+  expect(posts).toBe(1);
+});
+
+test('onboarding unknown login stays with its original account across conflicting sessions and edited input', async ({ page }) => {
+  await mockSetup(page);
+  let sent = false, posts = 0, sessionAccount = 'different-user';
+  await page.route('**/_web/api/login', route => { sent = true; posts++; return route.abort('failed'); });
+  await page.route('**/_web/api/session', route => sent ? route.fulfill({ json: {
+    authenticated: true, csrfToken: 'synthetic-csrf', user: { account: sessionAccount, role: 'admin' },
+  } }) : route.fallback());
+  await page.route('**/admin/setup', route => route.fulfill({ contentType: 'text/html', body: '<p>Confirmed destination</p>' }));
+  await page.goto(base + '/setup');
+  await page.locator('#account').fill('original-user');
+  await page.locator('#password').fill('synthetic-password');
+  await page.locator('#credentials button[type=submit]').click();
+  await expect(page.locator('#setup-notice')).toContainText('Sign-in as original-user is not confirmed');
+  await expect(page.locator('#credentials button[type=submit]')).toBeDisabled();
+  await expect(page.locator('[data-action="logout"]')).toBeVisible();
+  await expect(page).toHaveURL(base + '/setup');
+  await page.locator('#account').fill('newer-draft');
+  await page.locator('#account').evaluate(node => { window.originalAccountInput = node; });
+  await page.locator('#credential-recovery [data-action="refresh"]').click();
+  await expect(page.locator('#setup-notice')).toContainText('original-user');
+  await expect(page.locator('#account')).toHaveValue('newer-draft');
+  expect(await page.locator('#account').evaluate(node => node === window.originalAccountInput)).toBe(true);
+  expect(posts).toBe(1);
+  sessionAccount = 'original-user';
+  await page.locator('#credential-recovery [data-action="refresh"]').click();
+  await expect(page).toHaveURL(base + '/admin/setup');
+  expect(posts).toBe(1);
+});
+
 /** Mock Console 的会话与只读接口，使登录页和 /admin 概览无需真实 Core。 */
 async function mockConsole(page, { authenticated = false } = {}) {
   const user = { id: 'admin-fixture', account: 'admin', role: 'admin', enabled: true };
@@ -382,8 +536,8 @@ test('引导脚本不可用时显示所选语言的刷新入口', async ({ brows
   try {
     await page.route('**/setup/browser/onboarding.js', route => route.abort());
     await page.goto(`${base}/setup`);
-    await expect(page.locator('[data-boot-recovery]')).toHaveText('如果页面无法加载，请刷新页面。');
-    await expect(page.locator('[data-boot-recovery]')).toHaveAttribute('href', '');
+    await expect(page.locator('[data-boot-recovery]')).toHaveText('重新加载');
+    await expect(page.locator('[data-boot-recovery]')).toHaveAttribute('type', 'submit');
   } finally { await context.close(); }
 });
 
@@ -393,7 +547,7 @@ test('管理界面入口脚本不可用时提供刷新入口', async ({ browser 
   try {
     await page.route('**/browser/app.js', route => route.abort());
     await page.goto(`${base}/admin`);
-    await expect(page.locator('[data-boot-recovery]')).toHaveText('If the page cannot load, reload it.');
+    await expect(page.locator('[data-boot-recovery]')).toHaveText('Reload');
   } finally { await context.close(); }
 });
 

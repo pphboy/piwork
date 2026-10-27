@@ -4,6 +4,8 @@ package consoleapp
 import (
 	"encoding/json"
 	"net/http"
+	"piwork/internal/bootcsp"
+	"piwork/internal/bootrecovery"
 	"piwork/internal/consoleassets"
 	"piwork/internal/localweb"
 	"strconv"
@@ -41,13 +43,20 @@ func consoleShellRoute(escapedPath string) bool {
 	return valid
 }
 
+func consoleHTMLRoute(path string) bool {
+	return path == "/setup" || strings.Contains("|/|/login|/users|/runtime|/default-work|/skills|/packages|/operations|/models|/about|", "|"+path+"|") || consoleShellRoute(path)
+}
+
 func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	if c.hosted == nil || c.hosted.Origin(r) == "" {
 		consoleFailure(w, 400, "INVALID_HOST")
+		return
+	}
+	if consoleHTMLRoute(r.URL.EscapedPath()) && bootrecovery.Redirect(w, r) {
 		return
 	}
 	quickPreparation := r.URL.Path == "/setup" && r.URL.RawQuery == "step=prepare"
@@ -75,7 +84,7 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.Path, "/browser/") && localweb.BrowserAsset.MatchString(strings.TrimPrefix(r.URL.Path, "/browser/")):
 		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/browser/"), "text/javascript; charset=utf-8"
 	default:
-		if (r.URL.Path == "/setup") || strings.Contains("|/|/login|/users|/runtime|/default-work|/skills|/packages|/operations|/models|/about|", "|"+r.URL.Path+"|") || consoleShellRoute(r.URL.EscapedPath()) {
+		if consoleHTMLRoute(r.URL.EscapedPath()) {
 			path, contentType = "static/public/index.html", "text/html; charset=utf-8"
 		} else {
 			consoleFailure(w, 404, "NOT_FOUND")
@@ -91,7 +100,8 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		html := strings.Replace(string(content), "<head>", `<head><meta name="piwork-mode" content="hosted">`, 1)
 		html = strings.ReplaceAll(html, `href="/style.css"`, `href="/admin/style.css"`)
 		html = strings.ReplaceAll(html, `src="/browser/`, `src="/admin/browser/`)
-		content = []byte(html)
+		content = bootrecovery.HTML([]byte(html), r)
+		w.Header().Set("Content-Security-Policy", bootcsp.Policy(w.Header().Get("Content-Security-Policy"), consoleassets.FS))
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))

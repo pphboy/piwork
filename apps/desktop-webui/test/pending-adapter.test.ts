@@ -20,18 +20,22 @@ const ready = { json: { health: { available: true }, readiness: { available: tru
 const fallback = (path: string): Reply => ({ json: path === 'works' ? { works: [] } : path === 'known-operations' ? { operations: [] } : path === 'skills' ? { skills: [] } : { packages: [] } });
 async function tickUntil(test: () => boolean) { for (let n = 0; n < 30 && !test(); n++) await Promise.resolve(); assert.ok(test()); }
 
-test('pending Core: initial check is observable, deduplicates, explains slow waits and stops before unrelated reads', async t => {
+test('pending Core: a timed-out check releases its lock for an explicit read-only retry', async t => {
   const status = gate(), works = gate();
   const { adapter, requests } = fixture(t, path => path === 'status' ? status.promise : path === 'works' ? works.promise : fallback(path));
   const first = adapter.checkConnection(), second = adapter.checkConnection();
   assert.equal(first, second); assert.equal(adapter.connectionCheck.checking, true); assert.equal(adapter.connectionCheck.checkedAt, '');
   await tickUntil(() => requests.includes('status')); assert.equal(requests.filter(path => path === 'status').length, 1);
-  t.mock.timers.tick(10001); assert.equal(adapter.connectionCheck.waiting, true); assert.equal(adapter.connectionCheck.error, '');
-  status.resolve(ready); await tickUntil(() => requests.includes('works'));
+  const rejected = assert.rejects(first, /timed out/i);
+  t.mock.timers.tick(10001); await rejected;
+  assert.equal(adapter.connectionCheck.checking, false); assert.match(String(adapter.connectionCheck.error), /timed out/i);
+  assert.equal(requests.includes('works'), false);
+  status.resolve(ready); await Promise.resolve();
+  const retry = adapter.checkConnection(); await tickUntil(() => requests.includes('works'));
   assert.equal(adapter.connectionCheck.checking, false); assert.notEqual(adapter.connectionCheck.checkedAt, ''); assert.equal(adapter.worksLoading, true);
-  works.resolve({ json: { works: [] } }); await first;
+  works.resolve({ json: { works: [] } }); await retry;
   assert.equal(adapter.connectionCheck.waiting, false);
-  assert.equal(requests.filter(path => path === 'status').length, 1);
+  assert.equal(requests.filter(path => path === 'status').length, 2);
 });
 
 test('pending Core: actual error stops waiting without clearing last confirmed facts or adding probes', async t => {
@@ -54,7 +58,7 @@ test('pending Core: a session generation update continues the same check against
   assert.equal(adapter.identityEpoch, epoch + 1); assert.equal(adapter.connectionCheck.checking, true);
   assert.equal(adapter.connectionCheck.checkedAt, ''); assert.equal(adapter.state.works.length, 0);
   assert.equal(adapter.checkConnection(), next);
-  t.mock.timers.tick(10001); assert.equal(adapter.connectionCheck.waiting, true);
+  t.mock.timers.tick(9999); assert.equal(adapter.connectionCheck.checking, true);
   status.resolve(ready); await next;
   assert.equal(adapter.connectionCheck.checking, false); assert.notEqual(adapter.connectionCheck.checkedAt, '');
   assert.equal(adapter.state.works[0].id, 'work-2');

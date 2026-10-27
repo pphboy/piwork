@@ -77,8 +77,8 @@ for (const hosted of [false, true]) test(`ordinary session: hung ${hosted ? 'hos
   }, '', hosted, true);
   await expect(page.getByRole('heading', { name: 'Opening workspace…' })).toBeVisible();
   await expect(button(page, 'retry-session')).toHaveCount(0);
-  await page.clock.fastForward(11000);
-  await expect(page.locator('body')).toContainText('Still reading your Desktop session');
+  await page.clock.fastForward(10000);
+  await expect(page.locator('body')).toContainText('The read timed out. The current state has not been confirmed.');
   await expect(button(page, 'retry-session')).toBeVisible();
   await button(page, 'retry-session').click();
   await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
@@ -87,6 +87,21 @@ for (const hosted of [false, true]) test(`ordinary session: hung ${hosted ? 'hos
   await expect.poll(() => api(page, 'return adapter.state.core.account')).toBe('current-owner');
   assert.equal(records.filter(r => r.method !== 'GET').length, 0);
   assert.equal(await page.getByRole('button', { name: 'Retry connection', exact: true }).count(), 0);
+});
+test('ordinary session: a timed-out startup read automatically retries without a write', async t => {
+  const gate = pending(); t.after(async () => gate.resolve()); let reads = 0;
+  const { page, records } = await fixture(t, async r => {
+    if (r.path !== 'session') return;
+    if (++reads === 1) { await gate.promise; return { json: signedIn(1, 'old-owner') }; }
+    return { json: signedIn(2, 'current-owner') };
+  }, '', false, true);
+  await page.clock.fastForward(10000);
+  await expect(page.locator('body')).toContainText('The read timed out');
+  await page.clock.fastForward(1000);
+  await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  gate.resolve();
+  await expect.poll(() => api(page, 'return adapter.state.core.account')).toBe('current-owner');
+  assert.equal(records.filter(r => r.method !== 'GET').length, 0);
 });
 test('ordinary session: hung automatic Cookie confirmation can be replaced without a mutation', async t => {
   const gate = pending(); t.after(async () => gate.resolve()); let reads = 0;
@@ -120,6 +135,24 @@ test('ordinary session: a lost read can retry without replaying a write',async t
   await button(page,'retry-session').click();
   await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();
   assert.equal(records.filter(r=>r.method!=='GET').length,0);
+});
+test('a lost sign-in response is read back and never submitted automatically again', async t => {
+  let sent = false, allowReadback = false;
+  const { page, records } = await fixture(t, r => {
+    if (r.path === 'session') return sent && !allowReadback ? { abort: true } : { json: signedOut() };
+    if (r.path === 'login') { sent = true; return { abort: true }; }
+  });
+  await expect(button(page, 'sign-in')).toBeVisible();
+  await page.getByLabel('Account', { exact: true }).fill('owner');
+  await page.getByLabel('Password').fill('synthetic-password');
+  await button(page, 'sign-in').click();
+  await expect(page.locator('body')).toContainText('sign-in result is not confirmed');
+  assert.equal(records.filter(r => r.path === 'login' && r.method === 'POST').length, 1);
+  allowReadback = true;
+  await button(page, 'retry-session').click();
+  await expect(button(page, 'sign-in')).toBeEnabled();
+  await expect(page.getByLabel('Account', { exact: true })).toHaveValue('owner');
+  assert.equal(records.filter(r => r.path === 'login' && r.method === 'POST').length, 1);
 });
 test('ordinary session: blocked Cookies and capacity show connection diagnostics without Access',async t=>{
   for(const capacity of [false,true]) {

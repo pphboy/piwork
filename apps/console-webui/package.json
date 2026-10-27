@@ -7,7 +7,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs && node ../../scripts/sync-console-assets.mjs",
-    "test:browser": "playwright test -c playwright.config.mjs console.spec.mjs feedback.spec.mjs quick-setup.spec.mjs management-flow.spec.mjs controlplane-compat.spec.mjs language.spec.mjs",
+    "test:browser": "playwright test -c playwright.config.mjs console.spec.mjs feedback.spec.mjs quick-setup.spec.mjs management-flow.spec.mjs controlplane-compat.spec.mjs language.spec.mjs boot-recovery.spec.mjs",
     "test:real-core": "playwright test -c playwright.config.mjs real-core.spec.mjs"
   },
   "devDependencies": {

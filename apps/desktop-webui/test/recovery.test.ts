@@ -2424,7 +2424,7 @@ test('Controls recovery: original interrupted observer actions stay bound while 
  await expect(page.locator('.message-execution').filter({has:page.locator('[data-run-id=interrupted-manual]')})).toContainText('Observer interrupted');
  const original=page.locator('[data-action=run-details][data-run-id=interrupted-manual]');await expect(original).toHaveAttribute('data-run-id','interrupted-manual');await original.click();
  await expect(page.locator('#modal')).toContainText('interrupted-manual');
- assert.ok(requests.some(r=>r.path.endsWith('/runs/interrupted-manual')&&r.method==='GET'));
+ await expect.poll(()=>requests.some(r=>r.path.endsWith('/runs/interrupted-manual')&&r.method==='GET')).toBe(true);
  assert.equal(await api(page,"return adapter.activeRuns.get('work-1').run.id"),'background-active');
  assert.equal(await api(page,"return adapter.getWork('work-1').run.id"),'interrupted-manual');
  assert.equal(requests.filter(r=>r.method==='POST'&&r.path.endsWith('/runs')).length,0);

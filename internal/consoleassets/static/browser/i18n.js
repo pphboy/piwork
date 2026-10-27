@@ -216,9 +216,11 @@ export function applyBootLocale(page, options = {}) {
     if (text) {
       doc.title = text.title;
       const slot = doc.querySelector('[data-boot-loading]');
-      if (slot) slot.textContent = text.loading;
+      if (slot && doc.documentElement.dataset.bootState !== 'failed') slot.textContent = text.loading;
       const recovery = doc.querySelector('[data-boot-recovery]');
-      if (recovery) recovery.textContent = locale === 'zh-CN' ? '如果页面无法加载，请刷新页面。' : 'If the page cannot load, reload it.';
+      if (recovery) recovery.textContent = locale === 'zh-CN' ? '重新加载' : 'Reload';
+      const home = doc.querySelector('[data-boot-home]');
+      if (home) home.textContent = locale === 'zh-CN' ? '返回首页' : 'Home';
     }
   } catch {
     /* static fallback remains readable */

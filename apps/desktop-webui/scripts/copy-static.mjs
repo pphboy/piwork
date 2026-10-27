@@ -1,7 +1,9 @@
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { prepareBoot } from '../../ui-shared/prepare-boot.mjs';
 const target = new URL("../dist/public/", import.meta.url);
 mkdirSync(target, { recursive: true });
 cpSync(new URL("../public/", import.meta.url), target, { recursive: true });
+prepareBoot(target, [['index.html', 'desktop']]);
 cpSync(new URL("../../../apps/ui-shared/assets/piwork-logo.png", import.meta.url), new URL("piwork-logo.png", target));
 const tokens = readFileSync(new URL("../../ui-shared/tokens.css", import.meta.url), "utf8");
 const controls = readFileSync(new URL("../../ui-shared/controls.css", import.meta.url), "utf8");
@@ -19,4 +21,5 @@ cpSync(new URL("../../../apps/ui-shared/browser-crypto.js", import.meta.url), ne
 // modules next to the compiled browser entry points.
 cpSync(new URL("../../../apps/ui-shared/i18n.js", import.meta.url), new URL("../dist/browser/i18n.js", import.meta.url));
 cpSync(new URL("../../../apps/ui-shared/boot.js", import.meta.url), new URL("../dist/browser/boot.js", import.meta.url));
+cpSync(new URL("../../../apps/ui-shared/read-deadline.js", import.meta.url), new URL("../dist/browser/read-deadline.js", import.meta.url));
 cpSync(new URL("../src/i18n", import.meta.url), new URL("../dist/browser/i18n", import.meta.url), { recursive: true });

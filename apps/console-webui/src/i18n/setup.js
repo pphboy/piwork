@@ -3,6 +3,7 @@ export const setupStrings = {
   en: {
     // Shared request/network feedback used by onboarding and quick setup.
     'net.offlineRead': 'The server could not be reached. Retry this read.',
+    'net.readTimeout': 'The read timed out. The server state has not been confirmed.',
     'net.offlineWrite': 'The result is not confirmed. Read current state before submitting again.',
     'net.response': 'The response could not be confirmed. Read current state.',
     'net.unconfirmed': 'The request could not be confirmed.',
@@ -11,6 +12,8 @@ export const setupStrings = {
     'net.rate': 'Too many sign-in attempts. Wait {seconds} seconds before retrying.',
     'net.release': 'The server release is incomplete. Repair the server release, then read current state.',
     'net.requestFailed': 'The request failed. Check the current state before continuing.',
+    'onboarding.error.loginNotConfirmed': 'No signed-in session was found. You can sign in again.',
+    'onboarding.error.loginDifferentAccount': 'The current session belongs to a different account. Sign-in as {account} is not confirmed. Check again or sign out before continuing.',
 
     // Shared Console building blocks (components.ts).
     'ui.notProvided': 'Not provided',
@@ -370,6 +373,7 @@ export const setupStrings = {
   },
   'zh-CN': {
     'net.offlineRead': '无法连接服务器。请重试此读取。',
+    'net.readTimeout': '读取超时，服务器状态尚未确认。',
     'net.offlineWrite': '结果尚未确认。请先读取当前状态再重新提交。',
     'net.response': '响应无法确认。请读取当前状态。',
     'net.unconfirmed': '请求无法确认。',
@@ -378,6 +382,8 @@ export const setupStrings = {
     'net.rate': '登录尝试过多。请等待 {seconds} 秒后重试。',
     'net.release': '服务器发行版不完整。请修复服务器发行版后读取当前状态。',
     'net.requestFailed': '请求失败。请先检查当前状态，再继续操作。',
+    'onboarding.error.loginNotConfirmed': '未发现已登录的会话。你可以重新登录。',
+    'onboarding.error.loginDifferentAccount': '当前会话属于其他账号，尚未确认 {account} 的登录结果。请再次检查，或先退出当前会话。',
 
     'ui.notProvided': '未提供',
     'ui.copyAria': '复制 {value}',

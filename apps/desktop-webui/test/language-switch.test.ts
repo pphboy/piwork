@@ -613,8 +613,8 @@ test('Desktop 入口脚本无法加载时提供可理解的刷新入口', async 
   try {
     await page.route('**/desktop/browser/app.js', route => route.abort());
     await page.goto(app.base);
-    await expect(page.locator('[data-boot-recovery]')).toHaveText('如果页面无法加载，请刷新页面。');
-    await expect(page.locator('[data-boot-recovery]')).toHaveAttribute('href', '');
+    await expect(page.locator('[data-boot-recovery]')).toHaveText('重新加载');
+    await expect(page.locator('[data-boot-recovery]')).toHaveAttribute('type', 'submit');
   } finally { await browser.close(); await app.close(); }
 });
 

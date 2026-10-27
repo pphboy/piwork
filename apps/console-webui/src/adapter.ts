@@ -1,4 +1,5 @@
 import {modelErrors} from './model-form.js';
+import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import {t,LocalizedMessage,messageText,type Feedback} from './locale.js';
 import type { Defaults, Operation, Package, Runtime, Skill, Store, User } from "./models.js";
 
@@ -52,7 +53,8 @@ const invalidFields: Record<string,LocalizedMessage> = {
 function errorFrom(value: Data, status: number, write: boolean, login = false): ConsoleError {
   const raw = String(value.code ?? value.error?.code ?? "REQUEST_FAILED");
   const code = status === 401 && !login ? "SESSION_EXPIRED" : codeAliases[raw] ?? raw;
-  const uncertain = write && status >= 500 && !["CORE_UNAVAILABLE", "CORE_ADMIN_API_UNAVAILABLE"].includes(raw);
+  // CORE_UNAVAILABLE can follow a committed Core write whose reply was lost.
+  const uncertain = write && status >= 500 && raw !== "CORE_ADMIN_API_UNAVAILABLE";
   const field=typeof value.field==='string'?value.field:typeof value.error?.field==='string'?value.error.field:'';
   const fieldMessage=code==='INVALID_REQUEST'?invalidFields[field.split('.')[0]]:undefined;
   const fallback:Feedback=uncertain ? new LocalizedMessage('adapter.error.resultUnknown')
@@ -113,28 +115,43 @@ export class ConsoleAdapter {
   get identityEpoch() { return this.epoch; }
   get csrfToken() { return this.csrf; }
   private reads = new Map<string, Promise<Data>>();
+  private readControllers = new Map<string, AbortController>();
   private intents = new Map<string, { source: Data; intent: PackageIntent }>();
 
-  private request(path: string, method = "GET", body?: unknown, login = false): Promise<Data> {
+  private request(path: string, method = "GET", body?: unknown, login = false, forceDeadline = false): Promise<Data> {
     if (method !== 'GET') return this.requestOnce(path, method, body, login);
-    const key = `${this.epoch}:${path}`, old = this.reads.get(key); if (old) return old;
-    const pending = this.requestOnce(path, method, body, login).finally(() => { if (this.reads.get(key) === pending) this.reads.delete(key); }); this.reads.set(key, pending); return pending;
+    const bounded = forceDeadline || !path.startsWith('admin/operations/');
+    const key = `${this.epoch}:${path}${bounded ? '' : ':observation'}`, old = this.reads.get(key); if (old) return old;
+    const controller = new AbortController();
+    const read = bounded ? readWithDeadline(signal => this.requestOnce(path, method, body, login, signal), { signal: controller.signal })
+      : this.requestOnce(path, method, body, login, controller.signal);
+    const pending = read
+      .catch(error => { if (error instanceof ReadTimeout) throw new ConsoleError('READ_TIMEOUT', new LocalizedMessage('read.timeout')); throw error; })
+      .finally(() => { if (this.reads.get(key) === pending) { this.reads.delete(key); this.readControllers.delete(key); } });
+    this.reads.set(key, pending); this.readControllers.set(key, controller); return pending;
   }
-  private async requestOnce(path: string, method = "GET", body?: unknown, login = false): Promise<Data> {
+  cancelReads(paths: string[]) {
+    for (const path of paths) {
+      const key = `${this.epoch}:${path}`;
+      const controller = this.readControllers.get(key);
+      this.reads.delete(key); this.readControllers.delete(key); controller?.abort();
+    }
+  }
+  private async requestOnce(path: string, method = "GET", body?: unknown, login = false, signal?: AbortSignal): Promise<Data> {
     const epoch = this.epoch;
     let response: Response;
     try {
-      response = await fetch(`/console/api/${path}`, { method, credentials: "same-origin",
+      response = await fetch(`/console/api/${path}`, { method, credentials: "same-origin", signal,
         headers: { ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...(method !== "GET" ? { "X-Csrf-Token": this.csrf } : {}) },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
     } catch {
       throw new ConsoleError(method === "GET" ? "CORE_UNREACHABLE" : "RESULT_UNKNOWN",
         method === "GET" ? new LocalizedMessage('adapter.explain.CORE_UNREACHABLE') : new LocalizedMessage('adapter.error.writeLost'));
     }
-    if (epoch !== this.epoch) throw new ConsoleError("SESSION_CHANGED", new LocalizedMessage('adapter.error.accountChanged'));
+    if (signal?.aborted || epoch !== this.epoch) throw new ConsoleError("SESSION_CHANGED", new LocalizedMessage('adapter.error.accountChanged'));
     if (response.status === 204) return {};
     const value = await response.json().catch(() => null) as Data | null;
-    if (epoch !== this.epoch) throw new ConsoleError('SESSION_CHANGED', new LocalizedMessage('adapter.error.accountChangedRead'));
+    if (signal?.aborted || epoch !== this.epoch) throw new ConsoleError('SESSION_CHANGED', new LocalizedMessage('adapter.error.accountChangedRead'));
     if (!value || typeof value !== "object") throw new ConsoleError(method === "GET" ? "INVALID_RESPONSE" : "RESULT_UNKNOWN", new LocalizedMessage('adapter.error.invalidResponse'));
     if (!response.ok) {
       const error = errorFrom(value, response.status, method !== "GET", login);
@@ -269,8 +286,8 @@ export class ConsoleAdapter {
     if (typeof accepted.operationId !== "string" || !accepted.operationId) throw new ConsoleError("ACCEPTANCE_UNKNOWN", new LocalizedMessage('adapter.error.acceptanceNoId'));
     const op = operationView({ operationId: accepted.operationId, state: "accepted", packagePhase: "" }, intent); this.store.operations = [op]; return op;
   }
-  async operation(id: string, intent?: PackageIntent): Promise<Operation> {
-    const value = await this.request(`admin/operations/${encodeURIComponent(id)}`);
+  async operation(id: string, intent?: PackageIntent, bounded = false): Promise<Operation> {
+    const value = await this.request(`admin/operations/${encodeURIComponent(id)}`, 'GET', undefined, false, bounded);
     const previous = this.store.operations.find(o => o.id === id);
     const op = operationView(value, intent ?? (previous ? { key: "", kind: previous.sourceKind, source: previous.source, name: previous.packageName, addDefault: previous.addDefault, ...(previous.target ? { target: previous.target } : {}) } : undefined));
     this.store.operations = [op]; return op;

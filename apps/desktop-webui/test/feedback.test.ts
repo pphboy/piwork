@@ -898,17 +898,18 @@ test('DWUI-012 readonly file callback after Core switch cannot reopen a file or 
   await api(page,"await adapter.switchCore('http://new-core.test')");gate.resolve();await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();await expect(page.locator('#app')).not.toContainText('original private file');await expect(page.locator('#file-editor')).toHaveCount(0);
 });
 
-test('DWUI-011/012 desktop and narrow status wrap; ten seconds remain waiting, focus and draft selection stay intact',async t=>{
+test('DWUI-011/012 a timed-out configuration read preserves focus, draft and local retry',async t=>{
   const gate=deferred();t.after(async()=>gate.resolve());let armed=false;
   const {page,requests}=await fixture(t,async r=>{if(armed&&r.path==='works/work-1/configuration'){await gate.promise;return{status:503,json:{message:'Configuration readback unavailable. '+ 'A bounded diagnostic detail. '.repeat(8)}};}});
   await button(page,'settings').click();await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
   await page.locator('#agents-editor').fill('draft retained while checking');await page.locator('#agents-editor').evaluate((input:HTMLTextAreaElement)=>input.setSelectionRange(3,9));
   armed=true;await button(page,'refresh-config').click();await page.locator('#agents-editor').focus();await page.locator('#agents-editor').evaluate((input:HTMLTextAreaElement)=>input.setSelectionRange(3,9));
   await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveAttribute('role','status');await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveAttribute('aria-live','polite');
-  await expect(page.locator('[data-action-status]')).toContainText('Still waiting',{timeout:12000});await expect(page.locator('#agents-editor')).toBeFocused();assert.deepEqual(await page.locator('#agents-editor').evaluate((input:HTMLTextAreaElement)=>[input.selectionStart,input.selectionEnd]),[3,9]);
+  await expect(page.locator('.settings-page')).toContainText('The read timed out',{timeout:12000});await expect(page.locator('#agents-editor')).toBeFocused();assert.deepEqual(await page.locator('#agents-editor').evaluate((input:HTMLTextAreaElement)=>[input.selectionStart,input.selectionEnd]),[3,9]);
   const screenshots='/tmp/piwork-feedback-screens';await mkdir(screenshots,{recursive:true});
   for(const width of [1440,360]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:`${screenshots}/desktop-wait-${width}.png`,fullPage:true});}
-  gate.resolve();await expect(page.locator('.settings-page')).toContainText('Configuration readback unavailable');await expect(page.locator('[data-action-status]')).toHaveCount(0);await expect(page.locator('#agents-editor')).toHaveValue('draft retained while checking');assert.equal(requests.filter(r=>r.method==='PUT').length,0);
+  gate.resolve();await expect(page.locator('.settings-page')).not.toContainText('Configuration readback unavailable');await expect(page.locator('[data-action-status]')).toHaveCount(0);await expect(page.locator('#agents-editor')).toHaveValue('draft retained while checking');
+  armed=false;await button(page,'refresh-config').click();await expect(page.locator('.settings-page')).not.toContainText('The read timed out');await expect(page.locator('#agents-editor')).toHaveValue('draft retained while checking');assert.equal(requests.filter(r=>r.method==='PUT').length,0);
 });
 
 test('DWUI-016/017 Create and Stop during preparation converge in list and detail without reload', async t => {

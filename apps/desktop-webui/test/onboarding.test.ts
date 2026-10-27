@@ -53,6 +53,40 @@ async function start(environment:Record<string,string>={}, existing?:{directory:
   } catch(error) {await stop();throw error;}
 }
 
+test('real Go entry recovery preserves the exact URL without scripts or styles',async()=>{
+  const server=await start(),browser=await chromium.launch(browserOptions);
+  try {
+    const context=await browser.newContext({javaScriptEnabled:false,viewport:{width:360,height:800}}),page=await context.newPage();
+    const writes:string[]=[];
+    page.on('request',request=>{if(request.method()!=='GET')writes.push(request.method());});
+    await page.route('**/*.css',route=>route.abort());
+    const reload=async(path:string)=>{
+      const original=server.origin+path;
+      await page.goto(original);
+      await page.keyboard.press('Tab');
+      await expect(page.locator('[data-boot-recovery]')).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(original);
+      await expect(page.locator('[data-boot-recovery]')).toBeVisible();
+    };
+    await reload('/setup?view=one%20two&tag=a&tag=b&bare&_charset_=original#setup-target');
+    await reload('/login?returnTo=%2Fservices%2Fw%2Fs%2F8080%2F#login-target');
+    const session=await(await context.request.get(server.origin+'/_web/api/session')).json();
+    const headers={'X-Piwork-Csrf':session.csrfToken,Origin:server.origin};
+    const credentials={account:'admin',password:'synthetic-password'};
+    const created=await context.request.post(server.origin+'/_web/api/setup/administrator',{headers,data:credentials});
+    assert.equal(created.status(),201);
+    const signedIn=await context.request.post(server.origin+'/_web/api/login',{headers,data:credentials});
+    assert.equal(signedIn.status(),200);
+    await reload('/#work/session');
+    await reload('/?view=one%20two&tag=a&tag=b&bare&_charset_=original#work/session');
+    await reload('/admin#admin-target');
+    await reload('/admin/setup?step=prepare#admin-target');
+    assert.deepEqual(writes,[]);
+    await context.close();
+  }finally{await browser.close();await server.stop();}
+});
+
 test('IP browser directly creates an administrator, model/runtime save, workbench and admin navigation',async()=>{
   const server=await start();
   const browser=await chromium.launch(browserOptions);
@@ -682,11 +716,10 @@ test('hosted account management links share menu geometry, icons and keyboard na
   const baseline=await geometry(items[0]);
   for(const item of items){await expect(item.locator('svg')).toHaveCount(1);assert.deepEqual(await geometry(item),baseline);const normal=await item.evaluate(el=>getComputedStyle(el).backgroundColor);await item.hover();assert.notEqual(await item.evaluate(el=>getComputedStyle(el).backgroundColor),normal);await page.keyboard.press('Home');await item.focus();assert.equal(await item.evaluate(el=>getComputedStyle(el).outlineStyle),'solid');await page.mouse.move(0,0);}
   await expect(menu.locator('.dropdown-title')).toHaveText('admin');await expect(menu.locator('.account-context')).toContainText('Role: Administrator');await expect(menu.locator('.account-context')).toContainText('Core: '+coreOrigin(server));await expect(items[3]!).toHaveAttribute('href','/admin');await expect(items[4]!).toHaveAttribute('href','/admin/setup');assert.equal(await menu.getByRole('menuitem',{name:'Sign out',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(180, 35, 50)');
-  const chinese=menu.getByRole('menuitemradio',{name:'简体中文',exact:true}),english=menu.getByRole('menuitemradio',{name:'English',exact:true});
-  await expect(english).toHaveAttribute('aria-checked','true');
-  await items[4]!.focus();await page.keyboard.press('Home');await expect(items[0]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[1]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[2]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(chinese).toBeFocused();await page.keyboard.press('ArrowDown');await expect(english).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[3]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[4]!).toBeFocused();await page.keyboard.press('End');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('Home');await expect(items[0]!).toBeFocused();
+  const language=menu.locator('[data-language-trigger="menu"]');
+  await items[4]!.focus();await page.keyboard.press('Home');await expect(items[0]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[1]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[2]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(language).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[3]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[4]!).toBeFocused();await page.keyboard.press('End');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('Home');await expect(items[0]!).toBeFocused();
   await captureFollowup(page,'account-menu');
-  await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();await trigger.click();await page.keyboard.press('Tab');await expect(menu).toHaveCount(0);
+  await language.focus();await page.keyboard.press('Enter');await expect(page.locator('.language-picker [data-locale="auto"]')).toHaveAttribute('aria-selected','true');await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();await trigger.click();await page.keyboard.press('Tab');await expect(menu).toHaveCount(0);
   await trigger.click();await page.mouse.click(3,3);await expect(menu).toHaveCount(0);
   await trigger.click();await menu.getByRole('menuitem',{name:'Administration',exact:true}).focus();await page.keyboard.press('Enter');await expect.poll(()=>new URL(page.url()).pathname).toBe('/admin');
   await page.goto(server.origin+'/');await trigger.click();await menu.getByRole('menuitem',{name:'Quick setup',exact:true}).focus();await page.keyboard.press('Space');await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();assert.equal(new URL(page.url()).pathname,'/admin/setup');

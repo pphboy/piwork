@@ -1,4 +1,5 @@
 import { createLanguagePicker } from './i18n.js';
+import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import { esc, Field, Input, Feedback, icon } from './components.js';
 import { modelErrors } from './model-form.js';
 import { pendingDots } from './pending.js';
@@ -8,7 +9,10 @@ const languagePicker = createLanguagePicker({ choices: languageChoices, label: (
 if (location.hash)
     history.replaceState(null, '', location.pathname + location.search);
 let csrf = '', authenticated = false, stage = 'loading', account = '', notice = '', noticeError = false, view = 0, identity = 0, writing = false, reading = false, snapshot = {};
-let readLock = null, waitTimer, waitSince = 0, waitPhase = '';
+let readLock = null, readController = null, readCycle = 0, readRetryTimer;
+let waitTimer, waitSince = 0, waitPhase = '';
+let credentialUnknown = null;
+let lastReadFailed = false;
 class RequestError extends Error {
     status;
     unknown;
@@ -26,10 +30,23 @@ class RequestError extends Error {
             Object.defineProperty(this, 'message', { get: () => messageText(message), configurable: true });
     }
 }
-async function request(path, method = 'GET', body) {
+async function request(path, method = 'GET', body, signal) {
+    if (method === 'GET') {
+        try {
+            return await readWithDeadline(inner => requestOnce(path, method, body, inner), { signal });
+        }
+        catch (error) {
+            if (error instanceof ReadTimeout)
+                throw new RequestError(new LocalizedMessage('net.readTimeout'));
+            throw error;
+        }
+    }
+    return requestOnce(path, method, body);
+}
+async function requestOnce(path, method = 'GET', body, signal) {
     let response;
     try {
-        response = await fetch(path, { method, credentials: 'same-origin', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(method === 'GET' ? {} : { 'X-Piwork-Csrf': csrf, 'X-Csrf-Token': csrf }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+        response = await fetch(path, { method, credentials: 'same-origin', signal, headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(method === 'GET' ? {} : { 'X-Piwork-Csrf': csrf, 'X-Csrf-Token': csrf }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     }
     catch {
         throw new RequestError(new LocalizedMessage(method === 'GET' ? 'net.offlineRead' : 'net.offlineWrite'), 0, method !== 'GET');
@@ -53,7 +70,7 @@ async function request(path, method = 'GET', body) {
     }
     return value;
 }
-const web = (path, method = 'GET', body) => request('/_web/api/' + path, method, body);
+const web = (path, method = 'GET', body, signal) => request('/_web/api/' + path, method, body, signal);
 const message = (error) => error instanceof RequestError ? error.feedback : error instanceof Error ? error.message : new LocalizedMessage('net.unconfirmed');
 const button = (text, action, primary = false, disabled = false) => `<button type="button" class="btn ${primary ? 'primary' : 'secondary'}" data-action="${action}" ${disabled ? 'disabled' : ''}>${text}</button>`;
 function current(ticket) { return ticket.view === view && ticket.identity === identity; }
@@ -68,9 +85,12 @@ function changeStage(next) { if (next !== stage) {
 function languageMenu() {
     return `<button type="button" class="btn ghost small language-trigger" data-action="language" data-language-trigger="setup" aria-haspopup="listbox" aria-expanded="${languagePicker.isOpen}">${icon('globe', 16)}<span>${t('lang.menu')}</span>${icon('down', 12)}</button>`;
 }
+function sessionNavigation() {
+    return authenticated ? button(t('onboarding.signOut'), 'logout') : `<a class="btn ghost small" href="/login">${t('onboarding.signIn')}</a>`;
+}
 function credentialForm() {
     const creating = stage === 'administrator';
-    return `<form id="credentials" class="form-grid" novalidate>${Field('account', t('onboarding.form.account'), Input('account', account, 'autocomplete="username" required maxlength="128"'))}${Field('password', t('onboarding.form.password'), Input('password', '', `type="password" autocomplete="${creating ? 'new-password' : 'current-password'}" required`), creating ? t('onboarding.form.passwordHelpCreate') : t('onboarding.form.passwordHelpLogin'))}${creating ? Field('confirm-password', t('onboarding.form.confirmPassword'), Input('confirm-password', '', 'type="password" autocomplete="new-password" required'), t('onboarding.form.confirmHelp')) : ''}<div class="form-actions"><button class="btn primary" type="submit">${creating ? t('onboarding.form.createAdmin') : t('onboarding.form.signIn')}<span class="pending-slot" data-credential-pending>${icon('arrow', 16)}</span></button></div></form>`;
+    return `<form id="credentials" class="form-grid" novalidate>${Field('account', t('onboarding.form.account'), Input('account', account, 'autocomplete="username" required maxlength="128"'))}${Field('password', t('onboarding.form.password'), Input('password', '', `type="password" autocomplete="${creating ? 'new-password' : 'current-password'}" required`), creating ? t('onboarding.form.passwordHelpCreate') : t('onboarding.form.passwordHelpLogin'))}${creating ? Field('confirm-password', t('onboarding.form.confirmPassword'), Input('confirm-password', '', 'type="password" autocomplete="new-password" required'), t('onboarding.form.confirmHelp')) : ''}<div class="form-actions"><button class="btn primary" type="submit">${creating ? t('onboarding.form.createAdmin') : t('onboarding.form.signIn')}<span class="pending-slot" data-credential-pending>${icon('arrow', 16)}</span></button><span id="credential-recovery"></span></div></form>`;
 }
 function render() {
     const title = stage === 'administrator' ? t('onboarding.title.createAdmin') : stage === 'login' ? t('onboarding.title.login') : stage === 'waiting' ? (snapshot.status?.ready ? t('onboarding.title.ready') : t('onboarding.title.pending')) : stage === 'error' ? t('onboarding.title.error') : t('onboarding.title.loading');
@@ -81,7 +101,7 @@ function render() {
         content = `<p>${snapshot.status?.ready ? t('onboarding.waiting.ready') : t('onboarding.waiting.pending')}</p><div class="form-actions"><a class="btn primary" href="/">${t('onboarding.openWorkbench')}${icon('arrow', 16)}</a>${button(t('onboarding.refreshState'), 'refresh')}</div>`;
     if (stage === 'error')
         content = `<p>${t('onboarding.error.body')}</p>${button(t('onboarding.readState'), 'refresh', true)}`;
-    root.innerHTML = `<header class="setup-topbar"><a href="/" class="setup-brand" aria-label="${esc(t('onboarding.brandAria'))}"><img src="/setup/piwork-logo.png" width="32" height="32" alt=""><span>Piwork</span></a><span class="product-label">CoreSetup</span><nav aria-label="${esc(t('onboarding.navAria'))}">${languageMenu()}${authenticated ? button(t('onboarding.signOut'), 'logout') : `<a class="btn ghost small" href="/login">${t('onboarding.signIn')}</a>`}</nav></header><main class="setup-main setup-narrow"><div class="setup-heading"><p class="eyebrow">${stage === 'login' ? t('onboarding.eyebrow.welcome') : t('onboarding.eyebrow.setup')}</p><h1>${title}</h1></div><div id="setup-notice" aria-live="polite"></div><div id="setup-status" class="setup-status" aria-live="polite"></div>${content}</main>`;
+    root.innerHTML = `<header class="setup-topbar"><a href="/" class="setup-brand" aria-label="${esc(t('onboarding.brandAria'))}"><img src="/setup/piwork-logo.png" width="32" height="32" alt=""><span>Piwork</span></a><span class="product-label">CoreSetup</span><nav aria-label="${esc(t('onboarding.navAria'))}">${languageMenu()}<span data-session-navigation data-authenticated="${authenticated}">${sessionNavigation()}</span></nav></header><main class="setup-main setup-narrow"><div class="setup-heading"><p class="eyebrow">${stage === 'login' ? t('onboarding.eyebrow.welcome') : t('onboarding.eyebrow.setup')}</p><h1>${title}</h1></div><div id="setup-notice" aria-live="polite"></div><div id="setup-status" class="setup-status" aria-live="polite"></div>${content}</main>`;
     applyDocumentTitle(t('onboarding.docTitle'));
     updateNotice();
     updateLocks();
@@ -90,6 +110,11 @@ function updateNotice() { const node = root.querySelector('#setup-notice'); if (
     node.innerHTML = notice ? Feedback(messageText(notice), noticeError ? 'warning' : 'success') : ''; }
 function tell(text, error = false) { notice = text; noticeError = error; updateNotice(); }
 function updateLocks() {
+    const navigation = root.querySelector('[data-session-navigation]');
+    if (navigation && navigation.dataset.authenticated !== String(authenticated)) {
+        navigation.dataset.authenticated = String(authenticated);
+        navigation.innerHTML = sessionNavigation();
+    }
     const phase = writing ? 'write' : reading ? 'read' : '';
     if (phase !== waitPhase) {
         waitPhase = phase;
@@ -99,8 +124,11 @@ function updateLocks() {
             waitTimer = setTimeout(updateLocks, 10000);
     }
     const slow = !!phase && Date.now() - waitSince >= 10000;
+    const recovery = root.querySelector('#credential-recovery');
+    if (recovery && Boolean(recovery.firstElementChild) !== Boolean(credentialUnknown))
+        recovery.innerHTML = credentialUnknown ? button(t('onboarding.readState'), 'refresh') : '';
     root.querySelectorAll('input,button').forEach(node => { if (node instanceof HTMLButtonElement && node.hasAttribute('data-language-trigger'))
-        return; node.disabled = writing || (node instanceof HTMLButtonElement && reading); });
+        return; node.disabled = writing || (node instanceof HTMLButtonElement && reading && node.dataset.action !== 'refresh') || (node instanceof HTMLButtonElement && node.type === 'submit' && !!credentialUnknown); });
     root.querySelector('#credentials [type=submit]')?.setAttribute('aria-busy', String(writing));
     const pending = root.querySelector('[data-credential-pending]');
     if (pending)
@@ -153,7 +181,7 @@ function validateCredentials(submitting = false) {
     return !first;
 }
 async function credentials(form) {
-    if (writing || reading || !validateCredentials(true))
+    if (writing || reading || credentialUnknown || !validateCredentials(true))
         return;
     const creating = stage === 'administrator', ticket = context(), data = new FormData(form);
     account = String(data.get('account') || '');
@@ -173,10 +201,12 @@ async function credentials(form) {
             return;
         clearSecrets();
         tell(message(error), true);
-        if (creating && error instanceof RequestError && (error.unknown || error.status === 409)) {
-            // Read back uncertain/concurrent creation; never replay the write.
+        if (error instanceof RequestError && (error.unknown || (creating && error.status === 409))) {
+            // Read back uncertain creation or sign-in; never replay the write.
+            credentialUnknown = { kind: creating ? 'administrator' : 'login', account: String(data.get('account') || '') };
             writing = false;
-            await load(true);
+            updateLocks();
+            await load(creating);
         }
         else {
             const session = await web('session').catch(() => null);
@@ -192,35 +222,58 @@ async function credentials(form) {
         }
     }
 }
-async function load(recoveringCreation = false) {
-    if (reading || writing)
+async function load(recoveringCreation = false, automatic = false, attempt = 0) {
+    if (writing)
         return;
-    reading = true;
-    const lock = Symbol();
+    if (automatic && reading)
+        return;
+    if (!automatic) {
+        readCycle++;
+        clearTimeout(readRetryTimer);
+        readController?.abort();
+    }
+    const cycle = readCycle, controller = new AbortController(), lock = Symbol(), ticket = context(), checkedCredential = credentialUnknown;
+    readController = controller;
     readLock = lock;
+    reading = true;
     updateLocks();
-    const ticket = context();
+    const currentRead = () => current(ticket) && readCycle === cycle && readLock === lock && !controller.signal.aborted;
     try {
-        const state = await web('state');
-        if (!current(ticket))
+        const state = await web('state', 'GET', undefined, controller.signal);
+        if (!currentRead())
             return;
-        const session = await web('session');
-        if (!current(ticket))
+        const session = await web('session', 'GET', undefined, controller.signal);
+        if (!currentRead())
             return;
         csrf = session.csrfToken || '';
         authenticated = session.authenticated === true;
+        if (checkedCredential?.kind === 'login' && session.authenticated && session.user?.account !== checkedCredential.account) {
+            tell(new LocalizedMessage('onboarding.error.loginDifferentAccount', { account: checkedCredential.account }), true);
+            return;
+        }
+        if (credentialUnknown === checkedCredential)
+            credentialUnknown = null;
+        if (checkedCredential?.kind === 'login' && !session.authenticated)
+            tell(t('onboarding.error.loginNotConfirmed'), true);
+        else if (lastReadFailed && !checkedCredential)
+            tell('');
+        lastReadFailed = false;
         if (!state.administratorInitialized) {
+            const changed = stage !== 'administrator';
             changeStage('administrator');
             if (recoveringCreation)
                 tell(t('onboarding.error.recoveringAdmin'), true);
-            render();
+            if (changed)
+                render();
             return;
         }
         if (!session.authenticated) {
+            const changed = stage !== 'login';
             changeStage('login');
             if (recoveringCreation)
                 tell(t('onboarding.error.recoveringLogin'));
-            render();
+            if (changed)
+                render();
             return;
         }
         if (location.pathname === '/login') {
@@ -231,22 +284,35 @@ async function load(recoveringCreation = false) {
             location.replace('/admin/setup');
             return;
         }
-        snapshot = await web('onboarding');
-        if (!current(ticket))
+        const next = await web('onboarding', 'GET', undefined, controller.signal);
+        if (!currentRead())
             return;
+        snapshot = next;
         changeStage('waiting');
         render();
     }
     catch (error) {
-        if (current(ticket)) {
-            changeStage('error');
-            tell(message(error), true);
-            render();
+        if (currentRead()) {
+            lastReadFailed = true;
+            const notice = credentialUnknown ? `${t('net.offlineWrite')} ${messageText(message(error))}` : message(error);
+            if (stage === 'loading' || stage === 'error') {
+                changeStage('error');
+                tell(notice, true);
+                render();
+            }
+            else
+                tell(notice, true);
+            if (attempt < 2) {
+                const retryContext = context();
+                readRetryTimer = setTimeout(() => { if (readCycle === cycle && current(retryContext) && !writing)
+                    void load(recoveringCreation, true, attempt + 1); }, attempt === 0 ? 1000 : 3000);
+            }
         }
     }
     finally {
         if (readLock === lock) {
             readLock = null;
+            readController = null;
             reading = false;
             updateLocks();
         }
@@ -263,10 +329,11 @@ root.addEventListener('click', event => { const trigger = event.target.closest('
     event.preventDefault();
     languagePicker.open(trigger);
     return;
-} const action = event.target.closest('[data-action]')?.dataset.action; if (!action || writing || reading)
+} const action = event.target.closest('[data-action]')?.dataset.action; if (!action || writing || (reading && action !== 'refresh'))
     return; event.preventDefault(); if (action === 'refresh') {
-    tell('');
-    void load();
+    if (!credentialUnknown)
+        tell('');
+    void load(credentialUnknown?.kind === 'administrator');
 }
 else if (action === 'logout') {
     writing = true;
@@ -283,7 +350,7 @@ else if (action === 'logout') {
     catch { } location.replace('/login'); }).catch(error => { if (!current(ticket))
         return; writing = false; tell(message(error), true); updateLocks(); });
 } });
-window.addEventListener('pagehide', () => { identity++; view++; readLock = null; reading = false; writing = false; clearTimeout(waitTimer); waitPhase = ''; waitSince = 0; clearSecrets(); });
+window.addEventListener('pagehide', () => { identity++; view++; readCycle++; readController?.abort(); readController = null; clearTimeout(readRetryTimer); readLock = null; reading = false; writing = false; clearTimeout(waitTimer); waitPhase = ''; waitSince = 0; clearSecrets(); });
 window.addEventListener('pageshow', event => { if (event.persisted) {
     identity++;
     view++;
@@ -303,6 +370,7 @@ onLocaleChange(() => {
     validateCredentials();
 });
 render();
+document.dispatchEvent(new Event('piwork:boot-ready'));
 void load();
 function nextLocation(fallback) {
     const target = new URLSearchParams(location.search).get('returnTo');

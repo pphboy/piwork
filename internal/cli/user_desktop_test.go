@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -79,6 +81,32 @@ func TestNativeDesktopEmbeddedBrowserAndLocalIdentity(t *testing.T) {
 	}
 	if page := serve("GET", "/", nil, "", "", ""); !strings.Contains(page.Body.String(), `<link rel="icon" type="image/png" href="/desktop/piwork-logo.png">`) {
 		t.Fatal("Desktop favicon must use the embedded project Logo")
+	}
+	page := serve("GET", "/", nil, "", "", "")
+	html := page.Body.Bytes()
+	start := bytes.Index(html, []byte("<script data-boot-watchdog "))
+	if start < 0 {
+		t.Fatal("Desktop watchdog missing")
+	}
+	start += bytes.IndexByte(html[start:], '>') + 1
+	end := bytes.Index(html[start:], []byte("</script>"))
+	if end < 0 {
+		t.Fatal("Desktop watchdog not closed")
+	}
+	digest := sha256.Sum256(html[start : start+end])
+	policy := page.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "'sha256-"+base64.StdEncoding.EncodeToString(digest[:])+"'") || strings.Contains(policy, "unsafe-inline") {
+		t.Fatal("Desktop watchdog CSP mismatch", policy)
+	}
+	target := "/works/work-1?view=one%20two&tag=a&tag=b"
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(target))
+	page = serve("GET", target, nil, "", "", "")
+	if !strings.Contains(page.Body.String(), `name="__piwork_boot_retry" value="`+encoded+`"`) {
+		t.Fatal("Desktop recovery lost the original request target", page.Body.String())
+	}
+	retry := serve("GET", "/works/work-1?__piwork_boot_retry="+encoded, nil, "", "", "")
+	if retry.Code != http.StatusSeeOther || retry.Header().Get("Location") != target {
+		t.Fatal("Desktop recovery changed its target", retry.Code, retry.Header())
 	}
 	logoSource, err := os.ReadFile(filepath.Join("..", "..", "apps", "ui-shared", "assets", "piwork-logo.png"))
 	if err != nil {
