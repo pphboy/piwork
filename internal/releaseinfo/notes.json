@@ -2,6 +2,36 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.15",
+      "component": "core",
+      "title": "Piwork 0.0.15 Preview",
+      "publishedAt": "2026-10-27",
+      "sections": [
+        {
+          "title": "Model errors and temporary Services",
+          "items": [
+            "Classify model authentication and permission failures and provide clear guidance for resolving configuration problems.",
+            "Recover Services while retaining the original failure, and track cleanup of Run-scoped temporary Services without replaying one-time commands."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.15",
+      "component": "desktop",
+      "title": "Piwork 0.0.15 Preview",
+      "publishedAt": "2026-10-27",
+      "sections": [
+        {
+          "title": "Chinese and English interfaces",
+          "items": [
+            "Use browser language preferences or explicitly switch between English and Simplified Chinese in Desktop, setup and Administration.",
+            "Keep drafts, Service views and in-progress actions when switching languages, and present model errors, Service recovery and temporary cleanup status."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.14",
       "component": "core",
       "title": "Piwork 0.0.14 Preview",
