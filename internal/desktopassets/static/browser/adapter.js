@@ -6,6 +6,8 @@ import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { detectImageMime, imageDimensions, imageWithinLimits, FILE_IMAGE_MAX_BYTES } from './image-content.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
+import { operationKind, operationKindMatches } from './operation-recovery.js';
+import { legacyOperationError, operationCorrelationId, operationDiagnostic, operationDiagnostics } from './operation-diagnostics.js';
 import { MetadataReads, ObservationDeferred, ObservationStopped } from './observation.js';
 export function fileVersion(value) {
     const time = value ? Date.parse(value) : NaN;
@@ -509,6 +511,9 @@ export class DesktopAdapter {
     worksRequestSequence = 0;
     worksReadSequence = 0;
     pausedOperations = new Set();
+    invalidOperationTargets = new Set();
+    /** A dismissed terminal record remains recoverable until required object reads finish. */
+    pendingOperationHides = new Map();
     streams = new Map();
     reconnects = new Map();
     historyObservers = new Map();
@@ -840,6 +845,7 @@ export class DesktopAdapter {
         this.activeRevisions.clear();
         this.cancelAndSendCapabilities.clear();
         this.terminalEvidence.clear();
+        this.pendingOperationHides.clear();
         this.metadata.clear();
         this.pollTargets.clear();
         this.workMutations.clear();
@@ -922,6 +928,7 @@ export class DesktopAdapter {
         clearTimeout(this.pollTimer);
         this.pollTimer = undefined;
         this.pausedOperations.clear();
+        this.invalidOperationTargets.clear();
     }
     request(path, method = 'GET', body, signal) {
         const runPath = /^works\/([^/]+)\/runs(?:\/|$|\?)/.exec(path), lookup = /^works\/([^/]+)\/(?:runs|sessions)\/submissions\//.exec(path), target = runPath ?? lookup;
@@ -1249,9 +1256,16 @@ export class DesktopAdapter {
                 Object.assign(this.connectionCheck, { checking: false, checkedAt: this.state.lastChecked, waiting: false });
                 this.emit();
                 if (this.state.signedIn && this.state.scenario !== 'core-offline') {
-                    await this.listWorks();
-                    await this.checkCatalog();
-                    await this.recoverOperations();
+                    // The local record read is independent of the Work list. A failed or
+                    // slow list must not hide an accepted Create, Import, or Delete.
+                    const [works, records] = await Promise.allSettled([
+                        (async () => { await this.listWorks(); await this.checkCatalog(); })(),
+                        this.recoverOperations(),
+                    ]);
+                    if (works.status === 'rejected')
+                        throw works.reason;
+                    if (records.status === 'rejected')
+                        throw records.reason;
                 }
             }
             catch (error) {
@@ -2485,10 +2499,14 @@ export class DesktopAdapter {
         this.emit();
         return pending;
     }
-    accepted(value, workId, kind) {
+    accepted(value, workId, kind, serviceId) {
         if (!value.operationId)
             throw failure('INVALID_RESPONSE', 'd.error.acceptanceNoOperation');
-        const operation = { id: value.operationId, workId: value.workId ?? workId, kind, action: lifecycleAction(kind), state: 'accepted', phase: t('d.operation.accepted'), created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId, localRecordSaved: value.localRecordSaved };
+        if (workId && value.workId && value.workId !== workId)
+            throw failure('INVALID_RESPONSE', 'd.error.operationOtherWork');
+        if (serviceId && value.serviceId && value.serviceId !== serviceId)
+            throw failure('INVALID_RESPONSE', 'd.error.operationOtherService');
+        const operation = { id: value.operationId, workId: value.workId ?? workId, kind, action: lifecycleAction(kind), state: 'accepted', phase: t('d.operation.accepted'), created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId, serviceId: value.serviceId ?? serviceId, checkedServiceId: serviceId && value.serviceId === serviceId && value.workId === workId ? serviceId : undefined, localRecordSaved: value.localRecordSaved };
         if (operation.action && operation.workId) {
             const sequence = ++this.mutationSequence;
             this.workMutations.set(operation.workId, sequence);
@@ -2525,8 +2543,8 @@ export class DesktopAdapter {
         return this.accepted(await this.request('works', 'POST', payload), '', 'Create Work'); // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
     }
     async lifecycle(id, action) { return this.accepted(await this.request(`works/${part(id)}/${action}`, 'POST'), id, `${action[0].toUpperCase()}${action.slice(1)} Work`); }
-    async operateService(id, serviceId, action) { return this.accepted(await this.request(`works/${part(id)}/services/${part(serviceId)}/${action}`, 'POST'), id, `${action} Service`); }
-    async checkOperation(id, explicit = true) {
+    async operateService(id, serviceId, action) { return this.accepted(await this.request(`works/${part(id)}/services/${part(serviceId)}/${action}`, 'POST'), id, `${action} Service`, serviceId); }
+    async checkOperation(id, explicit = true, expectedWorkId, expectedKind) {
         let operation = this.getOperation(id);
         let value;
         try {
@@ -2539,24 +2557,54 @@ export class DesktopAdapter {
             }
             throw error;
         }
-        if (value.operationId !== id && value.operationId !== undefined)
-            throw failure('INVALID_RESPONSE', 'd.error.operationMismatch');
-        if (operation?.workId && value.workId && operation.workId !== value.workId)
+        // A manually entered ID belongs to this Work only after both identities
+        // have been confirmed. Do not alter another task's observation on failure.
+        if (expectedWorkId && (value.operationId !== id || value.workId !== expectedWorkId))
             throw failure('INVALID_RESPONSE', 'd.error.operationOtherWork');
+        const actualKind = typeof value.kind === 'string' ? value.kind : typeof value.type === 'string' ? value.type : '';
+        if (expectedKind && (value.operationId !== id || operationKind(actualKind) !== expectedKind))
+            throw failure('INVALID_RESPONSE', 'd.error.operationOtherType');
+        const rejectMismatch = (key) => {
+            const error = failure('INVALID_RESPONSE', key);
+            if (operation) {
+                operation.observationError = errorText(error);
+                this.invalidOperationTargets.add(id);
+                this.emit();
+            }
+            throw error;
+        };
+        if (value.operationId !== id && value.operationId !== undefined)
+            rejectMismatch('d.error.operationMismatch');
+        if (operation?.workId && value.workId && operation.workId !== value.workId)
+            rejectMismatch('d.error.operationOtherWork');
+        if (operation && actualKind && operationKind(operation.kind) && !operationKindMatches(operation.kind, actualKind))
+            rejectMismatch('d.error.operationOtherType');
+        const reportedService = operationCorrelationId(value.serviceId) ?? operationCorrelationId(value.error?.serviceId) ?? '';
+        if (operation?.serviceId && reportedService && operation.serviceId !== reportedService)
+            rejectMismatch('d.error.operationOtherService');
+        this.invalidOperationTargets.delete(id);
         if (!operation) {
             operation = { id, workId: value.workId || '', kind: value.kind || value.type || 'Operation', state: 'unknown', phase: '', created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}` };
             this.state.operations.push(operation);
         }
         const previousState = operation.state;
         operation.checkedWorkId = value.operationId === id && typeof value.workId === 'string' ? value.workId : undefined;
-        Object.assign(operation, { workId: value.workId ?? operation.workId, state: value.state, phase: value.packagePhase ?? value.state, created: value.createdAt ?? '', updated: value.updatedAt ?? '', error: value.error?.message ?? (typeof value.error === 'string' ? value.error : undefined), snapshotId: value.result?.snapshotId ?? operation.snapshotId, observationError: undefined });
+        operation.checkedKind = value.operationId === id && actualKind ? actualKind : undefined;
+        if (!operation.serviceId && reportedService && operation.checkedWorkId === operation.workId && operation.checkedKind && operationKind(operation.checkedKind).startsWith('service:'))
+            operation.serviceId = reportedService;
+        operation.checkedServiceId = operation.serviceId && operation.checkedWorkId === operation.workId && operation.checkedKind && operationKind(operation.checkedKind).startsWith('service:') ? operation.serviceId : undefined;
+        const diagnostic = operationDiagnostic(value.error);
+        Object.assign(operation, { workId: value.workId ?? operation.workId, state: value.state, phase: value.packagePhase ?? value.state, created: value.createdAt ?? '', updated: value.updatedAt ?? '', error: diagnostic?.message ?? legacyOperationError(value.error), diagnostic, diagnostics: operationDiagnostics(value.diagnostics), correlationId: operationCorrelationId(value.correlationId) ?? diagnostic?.correlationId, snapshotId: value.result?.snapshotId ?? operation.snapshotId, observationError: undefined });
         operation.action = lifecycleAction(value.kind || value.type || operation.kind);
         this.retainTerminal(operation);
-        if (operation.workId && (previousState !== operation.state || explicit))
+        const importingUnpublished = operationKind(operation.checkedKind || operation.kind) === 'transfer:import' && operation.state !== 'succeeded';
+        if (operation.workId && !importingUnpublished && (previousState !== operation.state || explicit))
             this.requireWorkSync(operation.workId);
         const work = this.getWork(operation.workId);
         if (work)
             this.associateOperations(work);
+        if (work && operation.checkedServiceId && previousState !== operation.state && terminalOperation(operation.state))
+            void this.loadServices(work.id).catch(() => undefined);
         if (operation.snapshotId)
             await this.fetchSnapshot(operation.snapshotId, explicit).catch(() => undefined);
         this.emit();
@@ -2567,13 +2615,15 @@ export class DesktopAdapter {
         const value = await this.request('known-operations');
         for (const record of value.operations ?? [])
             if (!this.state.operations.some(o => o.id === record.operationId)) {
-                this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', kind: record.type, action: lifecycleAction(record.type), state: 'unknown', phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
+                const kind = typeof record.type === 'string' && record.type ? record.type : 'Operation';
+                this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', serviceId: record.serviceId, kind, action: lifecycleAction(kind), state: 'unknown', phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
             }
         for (const work of this.state.works)
             this.associateOperations(work);
         this.scheduleOperationPoll();
         this.emit();
     }
+    workSynchronizationPending(workId) { return this.workSync.has(workId); }
     finishWorkSync() {
         for (const [id, sync] of this.workSync)
             if (!sync.work && !sync.list) {
@@ -2590,9 +2640,27 @@ export class DesktopAdapter {
         }
         for (const work of this.state.works)
             this.associateOperations(work);
+        this.flushOperationHides();
+    }
+    flushOperationHides() {
+        const epoch = this.epoch;
+        for (const [id, operation] of this.pendingOperationHides) {
+            if (operation.workId && this.workSync.has(operation.workId))
+                continue;
+            this.pendingOperationHides.delete(id);
+            void this.request(`known-operations/${part(id)}`, 'DELETE').catch(error => {
+                if (epoch !== this.epoch)
+                    return;
+                // The original record remains available after a failed local hide.
+                operation.observationError = errorText(error);
+                if (!this.state.operations.some(item => item.id === id))
+                    this.state.operations.push(operation);
+                this.emit();
+            });
+        }
     }
     observationTargets() {
-        const active = this.state.operations.filter(op => !terminalOperation(op.state) && !this.pausedOperations.has(op.id));
+        const active = this.state.operations.filter(op => !terminalOperation(op.state) && !this.pausedOperations.has(op.id) && !this.invalidOperationTargets.has(op.id));
         const workIds = new Set([...this.workSync].filter(([, sync]) => sync.work).map(([id]) => id));
         for (const op of active)
             if (op.workId)
@@ -2739,21 +2807,24 @@ export class DesktopAdapter {
         this.capabilityReads.set(id, pending);
         return pending;
     }
-    operationPaused(id) { return this.pausedOperations.has(id) || this.metadata.paused(this.metadataKey(`operations/${part(id)}`)); }
+    operationPaused(id) { return this.pausedOperations.has(id) || this.invalidOperationTargets.has(id) || this.metadata.paused(this.metadataKey(`operations/${part(id)}`)); }
     pauseOperation(id) { this.pausedOperations.add(id); }
     resumeOperation(id) { this.pausedOperations.delete(id); this.scheduleOperationPoll(); }
-    async clearOperations() {
-        const epoch = this.epoch;
-        const selected = this.state.operations.filter(op => terminalOperation(op.state));
-        for (const operation of selected) {
-            this.retainTerminal(operation);
-            await this.request(`known-operations/${part(operation.id)}`, 'DELETE');
-            if (epoch !== this.epoch)
-                return;
-            this.state.operations = this.state.operations.filter(op => op.id !== operation.id);
-        }
+    async dismissCompletedOperation(id) {
+        const operation = this.state.operations.find(item => item.id === id);
+        if (!operation || !terminalOperation(operation.state))
+            return false;
+        this.retainTerminal(operation);
+        this.state.operations = this.state.operations.filter(item => item.id !== id);
+        this.pendingOperationHides.set(id, operation);
         this.finishWorkSync();
         this.emit();
+        return true;
+    }
+    async clearOperations() {
+        for (const operation of [...this.state.operations])
+            if (terminalOperation(operation.state))
+                await this.dismissCompletedOperation(operation.id);
     }
     acceptChatSession(id, value) {
         const sessionId = value.sessionId ?? value.session?.sessionId;
@@ -3949,10 +4020,23 @@ export class DesktopAdapter {
         const value = await this.request(`work-packages/${part(context.id)}`);
         if (this.inspectionContext !== context)
             return;
+        if (value.transferId !== undefined && value.transferId !== context.id)
+            throw failure('INVALID_RESPONSE', 'd.error.importTransferMismatch');
         if (value.phase === 'ready')
             context.importState = 'unsubmitted';
-        else if (value.phase === 'accepted')
+        else if (value.phase === 'accepted') {
+            if (typeof value.operationId === 'string' && value.operationId) {
+                if (context.operationId && context.operationId !== value.operationId)
+                    throw failure('INVALID_RESPONSE', 'd.error.operationMismatch');
+                const existing = this.getOperation(value.operationId);
+                if (existing && value.workId && existing.workId && existing.workId !== value.workId)
+                    throw failure('INVALID_RESPONSE', 'd.error.operationOtherWork');
+                if (!existing)
+                    this.accepted(value, '', 'Import Work'); // i18n-exempt: internal Operation kind
+                context.operationId = value.operationId;
+            }
             context.importState = 'accepted';
+        }
         this.emit();
     }
     async importWork(name) {
@@ -3995,13 +4079,13 @@ export class DesktopAdapter {
             throw failure('RESULT_UNKNOWN', 'd.error.exportAcceptanceIncomplete');
         return this.accepted(value, id, 'Export Work'); // i18n-exempt: Operation kind 协议值
     }
-    async fetchSnapshot(id, explicit = true) {
+    async fetchSnapshot(id, explicit = true, expectedWorkId) {
         const epoch = this.epoch;
         const { value } = await this.readMetadata(`work-snapshots/${part(id)}`, explicit);
         if (epoch !== this.epoch)
             throw failure('CONNECTION_CHANGED', 'd.error.snapshotIdentityEnded');
         const known = this.getSnapshot(id);
-        if (value.snapshotId !== id || typeof value.workId !== 'string' || !value.workId || typeof value.operationId !== 'string' || !value.operationId ||
+        if (value.snapshotId !== id || typeof value.workId !== 'string' || !value.workId || expectedWorkId && value.workId !== expectedWorkId || typeof value.operationId !== 'string' || !value.operationId ||
             known && (known.workId !== value.workId || known.operationId !== value.operationId))
             throw failure('SNAPSHOT_MISMATCH', 'd.error.snapshotMismatch');
         if (!['accepted', 'pending', 'preparing', 'running', 'succeeded', 'failed', 'superseded'].includes(value.state))

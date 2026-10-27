@@ -208,7 +208,7 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     await page.waitForTimeout(2400); assert.equal(missingOperationReads, 1, '404 operation was automatically polled again');
     await page.getByRole('button',{name:'Close dialog'}).click();
     await create('Superseded Work');
-    await page.getByText('superseded',{exact:true}).waitFor();
+    await expect(page.locator('#modal .phase-track')).toContainText('superseded');
     assert.equal(await page.getByRole('button',{name:'Pause checking',exact:true}).count(), 0);
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.getByRole('button',{name:'Import Work',exact:true}).click();
@@ -218,7 +218,7 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     assert.equal(importRequests, 0, 'inspection submitted import without consent');
     await page.getByRole('button',{name:'Close dialog'}).click();
     await create('No ID Work');
-    await page.getByText('The acceptance response has no Operation ID. Check known operations.',{exact:true}).waitFor();
+    await page.getByText('The acceptance response has no Operation ID. Check the original task status.',{exact:true}).waitFor();
     assert.equal(createPayloads.filter(p => p.name === 'No ID Work').length, 1);
     await page.getByRole('button',{name:'Close dialog'}).click();
     const beforeUnknownRetry = createPayloads.length;
@@ -342,7 +342,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.getByRole('heading', {name: 'Lifecycle Work', exact: true}).waitFor();
     await page.getByRole('button',{name:'Start Work',exact:true}).first().click();
     await page.locator('.object-control-progress [data-action=operation]').click();
-    await page.getByText('pending',{exact:true}).waitFor();
+    await expect(page.locator('#modal .phase-track')).toContainText('pending');
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.getByRole('button',{name:'Work options'}).click();
     await page.locator('#modal [data-action=export]').click();
@@ -355,7 +355,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     assert.equal(exportCalls, 0, 'failed original Stop must never advance to Export');
     assert.equal(snapshotDownloads, 0, 'failed original Stop must never download a snapshot');
     await originalStop.click();
-    await page.getByText('failed',{exact:true}).waitFor();
+    await expect(page.locator('#modal .phase-track')).toContainText('failed');
     await expect(page.locator('#modal')).toContainText('Stop failed');
     await expect(page.locator('#modal')).toContainText('stop-failed-1234');
     await page.getByRole('button',{name:'Close dialog'}).click();
@@ -365,13 +365,14 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.locator('#modal [data-action=delete-work]').click();
     await page.locator('#delete-confirm').check();
     await page.getByRole('button',{name:'Delete Work',exact:true}).last().click();
-    await page.getByText('succeeded',{exact:true}).waitFor();
+    await expect(page.locator('#modal .phase-track')).toContainText('succeeded');
     assert.deepEqual(submitted, ['start','stop','delete']);
     await page.getByRole('button',{name:'Close dialog'}).click();
     if (await page.locator('[data-action=back-works]').count()) await page.locator('[data-action=back-works]').click();
-    await page.locator('[data-action=account]').click();
-    await page.locator('#modal [data-action=operations]').click();
-    await page.getByText('delete-succeeded-1234',{exact:false}).first().waitFor();
+    const deletedTask = page.locator('.recovery-task[data-operation-id="delete-succeeded-1234"]');
+    await expect(deletedTask).toBeVisible(); await deletedTask.locator('[data-action="operation"]').click();
+    await page.locator('.operation-technical > summary').click();
+    await expect(page.locator('.operation-technical')).toContainText('delete-succeeded-1234');
     assert.equal(exportCalls, 0);
   } finally {
     await browser?.close();

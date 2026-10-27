@@ -10,6 +10,8 @@ import { NewWorkDraftRevision, hasUnsentDrafts, createSubmissionBlocked } from '
 import { FileMutationResults, UnknownFileLocks, uploadReview } from './file-results.js';
 import { exportWorkConflict, exportSnapshotAvailable } from './export-admission.js';
 import { ExportFlows } from './export-flow.js';
+import { operationKind } from './operation-recovery.js';
+import { operationCauseStatus } from './operation-diagnostics.js';
 import { activityGroups } from './chat-projection.js';
 import { ImageDrafts } from './images.js';
 import { editAdvanced, synchronizeConfiguration } from './configuration.js';
@@ -191,11 +193,76 @@ function controlReady(control, w) {
 }
 const controlActionKeys = {
     'Start Work': 'action.startWork', 'Retry Work': 'action.retryWork', // i18n-exempt: internal control identifiers, rendered through controlActionText
+    'Create Work': 'create.submit', 'Stop Work': 'workMenu.stop', 'Delete Work': 'workMenu.delete', // i18n-exempt: internal control identifiers
     'start Service': 'action.startService', 'restart Service': 'action.restartService',
     'retry Service': 'action.retryService', 'stop Service': 'action.stopService', 'remove Service': 'action.removeService',
 };
 /** Presentation only: internal control identifiers stay unchanged for comparisons. */
 const controlActionText = (action) => controlActionKeys[action] ? t(controlActionKeys[action]) : action;
+function operationAction(op) {
+    const key = {
+        'work:create': 'create.submit', 'work:start': 'action.startWork', 'work:retry': 'action.retryWork',
+        'work:stop': 'workMenu.stop', 'work:delete': 'workMenu.delete',
+        'service:enable': 'action.startService', 'service:disable': 'action.stopService',
+        'service:restart': 'action.restartService', 'service:retry': 'action.retryService', 'service:remove': 'action.removeService',
+        'service:*': 'action.controlService', 'apply:configuration': 'recovery.apply',
+        'package:install': 'recovery.packageInstall', 'package:update': 'recovery.packageUpdate', 'package:remove': 'recovery.packageRemove', 'package:*': 'recovery.package',
+        'transfer:import': 'import.title', 'transfer:export': 'recovery.export', 'work:*': 'recovery.workAction',
+    };
+    return t(key[operationKind(op.checkedKind || op.kind)] || 'recovery.task');
+}
+function workControl(w) {
+    const settled = (op) => {
+        if (!op || op.localRecordSaved === false || w.lifecycleIntent || adapter.workSynchronizationPending(w.id))
+            return false;
+        if (op.state === 'superseded')
+            return true;
+        if (op.state !== 'succeeded')
+            return false;
+        return op.action === 'stop' ? w.status === 'Stopped' && w.desired === 'stopped' && !w.statusError : ['create', 'start', 'retry'].includes(op.action || '') && adapter.project(w).usable;
+    };
+    const local = workControls.get(w.id);
+    if (local && (!w.lifecycleIntent || !local.operationId || w.lifecycleIntent.operationId === local.operationId) && !settled(local.operationId ? adapter.getOperation(local.operationId) : undefined))
+        return local;
+    const ids = adapter.project(w).operationIds;
+    const id = w.lifecycleIntent?.operationId || (ids.length === 1 ? ids[0] : undefined);
+    const op = id ? adapter.getOperation(id) : undefined;
+    if (!op?.action || settled(op) || op.workId !== w.id || !(w.lifecycleIntent?.operationId === id || op.checkedWorkId === w.id))
+        return undefined;
+    return { workId: w.id, action: `${op.action[0].toUpperCase()}${op.action.slice(1)} Work`, phase: 'accepted', operationId: id };
+}
+function serviceOperations(w, serviceId) {
+    return adapter.state.operations.filter(op => op.workId === w.id && operationKind(op.checkedKind || op.kind).startsWith('service:') && (serviceId === undefined || op.checkedServiceId === serviceId));
+}
+function serviceControl(w, serviceId) {
+    const local = serviceControls.get(`${w.id}:${serviceId}`);
+    if (local)
+        return local;
+    const pending = serviceOperations(w, serviceId).filter(op => !['succeeded', 'superseded'].includes(op.state));
+    if (pending.length !== 1)
+        return undefined;
+    const op = pending[0];
+    return { workId: w.id, serviceId, action: operationAction(op), phase: 'accepted', operationId: op.id };
+}
+function serviceControlBlocked(w, serviceId) {
+    const local = serviceControls.get(`${w.id}:${serviceId}`);
+    const original = local?.operationId ? adapter.getOperation(local.operationId) : undefined;
+    return !!local && (['pending', 'unknown'].includes(local.phase) || !!original && !['succeeded', 'failed', 'superseded'].includes(original.state)) || serviceOperations(w, serviceId).some(op => !['succeeded', 'failed', 'superseded'].includes(op.state));
+}
+function serviceTaskList(w, serviceId) {
+    const operations = serviceOperations(w, serviceId);
+    const control = serviceId ? serviceControl(w, serviceId) : undefined;
+    const related = control ? operations.filter(op => op.id !== control.operationId) : operations;
+    if (!related.length)
+        return '';
+    return `<details class="related-task-list"><summary>${t('recovery.relatedTasks')}</summary>${related.map(op => `<div class="related-task"><span>${esc(operationAction(op))} · ${esc(op.observationError ? t('common.notConfirmed') : stateText(op.state))}</span>${btn(t('quick.checkStatus'), 'check-service-operation', 'text-button small', `data-id="${esc(op.id)}" data-work-id="${esc(w.id)}"`)}${btn(t('common.details'), 'operation', 'text-button small', `data-id="${esc(op.id)}"`)}</div>`).join('')}</details>`;
+}
+function unassignedServiceTasks(w) {
+    return serviceOperations(w).filter(op => !op.checkedServiceId || !w.services.some(service => service.id === op.checkedServiceId)).map(op => {
+        const explanation = op.checkedServiceId ? t('recovery.serviceRemoved') : t('recovery.serviceTargetUnconfirmed');
+        return `<div class="recovery-task"><div class="recovery-task-copy"><strong>${esc(operationAction(op))} · ${esc(op.observationError ? t('common.notConfirmed') : stateText(op.state))}</strong><small>${esc(explanation)}</small>${op.error ? `<small>${esc(op.error)}</small>` : ''}</div><div class="actions">${btn(t('quick.checkStatus'), 'check-service-operation', 'small', `data-id="${esc(op.id)}" data-work-id="${esc(w.id)}"`)}${btn(t('common.details'), 'operation', 'small', `data-id="${esc(op.id)}"`)}</div></div>`;
+    }).join('');
+}
 function controlMarkup(control) {
     if (!control)
         return '';
@@ -204,7 +271,67 @@ function controlMarkup(control) {
     const busy = operationBusy(op);
     const label = state === 'pending' ? t('control.submitting') : state === 'accepted' ? t('control.acceptedWaiting') : state === 'unknown' ? t('control.resultUnknown') : state === 'reviewed' ? t('control.outcomeUnknown') : stateText(state);
     const action = controlActionText(control.action);
-    return `<div class="object-control-progress" role="status" aria-busy="${busy}"><span>${busy ? pendingStatus(`${action} · ${label}`) : `${esc(action)} · ${esc(label)}`}</span>${control.error || op?.error || op?.observationError ? `<small>${esc(control.error || op?.error || op?.observationError)}</small>` : ''}<div class="actions">${control.operationId ? btn(t('control.operationDetails'), 'operation', 'text-button small', `data-id="${esc(control.operationId)}"`) : ''}${btn(t('control.checkProgress'), control.serviceId ? 'check-service-progress' : 'check-work-progress', 'text-button small', `data-id="${esc(control.workId)}"${control.serviceId ? ` data-service-id="${esc(control.serviceId)}"` : ''}`)}</div></div>`;
+    const reason = control.error || op?.observationError || op?.error || (op?.state === 'failed' ? t('recovery.noCause') : '');
+    return `<div class="object-control-progress" role="status" aria-busy="${busy}"><span>${busy ? pendingStatus(`${action} · ${label}`) : `${esc(action)} · ${esc(label)}`}</span>${reason ? `<small>${esc(reason)}</small>` : ''}${op?.localRecordSaved === false ? `<small>${t('recovery.recordNotSaved')}</small>` : ''}<div class="actions">${control.operationId ? btn(t('control.operationDetails'), 'operation', 'text-button small', `data-id="${esc(control.operationId)}"`) : ''}${btn(t('control.checkProgress'), control.serviceId ? 'check-service-progress' : 'check-work-progress', 'text-button small', `data-id="${esc(control.workId)}"${control.serviceId ? ` data-service-id="${esc(control.serviceId)}"` : ''}`)}</div></div>`;
+}
+function orphanTasks() {
+    const tasks = adapter.state.operations.filter(op => {
+        if (op.workId && adapter.getWork(op.workId))
+            return false;
+        const kind = operationKind(op.checkedKind || op.kind);
+        return ['work:create', 'work:delete', 'transfer:import'].includes(kind) || kind === 'work:*' && !op.checkedKind && op.state === 'unknown';
+    });
+    const transfer = adapter.inspectionContext;
+    const unconfirmedImport = transfer && transfer.importState !== 'unsubmitted' && !transfer.operationId;
+    if (!tasks.length && !unconfirmedImport)
+        return '';
+    const transferCount = unconfirmedImport ? 1 : 0, multiple = tasks.length + transferCount > 1;
+    const row = (op, index) => {
+        const status = op.observationError ? t('common.notConfirmed') : stateText(op.state);
+        const label = `${multiple ? `${t('recovery.taskNumber', { number: index + transferCount + 1 })} · ` : ''}${operationAction(op)} · ${status}`;
+        const reason = op.observationError || op.error || (op.state === 'failed' ? t('recovery.noCause') : '');
+        const completed = ['succeeded', 'superseded'].includes(op.state);
+        return `<article class="recovery-task" data-operation-id="${esc(op.id)}"><div class="recovery-task-copy"><strong>${operationBusy(op) ? pendingStatus(label) : esc(label)}</strong>${op.importName ? `<small>${esc(op.importName)}</small>` : ''}${reason ? `<small>${esc(reason)}</small>` : ''}${op.localRecordSaved === false ? `<small>${t('recovery.recordNotSaved')}</small>` : ''}</div><div class="actions">${btn(t('quick.checkStatus'), 'check-task-operation', 'small', `data-id="${esc(op.id)}"`)}${btn(t('common.details'), 'operation', 'small', `data-id="${esc(op.id)}"`)}${completed ? btn(t('common.close'), 'dismiss-completed-operation', 'quiet small', `data-id="${esc(op.id)}"`) : ''}</div></article>`;
+    };
+    const transferRow = unconfirmedImport ? `<article class="recovery-task" data-transfer-id="${esc(transfer.id)}"><div class="recovery-task-copy"><strong>${multiple ? `${esc(t('recovery.taskNumber', { number: 1 }))} · ` : ''}${esc(t('import.title'))} · ${esc(transfer.importState === 'submitting' ? t('control.submitting') : t('control.resultUnknown'))}</strong><small>${esc(t('recovery.checkOriginalImport'))}</small></div><div class="actions">${btn(t('quick.checkStatus'), 'check-inspection-import', 'small')}${btn(t('common.details'), 'import', 'small')}</div></article>` : '';
+    return `<section class="recovery-tasks" aria-label="${esc(t('recovery.pendingTasks'))}">${transferRow}${tasks.slice(0, 3).map(row).join('')}${tasks.length > 3 ? `<details><summary>${t('recovery.moreTasks', { count: tasks.length - 3 })}</summary>${tasks.slice(3).map((op, index) => row(op, index + 3)).join('')}</details>` : ''}</section>`;
+}
+function settingsTaskRows(operations) {
+    if (!operations.length)
+        return '';
+    const row = (op) => {
+        const status = op.observationError ? t('common.notConfirmed') : stateText(op.state);
+        const label = `${operationAction(op)} · ${status}`;
+        const reason = op.observationError || op.error || (op.state === 'failed' ? t('recovery.noCause') : '');
+        return `<div class="recovery-task settings-task" data-operation-id="${esc(op.id)}"><div class="recovery-task-copy"><strong>${operationBusy(op) ? pendingStatus(label) : esc(label)}</strong>${reason ? `<small>${esc(reason)}</small>` : ''}${op.localRecordSaved === false ? `<small>${t('recovery.recordNotSaved')}</small>` : ''}</div><div class="actions">${btn(t('quick.checkStatus'), 'check-task-operation', 'small', `data-id="${esc(op.id)}"`)}${btn(t('common.details'), 'operation', 'small', `data-id="${esc(op.id)}"`)}</div></div>`;
+    };
+    const visible = operations.filter(op => op.localRecordSaved === false || !['succeeded', 'superseded'].includes(op.state));
+    const completed = operations.filter(op => op.localRecordSaved !== false && ['succeeded', 'superseded'].includes(op.state));
+    return `<section class="recovery-tasks">${visible.map(row).join('')}${completed.length ? `<details class="related-task-list"><summary>${t('recovery.relatedTasks')}</summary>${completed.map(row).join('')}</details>` : ''}</section>`;
+}
+function operationTechnicalDetails(op, extra = '') {
+    const diagnostic = op.diagnostic;
+    const row = (label, value) => value === undefined || value === '' ? '' : `<dt>${label}</dt><dd><code>${esc(value)}</code></dd>`;
+    const fields = `${row(t('ops.operationId'), op.id)}${row(t('ops.workId'), op.workId)}${row(t('recovery.serviceId'), op.checkedServiceId || diagnostic?.serviceId)}${row(t('ops.snapshotId'), op.snapshotId)}${row(t('diag.correlationId'), op.correlationId)}${row(t('diag.errorCode'), diagnostic?.code)}${row(t('diag.stage'), diagnostic?.stage)}${row(t('recovery.skillName'), diagnostic?.skillName)}${row(t('recovery.field'), diagnostic?.field)}${row(t('diag.exitCode'), diagnostic?.exitCode)}${diagnostic?.retryable === undefined ? '' : `<dt>${t('diag.retryable')}</dt><dd>${diagnostic.retryable ? t('diag.yes') : t('diag.no')}</dd>`}${row(t('ops.lastConfirmed'), op.updated)}${extra}`;
+    const stages = op.diagnostics?.stages.length ? `<h3>${t('recovery.stages')}</h3><ol>${op.diagnostics.stages.map(stage => `<li>${[stage.timestamp, stage.component, stage.stage, stage.outcome, stage.code, stage.serviceId, stage.skillName, stage.message].filter(Boolean).map(esc).join(' · ')}</li>`).join('')}</ol>` : '';
+    const rollback = op.diagnostics?.rollback, rollbackError = rollback?.error, collection = op.diagnostics?.diagnosticCollection;
+    const extraDiagnostics = `${rollback ? `<h3>${t('recovery.rollback')}</h3><dl class="property-list">${row(t('ops.state'), rollback.state)}${row(t('diag.errorCode'), rollbackError?.code)}${row(t('diag.stage'), rollbackError?.stage)}${row(t('recovery.reportedCause'), rollbackError?.message)}${row(t('recovery.suggestedFix'), rollbackError?.remediation)}</dl>` : ''}${collection ? `<h3>${t('recovery.diagnosticCollection')}</h3><dl class="property-list">${row(t('ops.state'), collection.state)}${row(t('diag.errorCode'), collection.code)}</dl>` : ''}`;
+    return `<details class="operation-technical"><summary>${t('recovery.technicalDetails')}</summary><dl class="property-list">${fields}</dl>${btn(t('ops.copyId'), 'copy', 'small', `data-copy="${esc(op.id)}"`)}${stages}${extraDiagnostics}${op.diagnostics?.truncated ? `<p>${t('merge.olderEntries')}</p>` : ''}</details>`;
+}
+function operationRelatedService(op) {
+    const work = adapter.getWork(op.workId);
+    const serviceId = op.checkedServiceId || (op.workId && op.checkedWorkId === op.workId ? op.diagnostic?.serviceId : undefined);
+    return work && serviceId ? work.services.find(item => item.id === serviceId) : undefined;
+}
+function operationFailure(op) {
+    if (op.state !== 'failed')
+        return '';
+    const cause = operationCauseStatus(op.diagnostic);
+    const reason = `${op.error ? `<p><strong>${t('recovery.reportedCause')}:</strong> ${esc(op.error)}</p>` : ''}${cause === 'missing' ? `<p>${esc(t('recovery.noCause'))}</p>` : cause === 'unconfirmed' ? `<p>${esc(t('recovery.causeUnconfirmed'))}</p>` : ''}`;
+    const remediation = op.diagnostic?.remediation ? `<p><strong>${t('recovery.suggestedFix')}:</strong> ${esc(op.diagnostic.remediation)}</p>` : '';
+    const service = operationRelatedService(op);
+    const logs = service && current()?.id === op.workId ? btn(t('recovery.viewServiceLogs'), 'operation-service-logs', 'small', `data-id="${esc(op.id)}"`) : `<p>${t('recovery.noRelatedLogs')}</p>`;
+    return `<section class="operation-failure">${reason}${remediation}${logs}</section>`;
 }
 async function submitWorkStart(w, record, imported) {
     const old = workControls.get(w.id), permitted = adapter.project(w).action;
@@ -248,8 +375,8 @@ async function submitWorkStart(w, record, imported) {
     }
 }
 async function submitServiceControl(w, serviceId, action, record) {
-    const key = `${w.id}:${serviceId}`, old = serviceControls.get(key), original = old?.operationId && adapter.getOperation(old.operationId);
-    if (old && (['pending', 'unknown'].includes(old.phase) || original && !['succeeded', 'failed', 'superseded'].includes(original.state)))
+    const key = `${w.id}:${serviceId}`;
+    if (serviceControlBlocked(w, serviceId))
         throw new Error(t('action.checkServiceControl'));
     const epoch = adapter.identityEpoch, origin = location.hash, choice = modalChoice;
     const control = { workId: w.id, serviceId, action: `${action} Service`, phase: 'pending' };
@@ -341,15 +468,15 @@ const actionLabels = {
     'retry-services': 'actions.readingServices', 'run-details': 'actions.readingRunDetails', 'active-run': 'actions.readingActiveRun', 'check-chat-submission': 'actions.checkingOriginalSubmission',
     'load-models': 'actions.readingModels', 'save-model': 'actions.savingSessionModel', 'check-session-model': 'actions.readingSessionModel', 'service-requests': 'actions.readingAgentRequests', 'check-active-run': 'actions.checkingActiveRun', 'pi-requests': 'actions.readingPiRequests', 'pi-request-detail': 'actions.readingPiRequest', 'cancel-pi-request': 'actions.cancellingPiRequest', 'retry-pi-request': 'actions.retryingPiRequest', 'next-pi-requests': 'actions.readingMorePiRequests', 'next-pi-evidence': 'actions.readingMoreEvidence',
     'load-earlier-history': 'actions.readingEarlierMessages', 'reload-history': 'actions.readingRecentMessages', 'retry-conversation': 'actions.readingConversation', 'sessions': 'actions.readingSessions', 'select-session': 'actions.readingSession', 'new-session': 'actions.creatingSession', 'send-message': 'actions.submittingMessage', 'cancel-run': 'actions.requestingCancellation', 'resume-run': 'actions.reconnectingRun',
-    'service-details': 'actions.readingLogs', 'service-action': 'actions.submittingServiceControl', 'confirm-service-control': 'actions.submittingServiceControl', 'refresh-logs': 'actions.readingLogs',
+    'service-details': 'actions.readingLogs', 'service-action': 'actions.submittingServiceControl', 'confirm-service-control': 'actions.submittingServiceControl', 'refresh-logs': 'actions.readingLogs', 'check-service-operation': 'actions.checkingServiceProgress',
     'open-app': 'actions.openingApplication', 'open-window': 'actions.openingApplication', 'retry-service-entry': 'actions.preparingApplication', 'check-preview': 'actions.checkingPreview',
     'refresh-files': 'actions.readingWorkspace', 'file-path': 'actions.readingDirectory', 'open-file': 'actions.readingFile', 'open-source': 'actions.readingFile', 'retry-file-preview': 'actions.readingFile', 'save-file': 'actions.savingFile', 'dirty-save': 'actions.savingFile',
     'confirm-upload-overwrite': 'actions.uploadingFiles', 'confirm-folder': 'actions.creatingFolder', 'retry-selected-files': 'actions.retryingSelectedPaths', 'confirm-transfer': 'actions.transferringFiles', 'confirm-file-delete': 'actions.deletingFiles',
     'save-config': 'actions.savingSettings', 'dirty-config-save': 'actions.savingSettings', 'refresh-config': 'actions.readingSettings', 'apply-config': 'actions.submittingApply', 'confirm-core-skills': 'actions.copyingSkill', 'check-catalog': 'actions.readingCatalog',
     'confirm-install': 'actions.submittingPackage', 'confirm-remove-package': 'actions.removingPackage', 'confirm-import': 'actions.submittingImport', 'prepare-export': 'actions.preparingExport',
     'export': 'actions.preparingExport', 'view-snapshot': 'actions.checkingSnapshot', 'save-export-file': 'actions.checkingOriginalDownload', 'check-export-flow': 'actions.checkingExport', 'resume-export-flow': 'actions.resumingExport',
-    'download-work': 'actions.preparingDownload', 'check-download': 'actions.checkingTransfer', 'check-operation': 'actions.checkingOperation', 'lookup-operation': 'actions.readingOperation', 'lookup-snapshot': 'actions.readingSnapshot',
-    'operations': 'actions.readingKnownOperations', 'clear-operations': 'actions.clearingCompletedRecords', 'resume-operation': 'actions.resumingObservation', 'check-inspection-import': 'actions.checkingTransfer', 'retry-inspection-cleanup': 'actions.releasingLocalTransfer',
+    'download-work': 'actions.preparingDownload', 'check-download': 'actions.checkingTransfer', 'check-operation': 'actions.checkingOperation', 'check-task-operation': 'actions.checkingOperation', 'lookup-operation': 'actions.readingOperation', 'lookup-create-operation': 'actions.readingOperation', 'lookup-import-operation': 'actions.readingOperation', 'lookup-snapshot': 'actions.readingSnapshot',
+    'resume-operation': 'actions.resumingObservation', 'check-inspection-import': 'actions.checkingTransfer', 'retry-inspection-cleanup': 'actions.releasingLocalTransfer',
 };
 const serviceControlKeys = { start: 'action.startService', stop: 'action.stopService', restart: 'action.restartService', retry: 'action.retryService', remove: 'action.removeService' };
 function actionIntent(el, action = el.dataset.action || '') {
@@ -625,8 +752,8 @@ function clearNameFieldError(renderNow = true) {
         render();
 }
 function importNameFeedback(op) {
-    if (op.kind !== 'Import Work' && op.kind !== 'import-work')
-        return ''; // i18n-exempt: server operation kind
+    if (operationKind(op.checkedKind || op.kind) !== 'transfer:import')
+        return '';
     const name = op.importName || adapter.getWork(op.workId)?.name;
     if (!name)
         return `<div class="import-name-feedback">${feedback(t('import.nameUnconfirmed'))}</div>`;
@@ -779,7 +906,7 @@ function works() {
     const s = adapter.state.scenario;
     const confirmed = !!adapter.worksChecked || adapter.state.works.length > 0;
     const all = adapter.state.works.filter((w) => w.name.toLowerCase().includes(view.search.toLowerCase()));
-    return `${topbar()}<main class="works-page"><div class="works-eyebrow">${t('works.eyebrow')}</div><div class="page-heading"><div><h1>${t('term.works')}</h1><p>${t('works.subtitle')}</p></div><div class="actions">${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", `title="${esc(t('works.import'))}" aria-label="${esc(t('works.import'))}"`)}${btn(icon("plus"), "new-work", "icon-button primary", `title="${esc(t('works.newWork'))}" aria-label="${esc(t('works.newWork'))}"`)}</div></div>${confirmed && adapter.worksError ? feedback(t('works.refreshFailed', { error: esc(adapter.worksError) }), 'warning', btn(t('works.retryLoading'), 'retry-works', 'small')) : ''}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="${esc(t('works.searchPlaceholder'))}" aria-label="${esc(t('works.searchAria'))}">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", `aria-label="${esc(t('works.clearSearch'))}"`) : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(t('works.coreOffline', { time: esc(adapter.state.lastChecked) }), "warning", btn(t('works.checkConnection'), "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback(t('works.runtimeNotReady'), "warning", btn(t('works.checkReadiness'), "check-connection", "small")) : ""}${(!confirmed && !adapter.worksError && (s === "loading" || adapter.worksLoading || adapter.connectionCheck.checking)) ? `<div class="loading-list" role="status" aria-label="${esc(t('works.loadingAria'))}" aria-busy="true">${[1, 2, 3].map(() => '<div class="skeleton" aria-hidden="true"><i></i><span></span><span></span></div>').join("")}</div>` : !confirmed && (s === "list-error" || adapter.worksError) ? empty("refresh", t('works.loadFailed'), `${adapter.worksError ? `<span class="works-error-cause">${esc(adapter.worksError)}</span>` : ""}${t('works.loadFailedBody')}`, btn(t('works.retryLoading'), "retry-works", "primary")) : !confirmed ? empty("grid", t('works.notReadTitle'), t('works.notReadBody'), btn(t('works.read'), "retry-works", "primary")) : !adapter.state.works.length ? empty("grid", t('works.emptyTitle'), t('works.emptyBody'), btn(`${icon("plus")} ${t('works.newWork')}`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>${t('works.colName')}</span><span>${t('works.colStatus')}</span><span>${t('works.colQuick')}</span><span></span></div>${all.map((w) => `<div class="work-row"><a class="work-name" data-action="open-work" data-id="${esc(w.id)}" href="#/work/${encodeURIComponent(w.id)}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></a><div class="work-status">${workStatus(w)}${controlMarkup(workControls.get(w.id))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="${esc(t('works.moreAria', { name: w.name }))}"`)}</div>`).join("")}</div>` : empty("search", t('works.noMatchTitle'), t('works.noMatchBody'), btn(t('works.clearSearch'), "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} ${t('works.ownOnly')}</span><span>${confirmed ? t('works.count', { count: adapter.state.works.length }) : t('works.countUnread')} <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>${t('works.helpTitle')}</strong><p>${t('works.helpBody')}</p></div></div></main>`;
+    return `${topbar()}<main class="works-page"><div class="works-eyebrow">${t('works.eyebrow')}</div><div class="page-heading"><div><h1>${t('term.works')}</h1><p>${t('works.subtitle')}</p></div><div class="actions">${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", `title="${esc(t('works.import'))}" aria-label="${esc(t('works.import'))}"`)}${btn(icon("plus"), "new-work", "icon-button primary", `title="${esc(t('works.newWork'))}" aria-label="${esc(t('works.newWork'))}"`)}</div></div>${confirmed && adapter.worksError ? feedback(t('works.refreshFailed', { error: esc(adapter.worksError) }), 'warning', btn(t('works.retryLoading'), 'retry-works', 'small')) : ''}${orphanTasks()}<div class="list-controls"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="${esc(t('works.searchPlaceholder'))}" aria-label="${esc(t('works.searchAria'))}">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", `aria-label="${esc(t('works.clearSearch'))}"`) : ""}</div>${connection()}</div>${s === "core-offline" ? feedback(t('works.coreOffline', { time: esc(adapter.state.lastChecked) }), "warning", btn(t('works.checkConnection'), "check-connection", "small")) : ""}${s === "env-not-ready" ? feedback(t('works.runtimeNotReady'), "warning", btn(t('works.checkReadiness'), "check-connection", "small")) : ""}${(!confirmed && !adapter.worksError && (s === "loading" || adapter.worksLoading || adapter.connectionCheck.checking)) ? `<div class="loading-list" role="status" aria-label="${esc(t('works.loadingAria'))}" aria-busy="true">${[1, 2, 3].map(() => '<div class="skeleton" aria-hidden="true"><i></i><span></span><span></span></div>').join("")}</div>` : !confirmed && (s === "list-error" || adapter.worksError) ? empty("refresh", t('works.loadFailed'), `${adapter.worksError ? `<span class="works-error-cause">${esc(adapter.worksError)}</span>` : ""}${t('works.loadFailedBody')}`, btn(t('works.retryLoading'), "retry-works", "primary")) : !confirmed ? empty("grid", t('works.notReadTitle'), t('works.notReadBody'), btn(t('works.read'), "retry-works", "primary")) : !adapter.state.works.length ? empty("grid", t('works.emptyTitle'), t('works.emptyBody'), btn(`${icon("plus")} ${t('works.newWork')}`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>${t('works.colName')}</span><span>${t('works.colStatus')}</span><span>${t('works.colQuick')}</span><span></span></div>${all.map((w) => `<div class="work-row"><a class="work-name" data-action="open-work" data-id="${esc(w.id)}" href="#/work/${encodeURIComponent(w.id)}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></a><div class="work-status">${workStatus(w)}${controlMarkup(workControl(w))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="${esc(t('works.moreAria', { name: w.name }))}"`)}</div>`).join("")}</div>` : empty("search", t('works.noMatchTitle'), t('works.noMatchBody'), btn(t('works.clearSearch'), "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} ${t('works.ownOnly')}</span><span>${confirmed ? t('works.count', { count: adapter.state.works.length }) : t('works.countUnread')} <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>${t('works.helpTitle')}</strong><p>${t('works.helpBody')}</p></div></div></main>`;
 }
 function quickAction(w) {
     if (route()[0] === 'works' && controlReady(workControls.get(w.id), w))
@@ -810,7 +937,7 @@ function workPage(w) {
     const serviceArea = view.tab === 'Services', narrow = innerWidth < 900;
     const hiddenChat = view.layout === 'service-only' || serviceArea && view.layout === 'workspace' && (narrow ? !panels.narrowChat : panels.collapsed);
     const narrowChat = serviceArea && narrow && !hiddenChat && view.layout !== 'chat-only';
-    return `${workHeader(w)}${controlMarkup(workControls.get(w.id))}<nav class="work-tabs" aria-label="${esc(t('work.areasAria'))}"><div>${[['Services', t('work.tabServices'), 'grid'], ['Files', t('work.tabFiles'), 'folder'], ['Chat', t('work.tabChat'), 'chat']].map(([value, label, symbol]) => btn(`${icon(symbol, 17)} ${label}`, `tab-${value}`, !settings && view.tab === value ? "tab active" : "tab")).join("")}</div><div class="work-tools">${btn(`${icon('note', 17)} <span>${t('work.piRequests')}</span>`, 'pi-requests', 'tab work-requests', `aria-label="${esc(t('work.piRequestsAria'))}" title="${esc(t('work.piRequestsAria'))}"`)}${btn(`${icon("settings", 17)} ${t('work.settings')}`, "settings", settings ? "tab active" : "tab")}</div></nav>${serviceNotice(w)}${!settings && adapter.project(w).retainWorkspace && !adapter.project(w).usable ? feedback(t('work.statusUnconfirmed'), "warning", btn(t('work.checkWork'), "check-work", "small", `data-id="${esc(w.id)}"`)) : ""}${settings ? settingsPage(w) : !adapter.project(w).retainWorkspace ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${hiddenChat ? "chat-hidden" : ""} ${serviceArea ? "service-workspace" : ""} ${narrowChat ? "narrow-chat" : ""}"><section id="workspace-main" class="main-panel" ${view.layout === "chat-only" ? "inert" : ""}>${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="vertical" aria-label="${esc(t('work.resizeAria'))}" aria-controls="workspace-main workspace-chat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" title="${esc(t('work.resizeTitle'))}" tabindex="${serviceArea && !narrow && !hiddenChat && view.layout !== 'chat-only' ? 0 : -1}"></div><aside id="workspace-chat" class="agent-side" ${hiddenChat ? "inert" : ""}>${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
+    return `${workHeader(w)}${controlMarkup(workControl(w))}<nav class="work-tabs" aria-label="${esc(t('work.areasAria'))}"><div>${[['Services', t('work.tabServices'), 'grid'], ['Files', t('work.tabFiles'), 'folder'], ['Chat', t('work.tabChat'), 'chat']].map(([value, label, symbol]) => btn(`${icon(symbol, 17)} ${label}`, `tab-${value}`, !settings && view.tab === value ? "tab active" : "tab")).join("")}</div><div class="work-tools">${btn(`${icon('note', 17)} <span>${t('work.piRequests')}</span>`, 'pi-requests', 'tab work-requests', `aria-label="${esc(t('work.piRequestsAria'))}" title="${esc(t('work.piRequestsAria'))}"`)}${btn(`${icon("settings", 17)} ${t('work.settings')}`, "settings", settings ? "tab active" : "tab")}</div></nav>${serviceNotice(w)}${!settings && adapter.project(w).retainWorkspace && !adapter.project(w).usable ? feedback(t('work.statusUnconfirmed'), "warning", btn(t('work.checkWork'), "check-work", "small", `data-id="${esc(w.id)}"`)) : ""}${settings ? settingsPage(w) : !adapter.project(w).retainWorkspace ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${hiddenChat ? "chat-hidden" : ""} ${serviceArea ? "service-workspace" : ""} ${narrowChat ? "narrow-chat" : ""}"><section id="workspace-main" class="main-panel" ${view.layout === "chat-only" ? "inert" : ""}>${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="vertical" aria-label="${esc(t('work.resizeAria'))}" aria-controls="workspace-main workspace-chat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" title="${esc(t('work.resizeTitle'))}" tabindex="${serviceArea && !narrow && !hiddenChat && view.layout !== 'chat-only' ? 0 : -1}"></div><aside id="workspace-chat" class="agent-side" ${hiddenChat ? "inert" : ""}>${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
 }
 function workState(w) {
     const state = adapter.project(w);
@@ -1460,26 +1587,29 @@ function textEditor(f) {
 }
 function settingsPage(w) {
     const configurationError = w.resourceErrors?.configuration;
+    const settingsOperations = adapter.state.operations.filter(item => item.workId === w.id && /^(apply|package):/.test(operationKind(item.checkedKind || item.kind)));
     if (!w.resourceChecked?.configuration && !configurationError && !view.configDirty)
-        return `<main class="settings-page">${btn(`${icon('arrow', 16)} ${t('settings.backToWork')}`, 'back-work', 'quiet settings-back')}<h1>${t('settings.title')}</h1>${readPlaceholder(t('settings.loading'))}</main>`;
+        return `<main class="settings-page">${btn(`${icon('arrow', 16)} ${t('settings.backToWork')}`, 'back-work', 'quiet settings-back')}<h1>${t('settings.title')}</h1>${settingsTaskRows(settingsOperations)}${readPlaceholder(t('settings.loading'))}</main>`;
     if (configurationError && !view.config && !w.resourceChecked?.configuration)
-        return `<main class="settings-page">${btn(`${icon("arrow", 16)} ${t('settings.backToWork')}`, "back-work", "quiet settings-back")}<h1>${t('settings.title')}</h1>${feedback(esc(configurationError), "warning", btn(t('settings.refreshConfiguration'), "refresh-config", "primary"))}</main>`;
+        return `<main class="settings-page">${btn(`${icon("arrow", 16)} ${t('settings.backToWork')}`, "back-work", "quiet settings-back")}<h1>${t('settings.title')}</h1>${settingsTaskRows(settingsOperations)}${feedback(esc(configurationError), "warning", btn(t('settings.refreshConfiguration'), "refresh-config", "primary"))}</main>`;
     if (!view.config)
         view.config = structuredClone(w.config);
     const c = view.config, pending = w.config.pendingApply === true;
     const applyRecord = [...actions.records.values()].filter(item => item.work === w.id && item.action === 'apply-config').sort((a, b) => b.token - a.token)[0];
-    const applyOperations = adapter.state.operations.filter(item => item.workId === w.id && ['Apply configuration', 'Apply Work configuration', 'apply-work-configuration'].includes(item.kind)); // i18n-exempt: server operation kinds
-    const applyOperation = applyRecord ? applyOperations.find(item => !!applyRecord.businessId && item.id === applyRecord.businessId) : [...applyOperations].sort((a, b) => (Date.parse(b.created) || 0) - (Date.parse(a.created) || 0))[0];
-    const applying = !!applyRecord?.pending || !!applyOperation && ['accepted', 'pending', 'preparing', 'running'].includes(applyOperation.state);
-    const applyBusy = !!applyRecord?.pending || operationBusy(applyOperation);
+    const applyOperations = settingsOperations.filter(item => operationKind(item.checkedKind || item.kind) === 'apply:configuration');
+    const unfinishedApply = applyOperations.filter(item => !['succeeded', 'failed', 'superseded'].includes(item.state));
+    const applyOperation = applyRecord?.businessId ? applyOperations.find(item => item.id === applyRecord.businessId) : unfinishedApply.length === 1 ? unfinishedApply[0] : undefined;
+    const applying = !!applyRecord?.pending || unfinishedApply.some(item => ['accepted', 'pending', 'preparing', 'running'].includes(item.state));
+    const applyBusy = !!applyRecord?.pending || unfinishedApply.some(operationBusy);
     const applyError = applyRecord?.error || (applyOperation?.state === 'failed' ? applyOperation.error || t('settings.applyFailed') : '');
-    const unknown = !!applyRecord?.blocked || applyOperation?.state === 'unknown';
+    const unknown = !!applyRecord?.blocked || unfinishedApply.some(item => item.state === 'unknown');
     const attention = view.configDirty || pending || applying || applyError || unknown || configurationError;
     const stateLabel = view.configDirty ? t('settings.unsavedChanges') : applyRecord?.pending ? t('settings.submittingApply') : applying && !applyBusy ? t('settings.applyPaused') : applying ? t('settings.applying') : unknown ? t('settings.applyNotConfirmed') : applyError ? t('settings.applyFailed') : pending ? t('settings.notApplied') : t('settings.configInUse');
-    const stateBody = view.configDirty ? t('settings.saveDraftBeforeApply') : applying ? t('settings.usingPrevious') : unknown ? t('settings.checkOriginalApply') : applyError ? esc(applyError) : pending ? t('settings.savedNotActive') : '';
-    const statusActions = `${btn(icon('refresh', 15), 'refresh-config', 'icon-button quiet', `aria-label="${esc(t('settings.refreshStatus'))}" title="${esc(t('settings.refreshStatus'))}"`)}${applyOperation && (applying || unknown || applyError) ? btn(t('settings.checkApply'), 'operation', 'small', `data-id="${esc(applyOperation.id)}"`) : ''}${view.configDirty ? btn(t('settings.saveChanges'), 'save-config', 'primary') : pending && !applying && !unknown ? btn(t('settings.applyChanges'), 'apply-config', 'primary', adapter.project(w).usable ? '' : `disabled title="${esc(t('settings.applyDisabledTitle'))}"`) : ''}`;
+    const stateBody = (view.configDirty ? t('settings.saveDraftBeforeApply') : applying ? t('settings.usingPrevious') : unknown ? t('settings.checkOriginalApply') : applyError ? esc(applyError) : pending ? t('settings.savedNotActive') : '') + (applyOperation?.localRecordSaved === false ? ` ${t('recovery.recordNotSaved')}` : '');
+    const statusActions = `${btn(icon('refresh', 15), 'refresh-config', 'icon-button quiet', `aria-label="${esc(t('settings.refreshStatus'))}" title="${esc(t('settings.refreshStatus'))}"`)}${applyOperation && (applying || unknown || applyError) ? btn(t('quick.checkStatus'), 'check-task-operation', 'small', `data-id="${esc(applyOperation.id)}"`) + btn(t('common.details'), 'operation', 'small', `data-id="${esc(applyOperation.id)}"`) : ''}${view.configDirty ? btn(t('settings.saveChanges'), 'save-config', 'primary') : pending && !applying && !unknown ? btn(t('settings.applyChanges'), 'apply-config', 'primary', adapter.project(w).usable ? '' : `disabled title="${esc(t('settings.applyDisabledTitle'))}"`) : ''}`;
+    const otherApplyTasks = settingsTaskRows(applyOperations.filter(item => item.id !== applyOperation?.id || view.configDirty));
     const languageSection = `<section class="settings-language" aria-label="${esc(t('lang.menu'))}"><h2>${t('lang.menu')}</h2>${languageTrigger('quiet', 'settings')}</section>`;
-    return `<main class="settings-page">${configurationError ? feedback(`${esc(configurationError)} ${t('settings.configPreserved')}`, "warning") : ""}<div class="settings-navigation">${btn(`${icon('arrow', 16)} ${t('settings.backToWork')}`, 'back-work', 'quiet settings-back')}</div><div class="settings-heading"><h1>${t('settings.title')}</h1>${!attention ? `<div class="configuration-compact">${badge(t('settings.configInUse'))}${statusActions}</div>` : ''}</div>${attention ? `<div class="configuration-state"><div><strong>${applyBusy ? pendingStatus(stateLabel, "apply-config") : esc(stateLabel)}</strong><span>${stateBody}</span></div><div class="actions">${statusActions}</div></div>` : ''}<nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((tab) => btn(tab === "Skills" ? t('settings.tabSkills') : tab === "Pi Packages" ? t('settings.tabPackages') : tab === "AGENTS.md" ? t('settings.tabAgents') : t('settings.tabAdvanced'), "settings-section", view.settingsTab === tab ? "tab active" : "tab", `data-tab="${tab}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>${t('settings.agentsTitle')}</h2><p>${t('settings.agentsBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importFile')}`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? t('settings.previousActive') : t('settings.configInUse')}</span><span>${t('settings.savedConfiguration')}</span></div><label class="field">${t('settings.desiredAgents')}<textarea id="agents-editor" class="code-editor" rows="13">${esc(c.agents)}</textarea></label><details class="details-box"><summary>${t('settings.currentActiveContent')}</summary><pre>${esc(w.config.active?.agentsMd ?? t('settings.noActiveConfig'))}</pre></details>` : `<div class="section-heading"><div><h2>${t('settings.advancedTitle')}</h2><p>${t('settings.advancedBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importJson')}`, "import-json", "small")}</div><label class="field">${t('settings.configurationJson')}<textarea id="advanced-editor" aria-label="${esc(t('settings.configurationJson'))}" class="code-editor" rows="17" spellcheck="false">${esc(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">${t('settings.advancedHelp')}</p>`}</div>${view.configDirty ? `<div class="settings-savebar"><span>${t('settings.unsavedBar')}</span><div class="actions">${btn(t('settings.discardChanges'), "discard-config")}${btn(t('settings.saveChanges'), "save-config", "primary")}</div></div>` : ""}${languageSection}</main>`;
+    return `<main class="settings-page">${configurationError ? feedback(`${esc(configurationError)} ${t('settings.configPreserved')}`, "warning") : ""}<div class="settings-navigation">${btn(`${icon('arrow', 16)} ${t('settings.backToWork')}`, 'back-work', 'quiet settings-back')}</div><div class="settings-heading"><h1>${t('settings.title')}</h1>${!attention ? `<div class="configuration-compact">${badge(t('settings.configInUse'))}${statusActions}</div>` : ''}</div>${attention ? `<div class="configuration-state"><div><strong>${applyBusy ? pendingStatus(stateLabel, "apply-config") : esc(stateLabel)}</strong><span>${stateBody}</span></div><div class="actions">${statusActions}</div></div>` : ''}${otherApplyTasks}<nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((tab) => btn(tab === "Skills" ? t('settings.tabSkills') : tab === "Pi Packages" ? t('settings.tabPackages') : tab === "AGENTS.md" ? t('settings.tabAgents') : t('settings.tabAdvanced'), "settings-section", view.settingsTab === tab ? "tab active" : "tab", `data-tab="${tab}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>${t('settings.agentsTitle')}</h2><p>${t('settings.agentsBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importFile')}`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? t('settings.previousActive') : t('settings.configInUse')}</span><span>${t('settings.savedConfiguration')}</span></div><label class="field">${t('settings.desiredAgents')}<textarea id="agents-editor" class="code-editor" rows="13">${esc(c.agents)}</textarea></label><details class="details-box"><summary>${t('settings.currentActiveContent')}</summary><pre>${esc(w.config.active?.agentsMd ?? t('settings.noActiveConfig'))}</pre></details>` : `<div class="section-heading"><div><h2>${t('settings.advancedTitle')}</h2><p>${t('settings.advancedBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importJson')}`, "import-json", "small")}</div><label class="field">${t('settings.configurationJson')}<textarea id="advanced-editor" aria-label="${esc(t('settings.configurationJson'))}" class="code-editor" rows="17" spellcheck="false">${esc(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">${t('settings.advancedHelp')}</p>`}</div>${view.configDirty ? `<div class="settings-savebar"><span>${t('settings.unsavedBar')}</span><div class="actions">${btn(t('settings.discardChanges'), "discard-config")}${btn(t('settings.saveChanges'), "save-config", "primary")}</div></div>` : ""}${languageSection}</main>`;
 }
 function catalogFeedback(name) {
     const status = adapter.catalog[name];
@@ -1492,7 +1622,7 @@ function skillsSettings(w, c) {
         .join("")}</div>`;
 }
 function packagesSettings(w, c) {
-    return `<div class="section-heading"><div><h2>${t('settings.packagesTitle')}</h2><p>${t('settings.packagesBody')}</p></div>${btn(`${icon("plus", 15)} ${t('settings.installPackage')}`, "install-package", "primary small")}</div><div class="capability-list package-list">${c.packages.length ? c.packages.map((p) => `<article class="capability package-capability"><div class="capability-check package-identity"><span class="capability-icon">${icon("grid", 20)}</span><span class="package-copy"><strong>${esc(p.name)}</strong><small>${esc(p.source)}</small></span></div>${btn(t('common.details'), "package-detail", "quiet small package-details", `data-id="${esc(p.name)}"`)}<div class="package-status">${badge(p.enabled ? 'Enabled' : 'Disabled')}<span>${packageStatus(w, p.name)}</span></div><div class="package-actions">${btn(p.enabled ? t('settings.disable') : t('settings.enable'), "toggle-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.updateSource'), "update-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.remove'), "remove-package", "small danger", `data-id="${esc(p.name)}"`)}</div></article>`).join("") : empty("grid", t('settings.noPackagesTitle'), t('settings.noPackagesBody'))}${catalogFeedback("packages")}<div class="catalog-heading"><h3>${t('settings.availableFromCore')}</h3><div class="catalog-actions">${btn(t('settings.checkCatalog'), "check-catalog", "quiet small")}${btn(t('settings.clearWorkSelection'), "clear-packages", "quiet small")}</div></div>${adapter
+    return `<div class="section-heading"><div><h2>${t('settings.packagesTitle')}</h2><p>${t('settings.packagesBody')}</p></div>${btn(`${icon("plus", 15)} ${t('settings.installPackage')}`, "install-package", "primary small")}</div>${settingsTaskRows(adapter.state.operations.filter(op => op.workId === w.id && operationKind(op.checkedKind || op.kind).startsWith('package:')))}<div class="capability-list package-list">${c.packages.length ? c.packages.map((p) => `<article class="capability package-capability"><div class="capability-check package-identity"><span class="capability-icon">${icon("grid", 20)}</span><span class="package-copy"><strong>${esc(p.name)}</strong><small>${esc(p.source)}</small></span></div>${btn(t('common.details'), "package-detail", "quiet small package-details", `data-id="${esc(p.name)}"`)}<div class="package-status">${badge(p.enabled ? 'Enabled' : 'Disabled')}<span>${packageStatus(w, p.name)}</span></div><div class="package-actions">${btn(p.enabled ? t('settings.disable') : t('settings.enable'), "toggle-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.updateSource'), "update-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.remove'), "remove-package", "small danger", `data-id="${esc(p.name)}"`)}</div></article>`).join("") : empty("grid", t('settings.noPackagesTitle'), t('settings.noPackagesBody'))}${catalogFeedback("packages")}<div class="catalog-heading"><h3>${t('settings.availableFromCore')}</h3><div class="catalog-actions">${btn(t('settings.checkCatalog'), "check-catalog", "quiet small")}${btn(t('settings.clearWorkSelection'), "clear-packages", "quiet small")}</div></div>${adapter
         .getPackages()
         .map((p) => `<div class="catalog-row package-catalog-row"><span class="capability-icon">${icon("grid", 20)}</span><div class="package-copy"><strong>${esc(p.name)}</strong><p>${esc(p.description || t('settings.descriptionNotProvided'))} · ${p.version || t('settings.versionNotProvided')}</p></div>${btn(t('settings.select'), "select-package", "small", `data-id="${esc(p.name)}" ${adapter.catalog.packages.error || !adapter.catalog.packages.confirmed ? "disabled" : ""}`)}</div>`)
         .join("")}</div>`;
@@ -1552,15 +1682,16 @@ function exportPanel(target) {
     const active = target ? exportFlows.forWork(target.id) : undefined;
     const busy = !!active && !active.terminal;
     const phases = { checking: t('export.phase.checking'), stopping: t('export.phase.stopping'), exporting: t('export.phase.exporting'), snapshot: t('export.phase.snapshot'), preparing: t('export.phase.preparing'), ready: t('export.phase.ready'), delivered: t('export.phase.delivered'), unknown: t('export.phase.unknown'), failed: t('export.phase.failed'), revoked: t('export.phase.revoked') };
-    const title = flow ? phases[flow.phase] || flow.phase : t('export.packageTitle');
+    const title = flow ? phases[flow.phase] || flow.phase : view.data.findSnapshot ? t('recovery.previousExport') : t('export.packageTitle');
     const canSave = snap?.status === 'verified' && job?.ready && exportSnapshotAvailable(snap);
     const details = `${flow?.stopOperationId ? `<dt>${t('export.stopLabel')}</dt><dd>${btn(esc(flow.stopOperationId), 'operation', 'text-button', `data-id="${esc(flow.stopOperationId)}"`)}</dd>` : ''}${flow?.exportOperationId || snap?.operationId ? `<dt>${t('export.exportLabel')}</dt><dd>${btn(esc(flow?.exportOperationId || snap?.operationId), 'operation', 'text-button', `data-id="${esc(flow?.exportOperationId || snap?.operationId)}"`)}</dd>` : ''}${snap ? `<dt>${t('export.snapshotLabel')}</dt><dd><code>${esc(snap.id)}</code></dd><dt>${t('export.statusLabel')}</dt><dd>${badge(snap.status)}</dd><dt>${t('export.sizeLabel')}</dt><dd>${esc(snap.size || t('text.notProvided'))}</dd><dt>${t('export.expiresLabel')}</dt><dd>${esc(snap.expiresAt || t('text.notProvided'))}</dd>` : ''}`;
+    const findSnapshot = target ? `<label class="field">${t('ops.findSnapshot')}<div class="input-action"><input id="snapshot-query" value="${esc(view.snapshotQuery)}" placeholder="snapshot-…">${btn(t('ops.findSnapshotButton'), 'lookup-snapshot', '', `data-work-id="${esc(target.id)}"`)}</div></label>` : '';
     const known = target ? adapter.state.snapshots.filter(value => value.workId === target.id && value.id !== selectedID) : [];
     const controls = flow && !flow.terminal ? `${btn(t('quick.checkStatus'), 'check-export-flow', 'small', `data-id="${esc(flow.id)}"`)}${!flow.terminal ? btn(flow.paused ? t('export.resume') : t('export.pause'), flow.paused ? 'resume-export-flow' : 'pause-export-flow', 'small', `data-id="${esc(flow.id)}"`) : ''}` : '';
     const error = flow?.error || snap?.error || job?.error || job?.observationError;
     const unavailable = snap?.status === 'expired' ? t('export.packageExpired') : snap?.status === 'unavailable' ? t('export.packageUnavailable') : '';
     const waiting = !!flow && !flow.paused && ['checking', 'stopping', 'exporting', 'snapshot', 'preparing'].includes(flow.phase) && !error;
-    const body = `<p class="export-work-name">${esc(flow?.workName || target?.name || snap?.workId)}</p><p class="export-summary" role="status">${waiting ? pendingStatus(title, "export prepare-export download-work check-export-flow resume-export-flow save-export-file check-download") + " " : ""}${flow?.paused ? t('export.pausedBody') : flow?.phase === 'delivered' ? t('export.deliveredBody') : !flow ? t('export.packageBody') : t('export.keepWorking')}</p>${error || unavailable ? feedback(esc(error || unavailable), 'warning') : ''}<p class="export-privacy">${icon('lock', 14)} ${t('export.privacy')}</p><details class="export-details"><summary>${t('common.details')}</summary>${details ? `<dl class="export-snapshot">${details}</dl>` : ''}${snap ? downloadProgressMarkup(snap.id) : ''}${controls ? `<div class="actions">${controls}</div>` : ''}${known.length ? `<h3>${t('export.otherPackages')}</h3><div class="menu-list">${known.map(value => btn(`${esc(value.id)} · ${esc(value.status)}`, 'view-snapshot', '', `data-id="${esc(value.id)}" data-work-id="${esc(value.workId)}"`)).join('')}</div>` : ''}<p class="muted">${t('export.closingNote')}</p></details>`;
+    const body = `<p class="export-work-name">${esc(flow?.workName || target?.name || snap?.workId)}</p><p class="export-summary" role="status">${waiting ? pendingStatus(title, "export prepare-export download-work check-export-flow resume-export-flow save-export-file check-download") + " " : ""}${flow?.paused ? t('export.pausedBody') : flow?.phase === 'delivered' ? t('export.deliveredBody') : view.data.findSnapshot && !snap ? t('recovery.previousExportBody') : !flow ? t('export.packageBody') : t('export.keepWorking')}</p>${error || unavailable ? feedback(esc(error || unavailable), 'warning') : ''}<p class="export-privacy">${icon('lock', 14)} ${t('export.privacy')}</p><details class="export-details"${view.data.findSnapshot ? ' open' : ''}><summary>${t('common.details')}</summary>${details ? `<dl class="export-snapshot">${details}</dl>` : ''}${findSnapshot}${snap ? downloadProgressMarkup(snap.id) : ''}${controls ? `<div class="actions">${controls}</div>` : ''}${known.length ? `<h3>${t('export.otherPackages')}</h3><div class="menu-list">${known.map(value => btn(`${esc(value.id)} · ${esc(value.status)}`, 'view-snapshot', '', `data-id="${esc(value.id)}" data-work-id="${esc(value.workId)}"`)).join('')}</div>` : ''}<p class="muted">${t('export.closingNote')}</p></details>`;
     const retry = flow && flow.phase === 'unknown' && !canSave ? btn(t('quick.checkStatus'), 'check-export-flow', 'primary', `data-id="${esc(flow.id)}"`) : '';
     const download = canSave ? btn(flow?.autoDeliveryConsumed ? t('export.downloadAgain') : t('editor.saveFile'), 'save-export-file', 'primary', `data-id="${esc(snap.id)}"`) : (!flow || flow.phase === 'failed' && !!job?.terminalFailure) && snap?.status === 'verified' && exportSnapshotAvailable(snap) ? btn(job?.terminalFailure ? t('export.retryDownload') : t('export.downloadSnapshot'), 'download-work', 'primary', `data-id="${esc(snap.id)}" ${busy && active?.snapshotId !== snap.id ? 'disabled' : ''}`) : '';
     const fresh = !flow && target && ['expired', 'unavailable'].includes(snap?.status || '') ? btn(t('export.exportCurrentWork'), 'prepare-export', 'primary', `data-id="${esc(target.id)}" ${busy ? 'disabled' : ''}`) : '';
@@ -1593,7 +1724,7 @@ function modalMarkup() {
             break;
         case "account":
             title = esc(adapter.state.core.account || t('topbar.account'));
-            body = `<p class="account-context"><span>${t('account.roleLine', { role: esc(adapter.state.core.role === 'admin' ? t('account.administrator') : adapter.state.core.role) })}</span><span title="${esc(adapter.state.core.address)}">${t('account.coreLine', { address: esc(adapter.state.core.address) })}</span></p><div class="menu-list">${btn(`${icon("info")} ${t('account.about')}`, "about-piwork")}${btn(`${icon("clock")} ${t('account.knownOperations')}`, "operations")}${adapter.state.core.role === "admin" ? btn(`${icon("download")} ${t('account.exportLogs')}`, "export-logs") : ""}</div>${languageMenuItems()}<div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} ${t('account.administration')}</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} ${t('account.quickSetup')}</a>` : "") : `${btn(`${icon("refresh")} ${t('account.switchCore')}`, "switch-core")}`}${btn(`${icon("logout")} ${t('account.signOut')}`, "sign-out", "danger")}</div>`;
+            body = `<p class="account-context"><span>${t('account.roleLine', { role: esc(adapter.state.core.role === 'admin' ? t('account.administrator') : adapter.state.core.role) })}</span><span title="${esc(adapter.state.core.address)}">${t('account.coreLine', { address: esc(adapter.state.core.address) })}</span></p><div class="menu-list">${btn(`${icon("info")} ${t('account.about')}`, "about-piwork")}${adapter.state.core.role === "admin" ? btn(`${icon("download")} ${t('account.exportLogs')}`, "export-logs") : ""}</div>${languageMenuItems()}<div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} ${t('account.administration')}</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} ${t('account.quickSetup')}</a>` : "") : `${btn(`${icon("refresh")} ${t('account.switchCore')}`, "switch-core")}`}${btn(`${icon("logout")} ${t('account.signOut')}`, "sign-out", "danger")}</div>`;
             break;
         case "connection":
             title = t('connection.title');
@@ -1607,14 +1738,14 @@ function modalMarkup() {
             break;
         case "work-menu":
             title = target ? esc(target.name) : t('workMenu.options');
-            body = `<div class="menu-list">${btn(`${icon("info")} ${t('workMenu.info')}`, "work-info", "", `data-id="${target?.id}"`)}${btn(`${icon("settings")} ${t('workMenu.settings')}`, "settings", "", `data-id="${target?.id}"`)}${btn(`${icon("download")} ${t('workMenu.export')}`, "export", "", `data-id="${target?.id}"`)}${target && adapter.project(target).action === "stop" ? btn(`${icon("stop")} ${t('workMenu.stop')}`, "stop-work", "", `data-id="${esc(target.id)}"`) : ""}${btn(`${icon("trash")} ${t('workMenu.delete')}`, "delete-work", "danger", `data-id="${target?.id}"`)}</div>${languageMenuItems()}`;
+            body = `<div class="menu-list">${btn(`${icon("info")} ${t('workMenu.info')}`, "work-info", "", `data-id="${target?.id}"`)}${btn(`${icon("settings")} ${t('workMenu.settings')}`, "settings", "", `data-id="${target?.id}"`)}${btn(`${icon("download")} ${t('workMenu.export')}`, "export", "", `data-id="${target?.id}"`)}${btn(`${icon("clock")} ${t('recovery.previousExport')}`, "find-previous-export", "", `data-id="${esc(target?.id)}"`)}${target && adapter.project(target).action === "stop" ? btn(`${icon("stop")} ${t('workMenu.stop')}`, "stop-work", "", `data-id="${esc(target.id)}"`) : ""}${btn(`${icon("trash")} ${t('workMenu.delete')}`, "delete-work", "danger", `data-id="${target?.id}"`)}</div>${languageMenuItems()}`;
             break;
         case "work-info":
             if (!target)
                 break;
             title = t('workMenu.info');
             body = `<dl class="property-list"><dt>${t('workInfo.name')}</dt><dd>${esc(target.name)}</dd><dt>${t('workInfo.status')}</dt><dd>${badge(target.status)}</dd><dt>${t('workInfo.desired')}</dt><dd>${target.desired}</dd><dt>${t('workInfo.id')}</dt><dd class="property-value-action"><code>${target.id}</code>${btn(icon("copy", 15), "copy", "icon-button quiet", `data-copy="${target.id}" aria-label="${esc(t('workInfo.copyId'))}"`)}</dd><dt>${t('workInfo.network')}</dt><dd class="property-value-action"><code>${esc(target.network || t('text.notProvided'))}</code>${btn(icon("copy", 15), "copy", "icon-button quiet", `data-copy="${target.network}" aria-label="${esc(t('workInfo.copyNetwork'))}"`)}</dd><dt>${t('workInfo.owner')}</dt><dd>${esc(adapter.state.core.account)}</dd></dl>`;
-            footer = `${close()}${[...actions.records.values()].some(record => record.blocked && record.kind === 'lifecycle' && record.work === target.id) ? btn(t('workInfo.checkOriginal'), 'check-work', '', `data-id="${esc(target.id)}"`) : ''}`;
+            footer = `${close()}${btn(t('recovery.findWorkTask'), 'find-work-task', '', `data-id="${esc(target.id)}"`)}${[...actions.records.values()].some(record => record.blocked && record.kind === 'lifecycle' && record.work === target.id) ? btn(t('workInfo.checkOriginal'), 'check-work', '', `data-id="${esc(target.id)}"`) : ''}`;
             break;
         case "new-work":
             title = t('works.newWork');
@@ -1642,7 +1773,7 @@ function modalMarkup() {
                         .map((p) => `<label class="check-row"><input type="checkbox" data-create-package="${esc(p.name)}" ${view.createPackages.includes(p.name) ? "checked" : ""}>${esc(p.name)}</label>`)
                         .join("")
                     : ""}<label class="field">AGENTS.md<textarea id="create-agents" rows="4" placeholder="${esc(t('create.agentsPlaceholder'))}">${esc(view.createAgents)}</textarea></label>${btn(t('create.importAgents'), "create-import-agents", "small")}<label class="field">${t('create.fullJson')}<textarea id="create-json" rows="4" class="mono" placeholder="${esc(t('create.jsonPlaceholder'))}">${esc(view.createJson)}</textarea></label></div>`
-                : ""}<div class="merge-summary"><strong>${t('create.summaryTitle')}</strong><span>${t('create.summaryImage', { value: esc(view.createImage || t('create.coreDefault')) })}</span><span>${t('create.summarySkills', { value: view.createSkillMode === "defaults" ? t('create.coreDefaults') : view.createSkillMode === "none" ? t('create.none') : esc(view.createSkills.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.summaryPackages', { value: view.createPackageMode === "defaults" ? t('create.coreDefaults') : view.createPackageMode === "none" ? t('create.none') : esc(view.createPackages.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.overrideNote')}</span></div>`;
+                : ""}<div class="merge-summary"><strong>${t('create.summaryTitle')}</strong><span>${t('create.summaryImage', { value: esc(view.createImage || t('create.coreDefault')) })}</span><span>${t('create.summarySkills', { value: view.createSkillMode === "defaults" ? t('create.coreDefaults') : view.createSkillMode === "none" ? t('create.none') : esc(view.createSkills.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.summaryPackages', { value: view.createPackageMode === "defaults" ? t('create.coreDefaults') : view.createPackageMode === "none" ? t('create.none') : esc(view.createPackages.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.overrideNote')}</span></div><details class="original-task-lookup"><summary>${t('recovery.findCreate')}</summary><label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), 'lookup-create-operation')}</div></label></details>`;
             footer = `${cancel()}${btn(t('create.submit'), "create-work", "primary", createSubmissionBlocked(actions.records.values(), view.createName) ? "disabled" : "")}`;
             break;
         case "stop-work":
@@ -1701,7 +1832,7 @@ function modalMarkup() {
             break;
         case "manage-services":
             title = t('service.manage');
-            body = `<p>${t('service.definitionsAgent')}</p><div class="service-list">${target?.services.map((s) => `<button data-action="service-details" data-id="${s.id}"><span class="service-list-icon">${icon(s.ports.length ? "grid" : "terminal", 20)}</span><span><strong>${esc(s.name)}</strong><small>${s.ports.length ? t(s.ports.length === 1 ? 'service.declaredPortOne' : 'service.declaredPortMany', { count: s.ports.length }) : t('service.noWebEntry')} · ${s.enabled ? t('stateValue.enabled') : t('stateValue.disabled')}</small></span>${badge(s.observed)}${icon("chevron", 15)}</button>`).join("") || `<p>${t('service.noneDefined')}</p>`}</div>`;
+            body = `<p>${t('service.definitionsAgent')}</p><div class="service-list">${target?.services.map((s) => `<button data-action="service-details" data-id="${esc(s.id)}"><span class="service-list-icon">${icon(s.ports.length ? "grid" : "terminal", 20)}</span><span><strong>${esc(s.name)}</strong><small>${s.ports.length ? t(s.ports.length === 1 ? 'service.declaredPortOne' : 'service.declaredPortMany', { count: s.ports.length }) : t('service.noWebEntry')} · ${s.enabled ? t('stateValue.enabled') : t('stateValue.disabled')}</small></span>${badge(s.observed)}${icon("chevron", 15)}</button>${controlMarkup(serviceControl(target, s.id))}`).join("") || `<p>${t('service.noneDefined')}</p>`}</div>${target ? unassignedServiceTasks(target) : ''}`;
             footer = close();
             break;
         case "service-details": {
@@ -1709,7 +1840,7 @@ function modalMarkup() {
             title = s ? esc(s.name) : t('service.removed');
             body = s
                 ? serviceDetails(s, target)
-                : `${target ? controlMarkup(serviceControls.get(`${target.id}:${view.data.serviceId}`)) : ""}<p>${t('service.removedBody')}</p>${target ? temporaryCleanupMarkup(target.id, 'service', view.data.serviceId) : ''}`;
+                : `${target ? controlMarkup(serviceControl(target, view.data.serviceId)) + serviceTaskList(target, view.data.serviceId) : ""}<p>${t('service.removedBody')}</p>${target ? temporaryCleanupMarkup(target.id, 'service', view.data.serviceId) : ''}`;
             footer = `${close()}${btn(t('service.backToServices'), "manage-services")}`;
             break;
         }
@@ -1864,30 +1995,35 @@ function modalMarkup() {
         case "import":
             title = t('import.title');
             body = `<p>${adapter.hosted ? t('import.hostedBody') : t('import.localBody', { package: '<code>.work</code>' })}</p><div class="file-drop">${icon("upload", 28)}<strong>${esc(view.inspectFilename || t('import.choosePackage'))}</strong>${btn(t('import.chooseFile'), "choose-work-file", "", adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? "disabled" : "")}</div>${adapter.transferProgress ? feedback(`${['receiving', 'uploading', 'validating', 'inspecting', 'verifying'].includes(adapter.transferProgress.phase) ? pendingStatus(t('import.transfer', { phase: adapter.transferProgress.phase }), 'work-file-input confirm-import') : ''}${progressText(adapter.transferProgress)}${adapter.transferProgress.error ? ` · ${esc(adapter.transferProgress.error)}` : ''}`) : ""}${adapter.inspection ? `${feedback(adapter.hosted ? t('import.verifiedServer') : t('import.verifiedLocal'), "success")}<div class="inspection-summary"><h3>${t('import.summary')}</h3><pre>${esc(JSON.stringify(adapter.inspection, null, 2))}</pre><p>${t('import.note')}</p></div><label class="field">${t('import.workName')} <span>${t('create.optional')}</span><input id="import-name" value="${esc(view.importName)}" aria-label="${t('import.workName')}" aria-describedby="import-name-help${currentNameError() ? ' import-name-error' : ''}" ${currentNameError() ? 'aria-invalid="true"' : ""} placeholder="${t('import.namePlaceholder')}"><span id="import-name-help">${t('import.nameHelp')}</span>${nameFieldError("import-name-error", true)}</label>` : ""}`;
-            body += adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? feedback(t('import.original', { state: esc(adapter.inspectionContext.importState), transfer: `<code>${esc(adapter.inspectionTransfer)}</code>` }), "warning", btn(t('import.checkOriginal'), "check-inspection-import", "small") + btn(t('ops.known'), "operations", "small")) : "";
+            body += adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? feedback(t('import.original', { state: esc(adapter.inspectionContext.importState) }), "warning", btn(t('import.checkOriginal'), "check-inspection-import", "small") + (adapter.inspectionContext.operationId ? btn(t('common.details'), 'operation', 'small', `data-id="${esc(adapter.inspectionContext.operationId)}"`) : '')) + `<details><summary>${t('runDetails.technical')}</summary><p><code>${esc(adapter.inspectionTransfer)}</code></p></details>` : "";
+            if (adapter.state.signedIn)
+                body += `<details class="original-task-lookup"><summary>${t('recovery.findImport')}</summary><label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), 'lookup-import-operation')}</div></label></details>`;
             footer = `${cancel()}${adapter.inspection && adapter.inspectionContext?.importState === "unsubmitted" ? btn(adapter.state.signedIn ? t('import.title') : t('import.signIn'), adapter.state.signedIn ? "confirm-import" : "import-sign-in", "primary") : ""}`;
             break;
         case "operations": {
-            title = view.data.workId ? t('ops.related') : t('ops.known');
+            title = t('ops.related');
             const scope = `${adapter.state.core.address} · ${adapter.state.core.account}`;
-            const operations = adapter.state.operations.filter((o) => o.scope === scope && (!view.data.workId || o.workId === view.data.workId));
-            body = `<p>${adapter.hosted ? t('ops.hostedBody') : t('ops.localBody')}</p><label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), "lookup-operation")}</div></label><label class="field">${t('ops.findSnapshot')}<div class="input-action"><input id="snapshot-query" value="${esc(view.snapshotQuery)}" placeholder="snapshot-…">${btn(t('ops.findSnapshotButton'), "lookup-snapshot")}</div></label><div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${op.id}"><span>${icon("clock", 17)}<span><strong>${esc(op.kind)}</strong><small>${op.id} · ${op.updated}</small></span></span>${badge(op.state)}</button>`).join("") : `<p class="muted">${t('ops.none')}</p>`}</div><p class="muted">${adapter.hosted ? t('ops.hostedNote') : t('ops.localNote')}</p>`;
-            footer = `${close()}${btn(t('ops.clear'), "clear-operations", "quiet", operations.length ? "" : "disabled")}`;
+            const operations = adapter.state.operations.filter((o) => view.data.workId && o.scope === scope && o.workId === view.data.workId);
+            body = `<p>${t('recovery.workTasksBody')}</p><label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), "lookup-operation")}</div></label><div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${esc(op.id)}"><span>${icon("clock", 17)}<span><strong>${esc(operationAction(op))}</strong></span></span>${badge(op.state)}</button>`).join("") : `<p class="muted">${t('recovery.noWorkTasks')}</p>`}</div>`;
+            footer = close();
             break;
         }
         case "operation": {
             const op = adapter.getOperation(view.data.id);
-            title = op ? esc(op.kind) : t('ops.notFoundTitle');
+            const kind = op ? operationKind(op.checkedKind || op.kind) : '', start = op && importStarts.get(op.id);
+            title = op ? esc(operationAction(op)) : t('ops.notFoundTitle');
+            const originalStart = start ? `<dt>${t('ops.originalStart')}</dt><dd><code>${esc(start.startId || start.phase)}</code></dd>` : '';
             body = op
-                ? `${phase(op)}${importNameFeedback(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">${t('ops.workLine', { status: workStatus(adapter.getWork(op.workId)) + quickAction(adapter.getWork(op.workId)) })}</div>` : ""}${feedback(t('ops.phaseNote', { phase: esc(op.phase), note: op.state === "accepted" || op.state === "preparing" ? t('ops.acceptedNote') : op.state === "unknown" ? t('ops.unknownNote') : op.state === "succeeded" ? t('ops.succeededNote') : "" }), op.state === "failed" ? "warning" : op.state === "succeeded" ? "success" : "info")}<dl><dt>${t('ops.operationId')}</dt><dd><code>${op.id}</code>${btn(icon("copy", 14), "copy", "icon-button quiet", `data-copy="${op.id}" aria-label="${t('ops.copyId')}"`)}</dd><dt>${t('ops.workId')}</dt><dd><code>${op.workId}</code></dd><dt>${t('ops.state')}</dt><dd>${badge(op.state)}</dd><dt>${t('ops.lastConfirmed')}</dt><dd>${op.updated}</dd>${op.snapshotId ? `<dt>${t('ops.snapshotId')}</dt><dd><code>${op.snapshotId}</code></dd>` : ""}</dl>${op.error ? feedback(esc(op.error), "warning") : ""}${op.observationError ? feedback(t('ops.observationInterrupted', { error: esc(op.observationError) }), "warning") : ""}${op.localRecordSaved === false ? feedback(t('ops.localSaveFailed'), "warning") : ""}`
+                ? `${phase(op)}${importNameFeedback(op)}${op.action && adapter.getWork(op.workId) ? `<div class="operation-work-status">${t('ops.workLine', { status: workStatus(adapter.getWork(op.workId)) + quickAction(adapter.getWork(op.workId)) })}</div>` : ""}${op.state === 'unknown' ? feedback(t('ops.unknownNote'), 'warning') : ''}${operationFailure(op)}${op.observationError ? feedback(t('ops.observationInterrupted', { error: esc(op.observationError) }), "warning") : ""}${op.localRecordSaved === false ? feedback(t('ops.localSaveFailed'), "warning") : ""}${operationTechnicalDetails(op, originalStart)}`
                 : `<p>${t('ops.notKnown')}</p>`;
-            if (op?.kind === 'Import Work' && op.state === 'succeeded') { // i18n-exempt: server operation kind
-                const imported = adapter.getWork(op.workId), start = importStarts.get(op.id);
+            if (op && kind === 'transfer:import' && op.state === 'succeeded') {
+                const imported = adapter.getWork(op.workId);
                 const stopped = imported?.status === 'Stopped' && imported.desired === 'stopped' && !imported.statusError;
                 title = start ? t('ops.importStartProgress') : stopped ? t('ops.importNotStarted') : t('ops.importedWork');
-                body = `<p>${start ? t('ops.importStartBody') : stopped ? t('ops.importStoppedBody') : t('ops.importDoneBody')}</p>${start ? `<dl><dt>${t('ops.originalImport')}</dt><dd><code>${esc(op.id)}</code></dd><dt>${t('ops.originalStart')}</dt><dd>${start.startId ? `<code>${esc(start.startId)}</code>` : esc(start.phase)}</dd></dl>${controlMarkup(workControls.get(op.workId))}` : ''}${body}`;
+                body = `<p>${start ? t('ops.importStartBody') : stopped ? t('ops.importStoppedBody') : t('ops.importDoneBody')}</p>${start ? controlMarkup(workControls.get(op.workId)) : ''}${body}`;
             }
-            footer = `${close()}${op ? btn(t('quick.checkStatus'), "check-operation", "", `data-id="${op.id}"`) : ""}${op && !["succeeded", "failed", "superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? t('ops.resume') : t('ops.pause'), adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${op.id}"`) : ""}${op?.state === "succeeded" && op.kind === "Import Work" ? importExitButtons(op) : op?.state === "succeeded" && op.kind === "Create Work" ? workLink(t('quick.openWork'), op.workId, 'primary') : op?.snapshotId ? btn(t('ops.viewSnapshot'), "view-snapshot", "primary", `data-id="${esc(op.snapshotId)}" data-work-id="${esc(op.workId)}"`) : ""}`;
+            const work = op && adapter.getWork(op.workId);
+            footer = `${close()}${op ? btn(t('quick.checkStatus'), "check-operation", "", `data-id="${esc(op.id)}"`) : ""}${op && !["succeeded", "failed", "superseded"].includes(op.state) ? btn(adapter.operationPaused(op.id) ? t('ops.resume') : t('ops.pause'), adapter.operationPaused(op.id) ? "resume-operation" : "pause-operation", "", `data-id="${esc(op.id)}"`) : ""}${op?.state === "succeeded" && kind === 'transfer:import' ? importExitButtons(op) : op?.state === "succeeded" && kind === 'work:create' && work && adapter.project(work).usable ? workLink(t('quick.openWork'), op.workId, 'primary') : op?.snapshotId ? btn(t('ops.viewSnapshot'), "view-snapshot", "primary", `data-id="${esc(op.snapshotId)}" data-work-id="${esc(op.workId)}"`) : ""}`;
             break;
         }
     }
@@ -1950,15 +2086,16 @@ function temporaryCleanupMarkup(workId, kind, ref) {
     return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3>${items}${state.truncated ? `<p>${t('merge.olderRecords')}</p>` : ''}${refresh}</section>`;
 }
 function serviceDetails(s, w) {
-    const logs = adapter.serviceLogs(w.id, s.id), control = serviceControls.get(`${w.id}:${s.id}`);
+    const logs = adapter.serviceLogs(w.id, s.id), control = serviceControl(w, s.id);
+    const blocked = serviceControlBlocked(w, s.id), blockReason = blocked ? `title="${esc(t('action.checkServiceControl'))}"` : '';
     const op = control?.operationId ? adapter.getOperation(control.operationId) : undefined, port = s.ports.includes(view.port) ? view.port : s.ports[0];
     const open = serviceCompletionReady(op, w.id, adapter.project(w).usable, s, port) ? btn(t('service.open'), 'open-controlled-service', 'primary', `data-service-id="${esc(s.id)}" data-port="${port}"`) : '';
     const currentService = route()[0] === 'app' ? w.services.find(item => item.id === route()[2]) : activeService(w);
     const entryChoice = s.ports.length > 1 && currentService?.id === s.id
         ? `<label class="field">${t('service.webEntry')}<select id="port-select" data-service-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || s.observed !== 'Ready' ? 'disabled' : ''}>${s.ports.map(item => `<option value="${item}" ${item === port ? 'selected' : ''}>${t('service.port', { port: item })}</option>`).join('')}</select></label>` : '';
-    const ordinaryControls = s.temporary ? '' : `${btn(t('service.start'), "service-action", "small", `data-control="start" data-id="${s.id}" ${!adapter.project(w).usable || s.observed === "Ready" ? "disabled" : ""}`)}${btn(t('service.stop'), "service-action", "small", `data-control="stop" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled ? "disabled" : ""}`)}${btn(t('service.restart'), "service-action", "small", `data-control="restart" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" ? "disabled" : ""}`)}${btn(t('service.retryAction'), "service-action", "small", `data-control="retry" data-id="${s.id}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" ? "disabled" : ""}`)}`;
+    const ordinaryControls = s.temporary ? '' : `${btn(t('service.start'), "service-action", "small", `data-control="start" data-id="${esc(s.id)}" ${!adapter.project(w).usable || s.observed === "Ready" || blocked ? "disabled" : ""} ${blockReason}`)}${btn(t('service.stop'), "service-action", "small", `data-control="stop" data-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || blocked ? "disabled" : ""} ${blockReason}`)}${btn(t('service.restart'), "service-action", "small", `data-control="restart" data-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" || blocked ? "disabled" : ""} ${blockReason}`)}${btn(t('service.retryAction'), "service-action", "small", `data-control="retry" data-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" || blocked ? "disabled" : ""} ${blockReason}`)}`;
     const temporaryFacts = s.temporary ? `<dt>${t('merge.lifetime')}</dt><dd>${t('merge.runTemporary')} · ${esc(s.temporary.mode)}</dd>${s.temporary.exitCode !== undefined ? `<dt>${t('diag.exitCode')}</dt><dd>${s.temporary.exitCode}</dd>` : ''}` : '';
-    return `${controlMarkup(control)}${open}${entryChoice}${serviceExplanation(s)}<dl class="property-list"><dt>${t('service.domain')}</dt><dd><code>${esc(s.domain)}</code></dd><dt>${t('service.declaredPortsTitle')}</dt><dd>${s.ports.length ? s.ports.join(", ") : t('service.noPorts')}</dd><dt>${t('service.enabled')}</dt><dd>${s.enabled ? t('service.enabledPersists') : t('service.disabledPersists')}</dd><dt>${t('service.observed')}</dt><dd>${badge(s.observed)}</dd>${temporaryFacts}</dl>${serviceDiagnostics(s)}${s.temporary ? temporaryCleanupMarkup(w.id, 'service', s.id) : ''}<div class="service-controls">${ordinaryControls}${btn(t('service.remove'), "service-action", "small danger", `data-control="remove" data-id="${s.id}" ${!adapter.project(w).usable ? "disabled" : ""}`)}</div><div class="logs-heading"><h3>${t('service.logTitle')}</h3>${btn(`${icon("refresh", 14)} ${t('service.refreshLogs')}`, "refresh-logs", "small")}</div>${logs?.loading ? pendingStatus(t('service.readingLogs', { name: esc(s.name) }), 'service-details refresh-logs') : ""}${logs?.error ? feedback(esc(logs.error), "warning", btn(t('service.retryLogs'), "refresh-logs", "small")) : ""}<pre class="logs">${esc(logs?.value?.text ?? logs?.value?.reason ?? t('service.noLogs'))}</pre><p class="muted small-text">${esc(logs?.value?.status ?? t('service.notRetrieved'))} · ${t('service.collected', { time: esc(logs?.value?.collectedAt ?? t('text.notProvided')) })} · ${logs?.value?.truncated ? t('service.truncated') : t('service.bounded')}. ${t('service.notLive')}</p>`;
+    return `${controlMarkup(control)}${serviceTaskList(w, s.id)}${open}${entryChoice}${serviceExplanation(s)}<dl class="property-list"><dt>${t('service.domain')}</dt><dd><code>${esc(s.domain)}</code></dd><dt>${t('service.declaredPortsTitle')}</dt><dd>${s.ports.length ? s.ports.join(", ") : t('service.noPorts')}</dd><dt>${t('service.enabled')}</dt><dd>${s.enabled ? t('service.enabledPersists') : t('service.disabledPersists')}</dd><dt>${t('service.observed')}</dt><dd>${badge(s.observed)}</dd>${temporaryFacts}</dl>${serviceDiagnostics(s)}${s.temporary ? temporaryCleanupMarkup(w.id, 'service', s.id) : ''}<div class="service-controls">${ordinaryControls}${btn(t('service.remove'), "service-action", "small danger", `data-control="remove" data-id="${esc(s.id)}" ${!adapter.project(w).usable || blocked ? "disabled" : ""} ${blockReason}`)}</div><div class="logs-heading"><h3>${t('service.logTitle')}</h3>${btn(`${icon("refresh", 14)} ${t('service.refreshLogs')}`, "refresh-logs", "small")}</div>${logs?.loading ? pendingStatus(t('service.readingLogs', { name: esc(s.name) }), 'service-details refresh-logs') : ""}${logs?.error ? feedback(esc(logs.error), "warning", btn(t('service.retryLogs'), "refresh-logs", "small")) : ""}<pre class="logs">${esc(logs?.value?.text ?? logs?.value?.reason ?? t('service.noLogs'))}</pre><p class="muted small-text">${esc(logs?.value?.status ?? t('service.notRetrieved'))} · ${t('service.collected', { time: esc(logs?.value?.collectedAt ?? t('text.notProvided')) })} · ${logs?.value?.truncated ? t('service.truncated') : t('service.bounded')}. ${t('service.notLive')}</p>`;
 }
 let focusReturn = "";
 function focusKey(el) {
@@ -2430,9 +2567,17 @@ async function handleAction(action, el, record) {
             render();
             root.querySelector('#search')?.focus({ preventScroll: true });
             break;
-        case "operations":
-            await stay(adapter.recoverOperations());
-            openModal("operations");
+        case 'check-task-operation': {
+            const op = await stay(adapter.checkOperation(el.dataset.id));
+            reviewOperation(op, record);
+            const kind = operationKind(op.checkedKind || op.kind), target = op.workId ? adapter.getWork(op.workId) : undefined;
+            await Promise.allSettled([adapter.listWorks(), ...(target ? [adapter.refreshWorkStatus(target.id)] : []), ...(target && kind === 'apply:configuration' ? [adapter.loadConfiguration(target.id)] : []), ...(target && kind.startsWith('package:') ? [adapter.loadPackages(target.id)] : [])]);
+            render();
+            break;
+        }
+        case 'dismiss-completed-operation':
+            await adapter.dismissCompletedOperation(el.dataset.id);
+            render();
             break;
         case "new-work":
             if (createDraft.open())
@@ -2581,7 +2726,7 @@ async function handleAction(action, el, record) {
         }
         case 'check-work-progress':
             if (w) {
-                const control = workControls.get(w.id);
+                const control = workControl(w);
                 if (control?.operationId)
                     await adapter.checkOperation(control.operationId);
                 const checked = await adapter.refreshWorkStatus(w.id);
@@ -2601,7 +2746,7 @@ async function handleAction(action, el, record) {
         case 'check-service-progress': {
             const serviceId = el.dataset.serviceId || view.data.serviceId, target = w, epoch = adapter.identityEpoch;
             if (target) {
-                const control = serviceControls.get(`${target.id}:${serviceId}`);
+                const control = serviceControl(target, serviceId);
                 if (control?.operationId)
                     await adapter.checkOperation(control.operationId);
                 await adapter.loadServices(target.id);
@@ -2620,6 +2765,18 @@ async function handleAction(action, el, record) {
                 }
                 render();
             }
+            break;
+        }
+        case 'check-service-operation': {
+            const target = adapter.getWork(el.dataset.workId || ''), epoch = adapter.identityEpoch;
+            const op = await stay(adapter.checkOperation(el.dataset.id));
+            if (!target || op.workId !== target.id || epoch !== adapter.identityEpoch)
+                throw new ViewChanged();
+            await adapter.loadServices(target.id);
+            if (epoch !== adapter.identityEpoch || adapter.getWork(target.id) !== target)
+                throw new ViewChanged();
+            reviewOperation(op, record);
+            render();
             break;
         }
         case 'open-controlled-service': {
@@ -2673,6 +2830,10 @@ async function handleAction(action, el, record) {
                 openModal('operations', { workId: w.id });
             break;
         }
+        case 'find-work-task':
+            if (w)
+                openModal('operations', { workId: w.id });
+            break;
         case "check-work": {
             if (!w)
                 break;
@@ -3195,6 +3356,15 @@ async function handleAction(action, el, record) {
                 await stay(adapter.readLogs(currentWork.id, el.dataset.id));
             }
             break;
+        case 'operation-service-logs': {
+            const op = adapter.getOperation(el.dataset.id);
+            const service = op && currentWork && op.workId === currentWork.id && operationRelatedService(op);
+            if (!currentWork || !service)
+                break;
+            openModal('service-details', { serviceId: service.id });
+            await stay(adapter.readLogs(currentWork.id, service.id));
+            break;
+        }
         case "service-action": {
             const control = el.dataset.control;
             if (control === "stop" || control === "remove")
@@ -3558,7 +3728,7 @@ async function handleAction(action, el, record) {
                 accept(op);
                 if (origin !== ownedView())
                     throw new ViewChanged();
-                runAndShow(op);
+                render();
             }
             break;
         case "refresh-config":
@@ -3637,8 +3807,10 @@ async function handleAction(action, el, record) {
             break;
         case "confirm-remove-package":
             if (currentWork) {
-                show(await stay(adapter.removePackage(currentWork.id, view.data.id)));
-                view.config = null;
+                accept(await stay(adapter.removePackage(currentWork.id, view.data.id)));
+                if (!view.configDirty)
+                    view.config = null;
+                closeModal();
             }
             break;
         case "unselect-package":
@@ -3680,8 +3852,10 @@ async function handleAction(action, el, record) {
                     throw Error(t('package.chooseSourceError'));
                 const name = view.data.updateTarget ||
                     (view.installType === "Core" ? view.installName : view.installSource);
-                show(await stay(adapter.installPackage(currentWork.id, name, `${view.installType}: ${view.installType === "Core" ? "current Core copy" : view.installSource}`, packageFiles, view.data.updateTarget)));
-                view.config = null;
+                accept(await stay(adapter.installPackage(currentWork.id, name, `${view.installType}: ${view.installType === "Core" ? "current Core copy" : view.installSource}`, packageFiles, view.data.updateTarget)));
+                if (!view.configDirty)
+                    view.config = null;
+                closeModal();
             }
             break;
         case "import-agents":
@@ -3730,10 +3904,12 @@ async function handleAction(action, el, record) {
             if (w)
                 beginExport(w, false, record);
             break;
+        case 'find-previous-export':
+            if (w)
+                openModal('export', { id: w.id, findSnapshot: 'true' });
+            break;
         case 'view-snapshot': {
-            const snap = await stay(adapter.fetchSnapshot(el.dataset.id));
-            if (el.dataset.workId && snap.workId !== el.dataset.workId)
-                throw new Error(t('export.snapshotMismatch'));
+            const snap = await stay(adapter.fetchSnapshot(el.dataset.id, true, el.dataset.workId));
             openModal('export', { id: snap.workId, snapshotId: snap.id });
             break;
         }
@@ -3790,8 +3966,18 @@ async function handleAction(action, el, record) {
         case "check-operation":
             reviewOperation(await stay(adapter.checkOperation(el.dataset.id)), record);
             break;
+        case 'lookup-create-operation':
+        case 'lookup-import-operation': {
+            const kind = action === 'lookup-create-operation' ? 'work:create' : 'transfer:import';
+            const op = await stay(adapter.checkOperation(view.operationQuery.trim(), true, undefined, kind));
+            reviewOperation(op, record);
+            openModal('operation', { id: op.id });
+            break;
+        }
         case "lookup-operation": {
-            const op = await stay(adapter.checkOperation(view.operationQuery.trim()));
+            if (!view.data.workId || !adapter.getWork(view.data.workId))
+                throw Error(t('ops.lookupMissing'));
+            const op = await stay(adapter.checkOperation(view.operationQuery.trim(), true, view.data.workId));
             if (op) {
                 reviewOperation(op, record);
                 openModal("operation", { id: op.id });
@@ -3801,16 +3987,16 @@ async function handleAction(action, el, record) {
             break;
         }
         case "lookup-snapshot": {
-            const snap = await stay(adapter.fetchSnapshot(view.snapshotQuery.trim()));
+            const workId = el.dataset.workId || view.data.workId || view.data.id;
+            if (!workId)
+                throw new Error(t('export.snapshotMismatch'));
+            const snap = await stay(adapter.fetchSnapshot(view.snapshotQuery.trim(), true, workId));
             if (snap)
                 openModal("export", { id: snap.workId, snapshotId: snap.id });
             else
                 throw Error(t('export.snapshotMissing'));
             break;
         }
-        case "clear-operations":
-            await stay(adapter.clearOperations());
-            break;
     }
 }
 function joinPath(parent, name) {
@@ -4939,6 +5125,8 @@ adapter.subscribe(() => {
         filesRestoreNotice = '';
         workReadErrors.clear();
         view.serviceOpenError = "";
+        view.operationQuery = '';
+        view.snapshotQuery = '';
         view.config = null;
         view.configDirty = false;
         view.drafts = {};

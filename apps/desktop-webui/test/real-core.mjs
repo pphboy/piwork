@@ -137,12 +137,40 @@ try {
   const lifecycleRequests = [];
   page.on('request', request => { const path = new URL(request.url()).pathname; if (request.method() === 'POST' && (/\/_desktop\/api\/works(?:$|\/[^/]+\/(?:start|stop|retry|delete)$)/).test(path)) lifecycleRequests.push(path); });
   let mainReloads = 0; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame() && !new URL(request.url()).pathname.startsWith('/_desktop/')) mainReloads++; });
+  // A new page uses the same authenticated Desktop, but no in-memory task state.
+  const recoverOnNewPage = async (workName, id, kind) => {
+    const recoveredPage = await context.newPage(); const posts = [];
+    recoveredPage.on('request', request => { if (request.method() === 'POST') posts.push(new URL(request.url()).pathname); });
+    try {
+      await recoveredPage.goto(new URL(page.url()).origin + '/');
+      await recoveredPage.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+      await recoveredPage.locator('[data-action="account"]').click();
+      await expect(recoveredPage.getByRole('menuitem', { name: 'Known operations', exact: true })).toHaveCount(0);
+      await recoveredPage.keyboard.press('Escape');
+      await recoveredPage.locator('.work-name').filter({ has: recoveredPage.getByText(workName, { exact: true }) }).click();
+      await recoveredPage.locator('[data-action="work-menu"]').click();
+      if (kind === 'snapshot') {
+        await recoveredPage.locator('[data-action="find-previous-export"]').click();
+        await recoveredPage.locator('#snapshot-query').fill(id); await recoveredPage.locator('[data-action="lookup-snapshot"]').click();
+        await recoveredPage.locator('.export-details > summary').click();
+        await expect(recoveredPage.locator('.export-snapshot')).toContainText(id);
+      } else {
+        await recoveredPage.locator('[data-action="work-info"]').click(); await recoveredPage.locator('[data-action="find-work-task"]').click();
+        await recoveredPage.locator('#operation-query').fill(id); await recoveredPage.locator('[data-action="lookup-operation"]').click();
+        await recoveredPage.locator('.operation-technical > summary').click();
+        await expect(recoveredPage.locator('.operation-technical')).toContainText(id);
+      }
+      assert.deepEqual(posts, [], 'recovering an original task must be read-only');
+    } finally { await recoveredPage.close(); }
+  };
   await page.getByRole('button', { name: 'New Work', exact: true }).first().click();
   await page.locator('#create-name').fill('Real Browser Work');
   await page.locator('[data-action=toggle-create-advanced]').click();
   await page.locator('#create-skill-mode').selectOption('choose');
   await page.getByLabel('workspace-review', { exact: true }).check();
+  const createResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/_desktop/api/works' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Create Work', exact: true }).click();
+  const createAccepted = await (await createResponse).json(); assert.ok(createAccepted.operationId);
   const work = await waitFor(async () => (await api(coreUrl, token, 'GET', '/api/v1/works')).data.works?.find(item => item.name === 'Real Browser Work'), 'created Work');
   const workId = work.id;
   const waitState = (id, state) => waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/works/${id}`)).data.observedState === state, `Work ${state}`, 180_000);
@@ -150,6 +178,7 @@ try {
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.locator('.work-row').filter({ hasText: 'Real Browser Work' })).toContainText('Ready', { timeout: 180000 });
   await waitState(workId, 'ready');
+  await recoverOnNewPage('Real Browser Work', createAccepted.operationId, 'operation');
   await page.getByRole('button', { name: 'New Work', exact: true }).first().click();
   await page.locator('#create-name').fill('Real Browser Work');
   const nameConflictResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/_desktop/api/works' && response.request().method() === 'POST');
@@ -208,6 +237,40 @@ try {
   const disable = await api(coreUrl, token, 'POST', `/api/v1/works/${workId}/services/${disabled.data.serviceId}/disable`, { idempotencyKey: 'browser-disable-service' });
   assert.equal(disable.status, 202);
   await waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/operations/${disable.data.operationId}`)).data.state === 'succeeded', 'disable operation', 180000);
+  // Exercise the Desktop's Service control, then recover that exact Service
+  // and Operation in a fresh page without another control request.
+  const serviceControlPath = `/_desktop/api/works/${workId}/services/${service.data.serviceId}/restart`;
+  const serviceControls = [];
+  const countServiceControl = request => { if (request.method() === 'POST' && new URL(request.url()).pathname === serviceControlPath) serviceControls.push(serviceControlPath); };
+  page.on('request', countServiceControl);
+  await page.locator('[data-action="service-menu"]').click(); await page.locator('[data-action="manage-services"]').click();
+  await page.locator(`#modal [data-action="service-details"][data-id="${service.data.serviceId}"]`).click();
+  const serviceResponse = page.waitForResponse(response => new URL(response.url()).pathname === serviceControlPath && response.request().method() === 'POST');
+  await page.locator('#modal [data-action="service-action"][data-control="restart"]').click();
+  const serviceReceipt = await serviceResponse; assert.equal(serviceReceipt.status(), 202);
+  const serviceAccepted = await serviceReceipt.json(); assert.equal(serviceAccepted.serviceId, service.data.serviceId); assert.ok(serviceAccepted.operationId);
+  await expect(page.locator(`#modal [data-action="operation"][data-id="${serviceAccepted.operationId}"]`)).toBeVisible();
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/operations/${serviceAccepted.operationId}`)).data.state === 'succeeded', 'original Service restart', 180_000);
+  await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor({ timeout: 30_000 });
+  const serviceRecovery = await context.newPage();
+  serviceRecovery.on('request', countServiceControl);
+  try {
+    await serviceRecovery.goto(new URL(page.url()).origin + '/');
+    await serviceRecovery.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    await serviceRecovery.locator('.work-name').filter({ has: serviceRecovery.getByText('Real Browser Work', { exact: true }) }).click();
+    await expect.poll(() => serviceRecovery.evaluate(async id => !!(await import('/desktop/browser/adapter.js')).adapter.getOperation(id), serviceAccepted.operationId)).toBe(true);
+    await serviceRecovery.evaluate(async id => { const { adapter } = await import('/desktop/browser/adapter.js'); await adapter.checkOperation(id); }, serviceAccepted.operationId);
+    await serviceRecovery.getByRole('button', { name: 'Services', exact: true }).click();
+    await serviceRecovery.locator('[data-action="service-menu"]').click(); await serviceRecovery.locator('[data-action="manage-services"]').click();
+    await serviceRecovery.locator(`#modal [data-action="service-details"][data-id="${service.data.serviceId}"]`).click();
+    const related = serviceRecovery.locator('#modal .related-task-list').filter({ has: serviceRecovery.locator(`[data-action="operation"][data-id="${serviceAccepted.operationId}"]`) });
+    await related.locator('summary').click(); await related.locator('[data-action="operation"]').click();
+    await serviceRecovery.locator('.operation-technical > summary').click();
+    await expect(serviceRecovery.locator('.operation-technical')).toContainText(serviceAccepted.operationId);
+    await expect(serviceRecovery.locator('.operation-technical')).toContainText(service.data.serviceId);
+    assert.deepEqual(serviceControls, [serviceControlPath]);
+  } finally { await serviceRecovery.close(); page.off('request', countServiceControl); }
   const sentinel = Buffer.from('lifecycle sentinel: durable workspace\n');
   const sentinelWrite = await fetch(`${coreUrl}/api/v1/works/${workId}/files/lifecycle-sentinel.txt`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'If-None-Match': '*' }, body: sentinel });
   assert.equal(sentinelWrite.status, 201);
@@ -345,7 +408,7 @@ try {
   await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
   await waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/configuration`)).data.pendingApply === false, 'configuration apply', 180_000);
   console.log('Real Desktop: configuration applied');
-  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.locator('#modal')).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to Work', exact: true }).click();
   // Apply creates a different active context. Keep the earlier Session as history,
   // then explicitly create the Session whose current context will be exported and continued.
@@ -514,11 +577,14 @@ try {
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.getByRole('button', { name: 'Work options' }).click();
   await page.getByRole('menuitem', { name: 'Stop Work', exact: true }).click();
+  const stopResponse = page.waitForResponse(response => new URL(response.url()).pathname === `/_desktop/api/works/${workId}/stop` && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Stop Work', exact: true }).last().click();
+  const stopAccepted = await (await stopResponse).json(); assert.ok(stopAccepted.operationId);
   await expect(page.locator('#modal')).toContainText('Operation ID');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.getByRole('heading', { name: 'This Work is stopped', exact: true })).toBeVisible({ timeout: 180000 });
   await waitState(workId, 'stopped');
+  await recoverOnNewPage('Real Browser Work', stopAccepted.operationId, 'operation');
   console.log('Real Desktop: first Stop confirmed');
   await app.bringToFront();
   await app.getByRole('heading', { name: 'This Work is stopped', exact: true }).waitFor({timeout:15000});
@@ -604,6 +670,7 @@ try {
   page.off('request', recordExportRequest);
   page.off('download', recordExportDownload);
   console.log(JSON.stringify({ result: 'single browser export/download verified', exportPosts: 1, preparationPosts: 1, downloads: exportDownloads.length, bytes: exportedBytes.length }));
+  await recoverOnNewPage('Real Browser Work', acceptance.snapshotId, 'snapshot');
   await expect(page.locator('#modal')).toContainText('Download started');
   await expect(page.getByRole('button', { name: 'Download again', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Close dialog' }).click({ noWaitAfter: true });
@@ -629,12 +696,13 @@ try {
   await page.getByRole('button', { name: 'Import Work', exact: true }).last().click();
   const importAcceptance = await importResponse;
   assert.equal(importAcceptance.status(), 202, `Import acceptance: ${await importAcceptance.text()}`);
-  assert.equal((await importAcceptance.json()).name, 'Real Browser Work-2');
+  const importAccepted = await importAcceptance.json(); assert.equal(importAccepted.name, 'Real Browser Work-2'); assert.ok(importAccepted.operationId);
   await expect(page.locator('.import-name-feedback')).toContainText('Real Browser Work-2');
   await expect(page.locator('.import-name-feedback')).toContainText('because the source name was unavailable');
   await page.screenshot({ path: join(screenshotDir, '03-import-automatic-name.png'), fullPage: true });
   const imported = await waitFor(async () => (await api(coreUrl, token, 'GET', '/api/v1/works')).data.works?.find(item => item.name === 'Real Browser Work-2'), 'imported Work', 180_000);
   assert.notEqual(imported.id, workId); assert.equal(imported.observedState, 'stopped');
+  await recoverOnNewPage('Real Browser Work-2', importAccepted.operationId, 'operation');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.locator('.work-row').filter({ hasText: 'Real Browser Work-2' })).toContainText('Stopped', { timeout: 180000 });
   await page.getByRole('link', { name: /^Real Browser Work-2/ }).click();
@@ -679,6 +747,7 @@ try {
   for (const width of [1440,1024,390]) { await page.setViewportSize({ width, height: 900 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `horizontal overflow at ${width}px`); await page.screenshot({ path: join(screenshotDir, `05-responsive-${width}.png`), fullPage: true }); }
   await page.getByRole('button', { name: 'Work options' }).click(); await page.getByRole('menuitem', { name: 'Delete Work', exact: true }).click(); await page.locator('#delete-confirm').check(); await page.getByRole('button', { name: 'Delete Work', exact: true }).last().click();
   await expect(page.locator('#modal')).toContainText('Operation ID');
+  await page.locator('.operation-technical > summary').click();
   const deleteId = await page.locator('#modal dd code').first().innerText();
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.locator('.work-row').filter({ hasText: 'Real Browser Work-2' })).toHaveCount(0, { timeout: 180000 });

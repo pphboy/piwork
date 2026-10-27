@@ -108,6 +108,19 @@ func TestNativeDesktopWorkPackageTransferUsesOriginalSnapshotAndSession(t *testi
 	if result.Code != 202 {
 		t.Fatal("import", result.Code, result.Body.String())
 	}
+	recovered := request("GET", "work-packages/"+inspected.TransferID, "", nil, "")
+	var original struct {
+		OperationID      string `json:"operationId"`
+		WorkID           string `json:"workId"`
+		Name             string `json:"name"`
+		LocalRecordSaved bool   `json:"localRecordSaved"`
+	}
+	if recovered.Code != 200 || json.Unmarshal(recovered.Body.Bytes(), &original) != nil || original.OperationID != "operation-1" || original.WorkID != "work-1" || original.Name != "Imported" || !original.LocalRecordSaved {
+		t.Fatal("original import could not be recovered by a read", recovered.Code, recovered.Body.String())
+	}
+	if imports != 1 {
+		t.Fatal("read-only recovery resubmitted import", imports)
+	}
 	if repeated := request("POST", "work-imports", "application/json", []byte(`{"transferId":"`+inspected.TransferID+`"}`), "csrf"); repeated.Code != 202 || uploads != 2 || imports != 1 {
 		t.Fatal("import resent", repeated.Code, uploads, imports)
 	}
@@ -126,6 +139,12 @@ func TestNativeDesktopWorkPackageTransferUsesOriginalSnapshotAndSession(t *testi
 	d.mu.Lock()
 	d.identity.generation++
 	d.mu.Unlock()
+	if denied := request("GET", "work-packages/"+inspected.TransferID, "", nil, ""); denied.Code != 401 || strings.Contains(denied.Body.String(), "operation-1") {
+		t.Fatal("accepted import leaked across identity generation", denied.Code, denied.Body.String())
+	}
+	if denied := request("POST", "work-imports", "application/json", []byte(`{"transferId":"`+inspected.TransferID+`"}`), "csrf"); denied.Code != 401 || strings.Contains(denied.Body.String(), "operation-1") || imports != 1 {
+		t.Fatal("accepted import submission leaked across identity generation", denied.Code, denied.Body.String(), imports)
+	}
 	if denied := request("GET", "downloads/"+download.TransferID+"/content", "", nil, ""); denied.Code != 401 {
 		t.Fatal("cross generation transfer", denied.Code)
 	}

@@ -8,6 +8,7 @@ import test from 'node:test';
 // history event ordering remain browser QA. PIWORK_APP_PATH enables red/green runs.
 const source = readFileSync(process.env.PIWORK_APP_PATH || new URL('../browser/app.js', import.meta.url), 'utf8');
 const navigation = await import(new URL('../browser/work-navigation.js', import.meta.url).href);
+const { operationKind } = await import(new URL('../browser/operation-recovery.js', import.meta.url).href);
 const fileReference = await import(new URL('../browser/file-reference.js', import.meta.url).href);
 function extract(names: string[]) {
   return names.map(name => {
@@ -24,12 +25,12 @@ function fixture() {
     location: { hash: '#/work/one' }, modalChoice: 0, fileChoice: 0, areaChoice: 0, serviceChoice: 0, sessionChoice: 0,
     selectionWorkId: 'one', routeLoad: 0, workspaceReturn: undefined, workSelections: new Map(), filesRestoreNotice: '',
     lastRoute: '#/work/one', serviceControls: new Map(), workControls: new Map(), importStarts: new Map(),
-    adapter: { identityEpoch: 1, state: { signedIn: true }, project: () => ({ usable: true, action: 'start' }), getWork: () => work, getOperation: () => undefined },
+    adapter: { identityEpoch: 1, state: { signedIn: true, operations: [] }, project: () => ({ usable: true, action: 'start' }), getWork: () => work, getOperation: () => undefined },
     actions: { records: new Map(), begin: () => undefined, current: () => true, review: (r: any) => { r.blocked = false; } },
     render: () => {}, toast: () => {}, openModal: () => {}, activeService: () => work.services[0], current: () => work, targetWork: () => work,
     ViewChanged: class extends Error {}, URLSearchParams,
     restoreSelection: navigation.restoreSelection, initialWorkArea: navigation.initialWorkArea, exitWorkspaceFocus: async () => true,
-    parentDirectory: navigation.parentDirectory, isFilesRoute: fileReference.isFilesRoute, filesRouteTarget: fileReference.filesRouteTarget,
+    parentDirectory: navigation.parentDirectory, operationKind, isFilesRoute: fileReference.isFilesRoute, filesRouteTarget: fileReference.filesRouteTarget,
     fileSourceReturn: undefined, clearFileTarget: () => { c.view.file = ''; c.view.fileStatus = 'idle'; }, openFile: async () => undefined,
     workReadErrors: new Map(),
   };
@@ -76,7 +77,7 @@ test('C review: explicit exact-Service Ready read releases unknown Start for a l
   const { c, work } = fixture(); let posts = 0;
   c.adapter.operateService = async () => { posts++; if (posts === 1) throw Object.assign(new Error('Lost Start receipt'), { code: 'RESULT_UNKNOWN' }); return { id: 'stop-original', workId: 'one', state: 'accepted' }; };
   c.adapter.loadServices = async () => { work.services[0].enabled = true; work.services[0].observed = 'Ready'; };
-  vm.runInContext(extract(['handleAction', 'submitServiceControl']), c);
+  vm.runInContext(extract(['serviceOperations', 'serviceControl', 'serviceControlBlocked', 'handleAction', 'submitServiceControl']), c);
   await assert.rejects(c.submitServiceControl(work, 'service-a', 'start'));
   assert.equal(c.serviceControls.get('one:service-a').phase, 'unknown');
   await c.handleAction('check-service-progress', { dataset: { id: 'one', serviceId: 'service-a' } });

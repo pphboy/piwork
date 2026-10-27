@@ -74,6 +74,13 @@ test('export adapter: exact snapshot lookup rejects a different snapshot ID with
   assert.equal(f.posts().length, 0);
 });
 
+test('export adapter: a Work-scoped lookup rejects another Work before caching', async t => {
+  const f = await fixture(t, () => ({ json: metadata({ workId: 'work-other' }) }));
+  await assert.rejects(f.adapter.fetchSnapshot(snapshotID, true, workID));
+  assert.equal(f.adapter.state.snapshots.length, 0);
+  assert.equal(f.posts().length, 0);
+});
+
 for (const field of ['workId', 'operationId']) test(`export adapter: later metadata cannot replace the original ${field}`, async t => {
   const f = await fixture(t, () => ({ json: metadata() }));
   const original = await f.adapter.fetchSnapshot(snapshotID);

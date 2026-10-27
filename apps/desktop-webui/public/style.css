@@ -3117,6 +3117,25 @@ dd > .button {
 .object-control-progress { display: grid; gap: 4px; margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
 .object-control-progress .actions { flex-wrap: wrap; gap: 4px; }
 .object-control-progress small { color: var(--muted); }
+.recovery-tasks { display: grid; gap: 8px; margin: 16px 0; }
+.recovery-task { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.recovery-task-copy { display: grid; flex: 1 1 0; min-width: 0; gap: 3px; overflow-wrap: anywhere; font-size: 13px; }
+.recovery-task-copy small { color: var(--muted); }
+.recovery-task .actions { flex: 0 0 auto; flex-wrap: wrap; gap: 5px; }
+.related-task-list { margin: 10px 0; font-size: 12px; }
+.related-task-list summary { cursor: pointer; color: var(--accent); }
+.related-task { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 6px 0; overflow-wrap: anywhere; }
+.operation-technical { margin: 16px 0; min-width: 0; overflow-wrap: anywhere; }
+.operation-technical > summary { cursor: pointer; color: var(--accent); }
+.operation-technical .property-list { margin-top: 12px; }
+.operation-technical code { overflow-wrap: anywhere; }
+.operation-failure { overflow-wrap: anywhere; }
+.original-task-lookup { margin-top: 14px; }
+.original-task-lookup > summary { cursor: pointer; color: var(--accent); }
+.recovery-tasks button:focus-visible, .operation-technical summary:focus-visible, .original-task-lookup summary:focus-visible, .original-task-lookup button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.recovery-tasks > details > summary { cursor: pointer; color: var(--accent); font-size: 13px; padding: 4px 0; }
+.recovery-tasks > details .recovery-task { margin-top: 8px; }
+@media (max-width: 600px) { .recovery-task { align-items: flex-start; flex-direction: column; } }
 .work-header + .object-control-progress { margin: 8px 20px; }
 
 /* Keep management and progress subordinate to the current workspace. */

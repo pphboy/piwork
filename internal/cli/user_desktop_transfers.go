@@ -478,13 +478,38 @@ func (d *nativeDesktop) desktopTransferStatus(w http.ResponseWriter, r *http.Req
 	}
 	t.mu.Lock()
 	phase, transferred, total, size, digest, summary, workID, snapshotID := job.phase, job.transferred, job.total, job.size, job.digest, job.summary, job.workID, job.snapshotID
+	accepted := append(json.RawMessage(nil), job.accepted...)
 	t.mu.Unlock()
+	if kind == "inspect" && phase == "accepted" && !d.desktopTransferOwner(r, job) {
+		desktopTransferError(w, 401, "AUTH_REQUIRED")
+		return
+	}
 	value := map[string]any{"transferId": id, "kind": kind, "phase": phase, "transferred": transferred, "total": total}
 	if phase == "ready" || phase == "accepted" || phase == "unknown" {
 		value["size"] = size
 		value["digest"] = digest
 		if kind == "inspect" {
 			value["summary"] = summary
+			if phase == "accepted" && len(accepted) > 0 {
+				var original struct {
+					OperationID      string `json:"operationId"`
+					WorkID           string `json:"workId"`
+					Name             string `json:"name"`
+					LocalRecordSaved *bool  `json:"localRecordSaved"`
+				}
+				if json.Unmarshal(accepted, &original) == nil && desktopIDPattern.MatchString(original.OperationID) {
+					value["operationId"] = original.OperationID
+					if desktopIDPattern.MatchString(original.WorkID) {
+						value["workId"] = original.WorkID
+					}
+					if len(original.Name) > 0 && len(original.Name) <= 128 && !strings.ContainsRune(original.Name, 0) {
+						value["name"] = original.Name
+					}
+					if original.LocalRecordSaved != nil {
+						value["localRecordSaved"] = *original.LocalRecordSaved
+					}
+				}
+			}
 		} else {
 			value["workId"] = workID
 			value["snapshotId"] = snapshotID
@@ -555,6 +580,10 @@ func (d *nativeDesktop) importDesktopPackage(w http.ResponseWriter, r *http.Requ
 	if len(job.accepted) > 0 {
 		accepted := append([]byte(nil), job.accepted...)
 		t.mu.Unlock()
+		if !d.desktopTransferOwner(r, job) {
+			desktopTransferError(w, 401, "AUTH_REQUIRED")
+			return
+		}
 		desktopJSON(w, 202, json.RawMessage(accepted))
 		return
 	}
@@ -664,19 +693,26 @@ func (d *nativeDesktop) importDesktopPackage(w http.ResponseWriter, r *http.Requ
 		desktopControlFailure(w, err)
 		return
 	}
-	t.mu.Lock()
-	job.accepted = append([]byte(nil), accepted...)
-	job.phase = "accepted"
-	t.mu.Unlock()
 	var value map[string]json.RawMessage
 	_ = json.Unmarshal(accepted, &value)
 	if value != nil {
 		saved := d.operationRecords().accept(coreURL, record.User.ID, "Import Work", accepted) == nil
 		value["localRecordSaved"], _ = json.Marshal(saved)
-		desktopJSON(w, 202, value)
-	} else {
-		desktopJSON(w, 202, json.RawMessage(accepted))
+		accepted, _ = json.Marshal(value)
 	}
+	t.mu.Lock()
+	job.accepted = append([]byte(nil), accepted...)
+	job.userID, job.generation = record.User.ID, generation
+	job.phase = "accepted"
+	t.mu.Unlock()
+	d.mu.Lock()
+	live = d.identity.generation == generation && d.identity.credential != nil && d.identity.credential.Token == record.Token
+	d.mu.Unlock()
+	if !live {
+		desktopTransferError(w, 409, "CONNECTION_CHANGED")
+		return
+	}
+	desktopJSON(w, 202, json.RawMessage(accepted))
 }
 
 func (d *nativeDesktop) prepareDesktopDownload(w http.ResponseWriter, r *http.Request, s desktopSession, t *desktopTransfers, snapshotID string) {

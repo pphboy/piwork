@@ -307,7 +307,7 @@ for (const offline of [false, true]) test(`local auth: current business 401 read
     if (r.path === 'session') return { json: !armed ? signedIn() : offline ? { ...signedOut(), state: 'offline', lastKnownUser: { account: 'owner', role: 'user' } } : signedOut(2) };
     if (r.path === 'works' && armed) return { status: 401, json: { code: 'AUTH_REQUIRED' } };
   });
-  await expect.poll(() => api(page, 'return !!adapter.worksChecked')).toBe(true); armed = true;
+  await expect.poll(() => api(page, 'return !!adapter.worksChecked && !adapter.connectionRequest && !adapter.authCheck')).toBe(true); armed = true;
   const code = await api(page, `return adapter.request('works').catch(error => error.code)`);
   assert.equal(await api(page, 'return adapter.state.sessionState'), 'ready');
   assert.equal(await api(page, 'return adapter.state.signedIn'), offline);

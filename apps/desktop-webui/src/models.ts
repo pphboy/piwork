@@ -161,6 +161,35 @@ export interface Work {
   packageEntries?: Record<string, any>[];
   resourceErrors?: Record<string, string>;
 }
+/** Only public, typed fields from a Core Operation diagnostic. */
+export interface OperationDiagnostic {
+  code?: string;
+  stage?: string;
+  message?: string;
+  remediation?: string;
+  retryable?: boolean;
+  correlationId?: string;
+  serviceId?: string;
+  skillName?: string;
+  field?: string;
+  exitCode?: number;
+}
+export interface OperationDiagnosticStage {
+  timestamp?: string;
+  component?: string;
+  stage?: string;
+  outcome?: string;
+  code?: string;
+  message?: string;
+  serviceId?: string;
+  skillName?: string;
+}
+export interface OperationDiagnostics {
+  stages: OperationDiagnosticStage[];
+  truncated?: boolean;
+  rollback?: { state?: string; error?: OperationDiagnostic };
+  diagnosticCollection?: { state?: string; code?: string };
+}
 export interface Operation {
   importName?: string;
   importSourceName?: string;
@@ -170,6 +199,11 @@ export interface Operation {
   id: string;
   workId: string;
   checkedWorkId?: string;
+  /** Service identity retained from the accepted response or local record. */
+  serviceId?: string;
+  /** Identity and kind confirmed by a matching original Operation response. */
+  checkedServiceId?: string;
+  checkedKind?: string;
   kind: string;
   state:
     | "accepted"
@@ -184,6 +218,9 @@ export interface Operation {
   created: string;
   updated: string;
   error?: string;
+  diagnostic?: OperationDiagnostic;
+  diagnostics?: OperationDiagnostics;
+  correlationId?: string;
   snapshotId?: string;
   scope: string;
 }

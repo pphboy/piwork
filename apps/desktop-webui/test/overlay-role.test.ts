@@ -242,7 +242,7 @@ test('independent cold bootstrap errors are scoped to the original identity and 
 });
 
 for(const width of [1440,360])test(`default Chat retains Service explanation at ${width}px`,()=>{
- const {c,work}=rendererFixture();c.innerWidth=width;c.view.tab='Chat';c.workspacePanels=new Map([['a',{collapsed:false}]]);c.workControls=new Map();c.controlMarkup=()=>'';c.workHeader=()=>'';c.adapter.project=()=>({usable:true,retainWorkspace:true});vm.runInContext(extract('workPage'),c);
+ const {c,work}=rendererFixture();c.innerWidth=width;c.view.tab='Chat';c.workspacePanels=new Map([['a',{collapsed:false}]]);c.workControls=new Map();c.workControl=()=>undefined;c.controlMarkup=()=>'';c.workHeader=()=>'';c.adapter.project=()=>({usable:true,retainWorkspace:true});vm.runInContext(extract('workPage'),c);
  const html=c.workPage(work);assert.match(html,/chat-main/);assert.match(html,/This Work has no Services/);assert.match(html,/data-action="manage-services"/);assert.doesNotMatch(html,/chat-hidden|service-workspace/);
 });
 

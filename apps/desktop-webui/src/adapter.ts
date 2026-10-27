@@ -7,6 +7,8 @@ import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { detectImageMime, imageDimensions, imageWithinLimits, FILE_IMAGE_MAX_BYTES, type ImageMime } from './image-content.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
+import { operationKind, operationKindMatches } from './operation-recovery.js';
+import { legacyOperationError, operationCorrelationId, operationDiagnostic, operationDiagnostics } from './operation-diagnostics.js';
 import { MetadataReads, ObservationDeferred, ObservationStopped } from './observation.js';
 type Data = Record<string, any>;
 import type { ImageInput, HistoryImage } from './images.js';
@@ -308,6 +310,9 @@ export class DesktopAdapter {
   private worksRequestSequence = 0;
   private worksReadSequence = 0;
   private pausedOperations = new Set<string>();
+  private invalidOperationTargets = new Set<string>();
+  /** A dismissed terminal record remains recoverable until required object reads finish. */
+  private pendingOperationHides = new Map<string, Operation>();
   private streams = new Map<string, AbortController>();
   private reconnects = new Map<string, ReturnType<typeof setTimeout>>();
   private historyObservers = new Map<string, { controller: AbortController; run: NonNullable<Work['run']>; epoch: number; failures: number }>();
@@ -517,7 +522,7 @@ export class DesktopAdapter {
     this.epoch++; this.connectionRequest = undefined; Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false }); this.worksLoading = false; this.worksChecked = ''; this.stopFileReads(); this.directoryLoads.clear(); this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
     clearInterval(this.interactionTimer); this.interactionTimer=undefined;this.interactionScope='';this.interactionVersion++;
     this.requestPresence.clear();this.requestResponses.clear();this.runDetails.clear();this.temporaryCleanups.clear();this.temporaryCleanupRequests.clear();this.activeRuns.clear();this.activeRevisions.clear();this.cancelAndSendCapabilities.clear();
-    this.terminalEvidence.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
+    this.terminalEvidence.clear(); this.pendingOperationHides.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
     this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear(); this.stopLogExportPolling(); this.logExport = null;
     Object.assign(this.about,{core:null,coreError:'',coreLoading:false,coreChecked:''});
     this.cancelHistoryReads();this.historySupport.clear();this.historyProjections.clear();this.fullHistoryRuns.clear();this.historyEventParts.clear();
@@ -527,7 +532,7 @@ export class DesktopAdapter {
     this.uploadIntents.clear(); this.skills = []; this.packages = []; this.entries.clear(); this.entryErrors.clear(); this.entryPromises.clear(); this.entryChecks.clear(); this.entryVersions.clear(); this.serviceDenials.clear(); this.entryServiceGrants.clear(); this.serviceLoads.clear(); this.serviceReads.clear(); this.worksRequests.clear(); this.worksRequestSequence++; this.worksReadSequence = 0; this.logs.clear(); this.logStates.clear(); this.logRequests.clear(); this.inspection = null; this.inspectionTransfer = '';
     if (inspection) { this.inspectionContext = inspection.context; this.inspection = inspection.summary; this.inspectionTransfer = inspection.transfer; this.transferProgress = inspection.progress; }
     for (const observer of this.historyObservers.values()) observer.controller.abort(); this.historyObservers.clear();
-    for (const stream of this.streams.values()) stream.abort(); this.streams.clear(); for (const timer of this.reconnects.values()) clearTimeout(timer); this.reconnects.clear(); this.reconnectAttempts.clear(); clearTimeout(this.pollTimer); this.pollTimer = undefined; this.pausedOperations.clear();
+    for (const stream of this.streams.values()) stream.abort(); this.streams.clear(); for (const timer of this.reconnects.values()) clearTimeout(timer); this.reconnects.clear(); this.reconnectAttempts.clear(); clearTimeout(this.pollTimer); this.pollTimer = undefined; this.pausedOperations.clear(); this.invalidOperationTargets.clear();
   }
   private request(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<Data> {
     const runPath=/^works\/([^/]+)\/runs(?:\/|$|\?)/.exec(path),lookup=/^works\/([^/]+)\/(?:runs|sessions)\/submissions\//.exec(path),target=runPath??lookup;
@@ -746,7 +751,16 @@ export class DesktopAdapter {
         this.status = status; this.state.lastChecked = status.checkedAt ?? new Date().toISOString();
         this.state.scenario = !status.health?.available ? 'core-offline' : !status.readiness?.available || status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
         Object.assign(this.connectionCheck, { checking: false, checkedAt: this.state.lastChecked, waiting: false }); this.emit();
-        if (this.state.signedIn && this.state.scenario !== 'core-offline') { await this.listWorks(); await this.checkCatalog(); await this.recoverOperations(); }
+        if (this.state.signedIn && this.state.scenario !== 'core-offline') {
+          // The local record read is independent of the Work list. A failed or
+          // slow list must not hide an accepted Create, Import, or Delete.
+          const [works, records] = await Promise.allSettled([
+            (async () => { await this.listWorks(); await this.checkCatalog(); })(),
+            this.recoverOperations(),
+          ]);
+          if (works.status === 'rejected') throw works.reason;
+          if (records.status === 'rejected') throw records.reason;
+        }
       } catch (error) {
         if (epoch === this.epoch && this.connectionCheck.checking) this.connectionCheck.error = errorText(error);
         throw error;
@@ -1327,9 +1341,11 @@ export class DesktopAdapter {
     })();
     this.logRequests.set(key, pending); this.emit(); return pending;
   }
-  private accepted(value: Data, workId: string, kind: string) {
+  private accepted(value: Data, workId: string, kind: string, serviceId?: string) {
     if (!value.operationId) throw failure('INVALID_RESPONSE','d.error.acceptanceNoOperation');
-    const operation: Operation = { id: value.operationId, workId: value.workId ?? workId, kind, action: lifecycleAction(kind), state: 'accepted', phase: t('d.operation.accepted'), created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId, localRecordSaved: value.localRecordSaved };
+    if (workId && value.workId && value.workId !== workId) throw failure('INVALID_RESPONSE','d.error.operationOtherWork');
+    if (serviceId && value.serviceId && value.serviceId !== serviceId) throw failure('INVALID_RESPONSE','d.error.operationOtherService');
+    const operation: Operation = { id: value.operationId, workId: value.workId ?? workId, kind, action: lifecycleAction(kind), state: 'accepted', phase: t('d.operation.accepted'), created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}`, snapshotId: value.snapshotId, serviceId: value.serviceId ?? serviceId, checkedServiceId: serviceId && value.serviceId === serviceId && value.workId === workId ? serviceId : undefined, localRecordSaved: value.localRecordSaved };
     if (operation.action && operation.workId) {
       const sequence = ++this.mutationSequence; this.workMutations.set(operation.workId, sequence);
       const work = this.getWork(operation.workId);
@@ -1351,36 +1367,58 @@ export class DesktopAdapter {
     return this.accepted(await this.request('works', 'POST', payload), '', 'Create Work'); // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
   }
   async lifecycle(id: string, action: 'start' | 'stop' | 'retry' | 'delete') { return this.accepted(await this.request(`works/${part(id)}/${action}`, 'POST'), id, `${action[0].toUpperCase()}${action.slice(1)} Work`); }
-  async operateService(id: string, serviceId: string, action: string) { return this.accepted(await this.request(`works/${part(id)}/services/${part(serviceId)}/${action}`, 'POST'), id, `${action} Service`); }
-  async checkOperation(id: string, explicit = true) {
+  async operateService(id: string, serviceId: string, action: string) { return this.accepted(await this.request(`works/${part(id)}/services/${part(serviceId)}/${action}`, 'POST'), id, `${action} Service`, serviceId); }
+  async checkOperation(id: string, explicit = true, expectedWorkId?: string, expectedKind?: string) {
     let operation = this.getOperation(id);
     let value: Data;
     try { value = (await this.readMetadata(`operations/${part(id)}`, explicit)).value; }
     catch (error) { if (operation && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) { operation.observationError = errorText(error); this.emit(); } throw error; }
-    if (value.operationId !== id && value.operationId !== undefined) throw failure('INVALID_RESPONSE','d.error.operationMismatch');
-    if (operation?.workId && value.workId && operation.workId !== value.workId) throw failure('INVALID_RESPONSE','d.error.operationOtherWork');
+    // A manually entered ID belongs to this Work only after both identities
+    // have been confirmed. Do not alter another task's observation on failure.
+    if (expectedWorkId && (value.operationId !== id || value.workId !== expectedWorkId)) throw failure('INVALID_RESPONSE', 'd.error.operationOtherWork');
+    const actualKind = typeof value.kind === 'string' ? value.kind : typeof value.type === 'string' ? value.type : '';
+    if (expectedKind && (value.operationId !== id || operationKind(actualKind) !== expectedKind)) throw failure('INVALID_RESPONSE', 'd.error.operationOtherType');
+    const rejectMismatch = (key: string) => {
+      const error = failure('INVALID_RESPONSE', key);
+      if (operation) { operation.observationError = errorText(error); this.invalidOperationTargets.add(id); this.emit(); }
+      throw error;
+    };
+    if (value.operationId !== id && value.operationId !== undefined) rejectMismatch('d.error.operationMismatch');
+    if (operation?.workId && value.workId && operation.workId !== value.workId) rejectMismatch('d.error.operationOtherWork');
+    if (operation && actualKind && operationKind(operation.kind) && !operationKindMatches(operation.kind, actualKind)) rejectMismatch('d.error.operationOtherType');
+    const reportedService = operationCorrelationId(value.serviceId) ?? operationCorrelationId(value.error?.serviceId) ?? '';
+    if (operation?.serviceId && reportedService && operation.serviceId !== reportedService) rejectMismatch('d.error.operationOtherService');
+    this.invalidOperationTargets.delete(id);
     if (!operation) {
       operation = { id, workId: value.workId || '', kind: value.kind || value.type || 'Operation', state: 'unknown', phase: '', created: '', updated: '', scope: `${this.state.core.address} · ${this.state.core.account}` };
       this.state.operations.push(operation);
     }
     const previousState = operation.state;
     operation.checkedWorkId = value.operationId === id && typeof value.workId === 'string' ? value.workId : undefined;
-    Object.assign(operation, { workId: value.workId ?? operation.workId, state: value.state, phase: value.packagePhase ?? value.state, created: value.createdAt ?? '', updated: value.updatedAt ?? '', error: value.error?.message ?? (typeof value.error === 'string' ? value.error : undefined), snapshotId: value.result?.snapshotId ?? operation.snapshotId, observationError: undefined });
+    operation.checkedKind = value.operationId === id && actualKind ? actualKind : undefined;
+    if (!operation.serviceId && reportedService && operation.checkedWorkId === operation.workId && operation.checkedKind && operationKind(operation.checkedKind).startsWith('service:')) operation.serviceId = reportedService;
+    operation.checkedServiceId = operation.serviceId && operation.checkedWorkId === operation.workId && operation.checkedKind && operationKind(operation.checkedKind).startsWith('service:') ? operation.serviceId : undefined;
+    const diagnostic = operationDiagnostic(value.error);
+    Object.assign(operation, { workId: value.workId ?? operation.workId, state: value.state, phase: value.packagePhase ?? value.state, created: value.createdAt ?? '', updated: value.updatedAt ?? '', error: diagnostic?.message ?? legacyOperationError(value.error), diagnostic, diagnostics: operationDiagnostics(value.diagnostics), correlationId: operationCorrelationId(value.correlationId) ?? diagnostic?.correlationId, snapshotId: value.result?.snapshotId ?? operation.snapshotId, observationError: undefined });
     operation.action = lifecycleAction(value.kind || value.type || operation.kind);
     this.retainTerminal(operation);
-    if (operation.workId && (previousState !== operation.state || explicit)) this.requireWorkSync(operation.workId);
+    const importingUnpublished = operationKind(operation.checkedKind || operation.kind) === 'transfer:import' && operation.state !== 'succeeded';
+    if (operation.workId && !importingUnpublished && (previousState !== operation.state || explicit)) this.requireWorkSync(operation.workId);
     const work = this.getWork(operation.workId); if (work) this.associateOperations(work);
+    if (work && operation.checkedServiceId && previousState !== operation.state && terminalOperation(operation.state)) void this.loadServices(work.id).catch(() => undefined);
     if (operation.snapshotId) await this.fetchSnapshot(operation.snapshotId, explicit).catch(() => undefined);
     this.emit(); this.scheduleOperationPoll(); return operation;
   }
   async recoverOperations() {
     const value = await this.request('known-operations');
     for (const record of value.operations ?? []) if (!this.state.operations.some(o => o.id === record.operationId)) {
-      this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', kind: record.type, action: lifecycleAction(record.type), state: 'unknown', phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
+      const kind = typeof record.type === 'string' && record.type ? record.type : 'Operation';
+      this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', serviceId: record.serviceId, kind, action: lifecycleAction(kind), state: 'unknown', phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
     }
     for (const work of this.state.works) this.associateOperations(work);
     this.scheduleOperationPoll(); this.emit();
   }
+  workSynchronizationPending(workId: string) { return this.workSync.has(workId); }
   private finishWorkSync() {
     for (const [id, sync] of this.workSync) if (!sync.work && !sync.list) {
       this.workSync.delete(id);
@@ -1393,9 +1431,24 @@ export class DesktopAdapter {
       if (!this.workSync.has(evidence.operation.workId) && work?.lifecycleIntent?.operationId !== id) this.terminalEvidence.delete(id);
     }
     for (const work of this.state.works) this.associateOperations(work);
+    this.flushOperationHides();
+  }
+  private flushOperationHides() {
+    const epoch = this.epoch;
+    for (const [id, operation] of this.pendingOperationHides) {
+      if (operation.workId && this.workSync.has(operation.workId)) continue;
+      this.pendingOperationHides.delete(id);
+      void this.request(`known-operations/${part(id)}`, 'DELETE').catch(error => {
+        if (epoch !== this.epoch) return;
+        // The original record remains available after a failed local hide.
+        operation.observationError = errorText(error);
+        if (!this.state.operations.some(item => item.id === id)) this.state.operations.push(operation);
+        this.emit();
+      });
+    }
   }
   private observationTargets() {
-    const active = this.state.operations.filter(op => !terminalOperation(op.state) && !this.pausedOperations.has(op.id));
+    const active = this.state.operations.filter(op => !terminalOperation(op.state) && !this.pausedOperations.has(op.id) && !this.invalidOperationTargets.has(op.id));
     const workIds = new Set([...this.workSync].filter(([, sync]) => sync.work).map(([id]) => id));
     for (const op of active) if (op.workId) workIds.add(op.workId);
     return [
@@ -1491,19 +1544,20 @@ export class DesktopAdapter {
     })().finally(() => { if (this.capabilityReads.get(id) === pending) this.capabilityReads.delete(id); });
     this.capabilityReads.set(id, pending); return pending;
   }
-  operationPaused(id: string) { return this.pausedOperations.has(id) || this.metadata.paused(this.metadataKey(`operations/${part(id)}`)); }
+  operationPaused(id: string) { return this.pausedOperations.has(id) || this.invalidOperationTargets.has(id) || this.metadata.paused(this.metadataKey(`operations/${part(id)}`)); }
   pauseOperation(id: string) { this.pausedOperations.add(id); }
   resumeOperation(id: string) { this.pausedOperations.delete(id); this.scheduleOperationPoll(); }
-  async clearOperations() {
-    const epoch = this.epoch;
-    const selected = this.state.operations.filter(op => terminalOperation(op.state));
-    for (const operation of selected) {
-      this.retainTerminal(operation);
-      await this.request(`known-operations/${part(operation.id)}`, 'DELETE');
-      if (epoch !== this.epoch) return;
-      this.state.operations = this.state.operations.filter(op => op.id !== operation.id);
-    }
+  async dismissCompletedOperation(id: string) {
+    const operation = this.state.operations.find(item => item.id === id);
+    if (!operation || !terminalOperation(operation.state)) return false;
+    this.retainTerminal(operation);
+    this.state.operations = this.state.operations.filter(item => item.id !== id);
+    this.pendingOperationHides.set(id, operation);
     this.finishWorkSync(); this.emit();
+    return true;
+  }
+  async clearOperations() {
+    for (const operation of [...this.state.operations]) if (terminalOperation(operation.state)) await this.dismissCompletedOperation(operation.id);
   }
   private acceptChatSession(id:string,value:Data) {
     const sessionId=value.sessionId ?? value.session?.sessionId;if(typeof sessionId!=='string'||!sessionId)throw failure('INVALID_RESPONSE','d.error.sessionAcceptanceNoId');
@@ -2080,8 +2134,18 @@ export class DesktopAdapter {
     if (!context || context.importState === 'unsubmitted') return;
     const value = await this.request(`work-packages/${part(context.id)}`);
     if (this.inspectionContext !== context) return;
+    if (value.transferId !== undefined && value.transferId !== context.id) throw failure('INVALID_RESPONSE','d.error.importTransferMismatch');
     if (value.phase === 'ready') context.importState = 'unsubmitted';
-    else if (value.phase === 'accepted') context.importState = 'accepted';
+    else if (value.phase === 'accepted') {
+      if (typeof value.operationId === 'string' && value.operationId) {
+        if (context.operationId && context.operationId !== value.operationId) throw failure('INVALID_RESPONSE','d.error.operationMismatch');
+        const existing = this.getOperation(value.operationId);
+        if (existing && value.workId && existing.workId && existing.workId !== value.workId) throw failure('INVALID_RESPONSE','d.error.operationOtherWork');
+        if (!existing) this.accepted(value, '', 'Import Work'); // i18n-exempt: internal Operation kind
+        context.operationId = value.operationId;
+      }
+      context.importState = 'accepted';
+    }
     this.emit();
   }
   async importWork(name: string) {
@@ -2110,12 +2174,12 @@ export class DesktopAdapter {
       throw failure('RESULT_UNKNOWN','d.error.exportAcceptanceIncomplete');
     return this.accepted(value, id, 'Export Work'); // i18n-exempt: Operation kind 协议值
   }
-  async fetchSnapshot(id: string, explicit = true) {
+  async fetchSnapshot(id: string, explicit = true, expectedWorkId?: string) {
     const epoch = this.epoch;
     const { value } = await this.readMetadata(`work-snapshots/${part(id)}`, explicit);
     if (epoch !== this.epoch) throw failure('CONNECTION_CHANGED','d.error.snapshotIdentityEnded');
     const known = this.getSnapshot(id);
-    if (value.snapshotId !== id || typeof value.workId !== 'string' || !value.workId || typeof value.operationId !== 'string' || !value.operationId ||
+    if (value.snapshotId !== id || typeof value.workId !== 'string' || !value.workId || expectedWorkId && value.workId !== expectedWorkId || typeof value.operationId !== 'string' || !value.operationId ||
         known && (known.workId !== value.workId || known.operationId !== value.operationId))
       throw failure('SNAPSHOT_MISMATCH','d.error.snapshotMismatch');
     if (!['accepted', 'pending', 'preparing', 'running', 'succeeded', 'failed', 'superseded'].includes(value.state))

@@ -49,6 +49,104 @@ test('DWUI-018 recover canonical types and multiple IDs without guessing latest 
   assert.equal(a.state.operations[0].action, 'start'); assert.equal(a.state.operations[1].action, 'stop');
 });
 
+test('DWUI-OPREC-002 parallel record recovery cannot enter a newer identity', async t => {
+  let release!: () => void, markStarted!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { markStarted = resolve; });
+  t.after(() => release());
+  const a = fixture(t, async path => {
+    if (path === 'status') return { health: { available: true }, readiness: { available: true, value: { ready: true } } };
+    if (path === 'works') return { works: [] };
+    if (path === 'skills') return { skills: [] };
+    if (path === 'packages') return { packages: [] };
+    if (path === 'known-operations') { markStarted(); await gate; return { operations: [{ operationId: 'old-import', type: 'Import Work' }] }; }
+    return {};
+  });
+  a.state.signedIn = true;
+  const initial = a.readConnection(false).catch(() => undefined);
+  await started;
+  a.clearIdentity(); a.state.signedIn = true; a.state.core.account = 'new-owner';
+  release(); await initial;
+  assert.equal(a.state.core.account, 'new-owner');
+  assert.equal(a.getOperation('old-import'), undefined);
+});
+
+test('DWUI-OPREC-001 restores the original Service only after matching its Work and operation kind', async t => {
+  const reads: string[] = [];
+  const a = fixture(t, (path, method) => {
+    reads.push(`${method} ${path}`);
+    if (path === 'known-operations') return { operations: [
+      { operationId: 'service-op', workId: 'work-one', serviceId: 'service-a', type: 'Service action' },
+      { operationId: 'legacy-op', workId: 'work-one', type: 'Service action' },
+    ] };
+    return { operationId: path.split('/')[1], workId: 'work-one', kind: 'restart-service', state: 'running' };
+  });
+  await a.recoverOperations();
+  assert.equal(a.getOperation('service-op').serviceId, 'service-a');
+  assert.equal(a.getOperation('service-op').checkedServiceId, undefined);
+  await a.checkOperation('service-op'); await a.checkOperation('legacy-op');
+  assert.equal(a.getOperation('service-op').checkedServiceId, 'service-a');
+  assert.equal(a.getOperation('service-op').checkedKind, 'restart-service');
+  assert.equal(a.getOperation('legacy-op').checkedServiceId, undefined);
+  assert.ok(reads.every(value => value.startsWith('GET ')));
+});
+
+test('DWUI-OPREC-001 rejects mismatched kinds, Works and reported Service identities', async t => {
+  let reply: any = {};
+  const a = fixture(t, path => path === 'known-operations' ? { operations: [
+    { operationId: 'service-op', workId: 'work-one', serviceId: 'service-a', type: 'Service action' },
+  ] } : reply);
+  await a.recoverOperations();
+  for (const value of [
+    { operationId: 'service-op', workId: 'other-work', kind: 'restart-service', state: 'succeeded' },
+    { operationId: 'service-op', workId: 'work-one', kind: 'start-work', state: 'succeeded' },
+    { operationId: 'service-op', workId: 'work-one', kind: 'restart-service', serviceId: 'service-b', state: 'succeeded' },
+  ]) {
+    reply = value;
+    await assert.rejects(a.checkOperation('service-op'));
+    assert.equal(a.getOperation('service-op').state, 'unknown');
+    assert.equal(a.getOperation('service-op').checkedServiceId, undefined);
+  }
+  reply = { operationId: 'service-op', workId: 'work-one', kind: 'restart-service', state: 'running' };
+  await a.checkOperation('service-op');
+  assert.equal(a.getOperation('service-op').checkedServiceId, 'service-a');
+});
+
+test('DWUI-OPREC-001 Service acceptance preserves the requested identity and rejects conflicting acceptance', async t => {
+  let serviceId = 'service-a';
+  const a = fixture(t, () => ({ operationId: 'service-start', workId: 'work-one', serviceId }));
+  const op = await a.operateService('work-one', 'service-a', 'start');
+  assert.equal(op.serviceId, 'service-a'); assert.equal(op.checkedServiceId, 'service-a');
+  serviceId = 'other-service';
+  await assert.rejects(a.operateService('work-one', 'service-a', 'start'));
+  assert.equal(a.state.operations.length, 1);
+});
+
+test('DWUI-OPREC-003 preserves typed public diagnostics and handles legacy or malformed errors', async t => {
+  let error: any = {
+    code: 'AGENT_EXITED', stage: 'readiness', message: 'Agent exited', remediation: 'Check the runtime',
+    retryable: false, exitCode: 0, serviceId: 'service-a', correlationId: 'correlation-a', secret: 'do-not-copy',
+  };
+  let diagnostics: any = {
+    stages: [{ timestamp: '2026-01-01T00:00:00Z', component: 'agent', stage: 'readiness', outcome: 'failed', code: 'AGENT_EXITED', message: 'Agent exited', secret: 'do-not-copy' }],
+    truncated: true, rollback: { state: 'failed', error: { code: 'ROLLBACK_FAILED', stage: 'rollback', message: 'Rollback failed' } },
+    diagnosticCollection: { state: 'unavailable', code: 'DIAGNOSTIC_COLLECTION_FAILED' }, secret: 'do-not-copy',
+  };
+  const a = fixture(t, () => ({ operationId: 'original', workId: 'work-one', kind: 'start-work', state: 'failed', correlationId: 'correlation-a', error, diagnostics }));
+  a.state.operations = [{ id: 'original', workId: 'work-one', kind: 'Start Work', state: 'running' }];
+  let op = await a.checkOperation('original');
+  assert.deepEqual(op.diagnostic, { code: 'AGENT_EXITED', stage: 'readiness', correlationId: 'correlation-a', serviceId: 'service-a', message: 'Agent exited', remediation: 'Check the runtime', retryable: false, exitCode: 0 });
+  assert.equal(op.diagnostics.stages[0].stage, 'readiness');
+  assert.equal(op.diagnostics.rollback.error.code, 'ROLLBACK_FAILED');
+  assert.equal(op.diagnostics.diagnosticCollection.state, 'unavailable');
+  assert.doesNotMatch(JSON.stringify(op), /do-not-copy/);
+  error = 'Legacy failure'; diagnostics = null;
+  op = await a.checkOperation('original'); assert.equal(op.error, 'Legacy failure'); assert.equal(op.diagnostic, undefined);
+  error = { code: {}, stage: 42, message: {}, remediation: ['not text'], retryable: 'false', exitCode: 1.5 };
+  op = await a.checkOperation('original'); assert.equal(op.error, undefined); assert.equal(op.diagnostic, undefined);
+  assert.doesNotMatch(JSON.stringify(op), /\[object Object\]/);
+});
+
 test('DWUI-017 manual terminal query keeps a refresh obligation, failure then GET recovery', async t => {
   let failed = true; const writes: string[] = [];
   const a = fixture(t, (path, method) => {
@@ -217,6 +315,37 @@ test('DWUI-017 clear terminal history preserves original evidence until Work/lis
   assert.equal(a.project(a.getWork('work-one')).label, 'Ready'); assert.equal(a.project(a.getWork('work-one')).usable, true);
   assert.equal(a.getWork('work-one').lifecycleIntent, undefined); assert.equal(a.terminalEvidence.size, 0);
   assert.equal(a.workSync.size, 0); assert.equal(starts, 1);
+});
+
+test('DWUI-OPREC-002 dismissed terminal remains recoverable in another window until object sync finishes', async t => {
+  const writes: string[] = [];
+  const handler = (path: string, method: string) => {
+    if (method !== 'GET') { writes.push(`${method} ${path}`); return {}; }
+    if (path === 'known-operations') return { operations: [{ operationId: 'original-start', workId: 'work-one', type: 'Start Work' }] };
+    if (path === 'operations/original-start') return { operationId: 'original-start', workId: 'work-one', kind: 'start-work', state: 'succeeded' };
+    return path === 'works' ? { works: [raw('ready', 'running', 2)] } : raw('ready', 'running', 2);
+  };
+  const first = fixture(t, handler);
+  first.state.works = [first.mapWork(raw('stopped', 'stopped'))];
+  first.accepted({ operationId: 'original-start', workId: 'work-one' }, 'work-one', 'Start Work');
+  await first.checkOperation('original-start');
+  assert.equal(await first.dismissCompletedOperation('original-start'), true);
+  assert.deepEqual(writes, []);
+  const second = fixture(t, handler);
+  await second.recoverOperations(); await second.checkOperation('original-start');
+  assert.equal(second.getOperation('original-start').state, 'succeeded');
+  await first.refreshWorkStatus('work-one'); await first.listWorks();
+  await new Promise(done => setImmediate(done));
+  assert.deepEqual(writes, ['DELETE known-operations/original-start']);
+});
+
+test('DWUI-OPREC-002 a pending operation cannot be dismissed as completed history', async t => {
+  const writes: string[] = [];
+  const a = fixture(t, (path, method) => { if (method !== 'GET') writes.push(`${method} ${path}`); return {}; });
+  a.state.operations = [{ id: 'pending-original', workId: 'work-one', kind: 'Start Work', state: 'running' }];
+  assert.equal(await a.dismissCompletedOperation('pending-original'), false);
+  assert.equal(a.getOperation('pending-original').state, 'running');
+  assert.deepEqual(writes, []);
 });
 
 test('DWUI-018 clear snapshot cannot remove a new Stop or let late Start release its intent', async t => {

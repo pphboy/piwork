@@ -11,6 +11,11 @@ let nativeDownloadHandler: ((request: IncomingMessage, response: ServerResponse)
 let nativeUploadHandler: ((request: IncomingMessage, response: ServerResponse) => Promise<void>) | undefined;
 const server = createServer(async (request, response) => {
   if (nativeUploadHandler && request.method === 'PUT' && request.url?.startsWith('/_desktop/files/')) { await nativeUploadHandler(request, response); return; }
+  if (request.method === 'GET' && request.url === '/desktop/piwork-logo.png') {
+    try { response.setHeader('Content-Type', 'image/png'); response.end(await readFile(new URL('../public/piwork-logo.png', import.meta.url))); }
+    catch { response.writeHead(404); response.end(); }
+    return;
+  }
   if (request.method === 'GET' && /^\/_desktop\/api\/downloads\/[^/]+\/content$/.test(request.url || '')) {
     if (nativeDownloadHandler) await nativeDownloadHandler(request, response);
     else { response.writeHead(404); response.end(); }
@@ -23,11 +28,17 @@ const server = createServer(async (request, response) => {
 before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch(process.env.PIWORK_TEST_BROWSER_BIN ? { headless: true, executablePath: process.env.PIWORK_TEST_BROWSER_BIN } : { headless: true, channel: 'chromium' }); });
 after(async () => { await browser.close(); await new Promise<void>(done => server.close(() => done())); });
 
-async function knownOperations(page: Page) {
+async function openWorkForRecovery(page: Page) {
   if (await page.locator('#modal').count()) await button(page, 'close-modal').click();
-  if (await button(page, 'back-works').count()) await button(page, 'back-works').click();
-  await button(page, 'account').click();
-  await button(page, 'operations').click();
+  if (!await button(page, 'work-menu').count()) await page.locator('.work-name[data-action="open-work"]').first().click();
+}
+async function findPreviousExport(page: Page) {
+  await openWorkForRecovery(page);
+  await button(page, 'work-menu').click(); await button(page, 'find-previous-export').click();
+}
+async function workTasks(page: Page) {
+  await openWorkForRecovery(page);
+  await button(page, 'work-menu').click(); await button(page, 'work-info').click(); await button(page, 'find-work-task').click();
 }
 async function exportDetails(page: Page) {
   if (!await page.locator('.export-details').evaluate(el => el.hasAttribute('open'))) await page.locator('.export-details > summary').click();
@@ -112,10 +123,23 @@ function deferred() { let resolve!: () => void; const promise = new Promise<void
 test('standalone account menu retains Core and browser controls without hosted management links',async t=>{
  const {page}=await fixture(t,()=>undefined);
  await button(page,'back-works').click();await button(page,'account').click();const menu=page.getByRole('menu');
- for(const name of ['About Piwork','Known operations','Switch Core','Sign out'])await expect(menu.getByRole('menuitem',{name,exact:true})).toBeVisible();
+ for(const name of ['About Piwork','Switch Core','Sign out'])await expect(menu.getByRole('menuitem',{name,exact:true})).toBeVisible();
+ await expect(menu.getByRole('menuitem',{name:'Known operations',exact:true})).toHaveCount(0);
  await expect(menu.getByRole('menuitem',{name:'Reset browser access',exact:true})).toHaveCount(0);
  for(const name of ['Administration','Quick setup'])await expect(menu.getByRole('menuitem',{name,exact:true})).toHaveCount(0);
  await page.keyboard.press('End');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(button(page,'account')).toBeFocused();
+});
+
+for (const hosted of [false, true]) for (const role of ['user', 'admin']) test(`DWUI-OPREC-001 ${hosted ? 'hosted' : 'standalone'} ${role} account has no global tasks entry`, async t => {
+  const { page } = await fixture(t, () => undefined);
+  await api(page, `adapter.hosted=${hosted}; adapter.state.core.role=${JSON.stringify(role)}; adapter.emit()`);
+  await button(page, 'back-works').click(); await button(page, 'account').click();
+  const menu = page.getByRole('menu');
+  await expect(menu.getByRole('menuitem', { name: 'Known operations', exact: true })).toHaveCount(0);
+  await expect(menu.getByRole('menuitem', { name: 'About Piwork', exact: true })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'Sign out', exact: true })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'Administration', exact: true })).toHaveCount(hosted && role === 'admin' ? 1 : 0);
+  await expect(menu.getByRole('menuitem', { name: 'Switch Core', exact: true })).toHaveCount(hosted ? 0 : 1);
 });
 
 for(const method of ['picker','paste','drop','stop-and-send'])test(`Chat images: ${method} adds without side effects and sends a pure image`,async t=>{
@@ -353,7 +377,7 @@ test('D19 close preserves one automatic original download and a manual same-tran
     if (id && r.path === `downloads/${id}`) { reads++; return { json: { transferId: id, kind: 'download', phase: ready ? 'ready' : 'downloading', transferred: ready ? bytes.length : 400, total: bytes.length, ...(ready ? transfer() : {}) } }; }
   });
   page.on('download', () => { downloadEvents++; });
-  await knownOperations(page);
+  await findPreviousExport(page);
   await page.locator('#snapshot-query').fill('snap-1'); await button(page, 'lookup-snapshot').click();
   await expect(page.locator('.export-snapshot')).toContainText('snap-1');
   await button(page, 'download-work').click(); await exportDetails(page);
@@ -371,7 +395,7 @@ test('D19 close preserves one automatic original download and a manual same-tran
   assert.equal(downloadEvents, 1);
   assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['work-snapshots/snap-1/downloads']);
   assert.deepEqual(requests.filter(r => r.path.endsWith('/content')).map(r => r.path), [`downloads/${id}/content`]);
-  await knownOperations(page); await page.locator('#snapshot-query').fill('snap-1'); await button(page, 'lookup-snapshot').click();
+  await findPreviousExport(page); await page.locator('#snapshot-query').fill('snap-1'); await button(page, 'lookup-snapshot').click();
   await exportDetails(page); await button(page, 'check-download').click(); await expect(button(page, 'save-export-file')).toBeEnabled();
   assert.equal(downloadEvents, 1, 'reopening and checking the original transfer must not auto-download again');
   const manualDownload = page.waitForEvent('download'); await button(page, 'save-export-file').click();
@@ -381,6 +405,33 @@ test('D19 close preserves one automatic original download and a manual same-tran
   assert.equal(downloadEvents, 2);
   assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['work-snapshots/snap-1/downloads']);
   assert.deepEqual(requests.filter(r => r.path.endsWith('/content')).map(r => r.path), [`downloads/${id}/content`, `downloads/${id}/content`]);
+});
+
+test('DWUI-OPREC-001 paused Export recovers interrupted transfer observation without another submission', async t => {
+  const preparation = deferred(); t.after(async () => preparation.resolve());
+  const bytes = Buffer.from('same original package'), digest = createHash('sha256').update(bytes).digest('hex');
+  const snapshot = { snapshotId: 'snap-paused', operationId: 'op-export-paused', workId: 'work-1', state: 'succeeded', size: bytes.length, digest, expiresAt: '2099-01-01T00:00:00Z' };
+  let transferId = '', ready = false, offline = true, downloads = 0;
+  const transfer = () => ({ transferId, workId: 'work-1', snapshotId: 'snap-paused', size: bytes.length, digest, ready });
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'work-snapshots/snap-paused') return { json: snapshot };
+    if (r.path === 'operations/op-export-paused') return { json: { operationId: 'op-export-paused', workId: 'work-1', kind: 'export-work', state: 'succeeded', result: { snapshotId: 'snap-paused' } } };
+    if (r.path === 'work-snapshots/snap-paused/downloads' && r.method === 'POST') { transferId = r.headers['x-piwork-transfer-id']!; await preparation.promise; ready = true; return { json: transfer() }; }
+    if (transferId && r.path === `downloads/${transferId}`) return offline ? { status: 503, json: { message: 'Transfer status interrupted' } } : { json: { ...transfer(), kind: 'download', phase: ready ? 'ready' : 'downloading', transferred: ready ? bytes.length : 1, total: bytes.length } };
+    if (transferId && r.path === `downloads/${transferId}/content`) return { body: bytes, headers: { 'content-type': 'application/vnd.piwork.work-package', 'content-disposition': 'attachment; filename="paused.work"' } };
+  });
+  page.on('download', () => { downloads++; });
+  await findPreviousExport(page); await page.locator('#snapshot-query').fill('snap-paused'); await button(page, 'lookup-snapshot').click();
+  await button(page, 'download-work').click(); await exportDetails(page);
+  await expect(button(page, 'pause-export-flow')).toBeVisible(); await button(page, 'pause-export-flow').click();
+  await button(page, 'check-download').click(); await expect(page.locator('#modal')).toContainText('Transfer status interrupted');
+  offline = false; await button(page, 'check-download').click(); await expect(button(page, 'resume-export-flow')).toBeVisible();
+  preparation.resolve(); await expect.poll(() => api(page, "return adapter.downloads.get('snap-paused')?.ready")).toBe(true);
+  assert.equal(downloads, 0);
+  const completed = page.waitForEvent('download'); await button(page, 'resume-export-flow').click();
+  assert.deepEqual(await readFile((await (await completed).path())!), bytes);
+  assert.equal(downloads, 1);
+  assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['work-snapshots/snap-paused/downloads']);
 });
 
 test('stopped Export delivers current content once despite a known old snapshot, and exact old selection stays old', async t => {
@@ -401,7 +452,7 @@ test('stopped Export delivers current content once despite a known old snapshot,
     }
   });
   page.on('download', () => { downloadEvents++; });
-  await knownOperations(page);
+  await findPreviousExport(page);
   await page.locator('#snapshot-query').fill('snap-old'); await button(page, 'lookup-snapshot').click();
   await expect(page.locator('.export-snapshot')).toContainText('snap-old');
   assert.equal(requests.filter(r => r.method === 'POST').length, 0, 'looking up an old snapshot must be read-only');
@@ -531,7 +582,7 @@ test('D10 unknown preview preserves iframe; popup blocking offers protected link
   assert.doesNotMatch(await button(page, 'copy-local').getAttribute('data-copy') || '', /ticket|token/);
 });
 
-for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'settings', 'services', 'files', 'sessions', 'new-session', 'select-session', 'catalog', 'refresh-config', 'known', 'lookup', 'snapshot', 'check-operation', 'resume-operation', 'clear'] as const) test(`D01/D04–D06/D14–D15/D20 ${entry} waits visibly for its own request`, async t => {
+for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'settings', 'services', 'files', 'sessions', 'new-session', 'select-session', 'catalog', 'refresh-config', 'lookup', 'snapshot', 'check-operation', 'resume-operation'] as const) test(`D01/D04–D06/D14–D15/D20 ${entry} waits visibly for its own request`, async t => {
   const gate = deferred(); t.after(async () => gate.resolve()); let armed = false;
   const operation = { id: 'op-read', workId: 'work-1', kind: 'Operation', state: 'running', phase: 'running', scope: 'http://core.test · owner' };
   const endpoint: Record<string, string> = { connection:'status', readiness:'status', 'retry-works':'works', 'open-work':'works/work-1', settings:'works/work-1/configuration', services:'works/work-1/services', sessions:'works/work-1/sessions', 'new-session':'works/work-1/sessions', 'select-session':'works/work-1/sessions/session-2', catalog:'skills', 'refresh-config':'works/work-1/configuration', known:'known-operations', lookup:'operations/op-read', snapshot:'work-snapshots/snap-read', 'check-operation':'operations/op-read', 'resume-operation':'operations/op-read', clear:'known-operations/op-read', files:'/_desktop/files/works/work-1/files/' };
@@ -559,14 +610,11 @@ for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'set
   else if (entry==='sessions') trigger='sessions';
   else if (entry==='new-session') {await button(page,'agent-menu').click();trigger='new-session';}
   else if (entry==='select-session') {await button(page,'sessions').click();trigger='select-session';}
-  else if (entry==='known') { await button(page,'back-works').click(); await button(page,'account').click(); trigger='operations'; }
   else {
-    await button(page,'back-works').click();
-    await api(page,`adapter.state.operations.push(${JSON.stringify({...operation,state:entry==='clear'?'succeeded':'running'})})`);
-    await knownOperations(page);
+    await api(page,`adapter.state.operations.push(${JSON.stringify(operation)})`);
+    if (entry==='snapshot') await findPreviousExport(page); else await workTasks(page);
     if(entry==='lookup') {await page.locator('#operation-query').fill('op-read');trigger='lookup-operation';}
     else if(entry==='snapshot') {await page.locator('#snapshot-query').fill('snap-read');trigger='lookup-snapshot';}
-    else if(entry==='clear') trigger='clear-operations';
     else {await button(page,'operation').click(); if(entry==='resume-operation') await button(page,'pause-operation').click(); trigger=entry;}
   }
   armed = true; const before = requests.filter(r=>r.path===endpoint[entry]).length;
@@ -670,6 +718,7 @@ for (const source of ['Core','npm','Git','Local directory','ZIP'] as const) for 
   const {page,requests}=await fixture(t,async r=>{
     if(r.path==='works/work-1/package-uploads')return{json:{uploadId:'upload-original'}};
     if(r.path===`works/work-1/packages${update?'/pkg/update':''}`&&r.method==='POST'){await gate.promise;accepted=true;return{json:{operationId:'op-package',workId:'work-1'}};}
+    if(r.path==='operations/op-package')return{json:{operationId:'op-package',workId:'work-1',kind:update?'pi-package-update':'pi-package-install',state:'running'}};
     if(accepted&&r.path==='works/work-1/configuration')await readback.promise;
   });
   await button(page,'settings').click();await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
@@ -678,7 +727,8 @@ for (const source of ['Core','npm','Git','Local directory','ZIP'] as const) for 
   else if(source==='ZIP')await page.locator('#package-zip-input').setInputFiles({name:'pkg.zip',mimeType:'application/zip',buffer:Buffer.from('original ZIP fixture bytes')});
   else if(source==='Local directory')await page.evaluate(()=>{const transfer=new DataTransfer();const file=new File(['{"name":"pkg"}'],'package.json');Object.defineProperty(file,'webkitRelativePath',{value:'pkg/package.json'});transfer.items.add(file);const input=document.querySelector<HTMLInputElement>('#package-directory-input')!;input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));});
   await button(page,'confirm-install').click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('Submitting package');
-  await expect(button(page,'confirm-install')).toBeDisabled();gate.resolve();await expect(page.locator('#modal')).toContainText('op-package');
+  await expect(button(page,'confirm-install')).toBeDisabled();gate.resolve();await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('.settings-page [data-action="operation"][data-id="op-package"]')).toBeVisible();
   assert.equal(requests.filter(r=>r.path===`works/work-1/packages${update?'/pkg/update':''}`&&r.method==='POST').length,1);
   if(source==='ZIP'||source==='Local directory')assert.equal(requests.filter(r=>r.path.endsWith('/package-uploads')).length,1);else assert.equal(requests.filter(r=>r.path.endsWith('/package-uploads')).length,0);
   readback.resolve();
@@ -697,7 +747,9 @@ for(const action of ['apply','skill-copy','remove-package'])test(`D14/D16 ${acti
   if(action==='skill-copy'){await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();await button(page,'core-skill-copy').click();trigger='confirm-core-skills';}
   if(action==='remove-package'){await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();await button(page,'remove-package').click();trigger='confirm-remove-package';}
   await button(page,trigger).click();await expect(page.locator('[aria-busy="true"]').filter({ has: page.locator('.pending-dots') }).filter({ hasText: action === 'apply' ? 'Submitting Apply' : action === 'skill-copy' ? 'Copying Skill' : 'Removing package' }).first()).toBeVisible();gate.resolve();
-  await expect(page.locator('body')).toContainText(action==='skill-copy'?'Skill copy saved':'op-'+action);assert.equal(requests.filter(r=>r.path===endpoint&&r.method!=='GET').length,1);read.resolve();
+  if (action==='skill-copy') await expect(page.locator('body')).toContainText('Skill copy saved');
+  else await expect(page.locator(`.settings-page [data-action="operation"][data-id="op-${action}"]`)).toBeVisible();
+  assert.equal(requests.filter(r=>r.path===endpoint&&r.method!=='GET').length,1);read.resolve();
 });
 
 test('D19 lost preparation response and observation failure recover the original transfer without another POST',async t=>{
@@ -855,6 +907,41 @@ test('W1 Service control stays locked across port changes while another Service 
   assert.ok(requests.some(r => r.path === 'service-entries' && JSON.parse(r.body).port === 8080));
 });
 
+test('DWUI-OPREC-001 recovered Service controls stay with the confirmed Service and preserve the mounted application', async t => {
+  const records = [
+    { operationId: 'service-a-op', workId: 'work-1', serviceId: 'a', type: 'Service action' },
+    { operationId: 'service-gone-op', workId: 'work-1', serviceId: 'gone', type: 'Service action' },
+    { operationId: 'service-unknown-op', workId: 'work-1', type: 'Service action' },
+  ];
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: records } };
+    if (r.path.startsWith('operations/')) {
+      const id = r.path.split('/')[1]!;
+      return { json: { operationId: id, workId: 'work-1', kind: id === 'service-gone-op' ? 'remove-service' : 'restart-service', state: id === 'service-gone-op' ? 'failed' : 'running' } };
+    }
+    if (r.path.endsWith('/services')) return { json: { services: ['a', 'b'].map(id => ({ serviceId: id, name: `Tool ${id}`, enabled: true, observedState: 'ready', access: { hostname: `${id}.example`, ports: [{ port: 80, url: `http://${id}.example:80`, name: 'web' }] } })) } };
+    if (r.path.includes('/logs')) return { json: { text: 'safe log', status: 'collected' } };
+    if (r.path === 'service-entries') return { json: { entryId: 'entry', origin: 'http://service.test', entryUrl: 'about:blank', embed: 'allowed' } };
+    if (r.path === 'service-entries/entry') return { json: { embed: 'allowed' } };
+  });
+  await page.reload();
+  await api(page, "await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))");
+  await expect(page.locator('iframe')).toHaveCount(1);
+  await page.locator('iframe').evaluate(frame => { (window as any).recoveryFrame = frame; });
+  await button(page, 'service-menu').click(); await button(page, 'manage-services').click();
+  await expect(page.locator('#modal')).toContainText('The original Service has not been confirmed.');
+  await expect(page.locator('#modal')).toContainText('The Service is no longer in the current list.');
+  await page.locator('#modal [data-action="service-details"][data-id="a"]').click();
+  await expect(page.locator('#modal .object-control-progress [data-id="service-a-op"]')).toBeVisible();
+  await expect(page.locator('#modal [data-control="restart"]')).toBeDisabled();
+  await page.locator('#modal [data-action="check-service-progress"]').click();
+  await button(page, 'manage-services').click(); await page.locator('#modal [data-action="service-details"][data-id="b"]').click();
+  await expect(page.locator('#modal .object-control-progress')).toHaveCount(0);
+  await expect(page.locator('#modal [data-control="restart"]')).toBeEnabled();
+  assert.equal(await page.locator('iframe').evaluate(frame => frame === (window as any).recoveryFrame), true);
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path.includes('/services/')).length, 0);
+});
+
 test('W2 unrelated or unidentified Operations cannot unlock unknown Start; only original Work facts restore its admission', async t => {
   let state = 'stopped', wrongWork = false;
   const { page, requests } = await fixture(t, r => {
@@ -866,18 +953,17 @@ test('W2 unrelated or unidentified Operations cannot unlock unknown Start; only 
   });
   await button(page, 'start-work').click(); await expect(button(page, 'start-work')).toBeDisabled();
   for (const id of ['other-work', 'same-work', 'no-work']) {
-    await knownOperations(page); await page.locator('#operation-query').fill(id); await button(page, 'lookup-operation').click();
-    await expect(page.locator('#modal')).toContainText(id); await button(page, 'check-operation').click(); await expect(button(page, 'check-operation')).toBeEnabled(); await button(page, 'close-modal').click();
+    await workTasks(page); await page.locator('#operation-query').fill(id); await button(page, 'lookup-operation').click();
+    if (id === 'same-work') { await expect(page.locator('#modal')).toContainText(id); await button(page, 'check-operation').click(); await expect(button(page, 'check-operation')).toBeEnabled(); }
+    else await expect(page.locator('#modal')).toContainText('belongs to another Work');
+    await button(page, 'close-modal').click();
     await expect(button(page, 'start-work')).toBeDisabled();
     await button(page, 'start-work').evaluate((el: HTMLButtonElement) => el.click());
     assert.equal(requests.filter(r => r.path === 'works/work-1/start').length, 1);
   }
-  await knownOperations(page);
-  await button(page, 'clear-operations').click(); await button(page, 'close-modal').click();
   await expect(button(page, 'start-work')).toBeDisabled();
   await button(page, 'start-work').evaluate((el: HTMLButtonElement) => el.click());
   assert.equal(requests.filter(r => r.path === 'works/work-1/start').length, 1);
-  await page.locator('.work-name[data-action="open-work"]').click();
   await button(page, 'work-menu').click(); await button(page, 'work-info').click();
   wrongWork = true; await button(page, 'check-work').click(); await expect(page.locator('#modal')).toContainText('does not match the original Work');
   wrongWork = false; await button(page, 'check-work').click(); await expect(button(page, 'check-work')).toBeEnabled();
@@ -1001,6 +1087,195 @@ test('DWUI-018 reload recovers original Stop through canonical kind and reaches 
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
 
+test('DWUI-OPREC-001 recovered Work control is available on its own row and checks only the original task', async t => {
+  const raw = { id: 'work-1', name: 'Recovery Work', desiredState: 'stopped', observedState: 'stopping', controlVersion: 3 };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: 'original-stop', workId: 'work-1', type: 'Work action' }] } };
+    if (r.path === 'operations/original-stop') return { json: { operationId: 'original-stop', workId: 'work-1', kind: 'stop-work', state: 'running' } };
+    if (r.path === 'works' || r.path === 'works/work-1') return { json: r.path === 'works' ? { works: [raw] } : raw };
+  });
+  await api(page, "await adapter.checkOperation('original-stop')");
+  await button(page, 'back-works').click();
+  const row = page.locator('.work-row').filter({ hasText: 'Recovery Work' });
+  await expect(row.locator('[data-action="operation"][data-id="original-stop"]')).toBeVisible();
+  await expect(row).toContainText('Stopping');
+  await row.locator('[data-action="check-work-progress"]').click();
+  assert.ok(requests.some(r => r.method === 'GET' && r.path === 'operations/original-stop'));
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-OPREC-001 a converged successful Work task leaves the row while its original details remain reachable', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: 'finished-start', workId: 'work-1', type: 'Work action' }] } };
+    if (r.path === 'operations/finished-start') return { json: { operationId: 'finished-start', workId: 'work-1', kind: 'start-work', state: 'succeeded' } };
+  });
+  await api(page, "await adapter.checkOperation('finished-start'); await adapter.refreshWorkStatus('work-1'); await adapter.listWorks()");
+  await button(page, 'back-works').click();
+  await expect(page.locator('.work-row .object-control-progress')).toHaveCount(0);
+  await workTasks(page); await page.locator('#operation-query').fill('finished-start'); await button(page, 'lookup-operation').click();
+  await page.locator('.operation-technical > summary').click(); await expect(page.locator('.operation-technical')).toContainText('finished-start');
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-OPREC-001 a newer Stop replaces the older Start in the Work progress area', async t => {
+  const stopped = { id: 'work-1', name: 'Recovery Work', desiredState: 'stopped', observedState: 'stopped', controlVersion: 1 };
+  const { page } = await fixture(t, r => {
+    if (r.path === 'works' || r.path === 'works/work-1') return { json: r.path === 'works' ? { works: [stopped] } : stopped };
+    if (r.path === 'works/work-1/start') return { json: { operationId: 'old-start', workId: 'work-1' } };
+    if (r.path === 'works/work-1/stop') return { json: { operationId: 'new-stop', workId: 'work-1' } };
+  });
+  await button(page, 'back-works').click(); await button(page, 'start-work').click();
+  await api(page, "await adapter.lifecycle('work-1', 'stop')");
+  const progress = page.locator('.work-row .object-control-progress');
+  await expect(progress).toContainText('Stop Work');
+  await expect(progress.locator('[data-id="new-stop"]')).toBeVisible();
+  await expect(progress.locator('[data-id="old-start"]')).toHaveCount(0);
+});
+
+test('DWUI-OPREC-002 orphaned imports and deletions remain reachable after reload, search and an empty list', async t => {
+  let empty = false;
+  const records = [
+    { operationId: 'import-original', workId: 'work-import', type: 'Import Work' },
+    { operationId: 'delete-original', workId: 'work-deleted', type: 'Work action' },
+    ...['2', '3', '4'].map(id => ({ operationId: `import-${id}`, workId: `work-import-${id}`, type: 'Import Work' })),
+  ];
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: records } };
+    if (r.path.startsWith('operations/')) {
+      const id = r.path.split('/')[1]!;
+      const record = records.find(item => item.operationId === id)!;
+      return { json: { operationId: id, workId: record.workId, kind: id === 'delete-original' ? 'delete-work' : 'import-work', state: id === 'delete-original' ? 'failed' : 'running', ...(id === 'delete-original' ? { error: { message: 'Cleanup failed safely' } } : {}) } };
+    }
+    if (r.path === 'works') return { json: { works: empty ? [] : [{ id: 'work-1', name: 'Recovery Work', observedState: 'ready', desiredState: 'running' }] } };
+  });
+  await button(page, 'back-works').click();
+  await api(page, "await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))");
+  await expect(page.locator('.recovery-task[data-operation-id="import-original"]')).toContainText('Import Work');
+  await expect(page.locator('.recovery-task[data-operation-id="import-original"]')).toContainText('Task 1');
+  await expect(page.locator('.recovery-task[data-operation-id="delete-original"]')).toContainText('Cleanup failed safely');
+  await expect(page.locator('.recovery-tasks > details')).toContainText('Show 2 more tasks');
+  await page.locator('.recovery-tasks > details > summary').click();
+  await expect(page.locator('.recovery-task[data-operation-id="import-4"]')).toBeVisible();
+  await expect(page.locator('.recovery-task[data-operation-id="import-4"]')).toContainText('Task 5');
+  await page.locator('#search').fill('not-a-match');
+  await expect(page.locator('.recovery-task[data-operation-id="import-original"]')).toBeVisible();
+  empty = true; await api(page, 'await adapter.listWorks()');
+  await expect(page.locator('.recovery-task[data-operation-id="delete-original"]')).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.recovery-task[data-operation-id="import-original"]')).toBeVisible();
+  await page.locator('.recovery-task[data-operation-id="import-original"] [data-action="check-task-operation"]').click();
+  await page.locator('.recovery-task[data-operation-id="import-original"] [data-action="operation"]').click();
+  await expect(page.locator('#modal')).toContainText('Import Work');
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-OPREC-002 an accepted Create remains on Works when its object cannot be read', async t => {
+  let listFails = false;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works' && listFails) return { status: 503, json: { message: 'List unavailable' } };
+    if (r.path === 'operations/create-original') return { json: { operationId: 'create-original', workId: 'work-new', kind: 'create-work', state: 'running' } };
+    if (r.path === 'works/work-new') return { status: 503, json: { message: 'Work unavailable' } };
+  });
+  await button(page, 'back-works').click();
+  await api(page, "adapter.accepted({ operationId: 'create-original', workId: 'work-new' }, '', 'Create Work'); await adapter.checkOperation('create-original')");
+  listFails = true; await api(page, 'await adapter.listWorks().catch(() => {})');
+  await expect(page.locator('.recovery-task[data-operation-id="create-original"]')).toContainText('Create Work');
+  await expect(page.locator('.works-error-cause, .feedback').filter({ hasText: 'List unavailable' }).first()).toBeVisible();
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-OPREC-002 reload restores original tasks while the first Work list is delayed or fails', async t => {
+  let listFails = false;
+  const gate = deferred(); t.after(async () => gate.resolve());
+  const records = [
+    { operationId: 'reload-create', workId: 'work-new', type: 'Create Work', kind: 'create-work' },
+    { operationId: 'reload-import', workId: 'work-import', type: 'Import Work', kind: 'import-work' },
+    { operationId: 'reload-delete', workId: 'work-deleted', type: 'Work action', kind: 'delete-work' },
+  ];
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'known-operations') return { json: { operations: records } };
+    const task = records.find(item => r.path === `operations/${item.operationId}`);
+    if (task) return { json: { operationId: task.operationId, workId: task.workId, kind: task.kind, state: 'running' } };
+    if (r.path === 'works' && listFails) { await gate.promise; return { status: 503, json: { message: 'List unavailable' } }; }
+  });
+  await button(page, 'back-works').click();
+  await expect(page.locator('.recovery-task[data-operation-id="reload-import"]')).toBeVisible();
+  const previousReads = requests.filter(r => r.path === 'known-operations').length;
+  listFails = true; await page.reload();
+  await expect.poll(() => requests.filter(r => r.path === 'known-operations').length).toBeGreaterThan(previousReads);
+  for (const task of records) await expect(page.locator(`.recovery-task[data-operation-id="${task.operationId}"]`)).toBeVisible();
+  gate.resolve(); await expect(page.locator('.works-error-cause')).toBeVisible();
+  for (const task of records) await expect(page.locator(`.recovery-task[data-operation-id="${task.operationId}"]`)).toBeVisible();
+  await page.locator('.recovery-task[data-operation-id="reload-import"] [data-action="operation"]').click();
+  await expect(page.locator('#modal')).toContainText('Import Work');
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-OPREC-002 a confirmed created Work takes over its original task from the temporary hint', async t => {
+  let published = false;
+  const existing = { id: 'work-1', name: 'Recovery Work', observedState: 'ready', desiredState: 'running' };
+  const created = { id: 'work-new', name: 'New Work', observedState: 'starting', desiredState: 'running' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works') return { json: { works: published ? [existing, created] : [existing] } };
+    if (r.path === 'operations/create-original') return { json: { operationId: 'create-original', workId: 'work-new', kind: 'create-work', state: 'running' } };
+  });
+  await button(page, 'back-works').click();
+  await api(page, "adapter.accepted({ operationId: 'create-original', workId: 'work-new' }, '', 'Create Work'); await adapter.checkOperation('create-original')");
+  await expect(page.locator('.recovery-task[data-operation-id="create-original"]')).toBeVisible();
+  published = true; await api(page, 'await adapter.listWorks()');
+  await expect(page.locator('.recovery-task[data-operation-id="create-original"]')).toHaveCount(0);
+  await expect(page.locator('.work-row').filter({ hasText: 'New Work' }).locator('[data-action="operation"][data-id="create-original"]')).toBeVisible();
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-OPREC-002 an unknown Import checks its original transfer and recovers acceptance without another submission', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'work-packages/transfer-original') return { json: { transferId: 'transfer-original', phase: 'accepted', operationId: 'import-recovered', workId: 'work-import', name: 'Imported name', localRecordSaved: true } };
+    if (r.path === 'operations/import-recovered') return { json: { operationId: 'import-recovered', workId: 'work-import', kind: 'import-work', state: 'running' } };
+  });
+  await button(page, 'back-works').click();
+  await api(page, "adapter.inspectionTransfer='transfer-original'; adapter.inspectionContext={id:'transfer-original',nonce:1,core:'http://core.test',localSession:'local-session-csrf',ready:true,anonymous:false,importState:'unknown'}; adapter.emit()");
+  await expect(page.locator('.recovery-task[data-transfer-id="transfer-original"]')).toContainText('Result unknown');
+  await page.locator('.recovery-task[data-transfer-id="transfer-original"] [data-action="check-inspection-import"]').click();
+  await expect(page.locator('.recovery-task[data-operation-id="import-recovered"]')).toContainText('Imported name');
+  assert.equal(await api(page, "return adapter.inspectionContext.operationId"), 'import-recovered');
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path === 'work-imports').length, 0);
+});
+
+for (const kind of ['create', 'import'] as const) test(`DWUI-OPREC-002 ${kind} can find a copied original ID without a saved record or Work`, async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'operations/wrong-kind') return { json: { operationId: 'wrong-kind', workId: 'work-other', kind: kind === 'create' ? 'import-work' : 'create-work', state: 'running' } };
+    if (r.path === 'operations/original-no-record') return { json: { operationId: 'original-no-record', workId: 'work-unpublished', kind: kind === 'create' ? 'create-work' : 'import-work', state: 'failed', error: { message: 'Original task failed' } } };
+  });
+  await page.setViewportSize({ width: kind === 'import' ? 360 : 1440, height: 900 });
+  await button(page, 'back-works').click(); await button(page, kind === 'create' ? 'new-work' : 'import').click();
+  await page.locator('.original-task-lookup > summary').click();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.locator('#operation-query').fill('wrong-kind'); await button(page, `lookup-${kind}-operation`).click();
+  await expect(page.locator('#modal')).toContainText('does not match the original action');
+  assert.equal(await api(page, "return !!adapter.getOperation('wrong-kind')"), false);
+  if (!await page.locator('.original-task-lookup').evaluate(el => el.hasAttribute('open'))) await page.locator('.original-task-lookup > summary').click();
+  await page.locator('#operation-query').fill('original-no-record'); await button(page, `lookup-${kind}-operation`).click();
+  await expect(page.locator('#modal')).toContainText('Original task failed');
+  await page.locator('.operation-technical > summary').click(); await expect(page.locator('.operation-technical')).toContainText('original-no-record');
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-OPREC-001 a previous snapshot is found only within the original Work', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'work-snapshots/snapshot-other') return { json: { snapshotId: 'snapshot-other', workId: 'work-other', operationId: 'op-other', state: 'succeeded', size: 4, digest: 'hash', expiresAt: '2099-01-01T00:00:00Z' } };
+    if (r.path === 'work-snapshots/snapshot-original') return { json: { snapshotId: 'snapshot-original', workId: 'work-1', operationId: 'op-original', state: 'succeeded', size: 4, digest: 'hash', expiresAt: '2099-01-01T00:00:00Z' } };
+  });
+  await button(page, 'work-menu').click(); await button(page, 'find-previous-export').click();
+  await page.locator('#snapshot-query').fill('snapshot-other'); await button(page, 'lookup-snapshot').click();
+  await expect(page.locator('#modal')).toContainText('does not match');
+  assert.equal(await api(page, "return !!adapter.getSnapshot('snapshot-other')"), false);
+  await page.locator('#snapshot-query').fill('snapshot-original'); await button(page, 'lookup-snapshot').click();
+  await page.locator('.export-details > summary').click();
+  await expect(page.locator('.export-snapshot')).toContainText('snapshot-original');
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/exports')).length, 0);
+});
+
 test('DWUI-016 create validation retains field and execution failure offers Retry only for running goal', async t => {
   let failed = false, stoppedGoal = false;
   const { page } = await fixture(t, r => {
@@ -1031,7 +1306,181 @@ test('DWUI-016 accepted Stop also prevents Apply while saved settings and editor
   assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply') && r.method === 'POST').length, 0);
 });
 
-test('DWUI-017 cleared Start history still recovers Ready and original lookup without reload or replay', async t => {
+test('DWUI-OPREC-001 Apply and Package recovery stay in Settings and preserve a draft on readback failure', async t => {
+  let applyState = 'running', configFails = false;
+  const records = [
+    { operationId: 'original-apply', workId: 'work-1', type: 'Apply Work configuration' },
+    { operationId: 'original-package', workId: 'work-1', type: 'Pi Package action' },
+  ];
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: records } };
+    if (r.path === 'operations/original-apply') return { json: { operationId: 'original-apply', workId: 'work-1', kind: 'apply-work-configuration', state: applyState } };
+    if (r.path === 'operations/original-package') return { json: { operationId: 'original-package', workId: 'work-1', kind: 'pi-package-install', state: 'failed', error: { message: 'Package preparation failed' } } };
+    if (r.path === 'works/work-1/configuration') return configFails ? { status: 503, json: { message: 'Configuration read unavailable' } } : { json: { desired: { skills: [], packages: [], agentsMd: 'saved', mcp: { servers: [] } }, active: { skills: [], packages: [], agentsMd: '', mcp: { servers: [] } }, pendingApply: true, runtime: { state: 'ready' } } };
+  });
+  await api(page, "await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))");
+  await button(page, 'settings').click();
+  await expect(page.locator('.configuration-state')).toContainText('Applying');
+  await expect(page.locator('.configuration-state [data-action="operation"][data-id="original-apply"]')).toBeVisible();
+  await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
+  await expect(page.locator('.settings-task[data-operation-id="original-package"]')).toContainText('Package preparation failed');
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('Keep my newer draft');
+  applyState = 'succeeded'; configFails = true;
+  await page.locator('.configuration-state [data-action="check-task-operation"][data-id="original-apply"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('Keep my newer draft');
+  await expect(page.locator('.settings-page')).toContainText('Configuration read unavailable');
+  assert.equal(await api(page, "return adapter.getOperation('original-apply').state"), 'succeeded');
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-OPREC-001 a new Apply remains in Settings after acceptance', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1/configuration') return { json: { desired: { skills: [], packages: [], agentsMd: 'saved', mcp: { servers: [] } }, active: { skills: [], packages: [], agentsMd: '', mcp: { servers: [] } }, pendingApply: true, runtime: { state: 'ready' } } };
+    if (r.path === 'works/work-1/configuration/apply') return { json: { operationId: 'apply-new', workId: 'work-1' } };
+    if (r.path === 'operations/apply-new') return { json: { operationId: 'apply-new', workId: 'work-1', kind: 'apply-work-configuration', state: 'running' } };
+  });
+  await button(page, 'settings').click(); await button(page, 'apply-config').click();
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('.configuration-state')).toContainText('Applying');
+  await expect(page.locator('.configuration-state [data-action="operation"][data-id="apply-new"]')).toBeVisible();
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/configuration/apply')).length, 1);
+});
+
+test('DWUI-OPREC-001 an unsaved Apply record stays visible and points to its copyable original ID', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1/configuration') return { json: { desired: { skills: [], packages: [], agentsMd: 'saved', mcp: { servers: [] } }, active: {}, pendingApply: true, runtime: { state: 'ready' } } };
+    if (r.path === 'works/work-1/configuration/apply') return { json: { operationId: 'unsaved-apply', workId: 'work-1', localRecordSaved: false } };
+    if (r.path === 'operations/unsaved-apply') return { json: { operationId: 'unsaved-apply', workId: 'work-1', kind: 'apply-work-configuration', state: 'running' } };
+  });
+  await button(page, 'settings').click(); await button(page, 'apply-config').click();
+  await expect(page.locator('.settings-page')).toContainText('The record was not saved');
+  await page.locator('.settings-page [data-action="operation"][data-id="unsaved-apply"]').click();
+  await expect(page.locator('#modal')).toContainText('automatic recovery after reload is not guaranteed');
+  await page.locator('.operation-technical > summary').click(); await expect(page.locator('.operation-technical')).toContainText('unsaved-apply');
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/configuration/apply')).length, 1);
+});
+
+test('DWUI-OPREC-003 failure details present recorded facts, escape text and copy the full folded ID', async t => {
+  const id = `op-${'long-identifier-'.repeat(12)}end`;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: id, workId: 'new-work', type: 'Create Work' }] } };
+    if (r.path === `operations/${id}`) return { json: { operationId: id, workId: 'new-work', kind: 'create-work', state: 'failed', correlationId: 'corr-123', error: { code: 'AGENT_EXITED', stage: 'readiness', message: 'Agent <img src=x onerror=alert(1)> exited', remediation: 'Check the runtime', retryable: false, exitCode: 0, secret: 'not-for-display' }, diagnostics: { stages: [{ component: 'agent', stage: 'readiness', outcome: 'failed', message: 'Recorded <script>stage</script>' }], rollback: { state: 'failed', error: { code: 'ROLLBACK_FAILED', stage: 'rollback', message: 'Rollback failed', remediation: 'Check recovery' } }, diagnosticCollection: { state: 'unavailable', code: 'DIAGNOSTIC_COLLECTION_FAILED' } } } };
+  });
+  await api(page, `await adapter.checkOperation(${JSON.stringify(id)})`);
+  await button(page, 'back-works').click(); await page.locator('.recovery-task [data-action="operation"]').click();
+  const dialog = page.locator('#modal'), technical = dialog.locator('.operation-technical');
+  await expect(dialog).toContainText('Agent <img src=x onerror=alert(1)> exited');
+  await expect(dialog).toContainText('Check the runtime');
+  await expect(dialog).toContainText('A more specific cause was not recorded');
+  await expect(dialog.locator('img, script')).toHaveCount(0);
+  await expect(technical).not.toHaveAttribute('open');
+  await expect(technical.locator('code').filter({ hasText: id })).toBeHidden();
+  await technical.locator('summary').click();
+  await expect(technical).toContainText('AGENT_EXITED'); await expect(technical).toContainText('readiness');
+  await expect(technical).toContainText('corr-123'); await expect(technical).toContainText('Recorded <script>stage</script>');
+  await expect(technical).toContainText('ROLLBACK_FAILED'); await expect(technical).toContainText('Check recovery'); await expect(technical).toContainText('DIAGNOSTIC_COLLECTION_FAILED');
+  await expect(technical).not.toContainText('not-for-display');
+  await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { (window as any).copiedOperationId = value; } } }); });
+  await technical.getByRole('button', { name: 'Copy Operation ID' }).click();
+  assert.equal(await page.evaluate(() => (window as any).copiedOperationId), id);
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-OPREC-003 missing or partial failure evidence never invents an underlying cause', async t => {
+  const records = ['missing', 'generic'];
+  const { page } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: records.map(id => ({ operationId: id, workId: `work-${id}`, type: 'Import Work' })) } };
+    if (records.some(id => r.path === `operations/${id}`)) {
+      const id = r.path.split('/')[1]!;
+      return { json: { operationId: id, workId: `work-${id}`, kind: 'import-work', state: 'failed', error: id === 'generic' ? { code: 'WORK_OPERATION_FAILED', stage: 'create', message: 'The Work operation failed.' } : { message: {}, remediation: ['invalid'] } } };
+    }
+  });
+  await api(page, 'await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))'); await button(page, 'back-works').click();
+  for (const id of records) {
+    await page.locator(`.recovery-task[data-operation-id="${id}"] [data-action="operation"]`).click();
+    await expect(page.locator('#modal')).toContainText('A more specific cause was not recorded');
+    await expect(page.locator('#modal')).not.toContainText('[object Object]');
+    await expect(page.locator('#modal')).not.toContainText('credential conflict');
+    await expect(page.locator('#modal [data-action="operation-service-logs"]')).toHaveCount(0);
+    await button(page, 'close-modal').click();
+  }
+});
+
+test('DWUI-OPREC-003 generic failure codes do not masquerade as an underlying cause', async t => {
+  const records = [
+    { id: 'mcp-symptom', code: 'MCP_INITIALIZATION_FAILED', message: 'A required Work MCP server could not be initialized.', expected: 'A more specific cause was not recorded' },
+    { id: 'package-symptom', code: 'PACKAGE_LOAD_FAILED', message: 'A selected package could not be loaded.', expected: 'A more specific cause was not recorded' },
+    { id: 'service-symptom', code: 'SERVICE_STATE_UNCONFIRMED', message: 'The service container state is not confirmed.', expected: 'A more specific cause was not recorded' },
+    { id: 'future-code', code: 'FUTURE_FAILURE', message: 'A future failure was reported.', expected: 'The underlying cause has not been confirmed' },
+    { id: 'specific-cause', code: 'WORK_BUSY', message: 'The Work has an active Run.', expected: '' },
+  ];
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: records.map(item => ({ operationId: item.id, workId: `work-${item.id}`, type: 'Create Work' })) } };
+    const item = records.find(entry => r.path === `operations/${entry.id}`);
+    if (item) return { json: { operationId: item.id, workId: `work-${item.id}`, kind: 'create-work', state: 'failed', error: { code: item.code, stage: 'runtime-prepare', message: item.message } } };
+  });
+  await api(page, 'await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))');
+  await button(page, 'back-works').click();
+  await page.locator('.recovery-tasks > details > summary').click();
+  for (const item of records) {
+    await page.locator(`.recovery-task[data-operation-id="${item.id}"] [data-action="operation"]`).click();
+    const dialog = page.locator('#modal'); await expect(dialog).toContainText(item.message);
+    if (item.expected) await expect(dialog).toContainText(item.expected);
+    else { await expect(dialog).not.toContainText('A more specific cause was not recorded'); await expect(dialog).not.toContainText('The underlying cause has not been confirmed'); }
+    await button(page, 'close-modal').click();
+  }
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+for (const source of ['service', 'apply'] as const) test(`DWUI-OPREC-003 ${source} diagnostic Service log link stays scoped and shows denied access`, async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: 'service-failed', workId: 'work-1', ...(source === 'service' ? { serviceId: 'svc-a' } : {}), type: source === 'service' ? 'Service action' : 'Apply Work configuration' }] } };
+    if (r.path === 'operations/service-failed') return { json: { operationId: 'service-failed', workId: 'work-1', ...(source === 'service' ? { serviceId: 'svc-a' } : {}), kind: source === 'service' ? 'restart-service' : 'apply-work-configuration', state: 'failed', error: { code: 'SERVICE_START_FAILED', serviceId: 'svc-a', message: 'Service failed' } } };
+    if (r.path === 'works/work-1/services') return { json: { services: [{ serviceId: 'svc-a', name: 'Service A', enabled: true, observedState: 'failed' }, { serviceId: 'svc-b', name: 'Service B', enabled: true, observedState: 'ready' }] } };
+    if (r.path === 'works/work-1/services/svc-a/logs') return { status: 403, json: { message: 'Logs access denied' } };
+  });
+  await api(page, "await adapter.checkOperation('service-failed')");
+  if (source === 'service') {
+    await button(page, 'tab-Services').click(); await button(page, 'manage-services').click();
+    await page.locator('#modal [data-action="service-details"][data-id="svc-a"]').click();
+    await page.locator('#modal [data-action="operation"][data-id="service-failed"]').click();
+  } else {
+    await button(page, 'settings').click();
+    await page.locator('.settings-page [data-action="operation"][data-id="service-failed"]').click();
+  }
+  await expect(button(page, 'operation-service-logs')).toBeVisible();
+  await button(page, 'operation-service-logs').click();
+  await expect(page.locator('#modal')).toContainText('Logs access denied');
+  assert.ok(requests.some(r => r.method === 'GET' && r.path === 'works/work-1/services/svc-a/logs'));
+  assert.equal(requests.filter(r => r.path === 'works/work-1/services/svc-b/logs').length, 0);
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+for (const width of [360, 1440]) test(`DWUI-OPREC-004 task recovery remains usable at ${width}px with reduced motion and long values`, async t => {
+  const id = `op-${'long-id-'.repeat(26)}`;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: id, workId: '', type: 'Import Work' }] } };
+    if (r.path === `operations/${id}`) return { json: { operationId: id, workId: '', kind: 'import-work', state: 'failed', error: { message: 'A long task needs attention' } } };
+  });
+  await page.setViewportSize({ width, height: 900 }); await page.emulateMedia({ reducedMotion: 'reduce' });
+  await api(page, `await adapter.checkOperation(${JSON.stringify(id)}); adapter.getOperation(${JSON.stringify(id)}).importName='long-name-'.repeat(25); adapter.emit()`); await button(page, 'back-works').click();
+  const task = page.locator('.recovery-task').first(); await expect(task).toContainText('A long task needs attention');
+  await expect.poll(() => page.locator('.brand-logo').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  if (process.env.PIWORK_TEST_SCREENSHOT_DIR) { await mkdir(process.env.PIWORK_TEST_SCREENSHOT_DIR, { recursive: true }); await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/recovery-list-${width}.png`, fullPage: true }); }
+  const details = task.locator('[data-action="operation"]'); await page.keyboard.press('Tab'); await details.focus();
+  await expect(details).toBeFocused();
+  assert.ok(await details.evaluate(el => parseFloat(getComputedStyle(el).outlineWidth)) >= 2);
+  await page.keyboard.press('Enter'); await expect(page.locator('#modal')).toBeVisible();
+  await page.locator('.operation-technical > summary').focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('.operation-technical code').filter({ hasText: id })).toBeVisible();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  if (process.env.PIWORK_TEST_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/recovery-details-${width}.png`, fullPage: true });
+  await page.keyboard.press('Escape'); await expect(page.locator('#modal')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('DWUI-017 closed Start details still recover Ready and original lookup without reload or replay', async t => {
   let accepted = false, offline = false;
   const fact = () => ({ id: 'work-1', name: 'Recovery Work', desiredState: accepted ? 'running' : 'stopped', observedState: accepted ? 'ready' : 'stopped', controlVersion: accepted ? 2 : 1 });
   const { page, requests } = await fixture(t, r => {
@@ -1043,9 +1492,8 @@ test('DWUI-017 cleared Start history still recovers Ready and original lookup wi
   const navigations: string[] = []; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url()); });
   await button(page, 'start-work').click(); await page.locator('.object-control-progress [data-action=operation][data-id="cleared-start"]').click(); await expect(page.locator('#modal')).toContainText('cleared-start');
   await api(page, "await adapter.checkOperation('cleared-start'); await adapter.refreshWorkStatus('work-1').catch(() => {}); await adapter.listWorks().catch(() => {})");
-  await button(page, 'close-modal').click(); await knownOperations(page);
-  await button(page, 'clear-operations').click(); await expect(page.locator('#modal')).not.toContainText('cleared-start');
-  await button(page, 'close-modal').click(); await page.locator('.work-name[data-action="open-work"]').click(); await button(page, 'work-operations').click();
+  await button(page, 'close-modal').click(); await workTasks(page);
+  await page.locator('#operation-query').fill('cleared-start'); await button(page, 'lookup-operation').click();
   await expect(page.locator('#modal')).toContainText('cleared-start'); await button(page, 'check-operation').click();
   await expect(page.locator('#modal')).toContainText('succeeded'); await button(page, 'close-modal').click();
   offline = false;
@@ -1119,6 +1567,7 @@ test('C02 list Start keeps original local progress and gates Open Work on real r
   await expect(page.locator('#modal')).toHaveCount(0); await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
   terminal = true; await button(page, 'check-work-progress').click();
   await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toHaveCount(0);
+  await expect(button(page, 'check-work-progress')).toBeEnabled();
   ready = true; await button(page, 'check-work-progress').click();
   await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();

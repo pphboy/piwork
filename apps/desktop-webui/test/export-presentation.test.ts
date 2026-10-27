@@ -58,7 +58,6 @@ test('export details retains full original IDs, collapsed disclosure and existin
   assert.match(html, /data-action="resume-export-flow"[^>]*>Resume<\/button>/);
   assert.doesNotMatch(html, /data-pending-label="Starting export"/);
   assert.match(html, /Paused\. Resume in Details/);
-  assert.match(source, /data-copy="\$\{op\.id\}" aria-label="\$\{t\('ops\.copyId'\)\}"/);
   assert.equal(catalog.en['ops.copyId'], 'Copy Operation ID');
 });
 

@@ -58,7 +58,10 @@ test('pending Core: a session generation update continues the same check against
   status.resolve(ready); await next;
   assert.equal(adapter.connectionCheck.checking, false); assert.notEqual(adapter.connectionCheck.checkedAt, '');
   assert.equal(adapter.state.works[0].id, 'work-2');
-  assert.deepEqual(requests, ['session', 'status', 'works', 'skills', 'packages', 'known-operations']);
+  assert.deepEqual(requests.slice(0, 2), ['session', 'status']);
+  assert.deepEqual(requests.slice(2).sort(), ['known-operations', 'packages', 'skills', 'works']);
+  assert.ok(requests.indexOf('works') < requests.indexOf('skills'));
+  assert.ok(requests.indexOf('works') < requests.indexOf('packages'));
 });
 
 for (const changed of ['identity', 'authentication'] as const) test(`pending Core: an old session cannot continue after an external ${changed} change`, async t => {

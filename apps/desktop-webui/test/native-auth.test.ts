@@ -135,6 +135,7 @@ test('native auth: an accepted Import survives Core expiry and same-account logi
   await f.page.getByText('Package format and contents verified locally.', { exact: true }).waitFor();
   await f.page.locator('#import-name').fill('Expired import');
   await f.page.getByRole('button', { name: 'Import Work', exact: true }).last().click();
+  await f.page.locator('.operation-technical > summary').click();
   await expect(f.page.locator('dd code').filter({ hasText: recoveredImportID })).toBeVisible();
   await expect.poll(() => f.calls.includes(`GET /api/v1/operations/${recoveredImportID}`)).toBe(true);
   await f.page.evaluate(async () => { const { adapter } = await import('/desktop/browser/' + 'adapter.js'); await adapter.checkSession(); });
@@ -144,12 +145,13 @@ test('native auth: an accepted Import survives Core expiry and same-account logi
   assert.equal(localCookie(await f.context.cookies()), localCookie(cookies));
   const beforeLogin = f.calls.length;
   await f.login();
-  await f.page.locator('[data-action=account]').click();
-  await f.page.locator('#modal [data-action="operations"]').click();
-  await f.page.locator(`[data-action="operation"][data-id="${recoveredImportID}"]`).click();
+  const task = f.page.locator(`.recovery-task[data-operation-id="${recoveredImportID}"]`);
+  await expect(task).toBeVisible();
+  await task.locator('[data-action="operation"]').click();
   await f.page.locator(`[data-action="check-operation"][data-id="${recoveredImportID}"]`).click();
+  await f.page.locator('.operation-technical > summary').click();
   await expect(f.page.locator('dd code').filter({ hasText: recoveredImportID })).toBeVisible();
-  await expect(f.page.getByText('succeeded. The original Operation reached a confirmed result.', { exact: true })).toBeVisible();
+  await expect(f.page.locator('#modal .phase-track')).toContainText('succeeded');
   assert(f.calls.slice(beforeLogin).includes(`GET /api/v1/operations/${recoveredImportID}`));
   assert.equal(f.calls.filter(call => call === 'POST /api/v1/work-packages').length, 1);
   assert.equal(f.calls.filter(call => call === 'POST /api/v1/work-imports').length, 1);

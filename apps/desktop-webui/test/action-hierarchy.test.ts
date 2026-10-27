@@ -43,7 +43,8 @@ test('global controls live in Admin, not the topbar or Work header', () => {
   assert.doesNotMatch(c.workHeader(work), /data-action="about-piwork"/);
   c.view.modal = 'account'; const html = c.modalMarkup();
   assert.match(html, /command-dropdown/);
-  for (const action of ['about-piwork', 'operations', 'switch-core', 'sign-out']) assert.match(html, new RegExp(`data-action="${action}"`));
+  for (const action of ['about-piwork', 'switch-core', 'sign-out']) assert.match(html, new RegExp(`data-action="${action}"`));
+  assert.doesNotMatch(html, /data-action="operations"/);
   assert.doesNotMatch(html, /data-action="reset-browser-access"/);
   assert.doesNotMatch(html, /data-action="stop-work"/);
 });

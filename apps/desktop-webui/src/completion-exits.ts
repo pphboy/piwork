@@ -1,3 +1,5 @@
+import { operationKind } from './operation-recovery.js';
+
 /** A terminal receipt alone is never a usable workspace. */
 export function workCompletionReady(operation: { workId: string; state: string } | undefined, workId: string, usable: boolean): boolean {
   return !!operation && operation.workId === workId && operation.state === 'succeeded' && usable;
@@ -8,6 +10,6 @@ export function serviceCompletionReady(operation: { workId: string; state: strin
 }
 export function importCanStart(operation: { workId: string; state: string; kind: string } | undefined,
   work: { id: string; status: string; desired: string } | undefined, currentAction: string, submitted: boolean): boolean {
-  return !submitted && !!operation && operation.kind === 'Import Work' && operation.state === 'succeeded' && // i18n-exempt: server operation kind
+  return !submitted && !!operation && operationKind(operation.kind) === 'transfer:import' && operation.state === 'succeeded' &&
     !!work && operation.workId === work.id && work.status === 'Stopped' && work.desired === 'stopped' && currentAction === 'start';
 }
