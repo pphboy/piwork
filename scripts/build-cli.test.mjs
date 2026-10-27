@@ -20,6 +20,7 @@ test('CLI build prepares fresh Desktop once and builds only the requested client
   writeFileSync(join(base,'apps/ui-shared/browser-crypto.js'),'synthetic browser crypto');
   writeFileSync(join(base,'apps/ui-shared/i18n.js'),'synthetic shared language runtime');
   writeFileSync(join(base,'apps/ui-shared/boot.js'),'synthetic boot module');
+  for (const name of ['boot-watchdog.js', 'prepare-boot.mjs', 'read-deadline.js']) writeFileSync(join(base,'apps/ui-shared',name),`synthetic ${name}`);
   writeFileSync(join(base,'apps/ui-shared/tokens.css'),'synthetic shared tokens');
   writeFileSync(join(base,'apps/ui-shared/controls.css'),'synthetic shared controls');
   writeFileSync(join(base,'package.json'),'{"version":"0.1.0"}');

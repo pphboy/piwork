@@ -1,4 +1,5 @@
 import { modelErrors } from './model-form.js';
+import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import { t, LocalizedMessage, messageText } from './locale.js';
 export class ConsoleError extends Error {
     code;
@@ -52,7 +53,8 @@ const invalidFields = {
 function errorFrom(value, status, write, login = false) {
     const raw = String(value.code ?? value.error?.code ?? "REQUEST_FAILED");
     const code = status === 401 && !login ? "SESSION_EXPIRED" : codeAliases[raw] ?? raw;
-    const uncertain = write && status >= 500 && !["CORE_UNAVAILABLE", "CORE_ADMIN_API_UNAVAILABLE"].includes(raw);
+    // CORE_UNAVAILABLE can follow a committed Core write whose reply was lost.
+    const uncertain = write && status >= 500 && raw !== "CORE_ADMIN_API_UNAVAILABLE";
     const field = typeof value.field === 'string' ? value.field : typeof value.error?.field === 'string' ? value.error.field : '';
     const fieldMessage = code === 'INVALID_REQUEST' ? invalidFields[field.split('.')[0]] : undefined;
     const fallback = uncertain ? new LocalizedMessage('adapter.error.resultUnknown')
@@ -113,35 +115,55 @@ export class ConsoleAdapter {
     get identityEpoch() { return this.epoch; }
     get csrfToken() { return this.csrf; }
     reads = new Map();
+    readControllers = new Map();
     intents = new Map();
-    request(path, method = "GET", body, login = false) {
+    request(path, method = "GET", body, login = false, forceDeadline = false) {
         if (method !== 'GET')
             return this.requestOnce(path, method, body, login);
-        const key = `${this.epoch}:${path}`, old = this.reads.get(key);
+        const bounded = forceDeadline || !path.startsWith('admin/operations/');
+        const key = `${this.epoch}:${path}${bounded ? '' : ':observation'}`, old = this.reads.get(key);
         if (old)
             return old;
-        const pending = this.requestOnce(path, method, body, login).finally(() => { if (this.reads.get(key) === pending)
-            this.reads.delete(key); });
+        const controller = new AbortController();
+        const read = bounded ? readWithDeadline(signal => this.requestOnce(path, method, body, login, signal), { signal: controller.signal })
+            : this.requestOnce(path, method, body, login, controller.signal);
+        const pending = read
+            .catch(error => { if (error instanceof ReadTimeout)
+            throw new ConsoleError('READ_TIMEOUT', new LocalizedMessage('read.timeout')); throw error; })
+            .finally(() => { if (this.reads.get(key) === pending) {
+            this.reads.delete(key);
+            this.readControllers.delete(key);
+        } });
         this.reads.set(key, pending);
+        this.readControllers.set(key, controller);
         return pending;
     }
-    async requestOnce(path, method = "GET", body, login = false) {
+    cancelReads(paths) {
+        for (const path of paths) {
+            const key = `${this.epoch}:${path}`;
+            const controller = this.readControllers.get(key);
+            this.reads.delete(key);
+            this.readControllers.delete(key);
+            controller?.abort();
+        }
+    }
+    async requestOnce(path, method = "GET", body, login = false, signal) {
         const epoch = this.epoch;
         let response;
         try {
-            response = await fetch(`/console/api/${path}`, { method, credentials: "same-origin",
+            response = await fetch(`/console/api/${path}`, { method, credentials: "same-origin", signal,
                 headers: { ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...(method !== "GET" ? { "X-Csrf-Token": this.csrf } : {}) },
                 ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
         }
         catch {
             throw new ConsoleError(method === "GET" ? "CORE_UNREACHABLE" : "RESULT_UNKNOWN", method === "GET" ? new LocalizedMessage('adapter.explain.CORE_UNREACHABLE') : new LocalizedMessage('adapter.error.writeLost'));
         }
-        if (epoch !== this.epoch)
+        if (signal?.aborted || epoch !== this.epoch)
             throw new ConsoleError("SESSION_CHANGED", new LocalizedMessage('adapter.error.accountChanged'));
         if (response.status === 204)
             return {};
         const value = await response.json().catch(() => null);
-        if (epoch !== this.epoch)
+        if (signal?.aborted || epoch !== this.epoch)
             throw new ConsoleError('SESSION_CHANGED', new LocalizedMessage('adapter.error.accountChangedRead'));
         if (!value || typeof value !== "object")
             throw new ConsoleError(method === "GET" ? "INVALID_RESPONSE" : "RESULT_UNKNOWN", new LocalizedMessage('adapter.error.invalidResponse'));
@@ -358,8 +380,8 @@ export class ConsoleAdapter {
         this.store.operations = [op];
         return op;
     }
-    async operation(id, intent) {
-        const value = await this.request(`admin/operations/${encodeURIComponent(id)}`);
+    async operation(id, intent, bounded = false) {
+        const value = await this.request(`admin/operations/${encodeURIComponent(id)}`, 'GET', undefined, false, bounded);
         const previous = this.store.operations.find(o => o.id === id);
         const op = operationView(value, intent ?? (previous ? { key: "", kind: previous.sourceKind, source: previous.source, name: previous.packageName, addDefault: previous.addDefault, ...(previous.target ? { target: previous.target } : {}) } : undefined));
         this.store.operations = [op];

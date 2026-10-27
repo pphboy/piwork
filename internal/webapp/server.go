@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"piwork/internal/bootcsp"
+	"piwork/internal/bootrecovery"
 	"piwork/internal/cli"
 	"piwork/internal/client"
 	"piwork/internal/clientfs"
@@ -335,7 +337,7 @@ func (s *Server) serveSetupAsset(w http.ResponseWriter, r *http.Request) {
 	case "/setup/browser/onboarding.js", "/setup/browser/components.js", "/setup/browser/model-form.js", "/setup/browser/pending.js",
 		// Language runtime and catalogs loaded by the setup entry, boot script and
 		// onboarding modules. Each path is listed exactly; there is no directory prefix.
-		"/setup/browser/i18n.js", "/setup/browser/boot.js", "/setup/browser/locale.js",
+		"/setup/browser/i18n.js", "/setup/browser/boot.js", "/setup/browser/locale.js", "/setup/browser/read-deadline.js",
 		"/setup/browser/i18n/catalog.js", "/setup/browser/i18n/shared.js", "/setup/browser/i18n/setup.js", "/setup/browser/i18n/app.js":
 		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/setup/browser/"), "text/javascript; charset=utf-8"
 	case "/setup/style.css":
@@ -346,12 +348,20 @@ func (s *Server) serveSetupAsset(w http.ResponseWriter, r *http.Request) {
 		webError(w, 404, "NOT_FOUND")
 		return
 	}
+	if strings.HasPrefix(contentType, "text/html") && bootrecovery.Redirect(w, r) {
+		return
+	}
 	data, err := consoleassets.FS.ReadFile(path)
 	if err != nil {
 		webError(w, 503, "WEB_ASSET_UNAVAILABLE")
 		return
 	}
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	policy := "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	if strings.HasPrefix(contentType, "text/html") {
+		data = bootrecovery.HTML(data, r)
+		policy = bootcsp.Policy(policy, consoleassets.FS)
+	}
+	w.Header().Set("Content-Security-Policy", policy)
 	w.Header().Set("Content-Type", contentType)
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(data)

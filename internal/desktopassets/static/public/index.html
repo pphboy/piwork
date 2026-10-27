@@ -1,2 +1,130 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PiWork Desktop</title><link rel="icon" type="image/png" href="/desktop/piwork-logo.png"><link rel="stylesheet" href="/style.css"><script type="module" src="/desktop/browser/boot.js"></script><script type="module" src="/desktop/browser/app.js"></script></head><body data-boot-page="desktop"><div id="app" aria-live="polite"><div class="app-loading" role="status" aria-busy="true"><span class="pending-dots" aria-hidden="true"><i></i><i></i><i></i></span><span data-boot-loading>Loading Desktop…</span><p><a href="" data-boot-recovery>如果页面无法加载，请刷新页面。 / If the page cannot load, reload it.</a></p></div></div></body></html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PiWork Desktop</title><script data-boot-watchdog data-page="desktop">// This file is inlined into each HTML entry. It must not import other assets.
+(function () {
+  'use strict';
+
+  var script = document.currentScript;
+  var page = script && script.getAttribute('data-page');
+  var key = 'piwork:boot:' + page;
+  var owned = false;
+  var failed = false;
+  var styleFailed = false;
+  var retryTimer;
+  var watchdog;
+
+  function chinese() {
+    try {
+      var saved = localStorage.getItem('piwork.ui-locale');
+      if (saved === 'zh-CN' || saved === 'en') return saved === 'zh-CN';
+    } catch (_) { /* Use browser preferences. */ }
+    var languages = navigator.languages || [navigator.language];
+    for (var i = 0; i < languages.length; i++) {
+      var value = String(languages[i] || '').toLowerCase();
+      if (value === 'zh' || value.indexOf('zh-') === 0) return true;
+      if (value === 'en' || value.indexOf('en-') === 0) return false;
+    }
+    return false;
+  }
+
+  function showFailure(retrying) {
+    document.documentElement.dataset.bootState = 'failed';
+    var loading = document.querySelector('[data-boot-loading]');
+    if (!loading) {
+      // Parsing may not yet have reached the body when an asset fails.
+      setTimeout(function () { if (!owned) showFailure(retrying); }, 100);
+      return;
+    }
+    loading.textContent = chinese()
+      ? (retrying ? '页面加载未完成，正在重试…' : '页面加载未完成，请重试或返回首页。')
+      : (retrying ? 'Page loading was interrupted. Retrying…' : 'Page loading was interrupted. Retry or return home.');
+    var status = loading.closest('[aria-busy]');
+    if (status) status.setAttribute('aria-busy', retrying ? 'true' : 'false');
+  }
+
+  function showStyleWarning() {
+    if (!document.body || document.getElementById('piwork-boot-style-warning')) return;
+    var warning = document.createElement('p');
+    warning.id = 'piwork-boot-style-warning';
+    warning.setAttribute('role', 'status');
+    warning.appendChild(document.createTextNode(chinese()
+      ? '页面样式未能加载。保存草稿后可以重新加载页面。 '
+      : 'Page styles could not be loaded. Save your draft before reloading. '));
+    var retry = document.createElement('button');
+    retry.type = 'button';
+    retry.setAttribute('data-boot-recovery', '');
+    retry.textContent = chinese() ? '重新加载' : 'Reload';
+    warning.appendChild(retry);
+    document.body.appendChild(warning);
+  }
+
+  function fail(isStyle) {
+    if (isStyle) styleFailed = true;
+    if (owned) {
+      if (isStyle) showStyleWarning();
+      return;
+    }
+    if (failed) return;
+    failed = true;
+    clearTimeout(watchdog);
+    var count;
+    try {
+      var stored = sessionStorage.getItem(key);
+      count = stored === null ? 0 : Number(stored);
+      if (!Number.isInteger(count) || count < 0 || count >= 2) {
+        showFailure(false);
+        return;
+      }
+      sessionStorage.setItem(key, String(count + 1));
+      if (sessionStorage.getItem(key) !== String(count + 1)) throw new Error('storage unavailable');
+    } catch (_) {
+      showFailure(false);
+      return;
+    }
+    showFailure(true);
+    retryTimer = setTimeout(function () {
+      if (!owned) location.reload();
+    }, count === 0 ? 1000 : 3000);
+  }
+
+  window.addEventListener('error', function (event) {
+    var target = event.target;
+    var tag = target && target.tagName;
+    var style = tag === 'LINK' && String(target.rel).toLowerCase() === 'stylesheet';
+    if (style || tag === 'SCRIPT' || target === window) fail(style);
+  }, true);
+  document.addEventListener('piwork:boot-ready', function () {
+    if (owned) return;
+    owned = true;
+    clearTimeout(watchdog);
+    clearTimeout(retryTimer);
+    try { sessionStorage.removeItem(key); } catch (_) { /* Manual recovery remains available. */ }
+    delete document.documentElement.dataset.bootState;
+    if (styleFailed) showStyleWarning();
+  });
+  document.addEventListener('click', function (event) {
+    var target = event.target;
+    var link = target && target.closest && target.closest('[data-boot-recovery],[data-boot-home]');
+    if (link) {
+      clearTimeout(watchdog);
+      clearTimeout(retryTimer);
+      // Scripts can reload directly; the native GET form is the fallback.
+      if (link.hasAttribute('data-boot-recovery') && !event.defaultPrevented && event.button === 0 &&
+          !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        location.reload();
+      }
+    }
+  }, true);
+  window.addEventListener('pagehide', function () {
+    clearTimeout(watchdog);
+    clearTimeout(retryTimer);
+  });
+  window.addEventListener('pageshow', function (event) {
+    if (event.persisted && !owned) {
+      failed = false;
+      watchdog = setTimeout(function () { fail(false); }, 10000);
+    }
+  });
+  watchdog = setTimeout(function () { fail(false); }, 10000);
+}());
+</script><link rel="icon" type="image/png" href="/desktop/piwork-logo.png"><link rel="stylesheet" href="/style.css"><script type="module" src="/desktop/browser/boot.js"></script><script type="module" src="/desktop/browser/app.js"></script></head><body data-boot-page="desktop"><div id="app" aria-live="polite"><div class="app-loading" role="status" aria-busy="true"><span class="pending-dots" aria-hidden="true"><i></i><i></i><i></i></span><span data-boot-loading>Loading Desktop…</span><form method="get" data-boot-recovery-form><!-- PIWORK_BOOT_RECOVERY --><button type="submit" class="button quiet" data-boot-recovery>重新加载 / Reload</button> <a href="/" data-boot-home>返回首页 / Home</a></form></div></div></body></html>

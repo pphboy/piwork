@@ -3,6 +3,8 @@ package webapp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -374,6 +376,7 @@ func TestSetupLanguageModulesSupportHeadAndKeepCSP(t *testing.T) {
 		"/setup/browser/boot.js",
 		"/setup/browser/i18n.js",
 		"/setup/browser/locale.js",
+		"/setup/browser/read-deadline.js",
 		"/setup/browser/i18n/catalog.js",
 		"/setup/browser/i18n/shared.js",
 		"/setup/browser/i18n/setup.js",
@@ -404,6 +407,61 @@ func TestSetupLanguageModulesSupportHeadAndKeepCSP(t *testing.T) {
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatal("unlisted nested setup module was exposed")
 	}
+}
+
+func TestEntryWatchdogHashesMatchRealHTMLResponses(t *testing.T) {
+	_, core, origin := fixture(t)
+	client := browser(t)
+	check := func(path string) {
+		t.Helper()
+		response, err := client.Get(origin + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		html, err := io.ReadAll(response.Body)
+		if err != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("%s: %d %v", path, response.StatusCode, err)
+		}
+		start := bytes.Index(html, []byte("<script data-boot-watchdog "))
+		if start < 0 {
+			t.Fatalf("%s: watchdog missing", path)
+		}
+		start += bytes.IndexByte(html[start:], '>') + 1
+		end := bytes.Index(html[start:], []byte("</script>"))
+		if end < 0 {
+			t.Fatalf("%s: watchdog not closed", path)
+		}
+		digest := sha256.Sum256(html[start : start+end])
+		policy := response.Header.Get("Content-Security-Policy")
+		if !strings.Contains(policy, "'sha256-"+base64.StdEncoding.EncodeToString(digest[:])+"'") || strings.Contains(policy, "unsafe-inline") {
+			t.Fatalf("%s: incorrect CSP %q", path, policy)
+		}
+		encoded := base64.RawURLEncoding.EncodeToString([]byte(path))
+		if !strings.Contains(string(html), `<form method="get" data-boot-recovery-form>`) || !strings.Contains(string(html), `name="__piwork_boot_retry" value="`+encoded+`"`) {
+			t.Fatalf("%s: native recovery form lost its public request target", path)
+		}
+		copy := *client
+		copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		pathname := strings.SplitN(path, "?", 2)[0]
+		retry, err := copy.Get(origin + pathname + "?__piwork_boot_retry=" + encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retry.Body.Close()
+		if retry.StatusCode != http.StatusSeeOther || retry.Header.Get("Location") != path {
+			t.Fatalf("%s: recovery redirect changed the URL: %d %q", path, retry.StatusCode, retry.Header.Get("Location"))
+		}
+	}
+	check("/setup?returnTo=%2Fservices%2Fw%2Fs%2F8080%2F")
+	check("/login?view=one%20two&tag=a&tag=b")
+	if _, err := core.Identity.Bootstrap(context.Background(), "admin", "synthetic-password"); err != nil {
+		t.Fatal(err)
+	}
+	signIn(t, client, origin, "admin")
+	check("/?view=one%20two&tag=a&tag=b")
+	check("/admin")
+	check("/admin/setup?step=prepare")
 }
 
 func TestSetupModuleImportsArePublicAndTyped(t *testing.T) {

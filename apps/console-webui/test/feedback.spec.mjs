@@ -198,12 +198,45 @@ for (const [action, path, endpoint] of [
     }
     if (action === 'sign-out') await page.locator('#account-trigger').click();
     const button = page.locator(`[data-action="${action}"]`).first();
+    if (action === 'retry-connection') await expect(button).toBeVisible();
     armed = true; const before = requests.filter(r => r.path === endpoint).length;
     await button.click(); await expect(page.locator('[data-action-status]').filter({ hasText: action === 'sign-out' ? 'Signing out' : action === 'verify-runtime' ? 'Verifying' : action === 'resume-observation' ? 'Resuming' : 'Checking' })).toBeVisible();
     await expect(button).toBeDisabled(); await page.evaluate(action => document.querySelector(`[data-action="${action}"]`)?.click(), action);
     if(action === 'refresh-operation') await page.waitForTimeout(2200);
     expect(requests.filter(r => r.path === endpoint).length - before).toBe(1); gate.resolve();
   } finally { gate.resolve(); }
+});
+
+test('a committed user creation with a lost Core response stays locked until Users readback', async ({ page }) => {
+  let committed = false;
+  const created = { id: 'new-1', account: 'new-user', role: 'user', enabled: true };
+  const requests = await fixture(page, r => {
+    if (r.path === 'admin/users' && r.method === 'POST') { committed = true; return { status: 502, json: { code: 'CORE_UNAVAILABLE' } }; }
+    if (r.path === 'admin/users' && committed) return { json: { users: [created] } };
+  }, '/users');
+  await page.getByRole('button', { name: 'Create user', exact: true }).click();
+  await page.locator('#new-account').fill('new-user');
+  await page.locator('#new-password').fill('synthetic-password');
+  await page.locator('#confirm-password').fill('synthetic-password');
+  await page.locator('#dialog-submit').click();
+  await expect(page.locator('#dialog-submit')).toBeDisabled();
+  await expect(page.locator('dialog')).toContainText('result is unknown');
+  await page.locator('#dialog-form').evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  expect(requests.filter(r => r.path === 'admin/users' && r.method === 'POST')).toHaveLength(1);
+  await expect(page.getByRole('button', { name: 'Refresh Users', exact: true })).toBeVisible();
+  await page.locator('[data-action="close-dialog"]').first().click();
+  await page.getByRole('button', { name: 'Create user', exact: true }).click();
+  await page.locator('#new-account').fill('new-user');
+  await page.locator('#new-password').fill('synthetic-password');
+  await page.locator('#confirm-password').fill('synthetic-password');
+  await page.locator('#dialog-submit').click();
+  await expect(page.locator('#toast-root')).toContainText('new-user');
+  expect(requests.filter(r => r.path === 'admin/users' && r.method === 'POST')).toHaveLength(1);
+  await page.locator('[data-action="close-dialog"]').first().click();
+  await page.locator('[data-action="refresh"]').click();
+  await expect(page.locator('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'new-user', exact: true })).toBeVisible();
+  expect(requests.filter(r => r.path === 'admin/users' && r.method === 'POST')).toHaveLength(1);
 });
 
 test('S03 user confirmation survives slow and failed Users refresh without another POST', async ({ page }) => {

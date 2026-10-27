@@ -48,6 +48,9 @@ function fixture() {
     'apps/ui-shared/browser-crypto.js': 'fixture crypto\n',
     'apps/ui-shared/i18n.js': SHARED_I18N,
     'apps/ui-shared/boot.js': 'fixture boot\n',
+    'apps/ui-shared/boot-watchdog.js': 'fixture watchdog\n',
+    'apps/ui-shared/prepare-boot.mjs': 'fixture boot builder\n',
+    'apps/ui-shared/read-deadline.js': 'fixture read deadline\n',
     'apps/ui-shared/tokens.css': 'fixture tokens\n',
     'apps/ui-shared/controls.css': 'fixture controls\n',
   };
@@ -72,6 +75,18 @@ test('输入 hash 是稳定的 sha256', () => {
     assert.match(consoleHash, /^[a-f0-9]{64}$/);
     assert.equal(desktopInputHash(base), desktop);
     assert.equal(consoleInputHash(base), consoleHash);
+  });
+});
+
+test('共享启动和读取实现变化会影响两端构建身份', () => {
+  withFixture((base) => {
+    for (const name of ['boot-watchdog.js', 'prepare-boot.mjs', 'read-deadline.js']) {
+      const desktop = desktopInputHash(base);
+      const consoleHash = consoleInputHash(base);
+      write(base, `apps/ui-shared/${name}`, `changed ${name}\n`);
+      assert.notEqual(desktopInputHash(base), desktop);
+      assert.notEqual(consoleInputHash(base), consoleHash);
+    }
   });
 });
 

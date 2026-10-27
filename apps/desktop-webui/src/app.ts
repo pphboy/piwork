@@ -749,8 +749,8 @@ function signIn() {
   const loading = adapter.state.sessionState === 'loading';
   const retryAvailable = !loading || !!adapter.state.sessionError;
   if (adapter.hosted) return `${topbar()}<main class="auth-main"><h1>${loading ? t('auth.opening') : t('auth.connectToPiwork')}</h1><p class="muted" role="status">${loading && !adapter.state.sessionError ? pendingStatus(t('auth.readingServerSession'), 'retry-session') : esc(adapter.state.sessionError || t('auth.signInContinue'))}</p>${loading ? '' : `<a class="button primary" href="/login">${t('auth.signIn')}</a>`}${retryAvailable ? btn(t('auth.retry'),'retry-session','quiet') : ''}</main>`;
-  if (adapter.state.sessionState !== 'ready') return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon('lock',26)}</div><h1>${loading ? t('auth.opening') : t('auth.desktopUnavailable')}</h1><p class="muted" role="status" aria-live="polite">${loading && !adapter.state.sessionError ? pendingStatus(t('auth.connectingLocal'), 'retry-session') : esc(adapter.state.sessionError || t('auth.retryConnection'))}</p>${retryAvailable ? btn(t('auth.retry'),'retry-session','primary full') : ''}${loading ? '' : `<p class="muted">${t('auth.startDesktop', { command: `<code>${esc(adapter.startCommand())}</code>` })}</p>`}</main>`;
-  return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock",26)}</div><h1>${t('auth.connectToCore')}</h1><p class="muted">${t('auth.coreAccountHelp')}</p>${adapter.state.cleanupRequired ? feedback(t('auth.cleanupIncomplete', { command: `<code>${esc(adapter.logoutCommand())}</code>` }), 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}<label class="field">${t('auth.coreAddress')}<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label>${defaultCorePreferences()}<label class="field">${t('auth.account')}<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">${t('auth.password')}<input id="auth-password" type="password" autocomplete="current-password"></label>${btn(t('auth.signIn'), "sign-in", "primary full")}<div class="auth-divider">${t('auth.inspectDivider')}</div>${btn(`${icon("upload",16)} ${t('auth.inspectPackage')}`, "import", "quiet")}</main>`;
+  if (adapter.state.sessionState !== 'ready') return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon('lock',26)}</div><h1>${loading ? t('auth.opening') : t('auth.desktopUnavailable')}</h1><p class="muted" role="status" aria-live="polite">${loading && !adapter.state.sessionError ? pendingStatus(t('auth.connectingLocal'), 'retry-session') : esc(adapter.state.sessionError || t('auth.retryConnection'))}</p>${adapter.signInUnknown ? feedback(t('d.error.signInUnknown'), 'warning') : ''}${retryAvailable ? btn(t('auth.retry'),'retry-session','primary full') : ''}${loading ? '' : `<p class="muted">${t('auth.startDesktop', { command: `<code>${esc(adapter.startCommand())}</code>` })}</p>`}</main>`;
+  return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock",26)}</div><h1>${t('auth.connectToCore')}</h1><p class="muted">${t('auth.coreAccountHelp')}</p>${adapter.state.cleanupRequired ? feedback(t('auth.cleanupIncomplete', { command: `<code>${esc(adapter.logoutCommand())}</code>` }), 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}${adapter.signInUnknown ? feedback(t('d.error.signInUnknown'), 'warning') + btn(t('auth.retry'), 'check-sign-in', 'quiet') : ''}<label class="field">${t('auth.coreAddress')}<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label>${defaultCorePreferences()}<label class="field">${t('auth.account')}<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">${t('auth.password')}<input id="auth-password" type="password" autocomplete="current-password"></label>${btn(t('auth.signIn'), "sign-in", "primary full", adapter.signInUnknown ? 'disabled' : '')}<div class="auth-divider">${t('auth.inspectDivider')}</div>${btn(`${icon("upload",16)} ${t('auth.inspectPackage')}`, "import", "quiet")}</main>`;
 }
 function worksRefreshButton() {
   const pending = adapter.worksLoading || [...actions.records.values()].some(record => record.action === 'retry-works' && record.pending && record.view === location.hash);
@@ -2104,6 +2104,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       openModal("switch-core");
       break;
     case "retry-session": await stay(adapter.initialize()); if (adapter.state.sessionState === 'ready' && !adapter.state.signedIn) await stay(adapter.loadPreferences()); break;
+    case "check-sign-in": await stay(adapter.checkSignInOutcome()); break;
     case "sign-in": {
       const account = root.querySelector<HTMLInputElement>("#auth-account")?.value ?? "";
       const password = root.querySelector<HTMLInputElement>("#auth-password")?.value ?? "";
@@ -3815,7 +3816,7 @@ function handleRouteNavigation() {
 }
 window.addEventListener("hashchange", () => languagePicker.close());
 window.addEventListener("hashchange", handleRouteNavigation);
-window.addEventListener("pagehide", () => { actions.clear(); adapter.stopDownloadObservers(); adapter.stopRunObservers(); adapter.abandonInspectionOnUnload(); adapter.stopFileReads(); });
+window.addEventListener("pagehide", () => { adapter.cancelInitialization(); actions.clear(); adapter.stopDownloadObservers(); adapter.stopRunObservers(); adapter.abandonInspectionOnUnload(); adapter.stopFileReads(); });
 window.addEventListener("beforeunload", (e) => {
   if (dirty() || view.configDirty || hasUnsentDrafts({ texts: Object.values(view.drafts), imageGroups: imageDrafts.groups(), pending: pendingImageSubmissions.values() })) {
     e.preventDefault();
@@ -3850,6 +3851,11 @@ adapter.subscribe(() => { exportFlows.update(); if (lastIdentity !== adapter.ide
   advanceImportStarts(); confirmPendingChatCommand();render(); });
 lastRoute = location.hash;
 render();
+document.dispatchEvent(new Event('piwork:boot-ready'));
+window.addEventListener('piwork:startup-connection-recovered', () => {
+  const target = route();
+  if (['work', 'app'].includes(target[0]) && target[1] && !adapter.getWork(target[1])) void loadRoute();
+});
 const initialization = adapter.initialize();
 const initializationContext = { epoch: adapter.identityEpoch, route: location.hash };
 void initialization.then(async () => { view.coreAddress = adapter.state.core.address; if (adapter.state.sessionState === 'ready') void adapter.loadPreferences(); await loadRoute(); }).catch(error => reportInitializationFailure(error, initializationContext.epoch, initializationContext.route));

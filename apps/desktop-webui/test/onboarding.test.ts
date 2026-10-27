@@ -53,6 +53,40 @@ async function start(environment:Record<string,string>={}, existing?:{directory:
   } catch(error) {await stop();throw error;}
 }
 
+test('real Go entry recovery preserves the exact URL without scripts or styles',async()=>{
+  const server=await start(),browser=await chromium.launch(browserOptions);
+  try {
+    const context=await browser.newContext({javaScriptEnabled:false,viewport:{width:360,height:800}}),page=await context.newPage();
+    const writes:string[]=[];
+    page.on('request',request=>{if(request.method()!=='GET')writes.push(request.method());});
+    await page.route('**/*.css',route=>route.abort());
+    const reload=async(path:string)=>{
+      const original=server.origin+path;
+      await page.goto(original);
+      await page.keyboard.press('Tab');
+      await expect(page.locator('[data-boot-recovery]')).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(original);
+      await expect(page.locator('[data-boot-recovery]')).toBeVisible();
+    };
+    await reload('/setup?view=one%20two&tag=a&tag=b&bare&_charset_=original#setup-target');
+    await reload('/login?returnTo=%2Fservices%2Fw%2Fs%2F8080%2F#login-target');
+    const session=await(await context.request.get(server.origin+'/_web/api/session')).json();
+    const headers={'X-Piwork-Csrf':session.csrfToken,Origin:server.origin};
+    const credentials={account:'admin',password:'synthetic-password'};
+    const created=await context.request.post(server.origin+'/_web/api/setup/administrator',{headers,data:credentials});
+    assert.equal(created.status(),201);
+    const signedIn=await context.request.post(server.origin+'/_web/api/login',{headers,data:credentials});
+    assert.equal(signedIn.status(),200);
+    await reload('/#work/session');
+    await reload('/?view=one%20two&tag=a&tag=b&bare&_charset_=original#work/session');
+    await reload('/admin#admin-target');
+    await reload('/admin/setup?step=prepare#admin-target');
+    assert.deepEqual(writes,[]);
+    await context.close();
+  }finally{await browser.close();await server.stop();}
+});
+
 test('IP browser directly creates an administrator, model/runtime save, workbench and admin navigation',async()=>{
   const server=await start();
   const browser=await chromium.launch(browserOptions);
@@ -691,7 +725,7 @@ test('hosted account management links share menu geometry, icons and keyboard na
   await page.keyboard.press('ArrowDown');await expect(items[2]!).toBeFocused();await page.keyboard.press('ArrowDown');await expect(items[3]!).toBeFocused();await page.keyboard.press('End');await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();await page.keyboard.press('Home');await expect(items[0]!).toBeFocused();
   await language.focus();await page.keyboard.press('Enter');await expect(menu).toHaveCount(0);await expect(page.locator('.language-picker [data-locale="en"]')).toBeVisible();await expect(page.locator('.language-picker [data-locale="zh-CN"]')).toBeVisible();await page.keyboard.press('Escape');await expect(trigger).toBeFocused();await trigger.click();
   await captureFollowup(page,'account-menu');
-  await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();await trigger.click();await page.keyboard.press('Tab');await expect(menu).toHaveCount(0);
+  await language.focus();await page.keyboard.press('Enter');await expect(page.locator('.language-picker [data-locale="auto"]')).toHaveAttribute('aria-selected','true');await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();await trigger.click();await page.keyboard.press('Tab');await expect(menu).toHaveCount(0);
   await trigger.click();await page.mouse.click(3,3);await expect(menu).toHaveCount(0);
   await trigger.click();await menu.getByRole('menuitem',{name:'Administration',exact:true}).focus();await page.keyboard.press('Enter');await expect.poll(()=>new URL(page.url()).pathname).toBe('/admin');
   await page.goto(server.origin+'/');await trigger.click();await menu.getByRole('menuitem',{name:'Quick setup',exact:true}).focus();await page.keyboard.press('Space');await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();assert.equal(new URL(page.url()).pathname,'/admin/setup');

@@ -1,4 +1,5 @@
 import { createLanguagePicker } from './i18n.js';
+import { readWithDeadline } from './read-deadline.js';
 import { pendingDots } from './pending.js';
 import { mountQuickSetup } from './quick-setup.js';
 import { randomUUID } from './browser-crypto.js';
@@ -70,13 +71,14 @@ let setupJourney = null;
 let productInfo = null;
 let runtimeEditing = false, defaultEditSection = null, defaultLastSaved = false, overviewDataConfirmed = false, rememberedOperation = null, lastCreatedUser = null, referenceReturn = null;
 let pendingNavigation = null, modalError = "", currentModalTitle = "", submissionPending = false;
-let preflightPending = false, selectionVersion = 0, signingIn = false;
+let preflightPending = false, selectionVersion = 0, signingIn = false, loginOutcomeUnknown = false, loginRecoverySequence = 0;
 const actions = new ActionState(() => renderConsoleActions());
 const modelManagement = new ModelManagement(() => { if (path === '/models' || path.startsWith('/models/'))
     renderPage(); }, value => { dirty = value; }, (error, identity) => isCurrentSessionError(error, identity), openModelTestDialog);
 let modelCatalogError = '';
 let shellView = '', pageConfirmedAt = '', preparation = null;
 let pageRead = null;
+let pageRetryCycle = 0, pageRetryAttempt = 0, pageRetryTimer;
 let healthRead = null;
 let operationRead = null;
 let releaseAgentImage = '', runtimeDefaultsError = '';
@@ -685,7 +687,12 @@ window.addEventListener("focus", () => {
             void refreshHealth(false);
     }
 });
-async function loadPage(preserve = false) {
+async function loadPage(preserve = false, automatic = false) {
+    if (!automatic) {
+        pageRetryCycle++;
+        pageRetryAttempt = 0;
+        clearTimeout(pageRetryTimer);
+    }
     if (preserve && pageRead?.path === path && pageRead.view === loadId && pageRead.identity === adapter.identityEpoch)
         return pageRead.promise;
     const ticket = preserve ? loadId : ++loadId;
@@ -700,6 +707,16 @@ async function loadPage(preserve = false) {
     task.promise = readPage(preserve, ticket).finally(() => { if (pageRead === task)
         pageRead = null; });
     return task.promise;
+}
+function schedulePageRetry(ticket, origin, identity) {
+    if (pageRetryAttempt >= 2)
+        return;
+    const cycle = pageRetryCycle, attempt = pageRetryAttempt++;
+    clearTimeout(pageRetryTimer);
+    pageRetryTimer = setTimeout(() => {
+        if (cycle === pageRetryCycle && ticket === loadId && origin === path && identity === adapter.identityEpoch)
+            void loadPage(true, true);
+    }, attempt === 0 ? 1000 : 3000);
 }
 async function readPage(preserve, ticket) {
     clearPolling();
@@ -758,8 +775,10 @@ async function readPage(preserve, ticket) {
         }
         else if (path === "/about")
             productInfo = await read(adapter.about());
-        else if (path === "/users")
+        else if (path === "/users") {
             users = await read(adapter.users());
+            actions.reviewed(undefined, ['configuration'], originalPath);
+        }
         else if (path === '/models' || path.startsWith('/models/'))
             await read(modelManagement.load(path, preserve));
         else if (path === "/runtime") {
@@ -874,15 +893,18 @@ async function readPage(preserve, ticket) {
             }
         }
         else if (path.startsWith("/operations/")) {
-            operation = await read(adapter.operation(routeId()));
+            operation = await read(adapter.operation(routeId(), undefined, true));
             rememberedOperation = structuredClone(operation);
         }
         if (ticket !== loadId)
             return;
-        pageConfirmedAt = new Date().toISOString();
-        if (preserve && !readbackRequired && ![...actions.records.values()].some(record => record.view === path && record.blocked))
+        if (path !== '/' || !statusError)
+            pageConfirmedAt = new Date().toISOString();
+        if (preserve && !statusError && !readbackRequired && ![...actions.records.values()].some(record => record.view === path && record.blocked))
             feedback = localizedFeedback(() => Feedback(t('read.confirmed'), 'success'));
         renderPage();
+        if (path === '/' && statusError)
+            schedulePageRetry(ticket, originalPath, identity);
         if (path.startsWith("/operations/") && operation?.state === "running")
             scheduleOperation();
     }
@@ -893,6 +915,7 @@ async function readPage(preserve, ticket) {
             return;
         if (record)
             actions.fail(record, e);
+        schedulePageRetry(ticket, originalPath, identity);
         if (!initial) {
             const confirmedAt = pageConfirmedAt, needsReadback = readbackRequired, readbackKey = path === '/runtime' ? 'recovery.readRuntime' : 'recovery.readDefaults';
             feedback = localizedFeedback(() => Feedback(t('read.unconfirmed', { from: confirmedAt ? t('read.from', { time: date(confirmedAt) }) : '', error: err(e), note: needsReadback ? t('read.note') : '' }), 'warning', (needsReadback ? Button(t(readbackKey), 'readback', 'secondary') : '') + Button(t('refresh.retry'), 'refresh', 'secondary')));
@@ -958,8 +981,33 @@ function renderPage() {
 }
 function loginPage() {
     const unavailable = adapter.availability?.reachable === false;
+    const unknown = adapter.availability === null;
     const bootstrap = adapter.availability?.administratorInitialized === false;
-    return `<div class="login"><div class="login-heading"><img class="brand-logo" src="/piwork-logo.png" alt="${t('login.logoAlt')}" width="64" height="64"><h1>${t('login.title')}</h1><p class="muted">${t('login.subtitle')}</p><div class="core-login-status">${StatusLabel(unavailable ? t('login.coreUnreachable') : t('login.coreAvailable'), unavailable ? "warning" : "success")}<span class="muted">piwork-core</span></div></div>${feedback}${bootstrap ? Feedback(t('login.bootstrap'), "warning") : ""}<section class="section"><form id="login-form">${Field("account", t('login.account'), Input("account", loginAccount, `autocomplete="username" required placeholder="${t('login.accountPlaceholder')}"`))}${Field("password", t('login.password'), Input("password", "", `type="password" autocomplete="current-password" required placeholder="${t('login.passwordPlaceholder')}"`))}<div id="login-error"></div><button class="btn primary" type="submit" ${bootstrap ? "disabled" : ""}>${t('login.signIn')} ${icon("arrow", 15)}</button></form></section>${unavailable ? Button(t('login.retryConnection'), "retry-connection", "secondary") : ""}<p class="login-note">${t('login.note1')}<br>${t('login.note2')}</p></div>`;
+    return `<div class="login"><div class="login-heading"><img class="brand-logo" src="/piwork-logo.png" alt="${t('login.logoAlt')}" width="64" height="64"><h1>${t('login.title')}</h1><p class="muted">${t('login.subtitle')}</p><div class="core-login-status">${StatusLabel(unknown ? t('common.notConfirmed') : unavailable ? t('login.coreUnreachable') : t('login.coreAvailable'), unknown ? "neutral" : unavailable ? "warning" : "success")}<span class="muted">piwork-core</span></div></div>${feedback}${bootstrap ? Feedback(t('login.bootstrap'), "warning") : ""}<section class="section"><form id="login-form">${Field("account", t('login.account'), Input("account", loginAccount, `autocomplete="username" required placeholder="${t('login.accountPlaceholder')}"`))}${Field("password", t('login.password'), Input("password", "", `type="password" autocomplete="current-password" required placeholder="${t('login.passwordPlaceholder')}"`))}<div id="login-error">${loginOutcomeUnknown ? Feedback(t('login.outcomeUnknown'), 'warning', Button(t('common.retry'), 'check-login', 'secondary')) : ''}</div><button class="btn primary" type="submit" ${bootstrap || loginOutcomeUnknown ? "disabled" : ""}>${t('login.signIn')} ${icon("arrow", 15)}</button></form></section>${unavailable ? Button(t('login.retryConnection'), "retry-connection", "secondary") : ""}<p class="login-note">${t('login.note1')}<br>${t('login.note2')}</p></div>`;
+}
+async function checkConsoleLogin() {
+    if (!loginOutcomeUnknown)
+        return;
+    const sequence = ++loginRecoverySequence, expected = loginAccount, origin = path;
+    adapter.cancelReads(['session']);
+    try {
+        const authenticated = await adapter.initialize();
+        if (sequence !== loginRecoverySequence || origin !== path)
+            return;
+        if (authenticated && adapter.account === expected) {
+            loginOutcomeUnknown = false;
+            feedback = '';
+            navigate('/', true);
+            return;
+        }
+        if (!authenticated) {
+            loginOutcomeUnknown = false;
+            feedback = localizedFeedback(() => Feedback(t('login.noSessionAfterUnknown'), 'warning'));
+        }
+    }
+    catch { /* Keep the unknown result and its explicit readback action. */ }
+    if (sequence === loginRecoverySequence && origin === path)
+        renderPage();
 }
 function taskRail(steps, context) {
     return `<aside class="task-rail"><p class="rail-label">${t('rail.thisTask')}</p><ol>${steps.map((s, i) => `<li class="${s.state}"><span class="step-mark">${s.state === "complete" ? icon("check", 13) : i + 1}</span><div>${s.action ? `<button class="rail-link" type="button" data-action="${s.action}">${esc(s.title)}</button>` : `<strong>${esc(s.title)}</strong>`}<p>${esc(s.detail)}</p></div></li>`).join("")}</ol><div class="task-context">${context}</div></aside>`;
@@ -1407,10 +1455,10 @@ function closeDialog(force = false) {
             document.querySelector(query)?.focus();
     }
 }
-function dialogFeedback(message, tone = "error", buttons = "") {
+function dialogFeedback(message, tone = "error", buttons = "", cause) {
     for (const record of actions.records.values())
         if (record.pending && record.anchor === "#dialog-submit" && record.view === path)
-            actions.fail(record, new Error(message));
+            actions.fail(record, cause ?? new Error(message));
     const el = document.querySelector("#dialog-feedback");
     if (el) {
         el.innerHTML = Feedback(message, tone, buttons);
@@ -1461,7 +1509,7 @@ function createUserDialog() {
                 return;
             dialogFeedback(err(e), "error", e instanceof ConsoleError && e.code === "RESULT_UNKNOWN"
                 ? Button(t('dialog.refreshUsers'), "close-refresh", "secondary")
-                : "");
+                : "", e);
             const submit = document.querySelector("#dialog-submit");
             if (submit) {
                 submit.textContent = t('users.createUser');
@@ -1546,9 +1594,9 @@ function userActionDialog(id, action) {
             clearModalPasswords();
             if (isSessionError(e))
                 return;
-            dialogFeedback(err(e), "error", e instanceof ConsoleError && e.code === "USER_NOT_FOUND"
+            dialogFeedback(err(e), "error", e instanceof ConsoleError && ['USER_NOT_FOUND', 'RESULT_UNKNOWN'].includes(e.code)
                 ? Button(t('dialog.refreshUsers'), "close-refresh", "secondary")
-                : "");
+                : "", e);
             const submit = document.querySelector("#dialog-submit");
             if (submit)
                 submit.textContent = title;
@@ -1812,15 +1860,17 @@ async function submitPackage(form) {
 }
 async function readPreparation() {
     // Reuse the authenticated, read-only snapshot already consumed by Quick setup.
-    const response = await fetch('/_web/api/onboarding', { credentials: 'same-origin' });
-    if (response.status === 401)
-        throw new ConsoleError('SESSION_EXPIRED', t('prepare.sessionExpired'));
-    if (!response.ok)
-        throw new Error(t('prepare.readFailed'));
-    const snapshot = await response.json();
-    if (!snapshot || typeof snapshot.status?.ready !== 'boolean')
-        throw new Error(t('prepare.incomplete'));
-    return snapshot.preparation || {};
+    return readWithDeadline(async (signal) => {
+        const response = await fetch('/_web/api/onboarding', { credentials: 'same-origin', signal });
+        if (response.status === 401)
+            throw new ConsoleError('SESSION_EXPIRED', t('prepare.sessionExpired'));
+        if (!response.ok)
+            throw new Error(t('prepare.readFailed'));
+        const snapshot = await response.json();
+        if (!snapshot || typeof snapshot.status?.ready !== 'boolean')
+            throw new Error(t('prepare.incomplete'));
+        return snapshot.preparation || {};
+    });
 }
 async function refreshHealth(showNotice = true) {
     if (pageRead?.path === path && pageRead.view === loadId && pageRead.identity === adapter.identityEpoch)
@@ -2252,14 +2302,15 @@ document.addEventListener("submit", async (event) => {
     const form = event.target;
     event.preventDefault();
     if (form.id === "dialog-form") {
-        if (!submissionPending && !preflightPending) {
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (!submissionPending && !preflightPending && !submitButton?.disabled) {
             const submit = dialogAction, data = new FormData(form);
             await tracked({ key: `dialog:${path}:${currentModalTitle}`, kind: 'configuration', resource: currentModalTitle, label: t('intent.submitting'), target: `${currentModalTitle} · ${routeId() || String(data.get('new-account') || upload?.name || packageSourceDraft || t('term.core'))}`, anchor: '#dialog-submit', view: path }, async () => { await submit?.(data); });
         }
         return;
     }
     if (form.id === "login-form") {
-        if (signingIn)
+        if (signingIn || loginOutcomeUnknown)
             return;
         signingIn = true;
         const record = actions.begin({ key: "login", kind: "identity", label: t('login.signingInLabel'), target: t('login.title'), anchor: "#login-form", view: path });
@@ -2283,6 +2334,15 @@ document.addEventListener("submit", async (event) => {
             if (e instanceof ConsoleError && e.code === "RATE_LIMITED")
                 rateUntil = Date.now() + e.retryAfterMs;
             form.querySelector("#password").value = "";
+            if (e instanceof ConsoleError && ['RESULT_UNKNOWN', 'INVALID_RESPONSE'].includes(e.code)) {
+                loginOutcomeUnknown = true;
+                button.textContent = t('login.signIn');
+                await checkConsoleLogin();
+                signingIn = false;
+                if (record)
+                    actions.finish(record);
+                return;
+            }
             const message = e instanceof ConsoleError && e.code === "RATE_LIMITED"
                 ? t('login.rateLimited', { seconds: Math.max(1, Math.ceil((rateUntil - Date.now()) / 1000)) })
                 : err(e);
@@ -2515,6 +2575,9 @@ async function handleConsoleAction(button) {
             await signOut();
     }
     else if (action === "retry-connection") {
+        availabilitySequence++;
+        clearTimeout(availabilityTimer);
+        adapter.cancelReads(['availability']);
         try {
             await adapter.connection();
             feedback = localizedFeedback(() => Feedback(t('login.coreReachable'), "success"));
@@ -2524,6 +2587,8 @@ async function handleConsoleAction(button) {
         }
         renderPage();
     }
+    else if (action === "check-login")
+        await checkConsoleLogin();
     else if (action === "create-user")
         createUserDialog();
     else if (action === "user-details") {
@@ -2642,11 +2707,94 @@ async function handleConsoleAction(button) {
 }
 history.replaceState({ path }, "", publicPath(path) + location.search);
 pageURL = location.pathname + location.search;
-void adapter.initialize().then(async () => { await adapter.connection().catch(() => undefined); await loadPage(); }).catch(async () => { path = "/login"; history.replaceState({ path }, "", publicPath(path)); try {
-    await adapter.initialize();
+let startupSequence = 0, availabilitySequence = 0;
+let startupTimer, availabilityTimer;
+function startupStatus(message) {
+    const node = app.querySelector('[data-startup-status]');
+    if (node)
+        node.textContent = message;
 }
-catch { /* availability shown by login */ } await loadPage(); });
-window.addEventListener('pagehide', () => { languagePicker.close(); modelManagement.leave(); disposeQuickSetup(); closeAccountMenu(); actions.clear(); clearPolling(); selectionVersion++; preflightPending = false; });
+function availabilityNotice(message) {
+    let node = document.getElementById('console-availability-notice');
+    if (!node) {
+        node = document.createElement('div');
+        node.id = 'console-availability-notice';
+        node.className = 'feedback warning';
+        node.setAttribute('role', 'status');
+        const text = document.createElement('span');
+        text.dataset.availabilityMessage = '';
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn secondary';
+        retry.textContent = t('common.retry');
+        retry.addEventListener('click', () => { void readAvailability(); });
+        node.append(text, retry);
+        document.body.prepend(node);
+    }
+    node.querySelector('[data-availability-message]').textContent = message;
+}
+async function readAvailability(automatic = false, attempt = 0) {
+    if (!automatic) {
+        availabilitySequence++;
+        clearTimeout(availabilityTimer);
+        adapter.cancelReads(['availability']);
+    }
+    const sequence = availabilitySequence, identity = adapter.identityEpoch, origin = path;
+    const valid = () => sequence === availabilitySequence && identity === adapter.identityEpoch && origin === path;
+    try {
+        await adapter.connection();
+        if (!valid())
+            return;
+        document.getElementById('console-availability-notice')?.remove();
+        if (path === '/login') {
+            const status = app.querySelector('.core-login-status');
+            if (status)
+                status.innerHTML = StatusLabel(t('login.coreAvailable'), 'success') + '<span class="muted">piwork-core</span>';
+        }
+    }
+    catch (error) {
+        if (!valid())
+            return;
+        if (path === '/login' && adapter.availability?.reachable === false)
+            renderPage();
+        else
+            availabilityNotice(err(error));
+        if (attempt < 2)
+            availabilityTimer = setTimeout(() => { if (valid())
+                void readAvailability(true, attempt + 1); }, attempt === 0 ? 1000 : 3000);
+    }
+}
+async function startConsole(automatic = false, attempt = 0) {
+    if (!automatic) {
+        startupSequence++;
+        clearTimeout(startupTimer);
+        adapter.cancelReads(['session']);
+        startupStatus(t('startup.opening'));
+    }
+    const sequence = startupSequence, origin = location.pathname + location.search;
+    const valid = () => sequence === startupSequence && origin === location.pathname + location.search;
+    try {
+        await adapter.initialize();
+        if (!valid())
+            return;
+        void readAvailability();
+        await loadPage();
+    }
+    catch {
+        if (!valid())
+            return;
+        startupStatus(t('startup.unconfirmed'));
+        if (attempt < 2)
+            startupTimer = setTimeout(() => { if (valid())
+                void startConsole(true, attempt + 1); }, attempt === 0 ? 1000 : 3000);
+    }
+}
+app.innerHTML = `<main class="main task-main"><p role="status" data-startup-status>${esc(t('startup.opening'))}</p><button type="button" class="btn secondary" data-startup-retry>${esc(t('common.retry'))}</button> <a href="/">${esc(t('startup.home'))}</a></main>`;
+app.addEventListener('click', event => { if (event.target.closest('[data-startup-retry]'))
+    void startConsole(); });
+document.dispatchEvent(new Event('piwork:boot-ready'));
+void startConsole();
+window.addEventListener('pagehide', () => { startupSequence++; availabilitySequence++; pageRetryCycle++; clearTimeout(startupTimer); clearTimeout(availabilityTimer); clearTimeout(pageRetryTimer); adapter.cancelReads(['session', 'availability']); languagePicker.close(); modelManagement.leave(); disposeQuickSetup(); closeAccountMenu(); actions.clear(); clearPolling(); selectionVersion++; preflightPending = false; });
 function productInfoPage() {
     const info = productInfo, build = info?.build, notes = info?.releaseNotes;
     const releases = `<a class="btn secondary small" href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">${t('about.allReleases')}${icon('external', 15)}</a>`;

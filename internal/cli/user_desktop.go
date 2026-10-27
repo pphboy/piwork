@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"piwork/internal/bootcsp"
+	"piwork/internal/bootrecovery"
 	"piwork/internal/client"
 	"piwork/internal/desktopassets"
 	"piwork/internal/localweb"
@@ -237,6 +239,9 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 		desktopError(w, 404, "NOT_FOUND")
 		return
 	}
+	if strings.HasPrefix(contentType, "text/html") && bootrecovery.Redirect(w, r) {
+		return
+	}
 	content, err := desktopassets.FS.ReadFile(path)
 	if err != nil {
 		desktopError(w, 404, "DESKTOP_ASSET_UNAVAILABLE")
@@ -245,6 +250,9 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 	if d.hosted != nil && contentType == "text/html; charset=utf-8" {
 		content = []byte(strings.Replace(string(content), "<head>", `<head><meta name="piwork-mode" content="hosted">`, 1))
 	}
+	if strings.HasPrefix(contentType, "text/html") {
+		content = bootrecovery.HTML(content, r)
+	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
 	w.Header().Set("Cache-Control", "no-store")
@@ -252,9 +260,12 @@ func (d *nativeDesktop) serveStatic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Origin-Agent-Cluster", "?1")
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
-	w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src http://*.desktop.localhost:%d; object-src 'none'; base-uri 'none'; frame-ancestors 'none'", d.port))
+	w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src http://*.desktop.localhost:%d; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'", d.port))
 	if d.hosted != nil {
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+	}
+	if strings.HasPrefix(contentType, "text/html") {
+		w.Header().Set("Content-Security-Policy", bootcsp.Policy(w.Header().Get("Content-Security-Policy"), desktopassets.FS))
 	}
 
 	w.WriteHeader(200)

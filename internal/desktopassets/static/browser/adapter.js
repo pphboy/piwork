@@ -1,4 +1,5 @@
 import { randomUUID, sha256Hex } from './browser-crypto.js';
+import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import { LocalizedMessage, t } from './locale.js';
 import { historyMessages, resultText, upsertTool } from './chat-projection.js';
 import { HistoryProjection } from './history-projection.js';
@@ -536,6 +537,10 @@ export class DesktopAdapter {
     interactionTimer;
     capabilityReads = new Map();
     sessionTimer;
+    initializationTimer;
+    initializationCycle = 0;
+    pendingSignIn;
+    get signInUnknown() { return !!this.pendingSignIn; }
     authCheck;
     authSequence = 0;
     connectionCheck = { checking: false, error: '', checkedAt: '', waiting: false };
@@ -1008,7 +1013,15 @@ export class DesktopAdapter {
         }
         return work;
     }
-    async requestOnce(path, method = 'GET', body, signal, headers = {}) {
+    requestOnce(path, method = 'GET', body, signal, headers = {}) {
+        const startupRead = path === 'session' || path === 'status' || path === 'works' || /^works\/[^/?]+(?:\?.*)?$/.test(path) || /^works\/[^/]+\/(?:services|configuration|packages|sessions|models)(?:\?.*)?$/.test(path);
+        if (method !== 'GET' || !startupRead)
+            return this.requestRaw(path, method, body, signal, headers);
+        return readWithDeadline(inner => this.requestRaw(path, method, body, inner, headers), { signal })
+            .catch(error => { if (error instanceof ReadTimeout)
+            throw failure('READ_TIMEOUT', 'd.error.readTimeout'); throw error; });
+    }
+    async requestRaw(path, method = 'GET', body, signal, headers = {}) {
         const epoch = this.epoch, authSequence = this.authSequence;
         let response;
         try {
@@ -1017,10 +1030,10 @@ export class DesktopAdapter {
         catch {
             throw failure(method === 'GET' ? 'CORE_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? (this.hosted ? 'd.error.serverUnavailable' : 'd.error.localUnavailable') : 'd.error.responseLostOperations');
         }
-        if (epoch !== this.epoch)
+        if (signal?.aborted || epoch !== this.epoch)
             throw failure('CONNECTION_CHANGED', 'd.error.coreAccountChanged');
         const value = await response.json().catch(() => null);
-        if (epoch !== this.epoch)
+        if (signal?.aborted || epoch !== this.epoch)
             throw failure('CONNECTION_CHANGED', 'd.error.identityChangedReading');
         if (!response.ok) {
             const code = value?.code ?? `HTTP_${response.status}`;
@@ -1131,6 +1144,13 @@ export class DesktopAdapter {
                     value = confirmed;
                 }
                 this.acceptSession(value);
+                const uncertain = this.pendingSignIn;
+                if (uncertain && value.state !== 'offline') {
+                    const account = value.user?.account;
+                    if (uncertain.phase === 'connection' || value.state === 'signed-out' ||
+                        value.state === 'authenticated' && value.coreUrl === uncertain.core && account === uncertain.account)
+                        this.pendingSignIn = undefined;
+                }
                 const acceptedEpoch = this.epoch, connectionOwned = this.authCheck?.connectionOwned;
                 if (this.authCheck?.pending === pending)
                     this.authCheck.acceptedEpoch = acceptedEpoch;
@@ -1160,10 +1180,21 @@ export class DesktopAdapter {
     async initialize() {
         if (new URLSearchParams(location.hash.slice(1)).has('ticket'))
             history.replaceState(null, '', location.pathname + location.search);
+        const cycle = ++this.initializationCycle;
+        clearTimeout(this.initializationTimer);
+        return this.initializeAttempt(cycle, 0, location.hash);
+    }
+    cancelInitialization() {
+        this.initializationCycle++;
+        clearTimeout(this.initializationTimer);
+        this.authCheck?.controller.abort();
+    }
+    async initializeAttempt(cycle, attempt, route) {
         this.authSequence++;
         this.authCheck?.controller.abort();
         this.state.sessionState = 'loading';
-        this.state.sessionError = '';
+        if (attempt === 0)
+            this.state.sessionError = '';
         this.emit();
         const pending = this.checkSession(), sequence = this.authSequence;
         const slow = setTimeout(() => {
@@ -1176,15 +1207,45 @@ export class DesktopAdapter {
             await pending;
         }
         catch (error) {
-            if (sequence === this.authSequence && this.state.sessionState === 'loading')
+            if (cycle !== this.initializationCycle || sequence !== this.authSequence)
+                return;
+            if (this.state.sessionState === 'loading')
                 this.unavailableSession(error);
+            if (attempt < 2) {
+                const epoch = this.epoch;
+                this.initializationTimer = setTimeout(() => {
+                    if (cycle === this.initializationCycle && sequence === this.authSequence && epoch === this.epoch && route === location.hash)
+                        void this.initializeAttempt(cycle, attempt + 1, route);
+                }, attempt === 0 ? 1000 : 3000);
+            }
             return;
         }
         finally {
             clearTimeout(slow);
         }
-        if (sequence === this.authSequence && this.state.signedIn)
-            await this.checkConnection();
+        if (sequence === this.authSequence && this.state.signedIn) {
+            try {
+                await this.checkConnection();
+            }
+            catch (error) {
+                this.scheduleInitialConnectionRetry(cycle, 0, route);
+                throw error;
+            }
+        }
+    }
+    scheduleInitialConnectionRetry(cycle, attempt, route) {
+        if (attempt >= 2)
+            return;
+        const epoch = this.epoch, sequence = this.authSequence;
+        clearTimeout(this.initializationTimer);
+        this.initializationTimer = setTimeout(() => {
+            if (cycle !== this.initializationCycle || epoch !== this.epoch || sequence !== this.authSequence || route !== location.hash || !this.state.signedIn)
+                return;
+            void this.checkConnection().then(() => {
+                if (cycle === this.initializationCycle && epoch === this.epoch && route === location.hash)
+                    window.dispatchEvent(new Event('piwork:startup-connection-recovered'));
+            }).catch(() => this.scheduleInitialConnectionRetry(cycle, attempt + 1, route));
+        }, attempt === 0 ? 1000 : 3000);
     }
     scheduleSessionCheck() {
         clearTimeout(this.sessionTimer);
@@ -1202,10 +1263,25 @@ export class DesktopAdapter {
     startCommand() { return `piwork-cli desktop --port ${this.localPort()} --no-open`; }
     localPort() { const port = Number(location.port || 17891); return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 17891; }
     async signIn(core, account, password) {
+        if (this.pendingSignIn)
+            throw failure('RESULT_UNKNOWN', 'd.error.signInUnknown');
         this.authSequence++;
-        if (core !== this.state.core.address)
-            this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core }));
-        this.acceptSession(await this.request('login', 'POST', { account, password }));
+        let phase = 'connection';
+        try {
+            if (core !== this.state.core.address)
+                this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core }));
+            phase = 'login';
+            this.acceptSession(await this.request('login', 'POST', { account, password }));
+        }
+        catch (error) {
+            if (!(error instanceof DesktopError) || !['RESULT_UNKNOWN', 'INVALID_RESPONSE'].includes(error.code))
+                throw error;
+            this.pendingSignIn = { core, account, phase };
+            this.emit();
+            const confirmed = await this.checkSignInOutcome().catch(() => false);
+            if (!confirmed)
+                throw failure('RESULT_UNKNOWN', 'd.error.signInUnknown');
+        }
         this.state.scenario = 'loading';
         this.emit();
         const epoch = this.epoch;
@@ -1213,6 +1289,15 @@ export class DesktopAdapter {
             this.state.scenario = 'list-error';
             this.emit();
         } });
+    }
+    async checkSignInOutcome() {
+        const intent = this.pendingSignIn;
+        if (!intent)
+            return false;
+        const session = await this.checkSession();
+        if (this.pendingSignIn === intent)
+            throw failure('RESULT_UNKNOWN', 'd.error.signInUnknown');
+        return intent.phase === 'login' && session.state === 'authenticated' && session.coreUrl === intent.core && session.user?.account === intent.account;
     }
     async switchCore(core) { this.authSequence++; this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core })); if (this.state.signedIn)
         await this.checkConnection(); this.emit(); }
@@ -1269,8 +1354,11 @@ export class DesktopAdapter {
                 }
             }
             catch (error) {
-                if (epoch === this.epoch && this.connectionCheck.checking)
+                if (epoch === this.epoch && this.connectionCheck.checking) {
                     this.connectionCheck.error = errorText(error);
+                    if (this.state.scenario === 'loading')
+                        this.state.scenario = 'list-error';
+                }
                 throw error;
             }
             finally {
