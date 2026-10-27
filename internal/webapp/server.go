@@ -332,7 +332,11 @@ func (s *Server) serveSetupAsset(w http.ResponseWriter, r *http.Request) {
 	path, contentType := "static/public/setup.html", "text/html; charset=utf-8"
 	switch r.URL.Path {
 	case "/setup", "/login":
-	case "/setup/browser/onboarding.js", "/setup/browser/components.js", "/setup/browser/model-form.js", "/setup/browser/pending.js":
+	case "/setup/browser/onboarding.js", "/setup/browser/components.js", "/setup/browser/model-form.js", "/setup/browser/pending.js",
+		// Language runtime and catalogs loaded by the setup entry, boot script and
+		// onboarding modules. Each path is listed exactly; there is no directory prefix.
+		"/setup/browser/i18n.js", "/setup/browser/boot.js", "/setup/browser/locale.js",
+		"/setup/browser/i18n/catalog.js", "/setup/browser/i18n/shared.js", "/setup/browser/i18n/setup.js", "/setup/browser/i18n/app.js":
 		path, contentType = "static/browser/"+strings.TrimPrefix(r.URL.Path, "/setup/browser/"), "text/javascript; charset=utf-8"
 	case "/setup/style.css":
 		path, contentType = "static/public/style.css", "text/css; charset=utf-8"

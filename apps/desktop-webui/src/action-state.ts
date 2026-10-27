@@ -1,4 +1,5 @@
 import { pendingDots } from './pending.js';
+import { t } from './locale.js';
 
 export type ActionKind = 'identity' | 'lifecycle' | 'files' | 'configuration' | 'service' | 'agent' | 'transfer' | 'read';
 export interface ActionIntent {
@@ -49,21 +50,21 @@ export class ActionState {
   finish(record: ActionRecord) {
     if (!this.current(record)) return;
     record.pending = false; record.checkedAt = new Date(this.now()).toISOString();
-    if (!record.result && !record.error) { record.phase = record.refresh === 'failed' ? 'Readback not confirmed' : record.kind === 'read' ? 'Status checked' : 'Confirmed'; record.visibleUntil = record.kind === 'read' && !['refresh-files', 'refresh-config', 'check-work', 'check-operation', 'check-connection', 'check-preview', 'check-catalog'].includes(record.action || '') ? 0 : this.now() + 3000; } this.tick(); this.changed();
+    if (!record.result && !record.error) { record.phase = record.refresh === 'failed' ? t('d.action.readbackUnconfirmed') : record.kind === 'read' ? t('d.action.statusChecked') : t('d.action.confirmed'); record.visibleUntil = record.kind === 'read' && !['refresh-files', 'refresh-config', 'check-work', 'check-operation', 'check-connection', 'check-preview', 'check-catalog'].includes(record.action || '') ? 0 : this.now() + 3000; } this.tick(); this.changed();
   }
   fail(record: ActionRecord, error: unknown) {
     if (!this.current(record)) return;
-    record.pending = false; record.error = error instanceof Error ? error.message : String(error); record.phase = 'Not confirmed';
+    record.pending = false; record.error = error instanceof Error ? error.message : String(error); record.phase = t('d.action.notConfirmed');
     const code = (error as { code?: string })?.code;
     record.blocked = record.kind !== 'read' && record.kind !== 'identity' && ['RESULT_UNKNOWN', 'INVALID_RESPONSE'].includes(code || ''); this.changed();
   }
   reviewed(work: string | undefined, kinds: ActionKind[], view?: string) {
-    for (const record of this.records.values()) if (record.work === work && (!view || record.view === view) && kinds.includes(record.kind) && record.blocked) { record.blocked = false; record.phase = 'Previous result unknown; current object checked'; }
+    for (const record of this.records.values()) if (record.work === work && (!view || record.view === view) && kinds.includes(record.kind) && record.blocked) { record.blocked = false; record.phase = t('d.action.previousUnknown'); }
     this.changed();
   }
   review(record: ActionRecord) {
     if (!this.current(record) || !record.blocked) return;
-    record.blocked = false; record.phase = 'Previous result unknown; current object checked';
+    record.blocked = false; record.phase = t('d.action.previousUnknown');
     record.checkedAt = new Date(this.now()).toISOString(); this.changed();
   }
   async refresh(record: ActionRecord, read: () => Promise<unknown>) {
@@ -75,7 +76,7 @@ export class ActionState {
   }
   message(record: ActionRecord) {
     const elapsed = Math.floor((this.now() - record.started) / 1000);
-    return `${record.target} · ${record.phase}${record.pending && elapsed >= 10 ? ` · Still waiting (${elapsed}s)` : ''}${record.error ? ` · ${record.error}` : ''}${record.refresh === 'refreshing' ? ' · Refreshing' : record.refresh === 'failed' ? ` · ${record.result ? 'Confirmed result retained; ' : ''}refresh not confirmed${record.refreshError ? `: ${record.refreshError}` : ''}` : ''}`;
+    return `${record.target} · ${record.phase}${record.pending && elapsed >= 10 ? t('d.action.waitingSuffix', { seconds: elapsed }) : ''}${record.error ? ` · ${record.error}` : ''}${record.refresh === 'refreshing' ? t('d.action.refreshing') : record.refresh === 'failed' ? ` · ${record.result ? t('d.action.retainedPrefix') : ''}${record.refreshError ? t('d.action.refreshNotConfirmedDetail', { detail: record.refreshError }) : t('d.action.refreshNotConfirmed')}` : ''}`;
   }
   visible(record: ActionRecord) { return record.pending || !!record.error || !!record.blocked || record.refresh !== '' || (record.visibleUntil || 0) > this.now(); }
   clear() { this.generation++; this.records.clear(); this.announced.clear(); clearTimeout(this.timer); this.timer = undefined; this.changed(); }
@@ -146,7 +147,7 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
     const visible = { ...record };
     if (record.error && pageText.includes(record.error)) visible.error = undefined;
     if (record.refreshError && pageText.includes(record.refreshError)) visible.refreshError = undefined;
-    if (record.result && pageText.includes(record.result)) { visible.result = undefined; visible.phase = 'Confirmed'; }
+    if (record.result && pageText.includes(record.result)) { visible.result = undefined; visible.phase = t('d.action.confirmed'); }
     const message = actions.message(visible);
     // Update the text node in place so phase/elapsed-time messages do not restart dots.
     if (node.firstChild?.nodeType === 3) node.firstChild.nodeValue = message;
@@ -163,7 +164,7 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
     }
     if (detailsId && !node.querySelector?.('.action-details')) {
       const details = document.createElement('details'), summary = document.createElement('summary'), identity = document.createElement('code');
-      details.className='action-details'; summary.textContent=record.action==='new-session'?'Session details':'Run details'; identity.textContent=record.businessId || '';
+      details.className='action-details'; summary.textContent=record.action==='new-session'?t('d.action.sessionDetails'):t('d.action.runDetails'); identity.textContent=record.businessId || '';
       details.append(summary,identity); node.append(details);
     }
     // Status changes must not move the top of an interactive application frame.

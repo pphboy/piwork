@@ -9,3 +9,8 @@ const styles = readFileSync(new URL("../public/style.css", import.meta.url), "ut
 writeFileSync(new URL("style.css", target), tokens + "\n" + controls + "\n" + styles);
 
 cpSync(new URL("../../../apps/ui-shared/browser-crypto.js", import.meta.url), new URL("../dist/browser/browser-crypto.js", import.meta.url));
+// Shared language runtime and this app's plain-JS catalog stay flat-native
+// modules next to the compiled browser entry points.
+cpSync(new URL("../../../apps/ui-shared/i18n.js", import.meta.url), new URL("../dist/browser/i18n.js", import.meta.url));
+cpSync(new URL("../../../apps/ui-shared/boot.js", import.meta.url), new URL("../dist/browser/boot.js", import.meta.url));
+cpSync(new URL("../src/i18n", import.meta.url), new URL("../dist/browser/i18n", import.meta.url), { recursive: true });

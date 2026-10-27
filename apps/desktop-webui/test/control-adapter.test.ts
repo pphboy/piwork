@@ -22,7 +22,7 @@ test('cancel accepted then GET503 keeps original acceptance and prevents a secon
   const f = fixture(t, method => method === 'POST' ? response({ requestId: 'original' }) : response({ message: 'Synthetic readback outage' }, 503));
   await f.adapter.cancelRequest('one', 'original');
   assert.equal(f.adapter.requestCancellation('one', 'original').phase, 'accepted');
-  assert.match(f.adapter.requestCancellation('one', 'original').error, /readback outage/);
+  assert.match(String(f.adapter.requestCancellation('one', 'original').error), /readback outage/);
   await assert.rejects(f.adapter.cancelRequest('one', 'original'), /already submitted/);
   assert.deepEqual(f.requests, ['POST', 'GET']);
 });
@@ -58,7 +58,7 @@ test('identity cleanup clears cancel locks and discards late acceptance', async 
 test('successful original request refresh clears an accepted readback warning without unlocking cancel', async t => {
   let unavailable = true;
   const f = fixture(t, method => method === 'POST' ? response({ requestId: 'original' }) : unavailable ? response({ message: 'temporary outage' }, 503) : response(detail('cancelled')));
-  await f.adapter.cancelRequest('one', 'original'); assert.match(f.adapter.requestCancellation('one', 'original').error, /outage/);
+  await f.adapter.cancelRequest('one', 'original'); assert.match(String(f.adapter.requestCancellation('one', 'original').error), /outage/);
   unavailable = false; await f.adapter.loadRequest('one', 'original');
   assert.equal(f.adapter.requestCancellation('one', 'original').error, '');
   assert.equal(f.adapter.requestCancellation('one', 'original').phase, 'accepted');

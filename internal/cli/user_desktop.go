@@ -102,7 +102,11 @@ func runUserDesktop(api *client.Client, store client.CredentialStore, saved *cli
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	for _, path := range []string{"static/public/index.html", "static/public/style.css", "static/browser/app.js", "static/browser/files.js"} {
+	for _, path := range []string{
+		"static/public/index.html", "static/public/style.css", "static/browser/app.js", "static/browser/files.js",
+		"static/browser/boot.js", "static/browser/i18n.js", "static/browser/locale.js",
+		"static/browser/i18n/catalog.js", "static/browser/i18n/shared.js", "static/browser/i18n/app.js", "static/browser/i18n/adapter.js",
+	} {
 		if _, err := fs.Stat(desktopassets.FS, path); err != nil {
 			fmt.Fprintln(stderr, "Desktop browser resources are missing; rebuild piwork-cli")
 			return 5

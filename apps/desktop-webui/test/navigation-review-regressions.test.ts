@@ -1,3 +1,4 @@
+const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -18,6 +19,7 @@ function deferred() { let resolve!: () => void; const promise = new Promise<void
 function fixture() {
   const work: any = { id: 'one', name: 'One', services: [{ id: 'service-a', enabled: false, observed: 'Stopped' }], files: [], resourceErrors: {} };
   const c: any = {
+  ...localeSandbox,
     view: { tab: 'Files', path: '/x/y', file: '', fileDraft: '', fileOriginal: '', configDirty: false, data: {}, modal: '' },
     location: { hash: '#/work/one' }, modalChoice: 0, fileChoice: 0, areaChoice: 0, serviceChoice: 0, sessionChoice: 0,
     selectionWorkId: 'one', routeLoad: 0, workspaceReturn: undefined, workSelections: new Map(), filesRestoreNotice: '',

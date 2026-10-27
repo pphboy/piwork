@@ -15,3 +15,8 @@ cpSync(markedModule, new URL('marked.js', browser));
 cpSync(new URL('../LICENSE', markedModule), new URL('marked-LICENSE.txt', target));
 
 cpSync(new URL("../../../apps/ui-shared/browser-crypto.js", import.meta.url), new URL("../dist/browser/browser-crypto.js", import.meta.url));
+// Shared language runtime and this app's plain-JS catalog stay flat-native
+// modules next to the compiled browser entry points.
+cpSync(new URL("../../../apps/ui-shared/i18n.js", import.meta.url), new URL("../dist/browser/i18n.js", import.meta.url));
+cpSync(new URL("../../../apps/ui-shared/boot.js", import.meta.url), new URL("../dist/browser/boot.js", import.meta.url));
+cpSync(new URL("../src/i18n", import.meta.url), new URL("../dist/browser/i18n", import.meta.url), { recursive: true });

@@ -1,3 +1,5 @@
+import {t, currentLocale} from './locale.js';
+
 export const esc = (s: unknown) =>
   String(s ?? "").replace(
     /[&<>"']/g,
@@ -8,6 +10,7 @@ export const esc = (s: unknown) =>
   );
 export const icon = (name: string, size = 18) => {
   const paths: Record<string, string> = {
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
     grid: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
     logout: '<path d="M9 3H3v18h6M10 12h11m-5-5 5 5-5 5"/>',
@@ -81,7 +84,7 @@ export const Input = (id: string, value = "", attrs = "") =>
 export const DataTable = (head: string[], rows: string[], empty: string) =>
   `<div class="table-scroll"><table><thead><tr>${head.map((h) => `<th scope="col">${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.join("") : `<tr><td colspan="${head.length}" class="empty-cell">${esc(empty)}</td></tr>`}</tbody></table></div>`;
 export const date = (value: string) =>
-  !value ? "Not provided" : new Date(value).toLocaleString("en-US", {
+  !value ? t("ui.notProvided") : new Date(value).toLocaleString(currentLocale() === "zh-CN" ? "zh-CN" : "en-US", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -101,9 +104,9 @@ export const Copy = (value: string) =>
     icon("copy", 15),
     "copy",
     "icon-button",
-    `data-value="${esc(value)}" aria-label="Copy ${esc(value)}" title="Copy"`,
+    `data-value="${esc(value)}" aria-label="${esc(t("ui.copyAria", {value}))}" title="${esc(t("ui.copy"))}"`,
   );
 export const Empty = (title: string, message: string, action = "") =>
   `<div class="empty-state">${icon("box", 26)}<h3>${esc(title)}</h3><p>${esc(message)}</p>${action}</div>`;
 export const UploadProgress = (label: string, sent: number, total: number) =>
-  `<div class="upload-progress" role="status"><div><strong>${esc(label)}</strong><span>${total ? `${bytes(sent)} / ${bytes(total)}` : ""}</span></div>${total ? `<progress max="${total}" value="${sent}" aria-label="Bytes uploaded"></progress>` : '<span class="working-line">Waiting for Core confirmation…</span>'}</div>`;
+  `<div class="upload-progress" role="status"><div><strong>${esc(label)}</strong><span>${total ? `${bytes(sent)} / ${bytes(total)}` : ""}</span></div>${total ? `<progress max="${total}" value="${sent}" aria-label="${esc(t("ui.bytesUploaded"))}"></progress>` : `<span class="working-line">${esc(t("ui.waitingCore"))}</span>`}</div>`;

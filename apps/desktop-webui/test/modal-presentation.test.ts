@@ -1,3 +1,5 @@
+const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.meta.url).href);
+const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -12,7 +14,7 @@ function closeFixture() {
   addEventListener(k:string,f:Function){this.listeners.set(k,f);}removeEventListener(k:string){this.listeners.delete(k);}
  }
  const dialog=new Element(),trigger=new Element(),body=new Element();let live:any=dialog;
- const c:any={HTMLElement:Element,HTMLTextAreaElement:class {},view:{modal:'file-transfer',data:{},modalError:'',modalNameError:null},adapter:{identityEpoch:7},modalChoice:1,areaChoice:1,location:{hash:'#/work/a'},lastFocus:trigger,focusReturn:'',pendingWebCommand:undefined,requestNavigation:undefined,sourceGuardReturn:undefined,
+ const c:any={...localeSandbox,HTMLElement:Element,HTMLTextAreaElement:class {},view:{modal:'file-transfer',data:{},modalError:'',modalNameError:null},adapter:{identityEpoch:7},modalChoice:1,areaChoice:1,location:{hash:'#/work/a'},lastFocus:trigger,focusReturn:'',pendingWebCommand:undefined,requestNavigation:undefined,sourceGuardReturn:undefined,
  root:{querySelector:()=>live,querySelectorAll:()=>[]},document:{body,activeElement:trigger,fullscreenElement:null,createElement:()=>new Element()},matchMedia:()=>({matches:false}),nonmodalDialog:()=>false,isRequestInspector:()=>false,chatSettingsContextCurrent:()=>false,render:()=>{live=null;},clearNameFieldError:()=>{}};
  vm.createContext(c);for(const name of ['closeModal']){const f=source.match(new RegExp('^function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(f);vm.runInContext(f[0],c);}
  return {c,dialog,trigger,body,setLive:(node:any)=>live=node,Element};
@@ -40,5 +42,5 @@ test('modal transitions contain no animation, exit snapshot, timer or late focus
 });
 test('footer geometry stays scoped and real destructive confirmation is preserved',()=>{
  const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8'),css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
- assert.match(css,/\.modal \.modal-footer > \.button \{ min-height:40px/);assert.match(source,/id="delete-confirm" type="checkbox"/);assert.match(source,/<div class="impact-box">Entire Work · Services · Agent · Files<\/div>/);
+ assert.match(css,/\.modal \.modal-footer > \.button \{ min-height:40px/);assert.match(source,/id="delete-confirm" type="checkbox"/);assert.match(source,/<div class="impact-box">\$\{t\('stopWork\.impact'\)\}<\/div>/);assert.equal(catalog.en['stopWork.impact'],'Entire Work · Services · Agent · Files');
 });

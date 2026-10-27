@@ -1,3 +1,5 @@
+const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.meta.url).href);
+const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +9,7 @@ const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
 function extract(...names:string[]){return names.map(name=>{const value=source.match(new RegExp('^(?:async )?function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];}).join('\n');}
 function fixture(){
  const work:any={id:'work-a',name:'A',config:{pendingApply:false,skills:[],packages:[]},resourceChecked:{configuration:'now'},resourceErrors:{}};
- const c:any={pendingDots,current:()=>work,structuredClone,location:{hash:'#/work/work-a'},Date,view:{file:'',path:'/',modal:'',data:{},settingsTab:'Skills',config:null,configDirty:false},actions:{records:new Map(),visible:()=>true},adapter:{operationPaused:()=>false,connectionCheck:{checking:false,error:''},directories:new Map(),state:{operations:[]},project:()=>({usable:true})},skillsSettings:()=>'<p>Skills</p>'};c.fileActionsContext="";vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);vm.runInContext(extract('fileReadPending','fileRefreshButton','settingsPage'),c);return{c,work};
+ const c:any={...localeSandbox,pendingDots,current:()=>work,structuredClone,location:{hash:'#/work/work-a'},Date,view:{file:'',path:'/',modal:'',data:{},settingsTab:'Skills',config:null,configDirty:false},actions:{records:new Map(),visible:()=>true},adapter:{operationPaused:()=>false,connectionCheck:{checking:false,error:''},directories:new Map(),state:{operations:[]},project:()=>({usable:true})},skillsSettings:()=>'<p>Skills</p>'};c.fileActionsContext="";vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);vm.runInContext(extract('fileReadPending','fileRefreshButton','settingsPage'),c);return{c,work};
 }
 test('Files refresh keeps a fixed icon with scoped busy feedback and no success text',()=>{
  const {c,work}=fixture();let html=c.fileRefreshButton(work);assert.match(html,/icon-button quiet file-refresh/);assert.doesNotMatch(html,/>Refresh<|Updated|aria-busy|<span>/);
@@ -26,8 +28,8 @@ test('normal settings are compact; dirty, pending Apply, Applying and errors ret
  c.adapter.state.operations[0].state='unknown';html=c.settingsPage(work);assert.match(html,/Apply not confirmed/);assert.doesNotMatch(html,/data-action="apply-config"/);
 });
 test('Works icon actions retain labels; Files add menu and Admin role keep explicit context',()=>{
- const works=extract('works'),modal=extract('modalMarkup');assert.match(works,/worksRefreshButton\(\)/);assert.match(extract('worksRefreshButton'),/Refresh Works/);assert.match(works,/title="Import Work" aria-label="Import Work"/);assert.match(works,/title="New Work" aria-label="New Work"/);assert.match(works,/Make room for your next idea/);
- assert.doesNotMatch(modal,/case "file-add"/);assert.doesNotMatch(modal,/case "file-options"/);assert.match(modal,/Role: /);assert.match(modal,/Administrator/);assert.match(modal,/Core: /);
+ const works=extract('works'),modal=extract('modalMarkup');assert.match(works,/worksRefreshButton\(\)/);assert.match(extract('worksRefreshButton'),/t\('works\.refresh'\)/);assert.equal(catalog.en['works.refresh'],'Refresh Works');assert.match(works,/title="\$\{esc\(t\('works\.import'\)\)\}" aria-label="\$\{esc\(t\('works\.import'\)\)\}"/);assert.match(works,/title="\$\{esc\(t\('works\.newWork'\)\)\}" aria-label="\$\{esc\(t\('works\.newWork'\)\)\}"/);assert.match(works,/t\('works\.emptyTitle'\)/);
+ assert.doesNotMatch(modal,/case "file-add"/);assert.doesNotMatch(modal,/case "file-options"/);assert.match(modal,/t\('account\.roleLine'/);assert.match(modal,/t\('account\.administrator'\)/);assert.match(modal,/t\('account\.coreLine'/);assert.equal(catalog.en['account.roleLine'],'Role: {role}');assert.equal(catalog.en['account.coreLine'],'Core: {address}');
 });
 
 test('Settings checks the exact latest accepted Apply rather than an older array entry',()=>{
@@ -87,7 +89,7 @@ test('Chat toggle has one stable Service header slot and no Work navigation or A
  assert.equal((extract('services').match(/workspaceChatToggle\(w\)/g)||[]).length,1);assert.doesNotMatch(extract('workPage','agentLayoutControls'),/workspaceChatToggle|toggle-workspace-chat/);
 });
 test('Input options launches a dialog while its checkbox owns the actual option state',()=>{
- const agent=extract('agent');assert.match(agent,/aria-label="Input options" aria-haspopup="dialog" aria-expanded=/);assert.doesNotMatch(agent,/aria-label="Input options" aria-pressed=/);assert.match(extract('modalMarkup'),/id="include-identity" type="checkbox"/);
+ const agent=extract('agent');assert.match(agent,/aria-label="\$\{esc\(t\('chat\.inputOptions'\)\)\}" aria-haspopup="dialog" aria-expanded=/);assert.doesNotMatch(agent,/aria-label="\$\{esc\(t\('chat\.inputOptions'\)\)\}" aria-pressed=/);assert.equal(catalog.en['chat.inputOptions'],'Input options');assert.match(extract('modalMarkup'),/id="include-identity" type="checkbox"/);
 });
 test('Move selected files uses a dedicated folder move symbol instead of Back',()=>{
  assert.match(extract('files'),/icon\("move", 16\), "file-move"/);assert.doesNotMatch(extract('files'),/icon\("arrow", 16\), "file-move"/);
@@ -104,12 +106,31 @@ test('Files first reads preserve toolbar and never mistake another cached direct
 
 test('Files keeps mixed/unknown path evidence but removes all-success result clutter',()=>{
  const {c,work}=fixture();c.current=()=>work;c.adapter.transfersByWork=new Map();
- vm.runInContext(extract('transferResults'),c);
+ vm.runInContext(extract('transferResultMessage','transferResults'),c);
  for(const rows of [[],[{path:'/done',status:'succeeded',message:'Confirmed'}]]) {
   c.adapter.transfersByWork.set(work.id,rows);assert.equal(c.transferResults(),'');
  }
  c.adapter.transfersByWork.set(work.id,[{path:'/done',status:'succeeded',message:'Confirmed'},{path:'/unknown',status:'unknown',message:'Check original target'}]);
  const html=c.transferResults();assert.match(html,/\/done/);assert.match(html,/\/unknown/);assert.match(html,/Refresh to verify target/);
+});
+
+test('file results localize server failures and retain only safe diagnostic codes',async()=>{
+ const {i18n}=await import(new URL('../browser/locale.js',import.meta.url).href);
+ const {c,work}=fixture();c.current=()=>work;c.adapter.transfersByWork=new Map();
+ vm.runInContext(extract('transferResultMessage','transferResults'),c);
+ c.adapter.transfersByWork.set(work.id,[
+  {path:'/rejected',status:'failed',httpStatus:403,message:'Untranslated upstream diagnostic'},
+  {path:'/unknown',status:'unknown',httpStatus:503,message:'FILE_BACKEND_UNAVAILABLE'},
+  {path:'/lost',status:'unknown',message:'Response lost. Refresh source and destination before trying again.'},
+ ]);
+ try {
+  i18n.setLocale('zh-CN');const chinese=c.transferResults();
+  assert.match(chinese,/请求失败（403）/);assert.match(chinese,/结果未确认（503）/);
+  assert.match(chinese,/FILE_BACKEND_UNAVAILABLE/);assert.doesNotMatch(chinese,/Untranslated upstream diagnostic/);
+  assert.match(chinese,/此前对此原始路径的更改结果未知/);assert.doesNotMatch(chinese,/Response lost/);
+  i18n.setLocale('en');const english=c.transferResults();
+  assert.match(english,/Request failed \(403\)/);assert.match(english,/Result not confirmed \(503\)/);
+ } finally {i18n.setLocale('en');}
 });
 
 test('file success marker requires nonempty all-confirmed results and leaves original unknown lock intact',()=>{
@@ -169,7 +190,7 @@ test('Works first load owns a static labelled skeleton, first failure is never a
 });
 
 test('aria-disabled read refresh rejects direct dispatch before action submission',async()=>{
- const c:any={actionIntent:()=>undefined};vm.createContext(c);vm.runInContext(extract('dispatchAction'),c);let calls=0;await c.dispatchAction({getAttribute:()=> 'true'},async()=>calls++);assert.equal(calls,0);
+ const c:any={...localeSandbox,actionIntent:()=>undefined};vm.createContext(c);vm.runInContext(extract('dispatchAction'),c);let calls=0;await c.dispatchAction({getAttribute:()=> 'true'},async()=>calls++);assert.equal(calls,0);
  assert.match(source,/el.getAttribute\("aria-disabled"\) === "true"/);
 });
 

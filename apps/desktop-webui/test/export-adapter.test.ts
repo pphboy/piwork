@@ -136,8 +136,8 @@ test('export adapter: first succeeded all-null package is unavailable, without g
   assert.equal(snapshot.expiresAt ?? null, null);
   assert.equal(snapshot.digest ?? null, null);
   assert.equal(snapshot.size, '');
-  assert.match(snapshot.error, /unavailable|not available|could not|unconfirmed/i);
-  assert.doesNotMatch(snapshot.error, /expired/i);
+  assert.match(String(snapshot.error), /unavailable|not available|could not|unconfirmed/i);
+  assert.doesNotMatch(String(snapshot.error), /expired/i);
   assert.equal(f.posts().length, 0);
 });
 
@@ -155,7 +155,7 @@ test('export adapter: an actual failed snapshot retains the public failure reaso
     error: { code: 'SNAPSHOT_FAILED', message: 'Synthetic export validation failed' } }) }));
   const snapshot = await f.adapter.fetchSnapshot(snapshotID);
   assert.equal(snapshot.status, 'failed');
-  assert.match(snapshot.error, /Synthetic export validation failed/);
+  assert.match(String(snapshot.error), /Synthetic export validation failed/);
 });
 
 test('export adapter: same snapshot preparation shares one POST and ready reuse keeps the original transfer', async t => {
@@ -187,14 +187,14 @@ for (const [code, status] of [
     const original = f.adapter.downloads.get(snapshotID);
     assert.equal(original.terminalFailure, true);
     assert.equal(Boolean(original.ready), false);
-    assert.match(original.error, new RegExp(code));
+    assert.match(String(original.error), new RegExp(code));
     const transferId = original.transferId;
     f.respond(() => ({ status: 404, json: { code: 'TRANSFER_NOT_FOUND', message: 'Transfer no longer exists' } }));
     await f.adapter.checkDownload(snapshotID).catch(() => undefined);
     assert.equal(f.adapter.downloads.get(snapshotID), original);
     assert.equal(original.terminalFailure, true);
     assert.equal(original.transferId, transferId);
-    assert.match(original.error, new RegExp(code));
+    assert.match(String(original.error), new RegExp(code));
     await assert.rejects(f.adapter.downloadSnapshot(snapshotID));
     assert.equal(f.posts().length, 1);
     f.respond(request => request.method === 'POST' && request.path === `work-snapshots/${snapshotID}/downloads`

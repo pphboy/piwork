@@ -1,3 +1,4 @@
+import { t } from './locale.js';
 import { historyMessages } from './chat-projection.js';
 import type { Message } from './models.js';
 type Data = Record<string, any>;
@@ -5,7 +6,7 @@ interface Range { offset: number; bytes: Uint8Array }
 interface Block { value: Data; ranges: Range[] }
 interface Entry { id: string; order: number; role: string; runId: string; count: number; blocks: Map<string, Block> }
 const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', { fatal: true });
-const invalid = (): never => { throw new Error('Saved history contains a missing or conflicting content range.'); };
+const invalid = (): never => { throw new Error(t('d.history.invalidRange')); };
 
 /** The cache contains only content explicitly read by this page. Range overlap
  * is validated by bytes, never inferred from equal messages or tool names. */

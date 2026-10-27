@@ -83,7 +83,9 @@ test('S08 Overview polling retains the wide account menu, focus and expanded sem
   await trigger.focus();await trigger.press('ArrowDown');
   await expect(menu.getByRole('menuitem',{name:'About Piwork',exact:true})).toBeFocused();
   await page.keyboard.press('ArrowDown');
+  await expect(menu.locator('[data-action=language]')).toBeFocused();
   const signOut=menu.getByRole('menuitem',{name:'Sign out',exact:true});
+  await page.keyboard.press('End');
   await expect(signOut).toBeFocused();
   await page.evaluate(()=>{window.retainedShell={trigger:document.querySelector('#account-trigger'),menu:document.querySelector('#account-dropdown'),focused:document.activeElement};});
   values['admin/status']={ready:false,state:'RUNTIME_UNAVAILABLE',checks:{runtimeConfigured:true}};

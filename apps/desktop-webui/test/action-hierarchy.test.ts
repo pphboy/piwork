@@ -1,3 +1,5 @@
+const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.meta.url).href);
+const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
 const { overlayRole } = await import(new URL('../browser/overlay-role.js',import.meta.url).href);
 import assert from 'node:assert/strict';
@@ -18,6 +20,7 @@ function extract(...names: string[]) {
 function fixture() {
   const work: any = { id: 'work-a', name: 'A', desired: 'stopped', files: [], color: 'blue', icon: 'grid', resourceErrors: {} };
   const c: any = {
+  ...localeSandbox,
     pendingDots,
     view: { layout:'workspace', modal: '', data: {}, path: '/', selected: [], file: '', modalError: '' },
     adapter: { connectionCheck: { checking: false, error: '' }, state: { sessionState: 'ready', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [] },
@@ -132,12 +135,12 @@ test('Files has no empty selection strip and keeps checkbox/bulk controls in the
 test('request entries are scoped icon actions and the duplicate footer creation action is absent', () => {
   const service = extract('services'), agent = extract('agent'), works = extract('works');
   assert.match(service, /hasRecords[^\n]*btn\(icon\("note", 17\), "service-requests"/);
-  assert.match(service, /aria-label="Agent requests" title="Agent requests"/);
+  assert.match(service, /aria-label="\$\{esc\(t\('service\.agentRequests'\)\)\}" title="\$\{esc\(t\('service\.agentRequests'\)\)\}"/);assert.equal(catalog.en['service.agentRequests'],'Agent requests');
   assert.doesNotMatch(agent, /"pi-requests"/);
-  assert.match(extract('workPage'), /Pi requests for this Work/);
+  assert.match(extract('workPage'), /t\('work\.piRequestsAria'\)/);assert.equal(catalog.en['work.piRequestsAria'],'Pi requests for this Work');
   assert.doesNotMatch(agent.split('<div class="session-line">')[1]?.split('<div class="messages"')[0] || '', /pi-requests/);
   assert.doesNotMatch(works, /Create a Work", "new-work"/);
-  assert.match(works, /Make room for your next idea/); assert.match(works, /New Work/);
+  assert.match(works, /t\('works\.emptyTitle'\)/);assert.match(works, /t\('works\.newWork'\)/);assert.equal(catalog.en['works.emptyTitle'],'Make room for your next idea');
 });
 
 

@@ -23,11 +23,15 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
           </main><script>document.querySelector('#open').onclick=()=>document.querySelector('#dialog').showModal();document.querySelector('#close').onclick=()=>document.querySelector('#dialog').close();</script></body></html>`);
         return;
       }
-      if (path.endsWith('/app.js')) { res.setHeader('Content-Type', 'application/javascript'); res.end('// Hold the real initial HTML shell for this fixture.'); return; }
+      // Only stub the application entry; nested catalog modules also end in app.js.
+      if (path === '/browser/app.js') { res.setHeader('Content-Type', 'application/javascript'); res.end('// Hold the real initial HTML shell for this fixture.'); return; }
       const desktop = path.startsWith('/desktop/');
       const name = path.split('/').pop() || '';
-      const url = path.startsWith('/browser/')
-        ? new URL(`../browser/${name}`, import.meta.url)
+      // Browser modules may live in nested catalog folders (i18n/catalog.js),
+      // so preserve the subpath instead of flattening to the basename.
+      const browserPath = path.startsWith('/browser/') ? path.slice('/browser/'.length) : '';
+      const url = browserPath
+        ? new URL(`../browser/${browserPath}`, import.meta.url)
         : name === 'style.css' || name === 'index.html'
           ? new URL(desktop ? `../public/${name}` : `../../../console-webui/dist/public/${name}`, import.meta.url)
           : null;

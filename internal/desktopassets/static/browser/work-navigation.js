@@ -1,3 +1,4 @@
+import { t, stateText } from './locale.js';
 export function restoreSelection(previous) {
     return { area: previous && ['Services', 'Chat', 'Files'].includes(previous.area) ? previous.area : 'Services',
         path: previous?.path || '/', file: previous?.file || '', service: previous?.service || '',
@@ -18,7 +19,12 @@ export function unavailableServicesReason(work) {
     if (!work.resourceChecked?.services || work.resourceErrors?.services || work.services.some(service => service.enabled && service.observed === 'Ready' && service.ports.length))
         return '';
     if (!work.services.length)
-        return 'This Work has no Services. You can ask the Agent to build an application.';
-    return 'No Web Service is ready. ' + work.services.map(service => `${service.name}: ${!service.enabled ? 'disabled' : service.observed.toLowerCase()}${!service.ports.length ? ' · no declared Web entry' : ''}${service.error ? ` · ${service.error}` : ''}`).join('; ');
+        return t('d.nav.noServices');
+    return t('d.nav.noWebService') + work.services.map(service => t('d.nav.serviceState', {
+        name: service.name,
+        state: !service.enabled ? t('d.nav.disabled') : stateText(service.observed.toLowerCase()),
+        entry: !service.ports.length ? t('d.nav.noEntry') : '',
+        error: service.error ? ` · ${service.error}` : '',
+    })).join('; ');
 }
 //# sourceMappingURL=work-navigation.js.map

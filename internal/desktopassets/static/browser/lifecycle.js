@@ -1,3 +1,4 @@
+import { t, stateText } from './locale.js';
 export const terminalOperation = (state) => ['succeeded', 'failed', 'superseded'].includes(state);
 export function lifecycleAction(kind) {
     const value = kind.toLowerCase().replace(/[-_]/g, ' ').trim();
@@ -22,15 +23,16 @@ export function projectWork(work, operations) {
     const starting = accepting && ['create', 'start', 'retry'].includes(intent.action);
     let label = work.status;
     let action = 'check';
-    let explanation = work.statusError ? `Work status not confirmed. ${work.statusError}` : '';
+    let explanation = work.statusError ? t('d.lifecycle.statusUnconfirmed', { detail: String(work.statusError) }) : '';
     if (stopping) {
         const failed = work.status === 'Failed' || original?.state === 'failed';
-        label = failed ? 'Stop not confirmed' : work.desired === 'deleted' || intent?.action === 'delete' ? 'Deleting Work' : work.status === 'Stopping' ? 'Stopping' : 'Stop accepted';
-        explanation ||= failed ? original?.error || 'Check the original operation before continuing.' : `Last confirmed: ${work.status}. Waiting for the ${label === 'Deleting Work' ? 'deletion' : 'stop'} result.`;
+        const deleting = !failed && (work.desired === 'deleted' || intent?.action === 'delete');
+        label = failed ? t('d.lifecycle.stopUnconfirmed') : deleting ? t('d.lifecycle.deleting') : work.status === 'Stopping' ? t('d.lifecycle.stopping') : t('d.lifecycle.stopAccepted');
+        explanation ||= failed ? original?.error || t('d.lifecycle.checkOriginal') : t(deleting ? 'd.lifecycle.lastConfirmedDeletion' : 'd.lifecycle.lastConfirmedStop', { status: stateText(work.status) });
     }
     else if (starting && !['Preparing', 'Starting'].includes(work.status)) {
-        label = intent.action === 'create' ? 'Create accepted' : 'Start accepted';
-        explanation ||= `Last confirmed: ${work.status}. Waiting for the start result.`;
+        label = intent.action === 'create' ? t('d.lifecycle.createAccepted') : t('d.lifecycle.startAccepted');
+        explanation ||= t('d.lifecycle.lastConfirmedStart', { status: stateText(work.status) });
         action = 'stop';
     }
     else if (['Preparing', 'Starting'].includes(work.status) && work.desired === 'running')
@@ -42,9 +44,9 @@ export function projectWork(work, operations) {
     else if (['Ready', 'Degraded'].includes(work.status) && work.desired === 'running')
         action = 'stop';
     if (work.status === 'Failed' && !explanation)
-        explanation = work.error || original?.error || 'Check related operations for confirmed failure details.';
+        explanation = work.error || original?.error || t('d.lifecycle.checkRelated');
     if (work.statusError && !stopping) {
-        label = 'Work status not confirmed';
+        label = t('d.lifecycle.workUnconfirmed');
         action = 'check';
     }
     const retainWorkspace = !stopping && !starting && !work.accessRevoked && work.desired === 'running' && ['Ready', 'Degraded'].includes(work.status);

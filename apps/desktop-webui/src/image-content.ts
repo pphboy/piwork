@@ -1,4 +1,5 @@
 /** Pure content-based image identification shared by chat input and Files preview. */
+import { t } from './locale.js';
 export type ImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
 
 /** Bounded defaults chosen for read-only Files preview (not chat input limits). */
@@ -43,7 +44,7 @@ export function imageDimensions(mime: string, bytes: Uint8Array): { width: numbe
       p = d + n + (n & 1);
     }
   }
-  if (!width || !height) throw new Error('Invalid image dimensions');
+  if (!width || !height) throw new Error(t('d.images.invalidDimensions'));
   return { width, height };
 }
 

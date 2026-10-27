@@ -40,7 +40,7 @@ test('pending Core: actual error stops waiting without clearing last confirmed f
   await adapter.checkConnection(); const checked = adapter.connectionCheck.checkedAt, prior = adapter.status;
   fail = true; await assert.rejects(adapter.checkConnection(), /Core check failed/);
   assert.equal(adapter.connectionCheck.checking, false); assert.equal(adapter.connectionCheck.waiting, false);
-  assert.equal(adapter.connectionCheck.error, 'Core check failed'); assert.equal(adapter.connectionCheck.checkedAt, checked); assert.equal(adapter.status, prior);
+  assert.match(String(adapter.connectionCheck.error), /Core check failed/); assert.equal(adapter.connectionCheck.checkedAt, checked); assert.equal(adapter.status, prior);
   t.mock.timers.tick(30000); await Promise.resolve();
   assert.equal(requests.filter(path => path === 'status').length, 2);
 });

@@ -111,3 +111,23 @@ dialog, dialog::backdrop { animation:none; transition:none; }
 .command-dropdown .menu-list :is(.button,.btn) { border:0;min-height:40px;width:100%;padding:12px;gap:8px;font-weight:450;justify-content:flex-start;text-align:left;white-space:normal;overflow-wrap:anywhere; }
 .command-dropdown .account-context { display:flex;flex-direction:column;padding:0 8px 10px;margin:4px 8px 8px;font-size:11px;line-height:1.6;color:var(--muted); }
 .command-dropdown .account-context span { overflow-wrap:anywhere; }
+
+/* A single language entry opens the shared, anchored value selector. */
+.language-trigger { gap:8px; }
+.language-current { margin-left:auto; color:var(--muted); font-size:12px; }
+.language-picker {
+  position:fixed; inset:auto; margin:0; padding:4px;
+  width:232px; max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px);
+  overflow:auto; z-index:100; border:1px solid var(--border); border-radius:8px;
+  background:var(--surface); color:var(--ink); font:13px/1.4 var(--font); box-shadow:none;
+}
+.language-picker::backdrop { background:transparent; }
+.language-picker-option {
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  width:100%; min-height:40px; padding:8px 10px; border:0; border-radius:5px;
+  background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer;
+}
+.language-picker-option:hover { background:var(--surface-subtle); }
+.language-picker-option[aria-selected=true] { color:var(--accent); background:var(--accent-soft); }
+.language-picker-option:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+.language-picker-option svg { flex:none; }

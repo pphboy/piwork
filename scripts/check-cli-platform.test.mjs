@@ -48,6 +48,8 @@ test('native acceptance rejects a foreign target, changed binary and source that
  try {
   for(const dir of ['apps/desktop-webui/src','apps/desktop-webui/public','apps/desktop-webui/scripts','apps/ui-shared/assets','build'])mkdirSync(join(base,dir),{recursive:true});
   writeFileSync(join(base,'apps/ui-shared/browser-crypto.js'),'synthetic browser crypto');
+  writeFileSync(join(base,'apps/ui-shared/i18n.js'),'synthetic shared language runtime');
+  writeFileSync(join(base,'apps/ui-shared/boot.js'),'synthetic boot module');
   writeFileSync(join(base,'apps/ui-shared/tokens.css'),'synthetic shared tokens');
   writeFileSync(join(base,'apps/ui-shared/controls.css'),'synthetic shared controls');
   writeFileSync(join(base,'apps/ui-shared/assets/piwork-logo.png'),'synthetic public logo');
