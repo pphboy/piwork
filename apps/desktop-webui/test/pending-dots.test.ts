@@ -128,10 +128,10 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
         const intent = { key:'save-one', kind:'files', work:'one', resource:'file', action:'save-file', target:'File one', label:'Saving', anchor:'#action' };
         const render = () => renderActionStates(root, actions, '', () => intent);
         const record = actions.begin(intent); render();
-        const node = root.querySelector('[data-action-status]'), dots = node!.querySelector('.pending-dots');
+        const node = root.querySelector('#action .action-pending-content'), dots = node!.querySelector('.pending-dots');
         const animation = dots!.querySelector('i')!.getAnimations()[0];
         actions.update(record, 'Waiting for confirmation'); render(); render();
-        const retained = node === root.querySelector('[data-action-status]') && dots === node!.querySelector('.pending-dots') && animation === dots!.querySelector('i')!.getAnimations()[0];
+        const retained = node === root.querySelector('#action .action-pending-content') && dots === node!.querySelector('.pending-dots') && animation === dots!.querySelector('i')!.getAnimations()[0];
         const began = performance.now(); actions.confirm(record, 'Saved'); render();
         const completedImmediately = performance.now() - began < 1200 && !root.querySelector('.pending-dots') && !(root.querySelector('#action') as HTMLButtonElement).disabled;
         const next = actions.begin(intent); render();
@@ -148,7 +148,7 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
       const result = await page.evaluate(async () => {
         const path = '/browser/action-state.js'; const { ActionState, renderActionStates } = await import(path);
         const root = document.querySelector<HTMLElement>('#state')!;
-        root.innerHTML = '<div class="work-card"><button id="first">Save first</button><span data-pending-action="save-file" aria-busy="true">Saving first</span></div><div class="work-card"><button id="second">Save second</button></div>';
+        root.innerHTML = '<div class="work-card"><button id="first">Save first</button><span data-pending-action="save-file" data-pending-key="first" aria-busy="true">Saving first</span></div><div class="work-card"><button id="second">Save second</button></div>';
         const actions = new ActionState();
         const intent = { key:'first',kind:'files',work:'first',action:'save-file',target:'First',label:'Saving',anchor:'#first' };
         const first = actions.begin(intent);
@@ -156,12 +156,134 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
         const render = () => renderActionStates(root, actions, '', () => undefined);
         render();
         const primaryKeys = [...root.querySelectorAll<HTMLElement>('[data-action-status]')].map(node => node.dataset.actionStatus);
+        const secondDots = root.querySelectorAll('#second .pending-dots').length;
         actions.fail(first, Object.assign(new Error('Unknown first result'),{ code:'RESULT_UNKNOWN' })); render();
         const unknownVisible = !!root.querySelector('[data-action-status="first"]') && !root.querySelector('[data-action-status="first"] .pending-dots');
         actions.finish(second); actions.clear(); render();
-        return { primaryKeys, unknownVisible };
+        return { primaryKeys, secondDots, unknownVisible };
       });
-      assert.deepEqual(result, { primaryKeys:['second'], unknownVisible:true });
+      assert.deepEqual(result, { primaryKeys:[], secondDots:1, unknownVisible:true });
+    });
+
+    await t.test('the original control remains the owner when matching siblings change or it disappears', async () => {
+      const result = await page.evaluate(async () => {
+        const path = '/browser/action-state.js'; const { ActionState, renderActionStates } = await import(path);
+        const root = document.querySelector<HTMLElement>('#state')!;
+        root.innerHTML = '<div class="work-card"><button data-action="save">First</button><button data-action="save">Second</button></div>';
+        const original = root.querySelectorAll<HTMLElement>('button')[1]!;
+        const actions = new ActionState();
+        const intent = { key:'original',kind:'files',work:'one',action:'save',target:'Original',label:'Saving',anchor:'button[data-action="save"]',owner:original };
+        actions.begin(intent);
+        root.querySelector('.work-card')!.insertAdjacentHTML('afterbegin','<button data-action="save">New</button>');
+        const render = () => renderActionStates(root, actions, '', () => undefined);
+        render();
+        const attached = !!original.querySelector('.pending-dots') && root.querySelectorAll('button .pending-dots').length === 1;
+        original.remove();
+        root.insertAdjacentHTML('beforeend','<div class="work-card"><span data-pending-action="save" aria-busy="true">Other object</span></div>');
+        render();
+        const fallback = !!root.querySelector('[data-action-status="original"]') && !root.querySelector('button .pending-dots');
+        root.insertAdjacentHTML('beforeend','<div class="work-card"><button id="replacement" data-action="save">Replacement</button></div>');
+        renderActionStates(root, actions, '', (node: HTMLElement) => node.id === 'replacement' ? intent : undefined);
+        const recovered = !!root.querySelector('#replacement .pending-dots') && !root.querySelector('[data-action-status="original"]');
+        actions.clear(); render();
+        return { attached, fallback, recovered };
+      });
+      assert.deepEqual(result, { attached:true, fallback:true, recovered:true });
+    });
+
+    await t.test('a different object in the same container cannot hide feedback and a missing owner does not move neighbours', async () => {
+      const result = await page.evaluate(async () => {
+        const path = '/browser/action-state.js'; const { ActionState, renderActionStates } = await import(path);
+        const root = document.querySelector<HTMLElement>('#state')!;
+        root.innerHTML = '<main class="main-panel"><div><button id="owner">Save first</button></div><div><span data-pending-action="save-file" data-pending-key="second" aria-busy="true">Second</span><button id="neighbour">Other</button></div></main>';
+        const owner = root.querySelector<HTMLElement>('#owner')!, neighbour = root.querySelector<HTMLElement>('#neighbour')!;
+        const actions = new ActionState();
+        actions.begin({key:'first',kind:'files',work:'first',action:'save-file',target:'First',label:'Saving',anchor:'#owner',owner});
+        const render = () => renderActionStates(root, actions, '', () => undefined);
+        render(); const firstOwnsWait = !!owner.querySelector('.pending-dots');
+        owner.parentElement!.remove(); const before = neighbour.getBoundingClientRect().y;
+        render(); const after = neighbour.getBoundingClientRect().y;
+        const status = root.querySelector<HTMLElement>('[data-action-status="first"]');
+        const fallbackVisible = !!status && !!status.getClientRects().length && getComputedStyle(status).position === 'fixed';
+        actions.clear(); render();
+        return {firstOwnsWait, before, after, fallbackVisible};
+      });
+      assert.equal(result.firstOwnsWait,true); assert.equal(result.fallbackVisible,true); assert.equal(result.before,result.after);
+    });
+
+    await t.test('a missing owner keeps its fallback visible in the original modal without shifting controls', async () => {
+      const result = await page.evaluate(async () => {
+        const path = '/browser/action-state.js'; const { ActionState, renderActionStates } = await import(path);
+        const root = document.querySelector<HTMLElement>('#state')!;
+        root.innerHTML = '<dialog id="owned-dialog"><button id="owner">Save</button><button id="neighbour">Other</button></dialog>';
+        const dialog = root.querySelector<HTMLDialogElement>('dialog')!; dialog.showModal();
+        const owner = root.querySelector<HTMLElement>('#owner')!, neighbour = root.querySelector<HTMLElement>('#neighbour')!;
+        const actions = new ActionState();
+        actions.begin({key:'modal-save',kind:'files',action:'save',target:'File',label:'Saving',anchor:'#owner',owner});
+        owner.remove(); const before = neighbour.getBoundingClientRect().y;
+        renderActionStates(root, actions, '', () => undefined);
+        const status = root.querySelector<HTMLElement>('[data-action-status="modal-save"]')!, box = status.getBoundingClientRect();
+        const topmost = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+        const inside = dialog.contains(status) && (topmost === status || status.contains(topmost));
+        const after = neighbour.getBoundingClientRect().y;
+        actions.clear(); renderActionStates(root, actions, '', () => undefined); dialog.close();
+        return {inside,before,after};
+      });
+      assert.equal(result.inside,true); assert.equal(result.before,result.after);
+    });
+
+    await t.test('slow waiting is visibly explained at the original control without moving its neighbour', async () => {
+      for (const width of [360, 1440]) {
+        await page.setViewportSize({ width, height: 800 });
+        const result = await page.evaluate(async () => {
+          const path = '/browser/action-state.js'; const { ActionState, renderActionStates } = await import(path);
+          const root = document.querySelector<HTMLElement>('#state')!;
+          root.innerHTML = '<div class="work-card"><button id="slow" class="button">Save</button><button id="near" class="button">Other</button></div>';
+          let now = 0; const actions = new ActionState(() => {}, () => now);
+          const owner = root.querySelector<HTMLElement>('#slow')!;
+          const intent = { key:'slow',kind:'files',action:'save',target:'File',label:'Saving',anchor:'#slow',owner };
+          actions.begin(intent);
+          const render = () => renderActionStates(root, actions, '', () => undefined);
+          const box = () => { const r = root.querySelector('#near')!.getBoundingClientRect(); return [r.x,r.y,r.width,r.height]; };
+          const before = box(); render(); now = 12000; render();
+          const status = owner.querySelector<HTMLElement>('[role="status"]')!, rect = status.getBoundingClientRect();
+          const visible = getComputedStyle(status).visibility === 'visible' && rect.width > 10 && rect.height > 10 && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight;
+          const text = status.textContent || '', after = box();
+          const distance = owner.getBoundingClientRect().top - rect.top;
+          document.body.style.minHeight = '2000px'; window.scrollBy(0, 30);
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          const scrolledDistance = owner.getBoundingClientRect().top - status.getBoundingClientRect().top;
+          window.scrollTo(0, 0); document.body.style.minHeight = '';
+          const localePath = '/browser/locale.js'; const { chooseLocale } = await import(localePath);
+          chooseLocale('zh-CN'); render(); const chinese = status.textContent || ''; chooseLocale('en');
+          actions.clear(); render();
+          return { visible, text, chinese, before, after, distance, scrolledDistance, cleared: !root.querySelector('.action-slow-status') };
+        });
+        assert.equal(result.visible, true); assert.match(result.text, /File.*Saving.*Still waiting.*check the result/i);
+        assert.match(result.chinese, /仍在等待.*结果到达后查看/);
+        assert.ok(Math.abs(result.distance - result.scrolledDistance) < 2);
+        assert.deepEqual(result.before, result.after); assert.equal(result.cleared, true);
+      }
+      await page.setViewportSize({ width: 960, height: 600 });
+    });
+
+    await t.test('slow status follows desktop resize and is removed with its owner', async () => {
+      await page.evaluate(async () => {
+        const path = '/browser/action-state.js'; const { ActionState, renderActionStates } = await import(path);
+        const root = document.querySelector<HTMLElement>('#state')!;
+        root.innerHTML = '<div style="display:flex;justify-content:flex-end"><button id="resize-owner" class="button">Save</button></div>';
+        let now = 0; const actions = new ActionState(() => {}, () => now);
+        const owner = root.querySelector<HTMLElement>('#resize-owner')!;
+        actions.begin({key:'resize',kind:'files',action:'save',target:'File',label:'Saving',anchor:'#resize-owner',owner});
+        now = 12000; renderActionStates(root, actions, '', () => undefined);
+        (window as any).__resizeActions = actions;
+      });
+      await page.setViewportSize({width:360,height:600});
+      const status = page.locator('#resize-owner .action-slow-status'); await expect(status).toBeVisible();
+      const rect = await status.boundingBox(); assert.ok(rect && rect.x >= 0 && rect.x + rect.width <= 360);
+      await page.evaluate(() => { document.querySelector('#resize-owner')!.remove(); window.dispatchEvent(new Event('scroll')); (window as any).__resizeActions.clear(); });
+      await expect(page.locator('.action-slow-status')).toHaveCount(0);
+      await page.setViewportSize({width:960,height:600});
     });
 
     await t.test('a Dialog body owns its footer request without suppressing another Dialog', async () => {
@@ -170,7 +292,7 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
         const { ActionState, renderActionStates } = await import(path);
         const { pendingDots } = await import(pendingPath);
         const root = document.querySelector<HTMLElement>('#state')!;
-        root.innerHTML = `<dialog open class="modal" id="first-dialog"><div class="modal-body"><span data-pending-action="check-connection" aria-busy="true">${pendingDots()}Checking first Core</span></div><div class="modal-footer"><button id="first-check">Check first Core</button></div></dialog><dialog open class="modal" id="second-dialog"><div class="modal-body">Second Core</div><div class="modal-footer"><button id="second-check">Check second Core</button></div></dialog>`;
+        root.innerHTML = `<dialog open class="modal" id="first-dialog"><div class="modal-body"><span data-pending-action="check-connection" data-pending-key="first-check" aria-busy="true">${pendingDots()}Checking first Core</span></div><div class="modal-footer"><button id="first-check">Check first Core</button></div></dialog><dialog open class="modal" id="second-dialog"><div class="modal-body">Second Core</div><div class="modal-footer"><button id="second-check">Check second Core</button></div></dialog>`;
         const actions = new ActionState();
         const intent = { key:'first-check',kind:'read',action:'check-connection',target:'First Core',label:'Checking',anchor:'#first-check' };
         actions.begin(intent);
@@ -182,7 +304,7 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
         actions.clear(); renderActionStates(root, actions, '', () => undefined);
         return { firstDots, secondDots, genericKeys };
       });
-      assert.deepEqual(result, { firstDots:1, secondDots:1, genericKeys:['second-check'] });
+      assert.deepEqual(result, { firstDots:1, secondDots:1, genericKeys:[] });
     });
   } finally {
     await browser.close();

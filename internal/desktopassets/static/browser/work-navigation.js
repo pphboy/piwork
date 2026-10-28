@@ -15,6 +15,11 @@ export function initialWorkArea(previous, work, usable, chatReady) {
     const confirmed = !!work.resourceChecked?.services && !!work.resourceChecked?.agent && !work.resourceErrors?.services && !work.resourceErrors?.agent;
     return usable && chatReady && confirmed && !work.services.some(service => service.enabled && service.observed === 'Ready' && service.ports.length) ? 'Chat' : 'Services';
 }
+/**
+ * The Services context owns this explanation; the Chat main area does not render
+ * it. Keep it here so the reason and its per-Service detail stay reachable where
+ * Services are listed, and so it is not re-introduced as a Chat Alert.
+ */
 export function unavailableServicesReason(work) {
     if (!work.resourceChecked?.services || work.resourceErrors?.services || work.services.some(service => service.enabled && service.observed === 'Ready' && service.ports.length))
         return '';

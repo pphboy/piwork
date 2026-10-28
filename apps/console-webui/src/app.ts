@@ -651,7 +651,7 @@ async function readPage(preserve: boolean, ticket: number) {
     return value;
   };
   const initial = !preserve || shellView !== `${identity}:${ticket}:${path}`;
-  if (initial) shell(PageHeader(moduleTitle(path, t('title.details')), t('read.loadingTitle')) + `<section class="section"><div class="section-body">${t('read.loadingDetail')}</div></section>`);
+  if (initial) shell(`<section class="console-read-skeleton" role="status" aria-busy="true" aria-label="${esc(t('read.loadingTitle'))}"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section>`);
   const existingRead = [...actions.records.values()].find(record => record.pending && record.kind === 'read' && record.view === path);
   const record = existingRead || actions.begin({key:`read:${path}`,kind:'read',label:t('intent.readingPage'),target:moduleTitle(path, t('term.core')),anchor:'#page-read-status',view:path});
   renderConsoleActions();
@@ -1646,7 +1646,7 @@ function dialogBusy(busy: boolean, label = t('common.saving')) {
     b.disabled = busy;
   });
   const submit = document.querySelector<HTMLButtonElement>("#dialog-submit");
-  if (submit && busy) submit.textContent = label;
+  if (submit && busy) submit.title = label;
 }
 function createUserDialog() {
   openDialog(

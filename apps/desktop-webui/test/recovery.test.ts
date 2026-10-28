@@ -1221,7 +1221,10 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
   }, false, false);
   await button(page, 'tab-Chat').click();
   await expect(page.locator('#response-settings-trigger')).toHaveAttribute('aria-busy','true');
-  await expect(page.locator('#response-settings-trigger')).toContainText('Loading response settings');
+  // While the settings popover is closed the trigger keeps one glyph-sized box:
+  // the wait takes the glyph's place and the name lives in the accessible label,
+  // so the trigger cannot change width for the read.
+  await expect(page.locator('#response-settings-trigger')).toHaveAttribute('aria-label', /Loading response settings/);
   await expect(page.locator('#response-settings-trigger .pending-dots')).toHaveCount(1);
   await expect(button(page, 'send-message')).toBeDisabled();
   await uiuxEvidence(page, '11-loading-models-closed');
@@ -3093,7 +3096,7 @@ test('Service details: explanation, safe diagnostics and bounded logs stay bound
   await expect(page.locator('#modal .service-diagnostics code', { hasText: 'corr-a' })).toHaveCount(1);
   await expect(page.locator('#modal .service-diagnostics code', { hasText: '1' })).toHaveCount(1);
   await expect(page.locator('#modal [data-action="operation"]')).toHaveCount(0);
-  await expect(page.locator('#modal [data-pending-action~="refresh-logs"]')).toContainText('log snapshot');
+  await expect(page.locator('#modal [data-pending-action~="refresh-logs"]')).toHaveAttribute('title', /log snapshot/);
   assert.equal(await page.evaluate(() => (window as any).__serviceLeak), undefined);
   await button(page, 'close-modal').click();
   await button(page, 'service-menu').click(); await button(page, 'manage-services').click();
@@ -3144,20 +3147,31 @@ test('B Delete mixed 204 and real 207 retries only the explicitly selected faile
   assert.equal(requests.filter(r => r.method === 'DELETE' && r.path === root + 'b.txt').length, 2);
 });
 
-test('B Service details appear while their isolated log read is still pending', async t => {
-  let release!: () => void;
-  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+for (const fail of [false, true]) test(`B Service details appear while their isolated log read is still pending (${fail ? 'failure' : 'success'})`, async t => {
+  let release!: () => void, releaseRetry!: () => void, reads = 0;
+  const gate = new Promise<void>(done => release = done), retryGate = new Promise<void>(done => releaseRetry = done);
+  t.after(async () => { release(); releaseRetry(); });
   const { page } = await fixture(t, async r => {
-    if (r.path.endsWith('/services/service-a/logs')) { await gate; return { status: 503, json: { message: 'Only logs unavailable' } }; }
+    if (r.path.endsWith('/services/service-a/logs')) { await (++reads === 1 ? gate : retryGate); return fail ? { status: 503, json: { message: 'Only logs unavailable' } } : { json: { serviceId:'service-a', status:'available', text:'Confirmed log', collectedAt:'2026-10-20T00:00:00Z', truncated:false } }; }
     return focusFixture(r);
   });
   await button(page, 'service-menu').click(); await button(page, 'manage-services').click(); await page.locator('[data-action="service-details"][data-id="service-a"]').click();
   await expect(page.locator('#modal')).toContainText('Tool A'); await expect(page.locator('#modal .service-controls')).toBeVisible();
   const reading = page.locator('#modal [data-pending-action~="refresh-logs"]');
-  await expect(reading).toContainText('Reading Tool A log snapshot'); await expect(reading).toHaveAttribute('aria-busy', 'true');
-  await expect(reading.locator('.pending-dots')).toHaveCount(1); release();
-  await expect(page.locator('#modal')).toContainText('Only logs unavailable'); await expect(button(page, 'refresh-logs')).toBeEnabled();
+  await expect(reading).toHaveAttribute('title', /Reading Tool A log snapshot/); await expect(reading).toHaveAttribute('aria-busy', 'true');
+  await expect(reading.locator('.pending-dots')).toHaveCount(1);
+  const slow = reading.locator('.action-slow-status');
+  await expect(slow).toBeVisible({timeout: 12000});
+  await expect(slow).toContainText('Reading Tool A log snapshot');
+  await expect(slow).toContainText('Still waiting');
+  release();
+  await expect(page.locator('#modal')).toContainText(fail ? 'Only logs unavailable' : 'Confirmed log'); await expect(button(page, 'refresh-logs')).toBeEnabled();
   await expect(reading).toHaveCount(0); await expect(page.locator('#modal .service-controls')).toBeVisible();
+  if (!fail) {
+    await button(page, 'refresh-logs').click(); await expect(reading.locator('.pending-dots')).toHaveCount(1);
+    await page.waitForTimeout(100); await expect(reading.locator('.action-slow-status')).toHaveCount(0);
+    releaseRetry(); await expect(reading).toHaveCount(0);
+  }
 });
 
 test('B a failed-only retry does not inherit another path unknown lock', async t => {
@@ -3395,12 +3409,15 @@ test('History compatibility: old Agent explains update and Apply while preservin
   return undefined;
  });
  await expect(page.locator('#messages')).toContainText('Known saved answer');
- await expect(page.locator('.agent-panel')).toContainText('Legacy history reads have size limits');
- await expect(page.locator('.agent-panel')).toContainText('explicitly Apply');
+ // DWUI-HISTORY-RECOVERY-001: no permanent capability banner while Chat works.
+ await expect(page.locator('.agent-panel')).not.toContainText('Legacy history reads have size limits');
  await page.locator('#composer').fill('Keep my draft');
  const before=reads;fail=true;
  await api(page,`try { await adapter.loadSession('work-1','session-1'); } catch {}`);
  await expect(page.locator('.agent-panel')).toContainText('Conversation could not be read');
+ // The real failure explains the limit at the operation that would read more.
+ await expect(page.locator('.read-failure')).toContainText('Legacy history reads have size limits');
+ await expect(page.locator('.read-failure')).toContainText('explicitly Apply');
  await expect(page.locator('#messages')).toContainText('Known saved answer');
  await expect(page.locator('#composer')).toHaveValue('Keep my draft');
  assert.equal(reads,before+1);

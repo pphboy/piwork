@@ -36,6 +36,19 @@ async function findPreviousExport(page: Page) {
   await openWorkForRecovery(page);
   await button(page, 'work-menu').click(); await button(page, 'find-previous-export').click();
 }
+/** Tasks without a visible Work live behind the Works header entry, not in front of the list. */
+async function openWorksTasks(page: Page) {
+  // Reload restores the original tasks asynchronously; wait for the fixed entry.
+  const entry = page.locator('[data-action="works-tasks"]').first();
+  await entry.waitFor({ state: 'attached', timeout: 10000 });
+  // Closing a task detail keeps the disclosure; only reopen when it is shut.
+  const open = page.locator('#modal[aria-labelledby="modal-title"]');
+  const drawerOpen = await open.count() && (await open.getAttribute('class') || '').includes('inspector-drawer');
+  if (!drawerOpen) await entry.click();
+  // The tail of the list is collapsed behind "Show N more tasks".
+  const more = page.locator('.recovery-tasks > details');
+  if (await more.count() && !(await more.first().evaluate(node => (node as HTMLDetailsElement).open))) await more.first().locator('summary').click();
+}
 async function workTasks(page: Page) {
   await openWorkForRecovery(page);
   await button(page, 'work-menu').click(); await button(page, 'work-info').click(); await button(page, 'find-work-task').click();
@@ -49,7 +62,7 @@ type Reply = { passthrough?: boolean; status?: number; json?: unknown; body?: st
 const mtime1 = 'Sat, 03 Oct 2026 01:00:00 GMT';
 const mtime2 = 'Sat, 03 Oct 2026 01:00:02 GMT';
 const mtime3 = 'Sat, 03 Oct 2026 01:00:04 GMT';
-async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialWork = true) {
+async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialWork = true, duringInitial?: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); t.after(() => page.close()); page.setDefaultTimeout(5000);
   const requests: RequestRecord[] = [];
   const baseline = process.env.PIWORK_SESSION_BASELINE_DIR;
@@ -102,6 +115,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
     else await route.fulfill({ status: reply.status ?? 200, headers: reply.headers, ...(reply.json !== undefined ? { contentType: 'application/json', body: JSON.stringify(reply.json) } : { body: reply.body ?? '' }) });
   });
   await page.goto(base + (anonymous ? '/' : '/#/work/work-1'));
+  if (duringInitial) await duringInitial(page);
   await expect(page.getByRole('heading', { name: anonymous ? 'Connect to your Core' : 'Recovery Work', exact: true })).toBeVisible();
   if (!anonymous && waitForInitialWork) await expect.poll(() => api(page, `
     const work = adapter.getWork('work-1');
@@ -114,6 +128,36 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
   `)).toBe(true);
   return { page, requests };
 }
+test('unconfirmed session uses a neutral startup shell until its real state arrives', async t => {
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  try {
+    await fixture(t, async r => { if (r.path === 'session') await gate; }, true, true, async page => {
+      await expect(page.locator('.app-loading')).toContainText('Opening Piwork');
+      await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: 'Works', exact: true })).toHaveCount(0);
+      release();
+    });
+  } finally { release(); }
+});
+test('default Core saving stays in its button without moving the sign-in fields', async t => {
+  const { page } = await fixture(t, () => undefined, true);
+  await api(page, "Object.assign(adapter.preferences,{phase:'idle',reading:false,error:'',notice:''}); adapter.emit()");
+  const save = button(page, 'save-default-core'), account = page.locator('#auth-account');
+  const before = await save.boundingBox(), accountBefore = await account.boundingBox();
+  await api(page, "Object.assign(adapter.preferences,{phase:'saving',reading:false,error:'',notice:''}); adapter.emit()");
+  await expect(save).toHaveAttribute('aria-busy', 'true'); await expect(save.locator('.pending-dots')).toHaveCount(1);
+  assert.deepEqual(await save.boundingBox(), before); assert.deepEqual(await account.boundingBox(), accountBefore);
+  await api(page, "Object.assign(adapter.preferences,{phase:'idle',reading:false}); adapter.emit()");
+  assert.deepEqual(await save.boundingBox(), before); assert.deepEqual(await account.boundingBox(), accountBefore);
+});
+test('Core check retains the Works connection trigger geometry during a delayed read', async t => {
+  const gate = deferred(); t.after(() => gate.resolve()); let armed = false;
+  const { page } = await fixture(t, async r => { if (armed && r.path === 'status') await gate.promise; });
+  await button(page, 'back-works').click(); const connection = button(page, 'connection');
+  const before = await connection.boundingBox(); await connection.click(); armed = true; await button(page, 'check-connection').click();
+  await expect(connection).toHaveAttribute('aria-busy', 'true'); assert.deepEqual(await connection.boundingBox(), before);
+  gate.resolve(); await expect(connection).not.toHaveAttribute('aria-busy', 'true'); assert.deepEqual(await connection.boundingBox(), before);
+});
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
 const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]`).last();
 function listing(body: string, modified: string) { return `<d:multistatus xmlns:d="DAV:"><d:response><d:href>/_desktop/files/works/work-1/files/note.txt</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>${Buffer.byteLength(body)}</d:getcontentlength><d:getlastmodified>${modified}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`; }
@@ -180,18 +224,50 @@ test('Create Work geometry stays stable during delayed feedback on a narrow view
  const gate=deferred();t.after(()=>gate.resolve());
  const {page,requests}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {status:400,json:{code:'INVALID_REQUEST',message:'A long rejected creation message '.repeat(30)}};}});
  await page.setViewportSize({width:360,height:800});await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Long work name '.repeat(7));
- const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(page.locator('[data-action-status]').filter({hasText:'Creating Work'})).toBeVisible();
+ const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(button(page,'create-work').locator('[role="status"]')).toContainText('Creating Work');
  const waiting=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-waiting![key])<=1,`${key} moved`);
- await expect(page.locator('[data-action-status]').filter({hasText:'Still waiting'})).toBeVisible({timeout:12000});const longWait=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-longWait![key])<=1,`${key} moved on long wait`);
+ await expect(button(page,'create-work').locator('[role="status"]')).toContainText('Still waiting',{timeout:12000});const longWait=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-longWait![key])<=1,`${key} moved on long wait`);
  gate.resolve();await expect(button(page,'create-work')).toBeEnabled();const failed=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-failed![key])<=1,`${key} moved on error`);
  assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+});
+
+for (const width of [1440, 360]) for (const locale of ['en', 'zh-CN']) for (const reducedMotion of ['no-preference', 'reduce'] as const) test(`Create Work pending keeps buttons fixed at ${width}px ${locale} ${reducedMotion}`, async t => {
+ const gate=deferred();t.after(()=>gate.resolve());
+ const {page}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {status:400,json:{code:'INVALID_REQUEST'}};}});
+ await page.setViewportSize({width,height:900});await page.emulateMedia({reducedMotion});
+ await page.evaluate(`import('/desktop/browser/locale.js').then(m => m.chooseLocale('${locale}'))`);
+ await button(page,'back-works').click();await button(page,'new-work').click();await page.locator('#create-name').fill('Synthetic');
+ const submit=button(page,'create-work'),cancel=page.locator('#modal .modal-footer [data-action="close-modal"]').first();
+ const before=await submit.boundingBox(),neighbor=await cancel.boundingBox();await submit.click();await expect(submit.locator('.pending-dots')).toHaveCount(1);
+ assert.deepEqual(await submit.boundingBox(),before);assert.deepEqual(await cancel.boundingBox(),neighbor);
+ if(reducedMotion==='reduce')assert.equal(await submit.locator('.pending-dots i').first().evaluate(el=>getComputedStyle(el).animationName),'none');
+ gate.resolve();await expect(submit).toBeEnabled();
+});
+
+for (const width of [1440, 360]) for (const locale of ['en', 'zh-CN']) for (const reducedMotion of ['no-preference', 'reduce'] as const) test(`workspace refresh controls keep geometry at ${width}px ${locale} ${reducedMotion}`, async t => {
+ let held = '', gate = deferred(); t.after(() => gate.resolve());
+ const {page}=await fixture(t,async r=>{
+   if(held && (held === 'files' ? r.method === 'PROPFIND' : held === 'sessions' ? r.path.endsWith('/sessions') && r.method === 'GET' : r.path === held)) await gate.promise;
+   if(r.method === 'PROPFIND') return {status:207,body:listing('original',mtime1)};
+   if(r.path.endsWith('/services')) return {json:{services:[{serviceId:'tool',name:'Tool',enabled:true,observedState:'ready',access:{ports:[]}}]}};
+   if(r.path.includes('/logs')) return {json:{text:'fixture log',status:'collected'}};
+   if(r.path.endsWith('/agent-requests')) return {json:{items:[],checkedAt:'2026-10-28T00:00:00Z'}};
+ });
+ await page.setViewportSize({width,height:900});await page.emulateMedia({reducedMotion});await page.evaluate(`import('/desktop/browser/locale.js').then(m => m.chooseLocale('${locale}'))`);
+ await button(page,'tab-Files').click();await expect(page.locator('.file-row')).toHaveCount(1);
+ let trigger=button(page,'refresh-files');let before=await trigger.boundingBox();let neighbor=await page.locator('.file-row').first().boundingBox();held='files';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);assert.deepEqual(await page.locator('.file-row').first().boundingBox(),neighbor);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);
+ await button(page,'settings').click();trigger=button(page,'check-catalog');before=await trigger.boundingBox();held='skills';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);
+ await button(page,'back-work').click();await button(page,'tab-Services').click();await button(page,'manage-services').click();await button(page,'service-details').click();trigger=button(page,'refresh-logs');before=await trigger.boundingBox();held='works/work-1/services/tool/logs';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);await button(page,'close-modal').click();
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('retained draft');trigger=button(page,'sessions');before=await trigger.boundingBox();held='sessions';gate=deferred();await trigger.click();await expect(page.locator('#modal .session-list')).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(page.locator('#modal .session-list')).toHaveAttribute('aria-busy','false');assert.deepEqual(await trigger.boundingBox(),before);await page.keyboard.press('Escape');await expect(page.locator('#composer')).toHaveValue('retained draft');
+ await button(page,'pi-requests').click();await expect(page.locator('#modal .request-list')).toBeVisible();trigger=button(page,'pi-requests');before=await trigger.boundingBox();held='works/work-1/agent-requests';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);await page.keyboard.press('Escape');
+ await button(page,'back-works').click();trigger=button(page,'retry-works');before=await trigger.boundingBox();neighbor=await page.locator('.work-row').first().boundingBox();held='works';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);assert.deepEqual(await page.locator('.work-row').first().boundingBox(),neighbor);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);
 });
 
 test('Advanced Create Work keeps feedback visible and buttons stable when the result is unknown',async t=>{
  const gate=deferred();t.after(()=>gate.resolve());
  const {page,requests}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {abort:true};}});
  await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Advanced creation');await button(page,'toggle-create-advanced').click();await page.locator('#create-agents').fill('Long advanced instructions\n'.repeat(80));
- const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(page.locator('.create-action-status')).toContainText('Creating Work');await expect(page.locator('.create-action-status')).toBeInViewport();gate.resolve();await expect(page.locator('.create-action-status')).toContainText(/unknown|lost|not confirmed/i);
+ const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(button(page,'create-work').locator('[role="status"]')).toContainText('Creating Work');await expect(button(page,'create-work')).toBeInViewport();gate.resolve();await expect(page.locator('.create-action-status')).toContainText(/unknown|lost|not confirmed/i);
  const after=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-after![key])<=1,`${key} moved`);await expect(button(page,'create-work')).toBeDisabled();assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);
 });
 
@@ -331,14 +407,20 @@ for (const action of ['start', 'retry', 'stop', 'delete', 'create'] as const) te
   if (action === 'delete') { await button(page, 'work-menu').click(); await button(page, 'delete-work').click(); await page.locator('#delete-confirm').check(); }
   armed = true;
   const trigger = action === 'create' ? 'create-work' : action === 'stop' ? 'confirm-stop' : action === 'delete' ? 'confirm-delete' : 'start-work';
+  const tabsBefore = ['start','retry'].includes(action) ? await page.locator('.work-tabs').boundingBox() : null;
   await button(page, trigger).click();
-  await expect(page.locator('[data-action-status]').filter({ hasText: action === 'create' ? 'New tool' : 'Recovery Work' }).first()).toContainText(action === 'create' ? 'Creating' : action === 'stop' ? 'Stopping' : action === 'delete' ? 'Deleting' : 'Starting');
+  await expect(button(page, trigger).locator('[role="status"]')).toContainText(action === 'create' ? 'Creating' : action === 'stop' ? 'Stopping' : action === 'delete' ? 'Deleting' : 'Starting');
+  if (tabsBefore) assert.deepEqual(await page.locator('.work-tabs').boundingBox(), tabsBefore);
+  if (action === 'start' || action === 'retry') await expect(page.locator('[data-action="start-work"] .pending-dots')).toHaveCount(1);
   await expect(button(page, trigger)).toBeDisabled();
   await page.evaluate(action => document.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)?.click(), trigger);
   assert.equal(requests.filter(r => r.method === 'POST' && (r.path.includes(`/${action}`) || action === 'create' && r.path === 'works')).length, 1);
   submitting.resolve();
   if (action === 'start' || action === 'retry') {
-    await expect(page.locator(`.object-control-progress [data-action=operation][data-id="op-${action}"]`)).toBeVisible();
+    // Accepted is visible in the object's existing status slot; the original
+    // Operation ID is reachable on demand from that Work's own menu.
+    await expect(page.locator('.object-control-state')).toContainText(action === 'retry' ? 'Retry Work' : 'Start Work');
+    await expect(page.locator('.object-control-progress')).toHaveCount(0);
     await expect(page.locator('#modal')).toHaveCount(0);
   } else { await expect(page.locator('#modal')).toContainText(`op-${action}`); await expect(page.getByRole('button', { name: 'Close dialog' })).toBeEnabled(); }
   assert.equal(armed, true); refreshing.resolve();
@@ -354,7 +436,8 @@ test('D14 configuration confirms before failed refresh and preserves newer edits
   await button(page, 'work-menu').click(); await page.locator('#modal [data-action="settings"]').click();
   await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
   await page.locator('#agents-editor').fill('submitted'); await button(page, 'save-config').click();
-  await expect(page.locator('[data-action-status]').filter({hasText:'Saving settings'})).toBeVisible();
+  await expect(button(page, 'save-config').locator('[role="status"]')).toContainText('Saving settings');
+  await expect(page.locator('[data-action="save-config"] .pending-dots')).toHaveCount(1);
   await page.locator('#agents-editor').fill('newer unsaved draft'); save.resolve();
   await expect(page.locator('[data-action-status]').filter({hasText:'Settings saved'})).toBeVisible();
   await expect(page.locator('#agents-editor')).toHaveValue('newer unsaved draft');
@@ -618,12 +701,14 @@ for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'set
     else {await button(page,'operation').click(); if(entry==='resume-operation') await button(page,'pause-operation').click(); trigger=entry;}
   }
   armed = true; const before = requests.filter(r=>r.path===endpoint[entry]).length;
+  const catalogGeometry = entry === 'catalog' ? await button(page,trigger).boundingBox() : null;
   await button(page,trigger).click();
   if (entry==='retry-works') { await expect(page.locator('.page-heading [data-action="retry-works"]')).toHaveAttribute('aria-busy','true'); await expect(page.locator('.page-heading [data-action="retry-works"]')).toBeDisabled(); }
   else if (entry==='open-work') { await expect(page.locator('.work-header .work-read-feedback[role="status"][aria-busy="true"]')).toBeVisible(); await expect(page.getByRole('heading',{name:'Recovery Work',exact:true})).toBeVisible(); }
   else if (entry==='files') { await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true'); await expect(page.locator('.main-panel .read-placeholder[aria-busy="true"]')).toBeVisible(); }
   else if (entry==='sessions'||entry==='select-session') await expect(page.locator('.agent-header [data-action="sessions"]')).toHaveAttribute('aria-busy','true');
   else await expect(page.locator('[aria-busy="true"]').filter({ has: page.locator('.pending-dots') }).first()).toBeVisible();
+  if(catalogGeometry) assert.deepEqual(await button(page,trigger).boundingBox(),catalogGeometry);
   await expect.poll(()=>requests.filter(r=>r.path===endpoint[entry]).length-before).toBe(1);
   // Input/keyboard paths share the same in-flight action, while closing remains legal.
   if (await button(page,trigger).count()) { if(entry!=='open-work') await expect(button(page,trigger)).toBeDisabled(); await page.evaluate(action=>document.querySelector<HTMLElement>(`[data-action="${action}"]`)?.click(),trigger); }
@@ -641,7 +726,8 @@ for (const control of ['start','stop','restart','retry','remove'] as const) test
   await button(page,'tab-Services').click();await button(page,'manage-services').click();await button(page,'service-details').click();
   await page.locator(`[data-action="service-action"][data-control="${control}"]`).click();
   if(control==='stop'||control==='remove') await button(page,'confirm-service-control').click();
-  await expect(page.locator('[data-action-status][aria-busy="true"]').filter({hasText:'service-a'})).toBeVisible();
+  const owner = control==='stop'||control==='remove' ? button(page,'confirm-service-control') : page.locator(`[data-action="service-action"][data-control="${control}"]`);
+  await expect(owner.locator('[role="status"]')).toContainText('service-a');
   mutation.resolve();await expect(page.locator(`#modal .object-control-progress [data-action=operation][data-id="op-service-${control}"]`)).toBeVisible();assert.equal(requests.filter(r=>r.method==='POST').length,1);refresh.resolve();
 });
 
@@ -653,7 +739,7 @@ test('D02 acceptance allows Stop to supersede Start while Work readback is still
     if(r.path.endsWith('/stop'))return{json:{operationId:'op-stop',workId:'work-1'}};
     if(r.path==='operations/op-start')return{json:{state:'superseded',operationId:'op-start',workId:'work-1'}};
   });
-  await button(page,'start-work').click();await expect(page.locator('.object-control-progress [data-action=operation][data-id="op-start"]')).toBeVisible();await expect(page.locator('#modal')).toHaveCount(0);
+  await button(page,'start-work').click();await expect(page.locator('.object-control-state')).toContainText('Start Work');await expect(page.locator('.object-control-progress')).toHaveCount(0);await expect(page.locator('#modal')).toHaveCount(0);
   await button(page,'work-menu').click(); await button(page,'stop-work').click();await button(page,'confirm-stop').click();await expect(page.locator('#modal')).toContainText('op-stop');
   assert.equal(requests.filter(r=>r.path.endsWith('/start')).length,1);assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,1);readback.resolve();
 });
@@ -665,8 +751,9 @@ for(const action of ['detail','refresh'] as const)test(`D09 ${action} reports lo
     if(r.path.includes('/logs')){if(armed)await gate.promise;return{json:{text:'',status:'empty',collectedAt:'2026-10-03T01:00:00Z'}};}
   });
   await button(page,'tab-Services').click();await button(page,'manage-services').click();if(action==='refresh')await button(page,'service-details').click();
-  armed=true;const before=requests.filter(r=>r.path.includes('/logs')).length;await button(page,action==='detail'?'service-details':'refresh-logs').click();
-  await expect(page.locator('[aria-busy="true"]').filter({has:page.locator('.pending-dots'),hasText:'tool'}).first()).toBeVisible();assert.equal(requests.filter(r=>r.path.includes('/logs')).length-before,1);gate.resolve();
+  armed=true;const before=requests.filter(r=>r.path.includes('/logs')).length;const geometry=action==='refresh'?await button(page,'refresh-logs').boundingBox():null;await button(page,action==='detail'?'service-details':'refresh-logs').click();
+  if(action==='refresh'){await expect(button(page,'refresh-logs')).toHaveAttribute('aria-busy','true');await expect(button(page,'refresh-logs').locator('.pending-dots')).toHaveCount(1);assert.deepEqual(await button(page,'refresh-logs').boundingBox(),geometry);}
+  else await expect(page.locator('[aria-busy="true"]').filter({has:page.locator('.pending-dots'),hasText:'tool'}).first()).toBeVisible();assert.equal(requests.filter(r=>r.path.includes('/logs')).length-before,1);gate.resolve();
 });
 
 for (const action of ['read','path','refresh','save','folder','rename','move','copy','delete','upload'] as const) test(`D11–D13 ${action} keeps path feedback and confirms before directory refresh`, async t=>{
@@ -702,10 +789,10 @@ for (const action of ['read','path','refresh','save','folder','rename','move','c
   armed=true;const before=requests.filter(r=>r.method===method&&r.path.startsWith('/_desktop/files/')).length;
   if(action==='upload'){await button(page,'file-add').click();await page.locator('[data-action=upload]').click();await page.locator('#upload-input').setInputFiles({name:'binary.dat',mimeType:'application/octet-stream',buffer:Buffer.from([0,255,1,128])});}
   else if(action==='read')await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();else await button(page,trigger).click();
-  if(action==='read') { await expect(page.locator('.file-target-toolbar')).toContainText('note.txt'); await expect(page.locator('.read-placeholder')).toContainText('Reading note.txt'); }
+  if(action==='read') { await expect(page.locator('.file-target-toolbar')).toContainText('note.txt'); await expect(page.locator('.read-placeholder')).toHaveAttribute('aria-label','Reading note.txt…'); }
   else if(action==='path'||action==='refresh') { await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true'); await expect(button(page,'refresh-files')).toHaveAccessibleName('Reading files…'); }
   else await expect(page.locator('[aria-busy="true"]').filter({has:page.locator('.pending-dots')}).first()).toBeVisible();
-  if(action==='upload'){await expect(page.locator('#app')).toContainText('File 1 of 1');await expect(page.locator('#app')).toContainText('Waiting for confirmation');}
+  if(action==='upload'){await button(page,'file-add').click();await page.locator('.file-upload-details summary').click();await expect(page.locator('#app')).toContainText('File 1 of 1');await expect(page.locator('#app')).toContainText('Waiting for confirmation');}
   await expect.poll(()=>requests.filter(r=>r.method===method&&r.path.startsWith('/_desktop/files/')).length-before).toBe(1);
   if(action==='save'){await page.locator('#file-editor').fill('newer unsaved');operation.resolve();await expect(page.locator('#file-editor')).toHaveValue('newer unsaved');await expect(page.locator('#app')).toContainText('Unsaved');}
   else {operation.resolve();if(['folder','rename','move','copy','delete','upload'].includes(action)){await expect(page.locator('.toast')).toContainText(action==='folder'?'Folder created.':action==='upload'?'Upload complete.':'File changes saved.');await expect.poll(()=>confirmed).toBe(true);await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true');}}
@@ -726,7 +813,7 @@ for (const source of ['Core','npm','Git','Local directory','ZIP'] as const) for 
   if(source==='npm'||source==='Git')await page.locator('#install-source').fill(source==='npm'?'pkg@1.0.0':'https://example.test/pkg.git');
   else if(source==='ZIP')await page.locator('#package-zip-input').setInputFiles({name:'pkg.zip',mimeType:'application/zip',buffer:Buffer.from('original ZIP fixture bytes')});
   else if(source==='Local directory')await page.evaluate(()=>{const transfer=new DataTransfer();const file=new File(['{"name":"pkg"}'],'package.json');Object.defineProperty(file,'webkitRelativePath',{value:'pkg/package.json'});transfer.items.add(file);const input=document.querySelector<HTMLInputElement>('#package-directory-input')!;input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));});
-  await button(page,'confirm-install').click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('Submitting package');
+  await button(page,'confirm-install').click();await expect(button(page,'confirm-install').locator('[role="status"]')).toContainText('Submitting package');
   await expect(button(page,'confirm-install')).toBeDisabled();gate.resolve();await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.settings-page [data-action="operation"][data-id="op-package"]')).toBeVisible();
   assert.equal(requests.filter(r=>r.path===`works/work-1/packages${update?'/pkg/update':''}`&&r.method==='POST').length,1);
@@ -797,7 +884,7 @@ for(const entry of ['login','logout','switch'] as const)test(`D01 ${entry} first
   const {page,requests}=await fixture(t,async r=>{if(armed&&r.path===endpoint){await gate.promise;if(entry==='logout')return{json:{view:{state:'signed-out',generation:2,csrf:'local-session-csrf',coreUrl:'http://core.test'},remoteRevocationConfirmed:false}};}},entry==='login');
   if(entry==='login'){await page.locator('#auth-account').fill('owner');await page.locator('#auth-password').fill('test-password');}
   else {await button(page,'back-works').click();await button(page,'account').click();if(entry==='switch'){await button(page,'switch-core').click();await page.locator('#auth-core').fill('http://new-core.test');}}
-  armed=true;const trigger=entry==='login'?'sign-in':entry==='logout'?'sign-out':'confirm-switch-core';await button(page,trigger).click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText(entry==='login'?'Signing in':entry==='logout'?'Signing out':'Switching Core');await expect(button(page,trigger)).toBeDisabled();
+  armed=true;const trigger=entry==='login'?'sign-in':entry==='logout'?'sign-out':'confirm-switch-core';await button(page,trigger).click();await expect(button(page,trigger).locator('[role="status"]')).toContainText(entry==='login'?'Signing in':entry==='logout'?'Signing out':'Switching Core');await expect(button(page,trigger)).toBeDisabled();
   gate.resolve();if(entry==='logout')await expect(page.locator('#app')).toContainText('Remote revocation could not be confirmed');else await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveCount(0);assert.equal(requests.filter(r=>r.path===endpoint&&r.method!=='GET').length,1);
 });
 
@@ -808,7 +895,7 @@ for(const method of ['mouse','keyboard'] as const)test(`D07 Send ${method} confi
     if(r.path.endsWith('/events')){await events.promise;return{status:503};}
   });
   await page.locator('#composer').fill('submitted prompt');if(method==='mouse')await button(page,'send-message').click();else await page.locator('#composer').press('Enter');
-  await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('Submitting message');await page.locator('#composer').fill('newer draft');await page.locator('#composer').press('Enter');assert.equal(requests.filter(r=>r.method==='POST').length,1);
+  await expect(button(page,'send-message').locator('[role="status"]')).toContainText('Submitting message');await page.locator('#composer').fill('newer draft');await page.locator('#composer').press('Enter');assert.equal(requests.filter(r=>r.method==='POST').length,1);
   gate.resolve();const accepted=page.locator('[data-action-status]').filter({hasText:'run-original'});await expect(accepted).toBeVisible();await expect(accepted).toContainText('Message accepted');await expect(accepted.locator('code')).toBeHidden();await accepted.locator('summary').click();await expect(accepted.locator('code')).toBeVisible();await expect(page.locator('#composer')).toHaveValue('newer draft');events.resolve();
 });
 
@@ -820,7 +907,7 @@ for(const action of ['cancel','resume'] as const)test(`D07 ${action} original Ru
     if(r.path==='works/work-1/runs/run-original')return{json:{run:{runId:'run-original',sessionId:'session-1',state:2}}};
   });
   await api(page,`adapter.getWork('work-1').run={id:'run-original',sessionId:'session-1',status:'${action==='cancel'?'running':'interrupted'}',cursor:3,created:'',error:'Check the original Run'};`);await button(page,'agent-menu').click();await page.keyboard.press('Escape');
-  await button(page,action==='cancel'?'cancel-run':'resume-run').click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText(action==='cancel'?'Requesting cancellation':'Reconnecting Run');gate.resolve();
+  const owner=button(page,action==='cancel'?'cancel-run':'resume-run');await owner.click();await expect(owner.locator('[role="status"]')).toContainText(action==='cancel'?'Requesting cancellation':'Reconnecting Run');gate.resolve();
   if(action==='cancel')await expect(button(page,'cancel-run')).toHaveText('Cancelling…');else await expect(page.locator('[data-action-status]').filter({hasText:'Reconnected'})).toBeVisible();assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,0);
   if(action==='cancel'){await expect(button(page,'cancel-run')).toBeDisabled();assert.equal(await api(page,"return adapter.getWork('work-1').run.status"),'running');}
 });
@@ -858,7 +945,8 @@ for(const action of ['inspect','import','query','cleanup','export'] as const)tes
     await expect.poll(()=>requests.filter(r=>r.path==='work-packages'&&r.method==='POST').length).toBe(1);
     assert.equal(await api(page,'return adapter.inspectionTransfer'),id);assert.equal(await api(page,'return adapter.inspectionContext.id'),id);
   }
-  else await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
+  else if(action==='import') await expect(button(page,'confirm-import').locator('[role="status"]')).toHaveCount(1);
+  else await expect(button(page,action==='query'?'check-inspection-import':'retry-inspection-cleanup').locator('[role="status"]')).toHaveCount(1);
   gate.resolve();
   if(action==='export'||action==='import'){await expect(page.locator('#modal')).toContainText('op-'+action);assert.equal(requests.filter(r=>r.path==='work-imports'||r.path.endsWith('/exports')).length,1);read.resolve();}
   else if(action==='inspect'){
@@ -877,7 +965,7 @@ test('DWUI-012 pending Service A permits unrelated B; closing and reopening deta
     if(r.path==='works/work-1/services/b/start')return{json:{operationId:'op-b',workId:'work-1'}};
   });
   await button(page,'tab-Services').click();await button(page,'manage-services').click();await page.locator('[data-action="service-details"][data-id="a"]').click();await page.locator('[data-action="service-action"][data-control="start"]').click();
-  await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('service:a');await button(page,'close-modal').click();await button(page,'manage-services').click();await page.locator('[data-action="service-details"][data-id="b"]').click();
+  await expect(page.locator('[data-action="service-action"][data-id="a"][data-control="start"] [role="status"]')).toContainText('service:a');await button(page,'close-modal').click();await button(page,'manage-services').click();await page.locator('[data-action="service-details"][data-id="b"]').click();
   gate.resolve();await expect(page.locator('#modal-title')).toHaveText('Tool b');await page.locator('[data-action="service-action"][data-control="start"]').click();await expect(page.locator('#modal .object-control-progress [data-action=operation][data-id="op-b"]')).toBeVisible();
   assert.equal(requests.filter(r=>r.path==='works/work-1/services/a/start').length,1);assert.equal(requests.filter(r=>r.path==='works/work-1/services/b/start').length,1);
 });
@@ -894,12 +982,12 @@ test('W1 Service control stays locked across port changes while another Service 
   });
   const details = async (id: string) => { await button(page, 'service-menu').click(); await button(page, 'manage-services').click(); await page.locator(`[data-action="service-details"][data-id="${id}"]`).click(); };
   await details('a'); await page.locator('[data-control="restart"]').click();
-  await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('service:a');
+  await expect(page.locator('[data-action="service-action"][data-id="a"][data-control="restart"] [role="status"]')).toContainText('service:a');
   await button(page, 'close-modal').click(); await details('a'); await page.getByRole('combobox', { name: 'Web entry', exact: true }).selectOption('8080'); await button(page, 'close-modal').click(); await details('a');
   await expect(page.locator('[data-control="restart"]')).toBeDisabled();
   await page.locator('[data-control="restart"]').evaluate((el: HTMLButtonElement) => el.click());
   assert.equal(requests.filter(r => r.path === 'works/work-1/services/a/restart').length, 1);
-  await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('service:a');
+  await expect(page.locator('[data-action="service-action"][data-id="a"][data-control="restart"] [role="status"]')).toContainText('service:a');
   await button(page, 'close-modal').click(); await details('b');
   await expect(page.locator('[data-control="restart"]')).toBeEnabled(); await page.locator('[data-control="restart"]').click();
   await expect(page.locator('#modal .object-control-progress [data-action=operation][data-id="op-b"]')).toBeVisible();
@@ -980,7 +1068,7 @@ test('DWUI-012 readonly file callback after Core switch cannot reopen a file or 
     if(r.path.startsWith('/_desktop/files/')){if(r.method==='GET'){await gate.promise;return{body:'original private file'};}return{status:207,body:listing('original private file',mtime1)};}
   });
   await button(page,'tab-Files').click();await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
-  await expect(page.locator('.file-target-toolbar')).toContainText('note.txt');await expect(page.locator('.read-placeholder')).toContainText('Reading note.txt');
+  await expect(page.locator('.file-target-toolbar')).toContainText('note.txt');await expect(page.locator('.read-placeholder')).toHaveAttribute('aria-label','Reading note.txt…');
   await api(page,"await adapter.switchCore('http://new-core.test')");gate.resolve();await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();await expect(page.locator('#app')).not.toContainText('original private file');await expect(page.locator('#file-editor')).toHaveCount(0);
 });
 
@@ -990,7 +1078,7 @@ test('DWUI-011/012 a timed-out configuration read preserves focus, draft and loc
   await button(page,'settings').click();await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
   await page.locator('#agents-editor').fill('draft retained while checking');await page.locator('#agents-editor').evaluate((input:HTMLTextAreaElement)=>input.setSelectionRange(3,9));
   armed=true;await button(page,'refresh-config').click();await page.locator('#agents-editor').focus();await page.locator('#agents-editor').evaluate((input:HTMLTextAreaElement)=>input.setSelectionRange(3,9));
-  await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveAttribute('role','status');await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveAttribute('aria-live','polite');
+  await expect(button(page,'refresh-config')).toHaveAttribute('aria-busy','true');await expect(button(page,'refresh-config').locator('[role="status"]')).toHaveCount(1);
   await expect(page.locator('.settings-page')).toContainText('The read timed out',{timeout:12000});await expect(page.locator('#agents-editor')).toBeFocused();assert.deepEqual(await page.locator('#agents-editor').evaluate((input:HTMLTextAreaElement)=>[input.selectionStart,input.selectionEnd]),[3,9]);
   const screenshots='/tmp/piwork-feedback-screens';await mkdir(screenshots,{recursive:true});
   for(const width of [1440,360]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:`${screenshots}/desktop-wait-${width}.png`,fullPage:true});}
@@ -1032,7 +1120,7 @@ test('DWUI-016/017 Start to Ready, terminal readback failure and retry preserve 
     if (r.path === 'operations/original-start') return { json: { operationId: 'original-start', workId: 'work-1', kind: 'start-work', state: terminal ? 'succeeded' : 'running' } };
     if (r.path === 'works' || r.path === 'works/work-1') return fail ? { status: 503, json: { message: 'Work readback unavailable' } } : { json: r.path === 'works' ? { works: [raw()] } : raw() };
   });
-  await button(page, 'start-work').click(); await expect(page.locator('.object-control-progress [data-action=operation][data-id="original-start"]')).toBeVisible(); await expect(page.locator('#modal')).toHaveCount(0);
+  await button(page, 'start-work').click(); await expect(page.locator('.object-control-state')).toContainText('Start Work'); await expect(page.locator('.object-control-progress')).toHaveCount(0); await expect(page.locator('#modal')).toHaveCount(0);
   observed = 'starting'; await api(page, "await adapter.refreshWorkStatus('work-1')"); await expect(page.locator('.work-header')).toContainText('Starting');
   terminal = true; fail = true; await api(page, "await adapter.checkOperation('original-start'); await adapter.refreshWorkStatus('work-1').catch(()=>{}); await adapter.listWorks().catch(()=>{})");
   assert.equal(await api(page, "return adapter.state.operations[0].state"), 'succeeded');
@@ -1098,9 +1186,13 @@ test('DWUI-OPREC-001 recovered Work control is available on its own row and chec
   await api(page, "await adapter.checkOperation('original-stop')");
   await button(page, 'back-works').click();
   const row = page.locator('.work-row').filter({ hasText: 'Recovery Work' });
-  await expect(row.locator('[data-action="operation"][data-id="original-stop"]')).toBeVisible();
-  await expect(row).toContainText('Stopping');
-  await row.locator('[data-action="check-work-progress"]').click();
+  // The row keeps one compact state; original details and the read-only check
+  // are on demand from that Work's own menu.
+  await expect(row.locator('.object-control-state')).toContainText('Stop Work');
+  await expect(row.locator('.object-control-progress')).toHaveCount(0);
+  await row.locator('[data-action="work-menu"]').click();
+  await expect(page.locator('#modal [data-action="operation"][data-id="original-stop"]')).toBeVisible();
+  await page.locator('#modal [data-action="check-work-progress"]').click();
   assert.ok(requests.some(r => r.method === 'GET' && r.path === 'operations/original-stop'));
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
@@ -1113,6 +1205,7 @@ test('DWUI-OPREC-001 a converged successful Work task leaves the row while its o
   await api(page, "await adapter.checkOperation('finished-start'); await adapter.refreshWorkStatus('work-1'); await adapter.listWorks()");
   await button(page, 'back-works').click();
   await expect(page.locator('.work-row .object-control-progress')).toHaveCount(0);
+  await expect(page.locator('.work-row .object-control-state')).toHaveCount(0);
   await workTasks(page); await page.locator('#operation-query').fill('finished-start'); await button(page, 'lookup-operation').click();
   await page.locator('.operation-technical > summary').click(); await expect(page.locator('.operation-technical')).toContainText('finished-start');
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
@@ -1127,10 +1220,17 @@ test('DWUI-OPREC-001 a newer Stop replaces the older Start in the Work progress 
   });
   await button(page, 'back-works').click(); await button(page, 'start-work').click();
   await api(page, "await adapter.lifecycle('work-1', 'stop')");
-  const progress = page.locator('.work-row .object-control-progress');
+  // One task shows one state in the row's existing status slot; the original
+  // Operation details and the read-only check stay in that Work's own menu.
+  const progress = page.locator('.work-row .object-control-state');
   await expect(progress).toContainText('Stop Work');
-  await expect(progress.locator('[data-id="new-stop"]')).toBeVisible();
-  await expect(progress.locator('[data-id="old-start"]')).toHaveCount(0);
+  await expect(page.locator('.work-row .object-control-progress')).toHaveCount(0);
+  await page.locator('.work-row').filter({ hasText: 'Recovery Work' }).locator('[data-action="work-menu"]').click();
+  await expect(page.locator('#modal')).toContainText('Stop Work');
+  await expect(page.locator('#modal [data-id="new-stop"]')).toBeVisible();
+  // The superseded Start is not the current target, so the menu does not present
+  // it as the Work's outstanding task; its original result stays queryable.
+  await expect(page.locator('#modal .work-menu-task').filter({ hasText: 'Stop Work' })).toHaveCount(1);
 });
 
 test('DWUI-OPREC-002 orphaned imports and deletions remain reachable after reload, search and an empty list', async t => {
@@ -1151,11 +1251,12 @@ test('DWUI-OPREC-002 orphaned imports and deletions remain reachable after reloa
   });
   await button(page, 'back-works').click();
   await api(page, "await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))");
+  await openWorksTasks(page);
   await expect(page.locator('.recovery-task[data-operation-id="import-original"]')).toContainText('Import Work');
   await expect(page.locator('.recovery-task[data-operation-id="import-original"]')).toContainText('Task 1');
   await expect(page.locator('.recovery-task[data-operation-id="delete-original"]')).toContainText('Cleanup failed safely');
   await expect(page.locator('.recovery-tasks > details')).toContainText('Show 2 more tasks');
-  await page.locator('.recovery-tasks > details > summary').click();
+  // The helper already expanded the tail; a second toggle would collapse it.
   await expect(page.locator('.recovery-task[data-operation-id="import-4"]')).toBeVisible();
   await expect(page.locator('.recovery-task[data-operation-id="import-4"]')).toContainText('Task 5');
   await page.locator('#search').fill('not-a-match');
@@ -1163,6 +1264,7 @@ test('DWUI-OPREC-002 orphaned imports and deletions remain reachable after reloa
   empty = true; await api(page, 'await adapter.listWorks()');
   await expect(page.locator('.recovery-task[data-operation-id="delete-original"]')).toBeVisible();
   await page.reload();
+  await openWorksTasks(page);
   await expect(page.locator('.recovery-task[data-operation-id="import-original"]')).toBeVisible();
   await page.locator('.recovery-task[data-operation-id="import-original"] [data-action="check-task-operation"]').click();
   await page.locator('.recovery-task[data-operation-id="import-original"] [data-action="operation"]').click();
@@ -1180,6 +1282,7 @@ test('DWUI-OPREC-002 an accepted Create remains on Works when its object cannot 
   await button(page, 'back-works').click();
   await api(page, "adapter.accepted({ operationId: 'create-original', workId: 'work-new' }, '', 'Create Work'); await adapter.checkOperation('create-original')");
   listFails = true; await api(page, 'await adapter.listWorks().catch(() => {})');
+  await openWorksTasks(page);
   await expect(page.locator('.recovery-task[data-operation-id="create-original"]')).toContainText('Create Work');
   await expect(page.locator('.works-error-cause, .feedback').filter({ hasText: 'List unavailable' }).first()).toBeVisible();
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
@@ -1200,10 +1303,12 @@ test('DWUI-OPREC-002 reload restores original tasks while the first Work list is
     if (r.path === 'works' && listFails) { await gate.promise; return { status: 503, json: { message: 'List unavailable' } }; }
   });
   await button(page, 'back-works').click();
+  await openWorksTasks(page);
   await expect(page.locator('.recovery-task[data-operation-id="reload-import"]')).toBeVisible();
   const previousReads = requests.filter(r => r.path === 'known-operations').length;
   listFails = true; await page.reload();
   await expect.poll(() => requests.filter(r => r.path === 'known-operations').length).toBeGreaterThan(previousReads);
+  await openWorksTasks(page);
   for (const task of records) await expect(page.locator(`.recovery-task[data-operation-id="${task.operationId}"]`)).toBeVisible();
   gate.resolve(); await expect(page.locator('.works-error-cause')).toBeVisible();
   for (const task of records) await expect(page.locator(`.recovery-task[data-operation-id="${task.operationId}"]`)).toBeVisible();
@@ -1222,10 +1327,19 @@ test('DWUI-OPREC-002 a confirmed created Work takes over its original task from 
   });
   await button(page, 'back-works').click();
   await api(page, "adapter.accepted({ operationId: 'create-original', workId: 'work-new' }, '', 'Create Work'); await adapter.checkOperation('create-original')");
+  await openWorksTasks(page);
   await expect(page.locator('.recovery-task[data-operation-id="create-original"]')).toBeVisible();
   published = true; await api(page, 'await adapter.listWorks()');
   await expect(page.locator('.recovery-task[data-operation-id="create-original"]')).toHaveCount(0);
-  await expect(page.locator('.work-row').filter({ hasText: 'New Work' }).locator('[data-action="operation"][data-id="create-original"]')).toBeVisible();
+  // The created Work takes the task over in its own status slot; the original
+  // Operation ID stays reachable from that Work's menu.
+  // The task left the temporary list even while the disclosure stays open.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  const created_row = page.locator('.work-row').filter({ hasText: 'New Work' });
+  await expect(created_row.locator('.object-control-state')).toContainText('Create Work');
+  await created_row.locator('[data-action="work-menu"]').click();
+  await expect(page.locator('#modal [data-action="operation"][data-id="create-original"]')).toBeVisible();
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
 
@@ -1236,6 +1350,7 @@ test('DWUI-OPREC-002 an unknown Import checks its original transfer and recovers
   });
   await button(page, 'back-works').click();
   await api(page, "adapter.inspectionTransfer='transfer-original'; adapter.inspectionContext={id:'transfer-original',nonce:1,core:'http://core.test',localSession:'local-session-csrf',ready:true,anonymous:false,importState:'unknown'}; adapter.emit()");
+  await openWorksTasks(page);
   await expect(page.locator('.recovery-task[data-transfer-id="transfer-original"]')).toContainText('Result unknown');
   await page.locator('.recovery-task[data-transfer-id="transfer-original"] [data-action="check-inspection-import"]').click();
   await expect(page.locator('.recovery-task[data-operation-id="import-recovered"]')).toContainText('Imported name');
@@ -1369,7 +1484,7 @@ test('DWUI-OPREC-003 failure details present recorded facts, escape text and cop
     if (r.path === `operations/${id}`) return { json: { operationId: id, workId: 'new-work', kind: 'create-work', state: 'failed', correlationId: 'corr-123', error: { code: 'AGENT_EXITED', stage: 'readiness', message: 'Agent <img src=x onerror=alert(1)> exited', remediation: 'Check the runtime', retryable: false, exitCode: 0, secret: 'not-for-display' }, diagnostics: { stages: [{ component: 'agent', stage: 'readiness', outcome: 'failed', message: 'Recorded <script>stage</script>' }], rollback: { state: 'failed', error: { code: 'ROLLBACK_FAILED', stage: 'rollback', message: 'Rollback failed', remediation: 'Check recovery' } }, diagnosticCollection: { state: 'unavailable', code: 'DIAGNOSTIC_COLLECTION_FAILED' } } } };
   });
   await api(page, `await adapter.checkOperation(${JSON.stringify(id)})`);
-  await button(page, 'back-works').click(); await page.locator('.recovery-task [data-action="operation"]').click();
+  await button(page, 'back-works').click(); await openWorksTasks(page); await page.locator('.recovery-task [data-action="operation"]').click();
   const dialog = page.locator('#modal'), technical = dialog.locator('.operation-technical');
   await expect(dialog).toContainText('Agent <img src=x onerror=alert(1)> exited');
   await expect(dialog).toContainText('Check the runtime');
@@ -1398,7 +1513,9 @@ test('DWUI-OPREC-003 missing or partial failure evidence never invents an underl
     }
   });
   await api(page, 'await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))'); await button(page, 'back-works').click();
+  await openWorksTasks(page);
   for (const id of records) {
+    await openWorksTasks(page);
     await page.locator(`.recovery-task[data-operation-id="${id}"] [data-action="operation"]`).click();
     await expect(page.locator('#modal')).toContainText('A more specific cause was not recorded');
     await expect(page.locator('#modal')).not.toContainText('[object Object]');
@@ -1423,8 +1540,10 @@ test('DWUI-OPREC-003 generic failure codes do not masquerade as an underlying ca
   });
   await api(page, 'await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))');
   await button(page, 'back-works').click();
+  await openWorksTasks(page);
   await page.locator('.recovery-tasks > details > summary').click();
   for (const item of records) {
+    await openWorksTasks(page);
     await page.locator(`.recovery-task[data-operation-id="${item.id}"] [data-action="operation"]`).click();
     const dialog = page.locator('#modal'); await expect(dialog).toContainText(item.message);
     if (item.expected) await expect(dialog).toContainText(item.expected);
@@ -1466,6 +1585,7 @@ for (const width of [360, 1440]) test(`DWUI-OPREC-004 task recovery remains usab
   });
   await page.setViewportSize({ width, height: 900 }); await page.emulateMedia({ reducedMotion: 'reduce' });
   await api(page, `await adapter.checkOperation(${JSON.stringify(id)}); adapter.getOperation(${JSON.stringify(id)}).importName='long-name-'.repeat(25); adapter.emit()`); await button(page, 'back-works').click();
+  await openWorksTasks(page);
   const task = page.locator('.recovery-task').first(); await expect(task).toContainText('A long task needs attention');
   await expect.poll(() => page.locator('.brand-logo').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
   if (process.env.PIWORK_TEST_SCREENSHOT_DIR) { await mkdir(process.env.PIWORK_TEST_SCREENSHOT_DIR, { recursive: true }); await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/recovery-list-${width}.png`, fullPage: true }); }
@@ -1491,7 +1611,8 @@ test('DWUI-017 closed Start details still recover Ready and original lookup with
     if (r.path === 'works' || r.path === 'works/work-1') return offline ? { status: 503, json: { message: 'readback offline' } } : { json: r.path === 'works' ? { works: [fact()] } : fact() };
   });
   const navigations: string[] = []; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url()); });
-  await button(page, 'start-work').click(); await page.locator('.object-control-progress [data-action=operation][data-id="cleared-start"]').click(); await expect(page.locator('#modal')).toContainText('cleared-start');
+  await button(page, 'start-work').click(); await button(page, 'work-menu').click(); await expect(page.locator('#modal')).toContainText('Start Work · succeeded');
+  await page.locator('#modal [data-action="operation"][data-id="cleared-start"]').click(); await expect(page.locator('#modal')).toContainText('cleared-start');
   await api(page, "await adapter.checkOperation('cleared-start'); await adapter.refreshWorkStatus('work-1').catch(() => {}); await adapter.listWorks().catch(() => {})");
   await button(page, 'close-modal').click(); await workTasks(page);
   await page.locator('#operation-query').fill('cleared-start'); await button(page, 'lookup-operation').click();
@@ -1564,12 +1685,14 @@ test('C02 list Start keeps original local progress and gates Open Work on real r
     if (r.path === 'operations/c02-start') return { json: { operationId: 'c02-start', workId: 'work-1', kind: 'start-work', state: terminal ? 'succeeded' : 'running' } };
   });
   await button(page, 'back-works').click(); await button(page, 'start-work').click();
-  await expect(page.locator('.work-row .object-control-progress [data-id="c02-start"]')).toBeVisible();
+  await expect(page.locator('.work-row .object-control-state')).toContainText('Start Work');
+  await expect(page.locator('.work-row .object-control-progress')).toHaveCount(0);
   await expect(page.locator('#modal')).toHaveCount(0); await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
-  terminal = true; await button(page, 'check-work-progress').click();
+  // The read-only check lives in the Work's own menu, next to its original task.
+  const checkFromMenu = async () => { await page.locator('.work-row').filter({ hasText: 'Recovery Work' }).locator('[data-action="work-menu"]').click(); await page.locator('#modal [data-action="check-work-progress"]').click(); await expect(page.locator('#modal')).toHaveCount(0); };
+  terminal = true; await checkFromMenu();
   await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toHaveCount(0);
-  await expect(button(page, 'check-work-progress')).toBeEnabled();
-  ready = true; await button(page, 'check-work-progress').click();
+  ready = true; await checkFromMenu();
   await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Open Work', exact: true }).click();
@@ -1690,6 +1813,18 @@ for (const width of [360, 500]) test(`Action hierarchy: narrow Files controls re
   assert.equal(requests.filter(request => request.method !== 'GET' && request.path.startsWith('/_desktop/files/') && !['PROPFIND','HEAD'].includes(request.method)).length, 0);
 });
 
+test('Files upload with unknown total keeps real bytes and stops animation at failure', async t => {
+  const { page } = await fixture(t, r => r.method === 'PROPFIND' ? { status: 207, body: listing('original', mtime1) } : undefined);
+  await button(page, 'tab-Files').click();
+  await api(page, "adapter.uploadProgress.set('work-1',{scope:'files',path:'sample.txt',phase:'Uploading',transferred:42,index:1,count:1}); adapter.emit()");
+  const trigger = button(page, 'file-add'); await expect(trigger.locator('.pending-dots')).toHaveCount(1);
+  await expect(trigger).toHaveAttribute('aria-label', /42 bytes/); await trigger.click();
+  await page.locator('.file-upload-details summary').focus(); await page.keyboard.press('Enter'); await expect(page.locator('.file-upload-details')).toContainText('42 bytes');
+  await expect(page.locator('.file-upload-details progress')).toHaveCount(0);
+  await api(page, "adapter.uploadProgress.set('work-1',{scope:'files',path:'sample.txt',phase:'failed',error:'failed',transferred:42,index:1,count:1}); adapter.emit()");
+  await expect(trigger.locator('.pending-dots')).toHaveCount(0);
+});
+
 test('pending independent: automatic model save ends on unknown while the draft and original lock remain', async t => {
   const gate = deferred(); t.after(() => gate.resolve());
   const { page, requests } = await fixture(t, async r => {
@@ -1761,14 +1896,45 @@ for (const withTool of [false, true]) test(`pending active Run: failed observati
   await expect(page.locator('#messages .pending-dots')).toHaveCount(0);
 });
 
+test('Run wait renders at the assistant reply position and real content replaces it in place', async t => {
+  const { page } = await fixture(t, () => undefined);
+  const before = await page.locator('#composer').boundingBox();
+  await api(page, `const w = adapter.getWork('work-1'), session = w.sessions.find(s => s.id === 'session-1');
+    w.run = undefined;
+    adapter.activeRuns.set(w.id, { confirmed: true, loading: false, error: '', run: { id: 'run-slot', sessionId: session.id, status: 'running' } });
+    adapter.cancelAndSendCapabilities.set(w.id, 1);
+    session.messages.push({ id: 'slot-user', role: 'user', text: 'hello', runId: 'run-slot' });
+    adapter.emit();`);
+  const slot = page.locator('#messages .reply-slot');
+  await expect(slot).toHaveCount(1);
+  await expect(slot.locator('.pending-dots')).toHaveCount(1);
+  await expect(slot).toHaveAttribute('data-run-id', 'run-slot');
+  // One primary wait: the execution summary must not animate a second set.
+  await expect(page.locator('#messages .pending-dots')).toHaveCount(1);
+  // The original Cancel entry stays reachable, exactly once.
+  await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(1);
+  // The wait belongs to the messages flow, above the composer, which does not move.
+  const after = await page.locator('#composer').boundingBox();
+  for (const key of ['x', 'y', 'width', 'height'] as const) assert.ok(Math.abs(before![key] - after![key]) <= 1, `composer ${key} moved`);
+  // Real content arriving ends the wait in place, leaving the reply readable.
+  await api(page, `const w = adapter.getWork('work-1'), session = w.sessions.find(s => s.id === 'session-1');
+    adapter.activeRuns.set(w.id, { confirmed: true, loading: false, error: '', run: { ...adapter.activeRuns.get(w.id).run, status: 'succeeded' } });
+    session.messages.push({ id: 'slot-reply', role: 'assistant', text: 'The real answer', runId: 'run-slot' });
+    adapter.emit();`);
+  await expect(page.locator('#messages .reply-slot')).toHaveCount(0);
+  await expect(page.locator('#messages')).toContainText('The real answer');
+  await expect(page.locator('#composer')).toHaveValue('');
+});
+
 test('pending independent: About aggregates version reads and keeps the known version during refresh', async t => {
   const gate = deferred(); t.after(() => gate.resolve()); let held = false;
   const about = (program: string) => ({ aboutApiVersion: 1, build: { program, version: 'fixture-v1', commit: 'synthetic', os: 'linux', architecture: 'amd64' } });
   const { page } = await fixture(t, async r => { if (r.path === 'about' || r.path === 'core-about') { if (held) await gate.promise; return { json: about(r.path) }; } });
   await button(page, 'back-works').click(); await button(page, 'account').click(); await button(page, 'about-piwork').click();
   await expect(page.locator('#modal')).toContainText('fixture-v1'); await expect(page.locator('#modal .pending-dots')).toHaveCount(0);
-  held = true; await button(page, 'refresh-about').click();
+  const geometry=await button(page,'refresh-about').boundingBox();held = true; await button(page, 'refresh-about').click();
   await expect(page.locator('#modal .pending-dots')).toHaveCount(1); await expect(page.locator('#modal')).toContainText('fixture-v1');
+  assert.deepEqual(await button(page,'refresh-about').boundingBox(),geometry);
   gate.resolve(); await expect(page.locator('#modal .pending-dots')).toHaveCount(0);
 });
 
@@ -1882,7 +2048,7 @@ test('Session chooser retains rows during a failed refresh and retries to a conf
   });
   mode = 'pending'; await button(page, 'sessions').click();
   await expect(page.locator('#modal [role=option]')).toHaveCount(1);
-  await expect(page.locator('#modal')).toContainText('Reading conversations');
+  await expect(page.locator('#modal .session-list')).toHaveAttribute('aria-busy','true');await expect(page.locator('#modal .session-list .pending-dots')).toHaveCount(0);
   await expect(button(page, 'sessions')).toBeDisabled();
   await page.keyboard.press('Escape'); await expect(page.locator('#modal')).toHaveCount(0);
   assert.equal(await page.evaluate(() => { const el = document.activeElement as HTMLElement; return el !== document.body && !!el.getClientRects().length && !el.hasAttribute('disabled') && !el.closest('#modal'); }), true, 'a locked trigger falls back to another available workspace control');

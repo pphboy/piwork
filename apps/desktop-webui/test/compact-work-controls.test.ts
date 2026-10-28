@@ -10,7 +10,7 @@ const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
 function extract(...names:string[]){return names.map(name=>{const value=source.match(new RegExp('^(?:async )?function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];}).join('\n');}
 function fixture(){
  const work:any={id:'work-a',name:'A',config:{pendingApply:false,skills:[],packages:[]},resourceChecked:{configuration:'now'},resourceErrors:{}};
- const c:any={...localeSandbox,pendingDots,operationKind,operationAction:(op:any)=>op.kind,orphanTasks:()=>'',workControl:()=>undefined,current:()=>work,structuredClone,location:{hash:'#/work/work-a'},Date,view:{file:'',path:'/',modal:'',data:{},settingsTab:'Skills',config:null,configDirty:false},actions:{records:new Map(),visible:()=>true},adapter:{operationPaused:()=>false,connectionCheck:{checking:false,error:''},directories:new Map(),state:{operations:[]},project:()=>({usable:true})},skillsSettings:()=>'<p>Skills</p>'};c.fileActionsContext="";vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);vm.runInContext(extract('fileReadPending','fileRefreshButton','settingsTaskRows','settingsPage'),c);return{c,work};
+ const c:any={...localeSandbox,pendingDots,operationKind,operationAction:(op:any)=>op.kind,orphanTasksEntry:()=>'',orphanTasks:()=>'',workControl:()=>undefined,current:()=>work,structuredClone,location:{hash:'#/work/work-a'},Date,view:{file:'',path:'/',modal:'',data:{},settingsTab:'Skills',config:null,configDirty:false},actions:{records:new Map(),visible:()=>true},adapter:{operationPaused:()=>false,connectionCheck:{checking:false,error:''},directories:new Map(),state:{operations:[]},project:()=>({usable:true})},skillsSettings:()=>'<p>Skills</p>'};c.fileActionsContext="";vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);vm.runInContext(extract('fileReadPending','fileRefreshButton','settingsTaskRows','settingsPage'),c);return{c,work};
 }
 test('Files refresh keeps a fixed icon with scoped busy feedback and no success text',()=>{
  const {c,work}=fixture();let html=c.fileRefreshButton(work);assert.match(html,/icon-button quiet file-refresh/);assert.doesNotMatch(html,/>Refresh<|Updated|aria-busy|<span>/);
@@ -48,7 +48,7 @@ for (const kind of ['Apply Work configuration','apply-work-configuration']) test
 });
 
 test('Files toolbar renders one Refresh and Add control without literal template punctuation',()=>{
- const {c,work}=fixture();work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';
+ const {c,work}=fixture();work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.filesUploadState=()=>undefined;c.transferResults=()=>'';
  vm.runInContext(extract('files'),c);const html=c.files(work);
  assert.equal((html.match(/data-action="refresh-files"/g)||[]).length,1);assert.equal((html.match(/data-action="file-add"/g)||[]).length,1);assert.doesNotMatch(html,/<\/button>}/);assert.match(html,/data-action="upload"/);assert.doesNotMatch(html,/file-scope|Shared workspace|\/var\/data\/workspace/);
 });
@@ -73,12 +73,12 @@ test('Files toolbar retains 40px actions at the narrow breakpoint in either sele
  const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
  assert.match(css,/\.icon-button \{\s+width: 40px;\s+height: 40px;/);
  assert.doesNotMatch(css,/\.files-toolbar \.icon-button\s*\{/);
- const {c,work}=fixture();work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';vm.runInContext(extract('files'),c);
+ const {c,work}=fixture();work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.filesUploadState=()=>undefined;c.transferResults=()=>'';vm.runInContext(extract('files'),c);
  assert.match(c.files(work),/data-action="file-add"/);c.view.selected=['/A.txt'];const selected=c.files(work);for(const action of ['file-copy','file-move','file-delete','clear-selection'])assert.match(selected,new RegExp('data-action="'+action+'"'));assert.doesNotMatch(selected,/data-action="file-add"/);
 });
 
 for(const open of [false,true])test(`Files add is a nonmodal command menu: open=${open}`,()=>{
- const {c,work}=fixture();c.fileActionsContext=open?'context':'';work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';
+ const {c,work}=fixture();c.fileActionsContext=open?'context':'';work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.filesUploadState=()=>undefined;c.transferResults=()=>'';
  vm.runInContext(extract('files'),c);const html=c.files(work);assert.match(html,/aria-haspopup="menu"/);assert.match(html,new RegExp('aria-expanded="'+open+'"'));assert.doesNotMatch(html,/<dialog/);
  if(open){assert.match(html,/role="menu" aria-label="File actions"/);assert.equal((html.match(/role="menuitem"/g)||[]).length,3);assert.match(html,/data-action="webdav"/);assert.match(html,/role="separator"/);assert.match(html,/New folder/);assert.match(html,/Upload files/);}else assert.doesNotMatch(html,/role="menu"/);
 });
@@ -97,7 +97,7 @@ test('Move selected files uses a dedicated folder move symbol instead of Back',(
 });
 
 test('Files first reads preserve toolbar and never mistake another cached directory for confirmed empty',()=>{
- const {c,work}=fixture();work.files=[{path:'/other/old.txt',name:'old.txt',kind:'directory'}];c.view.selected=[];c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.transferResults=()=>'';vm.runInContext(extract('files'),c);
+ const {c,work}=fixture();work.files=[{path:'/other/old.txt',name:'old.txt',kind:'directory'}];c.view.selected=[];c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.filesUploadState=()=>undefined;c.transferResults=()=>'';vm.runInContext(extract('files'),c);
  c.adapter.directories.set('work-a:/',{loading:true,checkedAt:'',error:''});let html=c.files(work);assert.match(html,/files-toolbar/);assert.match(html,/read-placeholder/);assert.doesNotMatch(html,/This folder is empty|old.txt/);
  c.adapter.directories.set('work-a:/',{loading:false,checkedAt:'',error:'Forbidden'});html=c.files(work);assert.match(html,/Could not read \/|Forbidden/);assert.doesNotMatch(html,/This folder is empty|read-placeholder/);assert.equal((html.match(/read-failure/g)||[]).length,1);
  c.adapter.directories.set('work-a:/',{loading:true,checkedAt:'now',error:''});html=c.files(work);assert.match(html,/This folder is empty/);assert.doesNotMatch(html,/read-placeholder/);
@@ -152,7 +152,7 @@ test('success Toast really auto-dismisses after three seconds and replacement cl
 });
 
 test('Packages aligns identity/status separately from commands and groups catalog actions',()=>{
- const {c,work}=fixture();c.catalogFeedback=()=>'';c.packageStatus=()=> 'Saved · Loaded';
+ const {c,work}=fixture();c.catalogFeedback=()=>'';c.catalogButton=()=>'';c.packageStatus=()=> 'Saved · Loaded';
  c.adapter.catalog={packages:{error:'',confirmed:true}};c.adapter.getPackages=()=>[{name:'catalog-package',description:'A long package description',version:'1.0'}];
  vm.runInContext(extract('packagesSettings'),c);
  const config={packages:[{name:'a-very-long-package-name',source:'https://example.test/'+ 'long/'.repeat(30),enabled:true}]};
@@ -205,9 +205,14 @@ for(const viaRecord of [false,true]) test(`Works initial-error retry retains one
 });
 
 test('Works initial static shapes are immediately visible, scoped and distinguishable from their surface',()=>{
+ // dist/public/style.css is the built sheet: tokens + shared controls + page styles.
  const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
- assert.match(css,/\.loading-list \.skeleton > i \{[^}]*background:var\(--border\)/);assert.match(css,/\.loading-list \.skeleton span \{[^}]*background:var\(--border\)/);
- assert.doesNotMatch(css,/[^{}]*\.loading-list[^{}]*\{[^}]*animation:/);assert.match(css,/\.works-error-cause \{[^}]*overflow-wrap:anywhere/);
+ assert.match(css,/\.loading-list \.skeleton > i \{[^}]*height:40px;border-radius:8px; \}/);assert.match(css,/\.loading-list \.skeleton span \{[^}]*height:14px;max-width:60%/);
+ assert.doesNotMatch(css,/[^{}]*\.loading-list[^{}]*\{[^}]*animation:/);
+ // The shared low-contrast fill owns brightness and its static reduced-motion form.
+ assert.match(css,/\.skeleton-fill \{[^}]*background-image:\s*linear-gradient/);
+ assert.match(css,/@media \(prefers-reduced-motion: reduce\) \{\s*\.skeleton-fill \{ animation: none;[^}]*background-image: none/);
+ assert.match(css,/\.works-error-cause \{[^}]*overflow-wrap:anywhere/);
 });
 
 for(const scenario of ['normal','core-offline','env-not-ready','empty']) test(`Works unconfirmed idle ${scenario} never claims empty or search-empty`,()=>{
@@ -216,4 +221,34 @@ for(const scenario of ['normal','core-offline','env-not-ready','empty']) test(`W
  vm.runInContext(extract('worksRefreshButton','works'),c);const html=c.works();
  assert.match(html,/Works have not been read/);assert.match(html,/>Read Works<\/button>/);assert.match(html,/Works not yet read/);
  assert.doesNotMatch(html,/No matching Works|Make room for your next idea|0 Works|loading-list|pending-dots/);
+});
+
+test('Works rows project one compact state; original details and checks live in the Work menu',()=>{
+ const {c,work}=fixture();Object.assign(work,{name:'A',description:'work-a',color:'blue',icon:'grid',status:'Ready',desired:'running'});
+ c.topbar=()=>'';c.connection=()=>'';c.worksRefreshButton=()=>'';c.workStatus=()=>'<span>Ready</span>';c.quickAction=()=>'';c.view.search='';
+ c.controlMarkup=(control:any,compact?:boolean)=>control?`<span data-probe="${compact?'compact':'block'}"></span>`:'';
+ c.workControl=()=>({workId:'work-a',action:'Create Work',phase:'accepted',operationId:'op-a'});
+ Object.assign(c.adapter,{worksLoading:false,worksChecked:'now',worksError:'',state:{scenario:'normal',works:[work],core:{account:'user'}}});
+ vm.runInContext(extract('works'),c);
+ const html=c.works();
+ // The row keeps the object's own status slot and never adds a progress block.
+ assert.match(html,/data-probe="compact"/);assert.doesNotMatch(html,/data-probe="block"/);
+ assert.ok(html.indexOf('data-probe="compact"')<html.indexOf('data-action="work-menu"'));
+});
+
+test('a task without a visible Work uses a fixed header entry, not a row above search',()=>{
+ const {c}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.worksRefreshButton=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workControl=()=>undefined;
+ Object.assign(c.adapter,{worksLoading:false,worksChecked:'now',worksError:'',state:{scenario:'normal',works:[],core:{account:'user'}}});
+ c.operations=[{id:'op-import',workId:'work-hidden',kind:'Import Work',action:'import',state:'running'}];
+ for(const name of ['orphanTasksEntry','orphanTaskList','worksRefreshButton'])vm.runInContext(extract(name),c);
+ // The entry reads live task rows; the list body is a separate disclosure.
+ c.orphanTaskRows=()=>({count:1,rows:'<article class="recovery-task" data-operation-id="op-import"></article>'});
+ c.orphanTaskList=()=>'';
+ vm.runInContext(extract('works'),c);
+ const entry=c.orphanTasksEntry();
+ assert.match(entry,/data-action="works-tasks"/);assert.match(entry,/aria-haspopup="dialog"/);
+ assert.doesNotMatch(entry,/data-operation-id/);
+ const html=c.works();
+ assert.ok(html.indexOf('data-action="works-tasks"')<html.indexOf('class="list-controls"'),'entry sits in the header actions');
+ assert.ok(html.indexOf('data-action="works-tasks"')<html.indexOf('id="search"'));
 });

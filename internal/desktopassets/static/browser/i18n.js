@@ -189,12 +189,12 @@ export function sharedTermCatalog() {
 /** Pre-application loading labels for the three HTML entry points. */
 export const BOOT_TEXT = {
   desktop: {
-    en: { title: 'PiWork Desktop', loading: 'Loading Desktop…' },
-    'zh-CN': { title: 'PiWork Desktop', loading: '正在加载 Desktop…' },
+    en: { title: 'PiWork Desktop', loading: 'Opening Piwork…' },
+    'zh-CN': { title: 'PiWork Desktop', loading: '正在打开 Piwork…' },
   },
   console: {
-    en: { title: 'Piwork Core', loading: 'Loading administrator workspace…' },
-    'zh-CN': { title: 'Piwork Core', loading: '正在加载管理界面…' },
+    en: { title: 'Piwork Core', loading: 'Opening Piwork…' },
+    'zh-CN': { title: 'Piwork Core', loading: '正在打开 Piwork…' },
   },
   setup: {
     en: { title: 'Piwork setup', loading: 'Opening Piwork…' },

@@ -18,7 +18,7 @@ const signedOut = (generation = 1, csrf = 'current-csrf') => ({ state: 'signed-o
 const signedIn = (generation = 1, account = 'owner') => ({ ...signedOut(generation), state: 'authenticated', user: { account, role: 'user' } });
 const denied = { status: 401, json: { code: 'LOCAL_AUTH_REQUIRED' } };
 const pending = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
-async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: Record) => Reply | undefined | Promise<Reply | undefined>, ticket = '', hosted = false, clock = false) {
+async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: Record) => Reply | undefined | Promise<Reply | undefined>, ticket = '', hosted = false, clock = false, hash = '') {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } }); t.after(() => page.close()); page.setDefaultTimeout(5000);
   if (clock) await page.clock.install();
   const records: Record[] = [];
@@ -32,16 +32,24 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
     const response = await route.fetch();
     await route.fulfill({ response, body: (await response.text()).replace('<head>', '<head><meta name="piwork-mode" content="hosted">') });
   });
-  await page.goto(base + (ticket ? '/#ticket=' + ticket : '/'));
+  await page.goto(base + (ticket ? '/#ticket=' + ticket : '/' + hash));
   return { page, records };
 }
+for (const hosted of [false, true]) test(`deep link uses neutral startup before ${hosted ? 'hosted' : 'native'} identity is confirmed`, async t => {
+  const gate = pending(); t.after(async () => gate.resolve());
+  const { page } = await fixture(t, async r => { if (r.path === 'session') { await gate.promise; return { json: signedIn() }; } }, '', hosted, false, '#/work/missing-work');
+  await expect(page.locator('.app-loading')).toContainText('Opening Piwork');
+  await expect(page.locator('[data-action="account"]')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Works', exact: true })).toHaveCount(0);
+  gate.resolve(); await expect(button(page, 'retry-work-read')).toBeVisible();
+});
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
 const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]`).last();
 
 test('local auth: checking is visible and valid Cookie discards an old ticket without bootstrap', async t => {
   const gate = pending(); t.after(async () => gate.resolve());
   const { page, records } = await fixture(t, async r => { if (r.path === 'session') { await gate.promise; return { json: signedIn() }; } }, 'used-or-expired');
-  await expect(page.getByRole('heading', { name: 'Opening workspace…' })).toBeVisible();
+  await expect(page.locator('.app-loading')).toContainText('Opening Piwork');
   assert.equal(await page.locator('[data-action="account"]').count(), 0);
   assert.equal(new URL(page.url()).hash, ''); gate.resolve();
   await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
@@ -75,7 +83,7 @@ for (const hosted of [false, true]) test(`ordinary session: hung ${hosted ? 'hos
     if (++reads === 1) { await gate.promise; return { json: signedIn(1, 'obsolete-owner') }; }
     return { json: signedIn(2, 'current-owner') };
   }, '', hosted, true);
-  await expect(page.getByRole('heading', { name: 'Opening workspace…' })).toBeVisible();
+  await expect(page.locator('.app-loading')).toContainText('Opening Piwork');
   await expect(button(page, 'retry-session')).toHaveCount(0);
   await page.clock.fastForward(10000);
   await expect(page.locator('body')).toContainText('The read timed out. The current state has not been confirmed.');
@@ -430,7 +438,7 @@ test('pending Core: initial and manual checks have one local indicator, end on f
     if (r.path === 'session') return { json: signedIn() };
     if (r.path === 'status') { statusCalls++; await (statusCalls === 1 ? first.promise : manual.promise); return fail ? { status: 503, json: { message: 'Connection test failed' } } : { json: { health: { available: true }, readiness: { available: true, value: { ready: true } } } }; }
   });
-  await expect(page.locator('[data-pending-label="Checking Core connection…"] .pending-dots')).toHaveCount(1);
+  await expect(button(page, 'connection').locator('.pending-dots')).toHaveCount(1);
   await expect(page.locator('.loading-list .skeleton')).toHaveCount(3); await expect(page.locator('.loading-list')).toHaveText('');
   await expect(page.locator('.pending-dots')).toHaveCount(1);
   await expect(button(page, 'connection')).not.toContainText('Connected');
@@ -464,7 +472,7 @@ async function captureWorksEvidence(page: Page, name: string) {
   for (const width of [1440, 360]) {
     await page.setViewportSize({ width, height: 900 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-    await expect(page.locator('.connection > i')).toHaveCount(1);
+    await expect(page.locator('.connection > .pending-icon-slot > i')).toHaveCount(1);
     if (process.env.PIWORK_UI_EVIDENCE === '1') {
       await expect.poll(() => page.locator('.brand-logo').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
       await mkdir('dist/server-ui-core-flow/desktop', { recursive: true });
@@ -492,6 +500,7 @@ test('Works first-read static skeleton stays visible without duplicate pending o
     await page.emulateMedia({ reducedMotion });
     const style = await skeleton.locator('.skeleton').first().evaluate(row => ({ animation: getComputedStyle(row).animationName, opacity: getComputedStyle(row).opacity, fill: getComputedStyle(row.querySelector('i')!).backgroundColor, surface: getComputedStyle(row.parentElement!).backgroundColor }));
     assert.equal(style.animation, 'none'); assert.equal(style.opacity, '1'); assert.notEqual(style.fill, style.surface);
+    const before = await skeleton.boundingBox(); await page.waitForTimeout(250); assert.deepEqual(await skeleton.boundingBox(), before);
     await captureWorksEvidence(page, `works-initial-skeleton-${reducedMotion}`);
   }
   first.resolve();

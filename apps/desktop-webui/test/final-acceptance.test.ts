@@ -394,7 +394,7 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) test(`Final 15
   await button(page, 'service-menu').click(); await button(page, 'manage-services').click();
   await page.locator('[data-action="service-details"][data-id="service-a"]').click();
   const pendingLogs = page.locator('#modal [data-pending-action~="refresh-logs"]');
-  await expect(pendingLogs).toContainText('Reading Tool A log snapshot');
+  await expect(pendingLogs).toHaveAttribute('title', /Reading Tool A log snapshot/);
   await expect(pendingLogs).toHaveAttribute('aria-busy', 'true');
   await expect(pendingLogs.locator('.pending-dots')).toHaveCount(1);
   await button(page, 'close-modal').click(); await button(page, 'tab-Files').click();

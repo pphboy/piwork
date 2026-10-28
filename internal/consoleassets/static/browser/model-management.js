@@ -120,7 +120,7 @@ export class ModelManagement {
     beginPending(action) { this.pendingAction = action; this.pendingStarted = Date.now(); clearInterval(this.pendingTimer); this.pendingTimer = setInterval(() => { if (Date.now() - this.pendingStarted >= 10000)
         this.render(); }, 1000); }
     endPending() { this.pendingAction = ''; clearInterval(this.pendingTimer); this.pendingTimer = undefined; }
-    pendingText(action, idle) { const labels = { save: t('models.pending.save'), read: t('models.pending.read'), enable: t('models.pending.enable'), disable: t('models.pending.disable'), delete: t('models.pending.delete'), default: t('models.pending.default') }; return this.pendingAction === action ? `${pendingDots()}${labels[action]}` : idle; }
+    pendingText(action, idle) { const pending = this.pendingAction === action; return `<span class="button-pending-content${pending ? ' is-pending' : ''}"><span>${esc(idle)}</span>${pending ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`; }
     busy(action) { return `aria-busy="${this.pendingAction === action}"`; }
     form(m) {
         const d = this.draft;

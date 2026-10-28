@@ -2,6 +2,10 @@
 export function overlayRole(name) {
     if (['account', 'work-menu', 'agent-menu', 'service-menu', 'file-menu'].includes(name))
         return 'menu';
+    // The Works task list is a non-modal disclosure of the current identity's own
+    // outstanding tasks, not a global operations centre.
+    if (name === 'works-tasks')
+        return 'drawer';
     if (['service-picker', 'sessions', 'chat-response-settings', 'chat-input-options', 'connection', 'work-info', 'skill-detail'].includes(name))
         return 'popover';
     if (['manage-services', 'service-details', 'operations', 'operation', 'run-details', 'package-detail'].includes(name))

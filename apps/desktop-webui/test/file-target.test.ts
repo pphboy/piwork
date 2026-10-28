@@ -27,7 +27,7 @@ function fixture() {
   c.dirty = () => c.view.file && c.view.fileDraft !== c.view.fileOriginal;
   c.fileReadPending = () => false;
   c.fileRefreshButton = () => '<button data-action="refresh-files"></button>';
-  c.uploadProgressMarkup = () => '';
+  c.uploadProgressMarkup = () => ''; c.filesUploadState = () => undefined;
   c.transferResults = () => '';
   c.size = (n: number) => `${n} B`;
   vm.createContext(c); vm.runInContext(helpers, c);

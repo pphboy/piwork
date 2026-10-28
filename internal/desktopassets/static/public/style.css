@@ -142,6 +142,80 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .pending-dots > i { animation: none; opacity: .7; }
 }
+/* Icon buttons swap their own glyph for the dots inside the same box, so the
+   trigger and its neighbours keep the geometry they had before waiting.
+   .pending-slot (a labelled button's trailing glyph) already reserves 24x16;
+   .pending-icon-slot mirrors a standalone 14-19px glyph so dots never widen it. */
+.pending-icon-slot {
+  --pending-icon-size: 18px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pending-icon-size);
+  height: var(--pending-icon-size);
+  flex: 0 0 var(--pending-icon-size);
+  vertical-align: middle;
+}
+.pending-icon-slot.micro { --pending-icon-size: 13px; }
+.pending-icon-slot.small { --pending-icon-size: 14px; }
+.pending-icon-slot.large { --pending-icon-size: 19px; }
+.pending-icon-slot > svg { flex: none; }
+.pending-icon-slot > .pending-dots {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  flex: none;
+  gap: 1px;
+}
+.pending-icon-slot > .pending-dots > i {
+  width: 3px;
+  height: 3px;
+  flex: 0 0 3px;
+}
+/* Keep the idle label in flow while the decorative indicator occupies its box. */
+.button-pending-content { display: inline-block; position: relative; }
+.button-pending-content.is-pending > span:first-child { opacity: 0; }
+.button-pending-indicator { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.action-pending-content { display: inline-flex; position: relative; align-items: center; }
+.action-pending-label { display: inline-flex; align-items: center; gap: 8px; opacity: 0; }
+.action-pending-indicator { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.action-slow-status {
+  position: fixed; z-index: 20; width: max-content; max-width: min(280px, calc(100vw - 16px));
+  padding: 6px 9px; border: 1px solid var(--border, #cbd5e1); border-radius: 6px;
+  background: var(--surface, #fff); color: var(--text, #172033); box-shadow: 0 2px 8px #0002;
+  font-size: 12px; line-height: 1.4; text-align: left; white-space: normal; overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.action-orphan-status {
+  position: fixed; z-index: 20; width: max-content; max-width: min(320px, calc(100vw - 16px));
+}
+/* First reads use one low-contrast shape that only changes brightness. */
+.skeleton-fill {
+  background-color: var(--border, #dce7f2);
+  background-image: linear-gradient(100deg, #e6edf5 15%, #f5f8fc 38%, #e6edf5 65%);
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1.8s linear infinite;
+}
+@keyframes skeleton-shimmer { to { background-position: -220% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-fill { animation: none; background-image: none; background-color: var(--border, #dce7f2); }
+}
+/* Accessible names for shapes that carry no visible text. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 .app-loading { display:flex; align-items:center; gap:8px; min-height:96px; padding:24px; color:var(--muted); }
 .pending-status { display:inline-flex; align-items:center; gap:6px; max-width:100%; }
 .pending-wait-message { color:var(--muted); font-size:11px; }
@@ -478,14 +552,14 @@ pre,
   color: var(--muted);
   padding: 6px 0;
 }
-.connection > i {
+.connection .pending-icon-slot > i {
   height: 6px;
   width: 6px;
   background: var(--positive);
   border-radius: 50%;
   margin-right: 1px;
 }
-.connection > i.warn {
+.connection .pending-icon-slot > i.warn {
   background: var(--warning);
 }
 .work-table {
@@ -1403,11 +1477,13 @@ pre,
 @media (prefers-reduced-motion: reduce) {
   .startup-placeholder > svg > rect { animation: none; opacity: .7; }
 }
+/* The Works first read keeps the table's own columns; brightness only, never
+   geometry. Under reduced motion the shared fill renders as a static block. */
 .loading-list { padding:12px 20px;background:var(--surface);border:1px solid var(--border);border-radius:8px; }
 .loading-list .skeleton { display:grid;grid-template-columns:40px minmax(0,1fr) 96px;gap:16px;align-items:center;min-height:76px;border-bottom:1px solid var(--border); }
 .loading-list .skeleton:last-child { border-bottom:0; }
-.loading-list .skeleton > i { height:40px;border-radius:8px;background:var(--border); }
-.loading-list .skeleton span { height:14px;max-width:60%;border-radius:4px;background:var(--border); }
+.loading-list .skeleton > i { height:40px;border-radius:8px; }
+.loading-list .skeleton span { height:14px;max-width:60%;border-radius:4px; }
 .loading-list .skeleton span:last-child { max-width:100%; }
 .works-error-cause { display:block;margin-bottom:8px;overflow-wrap:anywhere; }
 .files-toolbar {
@@ -2109,6 +2185,11 @@ dd > .button {
   color: var(--muted);
   flex: none;
 }
+/* A Service's own control state replaces its badge in the same row cell, so a
+   neighbouring Service never moves while another one is controlled. */
+.service-list .object-control-progress { margin:0; min-width:0; max-width:180px; font-size:11px; }
+.service-list .object-control-progress .actions { display:none; }
+.modal-body > .object-control-progress { margin:10px 0 0; }
 .service-explanation { margin: 0 0 18px; }
 .service-explanation h3 { margin: 0 0 7px; font-size: 14px; }
 .service-explanation p { margin: 0 0 6px; font-size: 12px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
@@ -3362,6 +3443,19 @@ dd > .button {
 .object-control-progress { display: grid; gap: 4px; margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
 .object-control-progress .actions { flex-wrap: wrap; gap: 4px; }
 .object-control-progress small { color: var(--muted); }
+/* In a list row or the Work header the same state occupies the object's existing
+   status slot: one compact line, no extra height, no pushing controls. */
+.object-control-state { display:block; margin-top:4px; font-size:10px; line-height:1.5; color:var(--muted); overflow-wrap:anywhere; }
+.object-control-state > .pending-status { gap:4px; }
+.object-control-state > small { display:block; color:var(--muted); }
+.object-control-state.has-problem { color:var(--warning); }
+.object-control-state.has-problem > small { color:var(--warning); }
+.work-header .object-control-state { margin:0; max-width:28ch; }
+.work-status { display:flex; align-items:center; gap:6px; min-width:0; }
+.work-status .object-control-state:not(.has-problem), .work-header .object-control-state:not(.has-problem) { display:inline-block; min-width:0; max-width:18ch; margin:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.work-menu-tasks, .work-menu-task { display:grid; gap:3px; }
+.work-menu-task { padding:6px 12px; font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
+.work-menu-task .actions { display:flex; flex-wrap:wrap; gap:4px; }
 .recovery-tasks { display: grid; gap: 8px; margin: 16px 0; }
 .recovery-task { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .recovery-task-copy { display: grid; flex: 1 1 0; min-width: 0; gap: 3px; overflow-wrap: anywhere; font-size: 13px; }
@@ -3459,6 +3553,13 @@ dd > .button {
 .service-choice .choice-check { width:18px;flex:none;color:var(--accent); }
 .service-choice .status { flex:none; }
 .message-execution { margin:4px 0 18px;font-size:12px; }
+/* The Run wait occupies the assistant reply's own place: one quiet row that does
+   not move the composer, and it disappears in place when real content arrives. */
+.reply-slot { display:flex; align-items:center; gap:8px; min-height:28px; margin:2px 0 14px; font-size:12px; color:var(--muted); }
+.reply-slot-wait { display:inline-flex; flex:none; }
+.reply-slot-action { background:none; border:0; padding:2px 4px; border-radius:5px; font-size:12px; color:var(--accent); cursor:pointer; }
+.reply-slot-action:hover { background:var(--accent-soft); }
+.reply-slot-action.muted { color:var(--muted); cursor:default; }
 .execution-summary { display:flex;gap:8px;align-items:center;flex-wrap:wrap; }
 .execution-summary .status { font-size:11px;color:var(--muted); }
 .execution-summary .run-succeeded { color:var(--positive); }
@@ -3601,11 +3702,14 @@ a.button.primary { color:var(--on-accent,#fff); }
 
 /* First reads use static structure; background reads never replace loaded content. */
 .read-placeholder { padding:24px; }
-.read-placeholder-line { height:16px;margin-bottom:18px;background:var(--surface-subtle);border-radius:4px;max-width:80%; }
+/* Shape only: the shared skeleton fill carries the shimmer, the block sets the size. */
+.read-placeholder-line { display:block;height:16px;margin-bottom:18px;border-radius:4px;max-width:80%; }
 .read-placeholder-line:last-child { max-width:65%; }
-.read-placeholder-field { display:inline-block;width:112px;height:14px;border-radius:4px;background:var(--surface-subtle);vertical-align:middle; }
-/* A one-step reveal suppresses fast-read flashes without delaying real content. */
-.read-placeholder-line,.read-placeholder-field { animation:read-placeholder-reveal 0s 150ms both; }
+.read-placeholder-field { display:inline-block;width:112px;height:14px;border-radius:4px;vertical-align:middle; }
+/* A one-step reveal suppresses fast-read flashes without delaying real content.
+   It sits on the container so the shared shimmer keeps owning each shape's
+   brightness and its reduced-motion static form. */
+.read-placeholder,.read-placeholder-field { animation:read-placeholder-reveal 0s 150ms both; }
 @keyframes read-placeholder-reveal { from { opacity:0; } to { opacity:1; } }
 .read-failure { align-items:flex-start; }
 .read-failure > div { flex:1;min-width:0; }
@@ -3613,6 +3717,22 @@ a.button.primary { color:var(--on-accent,#fff); }
 .read-failure details p { margin:6px 0 0; }
 
 .file-actions-separator { height:1px;background:var(--border);margin:5px 0; }
+
+/* Upload feedback lives in the existing file-actions trigger: the ring shows only
+   real transferred bytes and its box never grows; the detail is anchored and out
+   of flow so the toolbar and the file rows keep their positions. */
+.file-add-anchor { position:relative; }
+.upload-ring {
+  display:block; width:16px; height:16px; border-radius:50%;
+  background:
+    radial-gradient(closest-side, var(--surface) 0 58%, transparent 59%),
+    conic-gradient(currentColor calc(var(--upload-ratio, 0) * 360deg), transparent 0);
+  color:var(--accent);
+}
+.file-upload-detail { width:min(256px, calc(100vw - 60px)); padding:10px 6px; border-top:1px solid var(--border); font-size:11px; line-height:1.6; color:var(--muted); overflow-wrap:anywhere; }
+.file-upload-detail > p { margin:0 0 4px; }
+.file-upload-detail progress { display:block; width:100%; margin-top:4px; }
+.file-upload-details > summary { cursor:pointer; }
 
 /* Package identity and status share the same text column; Skills keeps its checkbox column. */
 .package-capability { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:10px 12px;align-items:start; }
@@ -3648,11 +3768,11 @@ a.button.primary { color:var(--on-accent,#fff); }
 
 /* Static first-read shapes only; confirmed content stays mounted during refresh. */
 .read-placeholder-service { min-height:260px; }
-.read-placeholder-service .read-placeholder-line:first-child { height:24px;max-width:38%; }
-.read-placeholder-service .read-placeholder-line:last-child { height:144px;max-width:100%; }
+.read-placeholder-service .read-placeholder-line:first-of-type { height:24px;max-width:38%; }
+.read-placeholder-service .read-placeholder-line:last-of-type { height:144px;max-width:100%; }
 .read-placeholder-conversation { min-height:220px; }
 .read-placeholder-conversation .read-placeholder-line { height:56px;max-width:78%;border-radius:12px; }
-.read-placeholder-conversation .read-placeholder-line:nth-child(2) { height:40px;margin-left:auto;max-width:58%; }
+.read-placeholder-conversation .read-placeholder-line:nth-of-type(2) { height:40px;margin-left:auto;max-width:58%; }
 .work-loading { padding:24px; }
 
 /* Markdown is scoped to assistant prose; tool output and user text stay literal. */
@@ -3687,4 +3807,7 @@ a.button.primary { color:var(--on-accent,#fff); }
 .work-read-feedback { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); }
 
 .history-pagination { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-block: 8px; }
+/* A real history limit is explained where the history operation lives, not as a
+   normal Chat banner; the wording names the fact and the available next step. */
+.history-limit { margin:0; max-width:60ch; font-size:11px; line-height:1.6; color:var(--warning); overflow-wrap:anywhere; }
 .history-partial { display: block; color: var(--muted); margin-bottom: 6px; font: 12px/1.5 var(--font-sans, sans-serif); }
