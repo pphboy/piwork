@@ -2,10 +2,10 @@ package consoleapp
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"piwork/internal/client"
+	"piwork/internal/contracts"
 	"strings"
 	"testing"
 )
@@ -27,7 +27,7 @@ func TestConsoleAboutUsesRemoteCoreAndKeepsAdminSession(t *testing.T) {
 	origin := "http://localhost:17891"
 	c := NewHostedHandler(HostedOptions{CoreURL: core.URL, Origin: func(r *http.Request) string { return origin }, Resolve: func(r *http.Request) (HostedSession, error) {
 		if r.Header.Get("Cookie") == "" {
-			return HostedSession{}, fmt.Errorf("no session")
+			return HostedSession{}, contracts.NewError("AUTHENTICATION_REQUIRED", "")
 		}
 		return HostedSession{ID: "admin", Token: "fixture", CSRF: "csrf", User: client.Identity{ID: "owner", Role: "admin"}}, nil
 	}})

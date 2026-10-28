@@ -44,7 +44,7 @@ func (c *nativeConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	id, session, ok, err := c.activeSession(r)
 	if err != nil {
-		consoleFailure(w, 502, "CORE_UNAVAILABLE")
+		consoleSessionFailure(w, err)
 		return
 	}
 	if !ok {
@@ -53,6 +53,24 @@ func (c *nativeConsole) serveAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != "GET" && (!c.sameConsoleOrigin(r) || !consoleEqual(r.Header.Get("X-Csrf-Token"), session.csrf)) {
 		consoleFailure(w, 403, "CSRF_INVALID")
+		return
+	}
+	if path == "/console/api/availability" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			consoleFailure(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED")
+			return
+		}
+		api, _ := c.client(c.options.coreURL, "")
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		response, err := api.Binary(ctx, http.MethodGet, "/healthz", nil, nil, -1)
+		reachable := false
+		if err == nil {
+			reachable = response.StatusCode == http.StatusOK
+			response.Body.Close()
+		}
+		consoleJSON(w, http.StatusOK, map[string]bool{"reachable": reachable})
 		return
 	}
 	if path == "/console/api/about" && r.Method == http.MethodGet {

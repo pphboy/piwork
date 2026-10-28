@@ -1,11 +1,13 @@
 package consoleapp
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"piwork/internal/client"
+	"piwork/internal/contracts"
 )
 
 type HostedSession struct {
@@ -28,7 +30,7 @@ func NewHostedHandler(options HostedOptions) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, err := options.Resolve(r)
 		if err != nil {
-			consoleFailure(w, 401, "AUTHENTICATION_REQUIRED")
+			consoleSessionFailure(w, err)
 			return
 		}
 		if session.User.Role != "admin" {
@@ -47,6 +49,22 @@ func NewHostedHandler(options HostedOptions) http.Handler {
 		}
 		c.ServeHTTP(w, copy)
 	})
+}
+
+func consoleSessionFailure(w http.ResponseWriter, err error) {
+	status, _ := contracts.ProjectError(err)
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
+		status = apiErr.Status
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		consoleFailure(w, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED")
+	case http.StatusForbidden:
+		consoleFailure(w, http.StatusForbidden, "PERMISSION_DENIED")
+	default:
+		consoleFailure(w, http.StatusBadGateway, "CORE_UNAVAILABLE")
+	}
 }
 
 func (c *nativeConsole) client(base, token string) (*client.Client, error) {
